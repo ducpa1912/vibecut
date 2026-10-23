@@ -1360,6 +1360,7 @@
       state.audio.duck = dom.audioDuck.checked;
       updateRenderPanel();
       refreshAudioStatus();
+      renderMixer();
     };
     ["change", "input"].forEach((event) => {
       dom.audioMode.addEventListener(event, () => {
