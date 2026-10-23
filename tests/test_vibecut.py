@@ -867,3 +867,117 @@ def test_read_transcript_roundtrip(tmp_path):
     }), encoding="utf-8")
     segments = pipeline.read_transcript(job_dir)
     assert segments and segments[0]["text"] == "你好世界"
+
+
+# ---------------------------------------------------------------- automation mixer
+
+
+def test_automation_expression_piecewise():
+    expr = audio.automation_expression([[0, 0], [4, -6], [8, 0]], 10.0)
+    assert expr and "if(lt(t,4.000)" in expr and "if(lt(t,8.000)" in expr
+    assert "-0.00" in expr or "pow(10" in expr
+    flat = audio.automation_expression([[2, -3]], 10.0)
+    assert flat and "volume=volume=" in flat
+    assert audio.automation_expression([], 10.0) is None
+    clamped = audio.automation_expression([[2, -90]], 10.0)
+    assert "pow(10,(-24.00)/20)" in clamped
+
+
+def test_reel_envelope_slices_source():
+    envelope = [-30.0 + index for index in range(20)]  # 1 dB step, 0.25s buckets
+    clips = [{"start": 0.0, "duration": 1.0}, {"start": 2.0, "duration": 1.0}]
+    points = audio.reel_envelope(envelope, clips, bucket_seconds=0.25)
+    assert points
+    assert points[0][0] == 0.0
+    assert points[-1][0] <= 2.0
+    assert all(isinstance(item[1], float) for item in points)
+
+
+def test_retrieve_lines_prefers_relevant_sentence():
+    text = (
+        "The garden took three years to grow and it was hard work. "
+        "Friends kept asking how much effort it really takes. "
+        "The soil mix matters more than the fertilizer brand. "
+        "Watering in the morning keeps the roots healthy. "
+        "The payoff is picking fruit on a quiet morning. "
+        "Follow for more garden tours."
+    )
+    lines = audio.retrieve_lines(text, "fertilizer soil mix", limit=2)
+    assert any("soil mix" in line for line in lines)
+    assert len(lines) <= 2
+
+
+def test_story_brief_cached(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio, "BRIEFS", tmp_path / "brief")
+    calls = {"count": 0}
+
+    def fake_llm(prompt, provider="auto"):
+        calls["count"] += 1
+        return '{"topic": "garden", "audience": "hobbyists", "promise": "easy growing"}'
+
+    monkeypatch.setattr(audio, "_llm_text", fake_llm)
+    first = audio.story_brief("x" * 200, "en")
+    assert first and first["topic"] == "garden"
+    second = audio.story_brief("x" * 200, "en")
+    assert second == first
+    assert calls["count"] == 1
+
+
+def test_rewrite_mlx_prompt_uses_brief_and_relevant(monkeypatch, tmp_path):
+    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
+    captured = {}
+
+    def fake_llm(prompt, provider="auto"):
+        captured["prompt"] = prompt
+        return json.dumps(["hook rewrite", "beat rewrite"])
+
+    monkeypatch.setattr(audio, "_llm_text", fake_llm)
+    monkeypatch.setattr(audio, "mlx_lm_available", lambda: True)
+    script = [
+        {"scene": 0, "role": "hook", "duration": 3.0, "rate": 1.0, "text": "hook"},
+        {"scene": 1, "role": "beat", "duration": 3.0, "rate": 1.0, "text": "beat"},
+    ]
+    context = {
+        "full_text": "source text",
+        "target_text": "Sentence one about the soil mix. Sentence two about watering. Sentence three about fruit.",
+        "brief": {"topic": "garden", "promise": "easy"},
+        "beats": [
+            {"scene": 0, "role": "hook", "seconds": 2.75, "source": "hook source"},
+            {"scene": 1, "role": "beat", "seconds": 2.75, "source": "beat source"},
+        ],
+    }
+    result = audio._rewrite_mlx(script, "zh", "en", "viral", ["hook literal", "beat literal"], context)
+    assert result and result[0] == "hook rewrite"
+    assert "STORY BRIEF" in captured["prompt"]
+    assert "RELEVANT TRANSCRIPT LINES" in captured["prompt"]
+    assert "SELECTED BEATS" in captured["prompt"]
+
+
+def test_adapt_script_rewrite_provider_routing(monkeypatch, tmp_path):
+    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
+    called = {}
+
+    def fake_mlx(script, source, target, mode, literal, context=None):
+        called["mlx"] = True
+        return [f"mlx {index}" for index in range(len(script))]
+
+    def fake_ollama(script, source, target, mode, literal, context=None):
+        called["ollama"] = True
+        return ["ollama line"]
+
+    monkeypatch.setattr(audio, "_rewrite_mlx", fake_mlx)
+    monkeypatch.setattr(audio, "_rewrite_ollama", fake_ollama)
+    monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
+    script = [{"scene": 0, "role": "hook", "duration": 3.0, "rate": 1.0, "text": "orig"}]
+    result = audio.adapt_script(script, "zh", "en", "smooth", "auto", None, "mlx")
+    assert called.get("mlx") and not called.get("ollama")
+    assert result[0]["text"] == "mlx 0"
+    assert result[0]["rewrite"] == "mlx"
+
+
+def test_rewrite_models_shape():
+    models = audio.rewrite_models()
+    ids = {model["id"] for model in models}
+    assert {"mlx", "ollama", "apple"} <= ids
+    for model in models:
+        assert "available" in model and "size_mb" in model

@@ -78,9 +78,14 @@
     audioMode: $("#audio-mode"),
     audioLang: $("#audio-lang"),
     audioStyle: $("#audio-style"),
+    audioRewrite: $("#audio-rewrite"),
     audioBeatSync: $("#audio-beatsync"),
     audioBpm: $("#audio-bpm"),
-    audioMix: $("#audio-mix"),
+    mixerPanel: $("#mixer-panel"),
+    mixerCanvas: $("#mixer-canvas"),
+    mixerReadout: $("#mixer-readout"),
+    mixerReset: $("#mixer-reset"),
+    mixerSmooth: $("#mixer-smooth"),
     audioProvider: $("#audio-provider"),
     audioEngine: $("#audio-engine"),
     audioVoice: $("#audio-voice"),
@@ -134,6 +139,7 @@
       lang: "",
       provider: "auto",
       style: "literal",
+      rewrite: "auto",
       beatSync: false,
       engine: "say",
       voice: "",
@@ -145,7 +151,7 @@
       duck: true,
     },
     audioEngines: null,
-    audioMix: [],
+    mixer: { ready: false, total: 0, clips: [], original: [], music: [], voice: [], bed: [] },
     scriptOverrides: {},
     showLiteral: false,
     order: "source",
@@ -393,6 +399,7 @@
       }
     });
     dom.renderAb.addEventListener("click", abHooks);
+    bindMixer();
     dom.exportSrt.addEventListener("click", () => exportCut("srt"));
     dom.exportVtt.addEventListener("click", () => exportCut("vtt"));
     dom.exportEdl.addEventListener("click", () => exportCut("edl"));
@@ -944,44 +951,334 @@
       </span>`).join("");
   }
 
+  const MIXER_MIN_DB = -24;
+  const MIXER_MAX_DB = 6;
+
+  function automationPoints() {
+    const mixer = state.mixer;
+    if (!mixer.ready) return null;
+    const changed = [...mixer.voice, ...mixer.bed]
+      .some((point) => Math.abs(Number(point.db) || 0) > 0.01);
+    if (!changed) return null;
+    return {
+      voice: mixer.voice.map((point) => [round2(point.t), round2(point.db)]),
+      music: mixer.bed.map((point) => [round2(point.t), round2(point.db)]),
+    };
+  }
+
+  function round2(value) {
+    return Math.round((Number(value) || 0) * 100) / 100;
+  }
+
+  function defaultAutomation(clips) {
+    const voice = [];
+    const bed = [];
+    let offset = 0;
+    clips.forEach((clip) => {
+      const duration = Number(clip.dur) || 0;
+      const points = [offset, offset + duration / 2, offset + duration];
+      points.forEach((t) => {
+        voice.push({ t, db: 0 });
+        bed.push({ t, db: 0 });
+      });
+      offset += duration;
+    });
+    return { voice, bed };
+  }
+
   function renderMixer() {
-    if (!dom.audioMix) return;
+    if (!dom.mixerPanel) return;
+    loadMixer();
+  }
+
+  async function loadMixer() {
     const plan = state.plan;
-    if (!plan || state.audio.mode === "keep" || state.audio.mode === "music") {
-      dom.audioMix.hidden = true;
-      dom.audioMix.innerHTML = "";
+    if (!plan || state.audio.mode === "keep") {
+      state.mixer.ready = false;
+      dom.mixerPanel.hidden = true;
       return;
     }
-    dom.audioMix.hidden = false;
-    if (state.audioMix.length !== plan.clips.length) {
-      state.audioMix = plan.clips.map(() => ({ voice_db: 0, music_db: 0 }));
+    try {
+      const result = await api(
+        `/api/jobs/${state.job.id}/mixer?target=${state.target}`
+        + `&order=${encodeURIComponent(state.order)}`
+        + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : ""),
+      );
+      const keepVoice = state.mixer.ready ? state.mixer.voice : null;
+      const keepBed = state.mixer.ready ? state.mixer.bed : null;
+      const defaults = defaultAutomation(result.clips || []);
+      state.mixer = {
+        ready: true,
+        total: result.total || 0,
+        clips: result.clips || [],
+        original: result.envelopes?.original || [],
+        music: result.envelopes?.music || [],
+        voice: keepVoice || defaults.voice,
+        bed: keepBed || defaults.bed,
+      };
+      dom.mixerPanel.hidden = false;
+      drawMixer();
+    } catch (error) {
+      dom.mixerPanel.hidden = true;
+      state.mixer.ready = false;
     }
-    dom.audioMix.innerHTML = `
-      <div class="script-head"><span class="label">Per-clip mixer</span>
-      <span class="hint">voice / music dB per beat</span></div>
-      <div class="script-list">
-        ${plan.clips.map((clip, index) => {
-          const scene = sceneById(clip.scene);
-          const entry = state.audioMix[index] || { voice_db: 0, music_db: 0 };
-          return `
-            <div class="mix-row">
-              <span>${esc(fmtTime(clip.start, 1))} · ${esc(clip.role || "")}</span>
-              <input type="range" min="-18" max="6" step="1" value="${Number(entry.voice_db) || 0}"
-                     data-mix="voice" data-index="${index}" title="voice dB">
-              <input type="range" min="-18" max="6" step="1" value="${Number(entry.music_db) || 0}"
-                     data-mix="music" data-index="${index}" title="music dB">
-            </div>`;
-        }).join("")}
-      </div>`;
-    dom.audioMix.querySelectorAll("[data-mix]").forEach((input) => {
-      input.addEventListener("input", () => {
-        const index = Number(input.dataset.index);
-        const kind = input.dataset.mix;
-        state.audioMix[index] = state.audioMix[index] || { voice_db: 0, music_db: 0 };
-        state.audioMix[index][kind === "voice" ? "voice_db" : "music_db"] = Number(input.value);
-        updateRenderPanel();
+  }
+
+  function mixerLayout() {
+    const canvas = dom.mixerCanvas;
+    const width = canvas.clientWidth || 720;
+    const height = canvas.clientHeight || 220;
+    return {
+      width,
+      height,
+      padL: 6,
+      padR: 6,
+      rulerH: 18,
+      laneH: 82,
+      gap: 10,
+      top: 24,
+      get musicTop() { return this.rulerH + 6; },
+      get voiceTop() { return this.rulerH + 6 + this.laneH + this.gap; },
+    };
+  }
+
+  function timeToX(t, layout) {
+    const span = Math.max(0.001, state.mixer.total);
+    const usable = layout.width - layout.padL - layout.padR;
+    return layout.padL + (Math.max(0, Math.min(span, t)) / span) * usable;
+  }
+
+  function xToTime(x, layout) {
+    const usable = layout.width - layout.padL - layout.padR;
+    return ((x - layout.padL) / usable) * state.mixer.total;
+  }
+
+  function dbToY(db, laneTop, laneH) {
+    const value = Math.max(MIXER_MIN_DB, Math.min(MIXER_MAX_DB, Number(db) || 0));
+    return laneTop + ((MIXER_MAX_DB - value) / (MIXER_MAX_DB - MIXER_MIN_DB)) * laneH;
+  }
+
+  function yToDb(y, laneTop, laneH) {
+    const ratio = (y - laneTop) / laneH;
+    const value = MIXER_MAX_DB - ratio * (MIXER_MAX_DB - MIXER_MIN_DB);
+    return Math.round(Math.max(MIXER_MIN_DB, Math.min(MIXER_MAX_DB, value)) * 10) / 10;
+  }
+
+  function drawEnvelope(ctx, points, laneTop, laneH, color) {
+    if (!points.length) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      const x = timeToX(point.t, mixerLayout());
+      const y = dbToY(point.db, laneTop, laneH);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    points.forEach((point) => {
+      const x = timeToX(point.t, mixerLayout());
+      const y = dbToY(point.db, laneTop, laneH);
+      ctx.beginPath();
+      ctx.fillStyle = color;
+      ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(10,10,11,0.9)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    });
+  }
+
+  function drawWave(ctx, envelope, laneTop, laneH, color) {
+    if (!envelope || !envelope.length) return;
+    const layout = mixerLayout();
+    const mid = laneTop + laneH / 2;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(timeToX(envelope[0][0], layout), mid);
+    envelope.forEach(([t, db]) => {
+      const norm = Math.max(0, Math.min(1, (Number(db) + 40) / 40));
+      ctx.lineTo(timeToX(t, layout), mid - norm * (laneH * 0.42));
+    });
+    for (let index = envelope.length - 1; index >= 0; index -= 1) {
+      const [t, db] = envelope[index];
+      const norm = Math.max(0, Math.min(1, (Number(db) + 40) / 40));
+      ctx.lineTo(timeToX(t, layout), mid + norm * (laneH * 0.42));
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawMixer() {
+    const canvas = dom.mixerCanvas;
+    if (!canvas || !state.mixer.ready) return;
+    const ratio = window.devicePixelRatio || 1;
+    const layout = mixerLayout();
+    canvas.width = layout.width * ratio;
+    canvas.height = layout.height * ratio;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, layout.width, layout.height);
+
+    // clip sections
+    let offset = 0;
+    state.mixer.clips.forEach((clip, index) => {
+      const x0 = timeToX(offset, layout);
+      const x1 = timeToX(offset + (Number(clip.dur) || 0), layout);
+      ctx.fillStyle = index % 2 ? "rgba(255,255,255,0.022)" : "rgba(255,255,255,0.045)";
+      ctx.fillRect(x0, layout.rulerH, x1 - x0, layout.height - layout.rulerH);
+      ctx.strokeStyle = "rgba(255,255,255,0.10)";
+      ctx.beginPath();
+      ctx.moveTo(x0, layout.rulerH);
+      ctx.lineTo(x0, layout.height);
+      ctx.stroke();
+      const label = `${clip.role === "hook" ? "HOOK" : clip.role === "payoff" ? "PAYOFF" : "beat"} ${clip.label || ""}`;
+      ctx.fillStyle = clip.role === "hook" ? "#e8a266" : "rgba(255,255,255,0.42)";
+      ctx.font = "9px ui-monospace, monospace";
+      ctx.fillText(label, x0 + 4, layout.rulerH + 11);
+      offset += Number(clip.dur) || 0;
+    });
+
+    // ruler
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.font = "9px ui-monospace, monospace";
+    const step = state.mixer.total > 40 ? 5 : state.mixer.total > 15 ? 2 : 1;
+    for (let t = 0; t <= state.mixer.total + 0.001; t += step) {
+      const x = timeToX(t, layout);
+      ctx.fillRect(x, layout.rulerH - 4, 1, 4);
+      ctx.fillText(`${t}s`, x + 3, layout.rulerH - 4);
+    }
+
+    // dB grid
+    [0, -6, -12, -18].forEach((db) => {
+      [layout.musicTop, layout.voiceTop].forEach((laneTop) => {
+        const y = dbToY(db, laneTop, layout.laneH);
+        ctx.strokeStyle = "rgba(255,255,255,0.07)";
+        ctx.beginPath();
+        ctx.moveTo(layout.padL, y);
+        ctx.lineTo(layout.width - layout.padR, y);
+        ctx.stroke();
       });
     });
+
+    // lanes
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.font = "9px ui-monospace, monospace";
+    ctx.fillText("MUSIC", layout.padL + 2, layout.musicTop - 4);
+    ctx.fillText("VOICE", layout.padL + 2, layout.voiceTop - 4);
+
+    // waveforms: original behind both lanes, music stem inside the music lane
+    drawWave(ctx, state.mixer.original, layout.musicTop, layout.laneH, "rgba(255,255,255,0.075)");
+    drawWave(ctx, state.mixer.original, layout.voiceTop, layout.laneH, "rgba(255,255,255,0.075)");
+    drawWave(ctx, state.mixer.music, layout.musicTop, layout.laneH, "rgba(120,170,255,0.18)");
+
+    drawEnvelope(ctx, state.mixer.bed, layout.musicTop, layout.laneH, "#e8a266");
+    drawEnvelope(ctx, state.mixer.voice, layout.voiceTop, layout.laneH, "#8fd18a");
+  }
+
+  function mixerPointer(event) {
+    const canvas = dom.mixerCanvas;
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  function nearestPoint(lane, x, y) {
+    const layout = mixerLayout();
+    const laneTop = lane === "voice" ? layout.voiceTop : layout.musicTop;
+    let best = null;
+    let bestDistance = 12;
+    state.mixer[lane].forEach((point, index) => {
+      const px = timeToX(point.t, layout);
+      const py = dbToY(point.db, laneTop, layout.laneH);
+      const distance = Math.hypot(px - x, py - y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = index;
+      }
+    });
+    return best;
+  }
+
+  function bindMixer() {
+    if (!dom.mixerCanvas) return;
+    let dragging = null;
+    dom.mixerCanvas.addEventListener("pointerdown", (event) => {
+      if (!state.mixer.ready) return;
+      const { x, y } = mixerPointer(event);
+      const layout = mixerLayout();
+      const inVoice = y >= layout.voiceTop && y <= layout.voiceTop + layout.laneH;
+      const inMusic = y >= layout.musicTop && y <= layout.musicTop + layout.laneH;
+      const lane = inVoice ? "voice" : inMusic ? "bed" : null;
+      if (!lane) return;
+      const index = nearestPoint(lane, x, y);
+      if (index === null) return;
+      dragging = { lane, index };
+      dom.mixerCanvas.setPointerCapture(event.pointerId);
+    });
+    dom.mixerCanvas.addEventListener("pointermove", (event) => {
+      const { x, y } = mixerPointer(event);
+      const layout = mixerLayout();
+      if (dragging) {
+        const laneTop = dragging.lane === "voice" ? layout.voiceTop : layout.musicTop;
+        const point = state.mixer[dragging.lane][dragging.index];
+        point.db = yToDb(y, laneTop, layout.laneH);
+        dom.mixerReadout.textContent =
+          `${dragging.lane === "voice" ? "voice" : "music"} ${point.t.toFixed(1)}s · ${point.db >= 0 ? "+" : ""}${point.db} dB`;
+        drawMixer();
+        updateRenderPanel();
+        return;
+      }
+      const lane = y >= layout.voiceTop && y <= layout.voiceTop + layout.laneH ? "voice"
+        : y >= layout.musicTop && y <= layout.musicTop + layout.laneH ? "bed" : null;
+      if (!lane) {
+        dom.mixerReadout.textContent = "";
+        return;
+      }
+      const index = nearestPoint(lane, x, y);
+      if (index === null) {
+        dom.mixerReadout.textContent = `at ${xToTime(x, layout).toFixed(1)}s · double-click to add a point`;
+        return;
+      }
+      const point = state.mixer[lane][index];
+      dom.mixerReadout.textContent =
+        `${lane === "voice" ? "voice" : "music"} ${point.t.toFixed(1)}s · ${point.db >= 0 ? "+" : ""}${point.db} dB`;
+    });
+    dom.mixerCanvas.addEventListener("pointerup", () => { dragging = null; });
+    dom.mixerCanvas.addEventListener("dblclick", (event) => {
+      if (!state.mixer.ready) return;
+      const { x, y } = mixerPointer(event);
+      const layout = mixerLayout();
+      const lane = y >= layout.voiceTop && y <= layout.voiceTop + layout.laneH ? "voice"
+        : y >= layout.musicTop && y <= layout.musicTop + layout.laneH ? "bed" : null;
+      if (!lane) return;
+      const laneTop = lane === "voice" ? layout.voiceTop : layout.musicTop;
+      const t = Math.max(0, Math.min(state.mixer.total, xToTime(x, layout)));
+      state.mixer[lane].push({ t: round2(t), db: yToDb(y, laneTop, layout.laneH) });
+      state.mixer[lane].sort((a, b) => a.t - b.t);
+      drawMixer();
+      updateRenderPanel();
+    });
+    dom.mixerReset.addEventListener("click", () => {
+      const defaults = defaultAutomation(state.mixer.clips);
+      state.mixer.voice = defaults.voice;
+      state.mixer.bed = defaults.bed;
+      drawMixer();
+      updateRenderPanel();
+    });
+    dom.mixerSmooth.addEventListener("click", () => {
+      ["voice", "bed"].forEach((lane) => {
+        const points = state.mixer[lane];
+        if (points.length < 3) return;
+        state.mixer[lane] = points.map((point, index) => {
+          const prev = points[index - 1] || point;
+          const next = points[index + 1] || point;
+          return { t: point.t, db: Math.round(((prev.db + point.db + next.db) / 3) * 10) / 10 };
+        });
+      });
+      drawMixer();
+      updateRenderPanel();
+    });
+    window.addEventListener("resize", () => drawMixer());
   }
 
   function syncEditedPlan() {
@@ -1306,15 +1603,11 @@
       target: audio.lang || "",
       provider: audio.provider || "auto",
       mode: audio.style || "literal",
+      rewrite_provider: audio.rewrite || "auto",
     };
     plan.beat_sync = !!audio.beatSync;
-    const mix = state.audioMix
-      .map((entry) => ({
-        voice_db: Number(entry?.voice_db) || 0,
-        music_db: Number(entry?.music_db) || 0,
-      }))
-      .filter((entry) => entry.voice_db || entry.music_db);
-    if (mix.length) plan.clip_mix = state.audioMix;
+    const automation = automationPoints();
+    if (automation) plan.automation = automation;
     plan.voice = audio.mode === "music"
       ? null
       : {
@@ -1349,6 +1642,7 @@
       state.audio.lang = dom.audioLang.value;
       state.audio.provider = dom.audioProvider.value || "auto";
       state.audio.style = dom.audioStyle.value || "literal";
+      state.audio.rewrite = dom.audioRewrite.value || "auto";
       state.audio.beatSync = dom.audioBeatSync.checked;
       state.audio.engine = dom.audioEngine.value;
       state.audio.voice = dom.audioVoice.value;
@@ -1383,6 +1677,10 @@
         loadAudioScript();
       });
       dom.audioStyle.addEventListener(event, () => {
+        touch();
+        loadAudioScript();
+      });
+      dom.audioRewrite.addEventListener(event, () => {
         touch();
         loadAudioScript();
       });
@@ -1517,6 +1815,15 @@
     });
     fillSelect(dom.audioMusic, musicOptions);
     fillSelect(dom.audioLang, AUDIO_LANGUAGES);
+    const rewriteOptions = [["auto", "Auto · smallest ready model"]];
+    (engines.rewrite_models || []).forEach((item) => {
+      rewriteOptions.push([
+        item.id,
+        `${item.available ? "" : "unavailable · "}${item.name}${item.size_mb ? ` (~${item.size_mb} MB)` : ""}`,
+      ]);
+    });
+    fillSelect(dom.audioRewrite, rewriteOptions);
+    dom.audioRewrite.value = state.audio.rewrite || "auto";
     const translateOptions = [["auto", "Auto · best ready engine"]];
     (engines.translation || []).forEach((item) => {
       translateOptions.push([
@@ -1656,6 +1963,7 @@
           translate: audio.lang || null,
           provider: audio.provider || "auto",
           mode: audio.style || "literal",
+          rewrite_provider: audio.rewrite || "auto",
           overrides: state.scriptOverrides,
         }),
       });

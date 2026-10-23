@@ -227,6 +227,23 @@
         </div>
         <div id="render-error" class="error" hidden></div>
 
+        <section id="mixer-panel" class="mixer-panel" hidden>
+          <div class="mixer-head">
+            <span class="label">Automation mixer</span>
+            <span class="hint">drag points up / down · double-click adds a point · music ramps between points</span>
+            <button id="mixer-reset" class="ghost small" type="button">Reset</button>
+            <button id="mixer-smooth" class="ghost small" type="button">Smooth</button>
+            <span id="mixer-readout" class="hint"></span>
+          </div>
+          <canvas id="mixer-canvas" height="220"></canvas>
+          <div class="mixer-legend">
+            <span><i class="mixer-swatch sw-orig"></i> original audio</span>
+            <span><i class="mixer-swatch sw-music"></i> original music stem</span>
+            <span><i class="mixer-swatch sw-voice"></i> voice line</span>
+            <span><i class="mixer-swatch sw-bed"></i> music line</span>
+          </div>
+        </section>
+
         <details id="audio-panel" class="audio-panel">
           <summary>Audio · voice over, dub, music</summary>
           <div class="audio-grid">
@@ -255,6 +272,10 @@
                 <option value="smooth">Smooth rewrite</option>
                 <option value="viral">Viral rewrite</option>
               </select>
+            </label>
+            <label class="audio-field">
+              <span>Rewrite model</span>
+              <select id="audio-rewrite"></select>
             </label>
             <label class="audio-field">
               <span>Voice engine</span>
@@ -303,7 +324,6 @@
             </div>
           </div>
           <div id="audio-script" class="audio-script"></div>
-          <div id="audio-mix" class="audio-script" hidden></div>
         </details>
 
         <div id="player-wrap" class="player-wrap" hidden>

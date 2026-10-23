@@ -48,7 +48,7 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - **Edit cut** lets you reorder, trim and remove beats. **Save variant** stores that edit; variant chips reload or delete it.
 - **Audio** panel: keep the original sound, replace the voice, dub over the original bed (Demucs), fully replace voice + music, or add music only. Pick the voice engine, target language, **script style** (faithful / smooth / viral), music source and mood; **Test voice** plays a sample.
 - **Voice script** preview lists the deduped lines with role, emotion and fit flags. Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot using the **full transcript** as context (the whole story, then one complete sentence per selected beat), with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
-- **Per-clip mixer** below the script: voice and music dB per beat. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
+- **Automation mixer** above the audio controls: time ruler with one section per clip, a music lane and a voice lane, draggable dB points (double-click adds one, Smooth flattens, Reset clears). The bed ramps between points instead of jumping, and the original audio plus the Demucs music stem are drawn behind the lanes so a sudden loud, mute or dip is visible. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
 - **Platform presets** (TikTok, Reels, Shorts, Square, Landscape) set aspect, captions and safe-zone caption margin. **A/B hooks** queues the three strongest hooks at once. **Story arc order** reorders beats as setup → proof → payoff.
 - Music sources: your own track, CC0 library, Stable Audio Open Small or 1.0 with auto mood from the beats.
 - Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs with your API key.
@@ -60,6 +60,7 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - Long-video scenes outside the shortlist are read on demand when you click them.
 - Renders are cached per plan + quality + aspect + captions + audio mix; an overridden hook gets its own slot. **Render again** forces a fresh encode. Cancel stops a running render.
 - **SRT / VTT / EDL / XML** buttons export the caption file or the cut list for Resolve and Premiere.
+- **Rewrite model**: pick the local small model used for the story brief and the rewrite — MLX (no server), Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
 - Speech: `transcribe_engine` is `auto` by default, which tries the on-device Apple SpeechAnalyzer (macOS 26, 0 MB) and falls back to mlx-whisper. Pick the speech language next to the toggle.
 
 ## CLI
@@ -174,6 +175,9 @@ Full design notes and the free/paid tool list: [`docs/audio-replacement.md`](doc
 | `VIBECUT_KEEP_RENDERS` | `1` | Newest finals kept per target/aspect/captions/mix |
 | `VIBECUT_KEEP_DRAFTS` | `0` | Keep drafts once a final exists |
 | `VIBECUT_SOURCES_GC_DAYS` | `30` | Source store GC age for unreferenced uploads |
+| `VIBECUT_MLX_REWRITE_MODEL` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | MLX rewrite model |
+| `VIBECUT_LLM_MODEL` | `qwen2.5:3b` | Ollama rewrite model |
+| `VIBECUT_REWRITE_CONTEXT_CHARS` | `6000` | Transcript context cap |
 | `VIBECUT_AUDIO_LICENSE` | `normal` | `strict` blocks music/voice without license metadata |
 | `VIBECUT_TOKEN` | unset | Require this bearer token for the API |
 | `VIBECUT_ELEVENLABS_API_KEY` | unset | ElevenLabs voice over |
@@ -206,7 +210,10 @@ data/sources/<hash>/    content-addressed uploads, hardlinked into jobs
 assets/music/generated/ AI beds kept as reusable library tracks
 data/cache/segments/    content-addressed segment cache
 data/cache/beats/       BPM and beat grids per track
-data/cache/rewrite/     rewrite memo per line, style and provider
+data/cache/rewrite/     rewrite memo per line, style and context
+data/cache/brief/       story brief per transcript and model
+data/cache/waveforms/   RMS envelopes for the mixer lanes
+tools/rewrite_mlx.py    local MLX small-model worker
 data/cache/voice/       cached voice lines
 data/cache/stems/       cached Demucs instrumental beds
 data/cache/music/       cached AI music beds

@@ -12,6 +12,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 | 0.3.0 | 2026-10-23 | Render speed | parallel segments, segment cache, draft/final, VideoToolbox, cancel, ETA, render-all, aspects, captions, timeline edit |
 | 0.4.0 | 2026-10-23 | Audio replacement | voice engines (say/piper/kokoro/elevenlabs), music (own/CC0/Stable Audio), modes keep/full/bed/voice/music, translation, script builder |
 | 0.5.0 | 2026-10-23 | Storage & speed | video masters + audio mux, FLAC caches, 360px thumbs, cache caps, render retention, job clean, install audit |
+| 0.6.2 | 2026-10-23 | Mixer & small models | ruler automation mixer with draggable envelopes, original/music stem waveforms, MLX + Ollama small-model rewrite with story brief and retrieval |
 | 0.6.1 | 2026-10-23 | Context rewrite | rewrite reads the full transcript, one complete sentence per beat, word-boundary fitting, memo keyed by context |
 | 0.6.0 | 2026-10-23 | Script & delivery | rewrite styles, per-clip mixer, beat sync, line editor, SpeechAnalyzer, CAS source store, SRT/VTT/EDL/XML, presets, A/B, license registry, story arc, music library |
 
@@ -29,10 +30,15 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Complete-sentence per-beat source lines instead of trimmed fragments
 - [x] Fact and budget validation for rewrites (no invented numbers)
 - [x] Rules-only rewrite fallback when no LLM is available
+- [x] Local small models: MLX worker, Ollama presets, provider select
+- [x] Target-language transcript context + story brief + BM25-lite retrieval
+- [x] Brief and rewrite caches keyed by model and context
 - [x] Per-line script editor with instant re-TTS (line cache)
 - [x] Rewrite variant compare in the Voice script panel
 
 ### Audio mixing
+- [x] Ruler automation mixer: draggable dB envelopes, ramps between points, clip sections
+- [x] Original audio and music-stem waveforms for loud/mute/dip monitoring
 - [x] Per-clip voice and music gain, mute
 - [x] Beat sync: BPM detection, cut snapping, beat-aligned music start
 - [!] SFX auto-placement (riser / whoosh / impact) — parked

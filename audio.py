@@ -10,6 +10,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -173,6 +174,29 @@ def demucs_available() -> bool:
     return _module("demucs")
 
 
+def mlx_lm_available() -> bool:
+    return _module("mlx_lm")
+
+
+def rewrite_models() -> list[dict]:
+    """Small local models that fit an M1 and a short rewrite prompt."""
+    current = os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b")
+    return [
+        {"id": "mlx", "name": "MLX local (no server)",
+         "model": os.environ.get("VIBECUT_MLX_REWRITE_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit"),
+         "available": mlx_lm_available(), "size_mb": 1800,
+         "install": "pip install mlx-lm (first run downloads ~1.8 GB)"},
+        {"id": "ollama", "name": "Ollama",
+         "model": current,
+         "available": bool(os.environ.get("VIBECUT_LLM_URL")), "size_mb": 2000,
+         "install": "install Ollama, then: ollama pull qwen2.5:3b"},
+        {"id": "apple", "name": "Apple Foundation Models",
+         "model": "on-device 3B",
+         "available": sys.platform == "darwin", "size_mb": 0,
+         "install": "enable Apple Intelligence on macOS 26"},
+    ]
+
+
 def stable_audio_available() -> bool:
     return _module("stable_audio_tools")
 
@@ -238,6 +262,8 @@ def engine_status() -> dict:
     return {
         "voices": voices,
         "music": music,
+        "rewrite_models": rewrite_models(),
+        "mlx_lm": mlx_lm_available(),
         "translation": translate_providers(),
         "separation": {
             "demucs": {"available": demucs_available(), "size_mb": 700,
@@ -822,6 +848,17 @@ def _ready_providers(source: str, target: str) -> list[str]:
     return ready
 
 
+def _rewrite_candidates() -> list[str]:
+    """Rewrite-specific order: small local models first, rules last."""
+    order: list[str] = []
+    if mlx_lm_available():
+        order.append("mlx")
+    if os.environ.get("VIBECUT_LLM_URL"):
+        order.append("ollama")
+    order.append("rules")
+    return order
+
+
 def _provider_order(source: str, target: str, provider: str) -> list[str]:
     if provider and provider != "auto":
         return [provider]
@@ -1200,12 +1237,213 @@ def window_text(segments: list[dict], start: float, end: float) -> str:
     return clean_line(" ".join(parts))
 
 
+BRIEFS = CACHE / "brief"
+
+
+def _sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?。！？])\s+|\n+", str(text or ""))
+    return [part.strip() for part in parts if len(part.strip()) > 12]
+
+
+def _tokens(text: str) -> list[str]:
+    return [token for token in re.findall(r"[\w\u3400-\u9fff]{2,}", str(text or "").lower())]
+
+
+def retrieve_lines(text: str, query: str, limit: int = 6) -> list[str]:
+    """BM25-lite retrieval so a small model only sees the relevant transcript."""
+    sentences = _sentences(text)
+    if len(sentences) <= limit:
+        return sentences
+    import math as _math  # noqa: PLC0415
+
+    docs = [_tokens(sentence) for sentence in sentences]
+    query_tokens = set(_tokens(query))
+    if not query_tokens:
+        return sentences[:limit]
+    df: dict[str, int] = {}
+    for doc in docs:
+        for token in set(doc):
+            df[token] = df.get(token, 0) + 1
+    total = len(docs)
+    average = sum(len(doc) for doc in docs) / max(1, total)
+    scored = []
+    for sentence, doc in zip(sentences, docs):
+        length = max(1, len(doc))
+        score = 0.0
+        counts: dict[str, int] = {}
+        for token in doc:
+            counts[token] = counts.get(token, 0) + 1
+        for token in query_tokens:
+            frequency = counts.get(token, 0)
+            if not frequency:
+                continue
+            idf = _math.log(1 + (total - df.get(token, 0) + 0.5) / (df.get(token, 0) + 0.5))
+            score += idf * (frequency * 2.5) / (frequency + 1.5 * (0.25 + 0.75 * length / max(1.0, average)))
+        scored.append((score, sentence))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [sentence for score, sentence in scored[:limit] if score > 0] or sentences[:limit]
+
+
+def _brief_path(text: str, provider: str) -> Path:
+    digest = hashlib.sha1(f"v1|{provider}|{text}".encode("utf-8")).hexdigest()[:24]
+    return BRIEFS / digest[:2] / f"{digest}.json"
+
+
+def story_brief(text: str, target: str, provider: str = "auto") -> dict | None:
+    """Small-model summary: audience, promise, proof, tone, hook and payoff ideas."""
+    text = str(text or "").strip()
+    if len(text) < 80:
+        return None
+    cached = _brief_path(text, provider)
+    if cached.is_file():
+        try:
+            return json.loads(cached.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    prompt = (
+        "Read the transcript of a short vertical video and reply with JSON only:\n"
+        '{"topic": "...", "audience": "...", "promise": "...", "proof": ["..."], '
+        '"tone": "...", "hook_idea": "...", "payoff_idea": "...", "key_claims": ["..."]}\n'
+        f"Write the values in {_language_name(target)}.\nTRANSCRIPT:\n{text[:4000]}"
+    )
+    raw = _llm_text(prompt, provider)
+    if not raw:
+        return None
+    match = re.search(r"\{.*\}", raw, re.S)
+    if not match:
+        return None
+    try:
+        brief = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(brief, dict):
+        return None
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_text(json.dumps(brief, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return brief
+
+
+def _llm_text(prompt: str, provider: str = "auto") -> str | None:
+    """One small-model call: MLX first, then Ollama."""
+    if provider in {"mlx", "auto"} and mlx_lm_available():
+        text = _mlx_text(prompt)
+        if text:
+            return text
+        if provider == "mlx":
+            return None
+    url = os.environ.get("VIBECUT_LLM_URL")
+    if not url:
+        return None
+    model = os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b")
+    payload = json.dumps({
+        "model": model, "prompt": prompt, "stream": False, "format": "json",
+        "options": {"temperature": 0.4},
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=240) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    return str(data.get("response") or data.get("message", {}).get("content") or "") or None
+
+
+def _mlx_text(prompt: str) -> str | None:
+    worker = ROOT / "tools" / "rewrite_mlx.py"
+    if not worker.is_file():
+        return None
+    model = os.environ.get(
+        "VIBECUT_MLX_REWRITE_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, str(worker), "--model", model],
+            input=json.dumps({"prompt": prompt, "system": "You write short video voice overs. Reply with JSON when asked."}),
+            capture_output=True, text=True, timeout=1800,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return (result.stdout or "").strip() or None
+
+
+def _rewrite_mlx(
+    script: list[dict], source: str, target: str, mode: str, literal: list[str],
+    context: dict | None = None,
+) -> list[str] | None:
+    """Small local model rewrite (MLX worker or Apple FM via the same JSON contract)."""
+    if mode == "literal":
+        return None
+    url_ready = bool(os.environ.get("VIBECUT_LLM_URL"))
+    if not (mlx_lm_available() or url_ready):
+        return None
+    rows = []
+    context_beats = (context or {}).get("beats") or []
+    for index, line in enumerate(script):
+        source_line = ""
+        if index < len(context_beats):
+            source_line = str(context_beats[index].get("source") or "")
+        rows.append({
+            "beat": index,
+            "role": str(line.get("role") or "beat"),
+            "seconds": round(float(line.get("duration") or 0.0) - 0.25, 2),
+            "source_line": source_line,
+            "literal": literal[index],
+        })
+    context_text = str((context or {}).get("target_text") or (context or {}).get("full_text") or "")
+    style = {
+        "smooth": "natural, flowing, conversational",
+        "viral": "punchy: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
+    }.get(mode, "faithful")
+    brief = (context or {}).get("brief")
+    parts = [
+        f"You write a {len(rows)}-beat short vertical video voice over in {_language_name(target)}.",
+        f"Style: {style}. Keep every fact and number, invent nothing.",
+        "Each line must fit its seconds budget at normal pace. Reply with a JSON array of strings only.",
+    ]
+    if brief:
+        parts.append("STORY BRIEF:\n" + json.dumps(brief, ensure_ascii=False))
+    if context_text:
+        query = " ".join(str(row["source_line"]) or str(row["literal"]) for row in rows)
+        relevant = retrieve_lines(context_text, query, limit=8)
+        if relevant:
+            parts.append("RELEVANT TRANSCRIPT LINES:\n" + "\n".join(relevant))
+    parts.append("SELECTED BEATS:\n" + json.dumps(rows, ensure_ascii=False))
+    raw = _llm_text("\n".join(parts), provider="mlx")
+    if not raw:
+        return None
+    match = re.search(r"\[.*\]", raw, re.S)
+    if not match:
+        return None
+    try:
+        values = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(values, list) or len(values) != len(script):
+        return None
+    fits = all(
+        estimate_seconds(str(value), float(script[index].get("rate") or 1.0))
+        <= max(1.0, float(script[index].get("duration") or 1.0))
+        for index, value in enumerate(values)
+    )
+    return [str(value).strip() for value in values] if fits else None
+
+
 def transcript_context(
     segments: list[dict],
     clips: list[dict],
     scenes: list[dict],
     source_lang: str,
     cap_chars: int | None = None,
+    target_lang: str | None = None,
+    translate_provider: str = "auto",
+    brief_provider: str = "auto",
 ) -> dict:
     """Whole-video context plus one complete source line per selected beat."""
     if cap_chars is None:
@@ -1230,11 +1468,30 @@ def transcript_context(
     full = " ".join(full.split())
     if cap_chars > 0 and len(full) > cap_chars:
         full = full[:cap_chars] + "…"
-    return {
+    context = {
         "language": (source_lang or "en").split("-")[0],
         "full_text": full,
         "beats": beats,
     }
+    target = str(target_lang or "").split("-")[0]
+    if target and target != context["language"]:
+        try:
+            translated = translate_lines(
+                [segment["text"] for segment in segments],
+                context["language"], target, translate_provider,
+            )
+            target_text = " ".join(part for part in translated if part)
+            target_text = " ".join(target_text.split())
+            if cap_chars > 0 and len(target_text) > cap_chars:
+                target_text = target_text[:cap_chars] + "…"
+            context["target_text"] = target_text
+            context["target_language"] = target
+        except AudioError:
+            context["target_text"] = None
+    brief = story_brief(context.get("target_text") or full, target or context["language"], brief_provider)
+    if brief:
+        context["brief"] = brief
+    return context
 
 
 def build_script(
@@ -1344,6 +1601,7 @@ def _voice_track(
     tmp: Path,
     total: float,
     gain_db: float,
+    expr: str | None = None,
     cancel_event: threading.Event | None = None,
 ) -> Path | None:
     """Place each line in its own slot: compress a little, then trim.
@@ -1378,11 +1636,14 @@ def _voice_track(
         parts.append(f"adelay={delay}|{delay}")
         parts.append(f"volume={float(line.get('gain_db', gain_db)):.2f}dB")
         filters.append(f"[{index}:a]{','.join(parts)}[v{index}]")
-    filters.append(
+    tail = (
         "".join(f"[v{index}]" for index in range(len(placed)))
         + f"amix=inputs={len(placed)}:normalize=0:dropout_transition=0,"
-        f"atrim=0:{total:.6f}[voice]"
+        f"atrim=0:{total:.6f}"
     )
+    if expr:
+        tail += f",{expr}"
+    filters.append(tail + "[voice]")
     output = tmp / "voice.wav"
     _run([
         _ffmpeg(), "-y", "-v", "error", *inputs,
@@ -1490,12 +1751,19 @@ def build_bed(
         apply_overrides(script)
         mode = str(translate_plan.get("mode") or "literal")
         provider = str(translate_plan.get("provider") or "auto")
+        rewrite_provider = str(translate_plan.get("rewrite_provider") or "auto")
         progress(0.87, f"Adapting {len(script)} lines → {target or source_lang} ({mode})")
         context = (
-            transcript_context(segments, clips, scenes, source_lang)
+            transcript_context(
+                segments, clips, scenes, source_lang,
+                target_lang=target, translate_provider=provider,
+                brief_provider=provider,
+            )
             if segments else None
         )
-        script = adapt_script(script, source_lang, target, mode, provider, context)
+        script = adapt_script(
+            script, source_lang, target, mode, provider, context, rewrite_provider,
+        )
         apply_overrides(script)
         script = refit_script(script, base_rate)
 
@@ -1570,9 +1838,12 @@ def build_bed(
             line["offset"] = round(offset, 3)
             line["slot"] = round(min(slot, float(line["duration"])), 3)
 
+        automation = audio_plan.get("automation") or {}
+        voice_expr = automation_expression(automation.get("voice"), total)
         voice_path = _voice_track(
             clips, prepared, tmp, total,
             float(voice_plan.get("gain_db") or 0.0),
+            voice_expr,
             cancel_event,
         )
 
@@ -1606,9 +1877,12 @@ def build_bed(
                 if grid and grid.get("beats"):
                     beat_offset = float(grid["beats"][0])
                     audio_plan["_beat_bpm"] = grid.get("bpm")
-            expr = music_mix_expression(
-                clips, audio_plan.get("clip_mix"), base_music_gain,
-            )
+            automation = audio_plan.get("automation") or {}
+            expr = automation_expression(automation.get("music"), total)
+            if expr is None:
+                expr = music_mix_expression(
+                    clips, audio_plan.get("clip_mix"), base_music_gain,
+                )
             audio_plan["_used_assets"] = ensure_licensed([chosen])
             music_path = _music_loop(
                 chosen, total, base_music_gain, tmp, expr, beat_offset,
@@ -1875,7 +2149,10 @@ def _rewrite_ollama(
         "smooth": "natural, flowing, conversational, connected sentences",
         "viral": "punchy short-video style: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
     }.get(mode, "faithful")
-    full_text = str((context or {}).get("full_text") or "").strip()
+    full_text = str(
+        (context or {}).get("target_text") or (context or {}).get("full_text") or ""
+    ).strip()
+    brief = (context or {}).get("brief")
     prompt = (
         f"You are editing a short vertical video. Below is the FULL TRANSCRIPT of the "
         f"source video. Read it first to understand the story, the product, the claims "
@@ -1886,6 +2163,7 @@ def _rewrite_ollama(
         "story coherent from beat to beat (setup, proof, payoff), each line must fit its "
         "seconds budget at normal speaking pace. Reply with a JSON array of strings "
         "only, same order and count.\n"
+        + (f"STORY BRIEF:\n{json.dumps(brief, ensure_ascii=False)}\n\n" if brief else "")
         + (f"FULL TRANSCRIPT:\n{full_text}\n\n" if full_text else "")
         + "SELECTED BEATS:\n"
         + json.dumps(rows, ensure_ascii=False)
@@ -1929,6 +2207,7 @@ def adapt_script(
     mode: str = "smooth",
     provider: str = "auto",
     context: dict | None = None,
+    rewrite_provider: str | None = None,
 ) -> list[dict]:
     """Translate, then rewrite for the slot and the short-video style.
 
@@ -1965,16 +2244,25 @@ def adapt_script(
             subset = [lines[index] for index in missing]
             subset_literal = [literals[index] for index in missing]
             rewritten: list[str] | None = None
-            order = [provider] if provider and provider not in ("auto", "") else ["llm", "rules"]
+            if rewrite_provider and rewrite_provider not in ("auto", ""):
+                order = [rewrite_provider]
+            elif provider and provider not in ("auto", ""):
+                order = [provider]
+            else:
+                order = _rewrite_candidates()
             for candidate in order:
-                if candidate in {"llm", "ollama", "apple"}:
+                if candidate in {"llm", "ollama"}:
                     rewritten = _rewrite_ollama(
+                        subset, source_lang, target_lang, mode, subset_literal, context,
+                    )
+                elif candidate in {"mlx", "apple"}:
+                    rewritten = _rewrite_mlx(
                         subset, source_lang, target_lang, mode, subset_literal, context,
                     )
                 elif candidate == "rules":
                     rewritten = _rules_rewrite(subset, source_lang, target_lang, mode, subset_literal)
                 if rewritten:
-                    used = "llm" if candidate in {"llm", "ollama", "apple"} else candidate
+                    used = "llm" if candidate in {"llm", "ollama"} else candidate
                     break
             if not rewritten:
                 rewritten = subset_literal
@@ -2142,6 +2430,119 @@ def snap_clips(
         drift += delta
         boundary = target
     return out, round(drift, 3)
+
+
+def _db_to_linear(db: float) -> str:
+    return f"pow(10,({db:.2f})/20)"
+
+
+def automation_expression(points, total: float) -> str | None:
+    """Piecewise-linear volume automation so the bed ramps instead of jumping."""
+    cleaned: list[tuple[float, float]] = []
+    for item in points or []:
+        try:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                at, db = float(item[0]), float(item[1])
+            elif isinstance(item, dict):
+                at, db = float(item.get("t", 0.0)), float(item.get("db", 0.0))
+            else:
+                continue
+        except (TypeError, ValueError):
+            continue
+        cleaned.append((max(0.0, min(float(total), at)), max(-24.0, min(6.0, db))))
+    cleaned.sort()
+    if not cleaned:
+        return None
+    if len(cleaned) == 1:
+        return f"volume=volume={_db_to_linear(cleaned[0][1])}:eval=frame"
+    expression = _db_to_linear(cleaned[-1][1])
+    for index in range(len(cleaned) - 1, 0, -1):
+        t0, d0 = cleaned[index - 1]
+        t1, d1 = cleaned[index]
+        slope = (d1 - d0) / max(1e-6, t1 - t0)
+        segment = f"pow(10,({d0:.2f}+({slope:.4f})*(t-{t0:.3f}))/20)"
+        expression = f"if(lt(t,{t1:.3f}),{segment},{expression})"
+    expression = f"if(lt(t,{cleaned[0][0]:.3f}),{_db_to_linear(cleaned[0][1])},{expression})"
+    return f"volume=volume='{expression}':eval=frame"
+
+
+WAVEFORMS = CACHE / "waveforms"
+
+
+def _envelope_file(fingerprint: str, tag: str = "mix") -> Path:
+    safe = re.sub(r"[^a-zA-Z0-9_.-]", "_", fingerprint or "source")[:80]
+    return WAVEFORMS / f"{safe}-{tag}.json"
+
+
+def source_envelope(
+    path: str,
+    fingerprint: str,
+    bucket_seconds: float = 0.25,
+    tag: str = "mix",
+) -> list[float]:
+    """RMS dB envelope of an audio file, cached, cheap enough for the mixer UI."""
+    cached = _envelope_file(fingerprint, tag)
+    if cached.is_file():
+        try:
+            data = json.loads(cached.read_text(encoding="utf-8"))
+            if data.get("bucket") == bucket_seconds and data.get("db"):
+                return [float(value) for value in data["db"]]
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    sample_rate = 8000
+    try:
+        import numpy as np  # noqa: PLC0415
+
+        result = subprocess.run(
+            [_ffmpeg(), "-v", "error", "-i", path, "-ac", "1", "-ar", str(sample_rate),
+             "-f", "s16le", "pipe:1"],
+            capture_output=True, timeout=900,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return []
+        samples = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+        per_bucket = max(1, int(sample_rate * bucket_seconds))
+        usable = (samples.size // per_bucket) * per_bucket
+        if usable <= 0:
+            return []
+        blocks = samples[:usable].reshape(-1, per_bucket)
+        rms = np.sqrt(np.mean(blocks * blocks, axis=1))
+        dbs = 20.0 * np.log10(np.maximum(rms, 1e-6))
+    except Exception:  # noqa: BLE001
+        return []
+    values = [round(float(value), 1) for value in dbs]
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_text(json.dumps({"bucket": bucket_seconds, "db": values}), encoding="utf-8")
+    except OSError:
+        pass
+    return values
+
+
+def reel_envelope(
+    envelope: list[float],
+    clips: list[dict],
+    bucket_seconds: float = 0.25,
+    max_points: int = 1400,
+) -> list[list[float]]:
+    """Slice a source envelope onto the reel timeline: [[reel_seconds, dB], ...]."""
+    if not envelope:
+        return []
+    out: list[list[float]] = []
+    offset = 0.0
+    total_seconds = sum(float(c.get("duration") or c.get("dur") or 0.0) for c in clips)
+    step = max(1, int(math.ceil((total_seconds / max(1, bucket_seconds)) / max_points))) if max_points else 1
+    for clip in clips:
+        start = float(clip.get("start") or 0.0)
+        duration = float(clip.get("duration") or clip.get("dur") or 0.0)
+        count = max(1, int(duration / bucket_seconds))
+        for index in range(0, count, step):
+            at = start + index * bucket_seconds
+            bucket = int(at / bucket_seconds)
+            if 0 <= bucket < len(envelope):
+                out.append([round(offset + index * bucket_seconds, 2), envelope[bucket]])
+        offset += duration
+    return out
 
 
 def music_mix_expression(

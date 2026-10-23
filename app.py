@@ -1221,6 +1221,7 @@ class ScriptBody(BaseModel):
     translate: str | None = None
     provider: str = "auto"
     mode: str = "literal"
+    rewrite_provider: str = "auto"
     order: str = "source"
     overrides: dict | None = None
 
@@ -1360,6 +1361,49 @@ def source_store() -> dict:
     return {"entries": rows, "total_mb": round(sum(row["mb"] for row in rows), 1)}
 
 
+@app.get("/api/jobs/{job_id}/mixer")
+def job_mixer(
+    job_id: str,
+    target: int = 30,
+    hook_scene: int | None = None,
+    order: str = "source",
+) -> dict:
+    """Reel-time clip sections plus original/music envelopes for the mixer."""
+    job = load_job(job_id)
+    plan = _apply_order(job, _plan_for(job, _valid_target(int(target)), hook_scene), order)
+    scenes = job["analysis"]["scenes"]
+    scene_map = {scene["id"]: scene for scene in scenes}
+    clips = [
+        {
+            "index": index,
+            "scene": clip["scene"],
+            "role": clip.get("role") or "beat",
+            "start": round(float(clip.get("start") or 0.0), 3),
+            "dur": round(float(clip.get("dur") or 0.0), 3),
+            "label": f"{scene_map.get(clip['scene'], {}).get('start', 0):.0f}s",
+        }
+        for index, clip in enumerate(plan["clips"])
+    ]
+    total = round(sum(clip["dur"] for clip in clips), 3)
+    fingerprint = str(job["source"].get("fingerprint") or job["source"].get("size") or "source")
+    source_path = job["source"]["path"]
+    original = audio.source_envelope(source_path, fingerprint, tag="mix")
+    music_env: list[float] = []
+    stem = audio.stem_cache_path(fingerprint, "no_vocals")
+    if stem.is_file():
+        music_env = audio.source_envelope(str(stem), fingerprint, tag="music")
+    return {
+        "total": total,
+        "clips": clips,
+        "envelopes": {
+            "original": audio.reel_envelope(original, clips),
+            "music": audio.reel_envelope(music_env, clips) if music_env else [],
+            "music_available": bool(music_env),
+            "bucket": 0.25,
+        },
+    }
+
+
 @app.post("/api/jobs/{job_id}/ab")
 def ab_package(job_id: str, body: PlanBody) -> dict:
     """Queue one render per top hook so 3 posts can be compared."""
@@ -1470,12 +1514,17 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
                 line["overridden"] = True
 
     context = (
-        audio.transcript_context(segments, clips, scenes, source_lang)
+        audio.transcript_context(
+            segments, clips, scenes, source_lang,
+            target_lang=target_lang, translate_provider=body.provider,
+            brief_provider=body.provider,
+        )
         if segments else None
     )
     try:
         script = audio.adapt_script(
             script, source_lang, target_lang, mode, body.provider, context,
+            body.rewrite_provider,
         )
         apply_overrides(script)
         script = audio.refit_script(script)
