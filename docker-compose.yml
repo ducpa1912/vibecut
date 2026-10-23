@@ -1,0 +1,14 @@
+services:
+  vibecut:
+    build: .
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./data:/data
+    environment:
+      VIBECUT_ENCODER: ${VIBECUT_ENCODER:-libx264}
+      VIBECUT_RETENTION_DAYS: ${VIBECUT_RETENTION_DAYS:-0}
+      VIBECUT_CACHE_DAYS: ${VIBECUT_CACHE_DAYS:-14}
+      VIBECUT_TOKEN: ${VIBECUT_TOKEN:-}
+      VIBECUT_RENDER_WORKERS: ${VIBECUT_RENDER_WORKERS:-4}
+    restart: unless-stopped

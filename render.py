@@ -1,0 +1,769 @@
+"""Turn a cut plan into a vertical H.264 reel.
+
+The renderer is deliberately boring: every beat is cut as its own segment,
+then the segments are joined with the concat demuxer. That keeps frame
+boundaries exact and lets us cache and parallelize the expensive part.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Callable
+
+from PIL import Image, ImageDraw, ImageFont
+
+import audio
+from pipeline import PipelineError, probe
+
+TARGET_AR = 9 / 16
+OUT_W = 1080
+OUT_H = 1920
+OUT_FPS = 30
+
+ASPECTS = {
+    "9:16": ((1080, 1920), (540, 960)),
+    "4:5": ((1080, 1350), (540, 676)),
+    "1:1": ((1080, 1080), (540, 540)),
+    "16:9": ((1920, 1080), (960, 540)),
+}
+
+
+class RenderCancelled(RuntimeError):
+    pass
+
+
+def _ffmpeg() -> str:
+    path = shutil.which("ffmpeg")
+    if not path:
+        raise PipelineError("ffmpeg is not installed or not on PATH.")
+    return path
+
+
+def _run(
+    cmd: list[str],
+    timeout: int | None = None,
+    cwd: Path | None = None,
+    cancel_event: threading.Event | None = None,
+) -> subprocess.CompletedProcess:
+    """Run ffmpeg and kill the whole process group when a render is cancelled."""
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, cwd=cwd, start_new_session=True,
+    )
+    if cancel_event is not None:
+        def watch() -> None:
+            while process.poll() is None:
+                if cancel_event.wait(0.2):
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except OSError:
+                        pass
+                    return
+        threading.Thread(target=watch, daemon=True).start()
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        process.wait(timeout=5)
+        raise PipelineError("ffmpeg render timed out.") from None
+    if cancel_event is not None and cancel_event.is_set():
+        raise RenderCancelled("Render cancelled.")
+    if process.returncode != 0:
+        tail = (stderr or stdout or "")[-1600:]
+        raise PipelineError(f"ffmpeg render failed.\n{tail}")
+    return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+
+
+def _dims(aspect: str, quality: str) -> tuple[int, int]:
+    final, draft = ASPECTS.get(aspect, ASPECTS["9:16"])
+    return final if quality == "final" else draft
+
+
+def _choose_encoder(requested: str | None = None) -> str:
+    value = (requested or os.environ.get("VIBECUT_ENCODER") or "auto").lower()
+    if value in ("libx264", "x264"):
+        return "libx264"
+    if value in ("videotoolbox", "vt"):
+        return "videotoolbox"
+    if value == "auto":
+        return "videotoolbox" if sys.platform == "darwin" else "libx264"
+    return "libx264"
+
+
+def _encoder_args(encoder: str, quality: str) -> list[str]:
+    if encoder == "videotoolbox":
+        bitrate = "10M" if quality == "final" else "3M"
+        return [
+            "-c:v", "h264_videotoolbox",
+            "-b:v", bitrate,
+            "-maxrate", bitrate,
+            "-bufsize", bitrate,
+            "-allow_sw", "1",
+            "-profile:v", "high", "-level", "4.2",
+            "-pix_fmt", "yuv420p",
+            "-bf", "0",
+        ]
+    return [
+        "-c:v", "libx264",
+        "-preset", "veryfast" if quality == "final" else "ultrafast",
+        "-crf", "18" if quality == "final" else "23",
+        "-profile:v", "high", "-level", "4.2",
+        "-pix_fmt", "yuv420p",
+        # No B-frames keeps every segment starting at PTS 0. That lets the
+        # concat demuxer copy video without gaps at the cut boundaries.
+        "-bf", "0",
+    ]
+
+
+def _crop_filter(meta: dict, crop: dict, out_w: int, out_h: int) -> str:
+    width, height = int(meta["width"]), int(meta["height"])
+    source_ar = width / max(1, height)
+    target_ar = out_w / out_h
+    cx = float(crop.get("cx", 0.5))
+    cy = float(crop.get("cy", 0.5))
+    filters: list[str] = []
+
+    if abs(source_ar - target_ar) > 0.01:
+        if source_ar > target_ar:
+            crop_h = height - (height % 2)
+            crop_w = int(round(crop_h * target_ar))
+            crop_w -= crop_w % 2
+            crop_w = min(width, max(2, crop_w))
+            x = int(round(cx * width - crop_w / 2))
+            x = max(0, min(width - crop_w, x))
+            y = 0
+        else:
+            crop_w = width - (width % 2)
+            crop_h = int(round(crop_w / target_ar))
+            crop_h -= crop_h % 2
+            crop_h = min(height, max(2, crop_h))
+            x = 0
+            y = int(round(cy * height - crop_h / 2))
+            y = max(0, min(height - crop_h, y))
+        filters.append(f"crop={crop_w}:{crop_h}:{x}:{y}")
+
+    filters.extend([
+        f"scale={out_w}:{out_h}:flags=lanczos",
+        "setsar=1",
+        f"fps={OUT_FPS}",
+        "format=yuv420p",
+    ])
+    return ",".join(filters)
+
+
+def _frames_for(start: float, duration: float, source_duration: float) -> int:
+    frames = max(1, int(round(duration * OUT_FPS)))
+    if source_duration > 0:
+        room = max(1, int((source_duration - start) * OUT_FPS + 1e-6))
+        frames = min(frames, room)
+    return frames
+
+
+def _link_or_copy(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def _segment_cache_key(
+    meta: dict,
+    scene: dict,
+    start: float,
+    frames: int,
+    out_w: int,
+    out_h: int,
+    quality: str,
+    encoder: str,
+    first: bool,
+    last: bool,
+) -> str:
+    payload = {
+        "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
+        "start": round(start, 6),
+        "frames": frames,
+        "crop": scene.get("crop") or {"cx": 0.5, "cy": 0.5},
+        "out": [out_w, out_h],
+        "quality": quality,
+        "encoder": encoder,
+        "first": first,
+        "last": last,
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
+
+
+def _segment(
+    source: str,
+    meta: dict,
+    scene: dict,
+    start: float,
+    duration: float,
+    frames: int,
+    output: Path,
+    first: bool,
+    last: bool,
+    out_w: int,
+    out_h: int,
+    quality: str,
+    encoder: str,
+    cache_dir: Path,
+    cancel_event: threading.Event | None = None,
+) -> bool:
+    """Render one beat. Return True when the segment came from cache."""
+    key = _segment_cache_key(
+        meta, scene, start, frames, out_w, out_h, quality, encoder, first, last,
+    )
+    cached = cache_dir / f"{key}.mp4"
+    if cached.exists() and cached.stat().st_size > 0:
+        _link_or_copy(cached, output)
+        return True
+
+    ffmpeg = _ffmpeg()
+    vf = _crop_filter(meta, scene.get("crop") or {"cx": 0.5, "cy": 0.5}, out_w, out_h)
+
+    if first and duration > 0.4:
+        vf += ",fade=t=in:st=0:d=0.12"
+    if last and duration > 0.6:
+        vf += f",fade=t=out:st={max(0.0, duration - 0.4):.3f}:d=0.4"
+
+    part = output.parent / f".{output.stem}.part.mp4"
+    if part.exists():
+        part.unlink()
+    cmd = [
+        ffmpeg, "-y", "-v", "error",
+        "-ss", f"{start:.3f}", "-t", f"{duration:.6f}", "-i", source,
+        "-frames:v", str(frames),
+        "-vf", vf,
+        "-an",
+        *_encoder_args(encoder, quality),
+        "-movflags", "+faststart",
+        "-video_track_timescale", "90000",
+        "-avoid_negative_ts", "make_zero",
+        "-muxdelay", "0", "-muxpreload", "0",
+        str(part),
+    ]
+    _run(cmd, timeout=300, cancel_event=cancel_event)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.replace(part, cached)
+        _link_or_copy(cached, output)
+    except OSError:
+        os.replace(part, output)
+    return False
+
+
+def _audio_track(
+    source: str,
+    meta: dict,
+    clips: list[dict],
+    output: Path,
+    total: float,
+    cancel_event: threading.Event | None = None,
+) -> None:
+    """Build one continuous PCM bed from each clip's own exact input window.
+
+    Using one input per clip avoids cumulative seek drift and keeps the audio
+    sample-exact with the video beats, including clips from the same scene.
+    """
+    ffmpeg = _ffmpeg()
+    if not meta.get("has_audio"):
+        _run([
+            ffmpeg, "-y", "-v", "error",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            "-t", f"{total:.6f}", "-c:a", "pcm_s16le", str(output),
+        ], timeout=120, cancel_event=cancel_event)
+        return
+
+    cmd = [ffmpeg, "-y", "-v", "error"]
+    for clip in clips:
+        cmd += [
+            "-ss", f"{float(clip['start']):.6f}",
+            "-t", f"{float(clip['duration']):.6f}",
+            "-i", source,
+        ]
+
+    graph: list[str] = []
+    for index, clip in enumerate(clips):
+        duration = float(clip["duration"])
+        branch = (
+            f"[{index}:a]aresample=48000,"
+            f"atrim=start=0:end={duration:.6f},"
+            f"asetpts=PTS-STARTPTS"
+        )
+        if duration > 0.02:
+            branch += (
+                f",afade=t=in:st=0:d=0.005"
+                f",afade=t=out:st={duration - 0.005:.6f}:d=0.005"
+            )
+        graph.append(branch + f"[b{index}]")
+    graph.append(
+        "".join(f"[b{index}]" for index in range(len(clips))) +
+        f"concat=n={len(clips)}:v=0:a=1[cat]"
+    )
+    fades = ["apad"]
+    if total > 0.4:
+        fades.append("afade=t=in:st=0:d=0.12")
+    if total > 0.6:
+        fades.append(f"afade=t=out:st={max(0.0, total - 0.5):.6f}:d=0.5")
+    graph.append("[cat]" + ",".join(fades) + "[out]")
+
+    cmd += [
+        "-filter_complex", ";".join(graph),
+        "-map", "[out]",
+        "-t", f"{total:.6f}",
+        "-ar", "48000", "-ac", "2",
+        "-c:a", "pcm_s16le",
+        str(output),
+    ]
+    _run(cmd, timeout=900, cancel_event=cancel_event)
+
+
+def _caption_text(scene: dict) -> str:
+    text = str(scene.get("speech") or scene.get("ocr") or "").strip()
+    text = " ".join(text.replace("\n", " ").split())
+    return text
+
+
+def _caption_chunks(text: str, width: int = 72) -> list[str]:
+    if len(text) <= width:
+        return [text]
+    words = text.split()
+    if len(words) <= 1:
+        return [text[index:index + width] for index in range(0, len(text), width)]
+    chunks: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) > width and current:
+            chunks.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _caption_cues(plan: dict, clips: list[dict]) -> list[tuple[float, float, str]]:
+    scenes = {scene["id"]: scene for scene in plan.get("_scenes", [])}
+    cues: list[tuple[float, float, str]] = []
+    offset = 0.0
+    for clip in clips:
+        scene = scenes.get(clip["scene"]) or {}
+        text = _caption_text(scene)
+        duration = float(clip["duration"])
+        if text:
+            chunks = _caption_chunks(text)
+            share = duration / max(1, len(chunks))
+            for index, chunk in enumerate(chunks):
+                start = offset + index * share
+                cues.append((start, min(offset + duration, start + share), chunk))
+        offset += duration
+    return cues
+
+
+def _caption_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    candidates = [
+        os.environ.get("VIBECUT_CAPTION_FONT_FILE"),
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            try:
+                return ImageFont.truetype(candidate, size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+def _wrap_caption(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
+    if not text:
+        return []
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        candidate = current + char
+        if draw.textlength(candidate, font=font) <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = char
+    if current:
+        lines.append(current)
+    return lines[:4]
+
+
+def _caption_pngs(
+    tmp: Path,
+    cues: list[tuple[float, float, str]],
+    out_w: int,
+    out_h: int,
+) -> list[Path]:
+    font_size = max(22, int(out_h * 0.032))
+    font = _caption_font(font_size)
+    margin = max(40, int(out_h * 0.075))
+    stroke = max(2, font_size // 18)
+    paths: list[Path] = []
+    for index, (_start, _end, text) in enumerate(cues):
+        image = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        lines = _wrap_caption(draw, text, font, int(out_w * 0.86))
+        line_height = int(font_size * 1.22)
+        y = out_h - margin - line_height * len(lines)
+        for line in lines:
+            draw.text(
+                (out_w // 2, y), line, font=font, anchor="ma",
+                fill=(255, 255, 255, 255),
+                stroke_width=stroke, stroke_fill=(0, 0, 0, 255),
+            )
+            y += line_height
+        path = tmp / f"caption-{index:03d}.png"
+        image.save(path)
+        paths.append(path)
+    return paths
+
+
+def _burn_captions(
+    video: Path,
+    cues: list[tuple[float, float, str]],
+    output: Path,
+    tmp: Path,
+    out_w: int,
+    out_h: int,
+    total: float,
+    quality: str,
+    encoder: str,
+    cancel_event: threading.Event | None = None,
+) -> None:
+    pngs = _caption_pngs(tmp, cues, out_w, out_h)
+    cmd = [_ffmpeg(), "-y", "-v", "error", "-i", str(video)]
+    for png in pngs:
+        cmd += ["-loop", "1", "-i", str(png)]
+    graph: list[str] = []
+    last = "0:v"
+    for index, (start, end, _text) in enumerate(cues, 1):
+        out = f"v{index}"
+        graph.append(
+            f"[{last}][{index}:v]overlay=0:0:"
+            f"enable='between(t,{start:.3f},{max(start + 0.2, end):.3f})'[{out}]"
+        )
+        last = out
+    cmd += [
+        "-filter_complex", ";".join(graph),
+        "-map", f"[{last}]", "-an",
+        *_encoder_args(encoder, quality),
+        "-t", f"{total:.6f}",
+        "-movflags", "+faststart",
+        "-map_metadata", "-1",
+        str(output),
+    ]
+    _run(cmd, timeout=900, cancel_event=cancel_event)
+
+
+def _concat_video(
+    tmp: Path,
+    target_mp4: Path,
+    segments: list[Path],
+    quality: str,
+    cancel_event: threading.Event | None = None,
+) -> None:
+    """Join cached video segments without audio. Stays a copy when possible."""
+    ffmpeg = _ffmpeg()
+    list_path = tmp / "segments.txt"
+    if not segments:
+        raise PipelineError("No rendered segments to join.")
+    list_path.write_text("".join(f"file '{segment.name}'\n" for segment in segments))
+    base = [
+        ffmpeg, "-y", "-v", "error", "-f", "concat", "-safe", "0",
+        "-i", str(list_path),
+    ]
+    final = base + [
+        "-map", "0:v:0", "-an", "-c:v", "copy",
+        "-movflags", "+faststart",
+        "-map_metadata", "-1",
+        str(target_mp4),
+    ]
+    try:
+        _run(final, timeout=600, cwd=tmp, cancel_event=cancel_event)
+        return
+    except RenderCancelled:
+        raise
+    except PipelineError:
+        pass
+    fallback = base + [
+        "-map", "0:v:0", "-an",
+        *_encoder_args("libx264", quality),
+        "-movflags", "+faststart",
+        "-map_metadata", "-1",
+        str(target_mp4),
+    ]
+    _run(fallback, timeout=900, cwd=tmp, cancel_event=cancel_event)
+
+
+def _mux(
+    master: Path,
+    audio_path: Path,
+    output: Path,
+    job_title: str,
+    total: float,
+    quality: str,
+    normalize: bool,
+    cancel_event: threading.Event | None = None,
+) -> None:
+    """Attach one audio bed to the cached video master. Video is copied."""
+    base = [
+        _ffmpeg(), "-y", "-v", "error",
+        "-i", str(master), "-i", str(audio_path),
+    ]
+    audio_filters = ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11"] if normalize else []
+    final = base + [
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy",
+        *audio_filters,
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+        "-t", f"{total:.6f}",
+        "-movflags", "+faststart",
+        "-map_metadata", "-1",
+        "-metadata", f"title={job_title}",
+        "-metadata", "comment=Made with VibeCut. Original vibe preserved.",
+        str(output),
+    ]
+    try:
+        _run(final, timeout=900, cancel_event=cancel_event)
+        return
+    except RenderCancelled:
+        raise
+    except PipelineError:
+        pass
+    fallback = base + [
+        "-map", "0:v:0", "-map", "1:a:0",
+        *_encoder_args("libx264", quality),
+        *audio_filters,
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+        "-t", f"{total:.6f}",
+        "-movflags", "+faststart",
+        "-metadata", f"title={job_title}",
+        str(output),
+    ]
+    _run(fallback, timeout=1200, cancel_event=cancel_event)
+
+
+def render_reel(
+    source: str,
+    meta: dict,
+    job_dir: Path,
+    plan: dict,
+    job_title: str,
+    progress: Callable[[float, str], None],
+    quality: str = "final",
+    aspect: str = "9:16",
+    encoder: str | None = None,
+    captions: bool = False,
+    audio_plan: dict | None = None,
+    audio_sig: str = "",
+    cancel_event: threading.Event | None = None,
+) -> dict:
+    quality = "draft" if quality == "draft" else "final"
+    aspect = aspect if aspect in ASPECTS else "9:16"
+    out_w, out_h = _dims(aspect, quality)
+    encoder = _choose_encoder(encoder)
+    target = int(plan["target"])
+    suffix = ""
+    if quality != "final":
+        suffix += f"_{quality}"
+    if aspect != "9:16":
+        suffix += f"_{aspect.replace(':', 'x')}"
+    if audio_plan and str(audio_plan.get("mode") or "keep") != "keep":
+        audio_sig = audio_sig or audio.signature(audio_plan)
+        if audio_sig:
+            suffix += f"_{audio_sig}"
+
+    renders_dir = job_dir / "renders"
+    renders_dir.mkdir(parents=True, exist_ok=True)
+    out = renders_dir / f"reel_{target}{suffix}.mp4"
+    poster = renders_dir / f"reel_{target}{suffix}.jpg"
+    tmp = renders_dir / f"tmp_{target}{suffix}"
+    if tmp.exists():
+        shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True, exist_ok=True)
+    out_tmp = tmp / f"reel_{target}{suffix}.mp4"
+    poster_tmp = tmp / f"reel_{target}{suffix}.jpg"
+    cache_dir = job_dir.parent.parent / "cache" / "segments"
+
+    scenes = {scene["id"]: scene for scene in plan.get("_scenes", [])}
+    scene_list = plan.get("_scenes", [])
+    source_duration = float(meta.get("duration") or 0)
+    clips: list[dict] = []
+    for clip in plan["clips"]:
+        start = max(0.0, float(clip["start"]))
+        wanted = max(0.2, float(clip["end"]) - start)
+        frames = _frames_for(start, wanted, source_duration)
+        clips.append({
+            "scene": clip["scene"],
+            "start": start,
+            "frames": frames,
+            "duration": frames / OUT_FPS,
+        })
+
+    total = sum(clip["duration"] for clip in clips)
+    if cancel_event is not None and cancel_event.is_set():
+        raise RenderCancelled("Render cancelled.")
+
+    master_dir = job_dir.parent.parent / "cache" / "masters" / job_dir.name
+    master_key = hashlib.sha1(json.dumps({
+        "target": target,
+        "clips": [
+            {"scene": clip["scene"], "start": round(clip["start"], 3), "frames": clip["frames"]}
+            for clip in clips
+        ],
+        "quality": quality,
+        "aspect": aspect,
+        "captions": bool(captions),
+        "encoder": encoder,
+    }, sort_keys=True).encode()).hexdigest()[:16]
+    master = master_dir / f"{master_key}.mp4"
+    cached_count = 0
+    caption_count = 0
+    try:
+        if not master.is_file() or master.stat().st_size < 1024:
+            workers = max(1, min(
+                int(os.environ.get("VIBECUT_RENDER_WORKERS", "4")),
+                os.cpu_count() or 2,
+                len(clips),
+            ))
+            progress(0.01, f"Preparing {len(clips)} beats · {quality} · {encoder}")
+            done = 0
+            segments: list[Path] = []
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vibecut-seg") as pool:
+                futures = {}
+                for index, clip in enumerate(clips):
+                    scene = scenes.get(clip["scene"])
+                    if not scene:
+                        raise PipelineError(f"Plan references missing scene {clip['scene']}.")
+                    segment = tmp / f"{index:03d}.mp4"
+                    segments.append(segment)
+                    futures[pool.submit(
+                        _segment,
+                        source, meta, scene,
+                        clip["start"], clip["duration"], clip["frames"],
+                        segment, index == 0, index == len(clips) - 1,
+                        out_w, out_h, quality, encoder, cache_dir, cancel_event,
+                    )] = index
+                for future in as_completed(futures):
+                    if cancel_event is not None and cancel_event.is_set():
+                        for pending in futures:
+                            pending.cancel()
+                        raise RenderCancelled("Render cancelled.")
+                    if future.result():
+                        cached_count += 1
+                    done += 1
+                    progress(
+                        0.02 + 0.78 * (done / max(1, len(clips))),
+                        f"Cutting beat {done} / {len(clips)}"
+                        + (f" · {cached_count} cached" if cached_count else ""),
+                    )
+            progress(0.82, "Joining the cut")
+            master_tmp = tmp / "master.mp4"
+            _concat_video(tmp, master_tmp, segments, quality, cancel_event)
+            if captions:
+                progress(0.87, "Burning captions")
+                cues = _caption_cues(plan, clips)
+                caption_count = len(cues)
+                if cues:
+                    captioned = tmp / "captioned.mp4"
+                    _burn_captions(
+                        master_tmp, cues, captioned, tmp, out_w, out_h, total,
+                        quality, encoder, cancel_event,
+                    )
+                    os.replace(captioned, master_tmp)
+            master_dir.mkdir(parents=True, exist_ok=True)
+            os.replace(master_tmp, master)
+        else:
+            progress(0.40, "Video master cached")
+            if captions:
+                caption_count = len(_caption_cues(plan, clips))
+
+        audio_path = tmp / "audio.wav"
+        audio_info: dict = {"mode": "keep"}
+        bed: Path | None = None
+        if audio_plan and str(audio_plan.get("mode") or "keep") != "keep":
+            progress(0.90, "Building the new audio")
+            try:
+                bed = audio.build_bed(
+                    source, meta, plan, clips, scene_list, job_dir, audio_plan,
+                    total, tmp, progress,
+                    source_lang=str(plan.get("_source_lang") or "en"),
+                    cancel_event=cancel_event,
+                )
+            except audio.AudioError as exc:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RenderCancelled("Render cancelled.") from exc
+                raise PipelineError(str(exc)) from exc
+            audio_info = {
+                "mode": audio_plan.get("mode"),
+                "voice_engine": (audio_plan.get("voice") or {}).get("engine"),
+                "voice": (audio_plan.get("voice") or {}).get("voice"),
+                "music": (audio_plan.get("music") or {}).get("source"),
+                "translate": (audio_plan.get("translate") or {}).get("target"),
+            }
+        if bed is None:
+            progress(0.90, "Building the original audio bed")
+            _audio_track(source, meta, clips, audio_path, total, cancel_event)
+        else:
+            audio_path = bed
+
+        progress(0.95, "Muxing audio")
+        _mux(
+            master, audio_path, out_tmp, job_title, total, quality,
+            not (audio_plan and str(audio_plan.get("mode") or "keep") != "keep"),
+            cancel_event,
+        )
+
+        info = probe(out_tmp)
+        seek = min(0.25, max(0.0, info["duration"] / 2))
+        _run([
+            _ffmpeg(), "-y", "-v", "error", "-ss", f"{seek:.3f}", "-i", str(out_tmp),
+            "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", str(poster_tmp),
+        ], timeout=60, cancel_event=cancel_event)
+
+        os.replace(out_tmp, out)
+        os.replace(poster_tmp, poster)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    progress(1.0, "Reel ready")
+    return {
+        "target": target,
+        "duration": info["duration"],
+        "width": info["width"],
+        "height": info["height"],
+        "size": info["size"],
+        "has_audio": info["has_audio"],
+        "path": out.name,
+        "poster": poster.name,
+        "clip_count": len(clips),
+        "quality": quality,
+        "aspect": aspect,
+        "encoder": encoder,
+        "captions": bool(captions),
+        "caption_count": caption_count,
+        "cached": cached_count,
+        **audio_info,
+    }

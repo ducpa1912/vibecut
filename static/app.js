@@ -1,0 +1,2245 @@
+(() => {
+  "use strict";
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+  const dom = {
+    ingest: $("#ingest-view"),
+    progress: $("#progress-view"),
+    result: $("#result-view"),
+    brand: $("#brand"),
+    health: $("#health"),
+    footerHealth: $("#footer-health"),
+    dropzone: $("#dropzone"),
+    fileInput: $("#file-input"),
+    fileCard: $("#file-card"),
+    fileName: $("#file-name"),
+    fileInfo: $("#file-info"),
+    clearFile: $("#clear-file"),
+    pathInput: $("#path-input"),
+    pathLoad: $("#path-load"),
+    optCrop: $("#opt-crop"),
+    optOcr: $("#opt-ocr"),
+    optSpeech: $("#opt-speech"),
+    speechNote: $("#speech-note"),
+    analyze: $("#analyze"),
+    ingestNote: $("#ingest-note"),
+    ingestError: $("#ingest-error"),
+    progressTitle: $("#progress-title"),
+    progressFile: $("#progress-file"),
+    progressPct: $("#progress-pct"),
+    progressBar: $("#progress-bar"),
+    progressElapsed: $("#progress-elapsed"),
+    progressMessage: $("#progress-message"),
+    stages: $("#stages"),
+    progressError: $("#progress-error"),
+    progressBack: $("#progress-back"),
+    resultTitle: $("#result-title"),
+    resultMeta: $("#result-meta"),
+    newVideo: $("#new-video"),
+    deleteJob: $("#delete-job"),
+    cleanJob: $("#clean-job"),
+    cleanProfile: $("#clean-profile"),
+    hookImg: $("#hook-img"),
+    hookTime: $("#hook-time"),
+    hookCopy: $("#hook-copy"),
+    hookWhy: $("#hook-why"),
+    hookScores: $("#hook-scores"),
+    hookTags: $("#hook-tags"),
+    hookCrop: $("#hook-crop"),
+    hookChange: $("#hook-change"),
+    targetTabs: $("#target-tabs"),
+    planTotal: $("#plan-total"),
+    planBadge: $("#plan-badge"),
+    resetHook: $("#reset-hook"),
+    editCut: $("#edit-cut"),
+    editBar: $("#edit-bar"),
+    saveVariant: $("#save-variant"),
+    variantName: $("#variant-name"),
+    doneEdit: $("#done-edit"),
+    variantList: $("#variant-list"),
+    hookLab: $("#hook-lab"),
+    hookLabToggle: $("#hook-lab-toggle"),
+    transcriptToggle: $("#transcript-toggle"),
+    transcriptPanel: $("#transcript-panel"),
+    planWhy: $("#plan-why"),
+    timeline: $("#timeline"),
+    render: $("#render"),
+    renderDraft: $("#render-draft"),
+    renderAll: $("#render-all"),
+    renderCancel: $("#render-cancel"),
+    aspect: $("#aspect-select"),
+    captions: $("#captions"),
+    audioPanel: $("#audio-panel"),
+    audioMode: $("#audio-mode"),
+    audioLang: $("#audio-lang"),
+    audioProvider: $("#audio-provider"),
+    audioEngine: $("#audio-engine"),
+    audioVoice: $("#audio-voice"),
+    audioRate: $("#audio-rate"),
+    audioMusic: $("#audio-music"),
+    audioTrack: $("#audio-track"),
+    audioPrompt: $("#audio-prompt"),
+    audioGain: $("#audio-gain"),
+    audioDuck: $("#audio-duck"),
+    audioPreview: $("#audio-preview"),
+    audioTranslateInstall: $("#audio-translate-install"),
+    audioStatus: $("#audio-status"),
+    audioScript: $("#audio-script"),
+    renderNote: $("#render-note"),
+    renderProgress: $("#render-progress"),
+    renderError: $("#render-error"),
+    playerWrap: $("#player-wrap"),
+    reelVideo: $("#reel-video"),
+    reelDuration: $("#reel-duration"),
+    reelSize: $("#reel-size"),
+    download: $("#download"),
+    sortTabs: $("#sort-tabs"),
+    sceneCount: $("#scene-count"),
+    sceneGrid: $("#scene-grid"),
+    loadMore: $("#load-more"),
+    recentSection: $("#recent-section"),
+    recent: $("#recent"),
+    recentCount: $("#recent-count"),
+    drawer: $("#drawer"),
+    drawerContent: $("#drawer-content"),
+    toast: $("#toast"),
+  };
+
+  const state = {
+    health: null,
+    file: null,
+    localPath: null,
+    meta: null,
+    fileName: "",
+    job: null,
+    plan: null,
+    target: 30,
+    aspect: "9:16",
+    captions: false,
+    audio: {
+      mode: "keep",
+      lang: "",
+      provider: "auto",
+      engine: "say",
+      voice: "",
+      rate: 1,
+      music: "none",
+      track: "",
+      prompt: "",
+      gain: -18,
+      duck: true,
+    },
+    audioEngines: null,
+    audioMoods: [],
+    audioPromptAuto: "",
+    overrideHook: null,
+    editMode: false,
+    edited: false,
+    sort: "best",
+    visible: 96,
+    busy: false,
+    pollTimer: null,
+    pollStart: null,
+    toastTimer: null,
+  };
+
+  init();
+
+  function init() {
+    bind();
+    loadHealth();
+    loadRecent();
+    routeFromHash();
+    setInterval(tickElapsed, 1000);
+  }
+
+  // ---------------------------------------------------------------- api
+
+  async function api(path, options = {}) {
+    const config = { ...options };
+    if (config.body && !config.headers) {
+      config.headers = { "Content-Type": "application/json" };
+    }
+    const token = tokenValue();
+    if (token) {
+      config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+    }
+    let response = await fetch(path, config);
+    if (response.status === 401 && !config.__retried) {
+      const supplied = window.prompt("VibeCut token");
+      if (supplied) {
+        try { localStorage.setItem("vibecut_token", supplied.trim()); } catch (_) { /* ignore */ }
+        config.__retried = true;
+        return api(path, config);
+      }
+    }
+    if (!response.ok) {
+      let detail = response.statusText || "Request failed";
+      try {
+        const body = await response.json();
+        detail = body.detail || detail;
+      } catch (_) { /* ignore */ }
+      if (typeof detail !== "string") detail = JSON.stringify(detail);
+      throw new Error(detail);
+    }
+    return response.json();
+  }
+
+  function tokenValue() {
+    try { return localStorage.getItem("vibecut_token") || ""; } catch (_) { return ""; }
+  }
+
+  function withToken(url) {
+    const token = tokenValue();
+    if (!token || !url) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+  }
+
+  function uploadFile(file, options, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/jobs/upload");
+      const uploadToken = tokenValue();
+      if (uploadToken) xhr.setRequestHeader("Authorization", `Bearer ${uploadToken}`);
+      xhr.responseType = "json";
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          onProgress(event.loaded / event.total, event.loaded, event.total);
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.response);
+          return;
+        }
+        const detail = xhr.response && xhr.response.detail;
+        reject(new Error(typeof detail === "string" ? detail : (xhr.statusText || "Upload failed.")));
+      };
+      xhr.onerror = () => reject(new Error("Upload failed. Is the server running?"));
+      const form = new FormData();
+      form.append("file", file);
+      form.append("options", JSON.stringify(options));
+      xhr.send(form);
+    });
+  }
+
+  // ---------------------------------------------------------------- health + recent
+
+  async function loadHealth() {
+    try {
+      const health = await api("/api/health");
+      state.health = health;
+      const version = (health.ffmpeg.match(/ffmpeg version (\S+)/) || [])[1] || "ffmpeg";
+      dom.health.textContent = `${version} · ${health.vision ? "vision" : "center crop"} · ${health.whisper ? "whisper" : "no speech"}`;
+      dom.footerHealth.textContent = `local · ${health.vision ? "apple vision" : "center crop"}`;
+      if (!health.vision) {
+        dom.optOcr.checked = false;
+        dom.optOcr.disabled = true;
+        const note = dom.optOcr.closest(".check")?.querySelector("small");
+        if (note) note.textContent = "unavailable";
+      }
+      if (!health.whisper) {
+        dom.optSpeech.disabled = true;
+        dom.optSpeech.checked = false;
+        dom.speechNote.textContent = "unavailable";
+      }
+      syncOptions();
+    } catch (_) {
+      dom.health.textContent = "engine offline";
+      dom.footerHealth.textContent = "engine offline";
+    }
+  }
+
+  async function loadRecent() {
+    try {
+      const data = await api("/api/jobs");
+      const jobs = data.jobs || [];
+      if (!jobs.length) {
+        dom.recentSection.hidden = true;
+        return;
+      }
+      dom.recentSection.hidden = false;
+      dom.recentCount.textContent = `${jobs.length} local`;
+      dom.recent.innerHTML = jobs.map((job) => {
+        const status = job.status === "ready"
+          ? "ready"
+          : job.status === "failed"
+            ? "failed"
+            : `${Math.round((job.progress || 0) * 100)}%`;
+        const thumb = job.hook_thumb
+          ? `<img src="${esc(job.hook_thumb)}" alt="" loading="lazy">`
+          : `<div class="empty">${job.scene_count ? `${job.scene_count} scenes` : "working"}</div>`;
+        return `
+          <button class="recent-card" data-id="${esc(job.id)}">
+            <div class="recent-thumb">${thumb}</div>
+            <div class="recent-copy">
+              <strong title="${esc(job.name || "Untitled video")}">${esc(job.name || "Untitled video")}</strong>
+              <span>${esc(fmtDuration(job.duration))} · ${esc(formatDate(job.created))}</span>
+            </div>
+            <div class="recent-status"><span>${esc(job.scene_count ? `${job.scene_count} scenes` : job.message || "queued")}</span><span class="dot">${esc(status)}</span></div>
+          </button>`;
+      }).join("");
+    } catch (_) {
+      dom.recentSection.hidden = true;
+    }
+  }
+
+  // ---------------------------------------------------------------- events
+
+  function bind() {
+    dom.brand.addEventListener("click", (event) => {
+      event.preventDefault();
+      resetToIngest();
+    });
+
+    dom.dropzone.addEventListener("click", () => dom.fileInput.click());
+    dom.dropzone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        dom.fileInput.click();
+      }
+    });
+    dom.fileInput.addEventListener("change", () => {
+      const file = dom.fileInput.files && dom.fileInput.files[0];
+      if (file) handleFile(file);
+    });
+
+    ["dragenter", "dragover"].forEach((name) => {
+      dom.dropzone.addEventListener(name, (event) => {
+        event.preventDefault();
+        dom.dropzone.classList.add("dragging");
+      });
+    });
+    ["dragleave", "dragend"].forEach((name) => {
+      dom.dropzone.addEventListener(name, () => dom.dropzone.classList.remove("dragging"));
+    });
+    dom.dropzone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dom.dropzone.classList.remove("dragging");
+      const file = event.dataTransfer?.files?.[0];
+      if (file) handleFile(file);
+    });
+
+    dom.clearFile.addEventListener("click", clearFile);
+    dom.pathLoad.addEventListener("click", inspectPath);
+    dom.pathInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") inspectPath();
+    });
+    dom.analyze.addEventListener("click", startAnalysis);
+    dom.progressBack.addEventListener("click", resetToIngest);
+    dom.newVideo.addEventListener("click", resetToIngest);
+    dom.deleteJob.addEventListener("click", deleteJob);
+    dom.cleanJob.addEventListener("click", cleanJobFiles);
+
+    dom.targetTabs.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-target]");
+      if (button) setTarget(Number(button.dataset.target));
+    });
+    dom.sortTabs.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-sort]");
+      if (button) setSort(button.dataset.sort);
+    });
+    dom.loadMore.addEventListener("click", () => {
+      state.visible += 96;
+      renderScenes();
+    });
+    dom.hookChange.addEventListener("click", () => {
+      setSort("best");
+      document.querySelector(".scene-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      toast("Tap a scene, then use it as the hook.");
+    });
+    dom.resetHook.addEventListener("click", resetHook);
+    dom.render.addEventListener("click", () => startRender("final"));
+    dom.renderDraft.addEventListener("click", () => startRender("draft"));
+    dom.renderAll.addEventListener("click", startRenderAll);
+    dom.renderCancel.addEventListener("click", cancelRender);
+    dom.aspect.addEventListener("change", () => {
+      state.aspect = dom.aspect.value;
+      updateRenderPanel();
+    });
+    dom.captions.addEventListener("change", () => {
+      state.captions = dom.captions.checked;
+      updateRenderPanel();
+    });
+    bindAudio();
+
+    dom.timeline.addEventListener("click", (event) => {
+      const tool = event.target.closest("[data-edit]");
+      if (tool) {
+        event.stopPropagation();
+        editClip(Number(tool.dataset.index), tool.dataset.edit);
+        return;
+      }
+      const button = event.target.closest("[data-scene]");
+      if (button) openDrawer(Number(button.dataset.scene));
+    });
+    dom.editCut.addEventListener("click", () => toggleEdit());
+    dom.doneEdit.addEventListener("click", () => toggleEdit(false));
+    dom.saveVariant.addEventListener("click", saveVariant);
+    dom.variantList.addEventListener("click", (event) => {
+      const remove = event.target.closest("[data-variant-delete]");
+      if (remove) {
+        deleteVariant(remove.dataset.variantDelete);
+        return;
+      }
+      const load = event.target.closest("[data-variant-load]");
+      if (load) loadVariant(load.dataset.variantLoad);
+    });
+    dom.hookLabToggle.addEventListener("click", toggleHookLab);
+    dom.hookLab.addEventListener("click", (event) => {
+      const pick = event.target.closest("[data-lab-hook]");
+      if (pick) useHook(Number(pick.dataset.labHook));
+    });
+    dom.transcriptToggle.addEventListener("click", toggleTranscript);
+    dom.transcriptPanel.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-transcript-time]");
+      if (!row) return;
+      const text = row.dataset.transcriptText || "";
+      if (navigator.clipboard && text) {
+        navigator.clipboard.writeText(text).then(() => toast("Transcript line copied.")).catch(() => {});
+      }
+    });
+    dom.sceneGrid.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-scene]");
+      if (button) openDrawer(Number(button.dataset.scene));
+    });
+    dom.recent.addEventListener("click", (event) => {
+      const card = event.target.closest("[data-id]");
+      if (card) openJob(card.dataset.id);
+    });
+
+    dom.drawer.addEventListener("click", (event) => {
+      if (event.target.closest("[data-close]")) {
+        closeDrawer();
+        return;
+      }
+      const use = event.target.closest("[data-use-hook]");
+      if (use) useHook(Number(use.dataset.useHook));
+      const read = event.target.closest("[data-read-scene]");
+      if (read) readScene(Number(read.dataset.readScene));
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeDrawer();
+    });
+    window.addEventListener("hashchange", () => {
+      const match = location.hash.match(/^#job=([a-z0-9]+)/i);
+      if (match && state.job?.id !== match[1]) openJob(match[1]);
+    });
+  }
+
+  // ---------------------------------------------------------------- file intake
+
+  function handleFile(file) {
+    state.file = file;
+    state.localPath = null;
+    state.meta = null;
+    state.fileName = file.name;
+    dom.ingestError.hidden = true;
+    dom.dropzone.hidden = true;
+    dom.fileCard.hidden = false;
+    dom.fileName.textContent = file.name;
+    dom.fileInfo.textContent = formatSize(file.size);
+    dom.ingestNote.textContent = "Uploads a local copy into vibecut/data.";
+    dom.pathInput.value = "";
+    syncOptions();
+    updateAnalyzeState();
+    readBrowserMeta(file);
+  }
+
+  function readBrowserMeta(file) {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    let finished = false;
+    const cleanup = () => {
+      if (finished) return;
+      finished = true;
+      URL.revokeObjectURL(url);
+      video.removeAttribute("src");
+      video.load();
+    };
+    video.preload = "metadata";
+    video.muted = true;
+    video.onloadedmetadata = () => {
+      if (state.file !== file) {
+        cleanup();
+        return;
+      }
+      state.meta = {
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+        width: video.videoWidth || 0,
+        height: video.videoHeight || 0,
+        has_audio: true,
+      };
+      updateFileInfo();
+      applyMetaDefaults();
+      cleanup();
+    };
+    video.onerror = cleanup;
+    video.src = url;
+  }
+
+  function clearFile() {
+    state.file = null;
+    state.localPath = null;
+    state.meta = null;
+    state.fileName = "";
+    dom.fileInput.value = "";
+    dom.pathInput.value = "";
+    dom.dropzone.hidden = false;
+    dom.fileCard.hidden = true;
+    dom.fileName.textContent = "";
+    dom.fileInfo.textContent = "";
+    dom.ingestError.hidden = true;
+    dom.ingestNote.textContent = "ffmpeg cuts first. Analysis follows.";
+    dom.optSpeech.checked = false;
+    dom.optCrop.checked = true;
+    dom.optOcr.checked = state.health ? state.health.vision : true;
+    syncOptions();
+    updateAnalyzeState();
+  }
+
+  async function inspectPath() {
+    const path = dom.pathInput.value.trim();
+    if (!path) return;
+    dom.ingestError.hidden = true;
+    dom.pathLoad.disabled = true;
+    dom.pathLoad.textContent = "Reading…";
+    try {
+      const meta = await api("/api/inspect", {
+        method: "POST",
+        body: JSON.stringify({ path }),
+      });
+      state.file = null;
+      state.localPath = path;
+      state.meta = meta;
+      state.fileName = basename(path);
+      dom.dropzone.hidden = true;
+      dom.fileCard.hidden = false;
+      dom.fileName.textContent = state.fileName;
+      dom.ingestNote.textContent = "Read in place · no copy.";
+      updateFileInfo();
+      applyMetaDefaults();
+      updateAnalyzeState();
+      toast("Video loaded in place.");
+    } catch (error) {
+      dom.ingestError.textContent = error.message;
+      dom.ingestError.hidden = false;
+    } finally {
+      dom.pathLoad.disabled = false;
+      dom.pathLoad.textContent = "Load";
+    }
+  }
+
+  function updateFileInfo() {
+    const meta = state.meta;
+    const bits = [];
+    if (meta?.duration) bits.push(fmtDuration(meta.duration));
+    if (meta?.width && meta?.height) bits.push(`${meta.width}×${meta.height}`);
+    const size = state.file?.size || meta?.size;
+    if (size) bits.push(formatSize(size));
+    if (meta && meta.has_audio === false) bits.push("no audio");
+    dom.fileInfo.textContent = bits.join(" · ");
+  }
+
+  function applyMetaDefaults() {
+    const hasAudio = state.meta?.has_audio !== false;
+    const whisper = state.health ? state.health.whisper : true;
+    const duration = Number(state.meta?.duration) || 0;
+    const short = duration > 0 && duration <= 900;
+    dom.optSpeech.checked = hasAudio && whisper && short;
+    dom.optCrop.checked = true;
+    dom.optOcr.checked = state.health ? state.health.vision : true;
+    syncOptions();
+    updateAnalyzeState();
+  }
+
+  function syncOptions() {
+    const hasAudio = state.meta ? state.meta.has_audio !== false : true;
+    const whisper = state.health ? state.health.whisper : true;
+    const vision = state.health ? state.health.vision : true;
+    dom.optSpeech.disabled = !hasAudio || !whisper;
+    if (dom.optSpeech.disabled) dom.optSpeech.checked = false;
+    if (!hasAudio) {
+      dom.speechNote.textContent = "no audio track";
+    } else if (!whisper) {
+      dom.speechNote.textContent = "unavailable";
+    } else if (state.meta?.duration > 900) {
+      dom.speechNote.textContent = "long video · adds time";
+    } else {
+      dom.speechNote.textContent = "local Whisper";
+    }
+    if (!vision) {
+      dom.optOcr.checked = false;
+      dom.optOcr.disabled = true;
+    } else if (!dom.optOcr.disabled) {
+      dom.optOcr.disabled = false;
+    }
+    updateAnalyzeState();
+  }
+
+  function readOptions() {
+    return {
+      ocr: dom.optOcr.checked,
+      transcribe: dom.optSpeech.checked,
+      smart_crop: dom.optCrop.checked,
+    };
+  }
+
+  function updateAnalyzeState() {
+    dom.analyze.disabled = state.busy || (!state.file && !state.localPath);
+  }
+
+  // ---------------------------------------------------------------- analysis
+
+  async function startAnalysis() {
+    if (!state.file && !state.localPath) return;
+    const options = readOptions();
+    dom.ingestError.hidden = true;
+    state.busy = true;
+    updateAnalyzeState();
+    state.pollStart = Date.now();
+    state.progressStart = Date.now();
+
+    if (state.file) {
+      showView("progress");
+      setProgressFile(state.file.name);
+      dom.progressTitle.textContent = "Sending the file";
+      updateUploadProgress(0, 0, state.file.size);
+      try {
+        const result = await uploadFile(state.file, options, updateUploadProgress);
+        state.pollStart = Date.now();
+        setProgressFile(state.file.name);
+        updateProgress({ status: "queued", progress: 0.01, message: "Queued for dissection" });
+        startAnalysisPoll(result.id);
+      } catch (error) {
+        state.busy = false;
+        updateAnalyzeState();
+        showView("ingest");
+        showIngestError(error.message);
+      }
+    } else {
+      showView("progress");
+      setProgressFile(state.fileName);
+      updateProgress({ status: "queued", progress: 0.01, message: "Queued for dissection" });
+      try {
+        const result = await api("/api/jobs/path", {
+          method: "POST",
+          body: JSON.stringify({ path: state.localPath, options }),
+        });
+        state.pollStart = Date.now();
+        startAnalysisPoll(result.id);
+      } catch (error) {
+        state.busy = false;
+        updateAnalyzeState();
+        showView("ingest");
+        showIngestError(error.message);
+      }
+    }
+  }
+
+  function startAnalysisPoll(id) {
+    stopPoll();
+    const tick = async () => {
+      try {
+        const status = await api(`/api/jobs/${id}/status`);
+        updateProgress(status);
+        if (status.status === "ready") {
+          stopPoll();
+          await openJob(id);
+          return;
+        }
+        if (status.status === "failed") {
+          stopPoll();
+          state.busy = false;
+          updateAnalyzeState();
+          showProgressError(status.error || status.message || "Analysis failed.");
+          return;
+        }
+        state.pollTimer = setTimeout(tick, 750);
+      } catch (_) {
+        state.pollTimer = setTimeout(tick, 1600);
+      }
+    };
+    tick();
+  }
+
+  function updateUploadProgress(fraction, loaded, total) {
+    const pct = Math.round(fraction * 100);
+    dom.progressBar.style.width = `${pct}%`;
+    dom.progressPct.textContent = `${pct}%`;
+    dom.progressMessage.textContent = `Sending source · ${formatSize(loaded)}${total ? ` / ${formatSize(total)}` : ""}`;
+    $$(".stage-list > div").forEach((element) => {
+      element.classList.remove("active", "done");
+    });
+  }
+
+  function updateProgress(status) {
+    const pct = Math.max(0, Math.min(100, Math.round((status.progress || 0) * 100)));
+    dom.progressBar.style.width = `${pct}%`;
+    dom.progressPct.textContent = `${pct}%`;
+    dom.progressMessage.textContent = status.message || "Working";
+    dom.progressError.hidden = status.status !== "failed";
+    if (status.status === "failed") {
+      dom.progressError.textContent = status.error || status.message || "Analysis failed.";
+    }
+    dom.progressBack.hidden = status.status !== "failed";
+
+    const titles = {
+      queued: "Queued",
+      scanning: "Finding the cuts",
+      reading: "Reading the video",
+      scoring: "Choosing the hook",
+      ready: "Cut ready",
+      failed: "That didn't work",
+    };
+    dom.progressTitle.textContent = titles[status.status] || "Reading the video";
+
+    const order = ["scanning", "reading", "scoring", "ready"];
+    const current = order.indexOf(status.status);
+    $$(".stage-list > div").forEach((element, index) => {
+      const stage = element.dataset.stage;
+      const stageIndex = order.indexOf(stage);
+      element.classList.toggle("active", stageIndex === current && status.status !== "ready");
+      element.classList.toggle("done", current > stageIndex || status.status === "ready");
+    });
+  }
+
+  function showProgressError(message) {
+    dom.progressError.textContent = message || "Analysis failed.";
+    dom.progressError.hidden = false;
+    dom.progressBack.hidden = false;
+  }
+
+  function setProgressFile(name) {
+    dom.progressFile.textContent = name || "video";
+  }
+
+  function showProgressForJob(job) {
+    state.progressStart = Date.now();
+    state.pollStart = Date.now();
+    setProgressFile(job.source?.name || state.fileName || "video");
+    showView("progress");
+    updateProgress(job);
+    if (job.status === "failed") {
+      showProgressError(job.error || job.message);
+    }
+  }
+
+  function tickElapsed() {
+    if (dom.progress.hidden) return;
+    const start = state.pollStart || state.progressStart;
+    if (!start) return;
+    const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
+    dom.progressElapsed.textContent = fmtTime(seconds);
+  }
+
+  function stopPoll() {
+    if (state.pollTimer) {
+      clearTimeout(state.pollTimer);
+      state.pollTimer = null;
+    }
+  }
+
+  // ---------------------------------------------------------------- open + render result
+
+  async function openJob(id) {
+    stopPoll();
+    try {
+      const job = await api(`/api/jobs/${id}`);
+      state.job = job;
+      if (job.status === "ready") {
+        prepareResult(job);
+      } else if (job.status === "failed") {
+        state.busy = false;
+        updateAnalyzeState();
+        showProgressForJob(job);
+      } else {
+        state.busy = true;
+        updateAnalyzeState();
+        showProgressForJob(job);
+        startAnalysisPoll(job.id);
+      }
+      history.replaceState(null, "", `#job=${job.id}`);
+    } catch (error) {
+      toast(error.message);
+      resetToIngest();
+    }
+  }
+
+  function prepareResult(job) {
+    state.job = job;
+    state.meta = {
+      width: job.source.width,
+      height: job.source.height,
+      duration: job.source.duration,
+      has_audio: job.source.has_audio,
+    };
+    state.fileName = job.source.name;
+    state.target = 30;
+    state.overrideHook = null;
+    state.editMode = false;
+    state.edited = false;
+    state.sort = "best";
+    state.visible = 96;
+    state.busy = false;
+    dom.hookLab.hidden = true;
+    dom.hookLab.innerHTML = "";
+    dom.transcriptPanel.hidden = true;
+    dom.transcriptPanel.innerHTML = "";
+    state.plan = job.analysis.plans[String(state.target)];
+    $$("#target-tabs button").forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.target) === state.target);
+    });
+    $$("#sort-tabs button").forEach((button) => {
+      button.classList.toggle("active", button.dataset.sort === state.sort);
+    });
+    updateAnalyzeState();
+    showView("result");
+    renderResult();
+    loadAudioEngines();
+    loadAudioMoods();
+    loadTranslateCheck();
+    history.replaceState(null, "", `#job=${job.id}`);
+    document.title = `${fileStem(job.source.name)} · VibeCut`;
+    const active = Object.values(job.renders || {}).some(
+      (record) => record && (record.status === "queued" || record.status === "rendering" || record.status === "cancelling"),
+    );
+    if (active) startRenderPoll(job.id);
+  }
+
+  function mergeScene(scene) {
+    if (!state.job?.analysis?.scenes || !scene) return;
+    const index = state.job.analysis.scenes.findIndex((item) => item.id === scene.id);
+    if (index >= 0) state.job.analysis.scenes[index] = { ...state.job.analysis.scenes[index], ...scene };
+  }
+
+  function renderResult() {
+    const job = state.job;
+    const analysis = job.analysis;
+    dom.resultTitle.textContent = fileStem(job.source.name);
+    dom.resultTitle.title = job.source.name;
+    const engine = [
+      analysis.engine?.vision ? "vision" : "center crop",
+      analysis.engine?.whisper ? "whisper" : null,
+    ].filter(Boolean).join(" + ");
+    const deep = analysis.deep_count ?? analysis.scene_count;
+    dom.resultMeta.textContent = `${fmtDuration(job.source.duration)} source · ${analysis.scene_count} scenes · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    renderHook();
+    renderPlan();
+    renderScenes();
+    updateRenderPanel();
+  }
+
+  function renderHook() {
+    const scene = currentHookScene();
+    if (!scene) return;
+    dom.hookImg.src = thumbUrl(scene);
+    dom.hookImg.alt = `Hook at ${fmtTime(scene.start)}`;
+    dom.hookImg.style.objectPosition = objectPosition(scene.crop);
+    dom.hookTime.textContent = `${fmtTime(scene.start, 1)} – ${fmtTime(scene.end, 1)} · ${scene.dur.toFixed(1)}s`;
+    dom.hookCopy.textContent = sceneLine(scene);
+    dom.hookWhy.textContent = state.plan?.hook_why
+      || `Picked as the opening: ${sceneLine(scene)}`;
+    dom.transcriptToggle.hidden = !state.job?.analysis?.engine?.whisper;
+    if (dom.transcriptToggle.hidden) {
+      dom.transcriptPanel.hidden = true;
+      dom.transcriptPanel.innerHTML = "";
+    }
+    dom.hookScores.innerHTML = [
+      ["Hook", scene.hook],
+      ["Visual", scene.visual_score],
+      ["Motion", scene.motion_score],
+      ["Audio", scene.audio_score],
+      ["Text", scene.text_score],
+    ].map(([label, value]) => scoreItem(label, value)).join("");
+    dom.hookTags.innerHTML = tagsHtml(scene);
+    dom.hookCrop.textContent = cropLabel(scene);
+  }
+
+  function renderPlan() {
+    const plan = state.plan;
+    if (!plan) return;
+    dom.planTotal.textContent = `${plan.total.toFixed(1)}s cut · ${plan.clip_count} beats`;
+    dom.planBadge.textContent = plan.auto ? "auto hook" : "custom hook";
+    dom.planBadge.classList.toggle("custom", !plan.auto);
+    dom.resetHook.hidden = state.overrideHook === null;
+    dom.editCut.textContent = state.editMode ? "Editing…" : "Edit cut";
+    dom.editBar.hidden = !state.editMode;
+    dom.planWhy.textContent = [
+      plan.hook_why ? `Hook: ${plan.hook_why}` : "",
+      plan.payoff_why ? `Payoff: ${plan.payoff_why}` : "",
+    ].filter(Boolean).join(" ");
+    dom.timeline.innerHTML = plan.clips.map((clip, index) => {
+      const scene = sceneById(clip.scene);
+      if (!scene) return "";
+      const why = clip.why || sceneNote(scene);
+      const tools = state.editMode
+        ? `<span class="clip-tools">
+             <button data-edit="up" data-index="${index}" title="Move earlier">↑</button>
+             <button data-edit="down" data-index="${index}" title="Move later">↓</button>
+             <button data-edit="shorter" data-index="${index}" title="Trim 0.25s">−</button>
+             <button data-edit="longer" data-index="${index}" title="Extend 0.25s">+</button>
+             <button data-edit="remove" data-index="${index}" title="Remove">✕</button>
+           </span>`
+        : "";
+      return `
+        <div class="clip ${clip.role === "hook" ? "hook" : ""} ${state.editMode ? "editing" : ""}" data-scene="${scene.id}" title="${esc(`${clip.role}: ${why}`)}">
+          <img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">
+          <span class="clip-role">${esc(clip.role)}</span>
+          <span class="clip-time">${clip.dur.toFixed(1)}s</span>
+          ${tools}
+        </div>`;
+    }).join("");
+    dom.timeline.scrollLeft = 0;
+    renderVariants();
+  }
+
+  function renderVariants() {
+    const variants = state.job?.variants || [];
+    dom.variantList.innerHTML = variants.map((variant) => `
+      <span class="variant-chip">
+        <button data-variant-load="${esc(variant.id)}" title="Load this cut">${esc(variant.name)} · ${Number(variant.total || 0).toFixed(1)}s</button>
+        <button data-variant-delete="${esc(variant.id)}" title="Delete variant">✕</button>
+      </span>`).join("");
+  }
+
+  function syncEditedPlan() {
+    if (!state.plan) return;
+    const clips = state.plan.clips;
+    const total = Math.round(clips.reduce((sum, clip) => sum + clip.dur, 0) * 1000) / 1000;
+    state.plan = {
+      ...state.plan,
+      clips,
+      total,
+      clip_count: clips.length,
+      auto: false,
+      note: "Manual edit",
+    };
+    state.edited = true;
+  }
+
+  function editClip(index, action) {
+    if (!state.plan || !state.plan.clips[index]) return;
+    const clips = state.plan.clips.map((clip) => ({ ...clip }));
+    const clip = clips[index];
+    if (action === "up" && index > 0) {
+      [clips[index - 1], clips[index]] = [clips[index], clips[index - 1]];
+    } else if (action === "down" && index < clips.length - 1) {
+      [clips[index + 1], clips[index]] = [clips[index], clips[index + 1]];
+    } else if (action === "remove") {
+      if (clips.length <= 1) {
+        toast("Keep at least one beat.");
+        return;
+      }
+      clips.splice(index, 1);
+    } else if (action === "shorter" || action === "longer") {
+      const scene = sceneById(clip.scene);
+      const step = 0.25;
+      const room = scene ? scene.end - clip.start : clip.dur;
+      const wanted = Math.max(0.5, Math.min(room, clip.dur + (action === "longer" ? step : -step)));
+      const dur = Math.round(wanted * 100) / 100;
+      if (Math.abs(dur - clip.dur) < 0.001) return;
+      clip.end = Math.round(Math.min(scene?.end ?? clip.end, clip.start + dur) * 1000) / 1000;
+      clip.dur = Math.round((clip.end - clip.start) * 1000) / 1000;
+    }
+    state.plan = { ...state.plan, clips };
+    syncEditedPlan();
+    renderPlan();
+    updateRenderPanel();
+  }
+
+  function toggleEdit(force) {
+    if (!state.plan) return;
+    state.editMode = typeof force === "boolean" ? force : !state.editMode;
+    renderPlan();
+  }
+
+  async function saveVariant() {
+    if (!state.job || !state.plan || !state.edited) {
+      toast("Edit the cut first.");
+      return;
+    }
+    const name = (dom.variantName.value || "").trim() || `${state.target}s edit`;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/variants`, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          target: state.target,
+          hook_scene: state.plan.hook_scene,
+          clips: state.plan.clips,
+        }),
+      });
+      state.job.variants = result.variants;
+      dom.variantName.value = "";
+      renderVariants();
+      toast("Variant saved.");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function loadVariant(variantId) {
+    const variant = (state.job?.variants || []).find((item) => item.id === variantId);
+    if (!variant) return;
+    state.plan = {
+      target: variant.target,
+      total: variant.total,
+      hook_scene: variant.hook_scene,
+      auto: false,
+      clip_count: variant.clip_count,
+      clips: variant.clips.map((clip) => ({ ...clip })),
+      note: `Variant · ${variant.name}`,
+    };
+    state.edited = true;
+    state.editMode = true;
+    renderPlan();
+    updateRenderPanel();
+    toast(`Loaded “${variant.name}”.`);
+  }
+
+  async function deleteVariant(variantId) {
+    if (!state.job) return;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/variants/${variantId}`, { method: "DELETE" });
+      state.job.variants = result.variants;
+      renderVariants();
+      toast("Variant removed.");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function toggleHookLab() {
+    if (!state.job) return;
+    const hidden = dom.hookLab.hidden;
+    dom.hookLab.hidden = !hidden;
+    if (!hidden) return;
+    dom.hookLab.innerHTML = `<p class="hint">Loading hook candidates…</p>`;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/hooks?target=${state.target}&limit=8`);
+      dom.hookLab.innerHTML = (result.hooks || []).map((hook) => `
+        <button class="lab-card" data-lab-hook="${hook.scene}">
+          <img src="${esc(withToken(hook.thumb_url))}" alt="" loading="lazy">
+          <span class="lab-copy">
+            <b>${Math.round(hook.hook)} hook</b>
+            <small>${esc(fmtTime(hook.start, 1))} · ${hook.dur.toFixed(1)}s · ${hook.clip_count} beats · ${hook.plan_total.toFixed(0)}s cut</small>
+            <small>${esc((hook.why || hook.ocr || hook.speech || "no text").slice(0, 120))}</small>
+          </span>
+        </button>`).join("");
+    } catch (error) {
+      dom.hookLab.innerHTML = `<p class="hint">${esc(error.message)}</p>`;
+    }
+  }
+
+  async function toggleTranscript() {
+    if (!state.job) return;
+    const hidden = dom.transcriptPanel.hidden;
+    dom.transcriptPanel.hidden = !hidden;
+    if (!hidden) return;
+    dom.transcriptPanel.innerHTML = `<p class="hint">Loading transcript…</p>`;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/transcript`);
+      const segments = result.segments || [];
+      if (!segments.length) {
+        dom.transcriptPanel.innerHTML = `<p class="hint">${esc(result.text || result.note || "No transcript kept for this job.")}</p>`;
+        return;
+      }
+      dom.transcriptPanel.innerHTML = `
+        <div class="transcript-head">
+          <span class="label">Transcript · ${esc(result.language || "auto")} · ${segments.length} lines</span>
+          <input id="transcript-search" class="variant-name" placeholder="Search transcript">
+        </div>
+        <div class="transcript-list">
+          ${segments.map((segment) => `
+            <button class="transcript-row" data-transcript-time="${segment.start}" data-transcript-text="${esc(segment.text)}">
+              <span class="transcript-time">${esc(fmtTime(segment.start, 1))}</span>
+              <span class="transcript-text">${esc(segment.text)}</span>
+            </button>`).join("")}
+        </div>`;
+      const search = dom.transcriptPanel.querySelector("#transcript-search");
+      search?.addEventListener("input", () => {
+        const query = search.value.trim().toLowerCase();
+        dom.transcriptPanel.querySelectorAll(".transcript-row").forEach((row) => {
+          row.hidden = query.length > 0 && !row.textContent.toLowerCase().includes(query);
+        });
+      });
+    } catch (error) {
+      dom.transcriptPanel.innerHTML = `<p class="hint">${esc(error.message)}</p>`;
+    }
+  }
+
+  function renderScenes() {
+    if (!state.job) return;
+    const scenes = [...state.job.analysis.scenes];
+    if (state.sort === "best") {
+      scenes.sort((a, b) => b.hook - a.hook || a.start - b.start);
+    } else {
+      scenes.sort((a, b) => a.start - b.start);
+    }
+    const roles = new Map((state.plan?.clips || []).map((clip) => [clip.scene, clip.role]));
+    const hookId = currentHookId();
+    const visible = scenes.slice(0, state.visible);
+    const deep = state.job.analysis.deep_count ?? scenes.length;
+    dom.sceneCount.textContent = `${scenes.length.toLocaleString()} scenes · ${deep.toLocaleString()} deep · showing ${visible.length}`;
+    dom.sceneGrid.innerHTML = visible.map((scene) => {
+      const role = roles.get(scene.id) || "";
+      const tags = [...(scene.tags || []), ...(scene.deep === false ? ["quick"] : [])].join(" · ");
+      const still = scene.deep === false
+        ? `<span class="scene-placeholder"><span>quick</span></span>`
+        : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+      return `
+        <button class="scene-card ${role ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""}" data-scene="${scene.id}" title="${esc(scene.ocr || scene.speech || `Scene ${scene.id + 1}`)}">
+          ${still}
+          <span class="scene-top"><span>${esc(fmtTime(scene.start))}</span><span class="score">${Math.round(scene.hook)}</span></span>
+          <span class="scene-bottom"><span class="scene-role">${esc(role)}</span><span class="scene-tags">${esc(tags)}</span></span>
+        </button>`;
+    }).join("");
+    dom.loadMore.hidden = visible.length >= scenes.length;
+  }
+
+  // ---------------------------------------------------------------- plans + targets
+
+  async function setTarget(target) {
+    if (state.target === target) return;
+    state.target = target;
+    state.edited = false;
+    state.editMode = false;
+    $$("#target-tabs button").forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.target) === target);
+    });
+    try {
+      await refreshPlan();
+      loadAudioMoods();
+      loadAudioScript();
+      updateRenderPanel();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function refreshPlan() {
+    if (!state.job) return;
+    if (state.overrideHook === null) {
+      state.plan = state.job.analysis.plans[String(state.target)];
+    } else {
+      const result = await api(`/api/jobs/${state.job.id}/plan`, {
+        method: "POST",
+        body: JSON.stringify({ target: state.target, hook_scene: state.overrideHook }),
+      });
+      state.plan = result.plan;
+      mergeScene(result.scene);
+    }
+    renderHook();
+    renderPlan();
+    renderScenes();
+    updateRenderPanel();
+  }
+
+  function setSort(sort) {
+    state.sort = sort;
+    state.visible = 96;
+    $$("#sort-tabs button").forEach((button) => {
+      button.classList.toggle("active", button.dataset.sort === sort);
+    });
+    renderScenes();
+  }
+
+  async function resetHook() {
+    state.overrideHook = null;
+    state.edited = false;
+    state.editMode = false;
+    try {
+      await refreshPlan();
+      toast("Auto hook restored.");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function useHook(sceneId) {
+    if (!state.job) return;
+    const previous = state.overrideHook;
+    const scene = sceneById(sceneId);
+    state.overrideHook = sceneId === state.job.analysis.hook_scene ? null : sceneId;
+    state.edited = false;
+    state.editMode = false;
+    dom.hookLab.hidden = true;
+    closeDrawer();
+    try {
+      await refreshPlan();
+      loadAudioMoods();
+      loadAudioScript();
+      toast(state.overrideHook === null ? "Auto hook restored." : `Hook set to ${fmtTime(scene?.start || 0, 1)}.`);
+      document.querySelector(".export-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      state.overrideHook = previous;
+      await refreshPlan();
+      toast(error.message);
+    }
+  }
+
+  // ---------------------------------------------------------------- audio
+
+  const AUDIO_LANGUAGES = [
+    ["", "No translation (same language)"],
+    ["en", "English"], ["vi", "Vietnamese"], ["zh", "Chinese"],
+    ["ja", "Japanese"], ["ko", "Korean"], ["es", "Spanish"],
+    ["fr", "French"], ["de", "German"], ["pt", "Portuguese"],
+    ["it", "Italian"], ["ru", "Russian"], ["hi", "Hindi"],
+    ["th", "Thai"], ["id", "Indonesian"], ["tr", "Turkish"],
+    ["ar", "Arabic"], ["nl", "Dutch"], ["pl", "Polish"],
+    ["sv", "Swedish"], ["da", "Danish"], ["no", "Norwegian"],
+    ["fi", "Finnish"], ["uk", "Ukrainian"], ["cs", "Czech"],
+  ];
+
+  function canonicalAudio(value) {
+    if (Array.isArray(value)) return `[${value.map(canonicalAudio).join(",")}]`;
+    if (value && typeof value === "object") {
+      return `{${Object.keys(value).sort()
+        .map((key) => `${JSON.stringify(key)}:${canonicalAudio(value[key])}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value);
+  }
+
+  function fnv1a(text) {
+    let hash = 0x811c9dc5;
+    const bytes = new TextEncoder().encode(text);
+    for (const byte of bytes) {
+      hash ^= byte;
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, "0");
+  }
+
+  function currentAudioPlan() {
+    const audio = state.audio;
+    if (!audio || audio.mode === "keep") return null;
+    const plan = { mode: audio.mode };
+    plan.translate = audio.lang
+      ? { target: audio.lang, provider: audio.provider || "auto" }
+      : null;
+    plan.voice = audio.mode === "music"
+      ? null
+      : {
+        engine: audio.engine,
+        voice: audio.voice || "",
+        rate: Number(audio.rate) || 1,
+        gain_db: 0,
+      };
+    if (audio.mode === "bed") {
+      plan.music = { source: "none" };
+    } else {
+      plan.music = {
+        source: audio.music || "none",
+        track: audio.music === "library" || audio.music === "cc0" ? (audio.track || "") : "",
+        prompt: audio.prompt || "auto",
+        gain_db: Number(audio.gain) || -18,
+        duck: !!audio.duck,
+      };
+      if (state.audioMoods.length) plan.music.moods = state.audioMoods;
+    }
+    return plan;
+  }
+
+  function currentAudioSignature() {
+    const plan = currentAudioPlan();
+    return plan ? fnv1a(canonicalAudio(plan)) : "";
+  }
+
+  function bindAudio() {
+    const touch = () => {
+      state.audio.mode = dom.audioMode.value;
+      state.audio.lang = dom.audioLang.value;
+      state.audio.provider = dom.audioProvider.value || "auto";
+      state.audio.engine = dom.audioEngine.value;
+      state.audio.voice = dom.audioVoice.value;
+      state.audio.rate = Number(dom.audioRate.value) || 1;
+      state.audio.music = dom.audioMusic.value;
+      state.audio.track = dom.audioTrack.value;
+      state.audio.prompt = dom.audioPrompt.value.trim();
+      state.audio.gain = Number(dom.audioGain.value) || -18;
+      state.audio.duck = dom.audioDuck.checked;
+      updateRenderPanel();
+      refreshAudioStatus();
+    };
+    ["change", "input"].forEach((event) => {
+      dom.audioMode.addEventListener(event, () => {
+        touch();
+        loadAudioTracks();
+        loadAudioMoods();
+        loadAudioScript();
+      });
+      dom.audioMusic.addEventListener(event, () => {
+        touch();
+        loadAudioTracks();
+      });
+      dom.audioLang.addEventListener(event, () => {
+        touch();
+        loadTranslateCheck();
+        loadAudioScript();
+      });
+      dom.audioProvider.addEventListener(event, () => {
+        touch();
+        loadAudioScript();
+      });
+      dom.audioEngine.addEventListener(event, () => {
+        touch();
+        loadAudioVoices();
+      });
+      dom.audioVoice.addEventListener(event, touch);
+      dom.audioRate.addEventListener(event, touch);
+      dom.audioTrack.addEventListener(event, touch);
+      dom.audioPrompt.addEventListener(event, touch);
+      dom.audioGain.addEventListener(event, touch);
+      dom.audioDuck.addEventListener(event, touch);
+    });
+    dom.audioPreview.addEventListener("click", previewVoice);
+    dom.audioTranslateInstall.addEventListener("click", installTranslate);
+  }
+
+  function fillSelect(select, options) {
+    select.innerHTML = options.map(([value, label]) => (
+      `<option value="${esc(value)}">${esc(label)}</option>`
+    )).join("");
+  }
+
+  async function loadAudioEngines() {
+    try {
+      state.audioEngines = await api("/api/audio/engines");
+    } catch (_) {
+      state.audioEngines = null;
+      return;
+    }
+    const engines = state.audioEngines;
+    const voiceOptions = Object.entries(engines.voices || {}).map(([id, info]) => [
+      id,
+      `${info.available ? "" : "unavailable · "}${engineLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`,
+    ]);
+    fillSelect(dom.audioEngine, voiceOptions);
+    const available = Object.values(engines.voices || {}).filter((info) => info.available).length;
+    const musicOptions = [["none", "No music"]];
+    Object.entries(engines.music || {}).forEach(([id, info]) => {
+      musicOptions.push([
+        id,
+        `${info.available ? "" : "unavailable · "}${musicLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`,
+      ]);
+    });
+    fillSelect(dom.audioMusic, musicOptions);
+    fillSelect(dom.audioLang, AUDIO_LANGUAGES);
+    const translateOptions = [["auto", "Auto · best ready engine"]];
+    (engines.translation || []).forEach((item) => {
+      translateOptions.push([
+        item.id,
+        `${item.available ? "" : "unavailable · "}${translateLabel(item.id)}`,
+      ]);
+    });
+    fillSelect(dom.audioProvider, translateOptions);
+    dom.audioEngine.value = state.audio.engine;
+    dom.audioMusic.value = state.audio.music;
+    dom.audioLang.value = state.audio.lang;
+    dom.audioProvider.value = state.audio.provider || "auto";
+    if (!available) {
+      dom.audioStatus.textContent = "No voice engine installed. Apple say is built in.";
+    }
+    loadAudioVoices();
+    loadAudioTracks();
+    refreshAudioStatus();
+    loadAudioScript();
+  }
+
+  function translateLabel(id) {
+    return {
+      apple_fm: "Apple Translation",
+      argos: "Argos (offline)",
+      marian: "Marian opus-mt",
+      ollama: "Ollama",
+    }[id] || id;
+  }
+
+  function engineLabel(id) {
+    return {
+      say: "Apple say",
+      piper: "Piper medium",
+      kokoro: "Kokoro int8",
+      elevenlabs: "ElevenLabs (API key)",
+    }[id] || id;
+  }
+
+  function musicLabel(id) {
+    return {
+      library: "My own track",
+      cc0: "CC0 library",
+      "stable-small": "Stable Audio Open Small",
+      "stable-1.0": "Stable Audio Open 1.0",
+    }[id] || id;
+  }
+
+  async function loadAudioVoices() {
+    const engine = state.audio.engine;
+    dom.audioVoice.innerHTML = `<option value="">Loading…</option>`;
+    try {
+      const result = await api(`/api/audio/voices?engine=${encodeURIComponent(engine)}`);
+      const voices = result.voices || [];
+      if (!voices.length) {
+        fillSelect(dom.audioVoice, [["", engine === "elevenlabs" ? "Add your API key" : "No voices found"]]);
+        return;
+      }
+      fillSelect(dom.audioVoice, voices.map((voice) => [
+        voice.id, `${voice.name}${voice.lang ? ` · ${voice.lang}` : ""}`,
+      ]));
+      const preferred = voices.find((voice) => voice.id === state.audio.voice)
+        || voices.find((voice) => /(en[-_]US|en)/i.test(voice.lang || ""))
+        || voices[0];
+      dom.audioVoice.value = preferred.id;
+      state.audio.voice = preferred.id;
+    } catch (error) {
+      fillSelect(dom.audioVoice, [["", error.message]]);
+    }
+  }
+
+  async function loadAudioTracks() {
+    const source = state.audio.music;
+    if (source !== "library" && source !== "cc0") {
+      fillSelect(dom.audioTrack, [["", "Not needed for AI music"]]);
+      return;
+    }
+    dom.audioTrack.innerHTML = `<option value="">Auto mood</option>`;
+    try {
+      const result = await api(`/api/audio/music?source=${encodeURIComponent(source)}`);
+      const tracks = result.tracks || [];
+      if (!tracks.length) {
+        fillSelect(dom.audioTrack, [["", `Empty folder · drop files in assets/music/${source}`]]);
+        return;
+      }
+      fillSelect(dom.audioTrack, [
+        ["", "Auto mood"],
+        ...tracks.map((track) => [
+          track.id,
+          `${track.name}${track.moods.length ? ` · ${track.moods.join("/")}` : ""}`,
+        ]),
+      ]);
+      state.audio.track = dom.audioTrack.value || "";
+    } catch (error) {
+      fillSelect(dom.audioTrack, [["", error.message]]);
+    }
+  }
+
+  async function loadAudioMoods() {
+    if (!state.job) return;
+    try {
+      const result = await api(
+        `/api/jobs/${state.job.id}/audio/moods?target=${state.target}`,
+      );
+      state.audioMoods = result.moods || [];
+      state.audioPromptAuto = result.prompt || "";
+      if (!dom.audioPrompt.value) {
+        dom.audioPrompt.placeholder = state.audioPromptAuto || "auto mood";
+      }
+      updateRenderPanel();
+      refreshAudioStatus();
+    } catch (_) {
+      state.audioMoods = [];
+    }
+  }
+
+  async function loadAudioScript() {
+    if (!state.job || !state.plan || !dom.audioScript) return;
+    const audio = state.audio;
+    if (audio.mode === "keep" || audio.mode === "music") {
+      dom.audioScript.hidden = true;
+      dom.audioScript.innerHTML = "";
+      return;
+    }
+    dom.audioScript.hidden = false;
+    dom.audioScript.innerHTML =
+      `<div class="script-head"><span class="label">Voice script</span>`
+      + `<span class="hint">cleaning and de-duplicating…</span></div>`;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/audio/script`, {
+        method: "POST",
+        body: JSON.stringify({
+          target: state.target,
+          hook_scene: state.overrideHook,
+          clips: state.edited && state.plan ? state.plan.clips : null,
+          translate: audio.lang || null,
+          provider: audio.provider || "auto",
+        }),
+      });
+      const lines = result.lines || [];
+      const head = `${lines.length} lines · ${result.source_lang}${
+        result.translated ? ` → ${result.target}` : ""}`;
+      const warn = result.warning
+        ? `<span class="script-flag">${esc(result.warning.slice(0, 90))}</span>` : "";
+      dom.audioScript.innerHTML = `
+        <div class="script-head">
+          <span class="label">Voice script</span>
+          <span class="hint">${esc(head)}</span>${warn}
+        </div>
+        <div class="script-list">
+          ${lines.map((line) => `
+            <div class="script-row">
+              <span class="script-time">${esc(fmtTime(line.offset || 0, 1))}</span>
+              <span class="script-mood">${esc(line.emotion || "")}</span>
+              <span class="script-text">${esc(line.text)}${
+                line.shortened ? `<span class="script-flag">fit</span>` : ""}${
+                line.from_ocr ? `<span class="script-flag">screen</span>` : ""}</span>
+            </div>`).join("")
+            || `<p class="hint">No speech or on-screen text in this cut.</p>`}
+        </div>`;
+    } catch (error) {
+      dom.audioScript.innerHTML =
+        `<div class="script-head"><span class="hint">${esc(error.message)}</span></div>`;
+    }
+  }
+
+  function refreshAudioStatus() {
+    const engines = state.audioEngines;
+    if (!engines || !state.job) return;
+    const pieces = [];
+    const mode = state.audio.mode;
+    const sourceLang = (state.job.analysis?.engine?.transcript_language || "en").split("-")[0];
+    if (mode === "bed" && !engines.separation?.demucs?.available) {
+      pieces.push(`Demucs missing · ${engines.separation?.demucs?.install || "pip install demucs"}`);
+    }
+    const info = engines.music?.[state.audio.music];
+    if (info && !info.available && state.audio.music !== "none") {
+      pieces.push(info.install);
+    }
+    const translateNeeded = !!state.audio.lang && state.audio.lang !== sourceLang;
+    const check = state.translateCheck;
+    let ready = !translateNeeded;
+    if (translateNeeded && check) {
+      ready = !!(
+        check.same
+        || check.apple?.status === "installed"
+        || check.marian?.available
+        || check.argos?.installed
+        || check.ollama?.available
+      );
+    }
+    dom.audioTranslateInstall.hidden = !translateNeeded || ready;
+    if (translateNeeded && ready && check?.order?.length) {
+      pieces.push(`translate: ${translateLabel(check.order[0])}`);
+    }
+    if (translateNeeded && !ready) {
+      if (check?.apple?.status === "supported") {
+        pieces.push("Apple language pack missing · System Settings → General → Language & Region → Translation Languages");
+      } else if (!check) {
+        pieces.push("No translation engine yet · run Offline translate setup (~250 MB)");
+      } else {
+        pieces.push("No translation engine ready · run Offline translate setup (~250 MB)");
+      }
+    }
+    if (state.audioMoods.length) {
+      pieces.push(`auto mood: ${state.audioMoods.slice(0, 3).join(", ")}`);
+    }
+    dom.audioStatus.textContent = pieces.join(" · ");
+  }
+
+  async function loadTranslateCheck() {
+    if (!state.job) return;
+    const source = (state.job.analysis?.engine?.transcript_language || "en").split("-")[0];
+    const target = state.audio.lang;
+    if (!target || target === source) {
+      state.translateCheck = null;
+      refreshAudioStatus();
+      return;
+    }
+    try {
+      const result = await api(
+        `/api/audio/translate/status?source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`,
+      );
+      state.translateCheck = result.check;
+    } catch (_) {
+      state.translateCheck = null;
+    }
+    refreshAudioStatus();
+  }
+
+  async function previewVoice() {
+    if (!state.job) return;
+    dom.audioPreview.disabled = true;
+    dom.audioStatus.textContent = "Rendering voice sample…";
+    try {
+      const token = tokenValue();
+      const response = await fetch(`/api/jobs/${state.job.id}/voice/sample`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          engine: state.audio.engine,
+          voice: state.audio.voice,
+          rate: state.audio.rate,
+        }),
+      });
+      if (!response.ok) {
+        let detail = response.statusText;
+        try { detail = (await response.json()).detail || detail; } catch (_) { /* ignore */ }
+        throw new Error(detail);
+      }
+      const blob = await response.blob();
+      const audio = new Audio(URL.createObjectURL(blob));
+      audio.play();
+      dom.audioStatus.textContent = "Voice sample ready.";
+    } catch (error) {
+      dom.audioStatus.textContent = error.message;
+    } finally {
+      dom.audioPreview.disabled = false;
+    }
+  }
+
+  async function installTranslate() {
+    dom.audioTranslateInstall.disabled = true;
+    dom.audioStatus.textContent = "Installing offline translation…";
+    try {
+      const source = (state.job?.analysis?.engine?.transcript_language || "en").split("-")[0];
+      await api("/api/audio/translate/install", {
+        method: "POST",
+        body: JSON.stringify({ source, target: state.audio.lang }),
+      });
+      const poll = setInterval(async () => {
+        try {
+          const status = await api("/api/audio/translate/status");
+          const install = status.install || {};
+          dom.audioStatus.textContent = install.error || install.message || "working…";
+          if (!install.running) {
+            clearInterval(poll);
+            dom.audioTranslateInstall.disabled = false;
+            await loadAudioEngines();
+            await loadTranslateCheck();
+            loadAudioScript();
+          }
+        } catch (_) {
+          clearInterval(poll);
+          dom.audioTranslateInstall.disabled = false;
+        }
+      }, 2000);
+    } catch (error) {
+      dom.audioStatus.textContent = error.message;
+      dom.audioTranslateInstall.disabled = false;
+    }
+  }
+
+  // ---------------------------------------------------------------- render reel
+
+  function currentHookId() {
+    if (!state.job) return null;
+    return state.overrideHook ?? state.job.analysis.hook_scene;
+  }
+
+  function currentHookScene() {
+    return sceneById(currentHookId());
+  }
+
+  function renderKey(
+    target = state.target,
+    quality = "final",
+    aspect = state.aspect,
+    captions = state.captions,
+    audioSig = currentAudioSignature(),
+  ) {
+    let key = String(target);
+    if (quality !== "final") key += `:${quality}`;
+    if (aspect !== "9:16") key += `:${aspect.replace(":", "x")}`;
+    if (captions) key += ":cap";
+    if (audioSig) key += `:a${audioSig}`;
+    return key;
+  }
+
+  function findRender(quality = "final") {
+    if (!state.job?.renders) return null;
+    const sig = currentAudioSignature();
+    if (sig) {
+      return state.job.renders[renderKey(
+        state.target, quality, state.aspect, state.captions, sig,
+      )] || null;
+    }
+    return state.job.renders[renderKey(state.target, quality, state.aspect, state.captions)]
+      || state.job.renders[renderKey(state.target, quality, state.aspect, state.captions, "")]
+      || (quality === "final" && state.aspect === "9:16" && !state.captions
+        ? state.job.renders[String(state.target)] || null
+        : null);
+  }
+
+  function activeRender() {
+    const records = Object.values(state.job?.renders || {});
+    return records.find((record) => record
+      && (record.status === "queued" || record.status === "rendering" || record.status === "cancelling")) || null;
+  }
+
+  function isRenderActive(record) {
+    return !!record && (record.status === "queued" || record.status === "rendering" || record.status === "cancelling");
+  }
+
+  function updateRenderPanel() {
+    if (!state.job || !state.plan) return;
+    const target = state.target;
+    const finalRecord = findRender("final");
+    const draftRecord = findRender("draft");
+    const hookId = currentHookId();
+    const finalMatches = finalRecord && finalRecord.hook === hookId;
+    const draftMatches = draftRecord && draftRecord.hook === hookId;
+    const active = activeRender();
+
+    dom.renderError.hidden = true;
+    dom.playerWrap.hidden = true;
+    dom.renderProgress.hidden = true;
+    dom.render.disabled = false;
+    dom.renderDraft.disabled = false;
+    dom.renderAll.disabled = false;
+    dom.renderCancel.hidden = true;
+    dom.renderCancel.disabled = false;
+
+    if (active) {
+      const pct = Math.round((active.progress || 0) * 100);
+      dom.renderProgress.hidden = false;
+      dom.renderProgress.querySelector(".bar i").style.width = `${pct}%`;
+      const eta = active.eta ? ` · ~${Math.ceil(active.eta)}s left` : "";
+      dom.renderProgress.querySelector("span").textContent =
+        `${pct}% · ${active.message || "Rendering"}${eta}`;
+      dom.render.disabled = true;
+      dom.renderDraft.disabled = true;
+      dom.renderAll.disabled = true;
+      dom.renderCancel.hidden = false;
+      renderButton(active.quality === "draft" ? "Rendering draft…" : "Rendering final…");
+      dom.renderNote.textContent = state.plan.note || "One render at a time.";
+      return;
+    }
+
+    const show = (record, quality) => {
+      dom.playerWrap.hidden = false;
+      if (dom.reelVideo.dataset.key !== record.key) {
+        dom.reelVideo.src = withToken(record.url);
+        dom.reelVideo.poster = record.poster_url ? withToken(record.poster_url) : "";
+        dom.reelVideo.dataset.key = record.key;
+        dom.reelVideo.load();
+      }
+      const tag = quality === "draft" ? "draft · " : "";
+      const audioTag = record.audio
+        ? ` · ${record.audio.mode}${
+          (record.translate || record.audio.translate) ? ` → ${record.translate || record.audio.translate.target}` : ""}${
+          record.voice_engine ? ` · ${record.voice_engine}` : ""}`
+        : "";
+      dom.reelDuration.textContent = `${tag}${record.duration.toFixed(1)}s · ${record.width}×${record.height} · ${record.clip_count} beats`;
+      dom.reelSize.textContent = `${formatSize(record.size)} · H.264 / AAC${audioTag}`;
+      dom.download.href = withToken(record.url);
+      dom.download.download = `${fileStem(state.job.source.name)}-${target}s${quality === "draft" ? "-draft" : ""}.mp4`;
+    };
+
+    const draftNewer = draftMatches && draftRecord.status === "ready"
+      && (!finalMatches || finalRecord.status !== "ready"
+        || (draftRecord.updated || 0) > (finalRecord.updated || 0));
+    if (draftNewer) {
+      show(draftRecord, "draft");
+      dom.renderNote.textContent = "Draft preview · 540×960 · render final when it feels right.";
+      renderButton(`Render final ${target}s`);
+      return;
+    }
+
+    if (finalMatches && finalRecord.status === "ready") {
+      show(finalRecord, "final");
+      dom.renderNote.textContent = state.plan.note || `${finalRecord.clip_count} beats · original audio · no watermark`;
+      renderButton(`Render ${target}s again`);
+      return;
+    }
+
+    const failed = (finalMatches && finalRecord.status === "failed" && finalRecord)
+      || (draftMatches && draftRecord.status === "failed" && draftRecord);
+    if (failed) {
+      dom.renderError.textContent = failed.error || "Render failed.";
+      dom.renderError.hidden = false;
+    }
+
+    renderButton(`Render ${target}s reel`);
+    const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080" };
+    dom.renderNote.textContent = state.plan.note
+      || `${state.aspect} ${dims[state.aspect] || ""} · original audio${state.captions ? " · captions" : ""} · no watermark`;
+  }
+
+  function renderButton(label) {
+    dom.render.innerHTML = `${esc(label)} <span class="arrow">↗</span>`;
+  }
+
+  async function startRender(quality = "final") {
+    if (!state.job || !state.plan) return;
+    const target = state.target;
+    const existing = findRender(quality);
+    const force = !!(existing && existing.status === "ready" && existing.hook === currentHookId());
+    dom.render.disabled = true;
+    dom.renderDraft.disabled = true;
+    dom.renderError.hidden = true;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/render`, {
+        method: "POST",
+        body: JSON.stringify({
+          target,
+          hook_scene: state.overrideHook,
+          quality,
+          aspect: state.aspect,
+          captions: state.captions,
+          clips: state.edited && state.plan ? state.plan.clips : null,
+          audio: currentAudioPlan(),
+          force,
+        }),
+      });
+      state.job.renders = state.job.renders || {};
+      state.job.renders[result.render.record_key || renderKey(
+        target, quality, state.aspect, state.captions,
+      )] = result.render;
+      updateRenderPanel();
+      startRenderPoll(state.job.id);
+      toast(quality === "draft" ? "Rendering draft…" : (force ? "Re-rendering reel…" : "Rendering reel…"));
+    } catch (error) {
+      toast(error.message);
+      updateRenderPanel();
+    }
+  }
+
+  async function startRenderAll() {
+    if (!state.job || !state.plan) return;
+    dom.renderAll.disabled = true;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/render-all`, {
+        method: "POST",
+        body: JSON.stringify({
+          hook_scene: state.overrideHook,
+          quality: "final",
+          aspect: state.aspect,
+          captions: state.captions,
+          audio: currentAudioPlan(),
+        }),
+      });
+      state.job.renders = state.job.renders || {};
+      (result.renders || []).forEach((record) => {
+        state.job.renders[record.record_key || renderKey(
+          record.target,
+          record.quality || "final",
+          record.aspect || "9:16",
+          record.captions || false,
+          record.audio_sig || "",
+        )] = record;
+      });
+      updateRenderPanel();
+      startRenderPoll(state.job.id);
+      if (result.errors?.length) toast(result.errors[0].detail);
+      else toast("Queued all three reels.");
+    } catch (error) {
+      toast(error.message);
+      updateRenderPanel();
+    }
+  }
+
+  async function cancelRender() {
+    const record = activeRender();
+    if (!record) return;
+    dom.renderCancel.disabled = true;
+    try {
+      await api(`/api/jobs/${state.job.id}/render/${record.target}/cancel?quality=${
+        encodeURIComponent(record.quality || "final")
+      }&aspect=${encodeURIComponent(record.aspect || "9:16")}&captions=${
+        record.captions ? "true" : "false"
+      }&audio_sig=${encodeURIComponent(record.audio_sig || "")}`, { method: "POST" });
+      toast("Stopping render…");
+      startRenderPoll(state.job.id);
+    } catch (error) {
+      toast(error.message);
+      dom.renderCancel.disabled = false;
+    }
+  }
+
+  function startRenderPoll(id) {
+    stopPoll();
+    const tick = async () => {
+      try {
+        const status = await api(`/api/jobs/${id}/status`);
+        state.job.renders = status.renders || {};
+        updateRenderPanel();
+        const active = Object.values(status.renders || {}).some(isRenderActive);
+        if (active) {
+          state.pollTimer = setTimeout(tick, 900);
+        } else {
+          stopPoll();
+        }
+      } catch (_) {
+        state.pollTimer = setTimeout(tick, 1800);
+      }
+    };
+    tick();
+  }
+
+  // ---------------------------------------------------------------- drawer
+
+  function openDrawer(sceneId) {
+    const scene = sceneById(sceneId);
+    if (!scene) return;
+    const planClip = (state.plan?.clips || []).find((clip) => clip.scene === sceneId);
+    const role = planClip?.role || "";
+    const why = planClip?.why || sceneNote(scene);
+    const isHook = sceneId === currentHookId();
+    const isDeep = scene.deep !== false;
+    const bars = [
+      ["Hook", scene.hook],
+      ["Visual", scene.visual_score],
+      ["Motion", scene.motion_score],
+      ["Audio", scene.audio_score],
+      ["Text", scene.text_score],
+    ].map(([label, value]) => `
+      <div class="drawer-bar">
+        <span>${esc(label)}</span>
+        <div class="bar"><i style="width:${Math.round(value)}%"></i></div>
+        <b>${Math.round(value)}</b>
+      </div>`).join("");
+    const speech = scene.speech
+      ? `<div class="drawer-section"><span class="label">Speech</span><p class="drawer-copy" style="font-size:15px">${esc(scene.speech)}</p></div>`
+      : "";
+    const ocr = !isDeep
+      ? `<p class="drawer-copy muted">Quick scan. Deep-read this beat to inspect text, faces and crop.</p>`
+      : scene.ocr
+        ? `<p class="drawer-copy">${esc(scene.ocr)}</p>`
+        : (!scene.speech ? `<p class="drawer-copy muted">No on-screen text or speech on this beat.</p>` : "");
+    const cropDetail = state.meta && state.meta.width && state.meta.height
+      ? `${state.meta.width}×${state.meta.height} source · ${
+        Math.abs(state.meta.width / state.meta.height - 9 / 16) < 0.01
+          ? "native 9:16 · no crop"
+          : scene.crop_mode === "smart"
+            ? "Vision subject tracking"
+            : "center fallback"
+      }`
+      : "center fallback";
+    const frame = isDeep
+      ? `<img src="${esc(thumbUrl(scene))}" alt="" style="object-position:${objectPosition(scene.crop)}">`
+      : `<div class="drawer-placeholder"><span>quick scan</span><small>no still extracted yet</small></div>`;
+    dom.drawerContent.innerHTML = `
+      <div class="drawer-frame">
+        ${frame}
+      </div>
+      <div class="drawer-kicker">Scene ${scene.id + 1} · ${esc(role || "outside cut")}</div>
+      <h3 class="drawer-title">${esc(fmtTime(scene.start, 1))} – ${esc(fmtTime(scene.end, 1))}</h3>
+      <p class="drawer-meta">${scene.dur.toFixed(2)}s · hook ${Math.round(scene.hook)} · interest ${Math.round(scene.score)}</p>
+      ${ocr}
+      ${speech}
+      <div class="drawer-section"><span class="label">Why ${esc(role || "this beat")}</span><p class="drawer-why">${esc(why)}</p></div>
+      <div class="drawer-crop"><strong>${esc(cropLabel(scene))}</strong><span>${esc(cropDetail)}</span></div>
+      <div class="drawer-section"><span class="label">Score</span><div class="drawer-bars">${bars}</div></div>
+      <div class="drawer-section"><span class="label">Signals</span><div class="tag-row">${tagsHtml(scene)}</div></div>
+      <div class="drawer-actions">
+        ${!isDeep
+          ? `<button class="primary" data-read-scene="${scene.id}">Deep-read this scene <span class="arrow">↗</span></button>`
+          : isHook
+            ? `<button class="ghost" disabled>Current hook</button>`
+            : `<button class="primary" data-use-hook="${scene.id}">Use as hook <span class="arrow">↗</span></button>`}
+        <button class="ghost" data-close>Close</button>
+      </div>`;
+    dom.drawer.hidden = false;
+    document.body.classList.add("no-scroll");
+  }
+
+  async function readScene(sceneId) {
+    if (!state.job) return;
+    const button = dom.drawerContent.querySelector("[data-read-scene]");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Reading…";
+    }
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/scene/${sceneId}/read`, {
+        method: "POST",
+      });
+      mergeScene(result.scene);
+      state.job.analysis.hook_scene = result.hook_scene;
+      state.job.analysis.plans = result.plans;
+      state.job.analysis.deep_count = result.deep_count;
+      closeDrawer();
+      await refreshPlan();
+      openDrawer(sceneId);
+      toast("Scene deep-read.");
+    } catch (error) {
+      toast(error.message);
+      if (button) {
+        button.disabled = false;
+        button.innerHTML = `Deep-read this scene <span class="arrow">↗</span>`;
+      }
+    }
+  }
+
+  function closeDrawer() {
+    dom.drawer.hidden = true;
+    document.body.classList.remove("no-scroll");
+  }
+
+  // ---------------------------------------------------------------- navigation
+
+  function resetToIngest() {
+    stopPoll();
+    closeDrawer();
+    state.job = null;
+    state.plan = null;
+    state.overrideHook = null;
+    state.target = 30;
+    state.sort = "best";
+    state.visible = 96;
+    state.busy = false;
+    state.progressStart = null;
+    state.pollStart = null;
+    state.file = null;
+    state.localPath = null;
+    state.meta = null;
+    state.fileName = "";
+    dom.fileInput.value = "";
+    dom.pathInput.value = "";
+    dom.dropzone.hidden = false;
+    dom.fileCard.hidden = true;
+    dom.fileName.textContent = "";
+    dom.fileInfo.textContent = "";
+    dom.ingestError.hidden = true;
+    dom.progressError.hidden = true;
+    dom.progressBack.hidden = true;
+    dom.renderError.hidden = true;
+    dom.playerWrap.hidden = true;
+    dom.renderProgress.hidden = true;
+    dom.ingestNote.textContent = "ffmpeg cuts first. Analysis follows.";
+    dom.optSpeech.checked = false;
+    dom.optCrop.checked = true;
+    dom.optOcr.checked = state.health ? state.health.vision : true;
+    dom.reelVideo.removeAttribute("src");
+    dom.reelVideo.removeAttribute("data-key");
+    dom.reelVideo.load();
+    $$("#target-tabs button").forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.target) === 30);
+    });
+    $$("#sort-tabs button").forEach((button) => {
+      button.classList.toggle("active", button.dataset.sort === "best");
+    });
+    syncOptions();
+    updateAnalyzeState();
+    showView("ingest");
+    history.replaceState(null, "", location.pathname);
+    document.title = "VibeCut — long video to reels";
+    loadRecent();
+  }
+
+  async function deleteJob() {
+    if (!state.job) return;
+    if (!confirm("Delete this job and its rendered reels?")) return;
+    try {
+      await api(`/api/jobs/${state.job.id}`, { method: "DELETE" });
+      resetToIngest();
+      toast("Job deleted.");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  let cleanArmedAt = 0;
+
+  async function cleanJobFiles() {
+    if (!state.job) return;
+    const now = Date.now();
+    if (now - cleanArmedAt > 5000) {
+      cleanArmedAt = now;
+      dom.cleanJob.textContent = "Click to confirm";
+      setTimeout(() => {
+        if (Date.now() - cleanArmedAt >= 5000) dom.cleanJob.textContent = "Clean";
+      }, 5200);
+      return;
+    }
+    cleanArmedAt = 0;
+    dom.cleanJob.disabled = true;
+    dom.cleanJob.textContent = "Cleaning…";
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/clean`, {
+        method: "POST",
+        body: JSON.stringify({ profile: dom.cleanProfile.value || "workfiles" }),
+      });
+      toast(`Cleaned: ${(result.cleaned || []).join(", ") || "nothing to remove"}.`);
+      await openJob(state.job.id);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      dom.cleanJob.disabled = false;
+      dom.cleanJob.textContent = "Clean";
+    }
+  }
+
+  function showView(view) {
+    dom.ingest.hidden = view !== "ingest";
+    dom.progress.hidden = view !== "progress";
+    dom.result.hidden = view !== "result";
+    window.scrollTo(0, 0);
+  }
+
+  function showIngestError(message) {
+    dom.ingestError.textContent = message;
+    dom.ingestError.hidden = false;
+  }
+
+  // ---------------------------------------------------------------- helpers
+
+  function sceneById(id) {
+    if (!state.job) return null;
+    return state.job.analysis.scenes.find((scene) => scene.id === id) || null;
+  }
+
+  function thumbUrl(scene) {
+    return withToken(scene.thumb_url || `/api/jobs/${state.job.id}/thumb/${scene.id}`);
+  }
+
+  function objectPosition(crop) {
+    const meta = state.meta || { width: 9, height: 16 };
+    const boxW = 9;
+    const boxH = 16;
+    const srcW = Math.max(1, Number(meta.width) || 9);
+    const srcH = Math.max(1, Number(meta.height) || 16);
+    const scale = Math.max(boxW / srcW, boxH / srcH);
+    const scaledW = srcW * scale;
+    const scaledH = srcH * scale;
+    const overflowX = scaledW - boxW;
+    const overflowY = scaledH - boxH;
+    const cx = clamp(Number(crop?.cx ?? 0.5), 0, 1);
+    const cy = clamp(Number(crop?.cy ?? 0.5), 0, 1);
+    const posX = overflowX > 0 ? (cx * scaledW - boxW / 2) / overflowX : 0.5;
+    const posY = overflowY > 0 ? (cy * scaledH - boxH / 2) / overflowY : 0.5;
+    return `${clamp(posX, 0, 1) * 100}% ${clamp(posY, 0, 1) * 100}%`;
+  }
+
+  function cropLabel(scene) {
+    const meta = state.meta;
+    if (!meta?.width || !meta?.height) return "center crop";
+    const sourceAspect = meta.width / meta.height;
+    if (Math.abs(sourceAspect - 9 / 16) < 0.01) return "9:16 native";
+    if (scene.crop_mode !== "smart") return "center crop";
+    if (sourceAspect < 9 / 16) return `subject crop · ${Math.round((scene.crop?.cy ?? 0.5) * 100)}% y`;
+    return `subject crop · ${Math.round((scene.crop?.cx ?? 0.5) * 100)}% x`;
+  }
+
+  function sceneLine(scene) {
+    if (scene.ocr) return scene.ocr;
+    if (scene.speech) return `“${scene.speech}”`;
+    const bits = [];
+    if (scene.face) bits.push("a face");
+    if (scene.tags?.includes("motion")) bits.push("movement");
+    if (scene.tags?.includes("subject")) bits.push("a clear subject");
+    const detail = bits.length ? bits.join(", ") : "a quiet frame";
+    return `A ${scene.dur.toFixed(1)}s beat at ${fmtTime(scene.start)} — ${detail}.`;
+  }
+
+  function sceneNote(scene) {
+    const bits = [];
+    if (scene.ocr) bits.push(`on-screen text “${clipText(scene.ocr)}”`);
+    if (scene.speech) bits.push(`spoken line “${clipText(scene.speech)}”`);
+    if (scene.face) bits.push("a face in frame");
+    else if (scene.subject) bits.push("a clear subject");
+    if (scene.tags?.includes("motion")) bits.push("strong movement");
+    if (scene.dur >= 3) bits.push("a long hold");
+    if (!bits.length) bits.push("a strong visual + audio beat");
+    return bits.join(", ");
+  }
+
+  function clipText(value, limit = 70) {
+    const text = String(value || "").trim();
+    return text.length <= limit ? text : `${text.slice(0, limit - 1).trim()}…`;
+  }
+
+  function scoreItem(label, value) {
+    const safe = clamp(Number(value) || 0, 0, 100);
+    return `
+      <div class="score-item">
+        <div class="label"><span>${esc(label)}</span><b>${Math.round(safe)}</b></div>
+        <div class="mini-bar"><i style="width:${safe}%"></i></div>
+      </div>`;
+  }
+
+  function tagsHtml(scene) {
+    const tags = scene.tags && scene.tags.length ? scene.tags : ["quiet"];
+    return tags.map((tag) => `<span class="tag">${esc(tag)}</span>`).join("");
+  }
+
+  function fmtTime(seconds, decimals = 0) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value < 0) return "0:00";
+    const total = Math.floor(value);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    const base = hours
+      ? `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+      : `${minutes}:${String(secs).padStart(2, "0")}`;
+    if (!decimals) return base;
+    return `${base}.${String(Math.floor((value - total) * 10))}`;
+  }
+
+  function fmtDuration(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return "—";
+    if (value < 60) return `${value.toFixed(1)}s`;
+    const total = Math.round(value);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hours) return `${hours}h ${minutes}m`;
+    return `${minutes}m ${secs}s`;
+  }
+
+  function formatSize(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return "—";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let index = 0;
+    let size = value;
+    while (size >= 1024 && index < units.length - 1) {
+      size /= 1024;
+      index += 1;
+    }
+    return `${size.toFixed(index ? 1 : 0)} ${units[index]}`;
+  }
+
+  function formatDate(timestamp) {
+    if (!timestamp) return "";
+    const date = new Date(Number(timestamp) * 1000);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function fileStem(name) {
+    return String(name || "video").replace(/\.[^.]+$/, "");
+  }
+
+  function basename(path) {
+    return String(path || "").split(/[\\/]/).pop() || "video";
+  }
+
+  function clamp(value, low, high) {
+    return Math.max(low, Math.min(high, value));
+  }
+
+  function esc(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[character]));
+  }
+
+  function toast(message) {
+    dom.toast.textContent = message;
+    dom.toast.hidden = false;
+    if (state.toastTimer) clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(() => {
+      dom.toast.hidden = true;
+      state.toastTimer = null;
+    }, 3600);
+  }
+
+  function routeFromHash() {
+    const match = location.hash.match(/^#job=([a-z0-9]+)/i);
+    if (match) openJob(match[1]);
+  }
+})();

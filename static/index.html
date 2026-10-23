@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>VibeCut — long video to reels</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <header class="shell topbar">
+    <a class="brand" href="/" id="brand">VibeCut<span class="brand-mark"></span></a>
+    <div class="topbar-right">
+      <span class="local-pill"><i class="live-dot"></i> local only</span>
+      <span id="health" class="health">checking engine…</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <!-- 01 / ingest -->
+    <section id="ingest-view">
+      <div class="hero">
+        <p class="eyebrow"><span>01</span> ingest</p>
+        <h1>Long video in.<br><em>Reels that keep the vibe.</em></h1>
+        <p class="lede">Drop a video. VibeCut finds the hook, the beats and the crop. Then cuts a 15, 30 or 60 second reel without flattening the original.</p>
+      </div>
+
+      <div class="ingest-grid">
+        <div class="ingest-panel">
+          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Choose a video">
+            <input id="file-input" type="file" accept="video/*" hidden>
+            <div class="drop-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15.5V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3.5"/></svg>
+            </div>
+            <div class="drop-title">Drop a video</div>
+            <div class="drop-sub">or click to choose · files stay on this machine</div>
+          </div>
+
+          <div id="file-card" class="file-card" hidden>
+            <div class="file-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9Z"/></svg>
+            </div>
+            <div class="file-copy">
+              <strong id="file-name"></strong>
+              <span id="file-info"></span>
+            </div>
+            <button id="clear-file" class="icon-btn" aria-label="Remove file">×</button>
+          </div>
+
+          <details class="path-row">
+            <summary>Use a local path instead <span>no copy</span></summary>
+            <div class="path-input">
+              <input id="path-input" type="text" spellcheck="false" placeholder="/Users/you/Movies/long-video.mp4">
+              <button id="path-load" class="ghost small">Load</button>
+            </div>
+          </details>
+
+          <div class="options">
+            <label class="check">
+              <input id="opt-crop" type="checkbox" checked>
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>Smart crop</strong><small>follows the subject</small></span>
+            </label>
+            <label class="check">
+              <input id="opt-ocr" type="checkbox" checked>
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>Read text &amp; faces</strong><small>Apple Vision · local</small></span>
+            </label>
+            <label class="check" id="speech-check">
+              <input id="opt-speech" type="checkbox">
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>Transcribe speech</strong><small id="speech-note">local Whisper</small></span>
+            </label>
+          </div>
+
+          <div class="action-row">
+            <button id="analyze" class="primary" disabled>Dissect video <span class="arrow">↗</span></button>
+            <span class="hint" id="ingest-note">ffmpeg cuts first. Analysis follows.</span>
+          </div>
+          <div id="ingest-error" class="error" hidden></div>
+        </div>
+
+        <aside class="principle-panel">
+          <p class="eyebrow">the cut</p>
+          <ol class="principle-list">
+            <li><span>01</span><div><strong>Hook first</strong><p>A strong visual, line or action opens the reel.</p></div></li>
+            <li><span>02</span><div><strong>Keep the story</strong><p>Beats stay in order. No random highlights.</p></div></li>
+            <li><span>03</span><div><strong>Land the ending</strong><p>A payoff beat closes the cut.</p></div></li>
+            <li><span>04</span><div><strong>Follow the subject</strong><p>9:16 crop tracks faces and saliency.</p></div></li>
+          </ol>
+          <div class="local-note"><i class="live-dot"></i>No cloud. No account. No watermark.</div>
+        </aside>
+      </div>
+
+      <section id="recent-section" class="recent-section" hidden>
+        <div class="section-head">
+          <div><p class="eyebrow">recent</p><h2>Recent cuts</h2></div>
+          <span id="recent-count" class="muted"></span>
+        </div>
+        <div id="recent" class="recent-grid"></div>
+      </section>
+    </section>
+
+    <!-- 02 / progress -->
+    <section id="progress-view" hidden>
+      <div class="progress-wrap">
+        <p class="eyebrow"><span>02</span> dissect</p>
+        <h2 id="progress-title">Reading the video</h2>
+        <p id="progress-file" class="progress-file"></p>
+
+        <div class="progress-line">
+          <span id="progress-pct" class="mono">0%</span>
+          <div class="bar"><i id="progress-bar"></i></div>
+          <span id="progress-elapsed" class="mono">0:00</span>
+        </div>
+        <p id="progress-message" class="progress-message">Warming up</p>
+
+        <div class="stage-list" id="stages">
+          <div data-stage="scanning"><span class="stage-dot"></span><div><strong>Scan cuts</strong><small>ffmpeg scene detection</small></div></div>
+          <div data-stage="reading"><span class="stage-dot"></span><div><strong>Read frames</strong><small>stills, text, faces, audio</small></div></div>
+          <div data-stage="scoring"><span class="stage-dot"></span><div><strong>Choose hook</strong><small>score beats · build three cuts</small></div></div>
+          <div data-stage="ready"><span class="stage-dot"></span><div><strong>Ready</strong><small>15s · 30s · 60s</small></div></div>
+        </div>
+
+        <p class="hint progress-hint">Runs locally. Leave this tab open.</p>
+        <div id="progress-error" class="error" hidden></div>
+        <button id="progress-back" class="ghost" hidden>Back to ingest</button>
+      </div>
+    </section>
+
+    <!-- 03 / result -->
+    <section id="result-view" hidden>
+      <div class="result-top">
+        <div>
+          <p class="eyebrow"><span>03</span> cut</p>
+          <h2 id="result-title">—</h2>
+          <p id="result-meta" class="result-meta"></p>
+        </div>
+        <div class="result-actions">
+          <button id="new-video" class="ghost">New video</button>
+          <select id="clean-profile" class="ghost small" aria-label="Clean profile">
+            <option value="workfiles">Work files</option>
+            <option value="renders">Renders</option>
+            <option value="all">All but source</option>
+          </select>
+          <button id="clean-job" class="ghost">Clean</button>
+          <button id="delete-job" class="ghost danger">Delete</button>
+        </div>
+      </div>
+
+      <div class="hook-panel">
+        <div class="hook-frame">
+          <img id="hook-img" alt="Hook still">
+          <span class="hook-stamp">hook</span>
+          <span id="hook-crop" class="crop-chip"></span>
+        </div>
+        <div class="hook-info">
+          <div class="hook-kicker">Opening beat <span id="hook-time" class="mono"></span></div>
+          <p id="hook-copy" class="hook-copy"></p>
+          <p id="hook-why" class="hook-why"></p>
+          <div id="hook-scores" class="score-cluster"></div>
+          <div id="hook-tags" class="tag-row"></div>
+          <div class="hook-actions">
+            <button id="hook-change" class="text-btn">Pick another hook →</button>
+            <button id="hook-lab-toggle" class="text-btn">Hook lab →</button>
+            <button id="transcript-toggle" class="text-btn" hidden>CC · transcript</button>
+          </div>
+        </div>
+        <div id="hook-lab" class="hook-lab" hidden></div>
+        <div id="transcript-panel" class="transcript-panel" hidden></div>
+      </div>
+
+      <section class="export-panel">
+        <div class="export-head">
+          <div><p class="eyebrow">build</p><h3>One analysis. Three lengths.</h3></div>
+          <div id="target-tabs" class="target-tabs" role="tablist" aria-label="Reel length">
+            <button data-target="15" role="tab">15<span>s</span></button>
+            <button data-target="30" role="tab" class="active">30<span>s</span></button>
+            <button data-target="60" role="tab">60<span>s</span></button>
+          </div>
+        </div>
+
+        <div class="plan-meta">
+          <span id="plan-total">—</span>
+          <span id="plan-badge" class="badge">auto hook</span>
+          <button id="reset-hook" class="text-btn" hidden>Reset hook</button>
+          <button id="edit-cut" class="text-btn">Edit cut</button>
+        </div>
+        <div id="timeline" class="timeline"></div>
+        <p id="plan-why" class="plan-why"></p>
+        <div id="edit-bar" class="edit-bar" hidden>
+          <span id="edit-hint" class="hint">Trim with − / +, reorder with ↑ ↓, remove with ✕.</span>
+          <input id="variant-name" class="variant-name" placeholder="Variant name" maxlength="40">
+          <button id="save-variant" class="ghost small">Save variant</button>
+          <button id="done-edit" class="ghost small">Done</button>
+        </div>
+        <div id="variant-list" class="variant-list"></div>
+
+        <div class="render-row">
+          <button id="render" class="primary">Render 30s reel <span class="arrow">↗</span></button>
+          <button id="render-draft" class="ghost small">Draft</button>
+          <button id="render-all" class="ghost small">All 15/30/60</button>
+          <button id="render-cancel" class="ghost small" hidden>Cancel</button>
+          <select id="aspect-select" class="ghost small" aria-label="Aspect ratio">
+            <option value="9:16">9:16</option>
+            <option value="4:5">4:5</option>
+            <option value="1:1">1:1</option>
+            <option value="16:9">16:9</option>
+          </select>
+          <label class="caption-check"><input id="captions" type="checkbox"> Captions</label>
+          <span id="render-note" class="hint">Vertical 1080×1920 · original audio</span>
+        </div>
+        <div id="render-progress" class="render-progress" hidden>
+          <div class="bar"><i></i></div>
+          <span></span>
+        </div>
+        <div id="render-error" class="error" hidden></div>
+
+        <details id="audio-panel" class="audio-panel">
+          <summary>Audio · voice over, dub, music</summary>
+          <div class="audio-grid">
+            <label class="audio-field">
+              <span>Mode</span>
+              <select id="audio-mode">
+                <option value="keep">Keep original audio</option>
+                <option value="full">Full replace · new voice + new music</option>
+                <option value="bed">Dub over original bed · Demucs</option>
+                <option value="voice">Voice only · replace the voice</option>
+                <option value="music">Music only · replace the music</option>
+              </select>
+            </label>
+            <label class="audio-field">
+              <span>Translate to</span>
+              <select id="audio-lang"></select>
+            </label>
+            <label class="audio-field">
+              <span>Translate engine</span>
+              <select id="audio-provider"></select>
+            </label>
+            <label class="audio-field">
+              <span>Voice engine</span>
+              <select id="audio-engine"></select>
+            </label>
+            <label class="audio-field">
+              <span>Voice</span>
+              <select id="audio-voice"></select>
+            </label>
+            <label class="audio-field small">
+              <span>Rate</span>
+              <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
+            </label>
+            <label class="audio-field">
+              <span>Music</span>
+              <select id="audio-music">
+                <option value="none">No music</option>
+                <option value="library">My own track</option>
+                <option value="cc0">CC0 library</option>
+                <option value="stable-small">AI · Stable Audio Open Small</option>
+                <option value="stable-1.0">AI · Stable Audio Open 1.0</option>
+              </select>
+            </label>
+            <label class="audio-field">
+              <span>Track</span>
+              <select id="audio-track"></select>
+            </label>
+            <label class="audio-field">
+              <span>Music prompt</span>
+              <input id="audio-prompt" placeholder="auto mood">
+            </label>
+            <label class="audio-field small">
+              <span>Music dB</span>
+              <input id="audio-gain" type="number" min="-40" max="0" step="1" value="-18">
+            </label>
+            <label class="audio-field checkbox">
+              <input id="audio-duck" type="checkbox" checked> Duck under voice
+            </label>
+            <div class="audio-actions">
+              <button id="audio-preview" class="ghost small" type="button">Test voice</button>
+              <button id="audio-translate-install" class="ghost small" type="button" hidden>Offline translate setup</button>
+              <span id="audio-status" class="hint"></span>
+            </div>
+          </div>
+          <div id="audio-script" class="audio-script"></div>
+        </details>
+
+        <div id="player-wrap" class="player-wrap" hidden>
+          <div class="phone-frame"><video id="reel-video" controls playsinline></video></div>
+          <div class="player-meta">
+            <div class="player-copy"><span id="reel-duration"></span><span id="reel-size"></span></div>
+            <a id="download" class="primary small" download>Download <span class="arrow">↓</span></a>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene-section">
+        <div class="section-head">
+          <div><p class="eyebrow">index</p><h3>Every moment</h3></div>
+          <div class="scene-tools">
+            <div class="sort-tabs" id="sort-tabs">
+              <button data-sort="best" class="active">Best</button>
+              <button data-sort="timeline">Timeline</button>
+            </div>
+            <span id="scene-count" class="muted"></span>
+          </div>
+        </div>
+        <div id="scene-grid" class="scene-grid"></div>
+        <button id="load-more" class="ghost load-more" hidden>Show more</button>
+      </section>
+    </section>
+  </main>
+
+  <footer class="shell footer">
+    <span>VibeCut</span>
+    <span>ffmpeg · local analysis</span>
+    <span id="footer-health"></span>
+  </footer>
+
+  <div id="drawer" class="drawer" hidden>
+    <div class="drawer-backdrop" data-close></div>
+    <aside class="drawer-panel" role="dialog" aria-modal="true" aria-label="Scene detail">
+      <button id="drawer-close" class="icon-btn drawer-close" data-close aria-label="Close">×</button>
+      <div id="drawer-content" class="drawer-content"></div>
+    </aside>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+</body>
+</html>

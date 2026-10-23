@@ -1,0 +1,12 @@
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.git/
+sample/
+*.mp4
+*.mov
+*.jpg
+*.png
