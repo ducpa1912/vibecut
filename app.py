@@ -1440,7 +1440,8 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
         }
         for clip in plan["clips"]
     ]
-    script = audio.build_script(scenes, clips)
+    segments = pipeline.read_transcript(_job_dir(job_id)) or []
+    script = audio.build_script(scenes, clips, segments=segments)
     offsets: list[float] = []
     running = 0.0
     for clip in clips:
@@ -1468,8 +1469,14 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
                 line["text"] = audio.clean_line(value)
                 line["overridden"] = True
 
+    context = (
+        audio.transcript_context(segments, clips, scenes, source_lang)
+        if segments else None
+    )
     try:
-        script = audio.adapt_script(script, source_lang, target_lang, mode, body.provider)
+        script = audio.adapt_script(
+            script, source_lang, target_lang, mode, body.provider, context,
+        )
         apply_overrides(script)
         script = audio.refit_script(script)
         translated = bool(target_lang and target_lang != source_lang)
@@ -1479,6 +1486,7 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
         "lines": script,
         "mode": mode,
         "rewrite": (script[0].get("rewrite") if script else "literal"),
+        "context_chars": len((context or {}).get("full_text") or ""),
         "overrides": overrides,
         "source_lang": source_lang,
         "target": target_lang or source_lang,

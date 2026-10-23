@@ -782,3 +782,88 @@ def test_save_generated_asset(tmp_path, monkeypatch):
 def test_transcribe_apple_none_without_helper(monkeypatch):
     monkeypatch.setattr(pipeline, "_apple_transcribe_helper", lambda: None)
     assert pipeline.transcribe_apple(__import__("pathlib").Path("/tmp/none.wav"), __import__("pathlib").Path("/tmp"), "en") is None
+
+
+# ---------------------------------------------------------------- transcript context
+
+
+def test_window_text_uses_complete_segments():
+    segments = [
+        {"start": 12.9, "end": 16.8, "text": "friends keep asking about the garden"},
+        {"start": 16.8, "end": 20.5, "text": "and how much work it really takes"},
+        {"start": 40.0, "end": 44.0, "text": "unrelated later sentence"},
+    ]
+    text = audio.window_text(segments, 13.0, 17.0)
+    assert "friends keep asking" in text
+    assert "unrelated" not in text
+    assert audio.window_text([], 0, 1) == ""
+
+
+def test_transcript_context_has_full_text_and_beats():
+    segments = [
+        {"start": 0.0, "end": 2.0, "text": "first line about the product"},
+        {"start": 2.0, "end": 4.0, "text": "second line with 42 uses"},
+    ]
+    scenes = [make_scene(0, 0.0, 2.0), make_scene(1, 2.0, 2.0)]
+    clips = [
+        {"scene": 0, "role": "hook", "duration": 2.0},
+        {"scene": 1, "role": "beat", "duration": 2.0},
+    ]
+    context = audio.transcript_context(segments, clips, scenes, "en")
+    assert "first line about the product" in context["full_text"]
+    assert context["beats"][0]["role"] == "hook"
+    assert "first line" in context["beats"][0]["source"]
+    assert context["beats"][1]["seconds"] == 1.75
+
+
+def test_build_script_prefers_transcript_window():
+    scenes = [make_scene(0, 10.0, 5.0, speech="truncated scene speech fragment")]
+    clips = [{"scene": 0, "duration": 5.0, "role": "beat"}]
+    segments = [{"start": 9.5, "end": 15.0, "text": "the complete sentence from the transcript"}]
+    script = audio.build_script(scenes, clips, segments=segments)
+    assert script and script[0]["text"] == "the complete sentence from the transcript"
+    without = audio.build_script(scenes, clips)
+    assert without[0]["text"].startswith("truncated scene speech")
+
+
+def test_adapt_script_passes_context_to_llm(monkeypatch, tmp_path):
+    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
+    captured: dict = {}
+
+    def fake_llm(script, source, target, mode, literal, context=None):
+        captured["context"] = context
+        captured["literal"] = literal
+        return [f"rewritten {index}" for index in range(len(script))]
+
+    monkeypatch.setattr(audio, "_rewrite_ollama", fake_llm)
+    monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
+    script = [{
+        "scene": 0, "clip": 0, "role": "hook", "duration": 3.0, "rate": 1.0,
+        "text": "original",
+    }]
+    context = {"full_text": "the whole video transcript", "beats": [{"scene": 0, "source": "original"}]}
+    result = audio.adapt_script(script, "zh", "en", "viral", "llm", context)
+    assert captured["context"]["full_text"] == "the whole video transcript"
+    assert result[0]["text"] == "rewritten 0"
+    # memo key depends on the context
+    files_first = len(list((tmp_path / "rewrite").rglob("*.txt")))
+    other = {"full_text": "different transcript", "beats": []}
+    audio.adapt_script(script, "zh", "en", "viral", "llm", other)
+    assert len(list((tmp_path / "rewrite").rglob("*.txt"))) > files_first
+
+
+def test_char_cut_stays_on_word_boundary():
+    cut = audio._char_cut("responsive plants need good soil", 1.0, 1.0)
+    assert not cut.endswith(("respon", "responsi"))
+    assert "responsive" in cut or cut in "responsive plants need good soil"
+
+
+def test_read_transcript_roundtrip(tmp_path):
+    job_dir = tmp_path / "job"
+    (job_dir / "transcript").mkdir(parents=True)
+    (job_dir / "transcript" / "transcript_apple.json").write_text(json.dumps({
+        "language": "zh-CN",
+        "segments": [{"start": 0.0, "end": 1.5, "text": "你好世界"}],
+    }), encoding="utf-8")
+    segments = pipeline.read_transcript(job_dir)
+    assert segments and segments[0]["text"] == "你好世界"

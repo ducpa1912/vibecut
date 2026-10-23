@@ -1124,6 +1124,16 @@ def estimate_seconds(text: str, rate: float = 1.0) -> float:
     return max(0.3, cjk / (4.6 * rate) + latin / (14.0 * rate))
 
 
+def _char_cut(text: str, seconds: float, rate: float) -> str:
+    """Hard cut that never lands inside a word."""
+    chars_per_second = 4.6 if CJK_RE.search(text) else 14.0
+    limit = max(4, int(seconds * chars_per_second * rate))
+    cut = text[:limit]
+    if not CJK_RE.search(cut) and " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,，。.!！?？;；:：、")
+
+
 def trim_to_seconds(text: str, seconds: float, rate: float = 1.0) -> str:
     """Keep whole clauses while they fit the slot, then fall back to a cut."""
     value = clean_line(text)
@@ -1144,13 +1154,9 @@ def trim_to_seconds(text: str, seconds: float, rate: float = 1.0) -> str:
             break
     result = " ".join(kept).strip(" ,，。.!！?？;；:：、")
     if result and estimate_seconds(result, rate) > seconds:
-        chars_per_second = 4.6 if CJK_RE.search(result) else 14.0
-        limit = max(4, int(seconds * chars_per_second * rate))
-        result = result[:limit].rstrip(" ,，。.!！?？;；:：、")
+        result = _char_cut(result, seconds, rate)
     if not result:
-        chars_per_second = 4.6 if CJK_RE.search(value) else 14.0
-        limit = max(4, int(seconds * chars_per_second * rate))
-        result = value[:limit].rstrip(" ,，。.!！?？;；:：、")
+        result = _char_cut(value, seconds, rate)
     return result
 
 
@@ -1172,10 +1178,70 @@ def scene_emotion(scene: dict, clip_duration: float, base_rate: float = 1.0) -> 
     return label, round(rate, 3)
 
 
+def load_transcript_segments(job_dir: Path) -> list[dict]:
+    try:
+        import pipeline  # noqa: PLC0415
+
+        return pipeline.read_transcript(job_dir) or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def window_text(segments: list[dict], start: float, end: float) -> str:
+    """Complete sentences covering a beat, not the trimmed fragment."""
+    if not segments:
+        return ""
+    start = float(start or 0.0)
+    end = float(end or start)
+    parts = [
+        segment["text"] for segment in segments
+        if min(segment["end"], end) - max(segment["start"], start) > 0.15
+    ]
+    return clean_line(" ".join(parts))
+
+
+def transcript_context(
+    segments: list[dict],
+    clips: list[dict],
+    scenes: list[dict],
+    source_lang: str,
+    cap_chars: int | None = None,
+) -> dict:
+    """Whole-video context plus one complete source line per selected beat."""
+    if cap_chars is None:
+        try:
+            cap_chars = int(os.environ.get("VIBECUT_REWRITE_CONTEXT_CHARS", "6000"))
+        except ValueError:
+            cap_chars = 6000
+    by_id = {scene["id"]: scene for scene in scenes}
+    beats = []
+    for clip in clips:
+        scene = by_id.get(clip.get("scene")) or {}
+        beat_text = window_text(segments, scene.get("start"), scene.get("end"))
+        if not beat_text:
+            beat_text = clean_line(scene.get("speech") or scene.get("ocr") or "")
+        beats.append({
+            "scene": clip.get("scene"),
+            "role": clip.get("role") or "beat",
+            "seconds": round(max(0.5, float(clip.get("duration") or clip.get("dur") or 0.0) - 0.25), 2),
+            "source": beat_text[:400],
+        })
+    full = " ".join(segment["text"] for segment in segments)
+    full = " ".join(full.split())
+    if cap_chars > 0 and len(full) > cap_chars:
+        full = full[:cap_chars] + "…"
+    return {
+        "language": (source_lang or "en").split("-")[0],
+        "full_text": full,
+        "beats": beats,
+    }
+
+
 def build_script(
     scenes: list[dict],
     clips: list[dict],
     base_rate: float = 1.0,
+    segments: list[dict] | None = None,
 ) -> list[dict]:
     """Clean, de-duplicate and time-fit one line per beat with speech/text.
 
@@ -1192,8 +1258,12 @@ def build_script(
         duration = float(clip.get("duration") or clip.get("dur") or 0.0)
         if duration <= 0:
             continue
-        text = clean_line(scene.get("speech") or "")
+        text = ""
         used_ocr = False
+        if segments:
+            text = window_text(segments, scene.get("start"), scene.get("end"))
+        if not text:
+            text = clean_line(scene.get("speech") or "")
         if not text:
             ocr = clean_line(scene.get("ocr") or "")
             if ocr and len(ocr) <= 90:
@@ -1399,7 +1469,8 @@ def build_bed(
         base_rate = float(voice_plan.get("rate") or 1.0)
         source_lang = str(source_lang or "en").split("-")[0]
         target = str(translate_plan.get("target") or "").split("-")[0]
-        script = build_script(scenes, clips, base_rate)
+        segments = load_transcript_segments(job_dir)
+        script = build_script(scenes, clips, base_rate, segments=segments)
         if not script:
             raise AudioError(
                 "The cut has no speech lines to voice over. Turn on Transcribe first."
@@ -1420,7 +1491,11 @@ def build_bed(
         mode = str(translate_plan.get("mode") or "literal")
         provider = str(translate_plan.get("provider") or "auto")
         progress(0.87, f"Adapting {len(script)} lines → {target or source_lang} ({mode})")
-        script = adapt_script(script, source_lang, target, mode, provider)
+        context = (
+            transcript_context(segments, clips, scenes, source_lang)
+            if segments else None
+        )
+        script = adapt_script(script, source_lang, target, mode, provider, context)
         apply_overrides(script)
         script = refit_script(script, base_rate)
 
@@ -1637,7 +1712,7 @@ def prune_cache(max_gb: float = 2.0, days: float = 14.0) -> dict:
 # ---------------------------------------------------------------- rewrite styles
 
 REWRITE = CACHE / "rewrite"
-REWRITE_VERSION = 2
+REWRITE_VERSION = 3
 
 CONNECTORS = {
     "en": ["and", "but", "so", "then", "turns out"],
@@ -1672,15 +1747,25 @@ def _facts(texts: list[str]) -> set[str]:
     return facts
 
 
-def _rewrite_file(source: str, target: str, mode: str, text: str) -> Path:
+def _context_hash(context: dict | None) -> str:
+    if not context:
+        return ""
+    return hashlib.sha1(str(context.get("full_text") or "").encode("utf-8")).hexdigest()[:8]
+
+
+def _rewrite_file(
+    source: str, target: str, mode: str, text: str, context: dict | None = None,
+) -> Path:
     key = hashlib.sha1(
-        f"v{REWRITE_VERSION}|{source}|{target}|{mode}|{text}".encode("utf-8"),
+        f"v{REWRITE_VERSION}|{source}|{target}|{mode}|{_context_hash(context)}|{text}".encode("utf-8"),
     ).hexdigest()[:24]
     return REWRITE / key[:2] / f"{key}.txt"
 
 
-def _rewrite_memo(source: str, target: str, mode: str, text: str) -> str | None:
-    path = _rewrite_file(source, target, mode, text)
+def _rewrite_memo(
+    source: str, target: str, mode: str, text: str, context: dict | None = None,
+) -> str | None:
+    path = _rewrite_file(source, target, mode, text, context)
     if not path.is_file():
         return None
     try:
@@ -1690,10 +1775,13 @@ def _rewrite_memo(source: str, target: str, mode: str, text: str) -> str | None:
     return value or None
 
 
-def _rewrite_put(source: str, target: str, mode: str, text: str, value: str) -> None:
+def _rewrite_put(
+    source: str, target: str, mode: str, text: str, value: str,
+    context: dict | None = None,
+) -> None:
     if not value:
         return
-    path = _rewrite_file(source, target, mode, text)
+    path = _rewrite_file(source, target, mode, text, context)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value, encoding="utf-8")
@@ -1764,29 +1852,42 @@ def _rules_rewrite(
 
 def _rewrite_ollama(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
+    context: dict | None = None,
 ) -> list[str] | None:
     url = os.environ.get("VIBECUT_LLM_URL")
     if not url or mode == "literal":
         return None
     model = os.environ.get("VIBECUT_LLM_MODEL", "llama3.1")
-    rows = [
-        {
+    context_beats = (context or {}).get("beats") or []
+    rows = []
+    for index, line in enumerate(script):
+        source_line = ""
+        if index < len(context_beats):
+            source_line = str(context_beats[index].get("source") or "")
+        rows.append({
             "beat": index,
             "role": str(line.get("role") or "beat"),
             "seconds": round(float(line.get("duration") or 0.0) - 0.25, 2),
+            "source_line": source_line or line.get("text") or "",
             "literal": literal[index],
-        }
-        for index, line in enumerate(script)
-    ]
+        })
     style = {
         "smooth": "natural, flowing, conversational, connected sentences",
         "viral": "punchy short-video style: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
     }.get(mode, "faithful")
+    full_text = str((context or {}).get("full_text") or "").strip()
     prompt = (
-        f"Rewrite this {len(rows)}-beat short video voice over into {_language_name(target)}. "
-        f"Style: {style}. Keep every fact and number. Do not invent facts. "
-        "Each line must fit its seconds budget when spoken at normal pace. "
-        "Reply with a JSON array of strings only, same order and count.\n"
+        f"You are editing a short vertical video. Below is the FULL TRANSCRIPT of the "
+        f"source video. Read it first to understand the story, the product, the claims "
+        f"and the intended audience. Then write a {len(rows)}-beat voice over in "
+        f"{_language_name(target)} for the selected beats, in order.\n"
+        f"Style: {style}.\n"
+        "Rules: keep every fact and number from the source, invent nothing, keep the "
+        "story coherent from beat to beat (setup, proof, payoff), each line must fit its "
+        "seconds budget at normal speaking pace. Reply with a JSON array of strings "
+        "only, same order and count.\n"
+        + (f"FULL TRANSCRIPT:\n{full_text}\n\n" if full_text else "")
+        + "SELECTED BEATS:\n"
         + json.dumps(rows, ensure_ascii=False)
     )
     payload = json.dumps({
@@ -1827,6 +1928,7 @@ def adapt_script(
     target_lang: str,
     mode: str = "smooth",
     provider: str = "auto",
+    context: dict | None = None,
 ) -> list[dict]:
     """Translate, then rewrite for the slot and the short-video style.
 
@@ -1852,7 +1954,7 @@ def adapt_script(
         missing: list[int] = []
         cached: dict[int, str] = {}
         for index, text in enumerate(literals):
-            hit = _rewrite_memo(source_lang, target_lang, mode, text)
+            hit = _rewrite_memo(source_lang, target_lang, mode, text, context)
             if hit:
                 cached[index] = hit
             else:
@@ -1866,7 +1968,9 @@ def adapt_script(
             order = [provider] if provider and provider not in ("auto", "") else ["llm", "rules"]
             for candidate in order:
                 if candidate in {"llm", "ollama", "apple"}:
-                    rewritten = _rewrite_ollama(subset, source_lang, target_lang, mode, subset_literal)
+                    rewritten = _rewrite_ollama(
+                        subset, source_lang, target_lang, mode, subset_literal, context,
+                    )
                 elif candidate == "rules":
                     rewritten = _rules_rewrite(subset, source_lang, target_lang, mode, subset_literal)
                 if rewritten:
@@ -1877,7 +1981,7 @@ def adapt_script(
             for offset_index, index in enumerate(missing):
                 value = rewritten[offset_index]
                 cached[index] = value
-                _rewrite_put(source_lang, target_lang, mode, literals[index], value)
+                _rewrite_put(source_lang, target_lang, mode, literals[index], value, context)
         literals = [cached.get(index, literals[index]) for index in range(len(lines))]
 
     source_facts = _facts(originals)

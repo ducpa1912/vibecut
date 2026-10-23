@@ -12,6 +12,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 | 0.3.0 | 2026-10-23 | Render speed | parallel segments, segment cache, draft/final, VideoToolbox, cancel, ETA, render-all, aspects, captions, timeline edit |
 | 0.4.0 | 2026-10-23 | Audio replacement | voice engines (say/piper/kokoro/elevenlabs), music (own/CC0/Stable Audio), modes keep/full/bed/voice/music, translation, script builder |
 | 0.5.0 | 2026-10-23 | Storage & speed | video masters + audio mux, FLAC caches, 360px thumbs, cache caps, render retention, job clean, install audit |
+| 0.6.1 | 2026-10-23 | Context rewrite | rewrite reads the full transcript, one complete sentence per beat, word-boundary fitting, memo keyed by context |
 | 0.6.0 | 2026-10-23 | Script & delivery | rewrite styles, per-clip mixer, beat sync, line editor, SpeechAnalyzer, CAS source store, SRT/VTT/EDL/XML, presets, A/B, license registry, story arc, music library |
 
 Versioning: SemVer-ish per feature batch. Every batch bumps the minor, updates
@@ -24,6 +25,8 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Literal translation with provider ladder (Apple / Ollama / Marian / Argos)
 - [x] Global translation memo cache
 - [x] Rewrite styles: faithful, smooth, viral (fit to short duration)
+- [x] Full-transcript context for the rewrite (whole story before writing the cut)
+- [x] Complete-sentence per-beat source lines instead of trimmed fragments
 - [x] Fact and budget validation for rewrites (no invented numbers)
 - [x] Rules-only rewrite fallback when no LLM is available
 - [x] Per-line script editor with instant re-TTS (line cache)

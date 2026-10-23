@@ -1661,7 +1661,10 @@
       });
       const lines = result.lines || [];
       const head = `${lines.length} lines · ${result.source_lang}${
-        result.translated ? ` → ${result.target}` : ""} · ${result.mode || "literal"}`;
+        result.translated ? ` → ${result.target}` : ""} · ${result.mode || "literal"}${
+        result.rewrite && result.rewrite !== "literal" ? ` · ${result.rewrite}` : ""}${
+        result.context_chars ? ` · ctx ${result.context_chars}` : ""}${
+        result.context_chars === 0 && (result.mode || "literal") !== "literal" ? " · no transcript" : ""}`;
       const warn = result.warning
         ? `<span class="script-flag">${esc(result.warning.slice(0, 90))}</span>` : "";
       dom.audioScript.innerHTML = `

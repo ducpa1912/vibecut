@@ -746,6 +746,33 @@ def transcribe(
     }
 
 
+def read_transcript(job_dir: Path) -> list[dict] | None:
+    """Load the full transcript segments written by whisper or Apple Speech."""
+    out_dir = job_dir / "transcript"
+    for name in ("transcript.json", "transcript_apple.json"):
+        path = out_dir / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        segments: list[dict] = []
+        for item in data.get("segments", []):
+            value = " ".join(str(item.get("text") or "").split())
+            if not value:
+                continue
+            try:
+                start = float(item.get("start", 0.0))
+                end = float(item.get("end", start))
+            except (TypeError, ValueError):
+                continue
+            segments.append({"start": start, "end": end, "text": value})
+        if segments:
+            return segments
+    return None
+
+
 def attach_speech(scenes: list[dict], transcript: dict | None) -> None:
     for scene in scenes:
         scene.setdefault("speech", "")
