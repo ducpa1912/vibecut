@@ -1330,6 +1330,7 @@
       if (hit === null) return;
       state.mixer[lane].splice(hit, 1);
       state.mixer.selected = null;
+      dom.mixerReadout.textContent = "";
       drawMixer();
       updateRenderPanel();
     });
