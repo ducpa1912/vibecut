@@ -2437,8 +2437,13 @@ def _db_to_linear(db: float) -> str:
 
 
 def automation_expression(points, total: float) -> str | None:
-    """Piecewise-linear volume automation so the bed ramps instead of jumping."""
+    """Smooth gain automation: 100% at rest, cosine ramps peaking at each node.
+
+    Nodes are (time, dB) pairs. Missing start/end anchors are added at 0 dB so
+    the lane always begins and ends at 100%.
+    """
     cleaned: list[tuple[float, float]] = []
+    total = max(0.1, float(total or 0.0))
     for item in points or []:
         try:
             if isinstance(item, (list, tuple)) and len(item) >= 2:
@@ -2449,19 +2454,34 @@ def automation_expression(points, total: float) -> str | None:
                 continue
         except (TypeError, ValueError):
             continue
-        cleaned.append((max(0.0, min(float(total), at)), max(-24.0, min(6.0, db))))
-    cleaned.sort()
+        cleaned.append((
+            max(0.0, min(total, at)),
+            max(-24.0, min(6.0, db)),
+        ))
     if not cleaned:
+        return None
+    cleaned.sort()
+    if abs(cleaned[0][0]) > 0.05:
+        cleaned.insert(0, (0.0, 0.0))
+    if abs(cleaned[-1][0] - total) > 0.05:
+        cleaned.append((total, 0.0))
+    if all(abs(db) < 0.01 for _at, db in cleaned):
         return None
     if len(cleaned) == 1:
         return f"volume=volume={_db_to_linear(cleaned[0][1])}:eval=frame"
+
+    def ramp(t0: float, d0: float, t1: float, d1: float) -> str:
+        span = max(1e-6, t1 - t0)
+        return (
+            f"pow(10,({d0:.2f}+({d1 - d0:.2f})*"
+            f"(1-cos(PI*(t-{t0:.3f})/{span:.6f}))/2)/20)"
+        )
+
     expression = _db_to_linear(cleaned[-1][1])
     for index in range(len(cleaned) - 1, 0, -1):
         t0, d0 = cleaned[index - 1]
         t1, d1 = cleaned[index]
-        slope = (d1 - d0) / max(1e-6, t1 - t0)
-        segment = f"pow(10,({d0:.2f}+({slope:.4f})*(t-{t0:.3f}))/20)"
-        expression = f"if(lt(t,{t1:.3f}),{segment},{expression})"
+        expression = f"if(lt(t,{t1:.3f}),{ramp(t0, d0, t1, d1)},{expression})"
     expression = f"if(lt(t,{cleaned[0][0]:.3f}),{_db_to_linear(cleaned[0][1])},{expression})"
     return f"volume=volume='{expression}':eval=frame"
 

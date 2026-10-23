@@ -225,4 +225,5 @@ data/cache/music/       cached AI music beds
 - The crop is per beat. A subject that walks across a long take may drift out of the crop; split the source or edit the cut.
 - Captions come from OCR and speech. If the source already burns in subtitles, turn captions off to avoid doubles.
 - No music generation, no synthetic voice, no transitions. The original audio and pacing are the vibe.
+- Docs: [local models](docs/local-models.md) · [cloud plan](docs/cloud-plan.md).
 - The server is localhost-first. `VIBECUT_TOKEN` is a simple shared secret, not multi-user auth; put a reverse proxy in front for network use.

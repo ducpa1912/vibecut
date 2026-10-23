@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script defer src="/static/app.js"></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.6.2">
+  <script defer src="/static/app.js?v=0.6.5"></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -230,9 +230,9 @@
         <section id="mixer-panel" class="mixer-panel" hidden>
           <div class="mixer-head">
             <span class="label">Automation mixer</span>
-            <span class="hint">drag points up / down · double-click adds a point · music ramps between points</span>
-            <button id="mixer-reset" class="ghost small" type="button">Reset</button>
-            <button id="mixer-smooth" class="ghost small" type="button">Smooth</button>
+            <span class="hint">click a lane to add a node · drag it anywhere · double-click a node to remove</span>
+            <button id="mixer-reset" class="ghost small" type="button">Reset 100%</button>
+            <button id="mixer-smooth" class="ghost small" type="button">Flatten</button>
             <span id="mixer-readout" class="hint"></span>
           </div>
           <canvas id="mixer-canvas" height="220"></canvas>

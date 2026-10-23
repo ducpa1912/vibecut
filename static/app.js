@@ -970,20 +970,8 @@
     return Math.round((Number(value) || 0) * 100) / 100;
   }
 
-  function defaultAutomation(clips) {
-    const voice = [];
-    const bed = [];
-    let offset = 0;
-    clips.forEach((clip) => {
-      const duration = Number(clip.dur) || 0;
-      const points = [offset, offset + duration / 2, offset + duration];
-      points.forEach((t) => {
-        voice.push({ t, db: 0 });
-        bed.push({ t, db: 0 });
-      });
-      offset += duration;
-    });
-    return { voice, bed };
+  function defaultAutomation() {
+    return { voice: [], bed: [] };
   }
 
   function renderMixer() {
@@ -1004,17 +992,17 @@
         + `&order=${encodeURIComponent(state.order)}`
         + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : ""),
       );
-      const keepVoice = state.mixer.ready ? state.mixer.voice : null;
-      const keepBed = state.mixer.ready ? state.mixer.bed : null;
-      const defaults = defaultAutomation(result.clips || []);
+      const keepVoice = state.mixer.ready && state.mixer.voice.length ? state.mixer.voice : null;
+      const keepBed = state.mixer.ready && state.mixer.bed.length ? state.mixer.bed : null;
       state.mixer = {
         ready: true,
         total: result.total || 0,
         clips: result.clips || [],
         original: result.envelopes?.original || [],
         music: result.envelopes?.music || [],
-        voice: keepVoice || defaults.voice,
-        bed: keepBed || defaults.bed,
+        voice: keepVoice || [],
+        bed: keepBed || [],
+        selected: null,
       };
       dom.mixerPanel.hidden = false;
       drawMixer();
@@ -1022,6 +1010,46 @@
       dom.mixerPanel.hidden = true;
       state.mixer.ready = false;
     }
+  }
+
+  function formatGain(db) {
+    const value = Number(db) || 0;
+    const percent = Math.round(Math.pow(10, value / 20) * 100);
+    const sign = value >= 0 ? "+" : "";
+    return `${percent}% · ${sign}${value.toFixed(1)} dB`;
+  }
+
+  function lanePoints(lane) {
+    return state.mixer[lane] || [];
+  }
+
+  function anchorsFor(points) {
+    const total = state.mixer.total;
+    const pts = points.map((point) => ({ ...point })).sort((a, b) => a.t - b.t);
+    if (!pts.length) return [{ t: 0, db: 0 }, { t: total, db: 0 }];
+    if (pts[0].t > 0.05) pts.unshift({ t: 0, db: 0 });
+    if (Math.abs(pts[pts.length - 1].t - total) > 0.05) pts.push({ t: total, db: 0 });
+    return pts;
+  }
+
+  function sampleCurve(points) {
+    const layout = mixerLayout();
+    const anchors = anchorsFor(points);
+    const samples = [];
+    for (let index = 0; index < anchors.length - 1; index += 1) {
+      const a = anchors[index];
+      const b = anchors[index + 1];
+      const spanPx = Math.abs(timeToX(b.t, layout) - timeToX(a.t, layout));
+      const steps = Math.max(2, Math.min(80, Math.ceil(spanPx / 5)));
+      for (let step = 0; step < steps; step += 1) {
+        const u = step / steps;
+        const eased = (1 - Math.cos(Math.PI * u)) / 2;
+        samples.push({ t: a.t + (b.t - a.t) * u, db: a.db + (b.db - a.db) * eased });
+      }
+    }
+    const last = anchors[anchors.length - 1];
+    samples.push({ t: last.t, db: last.db });
+    return samples;
   }
 
   function mixerLayout() {
@@ -1064,27 +1092,32 @@
     return Math.round(Math.max(MIXER_MIN_DB, Math.min(MIXER_MAX_DB, value)) * 10) / 10;
   }
 
-  function drawEnvelope(ctx, points, laneTop, laneH, color) {
-    if (!points.length) return;
+  function drawEnvelope(ctx, lane, laneTop, laneH, color) {
+    const points = lanePoints(lane);
+    const layout = mixerLayout();
+    const curve = sampleCurve(points);
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    points.forEach((point, index) => {
-      const x = timeToX(point.t, mixerLayout());
+    curve.forEach((point, index) => {
+      const x = timeToX(point.t, layout);
       const y = dbToY(point.db, laneTop, laneH);
       if (index === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
     ctx.stroke();
-    points.forEach((point) => {
-      const x = timeToX(point.t, mixerLayout());
+    points.forEach((point, index) => {
+      const x = timeToX(point.t, layout);
       const y = dbToY(point.db, laneTop, laneH);
+      const selected = state.mixer.selected
+        && state.mixer.selected.lane === lane
+        && state.mixer.selected.index === index;
       ctx.beginPath();
       ctx.fillStyle = color;
-      ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+      ctx.arc(x, y, selected ? 6 : 4.5, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "rgba(10,10,11,0.9)";
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = selected ? "#fff" : "rgba(10,10,11,0.9)";
+      ctx.lineWidth = selected ? 2 : 1.5;
       ctx.stroke();
     });
   }
@@ -1120,7 +1153,6 @@
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, layout.width, layout.height);
 
-    // clip sections
     let offset = 0;
     state.mixer.clips.forEach((clip, index) => {
       const x0 = timeToX(offset, layout);
@@ -1139,7 +1171,6 @@
       offset += Number(clip.dur) || 0;
     });
 
-    // ruler
     ctx.fillStyle = "rgba(255,255,255,0.35)";
     ctx.font = "9px ui-monospace, monospace";
     const step = state.mixer.total > 40 ? 5 : state.mixer.total > 15 ? 2 : 1;
@@ -1149,31 +1180,38 @@
       ctx.fillText(`${t}s`, x + 3, layout.rulerH - 4);
     }
 
-    // dB grid
-    [0, -6, -12, -18].forEach((db) => {
+    [6, 0, -6, -12, -18, -24].forEach((db) => {
       [layout.musicTop, layout.voiceTop].forEach((laneTop) => {
         const y = dbToY(db, laneTop, layout.laneH);
-        ctx.strokeStyle = "rgba(255,255,255,0.07)";
+        ctx.strokeStyle = db === 0 ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)";
         ctx.beginPath();
         ctx.moveTo(layout.padL, y);
         ctx.lineTo(layout.width - layout.padR, y);
         ctx.stroke();
       });
+      const y = dbToY(db, layout.voiceTop, layout.laneH);
+      ctx.fillStyle = "rgba(255,255,255,0.24)";
+      ctx.font = "8.5px ui-monospace, monospace";
+      ctx.fillText(`${Math.round(Math.pow(10, db / 20) * 100)}%`, layout.width - layout.padR - 32, y - 2);
     });
 
-    // lanes
     ctx.fillStyle = "rgba(255,255,255,0.5)";
     ctx.font = "9px ui-monospace, monospace";
     ctx.fillText("MUSIC", layout.padL + 2, layout.musicTop - 4);
     ctx.fillText("VOICE", layout.padL + 2, layout.voiceTop - 4);
 
-    // waveforms: original behind both lanes, music stem inside the music lane
     drawWave(ctx, state.mixer.original, layout.musicTop, layout.laneH, "rgba(255,255,255,0.075)");
     drawWave(ctx, state.mixer.original, layout.voiceTop, layout.laneH, "rgba(255,255,255,0.075)");
     drawWave(ctx, state.mixer.music, layout.musicTop, layout.laneH, "rgba(120,170,255,0.18)");
 
-    drawEnvelope(ctx, state.mixer.bed, layout.musicTop, layout.laneH, "#e8a266");
-    drawEnvelope(ctx, state.mixer.voice, layout.voiceTop, layout.laneH, "#8fd18a");
+    drawEnvelope(ctx, "bed", layout.musicTop, layout.laneH, "#e8a266");
+    drawEnvelope(ctx, "voice", layout.voiceTop, layout.laneH, "#8fd18a");
+
+    if (!state.mixer.bed.length && !state.mixer.voice.length) {
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.font = "10px ui-monospace, monospace";
+      ctx.fillText("click a lane to add the first node · drag it anywhere", layout.padL + 90, layout.height - 10);
+    }
   }
 
   function mixerPointer(event) {
@@ -1182,21 +1220,43 @@
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
-  function nearestPoint(lane, x, y) {
+  function laneAtY(y) {
+    const layout = mixerLayout();
+    if (y >= layout.voiceTop && y <= layout.voiceTop + layout.laneH) return "voice";
+    if (y >= layout.musicTop && y <= layout.musicTop + layout.laneH) return "bed";
+    return null;
+  }
+
+  function hitNode(lane, x, y) {
     const layout = mixerLayout();
     const laneTop = lane === "voice" ? layout.voiceTop : layout.musicTop;
     let best = null;
-    let bestDistance = 12;
-    state.mixer[lane].forEach((point, index) => {
-      const px = timeToX(point.t, layout);
-      const py = dbToY(point.db, laneTop, layout.laneH);
-      const distance = Math.hypot(px - x, py - y);
+    let bestDistance = 11;
+    lanePoints(lane).forEach((point, index) => {
+      const distance = Math.hypot(
+        timeToX(point.t, layout) - x,
+        dbToY(point.db, laneTop, layout.laneH) - y,
+      );
       if (distance < bestDistance) {
         bestDistance = distance;
         best = index;
       }
     });
     return best;
+  }
+
+  function showPoint(lane, point) {
+    const name = lane === "voice" ? "voice" : "music";
+    dom.mixerReadout.textContent = `${name} ${point.t.toFixed(1)}s · ${formatGain(point.db)}`;
+  }
+
+  function addNode(lane, t, db) {
+    const points = lanePoints(lane);
+    points.push({ t: round2(t), db: Math.round(db * 10) / 10 });
+    points.sort((a, b) => a.t - b.t);
+    const index = points.findIndex((point) => point.t === round2(t) && point.db === Math.round(db * 10) / 10);
+    state.mixer.selected = { lane, index: index >= 0 ? index : 0 };
+    return state.mixer.selected.index;
   }
 
   function bindMixer() {
@@ -1206,74 +1266,83 @@
       if (!state.mixer.ready) return;
       const { x, y } = mixerPointer(event);
       const layout = mixerLayout();
-      const inVoice = y >= layout.voiceTop && y <= layout.voiceTop + layout.laneH;
-      const inMusic = y >= layout.musicTop && y <= layout.musicTop + layout.laneH;
-      const lane = inVoice ? "voice" : inMusic ? "bed" : null;
-      if (!lane) return;
-      const index = nearestPoint(lane, x, y);
-      if (index === null) return;
-      dragging = { lane, index };
+      const lane = laneAtY(y);
+      if (!lane) {
+        state.mixer.selected = null;
+        drawMixer();
+        return;
+      }
+      const hit = hitNode(lane, x, y);
+      const laneTop = lane === "voice" ? layout.voiceTop : layout.musicTop;
+      if (hit !== null) {
+        state.mixer.selected = { lane, index: hit };
+        dragging = { lane, index: hit };
+      } else {
+        const t = Math.max(0, Math.min(state.mixer.total, xToTime(x, layout)));
+        const index = addNode(lane, t, yToDb(y, laneTop, layout.laneH));
+        dragging = { lane, index };
+      }
       dom.mixerCanvas.setPointerCapture(event.pointerId);
+      showPoint(lane, state.mixer[lane][dragging.index]);
+      drawMixer();
     });
     dom.mixerCanvas.addEventListener("pointermove", (event) => {
+      if (!state.mixer.ready) return;
       const { x, y } = mixerPointer(event);
       const layout = mixerLayout();
       if (dragging) {
         const laneTop = dragging.lane === "voice" ? layout.voiceTop : layout.musicTop;
-        const point = state.mixer[dragging.lane][dragging.index];
+        const points = lanePoints(dragging.lane);
+        const point = points[dragging.index];
+        const previous = points[dragging.index - 1];
+        const next = points[dragging.index + 1];
+        let t = xToTime(x, layout);
+        t = Math.max(0, Math.min(state.mixer.total, t));
+        if (previous) t = Math.max(previous.t + 0.06, t);
+        if (next) t = Math.min(next.t - 0.06, t);
+        point.t = round2(t);
         point.db = yToDb(y, laneTop, layout.laneH);
-        dom.mixerReadout.textContent =
-          `${dragging.lane === "voice" ? "voice" : "music"} ${point.t.toFixed(1)}s · ${point.db >= 0 ? "+" : ""}${point.db} dB`;
+        showPoint(dragging.lane, point);
         drawMixer();
         updateRenderPanel();
         return;
       }
-      const lane = y >= layout.voiceTop && y <= layout.voiceTop + layout.laneH ? "voice"
-        : y >= layout.musicTop && y <= layout.musicTop + layout.laneH ? "bed" : null;
+      const lane = laneAtY(y);
       if (!lane) {
         dom.mixerReadout.textContent = "";
         return;
       }
-      const index = nearestPoint(lane, x, y);
-      if (index === null) {
-        dom.mixerReadout.textContent = `at ${xToTime(x, layout).toFixed(1)}s · double-click to add a point`;
+      const hit = hitNode(lane, x, y);
+      if (hit === null) {
+        const t = xToTime(x, layout);
+        dom.mixerReadout.textContent = `click at ${t.toFixed(1)}s to add a node`;
         return;
       }
-      const point = state.mixer[lane][index];
-      dom.mixerReadout.textContent =
-        `${lane === "voice" ? "voice" : "music"} ${point.t.toFixed(1)}s · ${point.db >= 0 ? "+" : ""}${point.db} dB`;
+      showPoint(lane, state.mixer[lane][hit]);
     });
     dom.mixerCanvas.addEventListener("pointerup", () => { dragging = null; });
     dom.mixerCanvas.addEventListener("dblclick", (event) => {
       if (!state.mixer.ready) return;
       const { x, y } = mixerPointer(event);
-      const layout = mixerLayout();
-      const lane = y >= layout.voiceTop && y <= layout.voiceTop + layout.laneH ? "voice"
-        : y >= layout.musicTop && y <= layout.musicTop + layout.laneH ? "bed" : null;
+      const lane = laneAtY(y);
       if (!lane) return;
-      const laneTop = lane === "voice" ? layout.voiceTop : layout.musicTop;
-      const t = Math.max(0, Math.min(state.mixer.total, xToTime(x, layout)));
-      state.mixer[lane].push({ t: round2(t), db: yToDb(y, laneTop, layout.laneH) });
-      state.mixer[lane].sort((a, b) => a.t - b.t);
+      const hit = hitNode(lane, x, y);
+      if (hit === null) return;
+      state.mixer[lane].splice(hit, 1);
+      state.mixer.selected = null;
       drawMixer();
       updateRenderPanel();
     });
     dom.mixerReset.addEventListener("click", () => {
-      const defaults = defaultAutomation(state.mixer.clips);
-      state.mixer.voice = defaults.voice;
-      state.mixer.bed = defaults.bed;
+      state.mixer.voice = [];
+      state.mixer.bed = [];
+      state.mixer.selected = null;
       drawMixer();
       updateRenderPanel();
     });
     dom.mixerSmooth.addEventListener("click", () => {
       ["voice", "bed"].forEach((lane) => {
-        const points = state.mixer[lane];
-        if (points.length < 3) return;
-        state.mixer[lane] = points.map((point, index) => {
-          const prev = points[index - 1] || point;
-          const next = points[index + 1] || point;
-          return { t: point.t, db: Math.round(((prev.db + point.db + next.db) / 3) * 10) / 10 };
-        });
+        state.mixer[lane] = state.mixer[lane].map((point) => ({ t: point.t, db: 0 }));
       });
       drawMixer();
       updateRenderPanel();

@@ -12,6 +12,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 | 0.3.0 | 2026-10-23 | Render speed | parallel segments, segment cache, draft/final, VideoToolbox, cancel, ETA, render-all, aspects, captions, timeline edit |
 | 0.4.0 | 2026-10-23 | Audio replacement | voice engines (say/piper/kokoro/elevenlabs), music (own/CC0/Stable Audio), modes keep/full/bed/voice/music, translation, script builder |
 | 0.5.0 | 2026-10-23 | Storage & speed | video masters + audio mux, FLAC caches, 360px thumbs, cache caps, render retention, job clean, install audit |
+| 0.6.3 | 2026-10-23 | Mixer v2 | click-to-add nodes, drag anywhere, cosine ramps, 100% scale, Flatten |
 | 0.6.2 | 2026-10-23 | Mixer & small models | ruler automation mixer with draggable envelopes, original/music stem waveforms, MLX + Ollama small-model rewrite with story brief and retrieval |
 | 0.6.1 | 2026-10-23 | Context rewrite | rewrite reads the full transcript, one complete sentence per beat, word-boundary fitting, memo keyed by context |
 | 0.6.0 | 2026-10-23 | Script & delivery | rewrite styles, per-clip mixer, beat sync, line editor, SpeechAnalyzer, CAS source store, SRT/VTT/EDL/XML, presets, A/B, license registry, story arc, music library |
