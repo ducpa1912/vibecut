@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 import app
 import audio
+import exports as cuts
 import pipeline
 import render
 
@@ -598,3 +599,186 @@ def test_clean_job_files_keeps_source(tmp_path, monkeypatch):
     assert "renders" in removed_all
     assert job["renders"] == {}
     assert (job_dir / "source.mp4").exists()
+
+
+# ---------------------------------------------------------------- 0.6.0 features
+
+
+def test_rules_rewrite_smooth_and_viral(monkeypatch):
+    monkeypatch.setattr(audio, "REWRITE", __import__("pathlib").Path("/tmp/vibecut-rewrite-test"))
+    script = [
+        {"scene": 0, "clip": 0, "role": "hook", "duration": 3.0, "rate": 1.0, "text": "orig hook"},
+        {"scene": 1, "clip": 1, "role": "beat", "duration": 3.0, "rate": 1.0, "text": "orig beat"},
+        {"scene": 2, "clip": 2, "role": "payoff", "duration": 4.0, "rate": 1.0, "text": "orig payoff"},
+    ]
+    literals = ["the garden is finally real, and it took years",
+                "friends keep asking how",
+                "come see the whole place"]
+    smooth = audio._rules_rewrite(script, "en", "en", "smooth", literals)
+    # hook stays connector-free, just fitted to its slot
+    assert not smooth[0].startswith(("and", "but", "so", "then", "turns out"))
+    assert literals[0].startswith(smooth[0]) or smooth[0] in literals[0]
+    assert smooth[1].startswith(("and", "but", "so", "then", "turns out"))
+    viral = audio._rules_rewrite(script, "en", "en", "viral", literals)
+    assert viral[0] == "the garden is finally real"
+    assert any(cta in viral[2] for cta in audio.CTAS["en"])
+
+
+def test_adapt_script_literal_and_memo(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
+    monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
+    script = [{
+        "scene": 3, "clip": 0, "role": "beat", "duration": 3.0, "rate": 1.0,
+        "text": "original text",
+    }]
+    literal = audio.adapt_script(script, "zh", "en", "literal")
+    assert literal[0]["text"] == "L:original text"
+    assert literal[0]["rewrite"] == "literal"
+    smooth = audio.adapt_script(script, "zh", "en", "smooth")
+    assert smooth[0]["rewrite"] in {"rules", "cached"}
+    assert smooth[0]["literal"] == "L:original text"
+    assert list((tmp_path / "rewrite").rglob("*.txt"))
+
+
+def test_music_mix_expression():
+    clips = [{"duration": 2.0}, {"duration": 2.0}]
+    assert audio.music_mix_expression(clips, [{"music_db": 0}, {"music_db": 0}], -18) is None
+    expr = audio.music_mix_expression(clips, [{"music_db": 0}, {"music_db": -6}], -18)
+    assert expr and "between(t,2.000,4.000)" in expr and "-24.00" in expr
+
+
+def test_snap_clips_guard_and_apply():
+    beats = {"bpm": 120.0, "beats": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]}
+    clips = [{"duration": 1.97}, {"duration": 1.97}]
+    snapped, drift = audio.snap_clips(clips, beats)
+    assert abs(drift) <= 0.4
+    far = [{"duration": 5.0}, {"duration": 5.0}]
+    unchanged, drift_far = audio.snap_clips(far, beats)
+    assert drift_far == 0.0
+    assert unchanged[0]["duration"] == 5.0
+
+
+def test_beat_grid_click_track(tmp_path):
+    import subprocess
+
+    path = tmp_path / "click.wav"
+    subprocess.run([
+        "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+        "-i", "aevalsrc='0.6*gt(mod(t\\,0.5)\\,0.45)':d=8:s=48000",
+        "-ac", "2", str(path),
+    ], check=True)
+    grid = audio.beat_grid(path)
+    assert grid and grid["beats"]
+    spacing = grid["beats"][1] - grid["beats"][0]
+    assert 0.45 <= spacing <= 0.55  # ~120 BPM
+
+
+def test_exports_shapes():
+    scenes = [make_scene(0, 0.0, 2.0, speech="hello world"),
+              make_scene(1, 5.0, 2.0, ocr="screen text")]
+    clips = [
+        {"scene": 0, "start": 0.0, "dur": 2.0, "role": "hook"},
+        {"scene": 1, "start": 5.0, "dur": 2.0, "role": "payoff"},
+    ]
+    cues = cuts.plan_cues({}, clips, scenes)
+    assert len(cues) == 2 and cues[1]["start"] == 2.0
+    assert "00:00:00,000 --> 00:00:02,000" in cuts.srt(cues)
+    assert cuts.vtt(cues).startswith("WEBVTT")
+    edl = cuts.edl({}, clips, "source.mp4")
+    assert "TITLE: source" in edl and "00:00:05:00" in edl
+    xml = cuts.fcp7_xml({}, clips, "/tmp/source.mp4")
+    assert "<xmeml" in xml and "<in>150</in>" in xml
+
+
+def test_preset_render_options():
+    body = app.PlanBody(target=30, preset="tiktok")
+    quality, aspect, encoder, captions, audio_plan, preset, margin = app._render_options(body)
+    assert preset == "tiktok" and aspect == "9:16" and captions is True
+    assert margin == 0.12
+    body = app.PlanBody(target=30, preset="landscape")
+    _, aspect, _, captions, _, _, margin = app._render_options(body)
+    assert aspect == "16:9" and captions is False and margin == 0.07
+
+
+def test_hook_marker_and_render_key():
+    auto_plan = {"auto": True, "hook_scene": 4}
+    custom_plan = {"auto": False, "hook_scene": 9}
+    assert app._hook_marker(auto_plan) is None
+    assert app._hook_marker(custom_plan) == 9
+    assert app._render_key(15, "draft", "9:16", False, "abc", 9) == "15:draft:aabc:h9"
+
+
+def test_store_source_dedupe_and_links(tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "SOURCES", tmp_path / "sources")
+    first = tmp_path / "a.bin"
+    first.write_bytes(b"same bytes")
+    second = tmp_path / "b.bin"
+    second.write_bytes(b"same bytes")
+    stored_a = app.store_source(first, ".mp4", "a.mp4")
+    stored_b = app.store_source(second, ".mp4", "b.mp4")
+    assert stored_a == stored_b
+    assert len(list((tmp_path / "sources").iterdir())) == 1
+    job_dir = tmp_path / "jobs" / "one"
+    job_dir.mkdir(parents=True)
+    linked = app.link_source(stored_a, job_dir, ".mp4")
+    assert linked.is_file()
+    assert linked.stat().st_nlink >= 2
+    job_two = tmp_path / "jobs" / "two"
+    job_two.mkdir(parents=True)
+    app.link_source(stored_a, job_two, ".mp4")
+    assert stored_a.stat().st_nlink >= 3
+
+
+def test_arc_order_hook_first_payoff_last():
+    scenes = [
+        make_scene(0, 0.0, 3.0, motion_score=90),
+        make_scene(1, 3.0, 3.0, motion_score=10, tags=["subject"]),
+        make_scene(2, 6.0, 3.0, motion_score=60, speech="proof line"),
+        make_scene(3, 9.0, 3.0, motion_score=20),
+    ]
+    clips = [
+        {"scene": 0, "dur": 3.0, "role": "hook"},
+        {"scene": 3, "dur": 3.0, "role": "beat"},
+        {"scene": 1, "dur": 3.0, "role": "beat"},
+        {"scene": 2, "dur": 3.0, "role": "payoff"},
+    ]
+    ordered = pipeline.arc_order(clips, scenes)
+    assert ordered[0]["role"] == "hook"
+    assert ordered[-1]["role"] == "payoff"
+    middle = [clip["scene"] for clip in ordered[1:-1]]
+    assert middle.index(1) < middle.index(3)  # calm setup before energetic
+
+
+def test_license_strict_mode(tmp_path, monkeypatch):
+    assets = tmp_path / "assets"
+    track = assets / "music" / "bed.wav"
+    track.parent.mkdir(parents=True)
+    track.write_bytes(b"x")
+    monkeypatch.setattr(audio, "ASSETS", assets)
+    monkeypatch.setenv("VIBECUT_AUDIO_LICENSE", "strict")
+    with pytest.raises(audio.AudioError):
+        audio.ensure_licensed([track])
+    sidecar = track.with_suffix(".wav.license.json")
+    sidecar.write_text('{"license": "cc0"}')
+    used = audio.ensure_licensed([track])
+    assert used[0]["license"] == "cc0"
+    monkeypatch.delenv("VIBECUT_AUDIO_LICENSE")
+
+
+def test_save_generated_asset(tmp_path, monkeypatch):
+    directory = tmp_path / "generated"
+    monkeypatch.setitem(audio.MUSIC_DIRS, "generated", directory)
+    source = tmp_path / "cache.wav"
+    source.write_bytes(b"RIFF" + b"0" * 512)
+    saved = audio.save_generated_asset(source, "stabilityai/stable-audio-open-small", "calm bed", 20.0)
+    assert saved.is_file()
+    license_file = saved.with_suffix(".wav.license.json")
+    assert license_file.is_file()
+    meta = json.loads(license_file.read_text())
+    assert meta["license"] == "generated"
+    assert "calm-bed" in saved.name
+
+
+def test_transcribe_apple_none_without_helper(monkeypatch):
+    monkeypatch.setattr(pipeline, "_apple_transcribe_helper", lambda: None)
+    assert pipeline.transcribe_apple(__import__("pathlib").Path("/tmp/none.wav"), __import__("pathlib").Path("/tmp"), "en") is None

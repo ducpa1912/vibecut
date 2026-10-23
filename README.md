@@ -4,6 +4,8 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine. No account, no cloud upload, no watermark.
 
+**v0.6.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+
 ## Run
 
 ```bash
@@ -44,7 +46,10 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - **Draft** renders 540×960 fast for feel checks; **Render final** does 1080×1920. **All 15/30/60** queues every length.
 - **Aspect** switches between 9:16, 4:5, 1:1 and 16:9. **Captions** burns OCR/speech text as styled overlays.
 - **Edit cut** lets you reorder, trim and remove beats. **Save variant** stores that edit; variant chips reload or delete it.
-- **Audio** panel: keep the original sound, replace the voice, dub over the original bed (Demucs), fully replace voice + music, or add music only. Pick the voice engine, target language, music source and mood; **Test voice** plays a sample.
+- **Audio** panel: keep the original sound, replace the voice, dub over the original bed (Demucs), fully replace voice + music, or add music only. Pick the voice engine, target language, **script style** (faithful / smooth / viral), music source and mood; **Test voice** plays a sample.
+- **Voice script** preview lists the deduped lines with role, emotion and fit flags. Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot, with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
+- **Per-clip mixer** below the script: voice and music dB per beat. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
+- **Platform presets** (TikTok, Reels, Shorts, Square, Landscape) set aspect, captions and safe-zone caption margin. **A/B hooks** queues the three strongest hooks at once. **Story arc order** reorders beats as setup → proof → payoff.
 - Music sources: your own track, CC0 library, Stable Audio Open Small or 1.0 with auto mood from the beats.
 - Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs with your API key.
 - Translation runs per render: Apple Translation framework, Ollama, or the offline Argos package. If no engine is ready, the panel offers **Offline translate setup (~250 MB)**.
@@ -53,7 +58,9 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - **CC · transcript** appears when Whisper ran; open it for timestamped lines with search, click a line to copy it.
 - Click any scene to inspect scores, OCR, speech and crop, then **Use as hook** to re-plan.
 - Long-video scenes outside the shortlist are read on demand when you click them.
-- Renders are cached per plan + quality + aspect + captions. **Render again** forces a fresh encode. Cancel stops a running render.
+- Renders are cached per plan + quality + aspect + captions + audio mix; an overridden hook gets its own slot. **Render again** forces a fresh encode. Cancel stops a running render.
+- **SRT / VTT / EDL / XML** buttons export the caption file or the cut list for Resolve and Premiere.
+- Speech: `transcribe_engine` is `auto` by default, which tries the on-device Apple SpeechAnalyzer (macOS 26, 0 MB) and falls back to mlx-whisper. Pick the speech language next to the toggle.
 
 ## CLI
 
@@ -66,6 +73,7 @@ python3 cli.py watch ./inbox --out ./reels
 python3 cli.py jobs
 python3 cli.py clean --all                 # delete work files, source stays
 python3 cli.py clean --job <id> --profile renders
+python3 cli.py sources [--gc]              # content-addressed source store
 python3 cli.py audit                       # what is installed and how big
 ```
 
@@ -125,9 +133,11 @@ trim, so they never overlap the next line. Preview the result under **Voice
 script** in the audio panel.
 
 Voice lines are cached in `data/cache/voice`, Demucs stems in
-`data/cache/stems`, generated music in `data/cache/music`. Render files carry an
-audio signature suffix so different voice/music mixes never overwrite each
-other.
+`data/cache/stems`, generated music in `data/cache/music` and kept for reuse in
+`assets/music/generated`. Render files carry an audio signature and hook suffix
+so different mixes and hooks never overwrite each other. With
+`VIBECUT_AUDIO_LICENSE=strict`, every music asset must ship a
+`.license.json` sidecar; used assets are recorded on the render.
 
 Full design notes and the free/paid tool list: [`docs/audio-replacement.md`](docs/audio-replacement.md).
 
@@ -163,6 +173,8 @@ Full design notes and the free/paid tool list: [`docs/audio-replacement.md`](doc
 | `VIBECUT_JOB_CLEAN_DAYS` | `0` (off) | Auto-delete job work files after this |
 | `VIBECUT_KEEP_RENDERS` | `1` | Newest finals kept per target/aspect/captions/mix |
 | `VIBECUT_KEEP_DRAFTS` | `0` | Keep drafts once a final exists |
+| `VIBECUT_SOURCES_GC_DAYS` | `30` | Source store GC age for unreferenced uploads |
+| `VIBECUT_AUDIO_LICENSE` | `normal` | `strict` blocks music/voice without license metadata |
 | `VIBECUT_TOKEN` | unset | Require this bearer token for the API |
 | `VIBECUT_ELEVENLABS_API_KEY` | unset | ElevenLabs voice over |
 | `VIBECUT_LLM_URL` | unset | Optional Ollama endpoint for hook ranking |
@@ -188,7 +200,13 @@ assets/music/           library + cc0 track folders
 static/                 plain HTML/CSS/JS UI
 tests/                  fast unit tests (no ffmpeg)
 data/jobs/<id>/         job.json, source, thumbs, transcript, audio, renders
+exports.py              SRT, VTT, EDL and FCP7 XML cut exports
+tools/transcribe_apple.swift  on-device SpeechAnalyzer transcription (macOS 26)
+data/sources/<hash>/    content-addressed uploads, hardlinked into jobs
+assets/music/generated/ AI beds kept as reusable library tracks
 data/cache/segments/    content-addressed segment cache
+data/cache/beats/       BPM and beat grids per track
+data/cache/rewrite/     rewrite memo per line, style and provider
 data/cache/voice/       cached voice lines
 data/cache/stems/       cached Demucs instrumental beds
 data/cache/music/       cached AI music beds

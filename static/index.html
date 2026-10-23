@@ -186,6 +186,7 @@
           <span id="plan-badge" class="badge">auto hook</span>
           <button id="reset-hook" class="text-btn" hidden>Reset hook</button>
           <button id="edit-cut" class="text-btn">Edit cut</button>
+          <label class="caption-check"><input id="arc-order" type="checkbox"> Story arc order</label>
         </div>
         <div id="timeline" class="timeline"></div>
         <p id="plan-why" class="plan-why"></p>
@@ -202,6 +203,15 @@
           <button id="render-draft" class="ghost small">Draft</button>
           <button id="render-all" class="ghost small">All 15/30/60</button>
           <button id="render-cancel" class="ghost small" hidden>Cancel</button>
+          <select id="preset-select" class="ghost small" aria-label="Platform preset">
+            <option value="">Custom</option>
+            <option value="tiktok">TikTok</option>
+            <option value="reels">Reels</option>
+            <option value="shorts">Shorts</option>
+            <option value="square">Square</option>
+            <option value="landscape">Landscape</option>
+          </select>
+          <button id="render-ab" class="ghost small">A/B hooks</button>
           <select id="aspect-select" class="ghost small" aria-label="Aspect ratio">
             <option value="9:16">9:16</option>
             <option value="4:5">4:5</option>
@@ -237,6 +247,14 @@
             <label class="audio-field">
               <span>Translate engine</span>
               <select id="audio-provider"></select>
+            </label>
+            <label class="audio-field">
+              <span>Script style</span>
+              <select id="audio-style">
+                <option value="literal">Faithful (literal)</option>
+                <option value="smooth">Smooth rewrite</option>
+                <option value="viral">Viral rewrite</option>
+              </select>
             </label>
             <label class="audio-field">
               <span>Voice engine</span>
@@ -275,6 +293,9 @@
             <label class="audio-field checkbox">
               <input id="audio-duck" type="checkbox" checked> Duck under voice
             </label>
+            <label class="audio-field checkbox">
+              <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
+            </label>
             <div class="audio-actions">
               <button id="audio-preview" class="ghost small" type="button">Test voice</button>
               <button id="audio-translate-install" class="ghost small" type="button" hidden>Offline translate setup</button>
@@ -282,6 +303,7 @@
             </div>
           </div>
           <div id="audio-script" class="audio-script"></div>
+          <div id="audio-mix" class="audio-script" hidden></div>
         </details>
 
         <div id="player-wrap" class="player-wrap" hidden>
@@ -289,6 +311,12 @@
           <div class="player-meta">
             <div class="player-copy"><span id="reel-duration"></span><span id="reel-size"></span></div>
             <a id="download" class="primary small" download>Download <span class="arrow">↓</span></a>
+            <div class="export-links">
+              <button id="export-srt" class="ghost small" type="button">SRT</button>
+              <button id="export-vtt" class="ghost small" type="button">VTT</button>
+              <button id="export-edl" class="ghost small" type="button">EDL</button>
+              <button id="export-xml" class="ghost small" type="button">XML</button>
+            </div>
           </div>
         </div>
       </section>

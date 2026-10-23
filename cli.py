@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
 import time
 import uuid
@@ -251,6 +253,11 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--profile", choices=("workfiles", "renders", "all"),
                        default="workfiles")
 
+    sources = add("sources", help="Show or GC the content-addressed source store.")
+    sources.add_argument("--gc", action="store_true", help="Remove unreferenced, old entries.")
+    sources.add_argument("--days", type=float, default=None,
+                         help="Age before GC (default VIBECUT_SOURCES_GC_DAYS or 30).")
+
     audit = add("audit", help="Show everything this project installed and its size.")
     audit.add_argument("--pair", nargs=2, action="append", default=None,
                        metavar=("SRC", "TGT"),
@@ -380,6 +387,26 @@ def _audit(data: Path, pairs: list[list[str]]) -> None:
     ):
         print(f"  {label:14} {_mb(_dir_size(path)):>12}  {path}")
 
+    store = data / "sources"
+    if store.is_dir():
+        entries = 0
+        total = 0
+        referenced = 0
+        for directory in store.iterdir():
+            files = [
+                item for item in directory.iterdir()
+                if item.is_file() and item.name.startswith("source")
+            ] if directory.is_dir() else []
+            if not files:
+                continue
+            entries += 1
+            total += files[0].stat().st_size
+            if files[0].stat().st_nlink > 1:
+                referenced += 1
+        if entries:
+            print(f"  {'source store':14} {_mb(total):>12}  "
+                  f"{entries} entries, {referenced} in use")
+
     hub = Path.home() / ".cache" / "huggingface" / "hub"
     if hub.is_dir():
         for model in sorted(hub.glob("models--*")):
@@ -462,6 +489,44 @@ def main(argv: list[str] | None = None) -> int:
             removed = vibecut_app.clean_job_files(job, args.profile)
             _save_job(data, job)
             print(f"{job['id']}  removed: {', '.join(removed) or 'nothing'}")
+        return 0
+
+    if args.command == "sources":
+        sources_dir = data / "sources"
+        rows = []
+        if sources_dir.is_dir():
+            for directory in sorted(sources_dir.iterdir()):
+                if not directory.is_dir():
+                    continue
+                files = [
+                    item for item in directory.iterdir()
+                    if item.is_file() and item.name.startswith("source")
+                ]
+                if not files:
+                    continue
+                stored = files[0]
+                rows.append((directory.name, stored.stat().st_size, stored.stat().st_nlink))
+        for ident, size, links in rows:
+            print(f"{ident}  {size / 1e6:8.1f} MB  links={links}")
+        print(f"total {sum(row[1] for row in rows) / 1e6:.1f} MB")
+        if args.gc:
+            days = args.days if args.days is not None else float(
+                os.environ.get("VIBECUT_SOURCES_GC_DAYS", "30") or 30,
+            )
+            cutoff = time.time() - days * 86400
+            removed = 0
+            for ident, _size, links in rows:
+                directory = sources_dir / ident
+                if links > 1:
+                    continue
+                try:
+                    if directory.stat().st_mtime >= cutoff:
+                        continue
+                except OSError:
+                    continue
+                shutil.rmtree(directory, ignore_errors=True)
+                removed += 1
+            print(f"gc removed {removed}")
         return 0
 
     if args.command == "audit":

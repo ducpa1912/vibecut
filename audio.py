@@ -26,6 +26,7 @@ ASSETS = ROOT / "assets"
 MUSIC_DIRS = {
     "library": ASSETS / "music" / "library",
     "cc0": ASSETS / "music" / "cc0",
+    "generated": ASSETS / "music" / "generated",
 }
 VOICE_DIRS = {
     "piper": ROOT / "data" / "voices" / "piper",
@@ -959,6 +960,7 @@ def list_music(source: str) -> list[dict]:
             "name": path.stem,
             "moods": moods,
             "size": path.stat().st_size,
+            "license": asset_license(path),
         })
     return tracks
 
@@ -1003,6 +1005,20 @@ def pick_music(tracks: list[dict], moods: list[str]) -> dict | None:
     return tracks[0]
 
 
+def resolve_music_track(scenes: list[dict], clips: list[dict], music_plan: dict) -> Path | None:
+    """Pick one library/CC0/generated track without generating anything."""
+    source = str(music_plan.get("source") or "none")
+    if source not in MUSIC_DIRS:
+        return None
+    track_id = str(music_plan.get("track") or "")
+    if track_id and Path(track_id).is_file():
+        return Path(track_id)
+    tracks = list_music(source)
+    moods = music_plan.get("moods") or scene_moods(scenes, clips)
+    picked = pick_music(tracks, moods)
+    return Path(picked["id"]) if picked else None
+
+
 def music_prompt(moods: list[str], target: float) -> str:
     primary = moods[0] if moods else "ambient"
     return (
@@ -1035,18 +1051,28 @@ def generate_music(
     ], timeout=3600, cancel_event=cancel_event)
     if not target.is_file() or target.stat().st_size <= 1024:
         raise AudioError("Stable Audio produced no file.")
+    save_generated_asset(target, model, prompt, seconds)
     return target
 
 
 # ---------------------------------------------------------------- mix
 
 
-def _music_loop(path: Path, total: float, gain_db: float, tmp: Path) -> Path:
+def _music_loop(
+    path: Path,
+    total: float,
+    gain_db: float,
+    tmp: Path,
+    expr: str | None = None,
+    offset: float = 0.0,
+) -> Path:
     output = tmp / "music_trim.wav"
+    seek = ["-ss", f"{offset:.3f}"] if offset > 0.01 else []
+    audio_filter = expr or f"volume={gain_db}dB"
     _run([
-        _ffmpeg(), "-y", "-v", "error", "-stream_loop", "-1", "-i", str(path),
+        _ffmpeg(), "-y", "-v", "error", *seek, "-stream_loop", "-1", "-i", str(path),
         "-t", f"{total:.6f}", "-ar", "48000", "-ac", "2",
-        "-af", f"volume={gain_db}dB",
+        "-af", audio_filter,
         "-c:a", "pcm_s16le", str(output),
     ])
     return output
@@ -1189,6 +1215,7 @@ def build_script(
         lines.append({
             "scene": clip.get("scene"),
             "clip": clip_index,
+            "role": clip.get("role") or "beat",
             "duration": round(duration, 3),
             "text": fitted,
             "original": text,
@@ -1279,7 +1306,7 @@ def _voice_track(
             parts.append(f"afade=t=out:st={max(0.0, usable - fade):.3f}:d={fade:.3f}")
         delay = int(offset * 1000)
         parts.append(f"adelay={delay}|{delay}")
-        parts.append(f"volume={gain_db}dB")
+        parts.append(f"volume={float(line.get('gain_db', gain_db)):.2f}dB")
         filters.append(f"[{index}:a]{','.join(parts)}[v{index}]")
     filters.append(
         "".join(f"[v{index}]" for index in range(len(placed)))
@@ -1378,31 +1405,27 @@ def build_bed(
                 "The cut has no speech lines to voice over. Turn on Transcribe first."
             )
 
-        if target and target != source_lang:
-            progress(0.87, f"Translating {len(script)} lines → {target}")
-            cache_path = job_dir / "audio" / f"translation.{target}.json"
-            cache: dict = {}
-            if cache_path.is_file():
-                try:
-                    cache = json.loads(cache_path.read_text())
-                except (OSError, json.JSONDecodeError):
-                    cache = {}
-            pending = [line for line in script if not cache.get(str(line["scene"]))]
-            if pending:
-                provider = str(translate_plan.get("provider") or "auto")
-                translated = translate_lines(
-                    [line["text"] for line in pending], source_lang, target, provider,
-                )
-                for line, text in zip(pending, translated):
-                    cache[str(line["scene"])] = text
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                cache_path.write_text(
-                    json.dumps(cache, ensure_ascii=False, indent=1),
-                )
-            for line in script:
-                line["text"] = str(cache.get(str(line["scene"])) or line["text"])
-            script = refit_script(script, base_rate)
+        overrides = audio_plan.get("script_overrides") or {}
 
+        def apply_overrides(lines: list[dict]) -> None:
+            if not isinstance(overrides, dict):
+                return
+            for line in lines:
+                value = overrides.get(str(line.get("scene")))
+                if isinstance(value, str) and value.strip():
+                    line["text"] = clean_line(value)
+                    line["overridden"] = True
+
+        apply_overrides(script)
+        mode = str(translate_plan.get("mode") or "literal")
+        provider = str(translate_plan.get("provider") or "auto")
+        progress(0.87, f"Adapting {len(script)} lines → {target or source_lang} ({mode})")
+        script = adapt_script(script, source_lang, target, mode, provider)
+        apply_overrides(script)
+        script = refit_script(script, base_rate)
+
+        clip_mix = audio_plan.get("clip_mix") or []
+        base_voice_gain = float(voice_plan.get("gain_db") or 0.0)
         cache_dir = CACHE / "voice"
         prepared: list[dict] = [None] * len(script)  # type: ignore[list-item]
         engine_name = str(voice_plan.get("engine"))
@@ -1438,7 +1461,10 @@ def build_bed(
             try:
                 for future in as_completed(futures):
                     index, path = future.result()
-                    prepared[index] = {**script[index], "path": path}
+                    clip_index = int(script[index].get("clip") or 0)
+                    entry = clip_mix[clip_index] if clip_index < len(clip_mix) and isinstance(clip_mix[clip_index], dict) else {}
+                    gain = base_voice_gain + float((entry or {}).get("voice_db") or 0.0)
+                    prepared[index] = {**script[index], "path": path, "gain_db": gain}
                     completed += 1
                     progress(
                         0.88 + 0.03 * (completed / max(1, len(script))),
@@ -1484,17 +1510,8 @@ def build_bed(
         )
     elif music_plan.get("source") and music_plan.get("source") != "none":
         progress(0.90, "Preparing music bed")
-        chosen: Path | None = None
-        if music_plan.get("source") in MUSIC_DIRS:
-            track_id = str(music_plan.get("track") or "")
-            if track_id and Path(track_id).is_file():
-                chosen = Path(track_id)
-            else:
-                tracks = list_music(str(music_plan["source"]))
-                moods = music_plan.get("moods") or scene_moods(scenes, clips)
-                picked = pick_music(tracks, moods)
-                chosen = Path(picked["id"]) if picked else None
-        elif music_plan.get("source") in {"stable-small", "stable-1.0"}:
+        chosen: Path | None = resolve_music_track(scenes, clips, music_plan)
+        if chosen is None and music_plan.get("source") in {"stable-small", "stable-1.0"}:
             model = (
                 "stabilityai/stable-audio-open-small"
                 if music_plan["source"] == "stable-small"
@@ -1507,8 +1524,19 @@ def build_bed(
                 )
             chosen = generate_music(model, prompt, min(47.0, max(8.0, total)), cancel_event)
         if chosen and chosen.is_file():
+            base_music_gain = float(music_plan.get("gain_db") or -18.0)
+            beat_offset = 0.0
+            if audio_plan.get("beat_sync"):
+                grid = beat_grid(chosen)
+                if grid and grid.get("beats"):
+                    beat_offset = float(grid["beats"][0])
+                    audio_plan["_beat_bpm"] = grid.get("bpm")
+            expr = music_mix_expression(
+                clips, audio_plan.get("clip_mix"), base_music_gain,
+            )
+            audio_plan["_used_assets"] = ensure_licensed([chosen])
             music_path = _music_loop(
-                chosen, total, float(music_plan.get("gain_db") or -18.0), tmp,
+                chosen, total, base_music_gain, tmp, expr, beat_offset,
             )
         elif music_plan.get("source") in MUSIC_DIRS:
             folder = MUSIC_DIRS[str(music_plan["source"])]
@@ -1604,3 +1632,438 @@ def prune_cache(max_gb: float = 2.0, days: float = 14.0) -> dict:
             except OSError:
                 continue
     return {"removed": removed, "freed_mb": round(freed / 1e6, 1)}
+
+
+# ---------------------------------------------------------------- rewrite styles
+
+REWRITE = CACHE / "rewrite"
+REWRITE_VERSION = 2
+
+CONNECTORS = {
+    "en": ["and", "but", "so", "then", "turns out"],
+    "vi": ["và", "nhưng", "nên", "rồi", "hoá ra"],
+    "es": ["y", "pero", "así que", "entonces"],
+    "fr": ["et", "mais", "donc", "alors"],
+    "de": ["und", "aber", "also", "dann"],
+    "pt": ["e", "mas", "então", "aí"],
+    "ja": ["そして", "でも", "だから", "すると"],
+    "ko": ["그리고", "하지만", "그래서", "그러면"],
+    "zh": ["然后", "但是", "所以", "结果"],
+}
+
+CTAS = {
+    "en": ["Follow for more.", "Save this one.", "Try it yourself."],
+    "vi": ["Theo dõi để xem thêm.", "Lưu lại nhé.", "Thử xem sao."],
+    "es": ["Sígueme para más.", "Guarda esto.", "Pruébalo tú mismo."],
+    "fr": ["Abonne-toi pour plus.", "Garde ça.", "Essaie toi-même."],
+    "de": ["Folge für mehr.", "Speicher das.", "Probier es selbst."],
+    "pt": ["Siga para mais.", "Salve este.", "Teste você mesmo."],
+    "ja": ["続きはフォローで。", "保存してね。", "試してみて。"],
+    "ko": ["더 보려면 팔로우.", "저장해 두세요.", "직접 해보세요."],
+    "zh": ["关注看更多。", "先收藏。", "自己试试。"],
+}
+
+
+def _facts(texts: list[str]) -> set[str]:
+    facts: set[str] = set()
+    for value in texts:
+        for token in re.findall(r"[0-9]+(?:[.,][0-9]+)?", str(value or "")):
+            facts.add(token.strip(".,"))
+    return facts
+
+
+def _rewrite_file(source: str, target: str, mode: str, text: str) -> Path:
+    key = hashlib.sha1(
+        f"v{REWRITE_VERSION}|{source}|{target}|{mode}|{text}".encode("utf-8"),
+    ).hexdigest()[:24]
+    return REWRITE / key[:2] / f"{key}.txt"
+
+
+def _rewrite_memo(source: str, target: str, mode: str, text: str) -> str | None:
+    path = _rewrite_file(source, target, mode, text)
+    if not path.is_file():
+        return None
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def _rewrite_put(source: str, target: str, mode: str, text: str, value: str) -> None:
+    if not value:
+        return
+    path = _rewrite_file(source, target, mode, text)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _dedupe_lead(text: str, previous: str) -> str:
+    if not previous:
+        return text
+    first = text.split(" ", 1)[0].lower().rstrip(",.")
+    if first in {"and", "but", "so", "then"} and " " in text:
+        return text.split(" ", 1)[1]
+    return text
+
+
+def grow(text: str, seconds: float, rate: float, mode: str, role: str, connector: str, cta: str) -> str:
+    """Shape one rewritten line to the slot and the style."""
+    value = clean_line(text)
+    budget = max(0.6, float(seconds or 0.0) - 0.25)
+    if mode == "viral" and role == "hook":
+        budget *= 0.8
+        for separator in ("。", ". ", "! ", "? ", "；", "; ", "，", ", "):
+            if separator in value:
+                value = value.split(separator)[0]
+                break
+        value = value.strip(" ,，。.!?！？;；:：")
+    value = trim_to_seconds(value, budget, rate)
+    if mode == "smooth" and value:
+        stripped = value[0].lower() + value[1:] if value[:1].isupper() and not CJK_RE.search(value) else value
+        value = f"{connector} {stripped}"
+        value = trim_to_seconds(value, budget, rate)
+    if mode == "viral":
+        value = value.replace("。", ".").strip()
+        lowered = value.lower()
+        if role == "payoff" and cta and cta.lower() not in lowered:
+            candidate = f"{value} {cta}".strip()
+            if estimate_seconds(candidate, rate) <= budget:
+                value = candidate
+    return value
+
+
+def _rules_rewrite(
+    script: list[dict], source: str, target: str, mode: str, literal: list[str],
+) -> list[str]:
+    connector_set = CONNECTORS.get(target, CONNECTORS["en"])
+    cta_set = CTAS.get(target, CTAS["en"])
+    out: list[str] = []
+    for index, line in enumerate(script):
+        value = _dedupe_lead(literal[index], out[index - 1] if out else "")
+        grow_mode = "literal"
+        if mode == "viral":
+            grow_mode = "viral"
+        elif mode == "smooth" and index > 0:
+            grow_mode = "smooth"
+        value = grow(
+            value,
+            float(line.get("duration") or 0.0),
+            float(line.get("rate") or 1.0),
+            grow_mode,
+            str(line.get("role") or "beat"),
+            connector_set[index % len(connector_set)],
+            cta_set[index % len(cta_set)],
+        )
+        out.append(value)
+    return out
+
+
+def _rewrite_ollama(
+    script: list[dict], source: str, target: str, mode: str, literal: list[str],
+) -> list[str] | None:
+    url = os.environ.get("VIBECUT_LLM_URL")
+    if not url or mode == "literal":
+        return None
+    model = os.environ.get("VIBECUT_LLM_MODEL", "llama3.1")
+    rows = [
+        {
+            "beat": index,
+            "role": str(line.get("role") or "beat"),
+            "seconds": round(float(line.get("duration") or 0.0) - 0.25, 2),
+            "literal": literal[index],
+        }
+        for index, line in enumerate(script)
+    ]
+    style = {
+        "smooth": "natural, flowing, conversational, connected sentences",
+        "viral": "punchy short-video style: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
+    }.get(mode, "faithful")
+    prompt = (
+        f"Rewrite this {len(rows)}-beat short video voice over into {_language_name(target)}. "
+        f"Style: {style}. Keep every fact and number. Do not invent facts. "
+        "Each line must fit its seconds budget when spoken at normal pace. "
+        "Reply with a JSON array of strings only, same order and count.\n"
+        + json.dumps(rows, ensure_ascii=False)
+    )
+    payload = json.dumps({
+        "model": model, "prompt": prompt, "stream": False,
+        "options": {"temperature": 0.6},
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=240) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    body = str(data.get("response") or data.get("message", {}).get("content") or "")
+    match = re.search(r"\[.*\]", body, re.S)
+    if not match:
+        return None
+    try:
+        values = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(values, list) or len(values) != len(script):
+        return None
+    fits = all(
+        estimate_seconds(str(value), float(script[index].get("rate") or 1.0))
+        <= max(1.0, float(script[index].get("duration") or 1.0))
+        for index, value in enumerate(values)
+    )
+    if not fits:
+        return None
+    return [str(value).strip() for value in values]
+
+
+def adapt_script(
+    script: list[dict],
+    source_lang: str,
+    target_lang: str,
+    mode: str = "smooth",
+    provider: str = "auto",
+) -> list[dict]:
+    """Translate, then rewrite for the slot and the short-video style.
+
+    The literal translation stays as the meaning reference; rules or an LLM
+    reshape it. Numbers found in the rewrite must exist in the source, so the
+    adapted script cannot invent facts.
+    """
+    source_lang = (source_lang or "en").split("-")[0]
+    target_lang = (target_lang or source_lang).split("-")[0]
+    mode = mode if mode in {"literal", "smooth", "viral"} else "smooth"
+    lines = [dict(line) for line in script]
+    if not lines:
+        return lines
+    originals = [str(line.get("text") or "") for line in lines]
+    if target_lang != source_lang:
+        literals = translate_lines(originals, source_lang, target_lang)
+    else:
+        literals = list(originals)
+    literal_values = list(literals)
+
+    used = "literal"
+    if mode != "literal":
+        missing: list[int] = []
+        cached: dict[int, str] = {}
+        for index, text in enumerate(literals):
+            hit = _rewrite_memo(source_lang, target_lang, mode, text)
+            if hit:
+                cached[index] = hit
+            else:
+                missing.append(index)
+        if cached:
+            used = "cached"
+        if missing:
+            subset = [lines[index] for index in missing]
+            subset_literal = [literals[index] for index in missing]
+            rewritten: list[str] | None = None
+            order = [provider] if provider and provider not in ("auto", "") else ["llm", "rules"]
+            for candidate in order:
+                if candidate in {"llm", "ollama", "apple"}:
+                    rewritten = _rewrite_ollama(subset, source_lang, target_lang, mode, subset_literal)
+                elif candidate == "rules":
+                    rewritten = _rules_rewrite(subset, source_lang, target_lang, mode, subset_literal)
+                if rewritten:
+                    used = "llm" if candidate in {"llm", "ollama", "apple"} else candidate
+                    break
+            if not rewritten:
+                rewritten = subset_literal
+            for offset_index, index in enumerate(missing):
+                value = rewritten[offset_index]
+                cached[index] = value
+                _rewrite_put(source_lang, target_lang, mode, literals[index], value)
+        literals = [cached.get(index, literals[index]) for index in range(len(lines))]
+
+    source_facts = _facts(originals)
+    for index, line in enumerate(lines):
+        candidate = literals[index]
+        line_facts = _facts([candidate])
+        if line_facts - (source_facts | _facts([originals[index]])):
+            candidate = literals[index] if mode == "literal" else trim_to_seconds(
+                originals[index] if target_lang == source_lang else literals[index],
+                max(0.6, float(line.get("duration") or 0.0) - 0.25),
+                float(line.get("rate") or 1.0),
+            )
+        line["text"] = candidate
+        line["literal"] = literal_values[index]
+        line["mode"] = mode
+        line["rewrite"] = used
+    return lines
+
+
+# ---------------------------------------------------------------- assets + licenses
+
+
+def asset_license(path: Path) -> dict | None:
+    sidecar = Path(str(path) + ".license.json")
+    if sidecar.is_file():
+        try:
+            return json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"license": "unknown"}
+    mapping = path.parent / "LICENSE.json"
+    if mapping.is_file():
+        try:
+            data = json.loads(mapping.read_text(encoding="utf-8"))
+            entry = data.get(path.name)
+            if entry:
+                return entry if isinstance(entry, dict) else {"license": str(entry)}
+        except (OSError, json.JSONDecodeError):
+            pass
+    if (path.parent / "LICENSE.txt").is_file():
+        return {"license": "file"}
+    return None
+
+
+def ensure_licensed(paths: list[Path]) -> list[dict]:
+    strict = os.environ.get("VIBECUT_AUDIO_LICENSE", "").lower() == "strict"
+    used: list[dict] = []
+    missing: list[str] = []
+    for path in paths:
+        meta = asset_license(path)
+        try:
+            shown = str(path.relative_to(ASSETS))
+        except ValueError:
+            shown = path.name
+        used.append({"path": shown, "license": (meta or {}).get("license") or "unknown"})
+        if not meta:
+            missing.append(path.name)
+    if strict and missing:
+        raise AudioError(
+            "Strict license mode: add a .license.json for " + ", ".join(missing)
+        )
+    return used
+
+
+def _slug(text: str, limit: int = 36) -> str:
+    value = re.sub(r"[^a-zA-Z0-9]+", "-", str(text or "")).strip("-").lower()
+    return (value or "bed")[:limit]
+
+
+def save_generated_asset(source: Path, model: str, prompt: str, seconds: float) -> Path:
+    """Keep an AI bed as a reusable library track, not only a render cache."""
+    directory = MUSIC_DIRS["generated"]
+    directory.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(
+        f"{model}|{prompt}|{seconds:.0f}|{source.stat().st_size}".encode("utf-8"),
+    ).hexdigest()[:8]
+    out = directory / f"{_slug(prompt)}-{digest}.wav"
+    if not out.is_file():
+        shutil.copy2(source, out)
+    sidecar = Path(str(out) + ".license.json")
+    if not sidecar.is_file():
+        sidecar.write_text(json.dumps({
+            "license": "generated",
+            "model": model,
+            "prompt": prompt,
+            "seconds": round(float(seconds), 1),
+            "created": round(time.time(), 3),
+        }, ensure_ascii=False, indent=1), encoding="utf-8")
+    return out
+
+
+# ---------------------------------------------------------------- beats
+
+
+BEATS = CACHE / "beats"
+
+
+def beat_grid(path: Path) -> dict | None:
+    """BPM and beat times for a music file, cached. Uses librosa when present."""
+    if not _module("librosa") or not path.is_file():
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = hashlib.sha1(f"{path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()[:24]
+    cached = BEATS / f"{key}.json"
+    if cached.is_file():
+        try:
+            return json.loads(cached.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    try:
+        import librosa  # noqa: PLC0415
+
+        samples, rate = librosa.load(str(path), mono=True, sr=22050)
+        tempo, beats = librosa.beat.beat_track(y=samples, sr=rate, units="time")
+        bpm = float(tempo[0] if hasattr(tempo, "__len__") else tempo)
+        grid = {
+            "bpm": round(bpm, 2),
+            "beats": [round(float(value), 3) for value in beats][:4000],
+        }
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_text(json.dumps(grid), encoding="utf-8")
+    except OSError:
+        pass
+    return grid
+
+
+def snap_clips(
+    clips: list[dict],
+    grid: dict | None,
+    max_shift: float = 0.25,
+    min_duration: float = 0.5,
+    max_drift: float = 0.4,
+) -> tuple[list[dict], float]:
+    """Move cut points onto nearby beats by trimming the previous clip."""
+    if not grid or not grid.get("beats") or len(clips) < 2:
+        return clips, 0.0
+    beats = grid["beats"]
+    out = [dict(clip) for clip in clips]
+    drift = 0.0
+    boundary = 0.0
+    for index in range(len(out) - 1):
+        boundary += float(out[index].get("duration") or 0.0)
+        target = min(beats, key=lambda beat: abs(beat - boundary))
+        delta = target - boundary
+        if abs(delta) > max_shift:
+            continue
+        new_duration = float(out[index]["duration"]) + delta
+        if new_duration < min_duration:
+            continue
+        if abs(drift + delta) > max_drift:
+            continue
+        out[index]["duration"] = round(new_duration, 3)
+        drift += delta
+        boundary = target
+    return out, round(drift, 3)
+
+
+def music_mix_expression(
+    clips: list[dict],
+    mix: list[dict] | None,
+    base_db: float,
+) -> str | None:
+    """Piecewise volume for per-clip music gain, or None when flat."""
+    if not mix:
+        return None
+    offsets: list[float] = []
+    running = 0.0
+    for clip in clips:
+        offsets.append(running)
+        running += float(clip.get("duration") or 0.0)
+    expression = f"{base_db:.2f}"
+    changed = False
+    for index in range(len(clips) - 1, -1, -1):
+        entry = mix[index] if index < len(mix) and isinstance(mix[index], dict) else {}
+        delta = float(entry.get("music_db") or 0.0)
+        start = offsets[index]
+        end = start + float(clips[index].get("duration") or 0.0)
+        value = base_db + delta
+        if abs(delta) > 0.01:
+            changed = True
+        expression = f"if(between(t,{start:.3f},{end:.3f}),{value:.2f},{expression})"
+    if not changed:
+        return None
+    return f"volume=volume='{expression}':eval=frame"

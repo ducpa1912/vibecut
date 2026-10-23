@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import wave
 from pathlib import Path
@@ -598,6 +599,83 @@ def hook_text_score(text: str) -> float:
     return min(1.0, hits / 3.2)
 
 
+SPEECH_LOCALES = {
+    "zh": "zh-CN", "en": "en-US", "ja": "ja-JP", "ko": "ko-KR",
+    "es": "es-ES", "fr": "fr-FR", "de": "de-DE", "pt": "pt-BR",
+    "it": "it-IT", "ru": "ru-RU", "vi": "vi-VN", "th": "th-TH",
+    "id": "id-ID", "tr": "tr-TR", "hi": "hi-IN", "ar": "ar-SA",
+}
+
+
+def _apple_transcribe_helper() -> Path | None:
+    """Compile tools/transcribe_apple.swift once, macOS 26 only."""
+    if sys.platform != "darwin":
+        return None
+    source = ROOT / "tools" / "transcribe_apple.swift"
+    binary = ROOT / "bin" / "transcribe_apple"
+    if binary.is_file() and (not source.is_file() or binary.stat().st_mtime >= source.stat().st_mtime):
+        return binary
+    swiftc = shutil.which("swiftc")
+    if not swiftc or not source.is_file():
+        return None
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [swiftc, "-O", "-parse-as-library", str(source), "-o", str(binary)],
+            capture_output=True, text=True, timeout=600,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return binary if result.returncode == 0 and binary.is_file() else None
+
+
+def transcribe_apple(
+    wav_path: Path | None,
+    job_dir: Path,
+    language: str = "en",
+) -> dict | None:
+    """0 MB on-device transcription through Apple Speech (macOS 26)."""
+    if not wav_path or not wav_path.exists():
+        return None
+    helper = _apple_transcribe_helper()
+    if not helper:
+        return None
+    locale = SPEECH_LOCALES.get((language or "en").split("-")[0].lower(), "en-US")
+    out_dir = job_dir / "transcript"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "transcript_apple.json"
+    try:
+        result = subprocess.run(
+            [str(helper), "--audio", str(wav_path), "--locale", locale, "--out", str(out_path)],
+            capture_output=True, text=True, timeout=3600,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not out_path.is_file():
+        return None
+    try:
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    segments = []
+    for item in data.get("segments", []):
+        text_value = str(item.get("text") or "").strip()
+        if not text_value:
+            continue
+        segments.append({
+            "start": round(float(item.get("start", 0.0)), 3),
+            "end": round(float(item.get("end", 0.0)), 3),
+            "text": text_value,
+        })
+    if not segments:
+        return None
+    return {
+        "language": str(data.get("language") or locale).split("-")[0],
+        "text": str(data.get("text") or "")[:4000],
+        "segments": segments,
+    }
+
+
 def transcribe(
     wav_path: Path | None,
     job_dir: Path,
@@ -794,6 +872,27 @@ def score_scenes(scenes: list[dict], source_w: int, source_h: int) -> None:
         scene["crop_mode"] = "smart" if needs_crop and tracked > 0.015 else "center"
         scene["visual"] = visual
         scene["motion_raw"] = round(motion_raw, 3)
+        best_face = max(
+            faces,
+            key=lambda f: f["w"] * f["h"] * f.get("confidence", 0),
+            default=None,
+        )
+        best_salient = max(
+            salient,
+            key=lambda s: s["w"] * s["h"] * s.get("confidence", 0),
+            default=None,
+        )
+        if best_face or best_salient:
+            scene["attention"] = {
+                "face": None if not best_face else {
+                    key: round(float(best_face.get(key) or 0), 3)
+                    for key in ("x", "y", "w", "h", "confidence")
+                },
+                "salient": None if not best_salient else {
+                    key: round(float(best_salient.get(key) or 0), 3)
+                    for key in ("x", "y", "w", "h", "confidence")
+                },
+            }
         scene.pop("faces", None)
         scene.pop("salient", None)
 
@@ -1123,6 +1222,32 @@ def build_plan(
     }
 
 
+def arc_order(clips: list[dict], scenes: list[dict]) -> list[dict]:
+    """Reorder beats as setup → proof → payoff, hook first, payoff last."""
+    if len(clips) < 4:
+        return clips
+    by_id = {scene["id"]: scene for scene in scenes}
+    hook = [clip for clip in clips if clip.get("role") == "hook"]
+    payoff = [clip for clip in clips if clip.get("role") == "payoff"]
+    middle = [
+        clip for clip in clips
+        if clip.get("role") not in {"hook", "payoff"}
+    ]
+    if not middle:
+        return clips
+
+    def key(clip: dict):
+        scene = by_id.get(clip.get("scene")) or {}
+        motion = float(scene.get("motion_score") or 50.0)
+        text_bonus = 12.0 if (scene.get("ocr") or scene.get("speech")) else 0.0
+        face_bonus = 6.0 if (scene.get("face") or "subject" in (scene.get("tags") or [])) else 0.0
+        duration = float(clip.get("dur") or 0.0)
+        return (motion - text_bonus - face_bonus, -duration)
+
+    ordered = sorted(middle, key=key)
+    return [*(hook or [clips[0]]), *ordered, *payoff]
+
+
 def make_plans(
     scenes: list[dict],
     source_duration: float,
@@ -1236,12 +1361,20 @@ def analyze_source(
     transcript = None
     if options.get("transcribe") and wav:
         stage = time.time()
-        progress("reading", 0.70, "Transcribing speech · local Whisper")
-        transcript = transcribe(
-            wav, job_dir, meta["duration"],
-            lambda fraction, message: progress("reading", 0.70 + 0.16 * fraction, message),
-        )
-        timings["whisper"] = round(time.time() - stage, 2)
+        engine = str(options.get("transcribe_engine") or "auto").lower()
+        speech_language = str(options.get("speech_language") or "en")
+        if engine in {"auto", "apple"}:
+            progress("reading", 0.70, "Transcribing speech · Apple Speech")
+            transcript = transcribe_apple(wav, job_dir, speech_language)
+            if transcript:
+                timings["apple_speech"] = round(time.time() - stage, 2)
+        if transcript is None and engine in {"auto", "whisper"}:
+            progress("reading", 0.72, "Transcribing speech · local Whisper")
+            transcript = transcribe(
+                wav, job_dir, meta["duration"],
+                lambda fraction, message: progress("reading", 0.70 + 0.16 * fraction, message),
+            )
+            timings["whisper"] = round(time.time() - stage, 2)
     attach_speech(scenes, transcript)
 
     stage = time.time()

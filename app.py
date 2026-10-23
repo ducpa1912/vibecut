@@ -18,11 +18,12 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import audio
+import exports as cuts
 import pipeline
 import render
 import vision
@@ -45,6 +46,7 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger("vibecut")
 JOBS.mkdir(parents=True, exist_ok=True)
+SOURCES = DATA / "sources"
 
 analysis_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibecut-analyze")
 render_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibecut-render")
@@ -70,6 +72,7 @@ def _render_key(
     aspect: str = "9:16",
     captions: bool = False,
     audio_sig: str = "",
+    hook_marker: int | None = None,
 ) -> str:
     key = str(int(target))
     if quality != "final":
@@ -80,10 +83,87 @@ def _render_key(
         key += ":cap"
     if audio_sig:
         key += f":a{audio_sig}"
+    if hook_marker is not None:
+        key += f":h{hook_marker}"
     return key
 
 
+def _hook_marker(plan: dict) -> int | None:
+    """Overridden hooks get their own render slot instead of overwriting auto."""
+    if plan.get("auto", True):
+        return None
+    hook = plan.get("hook_scene")
+    return int(hook) if hook is not None else None
+
+
 # ---------------------------------------------------------------- store
+
+
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha1()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()[:16]
+
+
+def store_source(temp_path: Path, suffix: str, original_name: str) -> Path:
+    """Move a file into the content-addressed store; returns the stored path."""
+    SOURCES.mkdir(parents=True, exist_ok=True)
+    digest = _hash_file(temp_path)
+    directory = SOURCES / digest
+    directory.mkdir(parents=True, exist_ok=True)
+    stored = directory / f"source{suffix}"
+    if stored.is_file() and stored.stat().st_size == temp_path.stat().st_size:
+        temp_path.unlink(missing_ok=True)
+    else:
+        os.replace(temp_path, stored)
+    meta = directory / "meta.json"
+    if not meta.is_file():
+        meta.write_text(json.dumps({
+            "name": original_name,
+            "size": stored.stat().st_size,
+            "created": round(time.time(), 3),
+        }), encoding="utf-8")
+    return stored
+
+
+def link_source(stored: Path, job_dir: Path, suffix: str) -> Path:
+    """Hardlink the stored source into the job dir; copy if the volume differs."""
+    target = job_dir / f"source{suffix}"
+    target.unlink(missing_ok=True)
+    try:
+        os.link(stored, target)
+    except OSError:
+        shutil.copy2(stored, target)
+    return target
+
+
+def gc_sources() -> int:
+    try:
+        days = float(os.environ.get("VIBECUT_SOURCES_GC_DAYS", "30") or 0)
+    except ValueError:
+        days = 30.0
+    if days <= 0 or not SOURCES.is_dir():
+        return 0
+    cutoff = time.time() - days * 86400
+    removed = 0
+    for directory in SOURCES.iterdir():
+        if not directory.is_dir():
+            continue
+        files = [item for item in directory.iterdir() if item.is_file() and item.name.startswith("source")]
+        if not files:
+            continue
+        try:
+            referenced = any(item.stat().st_nlink > 1 for item in files)
+            stale = directory.stat().st_mtime < cutoff
+        except OSError:
+            continue
+        if referenced or not stale:
+            continue
+        shutil.rmtree(directory, ignore_errors=True)
+        removed += 1
+    return removed
 
 
 def _job_dir(job_id: str) -> Path:
@@ -140,6 +220,8 @@ def clean_options(raw: dict | None) -> dict:
         "ocr": bool(raw.get("ocr", True)),
         "transcribe": bool(raw.get("transcribe", False)),
         "smart_crop": bool(raw.get("smart_crop", True)),
+        "transcribe_engine": str(raw.get("transcribe_engine") or "auto"),
+        "speech_language": str(raw.get("speech_language") or "en"),
     }
 
 
@@ -248,9 +330,13 @@ def run_render(
     captions: bool = False,
     audio_plan: dict | None = None,
     audio_sig: str = "",
+    preset: str | None = None,
+    caption_margin: float = 0.075,
 ) -> None:
     plan["_source_lang"] = plan.get("_source_lang") or "en"
-    record_key = _render_key(target, quality, aspect, captions, audio_sig)
+    record_key = _render_key(
+        target, quality, aspect, captions, audio_sig, _hook_marker(plan),
+    )
     cancel_event = RENDER_CANCELS.setdefault((job_id, record_key), threading.Event())
     started = time.time()
     try:
@@ -279,6 +365,7 @@ def run_render(
             source, meta, _job_dir(job_id), plan, title, progress,
             quality=quality, aspect=aspect, encoder=encoder,
             captions=captions, audio_plan=audio_plan, audio_sig=audio_sig,
+            caption_margin=caption_margin,
             cancel_event=cancel_event,
         )
         _set_render(
@@ -286,6 +373,7 @@ def run_render(
             status="ready", progress=1.0, message="Reel ready",
             error=None, key=key, hook=plan["hook_scene"],
             total=plan["total"], eta=0, audio_sig=audio_sig,
+            preset=preset, caption_margin=caption_margin,
             **result,
         )
         LOGGER.info("render %s/%s ready in %s", job_id, record_key, result["path"])
@@ -481,6 +569,9 @@ def cleanup_storage() -> None:
         cache_max_gb = float(os.environ.get("VIBECUT_CACHE_MAX_GB", "2") or 0)
     except ValueError:
         cache_max_gb = 2.0
+    removed_sources = gc_sources()
+    if removed_sources:
+        LOGGER.info("source store GC removed %d entries", removed_sources)
     result = audio.prune_cache(max_gb=cache_max_gb, days=cache_days)
     if result["removed"]:
         LOGGER.info(
@@ -597,6 +688,9 @@ class PlanBody(BaseModel):
     captions: bool = False
     clips: list[dict] | None = None
     audio: dict | None = None
+    preset: str | None = None
+    order: str = "source"
+    caption_margin: float | None = None
 
 
 class VariantBody(BaseModel):
@@ -668,10 +762,11 @@ async def upload_job(
     job_id = uuid.uuid4().hex[:12]
     directory = JOBS / job_id
     directory.mkdir(parents=True, exist_ok=False)
-    destination = directory / f"source{suffix}"
+    SOURCES.mkdir(parents=True, exist_ok=True)
+    temp = SOURCES / f".incoming-{uuid.uuid4().hex}{suffix}"
     total = 0
     try:
-        with destination.open("wb") as output:
+        with temp.open("wb") as output:
             while True:
                 chunk = await file.read(1024 * 1024)
                 if not chunk:
@@ -683,13 +778,17 @@ async def upload_job(
                         f"Upload is larger than the {MAX_UPLOAD / 1024 ** 3:.0f} GB limit.",
                     )
                 output.write(chunk)
+        stored = store_source(temp, suffix, original)
+        destination = link_source(stored, directory, suffix)
         meta = pipeline.probe(destination)
         job = _new_job(destination, original, meta, parsed_options, job_id=job_id)
         return {"id": job["id"], "status": job["status"]}
     except HTTPException:
+        temp.unlink(missing_ok=True)
         shutil.rmtree(directory, ignore_errors=True)
         raise
     except Exception as exc:
+        temp.unlink(missing_ok=True)
         shutil.rmtree(directory, ignore_errors=True)
         raise HTTPException(400, f"Could not ingest this video: {exc}") from exc
     finally:
@@ -931,10 +1030,29 @@ def _custom_plan(
     }
 
 
+def _apply_order(job: dict, plan: dict, order: str) -> dict:
+    if order != "arc":
+        return plan
+    scenes = (job.get("analysis") or {}).get("scenes") or []
+    ordered = pipeline.arc_order(plan["clips"], scenes)
+    if ordered == plan["clips"]:
+        plan["order"] = "arc"
+        return plan
+    total = round(sum(float(clip.get("dur") or 0.0) for clip in ordered), 3)
+    value = {
+        **plan,
+        "clips": ordered,
+        "clip_count": len(ordered),
+        "total": total,
+        "order": "arc",
+    }
+    return value
+
+
 def _plan_for_body(job: dict, target: int, body: PlanBody) -> dict:
     if body.clips is not None:
-        return _custom_plan(job, target, body.hook_scene, body.clips)
-    return _plan_for(job, target, body.hook_scene)
+        return _apply_order(job, _custom_plan(job, target, body.hook_scene, body.clips), body.order)
+    return _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
 
 
 @app.post("/api/jobs/{job_id}/plan")
@@ -954,6 +1072,16 @@ def make_plan(job_id: str, body: PlanBody) -> dict:
     return result
 
 
+def _top_hooks(job: dict, target: int, limit: int = 8) -> list[dict]:
+    analysis = job.get("analysis") or {}
+    scenes = [
+        scene for scene in analysis.get("scenes", [])
+        if scene.get("deep", True) and not scene.get("black") and scene["dur"] >= 0.55
+    ]
+    scenes.sort(key=lambda scene: (scene["hook"], -scene["start"]), reverse=True)
+    return scenes[: max(1, limit)]
+
+
 @app.get("/api/jobs/{job_id}/hooks")
 def hook_candidates(job_id: str, target: int = 30, limit: int = 8) -> dict:
     job = load_job(job_id)
@@ -962,11 +1090,7 @@ def hook_candidates(job_id: str, target: int = 30, limit: int = 8) -> dict:
         raise HTTPException(409, "Analysis is not ready yet.")
     target = _valid_target(int(target))
     limit = max(1, min(int(limit), 24))
-    scenes = [
-        scene for scene in analysis["scenes"]
-        if scene.get("deep", True) and not scene.get("black") and scene["dur"] >= 0.55
-    ]
-    scenes.sort(key=lambda scene: (scene["hook"], -scene["start"]), reverse=True)
+    scenes = _top_hooks(job, target, limit)
     hooks: list[dict] = []
     for scene in scenes[:limit]:
         plan = pipeline.build_plan(
@@ -1096,6 +1220,9 @@ class ScriptBody(BaseModel):
     clips: list[dict] | None = None
     translate: str | None = None
     provider: str = "auto"
+    mode: str = "literal"
+    order: str = "source"
+    overrides: dict | None = None
 
 
 class CleanBody(BaseModel):
@@ -1175,6 +1302,125 @@ def voice_sample(job_id: str, body: VoiceBody) -> FileResponse:
     return FileResponse(path, media_type="audio/wav", filename="voice-sample.wav")
 
 
+@app.get("/api/audio/beats")
+def audio_beats(source: str = "cc0", track: str = "") -> dict:
+    path = audio.resolve_music_track([], [], {"source": source, "track": track})
+    if not path:
+        raise HTTPException(404, "No track found for beat detection.")
+    grid = audio.beat_grid(path)
+    if not grid:
+        raise HTTPException(400, "Beat detection unavailable (librosa missing or unreadable audio).")
+    return {"track": path.name, "bpm": grid["bpm"], "beats": len(grid["beats"])}
+
+
+@app.get("/api/audio/licenses")
+def audio_licenses() -> dict:
+    rows = []
+    for source in audio.MUSIC_DIRS:
+        for track in audio.list_music(source):
+            rows.append({
+                "source": source,
+                "name": track["name"],
+                "id": track["id"],
+                "license": track.get("license"),
+            })
+    return {
+        "tracks": rows,
+        "strict": os.environ.get("VIBECUT_AUDIO_LICENSE", "").lower() == "strict",
+    }
+
+
+@app.get("/api/sources")
+def source_store() -> dict:
+    rows = []
+    if SOURCES.is_dir():
+        for directory in sorted(SOURCES.iterdir()):
+            if not directory.is_dir():
+                continue
+            files = [
+                item for item in directory.iterdir()
+                if item.is_file() and item.name.startswith("source")
+            ]
+            if not files:
+                continue
+            stored = files[0]
+            meta = {}
+            meta_path = directory / "meta.json"
+            if meta_path.is_file():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    meta = {}
+            rows.append({
+                "id": directory.name,
+                "name": meta.get("name") or stored.name,
+                "mb": round(stored.stat().st_size / 1e6, 1),
+                "links": stored.stat().st_nlink,
+            })
+    return {"entries": rows, "total_mb": round(sum(row["mb"] for row in rows), 1)}
+
+
+@app.post("/api/jobs/{job_id}/ab")
+def ab_package(job_id: str, body: PlanBody) -> dict:
+    """Queue one render per top hook so 3 posts can be compared."""
+    job = load_job(job_id)
+    target = _valid_target(int(body.target))
+    quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
+    renders: list[dict] = []
+    errors: list[dict] = []
+    for scene in _top_hooks(job, target, 3):
+        fresh = load_job(job_id)
+        try:
+            plan = _apply_order(
+                fresh, _plan_for(fresh, target, scene["id"]), body.order,
+            )
+            record = _queue_render(
+                job_id, fresh, plan, quality, aspect, encoder, captions,
+                audio_plan, bool(body.force), preset=preset, caption_margin=margin,
+            )
+            renders.append(_public_render(job_id, record))
+        except HTTPException as exc:
+            errors.append({"hook": scene["id"], "detail": str(exc.detail)})
+    return {"renders": renders, "errors": errors}
+
+
+@app.get("/api/jobs/{job_id}/export/{kind}")
+def export_cut(
+    job_id: str,
+    kind: str,
+    target: int = 30,
+    hook_scene: int | None = None,
+    order: str = "source",
+) -> Response:
+    if kind not in {"srt", "vtt", "edl", "xml"}:
+        raise HTTPException(404, "Unknown export format.")
+    job = load_job(job_id)
+    plan = _apply_order(job, _plan_for(job, _valid_target(int(target)), hook_scene), order)
+    scenes = job["analysis"]["scenes"]
+    clips = plan["clips"]
+    stem = Path(job["source"]["name"]).stem
+    if kind in {"srt", "vtt"}:
+        cues = cuts.plan_cues(plan, clips, scenes)
+        content = cuts.srt(cues) if kind == "srt" else cuts.vtt(cues)
+        media = "text/plain; charset=utf-8"
+    elif kind == "edl":
+        content = cuts.edl(plan, clips, job["source"]["name"])
+        media = "text/plain; charset=utf-8"
+    else:
+        content = cuts.fcp7_xml(plan, clips, job["source"]["path"])
+        media = "application/xml"
+    safe = "".join(
+        ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "-"
+        for ch in stem
+    ).strip("-") or "cut"
+    filename = f"{safe}-{int(target)}s.{kind}"
+    return Response(
+        content=content,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/api/jobs/{job_id}/audio/script")
 def audio_script(job_id: str, body: ScriptBody) -> dict:
     """List the cleaned, de-duplicated, time-fitted voice script for a cut."""
@@ -1184,9 +1430,14 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
         plan = _custom_plan(job, target, body.hook_scene, body.clips)
     else:
         plan = _plan_for(job, target, body.hook_scene)
+    plan = _apply_order(job, plan, body.order)
     scenes = job["analysis"]["scenes"]
     clips = [
-        {"scene": clip["scene"], "duration": round(float(clip["dur"]), 3)}
+        {
+            "scene": clip["scene"],
+            "role": clip.get("role") or "beat",
+            "duration": round(float(clip["dur"]), 3),
+        }
         for clip in plan["clips"]
     ]
     script = audio.build_script(scenes, clips)
@@ -1207,20 +1458,28 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
     target_lang = str(body.translate or "").split("-")[0]
     warning = None
     translated = False
-    if target_lang and target_lang != source_lang and script:
-        try:
-            texts = audio.translate_lines(
-                [line["text"] for line in script],
-                source_lang, target_lang, body.provider,
-            )
-            for line, text in zip(script, texts):
-                line["text"] = text
-            script = audio.refit_script(script)
-            translated = True
-        except audio.AudioError as exc:
-            warning = str(exc)[:400]
+    overrides = body.overrides if isinstance(body.overrides, dict) else {}
+    mode = body.mode if body.mode in {"literal", "smooth", "viral"} else "literal"
+
+    def apply_overrides(lines: list[dict]) -> None:
+        for line in lines:
+            value = overrides.get(str(line.get("scene")))
+            if isinstance(value, str) and value.strip():
+                line["text"] = audio.clean_line(value)
+                line["overridden"] = True
+
+    try:
+        script = audio.adapt_script(script, source_lang, target_lang, mode, body.provider)
+        apply_overrides(script)
+        script = audio.refit_script(script)
+        translated = bool(target_lang and target_lang != source_lang)
+    except audio.AudioError as exc:
+        warning = str(exc)[:400]
     return {
         "lines": script,
+        "mode": mode,
+        "rewrite": (script[0].get("rewrite") if script else "literal"),
+        "overrides": overrides,
         "source_lang": source_lang,
         "target": target_lang or source_lang,
         "translated": translated,
@@ -1240,10 +1499,14 @@ def _queue_render(
     captions: bool,
     audio_plan: dict | None,
     force: bool,
+    preset: str | None = None,
+    caption_margin: float = 0.075,
 ) -> dict:
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
-    record_key = _render_key(target, quality, aspect, captions, audio_sig)
+    record_key = _render_key(
+        target, quality, aspect, captions, audio_sig, _hook_marker(plan),
+    )
     key = hashlib.sha1(json.dumps({
         "target": target,
         "clips": plan["clips"],
@@ -1276,6 +1539,9 @@ def _queue_render(
         "aspect": aspect,
         "encoder": encoder or "auto",
         "captions": captions,
+        "preset": preset,
+        "caption_margin": caption_margin,
+        "order": plan.get("order") or "source",
         "created": round(time.time(), 3),
     }
 
@@ -1285,28 +1551,41 @@ def _queue_render(
     update_job(job_id, mutate)
     render_pool.submit(
         run_render, job_id, target, plan, key, quality, aspect, encoder, captions,
-        audio_plan, audio_sig,
+        audio_plan, audio_sig, preset, caption_margin,
     )
     return record
 
 
-def _render_options(body: PlanBody) -> tuple[str, str, str | None, bool, dict | None]:
+def _render_options(
+    body: PlanBody,
+) -> tuple[str, str, str | None, bool, dict | None, str | None, float]:
     quality = body.quality if body.quality in ("final", "draft") else "final"
+    preset = body.preset if body.preset in render.PRESETS else None
+    preset_cfg = render.PRESETS.get(preset or "", {})
     aspect = body.aspect if body.aspect in render.ASPECTS else "9:16"
+    if preset_cfg.get("aspect"):
+        aspect = preset_cfg["aspect"]
+    captions = bool(body.captions) or bool(preset_cfg.get("captions"))
+    margin = (
+        float(body.caption_margin)
+        if body.caption_margin is not None
+        else float(preset_cfg.get("caption_margin") or 0.075)
+    )
     audio_plan = body.audio if isinstance(body.audio, dict) else None
     if audio_plan and str(audio_plan.get("mode") or "keep") == "keep":
         audio_plan = None
-    return quality, aspect, body.encoder, bool(body.captions), audio_plan
+    return quality, aspect, body.encoder, captions, audio_plan, preset, margin
 
 
 @app.post("/api/jobs/{job_id}/render")
 def start_render(job_id: str, body: PlanBody) -> dict:
     job = load_job(job_id)
     target = _valid_target(int(body.target))
-    quality, aspect, encoder, captions, audio_plan = _render_options(body)
+    quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
     plan = _plan_for_body(job, target, body)
     record = _queue_render(
-        job_id, job, plan, quality, aspect, encoder, captions, audio_plan, bool(body.force),
+        job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
+        bool(body.force), preset=preset, caption_margin=margin,
     )
     return {"render": _public_render(job_id, record)}
 
@@ -1314,15 +1593,16 @@ def start_render(job_id: str, body: PlanBody) -> dict:
 @app.post("/api/jobs/{job_id}/render-all")
 def start_render_all(job_id: str, body: PlanBody) -> dict:
     load_job(job_id)
-    quality, aspect, encoder, captions, audio_plan = _render_options(body)
+    quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
     renders: list[dict] = []
     errors: list[dict] = []
     for target in (15, 30, 60):
         job = load_job(job_id)
         try:
-            plan = _plan_for(job, target, body.hook_scene)
+            plan = _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
             record = _queue_render(
-                job_id, job, plan, quality, aspect, encoder, captions, audio_plan, bool(body.force),
+                job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
+                bool(body.force), preset=preset, caption_margin=margin,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:
@@ -1338,11 +1618,17 @@ def cancel_render(
     aspect: str = "9:16",
     captions: bool = False,
     audio_sig: str = "",
+    hook_marker: int | None = None,
+    record_key: str | None = None,
 ) -> dict:
     target = _valid_target(int(target))
     quality = quality if quality in ("final", "draft") else "final"
     aspect = aspect if aspect in render.ASPECTS else "9:16"
-    record_key = _render_key(target, quality, aspect, captions, audio_sig)
+    if not record_key:
+        record_key = _render_key(
+            target, quality, aspect, captions, audio_sig,
+            int(hook_marker) if hook_marker is not None else None,
+        )
     job = load_job(job_id)
     record = (job.get("renders") or {}).get(record_key)
     if not record or record.get("status") not in ACTIVE_RENDER:

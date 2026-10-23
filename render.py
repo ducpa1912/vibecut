@@ -29,6 +29,14 @@ OUT_W = 1080
 OUT_H = 1920
 OUT_FPS = 30
 
+PRESETS = {
+    "tiktok": {"aspect": "9:16", "captions": True, "caption_margin": 0.12},
+    "reels": {"aspect": "9:16", "captions": True, "caption_margin": 0.10},
+    "shorts": {"aspect": "9:16", "captions": True, "caption_margin": 0.09},
+    "square": {"aspect": "1:1", "captions": True, "caption_margin": 0.08},
+    "landscape": {"aspect": "16:9", "captions": False, "caption_margin": 0.07},
+}
+
 ASPECTS = {
     "9:16": ((1080, 1920), (540, 960)),
     "4:5": ((1080, 1350), (540, 676)),
@@ -415,10 +423,11 @@ def _caption_pngs(
     cues: list[tuple[float, float, str]],
     out_w: int,
     out_h: int,
+    margin_fraction: float = 0.075,
 ) -> list[Path]:
     font_size = max(22, int(out_h * 0.032))
     font = _caption_font(font_size)
-    margin = max(40, int(out_h * 0.075))
+    margin = max(40, int(out_h * max(0.03, min(0.3, margin_fraction))))
     stroke = max(2, font_size // 18)
     paths: list[Path] = []
     for index, (_start, _end, text) in enumerate(cues):
@@ -450,9 +459,10 @@ def _burn_captions(
     total: float,
     quality: str,
     encoder: str,
+    margin_fraction: float = 0.075,
     cancel_event: threading.Event | None = None,
 ) -> None:
-    pngs = _caption_pngs(tmp, cues, out_w, out_h)
+    pngs = _caption_pngs(tmp, cues, out_w, out_h, margin_fraction)
     cmd = [_ffmpeg(), "-y", "-v", "error", "-i", str(video)]
     for png in pngs:
         cmd += ["-loop", "1", "-i", str(png)]
@@ -578,6 +588,7 @@ def render_reel(
     captions: bool = False,
     audio_plan: dict | None = None,
     audio_sig: str = "",
+    caption_margin: float = 0.075,
     cancel_event: threading.Event | None = None,
 ) -> dict:
     quality = "draft" if quality == "draft" else "final"
@@ -617,6 +628,7 @@ def render_reel(
         frames = _frames_for(start, wanted, source_duration)
         clips.append({
             "scene": clip["scene"],
+            "role": clip.get("role") or "beat",
             "start": start,
             "frames": frames,
             "duration": frames / OUT_FPS,
@@ -625,6 +637,15 @@ def render_reel(
     total = sum(clip["duration"] for clip in clips)
     if cancel_event is not None and cancel_event.is_set():
         raise RenderCancelled("Render cancelled.")
+
+    if audio_plan and audio_plan.get("beat_sync"):
+        track = audio.resolve_music_track(scene_list, clips, audio_plan.get("music") or {})
+        grid = audio.beat_grid(track) if track else None
+        if grid:
+            clips, drift = audio.snap_clips(clips, grid)
+            total = sum(clip["duration"] for clip in clips)
+            audio_plan["_beat_bpm"] = grid.get("bpm")
+            audio_plan["_beat_drift"] = drift
 
     master_dir = job_dir.parent.parent / "cache" / "masters" / job_dir.name
     master_key = hashlib.sha1(json.dumps({
@@ -690,7 +711,7 @@ def render_reel(
                     captioned = tmp / "captioned.mp4"
                     _burn_captions(
                         master_tmp, cues, captioned, tmp, out_w, out_h, total,
-                        quality, encoder, cancel_event,
+                        quality, encoder, caption_margin, cancel_event,
                     )
                     os.replace(captioned, master_tmp)
             master_dir.mkdir(parents=True, exist_ok=True)
@@ -765,5 +786,8 @@ def render_reel(
         "captions": bool(captions),
         "caption_count": caption_count,
         "cached": cached_count,
+        "beat_bpm": None if not audio_plan else audio_plan.get("_beat_bpm"),
+        "beat_drift": None if not audio_plan else audio_plan.get("_beat_drift"),
+        "used_assets": (audio_plan or {}).get("_used_assets") or [],
         **audio_info,
     }

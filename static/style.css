@@ -870,6 +870,17 @@ main { min-height: calc(100vh - 150px); }
   grid-column: 1 / -1;
 }
 .audio-status { color: var(--dim); }
+.export-links { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.mix-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.mix-row span { color: var(--dim); font-family: var(--mono); font-size: 10px; }
+.mix-row input[type="range"] { width: 100%; accent-color: var(--accent); }
 .audio-script {
   padding: 4px 16px 16px;
   border-top: 1px solid var(--line);

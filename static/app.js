@@ -68,12 +68,19 @@
     render: $("#render"),
     renderDraft: $("#render-draft"),
     renderAll: $("#render-all"),
+    renderAb: $("#render-ab"),
+    presetSelect: $("#preset-select"),
+    arcOrder: $("#arc-order"),
     renderCancel: $("#render-cancel"),
     aspect: $("#aspect-select"),
     captions: $("#captions"),
     audioPanel: $("#audio-panel"),
     audioMode: $("#audio-mode"),
     audioLang: $("#audio-lang"),
+    audioStyle: $("#audio-style"),
+    audioBeatSync: $("#audio-beatsync"),
+    audioBpm: $("#audio-bpm"),
+    audioMix: $("#audio-mix"),
     audioProvider: $("#audio-provider"),
     audioEngine: $("#audio-engine"),
     audioVoice: $("#audio-voice"),
@@ -95,6 +102,10 @@
     reelDuration: $("#reel-duration"),
     reelSize: $("#reel-size"),
     download: $("#download"),
+    exportSrt: $("#export-srt"),
+    exportVtt: $("#export-vtt"),
+    exportEdl: $("#export-edl"),
+    exportXml: $("#export-xml"),
     sortTabs: $("#sort-tabs"),
     sceneCount: $("#scene-count"),
     sceneGrid: $("#scene-grid"),
@@ -122,6 +133,8 @@
       mode: "keep",
       lang: "",
       provider: "auto",
+      style: "literal",
+      beatSync: false,
       engine: "say",
       voice: "",
       rate: 1,
@@ -132,6 +145,11 @@
       duck: true,
     },
     audioEngines: null,
+    audioMix: [],
+    scriptOverrides: {},
+    showLiteral: false,
+    order: "source",
+    preset: "",
     audioMoods: [],
     audioPromptAuto: "",
     overrideHook: null,
@@ -357,8 +375,28 @@
     dom.renderCancel.addEventListener("click", cancelRender);
     dom.aspect.addEventListener("change", () => {
       state.aspect = dom.aspect.value;
+      state.preset = "";
+      dom.presetSelect.value = "";
       updateRenderPanel();
     });
+    dom.presetSelect.addEventListener("change", applyPreset);
+    dom.arcOrder.addEventListener("change", async () => {
+      state.order = dom.arcOrder.checked ? "arc" : "source";
+      state.edited = false;
+      try {
+        await refreshPlan();
+        loadAudioMoods();
+        loadAudioScript();
+        toast(state.order === "arc" ? "Story arc order." : "Source order.");
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    dom.renderAb.addEventListener("click", abHooks);
+    dom.exportSrt.addEventListener("click", () => exportCut("srt"));
+    dom.exportVtt.addEventListener("click", () => exportCut("vtt"));
+    dom.exportEdl.addEventListener("click", () => exportCut("edl"));
+    dom.exportXml.addEventListener("click", () => exportCut("xml"));
     dom.captions.addEventListener("change", () => {
       state.captions = dom.captions.checked;
       updateRenderPanel();
@@ -894,6 +932,7 @@
     }).join("");
     dom.timeline.scrollLeft = 0;
     renderVariants();
+    renderMixer();
   }
 
   function renderVariants() {
@@ -903,6 +942,46 @@
         <button data-variant-load="${esc(variant.id)}" title="Load this cut">${esc(variant.name)} · ${Number(variant.total || 0).toFixed(1)}s</button>
         <button data-variant-delete="${esc(variant.id)}" title="Delete variant">✕</button>
       </span>`).join("");
+  }
+
+  function renderMixer() {
+    if (!dom.audioMix) return;
+    const plan = state.plan;
+    if (!plan || state.audio.mode === "keep" || state.audio.mode === "music") {
+      dom.audioMix.hidden = true;
+      dom.audioMix.innerHTML = "";
+      return;
+    }
+    dom.audioMix.hidden = false;
+    if (state.audioMix.length !== plan.clips.length) {
+      state.audioMix = plan.clips.map(() => ({ voice_db: 0, music_db: 0 }));
+    }
+    dom.audioMix.innerHTML = `
+      <div class="script-head"><span class="label">Per-clip mixer</span>
+      <span class="hint">voice / music dB per beat</span></div>
+      <div class="script-list">
+        ${plan.clips.map((clip, index) => {
+          const scene = sceneById(clip.scene);
+          const entry = state.audioMix[index] || { voice_db: 0, music_db: 0 };
+          return `
+            <div class="mix-row">
+              <span>${esc(fmtTime(clip.start, 1))} · ${esc(clip.role || "")}</span>
+              <input type="range" min="-18" max="6" step="1" value="${Number(entry.voice_db) || 0}"
+                     data-mix="voice" data-index="${index}" title="voice dB">
+              <input type="range" min="-18" max="6" step="1" value="${Number(entry.music_db) || 0}"
+                     data-mix="music" data-index="${index}" title="music dB">
+            </div>`;
+        }).join("")}
+      </div>`;
+    dom.audioMix.querySelectorAll("[data-mix]").forEach((input) => {
+      input.addEventListener("input", () => {
+        const index = Number(input.dataset.index);
+        const kind = input.dataset.mix;
+        state.audioMix[index] = state.audioMix[index] || { voice_db: 0, music_db: 0 };
+        state.audioMix[index][kind === "voice" ? "voice_db" : "music_db"] = Number(input.value);
+        updateRenderPanel();
+      });
+    });
   }
 
   function syncEditedPlan() {
@@ -1122,12 +1201,16 @@
 
   async function refreshPlan() {
     if (!state.job) return;
-    if (state.overrideHook === null) {
+    if (state.overrideHook === null && state.order !== "arc") {
       state.plan = state.job.analysis.plans[String(state.target)];
     } else {
       const result = await api(`/api/jobs/${state.job.id}/plan`, {
         method: "POST",
-        body: JSON.stringify({ target: state.target, hook_scene: state.overrideHook }),
+        body: JSON.stringify({
+          target: state.target,
+          hook_scene: state.overrideHook,
+          order: state.order,
+        }),
       });
       state.plan = result.plan;
       mergeScene(result.scene);
@@ -1219,9 +1302,19 @@
     const audio = state.audio;
     if (!audio || audio.mode === "keep") return null;
     const plan = { mode: audio.mode };
-    plan.translate = audio.lang
-      ? { target: audio.lang, provider: audio.provider || "auto" }
-      : null;
+    plan.translate = {
+      target: audio.lang || "",
+      provider: audio.provider || "auto",
+      mode: audio.style || "literal",
+    };
+    plan.beat_sync = !!audio.beatSync;
+    const mix = state.audioMix
+      .map((entry) => ({
+        voice_db: Number(entry?.voice_db) || 0,
+        music_db: Number(entry?.music_db) || 0,
+      }))
+      .filter((entry) => entry.voice_db || entry.music_db);
+    if (mix.length) plan.clip_mix = state.audioMix;
     plan.voice = audio.mode === "music"
       ? null
       : {
@@ -1255,6 +1348,8 @@
       state.audio.mode = dom.audioMode.value;
       state.audio.lang = dom.audioLang.value;
       state.audio.provider = dom.audioProvider.value || "auto";
+      state.audio.style = dom.audioStyle.value || "literal";
+      state.audio.beatSync = dom.audioBeatSync.checked;
       state.audio.engine = dom.audioEngine.value;
       state.audio.voice = dom.audioVoice.value;
       state.audio.rate = Number(dom.audioRate.value) || 1;
@@ -1286,6 +1381,14 @@
         touch();
         loadAudioScript();
       });
+      dom.audioStyle.addEventListener(event, () => {
+        touch();
+        loadAudioScript();
+      });
+      dom.audioBeatSync.addEventListener(event, () => {
+        touch();
+        loadBpm();
+      });
       dom.audioEngine.addEventListener(event, () => {
         touch();
         loadAudioVoices();
@@ -1305,6 +1408,89 @@
     select.innerHTML = options.map(([value, label]) => (
       `<option value="${esc(value)}">${esc(label)}</option>`
     )).join("");
+  }
+
+  function applyPreset() {
+    const value = dom.presetSelect.value;
+    state.preset = value;
+    const presets = {
+      tiktok: { aspect: "9:16", captions: true },
+      reels: { aspect: "9:16", captions: true },
+      shorts: { aspect: "9:16", captions: true },
+      square: { aspect: "1:1", captions: true },
+      landscape: { aspect: "16:9", captions: false },
+    };
+    const config = presets[value];
+    if (!config) {
+      updateRenderPanel();
+      return;
+    }
+    state.aspect = config.aspect;
+    state.captions = config.captions;
+    dom.aspect.value = config.aspect;
+    dom.captions.checked = config.captions;
+    updateRenderPanel();
+  }
+
+  async function loadBpm() {
+    if (!state.audio.beatSync) {
+      dom.audioBpm.textContent = "";
+      return;
+    }
+    const source = state.audio.music;
+    if (source !== "library" && source !== "cc0" && source !== "generated") {
+      dom.audioBpm.textContent = "pick a library track";
+      return;
+    }
+    dom.audioBpm.textContent = "detecting…";
+    try {
+      const result = await api(
+        `/api/audio/beats?source=${encodeURIComponent(source)}&track=${encodeURIComponent(state.audio.track || "")}`,
+      );
+      dom.audioBpm.textContent = `${result.bpm} BPM`;
+    } catch (error) {
+      dom.audioBpm.textContent = error.message.slice(0, 40);
+    }
+  }
+
+  function exportCut(kind) {
+    if (!state.job) return;
+    const token = tokenValue();
+    const url = `/api/jobs/${state.job.id}/export/${kind}?target=${state.target}`
+      + `&order=${encodeURIComponent(state.order)}`
+      + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : "")
+      + (token ? `&token=${encodeURIComponent(token)}` : "");
+    window.open(url, "_blank");
+  }
+
+  async function abHooks() {
+    if (!state.job || !state.plan) return;
+    dom.renderAb.disabled = true;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/ab`, {
+        method: "POST",
+        body: JSON.stringify({
+          target: state.target,
+          quality: "final",
+          aspect: state.aspect,
+          captions: state.captions,
+          preset: state.preset || null,
+          order: state.order,
+          audio: currentAudioPlan(),
+        }),
+      });
+      state.job.renders = state.job.renders || {};
+      (result.renders || []).forEach((record) => {
+        state.job.renders[record.record_key || renderKey(record.target)] = record;
+      });
+      updateRenderPanel();
+      startRenderPoll(state.job.id);
+      toast(`Queued ${(result.renders || []).length} hook variants.`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      dom.renderAb.disabled = false;
+    }
   }
 
   async function loadAudioEngines() {
@@ -1464,20 +1650,25 @@
         body: JSON.stringify({
           target: state.target,
           hook_scene: state.overrideHook,
+          order: state.order,
           clips: state.edited && state.plan ? state.plan.clips : null,
           translate: audio.lang || null,
           provider: audio.provider || "auto",
+          mode: audio.style || "literal",
+          overrides: state.scriptOverrides,
         }),
       });
       const lines = result.lines || [];
       const head = `${lines.length} lines · ${result.source_lang}${
-        result.translated ? ` → ${result.target}` : ""}`;
+        result.translated ? ` → ${result.target}` : ""} · ${result.mode || "literal"}`;
       const warn = result.warning
         ? `<span class="script-flag">${esc(result.warning.slice(0, 90))}</span>` : "";
       dom.audioScript.innerHTML = `
         <div class="script-head">
           <span class="label">Voice script</span>
           <span class="hint">${esc(head)}</span>${warn}
+          <button id="script-literal-toggle" class="ghost small" type="button">${
+            state.showLiteral ? "Hide literal" : "Show literal"}</button>
         </div>
         <div class="script-list">
           ${lines.map((line) => `
@@ -1486,10 +1677,29 @@
               <span class="script-mood">${esc(line.emotion || "")}</span>
               <span class="script-text">${esc(line.text)}${
                 line.shortened ? `<span class="script-flag">fit</span>` : ""}${
-                line.from_ocr ? `<span class="script-flag">screen</span>` : ""}</span>
+                line.from_ocr ? `<span class="script-flag">screen</span>` : ""}${
+                line.overridden ? `<span class="script-flag">edited</span>` : ""}${
+                state.showLiteral && line.literal && line.literal !== line.text
+                  ? `<span class="script-flag">literal: ${esc(line.literal.slice(0, 70))}</span>` : ""}</span>
+              <button class="ghost small script-edit" data-script-edit="${line.scene}" type="button">edit</button>
             </div>`).join("")
             || `<p class="hint">No speech or on-screen text in this cut.</p>`}
         </div>`;
+      dom.audioScript.querySelector("#script-literal-toggle")?.addEventListener("click", () => {
+        state.showLiteral = !state.showLiteral;
+        loadAudioScript();
+      });
+      dom.audioScript.querySelectorAll("[data-script-edit]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const sceneId = button.dataset.scriptEdit;
+          const current = state.scriptOverrides[sceneId] || "";
+          const next = window.prompt("Edit this line", current);
+          if (next === null) return;
+          if (next.trim()) state.scriptOverrides[sceneId] = next.trim();
+          else delete state.scriptOverrides[sceneId];
+          loadAudioScript();
+        });
+      });
     } catch (error) {
       dom.audioScript.innerHTML =
         `<div class="script-head"><span class="hint">${esc(error.message)}</span></div>`;
@@ -1655,14 +1865,23 @@
   function findRender(quality = "final") {
     if (!state.job?.renders) return null;
     const sig = currentAudioSignature();
-    if (sig) {
-      return state.job.renders[renderKey(
-        state.target, quality, state.aspect, state.captions, sig,
-      )] || null;
-    }
-    return state.job.renders[renderKey(state.target, quality, state.aspect, state.captions)]
-      || state.job.renders[renderKey(state.target, quality, state.aspect, state.captions, "")]
-      || (quality === "final" && state.aspect === "9:16" && !state.captions
+    const direct = sig
+      ? state.job.renders[renderKey(state.target, quality, state.aspect, state.captions, sig)]
+      : state.job.renders[renderKey(state.target, quality, state.aspect, state.captions)]
+        || state.job.renders[renderKey(state.target, quality, state.aspect, state.captions, "")];
+    if (direct) return direct;
+    const hookId = currentHookId();
+    const matches = Object.values(state.job.renders).filter((record) => record
+      && record.status === "ready"
+      && record.target === state.target
+      && (record.quality || "final") === quality
+      && (record.aspect || "9:16") === state.aspect
+      && !!record.captions === !!state.captions
+      && (record.audio_sig || "") === sig
+      && record.hook === hookId);
+    matches.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    return matches[0]
+      || (!sig && quality === "final" && state.aspect === "9:16" && !state.captions
         ? state.job.renders[String(state.target)] || null
         : null);
   }
@@ -1783,6 +2002,8 @@
           quality,
           aspect: state.aspect,
           captions: state.captions,
+          preset: state.preset || null,
+          order: state.order,
           clips: state.edited && state.plan ? state.plan.clips : null,
           audio: currentAudioPlan(),
           force,
@@ -1812,6 +2033,8 @@
           quality: "final",
           aspect: state.aspect,
           captions: state.captions,
+          preset: state.preset || null,
+          order: state.order,
           audio: currentAudioPlan(),
         }),
       });
@@ -1844,7 +2067,9 @@
         encodeURIComponent(record.quality || "final")
       }&aspect=${encodeURIComponent(record.aspect || "9:16")}&captions=${
         record.captions ? "true" : "false"
-      }&audio_sig=${encodeURIComponent(record.audio_sig || "")}`, { method: "POST" });
+      }&audio_sig=${encodeURIComponent(record.audio_sig || "")}&record_key=${
+        encodeURIComponent(record.record_key || "")
+      }`, { method: "POST" });
       toast("Stopping render…");
       startRenderPoll(state.job.id);
     } catch (error) {
