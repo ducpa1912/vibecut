@@ -872,15 +872,17 @@ def test_read_transcript_roundtrip(tmp_path):
 # ---------------------------------------------------------------- automation mixer
 
 
-def test_automation_expression_piecewise():
+def test_automation_expression_smooth_and_anchored():
     expr = audio.automation_expression([[0, 0], [4, -6], [8, 0]], 10.0)
     assert expr and "if(lt(t,4.000)" in expr and "if(lt(t,8.000)" in expr
-    assert "-0.00" in expr or "pow(10" in expr
-    flat = audio.automation_expression([[2, -3]], 10.0)
-    assert flat and "volume=volume=" in flat
+    assert "cos(PI" in expr
+    assert "if(lt(t,10.000)" in expr  # implicit 100% end anchor
+    single = audio.automation_expression([[2, -3]], 10.0)
+    assert single and "cos(PI" in single and "if(lt(t,0.000)" in single
     assert audio.automation_expression([], 10.0) is None
+    assert audio.automation_expression([[5, 0]], 10.0) is None  # flat 100%
     clamped = audio.automation_expression([[2, -90]], 10.0)
-    assert "pow(10,(-24.00)/20)" in clamped
+    assert "(-24.00)" in clamped
 
 
 def test_reel_envelope_slices_source():
