@@ -11,7 +11,7 @@ replace it.
 
 ```
 OPENCODE_GO_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
-DEEPGRAM_API_KEY      ELEVENLABS_API_KEY
+DEEPGRAM_API_KEY      ELEVENLABS_API_KEY   CARTESIA_API_KEY
 ```
 
 The API only returns `configured: true/false`; it never returns a key.
@@ -53,12 +53,12 @@ A 10-minute voice over is roughly 9,000 characters.
 | Groq Orpheus v1 English | $22/M chars | ~$0.20 | Expressive, six English voices, English only. |
 | Deepgram Aura-1 / Aura-2 | $15 / $30 per M | $0.14 / $0.27 | Fast; business voices; Kokoro-tier quality. |
 | ElevenLabs Flash v2.5 | ~$40/M chars | ~$0.36 | Clear naturalness and multilingual upgrade. |
-| Cartesia Sonic 3.6 | ~$49/M chars | ~$0.44 | Top quality and latency. Price reference only; adapter planned. |
+| Cartesia Sonic 3.6 | ~$49/M chars | ~$0.44 | Top quality and latency. Implemented. |
 
 Recommendation: **keep Kokoro default**. Add ElevenLabs Flash for multilingual
-naturalness, or Groq Orpheus for cheap expressive English. Cartesia is the
-quality-first reference until its adapter ships. OpenAI mini and Deepgram Aura
-are sidegrades, not upgrades.
+naturalness, Groq Orpheus for cheap expressive English, or Cartesia when quality
+matters more than cost. OpenAI mini and Deepgram Aura are sidegrades, not
+upgrades.
 
 Cloud voice is 20–60× the cost of transcription and about 1000× the LLM
 rewrite. Every line is cached by text + voice + provider; only changed lines are
@@ -124,3 +124,15 @@ shows the install hints and keeps the literal script.
 
 OpenCode Go is optional. Local MLX, Ollama, and the rules fallback stay active
 without it.
+
+
+## Usage and tests
+
+- The result header shows per-job calls, OpenCode tokens, STT minutes, TTS
+  characters and an estimated cost.
+- **Live STT** in Setup synthesizes a local test clip, sends it to the selected
+  cloud STT provider, and returns the transcript.
+- **Live TTS** synthesizes a sample, plays it in Setup, and exposes it at
+  `/api/settings/tts-test/<engine>.wav`.
+- Token prices in the ledger: DeepSeek V4.1 Flash off-peak, Groq/OpenAI/Deepgram
+  STT, and OpenAI/Groq/Deepgram/ElevenLabs/Cartesia TTS.

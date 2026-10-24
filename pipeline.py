@@ -20,6 +20,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 import settings_store
+import usage_store
 import vision
 from vision import probe_image, probe_images
 
@@ -449,6 +450,123 @@ def extract_thumbs(
                 progress(done / total, f"Pulling stills · {done} / {total}")
 
 
+def extract_tracking_frames(
+    path: str,
+    scenes: list[dict],
+    job_dir: Path,
+    progress: Callable[[float, str], None],
+) -> dict[str, Path]:
+    """Two extra stills per deep beat for a smoothed crop path."""
+    ffmpeg = _ffmpeg()
+    tracking_dir = job_dir / "tracking"
+    tracking_dir.mkdir(parents=True, exist_ok=True)
+    targets: list[tuple[dict, int, float]] = []
+    for scene in scenes:
+        if not scene.get("deep") or float(scene.get("dur") or 0.0) < 1.2:
+            continue
+        for index, fraction in enumerate((0.25, 0.75)):
+            moment = scene["start"] + float(scene["dur"]) * fraction
+            targets.append((scene, index, moment))
+    total = max(1, len(targets))
+    done = 0
+    files: dict[str, Path] = {}
+
+    def one(scene: dict, index: int, moment: float) -> None:
+        out = tracking_dir / f"s{scene['id']:05d}_{index}.jpg"
+        try:
+            _run([
+                ffmpeg, "-y", "-v", "error", "-ss", f"{moment:.3f}", "-i", path,
+                "-frames:v", "1", "-vf", "scale=360:-2:flags=lanczos", "-q:v", "5", str(out),
+            ], timeout=90)
+            files[out.name] = out
+        except Exception:
+            return
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(one, scene, index, moment) for scene, index, moment in targets]
+        for _future in as_completed(futures):
+            done += 1
+            if done == total or done % max(1, total // 20) == 0:
+                progress(done / total, f"Tracking crop · {done} / {total}")
+    return files
+
+
+def _attention_from_record(record: dict) -> dict | None:
+    faces = record.get("faces") or []
+    salient = record.get("salient") or []
+    best_face = max(
+        faces, key=lambda f: f["w"] * f["h"] * f.get("confidence", 0), default=None,
+    )
+    best_salient = max(
+        salient, key=lambda s: s["w"] * s["h"] * s.get("confidence", 0), default=None,
+    )
+    if not best_face and not best_salient:
+        return None
+    return {
+        "face": None if not best_face else {
+            key: round(float(best_face.get(key) or 0), 3)
+            for key in ("x", "y", "w", "h", "confidence")
+        },
+        "salient": None if not best_salient else {
+            key: round(float(best_salient.get(key) or 0), 3)
+            for key in ("x", "y", "w", "h", "confidence")
+        },
+    }
+
+
+def attach_crop_paths(
+    scenes: list[dict],
+    records: dict[str, dict],
+    source_w: int,
+    source_h: int,
+) -> None:
+    """Smooth sampled attention into a per-aspect crop path."""
+    for scene in scenes:
+        if not scene.get("deep") or float(scene.get("dur") or 0.0) < 1.2:
+            continue
+        samples: list[tuple[float, dict | None]] = []
+        mid_attention = scene.get("attention")
+        samples.append((0.5, mid_attention))
+        for index, fraction in enumerate((0.25, 0.75)):
+            record = records.get(f"s{scene['id']:05d}_{index}.jpg")
+            if record:
+                samples.append((fraction, _attention_from_record(record)))
+        samples.sort(key=lambda item: item[0])
+        if len([item for item in samples if item[1]]) < 2:
+            continue
+        paths: dict[str, list[dict]] = {}
+        for aspect, target_ar in ASPECT_RATIOS.items():
+            values = []
+            for fraction, attention in samples:
+                probe = {"attention": attention} if attention else {}
+                cx, cy = crop_center(probe, source_w, source_h, target_ar)
+                values.append((fraction, cx, cy))
+            # Extend to the cut edges with the nearest sample, then smooth jitter.
+            values = [(0.0, values[0][1], values[0][2]), *values,
+                      (1.0, values[-1][1], values[-1][2])]
+            smoothed = list(values)
+            for index in range(1, len(values) - 1):
+                _fraction, prev_x, prev_y = values[index - 1]
+                _fraction, cx, cy = values[index]
+                _fraction, next_x, next_y = values[index + 1]
+                smoothed[index] = (
+                    values[index][0],
+                    0.25 * prev_x + 0.5 * cx + 0.25 * next_x,
+                    0.25 * prev_y + 0.5 * cy + 0.25 * next_y,
+                )
+            paths[aspect] = [
+                {
+                    "t": round(fraction * float(scene["dur"]), 3),
+                    "cx": round(float(cx), 4),
+                    "cy": round(float(cy), 4),
+                }
+                for fraction, cx, cy in smoothed
+            ]
+        scene["crop_paths"] = paths
+
+
 # ---------------------------------------------------------------- features
 
 
@@ -634,6 +752,26 @@ def _apple_transcribe_helper() -> Path | None:
 
 
 CLOUD_STT_PROVIDERS = ("groq", "openai", "deepgram")
+WHISPER_MODELS = (
+    {"id": "mlx-community/whisper-small-mlx", "name": "Whisper small · fast", "size_mb": 500},
+    {"id": "mlx-community/whisper-large-v3-turbo-q4", "name": "Whisper large-v3 turbo q4 · balanced", "size_mb": 900},
+    {"id": "mlx-community/whisper-large-v3-turbo", "name": "Whisper large-v3 turbo · best", "size_mb": 1600},
+    {"id": "mlx-community/whisper-medium-mlx-q4", "name": "Whisper medium q4 · multilingual", "size_mb": 800},
+)
+
+
+def whisper_models() -> list[dict]:
+    hub = Path.home() / ".cache" / "huggingface" / "hub"
+    current = (
+        os.environ.get("VIBECUT_WHISPER_MODEL")
+        or (settings_store.load_settings().get("stt") or {}).get("model")
+        or WHISPER_MODELS[0]["id"]
+    )
+    rows = []
+    for item in WHISPER_MODELS:
+        cached = (hub / ("models--" + item["id"].replace("/", "--"))).is_dir()
+        rows.append({**item, "cached": cached, "current": item["id"] == current})
+    return rows
 
 
 def _cloud_stt_provider(preferred: str = "auto") -> str | None:
@@ -732,6 +870,7 @@ def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -
             "segments": segments,
             "provider": provider,
             "model": model,
+            "seconds": round(duration, 3),
         }
 
     # Deepgram
@@ -773,6 +912,7 @@ def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -
         "segments": segments,
         "provider": "deepgram",
         "model": "nova-3",
+        "seconds": round(duration, 3),
     }
 
 
@@ -788,9 +928,12 @@ def transcribe_cloud(
     if not chosen:
         return None
     try:
-        return _cloud_speech(wav_path, job_dir, chosen, language)
+        result = _cloud_speech(wav_path, job_dir, chosen, language)
     except Exception:  # noqa: BLE001 - cloud failure must fall back to local
         return None
+    if result:
+        usage_store.record("stt", chosen, audio_seconds=float(result.get("seconds") or 0.0))
+    return result
 
 
 def transcribe_apple(
@@ -854,7 +997,11 @@ def transcribe(
         return None
     out_dir = job_dir / "transcript"
     out_dir.mkdir(parents=True, exist_ok=True)
-    model = os.environ.get("VIBECUT_WHISPER_MODEL", "mlx-community/whisper-small-mlx")
+    model = (
+        os.environ.get("VIBECUT_WHISPER_MODEL")
+        or (settings_store.load_settings().get("stt") or {}).get("model")
+        or "mlx-community/whisper-small-mlx"
+    )
     log_path = out_dir / "whisper.log"
     cmd = [
         binary, str(wav_path), "--model", model, "--output-format", "json",
@@ -1519,6 +1666,7 @@ def analyze_source(
     timings: dict[str, float] = {}
     read_text = bool(options.get("ocr", True))
     smart_crop = bool(options.get("smart_crop", True))
+    crop_tracking = bool(options.get("crop_tracking", True)) and smart_crop
     vision_enabled = read_text or smart_crop
     use_vision = vision_enabled and vision.available()
 
@@ -1573,6 +1721,19 @@ def analyze_source(
         _apply_scene_read(scene, job_dir, vision_data.get(filename) or {}, read_text)
     timings["features"] = round(time.time() - stage, 2)
 
+    tracking_records = {}
+    if crop_tracking and use_vision:
+        stage = time.time()
+        progress("reading", 0.66, "Tracking crop across each beat")
+        tracking_dir = job_dir / "tracking"
+        tracking_files = extract_tracking_frames(
+            path, deep_scenes, job_dir,
+            lambda fraction, message: progress("reading", 0.66 + 0.02 * fraction, message),
+        )
+        if tracking_files:
+            tracking_records = vision.probe_images(tracking_dir, files=list(tracking_files.values()))
+        timings["crop_tracking"] = round(time.time() - stage, 2)
+
     transcript = None
     if options.get("transcribe") and wav:
         stage = time.time()
@@ -1605,6 +1766,8 @@ def analyze_source(
     stage = time.time()
     progress("scoring", 0.90, "Finding the hook")
     score_scenes(scenes, meta["width"], meta["height"])
+    if tracking_records:
+        attach_crop_paths(scenes, tracking_records, meta["width"], meta["height"])
     if not smart_crop:
         for scene in scenes:
             scene["crop"] = {"cx": 0.5, "cy": 0.5}

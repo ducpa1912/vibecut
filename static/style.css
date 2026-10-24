@@ -1300,3 +1300,8 @@ main { min-height: calc(100vh - 150px); }
   .setup-body { padding: 14px 16px 18px; }
   .setup-head, .setup-foot { padding-left: 16px; padding-right: 16px; }
 }
+
+.setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.setup-audio { width: 100%; margin-top: 10px; height: 34px; }
+
+.clip.selected { outline: 2px solid var(--accent); outline-offset: -2px; }

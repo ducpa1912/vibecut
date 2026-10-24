@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.8.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.9.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -45,14 +45,14 @@ The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 - **Transcribe speech** is off by default for videos over 15 minutes because local Whisper adds real time. Short clips default on.
 - After analysis, pick 15 / 30 / 60, preview the cut timeline, render, download.
 - **Draft** renders 540×960 fast for feel checks; **Render final** does 1080×1920. **All 15/30/60** queues every length.
-- **Aspect** switches between 9:16, 4:5, 1:1 and 16:9. Each aspect uses its own attention crop, so landscape→portrait and portrait→landscape both reframe without re-analysis. **Captions** burns OCR/speech text as styled overlays.
-- **Edit cut** lets you reorder, trim and remove beats. **Save variant** stores that edit; variant chips reload or delete it.
+- **Aspect** switches between 9:16, 4:5, 1:1 and 16:9. Each aspect uses its own attention crop, so landscape→portrait and portrait→landscape both reframe without re-analysis. **Track crop** samples two extra frames per beat and smooths a per-aspect crop path; renders follow it per frame. **Captions** burns OCR/speech text as styled overlays.
+- **Edit cut** lets you reorder, trim and remove beats. **Save variant** stores that edit; variant chips reload or delete it. Keyboard: `←/→` select, `Alt+←/→` reorder, `−/+` trim, `Del` remove, `e` edit, `s` save, `r` draft, `Space` play.
 - **Audio** panel: keep the original sound, replace the voice, dub over the original bed (Demucs), fully replace voice + music, or add music only. Pick the voice engine, target language, **script style** (faithful / smooth / viral), music source and mood; **Test voice** plays a sample.
-- **Voice script** preview lists the deduped lines with role, emotion and fit flags. Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot using the **full transcript** as context (the whole story, then one complete sentence per selected beat), with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
+- **Voice script** preview lists the deduped lines with role, emotion and fit flags. The header shows which engine translated, and **Retry translation** clears that provider's cached lines and retries. Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot using the **full transcript** as context (the whole story, then one complete sentence per selected beat), with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
 - **Automation mixer** above the audio controls: time ruler with one section per clip, a music lane and a voice lane. The lane starts at 100% (0 dB); click to add a node, drag it anywhere in time or gain, double-click to remove, **Reset 100%** clears, **Flatten** puts every node back at 100%. The curve is cosine, so nodes are smooth peaks, and the same curve runs in ffmpeg. The original audio plus the Demucs music stem are drawn behind the lanes so a sudden loud, mute or dip is visible. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
 - **Platform presets** (TikTok, Reels, Shorts, Square, Landscape) set aspect, captions and safe-zone caption margin. **A/B hooks** queues the three strongest hooks at once. **Story arc order** reorders beats as setup → proof → payoff.
 - Music sources: your own track, CC0 library, Stable Audio Open Small or 1.0 with auto mood from the beats.
-- Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs, OpenAI `gpt-4o-mini-tts`, Groq Orpheus, Deepgram Aura. Cloud engines appear after a key is saved in **Setup**.
+- Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs, OpenAI `gpt-4o-mini-tts`, Groq Orpheus, Deepgram Aura, Cartesia Sonic 3.6. Cloud engines appear after a key is saved in **Setup**.
 - Translation runs per render: **OpenCode Go (DeepSeek V4.1 Flash)**, Apple Translation, Marian, Argos, or Ollama. OpenCode translation is on by default and is picked in the **Translate engine** list. If every engine fails, the panel offers **Offline translate setup (~250 MB)**.
 - **Hook lab** lists the strongest opening candidates with their resulting cut length and a plain-language reason; click one to re-plan.
 - Hover any timeline clip for the same **why** note; the drawer repeats it per beat. The hook panel explains why that beat is the opening, and the plan line explains the payoff.
@@ -60,9 +60,10 @@ The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 - Click any scene to inspect scores, OCR, speech and crop, then **Use as hook** to re-plan.
 - Long-video scenes outside the shortlist are read on demand when you click them.
 - Renders are cached per plan + quality + aspect + captions + audio mix; an overridden hook gets its own slot. **Render again** forces a fresh encode. Cancel stops a running render.
-- **SRT / VTT / EDL / XML** buttons export the caption file or the cut list for Resolve and Premiere.
+- **SRT / VTT / EDL / XML** buttons export the caption file or the cut list for Resolve and Premiere. **Review link** copies a read-only page with the rendered video and SRT.
 - **Rewrite model**: OpenCode Go **DeepSeek V4.1 Flash** first when a project key or local OpenCode login exists, at the `low` reasoning variant. Then MLX, Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
-- Speech: `transcribe_engine` is `auto` by default: configured cloud STT → Apple SpeechAnalyzer (macOS 26, 0 MB) → mlx-whisper. Pick the provider and keys in **Setup**.
+- Speech: `transcribe_engine` is `auto` by default: configured cloud STT → Apple SpeechAnalyzer (macOS 26, 0 MB) → mlx-whisper. Pick the provider, keys and **Whisper model** in **Setup**: small, large-v3-turbo-q4, large-v3-turbo or medium-q4; cached models are marked.
+- **Usage** under the result title sums OpenCode tokens, STT minutes, TTS characters and estimated cost per job. **Live STT** and **Live TTS** in Setup exercise the configured providers with a local sample clip.
 
 ## Setup · optional cloud
 
@@ -72,17 +73,17 @@ Keys live in `data/secrets.json` (0600); env vars win.
 | Section | What you can set |
 |---|---|
 | Intelligence | OpenCode Go. Model locked to `deepseek-v4.1-flash`, reasoning variant locked to `low`. Use a project API key (stored only in this project) or the local OpenCode login. Toggles for rewrite, story brief, translation. |
-| Transcription | Auto / Apple / Whisper / Groq / OpenAI / Deepgram. Groq Whisper turbo is $0.04/hour. |
-| Voice over | Preferred provider plus keys. Kokoro stays the free default; ElevenLabs Flash is the best multilingual upgrade, Groq Orpheus the cheap English one. |
+| Transcription | Auto / Apple / Whisper / Groq / OpenAI / Deepgram, spoken language, Whisper model size/q4, keys. Live STT test. Groq Whisper turbo is $0.04/hour. |
+| Voice over | Preferred provider plus keys; ElevenLabs, OpenAI, Groq, Deepgram, Cartesia. Kokoro stays the free default. Live TTS test plays a sample. |
 
-Buttons **Test OpenCode**, **Check STT**, **Check TTS** show what is ready.
+Buttons **Test OpenCode**, **Check STT**, **Live STT**, **Check TTS**, **Live TTS** show what is ready. Live tests generate a local sample, call the provider, and show the transcript or play the audio.
 Costs, model choices and the fallback ladder: [docs/cloud-speech.md](docs/cloud-speech.md).
 
 Environment keys:
 
 ```
 OPENCODE_GO_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
-DEEPGRAM_API_KEY      ELEVENLABS_API_KEY
+DEEPGRAM_API_KEY      ELEVENLABS_API_KEY   CARTESIA_API_KEY
 ```
 
 The API never returns a speech key; it only reports whether one is configured
@@ -164,7 +165,7 @@ The render panel can rebuild the audio track:
 | Music only | Original audio dropped, only the new music bed |
 
 Voice engines: Apple `say` (0 MB, built in), Piper medium (~170 MB), Kokoro int8
-(~220 MB), ElevenLabs (set `VIBECUT_ELEVENLABS_API_KEY`).
+(~220 MB), ElevenLabs, OpenAI, Groq, Deepgram, Cartesia (cloud keys in Setup).
 
 Music sources: your own folder `assets/music/library`, CC0 folder
 `assets/music/cc0`, Stable Audio Open Small (~2 GB) or Stable Audio Open 1.0

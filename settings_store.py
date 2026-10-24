@@ -37,7 +37,11 @@ DEFAULTS = {
         "use_brief": True,
         "use_translate": True,
     },
-    "stt": {"provider": "auto", "language": "en"},
+    "stt": {
+        "provider": "auto",
+        "language": "en",
+        "model": "mlx-community/whisper-small-mlx",
+    },
     "tts": {"provider": "auto"},
 }
 

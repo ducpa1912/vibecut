@@ -127,7 +127,7 @@ def test_voice_sample_engine_registry(monkeypatch, tmp_path):
 def test_engine_status_shape():
     status = audio.engine_status()
     assert set(status["voices"]) == {
-        "say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram",
+        "say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram", "cartesia",
     }
     assert "stable-small" in status["music"]
     assert "demucs" in status["separation"]
@@ -1336,7 +1336,9 @@ def test_settings_api_locks_model_and_masks_keys(tmp_path, monkeypatch):
     })
     assert saved.status_code == 200
     body = saved.json()
-    assert body["settings"]["stt"] == {"provider": "groq", "language": "vi"}
+    assert body["settings"]["stt"]["provider"] == "groq"
+    assert body["settings"]["stt"]["language"] == "vi"
+    assert body["settings"]["stt"]["model"] == "mlx-community/whisper-small-mlx"
     assert body["secrets"]["groq"] is True
     assert body["secrets"]["opencode"] is True
     assert body["sources"]["groq"] == "file"
@@ -1371,3 +1373,135 @@ def test_opencode_direct_key_is_exclusive(monkeypatch):
     monkeypatch.setattr(audio, "_opencode_api", fail_local)
     assert audio._opencode_text("hello") == "direct answer"
     assert called["local"] is False
+
+
+# ---------------------------------------------------------------- 0.9.0 P1/P2
+
+
+def test_usage_store_costs_and_delta():
+    import usage_store
+    before = usage_store.snapshot()
+    usage_store.record("llm", "opencode", model="deepseek", input_tokens=1_000_000, output_tokens=1_000_000)
+    usage_store.record("stt", "groq", audio_seconds=3600)
+    usage_store.record("tts", "openai", chars=1_000_000)
+    delta = usage_store.delta(before)
+    assert delta["calls"] == 3
+    assert delta["input_tokens"] == 1_000_000
+    assert delta["audio_seconds"] == 3600
+    assert abs(delta["cost_usd"] - (0.75 + 0.04 + 15.0)) < 0.001
+
+
+def test_job_usage_summary_sums_entries():
+    job = {"usage": [
+        {"action": "script", "calls": 2, "input_tokens": 1000, "output_tokens": 200, "chars": 0,
+         "audio_seconds": 0, "cost_usd": 0.001},
+        {"action": "render", "calls": 0, "input_tokens": 0, "output_tokens": 0, "chars": 500,
+         "audio_seconds": 0, "cost_usd": 0.2},
+    ]}
+    summary = app._usage_summary(job)
+    assert summary["totals"]["calls"] == 2
+    assert summary["totals"]["chars"] == 500
+    assert abs(summary["totals"]["cost_usd"] - 0.201) < 0.000001
+
+
+def test_attach_crop_paths_smooths_samples():
+    scene = make_scene(0, 0.0, 4.0)
+    scene["deep"] = True
+    scene["attention"] = {
+        "face": {"x": 0.42, "y": 0.5, "w": 0.12, "h": 0.12, "confidence": 0.9},
+        "salient": None,
+    }
+    records = {
+        "s00000_0.jpg": {"faces": [{"x": 0.5, "y": 0.2, "w": 0.1, "h": 0.1, "confidence": 0.8}], "salient": []},
+        "s00000_1.jpg": {"faces": [{"x": 0.5, "y": 0.8, "w": 0.1, "h": 0.1, "confidence": 0.8}], "salient": []},
+    }
+    pipeline.attach_crop_paths([scene], records, 1080, 1920)
+    paths = scene["crop_paths"]
+    assert set(paths) == set(pipeline.ASPECT_RATIOS)
+    nine = paths["16:9"]
+    assert len(nine) == 5
+    assert all(0.0 <= item["t"] <= 4.0 for item in nine)
+    assert nine[0]["cy"] != nine[-1]["cy"]
+
+
+def test_crop_filter_dynamic_path_expression():
+    meta = {"width": 1080, "height": 1920}
+    vf = render._crop_filter(
+        meta, {"cx": 0.5, "cy": 0.5}, 1920, 1080,
+        crop_path=[{"t": 0.0, "cy": 0.2}, {"t": 2.0, "cy": 0.8}], duration=2.0,
+    )
+    assert "cos(PI" in vf
+    assert "y='" in vf
+    assert "crop=1080:608" in vf
+
+
+def test_cartesia_payload(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_convert(source, output, extra=None):
+        output.write_bytes(b"RIFF")
+        return output
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["headers"] = dict(request.header_items())
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse(b"fake-wav")
+
+    monkeypatch.setattr(audio, "_convert", fake_convert)
+    monkeypatch.setattr(audio, "cartesia_key", lambda: "sk_car_test")
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    output = tmp_path / "cartesia.wav"
+    audio._cartesia_voice("hello", "voice-id", output, 1.0)
+    assert captured["url"] == "https://api.cartesia.ai/tts/bytes"
+    assert captured["headers"].get("X-api-key") == "sk_car_test"
+    assert captured["body"]["model_id"] == "sonic-3.6"
+    assert captured["body"]["voice"] == "voice-id"
+    assert output.is_file()
+
+
+def test_whisper_models_shape():
+    models = pipeline.whisper_models()
+    ids = {item["id"] for item in models}
+    assert "mlx-community/whisper-large-v3-turbo-q4" in ids
+    assert all("cached" in item and "size_mb" in item for item in models)
+
+
+def test_share_token_and_review(tmp_path, monkeypatch):
+    job_dir = tmp_path / "job"
+    renders = job_dir / "renders"
+    renders.mkdir(parents=True)
+    video = renders / "reel_15.mp4"
+    video.write_bytes(b"fake-mp4")
+    scenes = [make_scene(0, 0.0, 2.0, speech="hello")]
+    job = {
+        "id": "job1",
+        "source": {"name": "clip.mp4"},
+        "analysis": {
+            "scenes": scenes,
+            "plans": {"15": {"target": 15, "clips": [
+                {"scene": 0, "start": 0.0, "duration": 2.0, "dur": 2.0, "role": "hook"},
+            ]}},
+        },
+        "renders": {"15": {"status": "ready", "path": "renders/reel_15.mp4", "updated": 1}},
+    }
+    monkeypatch.setattr(app, "SHARES", tmp_path / "shares.json")
+    monkeypatch.setattr(app, "_job_dir", lambda job_id: job_dir)
+    monkeypatch.setattr(app, "load_job", lambda job_id: job)
+    result = app.create_share("job1", 15, "9:16")
+    assert result["url"].startswith("/r/")
+    found = app._share(result["token"])
+    assert found and found[0]["target"] == 15
+    page = app.review_page(result["token"])
+    assert b"review only" in page.body
+    media = app.review_video(result["token"])
+    assert media.path == video
+
+
+def test_clear_translation_memo_by_provider(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio, "MEMO", tmp_path / "translate")
+    audio._memo_put("zh", "en", "你好", "hello", "opencode")
+    assert audio._memo_get("zh", "en", "你好", "opencode") == "hello"
+    removed = audio.clear_translation_memo(["你好"], "zh", "en", "opencode")
+    assert removed == 1
+    assert audio._memo_get("zh", "en", "你好", "opencode") is None

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
-  <link rel="stylesheet" href="/static/style.css?v=0.8.0">
-  <script defer src="/static/app.js?v=0.8.0"></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.9.0d">
+  <script defer src="/static/app.js?v=0.9.0d"></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -62,6 +62,11 @@
               <input id="opt-crop" type="checkbox" checked>
               <span class="check-box"></span>
               <span class="check-copy"><strong>Smart crop</strong><small>follows the subject</small></span>
+            </label>
+            <label class="check">
+              <input id="opt-track" type="checkbox" checked>
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>Track crop</strong><small>smoothed per beat</small></span>
             </label>
             <label class="check">
               <input id="opt-ocr" type="checkbox" checked>
@@ -137,6 +142,7 @@
           <p class="eyebrow"><span>03</span> cut</p>
           <h2 id="result-title">—</h2>
           <p id="result-meta" class="result-meta"></p>
+          <p id="usage-readout" class="hint"></p>
         </div>
         <div class="result-actions">
           <button id="new-video" class="ghost">New video</button>
@@ -192,7 +198,7 @@
         <div id="timeline" class="timeline"></div>
         <p id="plan-why" class="plan-why"></p>
         <div id="edit-bar" class="edit-bar" hidden>
-          <span id="edit-hint" class="hint">Trim with − / +, reorder with ↑ ↓, remove with ✕.</span>
+          <span id="edit-hint" class="hint">← / → select · Alt+← / → reorder · − / + trim · Del remove · e edit · s save · r draft · Space play</span>
           <input id="variant-name" class="variant-name" placeholder="Variant name" maxlength="40">
           <button id="save-variant" class="ghost small">Save variant</button>
           <button id="done-edit" class="ghost small">Done</button>
@@ -337,6 +343,7 @@
               <button id="export-vtt" class="ghost small" type="button">VTT</button>
               <button id="export-edl" class="ghost small" type="button">EDL</button>
               <button id="export-xml" class="ghost small" type="button">XML</button>
+              <button id="share-link" class="ghost small" type="button">Review link</button>
             </div>
           </div>
         </div>
@@ -454,6 +461,10 @@
               <option value="ar">Arabic</option>
             </select>
           </label>
+          <label class="setup-field">
+            <span>Whisper model</span>
+            <select id="setup-stt-model"></select>
+          </label>
           <div class="setup-row">
             <label class="setup-field">
               <span>Groq key</span>
@@ -468,7 +479,10 @@
             <span>Deepgram key</span>
             <input id="setup-deepgram-key" type="password" autocomplete="off" spellcheck="false" placeholder="Token…">
           </label>
-          <button id="setup-test-stt" class="ghost small" type="button">Check STT</button>
+          <div class="setup-actions">
+            <button id="setup-test-stt" class="ghost small" type="button">Check STT</button>
+            <button id="setup-test-stt-live" class="ghost small" type="button">Live STT</button>
+          </div>
         </section>
 
         <section class="setup-section">
@@ -487,14 +501,25 @@
               <option value="elevenlabs">ElevenLabs Flash · ~$40/M</option>
               <option value="groq">Groq Orpheus · ~$22/M, English</option>
               <option value="deepgram">Deepgram Aura-2 · $30/M</option>
+              <option value="cartesia">Cartesia Sonic 3.6 · ~$49/M</option>
             </select>
           </label>
-          <label class="setup-field">
-            <span>ElevenLabs key</span>
-            <input id="setup-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="xi-…">
-          </label>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>ElevenLabs key</span>
+              <input id="setup-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="xi-…">
+            </label>
+            <label class="setup-field">
+              <span>Cartesia key</span>
+              <input id="setup-cartesia-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk_car_…">
+            </label>
+          </div>
           <p class="setup-hint">Kokoro is already strong. Cloud voice is worth it for ElevenLabs naturalness, or Groq for cheap English. Every line is cached.</p>
-          <button id="setup-test-tts" class="ghost small" type="button">Check TTS</button>
+          <div class="setup-actions">
+            <button id="setup-test-tts" class="ghost small" type="button">Check TTS</button>
+            <button id="setup-test-tts-live" class="ghost small" type="button">Live TTS</button>
+          </div>
+          <audio id="setup-tts-audio" class="setup-audio" controls hidden></audio>
         </section>
       </div>
       <footer class="setup-foot">

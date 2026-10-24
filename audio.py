@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 import settings_store
+import usage_store
 
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
@@ -279,6 +280,8 @@ def engine_status() -> dict:
                  "install": "Set GROQ_API_KEY or add it in Setup. Orpheus English, cloud."},
         "deepgram": {"available": bool(deepgram_key()), "size_mb": 0,
                      "install": "Set DEEPGRAM_API_KEY or add it in Setup. Aura, cloud."},
+        "cartesia": {"available": bool(cartesia_key()), "size_mb": 0,
+                     "install": "Set CARTESIA_API_KEY or add it in Setup. Sonic 3.6, cloud."},
     }
     music = {
         "library": {"available": True, "size_mb": 0,
@@ -395,6 +398,37 @@ def list_voices(engine: str) -> list[dict]:
         ]
         return [{"id": name, "name": name, "lang": "en"} for name in names]
 
+    if engine == "cartesia":
+        key = cartesia_key()
+        if not key:
+            return []
+        request = urllib.request.Request(
+            "https://api.cartesia.ai/voices?limit=100",
+            headers={
+                "X-API-Key": key,
+                "Cartesia-Version": "2026-08-14",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise AudioError(f"Cartesia voices failed: {exc}") from exc
+        items = data.get("data") if isinstance(data, dict) else data
+        voices = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            voice_id = item.get("id")
+            if not voice_id:
+                continue
+            voices.append({
+                "id": voice_id,
+                "name": item.get("name") or voice_id,
+                "lang": str(item.get("language") or "multi"),
+            })
+        return voices
+
     if engine == "elevenlabs":
         key = elevenlabs_key()
         if not key:
@@ -430,6 +464,26 @@ def _text_hash(*parts: str) -> str:
 # ---------------------------------------------------------------- translate memo
 
 MEMO = CACHE / "translate"
+TRANSLATION_STATUS = {"provider": "", "source": "", "target": "", "lines": 0, "tried": []}
+
+
+def translation_status() -> dict:
+    return dict(TRANSLATION_STATUS)
+
+
+def clear_translation_memo(
+    lines: list[str], source: str, target: str, provider: str = "auto",
+) -> int:
+    removed = 0
+    for line in lines:
+        path = _memo_file(source, target, str(line), provider or "auto")
+        try:
+            if path.is_file():
+                path.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def _memo_file(source: str, target: str, text: str, provider: str = "auto") -> Path:
@@ -668,6 +722,47 @@ def _deepgram_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> N
         pass
 
 
+def _cartesia_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+    key = cartesia_key()
+    if not key:
+        raise AudioError("Set CARTESIA_API_KEY to use Cartesia voice.")
+    if not voice:
+        raise AudioError("Pick a Cartesia voice first.")
+    payload = json.dumps({
+        "model_id": "sonic-3.6",
+        "transcript": text,
+        "voice": voice,
+        "output_format": {
+            "container": "wav",
+            "encoding": "pcm_s16le",
+            "sample_rate": 44100,
+        },
+        "generation_config": {"speed": 1.0, "volume": 1.0},
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.cartesia.ai/tts/bytes",
+        data=payload,
+        headers={
+            "X-API-Key": key,
+            "Cartesia-Version": "2026-08-14",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    raw = output.with_name(f"{output.stem}.cartesia.tmp.wav")
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            raw.write_bytes(response.read())
+    except Exception as exc:  # noqa: BLE001
+        raise AudioError(f"Cartesia voice failed: {exc}") from exc
+    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
+    _convert(raw, output, extra)
+    try:
+        raw.unlink()
+    except OSError:
+        pass
+
+
 def synthesize_line(
     engine: str,
     voice: str,
@@ -701,6 +796,8 @@ def synthesize_line(
         _deepgram_voice(text, voice, target, rate)
     else:
         raise AudioError(f"Unknown voice engine {engine!r}.")
+    if engine in usage_store.TTS_PER_CHAR:
+        usage_store.record("tts", engine, chars=len(text))
     if not target.is_file() or target.stat().st_size == 0:
         raise AudioError("Voice synthesis produced no audio.")
     if flac:
@@ -1064,7 +1161,12 @@ def translate_lines(
     target: str,
     provider: str = "auto",
 ) -> list[str]:
+    TRANSLATION_STATUS.update({
+        "provider": "", "source": source, "target": target,
+        "lines": len(lines), "tried": [],
+    })
     if not target or target == source:
+        TRANSLATION_STATUS["provider"] = "none"
         return list(lines)
     target_name = _language_name(target)
     source_code = (source or "en").split("-")[0]
@@ -1097,6 +1199,13 @@ def translate_lines(
                 for original, translated in zip(missing, result):
                     memo[original] = translated
                     _memo_put(source_code, target_code, original, translated, requested)
+                TRANSLATION_STATUS.update({
+                    "provider": candidate,
+                    "source": source_code,
+                    "target": target_code,
+                    "lines": len(missing),
+                    "tried": errors,
+                })
                 break
             errors.append(candidate)
         else:
@@ -1700,6 +1809,12 @@ def _opencode_http_text(prompt: str, max_tokens: int = 1200) -> str | None:
     except Exception as exc:  # noqa: BLE001
         OPENCODE_LAST_ERROR = f"Direct API: {str(exc)[:220]}"
         return None
+    usage = data.get("usage") or {}
+    usage_store.record(
+        "llm", "opencode", model=opencode_model(),
+        input_tokens=int(usage.get("prompt_tokens") or 0),
+        output_tokens=int(usage.get("completion_tokens") or 0),
+    )
     choices = data.get("choices") or []
     if not choices:
         OPENCODE_LAST_ERROR = "Direct API returned no choices."
@@ -1754,6 +1869,7 @@ def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200)
         _opencode_api(["delete", f"/api/session/{session_id}"], allow_empty=True)
     value = str(((generated or {}).get("data") or {}).get("text") or "").strip()
     if value:
+        usage_store.record("llm", "opencode-local", calls=1)
         OPENCODE_LAST_ERROR = ""
         return value
     if not OPENCODE_LAST_ERROR:

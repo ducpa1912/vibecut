@@ -7,6 +7,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.9.0 | 2026-10-24 | P1/P2 | usage/cost readout, live STT/TTS tests, Cartesia, smoothed crop paths, review links, keyboard editor, Whisper model manager |
 | 0.8.0 | 2026-10-24 | Bilateral crop | per-aspect attention crops for 9:16/4:5/1:1/16:9, true aspect reframe, direct OpenCode Go project key mode |
 | 0.7.2 | 2026-10-24 | OpenCode translation | OpenCode Go becomes a translation provider, on by default; provider-scoped translation memo; line-end facts preserved through fit |
 | 0.7.1 | 2026-10-24 | OpenCode Go | Intelligence switched from OpenRouter to local OpenCode Go / DeepSeek V4.1 Flash, `low` variant, session-per-call, no key copy |
@@ -53,8 +54,8 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Cloud TTS: OpenAI gpt-4o-mini-tts, Groq Orpheus, Deepgram Aura
 - [x] Cloud STT/TTS fall back to local on any error
 - [x] Cost table + recommendations in [docs/cloud-speech.md](docs/cloud-speech.md)
-- [ ] Per-job cloud usage/cost readout
-- [ ] Cartesia TTS adapter
+- [x] Per-job cloud usage/cost readout
+- [x] Cartesia TTS adapter
 
 ### Audio mixing
 - [x] Ruler automation mixer: draggable dB envelopes, ramps between points, clip sections
@@ -69,7 +70,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 ### Analysis
 - [x] SpeechAnalyzer transcription engine (macOS 26, 0 MB) with whisper fallback
 - [x] Smart crop bilateral: vertical source to horizontal 16:9 / 4:5 / 1:1 and the opposite, attention stored per aspect
-- [ ] Per-frame crop tracking with smoothing
+- [x] Per-frame crop path: 3 attention samples per beat, smoothed, rendered with dynamic crop expressions
 - [ ] Story-arc reorder (setup → proof → payoff) for the beat order
 - [ ] Local-LLM scene notes feeding hook and payoff explanations
 
@@ -79,15 +80,15 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Platform presets (TikTok, Reels, Shorts, Square, Landscape)
 - [x] Safe-zone caption margin per preset
 - [x] A/B package: top 3 hooks rendered in one batch
-- [ ] Read-only review links
-- [ ] Keyboard-first editor
+- [x] Read-only review links with token, MP4 and SRT
+- [x] Keyboard-first editor: select, reorder, trim, remove, save, draft, play
 
 ### Storage and speed
 - [x] Content-addressed source store with hardlinks and GC
 - [x] Cache caps, age prune, master reuse, FLAC caches
 - [x] Job clean (work files / renders / all but source)
 - [x] Install audit CLI
-- [ ] Whisper q4 model option, model manager UI merged into the audit panel
+- [x] Whisper q4/model manager in Setup: cached marker and model picker
 
 ### Parked on purpose
 - [!] SFX auto-placement: wait until music assets exist for most users
@@ -103,7 +104,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 | 11 | SpeechAnalyzer, SRT/VTT, EDL/XML, presets, A/B | shipped 0.6.0 |
 | 12 | CAS source store, story arc | shipped 0.6.0 |
 | 12.5 | Cloud setup: OpenCode Go + cloud STT/TTS | shipped 0.7.1 |
-| 13 | Smart crop bilateral, crop tracking, review links, keyboard editor | bilateral shipped 0.8.0; tracking/review/keyboard next |
+| 13 | Smart crop bilateral, crop tracking, review links, keyboard editor | shipped 0.9.0 |
 | 14 | SFX, cloning (consent gated), whisper q4 manager | parked |
 
 ## Acceptance checks
@@ -119,6 +120,10 @@ this table, and gets one commit. Patch bumps for fixes only.
   Groq/Deepgram segments parse; TTS payloads match provider contracts.
 - Crop: portrait→16:9 follows the subject vertically; landscape→9:16 follows it
   horizontally; 4:5 and 1:1 use their own crop; segment cache keys change by crop.
+  Tracked paths use three samples per beat, smoothed, and per-frame crop
+  expressions; a trimmed clip offsets the path correctly.
+- Usage: one OpenCode rewrite records tokens and estimated cost on the job.
+- Review: token page serves the MP4 and SRT without exposing the editor.
 - CAS: ingesting the same file twice yields one store entry; GC keeps referenced copies.
 - Exports: EDL imports in Resolve with correct in/out frames at 30 fps.
 

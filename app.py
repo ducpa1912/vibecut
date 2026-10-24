@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html as html_lib
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ import exports as cuts
 import pipeline
 import render
 import settings_store
+import usage_store
 import vision
 
 ROOT = Path(__file__).resolve().parent
@@ -222,6 +224,7 @@ def clean_options(raw: dict | None) -> dict:
         "ocr": bool(raw.get("ocr", True)),
         "transcribe": bool(raw.get("transcribe", False)),
         "smart_crop": bool(raw.get("smart_crop", True)),
+        "crop_tracking": bool(raw.get("crop_tracking", True)),
         "transcribe_engine": str(raw.get("transcribe_engine") or "auto"),
         "speech_language": str(
             raw.get("speech_language")
@@ -253,6 +256,7 @@ def public_job(job: dict) -> dict:
         key: job.get("source", {}).get(key)
         for key in ("name", "duration", "width", "height", "fps", "has_audio", "size")
     }
+    value["usage"] = _usage_summary(job)
     analysis = value.get("analysis")
     if analysis:
         for scene in analysis.get("scenes", []):
@@ -292,6 +296,7 @@ def run_analysis(job_id: str) -> None:
         save_job(job)
 
     try:
+        before_usage = usage_store.snapshot()
         analysis = pipeline.analyze_source(
             job["source"]["path"],
             job["source"],
@@ -299,6 +304,13 @@ def run_analysis(job_id: str) -> None:
             job.get("options") or {},
             progress,
         )
+        analysis_delta = usage_store.delta(before_usage)
+        if analysis_delta["calls"] or analysis_delta["audio_seconds"] or analysis_delta["chars"]:
+            job.setdefault("usage", []).append({
+                "action": "analysis",
+                "at": round(time.time(), 3),
+                **analysis_delta,
+            })
         job["analysis"] = analysis
         job["status"] = "ready"
         job["progress"] = 1.0
@@ -323,6 +335,114 @@ def _set_render(job_id: str, record_key: str, **values) -> dict:
         record["updated"] = round(time.time(), 3)
 
     return update_job(job_id, mutate)
+
+
+def _append_usage(job_id: str, action: str, delta: dict) -> None:
+    if not delta.get("calls") and not delta.get("audio_seconds") and not delta.get("chars"):
+        return
+
+    def mutate(job: dict) -> None:
+        job.setdefault("usage", []).append({
+            "action": action,
+            "at": round(time.time(), 3),
+            **delta,
+        })
+        job["usage"] = job["usage"][-100:]
+
+    update_job(job_id, mutate)
+
+
+def _usage_summary(job: dict) -> dict:
+    entries = job.get("usage") or []
+    totals = {"calls": 0, "input_tokens": 0, "output_tokens": 0,
+              "chars": 0, "audio_seconds": 0.0, "cost_usd": 0.0}
+    for entry in entries:
+        for key in ("calls", "input_tokens", "output_tokens", "chars"):
+            totals[key] += int(entry.get(key) or 0)
+        totals["audio_seconds"] += float(entry.get("audio_seconds") or 0.0)
+        totals["cost_usd"] += float(entry.get("cost_usd") or 0.0)
+    totals["audio_seconds"] = round(totals["audio_seconds"], 3)
+    totals["cost_usd"] = round(totals["cost_usd"], 6)
+    return {"totals": totals, "entries": entries[-40:]}
+
+
+def _load_shares() -> dict:
+    if not SHARES.is_file():
+        return {}
+    try:
+        value = json.loads(SHARES.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _save_shares(value: dict) -> None:
+    SHARES.parent.mkdir(parents=True, exist_ok=True)
+    SHARES.write_text(json.dumps(value, indent=1), encoding="utf-8")
+    try:
+        SHARES.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _find_share_render(job: dict, target: int, aspect: str) -> dict | None:
+    rows = []
+    for record in (job.get("renders") or {}).values():
+        if record.get("status") != "ready" or not record.get("path"):
+            continue
+        if f"reel_{int(target)}" not in str(record["path"]):
+            continue
+        path = str(record["path"])
+        if aspect == "9:16" and any(token in path for token in ("_16x9", "_1x1", "_4x5")):
+            continue
+        if aspect != "9:16" and aspect.replace(":", "x") not in path:
+            continue
+        rows.append(record)
+    rows.sort(key=lambda item: float(item.get("updated") or 0), reverse=True)
+    if rows:
+        return rows[0]
+    # CLI renders are files only, so fall back to the render directory.
+    directory = _job_dir(job["id"]) / "renders"
+    pattern = f"reel_{int(target)}*.mp4"
+    candidates = []
+    for path in directory.glob(pattern):
+        name = path.name
+        if aspect == "9:16" and any(token in name for token in ("_16x9", "_1x1", "_4x5")):
+            continue
+        if aspect != "9:16" and aspect.replace(":", "x") not in name:
+            continue
+        candidates.append(path)
+    candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+    if not candidates:
+        return None
+    chosen = candidates[0]
+    return {
+        "status": "ready",
+        "path": str(chosen.relative_to(_job_dir(job["id"]))),
+        "updated": chosen.stat().st_mtime,
+    }
+
+
+def _share(token: str) -> tuple[dict, dict, dict] | None:
+    record = _load_shares().get(token)
+    if not record:
+        return None
+    try:
+        job = load_job(record["job_id"])
+    except HTTPException:
+        return None
+    render_record = _find_share_render(job, int(record["target"]), record.get("aspect") or "9:16")
+    if not render_record:
+        return None
+    return record, job, render_record
+
+
+def _share_captions(job: dict, target: int) -> str:
+    plan = _plan_for(job, target, None)
+    scenes = job["analysis"]["scenes"]
+    clips = plan.get("clips") or []
+    cues = cuts.plan_cues(plan, clips, scenes)
+    return cuts.srt(cues)
 
 
 def run_render(
@@ -367,6 +487,7 @@ def run_render(
 
         if cancel_event.is_set():
             raise render.RenderCancelled("Render cancelled.")
+        before_usage = usage_store.snapshot()
         result = render.render_reel(
             source, meta, _job_dir(job_id), plan, title, progress,
             quality=quality, aspect=aspect, encoder=encoder,
@@ -374,12 +495,15 @@ def run_render(
             caption_margin=caption_margin,
             cancel_event=cancel_event,
         )
+        render_delta = usage_store.delta(before_usage)
+        _append_usage(job_id, "render", render_delta)
         _set_render(
             job_id, record_key,
             status="ready", progress=1.0, message="Reel ready",
             error=None, key=key, hook=plan["hook_scene"],
             total=plan["total"], eta=0, audio_sig=audio_sig,
             preset=preset, caption_margin=caption_margin,
+            usage=render_delta,
             **result,
         )
         LOGGER.info("render %s/%s ready in %s", job_id, record_key, result["path"])
@@ -616,6 +740,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
 PUBLIC_PATHS = {"/", "/index.html", "/favicon.ico", "/api/health"}
+SHARES = DATA / "shares.json"
 
 
 @app.middleware("http")
@@ -624,7 +749,7 @@ async def require_token(request: Request, call_next):
     if not token:
         return await call_next(request)
     path = request.url.path
-    if path in PUBLIC_PATHS or path.startswith("/static"):
+    if path in PUBLIC_PATHS or path.startswith("/static") or path.startswith("/r/"):
         return await call_next(request)
     supplied = request.headers.get("authorization") or ""
     if supplied.lower().startswith("bearer "):
@@ -687,11 +812,14 @@ def health() -> dict:
 OPENCODE_MODEL = "deepseek-v4.1-flash"
 OPENCODE_VARIANT = "low"
 STT_PROVIDERS = {"auto", "apple", "whisper", "groq", "openai", "deepgram"}
-TTS_PROVIDERS = {"auto", "local", "say", "piper", "kokoro", "openai", "elevenlabs", "groq", "deepgram"}
+TTS_PROVIDERS = {"auto", "local", "say", "piper", "kokoro", "openai", "elevenlabs", "groq", "deepgram", "cartesia"}
 
 
 class SettingsTestBody(BaseModel):
     kind: str = "opencode"
+    engine: str = ""
+    voice: str = ""
+    provider: str = ""
 
 
 def _settings_state() -> dict:
@@ -702,6 +830,7 @@ def _settings_state() -> dict:
         "opencode_model": audio.opencode_model(),
         "opencode_variant": audio.opencode_variant(),
         "opencode_mode": audio.opencode_mode(),
+        "whisper_models": pipeline.whisper_models(),
     }
     return state
 
@@ -730,6 +859,10 @@ async def save_settings(request: Request) -> dict:
         stt = patch.get("stt")
         if isinstance(stt, dict) and stt.get("provider") not in (None, "") and stt["provider"] not in STT_PROVIDERS:
             raise HTTPException(400, "Unknown transcription provider.")
+        if isinstance(stt, dict) and stt.get("model") not in (None, "") and stt["model"] not in {
+            item["id"] for item in pipeline.WHISPER_MODELS
+        }:
+            raise HTTPException(400, "Unknown Whisper model.")
         tts = patch.get("tts")
         if isinstance(tts, dict) and tts.get("provider") not in (None, "") and tts["provider"] not in TTS_PROVIDERS:
             raise HTTPException(400, "Unknown voice provider.")
@@ -778,6 +911,7 @@ def test_settings(body: SettingsTestBody) -> dict:
             "groq": bool(audio.groq_key()),
             "deepgram": bool(audio.deepgram_key()),
             "elevenlabs": bool(audio.elevenlabs_key()),
+            "cartesia": bool(audio.cartesia_key()),
         }
         ready = [name for name, available in engines.items() if available]
         return {
@@ -786,7 +920,158 @@ def test_settings(body: SettingsTestBody) -> dict:
             "engines": engines,
             "detail": ("Configured: " + ", ".join(ready)) if ready else "No cloud voice key. Local voices still work.",
         }
+    if kind == "stt_live":
+        provider = (body.provider or "auto").lower()
+        chosen = pipeline._cloud_stt_provider(provider)
+        if not chosen:
+            return {"ok": False, "kind": "stt_live", "detail": "No cloud STT key for this provider."}
+        sample_dir = DATA / "cache" / "stt-test"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        sample = sample_dir / "sample.wav"
+        engine = ""
+        voice = ""
+        for candidate in ("say", "kokoro", "piper"):
+            info = audio.engine_status().get("voices", {}).get(candidate) or {}
+            if not info.get("available"):
+                continue
+            voices = audio.list_voices(candidate)
+            if voices:
+                engine, voice = candidate, voices[0]["id"]
+                break
+        if not engine:
+            return {"ok": False, "kind": "stt_live", "detail": "No local voice to generate the test clip."}
+        started = time.time()
+        try:
+            audio.synthesize_line(engine, voice, "VibeCut transcription test. The garden is open.", sample)
+            result = pipeline.transcribe_cloud(sample, sample_dir, "en", chosen)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "kind": "stt_live", "detail": str(exc)[:300]}
+        if not result:
+            return {"ok": False, "kind": "stt_live", "provider": chosen, "detail": "Cloud STT returned no transcript."}
+        return {
+            "ok": True,
+            "kind": "stt_live",
+            "provider": chosen,
+            "seconds": round(time.time() - started, 2),
+            "text": " ".join(str(result.get("text") or "").split())[:300],
+            "detail": f"{chosen} transcribed the local test clip.",
+        }
+    if kind == "tts_live":
+        requested = (body.engine or "").lower()
+        engines = audio.engine_status().get("voices", {})
+        candidates = [requested] if requested and requested not in {"auto", "local"} else [
+            "openai", "elevenlabs", "groq", "deepgram", "cartesia", "kokoro", "say",
+        ]
+        engine = next((name for name in candidates if (engines.get(name) or {}).get("available")), "")
+        if not engine:
+            return {"ok": False, "kind": "tts_live", "detail": "No available voice engine."}
+        voices = audio.list_voices(engine)
+        if not voices:
+            return {"ok": False, "kind": "tts_live", "engine": engine, "detail": "No voices for this engine."}
+        voice = body.voice or voices[0]["id"]
+        output_dir = DATA / "cache" / "voice-test"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output = output_dir / f"{engine}.wav"
+        started = time.time()
+        try:
+            audio.synthesize_line(engine, voice, "VibeCut voice test. The garden is open.", output)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "kind": "tts_live", "engine": engine, "detail": str(exc)[:300]}
+        return {
+            "ok": True,
+            "kind": "tts_live",
+            "engine": engine,
+            "voice": voice,
+            "seconds": round(time.time() - started, 2),
+            "url": f"/api/settings/tts-test/{engine}.wav?v={int(time.time())}",
+            "detail": f"{engine} synthesized a local test clip.",
+        }
     raise HTTPException(400, "Unknown test kind.")
+
+
+@app.get("/api/settings/tts-test/{engine}.wav")
+def settings_tts_test(engine: str) -> FileResponse:
+    safe = "".join(ch for ch in engine if ch.isalnum() or ch in "-_")
+    path = DATA / "cache" / "voice-test" / f"{safe}.wav"
+    if not path.is_file():
+        raise HTTPException(404, "No voice test yet.")
+    return FileResponse(path, media_type="audio/wav", filename=f"vibecut-{safe}-test.wav")
+
+
+@app.post("/api/jobs/{job_id}/share")
+def create_share(job_id: str, target: int = 30, aspect: str = "9:16") -> dict:
+    job = load_job(job_id)
+    target = _valid_target(int(target))
+    aspect = aspect if aspect in render.ASPECTS else "9:16"
+    record = _find_share_render(job, target, aspect)
+    if not record:
+        raise HTTPException(409, "Render this cut first, then create the review link.")
+    token = uuid.uuid4().hex + uuid.uuid4().hex[:12]
+    shares = _load_shares()
+    shares[token] = {
+        "job_id": job_id,
+        "target": target,
+        "aspect": aspect,
+        "created": round(time.time(), 3),
+    }
+    _save_shares(shares)
+    return {"token": token, "url": f"/r/{token}", "target": target, "aspect": aspect}
+
+
+@app.get("/r/{token}")
+def review_page(token: str) -> Response:
+    found = _share(token)
+    if not found:
+        raise HTTPException(404, "Review link not found.")
+    record, job, render_record = found
+    title = html_lib.escape(Path(job["source"]["name"]).stem)
+    html = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>{title} · review</title>
+<style>
+body{{margin:0;background:#0a0a0b;color:#f2f0ec;font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;
+display:grid;place-items:center;min-height:100vh}}
+main{{width:min(92vw,520px);padding:24px 0}}
+h1{{font-size:20px;font-weight:500;margin:0 0 4px}}
+p{{color:#8b8a86;font-size:12px;margin:0 0 18px}}
+video{{width:100%;border-radius:14px;background:#000}}
+a{{display:inline-block;margin:16px 12px 0 0;color:#e8a266;text-decoration:none}}
+</style></head><body><main>
+<h1>{title}</h1><p>{record['target']}s · {record['aspect']} · review only</p>
+<video controls playsinline src="/r/{token}/video"></video>
+<div><a href="/r/{token}/video" download>Download MP4</a>
+<a href="/r/{token}/captions.srt">Captions SRT</a></div>
+</main></body></html>"""
+    return Response(content=html, media_type="text/html")
+
+
+@app.get("/r/{token}/video")
+def review_video(token: str) -> FileResponse:
+    found = _share(token)
+    if not found:
+        raise HTTPException(404, "Review link not found.")
+    _record, job, render_record = found
+    path = _job_dir(job["id"]) / render_record["path"]
+    if not path.is_file():
+        raise HTTPException(404, "Render file missing.")
+    return FileResponse(path, media_type="video/mp4", filename=Path(render_record["path"]).name)
+
+
+@app.get("/r/{token}/captions.srt")
+def review_captions(token: str) -> Response:
+    found = _share(token)
+    if not found:
+        raise HTTPException(404, "Review link not found.")
+    record, job, _render_record = found
+    try:
+        content = _share_captions(job, int(record["target"]))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"Captions unavailable: {exc}") from exc
+    return Response(
+        content=content, media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="captions.srt"'},
+    )
 
 
 class PathBody(BaseModel):
@@ -960,6 +1245,11 @@ def list_jobs() -> dict:
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str) -> dict:
     return public_job(load_job(job_id))
+
+
+@app.get("/api/jobs/{job_id}/usage")
+def get_usage(job_id: str) -> dict:
+    return _usage_summary(load_job(job_id))
 
 
 @app.get("/api/jobs/{job_id}/status")
@@ -1345,6 +1635,7 @@ class ScriptBody(BaseModel):
     provider: str = "auto"
     mode: str = "literal"
     rewrite_provider: str = "auto"
+    force_translate: bool = False
     order: str = "source"
     overrides: dict | None = None
 
@@ -1627,6 +1918,10 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
     warning = None
     translated = False
     overrides = body.overrides if isinstance(body.overrides, dict) else {}
+    if body.force_translate and target_lang and target_lang != source_lang:
+        source_lines = [str(line.get("text") or "") for line in script]
+        source_lines.extend(str(segment.get("text") or "") for segment in segments)
+        audio.clear_translation_memo(source_lines, source_lang, target_lang, body.provider)
     mode = body.mode if body.mode in {"literal", "smooth", "viral"} else "literal"
 
     def apply_overrides(lines: list[dict]) -> None:
@@ -1636,6 +1931,7 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
                 line["text"] = audio.clean_line(value)
                 line["overridden"] = True
 
+    before_usage = usage_store.snapshot()
     context = (
         audio.transcript_context(
             segments, clips, scenes, source_lang,
@@ -1654,6 +1950,15 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
         translated = bool(target_lang and target_lang != source_lang)
     except audio.AudioError as exc:
         warning = str(exc)[:400]
+    script_delta = usage_store.delta(before_usage)
+    if script_delta["calls"] or script_delta["chars"] or script_delta["audio_seconds"]:
+        job.setdefault("usage", []).append({
+            "action": "script",
+            "at": round(time.time(), 3),
+            **script_delta,
+        })
+        job["usage"] = job["usage"][-100:]
+        save_job(job)
     return {
         "lines": script,
         "mode": mode,
@@ -1666,6 +1971,8 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
         "warning": warning,
         "moods": audio.scene_moods(scenes, clips),
         "total": round(sum(float(clip["duration"]) for clip in clips), 3),
+        "usage": _usage_summary(job),
+        "translation_status": audio.translation_status(),
     }
 
 

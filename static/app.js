@@ -26,14 +26,19 @@
     setupUseTranslate: $("#setup-use-translate"),
     setupSttProvider: $("#setup-stt-provider"),
     setupSttLanguage: $("#setup-stt-language"),
+    setupSttModel: $("#setup-stt-model"),
     setupTtsProvider: $("#setup-tts-provider"),
     setupGroqKey: $("#setup-groq-key"),
     setupOpenaiKey: $("#setup-openai-key"),
     setupDeepgramKey: $("#setup-deepgram-key"),
     setupElevenlabsKey: $("#setup-elevenlabs-key"),
+    setupCartesiaKey: $("#setup-cartesia-key"),
     setupTestOpencode: $("#setup-test-opencode"),
     setupTestStt: $("#setup-test-stt"),
+    setupTestSttLive: $("#setup-test-stt-live"),
     setupTestTts: $("#setup-test-tts"),
+    setupTestTtsLive: $("#setup-test-tts-live"),
+    setupTtsAudio: $("#setup-tts-audio"),
     dropzone: $("#dropzone"),
     fileInput: $("#file-input"),
     fileCard: $("#file-card"),
@@ -43,6 +48,7 @@
     pathInput: $("#path-input"),
     pathLoad: $("#path-load"),
     optCrop: $("#opt-crop"),
+    optTrack: $("#opt-track"),
     optOcr: $("#opt-ocr"),
     optSpeech: $("#opt-speech"),
     speechNote: $("#speech-note"),
@@ -60,6 +66,7 @@
     progressBack: $("#progress-back"),
     resultTitle: $("#result-title"),
     resultMeta: $("#result-meta"),
+    usageReadout: $("#usage-readout"),
     newVideo: $("#new-video"),
     deleteJob: $("#delete-job"),
     cleanJob: $("#clean-job"),
@@ -134,6 +141,7 @@
     exportVtt: $("#export-vtt"),
     exportEdl: $("#export-edl"),
     exportXml: $("#export-xml"),
+    shareLink: $("#share-link"),
     sortTabs: $("#sort-tabs"),
     sceneCount: $("#scene-count"),
     sceneGrid: $("#scene-grid"),
@@ -183,6 +191,7 @@
     audioPromptAuto: "",
     overrideHook: null,
     editMode: false,
+    editIndex: null,
     edited: false,
     sort: "best",
     visible: 96,
@@ -241,19 +250,30 @@
     dom.setupOpencodeStatus.classList.toggle("warn", !runtime.opencode);
     dom.setupSttProvider.value = (settings.stt || {}).provider || "auto";
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
+    const whisperModels = runtime.whisper_models || [];
+    const modelOptions = whisperModels.length
+      ? whisperModels.map((item) => [
+        item.id,
+        `${item.name}${item.cached ? " · cached" : ` · ~${item.size_mb} MB download`}`,
+      ])
+      : [["mlx-community/whisper-small-mlx", "Whisper small"]];
+    fillSelect(dom.setupSttModel, modelOptions);
+    dom.setupSttModel.value = (settings.stt || {}).model || "mlx-community/whisper-small-mlx";
     dom.setupTtsProvider.value = (settings.tts || {}).provider || "auto";
     setSecretHint(dom.setupOpencodeKey, !!secrets.opencode, sources.opencode);
     setSecretHint(dom.setupGroqKey, !!secrets.groq, sources.groq);
     setSecretHint(dom.setupOpenaiKey, !!secrets.openai, sources.openai);
     setSecretHint(dom.setupDeepgramKey, !!secrets.deepgram, sources.deepgram);
     setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
-    ["opencode", "groq", "openai", "deepgram", "elevenlabs"].forEach((name) => {
+    setSecretHint(dom.setupCartesiaKey, !!secrets.cartesia, sources.cartesia);
+    ["opencode", "groq", "openai", "deepgram", "elevenlabs", "cartesia"].forEach((name) => {
       const input = {
         opencode: dom.setupOpencodeKey,
         groq: dom.setupGroqKey,
         openai: dom.setupOpenaiKey,
         deepgram: dom.setupDeepgramKey,
         elevenlabs: dom.setupElevenlabsKey,
+        cartesia: dom.setupCartesiaKey,
       }[name];
       if (input) input.value = "";
     });
@@ -301,6 +321,7 @@
       openai: dom.setupOpenaiKey.value.trim(),
       deepgram: dom.setupDeepgramKey.value.trim(),
       elevenlabs: dom.setupElevenlabsKey.value.trim(),
+      cartesia: dom.setupCartesiaKey.value.trim(),
     };
     return Object.fromEntries(Object.entries(values).filter(([, value]) => value));
   }
@@ -319,7 +340,11 @@
             use_brief: dom.setupUseBrief.checked,
             use_translate: dom.setupUseTranslate.checked,
           },
-          stt: { provider: dom.setupSttProvider.value, language: dom.setupSttLanguage.value },
+          stt: {
+            provider: dom.setupSttProvider.value,
+            language: dom.setupSttLanguage.value,
+            model: dom.setupSttModel.value,
+          },
           tts: { provider: dom.setupTtsProvider.value },
         },
         secrets: setupSecrets(),
@@ -347,7 +372,7 @@
     }
   }
 
-  async function testSetup(kind, button) {
+  async function testSetup(kind, button, extra = {}) {
     const old = button.textContent;
     button.disabled = true;
     button.textContent = "Testing…";
@@ -355,12 +380,20 @@
     try {
       const result = await api("/api/settings/test", {
         method: "POST",
-        body: JSON.stringify({ kind }),
+        body: JSON.stringify({ kind, ...extra }),
       });
       const bits = [result.ok ? "OK" : "Not ready", result.detail];
       if (result.model) bits.push(result.model);
+      if (result.engine) bits.push(result.engine);
+      if (result.voice) bits.push(result.voice);
+      if (result.text) bits.push(`“${result.text.slice(0, 120)}”`);
       if (result.seconds !== undefined) bits.push(`${result.seconds}s`);
       dom.setupStatus.textContent = bits.filter(Boolean).join(" · ");
+      if (result.url && dom.setupTtsAudio) {
+        dom.setupTtsAudio.src = withToken(result.url);
+        dom.setupTtsAudio.hidden = false;
+        dom.setupTtsAudio.play().catch(() => {});
+      }
     } catch (error) {
       dom.setupStatus.textContent = error.message;
     } finally {
@@ -378,7 +411,13 @@
     dom.setupSave.addEventListener("click", saveSetup);
     dom.setupTestOpencode.addEventListener("click", () => testSetup("opencode", dom.setupTestOpencode));
     dom.setupTestStt.addEventListener("click", () => testSetup("stt", dom.setupTestStt));
+    dom.setupTestSttLive.addEventListener("click", () => testSetup(
+      "stt_live", dom.setupTestSttLive, { provider: dom.setupSttProvider.value },
+    ));
     dom.setupTestTts.addEventListener("click", () => testSetup("tts", dom.setupTestTts));
+    dom.setupTestTtsLive.addEventListener("click", () => testSetup(
+      "tts_live", dom.setupTestTtsLive, { engine: dom.setupTtsProvider.value },
+    ));
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !dom.setup.hidden) closeSetup();
     });
@@ -557,6 +596,7 @@
       if (event.key === "Enter") inspectPath();
     });
     dom.analyze.addEventListener("click", startAnalysis);
+    dom.optCrop.addEventListener("change", syncOptions);
     dom.progressBack.addEventListener("click", resetToIngest);
     dom.newVideo.addEventListener("click", resetToIngest);
     dom.deleteJob.addEventListener("click", deleteJob);
@@ -610,6 +650,7 @@
     dom.exportVtt.addEventListener("click", () => exportCut("vtt"));
     dom.exportEdl.addEventListener("click", () => exportCut("edl"));
     dom.exportXml.addEventListener("click", () => exportCut("xml"));
+    dom.shareLink.addEventListener("click", createReviewLink);
     dom.captions.addEventListener("change", () => {
       state.captions = dom.captions.checked;
       updateRenderPanel();
@@ -622,6 +663,12 @@
       if (tool) {
         event.stopPropagation();
         editClip(Number(tool.dataset.index), tool.dataset.edit);
+        return;
+      }
+      const clip = event.target.closest(".clip[data-index]");
+      if (state.editMode && clip) {
+        state.editIndex = Number(clip.dataset.index);
+        renderPlan();
         return;
       }
       const button = event.target.closest("[data-scene]");
@@ -674,6 +721,65 @@
     });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") closeDrawer();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (dom.result.hidden || !state.plan) return;
+      if (dom.setup && !dom.setup.hidden) return;
+      const tag = String(event.target?.tagName || "").toLowerCase();
+      if (["input", "select", "textarea"].includes(tag) || event.target?.isContentEditable) return;
+      if (event.metaKey || event.ctrlKey) return;
+      const clips = state.plan.clips || [];
+      if (!clips.length) return;
+      if (event.key === "e") {
+        event.preventDefault();
+        toggleEdit();
+        return;
+      }
+      if (event.key === "s") {
+        event.preventDefault();
+        saveVariant();
+        return;
+      }
+      if (event.key === "r") {
+        event.preventDefault();
+        startRender("draft");
+        return;
+      }
+      if (event.key === " ") {
+        if (dom.reelVideo?.src) {
+          event.preventDefault();
+          if (dom.reelVideo.paused) dom.reelVideo.play().catch(() => {});
+          else dom.reelVideo.pause();
+        }
+        return;
+      }
+      if (!state.editMode) return;
+      if (event.key === "Escape") {
+        state.editIndex = null;
+        state.editMode = false;
+        renderPlan();
+        return;
+      }
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        const step = event.key === "ArrowLeft" ? -1 : 1;
+        if (event.altKey) {
+          editClip(state.editIndex ?? 0, step < 0 ? "up" : "down");
+        } else {
+          state.editIndex = Math.max(0, Math.min(clips.length - 1, (state.editIndex ?? 0) + step));
+          renderPlan();
+        }
+        return;
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        editClip(state.editIndex ?? 0, "remove");
+        return;
+      }
+      if (event.key === "-" || event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        editClip(state.editIndex ?? 0, event.key === "-" ? "shorter" : "longer");
+      }
     });
     window.addEventListener("hashchange", () => {
       const match = location.hash.match(/^#job=([a-z0-9]+)/i);
@@ -833,12 +939,14 @@
     } else if (!dom.optOcr.disabled) {
       dom.optOcr.disabled = false;
     }
+    dom.optTrack.disabled = !vision || !dom.optCrop.checked;
     updateAnalyzeState();
   }
 
   function readOptions() {
     return {
       ocr: dom.optOcr.checked,
+      crop_tracking: dom.optTrack.checked,
       transcribe: dom.optSpeech.checked,
       transcribe_engine: state.setup?.stt?.provider || "auto",
       speech_language: state.setup?.stt?.language || "en",
@@ -1085,10 +1193,43 @@
     ].filter(Boolean).join(" + ");
     const deep = analysis.deep_count ?? analysis.scene_count;
     dom.resultMeta.textContent = `${fmtDuration(job.source.duration)} source · ${analysis.scene_count} scenes · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    renderUsage();
     renderHook();
     renderPlan();
     renderScenes();
     updateRenderPanel();
+  }
+
+  function renderUsage() {
+    if (!dom.usageReadout) return;
+    const usage = state.job?.usage;
+    const totals = usage?.totals;
+    if (!totals) {
+      dom.usageReadout.textContent = "";
+      return;
+    }
+    const parts = [];
+    if (totals.calls) parts.push(`${totals.calls} cloud call${totals.calls === 1 ? "" : "s"}`);
+    if (totals.input_tokens || totals.output_tokens) {
+      parts.push(`${Math.round((totals.input_tokens + totals.output_tokens) / 1000)}k tokens`);
+    }
+    if (totals.audio_seconds) parts.push(`${(totals.audio_seconds / 60).toFixed(1)} min STT`);
+    if (totals.chars) parts.push(`${Math.round(totals.chars / 1000)}k TTS chars`);
+    if (!parts.length) {
+      dom.usageReadout.textContent = "";
+      return;
+    }
+    parts.push(`~$${Number(totals.cost_usd || 0).toFixed(4)}`);
+    dom.usageReadout.textContent = `usage · ${parts.join(" · ")}`;
+  }
+
+  async function loadUsage() {
+    if (!state.job) return;
+    try {
+      const result = await api(`/api/jobs/${state.job.id}/usage`);
+      state.job.usage = result;
+      renderUsage();
+    } catch (_) { /* usage is optional */ }
   }
 
   function renderHook() {
@@ -1130,6 +1271,9 @@
       plan.hook_why ? `Hook: ${plan.hook_why}` : "",
       plan.payoff_why ? `Payoff: ${plan.payoff_why}` : "",
     ].filter(Boolean).join(" ");
+    if (state.editIndex !== null) {
+      state.editIndex = Math.max(0, Math.min(plan.clips.length - 1, state.editIndex));
+    }
     dom.timeline.innerHTML = plan.clips.map((clip, index) => {
       const scene = sceneById(clip.scene);
       if (!scene) return "";
@@ -1144,7 +1288,7 @@
            </span>`
         : "";
       return `
-        <div class="clip ${clip.role === "hook" ? "hook" : ""} ${state.editMode ? "editing" : ""}" data-scene="${scene.id}" title="${esc(`${clip.role}: ${why}`)}">
+        <div class="clip ${clip.role === "hook" ? "hook" : ""} ${state.editMode ? "editing" : ""} ${state.editIndex === index ? "selected" : ""}" data-scene="${scene.id}" data-index="${index}" title="${esc(`${clip.role}: ${why}`)}">
           <img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">
           <span class="clip-role">${esc(clip.role)}</span>
           <span class="clip-time">${clip.dur.toFixed(1)}s</span>
@@ -1586,14 +1730,17 @@
     const clip = clips[index];
     if (action === "up" && index > 0) {
       [clips[index - 1], clips[index]] = [clips[index], clips[index - 1]];
+      state.editIndex = index - 1;
     } else if (action === "down" && index < clips.length - 1) {
       [clips[index + 1], clips[index]] = [clips[index], clips[index + 1]];
+      state.editIndex = index + 1;
     } else if (action === "remove") {
       if (clips.length <= 1) {
         toast("Keep at least one beat.");
         return;
       }
       clips.splice(index, 1);
+      state.editIndex = Math.max(0, Math.min(clips.length - 1, index));
     } else if (action === "shorter" || action === "longer") {
       const scene = sceneById(clip.scene);
       const step = 0.25;
@@ -1613,6 +1760,7 @@
   function toggleEdit(force) {
     if (!state.plan) return;
     state.editMode = typeof force === "boolean" ? force : !state.editMode;
+    state.editIndex = state.editMode ? (state.editIndex ?? 0) : null;
     renderPlan();
   }
 
@@ -2036,6 +2184,25 @@
     }
   }
 
+  async function createReviewLink() {
+    if (!state.job) return;
+    try {
+      const result = await api(
+        `/api/jobs/${state.job.id}/share?target=${state.target}&aspect=${encodeURIComponent(state.aspect)}`,
+        { method: "POST" },
+      );
+      const url = `${location.origin}${result.url}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast("Review link copied.");
+      } catch (_) {
+        window.prompt("Review link", url);
+      }
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   function exportCut(kind) {
     if (!state.job) return;
     const token = tokenValue();
@@ -2153,6 +2320,7 @@
       openai: "OpenAI gpt-4o-mini-tts",
       groq: "Groq Orpheus",
       deepgram: "Deepgram Aura",
+      cartesia: "Cartesia Sonic",
     }[id] || id;
   }
 
@@ -2234,7 +2402,7 @@
     }
   }
 
-  async function loadAudioScript() {
+  async function loadAudioScript(forceTranslate = false) {
     if (!state.job || !state.plan || !dom.audioScript) return;
     const audio = state.audio;
     if (audio.mode === "keep" || audio.mode === "music") {
@@ -2245,7 +2413,7 @@
     dom.audioScript.hidden = false;
     dom.audioScript.innerHTML =
       `<div class="script-head"><span class="label">Voice script</span>`
-      + `<span class="hint">cleaning and de-duplicating…</span></div>`;
+      + `<span class="hint">translating and rewriting…</span></div>`;
     try {
       const result = await api(`/api/jobs/${state.job.id}/audio/script`, {
         method: "POST",
@@ -2258,13 +2426,21 @@
           provider: audio.provider || "auto",
           mode: audio.style || "literal",
           rewrite_provider: audio.rewrite || "auto",
+          force_translate: !!forceTranslate,
           overrides: state.scriptOverrides,
         }),
       });
       const lines = result.lines || [];
+      if (result.usage) {
+        state.job.usage = result.usage;
+        renderUsage();
+      } else {
+        loadUsage();
+      }
       const head = `${lines.length} lines · ${result.source_lang}${
         result.translated ? ` → ${result.target}` : ""} · ${result.mode || "literal"}${
         result.rewrite && result.rewrite !== "literal" ? ` · ${result.rewrite}` : ""}${
+        result.translation_status?.provider ? ` · translate ${result.translation_status.provider}` : ""}${
         result.context_chars ? ` · ctx ${result.context_chars}` : ""}${
         result.context_chars === 0 && (result.mode || "literal") !== "literal" ? " · no transcript" : ""}`;
       const warn = result.warning
@@ -2275,6 +2451,7 @@
           <span class="hint">${esc(head)}</span>${warn}
           <button id="script-literal-toggle" class="ghost small" type="button">${
             state.showLiteral ? "Hide literal" : "Show literal"}</button>
+          ${result.translated ? '<button data-script-retry class="ghost small" type="button">Retry translation</button>' : ""}
         </div>
         <div class="script-list">
           ${lines.map((line) => `
@@ -2294,6 +2471,9 @@
       dom.audioScript.querySelector("#script-literal-toggle")?.addEventListener("click", () => {
         state.showLiteral = !state.showLiteral;
         loadAudioScript();
+      });
+      dom.audioScript.querySelectorAll("[data-script-retry]").forEach((button) => {
+        button.addEventListener("click", () => loadAudioScript(true));
       });
       dom.audioScript.querySelectorAll("[data-script-edit]").forEach((button) => {
         button.addEventListener("click", () => {
@@ -2695,6 +2875,7 @@
         if (active) {
           state.pollTimer = setTimeout(tick, 900);
         } else {
+          loadUsage();
           stopPoll();
         }
       } catch (_) {

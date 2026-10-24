@@ -135,7 +135,36 @@ def _encoder_args(encoder: str, quality: str) -> list[str]:
     ]
 
 
-def _crop_filter(meta: dict, crop: dict, out_w: int, out_h: int) -> str:
+def _path_value(points: list[tuple[float, float]], at: float) -> float:
+    if at <= points[0][0]:
+        return points[0][1]
+    for index in range(len(points) - 1):
+        t0, v0 = points[index]
+        t1, v1 = points[index + 1]
+        if at <= t1:
+            span = max(1e-6, t1 - t0)
+            return v0 + (v1 - v0) * max(0.0, min(1.0, (at - t0) / span))
+    return points[-1][1]
+
+
+def _path_expression(points: list[tuple[float, float]]) -> str:
+    expression = f"{points[-1][1]:.3f}"
+    for index in range(len(points) - 2, -1, -1):
+        t0, v0 = points[index]
+        t1, v1 = points[index + 1]
+        span = max(1e-6, t1 - t0)
+        segment = (
+            f"{v0:.3f}+({v1 - v0:.3f})*"
+            f"(1-cos(PI*(t-{t0:.3f})/{span:.6f}))/2"
+        )
+        expression = f"if(lt(t,{t1:.3f}),{segment},{expression})"
+    return f"if(lt(t,{points[0][0]:.3f}),{points[0][1]:.3f},{expression})"
+
+
+def _crop_filter(
+    meta: dict, crop: dict, out_w: int, out_h: int,
+    crop_path: list[dict] | None = None, duration: float = 0.0,
+) -> str:
     width, height = int(meta["width"]), int(meta["height"])
     source_ar = width / max(1, height)
     target_ar = out_w / out_h
@@ -152,6 +181,19 @@ def _crop_filter(meta: dict, crop: dict, out_w: int, out_h: int) -> str:
             x = int(round(cx * width - crop_w / 2))
             x = max(0, min(width - crop_w, x))
             y = 0
+            dynamic = []
+            for point in crop_path or []:
+                value = max(0.0, min(
+                    float(width - crop_w),
+                    float(point.get("cx", 0.5)) * width - crop_w / 2,
+                ))
+                dynamic.append((max(0.0, min(duration, float(point.get("t") or 0.0))), value))
+            if len(dynamic) >= 2 and duration > 0.1:
+                filters.append(
+                    f"crop={crop_w}:{crop_h}:x='{_path_expression(dynamic)}':y=0"
+                )
+            else:
+                filters.append(f"crop={crop_w}:{crop_h}:{x}:{y}")
         else:
             crop_w = width - (width % 2)
             crop_h = int(round(crop_w / target_ar))
@@ -160,7 +202,19 @@ def _crop_filter(meta: dict, crop: dict, out_w: int, out_h: int) -> str:
             x = 0
             y = int(round(cy * height - crop_h / 2))
             y = max(0, min(height - crop_h, y))
-        filters.append(f"crop={crop_w}:{crop_h}:{x}:{y}")
+            dynamic = []
+            for point in crop_path or []:
+                value = max(0.0, min(
+                    float(height - crop_h),
+                    float(point.get("cy", 0.5)) * height - crop_h / 2,
+                ))
+                dynamic.append((max(0.0, min(duration, float(point.get("t") or 0.0))), value))
+            if len(dynamic) >= 2 and duration > 0.1:
+                filters.append(
+                    f"crop={crop_w}:{crop_h}:x=0:y='{_path_expression(dynamic)}'"
+                )
+            else:
+                filters.append(f"crop={crop_w}:{crop_h}:{x}:{y}")
 
     filters.extend([
         f"scale={out_w}:{out_h}:flags=lanczos",
@@ -183,6 +237,39 @@ def _scene_crop(scene: dict, aspect: str, meta: dict, out_w: int, out_h: int) ->
     if aspect != "9:16":
         return {"cx": 0.5, "cy": 0.5}
     return scene.get("crop") or {"cx": 0.5, "cy": 0.5}
+
+
+def _crop_path_for(scene: dict, aspect: str, clip: dict) -> list[dict] | None:
+    points = (scene.get("crop_paths") or {}).get(aspect) or []
+    if len(points) < 2:
+        return None
+    scene_start = float(scene.get("start") or clip.get("start") or 0.0)
+    offset = float(clip.get("start") or scene_start) - scene_start
+    duration = float(clip.get("duration") or clip.get("dur") or 0.0)
+    if duration <= 0.1:
+        return None
+    scene_points = [
+        (float(point.get("t") or 0.0), float(point.get("cx", 0.5)), float(point.get("cy", 0.5)))
+        for point in points
+    ]
+    cx_points = [(point[0], point[1]) for point in scene_points]
+    cy_points = [(point[0], point[2]) for point in scene_points]
+    values = [
+        (0.0, _path_value(cx_points, offset), _path_value(cy_points, offset)),
+        (duration, _path_value(cx_points, offset + duration), _path_value(cy_points, offset + duration)),
+    ]
+    for t, cx, cy in scene_points:
+        relative = t - offset
+        if 0.0 < relative < duration:
+            values.append((relative, cx, cy))
+    values.sort(key=lambda item: item[0])
+    deduped = []
+    for item in values:
+        if deduped and abs(item[0] - deduped[-1][0]) < 0.01:
+            deduped[-1] = item
+        else:
+            deduped.append(item)
+    return [{"t": round(t, 3), "cx": round(cx, 4), "cy": round(cy, 4)} for t, cx, cy in deduped]
 
 
 def _frames_for(start: float, duration: float, source_duration: float) -> int:
@@ -213,12 +300,14 @@ def _segment_cache_key(
     first: bool,
     last: bool,
     crop: dict | None = None,
+    crop_path: list[dict] | None = None,
 ) -> str:
     payload = {
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
         "start": round(start, 6),
         "frames": frames,
         "crop": crop or scene.get("crop") or {"cx": 0.5, "cy": 0.5},
+        "crop_path": crop_path,
         "out": [out_w, out_h],
         "quality": quality,
         "encoder": encoder,
@@ -244,11 +333,13 @@ def _segment(
     encoder: str,
     cache_dir: Path,
     crop: dict | None = None,
+    crop_path: list[dict] | None = None,
     cancel_event: threading.Event | None = None,
 ) -> bool:
     """Render one beat. Return True when the segment came from cache."""
     key = _segment_cache_key(
-        meta, scene, start, frames, out_w, out_h, quality, encoder, first, last, crop,
+        meta, scene, start, frames, out_w, out_h, quality, encoder, first, last,
+        crop, crop_path,
     )
     cached = cache_dir / f"{key}.mp4"
     if cached.exists() and cached.stat().st_size > 0:
@@ -256,7 +347,10 @@ def _segment(
         return True
 
     ffmpeg = _ffmpeg()
-    vf = _crop_filter(meta, crop or scene.get("crop") or {"cx": 0.5, "cy": 0.5}, out_w, out_h)
+    vf = _crop_filter(
+        meta, crop or scene.get("crop") or {"cx": 0.5, "cy": 0.5},
+        out_w, out_h, crop_path=crop_path, duration=duration,
+    )
 
     if first and duration > 0.4:
         vf += ",fade=t=in:st=0:d=0.12"
@@ -697,12 +791,13 @@ def render_reel(
                     segment = tmp / f"{index:03d}.mp4"
                     segments.append(segment)
                     crop = _scene_crop(scene, aspect, meta, out_w, out_h)
+                    crop_path = _crop_path_for(scene, aspect, clip)
                     futures[pool.submit(
                         _segment,
                         source, meta, scene,
                         clip["start"], clip["duration"], clip["frames"],
                         segment, index == 0, index == len(clips) - 1,
-                        out_w, out_h, quality, encoder, cache_dir, crop, cancel_event,
+                        out_w, out_h, quality, encoder, cache_dir, crop, crop_path, cancel_event,
                     )] = index
                 for future in as_completed(futures):
                     if cancel_event is not None and cancel_event.is_set():
