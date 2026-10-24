@@ -1180,6 +1180,11 @@ def translate_lines(
             memo[line] = cached
         elif line not in missing:
             missing.append(line)
+    if not missing:
+        TRANSLATION_STATUS.update({
+            "provider": "cache", "source": source_code, "target": target_code,
+            "lines": len(lines), "tried": [],
+        })
     if missing:
         errors: list[str] = []
         for candidate in _provider_order(source_code, target_code, provider):
@@ -1452,6 +1457,22 @@ def clean_line(text: str) -> str:
             else:
                 break
     return value.strip(" ,，。.!！?？;；:：、~-")
+
+
+def ensure_terminal(text: str, cjk: bool | None = None) -> str:
+    """Finish a spoken line with terminal punctuation, never a dangling cut."""
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    value = value.rstrip(" ,，;；:：、-")
+    if value.endswith(("…", "...")) :
+        value = value.rstrip("…").rstrip(".").rstrip(" ,，;；:：、-")
+    if not value:
+        return ""
+    if value.endswith((".", "!", "?", "。", "！", "？")):
+        return value
+    use_cjk = CJK_RE.search(value) if cjk is None else cjk
+    return value + ("。" if use_cjk else ".")
 
 
 def normalize_line(text: str) -> str:
@@ -1791,6 +1812,9 @@ def _opencode_http_text(prompt: str, max_tokens: int = 1200) -> str | None:
         "temperature": 0.4,
         "max_tokens": max_tokens,
         "reasoning_effort": opencode_variant(),
+        # Structured short-script work: hidden chain-of-thought on this model
+        # can consume the whole token budget and return empty content.
+        "thinking": {"type": "disabled"},
     }
     request = urllib.request.Request(
         OPENCODE_URL,
@@ -1877,47 +1901,148 @@ def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200)
     return None
 
 
+def _target_chars_per_second(target: str) -> float:
+    return 4.6 if (target or "").split("-")[0].lower() in {"zh", "ja", "ko"} else 14.0
+
+
 def _rewrite_prompt(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
     context: dict | None = None,
 ) -> str:
     rows = []
     context_beats = (context or {}).get("beats") or []
+    chars_per_second = _target_chars_per_second(target)
     for index, line in enumerate(script):
         source_line = ""
         if index < len(context_beats):
             source_line = str(context_beats[index].get("source") or "")
+        duration = max(0.8, float(line.get("duration") or 0.0))
+        rate = max(0.6, float(line.get("rate") or 1.0))
         rows.append({
             "beat": index,
             "role": str(line.get("role") or "beat"),
-            "seconds": round(float(line.get("duration") or 0.0) - 0.25, 2),
+            "seconds": round(duration, 2),
+            "max_chars": max(12, int((duration - 0.10) * rate * chars_per_second)),
+            "max_words": max(3, int((duration - 0.10) * rate * 2.9)),
             "source_line": source_line,
             "literal": literal[index],
         })
     context_text = str(
         (context or {}).get("target_text") or (context or {}).get("full_text") or ""
     ).strip()
+    aesthetic = (context or {}).get("aesthetic")
     style = {
-        "smooth": "natural, flowing, conversational",
-        "viral": "punchy: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
-    }.get(mode, "faithful")
+        "smooth": "natural, flowing, conversational; connected sentences",
+        "viral": "punchy short-video style: hook in the first words, one idea per beat, payoff lands",
+    }.get(mode, "faithful to the source")
     brief = (context or {}).get("brief")
     parts = [
-        f"You write a {len(rows)}-beat short vertical video voice over in {_language_name(target)}.",
-        f"Style: {style}. Keep every fact and number, invent nothing.",
-        "Each line must fit its seconds budget at normal pace. Reply with a JSON array of strings only.",
+        f"You are writing ONE coherent short-video voice over in "
+        f"{_language_name(target)}, not separate captions.",
+        f"The cut has exactly {len(rows)} beat{'s' if len(rows) != 1 else ''}.",
+        "Read the FULL VOICE SCRIPT and VIDEO AESTHETIC first. Keep the same story, "
+        "speaker, setting, tone, pacing and visual mood.",
+        f"Style: {style}.",
+        "Hard rules:",
+        f"1. Exactly {len(rows)} line{'s' if len(rows) != 1 else ''}, in beat order.",
+        "2. Every line is one complete, grammatical spoken sentence and ends with "
+        "terminal punctuation.",
+        "3. Every line must stay within both max_chars and max_words. Count them "
+        "before replying. Condense or rephrase to fit; never truncate, never end "
+        "on a conjunction, preposition, article or dangling word, and never output "
+        "ellipses or a fragment.",
+        "4. Lines must connect: use pronouns and natural transitions so the short "
+        "cut reads as one story, not isolated captions.",
+        "5. Keep the hook's promise and the payoff's resolution. Keep every named "
+        "product, number and claim; invent nothing. Drop secondary detail before "
+        "you drop the core meaning.",
+        "6. Write native target-language phrasing, not a word-for-word translation.",
+        f"Reply with a JSON array of exactly {len(rows)} string{'s' if len(rows) != 1 else ''} and nothing else.",
     ]
     if brief:
         parts.append("STORY BRIEF:\n" + json.dumps(brief, ensure_ascii=False))
+    if aesthetic:
+        parts.append("VIDEO AESTHETIC:\n" + json.dumps(aesthetic, ensure_ascii=False))
     if context_text and (context or {}).get("full_context"):
-        parts.append("FULL TRANSCRIPT:\n" + context_text[:4000])
-    if context_text:
+        parts.append("FULL VOICE SCRIPT:\n" + context_text[:6000])
+    elif context_text:
         query = " ".join(str(row["source_line"]) or str(row["literal"]) for row in rows)
         relevant = retrieve_lines(context_text, query, limit=8)
         if relevant:
-            parts.append("RELEVANT TRANSCRIPT LINES:\n" + "\n".join(relevant))
-    parts.append("SELECTED BEATS:\n" + json.dumps(rows, ensure_ascii=False))
+            parts.append("RELEVANT VOICE SCRIPT LINES:\n" + "\n".join(relevant))
+    parts.append("BEAT SLOTS:\n" + json.dumps(rows, ensure_ascii=False))
     return "\n".join(parts)
+
+
+BAD_LINE_ENDINGS = {
+    "and", "or", "but", "with", "of", "to", "for", "in", "on", "at", "by",
+    "from", "as", "that", "which", "who", "whom", "the", "a", "an", "my",
+    "your", "his", "her", "their", "this", "these", "those", "such", "very",
+    "so", "then", "because", "while", "when", "if", "into", "over", "under",
+}
+
+
+def _line_needs_repair(text: str, duration: float, rate: float, target: str) -> bool:
+    value = str(text or "").strip()
+    if not value or value.endswith(("…", "...")):
+        return True
+    words = re.findall(r"[A-Za-z']+", value.lower())
+    if words and words[-1] in BAD_LINE_ENDINGS:
+        return True
+    cjk = (target or "").split("-")[0].lower() in {"zh", "ja", "ko"}
+    budget = max(1.0, duration * 1.15)
+    return estimate_seconds(value, rate) > budget
+
+
+def _condense_opencode(
+    values: list[str], script: list[dict], target: str, context: dict | None,
+    indices: list[int],
+) -> list[str] | None:
+    """Second pass: turn overlong or broken lines into complete short sentences."""
+    rows = []
+    chars_per_second = _target_chars_per_second(target)
+    for index in indices:
+        duration = max(0.8, float(script[index].get("duration") or 0.0))
+        rate = max(0.6, float(script[index].get("rate") or 1.0))
+        rows.append({
+            "beat": index,
+            "text": values[index],
+            "seconds": round(duration, 2),
+            "max_chars": max(12, int((duration - 0.10) * rate * chars_per_second)),
+            "max_words": max(3, int((duration - 0.10) * rate * 2.9)),
+        })
+    context_text = str(
+        (context or {}).get("target_text") or (context or {}).get("full_text") or ""
+    ).strip()
+    parts = [
+        f"You are tightening {len(rows)} lines of a short-video voice over in "
+        f"{_language_name(target)}. Each must become one complete, grammatical sentence.",
+        "Read the full voice script and aesthetic first. Keep the same meaning, "
+        "speaker and story position. Invent nothing.",
+        "Respect max_chars and max_words. Condense or rephrase; never truncate, "
+        "never end on a conjunction, preposition, article or dangling word, and "
+        "never use ellipses.",
+        f"Return a JSON array of exactly {len(rows)} strings in the same order.",
+    ]
+    aesthetic = (context or {}).get("aesthetic")
+    if aesthetic:
+        parts.append("VIDEO AESTHETIC:\n" + json.dumps(aesthetic, ensure_ascii=False))
+    if context_text:
+        parts.append("FULL VOICE SCRIPT:\n" + context_text[:4000])
+    parts.append("LINES TO TIGHTEN:\n" + json.dumps(rows, ensure_ascii=False))
+    raw = _opencode_text("\n".join(parts), json_mode=True, max_tokens=1500)
+    if not raw:
+        return None
+    match = re.search(r"\[.*\]", raw, re.S)
+    if not match:
+        return None
+    try:
+        repaired = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(repaired, list) or len(repaired) != len(indices):
+        return None
+    return [str(item).strip() for item in repaired]
 
 
 def _rewrite_opencode(
@@ -1929,7 +2054,7 @@ def _rewrite_opencode(
         return None
     raw = _opencode_text(
         _rewrite_prompt(script, source, target, mode, literal, context),
-        json_mode=True,
+        json_mode=True, max_tokens=3000,
     )
     if not raw:
         return None
@@ -1942,15 +2067,29 @@ def _rewrite_opencode(
         return None
     if not isinstance(values, list) or len(values) != len(script):
         return None
+    cjk = (target or "").split("-")[0].lower() in {"zh", "ja", "ko"}
+    broken = [
+        index for index, value in enumerate(values)
+        if _line_needs_repair(
+            str(value), float(script[index].get("duration") or 1.0),
+            float(script[index].get("rate") or 1.0), target,
+        )
+    ]
+    if broken:
+        repaired = _condense_opencode(values, script, target, context, broken)
+        if repaired:
+            for offset, index in enumerate(broken):
+                values[index] = repaired[offset]
     cleaned: list[str] = []
     for index, value in enumerate(values):
-        text = str(value).strip()
+        text = ensure_terminal(str(value).strip(), cjk)
         rate = float(script[index].get("rate") or 1.0)
-        # The TTS bed can compress up to 1.35x, so a minor overshoot must not
-        # cut a fact off the end of the line.
-        budget = max(1.0, float(script[index].get("duration") or 1.0) + 0.25)
-        if estimate_seconds(text, rate) > budget:
-            text = trim_to_seconds(text, budget, rate)
+        duration = max(1.0, float(script[index].get("duration") or 1.0))
+        if _line_needs_repair(text, duration, rate, target):
+            # Last resort only: the repair pass failed. Keep a clause, never
+            # leave an unpunctuated fragment.
+            text = trim_to_seconds(text, duration * 1.10, rate)
+            text = ensure_terminal(text, cjk)
         if not text:
             return None
         cleaned.append(text)
@@ -2021,10 +2160,29 @@ def transcript_context(
     full = " ".join(full.split())
     if cap_chars > 0 and len(full) > cap_chars:
         full = full[:cap_chars] + "…"
+    total_cut = sum(float(clip.get("duration") or clip.get("dur") or 0.0) for clip in clips)
+    avg_beat = total_cut / max(1, len(clips))
+    tag_counts: dict[str, int] = {}
+    for scene in scenes:
+        for tag in scene.get("tags") or []:
+            tag_counts[str(tag)] = tag_counts.get(str(tag), 0) + 1
+    has_face = any((scene.get("attention") or {}).get("face") for scene in scenes)
     context = {
         "language": (source_lang or "en").split("-")[0],
         "full_text": full,
         "beats": beats,
+        "aesthetic": {
+            "moods": scene_moods(scenes, clips)[:4],
+            "visual_tags": [
+                tag for tag, _count in sorted(
+                    tag_counts.items(), key=lambda item: item[1], reverse=True,
+                )[:8]
+            ],
+            "subject": "people" if has_face else "place / object",
+            "pace": "fast" if avg_beat < 2.6 else "measured",
+            "avg_beat_seconds": round(avg_beat, 2),
+            "roles": [str(clip.get("role") or "beat") for clip in clips],
+        },
     }
     target = str(target_lang or "").split("-")[0]
     if target and target != context["language"]:
@@ -2103,21 +2261,23 @@ def build_script(
         seen.add(norm)
         accepted.append(norm)
         emotion, rate = scene_emotion(scene, duration, base_rate)
-        budget = max(0.7, duration - 0.25)
-        fitted = trim_to_seconds(text, budget, rate)
-        if not fitted:
+        # Keep the complete source sentence. Translation/rewrite condenses it;
+        # pre-trimming here was producing fragments that could not be translated
+        # into a meaningful line.
+        complete = ensure_terminal(text)
+        if not complete:
             continue
         lines.append({
             "scene": clip.get("scene"),
             "clip": clip_index,
             "role": clip.get("role") or "beat",
             "duration": round(duration, 3),
-            "text": fitted,
+            "text": complete,
             "original": text,
             "from_ocr": used_ocr,
             "emotion": emotion,
             "rate": rate,
-            "shortened": normalize_line(fitted) != norm,
+            "shortened": False,
         })
     return lines
 
@@ -2138,11 +2298,15 @@ def refit_script(lines: list[dict], base_rate: float = 1.0) -> list[dict]:
         accepted.append(norm)
         duration = float(line.get("duration") or 0.0)
         rate = float(line.get("rate") or base_rate)
-        budget = max(0.7, duration)
-        fitted = trim_to_seconds(text, budget, rate)
+        # The voice track can compress up to 1.35x. Keep a complete sentence
+        # within that window; only trim the rare line that cannot fit.
+        budget = max(0.7, duration * 1.30)
+        fitted = text if estimate_seconds(text, rate) <= budget else trim_to_seconds(
+            text, duration * 1.20, rate,
+        )
         if not fitted:
             continue
-        line["text"] = fitted
+        line["text"] = ensure_terminal(fitted)
         line["shortened"] = line.get("shortened") or normalize_line(fitted) != norm
         out.append(line)
     return out
@@ -2554,7 +2718,7 @@ def prune_cache(max_gb: float = 2.0, days: float = 14.0) -> dict:
 # ---------------------------------------------------------------- rewrite styles
 
 REWRITE = CACHE / "rewrite"
-REWRITE_VERSION = 4
+REWRITE_VERSION = 6
 
 CONNECTORS = {
     "en": ["and", "but", "so", "then", "turns out"],

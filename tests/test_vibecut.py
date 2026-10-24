@@ -368,6 +368,7 @@ def test_opencode_direct_api_payload(monkeypatch):
     assert captured["session"].startswith("vibecut-")
     assert captured["body"]["model"] == "deepseek-v4.1-flash"
     assert captured["body"]["reasoning_effort"] == "low"
+    assert captured["body"]["thinking"] == {"type": "disabled"}
 
 
 def _fake_job():
@@ -495,9 +496,9 @@ def test_build_script_dedupes_and_tags_emotion():
     ]
     script = audio.build_script(scenes, clips)
     assert [line["scene"] for line in script] == [0, 2]
-    assert script[0]["emotion"] == "energetic" and script[0]["shortened"] is True
+    assert script[0]["emotion"] == "energetic" and script[0]["shortened"] is False
     assert script[1]["from_ocr"] is True
-    assert audio.estimate_seconds(script[0]["text"], script[0]["rate"]) <= 2.0
+    assert script[0]["text"].endswith(".")
 
 
 def test_refit_script_dedupes_translated_lines():
@@ -929,7 +930,7 @@ def test_build_script_prefers_transcript_window():
     clips = [{"scene": 0, "duration": 5.0, "role": "beat"}]
     segments = [{"start": 9.5, "end": 15.0, "text": "the complete sentence from the transcript"}]
     script = audio.build_script(scenes, clips, segments=segments)
-    assert script and script[0]["text"] == "the complete sentence from the transcript"
+    assert script and script[0]["text"] == "the complete sentence from the transcript."
     without = audio.build_script(scenes, clips)
     assert without[0]["text"].startswith("truncated scene speech")
 
@@ -1051,6 +1052,7 @@ def test_rewrite_mlx_prompt_uses_brief_and_relevant(monkeypatch, tmp_path):
         "full_text": "source text",
         "target_text": "Sentence one about the soil mix. Sentence two about watering. Sentence three about fruit.",
         "brief": {"topic": "garden", "promise": "easy"},
+        "aesthetic": {"moods": ["calm"], "pace": "measured"},
         "beats": [
             {"scene": 0, "role": "hook", "seconds": 2.75, "source": "hook source"},
             {"scene": 1, "role": "beat", "seconds": 2.75, "source": "beat source"},
@@ -1059,8 +1061,11 @@ def test_rewrite_mlx_prompt_uses_brief_and_relevant(monkeypatch, tmp_path):
     result = audio._rewrite_mlx(script, "zh", "en", "viral", ["hook literal", "beat literal"], context)
     assert result and result[0] == "hook rewrite"
     assert "STORY BRIEF" in captured["prompt"]
-    assert "RELEVANT TRANSCRIPT LINES" in captured["prompt"]
-    assert "SELECTED BEATS" in captured["prompt"]
+    assert "RELEVANT VOICE SCRIPT LINES" in captured["prompt"]
+    assert "BEAT SLOTS" in captured["prompt"]
+    assert '"max_chars"' in captured["prompt"]
+    assert '"max_words"' in captured["prompt"]
+    assert "VIDEO AESTHETIC" in captured["prompt"]
 
 
 def test_adapt_script_rewrite_provider_routing(monkeypatch, tmp_path):
@@ -1354,7 +1359,7 @@ def test_opencode_rewrite_requires_fit_and_parses(monkeypatch):
     monkeypatch.setattr(audio, "_opencode_text", lambda *args, **kwargs: '["short line"]')
     script = [{"role": "hook", "duration": 3.0, "rate": 1.0, "text": "source"}]
     result = audio._rewrite_opencode(script, "en", "en", "smooth", ["a much longer literal line"])
-    assert result == ["short line"]
+    assert result == ["short line."]
 
     monkeypatch.setattr(audio, "_opencode_text", lambda *args, **kwargs: '["this line is far too long to fit the slot at normal pace"]')
     trimmed = audio._rewrite_opencode(script, "en", "en", "smooth", ["literal"])

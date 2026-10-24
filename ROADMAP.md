@@ -7,6 +7,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.9.1 | 2026-10-24 | Script prompt v2 | full target voice script + aesthetic + char/word budgets, complete-sentence rules, condense repair pass |
 | 0.9.0 | 2026-10-24 | P1/P2 | usage/cost readout, live STT/TTS tests, Cartesia, smoothed crop paths, review links, keyboard editor, Whisper model manager |
 | 0.8.0 | 2026-10-24 | Bilateral crop | per-aspect attention crops for 9:16/4:5/1:1/16:9, true aspect reframe, direct OpenCode Go project key mode |
 | 0.7.2 | 2026-10-24 | OpenCode translation | OpenCode Go becomes a translation provider, on by default; provider-scoped translation memo; line-end facts preserved through fit |
@@ -109,8 +110,10 @@ this table, and gets one commit. Patch bumps for fixes only.
 
 ## Acceptance checks
 
-- Rewrite: hook line ≤ 2.2 s at 1.0x, every line fits its slot, entity/number
-  drift is zero, rules fallback works with no LLM installed.
+- Rewrite: prompt contains full target voice script, visual aesthetic, and
+  per-beat max chars/words; every line ends with terminal punctuation and no
+  conjunction/article; overlong lines are repaired not truncated; entity/number
+  drift is zero; rules fallback works with no LLM installed.
 - Mixer: muting one clip removes voice only in that window; preview under 2 s warm.
 - Beat sync: synthetic 120 BPM click track detected within ±2 BPM; cuts land
   within 250 ms of a beat; drift guard skips when snapping would move > 0.4 s total.
