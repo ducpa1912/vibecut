@@ -1,3 +1,5 @@
+> **v0.11 scope:** normal Setup exposes only OpenCode, OpenRouter, MiniMax and local engines. Groq/OpenAI/Deepgram/ElevenLabs/Cartesia below are legacy backend notes, hidden from the UI. Transcription is local-only; OpenRouter project keys override env.
+
 # Cloud speech: cheap options that beat local
 
 VibeCut is local-first. The Setup drawer adds optional cloud providers for the
@@ -131,12 +133,12 @@ without it.
 
 - The result header shows per-job calls, OpenCode tokens, STT minutes, TTS
   characters and an estimated cost.
-- **Live STT** in Setup synthesizes a local test clip, sends it to the selected
-  cloud STT provider, and returns the transcript.
+- **Live STT** in Setup synthesizes a local test clip and runs Apple Speech,
+  with mlx-whisper as fallback. No cloud STT provider is used.
 - **Live TTS** synthesizes a sample, plays it in Setup, and exposes it at
   `/api/settings/tts-test/<engine>.wav`.
-- Token prices in the ledger: DeepSeek V4.1 Flash off-peak, Groq/OpenAI/Deepgram
-  STT, and OpenAI/Groq/Deepgram/ElevenLabs/Cartesia TTS.
+- Token prices in the ledger: DeepSeek V4.1 Flash off-peak, local STT,
+  MiniMax/OpenRouter TTS and music. Legacy provider prices remain in old data.
 
 
 ## 0.10 provider order

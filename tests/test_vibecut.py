@@ -1,8 +1,10 @@
+import io
 import json
 import math
 import os
 import stat
 import time
+import urllib.error
 import wave
 
 import pytest
@@ -368,8 +370,79 @@ def test_opencode_direct_api_payload(monkeypatch):
     assert captured["auth"] == "Bearer test-project-key"
     assert captured["session"].startswith("vibecut-")
     assert captured["body"]["model"] == "deepseek-v4.1-flash"
-    assert captured["body"]["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in captured["body"]
     assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert "response_format" not in captured["body"]
+
+
+def test_opencode_direct_json_mode_changes_request(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=0):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse(json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(audio, "opencode_key", lambda: "test-project-key")
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    assert audio._opencode_http_text("hello", json_mode=True) == '{"ok": true}'
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+
+
+def test_opencode_length_empty_retries_reasoning_off(monkeypatch):
+    captured = []
+
+    def fake_urlopen(request, timeout=0):
+        captured.append(json.loads(request.data.decode("utf-8")))
+        if len(captured) == 1:
+            return FakeResponse(json.dumps({
+                "choices": [{
+                    "message": {"content": ""},
+                    "finish_reason": "length",
+                }],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 120,
+                    "completion_tokens_details": {"reasoning_tokens": 120},
+                },
+            }).encode("utf-8"))
+        return FakeResponse(json.dumps({
+            "choices": [{
+                "message": {"content": '{"ok": true}'},
+                "finish_reason": "stop",
+            }],
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(audio, "opencode_key", lambda: "test-project-key")
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    assert audio._opencode_http_text("hello", max_tokens=120) == '{"ok": true}'
+    assert len(captured) == 2
+    assert "reasoning_effort" not in captured[0]
+    assert captured[1]["reasoning_effort"] == "none"
+    assert captured[1]["max_tokens"] > captured[0]["max_tokens"]
+
+
+def test_opencode_length_empty_error_names_reasoning(monkeypatch):
+    def fake_urlopen(request, timeout=0):
+        return FakeResponse(json.dumps({
+            "choices": [{
+                "message": {"content": ""},
+                "finish_reason": "length",
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 120,
+                "completion_tokens_details": {"reasoning_tokens": 120},
+            },
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(audio, "opencode_key", lambda: "test-project-key")
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    assert audio._opencode_http_text("hello", max_tokens=120) is None
+    assert "finish_reason=length" in audio.OPENCODE_LAST_ERROR
+    assert "reasoning_tokens=120" in audio.OPENCODE_LAST_ERROR
+    assert "reasoning-off retry" in audio.OPENCODE_LAST_ERROR
 
 
 def _fake_job():
@@ -516,6 +589,7 @@ def test_provider_order_prefers_ready_engine(monkeypatch):
     monkeypatch.setattr(audio, "opencode_available", lambda: False)
     monkeypatch.setattr(audio, "openrouter_available", lambda: False)
     monkeypatch.setattr(audio, "apple_pair_status", lambda source, target: "installed")
+    monkeypatch.setattr(audio, "argos_pair_ready", lambda source, target: False)
     order = audio._provider_order("zh", "en", "auto")
     assert order == ["apple_fm"]
 
@@ -724,6 +798,7 @@ def test_rules_rewrite_smooth_and_viral(monkeypatch):
 def test_adapt_script_literal_and_memo(tmp_path, monkeypatch):
     monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
     monkeypatch.setattr(audio, "opencode_available", lambda: False)
+    monkeypatch.setattr(audio, "openrouter_available", lambda: False)
     seen = {}
 
     def fake_translate(lines, source, target, provider="auto"):
@@ -731,6 +806,7 @@ def test_adapt_script_literal_and_memo(tmp_path, monkeypatch):
         return [f"L:{x}" for x in lines]
 
     monkeypatch.setattr(audio, "translate_lines", fake_translate)
+    monkeypatch.setattr(audio, "_rewrite_candidates", lambda: ["rules"])
     script = [{
         "scene": 3, "clip": 0, "role": "beat", "duration": 3.0, "rate": 1.0,
         "text": "original text",
@@ -740,9 +816,9 @@ def test_adapt_script_literal_and_memo(tmp_path, monkeypatch):
     assert seen["provider"] == "opencode"
     assert literal[0]["rewrite"] == "literal"
     smooth = audio.adapt_script(script, "zh", "en", "smooth")
-    assert smooth[0]["rewrite"] in {"rules", "cached"}
+    assert smooth[0]["rewrite"] == "rules"
     assert smooth[0]["literal"] == "L:original text"
-    assert list((tmp_path / "rewrite").rglob("*.txt"))
+    assert not list((tmp_path / "rewrite").rglob("*.txt"))
 
 
 def test_music_mix_expression():
@@ -1127,7 +1203,7 @@ def test_settings_roundtrip_masks_secrets(tmp_path, monkeypatch):
     state = settings_store.public_state()
 
     assert state["settings"]["opencode"]["model"] == "deepseek-v4.1-flash"
-    assert state["settings"]["stt"]["provider"] == "groq"
+    assert state["settings"]["stt"]["provider"] == "auto"
     assert state["secrets"]["groq"] is True
     assert state["secrets"]["openai"] is False
     assert "gsk-test-value" not in json.dumps(state)
@@ -1169,7 +1245,7 @@ def test_opencode_service_pins_model_and_low_variant(monkeypatch):
     })
     monkeypatch.setattr(audio.subprocess, "run", fake_run)
 
-    answer = audio._opencode_text("write a line")
+    answer = audio._opencode_text("write a line", json_mode=True)
     assert answer == '{"ok": true}'
     create = json.loads(calls[0][calls[0].index("-d") + 1])
     assert create["model"] == {
@@ -1177,6 +1253,8 @@ def test_opencode_service_pins_model_and_low_variant(monkeypatch):
         "providerID": "opencode-go",
         "variant": "low",
     }
+    generate = json.loads(calls[1][calls[1].index("-d") + 1])
+    assert generate["prompt"].endswith("Reply with JSON only.")
     assert any("/generate" in part for part in calls[1])
     assert calls[-1][:3] == ["/usr/local/bin/opencode", "api", "delete"]
     assert audio.opencode_model() == "deepseek-v4.1-flash"
@@ -1310,6 +1388,21 @@ def test_cloud_tts_payloads(monkeypatch, tmp_path):
     assert deepgram_out.is_file()
 
 
+def test_openrouter_settings_survive_settings_load(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings_store, "DATA", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", tmp_path / "secrets.json")
+    for names in settings_store.ENV_KEYS.values():
+        for env_name in names:
+            monkeypatch.delenv(env_name, raising=False)
+    settings_store.save_settings({
+        "openrouter": {"enabled": False, "model": "custom/model-x"},
+    })
+    loaded = settings_store.load_settings()["openrouter"]
+    assert loaded["enabled"] is False
+    assert loaded["model"] == "custom/model-x"
+
+
 def test_settings_api_locks_model_and_masks_keys(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_store, "DATA", tmp_path)
     monkeypatch.setattr(settings_store, "SETTINGS_PATH", tmp_path / "settings.json")
@@ -1331,20 +1424,20 @@ def test_settings_api_locks_model_and_masks_keys(tmp_path, monkeypatch):
     saved = client.post("/api/settings", json={
         "settings": {
             "opencode": {"model": "deepseek-v4.1-flash", "variant": "low"},
-            "stt": {"provider": "groq", "language": "vi"},
+            "stt": {"provider": "auto", "language": "vi"},
         },
-        "secrets": {"groq": "gsk-hidden", "opencode": "oc-hidden"},
+        "secrets": {"minimax": "mm-hidden", "opencode": "oc-hidden"},
     })
     assert saved.status_code == 200
     body = saved.json()
-    assert body["settings"]["stt"]["provider"] == "groq"
+    assert body["settings"]["stt"]["provider"] == "auto"
     assert body["settings"]["stt"]["language"] == "vi"
     assert body["settings"]["stt"]["model"] == "mlx-community/whisper-small-mlx"
-    assert body["secrets"]["groq"] is True
+    assert body["secrets"]["minimax"] is True
     assert body["secrets"]["opencode"] is True
-    assert body["sources"]["groq"] == "file"
+    assert body["sources"]["minimax"] == "file"
     assert body["sources"]["opencode"] == "file"
-    assert "gsk-hidden" not in saved.text
+    assert "mm-hidden" not in saved.text
 
 
 def test_opencode_rewrite_requires_fit_and_parses(monkeypatch):
@@ -1370,7 +1463,10 @@ def test_opencode_direct_key_is_exclusive(monkeypatch):
         return None
 
     monkeypatch.setattr(audio, "opencode_key", lambda: "project-key")
-    monkeypatch.setattr(audio, "_opencode_http_text", lambda prompt, max_tokens=0: "direct answer")
+    monkeypatch.setattr(
+        audio, "_opencode_http_text",
+        lambda prompt, max_tokens=0, json_mode=False, record_failure=True: "direct answer",
+    )
     monkeypatch.setattr(audio, "_opencode_api", fail_local)
     assert audio._opencode_text("hello") == "direct answer"
     assert called["local"] is False
@@ -1603,13 +1699,14 @@ def test_openrouter_tts_payload(monkeypatch, tmp_path):
     captured = {}
 
     def fake_convert(source, output, extra=None):
+        captured["convert_source"] = source
         output.write_bytes(b"RIFF")
         return output
 
     def fake_urlopen(request, timeout=0):
         captured["url"] = request.full_url
         captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse(b"fake-wav")
+        return FakeResponse(b"fake-mp3")
 
     monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-or")
     monkeypatch.setattr(audio, "_convert", fake_convert)
@@ -1619,8 +1716,17 @@ def test_openrouter_tts_payload(monkeypatch, tmp_path):
     assert captured["url"] == "https://openrouter.ai/api/v1/audio/speech"
     assert captured["body"]["model"] == "fish-audio/s2.1-pro-free:free"
     assert captured["body"]["input"] == "hello"
-    assert captured["body"]["voice"] == "default"
+    assert captured["body"]["voice"] == ""
+    assert captured["body"]["response_format"] == "mp3"
+    assert captured["convert_source"].suffix == ".mp3"
     assert out.is_file()
+
+
+def test_openrouter_tts_consults_quarantine(monkeypatch, tmp_path):
+    monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-or")
+    monkeypatch.setattr(audio, "openrouter_blocked", lambda: True)
+    with pytest.raises(audio.AudioError, match="quarantined"):
+        audio._openrouter_voice("hello", "", tmp_path / "fish.wav", 1.0, "fish")
 
 
 def test_minimax_music_payload(monkeypatch, tmp_path):
@@ -1700,3 +1806,320 @@ def test_lyria_streams_audio(monkeypatch, tmp_path):
     assert captured["body"]["stream"] is True
     assert captured["body"]["modalities"] == ["text", "audio"]
     assert out.is_file()
+
+
+# ---------------------------------------------------------------- 0.11 cloud reliability
+
+
+@pytest.fixture
+def provider_state():
+    audio.clear_openrouter_quarantine()
+    audio.reset_provider_breaker()
+    audio.OPENROUTER_LAST_ERROR = ""
+    audio.OPENROUTER_LAST_STATUS = 0
+    audio.OPENCODE_LAST_ERROR = ""
+    audio._rewrite_status_reset(False)
+    yield
+    audio.clear_openrouter_quarantine()
+    audio.reset_provider_breaker()
+    audio.OPENROUTER_LAST_ERROR = ""
+    audio.OPENROUTER_LAST_STATUS = 0
+    audio.OPENCODE_LAST_ERROR = ""
+    audio._rewrite_status_reset(False)
+
+
+def test_openrouter_project_file_key_beats_invalid_env(
+    tmp_path, monkeypatch, provider_state,
+):
+    monkeypatch.setattr(settings_store, "DATA", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", tmp_path / "secrets.json")
+    for env_name in settings_store.ENV_KEYS["openrouter"]:
+        monkeypatch.delenv(env_name, raising=False)
+
+    settings_store.save_secrets({"openrouter": "sk-or-project-key"})
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-invalid-env-key")
+
+    assert settings_store.get_secret("openrouter") == "sk-or-project-key"
+    assert audio.openrouter_key() == "sk-or-project-key"
+    assert settings_store.secret_source("openrouter") == "file"
+    state = settings_store.public_state()
+    assert state["sources"]["openrouter"] == "file"
+    assert state["secrets"]["openrouter"] is True
+    assert "sk-or-project-key" not in json.dumps(state)
+    assert "sk-or-invalid-env-key" not in json.dumps(state)
+
+    captured = {}
+
+    def fake_urlopen(request, timeout=0):
+        captured["auth"] = request.get_header("Authorization")
+        return FakeResponse(json.dumps({
+            "choices": [{"message": {"content": "ok"}}],
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "openrouter": {
+            "enabled": True,
+            "model": "deepseek/deepseek-v4.1-flash:floor",
+        },
+    })
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    assert audio._openrouter_text("hello") == "ok"
+    assert captured["auth"] == "Bearer sk-or-project-key"
+
+    settings_store.save_secrets({"openrouter": ""})
+    assert settings_store.get_secret("openrouter") == "sk-or-invalid-env-key"
+    assert settings_store.secret_source("openrouter") == "env"
+
+
+def test_openrouter_401_quarantines_and_success_clears(monkeypatch, provider_state):
+    calls = []
+
+    def reject(request, timeout=0):
+        calls.append(request)
+        raise urllib.error.HTTPError(
+            request.full_url, 401, "Unauthorized", {},
+            io.BytesIO(b'{"error":{"message":"invalid sk-or-test"}}'),
+        )
+
+    monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-or-test")
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "openrouter": {
+            "enabled": True,
+            "model": "deepseek/deepseek-v4.1-flash:floor",
+        },
+    })
+    monkeypatch.setattr(audio.urllib.request, "urlopen", reject)
+
+    assert audio._openrouter_text("hello") is None
+    assert audio.OPENROUTER_LAST_STATUS == 401
+    assert "sk-or-test" not in audio.OPENROUTER_LAST_ERROR
+    assert audio.openrouter_blocked()
+    assert not audio.openrouter_available()
+    assert len(calls) == 1
+
+    # A quarantined provider is not called again until the key test succeeds.
+    assert audio._openrouter_text("again") is None
+    assert len(calls) == 1
+    assert "quarantined" in audio.OPENROUTER_LAST_ERROR.lower()
+
+    def accept(request, timeout=0):
+        calls.append(request)
+        return FakeResponse(json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(audio.urllib.request, "urlopen", accept)
+    assert audio._openrouter_text("hello", force=True) == '{"ok": true}'
+    assert not audio.openrouter_blocked()
+    assert audio.openrouter_available()
+
+
+def test_openrouter_404_names_model_and_endpoint_reports_source(
+    tmp_path, monkeypatch, provider_state,
+):
+    monkeypatch.setattr(settings_store, "DATA", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", tmp_path / "secrets.json")
+    for env_name in settings_store.ENV_KEYS["openrouter"]:
+        monkeypatch.delenv(env_name, raising=False)
+    settings_store.save_secrets({"openrouter": "sk-or-file-key"})
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "openrouter": {
+            "enabled": True,
+            "model": "deepseek/deepseek-v4.1-flash:floor",
+        },
+    })
+
+    captured = {}
+
+    def missing(request, timeout=0):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        raise urllib.error.HTTPError(
+            request.full_url, 404, "Not Found", {},
+            io.BytesIO(
+                b'{"error":{"message":"No endpoints found for '
+                b'deepseek/deepseek-v4.1-flash:floor"}}'
+            ),
+        )
+
+    monkeypatch.setattr(audio.urllib.request, "urlopen", missing)
+    client = TestClient(app.app)
+    response = client.post("/api/settings/test", json={"kind": "openrouter"})
+    body = response.json()
+
+    assert body["ok"] is False
+    assert body["source"] == "file"
+    assert body["model"] == "deepseek/deepseek-v4.1-flash:floor"
+    assert body["status"] == 404
+    assert "deepseek/deepseek-v4.1-flash:floor" in body["detail"]
+    assert "sk-or-file-key" not in response.text
+    assert captured["body"]["model"] == "deepseek/deepseek-v4.1-flash:floor"
+    assert not audio.openrouter_blocked()
+
+
+def test_opencode_empty_retry_uses_short_backoff(monkeypatch, provider_state):
+    calls = []
+    sleeps = []
+
+    def fake_text(prompt, json_mode=False, max_tokens=1200, force=False, record_failure=True):
+        calls.append((json_mode, max_tokens))
+        if len(calls) == 3:
+            return '["ok"]'
+        audio.OPENCODE_LAST_ERROR = "OpenCode returned an empty reply."
+        return None
+
+    monkeypatch.setattr(audio, "_opencode_text", fake_text)
+    monkeypatch.setattr(audio.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    assert audio._opencode_json_attempts("prompt", 120) == '["ok"]'
+    assert sleeps == [0.4, 1.0]
+    assert [mode for mode, _tokens in calls] == [True, False, True]
+
+
+def test_opencode_empty_replies_trip_circuit_breaker(monkeypatch, provider_state):
+    monkeypatch.setattr(audio, "opencode_key", lambda: "")
+    monkeypatch.setattr(audio, "opencode_bin", lambda: "/usr/local/bin/opencode")
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "opencode": {
+            "enabled": True,
+            "model": "deepseek-v4.1-flash",
+            "variant": "low",
+        },
+    })
+    api_calls = []
+
+    def fake_api(args, body=None, allow_empty=False):
+        api_calls.append(list(args))
+        if args[:2] == ["post", "/api/session"]:
+            return {"data": {"id": "ses_test"}}
+        if args[0] == "post" and "/generate" in args[1]:
+            return {"data": {"text": ""}}
+        return {"data": True}
+
+    monkeypatch.setattr(audio, "_opencode_api", fake_api)
+
+    for _ in range(audio.PROVIDER_BREAKER_FAILURES):
+        assert audio._opencode_text("write") is None
+    assert audio._provider_breaker_open("opencode")
+    assert not audio.opencode_available()
+
+    before = len(api_calls)
+    assert audio._opencode_text("write") is None
+    assert len(api_calls) == before
+    assert "circuit" in audio.OPENCODE_LAST_ERROR.lower()
+
+    # The explicit Setup test still probes once, even while the circuit is open.
+    assert audio._opencode_text("write", force=True) is None
+    assert len(api_calls) > before
+
+
+def test_translation_memo_reused_and_duplicate_clear_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio, "MEMO", tmp_path / "translate")
+    audio._memo_put("en", "vi", "hello", "xin chào", "auto")
+    monkeypatch.setattr(audio, "_provider_order", lambda *args: [])
+
+    assert audio.translate_lines(["hello"], "en", "vi") == ["xin chào"]
+    assert audio.clear_translation_memo(["hello", "hello"], "en", "vi") == 1
+
+
+def test_adapt_script_reports_rewrite_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
+    monkeypatch.setattr(audio, "_rewrite_candidates", lambda: ["opencode"])
+    monkeypatch.setattr(audio, "_rewrite_opencode", lambda *args, **kwargs: None)
+    monkeypatch.setattr(audio, "OPENCODE_LAST_ERROR", "OpenCode returned an empty reply.")
+    script = [{
+        "scene": 0, "role": "hook", "duration": 3.0, "rate": 1.0,
+        "text": "original",
+    }]
+
+    result = audio.adapt_script(script, "en", "en", "smooth", "auto")
+    status = audio.rewrite_status()
+    assert status["ok"] is False
+    assert status["fallback"] is True
+    assert "opencode" in status["error"].lower()
+    assert result[0]["rewrite"] == "literal"
+    assert result[0]["text"] == "original"
+
+
+def test_rewrite_memo_key_includes_provider_and_clear(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
+    audio._rewrite_put(
+        "en", "en", "smooth", "text", "one", None, "opencode:model-a",
+    )
+    assert audio._rewrite_memo(
+        "en", "en", "smooth", "text", None, "opencode:model-a",
+    ) == "one"
+    assert audio._rewrite_memo(
+        "en", "en", "smooth", "text", None, "openrouter:model-b",
+    ) is None
+    assert audio.clear_rewrite_memo(
+        ["text"], "en", "en", "smooth", "opencode:model-a",
+    ) == 1
+    assert audio._rewrite_memo(
+        "en", "en", "smooth", "text", None, "opencode:model-a",
+    ) is None
+
+
+def test_rules_fallback_after_ai_failure_is_flagged_and_not_cached(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
+    monkeypatch.setattr(audio, "_rewrite_candidates", lambda: ["opencode", "rules"])
+    monkeypatch.setattr(audio, "_rewrite_opencode", lambda *args, **kwargs: None)
+    monkeypatch.setattr(audio, "OPENCODE_LAST_ERROR", "OpenCode returned an empty reply.")
+    script = [{
+        "scene": 0, "role": "hook", "duration": 3.0, "rate": 1.0,
+        "text": "original",
+    }]
+
+    result = audio.adapt_script(script, "en", "en", "smooth", "auto")
+    status = audio.rewrite_status()
+    assert status["ok"] is True
+    assert status["used"] == "rules"
+    assert status["fallback"] is True
+    assert "AI rewrite failed" in status["error"]
+    assert result[0]["rewrite"] == "rules"
+    assert not list((tmp_path / "rewrite").rglob("*.txt"))
+
+
+def test_cloud_tts_candidates_append_local_fallbacks(monkeypatch):
+    monkeypatch.setattr(audio, "minimax_key", lambda: "mm-test")
+    monkeypatch.setattr(audio, "openrouter_available", lambda: True)
+    monkeypatch.setattr(audio, "kokoro_available", lambda: True)
+    monkeypatch.setattr(audio, "say_available", lambda: True)
+    monkeypatch.setattr(audio, "piper_available", lambda: False)
+
+    assert audio._tts_candidates("minimax") == [
+        "minimax", "fish", "gemini", "kokoro", "say",
+    ]
+    assert audio._tts_candidates("fish") == [
+        "fish", "gemini", "kokoro", "say",
+    ]
+
+
+def test_cloud_tts_quarantine_skips_openrouter(monkeypatch):
+    monkeypatch.setattr(audio, "minimax_key", lambda: "")
+    monkeypatch.setattr(audio, "openrouter_available", lambda: False)
+    monkeypatch.setattr(audio, "kokoro_available", lambda: False)
+    monkeypatch.setattr(audio, "say_available", lambda: True)
+    monkeypatch.setattr(audio, "piper_available", lambda: False)
+
+    assert audio._tts_candidates("fish") == ["say"]
+
+
+def test_lyria_consults_quarantine(monkeypatch, tmp_path):
+    monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-or")
+    monkeypatch.setattr(audio, "openrouter_blocked", lambda: True)
+    with pytest.raises(audio.AudioError, match="quarantined"):
+        audio._lyria_music("calm bed", 30, tmp_path / "lyria.wav")
+
+
+def test_tts_voice_defaults_and_fish_empty(monkeypatch):
+    monkeypatch.setattr(audio, "list_voices", lambda engine: [])
+    assert audio._tts_voice_for("fish", "default", "fish") == ""
+    assert audio._tts_voice_for("fish", "female-shaonv", "minimax") == ""
+    assert audio._tts_voice_for("fish", "custom-fish", "fish") == "custom-fish"
+    assert audio._tts_voice_for("gemini", "", "gemini") == "Kore"
+    assert audio._tts_voice_for("gemini", "default", "gemini") == "Kore"
+    assert audio._tts_voice_for("kokoro", "female-shaonv", "minimax") == "af_heart"

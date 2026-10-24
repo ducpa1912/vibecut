@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
-  <link rel="stylesheet" href="/static/style.css?v=0.10.0b">
-  <script defer src="/static/app.js?v=0.10.0b"></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.11.4">
+  <script defer src="/static/app.js?v=0.11.4"></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -178,9 +178,29 @@
         <div id="transcript-panel" class="transcript-panel" hidden></div>
       </div>
 
-      <section class="export-panel">
+      <section id="moments-section" class="moments-section">
+        <div class="section-head">
+          <div><p class="eyebrow">moments</p><h3>Moments</h3></div>
+          <div class="scene-tools">
+            <div class="sort-tabs" id="sort-tabs">
+              <button data-sort="best" class="active">Best</button>
+              <button data-sort="timeline">Timeline</button>
+            </div>
+            <span id="scene-count" class="muted"></span>
+            <button id="moments-expand" class="ghost small" type="button">Expand</button>
+          </div>
+        </div>
+        <div id="moments-rail" class="moments-rail" aria-label="Moments"></div>
+        <input id="moments-scrub" class="moments-scrub" type="range" min="0" max="0" value="0" aria-label="Scrub moments">
+        <div id="moments-full" class="moments-full" hidden>
+          <div id="scene-grid" class="scene-grid"></div>
+          <button id="load-more" class="ghost load-more" hidden>Show more</button>
+        </div>
+      </section>
+
+      <section class="export-panel smart-cut-panel">
         <div class="export-head">
-          <div><p class="eyebrow">build</p><h3>One analysis. Three lengths.</h3></div>
+          <div><p class="eyebrow">smart cut</p><h3>Smart Cut</h3></div>
           <div id="target-tabs" class="target-tabs" role="tablist" aria-label="Reel length">
             <button data-target="15" role="tab">15<span>s</span></button>
             <button data-target="30" role="tab" class="active">30<span>s</span></button>
@@ -193,9 +213,9 @@
           <span id="plan-badge" class="badge">auto hook</span>
           <button id="reset-hook" class="text-btn" hidden>Reset hook</button>
           <button id="edit-cut" class="text-btn">Edit cut</button>
-          <label class="caption-check"><input id="arc-order" type="checkbox"> Story arc order</label>
         </div>
-        <div id="timeline" class="timeline"></div>
+        <div id="timeline" class="timeline" aria-label="Smart Cut timeline"></div>
+        <div id="timeline-drop" class="timeline-drop" hidden>Drop a moment here to add it · drag a clip here to remove it</div>
         <p id="plan-why" class="plan-why"></p>
         <div id="edit-bar" class="edit-bar" hidden>
           <span id="edit-hint" class="hint">← / → select · Alt+← / → reorder · − / + trim · Del remove · e edit · s save · r draft · Space play</span>
@@ -203,29 +223,35 @@
           <button id="save-variant" class="ghost small">Save variant</button>
           <button id="done-edit" class="ghost small">Done</button>
         </div>
-        <div id="variant-list" class="variant-list"></div>
+        <details id="advanced-settings" class="advanced-settings">
+          <summary>Advanced</summary>
+          <div class="advanced-body">
+            <label class="caption-check"><input id="arc-order" type="checkbox"> Story arc order</label>
+            <select id="preset-select" class="ghost small" aria-label="Platform preset">
+              <option value="">Custom</option>
+              <option value="tiktok">TikTok</option>
+              <option value="reels">Reels</option>
+              <option value="shorts">Shorts</option>
+              <option value="square">Square</option>
+              <option value="landscape">Landscape</option>
+            </select>
+            <select id="aspect-select" class="ghost small" aria-label="Aspect ratio">
+              <option value="9:16">9:16</option>
+              <option value="4:5">4:5</option>
+              <option value="1:1">1:1</option>
+              <option value="16:9">16:9</option>
+            </select>
+            <label class="caption-check"><input id="captions" type="checkbox"> Captions</label>
+            <button id="render-all" class="ghost small">All 15/30/60</button>
+            <button id="render-ab" class="ghost small">A/B hooks</button>
+            <div id="variant-list" class="variant-list"></div>
+          </div>
+        </details>
 
         <div class="render-row">
           <button id="render" class="primary">Render 30s reel <span class="arrow">↗</span></button>
           <button id="render-draft" class="ghost small">Draft</button>
-          <button id="render-all" class="ghost small">All 15/30/60</button>
           <button id="render-cancel" class="ghost small" hidden>Cancel</button>
-          <select id="preset-select" class="ghost small" aria-label="Platform preset">
-            <option value="">Custom</option>
-            <option value="tiktok">TikTok</option>
-            <option value="reels">Reels</option>
-            <option value="shorts">Shorts</option>
-            <option value="square">Square</option>
-            <option value="landscape">Landscape</option>
-          </select>
-          <button id="render-ab" class="ghost small">A/B hooks</button>
-          <select id="aspect-select" class="ghost small" aria-label="Aspect ratio">
-            <option value="9:16">9:16</option>
-            <option value="4:5">4:5</option>
-            <option value="1:1">1:1</option>
-            <option value="16:9">16:9</option>
-          </select>
-          <label class="caption-check"><input id="captions" type="checkbox"> Captions</label>
           <span id="render-note" class="hint">Vertical 1080×1920 · original audio</span>
         </div>
         <div id="render-progress" class="render-progress" hidden>
@@ -251,101 +277,149 @@
           </div>
         </section>
 
-        <details id="audio-panel" class="audio-panel">
-          <summary>Audio · voice over, dub, music</summary>
-          <div class="audio-grid">
-            <div class="audio-field audio-mode-field">
-              <span>Mode</span>
-              <div id="audio-mode-tabs" class="audio-mode-tabs">
-                <button type="button" data-audio-mode="keep" class="active">Original</button>
-                <button type="button" data-audio-mode="bed">Voice-over</button>
-                <button type="button" data-audio-mode="voice">Dub</button>
-                <button type="button" data-audio-mode="music">Music</button>
-                <button type="button" data-audio-mode="full">Full Replace</button>
-              </div>
-              <select id="audio-mode" hidden>
-                <option value="keep">Original</option>
-                <option value="bed">Voice-over · new voice over original audio</option>
-                <option value="voice">Dub · replace only the voice</option>
-                <option value="music">Music · replace original audio</option>
-                <option value="full">Full Replace · new voice + new music</option>
-              </select>
+        <details id="audio-panel" class="audio-panel" open>
+          <summary>Audio · rewrite, voice, music</summary>
+
+          <div class="audio-mode-field">
+            <span>Mode</span>
+            <div id="audio-mode-tabs" class="audio-mode-tabs">
+              <button type="button" data-audio-mode="keep" class="active">Original</button>
+              <button type="button" data-audio-mode="bed">Voice-over</button>
+              <button type="button" data-audio-mode="voice">Dub</button>
+              <button type="button" data-audio-mode="music">Music</button>
+              <button type="button" data-audio-mode="full">Full Replace</button>
             </div>
-            <div id="audio-voice-source" class="audio-field">
-              <span>Voice source</span>
-              <div class="audio-source-row">
+            <select id="audio-mode" hidden>
+              <option value="keep">Original</option>
+              <option value="bed">Voice-over · new voice over original audio</option>
+              <option value="voice">Dub · replace only the voice</option>
+              <option value="music">Music · replace original audio</option>
+              <option value="full">Full Replace · new voice + new music</option>
+            </select>
+          </div>
+
+          <section id="audio-rewrite-step" class="audio-step">
+            <div class="audio-step-head">
+              <span class="audio-step-num">1</span>
+              <div><h4>Rewrite</h4><p>Translate, then rewrite for this cut. Nothing runs until you press play.</p></div>
+            </div>
+            <div class="audio-step-body">
+              <div class="audio-grid">
+                <label class="audio-field">
+                  <span>Language</span>
+                  <select id="audio-lang"></select>
+                </label>
+                <label class="audio-field">
+                  <span>Script style</span>
+                  <select id="audio-style">
+                    <option value="smooth">Smooth · natural short script</option>
+                    <option value="viral">Viral · punchy hook</option>
+                    <option value="fun">Fun · playful and warm</option>
+                    <option value="creative">Creative · vivid and surprising</option>
+                    <option value="sad">Sad · intimate and restrained</option>
+                    <option value="chill">Chill · calm and understated</option>
+                    <option value="literal">Faithful · translation only</option>
+                  </select>
+                </label>
+                <div class="audio-field small audio-rewrite-action">
+                  <span>&nbsp;</span>
+                  <button id="audio-rewrite-run" class="primary small" type="button">▶ Rewrite</button>
+                </div>
+              </div>
+              <p id="audio-rewrite-note" class="hint">Click Rewrite to translate the full script and rewrite the cut.</p>
+              <select id="audio-provider" hidden></select>
+              <select id="audio-rewrite" hidden></select>
+            </div>
+          </section>
+
+          <section id="audio-voice-step" class="audio-step">
+            <div class="audio-step-head">
+              <span class="audio-step-num">2</span>
+              <div><h4>Voice</h4><p>Generate a voice, or fit your own recording to the cut.</p></div>
+            </div>
+            <div class="audio-step-body">
+              <div id="audio-voice-source" class="audio-source-row">
                 <label class="check compact"><input id="audio-source-generate" type="radio" name="audio-source" value="generate" checked> Generate</label>
                 <label class="check compact"><input id="audio-source-upload" type="radio" name="audio-source" value="upload"> Use my recording</label>
               </div>
-              <input id="audio-upload" type="file" accept="audio/*" hidden>
-              <button id="audio-upload-button" class="ghost small" type="button" hidden>Choose audio</button>
-              <span id="audio-upload-name" class="hint"></span>
+              <div id="audio-voice-generate" class="audio-grid">
+                <label class="audio-field">
+                  <span>Voice engine</span>
+                  <select id="audio-engine"></select>
+                </label>
+                <label class="audio-field">
+                  <span>Voice</span>
+                  <select id="audio-voice"></select>
+                </label>
+                <label class="audio-field small">
+                  <span>Rate</span>
+                  <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
+                </label>
+              </div>
+              <div id="audio-voice-upload" class="audio-upload-box" hidden>
+                <input id="audio-upload" type="file" accept="audio/*" hidden>
+                <button id="audio-upload-button" class="ghost small" type="button">Choose recording</button>
+                <span id="audio-upload-name" class="hint">Fit your recording to the cut length.</span>
+              </div>
+              <div class="audio-actions">
+                <button id="audio-preview" class="ghost small" type="button">Test voice</button>
+              </div>
             </div>
-            <label class="audio-field">
-              <span>Translate to</span>
-              <select id="audio-lang"></select>
-            </label>
-            <label class="audio-field">
-              <span>Translate engine</span>
-              <select id="audio-provider"></select>
-            </label>
-            <label class="audio-field">
-              <span>Script style</span>
-              <select id="audio-style">
-                <option value="literal">Faithful (literal)</option>
-                <option value="smooth">Smooth rewrite</option>
-                <option value="viral">Viral rewrite</option>
-              </select>
-            </label>
-            <label class="audio-field">
-              <span>Rewrite model</span>
-              <select id="audio-rewrite"></select>
-            </label>
-            <label class="audio-field">
-              <span>Voice engine</span>
-              <select id="audio-engine"></select>
-            </label>
-            <label class="audio-field">
-              <span>Voice</span>
-              <select id="audio-voice"></select>
-            </label>
-            <label class="audio-field small">
-              <span>Rate</span>
-              <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
-            </label>
-            <label class="audio-field">
-              <span>Music</span>
-              <select id="audio-music">
-                <option value="none">No music</option>
-                <option value="library">My own track</option>
-                <option value="cc0">CC0 library</option>
-                <option value="minimax-music">AI · MiniMax Music</option>
-                <option value="lyria-clip">AI · OpenRouter Lyria 3</option>
-              </select>
-            </label>
-            <label class="audio-field">
-              <span>Track</span>
-              <select id="audio-track"></select>
-            </label>
-            <label class="audio-field">
-              <span>Music prompt</span>
-              <input id="audio-prompt" placeholder="auto mood">
-            </label>
-            <label class="audio-field small">
-              <span>Music dB</span>
-              <input id="audio-gain" type="number" min="-40" max="0" step="1" value="-18">
-            </label>
-            <label class="audio-field checkbox">
-              <input id="audio-duck" type="checkbox" checked> Duck under voice
-            </label>
-            <label class="audio-field checkbox">
-              <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
-            </label>
-            <div class="audio-actions">
-              <button id="audio-preview" class="ghost small" type="button">Test voice</button>
-              <button id="audio-translate-install" class="ghost small" type="button" hidden>Offline translate setup</button>
-              <span id="audio-status" class="hint"></span>
+          </section>
+
+          <section id="audio-music-step" class="audio-step">
+            <div class="audio-step-head">
+              <span class="audio-step-num">3</span>
+              <div><h4>Music</h4><p>Use your own track, or generate a bed.</p></div>
             </div>
+            <div class="audio-step-body">
+              <div id="audio-music-source" class="audio-source-row">
+                <label class="check compact"><input type="radio" name="audio-music-source" value="none" checked> None</label>
+                <label class="check compact"><input type="radio" name="audio-music-source" value="own"> Use my sound</label>
+                <label class="check compact"><input type="radio" name="audio-music-source" value="generate"> Generate</label>
+              </div>
+              <p id="audio-music-warning" class="audio-warning" hidden></p>
+              <div class="audio-grid">
+                <label class="audio-field">
+                  <span>Music source</span>
+                  <select id="audio-music">
+                    <option value="none">No music</option>
+                    <option value="library">My own track</option>
+                    <option value="cc0">CC0 library</option>
+                    <option value="minimax-music">AI · MiniMax Music</option>
+                    <option value="lyria-clip">AI · OpenRouter Lyria 3</option>
+                  </select>
+                </label>
+                <label id="audio-track-field" class="audio-field">
+                  <span>Track</span>
+                  <select id="audio-track"></select>
+                </label>
+                <div id="audio-music-upload-box" class="audio-upload-box" hidden>
+                  <input id="audio-music-upload" type="file" accept="audio/*" hidden>
+                  <button id="audio-music-upload-button" class="ghost small" type="button">Choose sound</button>
+                  <button id="audio-music-upload-clear" class="ghost small" type="button" hidden>Clear</button>
+                  <span id="audio-music-upload-name" class="hint">Use your own music file.</span>
+                </div>
+                <label id="audio-prompt-field" class="audio-field">
+                  <span>Music prompt</span>
+                  <input id="audio-prompt" placeholder="auto mood">
+                </label>
+                <label id="audio-gain-field" class="audio-field small">
+                  <span>Music dB</span>
+                  <input id="audio-gain" type="number" min="-40" max="0" step="1" value="-18">
+                </label>
+                <label id="audio-duck-field" class="audio-field checkbox">
+                  <input id="audio-duck" type="checkbox" checked> Duck under voice
+                </label>
+                <label id="audio-beatsync-field" class="audio-field checkbox">
+                  <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <div class="audio-actions audio-bottom">
+            <span id="audio-status" class="hint"></span>
           </div>
           <div id="audio-script" class="audio-script"></div>
         </details>
@@ -366,20 +440,12 @@
         </div>
       </section>
 
-      <section class="scene-section">
-        <div class="section-head">
-          <div><p class="eyebrow">index</p><h3>Every moment</h3></div>
-          <div class="scene-tools">
-            <div class="sort-tabs" id="sort-tabs">
-              <button data-sort="best" class="active">Best</button>
-              <button data-sort="timeline">Timeline</button>
-            </div>
-            <span id="scene-count" class="muted"></span>
-          </div>
-        </div>
-        <div id="scene-grid" class="scene-grid"></div>
-        <button id="load-more" class="ghost load-more" hidden>Show more</button>
-      </section>
+      <details id="history-panel" class="history-panel">
+        <summary>History <span id="history-count" class="muted"></span></summary>
+        <div id="history-list" class="history-list"></div>
+        <div id="history-detail" class="history-detail" hidden></div>
+      </details>
+
     </section>
   </main>
 
@@ -439,8 +505,17 @@
           <div class="setup-toggles">
             <label class="setup-check"><input id="setup-use-rewrite" type="checkbox"> Rewrite script</label>
             <label class="setup-check"><input id="setup-use-brief" type="checkbox"> Story brief</label>
-            <label class="setup-check"><input id="setup-use-translate" type="checkbox"> Translation</label>
           </div>
+          <label class="setup-field">
+            <span>Translation mode</span>
+            <select id="setup-translation-mode">
+              <option value="auto">Auto · online first, local fallback</option>
+              <option value="local_first">Local first · online fallback</option>
+              <option value="local_only">Local only · Apple → Argos</option>
+              <option value="online_only">Online only · OpenCode / OpenRouter</option>
+            </select>
+          </label>
+          <p class="setup-hint">Translation engine is internal. Auto: online first, local fallback. Local first: Apple → Argos, then online. Local only: Apple → Argos. Online only: OpenCode → OpenRouter.</p>
           <div class="setup-actions">
             <button id="setup-test-opencode" class="ghost small" type="button">Test OpenCode</button>
             <button id="setup-test-openrouter" class="ghost small" type="button">Test OpenRouter</button>
@@ -455,12 +530,9 @@
           <label class="setup-field">
             <span>Provider</span>
             <select id="setup-stt-provider">
-              <option value="auto">Auto · cloud if key, else Apple / Whisper</option>
+              <option value="auto">Local · Apple Speech → Whisper</option>
               <option value="apple">Apple SpeechAnalyzer · local</option>
               <option value="whisper">mlx-whisper · local</option>
-              <option value="groq">Groq Whisper large-v3-turbo · $0.04/h</option>
-              <option value="openai">OpenAI Whisper · $0.36/h</option>
-              <option value="deepgram">Deepgram Nova-3 · diarization</option>
             </select>
           </label>
           <label class="setup-field">
@@ -489,22 +561,9 @@
             <span>Whisper model</span>
             <select id="setup-stt-model"></select>
           </label>
-          <div class="setup-row">
-            <label class="setup-field">
-              <span>Groq key</span>
-              <input id="setup-groq-key" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_…">
-            </label>
-            <label class="setup-field">
-              <span>OpenAI key</span>
-              <input id="setup-openai-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
-            </label>
-          </div>
-          <label class="setup-field">
-            <span>Deepgram key</span>
-            <input id="setup-deepgram-key" type="password" autocomplete="off" spellcheck="false" placeholder="Token…">
-          </label>
+          <p class="setup-hint">Transcription stays local. Apple Speech runs first; mlx-whisper is the fallback. No cloud STT key needed.</p>
           <div class="setup-actions">
-            <button id="setup-test-stt" class="ghost small" type="button">Check STT</button>
+            <button id="setup-test-stt" class="ghost small" type="button">Check local STT</button>
             <button id="setup-test-stt-live" class="ghost small" type="button">Live STT</button>
           </div>
         </section>
@@ -524,28 +583,13 @@
               <option value="minimax">MiniMax speech-2.8-turbo</option>
               <option value="fish">OpenRouter Fish S2.1 Pro Free</option>
               <option value="gemini">OpenRouter Gemini 3.8 Flash-Lite TTS</option>
-              <option value="openai">OpenAI gpt-4o-mini-tts · ~$15/M</option>
-              <option value="elevenlabs">ElevenLabs Flash · ~$40/M</option>
-              <option value="groq">Groq Orpheus · ~$22/M, English</option>
-              <option value="deepgram">Deepgram Aura-2 · $30/M</option>
-              <option value="cartesia">Cartesia Sonic 3.6 · ~$49/M</option>
             </select>
           </label>
-          <div class="setup-row">
-            <label class="setup-field">
-              <span>MiniMax key · TTS + music</span>
-              <input id="setup-minimax-key" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ…">
-            </label>
-            <label class="setup-field">
-              <span>ElevenLabs key</span>
-              <input id="setup-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="xi-…">
-            </label>
-            <label class="setup-field">
-              <span>Cartesia key</span>
-              <input id="setup-cartesia-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk_car_…">
-            </label>
-          </div>
-          <p class="setup-hint">Kokoro is already strong. Cloud voice is worth it for ElevenLabs naturalness, or Groq for cheap English. Every line is cached.</p>
+          <label class="setup-field">
+            <span>MiniMax key · TTS + music</span>
+            <input id="setup-minimax-key" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ…">
+          </label>
+          <p class="setup-hint">Local Kokoro/Piper/say stay free. Cloud voice: MiniMax → OpenRouter Fish → Gemini. Every line is cached.</p>
           <div class="setup-actions">
             <button id="setup-test-tts" class="ghost small" type="button">Check TTS</button>
             <button id="setup-test-tts-live" class="ghost small" type="button">Live TTS</button>

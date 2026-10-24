@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -57,6 +58,20 @@ LANGUAGE_NAMES = {
 
 class AudioError(RuntimeError):
     pass
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
 
 
 # ---------------------------------------------------------------- process
@@ -323,9 +338,9 @@ def engine_status() -> dict:
                      "install": "Set CARTESIA_API_KEY or add it in Setup. Sonic 3.6, cloud."},
         "minimax": {"available": bool(minimax_key()), "size_mb": 0,
                     "install": "Set MINIMAX_API_KEY or add it in Setup. Speech 2.8 Turbo, cloud."},
-        "fish": {"available": bool(openrouter_key()), "size_mb": 0,
+        "fish": {"available": openrouter_available(), "size_mb": 0,
                  "install": "Add an OpenRouter key. Fish Audio S2.1 Pro Free."},
-        "gemini": {"available": bool(openrouter_key()), "size_mb": 0,
+        "gemini": {"available": openrouter_available(), "size_mb": 0,
                    "install": "Add an OpenRouter key. Gemini 3.8 Flash-Lite TTS."},
     }
     music = {
@@ -341,7 +356,7 @@ def engine_status() -> dict:
                            "install": "pip install transformers torch soundfile. Ungated MusicGen Small; slow on M1, but no HF license gate."},
         "minimax-music": {"available": bool(minimax_key()), "size_mb": 0,
                           "install": "Set MINIMAX_API_KEY. MiniMax Music, instrumental."},
-        "lyria-clip": {"available": bool(openrouter_key()), "size_mb": 0,
+        "lyria-clip": {"available": openrouter_available(), "size_mb": 0,
                        "install": "Add an OpenRouter key. Lyria 3 Clip/Pro."},
     }
     return {
@@ -426,12 +441,12 @@ def list_voices(engine: str) -> list[dict]:
         return [{"id": name, "name": name, "lang": "multi"} for name in names]
 
     if engine == "fish":
-        if not openrouter_key():
+        if not openrouter_available():
             return []
         return [{"id": "default", "name": "Fish default", "lang": "multi"}]
 
     if engine == "gemini":
-        if not openrouter_key():
+        if not openrouter_available():
             return []
         names = ["Kore", "Zephyr", "Puck", "Charon", "Leda", "Aoede", "Fenrir"]
         return [{"id": name, "name": name, "lang": "multi"} for name in names]
@@ -525,6 +540,65 @@ def list_voices(engine: str) -> list[dict]:
     return []
 
 
+LOCAL_TTS_ORDER = ("kokoro", "say", "piper")
+
+
+def _local_tts_candidates() -> list[str]:
+    available = {
+        "kokoro": kokoro_available(),
+        "say": say_available(),
+        "piper": piper_available(),
+    }
+    return [name for name in LOCAL_TTS_ORDER if available[name]]
+
+
+def _tts_candidates(engine_name: str) -> list[str]:
+    """Cloud voices first, then local engines so a bad cloud key cannot mute."""
+    primary = str(engine_name or "auto").lower()
+    if primary == "auto":
+        cloud = [
+            name for name in ("minimax", "fish", "gemini")
+            if (minimax_key() if name == "minimax" else openrouter_available())
+        ]
+    elif primary == "minimax":
+        cloud = [
+            name for name in ("minimax", "fish", "gemini")
+            if (minimax_key() if name == "minimax" else openrouter_available())
+        ]
+    elif primary == "fish":
+        cloud = [
+            name for name in ("fish", "gemini") if openrouter_available()
+        ]
+    elif primary == "gemini":
+        cloud = ["gemini"] if openrouter_available() else []
+    else:
+        cloud = []
+    local = _local_tts_candidates()
+    return [*cloud, *[name for name in local if name not in cloud]]
+
+
+def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
+    preferred = str(preferred or "")
+    if candidate == "fish":
+        if candidate == primary and preferred not in {"", "default"}:
+            return preferred
+        return ""
+    if candidate == primary and preferred not in {"", "default"}:
+        return preferred
+    if candidate == "gemini":
+        return "Kore"
+    if candidate == "kokoro":
+        return "af_heart"
+    if candidate == "say":
+        return "Samantha"
+    if candidate == "piper":
+        voices = list_voices("piper")
+        return voices[0]["id"] if voices else ""
+    if candidate == "minimax":
+        return "female-shaonv"
+    return preferred
+
+
 # ---------------------------------------------------------------- speech
 
 
@@ -546,7 +620,8 @@ def clear_translation_memo(
     lines: list[str], source: str, target: str, provider: str = "auto",
 ) -> int:
     removed = 0
-    for line in lines:
+    # One request clears each memo entry once, even when beats repeat a line.
+    for line in dict.fromkeys(str(item) for item in lines):
         path = _memo_file(source, target, str(line), provider or "auto")
         try:
             if path.is_file():
@@ -887,12 +962,20 @@ def _openrouter_voice(text: str, voice: str, output: Path, rate: float = 1.0, en
     key = openrouter_key()
     if not key:
         raise AudioError("Set an OpenRouter key to use this voice.")
+    if openrouter_blocked():
+        raise AudioError(
+            "OpenRouter is quarantined after an auth error; retry in "
+            f"{openrouter_blocked_seconds()}s."
+        )
     model = "fish-audio/s2.1-pro-free:free" if engine == "fish" else "google/gemini-3.8-flash-lite-tts"
+    default_voice = "" if engine == "fish" else "Kore"
+    voice_value = default_voice if voice in {"", "default"} else voice
     body = {
         "model": model,
         "input": text,
-        "voice": voice or ("default" if engine == "fish" else "Kore"),
-        "response_format": "wav",
+        "voice": voice_value,
+        # OpenRouter speech returns MP3 or PCM, not WAV. Convert afterwards.
+        "response_format": "mp3",
     }
     request = urllib.request.Request(
         "https://openrouter.ai/api/v1/audio/speech",
@@ -903,9 +986,15 @@ def _openrouter_voice(text: str, voice: str, output: Path, rate: float = 1.0, en
     try:
         with urllib.request.urlopen(request, timeout=300) as response:
             content = response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            _openrouter_auth_failure(
+                int(exc.code), _openrouter_http_error_text(exc, key),
+            )
+        raise AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
-    raw = output.with_name(f"{output.stem}.{engine}.tmp.wav")
+    raw = output.with_name(f"{output.stem}.{engine}.tmp.mp3")
     raw.write_bytes(content)
     extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
     _convert(raw, output, extra)
@@ -1077,6 +1166,30 @@ def _translate_apple(
     return output
 
 
+def _translate_opencode(lines: list[str], source: str, target: str) -> list[str] | None:
+    if not opencode_available():
+        return None
+    prompt = (
+        f"Translate these {len(lines)} subtitle lines into {_language_name(target)}. "
+        "Keep the same count and order. Use natural spoken language and complete "
+        "sentences. Preserve every name, product, number and claim. "
+        "JSON array only:\n" + json.dumps(lines, ensure_ascii=False)
+    )
+    raw = _opencode_json_attempts(prompt, max_tokens=2500)
+    if not raw:
+        return None
+    match = re.search(r"\[.*\]", raw, re.S)
+    if not match:
+        return None
+    try:
+        values = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(values, list) or len(values) != len(lines):
+        return None
+    return [str(value) for value in values]
+
+
 def _translate_openrouter(lines: list[str], source: str, target: str) -> list[str] | None:
     prompt = (
         f"Translate these {len(lines)} subtitle lines into {_language_name(target)}. "
@@ -1097,6 +1210,34 @@ def _translate_openrouter(lines: list[str], source: str, target: str) -> list[st
     if not isinstance(values, list) or len(values) != len(lines):
         return None
     return [str(value) for value in values]
+
+
+def argos_pair_ready(source: str, target: str) -> bool:
+    try:
+        from argostranslate import translate as argos_translate  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return False
+    source_code = (source or "en").split("-")[0]
+    target_code = (target or "en").split("-")[0]
+    if source_code == target_code:
+        return True
+    try:
+        return argos_translate.get_translation_from_codes(source_code, target_code) is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _translate_argos(lines: list[str], source: str, target: str) -> list[str] | None:
+    try:
+        from argostranslate import translate as argos_translate  # noqa: PLC0415
+        translation = argos_translate.get_translation_from_codes(
+            (source or "en").split("-")[0], (target or "en").split("-")[0],
+        )
+        if translation is None:
+            return None
+        return [str(translation.translate(line)) for line in lines]
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _translate_marian(lines: list[str], source: str, target: str) -> list[str] | None:
@@ -1149,20 +1290,35 @@ def _rewrite_candidates() -> list[str]:
     return order
 
 
+def translation_mode() -> str:
+    mode = str((settings_store.load_settings().get("translation") or {}).get("mode") or "auto")
+    return mode if mode in {"auto", "local_first", "local_only", "online_only"} else "auto"
+
+
 def _provider_order(source: str, target: str, provider: str) -> list[str]:
     if provider and provider != "auto":
         return [provider]
-    order: list[str] = []
     settings = settings_store.load_settings().get("opencode") or {}
-    if settings.get("use_translate") and opencode_available():
-        order.append("opencode")
+    online: list[str] = []
+    if settings.get("use_translate", True) and opencode_available():
+        online.append("opencode")
     openrouter_settings = settings_store.load_settings().get("openrouter") or {}
     if openrouter_settings.get("use_translate", True) and openrouter_available():
-        order.append("openrouter")
-    # One local fallback only: Apple Translation.
-    if "apple_fm" not in order:
-        order.append("apple_fm")
-    return order
+        online.append("openrouter")
+    # Local mode uses Apple first, then Argos only when the pair is already
+    # installed. Marian/Ollama stay advanced/explicit: they may download models.
+    local: list[str] = ["apple_fm"]
+    if argos_pair_ready(source, target):
+        local.append("argos")
+    mode = translation_mode()
+    if mode == "local_only":
+        return local
+    if mode == "online_only":
+        return online
+    if mode == "local_first":
+        return [*local, *online]
+    # Auto: online first, local on-device fallback.
+    return [*online, *local]
 
 
 def translate_lines(
@@ -1424,6 +1580,11 @@ def _lyria_music(prompt: str, seconds: float, output: Path) -> None:
     key = openrouter_key()
     if not key:
         raise AudioError("Add an OpenRouter key to use Lyria music.")
+    if openrouter_blocked():
+        raise AudioError(
+            "OpenRouter is quarantined after an auth error; retry in "
+            f"{openrouter_blocked_seconds()}s."
+        )
     model = "google/lyria-3-pro-preview" if seconds > 32 else "google/lyria-3-clip-preview"
     payload = {
         "model": model,
@@ -1467,6 +1628,12 @@ def _lyria_music(prompt: str, seconds: float, output: Path) -> None:
                         chunks.append(base64.b64decode(value))
                     except (ValueError, TypeError):
                         continue
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            _openrouter_auth_failure(
+                int(exc.code), _openrouter_http_error_text(exc, key),
+            )
+        raise AudioError(f"Lyria music failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"Lyria music failed: {exc}") from exc
     if not chunks:
@@ -1499,6 +1666,11 @@ def generate_music(
     if is_lyria:
         if not openrouter_key():
             raise AudioError("Add an OpenRouter key to use Lyria music.")
+        if openrouter_blocked():
+            raise AudioError(
+                "OpenRouter is quarantined after an auth error; retry in "
+                f"{openrouter_blocked_seconds()}s."
+            )
     elif is_minimax:
         if not minimax_key():
             raise AudioError("Set MINIMAX_API_KEY to use MiniMax music.")
@@ -1847,15 +2019,104 @@ def _mlx_text(prompt: str) -> str | None:
 OPENCODE_PROVIDER = "opencode-go"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_LAST_ERROR = ""
+OPENROUTER_LAST_STATUS = 0
+OPENROUTER_LAST_MODEL = ""
+OPENROUTER_LAST_SOURCE = ""
+OPENROUTER_BLOCKED_UNTIL = 0.0
+OPENROUTER_QUARANTINE_SECONDS = max(
+    0.0, _env_float("VIBECUT_OPENROUTER_QUARANTINE_SECONDS", 300.0),
+)
+
+PROVIDER_BREAKER_LOCK = threading.Lock()
+PROVIDER_BREAKERS: dict[str, dict] = {}
+PROVIDER_BREAKER_FAILURES = max(1, _env_int("VIBECUT_PROVIDER_BREAKER_FAILURES", 3))
+PROVIDER_BREAKER_SECONDS = max(1.0, _env_float("VIBECUT_PROVIDER_BREAKER_SECONDS", 90.0))
+
+
+def _provider_breaker_open(provider: str) -> bool:
+    now = time.monotonic()
+    with PROVIDER_BREAKER_LOCK:
+        state = PROVIDER_BREAKERS.get(provider)
+        if not state:
+            return False
+        until = float(state.get("until") or 0.0)
+        if until and until <= now:
+            PROVIDER_BREAKERS.pop(provider, None)
+            return False
+        return bool(until)
+
+
+def _provider_breaker_fail(provider: str, detail: str) -> None:
+    now = time.monotonic()
+    with PROVIDER_BREAKER_LOCK:
+        state = PROVIDER_BREAKERS.setdefault(
+            provider, {"failures": 0, "until": 0.0, "error": ""},
+        )
+        state["failures"] = int(state.get("failures") or 0) + 1
+        state["error"] = str(detail or "")[:240]
+        if state["failures"] >= PROVIDER_BREAKER_FAILURES:
+            state["until"] = now + PROVIDER_BREAKER_SECONDS
+
+
+def _provider_breaker_ok(provider: str) -> None:
+    with PROVIDER_BREAKER_LOCK:
+        PROVIDER_BREAKERS.pop(provider, None)
+
+
+def reset_provider_breaker(provider: str = "") -> None:
+    with PROVIDER_BREAKER_LOCK:
+        if provider:
+            PROVIDER_BREAKERS.pop(provider, None)
+        else:
+            PROVIDER_BREAKERS.clear()
+
+
+def provider_breaker_status(provider: str) -> dict:
+    now = time.monotonic()
+    with PROVIDER_BREAKER_LOCK:
+        state = dict(PROVIDER_BREAKERS.get(provider) or {})
+    until = float(state.get("until") or 0.0)
+    return {
+        "open": bool(until and until > now),
+        "failures": int(state.get("failures") or 0),
+        "retry_in": round(max(0.0, until - now), 1) if until > now else 0.0,
+        "error": str(state.get("error") or ""),
+    }
+
+
+def _is_empty_reply_error(message: str) -> bool:
+    text = str(message or "").lower()
+    return "empty reply" in text or "returned no output" in text
 
 
 def openrouter_key() -> str:
     return settings_store.get_secret("openrouter")
 
 
-def openrouter_available() -> bool:
+def _openrouter_configured() -> bool:
     settings = settings_store.load_settings().get("openrouter") or {}
     return bool(openrouter_key()) and bool(settings.get("enabled", True))
+
+
+def openrouter_blocked() -> bool:
+    return time.monotonic() < OPENROUTER_BLOCKED_UNTIL
+
+
+def openrouter_blocked_seconds() -> float:
+    return round(max(0.0, OPENROUTER_BLOCKED_UNTIL - time.monotonic()), 1)
+
+
+def clear_openrouter_quarantine() -> None:
+    global OPENROUTER_BLOCKED_UNTIL
+    OPENROUTER_BLOCKED_UNTIL = 0.0
+
+
+def openrouter_available() -> bool:
+    return (
+        _openrouter_configured()
+        and not openrouter_blocked()
+        and not _provider_breaker_open("openrouter")
+    )
 
 
 def openrouter_model() -> str:
@@ -1863,14 +2124,104 @@ def openrouter_model() -> str:
     return str(settings.get("model") or "deepseek/deepseek-v4.1-flash:floor")
 
 
-def _openrouter_text(prompt: str, json_mode: bool = False, max_tokens: int = 3000) -> str | None:
-    global OPENROUTER_LAST_ERROR
+def _openrouter_http_error_text(exc: urllib.error.HTTPError, key: str) -> str:
+    try:
+        raw = exc.read().decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        raw = ""
+    message = ""
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message") or error.get("code") or "")
+        elif error:
+            message = str(error)
+    if not message:
+        message = raw
+    message = " ".join(str(message or "").split())
+    return _redact_secret(message, key)[:240]
+
+
+def _redact_secret(text: str, key: str = "") -> str:
+    value = str(text or "")
+    if key:
+        value = value.replace(key, "***")
+    return re.sub(r"sk-[A-Za-z0-9_-]{6,}", "***", value)
+
+
+def _openrouter_auth_failure(status: int, message: str = "") -> None:
+    global OPENROUTER_BLOCKED_UNTIL, OPENROUTER_LAST_ERROR, OPENROUTER_LAST_STATUS
+    OPENROUTER_LAST_STATUS = int(status)
+    detail = f"OpenRouter key rejected (HTTP {status}); check the project key."
+    if message:
+        detail = f"{detail} {message}"
+    OPENROUTER_LAST_ERROR = detail[:400]
+    OPENROUTER_BLOCKED_UNTIL = time.monotonic() + OPENROUTER_QUARANTINE_SECONDS
+
+
+def _openrouter_model_error(status: int, message: str) -> bool:
+    if status == 404:
+        return True
+    text = str(message or "").lower()
+    return status in {400, 422} and any(
+        token in text
+        for token in (
+            "no endpoints",
+            "model not found",
+            "model does not exist",
+            "model is not available",
+            "invalid model",
+        )
+    )
+
+
+def openrouter_status() -> dict:
+    return {
+        "available": openrouter_available(),
+        "source": settings_store.secret_source("openrouter"),
+        "model": openrouter_model(),
+        "status": OPENROUTER_LAST_STATUS,
+        "error": OPENROUTER_LAST_ERROR,
+        "blocked": openrouter_blocked(),
+        "retry_in": openrouter_blocked_seconds(),
+        "breaker": provider_breaker_status("openrouter"),
+    }
+
+
+def _openrouter_text(
+    prompt: str, json_mode: bool = False, max_tokens: int = 3000,
+    force: bool = False,
+) -> str | None:
+    global OPENROUTER_LAST_ERROR, OPENROUTER_LAST_STATUS
+    global OPENROUTER_LAST_MODEL, OPENROUTER_LAST_SOURCE, OPENROUTER_BLOCKED_UNTIL
+    model = openrouter_model()
+    OPENROUTER_LAST_MODEL = model
+    OPENROUTER_LAST_SOURCE = settings_store.secret_source("openrouter")
     key = openrouter_key()
     if not key:
+        OPENROUTER_LAST_STATUS = 0
         OPENROUTER_LAST_ERROR = "No OpenRouter key."
         return None
+    if not force and openrouter_blocked():
+        OPENROUTER_LAST_ERROR = (
+            "OpenRouter is quarantined after an auth error; retry in "
+            f"{openrouter_blocked_seconds()}s."
+        )
+        return None
+    if not force and _provider_breaker_open("openrouter"):
+        OPENROUTER_LAST_ERROR = (
+            "OpenRouter circuit is open after repeated empty replies; retry in "
+            f"{provider_breaker_status('openrouter')['retry_in']}s."
+        )
+        return None
     payload = {
-        "model": openrouter_model(),
+        # One configured model only: a 404/model error is reported, never
+        # silently switched to another model.
+        "model": model,
         "messages": [
             {"role": "system", "content": "You write short vertical video voice overs. Reply with JSON when asked."},
             {"role": "user", "content": prompt},
@@ -1896,18 +2247,38 @@ def _openrouter_text(prompt: str, json_mode: bool = False, max_tokens: int = 300
     try:
         with urllib.request.urlopen(request, timeout=180) as response:
             data = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        OPENROUTER_LAST_ERROR = str(exc)[:240]
+    except urllib.error.HTTPError as exc:
+        status = int(getattr(exc, "code", 0) or 0)
+        message = _openrouter_http_error_text(exc, key)
+        OPENROUTER_LAST_STATUS = status
+        if status in {401, 403}:
+            _openrouter_auth_failure(status, message)
+        elif _openrouter_model_error(status, message):
+            detail = f"Model {model} is not available for this key (HTTP {status})."
+            if message:
+                detail = f"{detail} {message}"
+            OPENROUTER_LAST_ERROR = detail[:400]
+        else:
+            reason = getattr(exc, "reason", "request failed")
+            OPENROUTER_LAST_ERROR = (
+                f"OpenRouter HTTP {status}: {message or reason}"
+            )[:400]
         return None
+    except Exception as exc:  # noqa: BLE001
+        OPENROUTER_LAST_STATUS = 0
+        OPENROUTER_LAST_ERROR = _redact_secret(str(exc), key)[:240]
+        return None
+    OPENROUTER_LAST_STATUS = 200
     usage = data.get("usage") or {}
     usage_store.record(
-        "llm", "openrouter", model=openrouter_model(),
+        "llm", "openrouter", model=model,
         input_tokens=int(usage.get("prompt_tokens") or 0),
         output_tokens=int(usage.get("completion_tokens") or 0),
     )
     choices = data.get("choices") or []
     if not choices:
         OPENROUTER_LAST_ERROR = "OpenRouter returned no choices."
+        _provider_breaker_fail("openrouter", OPENROUTER_LAST_ERROR)
         return None
     content = (choices[0].get("message") or {}).get("content")
     if isinstance(content, list):
@@ -1915,8 +2286,11 @@ def _openrouter_text(prompt: str, json_mode: bool = False, max_tokens: int = 300
     value = str(content or "").strip()
     if not value:
         OPENROUTER_LAST_ERROR = "OpenRouter returned an empty reply."
+        _provider_breaker_fail("openrouter", OPENROUTER_LAST_ERROR)
         return None
     OPENROUTER_LAST_ERROR = ""
+    clear_openrouter_quarantine()
+    _provider_breaker_ok("openrouter")
     return value
 
 
@@ -1949,9 +2323,13 @@ def opencode_mode() -> str:
     return "off"
 
 
-def opencode_available() -> bool:
+def _opencode_configured() -> bool:
     settings = settings_store.load_settings().get("opencode") or {}
     return (bool(opencode_key()) or bool(opencode_bin())) and bool(settings.get("enabled", True))
+
+
+def opencode_available() -> bool:
+    return _opencode_configured() and not _provider_breaker_open("opencode")
 
 
 def opencode_model() -> str:
@@ -2004,65 +2382,113 @@ def _opencode_api(args: list[str], body: dict | None = None, allow_empty: bool =
     return None
 
 
-def _opencode_http_text(prompt: str, max_tokens: int = 1200) -> str | None:
-    """Direct OpenCode Go API using the project's own key."""
+def _opencode_http_text(
+    prompt: str, max_tokens: int = 1200, json_mode: bool = False,
+    record_failure: bool = True,
+) -> str | None:
+    """Direct OpenCode Go API using the project's own key.
+
+    Hidden reasoning can consume the whole completion budget and return
+    ``finish_reason=length`` with empty content. Never send ``reasoning_effort``
+    while thinking is disabled. If an empty length-limited reply still happens,
+    retry once with reasoning explicitly off and a larger output budget.
+    """
     global OPENCODE_LAST_ERROR
     key = opencode_key()
     if not key:
         return None
-    body = {
-        "model": opencode_model(),
-        "messages": [
-            {"role": "system", "content": "You write short vertical video voice overs. Reply with JSON when asked."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.4,
-        "max_tokens": max_tokens,
-        "reasoning_effort": opencode_variant(),
-        # Structured short-script work: hidden chain-of-thought on this model
-        # can consume the whole token budget and return empty content.
-        "thinking": {"type": "disabled"},
-    }
-    request = urllib.request.Request(
-        OPENCODE_URL,
-        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "User-Agent": "VibeCut/0.8.0",
-            "x-opencode-session": "vibecut-" + hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:24],
-        },
-        method="POST",
+    attempts = (
+        (False, max(64, int(max_tokens))),
+        (True, max(2048, int(max_tokens) * 2)),
     )
-    try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        OPENCODE_LAST_ERROR = f"Direct API: {str(exc)[:220]}"
+    last_detail = ""
+    for attempt, (reasoning_off, budget) in enumerate(attempts):
+        body = {
+            "model": opencode_model(),
+            "messages": [
+                {"role": "system", "content": "You write short vertical video voice overs. Reply with JSON when asked."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.4,
+            "max_tokens": budget,
+            # Structured short-script work: hidden chain-of-thought on this model
+            # can consume the whole token budget and return empty content.
+            "thinking": {"type": "disabled"},
+        }
+        if reasoning_off:
+            body["reasoning_effort"] = "none"
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        request = urllib.request.Request(
+            OPENCODE_URL,
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "User-Agent": "VibeCut/0.8.0",
+                "x-opencode-session": "vibecut-" + hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:24],
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            OPENCODE_LAST_ERROR = (
+                f"Direct API: HTTP {exc.code} {getattr(exc, 'reason', '')}"
+            )[:240]
+            return None
+        except Exception as exc:  # noqa: BLE001
+            OPENCODE_LAST_ERROR = _redact_secret(str(exc), key)[:240]
+            return None
+        usage = data.get("usage") or {}
+        usage_store.record(
+            "llm", "opencode", model=opencode_model(),
+            input_tokens=int(usage.get("prompt_tokens") or 0),
+            output_tokens=int(usage.get("completion_tokens") or 0),
+        )
+        choices = data.get("choices") or []
+        if not choices:
+            OPENCODE_LAST_ERROR = "Direct API returned no choices."
+            return None
+        choice = choices[0]
+        finish_reason = str(choice.get("finish_reason") or "")
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+        value = str(content or "").strip()
+        if value:
+            OPENCODE_LAST_ERROR = ""
+            return value
+        details = usage.get("completion_tokens_details") or {}
+        try:
+            reasoning_tokens = int(
+                details.get("reasoning_tokens")
+                or usage.get("reasoning_tokens")
+                or 0
+            )
+        except (TypeError, ValueError):
+            reasoning_tokens = 0
+        detail = (
+            "Direct API returned an empty reply"
+            f" (finish_reason={finish_reason or 'unknown'}, "
+            f"reasoning_tokens={reasoning_tokens})"
+        )
+        last_detail = detail
+        if finish_reason == "length" and attempt == 0:
+            continue
+        if attempt:
+            detail += " after reasoning-off retry"
+        OPENCODE_LAST_ERROR = detail[:300]
         return None
-    usage = data.get("usage") or {}
-    usage_store.record(
-        "llm", "opencode", model=opencode_model(),
-        input_tokens=int(usage.get("prompt_tokens") or 0),
-        output_tokens=int(usage.get("completion_tokens") or 0),
-    )
-    choices = data.get("choices") or []
-    if not choices:
-        OPENCODE_LAST_ERROR = "Direct API returned no choices."
-        return None
-    message = choices[0].get("message") or {}
-    content = message.get("content")
-    if isinstance(content, list):
-        content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
-    value = str(content or "").strip()
-    if value:
-        OPENCODE_LAST_ERROR = ""
-        return value
-    OPENCODE_LAST_ERROR = "Direct API returned an empty reply."
+    OPENCODE_LAST_ERROR = last_detail or "Direct API returned an empty reply."
     return None
 
-
-def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200) -> str | None:
+def _opencode_text(
+    prompt: str, json_mode: bool = False, max_tokens: int = 1200,
+    force: bool = False, record_failure: bool = True,
+) -> str | None:
     """Generate text through OpenCode Go / DeepSeek V4.1 Flash at low reasoning.
 
     A fresh session pins the model and the ``low`` variant, then ``/generate``
@@ -2071,13 +2497,29 @@ def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200)
     """
     global OPENCODE_LAST_ERROR
     OPENCODE_LAST_ERROR = ""
-    if not opencode_available():
+    if not force and _provider_breaker_open("opencode"):
+        retry_in = provider_breaker_status("opencode")["retry_in"]
+        OPENCODE_LAST_ERROR = (
+            "OpenCode circuit is open after repeated empty replies; retry in "
+            f"{retry_in}s."
+        )
+        return None
+    if not _opencode_configured():
         OPENCODE_LAST_ERROR = "OpenCode is not installed or OpenCode Go is disabled."
         return None
     if opencode_key():
         # A project key is exclusive: never borrow the shared local login when
         # this key is configured but fails.
-        return _opencode_http_text(prompt, max_tokens=max_tokens)
+        value = _opencode_http_text(
+            prompt, max_tokens=max_tokens, json_mode=json_mode,
+            record_failure=record_failure,
+        )
+        if value:
+            _provider_breaker_ok("opencode")
+            return value
+        if record_failure and _is_empty_reply_error(OPENCODE_LAST_ERROR):
+            _provider_breaker_fail("opencode", OPENCODE_LAST_ERROR)
+        return None
     created = _opencode_api(["post", "/api/session"], {
         "title": "VibeCut rewrite",
         "model": {
@@ -2091,10 +2533,13 @@ def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200)
         if not OPENCODE_LAST_ERROR:
             OPENCODE_LAST_ERROR = "OpenCode could not create a session."
         return None
+    generate_prompt = prompt
+    if json_mode:
+        generate_prompt = prompt.rstrip() + "\nReply with JSON only."
     try:
         generated = _opencode_api(
             ["post", f"/api/session/{session_id}/generate"],
-            {"prompt": prompt},
+            {"prompt": generate_prompt},
         )
     finally:
         _opencode_api(["delete", f"/api/session/{session_id}"], allow_empty=True)
@@ -2102,10 +2547,37 @@ def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200)
     if value:
         usage_store.record("llm", "opencode-local", calls=1)
         OPENCODE_LAST_ERROR = ""
+        _provider_breaker_ok("opencode")
         return value
     if not OPENCODE_LAST_ERROR:
         OPENCODE_LAST_ERROR = "OpenCode returned an empty reply."
+    if record_failure and _is_empty_reply_error(OPENCODE_LAST_ERROR):
+        _provider_breaker_fail("opencode", OPENCODE_LAST_ERROR)
     return None
+
+
+OPENCODE_RETRY_DELAYS = (0.0, 0.4, 1.0)
+OPENCODE_RETRY_JSON_MODES = (True, False, True)
+
+
+def _opencode_json_attempts(prompt: str, max_tokens: int) -> str:
+    """Bounded JSON/plain retries with short backoff for empty OpenCode replies."""
+    for attempt, delay in enumerate(OPENCODE_RETRY_DELAYS):
+        if attempt and _provider_breaker_open("opencode"):
+            break
+        if delay:
+            time.sleep(delay)
+        raw = _opencode_text(
+            prompt,
+            json_mode=OPENCODE_RETRY_JSON_MODES[attempt],
+            max_tokens=max_tokens,
+            record_failure=False,
+        ) or ""
+        if raw:
+            return raw
+    if _is_empty_reply_error(OPENCODE_LAST_ERROR):
+        _provider_breaker_fail("opencode", OPENCODE_LAST_ERROR)
+    return ""
 
 
 def _target_chars_per_second(target: str) -> float:
@@ -2141,6 +2613,10 @@ def _rewrite_prompt(
     style = {
         "smooth": "natural, flowing, conversational; connected sentences",
         "viral": "punchy short-video style: hook in the first words, one idea per beat, payoff lands",
+        "fun": "playful, warm, light and witty; keep it human and shareable",
+        "creative": "vivid, surprising and visual; use fresh phrasing while keeping every fact",
+        "sad": "melancholic, intimate and restrained; let the emotion breathe",
+        "chill": "calm, relaxed and understated; low-energy, easy delivery",
     }.get(mode, "faithful to the source")
     brief = (context or {}).get("brief")
     parts = [
@@ -2237,7 +2713,7 @@ def _condense_opencode(
     if context_text:
         parts.append("FULL VOICE SCRIPT:\n" + context_text[:4000])
     parts.append("LINES TO TIGHTEN:\n" + json.dumps(rows, ensure_ascii=False))
-    raw = _opencode_text("\n".join(parts), json_mode=True, max_tokens=1500)
+    raw = _opencode_json_attempts("\n".join(parts), max_tokens=1500)
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -2259,10 +2735,8 @@ def _rewrite_opencode(
     settings = settings_store.load_settings().get("opencode") or {}
     if mode == "literal" or not settings.get("use_rewrite", True) or not opencode_available():
         return None
-    raw = _opencode_text(
-        _rewrite_prompt(script, source, target, mode, literal, context),
-        json_mode=True, max_tokens=3000,
-    )
+    prompt = _rewrite_prompt(script, source, target, mode, literal, context)
+    raw = _opencode_json_attempts(prompt, max_tokens=3000)
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -2674,6 +3148,16 @@ def _duck_and_mix(
     return output
 
 
+def store_uploaded_music(source: Path, job_dir: Path) -> Path:
+    output = job_dir / "audio" / "uploaded_music.wav"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _run([
+        _ffmpeg(), "-y", "-v", "error", "-i", str(source), "-vn",
+        "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(output),
+    ], timeout=900)
+    return output
+
+
 def store_uploaded_voice(source: Path, job_dir: Path) -> Path:
     output = job_dir / "audio" / "uploaded_voice.wav"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -2809,31 +3293,18 @@ def build_bed(
         prepared: list[dict] = [None] * len(script)  # type: ignore[list-item]
         engine_name = str(voice_plan.get("engine") or "auto")
         voice_name = str(voice_plan.get("voice") or "")
-        if engine_name in {"auto", "minimax"}:
-            candidates = [
-                candidate for candidate in ("minimax", "fish", "gemini")
-                if (
-                    (candidate == "minimax" and minimax_key())
-                    or (candidate in {"fish", "gemini"} and openrouter_key())
-                )
-            ]
-            if not candidates:
-                candidates = ["kokoro", "say"]
-            engine_name = candidates[0] if engine_name == "auto" else engine_name
+        if engine_name in {"auto", "minimax", "fish", "gemini"}:
+            candidates = _tts_candidates(engine_name)
+            if engine_name == "auto":
+                engine_name = candidates[0] if candidates else "auto"
         else:
             candidates = [engine_name]
-        if engine_name == "minimax":
-            candidates = ["minimax", "fish", "gemini"]
-        elif engine_name == "fish":
-            candidates = ["fish", "gemini"]
         workers = max(1, min(4, len(script)))
 
         def synth_one(index: int, line: dict) -> tuple[int, Path]:
             last_error: Exception | None = None
             for candidate in candidates:
-                candidate_voice = voice_name if candidate == engine_name else (
-                    "default" if candidate == "fish" else "Kore"
-                )
+                candidate_voice = _tts_voice_for(candidate, voice_name, engine_name)
                 key = _text_hash(
                     candidate, candidate_voice, f"{float(line['rate']):.3f}", line["text"],
                 )
@@ -2919,6 +3390,23 @@ def build_bed(
             source, str(meta.get("fingerprint") or meta.get("size") or "source"),
             cancel_event,
         )
+    elif music_plan.get("source") == "upload":
+        progress(0.90, "Fitting your music")
+        upload = str(music_plan.get("upload") or "")
+        chosen = (job_dir / upload).resolve() if upload else None
+        if not chosen or not chosen.is_file() or job_dir.resolve() not in chosen.parents:
+            raise AudioError("Uploaded music is missing. Upload it again.")
+        base_music_gain = float(music_plan.get("gain_db") or -18.0)
+        automation = audio_plan.get("automation") or {}
+        expr = automation_expression(automation.get("music"), total)
+        if expr is None:
+            expr = music_mix_expression(
+                clips, audio_plan.get("clip_mix"), base_music_gain,
+            )
+        audio_plan["_used_assets"] = ensure_licensed([chosen])
+        music_path = _music_loop(
+            chosen, total, base_music_gain, tmp, expr, 0.0,
+        )
     elif music_plan.get("source") and music_plan.get("source") != "none":
         progress(0.90, "Preparing music bed")
         chosen: Path | None = resolve_music_track(scenes, clips, music_plan)
@@ -2939,7 +3427,7 @@ def build_bed(
             except AudioError:
                 fallback = (
                     "google/lyria"
-                    if primary == "minimax:music" and openrouter_key()
+                    if primary == "minimax:music" and openrouter_available()
                     else "minimax:music"
                     if primary == "google/lyria" and minimax_key()
                     else ""
@@ -3086,7 +3574,54 @@ def prune_cache(max_gb: float = 2.0, days: float = 14.0) -> dict:
 # ---------------------------------------------------------------- rewrite styles
 
 REWRITE = CACHE / "rewrite"
-REWRITE_VERSION = 6
+REWRITE_VERSION = 7
+REWRITE_STATUS = {
+    "requested": False,
+    "ok": True,
+    "provider": "",
+    "used": "literal",
+    "fallback": False,
+    "error": "",
+    "attempts": [],
+}
+
+
+def rewrite_status() -> dict:
+    status = dict(REWRITE_STATUS)
+    status["attempts"] = list(REWRITE_STATUS.get("attempts") or [])
+    return status
+
+
+def _rewrite_status_reset(requested: bool) -> None:
+    REWRITE_STATUS.update({
+        "requested": bool(requested),
+        "ok": True,
+        "provider": "",
+        "used": "literal",
+        "fallback": False,
+        "error": "",
+        "attempts": [],
+    })
+
+
+def _rewrite_failure_detail(attempts: list[dict]) -> str:
+    errors = [
+        f"{item.get('provider')}: {item.get('error')}"
+        for item in attempts
+        if item.get("error")
+    ]
+    if not errors:
+        return "No rewrite provider returned usable lines."
+    return ("Rewrite unavailable (" + "; ".join(errors) + ").")[:400]
+
+
+def mark_rewrite_error(message: str) -> None:
+    REWRITE_STATUS.update({
+        "ok": False,
+        "fallback": True,
+        "error": str(message or "")[:400],
+    })
+
 
 CONNECTORS = {
     "en": ["and", "but", "so", "then", "turns out"],
@@ -3127,19 +3662,42 @@ def _context_hash(context: dict | None) -> str:
     return hashlib.sha1(str(context.get("full_text") or "").encode("utf-8")).hexdigest()[:8]
 
 
+def _rewrite_provider_tag(candidate: str) -> str:
+    """Cache namespace for the actual rewrite provider and model."""
+    name = str(candidate or "").strip()
+    if name == "opencode":
+        return f"opencode:{opencode_model()}:{opencode_variant()}"
+    if name == "openrouter":
+        return f"openrouter:{openrouter_model()}"
+    if name == "apple":
+        return "apple:on-device-3b"
+    if name == "mlx":
+        model = os.environ.get(
+            "VIBECUT_MLX_REWRITE_MODEL",
+            "mlx-community/Qwen2.5-3B-Instruct-4bit",
+        )
+        return f"mlx:{model}"
+    if name in {"llm", "ollama"}:
+        return f"{name}:{os.environ.get('VIBECUT_LLM_MODEL', 'llama3.1')}"
+    return name or "unknown"
+
+
 def _rewrite_file(
-    source: str, target: str, mode: str, text: str, context: dict | None = None,
+    source: str, target: str, mode: str, text: str,
+    context: dict | None = None, provider: str = "",
 ) -> Path:
     key = hashlib.sha1(
-        f"v{REWRITE_VERSION}|{source}|{target}|{mode}|{_context_hash(context)}|{text}".encode("utf-8"),
+        f"v{REWRITE_VERSION}|{provider}|{source}|{target}|{mode}|"
+        f"{_context_hash(context)}|{text}".encode("utf-8"),
     ).hexdigest()[:24]
     return REWRITE / key[:2] / f"{key}.txt"
 
 
 def _rewrite_memo(
-    source: str, target: str, mode: str, text: str, context: dict | None = None,
+    source: str, target: str, mode: str, text: str,
+    context: dict | None = None, provider: str = "",
 ) -> str | None:
-    path = _rewrite_file(source, target, mode, text, context)
+    path = _rewrite_file(source, target, mode, text, context, provider)
     if not path.is_file():
         return None
     try:
@@ -3151,16 +3709,44 @@ def _rewrite_memo(
 
 def _rewrite_put(
     source: str, target: str, mode: str, text: str, value: str,
-    context: dict | None = None,
+    context: dict | None = None, provider: str = "",
 ) -> None:
-    if not value:
+    if not value or provider == "rules":
         return
-    path = _rewrite_file(source, target, mode, text, context)
+    path = _rewrite_file(source, target, mode, text, context, provider)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value, encoding="utf-8")
     except OSError:
         pass
+
+
+def clear_rewrite_memo(
+    lines: list[str], source: str, target: str, mode: str,
+    provider: str = "", context: dict | None = None,
+) -> int:
+    """Drop rewrite cache entries for one provider/model, or all known ones."""
+    tags = [provider] if provider else [
+        _rewrite_provider_tag(name)
+        for name in ("opencode", "openrouter", "mlx", "apple", "llm", "ollama")
+    ]
+    if provider and ":" not in provider:
+        tags = [_rewrite_provider_tag(provider)]
+    removed = 0
+    seen: set[Path] = set()
+    for line in dict.fromkeys(str(item) for item in lines):
+        for tag in tags:
+            path = _rewrite_file(source, target, mode, str(line), context, tag)
+            if path in seen:
+                continue
+            seen.add(path)
+            try:
+                if path.is_file():
+                    path.unlink()
+                    removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def _dedupe_lead(text: str, previous: str) -> str:
@@ -3184,7 +3770,7 @@ def grow(text: str, seconds: float, rate: float, mode: str, role: str, connector
                 break
         value = value.strip(" ,，。.!?！？;；:：")
     value = trim_to_seconds(value, budget, rate)
-    if mode == "smooth" and value:
+    if mode in {"smooth", "fun", "creative", "sad", "chill"} and value:
         stripped = value[0].lower() + value[1:] if value[:1].isupper() and not CJK_RE.search(value) else value
         value = f"{connector} {stripped}"
         value = trim_to_seconds(value, budget, rate)
@@ -3209,7 +3795,7 @@ def _rules_rewrite(
         grow_mode = "literal"
         if mode == "viral":
             grow_mode = "viral"
-        elif mode == "smooth" and index > 0:
+        elif mode in {"smooth", "fun", "creative", "sad", "chill"} and index > 0:
             grow_mode = "smooth"
         value = grow(
             value,
@@ -3248,6 +3834,10 @@ def _rewrite_ollama(
     style = {
         "smooth": "natural, flowing, conversational, connected sentences",
         "viral": "punchy short-video style: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
+        "fun": "playful, warm, light and witty",
+        "creative": "vivid, surprising and visual, facts unchanged",
+        "sad": "melancholic, intimate and restrained",
+        "chill": "calm, relaxed and understated",
     }.get(mode, "faithful")
     full_text = str(
         (context or {}).get("target_text") or (context or {}).get("full_text") or ""
@@ -3317,7 +3907,9 @@ def adapt_script(
     """
     source_lang = (source_lang or "en").split("-")[0]
     target_lang = (target_lang or source_lang).split("-")[0]
-    mode = mode if mode in {"literal", "smooth", "viral"} else "smooth"
+    mode = mode if mode in {"literal", "smooth", "viral", "fun", "creative", "sad", "chill"} else "smooth"
+    requested = mode != "literal"
+    _rewrite_status_reset(requested)
     lines = [dict(line) for line in script]
     if not lines:
         return lines
@@ -3329,58 +3921,118 @@ def adapt_script(
     literal_values = list(literals)
 
     used = "literal"
-    if mode != "literal":
-        missing: list[int] = []
-        cached: dict[int, str] = {}
-        for index, text in enumerate(literals):
-            hit = _rewrite_memo(source_lang, target_lang, mode, text, context)
-            if hit:
-                cached[index] = hit
-            else:
-                missing.append(index)
-        if cached:
-            used = "cached"
-        if missing:
+    if requested:
+        if rewrite_provider and rewrite_provider not in ("auto", ""):
+            order = [rewrite_provider]
+        elif provider and provider not in ("auto", ""):
+            order = [provider]
+        else:
+            order = _rewrite_candidates()
+        resolved: dict[int, str] = {}
+        attempts: list[dict] = []
+        succeeded = False
+        ai_providers = {"opencode", "openrouter", "mlx", "apple", "llm", "ollama"}
+        for name in order:
+            pending = [index for index in range(len(lines)) if index not in resolved]
+            if not pending:
+                succeeded = True
+                break
+            tag = _rewrite_provider_tag(name)
+            memo_hits: dict[int, str] = {}
+            missing = list(pending)
+            if name != "rules":
+                missing = []
+                for index in pending:
+                    hit = _rewrite_memo(
+                        source_lang, target_lang, mode, literals[index], context, tag,
+                    )
+                    if hit:
+                        memo_hits[index] = hit
+                    else:
+                        missing.append(index)
+            if not missing:
+                resolved.update(memo_hits)
+                used = "cached"
+                REWRITE_STATUS.update({
+                    "ok": True,
+                    "provider": name,
+                    "used": "cached",
+                    "fallback": False,
+                    "error": "",
+                    "attempts": attempts,
+                })
+                succeeded = True
+                break
             subset = [lines[index] for index in missing]
             subset_literal = [literals[index] for index in missing]
             rewritten: list[str] | None = None
-            if rewrite_provider and rewrite_provider not in ("auto", ""):
-                order = [rewrite_provider]
-            elif provider and provider not in ("auto", ""):
-                order = [provider]
-            else:
-                order = _rewrite_candidates()
-            for candidate in order:
-                if candidate == "opencode":
-                    rewritten = _rewrite_opencode(
-                        subset, source_lang, target_lang, mode, subset_literal, context,
-                    )
-                elif candidate == "openrouter":
-                    rewritten = _rewrite_openrouter(
-                        subset, source_lang, target_lang, mode, subset_literal, context,
-                    )
-                elif candidate in {"llm", "ollama"}:
-                    rewritten = _rewrite_ollama(
-                        subset, source_lang, target_lang, mode, subset_literal, context,
-                    )
-                elif candidate in {"mlx", "apple"}:
-                    rewritten = _rewrite_mlx(
-                        subset, source_lang, target_lang, mode, subset_literal, context,
-                    )
-                elif candidate == "rules":
-                    rewritten = _rules_rewrite(subset, source_lang, target_lang, mode, subset_literal)
-                if rewritten:
-                    used = "llm" if candidate in {"llm", "ollama"} else candidate
-                    break
-            fallback = not rewritten
-            if fallback:
-                rewritten = subset_literal
-            for offset_index, index in enumerate(missing):
-                value = rewritten[offset_index]
-                cached[index] = value
-                if not fallback:
-                    _rewrite_put(source_lang, target_lang, mode, literals[index], value, context)
-        literals = [cached.get(index, literals[index]) for index in range(len(lines))]
+            if name == "opencode":
+                rewritten = _rewrite_opencode(
+                    subset, source_lang, target_lang, mode, subset_literal, context,
+                )
+            elif name == "openrouter":
+                rewritten = _rewrite_openrouter(
+                    subset, source_lang, target_lang, mode, subset_literal, context,
+                )
+            elif name in {"llm", "ollama"}:
+                rewritten = _rewrite_ollama(
+                    subset, source_lang, target_lang, mode, subset_literal, context,
+                )
+            elif name in {"mlx", "apple"}:
+                rewritten = _rewrite_mlx(
+                    subset, source_lang, target_lang, mode, subset_literal, context,
+                )
+            elif name == "rules":
+                rewritten = _rules_rewrite(subset, source_lang, target_lang, mode, subset_literal)
+            if rewritten:
+                for offset_index, index in enumerate(missing):
+                    value = rewritten[offset_index]
+                    resolved[index] = value
+                    if name != "rules":
+                        _rewrite_put(
+                            source_lang, target_lang, mode, literals[index],
+                            value, context, tag,
+                        )
+                resolved.update(memo_hits)
+                used = "llm" if name in {"llm", "ollama"} else name
+                ai_failed = any(
+                    item.get("provider") in ai_providers for item in attempts
+                )
+                fallback = bool(name == "rules" and ai_failed)
+                detail = _rewrite_failure_detail(attempts) if fallback else ""
+                REWRITE_STATUS.update({
+                    "ok": True,
+                    "provider": name,
+                    "used": used,
+                    "fallback": fallback,
+                    "error": (
+                        f"AI rewrite failed; used rules fallback. {detail}"
+                    )[:400] if fallback else "",
+                    "attempts": attempts,
+                })
+                succeeded = True
+                break
+            detail = ""
+            if name == "opencode":
+                detail = OPENCODE_LAST_ERROR
+            elif name == "openrouter":
+                detail = OPENROUTER_LAST_ERROR
+            attempts.append({
+                "provider": name,
+                "error": str(detail or "")[:240],
+            })
+        if not succeeded:
+            resolved = {index: literals[index] for index in range(len(lines))}
+            used = "literal"
+            REWRITE_STATUS.update({
+                "ok": False,
+                "provider": "",
+                "used": "literal",
+                "fallback": True,
+                "error": _rewrite_failure_detail(attempts),
+                "attempts": attempts,
+            })
+        literals = [resolved.get(index, literals[index]) for index in range(len(lines))]
 
     source_facts = _facts(originals)
     for index, line in enumerate(lines):

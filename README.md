@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.10.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.11.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -21,7 +21,7 @@ Requirements:
 - Python 3.10+
 - Python packages in `requirements.txt`
 - macOS: `swiftc` (Xcode Command Line Tools) for Apple Vision text + face + saliency reading. Without it, crops fall back to center and on-screen text is skipped.
-- Optional: `mlx_whisper` for local speech transcription, or a cloud STT key.
+- Optional: `mlx_whisper` for local speech transcription. Apple Speech is built in on macOS 26.
 - Optional: **OpenCode Go** for DeepSeek V4.1 Flash intelligence. Use a project API key in Setup, or sign in with the OpenCode CLI. Cloud is off by default.
 
 The Swift helper is compiled automatically on first use into `bin/vision_probe`.
@@ -46,16 +46,17 @@ The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 - After analysis, pick 15 / 30 / 60, preview the cut timeline, render, download.
 - **Draft** renders 540×960 fast for feel checks; **Render final** does 1080×1920. **All 15/30/60** queues every length.
 - **Aspect** switches between 9:16, 4:5, 1:1 and 16:9. Each aspect uses its own attention crop, so landscape→portrait and portrait→landscape both reframe without re-analysis. **Track crop** samples two extra frames per beat and smooths a per-aspect crop path; renders follow it per frame. **Captions** burns OCR/speech text as styled overlays.
+- **Moments** sits above **Smart Cut**: compact horizontal thumbnails, scrub slider, orange auto-hook, neon-green payoff, used-clip check badges. Click previews, drag into Smart Cut, **Expand** for the full collage.
+- **Smart Cut** replaces Build. Drag clips to reorder, drag an edge to trim, drag out to remove, drop a moment to add. Hook stays first; payoff stays last. Advanced (aspect, captions, arc, A/B, variants, render-all) is collapsed under one row; Render + Draft stay primary.
 - **Audio modes** are tabs: **Original · Voice-over · Dub · Music · Full Replace**. **Voice-over** puts a new voice over the original audio; **Dub** replaces only the original voice and keeps the music/SFX; **Music** replaces the original audio; **Full Replace** uses a new voice plus new music.
-- **Use my recording** appears only in Voice-over, Dub and Full Replace. It hides translation and voice-engine controls and fits the uploaded recording to the cut length.
+- **Audio panel** is three steps: **1 Rewrite · 2 Voice · 3 Music**. Rewrite runs only when you press **▶ Rewrite**; it translates the full script, then rewrites the cut. If translation is on, every line shows original + translation; copy buttons copy either script. Translation engine and rewrite worker stay internal. Styles: smooth, viral, fun, creative, sad, chill, faithful.
+- **Use my recording** appears only in Voice-over, Dub and Full Replace; it hides translation/voice controls and fits the recording to the cut. **Use my sound** accepts your own music file; **Generate** uses MiniMax Music or OpenRouter Lyria 3.
 - **Edit cut** lets you reorder, trim and remove beats. **Save variant** stores that edit; variant chips reload or delete it. Keyboard: `←/→` select, `Alt+←/→` reorder, `−/+` trim, `Del` remove, `e` edit, `s` save, `r` draft, `Space` play.
-- **Audio** panel: keep the original sound, replace the voice, dub over the original bed (Demucs), fully replace voice + music, or add music only. Pick the voice engine, target language, **script style** (faithful / smooth / viral), music source and mood; **Test voice** plays a sample.
-- **Voice script** preview lists the deduped lines with role, emotion and fit flags. The header shows which engine translated, and **Retry translation** clears that provider's cached lines and retries. The rewrite reads the full target-language voice script plus the video aesthetic, obeys per-beat character/word budgets, and writes complete sentences; overlong lines go through a condense pass instead of being cut into fragments. Hidden chain-of-thought is disabled for these structured calls because it could consume the whole output budget and return empty content. The prompt is documented in [docs/rewrite-prompt.md](docs/rewrite-prompt.md). Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot using the **full transcript** as context (the whole story, then one complete sentence per selected beat), with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
 - **Automation mixer** above the audio controls: time ruler with one section per clip, a music lane and a voice lane. The lane starts at 100% (0 dB); click to add a node, drag it anywhere in time or gain, double-click to remove, **Reset 100%** clears, **Flatten** puts every node back at 100%. The curve is cosine, so nodes are smooth peaks, and the same curve runs in ffmpeg. The original audio plus the Demucs music stem are drawn behind the lanes so a sudden loud, mute or dip is visible. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
 - **Platform presets** (TikTok, Reels, Shorts, Square, Landscape) set aspect, captions and safe-zone caption margin. **A/B hooks** queues the three strongest hooks at once. **Story arc order** reorders beats as setup → proof → payoff.
-- Music sources: your own track, CC0 library, **MiniMax Music**, or **OpenRouter Lyria 3**. Stable Audio/MusicGen remain advanced legacy options.
-- Voice engines: Apple `say`, Piper, Kokoro local; **MiniMax Speech 2.8 Turbo** → **OpenRouter Fish S2.1 Pro Free** → **OpenRouter Gemini 3.8 Flash-Lite TTS**; ElevenLabs, OpenAI, Groq, Deepgram, Cartesia. Cloud engines appear after a key is saved in **Setup**.
-- Translation runs per render: **OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek V4.1 Flash → Apple Translation**. Apple is the only local fallback in the normal UI; Argos/Marian/Ollama are advanced only. Apple batches are split and retried.
+- Music sources: your own upload, library/CC0, **MiniMax Music**, or **OpenRouter Lyria 3**. Stable Audio/MusicGen remain advanced legacy options.
+- Voice engines: Apple `say`, Piper, Kokoro local; **MiniMax Speech 2.8 Turbo** → **OpenRouter Fish S2.1 Pro Free** → **OpenRouter Gemini 3.8 Flash-Lite TTS**. Setup only exposes these plus local.
+- Translation is a **Setup mode**, not a visible engine: **Auto** (online → local), **Local first** (Apple → Argos → online), **Local only**, **Online only**. Online is OpenCode → OpenRouter; local is Apple → Argos. Apple batches are split and retried.
 - **Hook lab** lists the strongest opening candidates with their resulting cut length and a plain-language reason; click one to re-plan.
 - Hover any timeline clip for the same **why** note; the drawer repeats it per beat. The hook panel explains why that beat is the opening, and the plan line explains the payoff.
 - **CC · transcript** appears when Whisper ran; open it for timestamped lines with search, click a line to copy it.
@@ -63,30 +64,29 @@ The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 - Long-video scenes outside the shortlist are read on demand when you click them.
 - Renders are cached per plan + quality + aspect + captions + audio mix; an overridden hook gets its own slot. **Render again** forces a fresh encode. Cancel stops a running render.
 - **SRT / VTT / EDL / XML** buttons export the caption file or the cut list for Resolve and Premiere. **Review link** copies a read-only page with the rendered video and SRT.
-- **Rewrite model**: OpenCode Go **DeepSeek V4.1 Flash** first when a project key or local OpenCode login exists, at the `low` reasoning variant. Then MLX, Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
-- Speech: `transcribe_engine` is `auto` by default: configured cloud STT → Apple SpeechAnalyzer (macOS 26, 0 MB) → mlx-whisper. Pick the provider, keys and **Whisper model** in **Setup**: small, large-v3-turbo-q4, large-v3-turbo or medium-q4; cached models are marked.
-- **Usage** under the result title sums OpenCode tokens, STT minutes, TTS characters and estimated cost per job. **Live STT** and **Live TTS** in Setup exercise the configured providers with a local sample clip.
+- **Rewrite model** is internal: OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek → local MLX/Ollama → rules. The Rewrite button is the only trigger.
+- Speech is local: **Apple SpeechAnalyzer (macOS 26) → mlx-whisper**. Pick the local provider and Whisper model in Setup; no cloud STT key exists.
+- **Usage** under the result title sums tokens, STT minutes, TTS characters and estimated cost per job. **Live STT** and **Live TTS** exercise local engines with a sample clip.
+- **History** stores every translation, rewrite, render and upload attempt: provider, model, status, latency, cost, warning/error and script snapshot. Restore a script as overrides on the current cut, copy original/final text, or re-download a render. Failed attempts stay visible.
 
 ## Setup · optional cloud
 
 Click **Setup** in the top bar. Nothing leaves the machine until a key is saved.
-Keys live in `data/secrets.json` (0600); env vars win.
+Keys live in `data/secrets.json` (0600). OpenRouter project keys override the environment; other providers use env first.
 
 | Section | What you can set |
 |---|---|
-| Intelligence | OpenCode Go default. OpenRouter DeepSeek fallback. Model locked, low reasoning. Toggles for rewrite, story brief, translation. |
-| Transcription | Auto / Apple / Whisper / Groq / OpenAI / Deepgram, spoken language, Whisper model size/q4, keys. Live STT test. Groq Whisper turbo is $0.04/hour. |
-| Voice over | MiniMax Speech 2.8 Turbo, OpenRouter Fish/Gemini fallback, local Kokoro/Piper/say; ElevenLabs/OpenAI/Groq/Deepgram/Cartesia optional. Live TTS test. |
+| Intelligence | OpenCode Go default. OpenRouter DeepSeek fallback. Translation mode (Auto / Local first / Local only / Online only), rewrite/story brief toggles. |
+| Transcription | Local only: Auto / Apple / Whisper, spoken language, Whisper model. No cloud STT keys. |
+| Voice over | MiniMax Speech 2.8 Turbo, OpenRouter Fish/Gemini fallback, local Kokoro/Piper/say. Live TTS test. |
 
-Buttons **Test OpenCode**, **Check STT**, **Live STT**, **Check TTS**, **Live TTS** show what is ready. Live tests generate a local sample, call the provider, and show the transcript or play the audio.
+Buttons **Test OpenCode**, **Check local STT**, **Live STT**, **Check TTS**, **Live TTS** show what is ready. Live tests generate a local sample, call the local/cloud engine, and show the transcript or play the audio.
 Costs, model choices and the fallback ladder: [docs/cloud-speech.md](docs/cloud-speech.md).
 
 Environment keys:
 
 ```
 OPENCODE_GO_API_KEY   OPENROUTER_API_KEY   MINIMAX_API_KEY
-GROQ_API_KEY          OPENAI_API_KEY       DEEPGRAM_API_KEY
-ELEVENLABS_API_KEY    CARTESIA_API_KEY
 ```
 
 The API never returns a speech key; it only reports whether one is configured
@@ -169,26 +169,25 @@ The render panel can rebuild the audio track:
 
 **Use my recording** appears in Voice-over, Dub and Full Replace. It hides
 translation and voice-engine controls and fits the uploaded recording to the
-cut length. It is not voice cloning.
+cut length. It is not voice cloning. **Use my sound** accepts your own music
+file; it is looped/trimmed to the cut.
 
 Voice engines: MiniMax Speech 2.8 Turbo → OpenRouter Fish S2.1 Pro Free →
-OpenRouter Gemini 3.8 Flash-Lite TTS; local Kokoro/Piper/say; ElevenLabs,
-OpenAI, Groq, Deepgram, Cartesia optional.
+OpenRouter Gemini 3.8 Flash-Lite TTS; local Kokoro/Piper/say.
 
-Music sources: your own folder `assets/music/library`, CC0 folder
-`assets/music/cc0`, MiniMax Music, OpenRouter Lyria 3, or advanced legacy
-Stable Audio/MusicGen. AI sources use an auto mood prompt built from the cut.
+Music sources: your own upload, library/CC0, MiniMax Music, OpenRouter Lyria 3,
+or advanced legacy Stable Audio/MusicGen. AI sources use an auto mood prompt
+built from the cut.
 
 Stable Audio/MusicGen remain in the code as advanced legacy options but are
 not shown in the normal music picker. The normal AI path is MiniMax Music →
 OpenRouter Lyria 3.
 
-Translation happens once per render, on the cleaned and de-duplicated lines.
-Provider order is fixed: **OpenCode Go DeepSeek V4.1 Flash → OpenRouter
-DeepSeek V4.1 Flash → Apple Translation**. Apple is the only local fallback in
-the normal UI; it splits large batches and retries. Translations are cached in
-`data/cache/translate`, keyed by provider, so switching engines does not reuse a
-different engine's output.
+Translation runs only from **▶ Rewrite**, on the full transcript and then the
+cut lines. Setup chooses the mode: **Auto** (online → local), **Local first**
+(Apple → Argos → online), **Local only**, **Online only**. Online is OpenCode →
+OpenRouter; local is Apple → Argos. Apple batches are split and retried.
+Translations are cached in `data/cache/translate`, keyed by provider.
 
 Voice script: Whisper repeats the same sentence on overlapping beats, so the
 script builder strips fillers and stage directions, drops near-duplicates,
@@ -245,9 +244,6 @@ Full design notes and the free/paid tool list: [`docs/audio-replacement.md`](doc
 | `VIBECUT_REWRITE_CONTEXT_CHARS` | `6000` | Transcript context cap |
 | `VIBECUT_AUDIO_LICENSE` | `normal` | `strict` blocks music/voice without license metadata |
 | `VIBECUT_TOKEN` | unset | Require this bearer token for the API |
-| `VIBECUT_ELEVENLABS_API_KEY` | unset | ElevenLabs voice over |
-| `VIBECUT_LLM_URL` | unset | Optional Ollama endpoint for hook ranking |
-| `VIBECUT_LLM_MODEL` | `llama3.1` | Optional local LLM model |
 | `VIBECUT_WHISPER_MODEL` | `mlx-community/whisper-small-mlx` | MLX Whisper model |
 
 When `VIBECUT_TOKEN` is set, the UI asks for it once and stores it in `localStorage`. Media and thumbnail URLs carry `?token=` so the video player keeps working.

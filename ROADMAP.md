@@ -9,6 +9,7 @@ Full compressed plan: `~/.opencode/plan/vibecut-plan.md`.
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.11.0 | 2026-10-24 | Rewrite/History/UI | OpenRouter project-key override + quarantine, OpenCode reasoning fix, rewrite last-good cache, script/render/upload history with restore, Moments/Smart Cut UI, audio Rewrite→Voice→Music steps, local-only STT, translation modes |
 | 0.10.0 | 2026-10-24 | Speech/Music/Upload | OpenCode→OpenRouter→Apple translation, AI rewrite fallback, MiniMax TTS/music, OpenRouter TTS/Lyria fallbacks, uploaded voice fit for Voice-over/Dub/Full Replace, audio tabs |
 | 0.9.2 | 2026-10-24 | AI music fix | Stable Audio preflight + gated-weight guidance; ungated MusicGen Small fallback with worker |
 | 0.9.1 | 2026-10-24 | Script prompt v2 | full target voice script + aesthetic + char/word budgets, complete-sentence rules, condense repair pass |
@@ -42,7 +43,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 - Music: MiniMax Music → OpenRouter Lyria 3 → library/CC0.
 - STT: cloud → Apple SpeechAnalyzer → mlx-whisper.
 - Setup: keys in `data/secrets.json` 0600, env overrides, masked API.
-- 100 tests pass. Commit `02c0fc2`.
+- 132 tests pass. v0.11.0 working tree.
 
 ## Shipped checklist
 
@@ -67,6 +68,11 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] OpenCode Go rewrite + story brief; model `deepseek-v4.1-flash`, variant `low`
 - [x] Direct OpenCode Go project API key mode (project-local secret, no shared login)
 - [x] OpenRouter DeepSeek translation/rewrite fallback
+- [x] OpenRouter project key override, 401 quarantine, model error reporting
+- [x] Rewrite reasoning/empty-reply retry, last-good script, no silent rules cache
+- [x] Persistent translation/rewrite/render/upload history with restore
+- [x] Moments rail + Smart Cut drag/drop/trim/remove UI
+- [x] Audio Rewrite→Voice→Music steps; local-only STT; translation modes
 - [x] MiniMax Speech 2.8 Turbo + OpenRouter Fish/Gemini TTS fallback
 - [x] MiniMax Music + OpenRouter Lyria 3 fallback
 - [x] Audio mode tabs and upload-only-in-supported-modes UI
@@ -236,9 +242,10 @@ this table, and gets one commit. Patch bumps for fixes only.
 | 13 | Smart crop bilateral, crop tracking, review links, keyboard editor | shipped 0.9.0 |
 | 14 | SFX, cloning (consent gated), whisper q4 manager | parked |
 | 15 | OpenRouter fallback, MiniMax TTS/music, upload fit, audio tabs | shipped 0.10.0 |
-| 16 | Async music, Smart Cut/Moments UI, per-line upload, glossary | next |
-| 17 | Music Director, candidates, stem buses, mastering | future |
-| 18 | Cloud/open-core packaging | future |
+| 16 | OpenRouter override/quarantine, rewrite reliability, history, Moments/Smart Cut UI, audio steps | shipped 0.11.0 |
+| 17 | Async music, per-line upload, glossary | next |
+| 18 | Music Director, candidates, stem buses, mastering | future |
+| 19 | Cloud/open-core packaging | future |
 
 ## Acceptance checks
 

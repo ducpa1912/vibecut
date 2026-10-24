@@ -1,7 +1,10 @@
 """Local settings + secret storage for optional cloud providers.
 
 Secrets live in ``data/secrets.json`` with mode 0600 and are never returned by
-the API. Environment variables always win, so containers and CI can inject them.
+the API. Environment variables win for most providers, so containers and CI
+can inject them. OpenRouter is project-first: a key saved in Setup beats an
+environment variable, because a stale global ``OPENROUTER_API_KEY`` should not
+shadow the project's own key.
 """
 
 from __future__ import annotations
@@ -18,6 +21,9 @@ SECRETS_PATH = DATA / "secrets.json"
 LOCK = threading.Lock()
 
 SECRET_NAMES = ("opencode", "openrouter", "minimax", "groq", "openai", "deepgram", "elevenlabs", "cartesia")
+
+# A saved project key beats the environment for these providers.
+PROJECT_FIRST = frozenset({"openrouter"})
 
 ENV_KEYS = {
     "opencode": ("VIBECUT_OPENCODE_API_KEY", "OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"),
@@ -38,6 +44,9 @@ DEFAULTS = {
         "use_rewrite": True,
         "use_brief": True,
         "use_translate": True,
+    },
+    "translation": {
+        "mode": "auto",
     },
     "openrouter": {
         "enabled": True,
@@ -83,7 +92,9 @@ def _merge(base: dict, patch: dict) -> dict:
 
 
 def _migrate(stored: dict) -> dict:
-    legacy = stored.pop("openrouter", None)
+    # Old v0.7 stored an OpenRouter config before OpenCode existed. Copy it to
+    # OpenCode for migration, but keep the modern OpenRouter config intact.
+    legacy = stored.get("openrouter")
     if isinstance(legacy, dict) and "opencode" not in stored:
         stored["opencode"] = {
             "enabled": bool(legacy.get("enabled", True)),
@@ -97,7 +108,20 @@ def _migrate(stored: dict) -> dict:
 
 
 def load_settings() -> dict:
-    return _merge(DEFAULTS, _migrate(_read(SETTINGS_PATH)))
+    merged = _merge(DEFAULTS, _migrate(_read(SETTINGS_PATH)))
+    stt = merged.get("stt") or {}
+    if stt.get("provider") in {"groq", "openai", "deepgram", "cloud"}:
+        stt["provider"] = "auto"
+        merged["stt"] = stt
+    translation = merged.get("translation") or {}
+    if translation.get("mode") not in {"auto", "local_first", "local_only", "online_only"}:
+        translation["mode"] = "auto"
+        merged["translation"] = translation
+    tts = merged.get("tts") or {}
+    if tts.get("provider") in {"elevenlabs", "openai", "groq", "deepgram", "cartesia", "local"}:
+        tts["provider"] = "auto"
+        merged["tts"] = tts
+    return merged
 
 
 def save_settings(patch: dict) -> dict:
@@ -115,12 +139,23 @@ def _load_secrets() -> dict:
     return _read(SECRETS_PATH)
 
 
-def get_secret(name: str) -> str:
+def _file_secret(name: str) -> str:
+    return str(_load_secrets().get(name) or "").strip()
+
+
+def _env_secret(name: str) -> str:
     for env_name in ENV_KEYS.get(name, ()):
         value = os.environ.get(env_name)
-        if value:
+        if value and value.strip():
             return value.strip()
-    return str(_load_secrets().get(name) or "").strip()
+    return ""
+
+
+def get_secret(name: str) -> str:
+    file_value = _file_secret(name)
+    if name in PROJECT_FIRST and file_value:
+        return file_value
+    return _env_secret(name) or file_value
 
 
 def secret_status() -> dict:
@@ -128,12 +163,12 @@ def secret_status() -> dict:
 
 
 def secret_source(name: str) -> str:
-    for env_name in ENV_KEYS.get(name, ()):
-        if os.environ.get(env_name):
-            return "env"
-    if str(_load_secrets().get(name) or "").strip():
+    file_value = _file_secret(name)
+    if name in PROJECT_FIRST and file_value:
         return "file"
-    return ""
+    if _env_secret(name):
+        return "env"
+    return "file" if file_value else ""
 
 
 def save_secrets(updates: dict) -> None:

@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 import audio
 import exports as cuts
+import history_store
 import pipeline
 import render
 import settings_store
@@ -248,6 +249,7 @@ def _public_render(job_id: str, record: dict | None) -> dict | None:
 def public_job(job: dict) -> dict:
     value = dict(job)
     value.pop("source", None)
+    value.pop("history", None)
     value["renders"] = {
         key: _public_render(job["id"], record)
         for key, record in (job.get("renders") or {}).items()
@@ -366,6 +368,206 @@ def _usage_summary(job: dict) -> dict:
     return {"totals": totals, "entries": entries[-40:]}
 
 
+def _history_append(job_id: str, entry: dict, snapshot: dict | None = None) -> dict | None:
+    """Best-effort history write; never break the media operation itself."""
+    try:
+        return history_store.append(_job_dir(job_id), entry, snapshot)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("history append failed for %s", job_id)
+        return None
+
+
+def _clip_hash(clips: list[dict] | None) -> str:
+    if not clips:
+        return ""
+    return hashlib.sha1(_canonical(clips).encode("utf-8")).hexdigest()[:16]
+
+
+def _history_tried(translation: dict | None, rewrite: dict | None) -> list[str]:
+    tried: list[str] = []
+    for name in (translation or {}).get("tried") or []:
+        value = str(name)
+        if value and value not in tried:
+            tried.append(value)
+    for attempt in (rewrite or {}).get("attempts") or []:
+        value = str((attempt or {}).get("provider") or "")
+        if value and value not in tried:
+            tried.append(value)
+    return tried[:24]
+
+
+def _provider_model(provider: str | None) -> str:
+    name = str(provider or "")
+    try:
+        if name == "opencode":
+            return audio.opencode_model()
+        if name == "openrouter":
+            return audio.openrouter_model()
+    except Exception:  # noqa: BLE001
+        return name
+    return name
+
+
+def _audio_languages(audio_plan: dict | None) -> tuple[str | None, str | None]:
+    if not isinstance(audio_plan, dict):
+        return None, None
+    translate = audio_plan.get("translate")
+    if not isinstance(translate, dict):
+        return None, None
+    source = str(translate.get("source") or "").split("-")[0] or None
+    target = str(translate.get("target") or "").split("-")[0] or None
+    return source, target
+
+
+def _body_script_id(body, audio_plan: dict | None) -> str | None:
+    value = getattr(body, "script_id", None)
+    if not value and isinstance(audio_plan, dict):
+        value = audio_plan.get("script_id")
+    text = str(value or "").strip()[:64]
+    return text or None
+
+
+def _record_upload_history(
+    job_id: str,
+    kind: str,
+    status: str,
+    name: str,
+    *,
+    path: str | None = None,
+    duration: float | None = None,
+    size: int | None = None,
+    error: str | None = None,
+    latency_ms: int = 0,
+) -> dict | None:
+    entry = {
+        "id": uuid.uuid4().hex[:12],
+        "type": "upload",
+        "created": round(time.time(), 3),
+        "status": status,
+        "kind": kind,
+        "name": name,
+        "path": path,
+        "duration": duration,
+        "target": None,
+        "style": kind,
+        "source_lang": None,
+        "target_lang": None,
+        "provider": None,
+        "fallback": False,
+        "tried": [],
+        "model": None,
+        "latency_ms": latency_ms,
+        "usage": {},
+        "warning": None,
+        "error": error,
+        "script_id": None,
+        "size": size,
+    }
+    snapshot = {
+        "kind": kind,
+        "name": name,
+        "path": path,
+        "duration": duration,
+        "size": size,
+        "error": error,
+        "status": status,
+    }
+    return _history_append(job_id, entry, snapshot)
+
+
+def _record_render_history(
+    job_id: str,
+    record: dict,
+    plan: dict,
+    audio_plan: dict | None,
+    status: str,
+    *,
+    script_id: str | None = None,
+    error: str | None = None,
+    warning: str | None = None,
+    latency_ms: int = 0,
+    entry_id: str | None = None,
+) -> dict | None:
+    try:
+        return _append_render_history(
+            job_id, record, plan, audio_plan, status,
+            script_id=script_id, error=error, warning=warning,
+            latency_ms=latency_ms, entry_id=entry_id,
+        )
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("render history failed for %s", job_id)
+        return None
+
+
+def _append_render_history(
+    job_id: str,
+    record: dict,
+    plan: dict,
+    audio_plan: dict | None,
+    status: str,
+    *,
+    script_id: str | None = None,
+    error: str | None = None,
+    warning: str | None = None,
+    latency_ms: int = 0,
+    entry_id: str | None = None,
+) -> dict | None:
+    source_lang, target_lang = _audio_languages(audio_plan)
+    if not source_lang:
+        source_lang = str(plan.get("_source_lang") or "").split("-")[0] or None
+    translate = (audio_plan or {}).get("translate") if isinstance(audio_plan, dict) else None
+    if not isinstance(translate, dict):
+        translate = {}
+    provider = str(translate.get("provider") or "") or None
+    target = record.get("target")
+    quality = record.get("quality") or "final"
+    aspect = record.get("aspect") or "9:16"
+    audio_sig = record.get("audio_sig") or ""
+    record_key = record.get("record_key") or ""
+    entry = {
+        "id": entry_id or uuid.uuid4().hex[:12],
+        "type": "render",
+        "created": round(time.time(), 3),
+        "status": status,
+        "target": target,
+        "style": record.get("preset") or quality,
+        "source_lang": source_lang,
+        "target_lang": target_lang,
+        "provider": provider,
+        "fallback": False,
+        "tried": [],
+        "model": None,
+        "latency_ms": latency_ms,
+        "usage": record.get("usage") or {},
+        "warning": warning,
+        "error": error,
+        "path": record.get("path"),
+        "script_id": script_id,
+        "clip_hash": _clip_hash(plan.get("clips")),
+        "kind": "render",
+        "quality": quality,
+        "aspect": aspect,
+        "audio_sig": audio_sig,
+        "record_key": record_key,
+    }
+    snapshot = {
+        "render": record,
+        "plan": {
+            "target": target,
+            "hook_scene": plan.get("hook_scene"),
+            "total": plan.get("total"),
+            "clip_count": plan.get("clip_count"),
+            "order": plan.get("order") or "source",
+            "clips": plan.get("clips") or [],
+        },
+        "script_id": script_id,
+        "error": error,
+        "warning": warning,
+        "status": status,
+    }
+    return _history_append(job_id, entry, snapshot)
+
+
 def _load_shares() -> dict:
     if not SHARES.is_file():
         return {}
@@ -458,6 +660,7 @@ def run_render(
     audio_sig: str = "",
     preset: str | None = None,
     caption_margin: float = 0.075,
+    script_id: str | None = None,
 ) -> None:
     plan["_source_lang"] = plan.get("_source_lang") or "en"
     record_key = _render_key(
@@ -467,6 +670,9 @@ def run_render(
     started = time.time()
     try:
         job = load_job(job_id)
+        history_id = str(
+            ((job.get("renders") or {}).get(record_key) or {}).get("history_id") or ""
+        ) or None
         scenes = job["analysis"]["scenes"]
         plan["_scenes"] = scenes
         source = job["source"]["path"]
@@ -506,6 +712,35 @@ def run_render(
             usage=render_delta,
             **result,
         )
+        ready_record = {
+            "status": "ready",
+            "progress": 1.0,
+            "message": "Reel ready",
+            "error": None,
+            "key": key,
+            "hook": plan["hook_scene"],
+            "total": plan["total"],
+            "eta": 0,
+            "audio_sig": audio_sig,
+            "preset": preset,
+            "caption_margin": caption_margin,
+            "usage": render_delta,
+            "target": target,
+            "quality": quality,
+            "aspect": aspect,
+            "encoder": encoder or "auto",
+            "captions": bool(captions),
+            "record_key": record_key,
+            "created": round(time.time(), 3),
+            "script_id": script_id,
+            **result,
+        }
+        _record_render_history(
+            job_id, ready_record, plan, audio_plan, "ready",
+            script_id=script_id,
+            latency_ms=round((time.time() - started) * 1000),
+            entry_id=history_id,
+        )
         LOGGER.info("render %s/%s ready in %s", job_id, record_key, result["path"])
         pruned: list[str] = []
         update_job(job_id, lambda value: pruned.extend(_prune_renders(value)))
@@ -517,11 +752,50 @@ def run_render(
             job_id, record_key, status="cancelled", progress=1.0,
             message="Cancelled", error=None, eta=None,
         )
+        _record_render_history(
+            job_id,
+            {
+                "status": "cancelled",
+                "target": target,
+                "quality": quality,
+                "aspect": aspect,
+                "record_key": record_key,
+                "audio_sig": audio_sig,
+                "preset": preset,
+                "message": "Cancelled",
+                "error": None,
+                "script_id": script_id,
+            },
+            plan, audio_plan, "cancelled",
+            script_id=script_id,
+            latency_ms=round((time.time() - started) * 1000),
+            entry_id=history_id,
+        )
     except Exception as exc:  # noqa: BLE001
         LOGGER.exception("render failed for %s/%s", job_id, record_key)
         _set_render(
             job_id, record_key, status="failed", progress=1.0,
             message="Render failed", error=str(exc)[:2400], eta=None,
+        )
+        _record_render_history(
+            job_id,
+            {
+                "status": "failed",
+                "target": target,
+                "quality": quality,
+                "aspect": aspect,
+                "record_key": record_key,
+                "audio_sig": audio_sig,
+                "preset": preset,
+                "message": "Render failed",
+                "error": str(exc)[:2400],
+                "script_id": script_id,
+            },
+            plan, audio_plan, "failed",
+            script_id=script_id,
+            error=str(exc)[:2400],
+            latency_ms=round((time.time() - started) * 1000),
+            entry_id=history_id,
         )
     finally:
         RENDER_CANCELS.pop((job_id, record_key), None)
@@ -546,6 +820,15 @@ def recover_jobs() -> None:
                         record["message"] = "Interrupted"
                         record["error"] = "The server restarted while this reel was rendering."
                         changed = True
+                        _record_render_history(
+                            job["id"], record,
+                            {"target": record.get("target"), "clips": []},
+                            record.get("audio"), "failed",
+                            script_id=record.get("script_id"),
+                            error=record["error"],
+                            latency_ms=0,
+                            entry_id=record.get("history_id"),
+                        )
                 if changed:
                     _save_unlocked(job)
                     fixed += 1
@@ -794,7 +1077,6 @@ def health() -> dict:
         "ffmpeg": ffmpeg_version(),
         "vision": vision.available(),
         "whisper": bool(shutil.which("mlx_whisper"))
-        or pipeline._cloud_stt_provider("auto") is not None
         or (
             sys.platform == "darwin"
             and (
@@ -811,7 +1093,7 @@ def health() -> dict:
 
 OPENCODE_MODEL = "deepseek-v4.1-flash"
 OPENCODE_VARIANT = "low"
-STT_PROVIDERS = {"auto", "apple", "whisper", "groq", "openai", "deepgram"}
+STT_PROVIDERS = {"auto", "apple", "whisper"}
 TTS_PROVIDERS = {"auto", "local", "say", "piper", "kokoro", "openai", "elevenlabs", "groq", "deepgram", "cartesia", "minimax", "fish", "gemini"}
 
 
@@ -830,6 +1112,7 @@ def _settings_state() -> dict:
         "opencode_model": audio.opencode_model(),
         "opencode_variant": audio.opencode_variant(),
         "opencode_mode": audio.opencode_mode(),
+        "openrouter": audio.openrouter_status(),
         "whisper_models": pipeline.whisper_models(),
     }
     return state
@@ -863,12 +1146,20 @@ async def save_settings(request: Request) -> dict:
             item["id"] for item in pipeline.WHISPER_MODELS
         }:
             raise HTTPException(400, "Unknown Whisper model.")
+        translation = patch.get("translation")
+        if isinstance(translation, dict) and translation.get("mode") not in (None, "", "auto", "local_first", "local_only", "online_only"):
+            raise HTTPException(400, "Unknown translation mode.")
         tts = patch.get("tts")
         if isinstance(tts, dict) and tts.get("provider") not in (None, "") and tts["provider"] not in TTS_PROVIDERS:
             raise HTTPException(400, "Unknown voice provider.")
         settings_store.save_settings(patch)
     if isinstance(secrets, dict):
         settings_store.save_secrets(secrets)
+        if "openrouter" in secrets:
+            audio.clear_openrouter_quarantine()
+            audio.reset_provider_breaker("openrouter")
+            audio.OPENROUTER_LAST_ERROR = ""
+            audio.OPENROUTER_LAST_STATUS = 0
     return _settings_state()
 
 
@@ -879,6 +1170,7 @@ def test_settings(body: SettingsTestBody) -> dict:
         started = time.time()
         answer = audio._opencode_text(
             'Reply with JSON only: {"ok": true}', json_mode=True, max_tokens=200,
+            force=True,
         )
         return {
             "ok": bool(answer),
@@ -896,52 +1188,57 @@ def test_settings(body: SettingsTestBody) -> dict:
         }
     if kind == "openrouter":
         started = time.time()
+        source = settings_store.secret_source("openrouter")
+        model = audio.openrouter_model()
         answer = audio._openrouter_text(
             'Reply with JSON only: {"ok": true}', json_mode=True, max_tokens=120,
+            force=True,
         )
+        if answer:
+            audio.clear_openrouter_quarantine()
         return {
             "ok": bool(answer),
             "kind": "openrouter",
-            "model": audio.openrouter_model(),
+            "source": source,
+            "model": model,
+            "status": audio.OPENROUTER_LAST_STATUS,
+            "blocked": audio.openrouter_blocked(),
+            "retry_in": audio.openrouter_blocked_seconds(),
             "seconds": round(time.time() - started, 2),
             "answer": (answer or "")[:160],
             "detail": (
                 "OpenRouter replied." if answer
-                else "No reply. Check the key and model access."
-                + (f" {audio.OPENROUTER_LAST_ERROR}" if audio.OPENROUTER_LAST_ERROR else "")
+                else "OpenRouter model check failed. "
+                + (audio.OPENROUTER_LAST_ERROR or "No reply.")
             ),
         }
     if kind == "stt":
-        provider = pipeline._cloud_stt_provider("auto")
+        apple = pipeline._apple_transcribe_helper()
+        whisper = bool(shutil.which("mlx_whisper"))
+        ok = bool(apple or whisper)
         return {
-            "ok": bool(provider),
+            "ok": ok,
             "kind": "stt",
-            "provider": provider,
+            "provider": "apple" if apple else ("whisper" if whisper else None),
             "detail": (
-                f"{provider} is configured." if provider
-                else "No cloud STT key. Apple Speech or local Whisper will be used."
+                "Local STT ready: Apple Speech → Whisper."
+                if ok else
+                "Local STT unavailable. Install macOS 26 Apple Speech or mlx-whisper."
             ),
         }
     if kind == "tts":
-        engines = {
-            "openai": bool(audio.openai_key()),
-            "groq": bool(audio.groq_key()),
-            "deepgram": bool(audio.deepgram_key()),
-            "elevenlabs": bool(audio.elevenlabs_key()),
-            "cartesia": bool(audio.cartesia_key()),
-        }
-        ready = [name for name, available in engines.items() if available]
+        engines = audio.engine_status().get("voices") or {}
+        ready = [
+            name for name in ("minimax", "fish", "gemini", "kokoro", "piper", "say")
+            if (engines.get(name) or {}).get("available")
+        ]
         return {
             "ok": bool(ready),
             "kind": "tts",
-            "engines": engines,
-            "detail": ("Configured: " + ", ".join(ready)) if ready else "No cloud voice key. Local voices still work.",
+            "engines": {name: bool((engines.get(name) or {}).get("available")) for name in ready},
+            "detail": ("Ready: " + ", ".join(ready)) if ready else "No voice engine ready.",
         }
     if kind == "stt_live":
-        provider = (body.provider or "auto").lower()
-        chosen = pipeline._cloud_stt_provider(provider)
-        if not chosen:
-            return {"ok": False, "kind": "stt_live", "detail": "No cloud STT key for this provider."}
         sample_dir = DATA / "cache" / "stt-test"
         sample_dir.mkdir(parents=True, exist_ok=True)
         sample = sample_dir / "sample.wav"
@@ -960,24 +1257,31 @@ def test_settings(body: SettingsTestBody) -> dict:
         started = time.time()
         try:
             audio.synthesize_line(engine, voice, "VibeCut transcription test. The garden is open.", sample)
-            result = pipeline.transcribe_cloud(sample, sample_dir, "en", chosen)
+            result = pipeline.transcribe_apple(sample, sample_dir, "en")
+            provider = "apple" if result else ""
+            if result is None:
+                result = pipeline.transcribe(
+                    sample, sample_dir, audio.media_duration(sample) or 3.0,
+                    lambda fraction, message: None,
+                )
+                provider = "whisper" if result else ""
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "kind": "stt_live", "detail": str(exc)[:300]}
         if not result:
-            return {"ok": False, "kind": "stt_live", "provider": chosen, "detail": "Cloud STT returned no transcript."}
+            return {"ok": False, "kind": "stt_live", "detail": "Local STT returned no transcript."}
         return {
             "ok": True,
             "kind": "stt_live",
-            "provider": chosen,
+            "provider": provider,
             "seconds": round(time.time() - started, 2),
             "text": " ".join(str(result.get("text") or "").split())[:300],
-            "detail": f"{chosen} transcribed the local test clip.",
+            "detail": f"{provider} transcribed the local test clip.",
         }
     if kind == "tts_live":
         requested = (body.engine or "").lower()
         engines = audio.engine_status().get("voices", {})
         candidates = [requested] if requested and requested not in {"auto", "local"} else [
-            "openai", "elevenlabs", "groq", "deepgram", "cartesia", "kokoro", "say",
+            "minimax", "fish", "gemini", "kokoro", "say", "piper",
         ]
         engine = next((name for name in candidates if (engines.get(name) or {}).get("available")), "")
         if not engine:
@@ -1113,6 +1417,7 @@ class PlanBody(BaseModel):
     preset: str | None = None
     order: str = "source"
     caption_margin: float | None = None
+    script_id: str | None = None
 
 
 class VariantBody(BaseModel):
@@ -1272,6 +1577,40 @@ def get_usage(job_id: str) -> dict:
 @app.get("/api/jobs/{job_id}/status")
 def get_status(job_id: str) -> dict:
     return public_status(load_job(job_id))
+
+
+@app.get("/api/jobs/{job_id}/history")
+def get_history(job_id: str, limit: int | None = None) -> dict:
+    load_job(job_id)
+    entries = history_store.list_entries(_job_dir(job_id), limit=limit)
+    return {"entries": entries, "count": len(entries)}
+
+
+@app.get("/api/jobs/{job_id}/history/{entry_id}")
+def get_history_entry(job_id: str, entry_id: str) -> dict:
+    load_job(job_id)
+    item = history_store.get_entry(_job_dir(job_id), entry_id)
+    if not item:
+        raise HTTPException(404, "History entry not found.")
+    return item
+
+
+@app.delete("/api/jobs/{job_id}/history/{entry_id}")
+def delete_history_entry(job_id: str, entry_id: str) -> dict:
+    load_job(job_id)
+    if not history_store.delete_entry(_job_dir(job_id), entry_id):
+        raise HTTPException(404, "History entry not found.")
+    return {"deleted": entry_id}
+
+
+@app.post("/api/jobs/{job_id}/history/{entry_id}/restore")
+def restore_history_entry(job_id: str, entry_id: str) -> dict:
+    """Return the saved snapshot; the client decides what to apply."""
+    load_job(job_id)
+    item = history_store.get_entry(_job_dir(job_id), entry_id)
+    if not item:
+        raise HTTPException(404, "History entry not found.")
+    return {"restored": True, **item}
 
 
 @app.post("/api/jobs/{job_id}/scene/{scene_id}/read")
@@ -1719,13 +2058,21 @@ def job_moods(job_id: str, target: int = 30, hook_scene: int | None = None) -> d
 
 @app.post("/api/jobs/{job_id}/audio/voice-upload")
 async def upload_voice_audio(job_id: str, file: UploadFile = File(...)) -> dict:
-    job = load_job(job_id)
+    load_job(job_id)
+    started = time.time()
+    original_name = Path(file.filename or "voice.wav").name
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".aif"}:
+        error = "Upload a WAV, MP3, M4A, FLAC, OGG or AIFF file."
+        _record_upload_history(
+            job_id, "voice", "failed", original_name, error=error,
+            latency_ms=round((time.time() - started) * 1000),
+        )
+        raise HTTPException(400, error)
     directory = _job_dir(job_id) / "audio"
     directory.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename or "voice.wav").suffix.lower()
-    if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".aif"}:
-        raise HTTPException(400, "Upload a WAV, MP3, M4A, FLAC, OGG or AIFF file.")
     temp = directory / f"upload-source{suffix}"
+    stored: Path | None = None
     try:
         with temp.open("wb") as handle:
             shutil.copyfileobj(file.file, handle)
@@ -1734,18 +2081,112 @@ async def upload_voice_audio(job_id: str, file: UploadFile = File(...)) -> dict:
         versioned = stored.with_name(f"uploaded_voice_{digest}.wav")
         stored.replace(versioned)
         stored = versioned
+        duration = audio.media_duration(stored)
+        if duration <= 0.2:
+            raise HTTPException(400, "The uploaded audio is empty or unreadable.")
+    except HTTPException as exc:
+        _record_upload_history(
+            job_id, "voice", "failed", original_name,
+            error=str(exc.detail)[:2400],
+            latency_ms=round((time.time() - started) * 1000),
+        )
+        raise
     except audio.AudioError as exc:
+        _record_upload_history(
+            job_id, "voice", "failed", original_name,
+            error=str(exc)[:2400],
+            latency_ms=round((time.time() - started) * 1000),
+        )
         raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        _record_upload_history(
+            job_id, "voice", "failed", original_name,
+            error=str(exc)[:2400],
+            latency_ms=round((time.time() - started) * 1000),
+        )
+        raise
     finally:
         try:
             temp.unlink()
         except OSError:
             pass
-    duration = audio.media_duration(stored)
-    if duration <= 0.2:
-        raise HTTPException(400, "The uploaded audio is empty or unreadable.")
+    path = str(stored.relative_to(_job_dir(job_id)))
+    size = stored.stat().st_size if stored else None
+    _record_upload_history(
+        job_id, "voice", "ok", original_name,
+        path=path, duration=duration, size=size,
+        latency_ms=round((time.time() - started) * 1000),
+    )
     return {
-        "path": str(stored.relative_to(_job_dir(job_id))),
+        "path": path,
+        "duration": round(duration, 3),
+        "name": file.filename or stored.name,
+    }
+
+
+@app.post("/api/jobs/{job_id}/audio/music-upload")
+async def upload_music_audio(job_id: str, file: UploadFile = File(...)) -> dict:
+    load_job(job_id)
+    started = time.time()
+    original_name = Path(file.filename or "music.wav").name
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".aif"}:
+        error = "Upload a WAV, MP3, M4A, FLAC, OGG or AIFF file."
+        _record_upload_history(
+            job_id, "music", "failed", original_name, error=error,
+            latency_ms=round((time.time() - started) * 1000),
+        )
+        raise HTTPException(400, error)
+    directory = _job_dir(job_id) / "audio"
+    directory.mkdir(parents=True, exist_ok=True)
+    temp = directory / f"music-source{suffix}"
+    stored: Path | None = None
+    try:
+        with temp.open("wb") as handle:
+            shutil.copyfileobj(file.file, handle)
+        stored = audio.store_uploaded_music(temp, _job_dir(job_id))
+        digest = hashlib.sha1(stored.read_bytes()).hexdigest()[:12]
+        versioned = stored.with_name(f"uploaded_music_{digest}.wav")
+        stored.replace(versioned)
+        stored = versioned
+        duration = audio.media_duration(stored)
+        if duration <= 0.2:
+            raise HTTPException(400, "The uploaded music is empty or unreadable.")
+    except HTTPException as exc:
+        _record_upload_history(
+            job_id, "music", "failed", original_name,
+            error=str(exc.detail)[:2400],
+            latency_ms=round((time.time() - started) * 1000),
+        )
+        raise
+    except audio.AudioError as exc:
+        _record_upload_history(
+            job_id, "music", "failed", original_name,
+            error=str(exc)[:2400],
+            latency_ms=round((time.time() - started) * 1000),
+        )
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        _record_upload_history(
+            job_id, "music", "failed", original_name,
+            error=str(exc)[:2400],
+            latency_ms=round((time.time() - started) * 1000),
+        )
+        raise
+    finally:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
+    path = str(stored.relative_to(_job_dir(job_id)))
+    size = stored.stat().st_size if stored else None
+    _record_upload_history(
+        job_id, "music", "ok", original_name,
+        path=path, duration=duration, size=size,
+        latency_ms=round((time.time() - started) * 1000),
+    )
+    return {
+        "path": path,
         "duration": round(duration, 3),
         "name": file.filename or stored.name,
     }
@@ -1871,6 +2312,7 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
     job = load_job(job_id)
     target = _valid_target(int(body.target))
     quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
+    script_id = _body_script_id(body, audio_plan)
     renders: list[dict] = []
     errors: list[dict] = []
     for scene in _top_hooks(job, target, 3):
@@ -1882,6 +2324,7 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
             record = _queue_render(
                 job_id, fresh, plan, quality, aspect, encoder, captions,
                 audio_plan, bool(body.force), preset=preset, caption_margin=margin,
+                script_id=script_id,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:
@@ -1930,97 +2373,333 @@ def export_cut(
 def audio_script(job_id: str, body: ScriptBody) -> dict:
     """List the cleaned, de-duplicated, time-fitted voice script for a cut."""
     job = load_job(job_id)
-    target = _valid_target(int(body.target))
-    if body.clips:
-        plan = _custom_plan(job, target, body.hook_scene, body.clips)
-    else:
-        plan = _plan_for(job, target, body.hook_scene)
-    plan = _apply_order(job, plan, body.order)
-    scenes = job["analysis"]["scenes"]
-    clips = [
-        {
-            "scene": clip["scene"],
-            "role": clip.get("role") or "beat",
-            "duration": round(float(clip["dur"]), 3),
-        }
-        for clip in plan["clips"]
-    ]
-    segments = pipeline.read_transcript(_job_dir(job_id)) or []
-    script = audio.build_script(scenes, clips, segments=segments)
-    offsets: list[float] = []
-    running = 0.0
-    for clip in clips:
-        offsets.append(running)
-        running += float(clip["duration"])
-    offsets.append(running)
-    for line in script:
-        index = max(0, min(int(line.get("clip") or 0), len(offsets) - 1))
-        line["offset"] = round(offsets[index], 2)
+    started = time.time()
+    script_id = uuid.uuid4().hex[:12]
+    mode = body.mode if body.mode in {"literal", "smooth", "viral", "fun", "creative", "sad", "chill"} else "smooth"
+    overrides = body.overrides if isinstance(body.overrides, dict) else {}
+    target = int(body.target)
     source_lang = str(
-        plan.get("_source_lang")
-        or (job["analysis"].get("engine") or {}).get("transcript_language")
-        or "en"
+        ((job.get("analysis") or {}).get("engine") or {}).get("transcript_language") or "en"
     ).split("-")[0]
     target_lang = str(body.translate or "").split("-")[0]
-    warning = None
-    translated = False
-    overrides = body.overrides if isinstance(body.overrides, dict) else {}
-    if body.force_translate and target_lang and target_lang != source_lang:
-        source_lines = [str(line.get("text") or "") for line in script]
-        source_lines.extend(str(segment.get("text") or "") for segment in segments)
-        audio.clear_translation_memo(source_lines, source_lang, target_lang, body.provider)
-    mode = body.mode if body.mode in {"literal", "smooth", "viral"} else "literal"
-
-    def apply_overrides(lines: list[dict]) -> None:
-        for line in lines:
-            value = overrides.get(str(line.get("scene")))
-            if isinstance(value, str) and value.strip():
-                line["text"] = audio.clean_line(value)
-                line["overridden"] = True
-
     before_usage = usage_store.snapshot()
-    context = (
-        audio.transcript_context(
-            segments, clips, scenes, source_lang,
-            target_lang=target_lang, translate_provider=body.provider,
-            brief_provider=body.provider, rewrite_provider=body.rewrite_provider,
-        )
-        if segments else None
-    )
+    plan: dict | None = None
+    clips: list[dict] = []
+    script: list[dict] = []
+    context: dict | None = None
+    warning: str | None = None
+    translated = False
+
+    def record_failure(exc: Exception) -> None:
+        try:
+            detail = getattr(exc, "detail", None) or str(exc) or exc.__class__.__name__
+            delta = usage_store.delta(before_usage)
+            translation = audio.translation_status()
+            rewrite = audio.rewrite_status()
+            snapshot = {
+                "script_id": script_id,
+                "target": target,
+                "style": mode,
+                "source_lang": source_lang,
+                "target_lang": target_lang or source_lang,
+                "overrides": overrides,
+                "clip_hash": _clip_hash((plan or {}).get("clips")),
+                "original_lines": [
+                    str(line.get("original") or line.get("text") or "") for line in script
+                ],
+                "literal_lines": [
+                    str(line.get("literal") or line.get("text") or "") for line in script
+                ],
+                "final_lines": script,
+                "translation": translation,
+                "rewrite": rewrite,
+                "translated": translated,
+                "warning": None,
+                "error": str(detail)[:2400],
+                "usage": delta,
+                "latency_ms": round((time.time() - started) * 1000),
+            }
+            _history_append(
+                job_id,
+                {
+                    "id": script_id,
+                    "type": "script",
+                    "created": round(time.time(), 3),
+                    "status": "failed",
+                    "target": target,
+                    "style": mode,
+                    "source_lang": source_lang,
+                    "target_lang": target_lang or source_lang,
+                    "provider": str(body.provider or ""),
+                    "fallback": False,
+                    "tried": _history_tried(translation, rewrite),
+                    "model": _provider_model(rewrite.get("provider")),
+                    "latency_ms": snapshot["latency_ms"],
+                    "usage": delta,
+                    "warning": None,
+                    "error": str(detail)[:2400],
+                    "path": None,
+                    "script_id": script_id,
+                    "clip_hash": snapshot["clip_hash"],
+                },
+                snapshot,
+            )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("could not record failed script attempt for %s", job_id)
+
     try:
-        script = audio.adapt_script(
-            script, source_lang, target_lang, mode, body.provider, context,
-            body.rewrite_provider,
+        target = _valid_target(target)
+        if body.clips:
+            plan = _custom_plan(job, target, body.hook_scene, body.clips)
+        else:
+            plan = _plan_for(job, target, body.hook_scene)
+        plan = _apply_order(job, plan, body.order)
+        scenes = job["analysis"]["scenes"]
+        clips = [
+            {
+                "scene": clip["scene"],
+                "role": clip.get("role") or "beat",
+                "duration": round(float(clip["dur"]), 3),
+            }
+            for clip in plan["clips"]
+        ]
+        segments = pipeline.read_transcript(_job_dir(job_id)) or []
+        script = audio.build_script(scenes, clips, segments=segments)
+        offsets: list[float] = []
+        running = 0.0
+        for clip in clips:
+            offsets.append(running)
+            running += float(clip["duration"])
+        offsets.append(running)
+        for line in script:
+            index = max(0, min(int(line.get("clip") or 0), len(offsets) - 1))
+            line["offset"] = round(offsets[index], 2)
+        source_lang = str(
+            plan.get("_source_lang")
+            or (job["analysis"].get("engine") or {}).get("transcript_language")
+            or "en"
+        ).split("-")[0]
+        target_lang = str(body.translate or "").split("-")[0]
+        # Clear once per request, before context and script translation. Both passes
+        # reuse the same memo; force_translate=false always reads the memo.
+        if body.force_translate and target_lang and target_lang != source_lang:
+            source_lines = [str(line.get("text") or "") for line in script]
+            source_lines.extend(str(segment.get("text") or "") for segment in segments)
+            audio.clear_translation_memo(source_lines, source_lang, target_lang, body.provider)
+
+        def apply_overrides(lines: list[dict]) -> None:
+            for line in lines:
+                value = overrides.get(str(line.get("scene")))
+                if isinstance(value, str) and value.strip():
+                    line["text"] = audio.clean_line(value)
+                    line["overridden"] = True
+
+        context = (
+            audio.transcript_context(
+                segments, clips, scenes, source_lang,
+                target_lang=target_lang, translate_provider=body.provider,
+                brief_provider=body.provider, rewrite_provider=body.rewrite_provider,
+            )
+            if segments else None
         )
-        apply_overrides(script)
-        script = audio.refit_script(script)
-        translated = bool(target_lang and target_lang != source_lang)
-    except audio.AudioError as exc:
-        warning = str(exc)[:400]
-    script_delta = usage_store.delta(before_usage)
-    if script_delta["calls"] or script_delta["chars"] or script_delta["audio_seconds"]:
-        job.setdefault("usage", []).append({
-            "action": "script",
-            "at": round(time.time(), 3),
-            **script_delta,
-        })
-        job["usage"] = job["usage"][-100:]
-        save_job(job)
-    return {
-        "lines": script,
-        "mode": mode,
-        "rewrite": (script[0].get("rewrite") if script else "literal"),
-        "context_chars": len((context or {}).get("full_text") or ""),
-        "overrides": overrides,
-        "source_lang": source_lang,
-        "target": target_lang or source_lang,
-        "translated": translated,
-        "warning": warning,
-        "moods": audio.scene_moods(scenes, clips),
-        "total": round(sum(float(clip["duration"]) for clip in clips), 3),
-        "usage": _usage_summary(job),
-        "translation_status": audio.translation_status(),
-    }
+        try:
+            script = audio.adapt_script(
+                script, source_lang, target_lang, mode, body.provider, context,
+                body.rewrite_provider,
+            )
+            apply_overrides(script)
+            script = audio.refit_script(script)
+            translated = bool(target_lang and target_lang != source_lang)
+        except audio.AudioError as exc:
+            warning = str(exc)[:400]
+            if mode != "literal":
+                audio.mark_rewrite_error(warning)
+        rewrite = audio.rewrite_status()
+        if rewrite.get("fallback") and not warning:
+            warning = str(
+                rewrite.get("error") or "Rewrite unavailable; kept the literal translation."
+            )[:400]
+        script_delta = usage_store.delta(before_usage)
+        if script_delta["calls"] or script_delta["chars"] or script_delta["audio_seconds"]:
+            job.setdefault("usage", []).append({
+                "action": "script",
+                "at": round(time.time(), 3),
+                **script_delta,
+            })
+            job["usage"] = job["usage"][-100:]
+            save_job(job)
+        translation = audio.translation_status()
+        moods = audio.scene_moods(scenes, clips)
+        total = round(sum(float(clip["duration"]) for clip in clips), 3)
+        clip_hash = _clip_hash(plan["clips"])
+        fallback = bool(warning or rewrite.get("fallback"))
+        provider = str(translation.get("provider") or "")
+        if not provider or provider == "none":
+            provider = str(rewrite.get("provider") or body.provider or "")
+        tried = _history_tried(translation, rewrite)
+        model_provider = str(translation.get("provider") or "")
+        if not translated or model_provider in {"", "none", "cache"}:
+            model_provider = str(rewrite.get("provider") or provider)
+        model = _provider_model(model_provider)
+        latency_ms = round((time.time() - started) * 1000)
+        snapshot = {
+            "script_id": script_id,
+            "target": target,
+            "style": mode,
+            "source_lang": source_lang,
+            "target_lang": target_lang or source_lang,
+            "overrides": overrides,
+            "clip_hash": clip_hash,
+            "original_lines": [
+                str(line.get("original") or line.get("text") or "") for line in script
+            ],
+            "literal_lines": [
+                str(line.get("literal") or line.get("text") or "") for line in script
+            ],
+            "final_lines": script,
+            "translation": translation,
+            "rewrite": rewrite,
+            "translated": translated,
+            "warning": warning,
+            "error": None,
+            "provider": provider,
+            "model": model,
+            "rewrite_model": _provider_model(rewrite.get("provider")),
+            "tried": tried,
+            "fallback": fallback,
+            "total": total,
+            "moods": moods,
+            "usage": script_delta,
+            "latency_ms": latency_ms,
+        }
+        _history_append(
+            job_id,
+            {
+                "id": script_id,
+                "type": "script",
+                "created": round(time.time(), 3),
+                "status": "fallback" if warning else "ok",
+                "target": target,
+                "style": mode,
+                "source_lang": source_lang,
+                "target_lang": target_lang or source_lang,
+                "provider": provider,
+                "fallback": fallback,
+                "tried": tried,
+                "model": model,
+                "latency_ms": latency_ms,
+                "usage": script_delta,
+                "warning": warning,
+                "error": None,
+                "path": None,
+                "script_id": script_id,
+                "clip_hash": clip_hash,
+            },
+            snapshot,
+        )
+        # Keep translation and rewrite as separate history rows. The script row
+        # remains the combined artifact, but users can filter/replay each step.
+        if target_lang and target_lang != source_lang:
+            _history_append(
+                job_id,
+                {
+                    "id": uuid.uuid4().hex[:12],
+                    "type": "translation",
+                    "created": round(time.time(), 3),
+                    "status": "ok" if translated else "failed",
+                    "target": target,
+                    "style": mode,
+                    "source_lang": source_lang,
+                    "target_lang": target_lang,
+                    "provider": str(translation.get("provider") or ""),
+                    "fallback": bool(translation.get("tried") and len(translation.get("tried") or []) > 1),
+                    "tried": translation.get("tried") or [],
+                    "model": None,
+                    "latency_ms": latency_ms,
+                    "usage": {},
+                    "warning": warning,
+                    "error": None if translated else "Translation did not complete.",
+                    "script_id": script_id,
+                    "clip_hash": clip_hash,
+                },
+                {
+                    "script_id": script_id,
+                    "source_lang": source_lang,
+                    "target_lang": target_lang,
+                    "original_lines": snapshot["original_lines"],
+                    "translated_lines": snapshot["literal_lines"],
+                    "translation": translation,
+                    "warning": warning,
+                },
+            )
+        if mode != "literal":
+            _history_append(
+                job_id,
+                {
+                    "id": uuid.uuid4().hex[:12],
+                    "type": "rewrite",
+                    "created": round(time.time(), 3),
+                    "status": "fallback" if rewrite.get("fallback") else "ok",
+                    "target": target,
+                    "style": mode,
+                    "source_lang": source_lang,
+                    "target_lang": target_lang or source_lang,
+                    "provider": str(rewrite.get("provider") or ""),
+                    "fallback": bool(rewrite.get("fallback")),
+                    "tried": rewrite.get("attempts") or [],
+                    "model": _provider_model(rewrite.get("provider")),
+                    "latency_ms": latency_ms,
+                    "usage": {},
+                    "warning": warning,
+                    "error": rewrite.get("error") or None,
+                    "script_id": script_id,
+                    "clip_hash": clip_hash,
+                },
+                {
+                    "script_id": script_id,
+                    "style": mode,
+                    "lines": script,
+                    "rewrite": rewrite,
+                    "warning": warning,
+                },
+            )
+        return {
+            "lines": script,
+            "mode": mode,
+            "rewrite": (script[0].get("rewrite") if script else "literal"),
+            "context_chars": len((context or {}).get("full_text") or ""),
+            "overrides": overrides,
+            "source_lang": source_lang,
+            "target": target_lang or source_lang,
+            "translated": translated,
+            "warning": warning,
+            "rewrite_status": rewrite,
+            "moods": moods,
+            "total": total,
+            "usage": _usage_summary(job),
+            "translation_status": translation,
+            "script_id": script_id,
+        }
+    except Exception as exc:
+        record_failure(exc)
+        raise
+
+
+def _valid_script_id(job_id: str, plan: dict, script_id: str | None) -> str | None:
+    """Only attach a history script when its saved cut still matches this plan."""
+    if not script_id:
+        return None
+    try:
+        item = history_store.get_entry(_job_dir(job_id), script_id)
+    except Exception:  # noqa: BLE001
+        return None
+    if not item:
+        return None
+    saved = str((item.get("entry") or {}).get("clip_hash") or "")
+    current = _clip_hash(plan.get("clips"))
+    if saved and current and saved != current:
+        return None
+    return script_id
 
 
 def _queue_render(
@@ -2035,7 +2714,9 @@ def _queue_render(
     force: bool,
     preset: str | None = None,
     caption_margin: float = 0.075,
+    script_id: str | None = None,
 ) -> dict:
+    script_id = _valid_script_id(job_id, plan, script_id)
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
     record_key = _render_key(
@@ -2077,15 +2758,29 @@ def _queue_render(
         "caption_margin": caption_margin,
         "order": plan.get("order") or "source",
         "created": round(time.time(), 3),
+        "script_id": script_id,
     }
 
     def mutate(value: dict) -> None:
         value.setdefault("renders", {})[record_key] = record
 
     update_job(job_id, mutate)
+    queued_history = _record_render_history(
+        job_id, record, plan, audio_plan, "queued",
+        script_id=script_id, latency_ms=0,
+    )
+    if queued_history:
+        history_id = queued_history.get("id")
+
+        def attach_history(value: dict) -> None:
+            stored = (value.get("renders") or {}).get(record_key)
+            if isinstance(stored, dict):
+                stored["history_id"] = history_id
+
+        update_job(job_id, attach_history)
     render_pool.submit(
         run_render, job_id, target, plan, key, quality, aspect, encoder, captions,
-        audio_plan, audio_sig, preset, caption_margin,
+        audio_plan, audio_sig, preset, caption_margin, script_id,
     )
     return record
 
@@ -2120,6 +2815,7 @@ def start_render(job_id: str, body: PlanBody) -> dict:
     record = _queue_render(
         job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
         bool(body.force), preset=preset, caption_margin=margin,
+        script_id=_body_script_id(body, audio_plan),
     )
     return {"render": _public_render(job_id, record)}
 
@@ -2128,6 +2824,7 @@ def start_render(job_id: str, body: PlanBody) -> dict:
 def start_render_all(job_id: str, body: PlanBody) -> dict:
     load_job(job_id)
     quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
+    script_id = _body_script_id(body, audio_plan)
     renders: list[dict] = []
     errors: list[dict] = []
     for target in (15, 30, 60):
@@ -2137,6 +2834,7 @@ def start_render_all(job_id: str, body: PlanBody) -> dict:
             record = _queue_render(
                 job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
                 bool(body.force), preset=preset, caption_margin=margin,
+                script_id=script_id,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:

@@ -1743,24 +1743,20 @@ def analyze_source(
             or (settings_store.load_settings().get("stt") or {}).get("language")
             or "en"
         )
-        cloud_engine = engine if engine in CLOUD_STT_PROVIDERS else "auto"
-        if engine in {"auto", "cloud", *CLOUD_STT_PROVIDERS}:
-            progress("reading", 0.69, "Transcribing speech · cloud")
-            transcript = transcribe_cloud(wav, job_dir, speech_language, cloud_engine)
-            if transcript:
-                timings["cloud_speech"] = round(time.time() - stage, 2)
-        if transcript is None and engine in {"auto", "cloud", "apple", *CLOUD_STT_PROVIDERS}:
+        # Transcription is local-only. Apple Speech is primary; mlx-whisper is
+        # the fallback. Cloud STT keys are no longer part of Setup.
+        if engine in {"auto", "apple", "whisper", "local"}:
             progress("reading", 0.70, "Transcribing speech · Apple Speech")
             transcript = transcribe_apple(wav, job_dir, speech_language)
             if transcript:
                 timings["apple_speech"] = round(time.time() - stage, 2)
-        if transcript is None and engine in {"auto", "cloud", "apple", "whisper", *CLOUD_STT_PROVIDERS}:
-            progress("reading", 0.72, "Transcribing speech · local Whisper")
-            transcript = transcribe(
-                wav, job_dir, meta["duration"],
-                lambda fraction, message: progress("reading", 0.70 + 0.16 * fraction, message),
-            )
-            timings["whisper"] = round(time.time() - stage, 2)
+            if transcript is None:
+                progress("reading", 0.72, "Transcribing speech · local Whisper")
+                transcript = transcribe(
+                    wav, job_dir, meta["duration"],
+                    lambda fraction, message: progress("reading", 0.70 + 0.16 * fraction, message),
+                )
+                timings["whisper"] = round(time.time() - stage, 2)
     attach_speech(scenes, transcript)
 
     stage = time.time()
