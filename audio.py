@@ -1583,6 +1583,7 @@ def _mlx_text(prompt: str) -> str | None:
 
 
 OPENCODE_PROVIDER = "opencode-go"
+OPENCODE_URL = "https://opencode.ai/inference/go/openai/v1/chat/completions"
 OPENCODE_DEFAULT_MODEL = "deepseek-v4.1-flash"
 OPENCODE_DEFAULT_VARIANT = "low"
 OPENCODE_LAST_ERROR = ""
@@ -1596,9 +1597,24 @@ def opencode_bin() -> str | None:
     return str(candidate) if candidate.is_file() else None
 
 
+def opencode_key() -> str:
+    return settings_store.get_secret("opencode")
+
+
+def opencode_mode() -> str:
+    settings = settings_store.load_settings().get("opencode") or {}
+    if not settings.get("enabled", True):
+        return "off"
+    if opencode_key():
+        return "api"
+    if opencode_bin():
+        return "local"
+    return "off"
+
+
 def opencode_available() -> bool:
     settings = settings_store.load_settings().get("opencode") or {}
-    return bool(opencode_bin()) and bool(settings.get("enabled", True))
+    return (bool(opencode_key()) or bool(opencode_bin())) and bool(settings.get("enabled", True))
 
 
 def opencode_model() -> str:
@@ -1651,6 +1667,55 @@ def _opencode_api(args: list[str], body: dict | None = None, allow_empty: bool =
     return None
 
 
+def _opencode_http_text(prompt: str, max_tokens: int = 1200) -> str | None:
+    """Direct OpenCode Go API using the project's own key."""
+    global OPENCODE_LAST_ERROR
+    key = opencode_key()
+    if not key:
+        return None
+    body = {
+        "model": opencode_model(),
+        "messages": [
+            {"role": "system", "content": "You write short vertical video voice overs. Reply with JSON when asked."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.4,
+        "max_tokens": max_tokens,
+        "reasoning_effort": opencode_variant(),
+    }
+    request = urllib.request.Request(
+        OPENCODE_URL,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "User-Agent": "VibeCut/0.8.0",
+            "x-opencode-session": "vibecut-" + hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:24],
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        OPENCODE_LAST_ERROR = f"Direct API: {str(exc)[:220]}"
+        return None
+    choices = data.get("choices") or []
+    if not choices:
+        OPENCODE_LAST_ERROR = "Direct API returned no choices."
+        return None
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+    value = str(content or "").strip()
+    if value:
+        OPENCODE_LAST_ERROR = ""
+        return value
+    OPENCODE_LAST_ERROR = "Direct API returned an empty reply."
+    return None
+
+
 def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200) -> str | None:
     """Generate text through OpenCode Go / DeepSeek V4.1 Flash at low reasoning.
 
@@ -1663,6 +1728,10 @@ def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200)
     if not opencode_available():
         OPENCODE_LAST_ERROR = "OpenCode is not installed or OpenCode Go is disabled."
         return None
+    if opencode_key():
+        # A project key is exclusive: never borrow the shared local login when
+        # this key is configured but fails.
+        return _opencode_http_text(prompt, max_tokens=max_tokens)
     created = _opencode_api(["post", "/api/session"], {
         "title": "VibeCut rewrite",
         "model": {
@@ -2606,7 +2675,7 @@ def adapt_script(
         return lines
     originals = [str(line.get("text") or "") for line in lines]
     if target_lang != source_lang:
-        literals = translate_lines(originals, source_lang, target_lang)
+        literals = translate_lines(originals, source_lang, target_lang, provider)
     else:
         literals = list(originals)
     literal_values = list(literals)

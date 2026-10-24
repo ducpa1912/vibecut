@@ -200,9 +200,9 @@ def _add_render_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--audio-mode", choices=("keep", "full", "bed", "voice", "music"),
                         default="keep", help="Replace or keep the original audio.")
     parser.add_argument("--translate", default=None, help="Target language code, e.g. en.")
-    parser.add_argument("--translate-provider", choices=("auto", "apple_fm", "argos", "marian", "ollama"),
+    parser.add_argument("--translate-provider", choices=("auto", "opencode", "apple_fm", "argos", "marian", "ollama"),
                         default="auto")
-    parser.add_argument("--voice-engine", choices=("say", "piper", "kokoro", "elevenlabs"),
+    parser.add_argument("--voice-engine", choices=("say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram"),
                         default="say")
     parser.add_argument("--voice", default="", help="Voice id for the chosen engine.")
     parser.add_argument("--voice-rate", type=float, default=1.0)

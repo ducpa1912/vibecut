@@ -22,7 +22,7 @@ from typing import Callable
 from PIL import Image, ImageDraw, ImageFont
 
 import audio
-from pipeline import PipelineError, probe
+from pipeline import PipelineError, crop_center, probe
 
 TARGET_AR = 9 / 16
 OUT_W = 1080
@@ -171,6 +171,20 @@ def _crop_filter(meta: dict, crop: dict, out_w: int, out_h: int) -> str:
     return ",".join(filters)
 
 
+def _scene_crop(scene: dict, aspect: str, meta: dict, out_w: int, out_h: int) -> dict:
+    crop = (scene.get("crops") or {}).get(aspect)
+    if crop:
+        return crop
+    if scene.get("attention"):
+        cx, cy = crop_center(
+            scene, int(meta["width"]), int(meta["height"]), out_w / max(1, out_h),
+        )
+        return {"cx": round(cx, 4), "cy": round(cy, 4)}
+    if aspect != "9:16":
+        return {"cx": 0.5, "cy": 0.5}
+    return scene.get("crop") or {"cx": 0.5, "cy": 0.5}
+
+
 def _frames_for(start: float, duration: float, source_duration: float) -> int:
     frames = max(1, int(round(duration * OUT_FPS)))
     if source_duration > 0:
@@ -198,12 +212,13 @@ def _segment_cache_key(
     encoder: str,
     first: bool,
     last: bool,
+    crop: dict | None = None,
 ) -> str:
     payload = {
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
         "start": round(start, 6),
         "frames": frames,
-        "crop": scene.get("crop") or {"cx": 0.5, "cy": 0.5},
+        "crop": crop or scene.get("crop") or {"cx": 0.5, "cy": 0.5},
         "out": [out_w, out_h],
         "quality": quality,
         "encoder": encoder,
@@ -228,11 +243,12 @@ def _segment(
     quality: str,
     encoder: str,
     cache_dir: Path,
+    crop: dict | None = None,
     cancel_event: threading.Event | None = None,
 ) -> bool:
     """Render one beat. Return True when the segment came from cache."""
     key = _segment_cache_key(
-        meta, scene, start, frames, out_w, out_h, quality, encoder, first, last,
+        meta, scene, start, frames, out_w, out_h, quality, encoder, first, last, crop,
     )
     cached = cache_dir / f"{key}.mp4"
     if cached.exists() and cached.stat().st_size > 0:
@@ -240,7 +256,7 @@ def _segment(
         return True
 
     ffmpeg = _ffmpeg()
-    vf = _crop_filter(meta, scene.get("crop") or {"cx": 0.5, "cy": 0.5}, out_w, out_h)
+    vf = _crop_filter(meta, crop or scene.get("crop") or {"cx": 0.5, "cy": 0.5}, out_w, out_h)
 
     if first and duration > 0.4:
         vf += ",fade=t=in:st=0:d=0.12"
@@ -680,12 +696,13 @@ def render_reel(
                         raise PipelineError(f"Plan references missing scene {clip['scene']}.")
                     segment = tmp / f"{index:03d}.mp4"
                     segments.append(segment)
+                    crop = _scene_crop(scene, aspect, meta, out_w, out_h)
                     futures[pool.submit(
                         _segment,
                         source, meta, scene,
                         clip["start"], clip["duration"], clip["frames"],
                         segment, index == 0, index == len(clips) - 1,
-                        out_w, out_h, quality, encoder, cache_dir, cancel_event,
+                        out_w, out_h, quality, encoder, cache_dir, crop, cancel_event,
                     )] = index
                 for future in as_completed(futures):
                     if cancel_event is not None and cancel_event.is_set():

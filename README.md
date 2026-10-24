@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.7.2** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.8.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -22,7 +22,7 @@ Requirements:
 - Python packages in `requirements.txt`
 - macOS: `swiftc` (Xcode Command Line Tools) for Apple Vision text + face + saliency reading. Without it, crops fall back to center and on-screen text is skipped.
 - Optional: `mlx_whisper` for local speech transcription, or a cloud STT key.
-- Optional: OpenCode CLI signed in to **OpenCode Go** for DeepSeek V4.1 Flash intelligence. Cloud is off by default.
+- Optional: **OpenCode Go** for DeepSeek V4.1 Flash intelligence. Use a project API key in Setup, or sign in with the OpenCode CLI. Cloud is off by default.
 
 The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 
@@ -35,7 +35,7 @@ The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 5. **Plan** — three cut plans (15s / 30s / 60s) share the same hook. Body beats stay in source order, a payoff beat lands at the end, and a spacing rule keeps the cut from clustering.
 6. **Render** — each beat is cut as its own segment in parallel, then joined frame-accurately. A per-clip audio bed is muxed in, loudness-normalized to −14 LUFS, and written to `data/jobs/<id>/renders/`.
 
-Portrait sources are left native. Landscape and square sources get a crop centered on the strongest face or salient object. The crop is per beat, not per frame, so shots stay stable.
+**Smart crop is bilateral.** Every beat stores an attention crop for 9:16, 4:5, 1:1 and 16:9. A portrait source cropped to 16:9 follows the subject on the vertical axis; a landscape source cropped to 9:16 follows it on the horizontal axis. Switching aspect is a true reframe with no re-analysis, and the crop stays per beat so shots remain stable.
 
 ## UI notes
 
@@ -45,7 +45,7 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - **Transcribe speech** is off by default for videos over 15 minutes because local Whisper adds real time. Short clips default on.
 - After analysis, pick 15 / 30 / 60, preview the cut timeline, render, download.
 - **Draft** renders 540×960 fast for feel checks; **Render final** does 1080×1920. **All 15/30/60** queues every length.
-- **Aspect** switches between 9:16, 4:5, 1:1 and 16:9. **Captions** burns OCR/speech text as styled overlays.
+- **Aspect** switches between 9:16, 4:5, 1:1 and 16:9. Each aspect uses its own attention crop, so landscape→portrait and portrait→landscape both reframe without re-analysis. **Captions** burns OCR/speech text as styled overlays.
 - **Edit cut** lets you reorder, trim and remove beats. **Save variant** stores that edit; variant chips reload or delete it.
 - **Audio** panel: keep the original sound, replace the voice, dub over the original bed (Demucs), fully replace voice + music, or add music only. Pick the voice engine, target language, **script style** (faithful / smooth / viral), music source and mood; **Test voice** plays a sample.
 - **Voice script** preview lists the deduped lines with role, emotion and fit flags. Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot using the **full transcript** as context (the whole story, then one complete sentence per selected beat), with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
@@ -61,7 +61,7 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - Long-video scenes outside the shortlist are read on demand when you click them.
 - Renders are cached per plan + quality + aspect + captions + audio mix; an overridden hook gets its own slot. **Render again** forces a fresh encode. Cancel stops a running render.
 - **SRT / VTT / EDL / XML** buttons export the caption file or the cut list for Resolve and Premiere.
-- **Rewrite model**: OpenCode Go **DeepSeek V4.1 Flash** first when the local OpenCode service is signed in, at the `low` reasoning variant. Then MLX, Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
+- **Rewrite model**: OpenCode Go **DeepSeek V4.1 Flash** first when a project key or local OpenCode login exists, at the `low` reasoning variant. Then MLX, Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
 - Speech: `transcribe_engine` is `auto` by default: configured cloud STT → Apple SpeechAnalyzer (macOS 26, 0 MB) → mlx-whisper. Pick the provider and keys in **Setup**.
 
 ## Setup · optional cloud
@@ -71,7 +71,7 @@ Keys live in `data/secrets.json` (0600); env vars win.
 
 | Section | What you can set |
 |---|---|
-| Intelligence | OpenCode Go. Model locked to `deepseek-v4.1-flash`, reasoning variant locked to `low`. Uses the OpenCode login already on this machine; no key copy. Toggles for rewrite, story brief, translation. |
+| Intelligence | OpenCode Go. Model locked to `deepseek-v4.1-flash`, reasoning variant locked to `low`. Use a project API key (stored only in this project) or the local OpenCode login. Toggles for rewrite, story brief, translation. |
 | Transcription | Auto / Apple / Whisper / Groq / OpenAI / Deepgram. Groq Whisper turbo is $0.04/hour. |
 | Voice over | Preferred provider plus keys. Kokoro stays the free default; ElevenLabs Flash is the best multilingual upgrade, Groq Orpheus the cheap English one. |
 
@@ -81,15 +81,22 @@ Costs, model choices and the fallback ladder: [docs/cloud-speech.md](docs/cloud-
 Environment keys:
 
 ```
-GROQ_API_KEY   OPENAI_API_KEY   DEEPGRAM_API_KEY   ELEVENLABS_API_KEY
+OPENCODE_GO_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
+DEEPGRAM_API_KEY      ELEVENLABS_API_KEY
 ```
 
 The API never returns a speech key; it only reports whether one is configured
 and whether it came from the environment or the local file. Environment keys
 win, so a key seen by the server is shown read-only in Setup.
 
-OpenCode Go needs no key in VibeCut. Install the OpenCode CLI, run
-`opencode auth login`, connect **OpenCode Go**, then check:
+OpenCode Go can use a **project API key** entered in Setup. It is written only
+to this project's `data/secrets.json` (0600, gitignored) and is never returned
+by the API. When a key is configured, VibeCut uses the direct OpenCode Go
+endpoint exclusively and does not borrow the shared local login.
+
+Alternatively, leave the key blank. VibeCut can use the local OpenCode login.
+Install the OpenCode CLI, run `opencode auth login`, connect **OpenCode Go**,
+then check:
 
 ```bash
 opencode models | grep opencode-go/deepseek-v4.1-flash
@@ -123,7 +130,7 @@ python3 cli.py sources [--gc]              # content-addressed source store
 python3 cli.py audit                       # what is installed and how big
 ```
 
-`render` reuses the newest analyzed job for a file when one exists. `--target` can be repeated. `--encoder auto|videotoolbox|libx264` overrides the default. Audio replacement: `--audio-mode keep|full|bed|voice|music`, `--translate <lang>`, `--translate-provider auto|apple_fm|argos|marian|ollama`, `--voice-engine`, `--voice`, `--music`.
+`render` reuses the newest analyzed job for a file when one exists. `--target` can be repeated. `--encoder auto|videotoolbox|libx264` overrides the default. Audio replacement: `--audio-mode keep|full|bed|voice|music`, `--translate <lang>`, `--translate-provider auto|opencode|apple_fm|argos|marian|ollama`, `--voice-engine`, `--voice`, `--music`.
 
 Optional local LLM hook ranking: point `VIBECUT_LLM_URL` at an Ollama `/api/generate` endpoint and set `VIBECUT_LLM_MODEL` (default `llama3.1`). Hook lab reorders candidates when the model answers; any failure falls back to the deterministic score.
 

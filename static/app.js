@@ -18,6 +18,7 @@
     setupStatus: $("#setup-status"),
     setupOpencodeEnabled: $("#setup-opencode-enabled"),
     setupOpencodeStatus: $("#setup-opencode-status"),
+    setupOpencodeKey: $("#setup-opencode-key"),
     setupOpencodeModel: $("#setup-opencode-model"),
     setupOpencodeVariant: $("#setup-opencode-variant"),
     setupUseRewrite: $("#setup-use-rewrite"),
@@ -230,19 +231,25 @@
     dom.setupUseBrief.checked = opencode.use_brief !== false;
     dom.setupUseTranslate.checked = !!opencode.use_translate;
     const runtime = data.runtime || {};
-    dom.setupOpencodeStatus.textContent = runtime.opencode
-      ? "Local OpenCode service ready · uses your OpenCode Go login · low reasoning."
-      : "OpenCode CLI not found. Install OpenCode and sign in to OpenCode Go, or use local MLX / Ollama.";
+    if (runtime.opencode_mode === "api") {
+      dom.setupOpencodeStatus.textContent = "Direct OpenCode Go API key configured for this project · low reasoning.";
+    } else if (runtime.opencode) {
+      dom.setupOpencodeStatus.textContent = "Local OpenCode service ready · uses your OpenCode Go login · low reasoning.";
+    } else {
+      dom.setupOpencodeStatus.textContent = "No OpenCode key or service. Add a key here, or sign in with OpenCode, or use local MLX / Ollama.";
+    }
     dom.setupOpencodeStatus.classList.toggle("warn", !runtime.opencode);
     dom.setupSttProvider.value = (settings.stt || {}).provider || "auto";
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
     dom.setupTtsProvider.value = (settings.tts || {}).provider || "auto";
+    setSecretHint(dom.setupOpencodeKey, !!secrets.opencode, sources.opencode);
     setSecretHint(dom.setupGroqKey, !!secrets.groq, sources.groq);
     setSecretHint(dom.setupOpenaiKey, !!secrets.openai, sources.openai);
     setSecretHint(dom.setupDeepgramKey, !!secrets.deepgram, sources.deepgram);
     setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
-    ["groq", "openai", "deepgram", "elevenlabs"].forEach((name) => {
+    ["opencode", "groq", "openai", "deepgram", "elevenlabs"].forEach((name) => {
       const input = {
+        opencode: dom.setupOpencodeKey,
         groq: dom.setupGroqKey,
         openai: dom.setupOpenaiKey,
         deepgram: dom.setupDeepgramKey,
@@ -265,9 +272,11 @@
       const data = await api("/api/settings");
       applySetup(data);
       if (quiet) return data;
-      dom.setupStatus.textContent = data.runtime?.opencode
-        ? "OpenCode Go is ready through the local login."
-        : "OpenCode service not found. Local engines are active.";
+      dom.setupStatus.textContent = data.runtime?.opencode_mode === "api"
+        ? "OpenCode Go is ready with this project's API key."
+        : data.runtime?.opencode
+          ? "OpenCode Go is ready through the local login."
+          : "OpenCode service not found. Local engines are active.";
       return data;
     } catch (error) {
       if (!quiet) dom.setupStatus.textContent = error.message;
@@ -287,6 +296,7 @@
 
   function setupSecrets() {
     const values = {
+      opencode: dom.setupOpencodeKey.value.trim(),
       groq: dom.setupGroqKey.value.trim(),
       openai: dom.setupOpenaiKey.value.trim(),
       deepgram: dom.setupDeepgramKey.value.trim(),
@@ -579,6 +589,7 @@
       state.preset = "";
       dom.presetSelect.value = "";
       updateRenderPanel();
+      if (state.plan) renderHook();
     });
     dom.presetSelect.addEventListener("change", applyPreset);
     dom.arcOrder.addEventListener("change", async () => {
@@ -2723,13 +2734,14 @@
       : scene.ocr
         ? `<p class="drawer-copy">${esc(scene.ocr)}</p>`
         : (!scene.speech ? `<p class="drawer-copy muted">No on-screen text or speech on this beat.</p>` : "");
+    const targetAspect = aspectValue(state.aspect);
     const cropDetail = state.meta && state.meta.width && state.meta.height
       ? `${state.meta.width}×${state.meta.height} source · ${
-        Math.abs(state.meta.width / state.meta.height - 9 / 16) < 0.01
-          ? "native 9:16 · no crop"
-          : scene.crop_mode === "smart"
-            ? "Vision subject tracking"
-            : "center fallback"
+        Math.abs(state.meta.width / state.meta.height - targetAspect) < 0.01
+          ? `native ${state.aspect} · no crop`
+          : cropModeFor(scene) === "smart"
+            ? `Vision subject tracking · ${state.aspect}`
+            : `center fallback · ${state.aspect}`
       }`
       : "center fallback";
     const frame = isDeep
@@ -2928,14 +2940,31 @@
     return `${clamp(posX, 0, 1) * 100}% ${clamp(posY, 0, 1) * 100}%`;
   }
 
+  function aspectValue(value) {
+    const [width, height] = String(value || "9:16").split(":").map(Number);
+    return width / Math.max(1, height);
+  }
+
+  function cropFor(scene) {
+    return scene?.crops?.[state.aspect] || scene?.crop || { cx: 0.5, cy: 0.5 };
+  }
+
+  function cropModeFor(scene) {
+    return scene?.crop_modes?.[state.aspect] || scene?.crop_mode || "center";
+  }
+
   function cropLabel(scene) {
     const meta = state.meta;
     if (!meta?.width || !meta?.height) return "center crop";
     const sourceAspect = meta.width / meta.height;
-    if (Math.abs(sourceAspect - 9 / 16) < 0.01) return "9:16 native";
-    if (scene.crop_mode !== "smart") return "center crop";
-    if (sourceAspect < 9 / 16) return `subject crop · ${Math.round((scene.crop?.cy ?? 0.5) * 100)}% y`;
-    return `subject crop · ${Math.round((scene.crop?.cx ?? 0.5) * 100)}% x`;
+    const targetAspect = aspectValue(state.aspect);
+    if (Math.abs(sourceAspect - targetAspect) < 0.01) return `${state.aspect} native`;
+    if (cropModeFor(scene) !== "smart") return `center ${state.aspect}`;
+    const crop = cropFor(scene);
+    if (sourceAspect < targetAspect) {
+      return `subject ${state.aspect} · ${Math.round((crop.cy ?? 0.5) * 100)}% y`;
+    }
+    return `subject ${state.aspect} · ${Math.round((crop.cx ?? 0.5) * 100)}% x`;
   }
 
   function sceneLine(scene) {

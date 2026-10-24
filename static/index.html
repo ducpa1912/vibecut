@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
-  <link rel="stylesheet" href="/static/style.css?v=0.7.2">
-  <script defer src="/static/app.js?v=0.7.2"></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.8.0">
+  <script defer src="/static/app.js?v=0.8.0"></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -392,7 +392,12 @@
             <span class="setup-badge">OpenCode Go</span>
           </div>
           <label class="setup-check"><input id="setup-opencode-enabled" type="checkbox"> Use OpenCode Go for rewriting and story briefs</label>
-          <p id="setup-opencode-status" class="setup-hint">Checking the local OpenCode service…</p>
+          <p id="setup-opencode-status" class="setup-hint">Checking OpenCode Go…</p>
+          <label class="setup-field">
+            <span>API key · optional</span>
+            <input id="setup-opencode-key" type="password" autocomplete="off" spellcheck="false" placeholder="oc_sk_…">
+          </label>
+          <p class="setup-hint">Leave blank to use the OpenCode login on this machine. A saved key is used only by this project.</p>
           <div class="setup-row">
             <label class="setup-field">
               <span>Model</span>

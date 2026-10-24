@@ -273,9 +273,101 @@ def test_segment_cache_key_changes_with_crop_and_quality():
         meta, {"crop": {"cx": 0.7, "cy": 0.5}}, 1.0, 30, 540, 960, "final", "libx264", True, False,
     )
     draft = render._segment_cache_key(meta, scene, 1.0, 30, 540, 960, "draft", "libx264", True, False)
+    aspect_crop = render._segment_cache_key(
+        meta, scene, 1.0, 30, 540, 960, "final", "libx264", True, False,
+        {"cx": 0.5, "cy": 0.8},
+    )
     assert base == same
     assert base != moved
     assert base != draft
+    assert base != aspect_crop
+
+def test_crop_center_bilateral():
+    portrait = {
+        "attention": {
+            "face": {"x": 0.4, "y": 0.8, "w": 0.1, "h": 0.1, "confidence": 0.9},
+            "salient": None,
+        },
+    }
+    cx, cy = pipeline.crop_center(portrait, 1080, 1920, 16 / 9)
+    assert cx == 0.5 and 0.7 <= cy <= 0.85
+    cx, cy = pipeline.crop_center(portrait, 1080, 1920, 9 / 16)
+    assert (cx, cy) == (0.5, 0.5)
+
+    landscape = {
+        "attention": {
+            "face": {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.1, "confidence": 0.9},
+            "salient": None,
+        },
+    }
+    cx, cy = pipeline.crop_center(landscape, 1920, 1080, 9 / 16)
+    assert 0.1 <= cx <= 0.3 and cy == 0.5
+
+    square = {
+        "attention": {
+            "face": {"x": 0.45, "y": 0.8, "w": 0.1, "h": 0.1, "confidence": 0.9},
+            "salient": None,
+        },
+    }
+    cx, cy = pipeline.crop_center(square, 1000, 1000, 16 / 9)
+    assert cx == 0.5 and 0.7 <= cy <= 0.88
+
+
+def test_score_scenes_stores_all_aspect_crops():
+    scene = make_scene(0, 0.0, 3.0)
+    scene.update({
+        "visual": {"sharp": 60.0, "bright": 0.5, "contrast": 40.0, "saturation": 50.0, "color": 40.0},
+        "faces": [{"x": 0.4, "y": 0.8, "w": 0.12, "h": 0.12, "confidence": 0.9}],
+        "salient": [],
+        "motion_raw": 20.0,
+        "audio_mean": -20.0,
+        "audio_peak": -10.0,
+        "onset": 1.0,
+    })
+    pipeline.score_scenes([scene], 1080, 1920)
+    assert set(scene["crops"]) == set(pipeline.ASPECT_RATIOS)
+    assert scene["crop"] == scene["crops"]["9:16"]
+    assert scene["crops"]["16:9"]["cy"] > 0.5
+    assert scene["crop_modes"]["16:9"] == "smart"
+    assert "attention" in scene
+
+    pipeline.score_scenes([scene], 1080, 1920)
+    assert "attention" in scene
+    assert scene["crops"]["16:9"]["cy"] > 0.5
+
+
+def test_render_scene_crop_uses_aspect():
+    meta = {"width": 1080, "height": 1920, "fingerprint": "abc", "duration": 10.0}
+    scene = {
+        "crop": {"cx": 0.5, "cy": 0.5},
+        "crops": {"16:9": {"cx": 0.5, "cy": 0.8}},
+        "attention": {"face": {"x": 0.45, "y": 0.8, "w": 0.1, "h": 0.1, "confidence": 0.9}},
+    }
+    assert render._scene_crop(scene, "16:9", meta, 1920, 1080) == {"cx": 0.5, "cy": 0.8}
+    assert render._scene_crop(scene, "9:16", meta, 1080, 1920) == {"cx": 0.5, "cy": 0.5}
+
+
+def test_opencode_direct_api_payload(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["auth"] = request.get_header("Authorization")
+        captured["session"] = request.get_header("X-opencode-session")
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse(json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(audio, "opencode_key", lambda: "test-project-key")
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    answer = audio._opencode_http_text("hello")
+    assert answer == '{"ok": true}'
+    assert captured["url"] == audio.OPENCODE_URL
+    assert captured["auth"] == "Bearer test-project-key"
+    assert captured["session"].startswith("vibecut-")
+    assert captured["body"]["model"] == "deepseek-v4.1-flash"
+    assert captured["body"]["reasoning_effort"] == "low"
 
 
 def _fake_job():
@@ -635,13 +727,20 @@ def test_rules_rewrite_smooth_and_viral(monkeypatch):
 def test_adapt_script_literal_and_memo(tmp_path, monkeypatch):
     monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
     monkeypatch.setattr(audio, "opencode_available", lambda: False)
-    monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
+    seen = {}
+
+    def fake_translate(lines, source, target, provider="auto"):
+        seen["provider"] = provider
+        return [f"L:{x}" for x in lines]
+
+    monkeypatch.setattr(audio, "translate_lines", fake_translate)
     script = [{
         "scene": 3, "clip": 0, "role": "beat", "duration": 3.0, "rate": 1.0,
         "text": "original text",
     }]
-    literal = audio.adapt_script(script, "zh", "en", "literal")
+    literal = audio.adapt_script(script, "zh", "en", "literal", "opencode")
     assert literal[0]["text"] == "L:original text"
+    assert seen["provider"] == "opencode"
     assert literal[0]["rewrite"] == "literal"
     smooth = audio.adapt_script(script, "zh", "en", "smooth")
     assert smooth[0]["rewrite"] in {"rules", "cached"}
@@ -1056,6 +1155,7 @@ def test_opencode_service_pins_model_and_low_variant(monkeypatch):
         return Result({"data": True})
 
     monkeypatch.setattr(audio, "opencode_bin", lambda: "/usr/local/bin/opencode")
+    monkeypatch.setattr(audio, "opencode_key", lambda: "")
     monkeypatch.setattr(settings_store, "load_settings", lambda: {
         "opencode": {
             "enabled": True,
@@ -1232,13 +1332,15 @@ def test_settings_api_locks_model_and_masks_keys(tmp_path, monkeypatch):
             "opencode": {"model": "deepseek-v4.1-flash", "variant": "low"},
             "stt": {"provider": "groq", "language": "vi"},
         },
-        "secrets": {"groq": "gsk-hidden"},
+        "secrets": {"groq": "gsk-hidden", "opencode": "oc-hidden"},
     })
     assert saved.status_code == 200
     body = saved.json()
     assert body["settings"]["stt"] == {"provider": "groq", "language": "vi"}
     assert body["secrets"]["groq"] is True
+    assert body["secrets"]["opencode"] is True
     assert body["sources"]["groq"] == "file"
+    assert body["sources"]["opencode"] == "file"
     assert "gsk-hidden" not in saved.text
 
 
@@ -1255,3 +1357,17 @@ def test_opencode_rewrite_requires_fit_and_parses(monkeypatch):
     monkeypatch.setattr(audio, "_opencode_text", lambda *args, **kwargs: '["this line is far too long to fit the slot at normal pace"]')
     trimmed = audio._rewrite_opencode(script, "en", "en", "smooth", ["literal"])
     assert trimmed and trimmed[0]
+
+
+def test_opencode_direct_key_is_exclusive(monkeypatch):
+    called = {"local": False}
+
+    def fail_local(*args, **kwargs):
+        called["local"] = True
+        return None
+
+    monkeypatch.setattr(audio, "opencode_key", lambda: "project-key")
+    monkeypatch.setattr(audio, "_opencode_http_text", lambda prompt, max_tokens=0: "direct answer")
+    monkeypatch.setattr(audio, "_opencode_api", fail_local)
+    assert audio._opencode_text("hello") == "direct answer"
+    assert called["local"] is False

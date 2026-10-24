@@ -701,6 +701,7 @@ def _settings_state() -> dict:
         "opencode_binary": audio.opencode_bin() or "",
         "opencode_model": audio.opencode_model(),
         "opencode_variant": audio.opencode_variant(),
+        "opencode_mode": audio.opencode_mode(),
     }
     return state
 
@@ -751,6 +752,7 @@ def test_settings(body: SettingsTestBody) -> dict:
             "kind": "opencode",
             "model": audio.opencode_model(),
             "variant": OPENCODE_VARIANT,
+            "mode": audio.opencode_mode(),
             "seconds": round(time.time() - started, 2),
             "answer": (answer or "")[:160],
             "detail": (
@@ -984,8 +986,11 @@ def read_scene(job_id: str, scene_id: int) -> dict:
             analysis["scenes"], job["source"]["width"], job["source"]["height"],
         )
         if not options.get("smart_crop", True):
-            scene["crop"] = {"cx": 0.5, "cy": 0.5}
-            scene["crop_mode"] = "center"
+            for item in analysis["scenes"]:
+                item["crop"] = {"cx": 0.5, "cy": 0.5}
+                item["crop_mode"] = "center"
+                item["crops"] = {aspect: {"cx": 0.5, "cy": 0.5} for aspect in pipeline.ASPECT_RATIOS}
+                item["crop_modes"] = {aspect: "center" for aspect in pipeline.ASPECT_RATIOS}
         hook = pipeline.auto_hook(analysis["scenes"])
         analysis["hook_scene"] = hook["id"]
         analysis["deep_scene_ids"] = sorted(

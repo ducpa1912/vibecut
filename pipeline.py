@@ -25,6 +25,7 @@ from vision import probe_image, probe_images
 
 ROOT = Path(__file__).resolve().parent
 TARGET_AR = 9 / 16
+ASPECT_RATIOS = {"9:16": 9 / 16, "4:5": 4 / 5, "1:1": 1.0, "16:9": 16 / 9}
 
 
 class PipelineError(RuntimeError):
@@ -975,12 +976,12 @@ def score_scenes(scenes: list[dict], source_w: int, source_h: int) -> None:
     onset_n = _rank(onset)
 
     source_ar = source_w / max(1, source_h)
-    needs_crop = abs(source_ar - TARGET_AR) > 0.01
 
     for index, scene in enumerate(scenes):
         visual = scene.get("visual") or {}
-        faces = scene.get("faces") or []
-        salient = scene.get("salient") or []
+        attention = scene.get("attention") or {}
+        faces = scene.get("faces") or ([attention["face"]] if attention.get("face") else [])
+        salient = scene.get("salient") or ([attention["salient"]] if attention.get("salient") else [])
         face_best = max((f["w"] * f["h"] * f.get("confidence", 0) for f in faces), default=0.0)
         sal_best = max((s["w"] * s["h"] * s.get("confidence", 0) for s in salient), default=0.0)
         face_n = 1.0 if face_best > 0.004 else 0.0
@@ -1058,12 +1059,6 @@ def score_scenes(scenes: list[dict], source_w: int, source_h: int) -> None:
         if sharp_n[index] >= 0.72:
             scene["tags"].append("sharp")
 
-        crop = crop_center(scene, source_w, source_h) if needs_crop else (0.5, 0.5)
-        scene["crop"] = {"cx": round(crop[0], 4), "cy": round(crop[1], 4)}
-        tracked = max(abs(crop[0] - 0.5), abs(crop[1] - 0.5))
-        scene["crop_mode"] = "smart" if needs_crop and tracked > 0.015 else "center"
-        scene["visual"] = visual
-        scene["motion_raw"] = round(motion_raw, 3)
         best_face = max(
             faces,
             key=lambda f: f["w"] * f["h"] * f.get("confidence", 0),
@@ -1085,13 +1080,38 @@ def score_scenes(scenes: list[dict], source_w: int, source_h: int) -> None:
                     for key in ("x", "y", "w", "h", "confidence")
                 },
             }
+        else:
+            scene.pop("attention", None)
+
+        crops = {}
+        crop_modes = {}
+        for aspect, target_ar in ASPECT_RATIOS.items():
+            cx, cy = crop_center(scene, source_w, source_h, target_ar)
+            crops[aspect] = {"cx": round(cx, 4), "cy": round(cy, 4)}
+            tracked = max(abs(cx - 0.5), abs(cy - 0.5))
+            crop_modes[aspect] = (
+                "smart"
+                if abs(source_ar - target_ar) > 0.01 and tracked > 0.015
+                else "center"
+            )
+        scene["crops"] = crops
+        scene["crop_modes"] = crop_modes
+        scene["crop"] = crops.get("9:16", {"cx": 0.5, "cy": 0.5})
+        scene["crop_mode"] = crop_modes.get("9:16", "center")
+        scene["visual"] = visual
+        scene["motion_raw"] = round(motion_raw, 3)
         scene.pop("faces", None)
         scene.pop("salient", None)
 
 
-def crop_center(scene: dict, source_w: int, source_h: int) -> tuple[float, float]:
-    faces = scene.get("faces") or []
-    salient = scene.get("salient") or []
+def crop_center(
+    scene: dict, source_w: int, source_h: int, target_ar: float = TARGET_AR,
+) -> tuple[float, float]:
+    attention = scene.get("attention") or {}
+    face = attention.get("face")
+    salient_item = attention.get("salient")
+    faces = [face] if face else (scene.get("faces") or [])
+    salient = [salient_item] if salient_item else (scene.get("salient") or [])
     face_boxes = [f for f in faces if f.get("confidence", 0) > 0.35 and f["w"] * f["h"] > 0.003]
     sal_boxes = [
         s for s in salient
@@ -1114,12 +1134,15 @@ def crop_center(scene: dict, source_w: int, source_h: int) -> tuple[float, float
         cy = sal["y"] + sal["h"] / 2
 
     source_ar = source_w / max(1, source_h)
-    if source_ar > TARGET_AR:
-        width = TARGET_AR * source_h / source_w
+    target_ar = max(0.01, float(target_ar or TARGET_AR))
+    if abs(source_ar - target_ar) <= 0.01:
+        return 0.5, 0.5
+    if source_ar > target_ar:
+        width = target_ar * source_h / source_w
         cx = _clamp(cx, width / 2, 1 - width / 2)
         cy = 0.5
-    elif source_ar < TARGET_AR:
-        height = (source_w / TARGET_AR) / source_h
+    else:
+        height = (source_w / target_ar) / source_h
         cy = _clamp(cy, height / 2, 1 - height / 2)
         cx = 0.5
     return cx, cy
@@ -1586,6 +1609,8 @@ def analyze_source(
         for scene in scenes:
             scene["crop"] = {"cx": 0.5, "cy": 0.5}
             scene["crop_mode"] = "center"
+            scene["crops"] = {aspect: {"cx": 0.5, "cy": 0.5} for aspect in ASPECT_RATIOS}
+            scene["crop_modes"] = {aspect: "center" for aspect in ASPECT_RATIOS}
     hook = auto_hook(scenes)
     plans = make_plans(scenes, meta["duration"], None, hook["id"])
     timings["score"] = round(time.time() - stage, 2)

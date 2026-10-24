@@ -7,6 +7,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.8.0 | 2026-10-24 | Bilateral crop | per-aspect attention crops for 9:16/4:5/1:1/16:9, true aspect reframe, direct OpenCode Go project key mode |
 | 0.7.2 | 2026-10-24 | OpenCode translation | OpenCode Go becomes a translation provider, on by default; provider-scoped translation memo; line-end facts preserved through fit |
 | 0.7.1 | 2026-10-24 | OpenCode Go | Intelligence switched from OpenRouter to local OpenCode Go / DeepSeek V4.1 Flash, `low` variant, session-per-call, no key copy |
 | 0.7.0 | 2026-10-24 | Cloud config | Setup drawer, cloud STT (Groq/OpenAI/Deepgram), cloud TTS (OpenAI/Groq/Deepgram), secret store 0600 |
@@ -45,6 +46,8 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Local secret store (`data/secrets.json`, 0600) with env override
 - [x] Setup drawer: keys, provider selects, masked values, test buttons
 - [x] OpenCode Go rewrite + story brief; model `deepseek-v4.1-flash`, variant `low`
+- [x] Direct OpenCode Go project API key mode (project-local secret, no shared login)
+- [x] OpenCode Go translation
 - [x] OpenCode Go optional translation
 - [x] Cloud STT: Groq Whisper turbo, OpenAI Whisper, Deepgram Nova-3
 - [x] Cloud TTS: OpenAI gpt-4o-mini-tts, Groq Orpheus, Deepgram Aura
@@ -65,7 +68,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 
 ### Analysis
 - [x] SpeechAnalyzer transcription engine (macOS 26, 0 MB) with whisper fallback
-- [ ] Smart crop bilateral: vertical source to horizontal 16:9 / 4:5 / 1:1 and the opposite, attention recomputed per aspect
+- [x] Smart crop bilateral: vertical source to horizontal 16:9 / 4:5 / 1:1 and the opposite, attention stored per aspect
 - [ ] Per-frame crop tracking with smoothing
 - [ ] Story-arc reorder (setup → proof → payoff) for the beat order
 - [ ] Local-LLM scene notes feeding hook and payoff explanations
@@ -100,7 +103,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 | 11 | SpeechAnalyzer, SRT/VTT, EDL/XML, presets, A/B | shipped 0.6.0 |
 | 12 | CAS source store, story arc | shipped 0.6.0 |
 | 12.5 | Cloud setup: OpenCode Go + cloud STT/TTS | shipped 0.7.1 |
-| 13 | Smart crop bilateral, crop tracking, review links, keyboard editor | next |
+| 13 | Smart crop bilateral, crop tracking, review links, keyboard editor | bilateral shipped 0.8.0; tracking/review/keyboard next |
 | 14 | SFX, cloning (consent gated), whisper q4 manager | parked |
 
 ## Acceptance checks
@@ -111,9 +114,11 @@ this table, and gets one commit. Patch bumps for fixes only.
 - Beat sync: synthetic 120 BPM click track detected within ±2 BPM; cuts land
   within 250 ms of a beat; drift guard skips when snapping would move > 0.4 s total.
 - SpeechAnalyzer: zh sample transcript comparable to whisper-small, no HF download.
-- Cloud: an OpenCode session is created with `opencode-go/deepseek-v4.1-flash`
-  and variant `low`; a missing service/key falls back without failing the job;
+- Cloud: Direct OpenCode Go payload uses `deepseek-v4.1-flash`, variant `low`,
+  and the project key; a missing key/service falls back without failing the job;
   Groq/Deepgram segments parse; TTS payloads match provider contracts.
+- Crop: portrait→16:9 follows the subject vertically; landscape→9:16 follows it
+  horizontally; 4:5 and 1:1 use their own crop; segment cache keys change by crop.
 - CAS: ingesting the same file twice yields one store entry; GC keeps referenced copies.
 - Exports: EDL imports in Resolve with correct in/out frames at 30 fps.
 

@@ -17,9 +17,10 @@ SETTINGS_PATH = DATA / "settings.json"
 SECRETS_PATH = DATA / "secrets.json"
 LOCK = threading.Lock()
 
-SECRET_NAMES = ("groq", "openai", "deepgram", "elevenlabs", "cartesia")
+SECRET_NAMES = ("opencode", "groq", "openai", "deepgram", "elevenlabs", "cartesia")
 
 ENV_KEYS = {
+    "opencode": ("VIBECUT_OPENCODE_API_KEY", "OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"),
     "groq": ("VIBECUT_GROQ_API_KEY", "GROQ_API_KEY"),
     "openai": ("VIBECUT_OPENAI_API_KEY", "OPENAI_API_KEY"),
     "deepgram": ("VIBECUT_DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY"),

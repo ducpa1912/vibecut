@@ -1,8 +1,8 @@
 # Cloud speech: cheap options that beat local
 
 VibeCut is local-first. The Setup drawer adds optional cloud providers for the
-two stages where local models cost the most time or quality: transcription and
-voice over.
+stages where local models cost the most time or quality: intelligence,
+transcription and voice over.
 
 Keys are stored in `data/secrets.json` with mode `0600`. Environment variables
 win, so Docker and CI can inject keys without writing a file. If a key comes from
@@ -10,7 +10,8 @@ the environment, Setup shows that field read-only; change or unset the env var t
 replace it.
 
 ```
-GROQ_API_KEY   OPENAI_API_KEY   DEEPGRAM_API_KEY   ELEVENLABS_API_KEY
+OPENCODE_GO_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
+DEEPGRAM_API_KEY      ELEVENLABS_API_KEY
 ```
 
 The API only returns `configured: true/false`; it never returns a key.
@@ -65,31 +66,39 @@ regenerated.
 
 ## Intelligence
 
-VibeCut uses **OpenCode Go / DeepSeek V4.1 Flash** through the local OpenCode
-service. It uses the OpenCode login already stored on this machine, so no API
-key is copied into VibeCut.
+VibeCut uses **OpenCode Go / DeepSeek V4.1 Flash** through a project API key or
+the local OpenCode service.
+
+A key entered in **Setup → Intelligence** is stored only in this project's
+`data/secrets.json` (0600, gitignored). It is never returned by the API, never
+logged, and never committed. When a key exists, VibeCut calls the direct
+endpoint exclusively:
+
+```
+https://opencode.ai/inference/go/openai/v1/chat/completions
+```
+
+and does not borrow the shared local login. Leave the key blank to use the
+OpenCode CLI login instead.
 
 ```bash
 opencode auth login          # connect OpenCode Go
 opencode models | grep opencode-go/deepseek-v4.1-flash
 ```
 
-For each rewrite, VibeCut creates a session with:
+Direct API requests use:
 
 ```json
 {
-  "model": {
-    "id": "deepseek-v4.1-flash",
-    "providerID": "opencode-go",
-    "variant": "low"
-  }
+  "model": "deepseek-v4.1-flash",
+  "reasoning_effort": "low"
 }
 ```
 
-The `low` variant maps to `reasoningEffort: low`. The session is used for one
-`/generate` call and then deleted. A failure falls back to MLX, Ollama, then
-rules. The first rewrite of a job can take tens of seconds; lines are cached by
-context afterwards, so repeated renders are instant.
+Local-service requests create a session pinned to the same model and the `low`
+variant, generate once, then delete the session. A failure falls back to MLX,
+Ollama, then rules. The first rewrite of a job can take tens of seconds; lines
+are cached by context afterwards, so repeated renders are instant.
 
 DeepSeek V4.1 Flash on OpenCode Go:
 
