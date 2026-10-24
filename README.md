@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.9.1** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.9.2** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -51,7 +51,7 @@ The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 - **Voice script** preview lists the deduped lines with role, emotion and fit flags. The header shows which engine translated, and **Retry translation** clears that provider's cached lines and retries. The rewrite reads the full target-language voice script plus the video aesthetic, obeys per-beat character/word budgets, and writes complete sentences; overlong lines go through a condense pass instead of being cut into fragments. Hidden chain-of-thought is disabled for these structured calls because it could consume the whole output budget and return empty content. The prompt is documented in [docs/rewrite-prompt.md](docs/rewrite-prompt.md). Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot using the **full transcript** as context (the whole story, then one complete sentence per selected beat), with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
 - **Automation mixer** above the audio controls: time ruler with one section per clip, a music lane and a voice lane. The lane starts at 100% (0 dB); click to add a node, drag it anywhere in time or gain, double-click to remove, **Reset 100%** clears, **Flatten** puts every node back at 100%. The curve is cosine, so nodes are smooth peaks, and the same curve runs in ffmpeg. The original audio plus the Demucs music stem are drawn behind the lanes so a sudden loud, mute or dip is visible. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
 - **Platform presets** (TikTok, Reels, Shorts, Square, Landscape) set aspect, captions and safe-zone caption margin. **A/B hooks** queues the three strongest hooks at once. **Story arc order** reorders beats as setup → proof → payoff.
-- Music sources: your own track, CC0 library, Stable Audio Open Small or 1.0 with auto mood from the beats.
+- Music sources: your own track, CC0 library, Stable Audio Open Small/1.0, or **MusicGen Small** (ungated) with auto mood from the beats.
 - Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs, OpenAI `gpt-4o-mini-tts`, Groq Orpheus, Deepgram Aura, Cartesia Sonic 3.6. Cloud engines appear after a key is saved in **Setup**.
 - Translation runs per render: **OpenCode Go (DeepSeek V4.1 Flash)**, Apple Translation, Marian, Argos, or Ollama. OpenCode translation is on by default and is picked in the **Translate engine** list. If every engine fails, the panel offers **Offline translate setup (~250 MB)**.
 - **Hook lab** lists the strongest opening candidates with their resulting cut length and a plain-language reason; click one to re-plan.
@@ -168,8 +168,22 @@ Voice engines: Apple `say` (0 MB, built in), Piper medium (~170 MB), Kokoro int8
 (~220 MB), ElevenLabs, OpenAI, Groq, Deepgram, Cartesia (cloud keys in Setup).
 
 Music sources: your own folder `assets/music/library`, CC0 folder
-`assets/music/cc0`, Stable Audio Open Small (~2 GB) or Stable Audio Open 1.0
-(~6 GB). Both AI sources use an auto mood prompt built from the cut's beats.
+`assets/music/cc0`, Stable Audio Open Small (~2 GB), Stable Audio Open 1.0
+(~6 GB), or MusicGen Small (~2 GB, ungated). AI sources use an auto mood prompt
+built from the cut's beats.
+
+Stable Audio setup:
+
+```bash
+pip install "setuptools<80" stable-audio-tools
+# accept the license at https://huggingface.co/stabilityai/stable-audio-open-small
+hf auth login
+```
+
+The Stable Audio weights are gated. Without a Hugging Face login, use
+**MusicGen Small** — it is ungated, but slow on an M1. It generates a 4-second
+bed and loops it for the cut. Install dependencies with
+`pip install -r requirements-music.txt`.
 
 Translation happens once per render, on the cleaned and de-duplicated lines.
 Provider order is automatic: OpenCode Go first when Translation is enabled,

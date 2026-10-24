@@ -1510,3 +1510,28 @@ def test_clear_translation_memo_by_provider(tmp_path, monkeypatch):
     removed = audio.clear_translation_memo(["你好"], "zh", "en", "opencode")
     assert removed == 1
     assert audio._memo_get("zh", "en", "你好", "opencode") is None
+
+
+def test_generate_music_selects_worker(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio, "CACHE", tmp_path / "cache")
+    monkeypatch.setattr(audio, "stable_audio_available", lambda: True)
+    monkeypatch.setattr(audio, "musicgen_available", lambda: True)
+    monkeypatch.setattr(audio, "save_generated_asset", lambda *args: None)
+    calls = []
+
+    def fake_run(cmd, timeout=None, cancel_event=None):
+        calls.append(cmd)
+        target = __import__("pathlib").Path(cmd[cmd.index("--out") + 1])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"RIFF" + b"0" * 2048)
+
+    monkeypatch.setattr(audio, "_run", fake_run)
+    audio.generate_music("facebook/musicgen-small", "calm bed", 8.0)
+    assert "musicgen_generate.py" in calls[-1][1]
+    audio.generate_music("stabilityai/stable-audio-open-small", "calm bed", 8.0)
+    assert "music_generate.py" in calls[-1][1]
+
+
+def test_music_engine_lists_musicgen():
+    status = audio.engine_status()
+    assert "musicgen-small" in status["music"]

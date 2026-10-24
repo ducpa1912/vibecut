@@ -2330,6 +2330,7 @@
       cc0: "CC0 library",
       "stable-small": "Stable Audio Open Small",
       "stable-1.0": "Stable Audio Open 1.0",
+      "musicgen-small": "MusicGen Small · ungated",
     }[id] || id;
   }
 

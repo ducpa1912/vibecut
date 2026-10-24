@@ -216,8 +216,31 @@ def rewrite_models() -> list[dict]:
     ]
 
 
+def _hf_token_present() -> bool:
+    if any(os.environ.get(name) for name in (
+        "HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN",
+    )):
+        return True
+    return (Path.home() / ".cache" / "huggingface" / "token").is_file()
+
+
 def stable_audio_available() -> bool:
-    return _module("stable_audio_tools")
+    # stable-audio-tools imports pkg_resources via k_diffusion; setuptools >= 80
+    # removed it, so a bare module check gives a false positive. The weights are
+    # also gated, so a Hugging Face token must be present.
+    return (
+        _module("stable_audio_tools")
+        and _module("pkg_resources")
+        and _hf_token_present()
+    )
+
+
+def musicgen_available() -> bool:
+    return (
+        _module("transformers")
+        and _module("torch")
+        and _module("soundfile")
+    )
 
 
 def translate_providers() -> list[dict]:
@@ -289,9 +312,11 @@ def engine_status() -> dict:
         "cc0": {"available": True, "size_mb": 0,
                 "install": "Drop CC0 tracks in assets/music/cc0. Check each track license."},
         "stable-small": {"available": stable_audio_available(), "size_mb": 2048,
-                         "install": "pip install stable-audio-tools. Downloads ~2 GB on first use."},
+                         "install": "Accept the gated model license and run hf auth login. pip install 'setuptools<80' stable-audio-tools."},
         "stable-1.0": {"available": stable_audio_available(), "size_mb": 6192,
-                       "install": "pip install stable-audio-tools. Downloads ~6 GB on first use. CC-BY-NC weights."},
+                       "install": "Accept the gated model license and run hf auth login. pip install 'setuptools<80' stable-audio-tools. CC-BY-NC weights."},
+        "musicgen-small": {"available": musicgen_available(), "size_mb": 2200,
+                           "install": "pip install transformers torch soundfile. Ungated MusicGen Small; slow on M1, but no HF license gate."},
     }
     return {
         "voices": voices,
@@ -1385,18 +1410,30 @@ def generate_music(
     target = CACHE / "music" / f"{key}.wav"
     if target.is_file() and target.stat().st_size > 1024:
         return target
-    if not stable_audio_available():
+    is_musicgen = model.startswith("facebook/musicgen")
+    if not is_musicgen and not stable_audio_available():
         raise AudioError(
-            "Stable Audio is not installed. pip install stable-audio-tools "
-            "(first run downloads ~2 GB for Small, ~6 GB for 1.0)."
+            "Stable Audio is not usable. Install setuptools<80 and stable-audio-tools, "
+            "accept the model license on Hugging Face, then run hf auth login. "
+            "Or choose MusicGen Small, which is ungated."
         )
+    if is_musicgen and not musicgen_available():
+        raise AudioError("MusicGen needs transformers, torch and soundfile.")
     target.parent.mkdir(parents=True, exist_ok=True)
-    worker = ROOT / "tools" / "music_generate.py"
-    _run([
-        sys.executable, str(worker),
-        "--model", model, "--prompt", prompt,
-        "--seconds", f"{seconds:.1f}", "--out", str(target),
-    ], timeout=3600, cancel_event=cancel_event)
+    if is_musicgen:
+        worker = ROOT / "tools" / "musicgen_generate.py"
+        _run([
+            sys.executable, str(worker),
+            "--model", model, "--prompt", prompt,
+            "--seconds", f"{seconds:.1f}", "--out", str(target),
+        ], timeout=3600, cancel_event=cancel_event)
+    else:
+        worker = ROOT / "tools" / "music_generate.py"
+        _run([
+            sys.executable, str(worker),
+            "--model", model, "--prompt", prompt,
+            "--seconds", f"{seconds:.1f}", "--out", str(target),
+        ], timeout=3600, cancel_event=cancel_event)
     if not target.is_file() or target.stat().st_size <= 1024:
         raise AudioError("Stable Audio produced no file.")
     save_generated_asset(target, model, prompt, seconds)
@@ -2589,18 +2626,28 @@ def build_bed(
     elif music_plan.get("source") and music_plan.get("source") != "none":
         progress(0.90, "Preparing music bed")
         chosen: Path | None = resolve_music_track(scenes, clips, music_plan)
-        if chosen is None and music_plan.get("source") in {"stable-small", "stable-1.0"}:
-            model = (
-                "stabilityai/stable-audio-open-small"
-                if music_plan["source"] == "stable-small"
-                else "stabilityai/stable-audio-open-1.0"
-            )
+        if chosen is None and music_plan.get("source") in {"stable-small", "stable-1.0", "musicgen-small"}:
+            if music_plan["source"] == "musicgen-small":
+                model = "facebook/musicgen-small"
+                progress(0.90, "Generating AI music · MusicGen can take minutes")
+            else:
+                model = (
+                    "stabilityai/stable-audio-open-small"
+                    if music_plan["source"] == "stable-small"
+                    else "stabilityai/stable-audio-open-1.0"
+                )
+                progress(0.90, "Generating AI music · Stable Audio")
+            music_seconds = min(47.0, max(8.0, total))
+            if music_plan["source"] == "musicgen-small":
+                # MusicGen is autoregressive and much slower beyond a few
+                # seconds; generate a short ungated bed and loop it.
+                music_seconds = 4.0
             prompt = str(music_plan.get("prompt") or "").strip()
             if not prompt or prompt == "auto":
                 prompt = music_prompt(
-                    music_plan.get("moods") or scene_moods(scenes, clips), total,
+                    music_plan.get("moods") or scene_moods(scenes, clips), music_seconds,
                 )
-            chosen = generate_music(model, prompt, min(47.0, max(8.0, total)), cancel_event)
+            chosen = generate_music(model, prompt, music_seconds, cancel_event)
         if chosen and chosen.is_file():
             base_music_gain = float(music_plan.get("gain_db") or -18.0)
             beat_offset = 0.0

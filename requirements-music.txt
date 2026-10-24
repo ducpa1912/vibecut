@@ -1,0 +1,11 @@
+# Optional local music generation
+# Stable Audio is gated on Hugging Face: accept the model license, then login.
+setuptools<80
+stable-audio-tools>=0.0.19
+huggingface_hub
+
+# Ungated fallback (slow on Apple Silicon)
+transformers>=4.40
+torch
+torchaudio
+soundfile

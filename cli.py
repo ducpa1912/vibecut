@@ -206,7 +206,7 @@ def _add_render_options(parser: argparse.ArgumentParser) -> None:
                         default="say")
     parser.add_argument("--voice", default="", help="Voice id for the chosen engine.")
     parser.add_argument("--voice-rate", type=float, default=1.0)
-    parser.add_argument("--music", choices=("none", "library", "cc0", "stable-small", "stable-1.0"),
+    parser.add_argument("--music", choices=("none", "library", "cc0", "stable-small", "stable-1.0", "musicgen-small"),
                         default="none")
     parser.add_argument("--music-track", default="", help="Track path or name; empty = auto mood.")
     parser.add_argument("--music-prompt", default="", help="Prompt for Stable Audio; empty = auto.")

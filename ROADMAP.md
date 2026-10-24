@@ -7,6 +7,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.9.2 | 2026-10-24 | AI music fix | Stable Audio preflight + gated-weight guidance; ungated MusicGen Small fallback with worker |
 | 0.9.1 | 2026-10-24 | Script prompt v2 | full target voice script + aesthetic + char/word budgets, complete-sentence rules, condense repair pass |
 | 0.9.0 | 2026-10-24 | P1/P2 | usage/cost readout, live STT/TTS tests, Cartesia, smoothed crop paths, review links, keyboard editor, Whisper model manager |
 | 0.8.0 | 2026-10-24 | Bilateral crop | per-aspect attention crops for 9:16/4:5/1:1/16:9, true aspect reframe, direct OpenCode Go project key mode |
@@ -66,6 +67,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [!] SFX auto-placement (riser / whoosh / impact) — parked
 - [!] Voice cloning (Apple Personal, RVC, ElevenLabs) — parked, consent gated
 - [x] Music asset library (generated beds saved as reusable tracks)
+- [x] AI music: Stable Audio preflight, gated-weight guidance, MusicGen Small 4s loop fallback
 - [x] License registry + strict mode for music and voice assets
 
 ### Analysis
