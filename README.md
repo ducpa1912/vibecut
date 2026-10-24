@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.7.1** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.7.2** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -53,7 +53,7 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - **Platform presets** (TikTok, Reels, Shorts, Square, Landscape) set aspect, captions and safe-zone caption margin. **A/B hooks** queues the three strongest hooks at once. **Story arc order** reorders beats as setup → proof → payoff.
 - Music sources: your own track, CC0 library, Stable Audio Open Small or 1.0 with auto mood from the beats.
 - Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs, OpenAI `gpt-4o-mini-tts`, Groq Orpheus, Deepgram Aura. Cloud engines appear after a key is saved in **Setup**.
-- Translation runs per render: Apple Translation framework, Ollama, or the offline Argos package. If no engine is ready, the panel offers **Offline translate setup (~250 MB)**.
+- Translation runs per render: **OpenCode Go (DeepSeek V4.1 Flash)**, Apple Translation, Marian, Argos, or Ollama. OpenCode translation is on by default and is picked in the **Translate engine** list. If every engine fails, the panel offers **Offline translate setup (~250 MB)**.
 - **Hook lab** lists the strongest opening candidates with their resulting cut length and a plain-language reason; click one to re-plan.
 - Hover any timeline clip for the same **why** note; the drawer repeats it per beat. The hook panel explains why that beat is the opening, and the plan line explains the payoff.
 - **CC · transcript** appears when Whisper ran; open it for timestamped lines with search, click a line to copy it.
@@ -103,6 +103,10 @@ local MLX / Ollama / rules.
 The first rewrite of a job can take tens of seconds because the model reads the
 full transcript and reasons at the `low` level. The result is cached per line
 and context; later renders are instant.
+
+Translation is enabled by default. If you see **No translation provider
+worked**, open **Setup → Intelligence**, check **Translation**, or pick
+**OpenCode Go** in the audio panel's **Translate engine** list.
 
 ## CLI
 
@@ -160,11 +164,12 @@ Music sources: your own folder `assets/music/library`, CC0 folder
 (~6 GB). Both AI sources use an auto mood prompt built from the cut's beats.
 
 Translation happens once per render, on the cleaned and de-duplicated lines.
-Provider order is automatic: whatever is already working first (Argos offline
-pair, Apple Translation language pack, Marian/opus-mt, Ollama), then the ones
-that need a first-use download. The panel shows which engine will run and can
-force one. Translations are cached per job in
-`data/jobs/<id>/audio/translation.<lang>.json`.
+Provider order is automatic: OpenCode Go first when Translation is enabled,
+then whatever is already working (Argos offline pair, Apple Translation language
+pack, Marian/opus-mt, Ollama), then engines that need a first-use download. The
+panel shows which engine will run and can force one. Translations are cached in
+`data/cache/translate`, keyed by provider, so switching engines does not reuse a
+different engine's output.
 
 Voice script: Whisper repeats the same sentence on overlapping beats, so the
 script builder strips fillers and stage directions, drops near-duplicates,

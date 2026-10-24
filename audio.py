@@ -222,6 +222,13 @@ def stable_audio_available() -> bool:
 def translate_providers() -> list[dict]:
     providers = []
     providers.append({
+        "id": "opencode",
+        "name": "OpenCode Go · DeepSeek V4.1 Flash",
+        "available": opencode_available(),
+        "install": "Sign in to OpenCode Go. Uses the local OpenCode login; low reasoning.",
+        "size_mb": 0,
+    })
+    providers.append({
         "id": "apple_fm",
         "name": "Apple Translation (on-device)",
         "available": sys.platform == "darwin" and bool(
@@ -425,13 +432,15 @@ def _text_hash(*parts: str) -> str:
 MEMO = CACHE / "translate"
 
 
-def _memo_file(source: str, target: str, text: str) -> Path:
-    key = hashlib.sha1(f"{source}|{target}|{text}".encode("utf-8")).hexdigest()[:24]
+def _memo_file(source: str, target: str, text: str, provider: str = "auto") -> Path:
+    key = hashlib.sha1(
+        f"v2|{provider}|{source}|{target}|{text}".encode("utf-8")
+    ).hexdigest()[:24]
     return MEMO / key[:2] / f"{key}.txt"
 
 
-def _memo_get(source: str, target: str, text: str) -> str | None:
-    path = _memo_file(source, target, text)
+def _memo_get(source: str, target: str, text: str, provider: str = "auto") -> str | None:
+    path = _memo_file(source, target, text, provider)
     if not path.is_file():
         return None
     try:
@@ -441,10 +450,10 @@ def _memo_get(source: str, target: str, text: str) -> str | None:
     return value or None
 
 
-def _memo_put(source: str, target: str, text: str, value: str) -> None:
+def _memo_put(source: str, target: str, text: str, value: str, provider: str = "auto") -> None:
     if not value:
         return
-    path = _memo_file(source, target, text)
+    path = _memo_file(source, target, text, provider)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value, encoding="utf-8")
@@ -965,8 +974,7 @@ def apple_pair_status(source: str, target: str) -> str:
 
 
 def _translate_opencode(lines: list[str], source: str, target: str) -> list[str] | None:
-    settings = settings_store.load_settings().get("opencode") or {}
-    if not settings.get("use_translate") or not opencode_available():
+    if not opencode_available():
         return None
     prompt = (
         f"Translate these {len(lines)} subtitle lines into {_language_name(target)}. "
@@ -1063,8 +1071,9 @@ def translate_lines(
     target_code = (target or "en").split("-")[0]
     memo: dict[str, str] = {}
     missing: list[str] = []
+    requested = provider or "auto"
     for line in lines:
-        cached = _memo_get(source_code, target_code, line)
+        cached = _memo_get(source_code, target_code, line, requested)
         if cached:
             memo[line] = cached
         elif line not in missing:
@@ -1087,16 +1096,22 @@ def translate_lines(
             if result:
                 for original, translated in zip(missing, result):
                     memo[original] = translated
-                    _memo_put(source_code, target_code, original, translated)
+                    _memo_put(source_code, target_code, original, translated, requested)
                 break
             errors.append(candidate)
         else:
+            hint = (
+                " OpenCode Go is available: enable Translation in Setup → Intelligence "
+                "or pick OpenCode as the Translate engine."
+                if opencode_available()
+                else " Keep one of: Apple Translation language pack "
+                "(System Settings → General → Language & Region), argostranslate, "
+                "Marian (pip install transformers torch), or Ollama (VIBECUT_LLM_URL)."
+            )
             raise AudioError(
                 "No translation provider worked (tried: "
                 + ", ".join(errors)
-                + "). Keep one of: Apple Translation language pack "
-                "(System Settings → General → Language & Region), argostranslate, "
-                "Marian (pip install transformers torch), or Ollama (VIBECUT_LLM_URL)."
+                + ")." + hint
             )
     return [memo.get(line) or line for line in lines]
 

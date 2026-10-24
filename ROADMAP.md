@@ -7,6 +7,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.7.2 | 2026-10-24 | OpenCode translation | OpenCode Go becomes a translation provider, on by default; provider-scoped translation memo; line-end facts preserved through fit |
 | 0.7.1 | 2026-10-24 | OpenCode Go | Intelligence switched from OpenRouter to local OpenCode Go / DeepSeek V4.1 Flash, `low` variant, session-per-call, no key copy |
 | 0.7.0 | 2026-10-24 | Cloud config | Setup drawer, cloud STT (Groq/OpenAI/Deepgram), cloud TTS (OpenAI/Groq/Deepgram), secret store 0600 |
 | 0.1.0 | 2026-10-23 | Core cut | probe, scene scan, stills, scoring, plans, 9:16 render |
@@ -26,7 +27,8 @@ this table, and gets one commit. Patch bumps for fixes only.
 
 ### Audio script and language
 - [x] Clean, de-duplicate and time-fit voice lines
-- [x] Literal translation with provider ladder (Apple / Ollama / Marian / Argos)
+- [x] Literal translation with provider ladder (OpenCode / Apple / Ollama / Marian / Argos)
+- [x] Translation memo keyed by provider
 - [x] Global translation memo cache
 - [x] Rewrite styles: faithful, smooth, viral (fit to short duration)
 - [x] Full-transcript context for the rewrite (whole story before writing the cut)

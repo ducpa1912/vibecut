@@ -2129,6 +2129,7 @@
       argos: "Argos (offline)",
       marian: "Marian opus-mt",
       ollama: "Ollama",
+      opencode: "OpenCode Go · DeepSeek",
     }[id] || id;
   }
 

@@ -99,5 +99,19 @@ DeepSeek V4.1 Flash on OpenCode Go:
 - A full-context rewrite (~3k input + 1k output) costs about $0.001–0.002.
 - Not used for training; 0-day retention per OpenCode Go docs.
 
+### Translation
+
+OpenCode Go also translates subtitle lines, one batch per render. **Setup →
+Intelligence → Translation** is on by default; the audio panel's **Translate
+engine** list also offers OpenCode Go explicitly. The provider ladder is:
+
+```
+OpenCode Go → Argos → Apple Translation → Marian → Ollama
+```
+
+Translation cache entries are keyed by provider, so switching from Argos to
+OpenCode does not reuse the old engine's output. If every provider fails, VibeCut
+shows the install hints and keeps the literal script.
+
 OpenCode Go is optional. Local MLX, Ollama, and the rules fallback stay active
 without it.

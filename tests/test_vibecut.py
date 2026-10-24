@@ -419,6 +419,7 @@ def test_refit_script_dedupes_translated_lines():
 
 
 def test_provider_order_prefers_ready_engine(monkeypatch):
+    monkeypatch.setattr(audio, "opencode_available", lambda: False)
     monkeypatch.setattr(audio, "argos_pair_ready", lambda source, target: True)
     monkeypatch.setattr(audio, "apple_pair_status", lambda source, target: "supported")
     monkeypatch.setattr(
@@ -529,6 +530,7 @@ def test_translate_memo_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(audio, "MEMO", tmp_path / "translate")
     audio._memo_put("zh", "en", "你好", "hello")
     assert audio._memo_get("zh", "en", "你好") == "hello"
+    assert audio._memo_get("zh", "en", "你好", "opencode") is None
     assert audio._memo_get("zh", "en", "别的") is None
     lines = audio.translate_lines(["你好"], "zh", "en")
     assert lines == ["hello"]

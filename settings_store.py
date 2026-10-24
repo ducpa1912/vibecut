@@ -34,7 +34,7 @@ DEFAULTS = {
         "variant": "low",
         "use_rewrite": True,
         "use_brief": True,
-        "use_translate": False,
+        "use_translate": True,
     },
     "stt": {"provider": "auto", "language": "en"},
     "tts": {"provider": "auto"},
@@ -70,7 +70,7 @@ def _migrate(stored: dict) -> dict:
             "variant": "low",
             "use_rewrite": bool(legacy.get("use_rewrite", True)),
             "use_brief": bool(legacy.get("use_brief", True)),
-            "use_translate": bool(legacy.get("use_translate", False)),
+            "use_translate": True,
         }
     return stored
 
