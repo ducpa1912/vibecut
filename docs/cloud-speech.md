@@ -10,8 +10,7 @@ the environment, Setup shows that field read-only; change or unset the env var t
 replace it.
 
 ```
-OPENROUTER_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
-DEEPGRAM_API_KEY     ELEVENLABS_API_KEY
+GROQ_API_KEY   OPENAI_API_KEY   DEEPGRAM_API_KEY   ELEVENLABS_API_KEY
 ```
 
 The API only returns `configured: true/false`; it never returns a key.
@@ -66,21 +65,39 @@ regenerated.
 
 ## Intelligence
 
-OpenRouter is locked to one model so costs stay predictable:
+VibeCut uses **OpenCode Go / DeepSeek V4.1 Flash** through the local OpenCode
+service. It uses the OpenCode login already stored on this machine, so no API
+key is copied into VibeCut.
+
+```bash
+opencode auth login          # connect OpenCode Go
+opencode models | grep opencode-go/deepseek-v4.1-flash
+```
+
+For each rewrite, VibeCut creates a session with:
 
 ```json
 {
-  "model": "z-ai/glm-5.3-flash:floor",
-  "reasoning": {"effort": "low"},
-  "provider": {"sort": "price"}
+  "model": {
+    "id": "deepseek-v4.1-flash",
+    "providerID": "opencode-go",
+    "variant": "low"
+  }
 }
 ```
 
-- GLM 5.3 Flash: $0.04119 / $0.12 per 1M input/output tokens.
-- `:floor` routes to the cheapest provider for that model.
-- Reasoning is locked to `low`; the rewrite task does not need more.
-- A full-context rewrite (~3k input + 1k output) costs about $0.0003.
-- Used for script rewrite and story brief; optionally translation. A failure
-  falls back to MLX, Ollama, then rules.
+The `low` variant maps to `reasoningEffort: low`. The session is used for one
+`/generate` call and then deleted. A failure falls back to MLX, Ollama, then
+rules. The first rewrite of a job can take tens of seconds; lines are cached by
+context afterwards, so repeated renders are instant.
 
-Get a key at <https://openrouter.ai/keys>. Add it in **Setup → Intelligence**.
+DeepSeek V4.1 Flash on OpenCode Go:
+
+- Included in the Go plan; monthly usage limit $80 (Go) / $160 (Go Plus).
+- Token price: $0.15 input / $0.60 output per 1M off-peak;
+  $0.30 / $1.20 at peak.
+- A full-context rewrite (~3k input + 1k output) costs about $0.001–0.002.
+- Not used for training; 0-day retention per OpenCode Go docs.
+
+OpenCode Go is optional. Local MLX, Ollama, and the rules fallback stay active
+without it.

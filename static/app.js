@@ -16,10 +16,10 @@
     setupClose: $("#setup-close"),
     setupSave: $("#setup-save"),
     setupStatus: $("#setup-status"),
-    setupOpenrouterEnabled: $("#setup-openrouter-enabled"),
-    setupOpenrouterKey: $("#setup-openrouter-key"),
-    setupOpenrouterModel: $("#setup-openrouter-model"),
-    setupOpenrouterReasoning: $("#setup-openrouter-reasoning"),
+    setupOpencodeEnabled: $("#setup-opencode-enabled"),
+    setupOpencodeStatus: $("#setup-opencode-status"),
+    setupOpencodeModel: $("#setup-opencode-model"),
+    setupOpencodeVariant: $("#setup-opencode-variant"),
     setupUseRewrite: $("#setup-use-rewrite"),
     setupUseBrief: $("#setup-use-brief"),
     setupUseTranslate: $("#setup-use-translate"),
@@ -30,7 +30,7 @@
     setupOpenaiKey: $("#setup-openai-key"),
     setupDeepgramKey: $("#setup-deepgram-key"),
     setupElevenlabsKey: $("#setup-elevenlabs-key"),
-    setupTestOpenrouter: $("#setup-test-openrouter"),
+    setupTestOpencode: $("#setup-test-opencode"),
     setupTestStt: $("#setup-test-stt"),
     setupTestTts: $("#setup-test-tts"),
     dropzone: $("#dropzone"),
@@ -222,24 +222,27 @@
     const settings = data.settings || {};
     const secrets = data.secrets || {};
     const sources = data.sources || {};
-    const openrouter = settings.openrouter || {};
-    dom.setupOpenrouterEnabled.checked = openrouter.enabled !== false;
-    dom.setupOpenrouterModel.value = openrouter.model || "z-ai/glm-5.3-flash:floor";
-    dom.setupOpenrouterReasoning.value = openrouter.reasoning || "low";
-    dom.setupUseRewrite.checked = openrouter.use_rewrite !== false;
-    dom.setupUseBrief.checked = openrouter.use_brief !== false;
-    dom.setupUseTranslate.checked = !!openrouter.use_translate;
+    const opencode = settings.opencode || {};
+    dom.setupOpencodeEnabled.checked = opencode.enabled !== false;
+    dom.setupOpencodeModel.value = opencode.model || "deepseek-v4.1-flash";
+    dom.setupOpencodeVariant.value = opencode.variant || "low";
+    dom.setupUseRewrite.checked = opencode.use_rewrite !== false;
+    dom.setupUseBrief.checked = opencode.use_brief !== false;
+    dom.setupUseTranslate.checked = !!opencode.use_translate;
+    const runtime = data.runtime || {};
+    dom.setupOpencodeStatus.textContent = runtime.opencode
+      ? "Local OpenCode service ready · uses your OpenCode Go login · low reasoning."
+      : "OpenCode CLI not found. Install OpenCode and sign in to OpenCode Go, or use local MLX / Ollama.";
+    dom.setupOpencodeStatus.classList.toggle("warn", !runtime.opencode);
     dom.setupSttProvider.value = (settings.stt || {}).provider || "auto";
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
     dom.setupTtsProvider.value = (settings.tts || {}).provider || "auto";
-    setSecretHint(dom.setupOpenrouterKey, !!secrets.openrouter, sources.openrouter);
     setSecretHint(dom.setupGroqKey, !!secrets.groq, sources.groq);
     setSecretHint(dom.setupOpenaiKey, !!secrets.openai, sources.openai);
     setSecretHint(dom.setupDeepgramKey, !!secrets.deepgram, sources.deepgram);
     setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
-    ["openrouter", "groq", "openai", "deepgram", "elevenlabs"].forEach((name) => {
+    ["groq", "openai", "deepgram", "elevenlabs"].forEach((name) => {
       const input = {
-        openrouter: dom.setupOpenrouterKey,
         groq: dom.setupGroqKey,
         openai: dom.setupOpenaiKey,
         deepgram: dom.setupDeepgramKey,
@@ -262,9 +265,9 @@
       const data = await api("/api/settings");
       applySetup(data);
       if (quiet) return data;
-      dom.setupStatus.textContent = data.secrets?.openrouter
-        ? "OpenRouter key configured."
-        : "No cloud keys yet. Local engines are active.";
+      dom.setupStatus.textContent = data.runtime?.opencode
+        ? "OpenCode Go is ready through the local login."
+        : "OpenCode service not found. Local engines are active.";
       return data;
     } catch (error) {
       if (!quiet) dom.setupStatus.textContent = error.message;
@@ -284,7 +287,6 @@
 
   function setupSecrets() {
     const values = {
-      openrouter: dom.setupOpenrouterKey.value.trim(),
       groq: dom.setupGroqKey.value.trim(),
       openai: dom.setupOpenaiKey.value.trim(),
       deepgram: dom.setupDeepgramKey.value.trim(),
@@ -299,10 +301,10 @@
     try {
       const payload = {
         settings: {
-          openrouter: {
-            enabled: dom.setupOpenrouterEnabled.checked,
-            model: dom.setupOpenrouterModel.value.trim() || "z-ai/glm-5.3-flash:floor",
-            reasoning: "low",
+          opencode: {
+            enabled: dom.setupOpencodeEnabled.checked,
+            model: dom.setupOpencodeModel.value.trim() || "deepseek-v4.1-flash",
+            variant: "low",
             use_rewrite: dom.setupUseRewrite.checked,
             use_brief: dom.setupUseBrief.checked,
             use_translate: dom.setupUseTranslate.checked,
@@ -364,7 +366,7 @@
       node.addEventListener("click", closeSetup);
     });
     dom.setupSave.addEventListener("click", saveSetup);
-    dom.setupTestOpenrouter.addEventListener("click", () => testSetup("openrouter", dom.setupTestOpenrouter));
+    dom.setupTestOpencode.addEventListener("click", () => testSetup("opencode", dom.setupTestOpencode));
     dom.setupTestStt.addEventListener("click", () => testSetup("stt", dom.setupTestStt));
     dom.setupTestTts.addEventListener("click", () => testSetup("tts", dom.setupTestTts));
     document.addEventListener("keydown", (event) => {

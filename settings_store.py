@@ -17,10 +17,9 @@ SETTINGS_PATH = DATA / "settings.json"
 SECRETS_PATH = DATA / "secrets.json"
 LOCK = threading.Lock()
 
-SECRET_NAMES = ("openrouter", "groq", "openai", "deepgram", "elevenlabs", "cartesia")
+SECRET_NAMES = ("groq", "openai", "deepgram", "elevenlabs", "cartesia")
 
 ENV_KEYS = {
-    "openrouter": ("VIBECUT_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"),
     "groq": ("VIBECUT_GROQ_API_KEY", "GROQ_API_KEY"),
     "openai": ("VIBECUT_OPENAI_API_KEY", "OPENAI_API_KEY"),
     "deepgram": ("VIBECUT_DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY"),
@@ -29,10 +28,10 @@ ENV_KEYS = {
 }
 
 DEFAULTS = {
-    "openrouter": {
+    "opencode": {
         "enabled": True,
-        "model": "z-ai/glm-5.3-flash:floor",
-        "reasoning": "low",
+        "model": "deepseek-v4.1-flash",
+        "variant": "low",
         "use_rewrite": True,
         "use_brief": True,
         "use_translate": False,
@@ -62,8 +61,22 @@ def _merge(base: dict, patch: dict) -> dict:
     return result
 
 
+def _migrate(stored: dict) -> dict:
+    legacy = stored.pop("openrouter", None)
+    if isinstance(legacy, dict) and "opencode" not in stored:
+        stored["opencode"] = {
+            "enabled": bool(legacy.get("enabled", True)),
+            "model": "deepseek-v4.1-flash",
+            "variant": "low",
+            "use_rewrite": bool(legacy.get("use_rewrite", True)),
+            "use_brief": bool(legacy.get("use_brief", True)),
+            "use_translate": bool(legacy.get("use_translate", False)),
+        }
+    return stored
+
+
 def load_settings() -> dict:
-    return _merge(DEFAULTS, _read(SETTINGS_PATH))
+    return _merge(DEFAULTS, _migrate(_read(SETTINGS_PATH)))
 
 
 def save_settings(patch: dict) -> dict:

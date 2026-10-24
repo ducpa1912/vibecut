@@ -208,10 +208,10 @@ def rewrite_models() -> list[dict]:
          "model": "on-device 3B",
          "available": sys.platform == "darwin", "size_mb": 0,
          "install": "enable Apple Intelligence on macOS 26"},
-        {"id": "openrouter", "name": "OpenRouter (cheap cloud)",
-         "model": openrouter_model() if openrouter_ready() else "z-ai/glm-5.3-flash:floor",
-         "available": openrouter_ready(), "size_mb": 0,
-         "install": "Add an OpenRouter key in Setup. Low reasoning, price-floor routing."},
+        {"id": "opencode", "name": "OpenCode Go · DeepSeek V4.1 Flash",
+         "model": opencode_model() if opencode_available() else "deepseek-v4.1-flash",
+         "available": opencode_available(), "size_mb": 0,
+         "install": "Install OpenCode and sign in to OpenCode Go. Uses the local login; low reasoning."},
     ]
 
 
@@ -964,16 +964,16 @@ def apple_pair_status(source: str, target: str) -> str:
     return status
 
 
-def _translate_openrouter(lines: list[str], source: str, target: str) -> list[str] | None:
-    settings = settings_store.load_settings().get("openrouter") or {}
-    if not settings.get("use_translate") or not openrouter_ready():
+def _translate_opencode(lines: list[str], source: str, target: str) -> list[str] | None:
+    settings = settings_store.load_settings().get("opencode") or {}
+    if not settings.get("use_translate") or not opencode_available():
         return None
     prompt = (
         f"Translate these {len(lines)} subtitle lines into {_language_name(target)}. "
         "Keep the same count and order, natural spoken style, JSON array only:\n"
         + json.dumps(lines, ensure_ascii=False)
     )
-    raw = _openrouter_text(prompt, json_mode=False, max_tokens=1600)
+    raw = _opencode_text(prompt, json_mode=False, max_tokens=1600)
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -1024,9 +1024,9 @@ def _ready_providers(source: str, target: str) -> list[str]:
 def _rewrite_candidates() -> list[str]:
     """Rewrite-specific order: configured cloud model, local models, rules."""
     order: list[str] = []
-    settings = settings_store.load_settings().get("openrouter") or {}
-    if openrouter_ready() and settings.get("use_rewrite", True):
-        order.append("openrouter")
+    settings = settings_store.load_settings().get("opencode") or {}
+    if opencode_available() and settings.get("use_rewrite", True):
+        order.append("opencode")
     if mlx_lm_available():
         order.append("mlx")
     if os.environ.get("VIBECUT_LLM_URL"):
@@ -1039,9 +1039,9 @@ def _provider_order(source: str, target: str, provider: str) -> list[str]:
     if provider and provider != "auto":
         return [provider]
     order: list[str] = []
-    settings = settings_store.load_settings().get("openrouter") or {}
-    if settings.get("use_translate") and openrouter_ready():
-        order.append("openrouter")
+    settings = settings_store.load_settings().get("opencode") or {}
+    if settings.get("use_translate") and opencode_available():
+        order.append("opencode")
     order.extend(_ready_providers(source, target))
     # Anything that might download or install goes after what already works.
     for candidate in ("argos", "marian", "apple_fm", "ollama"):
@@ -1072,8 +1072,8 @@ def translate_lines(
     if missing:
         errors: list[str] = []
         for candidate in _provider_order(source_code, target_code, provider):
-            if candidate == "openrouter":
-                result = _translate_openrouter(missing, source_code, target_code)
+            if candidate == "opencode":
+                result = _translate_opencode(missing, source_code, target_code)
             elif candidate == "apple_fm":
                 result = _translate_apple(missing, source_code, target_code, target_name)
             elif candidate == "ollama":
@@ -1509,18 +1509,18 @@ def story_brief(text: str, target: str, provider: str = "auto") -> dict | None:
 
 
 def _llm_text(prompt: str, provider: str = "auto") -> str | None:
-    """One model call: configured OpenRouter first, then MLX, then Ollama."""
-    settings = settings_store.load_settings().get("openrouter") or {}
+    """One model call: OpenCode Go first, then MLX, then Ollama."""
+    settings = settings_store.load_settings().get("opencode") or {}
     cloud_ok = (
-        provider in {"openrouter", "auto", "argos", "marian", "apple_fm", ""}
+        provider in {"opencode", "auto", "argos", "marian", "apple_fm", ""}
         and settings.get("use_brief", True)
-        and openrouter_ready()
+        and opencode_available()
     )
     if cloud_ok:
-        text = _openrouter_text(prompt, json_mode=True)
+        text = _opencode_text(prompt, json_mode=True)
         if text:
             return text
-        if provider == "openrouter":
+        if provider == "opencode":
             return None
     if provider in {"mlx", "auto"} and mlx_lm_available():
         text = _mlx_text(prompt)
@@ -1567,65 +1567,114 @@ def _mlx_text(prompt: str) -> str | None:
     return (result.stdout or "").strip() or None
 
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_LAST_ERROR = ""
+OPENCODE_PROVIDER = "opencode-go"
+OPENCODE_DEFAULT_MODEL = "deepseek-v4.1-flash"
+OPENCODE_DEFAULT_VARIANT = "low"
+OPENCODE_LAST_ERROR = ""
 
 
-def openrouter_ready() -> bool:
-    settings = settings_store.load_settings().get("openrouter") or {}
-    return bool(settings_store.get_secret("openrouter")) and bool(settings.get("enabled", True))
+def opencode_bin() -> str | None:
+    path = os.environ.get("VIBECUT_OPENCODE_BIN") or shutil.which("opencode")
+    if path:
+        return path
+    candidate = Path.home() / ".opencode" / "bin" / "opencode"
+    return str(candidate) if candidate.is_file() else None
 
 
-def openrouter_model() -> str:
-    settings = settings_store.load_settings().get("openrouter") or {}
-    return str(settings.get("model") or "z-ai/glm-5.3-flash:floor")
+def opencode_available() -> bool:
+    settings = settings_store.load_settings().get("opencode") or {}
+    return bool(opencode_bin()) and bool(settings.get("enabled", True))
 
 
-def _openrouter_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200) -> str | None:
-    global OPENROUTER_LAST_ERROR
-    key = settings_store.get_secret("openrouter")
-    if not key:
-        OPENROUTER_LAST_ERROR = "No OpenRouter key."
+def opencode_model() -> str:
+    settings = settings_store.load_settings().get("opencode") or {}
+    return str(settings.get("model") or OPENCODE_DEFAULT_MODEL)
+
+
+def opencode_variant() -> str:
+    settings = settings_store.load_settings().get("opencode") or {}
+    variant = str(settings.get("variant") or OPENCODE_DEFAULT_VARIANT).lower()
+    return variant if variant in {"low", "high", "max"} else OPENCODE_DEFAULT_VARIANT
+
+
+def _opencode_api(args: list[str], body: dict | None = None, allow_empty: bool = False) -> dict | None:
+    """Call the local OpenCode service with the user's own stored login."""
+    global OPENCODE_LAST_ERROR
+    binary = opencode_bin()
+    if not binary:
+        OPENCODE_LAST_ERROR = "OpenCode CLI not found. Install OpenCode and sign in to OpenCode Go."
         return None
-    payload = {
-        "model": openrouter_model(),
-        "messages": [
-            {"role": "system", "content": "You write short vertical video voice overs. Reply with JSON when asked."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.4,
-        "max_tokens": max_tokens,
-        "reasoning": {"effort": "low"},
-        "provider": {"sort": "price"},
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    request = urllib.request.Request(
-        OPENROUTER_URL,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:8787",
-            "X-Title": "VibeCut",
-        },
-        method="POST",
-    )
+    command = [binary, "api", *args]
+    if body is not None:
+        command.extend(["-d", json.dumps(body, ensure_ascii=False)])
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        OPENROUTER_LAST_ERROR = str(exc)[:240]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=240)
+    except (OSError, subprocess.SubprocessError) as exc:
+        OPENCODE_LAST_ERROR = str(exc)[:240]
         return None
-    OPENROUTER_LAST_ERROR = ""
-    choices = data.get("choices") or []
-    if not choices:
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        OPENCODE_LAST_ERROR = (message[-240:] or f"opencode api exited {result.returncode}")
         return None
-    message = choices[0].get("message") or {}
-    content = message.get("content")
-    if isinstance(content, list):
-        content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
-    return str(content or "").strip() or None
+    output = (result.stdout or "").strip()
+    if not output:
+        if allow_empty:
+            return {}
+        OPENCODE_LAST_ERROR = "OpenCode returned no output."
+        return None
+    try:
+        return json.loads(output)
+    except ValueError:
+        start = output.find("{")
+        end = output.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                return json.loads(output[start:end + 1])
+            except ValueError:
+                pass
+    OPENCODE_LAST_ERROR = f"Could not parse OpenCode output: {output[:160]}"
+    return None
+
+
+def _opencode_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200) -> str | None:
+    """Generate text through OpenCode Go / DeepSeek V4.1 Flash at low reasoning.
+
+    A fresh session pins the model and the ``low`` variant, then ``/generate``
+    returns plain text. The session is removed afterwards. The stored OpenCode
+    login is used, so no API key is copied into VibeCut.
+    """
+    global OPENCODE_LAST_ERROR
+    OPENCODE_LAST_ERROR = ""
+    if not opencode_available():
+        OPENCODE_LAST_ERROR = "OpenCode is not installed or OpenCode Go is disabled."
+        return None
+    created = _opencode_api(["post", "/api/session"], {
+        "title": "VibeCut rewrite",
+        "model": {
+            "id": opencode_model(),
+            "providerID": OPENCODE_PROVIDER,
+            "variant": opencode_variant(),
+        },
+    })
+    session_id = str(((created or {}).get("data") or {}).get("id") or "")
+    if not session_id:
+        if not OPENCODE_LAST_ERROR:
+            OPENCODE_LAST_ERROR = "OpenCode could not create a session."
+        return None
+    try:
+        generated = _opencode_api(
+            ["post", f"/api/session/{session_id}/generate"],
+            {"prompt": prompt},
+        )
+    finally:
+        _opencode_api(["delete", f"/api/session/{session_id}"], allow_empty=True)
+    value = str(((generated or {}).get("data") or {}).get("text") or "").strip()
+    if value:
+        OPENCODE_LAST_ERROR = ""
+        return value
+    if not OPENCODE_LAST_ERROR:
+        OPENCODE_LAST_ERROR = "OpenCode returned an empty reply."
+    return None
 
 
 def _rewrite_prompt(
@@ -1660,6 +1709,8 @@ def _rewrite_prompt(
     ]
     if brief:
         parts.append("STORY BRIEF:\n" + json.dumps(brief, ensure_ascii=False))
+    if context_text and (context or {}).get("full_context"):
+        parts.append("FULL TRANSCRIPT:\n" + context_text[:4000])
     if context_text:
         query = " ".join(str(row["source_line"]) or str(row["literal"]) for row in rows)
         relevant = retrieve_lines(context_text, query, limit=8)
@@ -1669,14 +1720,14 @@ def _rewrite_prompt(
     return "\n".join(parts)
 
 
-def _rewrite_openrouter(
+def _rewrite_opencode(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
     context: dict | None = None,
 ) -> list[str] | None:
-    settings = settings_store.load_settings().get("openrouter") or {}
-    if mode == "literal" or not settings.get("use_rewrite", True) or not openrouter_ready():
+    settings = settings_store.load_settings().get("opencode") or {}
+    if mode == "literal" or not settings.get("use_rewrite", True) or not opencode_available():
         return None
-    raw = _openrouter_text(
+    raw = _opencode_text(
         _rewrite_prompt(script, source, target, mode, literal, context),
         json_mode=True,
     )
@@ -1691,12 +1742,19 @@ def _rewrite_openrouter(
         return None
     if not isinstance(values, list) or len(values) != len(script):
         return None
-    fits = all(
-        estimate_seconds(str(value), float(script[index].get("rate") or 1.0))
-        <= max(1.0, float(script[index].get("duration") or 1.0))
-        for index, value in enumerate(values)
-    )
-    return [str(value).strip() for value in values] if fits else None
+    cleaned: list[str] = []
+    for index, value in enumerate(values):
+        text = str(value).strip()
+        rate = float(script[index].get("rate") or 1.0)
+        # The TTS bed can compress up to 1.35x, so a minor overshoot must not
+        # cut a fact off the end of the line.
+        budget = max(1.0, float(script[index].get("duration") or 1.0) + 0.25)
+        if estimate_seconds(text, rate) > budget:
+            text = trim_to_seconds(text, budget, rate)
+        if not text:
+            return None
+        cleaned.append(text)
+    return cleaned
 
 
 def _rewrite_mlx(
@@ -1738,6 +1796,7 @@ def transcript_context(
     target_lang: str | None = None,
     translate_provider: str = "auto",
     brief_provider: str = "auto",
+    rewrite_provider: str = "auto",
 ) -> dict:
     """Whole-video context plus one complete source line per selected beat."""
     if cap_chars is None:
@@ -1782,9 +1841,24 @@ def transcript_context(
             context["target_language"] = target
         except AudioError:
             context["target_text"] = None
-    brief = story_brief(context.get("target_text") or full, target or context["language"], brief_provider)
-    if brief:
-        context["brief"] = brief
+    opencode_settings = settings_store.load_settings().get("opencode") or {}
+    opencode_rewrite = (
+        rewrite_provider in {"auto", "opencode", ""}
+        and opencode_available()
+        and bool(opencode_settings.get("use_rewrite", True))
+    )
+    if opencode_rewrite:
+        # DeepSeek can read the whole transcript in one call; skip the extra
+        # story-brief round trip.
+        context["full_context"] = True
+    else:
+        brief = story_brief(
+            context.get("target_text") or full,
+            target or context["language"],
+            brief_provider,
+        )
+        if brief:
+            context["brief"] = brief
     return context
 
 
@@ -1864,7 +1938,7 @@ def refit_script(lines: list[dict], base_rate: float = 1.0) -> list[dict]:
         accepted.append(norm)
         duration = float(line.get("duration") or 0.0)
         rate = float(line.get("rate") or base_rate)
-        budget = max(0.7, duration - 0.25)
+        budget = max(0.7, duration)
         fitted = trim_to_seconds(text, budget, rate)
         if not fitted:
             continue
@@ -2051,7 +2125,7 @@ def build_bed(
             transcript_context(
                 segments, clips, scenes, source_lang,
                 target_lang=target, translate_provider=provider,
-                brief_provider=provider,
+                brief_provider=provider, rewrite_provider=rewrite_provider,
             )
             if segments else None
         )
@@ -2280,7 +2354,7 @@ def prune_cache(max_gb: float = 2.0, days: float = 14.0) -> dict:
 # ---------------------------------------------------------------- rewrite styles
 
 REWRITE = CACHE / "rewrite"
-REWRITE_VERSION = 3
+REWRITE_VERSION = 4
 
 CONNECTORS = {
     "en": ["and", "but", "so", "then", "turns out"],
@@ -2545,8 +2619,8 @@ def adapt_script(
             else:
                 order = _rewrite_candidates()
             for candidate in order:
-                if candidate == "openrouter":
-                    rewritten = _rewrite_openrouter(
+                if candidate == "opencode":
+                    rewritten = _rewrite_opencode(
                         subset, source_lang, target_lang, mode, subset_literal, context,
                     )
                 elif candidate in {"llm", "ollama"}:
@@ -2562,12 +2636,14 @@ def adapt_script(
                 if rewritten:
                     used = "llm" if candidate in {"llm", "ollama"} else candidate
                     break
-            if not rewritten:
+            fallback = not rewritten
+            if fallback:
                 rewritten = subset_literal
             for offset_index, index in enumerate(missing):
                 value = rewritten[offset_index]
                 cached[index] = value
-                _rewrite_put(source_lang, target_lang, mode, literals[index], value, context)
+                if not fallback:
+                    _rewrite_put(source_lang, target_lang, mode, literals[index], value, context)
         literals = [cached.get(index, literals[index]) for index in range(len(lines))]
 
     source_facts = _facts(originals)

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
-  <link rel="stylesheet" href="/static/style.css?v=0.7.0c">
-  <script defer src="/static/app.js?v=0.7.0c"></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.7.1">
+  <script defer src="/static/app.js?v=0.7.1"></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -384,26 +384,23 @@
         <button id="setup-close" class="icon-btn" type="button" aria-label="Close">×</button>
       </header>
       <div class="setup-body">
-        <p class="setup-note">Keys stay on this machine in <code>data/secrets.json</code> (0600). Nothing is enabled until you save a key. Local engines always remain the fallback.</p>
+        <p class="setup-note">OpenCode Go uses the login already stored on this machine — no key copy. Speech keys stay in <code>data/secrets.json</code> (0600). Local engines always remain the fallback.</p>
 
         <section class="setup-section">
           <div class="setup-title">
             <h3>Intelligence</h3>
-            <span class="setup-badge">OpenRouter</span>
+            <span class="setup-badge">OpenCode Go</span>
           </div>
-          <label class="setup-check"><input id="setup-openrouter-enabled" type="checkbox"> Use OpenRouter for rewriting and story briefs</label>
-          <label class="setup-field">
-            <span>API key</span>
-            <input id="setup-openrouter-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…">
-          </label>
+          <label class="setup-check"><input id="setup-opencode-enabled" type="checkbox"> Use OpenCode Go for rewriting and story briefs</label>
+          <p id="setup-opencode-status" class="setup-hint">Checking the local OpenCode service…</p>
           <div class="setup-row">
             <label class="setup-field">
               <span>Model</span>
-              <input id="setup-openrouter-model" type="text" value="z-ai/glm-5.3-flash:floor" readonly>
+              <input id="setup-opencode-model" type="text" value="deepseek-v4.1-flash" readonly>
             </label>
             <label class="setup-field narrow">
               <span>Reasoning</span>
-              <input id="setup-openrouter-reasoning" type="text" value="low" readonly>
+              <input id="setup-opencode-variant" type="text" value="low" readonly>
             </label>
           </div>
           <div class="setup-toggles">
@@ -411,7 +408,7 @@
             <label class="setup-check"><input id="setup-use-brief" type="checkbox"> Story brief</label>
             <label class="setup-check"><input id="setup-use-translate" type="checkbox"> Translation</label>
           </div>
-          <button id="setup-test-openrouter" class="ghost small" type="button">Test OpenRouter</button>
+          <button id="setup-test-opencode" class="ghost small" type="button">Test OpenCode</button>
         </section>
 
         <section class="setup-section">

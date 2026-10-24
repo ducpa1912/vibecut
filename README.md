@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.7.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.7.1** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -22,7 +22,7 @@ Requirements:
 - Python packages in `requirements.txt`
 - macOS: `swiftc` (Xcode Command Line Tools) for Apple Vision text + face + saliency reading. Without it, crops fall back to center and on-screen text is skipped.
 - Optional: `mlx_whisper` for local speech transcription, or a cloud STT key.
-- Optional: an OpenRouter key for the cheap GLM 5.3 Flash rewrite. Cloud is off by default.
+- Optional: OpenCode CLI signed in to **OpenCode Go** for DeepSeek V4.1 Flash intelligence. Cloud is off by default.
 
 The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 
@@ -61,7 +61,7 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - Long-video scenes outside the shortlist are read on demand when you click them.
 - Renders are cached per plan + quality + aspect + captions + audio mix; an overridden hook gets its own slot. **Render again** forces a fresh encode. Cancel stops a running render.
 - **SRT / VTT / EDL / XML** buttons export the caption file or the cut list for Resolve and Premiere.
-- **Rewrite model**: OpenRouter GLM 5.3 Flash (cheap cloud, low reasoning) first when a key exists, then MLX, Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
+- **Rewrite model**: OpenCode Go **DeepSeek V4.1 Flash** first when the local OpenCode service is signed in, at the `low` reasoning variant. Then MLX, Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
 - Speech: `transcribe_engine` is `auto` by default: configured cloud STT → Apple SpeechAnalyzer (macOS 26, 0 MB) → mlx-whisper. Pick the provider and keys in **Setup**.
 
 ## Setup · optional cloud
@@ -71,23 +71,38 @@ Keys live in `data/secrets.json` (0600); env vars win.
 
 | Section | What you can set |
 |---|---|
-| Intelligence | OpenRouter key. Model locked to `z-ai/glm-5.3-flash:floor`, reasoning locked to `low`. Toggles for rewrite, story brief, translation. |
+| Intelligence | OpenCode Go. Model locked to `deepseek-v4.1-flash`, reasoning variant locked to `low`. Uses the OpenCode login already on this machine; no key copy. Toggles for rewrite, story brief, translation. |
 | Transcription | Auto / Apple / Whisper / Groq / OpenAI / Deepgram. Groq Whisper turbo is $0.04/hour. |
 | Voice over | Preferred provider plus keys. Kokoro stays the free default; ElevenLabs Flash is the best multilingual upgrade, Groq Orpheus the cheap English one. |
 
-Buttons **Test OpenRouter**, **Check STT**, **Check TTS** show what is ready.
+Buttons **Test OpenCode**, **Check STT**, **Check TTS** show what is ready.
 Costs, model choices and the fallback ladder: [docs/cloud-speech.md](docs/cloud-speech.md).
 
 Environment keys:
 
 ```
-OPENROUTER_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
-DEEPGRAM_API_KEY     ELEVENLABS_API_KEY
+GROQ_API_KEY   OPENAI_API_KEY   DEEPGRAM_API_KEY   ELEVENLABS_API_KEY
 ```
 
-The API never returns a key; it only reports whether one is configured and
-whether it came from the environment or the local file. Environment keys win, so
-a key seen by the server is shown read-only in Setup.
+The API never returns a speech key; it only reports whether one is configured
+and whether it came from the environment or the local file. Environment keys
+win, so a key seen by the server is shown read-only in Setup.
+
+OpenCode Go needs no key in VibeCut. Install the OpenCode CLI, run
+`opencode auth login`, connect **OpenCode Go**, then check:
+
+```bash
+opencode models | grep opencode-go/deepseek-v4.1-flash
+```
+
+VibeCut calls the local OpenCode service, creates a short-lived session pinned
+to `deepseek-v4.1-flash` with the `low` variant, generates the text, and deletes
+the session. If OpenCode is missing or not signed in, rewrite falls back to
+local MLX / Ollama / rules.
+
+The first rewrite of a job can take tens of seconds because the model reads the
+full transcript and reasons at the `low` level. The result is cached per line
+and context; later renders are instant.
 
 ## CLI
 

@@ -679,23 +679,35 @@ def health() -> dict:
         ),
         "data": str(DATA),
         "encoder": render._choose_encoder(),
+        "opencode": audio.opencode_available(),
         "version": 2,
     }
 
 
-OPENROUTER_MODEL = "z-ai/glm-5.3-flash:floor"
-OPENROUTER_REASONING = "low"
+OPENCODE_MODEL = "deepseek-v4.1-flash"
+OPENCODE_VARIANT = "low"
 STT_PROVIDERS = {"auto", "apple", "whisper", "groq", "openai", "deepgram"}
 TTS_PROVIDERS = {"auto", "local", "say", "piper", "kokoro", "openai", "elevenlabs", "groq", "deepgram"}
 
 
 class SettingsTestBody(BaseModel):
-    kind: str = "openrouter"
+    kind: str = "opencode"
+
+
+def _settings_state() -> dict:
+    state = settings_store.public_state()
+    state["runtime"] = {
+        "opencode": audio.opencode_available(),
+        "opencode_binary": audio.opencode_bin() or "",
+        "opencode_model": audio.opencode_model(),
+        "opencode_variant": audio.opencode_variant(),
+    }
+    return state
 
 
 @app.get("/api/settings")
 def get_settings() -> dict:
-    return settings_store.public_state()
+    return _settings_state()
 
 
 @app.post("/api/settings")
@@ -704,16 +716,16 @@ async def save_settings(request: Request) -> dict:
     patch = body.get("settings") if isinstance(body, dict) else None
     secrets = body.get("secrets") if isinstance(body, dict) else None
     if isinstance(patch, dict):
-        openrouter = patch.get("openrouter")
-        if isinstance(openrouter, dict):
-            requested = str(openrouter.get("model") or OPENROUTER_MODEL)
-            if requested != OPENROUTER_MODEL:
-                raise HTTPException(400, f"Only {OPENROUTER_MODEL} is supported.")
-            requested_reasoning = str(openrouter.get("reasoning") or OPENROUTER_REASONING)
-            if requested_reasoning != OPENROUTER_REASONING:
-                raise HTTPException(400, "OpenRouter reasoning is locked to low.")
-            openrouter["model"] = OPENROUTER_MODEL
-            openrouter["reasoning"] = OPENROUTER_REASONING
+        opencode = patch.get("opencode")
+        if isinstance(opencode, dict):
+            requested = str(opencode.get("model") or OPENCODE_MODEL)
+            if requested != OPENCODE_MODEL:
+                raise HTTPException(400, f"Only {OPENCODE_MODEL} is supported.")
+            requested_variant = str(opencode.get("variant") or OPENCODE_VARIANT)
+            if requested_variant != OPENCODE_VARIANT:
+                raise HTTPException(400, "OpenCode reasoning is locked to low.")
+            opencode["model"] = OPENCODE_MODEL
+            opencode["variant"] = OPENCODE_VARIANT
         stt = patch.get("stt")
         if isinstance(stt, dict) and stt.get("provider") not in (None, "") and stt["provider"] not in STT_PROVIDERS:
             raise HTTPException(400, "Unknown transcription provider.")
@@ -723,28 +735,28 @@ async def save_settings(request: Request) -> dict:
         settings_store.save_settings(patch)
     if isinstance(secrets, dict):
         settings_store.save_secrets(secrets)
-    return settings_store.public_state()
+    return _settings_state()
 
 
 @app.post("/api/settings/test")
 def test_settings(body: SettingsTestBody) -> dict:
-    kind = (body.kind or "openrouter").lower()
-    if kind == "openrouter":
+    kind = (body.kind or "opencode").lower()
+    if kind == "opencode":
         started = time.time()
-        answer = audio._openrouter_text(
+        answer = audio._opencode_text(
             'Reply with JSON only: {"ok": true}', json_mode=True, max_tokens=200,
         )
         return {
             "ok": bool(answer),
-            "kind": "openrouter",
-            "model": audio.openrouter_model(),
-            "reasoning": OPENROUTER_REASONING,
+            "kind": "opencode",
+            "model": audio.opencode_model(),
+            "variant": OPENCODE_VARIANT,
             "seconds": round(time.time() - started, 2),
             "answer": (answer or "")[:160],
             "detail": (
-                "OpenRouter replied." if answer
-                else "No reply. Check the key, model access, or network."
-                + (f" {audio.OPENROUTER_LAST_ERROR}" if audio.OPENROUTER_LAST_ERROR else "")
+                "OpenCode Go replied." if answer
+                else "No reply. Check the OpenCode login, Go subscription, or service."
+                + (f" {audio.OPENCODE_LAST_ERROR}" if audio.OPENCODE_LAST_ERROR else "")
             ),
         }
     if kind == "stt":
@@ -1623,7 +1635,7 @@ def audio_script(job_id: str, body: ScriptBody) -> dict:
         audio.transcript_context(
             segments, clips, scenes, source_lang,
             target_lang=target_lang, translate_provider=body.provider,
-            brief_provider=body.provider,
+            brief_provider=body.provider, rewrite_provider=body.rewrite_provider,
         )
         if segments else None
     )
