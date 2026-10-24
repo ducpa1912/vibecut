@@ -1743,19 +1743,25 @@ def analyze_source(
             or (settings_store.load_settings().get("stt") or {}).get("language")
             or "en"
         )
-        # Transcription is local-only. Apple Speech is primary; mlx-whisper is
-        # the fallback. Cloud STT keys are no longer part of Setup.
-        if engine in {"auto", "apple", "whisper", "local"}:
+        # Transcription is local-only. Auto language means Whisper auto-detect:
+        # Apple Speech needs an explicit locale and hardcoding en-US on Chinese
+        # audio produces confident garbage. Explicit locale prefers Apple.
+        auto_language = str(speech_language or "auto").lower() in {"", "auto"}
+        # Apple has no auto-detect here. If the user chose Auto language, use
+        # Whisper for detection even when the provider is Apple.
+        use_whisper_first = engine in {"whisper", "local"} or auto_language
+        if not use_whisper_first and engine in {"auto", "apple"}:
             progress("reading", 0.70, "Transcribing speech · Apple Speech")
             transcript = transcribe_apple(wav, job_dir, speech_language)
             if transcript:
                 timings["apple_speech"] = round(time.time() - stage, 2)
-            if transcript is None:
-                progress("reading", 0.72, "Transcribing speech · local Whisper")
-                transcript = transcribe(
-                    wav, job_dir, meta["duration"],
-                    lambda fraction, message: progress("reading", 0.70 + 0.16 * fraction, message),
-                )
+        if transcript is None and engine in {"auto", "apple", "whisper", "local"}:
+            progress("reading", 0.72, "Transcribing speech · local Whisper")
+            transcript = transcribe(
+                wav, job_dir, meta["duration"],
+                lambda fraction, message: progress("reading", 0.70 + 0.16 * fraction, message),
+            )
+            if transcript:
                 timings["whisper"] = round(time.time() - stage, 2)
     attach_speech(scenes, transcript)
 
