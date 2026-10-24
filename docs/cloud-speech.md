@@ -10,8 +10,9 @@ the environment, Setup shows that field read-only; change or unset the env var t
 replace it.
 
 ```
-OPENCODE_GO_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
-DEEPGRAM_API_KEY      ELEVENLABS_API_KEY   CARTESIA_API_KEY
+OPENCODE_GO_API_KEY   OPENROUTER_API_KEY   MINIMAX_API_KEY
+GROQ_API_KEY          OPENAI_API_KEY       DEEPGRAM_API_KEY
+ELEVENLABS_API_KEY    CARTESIA_API_KEY
 ```
 
 The API only returns `configured: true/false`; it never returns a key.
@@ -136,3 +137,19 @@ without it.
   `/api/settings/tts-test/<engine>.wav`.
 - Token prices in the ledger: DeepSeek V4.1 Flash off-peak, Groq/OpenAI/Deepgram
   STT, and OpenAI/Groq/Deepgram/ElevenLabs/Cartesia TTS.
+
+
+## 0.10 provider order
+
+Translation: **OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek V4.1 Flash → Apple Translation**. Apple batches are split and retried. Argos/Marian/Ollama are advanced only.
+
+Voice: **MiniMax Speech 2.8 Turbo → OpenRouter Fish S2.1 Pro Free → OpenRouter Gemini 3.8 Flash-Lite TTS → local Kokoro/Piper/say**. A fallback switches the whole line only when the primary fails; voice identity can change, so test before a final export.
+
+Music: **MiniMax Music → OpenRouter Lyria 3 Clip (30 s) / Pro (>32 s) → library**. MiniMax music API is only for existing paying accounts; no live test was run without a key.
+
+Uploaded voice: in Voice-over, Dub and Full Replace, choose **Use my recording**. Translation and voice-engine controls disappear; the recording is time-fitted to the cut with atempo and silence padding. It is not cloned and does not need a TTS key.
+
+MiniMax music/TTS adapters are implemented against the official docs but were
+not live-tested without a key. MiniMax music is only available to existing
+paying accounts; new accounts should use MiniMax Audio or the open Music 3
+weights. OpenRouter Fish/Gemini TTS and Lyria music are also mock-tested only.

@@ -127,7 +127,8 @@ def test_voice_sample_engine_registry(monkeypatch, tmp_path):
 def test_engine_status_shape():
     status = audio.engine_status()
     assert set(status["voices"]) == {
-        "say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram", "cartesia",
+        "say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram",
+        "cartesia", "minimax", "fish", "gemini",
     }
     assert "stable-small" in status["music"]
     assert "demucs" in status["separation"]
@@ -513,15 +514,10 @@ def test_refit_script_dedupes_translated_lines():
 
 def test_provider_order_prefers_ready_engine(monkeypatch):
     monkeypatch.setattr(audio, "opencode_available", lambda: False)
-    monkeypatch.setattr(audio, "argos_pair_ready", lambda source, target: True)
-    monkeypatch.setattr(audio, "apple_pair_status", lambda source, target: "supported")
-    monkeypatch.setattr(
-        audio, "_module", lambda name: name in {"transformers", "torch"},
-    )
-    monkeypatch.delenv("VIBECUT_LLM_URL", raising=False)
+    monkeypatch.setattr(audio, "openrouter_available", lambda: False)
+    monkeypatch.setattr(audio, "apple_pair_status", lambda source, target: "installed")
     order = audio._provider_order("zh", "en", "auto")
-    assert order[0] == "argos"
-    assert "marian" in order
+    assert order == ["apple_fm"]
 
 
 def test_provider_order_explicit_wins():
@@ -1535,3 +1531,172 @@ def test_generate_music_selects_worker(tmp_path, monkeypatch):
 def test_music_engine_lists_musicgen():
     status = audio.engine_status()
     assert "musicgen-small" in status["music"]
+
+
+def test_openrouter_text_payload_and_fallback_order(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=0):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["auth"] = request.get_header("Authorization")
+        return FakeResponse(json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 5},
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-or-test")
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "openrouter": {
+            "enabled": True,
+            "model": "deepseek/deepseek-v4.1-flash:floor",
+            "use_rewrite": True,
+            "use_translate": True,
+        },
+        "opencode": {"enabled": True, "use_translate": True, "use_rewrite": True},
+    })
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    assert audio._openrouter_text("hello") == '{"ok": true}'
+    assert captured["body"]["model"] == "deepseek/deepseek-v4.1-flash:floor"
+    assert captured["body"]["reasoning"] == {"effort": "low"}
+    assert captured["body"]["provider"] == {"sort": "price"}
+    assert captured["auth"] == "Bearer sk-or-test"
+
+    monkeypatch.setattr(audio, "opencode_available", lambda: True)
+    monkeypatch.setattr(audio, "openrouter_available", lambda: True)
+    monkeypatch.setattr(audio, "apple_pair_status", lambda source, target: "installed")
+    assert audio._provider_order("zh", "en", "auto")[:3] == ["opencode", "openrouter", "apple_fm"]
+
+
+def test_minimax_tts_payload(monkeypatch, tmp_path):
+    captured = {}
+    fake_audio = b"RIFF" + b"0" * 2048
+
+    def fake_convert(source, output, extra=None):
+        output.write_bytes(b"RIFF-converted")
+        return output
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["auth"] = request.get_header("Authorization")
+        return FakeResponse(json.dumps({
+            "data": {"audio": fake_audio.hex()},
+            "base_resp": {"status_code": 0},
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(audio, "minimax_key", lambda: "mm-test")
+    monkeypatch.setattr(audio, "_convert", fake_convert)
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "minimax": {"tts_model": "speech-2.8-turbo"},
+    })
+    out = tmp_path / "minimax.wav"
+    audio._minimax_voice("hello", "female-shaonv", out, 1.0)
+    assert captured["url"] == "https://api.minimax.io/v1/t2a_v2"
+    assert captured["body"]["model"] == "speech-2.8-turbo"
+    assert captured["body"]["voice_setting"]["voice_id"] == "female-shaonv"
+    assert captured["auth"] == "Bearer mm-test"
+    assert out.is_file()
+
+
+def test_openrouter_tts_payload(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_convert(source, output, extra=None):
+        output.write_bytes(b"RIFF")
+        return output
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse(b"fake-wav")
+
+    monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-or")
+    monkeypatch.setattr(audio, "_convert", fake_convert)
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    out = tmp_path / "fish.wav"
+    audio._openrouter_voice("hello", "", out, 1.0, "fish")
+    assert captured["url"] == "https://openrouter.ai/api/v1/audio/speech"
+    assert captured["body"]["model"] == "fish-audio/s2.1-pro-free:free"
+    assert captured["body"]["input"] == "hello"
+    assert captured["body"]["voice"] == "default"
+    assert out.is_file()
+
+
+def test_minimax_music_payload(monkeypatch, tmp_path):
+    captured = {}
+    fake_audio = b"RIFF" + b"1" * 4096
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse(json.dumps({
+            "data": {"audio": fake_audio.hex()},
+            "base_resp": {"status_code": 0},
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(audio, "minimax_key", lambda: "mm-test")
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "minimax": {"music_model": "music-3.0"},
+    })
+    out = tmp_path / "music.wav"
+    audio._minimax_music("calm bed", 30, out)
+    assert captured["url"] == "https://api.minimax.io/v1/music_generation"
+    assert captured["body"]["model"] == "music-3.0"
+    assert captured["body"]["is_instrumental"] is True
+    assert captured["body"]["output_format"] == "hex"
+    assert out.read_bytes() == fake_audio
+
+
+def test_uploaded_voice_fit(tmp_path, monkeypatch):
+    source = tmp_path / "voice.wav"
+    source.write_bytes(b"RIFF" + b"0" * 4096)
+    calls = []
+
+    def fake_media_duration(path):
+        return 4.0
+
+    def fake_run(cmd, timeout=None, cancel_event=None):
+        calls.append(cmd)
+        target = __import__("pathlib").Path(cmd[-1])
+        target.write_bytes(b"RIFF" + b"0" * 4096)
+
+    monkeypatch.setattr(audio, "media_duration", fake_media_duration)
+    monkeypatch.setattr(audio, "_run", fake_run)
+    out = audio._fit_uploaded_voice(source, 2.0, tmp_path, 0.0)
+    assert out == tmp_path / "uploaded_voice.wav"
+    assert any("atempo=" in part for part in calls[0])
+    assert any("apad" in part for part in calls[0])
+
+
+def test_lyria_streams_audio(monkeypatch, tmp_path):
+    import base64
+
+    class Stream:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def __iter__(self):
+            payload = {"choices": [{"delta": {"audio": {"data": base64.b64encode(b"mp3-bytes").decode()}}}]}
+            yield (b"data: " + json.dumps(payload).encode() + b"\n")
+            yield b"data: [DONE]\n"
+
+    captured = {}
+
+    def fake_urlopen(request, timeout=0):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return Stream()
+
+    def fake_convert(source, output, extra=None):
+        output.write_bytes(b"wav-bytes")
+        return output
+
+    monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-or")
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(audio, "_convert", fake_convert)
+    out = tmp_path / "lyria.wav"
+    audio._lyria_music("calm bed", 30, out)
+    assert captured["body"]["model"] == "google/lyria-3-clip-preview"
+    assert captured["body"]["stream"] is True
+    assert captured["body"]["modalities"] == ["text", "audio"]
+    assert out.is_file()

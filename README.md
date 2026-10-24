@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.9.2** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.10.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -46,14 +46,16 @@ The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 - After analysis, pick 15 / 30 / 60, preview the cut timeline, render, download.
 - **Draft** renders 540×960 fast for feel checks; **Render final** does 1080×1920. **All 15/30/60** queues every length.
 - **Aspect** switches between 9:16, 4:5, 1:1 and 16:9. Each aspect uses its own attention crop, so landscape→portrait and portrait→landscape both reframe without re-analysis. **Track crop** samples two extra frames per beat and smooths a per-aspect crop path; renders follow it per frame. **Captions** burns OCR/speech text as styled overlays.
+- **Audio modes** are tabs: **Original · Voice-over · Dub · Music · Full Replace**. **Voice-over** puts a new voice over the original audio; **Dub** replaces only the original voice and keeps the music/SFX; **Music** replaces the original audio; **Full Replace** uses a new voice plus new music.
+- **Use my recording** appears only in Voice-over, Dub and Full Replace. It hides translation and voice-engine controls and fits the uploaded recording to the cut length.
 - **Edit cut** lets you reorder, trim and remove beats. **Save variant** stores that edit; variant chips reload or delete it. Keyboard: `←/→` select, `Alt+←/→` reorder, `−/+` trim, `Del` remove, `e` edit, `s` save, `r` draft, `Space` play.
 - **Audio** panel: keep the original sound, replace the voice, dub over the original bed (Demucs), fully replace voice + music, or add music only. Pick the voice engine, target language, **script style** (faithful / smooth / viral), music source and mood; **Test voice** plays a sample.
 - **Voice script** preview lists the deduped lines with role, emotion and fit flags. The header shows which engine translated, and **Retry translation** clears that provider's cached lines and retries. The rewrite reads the full target-language voice script plus the video aesthetic, obeys per-beat character/word budgets, and writes complete sentences; overlong lines go through a condense pass instead of being cut into fragments. Hidden chain-of-thought is disabled for these structured calls because it could consume the whole output budget and return empty content. The prompt is documented in [docs/rewrite-prompt.md](docs/rewrite-prompt.md). Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot using the **full transcript** as context (the whole story, then one complete sentence per selected beat), with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
 - **Automation mixer** above the audio controls: time ruler with one section per clip, a music lane and a voice lane. The lane starts at 100% (0 dB); click to add a node, drag it anywhere in time or gain, double-click to remove, **Reset 100%** clears, **Flatten** puts every node back at 100%. The curve is cosine, so nodes are smooth peaks, and the same curve runs in ffmpeg. The original audio plus the Demucs music stem are drawn behind the lanes so a sudden loud, mute or dip is visible. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
 - **Platform presets** (TikTok, Reels, Shorts, Square, Landscape) set aspect, captions and safe-zone caption margin. **A/B hooks** queues the three strongest hooks at once. **Story arc order** reorders beats as setup → proof → payoff.
-- Music sources: your own track, CC0 library, Stable Audio Open Small/1.0, or **MusicGen Small** (ungated) with auto mood from the beats.
-- Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs, OpenAI `gpt-4o-mini-tts`, Groq Orpheus, Deepgram Aura, Cartesia Sonic 3.6. Cloud engines appear after a key is saved in **Setup**.
-- Translation runs per render: **OpenCode Go (DeepSeek V4.1 Flash)**, Apple Translation, Marian, Argos, or Ollama. OpenCode translation is on by default and is picked in the **Translate engine** list. If every engine fails, the panel offers **Offline translate setup (~250 MB)**.
+- Music sources: your own track, CC0 library, **MiniMax Music**, or **OpenRouter Lyria 3**. Stable Audio/MusicGen remain advanced legacy options.
+- Voice engines: Apple `say`, Piper, Kokoro local; **MiniMax Speech 2.8 Turbo** → **OpenRouter Fish S2.1 Pro Free** → **OpenRouter Gemini 3.8 Flash-Lite TTS**; ElevenLabs, OpenAI, Groq, Deepgram, Cartesia. Cloud engines appear after a key is saved in **Setup**.
+- Translation runs per render: **OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek V4.1 Flash → Apple Translation**. Apple is the only local fallback in the normal UI; Argos/Marian/Ollama are advanced only. Apple batches are split and retried.
 - **Hook lab** lists the strongest opening candidates with their resulting cut length and a plain-language reason; click one to re-plan.
 - Hover any timeline clip for the same **why** note; the drawer repeats it per beat. The hook panel explains why that beat is the opening, and the plan line explains the payoff.
 - **CC · transcript** appears when Whisper ran; open it for timestamped lines with search, click a line to copy it.
@@ -72,9 +74,9 @@ Keys live in `data/secrets.json` (0600); env vars win.
 
 | Section | What you can set |
 |---|---|
-| Intelligence | OpenCode Go. Model locked to `deepseek-v4.1-flash`, reasoning variant locked to `low`. Use a project API key (stored only in this project) or the local OpenCode login. Toggles for rewrite, story brief, translation. |
+| Intelligence | OpenCode Go default. OpenRouter DeepSeek fallback. Model locked, low reasoning. Toggles for rewrite, story brief, translation. |
 | Transcription | Auto / Apple / Whisper / Groq / OpenAI / Deepgram, spoken language, Whisper model size/q4, keys. Live STT test. Groq Whisper turbo is $0.04/hour. |
-| Voice over | Preferred provider plus keys; ElevenLabs, OpenAI, Groq, Deepgram, Cartesia. Kokoro stays the free default. Live TTS test plays a sample. |
+| Voice over | MiniMax Speech 2.8 Turbo, OpenRouter Fish/Gemini fallback, local Kokoro/Piper/say; ElevenLabs/OpenAI/Groq/Deepgram/Cartesia optional. Live TTS test. |
 
 Buttons **Test OpenCode**, **Check STT**, **Live STT**, **Check TTS**, **Live TTS** show what is ready. Live tests generate a local sample, call the provider, and show the transcript or play the audio.
 Costs, model choices and the fallback ladder: [docs/cloud-speech.md](docs/cloud-speech.md).
@@ -82,8 +84,9 @@ Costs, model choices and the fallback ladder: [docs/cloud-speech.md](docs/cloud-
 Environment keys:
 
 ```
-OPENCODE_GO_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
-DEEPGRAM_API_KEY      ELEVENLABS_API_KEY   CARTESIA_API_KEY
+OPENCODE_GO_API_KEY   OPENROUTER_API_KEY   MINIMAX_API_KEY
+GROQ_API_KEY          OPENAI_API_KEY       DEEPGRAM_API_KEY
+ELEVENLABS_API_KEY    CARTESIA_API_KEY
 ```
 
 The API never returns a speech key; it only reports whether one is configured
@@ -158,38 +161,32 @@ The render panel can rebuild the audio track:
 
 | Mode | What happens |
 |---|---|
-| Keep original | Nothing changes (default) |
-| Full replace | Original audio is dropped. New voice + new music. No Demucs needed |
-| Dub over original bed | Demucs removes the original voice, the instrumental bed stays, the new voice is dubbed over it |
-| Voice only | Original voice replaced, no new music |
-| Music only | Original audio dropped, only the new music bed |
+| Original | Nothing changes (default) |
+| Voice-over | New voice over the original audio; original voice is ducked underneath |
+| Dub | Demucs removes the original voice; music/SFX stay; new voice replaces it |
+| Music | Original audio removed; new music only |
+| Full Replace | New voice + new music; original audio removed |
 
-Voice engines: Apple `say` (0 MB, built in), Piper medium (~170 MB), Kokoro int8
-(~220 MB), ElevenLabs, OpenAI, Groq, Deepgram, Cartesia (cloud keys in Setup).
+**Use my recording** appears in Voice-over, Dub and Full Replace. It hides
+translation and voice-engine controls and fits the uploaded recording to the
+cut length. It is not voice cloning.
+
+Voice engines: MiniMax Speech 2.8 Turbo → OpenRouter Fish S2.1 Pro Free →
+OpenRouter Gemini 3.8 Flash-Lite TTS; local Kokoro/Piper/say; ElevenLabs,
+OpenAI, Groq, Deepgram, Cartesia optional.
 
 Music sources: your own folder `assets/music/library`, CC0 folder
-`assets/music/cc0`, Stable Audio Open Small (~2 GB), Stable Audio Open 1.0
-(~6 GB), or MusicGen Small (~2 GB, ungated). AI sources use an auto mood prompt
-built from the cut's beats.
+`assets/music/cc0`, MiniMax Music, OpenRouter Lyria 3, or advanced legacy
+Stable Audio/MusicGen. AI sources use an auto mood prompt built from the cut.
 
-Stable Audio setup:
-
-```bash
-pip install "setuptools<80" stable-audio-tools
-# accept the license at https://huggingface.co/stabilityai/stable-audio-open-small
-hf auth login
-```
-
-The Stable Audio weights are gated. Without a Hugging Face login, use
-**MusicGen Small** — it is ungated, but slow on an M1. It generates a 4-second
-bed and loops it for the cut. Install dependencies with
-`pip install -r requirements-music.txt`.
+Stable Audio/MusicGen remain in the code as advanced legacy options but are
+not shown in the normal music picker. The normal AI path is MiniMax Music →
+OpenRouter Lyria 3.
 
 Translation happens once per render, on the cleaned and de-duplicated lines.
-Provider order is automatic: OpenCode Go first when Translation is enabled,
-then whatever is already working (Argos offline pair, Apple Translation language
-pack, Marian/opus-mt, Ollama), then engines that need a first-use download. The
-panel shows which engine will run and can force one. Translations are cached in
+Provider order is fixed: **OpenCode Go DeepSeek V4.1 Flash → OpenRouter
+DeepSeek V4.1 Flash → Apple Translation**. Apple is the only local fallback in
+the normal UI; it splits large batches and retries. Translations are cached in
 `data/cache/translate`, keyed by provider, so switching engines does not reuse a
 different engine's output.
 

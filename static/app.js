@@ -19,6 +19,7 @@
     setupOpencodeEnabled: $("#setup-opencode-enabled"),
     setupOpencodeStatus: $("#setup-opencode-status"),
     setupOpencodeKey: $("#setup-opencode-key"),
+    setupOpenrouterKey: $("#setup-openrouter-key"),
     setupOpencodeModel: $("#setup-opencode-model"),
     setupOpencodeVariant: $("#setup-opencode-variant"),
     setupUseRewrite: $("#setup-use-rewrite"),
@@ -32,8 +33,10 @@
     setupOpenaiKey: $("#setup-openai-key"),
     setupDeepgramKey: $("#setup-deepgram-key"),
     setupElevenlabsKey: $("#setup-elevenlabs-key"),
+    setupMinimaxKey: $("#setup-minimax-key"),
     setupCartesiaKey: $("#setup-cartesia-key"),
     setupTestOpencode: $("#setup-test-opencode"),
+    setupTestOpenrouter: $("#setup-test-openrouter"),
     setupTestStt: $("#setup-test-stt"),
     setupTestSttLive: $("#setup-test-stt-live"),
     setupTestTts: $("#setup-test-tts"),
@@ -106,6 +109,13 @@
     captions: $("#captions"),
     audioPanel: $("#audio-panel"),
     audioMode: $("#audio-mode"),
+    audioModeTabs: $("#audio-mode-tabs"),
+    audioVoiceSource: $("#audio-voice-source"),
+    audioSourceGenerate: $("#audio-source-generate"),
+    audioSourceUpload: $("#audio-source-upload"),
+    audioUpload: $("#audio-upload"),
+    audioUploadButton: $("#audio-upload-button"),
+    audioUploadName: $("#audio-upload-name"),
     audioLang: $("#audio-lang"),
     audioStyle: $("#audio-style"),
     audioRewrite: $("#audio-rewrite"),
@@ -167,6 +177,10 @@
     captions: false,
     audio: {
       mode: "keep",
+      source: "generate",
+      upload: "",
+      uploadName: "",
+      uploadDuration: 0,
       lang: "",
       provider: "auto",
       style: "literal",
@@ -261,14 +275,18 @@
     dom.setupSttModel.value = (settings.stt || {}).model || "mlx-community/whisper-small-mlx";
     dom.setupTtsProvider.value = (settings.tts || {}).provider || "auto";
     setSecretHint(dom.setupOpencodeKey, !!secrets.opencode, sources.opencode);
+    setSecretHint(dom.setupOpenrouterKey, !!secrets.openrouter, sources.openrouter);
+    setSecretHint(dom.setupMinimaxKey, !!secrets.minimax, sources.minimax);
     setSecretHint(dom.setupGroqKey, !!secrets.groq, sources.groq);
     setSecretHint(dom.setupOpenaiKey, !!secrets.openai, sources.openai);
     setSecretHint(dom.setupDeepgramKey, !!secrets.deepgram, sources.deepgram);
     setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
     setSecretHint(dom.setupCartesiaKey, !!secrets.cartesia, sources.cartesia);
-    ["opencode", "groq", "openai", "deepgram", "elevenlabs", "cartesia"].forEach((name) => {
+    ["opencode", "openrouter", "minimax", "groq", "openai", "deepgram", "elevenlabs", "cartesia"].forEach((name) => {
       const input = {
         opencode: dom.setupOpencodeKey,
+        openrouter: dom.setupOpenrouterKey,
+        minimax: dom.setupMinimaxKey,
         groq: dom.setupGroqKey,
         openai: dom.setupOpenaiKey,
         deepgram: dom.setupDeepgramKey,
@@ -317,6 +335,8 @@
   function setupSecrets() {
     const values = {
       opencode: dom.setupOpencodeKey.value.trim(),
+      openrouter: dom.setupOpenrouterKey.value.trim(),
+      minimax: dom.setupMinimaxKey.value.trim(),
       groq: dom.setupGroqKey.value.trim(),
       openai: dom.setupOpenaiKey.value.trim(),
       deepgram: dom.setupDeepgramKey.value.trim(),
@@ -410,6 +430,7 @@
     });
     dom.setupSave.addEventListener("click", saveSetup);
     dom.setupTestOpencode.addEventListener("click", () => testSetup("opencode", dom.setupTestOpencode));
+    dom.setupTestOpenrouter.addEventListener("click", () => testSetup("openrouter", dom.setupTestOpenrouter));
     dom.setupTestStt.addEventListener("click", () => testSetup("stt", dom.setupTestStt));
     dom.setupTestSttLive.addEventListener("click", () => testSetup(
       "stt_live", dom.setupTestSttLive, { provider: dom.setupSttProvider.value },
@@ -1115,6 +1136,15 @@
     stopPoll();
     try {
       const job = await api(`/api/jobs/${id}`);
+      if (state.job?.id !== job.id) {
+        state.audio.upload = "";
+        state.audio.uploadName = "";
+        state.audio.uploadDuration = 0;
+        state.audio.source = "generate";
+        if (dom.audioUpload) dom.audioUpload.value = "";
+        if (dom.audioSourceGenerate) dom.audioSourceGenerate.checked = true;
+        syncAudioVisibility();
+      }
       state.job = job;
       if (job.status === "ready") {
         prepareResult(job);
@@ -2030,8 +2060,11 @@
   function currentAudioPlan() {
     const audio = state.audio;
     if (!audio || audio.mode === "keep") return null;
+    const uploadMode = audio.source === "upload" && ["bed", "voice", "full"].includes(audio.mode);
     const plan = { mode: audio.mode };
-    plan.translate = {
+    plan.translate = uploadMode ? {
+      target: "", provider: "auto", mode: "literal", rewrite_provider: "auto",
+    } : {
       target: audio.lang || "",
       provider: audio.provider || "auto",
       mode: audio.style || "literal",
@@ -2042,12 +2075,14 @@
     if (automation) plan.automation = automation;
     plan.voice = audio.mode === "music"
       ? null
-      : {
-        engine: audio.engine,
-        voice: audio.voice || "",
-        rate: Number(audio.rate) || 1,
-        gain_db: 0,
-      };
+      : uploadMode
+        ? { source: "upload", upload: audio.upload || "", gain_db: 0 }
+        : {
+          engine: audio.engine,
+          voice: audio.voice || "",
+          rate: Number(audio.rate) || 1,
+          gain_db: 0,
+        };
     if (audio.mode === "bed") {
       plan.music = { source: "none" };
     } else {
@@ -2071,6 +2106,10 @@
   function bindAudio() {
     const touch = () => {
       state.audio.mode = dom.audioMode.value;
+      dom.audioModeTabs.querySelectorAll("[data-audio-mode]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.audioMode === state.audio.mode);
+      });
+      state.audio.source = dom.audioSourceUpload.checked ? "upload" : "generate";
       state.audio.lang = dom.audioLang.value;
       state.audio.provider = dom.audioProvider.value || "auto";
       state.audio.style = dom.audioStyle.value || "literal";
@@ -2084,6 +2123,7 @@
       state.audio.prompt = dom.audioPrompt.value.trim();
       state.audio.gain = Number(dom.audioGain.value) || -18;
       state.audio.duck = dom.audioDuck.checked;
+      syncAudioVisibility();
       updateRenderPanel();
       refreshAudioStatus();
       renderMixer();
@@ -2131,8 +2171,88 @@
       dom.audioGain.addEventListener(event, touch);
       dom.audioDuck.addEventListener(event, touch);
     });
+    dom.audioModeTabs.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-audio-mode]");
+      if (!button) return;
+      dom.audioMode.value = button.dataset.audioMode;
+      dom.audioMode.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     dom.audioPreview.addEventListener("click", previewVoice);
     dom.audioTranslateInstall.addEventListener("click", installTranslate);
+    dom.audioSourceGenerate.addEventListener("change", () => {
+      state.audio.source = "generate";
+      syncAudioVisibility();
+      touch();
+      loadAudioScript();
+    });
+    dom.audioSourceUpload.addEventListener("change", () => {
+      state.audio.source = "upload";
+      syncAudioVisibility();
+      if (!state.audio.upload) dom.audioUpload.click();
+      touch();
+      loadAudioScript();
+    });
+    dom.audioUploadButton.addEventListener("click", () => dom.audioUpload.click());
+    dom.audioUpload.addEventListener("change", () => {
+      const file = dom.audioUpload.files && dom.audioUpload.files[0];
+      if (file) uploadVoice(file);
+    });
+    syncAudioVisibility();
+  }
+
+  function syncAudioVisibility() {
+    const mode = dom.audioMode.value;
+    const supported = ["bed", "voice", "full"].includes(mode);
+    const upload = supported && dom.audioSourceUpload.checked;
+    dom.audioVoiceSource.hidden = !supported;
+    dom.audioUploadButton.hidden = !upload;
+    dom.audioUploadName.hidden = !upload;
+    dom.audioUploadName.textContent = upload && state.audio.upload
+      ? `${state.audio.uploadName || "recording"} · ${Number(state.audio.uploadDuration || 0).toFixed(1)}s`
+      : upload ? "Fit your recording to the cut length." : "";
+    const generated = [
+      dom.audioLang, dom.audioProvider, dom.audioStyle, dom.audioRewrite,
+      dom.audioEngine, dom.audioVoice, dom.audioRate,
+    ];
+    generated.forEach((field) => {
+      const wrapper = field?.closest(".audio-field");
+      if (wrapper) wrapper.hidden = upload;
+    });
+    if (dom.audioPreview) dom.audioPreview.hidden = upload;
+    if (!supported) {
+      dom.audioUploadButton.hidden = true;
+      dom.audioUploadName.hidden = true;
+    }
+  }
+
+  async function uploadVoice(file) {
+    if (!state.job || !state.plan) return;
+    const form = new FormData();
+    form.append("file", file);
+    const headers = {};
+    const token = tokenValue();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    try {
+      const response = await fetch(`/api/jobs/${state.job.id}/audio/voice-upload`, {
+        method: "POST", headers, body: form,
+      });
+      if (!response.ok) {
+        let detail = response.statusText;
+        try { detail = (await response.json()).detail || detail; } catch (_) { /* ignore */ }
+        throw new Error(detail);
+      }
+      const result = await response.json();
+      state.audio.upload = result.path;
+      state.audio.uploadName = result.name || file.name;
+      state.audio.uploadDuration = Number(result.duration) || 0;
+      state.audio.source = "upload";
+      dom.audioUpload.value = "";
+      syncAudioVisibility();
+      updateRenderPanel();
+      toast(`Voice fitted source: ${state.audio.uploadName}`);
+    } catch (error) {
+      toast(error.message);
+    }
   }
 
   function fillSelect(select, options) {
@@ -2258,7 +2378,9 @@
     fillSelect(dom.audioEngine, voiceOptions);
     const available = Object.values(engines.voices || {}).filter((info) => info.available).length;
     const musicOptions = [["none", "No music"]];
+    const allowedMusic = new Set(["library", "cc0", "minimax-music", "lyria-clip"]);
     Object.entries(engines.music || {}).forEach(([id, info]) => {
+      if (!allowedMusic.has(id)) return;
       musicOptions.push([
         id,
         `${info.available ? "" : "unavailable · "}${musicLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`,
@@ -2266,7 +2388,7 @@
     });
     fillSelect(dom.audioMusic, musicOptions);
     fillSelect(dom.audioLang, AUDIO_LANGUAGES);
-    const rewriteOptions = [["auto", "Auto · smallest ready model"]];
+    const rewriteOptions = [["auto", "Auto · OpenCode → OpenRouter → local"]];
     (engines.rewrite_models || []).forEach((item) => {
       rewriteOptions.push([
         item.id,
@@ -2308,6 +2430,7 @@
       marian: "Marian opus-mt",
       ollama: "Ollama",
       opencode: "OpenCode Go · DeepSeek",
+      openrouter: "OpenRouter · DeepSeek",
     }[id] || id;
   }
 
@@ -2321,6 +2444,10 @@
       groq: "Groq Orpheus",
       deepgram: "Deepgram Aura",
       cartesia: "Cartesia Sonic",
+      minimax: "MiniMax Speech 2.8",
+      fish: "OpenRouter Fish S2.1 Free",
+      gemini: "OpenRouter Gemini Flash-Lite TTS",
+      openrouter: "OpenRouter DeepSeek",
     }[id] || id;
   }
 
@@ -2331,6 +2458,8 @@
       "stable-small": "Stable Audio Open Small",
       "stable-1.0": "Stable Audio Open 1.0",
       "musicgen-small": "MusicGen Small · ungated",
+      "minimax-music": "MiniMax Music",
+      "lyria-clip": "OpenRouter Lyria 3",
     }[id] || id;
   }
 
@@ -2341,7 +2470,7 @@
       const result = await api(`/api/audio/voices?engine=${encodeURIComponent(engine)}`);
       const voices = result.voices || [];
       if (!voices.length) {
-        const needsKey = ["elevenlabs", "openai", "groq", "deepgram"].includes(engine);
+        const needsKey = ["elevenlabs", "openai", "groq", "deepgram", "minimax", "fish", "gemini"].includes(engine);
         fillSelect(dom.audioVoice, [["", needsKey ? "Add the key in Setup" : "No voices found"]]);
         return;
       }
@@ -2406,7 +2535,8 @@
   async function loadAudioScript(forceTranslate = false) {
     if (!state.job || !state.plan || !dom.audioScript) return;
     const audio = state.audio;
-    if (audio.mode === "keep" || audio.mode === "music") {
+    if (audio.mode === "keep" || audio.mode === "music"
+        || (audio.source === "upload" && ["bed", "voice", "full"].includes(audio.mode))) {
       dom.audioScript.hidden = true;
       dom.audioScript.innerHTML = "";
       return;
@@ -2518,18 +2648,9 @@
         || check.ollama?.available
       );
     }
-    dom.audioTranslateInstall.hidden = !translateNeeded || ready;
-    if (translateNeeded && ready && check?.order?.length) {
-      pieces.push(`translate: ${translateLabel(check.order[0])}`);
-    }
-    if (translateNeeded && !ready) {
-      if (check?.apple?.status === "supported") {
-        pieces.push("Apple language pack missing · System Settings → General → Language & Region → Translation Languages");
-      } else if (!check) {
-        pieces.push("No translation engine yet · run Offline translate setup (~250 MB)");
-      } else {
-        pieces.push("No translation engine ready · run Offline translate setup (~250 MB)");
-      }
+    dom.audioTranslateInstall.hidden = true;
+    if (translateNeeded) {
+      pieces.push("translate: OpenCode → OpenRouter → Apple");
     }
     if (state.audioMoods.length) {
       pieces.push(`auto mood: ${state.audioMoods.slice(0, 3).join(", ")}`);

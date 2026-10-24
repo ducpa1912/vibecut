@@ -812,7 +812,7 @@ def health() -> dict:
 OPENCODE_MODEL = "deepseek-v4.1-flash"
 OPENCODE_VARIANT = "low"
 STT_PROVIDERS = {"auto", "apple", "whisper", "groq", "openai", "deepgram"}
-TTS_PROVIDERS = {"auto", "local", "say", "piper", "kokoro", "openai", "elevenlabs", "groq", "deepgram", "cartesia"}
+TTS_PROVIDERS = {"auto", "local", "say", "piper", "kokoro", "openai", "elevenlabs", "groq", "deepgram", "cartesia", "minimax", "fish", "gemini"}
 
 
 class SettingsTestBody(BaseModel):
@@ -892,6 +892,23 @@ def test_settings(body: SettingsTestBody) -> dict:
                 "OpenCode Go replied." if answer
                 else "No reply. Check the OpenCode login, Go subscription, or service."
                 + (f" {audio.OPENCODE_LAST_ERROR}" if audio.OPENCODE_LAST_ERROR else "")
+            ),
+        }
+    if kind == "openrouter":
+        started = time.time()
+        answer = audio._openrouter_text(
+            'Reply with JSON only: {"ok": true}', json_mode=True, max_tokens=120,
+        )
+        return {
+            "ok": bool(answer),
+            "kind": "openrouter",
+            "model": audio.openrouter_model(),
+            "seconds": round(time.time() - started, 2),
+            "answer": (answer or "")[:160],
+            "detail": (
+                "OpenRouter replied." if answer
+                else "No reply. Check the key and model access."
+                + (f" {audio.OPENROUTER_LAST_ERROR}" if audio.OPENROUTER_LAST_ERROR else "")
             ),
         }
     if kind == "stt":
@@ -1674,21 +1691,17 @@ def audio_music(source: str = "cc0") -> dict:
 @app.get("/api/audio/translate/status")
 def translate_status(source: str = "", target: str = "") -> dict:
     return {
-        "install": audio.ARGOS_STATE,
         "providers": audio.translate_providers(),
-        "check": audio.translate_check(source, target) if source and target else None,
+        "check": None,
     }
 
 
 @app.post("/api/audio/translate/install")
 def translate_install(body: TranslateInstallBody | None = None) -> dict:
-    source = (body.source if body else None) or ""
-    target = (body.target if body else None) or ""
-    if not audio.ARGOS_STATE.get("running"):
-        threading.Thread(
-            target=_install_argos_safe, args=(source, target), daemon=True,
-        ).start()
-    return {"install": audio.ARGOS_STATE}
+    return {
+        "ok": False,
+        "detail": "Local fallback is Apple Translation. Install the language pack in System Settings.",
+    }
 
 
 @app.get("/api/jobs/{job_id}/audio/moods")
@@ -1701,6 +1714,40 @@ def job_moods(job_id: str, target: int = 30, hook_scene: int | None = None) -> d
     return {
         "moods": moods,
         "prompt": audio.music_prompt(moods, plan["total"]),
+    }
+
+
+@app.post("/api/jobs/{job_id}/audio/voice-upload")
+async def upload_voice_audio(job_id: str, file: UploadFile = File(...)) -> dict:
+    job = load_job(job_id)
+    directory = _job_dir(job_id) / "audio"
+    directory.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "voice.wav").suffix.lower()
+    if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".aif"}:
+        raise HTTPException(400, "Upload a WAV, MP3, M4A, FLAC, OGG or AIFF file.")
+    temp = directory / f"upload-source{suffix}"
+    try:
+        with temp.open("wb") as handle:
+            shutil.copyfileobj(file.file, handle)
+        stored = audio.store_uploaded_voice(temp, _job_dir(job_id))
+        digest = hashlib.sha1(stored.read_bytes()).hexdigest()[:12]
+        versioned = stored.with_name(f"uploaded_voice_{digest}.wav")
+        stored.replace(versioned)
+        stored = versioned
+    except audio.AudioError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
+    duration = audio.media_duration(stored)
+    if duration <= 0.2:
+        raise HTTPException(400, "The uploaded audio is empty or unreadable.")
+    return {
+        "path": str(stored.relative_to(_job_dir(job_id))),
+        "duration": round(duration, 3),
+        "name": file.filename or stored.name,
     }
 
 

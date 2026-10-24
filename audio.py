@@ -7,6 +7,7 @@ the UI can grey out what is not installed and show an install hint.
 
 from __future__ import annotations
 
+import base64
 import difflib
 import hashlib
 import json
@@ -183,6 +184,10 @@ def cartesia_key() -> str:
     return settings_store.get_secret("cartesia")
 
 
+def minimax_key() -> str:
+    return settings_store.get_secret("minimax")
+
+
 def demucs_available() -> bool:
     if shutil.which("demucs"):
         return True
@@ -213,6 +218,10 @@ def rewrite_models() -> list[dict]:
          "model": opencode_model() if opencode_available() else "deepseek-v4.1-flash",
          "available": opencode_available(), "size_mb": 0,
          "install": "Install OpenCode and sign in to OpenCode Go. Uses the local login; low reasoning."},
+        {"id": "openrouter", "name": "OpenRouter · DeepSeek V4.1 Flash",
+         "model": openrouter_model() if openrouter_available() else "deepseek/deepseek-v4.1-flash:floor",
+         "available": openrouter_available(), "size_mb": 0,
+         "install": "Add an OpenRouter key in Setup."},
     ]
 
 
@@ -253,6 +262,13 @@ def translate_providers() -> list[dict]:
         "size_mb": 0,
     })
     providers.append({
+        "id": "openrouter",
+        "name": "OpenRouter · DeepSeek V4.1 Flash",
+        "available": openrouter_available(),
+        "install": "Add an OpenRouter key in Setup.",
+        "size_mb": 0,
+    })
+    providers.append({
         "id": "apple_fm",
         "name": "Apple Translation (on-device)",
         "available": sys.platform == "darwin" and bool(
@@ -282,7 +298,7 @@ def translate_providers() -> list[dict]:
         "install": "pip install argostranslate && install the language pair.",
         "size_mb": 250,
     })
-    return providers
+    return [item for item in providers if item["id"] in {"opencode", "openrouter", "apple_fm"}]
 
 
 def engine_status() -> dict:
@@ -305,6 +321,12 @@ def engine_status() -> dict:
                      "install": "Set DEEPGRAM_API_KEY or add it in Setup. Aura, cloud."},
         "cartesia": {"available": bool(cartesia_key()), "size_mb": 0,
                      "install": "Set CARTESIA_API_KEY or add it in Setup. Sonic 3.6, cloud."},
+        "minimax": {"available": bool(minimax_key()), "size_mb": 0,
+                    "install": "Set MINIMAX_API_KEY or add it in Setup. Speech 2.8 Turbo, cloud."},
+        "fish": {"available": bool(openrouter_key()), "size_mb": 0,
+                 "install": "Add an OpenRouter key. Fish Audio S2.1 Pro Free."},
+        "gemini": {"available": bool(openrouter_key()), "size_mb": 0,
+                   "install": "Add an OpenRouter key. Gemini 3.8 Flash-Lite TTS."},
     }
     music = {
         "library": {"available": True, "size_mb": 0,
@@ -317,6 +339,10 @@ def engine_status() -> dict:
                        "install": "Accept the gated model license and run hf auth login. pip install 'setuptools<80' stable-audio-tools. CC-BY-NC weights."},
         "musicgen-small": {"available": musicgen_available(), "size_mb": 2200,
                            "install": "pip install transformers torch soundfile. Ungated MusicGen Small; slow on M1, but no HF license gate."},
+        "minimax-music": {"available": bool(minimax_key()), "size_mb": 0,
+                          "install": "Set MINIMAX_API_KEY. MiniMax Music, instrumental."},
+        "lyria-clip": {"available": bool(openrouter_key()), "size_mb": 0,
+                       "install": "Add an OpenRouter key. Lyria 3 Clip/Pro."},
     }
     return {
         "voices": voices,
@@ -389,6 +415,26 @@ def list_voices(engine: str) -> list[dict]:
                 "bm_george", "bm_lewis",
             ]
         return [{"id": name, "name": name, "lang": "en"} for name in names]
+
+    if engine == "minimax":
+        if not minimax_key():
+            return []
+        names = [
+            "female-shaonv", "female-yujie", "female-chengshu", "female-tianmei",
+            "male-qn-qingse", "male-qn-jingying", "presenter_female", "presenter_male",
+        ]
+        return [{"id": name, "name": name, "lang": "multi"} for name in names]
+
+    if engine == "fish":
+        if not openrouter_key():
+            return []
+        return [{"id": "default", "name": "Fish default", "lang": "multi"}]
+
+    if engine == "gemini":
+        if not openrouter_key():
+            return []
+        names = ["Kore", "Zephyr", "Puck", "Charon", "Leda", "Aoede", "Fenrir"]
+        return [{"id": name, "name": name, "lang": "multi"} for name in names]
 
     if engine == "openai":
         if not openai_key():
@@ -788,6 +834,87 @@ def _cartesia_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> N
         pass
 
 
+def _minimax_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+    key = minimax_key()
+    if not key:
+        raise AudioError("Set MINIMAX_API_KEY to use MiniMax voice.")
+    model = str((settings_store.load_settings().get("minimax") or {}).get("tts_model") or "speech-2.8-turbo")
+    payload = json.dumps({
+        "model": model,
+        "text": text,
+        "stream": False,
+        "voice_setting": {
+            "voice_id": voice or "female-shaonv",
+            "speed": max(0.5, min(2.0, float(rate or 1.0))),
+            "vol": 1.0,
+            "pitch": 0,
+        },
+        "audio_setting": {
+            "sample_rate": 44100,
+            "bitrate": 128000,
+            "format": "wav",
+        },
+        "language_boost": "auto",
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.minimax.io/v1/t2a_v2",
+        data=payload,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise AudioError(f"MiniMax voice failed: {exc}") from exc
+    status = ((data.get("base_resp") or {}).get("status_code"))
+    if status not in (None, 0):
+        raise AudioError(f"MiniMax voice failed: {data.get('base_resp')}")
+    audio_hex = str((data.get("data") or {}).get("audio") or "")
+    if not audio_hex:
+        raise AudioError("MiniMax voice returned no audio.")
+    raw = output.with_name(f"{output.stem}.minimax.tmp.wav")
+    raw.write_bytes(bytes.fromhex(audio_hex))
+    extra = ["-filter:a", f"atempo={max(0.8, min(1.25, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
+    _convert(raw, output, extra)
+    try:
+        raw.unlink()
+    except OSError:
+        pass
+
+
+def _openrouter_voice(text: str, voice: str, output: Path, rate: float = 1.0, engine: str = "fish") -> None:
+    key = openrouter_key()
+    if not key:
+        raise AudioError("Set an OpenRouter key to use this voice.")
+    model = "fish-audio/s2.1-pro-free:free" if engine == "fish" else "google/gemini-3.8-flash-lite-tts"
+    body = {
+        "model": model,
+        "input": text,
+        "voice": voice or ("default" if engine == "fish" else "Kore"),
+        "response_format": "wav",
+    }
+    request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/audio/speech",
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            content = response.read()
+    except Exception as exc:  # noqa: BLE001
+        raise AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
+    raw = output.with_name(f"{output.stem}.{engine}.tmp.wav")
+    raw.write_bytes(content)
+    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
+    _convert(raw, output, extra)
+    try:
+        raw.unlink()
+    except OSError:
+        pass
+
+
 def synthesize_line(
     engine: str,
     voice: str,
@@ -819,6 +946,10 @@ def synthesize_line(
         _groq_voice(text, voice, target, rate)
     elif engine == "deepgram":
         _deepgram_voice(text, voice, target, rate)
+    elif engine == "minimax":
+        _minimax_voice(text, voice, target, rate)
+    elif engine in {"fish", "gemini"}:
+        _openrouter_voice(text, voice, target, rate, engine)
     else:
         raise AudioError(f"Unknown voice engine {engine!r}.")
     if engine in usage_store.TTS_PER_CHAR:
@@ -876,194 +1007,6 @@ def _apple_helper() -> Path | None:
     return binary if binary.is_file() else None
 
 
-def _translate_apple(
-    lines: list[str], source: str, target: str, target_name: str,
-) -> list[str] | None:
-    binary = _apple_helper()
-    if not binary:
-        return None
-    payload = json.dumps({
-        "source": source, "target": target,
-        "targetName": target_name, "lines": lines,
-    }).encode("utf-8")
-    try:
-        result = subprocess.run(
-            [str(binary)], input=payload, capture_output=True, timeout=600,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    try:
-        data = json.loads(result.stdout.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return None
-    if isinstance(data, list) and len(data) == len(lines):
-        return [str(item) for item in data]
-    return None
-
-
-def _translate_ollama(lines: list[str], source: str, target_name: str) -> list[str] | None:
-    url = os.environ.get("VIBECUT_LLM_URL")
-    if not url:
-        return None
-    model = os.environ.get("VIBECUT_LLM_MODEL", "llama3.1")
-    numbered = "\n".join(f"{index + 1}. {line}" for index, line in enumerate(lines))
-    prompt = (
-        f"Translate every numbered line to {target_name}. Keep the same line count "
-        "and order. Reply with a JSON array of strings only.\n" + numbered
-    )
-    payload = json.dumps({
-        "model": model, "prompt": prompt, "stream": False,
-        "options": {"temperature": 0.2},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
-    text = str(data.get("response") or data.get("message", {}).get("content") or "")
-    match = re.search(r"\[.*\]", text, re.S)
-    if not match:
-        return None
-    try:
-        values = json.loads(match.group(0))
-    except ValueError:
-        return None
-    if isinstance(values, list) and len(values) == len(lines):
-        return [str(item) for item in values]
-    return None
-
-
-def translate_check(source: str, target: str) -> dict:
-    """Report which translation path is ready for one language pair."""
-    source_code = (source or "").split("-")[0]
-    target_code = (target or "").split("-")[0]
-    if not source_code or not target_code or source_code == target_code:
-        return {"same": True, "apple": {"status": "not-needed", "framework": True},
-                "argos": {"installed": True, "module": _module("argostranslate")},
-                "ollama": {"available": bool(os.environ.get("VIBECUT_LLM_URL"))}}
-    apple = {"status": "unavailable", "framework": False}
-    binary = _apple_helper()
-    if binary:
-        try:
-            result = subprocess.run(
-                [str(binary), "--check", source_code, target_code],
-                capture_output=True, timeout=60,
-            )
-            if result.returncode == 0:
-                apple = json.loads(result.stdout.decode("utf-8"))
-        except (OSError, subprocess.SubprocessError, ValueError):
-            apple = {"status": "unavailable", "framework": False}
-    return {
-        "same": False,
-        "apple": apple,
-        "marian": {
-            "available": _module("transformers") and _module("torch"),
-            "model": f"Helsinki-NLP/opus-mt-{source_code}-{target_code}",
-            "size_mb": 300,
-        },
-        "argos": {
-            "installed": argos_pair_ready(source_code, target_code),
-            "module": _module("argostranslate"),
-        },
-        "ollama": {"available": bool(os.environ.get("VIBECUT_LLM_URL"))},
-        "order": _provider_order(source_code, target_code, "auto"),
-    }
-
-
-def translate_ready(check: dict) -> bool:
-    if not check or check.get("same"):
-        return True
-    if check.get("apple", {}).get("status") == "installed":
-        return True
-    if check.get("marian", {}).get("available"):
-        return True
-    if check.get("argos", {}).get("installed"):
-        return True
-    if check.get("ollama", {}).get("available"):
-        return True
-    return False
-
-
-ARGOS_STATE: dict = {"running": False, "message": "idle", "error": None}
-
-
-def argos_pair_ready(source: str, target: str) -> bool:
-    if not _module("argostranslate"):
-        return False
-    try:
-        import argostranslate.package as argos_package  # noqa: PLC0415
-
-        source_code = (source or "en").split("-")[0]
-        target_code = (target or "en").split("-")[0]
-        return any(
-            package.from_code == source_code and package.to_code == target_code
-            for package in argos_package.get_installed_packages()
-        )
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def ensure_argos_pair(source: str, target: str) -> None:
-    """Download and install the offline Argos language pair (~100-300 MB)."""
-    import argostranslate.package as argos_package  # noqa: PLC0415
-
-    source_code = (source or "en").split("-")[0]
-    target_code = (target or "en").split("-")[0]
-    if argos_pair_ready(source_code, target_code):
-        return
-    ARGOS_STATE.update(running=True, message=f"Fetching {source_code}→{target_code} package", error=None)
-    try:
-        argos_package.update_package_index()
-        available = argos_package.get_available_packages()
-        match = next(
-            (p for p in available if p.from_code == source_code and p.to_code == target_code),
-            None,
-        )
-        if match is None:
-            raise AudioError(f"Argos has no offline package for {source_code}→{target_code}.")
-        ARGOS_STATE["message"] = f"Downloading {match.package_version}"
-        path = match.download()
-        argos_package.install_from_path(path)
-        ARGOS_STATE["message"] = f"{source_code}→{target_code} ready"
-    finally:
-        ARGOS_STATE["running"] = False
-
-
-def install_argos() -> None:
-    """pip install argostranslate, used by the UI install button."""
-    ARGOS_STATE.update(running=True, message="Installing argostranslate", error=None)
-    try:
-        _run([sys.executable, "-m", "pip", "install", "--quiet", "argostranslate"], timeout=900)
-        ARGOS_STATE["message"] = "argostranslate installed"
-    except AudioError as exc:
-        ARGOS_STATE.update(error=str(exc)[:400])
-        raise
-    finally:
-        ARGOS_STATE["running"] = False
-
-
-def _translate_argos(lines: list[str], source: str, target: str) -> list[str] | None:
-    if not _module("argostranslate"):
-        return None
-    try:
-        import argostranslate.translate as argos_translate  # noqa: PLC0415
-
-        source_code = (source or "en").split("-")[0]
-        target_code = (target or "en").split("-")[0]
-        try:
-            return [argos_translate.translate(line, source_code, target_code) for line in lines]
-        except Exception:  # noqa: BLE001
-            ensure_argos_pair(source_code, target_code)
-            return [argos_translate.translate(line, source_code, target_code) for line in lines]
-    except Exception:  # noqa: BLE001
-        return None
-
-
 _APPLE_STATUS_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
 
 
@@ -1095,15 +1038,53 @@ def apple_pair_status(source: str, target: str) -> str:
     return status
 
 
-def _translate_opencode(lines: list[str], source: str, target: str) -> list[str] | None:
-    if not opencode_available():
+def _translate_apple(
+    lines: list[str], source: str, target: str, target_name: str,
+) -> list[str] | None:
+    binary = _apple_helper()
+    if not binary:
         return None
+
+    def translate_chunk(chunk: list[str]) -> list[str] | None:
+        payload = json.dumps({
+            "source": source, "target": target,
+            "targetName": target_name, "lines": chunk,
+        }).encode("utf-8")
+        for _attempt in range(2):
+            try:
+                result = subprocess.run(
+                    [str(binary)], input=payload, capture_output=True, timeout=600,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if result.returncode != 0:
+                continue
+            try:
+                data = json.loads(result.stdout.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if isinstance(data, list) and len(data) == len(chunk):
+                return [str(item) for item in data]
+        return None
+
+    # Apple's framework gets flaky on very large batches; split and retry.
+    output: list[str] = []
+    for offset in range(0, len(lines), 20):
+        translated = translate_chunk(lines[offset:offset + 20])
+        if translated is None:
+            return None
+        output.extend(translated)
+    return output
+
+
+def _translate_openrouter(lines: list[str], source: str, target: str) -> list[str] | None:
     prompt = (
         f"Translate these {len(lines)} subtitle lines into {_language_name(target)}. "
-        "Keep the same count and order, natural spoken style, JSON array only:\n"
+        "Keep the same count and order, natural spoken language, complete sentences. "
+        "Preserve names and numbers. JSON array only:\n"
         + json.dumps(lines, ensure_ascii=False)
     )
-    raw = _opencode_text(prompt, json_mode=False, max_tokens=1600)
+    raw = _openrouter_text(prompt, json_mode=False, max_tokens=2500)
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -1157,6 +1138,9 @@ def _rewrite_candidates() -> list[str]:
     settings = settings_store.load_settings().get("opencode") or {}
     if opencode_available() and settings.get("use_rewrite", True):
         order.append("opencode")
+    openrouter_settings = settings_store.load_settings().get("openrouter") or {}
+    if openrouter_available() and openrouter_settings.get("use_rewrite", True):
+        order.append("openrouter")
     if mlx_lm_available():
         order.append("mlx")
     if os.environ.get("VIBECUT_LLM_URL"):
@@ -1172,11 +1156,12 @@ def _provider_order(source: str, target: str, provider: str) -> list[str]:
     settings = settings_store.load_settings().get("opencode") or {}
     if settings.get("use_translate") and opencode_available():
         order.append("opencode")
-    order.extend(_ready_providers(source, target))
-    # Anything that might download or install goes after what already works.
-    for candidate in ("argos", "marian", "apple_fm", "ollama"):
-        if candidate not in order:
-            order.append(candidate)
+    openrouter_settings = settings_store.load_settings().get("openrouter") or {}
+    if openrouter_settings.get("use_translate", True) and openrouter_available():
+        order.append("openrouter")
+    # One local fallback only: Apple Translation.
+    if "apple_fm" not in order:
+        order.append("apple_fm")
     return order
 
 
@@ -1215,6 +1200,8 @@ def translate_lines(
         for candidate in _provider_order(source_code, target_code, provider):
             if candidate == "opencode":
                 result = _translate_opencode(missing, source_code, target_code)
+            elif candidate == "openrouter":
+                result = _translate_openrouter(missing, source_code, target_code)
             elif candidate == "apple_fm":
                 result = _translate_apple(missing, source_code, target_code, target_name)
             elif candidate == "ollama":
@@ -1240,12 +1227,8 @@ def translate_lines(
             errors.append(candidate)
         else:
             hint = (
-                " OpenCode Go is available: enable Translation in Setup → Intelligence "
-                "or pick OpenCode as the Translate engine."
-                if opencode_available()
-                else " Keep one of: Apple Translation language pack "
-                "(System Settings → General → Language & Region), argostranslate, "
-                "Marian (pip install transformers torch), or Ollama (VIBECUT_LLM_URL)."
+                " Check OpenCode Go, add an OpenRouter key, or install the Apple "
+                "Translation language pack (System Settings → General → Language & Region)."
             )
             raise AudioError(
                 "No translation provider worked (tried: "
@@ -1400,6 +1383,106 @@ def music_prompt(moods: list[str], target: float) -> str:
     )
 
 
+def _minimax_music(prompt: str, seconds: float, output: Path) -> None:
+    key = minimax_key()
+    if not key:
+        raise AudioError("Set MINIMAX_API_KEY to use MiniMax music.")
+    model = str((settings_store.load_settings().get("minimax") or {}).get("music_model") or "music-3.0")
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "is_instrumental": True,
+        "output_format": "hex",
+        "audio_setting": {
+            "sample_rate": 44100,
+            "bitrate": 256000,
+            "format": "wav",
+        },
+    }, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.minimax.io/v1/music_generation",
+        data=payload,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise AudioError(f"MiniMax music failed: {exc}") from exc
+    status = ((data.get("base_resp") or {}).get("status_code"))
+    if status not in (None, 0):
+        raise AudioError(f"MiniMax music failed: {data.get('base_resp')}")
+    audio_hex = str((data.get("data") or {}).get("audio") or "")
+    if not audio_hex:
+        raise AudioError("MiniMax music returned no audio.")
+    output.write_bytes(bytes.fromhex(audio_hex))
+    usage_store.record("music", "minimax")
+
+
+def _lyria_music(prompt: str, seconds: float, output: Path) -> None:
+    key = openrouter_key()
+    if not key:
+        raise AudioError("Add an OpenRouter key to use Lyria music.")
+    model = "google/lyria-3-pro-preview" if seconds > 32 else "google/lyria-3-clip-preview"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "modalities": ["text", "audio"],
+        "audio": {"format": "mp3"},
+        "stream": True,
+    }
+    request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:8787",
+            "X-Title": "VibeCut",
+        },
+        method="POST",
+    )
+    chunks: list[bytes] = []
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                body = line[5:].strip()
+                if not body or body == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(body)
+                except ValueError:
+                    continue
+                choices = event.get("choices") or []
+                if not choices:
+                    continue
+                audio = (choices[0].get("delta") or {}).get("audio") or {}
+                value = audio.get("data")
+                if value:
+                    try:
+                        chunks.append(base64.b64decode(value))
+                    except (ValueError, TypeError):
+                        continue
+    except Exception as exc:  # noqa: BLE001
+        raise AudioError(f"Lyria music failed: {exc}") from exc
+    if not chunks:
+        raise AudioError("Lyria returned no audio chunks.")
+    raw = output.with_name(f"{output.stem}.lyria.tmp.mp3")
+    raw.write_bytes(b"".join(chunks))
+    _convert(raw, output, ["-ar", "48000"])
+    usage_store.record(
+        "music", "lyria-pro" if model.endswith("-pro-preview") else "lyria-clip",
+    )
+    try:
+        raw.unlink()
+    except OSError:
+        pass
+
+
 def generate_music(
     model: str,
     prompt: str,
@@ -1411,7 +1494,15 @@ def generate_music(
     if target.is_file() and target.stat().st_size > 1024:
         return target
     is_musicgen = model.startswith("facebook/musicgen")
-    if not is_musicgen and not stable_audio_available():
+    is_minimax = model.startswith("minimax") or model.startswith("music-")
+    is_lyria = model.startswith("google/lyria")
+    if is_lyria:
+        if not openrouter_key():
+            raise AudioError("Add an OpenRouter key to use Lyria music.")
+    elif is_minimax:
+        if not minimax_key():
+            raise AudioError("Set MINIMAX_API_KEY to use MiniMax music.")
+    elif not is_musicgen and not stable_audio_available():
         raise AudioError(
             "Stable Audio is not usable. Install setuptools<80 and stable-audio-tools, "
             "accept the model license on Hugging Face, then run hf auth login. "
@@ -1420,7 +1511,11 @@ def generate_music(
     if is_musicgen and not musicgen_available():
         raise AudioError("MusicGen needs transformers, torch and soundfile.")
     target.parent.mkdir(parents=True, exist_ok=True)
-    if is_musicgen:
+    if is_lyria:
+        _lyria_music(prompt, seconds, target)
+    elif is_minimax:
+        _minimax_music(prompt, seconds, target)
+    elif is_musicgen:
         worker = ROOT / "tools" / "musicgen_generate.py"
         _run([
             sys.executable, str(worker),
@@ -1750,6 +1845,81 @@ def _mlx_text(prompt: str) -> str | None:
 
 
 OPENCODE_PROVIDER = "opencode-go"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_LAST_ERROR = ""
+
+
+def openrouter_key() -> str:
+    return settings_store.get_secret("openrouter")
+
+
+def openrouter_available() -> bool:
+    settings = settings_store.load_settings().get("openrouter") or {}
+    return bool(openrouter_key()) and bool(settings.get("enabled", True))
+
+
+def openrouter_model() -> str:
+    settings = settings_store.load_settings().get("openrouter") or {}
+    return str(settings.get("model") or "deepseek/deepseek-v4.1-flash:floor")
+
+
+def _openrouter_text(prompt: str, json_mode: bool = False, max_tokens: int = 3000) -> str | None:
+    global OPENROUTER_LAST_ERROR
+    key = openrouter_key()
+    if not key:
+        OPENROUTER_LAST_ERROR = "No OpenRouter key."
+        return None
+    payload = {
+        "model": openrouter_model(),
+        "messages": [
+            {"role": "system", "content": "You write short vertical video voice overs. Reply with JSON when asked."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.4,
+        "max_tokens": max_tokens,
+        "reasoning": {"effort": "low"},
+        "provider": {"sort": "price"},
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    request = urllib.request.Request(
+        OPENROUTER_URL,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:8787",
+            "X-Title": "VibeCut",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        OPENROUTER_LAST_ERROR = str(exc)[:240]
+        return None
+    usage = data.get("usage") or {}
+    usage_store.record(
+        "llm", "openrouter", model=openrouter_model(),
+        input_tokens=int(usage.get("prompt_tokens") or 0),
+        output_tokens=int(usage.get("completion_tokens") or 0),
+    )
+    choices = data.get("choices") or []
+    if not choices:
+        OPENROUTER_LAST_ERROR = "OpenRouter returned no choices."
+        return None
+    content = (choices[0].get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+    value = str(content or "").strip()
+    if not value:
+        OPENROUTER_LAST_ERROR = "OpenRouter returned an empty reply."
+        return None
+    OPENROUTER_LAST_ERROR = ""
+    return value
+
+
 OPENCODE_URL = "https://opencode.ai/inference/go/openai/v1/chat/completions"
 OPENCODE_DEFAULT_MODEL = "deepseek-v4.1-flash"
 OPENCODE_DEFAULT_VARIANT = "low"
@@ -2133,6 +2303,42 @@ def _rewrite_opencode(
     return cleaned
 
 
+def _rewrite_openrouter(
+    script: list[dict], source: str, target: str, mode: str, literal: list[str],
+    context: dict | None = None,
+) -> list[str] | None:
+    settings = settings_store.load_settings().get("openrouter") or {}
+    if mode == "literal" or not settings.get("use_rewrite", True) or not openrouter_available():
+        return None
+    raw = _openrouter_text(
+        _rewrite_prompt(script, source, target, mode, literal, context),
+        json_mode=True, max_tokens=3000,
+    )
+    if not raw:
+        return None
+    match = re.search(r"\[.*\]", raw, re.S)
+    if not match:
+        return None
+    try:
+        values = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(values, list) or len(values) != len(script):
+        return None
+    cjk = (target or "").split("-")[0].lower() in {"zh", "ja", "ko"}
+    cleaned = []
+    for index, value in enumerate(values):
+        text = ensure_terminal(str(value).strip(), cjk)
+        rate = float(script[index].get("rate") or 1.0)
+        duration = max(1.0, float(script[index].get("duration") or 1.0))
+        if estimate_seconds(text, rate) > duration * 1.35:
+            text = ensure_terminal(trim_to_seconds(text, duration * 1.20, rate), cjk)
+        if not text:
+            return None
+        cleaned.append(text)
+    return cleaned
+
+
 def _rewrite_mlx(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
     context: dict | None = None,
@@ -2468,6 +2674,54 @@ def _duck_and_mix(
     return output
 
 
+def store_uploaded_voice(source: Path, job_dir: Path) -> Path:
+    output = job_dir / "audio" / "uploaded_voice.wav"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _run([
+        _ffmpeg(), "-y", "-v", "error", "-i", str(source), "-vn",
+        "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(output),
+    ], timeout=900)
+    return output
+
+
+def _source_audio_bed(source: str, tmp: Path, cancel_event=None) -> Path:
+    output = tmp / "original_audio.wav"
+    _run([
+        _ffmpeg(), "-y", "-v", "error", "-i", source, "-vn",
+        "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(output),
+    ], timeout=900, cancel_event=cancel_event)
+    return output
+
+
+def _fit_uploaded_voice(
+    source: Path, total: float, tmp: Path, gain_db: float = 0.0,
+    expr: str | None = None, cancel_event=None,
+) -> Path:
+    """Fit an uploaded recording to the cut length without changing its voice."""
+    output = tmp / "uploaded_voice.wav"
+    native = media_duration(source) or 0.0
+    tempo = 1.0
+    if native > total > 0.1:
+        tempo = max(1.0, min(1.35, native / total))
+    filters = ["aresample=48000"]
+    if tempo > 1.001:
+        filters.append(f"atempo={tempo:.4f}")
+    filters.extend([
+        f"atrim=0:{total:.6f}",
+        "apad",
+        f"atrim=0:{total:.6f}",
+        f"volume={float(gain_db):.2f}dB",
+    ])
+    if expr:
+        filters.append(expr)
+    _run([
+        _ffmpeg(), "-y", "-v", "error", "-i", str(source),
+        "-af", ",".join(filters), "-ar", "48000", "-ac", "2",
+        "-c:a", "pcm_s16le", str(output),
+    ], timeout=900, cancel_event=cancel_event)
+    return output
+
+
 def build_bed(
     source: str,
     meta: dict,
@@ -2494,7 +2748,20 @@ def build_bed(
     lines: list[dict] = []
     voice_path: Path | None = None
 
-    if mode in {"voice", "full", "bed"} and voice_plan.get("engine"):
+    if mode in {"voice", "full", "bed"} and voice_plan.get("source") == "upload":
+        upload = str(voice_plan.get("upload") or "")
+        upload_path = (job_dir / upload).resolve() if upload else None
+        if not upload_path or not upload_path.is_file() or job_dir.resolve() not in upload_path.parents:
+            raise AudioError("Uploaded voice audio is missing. Upload it again.")
+        progress(0.86, "Fitting uploaded voice to the cut")
+        automation = audio_plan.get("automation") or {}
+        voice_path = _fit_uploaded_voice(
+            upload_path, total, tmp,
+            float(voice_plan.get("gain_db") or 0.0),
+            automation_expression(automation.get("voice"), total),
+            cancel_event,
+        )
+    elif mode in {"voice", "full", "bed"} and voice_plan.get("engine"):
         progress(0.86, "Writing the voice script")
         base_rate = float(voice_plan.get("rate") or 1.0)
         source_lang = str(source_lang or "en").split("-")[0]
@@ -2540,27 +2807,53 @@ def build_bed(
         base_voice_gain = float(voice_plan.get("gain_db") or 0.0)
         cache_dir = CACHE / "voice"
         prepared: list[dict] = [None] * len(script)  # type: ignore[list-item]
-        engine_name = str(voice_plan.get("engine"))
+        engine_name = str(voice_plan.get("engine") or "auto")
         voice_name = str(voice_plan.get("voice") or "")
+        if engine_name in {"auto", "minimax"}:
+            candidates = [
+                candidate for candidate in ("minimax", "fish", "gemini")
+                if (
+                    (candidate == "minimax" and minimax_key())
+                    or (candidate in {"fish", "gemini"} and openrouter_key())
+                )
+            ]
+            if not candidates:
+                candidates = ["kokoro", "say"]
+            engine_name = candidates[0] if engine_name == "auto" else engine_name
+        else:
+            candidates = [engine_name]
+        if engine_name == "minimax":
+            candidates = ["minimax", "fish", "gemini"]
+        elif engine_name == "fish":
+            candidates = ["fish", "gemini"]
         workers = max(1, min(4, len(script)))
 
         def synth_one(index: int, line: dict) -> tuple[int, Path]:
-            key = _text_hash(
-                engine_name, voice_name, f"{float(line['rate']):.3f}", line["text"],
-            )
-            path = _voice_cache(cache_dir, key)
-            if not path.is_file() or path.stat().st_size <= 512:
+            last_error: Exception | None = None
+            for candidate in candidates:
+                candidate_voice = voice_name if candidate == engine_name else (
+                    "default" if candidate == "fish" else "Kore"
+                )
+                key = _text_hash(
+                    candidate, candidate_voice, f"{float(line['rate']):.3f}", line["text"],
+                )
+                path = _voice_cache(cache_dir, key)
+                if path.is_file() and path.stat().st_size > 512:
+                    line["engine_used"] = candidate
+                    return index, path
                 try:
                     synthesize_line(
-                        engine_name, voice_name, line["text"], path,
+                        candidate, candidate_voice, line["text"], path,
                         rate=float(line["rate"]),
                         cancel_event=cancel_event,
                     )
-                except AudioError:
+                    line["engine_used"] = candidate
+                    return index, path
+                except AudioError as exc:
+                    last_error = exc
                     if path.exists():
                         path.unlink()
-                    raise
-            return index, path
+            raise last_error or AudioError("All voice providers failed.")
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2618,6 +2911,9 @@ def build_bed(
 
     music_path: Path | None = None
     if mode == "bed":
+        progress(0.90, "Keeping the original audio under the voice")
+        music_path = _source_audio_bed(source, tmp, cancel_event)
+    elif mode == "voice":
         progress(0.90, "Separating the original instrumental")
         music_path = separate_vocals(
             source, str(meta.get("fingerprint") or meta.get("size") or "source"),
@@ -2626,7 +2922,32 @@ def build_bed(
     elif music_plan.get("source") and music_plan.get("source") != "none":
         progress(0.90, "Preparing music bed")
         chosen: Path | None = resolve_music_track(scenes, clips, music_plan)
-        if chosen is None and music_plan.get("source") in {"stable-small", "stable-1.0", "musicgen-small"}:
+        if chosen is None and music_plan.get("source") in {"minimax-music", "lyria-clip"}:
+            primary = (
+                "minimax:music"
+                if music_plan["source"] == "minimax-music"
+                else "google/lyria"
+            )
+            prompt = str(music_plan.get("prompt") or "").strip()
+            if not prompt or prompt == "auto":
+                prompt = music_prompt(
+                    music_plan.get("moods") or scene_moods(scenes, clips),
+                    min(60.0, max(15.0, total)),
+                )
+            try:
+                chosen = generate_music(primary, prompt, min(60.0, max(15.0, total)), cancel_event)
+            except AudioError:
+                fallback = (
+                    "google/lyria"
+                    if primary == "minimax:music" and openrouter_key()
+                    else "minimax:music"
+                    if primary == "google/lyria" and minimax_key()
+                    else ""
+                )
+                if not fallback:
+                    raise
+                chosen = generate_music(fallback, prompt, min(60.0, max(15.0, total)), cancel_event)
+        elif chosen is None and music_plan.get("source") in {"stable-small", "stable-1.0", "musicgen-small"}:
             if music_plan["source"] == "musicgen-small":
                 model = "facebook/musicgen-small"
                 progress(0.90, "Generating AI music · MusicGen can take minutes")
@@ -3032,6 +3353,10 @@ def adapt_script(
             for candidate in order:
                 if candidate == "opencode":
                     rewritten = _rewrite_opencode(
+                        subset, source_lang, target_lang, mode, subset_literal, context,
+                    )
+                elif candidate == "openrouter":
+                    rewritten = _rewrite_openrouter(
                         subset, source_lang, target_lang, mode, subset_literal, context,
                     )
                 elif candidate in {"llm", "ollama"}:

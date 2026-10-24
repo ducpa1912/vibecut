@@ -17,10 +17,12 @@ SETTINGS_PATH = DATA / "settings.json"
 SECRETS_PATH = DATA / "secrets.json"
 LOCK = threading.Lock()
 
-SECRET_NAMES = ("opencode", "groq", "openai", "deepgram", "elevenlabs", "cartesia")
+SECRET_NAMES = ("opencode", "openrouter", "minimax", "groq", "openai", "deepgram", "elevenlabs", "cartesia")
 
 ENV_KEYS = {
     "opencode": ("VIBECUT_OPENCODE_API_KEY", "OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"),
+    "openrouter": ("VIBECUT_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"),
+    "minimax": ("VIBECUT_MINIMAX_API_KEY", "MINIMAX_API_KEY"),
     "groq": ("VIBECUT_GROQ_API_KEY", "GROQ_API_KEY"),
     "openai": ("VIBECUT_OPENAI_API_KEY", "OPENAI_API_KEY"),
     "deepgram": ("VIBECUT_DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY"),
@@ -37,12 +39,26 @@ DEFAULTS = {
         "use_brief": True,
         "use_translate": True,
     },
+    "openrouter": {
+        "enabled": True,
+        "model": "deepseek/deepseek-v4.1-flash:floor",
+        "reasoning": "low",
+        "use_rewrite": True,
+        "use_translate": True,
+        "use_tts": True,
+        "use_music": True,
+    },
+    "minimax": {
+        "enabled": True,
+        "tts_model": "speech-2.8-turbo",
+        "music_model": "music-3.0",
+    },
     "stt": {
         "provider": "auto",
         "language": "en",
         "model": "mlx-community/whisper-small-mlx",
     },
-    "tts": {"provider": "auto"},
+    "tts": {"provider": "minimax"},
 }
 
 

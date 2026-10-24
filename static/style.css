@@ -1305,3 +1305,14 @@ main { min-height: calc(100vh - 150px); }
 .setup-audio { width: 100%; margin-top: 10px; height: 34px; }
 
 .clip.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.audio-source-row { display: flex; gap: 14px; align-items: center; }
+.check.compact { font-size: 11.5px; }
+
+.audio-mode-field { grid-column: 1 / -1; }
+.audio-mode-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.audio-mode-tabs button {
+  border: 1px solid var(--line, #2a2a30); background: transparent; color: var(--muted);
+  border-radius: 999px; padding: 5px 11px; font-size: 11px; cursor: pointer;
+}
+.audio-mode-tabs button.active { color: var(--text); border-color: var(--accent); background: rgba(232, 162, 102, 0.1); }

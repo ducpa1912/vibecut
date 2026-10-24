@@ -200,13 +200,13 @@ def _add_render_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--audio-mode", choices=("keep", "full", "bed", "voice", "music"),
                         default="keep", help="Replace or keep the original audio.")
     parser.add_argument("--translate", default=None, help="Target language code, e.g. en.")
-    parser.add_argument("--translate-provider", choices=("auto", "opencode", "apple_fm", "argos", "marian", "ollama"),
+    parser.add_argument("--translate-provider", choices=("auto", "opencode", "openrouter", "apple_fm", "argos", "marian", "ollama"),
                         default="auto")
-    parser.add_argument("--voice-engine", choices=("say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram"),
+    parser.add_argument("--voice-engine", choices=("say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram", "minimax", "fish", "gemini", "cartesia"),
                         default="say")
     parser.add_argument("--voice", default="", help="Voice id for the chosen engine.")
     parser.add_argument("--voice-rate", type=float, default=1.0)
-    parser.add_argument("--music", choices=("none", "library", "cc0", "stable-small", "stable-1.0", "musicgen-small"),
+    parser.add_argument("--music", choices=("none", "library", "cc0", "minimax-music", "lyria-clip", "stable-small", "stable-1.0", "musicgen-small"),
                         default="none")
     parser.add_argument("--music-track", default="", help="Track path or name; empty = auto mood.")
     parser.add_argument("--music-prompt", default="", help="Prompt for Stable Audio; empty = auto.")

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
-  <link rel="stylesheet" href="/static/style.css?v=0.9.2">
-  <script defer src="/static/app.js?v=0.9.2"></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.10.0b">
+  <script defer src="/static/app.js?v=0.10.0b"></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -254,16 +254,33 @@
         <details id="audio-panel" class="audio-panel">
           <summary>Audio · voice over, dub, music</summary>
           <div class="audio-grid">
-            <label class="audio-field">
+            <div class="audio-field audio-mode-field">
               <span>Mode</span>
-              <select id="audio-mode">
-                <option value="keep">Keep original audio</option>
-                <option value="full">Full replace · new voice + new music</option>
-                <option value="bed">Dub over original bed · Demucs</option>
-                <option value="voice">Voice only · replace the voice</option>
-                <option value="music">Music only · replace the music</option>
+              <div id="audio-mode-tabs" class="audio-mode-tabs">
+                <button type="button" data-audio-mode="keep" class="active">Original</button>
+                <button type="button" data-audio-mode="bed">Voice-over</button>
+                <button type="button" data-audio-mode="voice">Dub</button>
+                <button type="button" data-audio-mode="music">Music</button>
+                <button type="button" data-audio-mode="full">Full Replace</button>
+              </div>
+              <select id="audio-mode" hidden>
+                <option value="keep">Original</option>
+                <option value="bed">Voice-over · new voice over original audio</option>
+                <option value="voice">Dub · replace only the voice</option>
+                <option value="music">Music · replace original audio</option>
+                <option value="full">Full Replace · new voice + new music</option>
               </select>
-            </label>
+            </div>
+            <div id="audio-voice-source" class="audio-field">
+              <span>Voice source</span>
+              <div class="audio-source-row">
+                <label class="check compact"><input id="audio-source-generate" type="radio" name="audio-source" value="generate" checked> Generate</label>
+                <label class="check compact"><input id="audio-source-upload" type="radio" name="audio-source" value="upload"> Use my recording</label>
+              </div>
+              <input id="audio-upload" type="file" accept="audio/*" hidden>
+              <button id="audio-upload-button" class="ghost small" type="button" hidden>Choose audio</button>
+              <span id="audio-upload-name" class="hint"></span>
+            </div>
             <label class="audio-field">
               <span>Translate to</span>
               <select id="audio-lang"></select>
@@ -302,9 +319,8 @@
                 <option value="none">No music</option>
                 <option value="library">My own track</option>
                 <option value="cc0">CC0 library</option>
-                <option value="stable-small">AI · Stable Audio Open Small</option>
-                <option value="stable-1.0">AI · Stable Audio Open 1.0</option>
-                <option value="musicgen-small">AI · MusicGen Small · ungated, slow</option>
+                <option value="minimax-music">AI · MiniMax Music</option>
+                <option value="lyria-clip">AI · OpenRouter Lyria 3</option>
               </select>
             </label>
             <label class="audio-field">
@@ -406,6 +422,10 @@
             <input id="setup-opencode-key" type="password" autocomplete="off" spellcheck="false" placeholder="oc_sk_…">
           </label>
           <p class="setup-hint">Leave blank to use the OpenCode login on this machine. A saved key is used only by this project.</p>
+          <label class="setup-field">
+            <span>OpenRouter key · translation/TTS/music fallback</span>
+            <input id="setup-openrouter-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…">
+          </label>
           <div class="setup-row">
             <label class="setup-field">
               <span>Model</span>
@@ -421,7 +441,10 @@
             <label class="setup-check"><input id="setup-use-brief" type="checkbox"> Story brief</label>
             <label class="setup-check"><input id="setup-use-translate" type="checkbox"> Translation</label>
           </div>
-          <button id="setup-test-opencode" class="ghost small" type="button">Test OpenCode</button>
+          <div class="setup-actions">
+            <button id="setup-test-opencode" class="ghost small" type="button">Test OpenCode</button>
+            <button id="setup-test-openrouter" class="ghost small" type="button">Test OpenRouter</button>
+          </div>
         </section>
 
         <section class="setup-section">
@@ -498,6 +521,9 @@
               <option value="kokoro">Kokoro · local, free</option>
               <option value="piper">Piper · local, free</option>
               <option value="say">Apple say · local, free</option>
+              <option value="minimax">MiniMax speech-2.8-turbo</option>
+              <option value="fish">OpenRouter Fish S2.1 Pro Free</option>
+              <option value="gemini">OpenRouter Gemini 3.8 Flash-Lite TTS</option>
               <option value="openai">OpenAI gpt-4o-mini-tts · ~$15/M</option>
               <option value="elevenlabs">ElevenLabs Flash · ~$40/M</option>
               <option value="groq">Groq Orpheus · ~$22/M, English</option>
@@ -506,6 +532,10 @@
             </select>
           </label>
           <div class="setup-row">
+            <label class="setup-field">
+              <span>MiniMax key · TTS + music</span>
+              <input id="setup-minimax-key" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ…">
+            </label>
             <label class="setup-field">
               <span>ElevenLabs key</span>
               <input id="setup-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="xi-…">

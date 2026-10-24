@@ -7,6 +7,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.10.0 | 2026-10-24 | Speech/Music/Upload | OpenCode→OpenRouter→Apple translation, AI rewrite fallback, MiniMax TTS/music, OpenRouter TTS/Lyria fallbacks, uploaded voice fit for Voice-over/Dub/Full Replace, audio tabs |
 | 0.9.2 | 2026-10-24 | AI music fix | Stable Audio preflight + gated-weight guidance; ungated MusicGen Small fallback with worker |
 | 0.9.1 | 2026-10-24 | Script prompt v2 | full target voice script + aesthetic + char/word budgets, complete-sentence rules, condense repair pass |
 | 0.9.0 | 2026-10-24 | P1/P2 | usage/cost readout, live STT/TTS tests, Cartesia, smoothed crop paths, review links, keyboard editor, Whisper model manager |
@@ -51,6 +52,12 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] OpenCode Go rewrite + story brief; model `deepseek-v4.1-flash`, variant `low`
 - [x] Direct OpenCode Go project API key mode (project-local secret, no shared login)
 - [x] OpenCode Go translation
+- [x] OpenRouter DeepSeek translation/rewrite fallback
+- [x] Apple local translation, chunked with retries
+- [x] Uploaded voice fit for Voice-over/Dub/Full Replace
+- [x] MiniMax Speech 2.8 Turbo + OpenRouter Fish/Gemini TTS fallback
+- [x] MiniMax Music + OpenRouter Lyria 3 fallback
+- [x] Audio mode tabs and upload-only-in-supported-modes UI
 - [x] OpenCode Go optional translation
 - [x] Cloud STT: Groq Whisper turbo, OpenAI Whisper, Deepgram Nova-3
 - [x] Cloud TTS: OpenAI gpt-4o-mini-tts, Groq Orpheus, Deepgram Aura
