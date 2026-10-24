@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -26,6 +27,7 @@ import audio
 import exports as cuts
 import pipeline
 import render
+import settings_store
 import vision
 
 ROOT = Path(__file__).resolve().parent
@@ -221,7 +223,11 @@ def clean_options(raw: dict | None) -> dict:
         "transcribe": bool(raw.get("transcribe", False)),
         "smart_crop": bool(raw.get("smart_crop", True)),
         "transcribe_engine": str(raw.get("transcribe_engine") or "auto"),
-        "speech_language": str(raw.get("speech_language") or "en"),
+        "speech_language": str(
+            raw.get("speech_language")
+            or (settings_store.load_settings().get("stt") or {}).get("language")
+            or "en"
+        ),
     }
 
 
@@ -662,11 +668,111 @@ def health() -> dict:
         "ok": True,
         "ffmpeg": ffmpeg_version(),
         "vision": vision.available(),
-        "whisper": bool(shutil.which("mlx_whisper")),
+        "whisper": bool(shutil.which("mlx_whisper"))
+        or pipeline._cloud_stt_provider("auto") is not None
+        or (
+            sys.platform == "darwin"
+            and (
+                (ROOT / "bin" / "transcribe_apple").is_file()
+                or bool(shutil.which("swiftc"))
+            )
+        ),
         "data": str(DATA),
         "encoder": render._choose_encoder(),
         "version": 2,
     }
+
+
+OPENROUTER_MODEL = "z-ai/glm-5.3-flash:floor"
+OPENROUTER_REASONING = "low"
+STT_PROVIDERS = {"auto", "apple", "whisper", "groq", "openai", "deepgram"}
+TTS_PROVIDERS = {"auto", "local", "say", "piper", "kokoro", "openai", "elevenlabs", "groq", "deepgram"}
+
+
+class SettingsTestBody(BaseModel):
+    kind: str = "openrouter"
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    return settings_store.public_state()
+
+
+@app.post("/api/settings")
+async def save_settings(request: Request) -> dict:
+    body = await request.json()
+    patch = body.get("settings") if isinstance(body, dict) else None
+    secrets = body.get("secrets") if isinstance(body, dict) else None
+    if isinstance(patch, dict):
+        openrouter = patch.get("openrouter")
+        if isinstance(openrouter, dict):
+            requested = str(openrouter.get("model") or OPENROUTER_MODEL)
+            if requested != OPENROUTER_MODEL:
+                raise HTTPException(400, f"Only {OPENROUTER_MODEL} is supported.")
+            requested_reasoning = str(openrouter.get("reasoning") or OPENROUTER_REASONING)
+            if requested_reasoning != OPENROUTER_REASONING:
+                raise HTTPException(400, "OpenRouter reasoning is locked to low.")
+            openrouter["model"] = OPENROUTER_MODEL
+            openrouter["reasoning"] = OPENROUTER_REASONING
+        stt = patch.get("stt")
+        if isinstance(stt, dict) and stt.get("provider") not in (None, "") and stt["provider"] not in STT_PROVIDERS:
+            raise HTTPException(400, "Unknown transcription provider.")
+        tts = patch.get("tts")
+        if isinstance(tts, dict) and tts.get("provider") not in (None, "") and tts["provider"] not in TTS_PROVIDERS:
+            raise HTTPException(400, "Unknown voice provider.")
+        settings_store.save_settings(patch)
+    if isinstance(secrets, dict):
+        settings_store.save_secrets(secrets)
+    return settings_store.public_state()
+
+
+@app.post("/api/settings/test")
+def test_settings(body: SettingsTestBody) -> dict:
+    kind = (body.kind or "openrouter").lower()
+    if kind == "openrouter":
+        started = time.time()
+        answer = audio._openrouter_text(
+            'Reply with JSON only: {"ok": true}', json_mode=True, max_tokens=200,
+        )
+        return {
+            "ok": bool(answer),
+            "kind": "openrouter",
+            "model": audio.openrouter_model(),
+            "reasoning": OPENROUTER_REASONING,
+            "seconds": round(time.time() - started, 2),
+            "answer": (answer or "")[:160],
+            "detail": (
+                "OpenRouter replied." if answer
+                else "No reply. Check the key, model access, or network."
+                + (f" {audio.OPENROUTER_LAST_ERROR}" if audio.OPENROUTER_LAST_ERROR else "")
+            ),
+        }
+    if kind == "stt":
+        provider = pipeline._cloud_stt_provider("auto")
+        return {
+            "ok": bool(provider),
+            "kind": "stt",
+            "provider": provider,
+            "detail": (
+                f"{provider} is configured." if provider
+                else "No cloud STT key. Apple Speech or local Whisper will be used."
+            ),
+        }
+    if kind == "tts":
+        engines = {
+            "openai": bool(audio.openai_key()),
+            "groq": bool(audio.groq_key()),
+            "deepgram": bool(audio.deepgram_key()),
+            "elevenlabs": bool(audio.elevenlabs_key()),
+        }
+        ready = [name for name, available in engines.items() if available]
+        return {
+            "ok": bool(ready),
+            "kind": "tts",
+            "engines": engines,
+            "detail": ("Configured: " + ", ".join(ready)) if ready else "No cloud voice key. Local voices still work.",
+        }
+    raise HTTPException(400, "Unknown test kind.")
 
 
 class PathBody(BaseModel):

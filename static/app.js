@@ -11,6 +11,28 @@
     brand: $("#brand"),
     health: $("#health"),
     footerHealth: $("#footer-health"),
+    setup: $("#setup"),
+    setupOpen: $("#setup-open"),
+    setupClose: $("#setup-close"),
+    setupSave: $("#setup-save"),
+    setupStatus: $("#setup-status"),
+    setupOpenrouterEnabled: $("#setup-openrouter-enabled"),
+    setupOpenrouterKey: $("#setup-openrouter-key"),
+    setupOpenrouterModel: $("#setup-openrouter-model"),
+    setupOpenrouterReasoning: $("#setup-openrouter-reasoning"),
+    setupUseRewrite: $("#setup-use-rewrite"),
+    setupUseBrief: $("#setup-use-brief"),
+    setupUseTranslate: $("#setup-use-translate"),
+    setupSttProvider: $("#setup-stt-provider"),
+    setupSttLanguage: $("#setup-stt-language"),
+    setupTtsProvider: $("#setup-tts-provider"),
+    setupGroqKey: $("#setup-groq-key"),
+    setupOpenaiKey: $("#setup-openai-key"),
+    setupDeepgramKey: $("#setup-deepgram-key"),
+    setupElevenlabsKey: $("#setup-elevenlabs-key"),
+    setupTestOpenrouter: $("#setup-test-openrouter"),
+    setupTestStt: $("#setup-test-stt"),
+    setupTestTts: $("#setup-test-tts"),
     dropzone: $("#dropzone"),
     fileInput: $("#file-input"),
     fileCard: $("#file-card"),
@@ -175,8 +197,179 @@
     bind();
     loadHealth();
     loadRecent();
+    loadSetup(true);
     routeFromHash();
     setInterval(tickElapsed, 1000);
+  }
+
+  // ---------------------------------------------------------------- setup
+
+  function setSecretHint(input, configured, source) {
+    if (source === "env") {
+      input.placeholder = "set by environment · env wins";
+      input.disabled = true;
+      input.dataset.configured = "1";
+      return;
+    }
+    input.disabled = false;
+    input.placeholder = configured
+      ? "configured · leave blank to keep"
+      : (input.dataset.empty || "not set");
+    input.dataset.configured = configured ? "1" : "0";
+  }
+
+  function applySetup(data) {
+    const settings = data.settings || {};
+    const secrets = data.secrets || {};
+    const sources = data.sources || {};
+    const openrouter = settings.openrouter || {};
+    dom.setupOpenrouterEnabled.checked = openrouter.enabled !== false;
+    dom.setupOpenrouterModel.value = openrouter.model || "z-ai/glm-5.3-flash:floor";
+    dom.setupOpenrouterReasoning.value = openrouter.reasoning || "low";
+    dom.setupUseRewrite.checked = openrouter.use_rewrite !== false;
+    dom.setupUseBrief.checked = openrouter.use_brief !== false;
+    dom.setupUseTranslate.checked = !!openrouter.use_translate;
+    dom.setupSttProvider.value = (settings.stt || {}).provider || "auto";
+    dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
+    dom.setupTtsProvider.value = (settings.tts || {}).provider || "auto";
+    setSecretHint(dom.setupOpenrouterKey, !!secrets.openrouter, sources.openrouter);
+    setSecretHint(dom.setupGroqKey, !!secrets.groq, sources.groq);
+    setSecretHint(dom.setupOpenaiKey, !!secrets.openai, sources.openai);
+    setSecretHint(dom.setupDeepgramKey, !!secrets.deepgram, sources.deepgram);
+    setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
+    ["openrouter", "groq", "openai", "deepgram", "elevenlabs"].forEach((name) => {
+      const input = {
+        openrouter: dom.setupOpenrouterKey,
+        groq: dom.setupGroqKey,
+        openai: dom.setupOpenaiKey,
+        deepgram: dom.setupDeepgramKey,
+        elevenlabs: dom.setupElevenlabsKey,
+      }[name];
+      if (input) input.value = "";
+    });
+    state.setup = settings;
+    state.setupSecrets = secrets;
+    const stt = settings.stt || {};
+    const cloudStt = ["groq", "openai", "deepgram"].includes(stt.provider);
+    if (cloudStt && dom.speechNote) dom.speechNote.textContent = `cloud · ${stt.provider}`;
+    else if (dom.speechNote && !dom.speechNote.textContent.includes("unavailable")) {
+      dom.speechNote.textContent = "Apple / local Whisper";
+    }
+  }
+
+  async function loadSetup(quiet = false) {
+    try {
+      const data = await api("/api/settings");
+      applySetup(data);
+      if (quiet) return data;
+      dom.setupStatus.textContent = data.secrets?.openrouter
+        ? "OpenRouter key configured."
+        : "No cloud keys yet. Local engines are active.";
+      return data;
+    } catch (error) {
+      if (!quiet) dom.setupStatus.textContent = error.message;
+      return null;
+    }
+  }
+
+  async function openSetup() {
+    dom.setup.hidden = false;
+    dom.setupStatus.textContent = "Loading…";
+    await loadSetup();
+  }
+
+  function closeSetup() {
+    dom.setup.hidden = true;
+  }
+
+  function setupSecrets() {
+    const values = {
+      openrouter: dom.setupOpenrouterKey.value.trim(),
+      groq: dom.setupGroqKey.value.trim(),
+      openai: dom.setupOpenaiKey.value.trim(),
+      deepgram: dom.setupDeepgramKey.value.trim(),
+      elevenlabs: dom.setupElevenlabsKey.value.trim(),
+    };
+    return Object.fromEntries(Object.entries(values).filter(([, value]) => value));
+  }
+
+  async function saveSetup() {
+    dom.setupSave.disabled = true;
+    dom.setupStatus.textContent = "Saving…";
+    try {
+      const payload = {
+        settings: {
+          openrouter: {
+            enabled: dom.setupOpenrouterEnabled.checked,
+            model: dom.setupOpenrouterModel.value.trim() || "z-ai/glm-5.3-flash:floor",
+            reasoning: "low",
+            use_rewrite: dom.setupUseRewrite.checked,
+            use_brief: dom.setupUseBrief.checked,
+            use_translate: dom.setupUseTranslate.checked,
+          },
+          stt: { provider: dom.setupSttProvider.value, language: dom.setupSttLanguage.value },
+          tts: { provider: dom.setupTtsProvider.value },
+        },
+        secrets: setupSecrets(),
+      };
+      const data = await api("/api/settings", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      applySetup(data);
+      dom.setupStatus.textContent = "Saved. Local fallback still active.";
+      toast("Setup saved.");
+      await loadAudioEngines();
+      const preferred = dom.setupTtsProvider.value;
+      if (preferred && preferred !== "auto" && preferred !== "local"
+          && state.audioEngines?.voices?.[preferred]?.available) {
+        state.audio.engine = preferred;
+        dom.audioEngine.value = preferred;
+        loadAudioVoices();
+      }
+      refreshAudioStatus();
+    } catch (error) {
+      dom.setupStatus.textContent = error.message;
+    } finally {
+      dom.setupSave.disabled = false;
+    }
+  }
+
+  async function testSetup(kind, button) {
+    const old = button.textContent;
+    button.disabled = true;
+    button.textContent = "Testing…";
+    dom.setupStatus.textContent = "";
+    try {
+      const result = await api("/api/settings/test", {
+        method: "POST",
+        body: JSON.stringify({ kind }),
+      });
+      const bits = [result.ok ? "OK" : "Not ready", result.detail];
+      if (result.model) bits.push(result.model);
+      if (result.seconds !== undefined) bits.push(`${result.seconds}s`);
+      dom.setupStatus.textContent = bits.filter(Boolean).join(" · ");
+    } catch (error) {
+      dom.setupStatus.textContent = error.message;
+    } finally {
+      button.disabled = false;
+      button.textContent = old;
+    }
+  }
+
+  function bindSetup() {
+    dom.setupOpen.addEventListener("click", openSetup);
+    dom.setupClose.addEventListener("click", closeSetup);
+    dom.setup.querySelectorAll("[data-setup-close]").forEach((node) => {
+      node.addEventListener("click", closeSetup);
+    });
+    dom.setupSave.addEventListener("click", saveSetup);
+    dom.setupTestOpenrouter.addEventListener("click", () => testSetup("openrouter", dom.setupTestOpenrouter));
+    dom.setupTestStt.addEventListener("click", () => testSetup("stt", dom.setupTestStt));
+    dom.setupTestTts.addEventListener("click", () => testSetup("tts", dom.setupTestTts));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !dom.setup.hidden) closeSetup();
+    });
   }
 
   // ---------------------------------------------------------------- api
@@ -409,6 +602,7 @@
       updateRenderPanel();
     });
     bindAudio();
+    bindSetup();
 
     dom.timeline.addEventListener("click", (event) => {
       const tool = event.target.closest("[data-edit]");
@@ -613,7 +807,12 @@
     } else if (state.meta?.duration > 900) {
       dom.speechNote.textContent = "long video · adds time";
     } else {
-      dom.speechNote.textContent = "local Whisper";
+      const stt = state.setup?.stt?.provider || "auto";
+      const cloud = ["groq", "openai", "deepgram"].includes(stt)
+        || (stt === "auto" && ["groq", "openai", "deepgram"].some(
+          (name) => state.setupSecrets?.[name],
+        ));
+      dom.speechNote.textContent = cloud ? `cloud · ${stt === "auto" ? "auto" : stt}` : "Apple / local Whisper";
     }
     if (!vision) {
       dom.optOcr.checked = false;
@@ -628,6 +827,8 @@
     return {
       ocr: dom.optOcr.checked,
       transcribe: dom.optSpeech.checked,
+      transcribe_engine: state.setup?.stt?.provider || "auto",
+      speech_language: state.setup?.stt?.language || "en",
       smart_crop: dom.optCrop.checked,
     };
   }
@@ -1902,6 +2103,11 @@
       ]);
     });
     fillSelect(dom.audioProvider, translateOptions);
+    const preferredTts = state.setup?.tts?.provider;
+    if (preferredTts && !["auto", "local"].includes(preferredTts)
+        && engines.voices?.[preferredTts]?.available) {
+      state.audio.engine = preferredTts;
+    }
     dom.audioEngine.value = state.audio.engine;
     dom.audioMusic.value = state.audio.music;
     dom.audioLang.value = state.audio.lang;
@@ -1930,6 +2136,9 @@
       piper: "Piper medium",
       kokoro: "Kokoro int8",
       elevenlabs: "ElevenLabs (API key)",
+      openai: "OpenAI gpt-4o-mini-tts",
+      groq: "Groq Orpheus",
+      deepgram: "Deepgram Aura",
     }[id] || id;
   }
 
@@ -1949,7 +2158,8 @@
       const result = await api(`/api/audio/voices?engine=${encodeURIComponent(engine)}`);
       const voices = result.voices || [];
       if (!voices.length) {
-        fillSelect(dom.audioVoice, [["", engine === "elevenlabs" ? "Add your API key" : "No voices found"]]);
+        const needsKey = ["elevenlabs", "openai", "groq", "deepgram"].includes(engine);
+        fillSelect(dom.audioVoice, [["", needsKey ? "Add the key in Setup" : "No voices found"]]);
         return;
       }
       fillSelect(dom.audioVoice, voices.map((voice) => [

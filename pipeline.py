@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
+import uuid
 import wave
 from pathlib import Path
 from typing import Callable
@@ -17,6 +19,7 @@ from typing import Callable
 import numpy as np
 from PIL import Image, ImageFilter
 
+import settings_store
 import vision
 from vision import probe_image, probe_images
 
@@ -629,6 +632,166 @@ def _apple_transcribe_helper() -> Path | None:
     return binary if result.returncode == 0 and binary.is_file() else None
 
 
+CLOUD_STT_PROVIDERS = ("groq", "openai", "deepgram")
+
+
+def _cloud_stt_provider(preferred: str = "auto") -> str | None:
+    preferred = (preferred or "auto").lower()
+    if preferred == "auto":
+        preferred = str((settings_store.load_settings().get("stt") or {}).get("provider") or "auto").lower()
+    if preferred in {"apple", "whisper", "local"}:
+        return None
+    if preferred in CLOUD_STT_PROVIDERS:
+        return preferred if settings_store.get_secret(preferred) else None
+    if preferred == "auto":
+        for provider in CLOUD_STT_PROVIDERS:
+            if settings_store.get_secret(provider):
+                return provider
+    return None
+
+
+def _multipart(fields: dict, file_field: str, filename: str, content: bytes, content_type: str):
+    boundary = "----vibecut" + uuid.uuid4().hex
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8")
+        )
+    chunks.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n".encode("utf-8")
+    )
+    chunks.append(content)
+    chunks.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -> dict | None:
+    out_dir = job_dir / "transcript"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    upload = out_dir / "transcript_upload.mp3"
+    _run([
+        _ffmpeg(), "-y", "-v", "error", "-i", str(wav_path),
+        "-ac", "1", "-ar", "16000", "-b:a", "48k", str(upload),
+    ], timeout=600)
+    if not upload.is_file() or upload.stat().st_size == 0:
+        return None
+    audio_bytes = upload.read_bytes()
+    key = settings_store.get_secret(provider)
+    duration = 0.0
+    try:
+        with wave.open(str(wav_path), "rb") as handle:
+            duration = handle.getnframes() / max(1, handle.getframerate())
+    except (OSError, wave.Error):
+        pass
+
+    if provider in {"groq", "openai"}:
+        if provider == "groq":
+            endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+            model = os.environ.get("VIBECUT_GROQ_STT_MODEL", "whisper-large-v3-turbo")
+        else:
+            endpoint = "https://api.openai.com/v1/audio/transcriptions"
+            model = os.environ.get("VIBECUT_OPENAI_STT_MODEL", "whisper-1")
+        fields = {
+            "model": model,
+            "response_format": "verbose_json",
+            "temperature": "0",
+        }
+        if language and language != "auto":
+            fields["language"] = language.split("-")[0]
+        body, content_type = _multipart(fields, "file", "audio.mp3", audio_bytes, "audio/mpeg")
+        request = urllib.request.Request(
+            endpoint, data=body,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": content_type},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=1800) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+        segments = []
+        for item in data.get("segments") or []:
+            value = " ".join(str(item.get("text") or "").split())
+            if not value:
+                continue
+            start = float(item.get("start") or 0.0)
+            end = float(item.get("end") or start)
+            if end <= start:
+                end = min(duration or start + 1.0, start + 8.0)
+            segments.append({"start": round(start, 3), "end": round(end, 3), "text": value})
+        full_text = " ".join(str(data.get("text") or "").split())
+        if not segments and full_text:
+            segments = [{"start": 0.0, "end": round(duration, 3) or 1.0, "text": full_text}]
+        if not segments:
+            return None
+        return {
+            "language": str(data.get("language") or language or "en").split("-")[0],
+            "text": " ".join(item["text"] for item in segments)[:4000],
+            "segments": segments,
+            "provider": provider,
+            "model": model,
+        }
+
+    # Deepgram
+    params = ["model=nova-3", "smart_format=true", "utterances=true"]
+    if language and language != "auto":
+        params.append(f"language={language.split('-')[0]}")
+    endpoint = "https://api.deepgram.com/v1/listen?" + "&".join(params)
+    request = urllib.request.Request(
+        endpoint, data=audio_bytes,
+        headers={"Authorization": f"Token {key}", "Content-Type": "audio/mpeg"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=1800) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    segments = []
+    utterances = (((data.get("results") or {}).get("utterances")) or [])
+    for item in utterances:
+        value = " ".join(str(item.get("transcript") or "").split())
+        if not value:
+            continue
+        segments.append({
+            "start": round(float(item.get("start") or 0.0), 3),
+            "end": round(float(item.get("end") or 0.0), 3),
+            "text": value,
+        })
+    if not segments:
+        alternatives = (((data.get("results") or {}).get("channels") or [{}])[0].get("alternatives") or [])
+        full_text = " ".join(str((alternatives[0] if alternatives else {}).get("transcript") or "").split())
+        if full_text:
+            segments = [{"start": 0.0, "end": round(duration, 3) or 1.0, "text": full_text}]
+    if not segments:
+        return None
+    return {
+        "language": str(data.get("metadata", {}).get("language") or language or "en").split("-")[0],
+        "text": " ".join(item["text"] for item in segments)[:4000],
+        "segments": segments,
+        "provider": "deepgram",
+        "model": "nova-3",
+    }
+
+
+def transcribe_cloud(
+    wav_path: Path | None,
+    job_dir: Path,
+    language: str = "en",
+    provider: str = "auto",
+) -> dict | None:
+    if not wav_path or not wav_path.exists():
+        return None
+    chosen = _cloud_stt_provider(provider)
+    if not chosen:
+        return None
+    try:
+        return _cloud_speech(wav_path, job_dir, chosen, language)
+    except Exception:  # noqa: BLE001 - cloud failure must fall back to local
+        return None
+
+
 def transcribe_apple(
     wav_path: Path | None,
     job_dir: Path,
@@ -673,6 +836,7 @@ def transcribe_apple(
         "language": str(data.get("language") or locale).split("-")[0],
         "text": str(data.get("text") or "")[:4000],
         "segments": segments,
+        "provider": "apple",
     }
 
 
@@ -743,6 +907,7 @@ def transcribe(
         "language": data.get("language"),
         "text": text[:1200],
         "segments": events,
+        "provider": "whisper",
     }
 
 
@@ -1389,13 +1554,23 @@ def analyze_source(
     if options.get("transcribe") and wav:
         stage = time.time()
         engine = str(options.get("transcribe_engine") or "auto").lower()
-        speech_language = str(options.get("speech_language") or "en")
-        if engine in {"auto", "apple"}:
+        speech_language = str(
+            options.get("speech_language")
+            or (settings_store.load_settings().get("stt") or {}).get("language")
+            or "en"
+        )
+        cloud_engine = engine if engine in CLOUD_STT_PROVIDERS else "auto"
+        if engine in {"auto", "cloud", *CLOUD_STT_PROVIDERS}:
+            progress("reading", 0.69, "Transcribing speech · cloud")
+            transcript = transcribe_cloud(wav, job_dir, speech_language, cloud_engine)
+            if transcript:
+                timings["cloud_speech"] = round(time.time() - stage, 2)
+        if transcript is None and engine in {"auto", "cloud", "apple", *CLOUD_STT_PROVIDERS}:
             progress("reading", 0.70, "Transcribing speech · Apple Speech")
             transcript = transcribe_apple(wav, job_dir, speech_language)
             if transcript:
                 timings["apple_speech"] = round(time.time() - stage, 2)
-        if transcript is None and engine in {"auto", "whisper"}:
+        if transcript is None and engine in {"auto", "cloud", "apple", "whisper", *CLOUD_STT_PROVIDERS}:
             progress("reading", 0.72, "Transcribing speech · local Whisper")
             transcript = transcribe(
                 wav, job_dir, meta["duration"],
@@ -1434,6 +1609,7 @@ def analyze_source(
         "engine": {
             "vision": bool(vision_data),
             "whisper": bool(transcript),
+            "transcript_provider": (transcript or {}).get("provider") or "local",
             "transcript_language": (transcript or {}).get("language"),
         },
         "hook_scene": hook["id"],

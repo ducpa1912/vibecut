@@ -7,6 +7,7 @@ Version history, checklist and build plan. `[x]` shipped, `[~]` in progress,
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.7.0 | 2026-10-24 | Cloud config | Setup drawer, OpenRouter GLM 5.3 Flash (`:floor`, low reasoning), cloud STT (Groq/OpenAI/Deepgram), cloud TTS (OpenAI/Groq/Deepgram), secret store 0600 |
 | 0.1.0 | 2026-10-23 | Core cut | probe, scene scan, stills, scoring, plans, 9:16 render |
 | 0.2.0 | 2026-10-23 | Deep read | lazy scene read, why notes, hook lab, variants, transcript CC |
 | 0.3.0 | 2026-10-23 | Render speed | parallel segments, segment cache, draft/final, VideoToolbox, cancel, ETA, render-all, aspects, captions, timeline edit |
@@ -36,6 +37,18 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Brief and rewrite caches keyed by model and context
 - [x] Per-line script editor with instant re-TTS (line cache)
 - [x] Rewrite variant compare in the Voice script panel
+
+### Cloud setup (optional)
+- [x] Local secret store (`data/secrets.json`, 0600) with env override
+- [x] Setup drawer: keys, provider selects, masked values, test buttons
+- [x] OpenRouter rewrite + story brief; model `z-ai/glm-5.3-flash:floor`, reasoning `low`
+- [x] OpenRouter optional translation
+- [x] Cloud STT: Groq Whisper turbo, OpenAI Whisper, Deepgram Nova-3
+- [x] Cloud TTS: OpenAI gpt-4o-mini-tts, Groq Orpheus, Deepgram Aura
+- [x] Cloud STT/TTS fall back to local on any error
+- [x] Cost table + recommendations in [docs/cloud-speech.md](docs/cloud-speech.md)
+- [ ] Per-job cloud usage/cost readout
+- [ ] Cartesia TTS adapter
 
 ### Audio mixing
 - [x] Ruler automation mixer: draggable dB envelopes, ramps between points, clip sections
@@ -83,6 +96,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 | 10 | Per-clip mixer, beat sync, music library, license registry | shipped 0.6.0 |
 | 11 | SpeechAnalyzer, SRT/VTT, EDL/XML, presets, A/B | shipped 0.6.0 |
 | 12 | CAS source store, story arc | shipped 0.6.0 |
+| 12.5 | Cloud setup: OpenRouter + cloud STT/TTS | shipped 0.7.0 |
 | 13 | Smart crop bilateral, crop tracking, review links, keyboard editor | next |
 | 14 | SFX, cloning (consent gated), whisper q4 manager | parked |
 
@@ -94,6 +108,9 @@ this table, and gets one commit. Patch bumps for fixes only.
 - Beat sync: synthetic 120 BPM click track detected within ±2 BPM; cuts land
   within 250 ms of a beat; drift guard skips when snapping would move > 0.4 s total.
 - SpeechAnalyzer: zh sample transcript comparable to whisper-small, no HF download.
+- Cloud: OpenRouter payload uses `z-ai/glm-5.3-flash:floor` and
+  `reasoning.effort=low`; a missing key falls back without failing the job;
+  Groq/Deepgram segments parse; TTS payloads match provider contracts.
 - CAS: ingesting the same file twice yields one store entry; GC keeps referenced copies.
 - Exports: EDL imports in Resolve with correct in/out frames at 30 fps.
 

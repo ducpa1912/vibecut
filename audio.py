@@ -22,6 +22,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+import settings_store
+
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 MUSIC_DIRS = {
@@ -161,11 +163,23 @@ def kokoro_available() -> bool:
 
 
 def elevenlabs_key() -> str:
-    return (
-        os.environ.get("VIBECUT_ELEVENLABS_API_KEY")
-        or os.environ.get("ELEVENLABS_API_KEY")
-        or ""
-    )
+    return settings_store.get_secret("elevenlabs")
+
+
+def openai_key() -> str:
+    return settings_store.get_secret("openai")
+
+
+def groq_key() -> str:
+    return settings_store.get_secret("groq")
+
+
+def deepgram_key() -> str:
+    return settings_store.get_secret("deepgram")
+
+
+def cartesia_key() -> str:
+    return settings_store.get_secret("cartesia")
 
 
 def demucs_available() -> bool:
@@ -194,6 +208,10 @@ def rewrite_models() -> list[dict]:
          "model": "on-device 3B",
          "available": sys.platform == "darwin", "size_mb": 0,
          "install": "enable Apple Intelligence on macOS 26"},
+        {"id": "openrouter", "name": "OpenRouter (cheap cloud)",
+         "model": openrouter_model() if openrouter_ready() else "z-ai/glm-5.3-flash:floor",
+         "available": openrouter_ready(), "size_mb": 0,
+         "install": "Add an OpenRouter key in Setup. Low reasoning, price-floor routing."},
     ]
 
 
@@ -247,7 +265,13 @@ def engine_status() -> dict:
         "kokoro": {"available": kokoro_available(), "size_mb": 220,
                    "install": "pip install kokoro-onnx soundfile espeak-ng, put kokoro*.onnx + voices*.bin in data/models/kokoro."},
         "elevenlabs": {"available": bool(elevenlabs_key()), "size_mb": 0,
-                       "install": "Set VIBECUT_ELEVENLABS_API_KEY. Cloud, paid."},
+                       "install": "Set ELEVENLABS_API_KEY or add it in Setup. Cloud, paid."},
+        "openai": {"available": bool(openai_key()), "size_mb": 0,
+                   "install": "Set OPENAI_API_KEY or add it in Setup. gpt-4o-mini-tts, cloud."},
+        "groq": {"available": bool(groq_key()), "size_mb": 0,
+                 "install": "Set GROQ_API_KEY or add it in Setup. Orpheus English, cloud."},
+        "deepgram": {"available": bool(deepgram_key()), "size_mb": 0,
+                     "install": "Set DEEPGRAM_API_KEY or add it in Setup. Aura, cloud."},
     }
     music = {
         "library": {"available": True, "size_mb": 0,
@@ -329,6 +353,39 @@ def list_voices(engine: str) -> list[dict]:
                 "am_adam", "am_michael", "bf_emma", "bf_isabella",
                 "bm_george", "bm_lewis",
             ]
+        return [{"id": name, "name": name, "lang": "en"} for name in names]
+
+    if engine == "openai":
+        if not openai_key():
+            return []
+        names = ["alloy", "ash", "ballad", "coral", "echo", "fable",
+                 "nova", "onyx", "sage", "shimmer", "verse"]
+        return [{"id": name, "name": name, "lang": "multi"} for name in names]
+
+    if engine == "groq":
+        if not groq_key():
+            return []
+        names = ["autumn", "diana", "hannah", "austin", "daniel", "troy"]
+        return [{"id": name, "name": name, "lang": "en"} for name in names]
+
+    if engine == "deepgram":
+        if not deepgram_key():
+            return []
+        names = [
+            "aura-2-thalia-en", "aura-2-andromeda-en", "aura-2-helena-en",
+            "aura-2-apollo-en", "aura-2-arcas-en", "aura-2-aries-en",
+            "aura-2-amalthea-en", "aura-2-atlas-en", "aura-2-aurora-en",
+            "aura-2-callista-en", "aura-2-cora-en", "aura-2-cordelia-en",
+            "aura-2-delia-en", "aura-2-draco-en", "aura-2-electra-en",
+            "aura-2-harmonia-en", "aura-2-hera-en", "aura-2-hyperion-en",
+            "aura-2-iris-en", "aura-2-janus-en",
+            "aura-2-juno-en", "aura-2-jupiter-en", "aura-2-luna-en",
+            "aura-2-mars-en", "aura-2-minerva-en", "aura-2-neptune-en",
+            "aura-2-odysseus-en", "aura-2-ophelia-en", "aura-2-orion-en",
+            "aura-2-perseus-en", "aura-2-phoebe-en", "aura-2-pluto-en",
+            "aura-2-saturn-en", "aura-2-selene-en", "aura-2-theia-en",
+            "aura-2-vesta-en", "aura-2-zeus-en",
+        ]
         return [{"id": name, "name": name, "lang": "en"} for name in names]
 
     if engine == "elevenlabs":
@@ -516,6 +573,92 @@ def _elevenlabs_voice(text: str, voice: str, output: Path, rate: float) -> None:
         pass
 
 
+def _openai_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+    key = openai_key()
+    if not key:
+        raise AudioError("Set OPENAI_API_KEY to use OpenAI voice.")
+    payload = json.dumps({
+        "model": os.environ.get("VIBECUT_OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
+        "voice": voice or "alloy",
+        "input": text,
+        "response_format": "wav",
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/audio/speech",
+        data=payload,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    raw = output.with_name(f"{output.stem}.openai.tmp.wav")
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            raw.write_bytes(response.read())
+    except Exception as exc:  # noqa: BLE001
+        raise AudioError(f"OpenAI voice failed: {exc}") from exc
+    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
+    _convert(raw, output, extra)
+    try:
+        raw.unlink()
+    except OSError:
+        pass
+
+
+def _groq_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+    key = groq_key()
+    if not key:
+        raise AudioError("Set GROQ_API_KEY to use Groq voice.")
+    payload = json.dumps({
+        "model": os.environ.get("VIBECUT_GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english"),
+        "voice": voice or "troy",
+        "input": text,
+        "response_format": "wav",
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.groq.com/openai/v1/audio/speech",
+        data=payload,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    raw = output.with_name(f"{output.stem}.groq.tmp.wav")
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            raw.write_bytes(response.read())
+    except Exception as exc:  # noqa: BLE001
+        raise AudioError(f"Groq voice failed: {exc}") from exc
+    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
+    _convert(raw, output, extra)
+    try:
+        raw.unlink()
+    except OSError:
+        pass
+
+
+def _deepgram_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+    key = deepgram_key()
+    if not key:
+        raise AudioError("Set DEEPGRAM_API_KEY to use Deepgram voice.")
+    model = voice or "aura-2-thalia-en"
+    payload = json.dumps({"text": text}).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.deepgram.com/v1/speak?model={model}",
+        data=payload,
+        headers={"Authorization": f"Token {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    raw = output.with_name(f"{output.stem}.deepgram.tmp.mp3")
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            raw.write_bytes(response.read())
+    except Exception as exc:  # noqa: BLE001
+        raise AudioError(f"Deepgram voice failed: {exc}") from exc
+    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
+    _convert(raw, output, extra)
+    try:
+        raw.unlink()
+    except OSError:
+        pass
+
+
 def synthesize_line(
     engine: str,
     voice: str,
@@ -541,6 +684,12 @@ def synthesize_line(
         _kokoro_voice(text, voice, target, rate, cancel_event)
     elif engine == "elevenlabs":
         _elevenlabs_voice(text, voice, target, rate)
+    elif engine == "openai":
+        _openai_voice(text, voice, target, rate)
+    elif engine == "groq":
+        _groq_voice(text, voice, target, rate)
+    elif engine == "deepgram":
+        _deepgram_voice(text, voice, target, rate)
     else:
         raise AudioError(f"Unknown voice engine {engine!r}.")
     if not target.is_file() or target.stat().st_size == 0:
@@ -815,6 +964,30 @@ def apple_pair_status(source: str, target: str) -> str:
     return status
 
 
+def _translate_openrouter(lines: list[str], source: str, target: str) -> list[str] | None:
+    settings = settings_store.load_settings().get("openrouter") or {}
+    if not settings.get("use_translate") or not openrouter_ready():
+        return None
+    prompt = (
+        f"Translate these {len(lines)} subtitle lines into {_language_name(target)}. "
+        "Keep the same count and order, natural spoken style, JSON array only:\n"
+        + json.dumps(lines, ensure_ascii=False)
+    )
+    raw = _openrouter_text(prompt, json_mode=False, max_tokens=1600)
+    if not raw:
+        return None
+    match = re.search(r"\[.*\]", raw, re.S)
+    if not match:
+        return None
+    try:
+        values = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(values, list) or len(values) != len(lines):
+        return None
+    return [str(value) for value in values]
+
+
 def _translate_marian(lines: list[str], source: str, target: str) -> list[str] | None:
     """Small on-device seq2seq model, ~300 MB per language pair."""
     if not (_module("transformers") and _module("torch")):
@@ -849,8 +1022,11 @@ def _ready_providers(source: str, target: str) -> list[str]:
 
 
 def _rewrite_candidates() -> list[str]:
-    """Rewrite-specific order: small local models first, rules last."""
+    """Rewrite-specific order: configured cloud model, local models, rules."""
     order: list[str] = []
+    settings = settings_store.load_settings().get("openrouter") or {}
+    if openrouter_ready() and settings.get("use_rewrite", True):
+        order.append("openrouter")
     if mlx_lm_available():
         order.append("mlx")
     if os.environ.get("VIBECUT_LLM_URL"):
@@ -862,7 +1038,11 @@ def _rewrite_candidates() -> list[str]:
 def _provider_order(source: str, target: str, provider: str) -> list[str]:
     if provider and provider != "auto":
         return [provider]
-    order = _ready_providers(source, target)
+    order: list[str] = []
+    settings = settings_store.load_settings().get("openrouter") or {}
+    if settings.get("use_translate") and openrouter_ready():
+        order.append("openrouter")
+    order.extend(_ready_providers(source, target))
     # Anything that might download or install goes after what already works.
     for candidate in ("argos", "marian", "apple_fm", "ollama"):
         if candidate not in order:
@@ -892,7 +1072,9 @@ def translate_lines(
     if missing:
         errors: list[str] = []
         for candidate in _provider_order(source_code, target_code, provider):
-            if candidate == "apple_fm":
+            if candidate == "openrouter":
+                result = _translate_openrouter(missing, source_code, target_code)
+            elif candidate == "apple_fm":
                 result = _translate_apple(missing, source_code, target_code, target_name)
             elif candidate == "ollama":
                 result = _translate_ollama(missing, source_code, target_name)
@@ -1327,7 +1509,19 @@ def story_brief(text: str, target: str, provider: str = "auto") -> dict | None:
 
 
 def _llm_text(prompt: str, provider: str = "auto") -> str | None:
-    """One small-model call: MLX first, then Ollama."""
+    """One model call: configured OpenRouter first, then MLX, then Ollama."""
+    settings = settings_store.load_settings().get("openrouter") or {}
+    cloud_ok = (
+        provider in {"openrouter", "auto", "argos", "marian", "apple_fm", ""}
+        and settings.get("use_brief", True)
+        and openrouter_ready()
+    )
+    if cloud_ok:
+        text = _openrouter_text(prompt, json_mode=True)
+        if text:
+            return text
+        if provider == "openrouter":
+            return None
     if provider in {"mlx", "auto"} and mlx_lm_available():
         text = _mlx_text(prompt)
         if text:
@@ -1373,16 +1567,71 @@ def _mlx_text(prompt: str) -> str | None:
     return (result.stdout or "").strip() or None
 
 
-def _rewrite_mlx(
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_LAST_ERROR = ""
+
+
+def openrouter_ready() -> bool:
+    settings = settings_store.load_settings().get("openrouter") or {}
+    return bool(settings_store.get_secret("openrouter")) and bool(settings.get("enabled", True))
+
+
+def openrouter_model() -> str:
+    settings = settings_store.load_settings().get("openrouter") or {}
+    return str(settings.get("model") or "z-ai/glm-5.3-flash:floor")
+
+
+def _openrouter_text(prompt: str, json_mode: bool = False, max_tokens: int = 1200) -> str | None:
+    global OPENROUTER_LAST_ERROR
+    key = settings_store.get_secret("openrouter")
+    if not key:
+        OPENROUTER_LAST_ERROR = "No OpenRouter key."
+        return None
+    payload = {
+        "model": openrouter_model(),
+        "messages": [
+            {"role": "system", "content": "You write short vertical video voice overs. Reply with JSON when asked."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.4,
+        "max_tokens": max_tokens,
+        "reasoning": {"effort": "low"},
+        "provider": {"sort": "price"},
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    request = urllib.request.Request(
+        OPENROUTER_URL,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:8787",
+            "X-Title": "VibeCut",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        OPENROUTER_LAST_ERROR = str(exc)[:240]
+        return None
+    OPENROUTER_LAST_ERROR = ""
+    choices = data.get("choices") or []
+    if not choices:
+        return None
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+    return str(content or "").strip() or None
+
+
+def _rewrite_prompt(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
     context: dict | None = None,
-) -> list[str] | None:
-    """Small local model rewrite (MLX worker or Apple FM via the same JSON contract)."""
-    if mode == "literal":
-        return None
-    url_ready = bool(os.environ.get("VIBECUT_LLM_URL"))
-    if not (mlx_lm_available() or url_ready):
-        return None
+) -> str:
     rows = []
     context_beats = (context or {}).get("beats") or []
     for index, line in enumerate(script):
@@ -1396,7 +1645,9 @@ def _rewrite_mlx(
             "source_line": source_line,
             "literal": literal[index],
         })
-    context_text = str((context or {}).get("target_text") or (context or {}).get("full_text") or "")
+    context_text = str(
+        (context or {}).get("target_text") or (context or {}).get("full_text") or ""
+    ).strip()
     style = {
         "smooth": "natural, flowing, conversational",
         "viral": "punchy: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
@@ -1415,7 +1666,50 @@ def _rewrite_mlx(
         if relevant:
             parts.append("RELEVANT TRANSCRIPT LINES:\n" + "\n".join(relevant))
     parts.append("SELECTED BEATS:\n" + json.dumps(rows, ensure_ascii=False))
-    raw = _llm_text("\n".join(parts), provider="mlx")
+    return "\n".join(parts)
+
+
+def _rewrite_openrouter(
+    script: list[dict], source: str, target: str, mode: str, literal: list[str],
+    context: dict | None = None,
+) -> list[str] | None:
+    settings = settings_store.load_settings().get("openrouter") or {}
+    if mode == "literal" or not settings.get("use_rewrite", True) or not openrouter_ready():
+        return None
+    raw = _openrouter_text(
+        _rewrite_prompt(script, source, target, mode, literal, context),
+        json_mode=True,
+    )
+    if not raw:
+        return None
+    match = re.search(r"\[.*\]", raw, re.S)
+    if not match:
+        return None
+    try:
+        values = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(values, list) or len(values) != len(script):
+        return None
+    fits = all(
+        estimate_seconds(str(value), float(script[index].get("rate") or 1.0))
+        <= max(1.0, float(script[index].get("duration") or 1.0))
+        for index, value in enumerate(values)
+    )
+    return [str(value).strip() for value in values] if fits else None
+
+
+def _rewrite_mlx(
+    script: list[dict], source: str, target: str, mode: str, literal: list[str],
+    context: dict | None = None,
+) -> list[str] | None:
+    """Small local model rewrite (MLX worker or Apple FM via the same JSON contract)."""
+    if mode == "literal":
+        return None
+    if not mlx_lm_available():
+        return None
+    prompt = _rewrite_prompt(script, source, target, mode, literal, context)
+    raw = _llm_text(prompt, provider="mlx")
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -2251,7 +2545,11 @@ def adapt_script(
             else:
                 order = _rewrite_candidates()
             for candidate in order:
-                if candidate in {"llm", "ollama"}:
+                if candidate == "openrouter":
+                    rewritten = _rewrite_openrouter(
+                        subset, source_lang, target_lang, mode, subset_literal, context,
+                    )
+                elif candidate in {"llm", "ollama"}:
                     rewritten = _rewrite_ollama(
                         subset, source_lang, target_lang, mode, subset_literal, context,
                     )

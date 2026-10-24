@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
-  <link rel="stylesheet" href="/static/style.css?v=0.6.2">
-  <script defer src="/static/app.js?v=0.6.6"></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.7.0c">
+  <script defer src="/static/app.js?v=0.7.0c"></script>
 </head>
 <body>
   <header class="shell topbar">
     <a class="brand" href="/" id="brand">VibeCut<span class="brand-mark"></span></a>
     <div class="topbar-right">
+      <button id="setup-open" class="ghost small" type="button">Setup</button>
       <span class="local-pill"><i class="live-dot"></i> local only</span>
       <span id="health" class="health">checking engine…</span>
     </div>
@@ -370,6 +371,135 @@
       <button id="drawer-close" class="icon-btn drawer-close" data-close aria-label="Close">×</button>
       <div id="drawer-content" class="drawer-content"></div>
     </aside>
+  </div>
+
+  <div id="setup" class="setup" hidden>
+    <div class="setup-backdrop" data-setup-close></div>
+    <section class="setup-panel" role="dialog" aria-modal="true" aria-label="Setup">
+      <header class="setup-head">
+        <div>
+          <p class="eyebrow">setup</p>
+          <h2>Cloud, optional</h2>
+        </div>
+        <button id="setup-close" class="icon-btn" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="setup-body">
+        <p class="setup-note">Keys stay on this machine in <code>data/secrets.json</code> (0600). Nothing is enabled until you save a key. Local engines always remain the fallback.</p>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Intelligence</h3>
+            <span class="setup-badge">OpenRouter</span>
+          </div>
+          <label class="setup-check"><input id="setup-openrouter-enabled" type="checkbox"> Use OpenRouter for rewriting and story briefs</label>
+          <label class="setup-field">
+            <span>API key</span>
+            <input id="setup-openrouter-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…">
+          </label>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>Model</span>
+              <input id="setup-openrouter-model" type="text" value="z-ai/glm-5.3-flash:floor" readonly>
+            </label>
+            <label class="setup-field narrow">
+              <span>Reasoning</span>
+              <input id="setup-openrouter-reasoning" type="text" value="low" readonly>
+            </label>
+          </div>
+          <div class="setup-toggles">
+            <label class="setup-check"><input id="setup-use-rewrite" type="checkbox"> Rewrite script</label>
+            <label class="setup-check"><input id="setup-use-brief" type="checkbox"> Story brief</label>
+            <label class="setup-check"><input id="setup-use-translate" type="checkbox"> Translation</label>
+          </div>
+          <button id="setup-test-openrouter" class="ghost small" type="button">Test OpenRouter</button>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Transcription</h3>
+            <span class="setup-badge">STT</span>
+          </div>
+          <label class="setup-field">
+            <span>Provider</span>
+            <select id="setup-stt-provider">
+              <option value="auto">Auto · cloud if key, else Apple / Whisper</option>
+              <option value="apple">Apple SpeechAnalyzer · local</option>
+              <option value="whisper">mlx-whisper · local</option>
+              <option value="groq">Groq Whisper large-v3-turbo · $0.04/h</option>
+              <option value="openai">OpenAI Whisper · $0.36/h</option>
+              <option value="deepgram">Deepgram Nova-3 · diarization</option>
+            </select>
+          </label>
+          <label class="setup-field">
+            <span>Spoken language</span>
+            <select id="setup-stt-language">
+              <option value="auto">Auto detect</option>
+              <option value="en">English</option>
+              <option value="vi">Vietnamese</option>
+              <option value="zh">Chinese</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+              <option value="it">Italian</option>
+              <option value="ru">Russian</option>
+              <option value="hi">Hindi</option>
+              <option value="th">Thai</option>
+              <option value="id">Indonesian</option>
+              <option value="tr">Turkish</option>
+              <option value="ar">Arabic</option>
+            </select>
+          </label>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>Groq key</span>
+              <input id="setup-groq-key" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_…">
+            </label>
+            <label class="setup-field">
+              <span>OpenAI key</span>
+              <input id="setup-openai-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+            </label>
+          </div>
+          <label class="setup-field">
+            <span>Deepgram key</span>
+            <input id="setup-deepgram-key" type="password" autocomplete="off" spellcheck="false" placeholder="Token…">
+          </label>
+          <button id="setup-test-stt" class="ghost small" type="button">Check STT</button>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Voice over</h3>
+            <span class="setup-badge">TTS</span>
+          </div>
+          <label class="setup-field">
+            <span>Preferred provider</span>
+            <select id="setup-tts-provider">
+              <option value="auto">Auto · use the Voice engine picker</option>
+              <option value="kokoro">Kokoro · local, free</option>
+              <option value="piper">Piper · local, free</option>
+              <option value="say">Apple say · local, free</option>
+              <option value="openai">OpenAI gpt-4o-mini-tts · ~$15/M</option>
+              <option value="elevenlabs">ElevenLabs Flash · ~$40/M</option>
+              <option value="groq">Groq Orpheus · ~$22/M, English</option>
+              <option value="deepgram">Deepgram Aura-2 · $30/M</option>
+            </select>
+          </label>
+          <label class="setup-field">
+            <span>ElevenLabs key</span>
+            <input id="setup-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="xi-…">
+          </label>
+          <p class="setup-hint">Kokoro is already strong. Cloud voice is worth it for ElevenLabs naturalness, or Groq for cheap English. Every line is cached.</p>
+          <button id="setup-test-tts" class="ghost small" type="button">Check TTS</button>
+        </section>
+      </div>
+      <footer class="setup-foot">
+        <span id="setup-status" class="hint"></span>
+        <button id="setup-save" class="primary small" type="button">Save setup</button>
+      </footer>
+    </section>
   </div>
 
   <div id="toast" class="toast" hidden></div>

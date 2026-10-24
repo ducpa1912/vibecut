@@ -1,16 +1,20 @@
 import json
 import math
 import os
+import stat
 import time
+import wave
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 import app
 import audio
 import exports as cuts
 import pipeline
 import render
+import settings_store
 
 
 def make_scene(index, start, dur, hook=50.0, score=50.0, deep=True, **extra):
@@ -122,7 +126,9 @@ def test_voice_sample_engine_registry(monkeypatch, tmp_path):
 
 def test_engine_status_shape():
     status = audio.engine_status()
-    assert set(status["voices"]) == {"say", "piper", "kokoro", "elevenlabs"}
+    assert set(status["voices"]) == {
+        "say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram",
+    }
     assert "stable-small" in status["music"]
     assert "demucs" in status["separation"]
     for entry in status["voices"].values():
@@ -626,6 +632,7 @@ def test_rules_rewrite_smooth_and_viral(monkeypatch):
 
 def test_adapt_script_literal_and_memo(tmp_path, monkeypatch):
     monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
+    monkeypatch.setattr(audio, "openrouter_ready", lambda: False)
     monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
     script = [{
         "scene": 3, "clip": 0, "role": "beat", "duration": 3.0, "rate": 1.0,
@@ -983,3 +990,258 @@ def test_rewrite_models_shape():
     assert {"mlx", "ollama", "apple"} <= ids
     for model in models:
         assert "available" in model and "size_mb" in model
+
+
+# ---------------------------------------------------------------- 0.7.0 cloud config
+
+
+class FakeResponse:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self.payload
+
+
+def test_settings_roundtrip_masks_secrets(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings_store, "DATA", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", tmp_path / "secrets.json")
+    for name in settings_store.ENV_KEYS.values():
+        for env_name in name:
+            monkeypatch.delenv(env_name, raising=False)
+
+    settings_store.save_settings({
+        "openrouter": {"model": "z-ai/glm-5.3-flash:floor", "reasoning": "low"},
+        "stt": {"provider": "groq"},
+    })
+    settings_store.save_secrets({"groq": "gsk-test-value"})
+    state = settings_store.public_state()
+
+    assert state["settings"]["openrouter"]["model"] == "z-ai/glm-5.3-flash:floor"
+    assert state["settings"]["stt"]["provider"] == "groq"
+    assert state["secrets"]["groq"] is True
+    assert state["secrets"]["openai"] is False
+    assert "gsk-test-value" not in json.dumps(state)
+    assert stat.S_IMODE((tmp_path / "secrets.json").stat().st_mode) == 0o600
+    assert settings_store.get_secret("groq") == "gsk-test-value"
+
+    monkeypatch.setenv("GROQ_API_KEY", "env-wins")
+    assert settings_store.get_secret("groq") == "env-wins"
+
+
+def test_openrouter_payload_locked_model_and_low_reasoning(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["auth"] = request.get_header("Authorization")
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse(json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(settings_store, "get_secret", lambda name: "sk-or-test" if name == "openrouter" else "")
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "openrouter": {
+            "enabled": True,
+            "model": "z-ai/glm-5.3-flash:floor",
+            "reasoning": "low",
+            "use_rewrite": True,
+            "use_brief": True,
+            "use_translate": False,
+        },
+        "stt": {"provider": "auto"},
+        "tts": {"provider": "auto"},
+    })
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+
+    answer = audio._openrouter_text("write a line", json_mode=True)
+    assert answer == '{"ok": true}'
+    assert captured["url"] == audio.OPENROUTER_URL
+    assert captured["auth"] == "Bearer sk-or-test"
+    assert captured["body"]["model"] == "z-ai/glm-5.3-flash:floor"
+    assert captured["body"]["reasoning"] == {"effort": "low"}
+    assert captured["body"]["provider"] == {"sort": "price"}
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert audio.openrouter_model() == "z-ai/glm-5.3-flash:floor"
+
+
+def test_openrouter_leads_rewrite_candidates(monkeypatch):
+    monkeypatch.setattr(audio, "openrouter_ready", lambda: True)
+    monkeypatch.setattr(audio, "mlx_lm_available", lambda: True)
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "openrouter": {"enabled": True, "use_rewrite": True},
+    })
+    assert audio._rewrite_candidates()[0] == "openrouter"
+
+
+def _write_silent_wav(path, seconds=1.0):
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\0\0" * int(16000 * seconds))
+
+
+def test_cloud_stt_groq_parses_segments(tmp_path, monkeypatch):
+    wav = tmp_path / "audio.wav"
+    _write_silent_wav(wav)
+    job_dir = tmp_path / "job"
+    captured = {}
+
+    def fake_run(cmd, timeout=None):
+        target = __import__("pathlib").Path(cmd[-1])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"fake-mp3")
+        return None
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = request.data
+        return FakeResponse(json.dumps({
+            "language": "en",
+            "text": " hello world ",
+            "segments": [{"start": 0.0, "end": 1.2, "text": " hello world "}],
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+    monkeypatch.setattr(settings_store, "get_secret", lambda name: "gsk-test" if name == "groq" else "")
+    monkeypatch.setattr(pipeline.urllib.request, "urlopen", fake_urlopen)
+
+    result = pipeline._cloud_speech(wav, job_dir, "groq", "en")
+    assert result["provider"] == "groq"
+    assert result["model"] == "whisper-large-v3-turbo"
+    assert result["segments"] == [{"start": 0.0, "end": 1.2, "text": "hello world"}]
+    assert captured["url"].startswith("https://api.groq.com/")
+    assert b"whisper-large-v3-turbo" in captured["body"]
+
+
+def test_cloud_stt_deepgram_parses_utterances(tmp_path, monkeypatch):
+    wav = tmp_path / "audio.wav"
+    _write_silent_wav(wav)
+    job_dir = tmp_path / "job"
+    captured = {}
+
+    def fake_run(cmd, timeout=None):
+        target = __import__("pathlib").Path(cmd[-1])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"fake-mp3")
+        return None
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["auth"] = request.get_header("Authorization")
+        captured["content_type"] = request.get_header("Content-type")
+        return FakeResponse(json.dumps({
+            "metadata": {"language": "en"},
+            "results": {"utterances": [
+                {"start": 0.2, "end": 1.4, "transcript": "hello from deepgram"},
+            ]},
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+    monkeypatch.setattr(settings_store, "get_secret", lambda name: "dg-test" if name == "deepgram" else "")
+    monkeypatch.setattr(pipeline.urllib.request, "urlopen", fake_urlopen)
+
+    result = pipeline._cloud_speech(wav, job_dir, "deepgram", "en")
+    assert result["provider"] == "deepgram"
+    assert result["segments"][0]["text"] == "hello from deepgram"
+    assert "model=nova-3" in captured["url"]
+    assert captured["auth"] == "Token dg-test"
+    assert captured["content_type"] == "audio/mpeg"
+
+
+def test_cloud_tts_payloads(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_convert(source, output, extra=None):
+        output.write_bytes(b"RIFF-fake")
+        return output
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["auth"] = request.get_header("Authorization")
+        return FakeResponse(b"fake-audio")
+
+    monkeypatch.setattr(audio, "_convert", fake_convert)
+    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(audio, "openai_key", lambda: "sk-openai")
+    monkeypatch.setattr(audio, "groq_key", lambda: "gsk-groq")
+    monkeypatch.setattr(audio, "deepgram_key", lambda: "dg-key")
+
+    openai_out = tmp_path / "openai.wav"
+    audio._openai_voice("hello", "alloy", openai_out, 1.0)
+    assert captured["url"].endswith("/v1/audio/speech")
+    assert captured["body"]["model"] == "gpt-4o-mini-tts"
+    assert captured["body"]["voice"] == "alloy"
+    assert captured["body"]["input"] == "hello"
+    assert captured["auth"] == "Bearer sk-openai"
+    assert openai_out.is_file()
+
+    groq_out = tmp_path / "groq.wav"
+    audio._groq_voice("hello", "troy", groq_out, 1.0)
+    assert captured["body"]["model"] == "canopylabs/orpheus-v1-english"
+    assert captured["body"]["voice"] == "troy"
+    assert groq_out.is_file()
+
+    deepgram_out = tmp_path / "deepgram.wav"
+    audio._deepgram_voice("hello", "aura-2-thalia-en", deepgram_out, 1.0)
+    assert "model=aura-2-thalia-en" in captured["url"]
+    assert captured["body"] == {"text": "hello"}
+    assert captured["auth"] == "Token dg-key"
+    assert deepgram_out.is_file()
+
+
+def test_settings_api_locks_model_and_masks_keys(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings_store, "DATA", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", tmp_path / "secrets.json")
+    for names in settings_store.ENV_KEYS.values():
+        for env_name in names:
+            monkeypatch.delenv(env_name, raising=False)
+
+    client = TestClient(app.app)
+    bad = client.post("/api/settings", json={
+        "settings": {"openrouter": {"model": "openai/gpt-4"}},
+    })
+    assert bad.status_code == 400
+    bad_reasoning = client.post("/api/settings", json={
+        "settings": {"openrouter": {"reasoning": "high"}},
+    })
+    assert bad_reasoning.status_code == 400
+
+    saved = client.post("/api/settings", json={
+        "settings": {
+            "openrouter": {"model": "z-ai/glm-5.3-flash:floor", "reasoning": "low"},
+            "stt": {"provider": "groq", "language": "vi"},
+        },
+        "secrets": {"groq": "gsk-hidden"},
+    })
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["settings"]["stt"] == {"provider": "groq", "language": "vi"}
+    assert body["secrets"]["groq"] is True
+    assert body["sources"]["groq"] == "file"
+    assert "gsk-hidden" not in saved.text
+
+
+def test_openrouter_rewrite_requires_fit_and_parses(monkeypatch):
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "openrouter": {"enabled": True, "use_rewrite": True},
+    })
+    monkeypatch.setattr(audio, "openrouter_ready", lambda: True)
+    monkeypatch.setattr(audio, "_openrouter_text", lambda *args, **kwargs: '["short line"]')
+    script = [{"role": "hook", "duration": 3.0, "rate": 1.0, "text": "source"}]
+    result = audio._rewrite_openrouter(script, "en", "en", "smooth", ["a much longer literal line"])
+    assert result == ["short line"]
+
+    monkeypatch.setattr(audio, "_openrouter_text", lambda *args, **kwargs: '["this line is far too long to fit the slot at normal pace"]')
+    assert audio._rewrite_openrouter(script, "en", "en", "smooth", ["literal"]) is None

@@ -2,9 +2,9 @@
 
 Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long video; VibeCut finds the hook, the beats and the crop, then cuts a 15, 30 or 60 second reel while keeping the original footage, audio and pacing.
 
-Everything runs on this machine. No account, no cloud upload, no watermark.
+Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.6.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.7.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -21,7 +21,8 @@ Requirements:
 - Python 3.10+
 - Python packages in `requirements.txt`
 - macOS: `swiftc` (Xcode Command Line Tools) for Apple Vision text + face + saliency reading. Without it, crops fall back to center and on-screen text is skipped.
-- Optional: `mlx_whisper` for local speech transcription. Without it, the speech toggle is disabled.
+- Optional: `mlx_whisper` for local speech transcription, or a cloud STT key.
+- Optional: an OpenRouter key for the cheap GLM 5.3 Flash rewrite. Cloud is off by default.
 
 The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 
@@ -48,10 +49,10 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - **Edit cut** lets you reorder, trim and remove beats. **Save variant** stores that edit; variant chips reload or delete it.
 - **Audio** panel: keep the original sound, replace the voice, dub over the original bed (Demucs), fully replace voice + music, or add music only. Pick the voice engine, target language, **script style** (faithful / smooth / viral), music source and mood; **Test voice** plays a sample.
 - **Voice script** preview lists the deduped lines with role, emotion and fit flags. Show the literal translation, edit any line (only that line re-renders), or switch style and the script is rewritten for the slot using the **full transcript** as context (the whole story, then one complete sentence per selected beat), with connectors, a tightened hook and a payoff CTA. Numbers are validated so a rewrite cannot invent facts.
-- **Automation mixer** above the audio controls: time ruler with one section per clip, a music lane and a voice lane, draggable dB points (double-click adds one, Smooth flattens, Reset clears). The bed ramps between points instead of jumping, and the original audio plus the Demucs music stem are drawn behind the lanes so a sudden loud, mute or dip is visible. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
+- **Automation mixer** above the audio controls: time ruler with one section per clip, a music lane and a voice lane. The lane starts at 100% (0 dB); click to add a node, drag it anywhere in time or gain, double-click to remove, **Reset 100%** clears, **Flatten** puts every node back at 100%. The curve is cosine, so nodes are smooth peaks, and the same curve runs in ffmpeg. The original audio plus the Demucs music stem are drawn behind the lanes so a sudden loud, mute or dip is visible. **Beat sync** detects the bed BPM, snaps cuts to the grid (max 250 ms shift) and starts the loop on a beat.
 - **Platform presets** (TikTok, Reels, Shorts, Square, Landscape) set aspect, captions and safe-zone caption margin. **A/B hooks** queues the three strongest hooks at once. **Story arc order** reorders beats as setup → proof → payoff.
 - Music sources: your own track, CC0 library, Stable Audio Open Small or 1.0 with auto mood from the beats.
-- Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs with your API key.
+- Voice engines: Apple `say` (built in), Piper medium, Kokoro int8, ElevenLabs, OpenAI `gpt-4o-mini-tts`, Groq Orpheus, Deepgram Aura. Cloud engines appear after a key is saved in **Setup**.
 - Translation runs per render: Apple Translation framework, Ollama, or the offline Argos package. If no engine is ready, the panel offers **Offline translate setup (~250 MB)**.
 - **Hook lab** lists the strongest opening candidates with their resulting cut length and a plain-language reason; click one to re-plan.
 - Hover any timeline clip for the same **why** note; the drawer repeats it per beat. The hook panel explains why that beat is the opening, and the plan line explains the payoff.
@@ -60,8 +61,33 @@ Portrait sources are left native. Landscape and square sources get a crop center
 - Long-video scenes outside the shortlist are read on demand when you click them.
 - Renders are cached per plan + quality + aspect + captions + audio mix; an overridden hook gets its own slot. **Render again** forces a fresh encode. Cancel stops a running render.
 - **SRT / VTT / EDL / XML** buttons export the caption file or the cut list for Resolve and Premiere.
-- **Rewrite model**: pick the local small model used for the story brief and the rewrite — MLX (no server), Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
-- Speech: `transcribe_engine` is `auto` by default, which tries the on-device Apple SpeechAnalyzer (macOS 26, 0 MB) and falls back to mlx-whisper. Pick the speech language next to the toggle.
+- **Rewrite model**: OpenRouter GLM 5.3 Flash (cheap cloud, low reasoning) first when a key exists, then MLX, Ollama, or Apple Foundation Models. Small-model prompts only get the story brief plus the most relevant transcript lines (BM25-lite retrieval), so a 1-3B model stays on topic.
+- Speech: `transcribe_engine` is `auto` by default: configured cloud STT → Apple SpeechAnalyzer (macOS 26, 0 MB) → mlx-whisper. Pick the provider and keys in **Setup**.
+
+## Setup · optional cloud
+
+Click **Setup** in the top bar. Nothing leaves the machine until a key is saved.
+Keys live in `data/secrets.json` (0600); env vars win.
+
+| Section | What you can set |
+|---|---|
+| Intelligence | OpenRouter key. Model locked to `z-ai/glm-5.3-flash:floor`, reasoning locked to `low`. Toggles for rewrite, story brief, translation. |
+| Transcription | Auto / Apple / Whisper / Groq / OpenAI / Deepgram. Groq Whisper turbo is $0.04/hour. |
+| Voice over | Preferred provider plus keys. Kokoro stays the free default; ElevenLabs Flash is the best multilingual upgrade, Groq Orpheus the cheap English one. |
+
+Buttons **Test OpenRouter**, **Check STT**, **Check TTS** show what is ready.
+Costs, model choices and the fallback ladder: [docs/cloud-speech.md](docs/cloud-speech.md).
+
+Environment keys:
+
+```
+OPENROUTER_API_KEY   GROQ_API_KEY   OPENAI_API_KEY
+DEEPGRAM_API_KEY     ELEVENLABS_API_KEY
+```
+
+The API never returns a key; it only reports whether one is configured and
+whether it came from the environment or the local file. Environment keys win, so
+a key seen by the server is shown read-only in Setup.
 
 ## CLI
 
