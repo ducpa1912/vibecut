@@ -28,7 +28,7 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import artifacts
 import audio
@@ -4782,8 +4782,8 @@ class ClipSetCreateBody(BaseModel):
     count: int = 3
     min_s: float = clipset.MIN_STORY_S
     max_s: float = clipset.MAX_STORY_S
-    locks: list[int] = []
-    ban_scenes: list[int] = []
+    locks: list[int] = Field(default_factory=list)
+    ban_scenes: list[int] = Field(default_factory=list)
     order: str = "source"
 
 
@@ -4803,7 +4803,7 @@ class ClipSetPlansBody(BaseModel):
 class SelectionV2Body(BaseModel):
     set_id: str | None = None
     prompt: str = ""
-    exclusions: list[str] = []
+    exclusions: list[str] = Field(default_factory=list)
     count: int | None = None
 
 
@@ -4811,7 +4811,7 @@ class HookMatrixBody(BaseModel):
     set_id: str | None = None
     story_id: str | None = None
     prompt: str = ""
-    exclusions: list[str] = []
+    exclusions: list[str] = Field(default_factory=list)
     count: int = 3
 
 
@@ -4967,6 +4967,16 @@ def patch_clip_set(set_id: str, body: ClipSetPatchBody) -> dict:
     job, record = _find_clip_set(set_id)
     if job.get("status") != "ready" or not job.get("analysis"):
         raise HTTPException(409, "Analysis is not ready yet.")
+    current_sentences, _, _ = _clipset_sentences(job)
+    stored_fingerprint = record.get("source_fingerprint")
+    if (
+        stored_fingerprint
+        and clipset.source_fingerprint(current_sentences) != stored_fingerprint
+    ):
+        raise HTTPException(
+            409,
+            "Clip set source changed since it was built; regenerate the clip set.",
+        )
     sentences, scenes, _ = _clipset_pool(job, record)
     try:
         updated = clipset.apply_edits(
@@ -4996,6 +5006,8 @@ def clip_set_plans(
     body: ClipSetPlansBody | None = None,
 ) -> dict:
     job, record = _find_clip_set(set_id)
+    if job.get("status") != "ready" or not job.get("analysis"):
+        raise HTTPException(409, "Analysis is not ready yet.")
     _, scenes, _ = _clipset_sentences(job)
     target = None
     if body is not None and body.target is not None:
@@ -5004,9 +5016,12 @@ def clip_set_plans(
             raise HTTPException(400, "target must be between 1 and 180 seconds.")
     plans = []
     for story in record.get("stories") or []:
-        plan = clipset.story_to_plan(
-            story, scenes, target=target, set_id=set_id,
-        )
+        try:
+            plan = clipset.story_to_plan(
+                story, scenes, target=target, set_id=set_id,
+            )
+        except clipset.ClipSetError as exc:
+            raise HTTPException(422, str(exc)) from exc
         plans.append({
             "story_id": story.get("id"),
             "title": story.get("title"),
@@ -5070,7 +5085,10 @@ def hook_matrix(job_id: str, body: HookMatrixBody) -> dict:
             source_duration=float((job.get("source") or {}).get("duration") or 0.0),
         )
         stories = ranked["ranked"]
-    result = matrix.build_matrix_for_stories(stories, scenes)
+    try:
+        result = matrix.build_matrix_for_stories(stories, scenes)
+    except matrix.MatrixError as exc:
+        raise HTTPException(422, str(exc)) from exc
     result["job_id"] = job_id
     result["set_id"] = body.set_id
     result["source"] = source

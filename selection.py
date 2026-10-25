@@ -93,21 +93,37 @@ def parse_exclusions(prompt: str = "", explicit: Iterable[str] | None = None) ->
 
     text = _clean(prompt)
     if text:
-        # A marker is a whole word. Scan each comma/clause so "no X and no Y"
-        # yields two terms instead of one run-on phrase.
+        # A marker is a whole word. Scan each comma/clause so "no X, Y, or Z"
+        # keeps the exclusion context across the list, while a new instruction
+        # such as "but make it funny" ends that list.
+        continuation = False
         for clause in re.split(r"[,;\n]+|(?<=[.!?])\s+", text):
             matches = list(_MARKER_RE.finditer(clause))
-            for index, match in enumerate(matches):
-                stop = matches[index + 1].start() if index + 1 < len(matches) else len(clause)
-                tail = clause[match.end():stop]
-                tail = re.sub(r"^[\s:=-]+", "", tail)
-                previous = None
-                while previous != tail:
-                    previous = tail
-                    tail = _OPTIONAL_LEAD.sub("", tail).strip()
-                for part in re.split(r"\s+(?:and|or)\s+", tail):
+            if matches:
+                continuation = True
+                for index, match in enumerate(matches):
+                    stop = matches[index + 1].start() if index + 1 < len(matches) else len(clause)
+                    tail = clause[match.end():stop]
+                    tail = re.sub(r"^[\s:=-]+", "", tail)
+                    previous = None
+                    while previous != tail:
+                        previous = tail
+                        tail = _OPTIONAL_LEAD.sub("", tail).strip()
+                    for part in re.split(r"\s+(?:and|or)\s+", tail):
+                        add(part)
+            elif continuation:
+                stripped = clause.strip()
+                if re.match(
+                    r"(?i)^(?:but|however|then|make|use|keep|add|include|"
+                    r"with|for|so|plus)\b",
+                    stripped,
+                ):
+                    continuation = False
+                    continue
+                stripped = re.sub(r"(?i)^(?:or|and)\s+", "", stripped)
+                for part in re.split(r"\s+(?:and|or)\s+", stripped):
                     add(part)
-            if not matches:
+            else:
                 free = re.search(r"(?i)\b([a-z][\w -]{1,36}?)[- ]free\b", clause)
                 if free:
                     add(free.group(1))
@@ -345,19 +361,6 @@ def hook_candidates(story: dict, limit: int = 3) -> list[dict]:
         ))
         if len(hooks) >= limit:
             break
-
-    # A very short single sentence cannot yield three distinct quotes. Return
-    # three labelled variants without inventing words.
-    while len(hooks) < limit:
-        label = "opening_micro" if len(hooks) % 2 else "opening_trim"
-        hooks.append(_hook_source(
-            label,
-            _shorten(first.get("text"), max(12, 40 - 8 * len(hooks))),
-            first,
-            story_id,
-            len(hooks),
-            {"trimmed": True, "variant": True},
-        ))
     return hooks[:limit]
 
 
@@ -402,6 +405,9 @@ def rank_stories(
         ranked_story["v2_breakdown"] = signals
         ranked_story["v2_evidence"] = _v2_evidence(story, signals)
         ranked_story["hook_candidates"] = hook_candidates(story, 3)
+        ranked_story["hook_candidates_complete"] = (
+            len(ranked_story["hook_candidates"]) >= 3
+        )
         ranked_story["why"] = (
             f"Selection v2 score {total * 100:.1f}: hook {signals['hook_score']:.2f}, "
             f"coherence {signals['speech_coherence']:.2f}, "
@@ -411,11 +417,15 @@ def rank_stories(
             f"novelty {signals['novelty']:.2f}."
         )
         if scenes is not None:
-            ranked_story["plan"] = clipset.story_to_plan(
-                story,
-                scenes,
-                target=int(round(_safe_float(story.get("dur"), 30.0))),
-            )
+            try:
+                ranked_story["plan"] = clipset.story_to_plan(
+                    story,
+                    scenes,
+                    target=int(round(_safe_float(story.get("dur"), 30.0))),
+                )
+            except clipset.ClipSetError as exc:
+                ranked_story["plan"] = None
+                ranked_story["plan_error"] = str(exc)
         ranked.append(ranked_story)
 
     ranked.sort(key=lambda story: (

@@ -93,6 +93,7 @@ def test_clipset_count_variance_and_sentence_boundaries():
             }
             types = {item["type"] for item in story["evidence"]}
             assert types == {"transcript", "visual", "audio", "structure"}
+            assert "(transcript)" in story["evidence"][0]["text"]
             assert all(set(item) == {"type", "text", "scene", "time"} for item in story["evidence"])
             assert "virality" not in json.dumps(story).lower()
     ordered = sorted(six["stories"], key=lambda story: story["start"])
@@ -120,6 +121,7 @@ def test_clipset_scene_text_fallback():
     assert document["source"]["transcript"] is False
     assert document["source"]["scene_text"] is True
     assert document["source"]["fallback"] == "scene_text"
+    assert "(scene)" in document["stories"][0]["evidence"][0]["text"]
 
     silent = [make_scene(index, index * 4.0, 4.0, speech="", ocr="") for index in range(30)]
     empty = clipset.build_clipset(silent, None, 120.0, count=3)
@@ -201,6 +203,141 @@ def test_clipset_rejects_bad_parameters():
         clipset.build_clipset(scenes, None, 120.0, order="random")
 
 
+def test_90_minute_clipset_build_is_seconds_scale():
+    scenes = make_scenes(1350)
+    transcript = transcript_for(scenes)
+    started = time.perf_counter()
+    document = clipset.build_clipset(
+        scenes, transcript, 5400.0, count=6,
+    )
+    elapsed = time.perf_counter() - started
+    assert document["available"] >= 3
+    assert document["candidate_count"] > 5000
+    assert all(story["clips"] for story in document["stories"])
+    assert elapsed < 15.0, f"90-minute clip set took {elapsed:.1f}s"
+
+
+def test_zero_overlap_story_gets_nearest_scene_and_zero_clip_fails():
+    scenes = [
+        make_scene(0, 100.0, 4.0),
+        make_scene(1, 104.0, 4.0),
+    ]
+    sentences = [
+        {
+            "id": 0,
+            "start": 0.0,
+            "end": 20.0,
+            "text": "A sentence far outside every scene. It still needs one clip.",
+            "scene": None,
+            "scenes": [],
+            "source": "transcript",
+            "dur": 20.0,
+        },
+    ]
+    story = clipset._story_from_sentences(
+        sentences, scenes, 600.0, "st_zero_overlap",
+    )
+    assert story is not None
+    assert story["clips"]
+    assert story["clips"][0]["fallback"] is True
+
+    empty = clipset._story_from_sentences(
+        sentences, [], 600.0, "st_no_scenes",
+    )
+    assert empty is None
+
+    broken = copy.deepcopy(story)
+    broken["clips"] = []
+    with pytest.raises(clipset.ClipSetError):
+        clipset.story_to_plan(broken, scenes)
+    with pytest.raises(matrix.MatrixError):
+        matrix.build_matrix(broken, scenes)
+
+
+def test_matrix_short_clip_is_full_or_explicit_error():
+    scenes = make_scenes(75)
+    document = clipset.build_clipset(scenes, None, 300.0, count=6)
+    story = next(
+        story for story in document["stories"]
+        if len(selection.hook_candidates(story, 3)) == 3
+    )
+    short = copy.deepcopy(story)
+    clip = short["clips"][0]
+    clip["end"] = clip["start"] + 0.05
+    clip["dur"] = 0.05
+    short["clips"] = [clip]
+
+    payload = matrix.build_matrix(short, scenes)
+    assert len(payload["covers"]) == 3
+    assert len(payload["hooks"]) == 3
+    assert len(payload["jobs"]) == 9
+
+
+def test_arc_order_puts_strongest_hook_first_and_payoff_last():
+    scenes = make_scenes(150)
+    document = clipset.build_clipset(scenes, None, 600.0, count=3)
+    stories = copy.deepcopy(document["stories"])
+    stories[0]["score_breakdown"]["hook_score"] = 0.99
+    stories[0]["score_breakdown"]["payoff_position"] = 0.10
+    stories[1]["score_breakdown"]["hook_score"] = 0.10
+    stories[1]["score_breakdown"]["payoff_position"] = 0.99
+    stories[2]["score_breakdown"]["hook_score"] = 0.20
+    stories[2]["score_breakdown"]["payoff_position"] = 0.20
+
+    ordered = clipset._order_stories(stories, "arc")
+    assert ordered[0] is stories[0]
+    assert ordered[-1] is stories[1]
+    assert ordered[1] is stories[2]
+    assert clipset._order_stories(stories, "source") != ordered
+
+
+def test_duplicate_hook_texts_are_reported_not_padded():
+    scenes = make_scenes(75)
+    document = clipset.build_clipset(scenes, None, 300.0, count=3)
+    story = copy.deepcopy(document["stories"][0])
+    sentence = dict(
+        story["sentences"][0],
+        text="Yes.",
+        start=0.0,
+        end=1.0,
+        dur=1.0,
+    )
+    story["sentences"] = [sentence]
+    story["hook"] = sentence
+    story["payoff"] = sentence
+    hooks = selection.hook_candidates(story, 3)
+    assert len(hooks) < 3
+    assert len({hook["text"] for hook in hooks}) == len(hooks)
+    ranked = selection.rank_stories([story], scenes=scenes)
+    assert ranked["ranked"][0]["hook_candidates_complete"] is False
+    with pytest.raises(matrix.MatrixError):
+        matrix.build_matrix(story, scenes)
+
+
+def test_partial_transcript_merges_scene_text_and_warns_on_truncation():
+    scenes = make_scenes(30)
+    transcript = transcript_for(scenes[:10])
+    stats: dict = {}
+    sentences = clipset.source_sentences(scenes, transcript, stats=stats)
+    assert stats["partial_scene_fallback"] > 0
+    assert {sentence["source"] for sentence in sentences} == {"transcript", "scene"}
+
+    document = clipset.build_clipset(
+        scenes, transcript, 120.0, count=3,
+    )
+    assert document["source"]["partial_scene_fallback"] > 0
+    assert document["source"]["fallback"] == "transcript"
+
+    many = [
+        {"start": index * 0.1, "end": index * 0.1 + 0.1, "text": f"T{index}."}
+        for index in range(4100)
+    ]
+    trunc_stats: dict = {}
+    clipset.source_sentences([make_scene(0, 0.0, 500.0)], many, stats=trunc_stats)
+    assert trunc_stats["truncated"] is True
+    assert trunc_stats["sentence_returned"] == 4000
+
+
 def _ranked_story(scenes: list[dict]) -> dict:
     document = clipset.build_clipset(scenes, None, 600.0, count=3)
     return document["stories"][0]
@@ -208,6 +345,9 @@ def _ranked_story(scenes: list[dict]) -> dict:
 
 def test_selection_v2_prompt_exclusions_and_evidence():
     assert selection.parse_exclusions("no more than 3 clips") == []
+    assert selection.parse_exclusions(
+        "no politics, crypto, or religion"
+    ) == ["politics", "crypto", "religion"]
     scenes = make_scenes(150)
     story = _ranked_story(scenes)
     clean = copy.deepcopy(story)
@@ -343,6 +483,13 @@ def write_job(jobs: Path, job_id: str, **overrides) -> Path:
     return directory
 
 
+def write_transcript(directory: Path, segments: list[dict]) -> Path:
+    path = directory / "transcript" / "transcript.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"language": "en", "segments": segments}))
+    return path
+
+
 def test_clipset_api_create_get_patch_plans(api):
     write_job(api.jobs_dir, "j1")
     created = api.post("/api/jobs/j1/clip-sets", json={"count": 3})
@@ -352,9 +499,11 @@ def test_clipset_api_create_get_patch_plans(api):
     assert record["job_id"] == "j1"
     assert record["available"] == 3
     assert len(record["stories"]) == 3
-    assert {story["id"] for story in record["stories"]} == {
-        story["id"] for story in record["stories"]
-    }
+    story_ids = [story["id"] for story in record["stories"]]
+    assert len(story_ids) == len(set(story_ids)) == 3
+    assert record["source_fingerprint"]
+    assert "_keywords" not in json.dumps(record)
+    assert "_base_total" not in json.dumps(record)
 
     listed = api.get("/api/jobs/j1/clip-sets")
     assert listed.status_code == 200
@@ -421,6 +570,81 @@ def test_clipset_api_validation_and_short_source(api):
     assert record["stories"] == []
     assert record["available"] == 0
     assert "at least 20s" in record["note"]
+
+    matrix_response = api.post("/api/jobs/short/hook-matrix", json={})
+    assert matrix_response.status_code == 422
+    assert "No stories" in matrix_response.json()["detail"]
+
+
+def test_clipset_api_bans_alias_and_plans_readiness(api):
+    write_job(api.jobs_dir, "j1")
+    record = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    set_id = record["id"]
+    banned = record["stories"][1]["scenes"][0]
+    patched = api.patch(f"/clip-sets/{set_id}", json={"bans": [banned]})
+    assert patched.status_code == 200
+    updated = patched.json()["clip_set"]
+    assert updated["ban_scenes"] == [banned]
+    assert all(banned not in story["scenes"] for story in updated["stories"])
+
+    job_path = api.jobs_dir / "j1" / "job.json"
+    job = json.loads(job_path.read_text())
+    job["status"] = "scanning"
+    job_path.write_text(json.dumps(job))
+    assert api.post(f"/clip-sets/{set_id}/plans", json={}).status_code == 409
+
+
+def test_clipset_api_rejects_overlapping_edits(api):
+    write_job(api.jobs_dir, "j1")
+    record = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    set_id = record["id"]
+    first, second = record["stories"][:2]
+    ids = [sentence["id"] for sentence in first["sentences"]]
+    ids.append(second["sentences"][0]["id"])
+    response = api.patch(
+        f"/clip-sets/{set_id}",
+        json={"stories": [{"id": first["id"], "sentences": ids}]},
+    )
+    assert response.status_code == 400
+    assert "overlap" in response.json()["detail"]
+
+
+def test_clipset_api_rejects_stale_transcript_edits(api):
+    scenes = make_scenes(150)
+    directory = write_job(api.jobs_dir, "j1", scenes=scenes)
+    transcript = write_transcript(directory, [
+        {
+            "start": scene["start"],
+            "end": scene["end"],
+            "text": f"Different transcript line {index} about the source.",
+        }
+        for index, scene in enumerate(scenes)
+    ])
+    record = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    transcript.unlink()
+    response = api.patch(
+        f"/clip-sets/{record['id']}",
+        json={"locks": record["locks"]},
+    )
+    assert response.status_code == 409
+    assert "source changed" in response.json()["detail"]
+
+
+def test_new_pydantic_models_do_not_share_list_defaults():
+    first = app.ClipSetCreateBody()
+    second = app.ClipSetCreateBody()
+    first.locks.append(1)
+    first.ban_scenes.append(2)
+    assert second.locks == []
+    assert second.ban_scenes == []
+    assert app.SelectionV2Body().exclusions == []
+    assert app.HookMatrixBody().exclusions == []
 
 
 def test_generated_paths_for_selection_v2_and_hook_matrix(api):

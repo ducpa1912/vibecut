@@ -13,6 +13,10 @@ import clipset
 import selection
 
 
+class MatrixError(ValueError):
+    """A story cannot produce a complete 3x3 hook/cover matrix."""
+
+
 def _safe_float(value, fallback: float = 0.0) -> float:
     try:
         number = float(value)
@@ -54,7 +58,7 @@ def _cover_frame(
             _safe_float(clip.get("end")),
             _safe_float(scene.get("end")),
         )
-        if end - start < 0.2:
+        if end <= start:
             continue
         midpoint = round((start + end) / 2, 3)
         visual = _clamp(_safe_float(scene.get("visual_score"), 50.0) / 100.0)
@@ -77,9 +81,9 @@ def _cover_frame(
     ))
 
     chosen: list[dict] = []
-    seen: set[tuple[int, int]] = set()
+    seen: set[tuple[int, float]] = set()
     for frame in frames:
-        key = (frame["scene"], int(round(frame["time"] * 10)))
+        key = (frame["scene"], round(frame["time"], 3))
         if key in seen:
             continue
         seen.add(key)
@@ -90,10 +94,10 @@ def _cover_frame(
     # One long scene can still yield three distinct cover times.
     if len(chosen) < 3 and frames:
         source = frames[0]
-        span = max(0.2, source["end"] - source["start"])
-        for fraction in (0.30, 0.50, 0.70, 0.20, 0.80):
+        span = max(0.01, source["end"] - source["start"])
+        for fraction in (0.30, 0.50, 0.70, 0.20, 0.80, 0.10, 0.90):
             time = round(source["start"] + span * fraction, 3)
-            key = (source["scene"], int(round(time * 10)))
+            key = (source["scene"], round(time, 3))
             if key in seen:
                 continue
             seen.add(key)
@@ -130,51 +134,29 @@ def _cover_frame(
 
 
 def _ensure_three_hooks(story: dict) -> list[dict]:
-    hooks = selection.hook_candidates(story, 3)
-    if len(hooks) >= 3:
-        return hooks[:3]
-    hook = story.get("hook") or {}
-    sentence = {
-        "id": hook.get("id"),
-        "scene": hook.get("scene"),
-        "start": hook.get("start"),
-        "end": hook.get("end"),
-        "text": hook.get("text") or story.get("title") or "",
-    }
-    while len(hooks) < 3 and sentence["text"]:
-        label = "opening_trim" if len(hooks) % 2 else "opening"
-        hooks.append({
-            "id": f"hk_{story.get('id')}_{len(hooks)}",
-            "story_id": story.get("id"),
-            "source": label,
-            "text": _clip_text(sentence["text"], 48),
-            "sentence": sentence["id"],
-            "scene": sentence["scene"],
-            "start": _safe_float(sentence["start"]),
-            "end": _safe_float(sentence["end"]),
-            "time": _safe_float(sentence["start"]),
-            "score": 0.0,
-            "trimmed": label != "opening",
-            "evidence": [{
-                "type": "transcript",
-                "text": f"Hook fallback: {_clip_text(sentence['text'], 100)}",
-                "scene": sentence["scene"],
-                "time": _safe_float(sentence["start"]),
-            }],
-        })
-    return hooks[:3]
+    return selection.hook_candidates(story, 3)
 
 
 def build_matrix(story: dict, scenes: list[dict], target: int | None = None) -> dict:
     """Build one deterministic hook/cover matrix. No renders are queued."""
     story_id = str(story.get("id") or "story")
+    if not story.get("clips"):
+        raise MatrixError(f"Story {story_id} has no materialized clips.")
     duration = _safe_float(story.get("dur"))
     target = int(target) if target is not None else int(round(duration))
     target = max(1, min(180, target))
     hooks = _ensure_three_hooks(story)
+    if len(hooks) < 3:
+        raise MatrixError(
+            f"Story {story_id} has {len(hooks)}/3 distinct hook candidates."
+        )
     hook_text = str((hooks[0] or {}).get("text") or (story.get("hook") or {}).get("text") or "")
     payoff_text = str((story.get("payoff") or {}).get("text") or "")
     covers = _cover_frame(story, scenes, hook_text, payoff_text)
+    if len(covers) < 3:
+        raise MatrixError(
+            f"Story {story_id} has {len(covers)}/3 distinct cover frames."
+        )
     plan = clipset.story_to_plan(story, scenes, target=target)
 
     cells: list[dict] = []
@@ -238,6 +220,8 @@ def build_matrix_for_stories(
     scenes: list[dict],
     target: int | None = None,
 ) -> dict:
+    if not stories:
+        raise MatrixError("No stories are available for a hook/cover matrix.")
     matrices = [
         build_matrix(story, scenes, target=target)
         for story in stories or []
