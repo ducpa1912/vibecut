@@ -505,30 +505,27 @@ def test_frames_for_never_exceeds_source():
     assert render._frames_for(0.0, 0.01, 10.0) >= 1
 
 
-def test_llm_rank_parses_response(monkeypatch):
-    class FakeResponse:
-        def __enter__(self):
-            return self
+def test_llm_rank_uses_admin_routes(monkeypatch):
+    calls = []
 
-        def __exit__(self, *args):
-            return False
+    def fake_workflow(workflow, prompt, **kwargs):
+        calls.append((workflow, prompt, kwargs))
+        return "[7, 2, 9]"
 
-        def read(self):
-            return b'{"response": "[7, 2, 9]"}'
-
-    def fake_urlopen(request, timeout=None):
-        return FakeResponse()
-
-    monkeypatch.setenv("VIBECUT_LLM_URL", "http://127.0.0.1:11434/api/generate")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(pipeline, "llm_available", lambda: True)
+    monkeypatch.setattr(audio, "_workflow_text", fake_workflow)
     candidates = [{"scene": 2, "dur": 2.0, "hook": 50.0, "speech": "a"},
                   {"scene": 7, "dur": 3.0, "hook": 40.0, "ocr": "b"}]
     assert pipeline.llm_rank_hooks(candidates, 30) == [7, 2]
+    assert calls[0][0] == "hook_rank"
+    assert calls[0][2]["json_mode"] is True
 
 
-def test_llm_rank_returns_none_without_url(monkeypatch):
-    monkeypatch.delenv("VIBECUT_LLM_URL", raising=False)
-    assert pipeline.llm_rank_hooks([{"scene": 1}, {"scene": 2}]) is None
+def test_llm_rank_returns_none_without_available_route(monkeypatch):
+    monkeypatch.setattr(pipeline, "llm_available", lambda: False)
+    assert pipeline.llm_rank_hooks(
+        [{"scene": 1, "dur": 1.0, "hook": 1.0}, {"scene": 2, "dur": 1.0, "hook": 1.0}]
+    ) is None
 
 
 def test_caption_chunks_respects_width():
@@ -1206,7 +1203,7 @@ def test_settings_roundtrip_masks_secrets(tmp_path, monkeypatch):
     state = settings_store.public_state()
 
     assert state["settings"]["opencode"]["model"] == "deepseek-v4.1-flash"
-    assert state["settings"]["stt"]["provider"] == "auto"
+    assert state["settings"]["stt"]["provider"] == "groq"
     assert state["secrets"]["groq"] is True
     assert state["secrets"]["openai"] is False
     assert "gsk-test-value" not in json.dumps(state)
@@ -2094,29 +2091,40 @@ def test_rules_fallback_after_ai_failure_is_flagged_and_not_cached(
     assert not list((tmp_path / "rewrite").rglob("*.txt"))
 
 
-def test_cloud_tts_candidates_append_local_fallbacks(monkeypatch):
-    monkeypatch.setattr(audio, "minimax_key", lambda: "mm-test")
-    monkeypatch.setattr(audio, "openrouter_available", lambda: True)
-    monkeypatch.setattr(audio, "kokoro_available", lambda: True)
-    monkeypatch.setattr(audio, "say_available", lambda: True)
-    monkeypatch.setattr(audio, "piper_available", lambda: False)
-
-    assert audio._tts_candidates("minimax") == [
-        "minimax", "fish", "gemini", "kokoro", "say",
+def test_tts_candidates_follow_admin_routes(monkeypatch):
+    monkeypatch.setattr(audio.settings_store, "load_settings", lambda: {
+        "workflows": {
+            "tts": {
+                "routes": [
+                    {"provider": "minimax", "model": "speech-2.8-turbo"},
+                    {"provider": "openrouter", "model": "fish-audio/s2.1-pro-free:free"},
+                    {"provider": "openrouter", "model": "google/gemini-3.8-flash-lite-tts"},
+                    {"provider": "local", "model": "kokoro"},
+                ],
+                "timeout_s": 120,
+            }
+        }
+    })
+    assert audio._tts_candidates("minimax") == ["minimax", "fish", "gemini", "kokoro"]
+    assert [item["model"] for item in audio._tts_route_candidates()] == [
+        "speech-2.8-turbo",
+        "fish-audio/s2.1-pro-free:free",
+        "google/gemini-3.8-flash-lite-tts",
+        "kokoro",
     ]
-    assert audio._tts_candidates("fish") == [
-        "fish", "gemini", "kokoro", "say",
-    ]
+    assert audio._tts_candidates("fish") == ["minimax", "fish", "gemini", "kokoro"]
 
 
-def test_cloud_tts_quarantine_skips_openrouter(monkeypatch):
-    monkeypatch.setattr(audio, "minimax_key", lambda: "")
-    monkeypatch.setattr(audio, "openrouter_available", lambda: False)
-    monkeypatch.setattr(audio, "kokoro_available", lambda: False)
-    monkeypatch.setattr(audio, "say_available", lambda: True)
-    monkeypatch.setattr(audio, "piper_available", lambda: False)
-
-    assert audio._tts_candidates("fish") == ["say"]
+def test_tts_candidates_do_not_add_unconfigured_local_fallbacks(monkeypatch):
+    monkeypatch.setattr(audio.settings_store, "load_settings", lambda: {
+        "workflows": {
+            "tts": {
+                "routes": [{"provider": "openrouter", "model": "fish-audio/s2.1-pro-free:free"}],
+                "timeout_s": 120,
+            }
+        }
+    })
+    assert audio._tts_candidates("auto") == ["fish"]
 
 
 def test_lyria_consults_quarantine(monkeypatch, tmp_path):
@@ -2134,3 +2142,4 @@ def test_tts_voice_defaults_and_fish_empty(monkeypatch):
     assert audio._tts_voice_for("gemini", "", "gemini") == "Kore"
     assert audio._tts_voice_for("gemini", "default", "gemini") == "Kore"
     assert audio._tts_voice_for("kokoro", "female-shaonv", "minimax") == "af_heart"
+    assert audio._tts_voice_for("minimax", "Samantha", "say") == "female-shaonv"

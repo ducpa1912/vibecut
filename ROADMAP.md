@@ -11,7 +11,7 @@ Full compressed plan: `~/.opencode/plan/vibecut-plan.md`.
 |---|---|---|---|
 | 0.13.0 | 2026-10-25 | Admin console | `/_ductator/` password-only admin; first-admin bootstrap; masked AI keys; searchable provider model catalogs; ordered model routes per workflow; reasoning/tokens/timeouts; pipeline log; hash-chained admin audit; Setup model summary |
 | 0.12.0 | 2026-10-25 | Video links | URL bar under ingest; native yt-dlp first (quality/audio/cookies/playlist/cancel); Cobalt + xhs_get optional sidecars; XHS token/cookie/login; background URL ingest + history |
-| 0.11.0 | 2026-10-24 | Rewrite/History/UI | OpenRouter project-key override + quarantine, OpenCode reasoning fix, rewrite last-good cache, script/render/upload history with restore, Moments/Smart Cut UI, audio Rewrite→Voice→Music steps, local-only STT, translation modes |
+| 0.11.0 | 2026-10-24 | Rewrite/History/UI | OpenRouter project-key override + quarantine, OpenCode reasoning fix, rewrite last-good cache, script/render/upload history with restore, Moments/Smart Cut UI, audio Rewrite→Voice→Music steps, local-first STT, translation modes |
 | 0.10.0 | 2026-10-24 | Speech/Music/Upload | OpenCode→OpenRouter→Apple translation, AI rewrite fallback, MiniMax TTS/music, OpenRouter TTS/Lyria fallbacks, uploaded voice fit for Voice-over/Dub/Full Replace, audio tabs |
 | 0.9.2 | 2026-10-24 | AI music fix | Stable Audio preflight + gated-weight guidance; ungated MusicGen Small fallback with worker |
 | 0.9.1 | 2026-10-24 | Script prompt v2 | full target voice script + aesthetic + char/word budgets, complete-sentence rules, condense repair pass |
@@ -45,7 +45,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 - Music: MiniMax Music → OpenRouter Lyria 3 → library/CC0.
 - STT: cloud → Apple SpeechAnalyzer → mlx-whisper.
 - Setup: keys in `data/secrets.json` 0600, env overrides, masked API.
-- 493 tests pass. v0.13.0 working tree.
+- 540 tests pass. v0.13.0 working tree.
 
 ## Shipped checklist
 
@@ -86,7 +86,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Masked AI key management; provider model catalogs; ordered workflow model routes with reasoning/tokens/timeouts
 - [x] Pipeline log and hash-chained admin action log
 - [x] Setup Intelligence model-route summary
-- [x] Audio Rewrite→Voice→Music steps; local-only STT; translation modes
+- [x] Audio Rewrite→Voice→Music steps; local-first STT; translation modes
 - [x] MiniMax Speech 2.8 Turbo + OpenRouter Fish/Gemini TTS fallback
 - [x] MiniMax Music + OpenRouter Lyria 3 fallback
 - [x] Audio mode tabs and upload-only-in-supported-modes UI
@@ -216,7 +216,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 - Open-core: AGPL/Apache core + proprietary cloud control plane.
 - Cloud needs cross-platform models: faster-whisper, PaddleOCR/Florence,
   Demucs, Kokoro/Piper, MiniMax/OpenRouter APIs.
-- Per-tenant buckets, signed URLs, queue workers, quota/metering, Stripe,
+- Per-tenant buckets, signed URLs, queue workers, quota/metering,
   retention, moderation, voice-clone consent.
 - Portable job bundle between local and cloud.
 - Cost model: ~$0.01–0.03 compute per 10-min job before margin; storage/CDN on

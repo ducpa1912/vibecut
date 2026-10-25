@@ -1,12 +1,16 @@
-> **v0.11 scope:** normal Setup exposes only OpenCode, OpenRouter, MiniMax and local engines. Groq/OpenAI/Deepgram/ElevenLabs/Cartesia below are legacy backend notes, hidden from the UI. Transcription is local-only; OpenRouter project keys override env.
+> **Scope:** Setup exposes OpenCode, OpenRouter, MiniMax and local engines. The
+> admin console manages all eight AI keys and the ordered route lists for
+> intelligence, speech, music, and transcription. Cloud STT/TTS are optional;
+> local engines remain the default. OpenRouter project keys override env.
 
-# Cloud speech: cheap options that beat local
+# Cloud speech: optional providers behind ordered admin routes
 
-VibeCut is local-first. The Setup drawer adds optional cloud providers for the
+VibeCut is local-first. The admin console adds optional cloud providers for the
 stages where local models cost the most time or quality: intelligence,
-transcription and voice over.
+transcription and voice over. Setup keeps the spoken language and optional key
+entry; route order lives in the admin console.
 
-Keys are stored in `data/secrets.json` with mode `0600`. Environment variables
+Keys are stored in the configured data directory (`secrets.json`, default `data/secrets.json`) with mode `0600`. Environment variables
 win, so Docker and CI can inject keys without writing a file. If a key comes from
 the environment, Setup shows that field read-only; change or unset the env var to
 replace it.
@@ -36,14 +40,16 @@ Recommendation: **Groq turbo** for normal use. If the local pipeline already
 runs Whisper large-v3-turbo, cloud buys speed rather than accuracy; use Groq
 large-v3 or Deepgram for hard audio.
 
-The ladder is:
+The ladder is whatever the admin console transcription routes list, top to
+bottom. The default is local:
 
 ```
-configured cloud provider → Apple SpeechAnalyzer → mlx-whisper
+Apple SpeechAnalyzer → mlx-whisper
 ```
 
-Audio is uploaded as mono 16 kHz mp3 at 64 kbps to stay under provider limits.
-Segments come back as verbose JSON.
+Add Groq, OpenAI, or Deepgram routes to opt into cloud STT. Audio is uploaded
+as mono 16 kHz mp3 to stay under provider limits. Segments come back as verbose
+JSON.
 
 ## Voice over
 
@@ -63,9 +69,9 @@ naturalness, Groq Orpheus for cheap expressive English, or Cartesia when quality
 matters more than cost. OpenAI mini and Deepgram Aura are sidegrades, not
 upgrades.
 
-Cloud voice is 20–60× the cost of transcription and about 1000× the LLM
-rewrite. Every line is cached by text + voice + provider; only changed lines are
-regenerated.
+Cloud voice runs only when its route is in the admin voice-over list; the
+route order is the fallback order. Every line is cached by provider, model,
+voice, rate, and text; only changed lines are regenerated.
 
 ## Intelligence
 
@@ -133,8 +139,10 @@ without it.
 
 - The result header shows per-job calls, OpenCode tokens, STT minutes, TTS
   characters and an estimated cost.
-- **Live STT** in Setup synthesizes a local test clip and runs Apple Speech,
-  with mlx-whisper as fallback. No cloud STT provider is used.
+- **Live STT** in Setup synthesizes a local test clip and exercises the local
+  Apple Speech → mlx-whisper path. It is a local readiness check; normal job
+  transcription follows the admin console route list, which may include cloud
+  STT providers.
 - **Live TTS** synthesizes a sample, plays it in Setup, and exposes it at
   `/api/settings/tts-test/<engine>.wav`.
 - Token prices in the ledger: DeepSeek V4.1 Flash off-peak, local STT,

@@ -10,6 +10,10 @@
     providerMeta: {},
     catalogs: {},
     keys: [],
+    auditEntries: [],
+    auditTotal: 0,
+    pipelineEntries: [],
+    pipelineTotal: 0,
   };
 
   function toast(message) {
@@ -38,7 +42,7 @@
     });
     let data = null;
     try { data = await response.json(); } catch (_) { data = null; }
-    if (response.status === 401) {
+    if (response.status === 401 && !options.noAuthRedirect) {
       showLogin();
       throw new Error((data && data.detail) || "Admin login required.");
     }
@@ -53,6 +57,7 @@
     $("#admin-login").hidden = false;
     $("#login-form").hidden = false;
     $("#bootstrap-form").hidden = true;
+    $("#login-password").value = "";
     $("#auth-title").textContent = "Admin login";
     $("#auth-note").textContent = "Local admin only. No signup.";
   }
@@ -152,7 +157,9 @@
   }
 
   function jsonDiff(before, after) {
-    if (before === undefined || before === null && after === undefined) return null;
+    if (before === undefined || before === null) {
+      if (after === undefined || after === null) return null;
+    }
     const details = document.createElement("details");
     details.className = "log-diff";
     const summary = document.createElement("summary");
@@ -166,10 +173,15 @@
   async function loadOverview() {
     const data = await api("/overview");
     const configured = (data.keys || []).filter((item) => item.configured).length;
+    const workflows = data.workflows || {};
+    const routeCount = Object.values(workflows).reduce(
+      (total, workflow) => total + ((workflow && workflow.routes) || []).length,
+      0,
+    );
     const cards = [
       [data.email, "signed in"],
       [`${configured} / ${(data.keys || []).length}`, "AI keys configured"],
-      [Object.keys(data.workflows || {}).length, "workflow routes"],
+      [routeCount, `model routes · ${Object.keys(workflows).length} workflows`],
       [`${(data.pipeline || []).length}`, "recent model calls"],
     ];
     const grid = $("#overview-cards");
@@ -278,7 +290,7 @@
       menu.hidden = false;
     };
     input.addEventListener("focus", renderMenu);
-    input.addEventListener("input", () => { route.model = ""; renderMenu(); });
+    input.addEventListener("input", () => { route.model = input.value.trim(); renderMenu(); });
     input.addEventListener("keydown", (event) => {
       const rows = filtered();
       if (event.key === "ArrowDown") { event.preventDefault(); active = Math.min(rows.length - 1, active + 1); renderMenu(); }
@@ -317,6 +329,11 @@
     const card = document.createElement("section");
     card.className = "workflow-card";
     card.dataset.workflow = name;
+    const draft = {
+      reasoning: cfg.reasoning || "",
+      max_output_tokens: Number(cfg.max_output_tokens || 0),
+      timeout_s: Number(cfg.timeout_s || 300),
+    };
     const head = document.createElement("header");
     head.className = "workflow-head";
     const copy = document.createElement("div");
@@ -347,6 +364,7 @@
     const rerender = () => {
       const replacement = renderWorkflowCard(workflow, {
         ...cfg,
+        ...draft,
         routes: routeObjects,
       });
       card.replaceWith(replacement);
@@ -417,6 +435,7 @@
       reasoningLabel.textContent = "Reasoning";
       const reasoning = document.createElement("select");
       wrapperReasoningOptions(reasoning, cfg.reasoning);
+      reasoning.addEventListener("change", () => { draft.reasoning = reasoning.value; });
       reasoningLabel.append(reasoning);
       foot.append(reasoningLabel);
       const tokenLabel = document.createElement("label");
@@ -425,6 +444,7 @@
       tokens.type = "number"; tokens.min = "64"; tokens.max = "128000";
       tokens.dataset.field = "tokens";
       tokens.value = String(cfg.max_output_tokens || 3200);
+      tokens.addEventListener("input", () => { draft.max_output_tokens = Number(tokens.value || 0); });
       tokenLabel.append(tokens);
       foot.append(tokenLabel);
     }
@@ -435,6 +455,7 @@
     timeout.type = "number"; timeout.min = "10"; timeout.max = "3600";
     timeout.dataset.field = "timeout";
     timeout.value = String(cfg.timeout_s || 300);
+    timeout.addEventListener("input", () => { draft.timeout_s = Number(timeout.value || 0); });
     timeoutLabel.append(timeout);
     foot.append(timeoutLabel);
     const footActions = document.createElement("div");
@@ -467,9 +488,9 @@
           method: "POST",
           body: {
             routes: selected,
-            reasoning: foot.querySelector("select")?.value || cfg.reasoning || "",
-            max_output_tokens: Number(foot.querySelector('[data-field="tokens"]')?.value || cfg.max_output_tokens || 0),
-            timeout_s: Number(foot.querySelector('[data-field="timeout"]')?.value || cfg.timeout_s || 300),
+            reasoning: kind === "text" ? (draft.reasoning || cfg.reasoning || "") : "",
+            max_output_tokens: kind === "text" ? Number(draft.max_output_tokens || 0) : 0,
+            timeout_s: Number(draft.timeout_s || cfg.timeout_s || 300),
           },
         });
         toast(`${workflow.label} saved.`);
@@ -567,6 +588,10 @@
     message.className = "key-error";
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (!input.value.trim()) {
+        message.textContent = "Enter a key first. Use Clear to remove the stored key.";
+        return;
+      }
       try {
         await api(`/keys/${encodeURIComponent(key.name)}`, { method: "POST", body: { value: input.value } });
         toast(`${key.label} saved.`);
@@ -578,14 +603,15 @@
       test.disabled = true; message.textContent = "Testing…";
       try {
         const result = await api(`/keys/${encodeURIComponent(key.name)}/test`, { method: "POST" });
-        message.textContent = `${result.ok ? "OK" : "Not ready"} · ${result.detail || ""}`;
+        const label = result.tested === false ? "Stored (not tested)" : (result.ok ? "OK" : "Not ready");
+        message.textContent = `${label} · ${result.detail || ""}`;
       } catch (error) { message.textContent = errorText(error); }
       finally { test.disabled = false; }
     });
     clear.addEventListener("click", async () => {
       if (!confirm(`Clear ${key.label}?`)) return;
       try {
-        await api(`/keys/${encodeURIComponent(key.name)}`, { method: "POST", body: { value: "" } });
+        await api(`/keys/${encodeURIComponent(key.name)}`, { method: "POST", body: { value: "", clear: true } });
         toast(`${key.label} cleared.`);
         await loadKeys();
       } catch (error) { message.textContent = errorText(error); }
@@ -597,18 +623,18 @@
   async function loadKeys() {
     const data = await api("/keys");
     state.keys = data.keys || [];
+    const path = $("#keys-path");
+    if (path && data.paths?.secrets) path.textContent = data.paths.secrets;
     const target = $("#key-cards");
     target.replaceChildren();
     state.keys.forEach((key) => target.append(renderKeyCard(key)));
   }
 
-  async function loadPipeline() {
-    const filter = $("#pipeline-filter").value.trim();
-    const data = await api(`/pipeline?limit=200&workflow=${encodeURIComponent(filter)}`);
+  function renderPipeline() {
     const target = $("#pipeline-table");
     target.replaceChildren(table(
       ["When", "Workflow", "Route", "Status", "ms", "Tokens", "Error"],
-      data.entries || [],
+      state.pipelineEntries,
       (row) => {
         const tr = document.createElement("tr");
         const values = [
@@ -624,15 +650,24 @@
         return tr;
       },
     ));
+    const more = $("#pipeline-more");
+    if (more) more.hidden = state.pipelineEntries.length >= state.pipelineTotal;
   }
 
-  async function loadAudit() {
-    const filter = $("#audit-filter").value.trim();
-    const data = await api(`/audit?limit=200&action=${encodeURIComponent(filter)}`);
+  async function loadPipeline(append = false) {
+    const filter = $("#pipeline-filter").value.trim();
+    const offset = append ? state.pipelineEntries.length : 0;
+    const data = await api(`/pipeline?limit=100&offset=${offset}&workflow=${encodeURIComponent(filter)}`);
+    state.pipelineEntries = append ? [...state.pipelineEntries, ...(data.entries || [])] : (data.entries || []);
+    state.pipelineTotal = Number(data.total || 0);
+    renderPipeline();
+  }
+
+  function renderAudit() {
     const target = $("#audit-table");
     target.replaceChildren(table(
       ["When", "Actor", "Action", "Resource", "Result", "Detail"],
-      data.entries || [],
+      state.auditEntries,
       (row) => {
         const tr = document.createElement("tr");
         const when = document.createElement("td"); when.textContent = new Date(row.ts * 1000).toLocaleString();
@@ -647,6 +682,18 @@
         return tr;
       },
     ));
+    const more = $("#audit-more");
+    if (more) more.hidden = state.auditEntries.length >= state.auditTotal;
+  }
+
+  async function loadAudit(append = false) {
+    const filter = $("#audit-filter").value.trim();
+    const includeHttp = $("#audit-http")?.checked ? 1 : 0;
+    const offset = append ? state.auditEntries.length : 0;
+    const data = await api(`/audit?limit=100&offset=${offset}&action=${encodeURIComponent(filter)}&include_http=${includeHttp}`);
+    state.auditEntries = append ? [...state.auditEntries, ...(data.entries || [])] : (data.entries || []);
+    state.auditTotal = Number(data.total || 0);
+    renderAudit();
   }
 
   function loadAccess() {
@@ -692,6 +739,8 @@
     $("#logout").addEventListener("click", async () => {
       try { await api("/logout", { method: "POST" }); } catch (_) { /* already gone */ }
       state.csrf = "";
+      $("#login-email").value = "";
+      $("#login-password").value = "";
       showLogin();
     });
     $("#refresh-catalogs").addEventListener("click", async () => {
@@ -700,16 +749,19 @@
       try { await loadModels(true); toast("Catalogs refreshed."); }
       catch (error) { toast(errorText(error)); }
     });
-    $("#reload-pipeline").addEventListener("click", () => loadPipeline().catch((error) => toast(errorText(error))));
-    $("#reload-audit").addEventListener("click", () => loadAudit().catch((error) => toast(errorText(error))));
-    $("#pipeline-filter").addEventListener("keydown", (event) => { if (event.key === "Enter") loadPipeline(); });
-    $("#audit-filter").addEventListener("keydown", (event) => { if (event.key === "Enter") loadAudit(); });
+    $("#reload-pipeline").addEventListener("click", () => loadPipeline(false).catch((error) => toast(errorText(error))));
+    $("#pipeline-more").addEventListener("click", () => loadPipeline(true).catch((error) => toast(errorText(error))));
+    $("#reload-audit").addEventListener("click", () => loadAudit(false).catch((error) => toast(errorText(error))));
+    $("#audit-more").addEventListener("click", () => loadAudit(true).catch((error) => toast(errorText(error))));
+    $("#audit-http").addEventListener("change", () => loadAudit(false).catch((error) => toast(errorText(error))));
+    $("#pipeline-filter").addEventListener("keydown", (event) => { if (event.key === "Enter") loadPipeline(false); });
+    $("#audit-filter").addEventListener("keydown", (event) => { if (event.key === "Enter") loadAudit(false); });
     $("#verify-audit").addEventListener("click", async () => {
       try {
         const result = await api("/audit/verify");
         $("#audit-verify").textContent = result.ok
           ? `Audit chain verified · ${result.entries} entries.`
-          : `Audit chain broken at entry ${result.broken_at}.`;
+          : `Audit chain broken at entry ${result.broken_at}${result.reason ? ` · ${result.reason}` : ""}.`;
       } catch (error) { $("#audit-verify").textContent = errorText(error); }
     });
     $("#account-form").addEventListener("submit", async (event) => {
@@ -719,6 +771,7 @@
       try {
         const data = await api("/account", {
           method: "POST",
+          noAuthRedirect: true,
           body: {
             email: $("#account-email").value,
             current_password: $("#account-current").value,

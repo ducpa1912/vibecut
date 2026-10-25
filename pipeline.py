@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 import uuid
 import wave
@@ -22,11 +23,44 @@ from PIL import Image, ImageFilter
 import settings_store
 import usage_store
 import vision
+import workflow_config
 from vision import probe_image, probe_images
 
 ROOT = Path(__file__).resolve().parent
 TARGET_AR = 9 / 16
 ASPECT_RATIOS = {"9:16": 9 / 16, "4:5": 4 / 5, "1:1": 1.0, "16:9": 16 / 9}
+
+
+def _pipeline_log(
+    workflow: str,
+    route_index: int,
+    provider: str,
+    model: str,
+    started: float,
+    ok: bool,
+    error: str = "",
+    *,
+    job_id: str = "",
+    request_id: str = "",
+    reasoning: str = "",
+) -> None:
+    try:
+        from admin import store  # noqa: PLC0415
+        store.record_pipeline_event(
+            workflow,
+            provider,
+            model,
+            route_index=route_index,
+            job_id=job_id,
+            request_id=request_id or job_id,
+            reasoning=reasoning,
+            status="ok" if ok else "failed",
+            latency_ms=(time.time() - started) * 1000,
+            fallback=route_index > 0,
+            error=error,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class PipelineError(RuntimeError):
@@ -817,7 +851,10 @@ def _multipart(fields: dict, file_field: str, filename: str, content: bytes, con
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
-def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -> dict | None:
+def _cloud_speech(
+    wav_path: Path, job_dir: Path, provider: str, language: str,
+    model: str = "", timeout: float = 1800,
+) -> dict | None:
     out_dir = job_dir / "transcript"
     out_dir.mkdir(parents=True, exist_ok=True)
     upload = out_dir / "transcript_upload.mp3"
@@ -833,16 +870,16 @@ def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -
     try:
         with wave.open(str(wav_path), "rb") as handle:
             duration = handle.getnframes() / max(1, handle.getframerate())
-    except (OSError, wave.Error):
+    except (OSError, EOFError, wave.Error):
         pass
 
     if provider in {"groq", "openai"}:
         if provider == "groq":
             endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-            model = os.environ.get("VIBECUT_GROQ_STT_MODEL") or _stt_workflow_model("groq", "whisper-large-v3-turbo")
+            model = model or os.environ.get("VIBECUT_GROQ_STT_MODEL") or _stt_workflow_model("groq", "whisper-large-v3-turbo")
         else:
             endpoint = "https://api.openai.com/v1/audio/transcriptions"
-            model = os.environ.get("VIBECUT_OPENAI_STT_MODEL") or _stt_workflow_model("openai", "whisper-1")
+            model = model or os.environ.get("VIBECUT_OPENAI_STT_MODEL") or _stt_workflow_model("openai", "whisper-1")
         fields = {
             "model": model,
             "response_format": "verbose_json",
@@ -857,7 +894,7 @@ def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=1800) as response:
+            with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except Exception:  # noqa: BLE001
             return None
@@ -886,18 +923,18 @@ def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -
         }
 
     # Deepgram
-    model = _stt_workflow_model("deepgram", "nova-3")
-    params = [f"model={model}", "smart_format=true", "utterances=true"]
+    model = model or _stt_workflow_model("deepgram", "nova-3")
+    params = {"model": model, "smart_format": "true", "utterances": "true"}
     if language and language != "auto":
-        params.append(f"language={language.split('-')[0]}")
-    endpoint = "https://api.deepgram.com/v1/listen?" + "&".join(params)
+        params["language"] = language.split("-")[0]
+    endpoint = "https://api.deepgram.com/v1/listen?" + urllib.parse.urlencode(params)
     request = urllib.request.Request(
         endpoint, data=audio_bytes,
         headers={"Authorization": f"Token {key}", "Content-Type": "audio/mpeg"},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=1800) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             data = json.loads(response.read().decode("utf-8"))
     except Exception:  # noqa: BLE001
         return None
@@ -937,22 +974,59 @@ def transcribe_cloud(
 ) -> dict | None:
     if not wav_path or not wav_path.exists():
         return None
-    chosen = _cloud_stt_provider(provider)
-    if not chosen:
-        return None
-    try:
-        result = _cloud_speech(wav_path, job_dir, chosen, language)
-    except Exception:  # noqa: BLE001 - cloud failure must fall back to local
-        return None
-    if result:
-        usage_store.record("stt", chosen, audio_seconds=float(result.get("seconds") or 0.0))
-    return result
+    routes: list[dict[str, str]] = []
+    requested = str(provider or "auto").lower()
+    if requested not in {"", "auto"}:
+        if requested not in CLOUD_STT_PROVIDERS:
+            return None
+        defaults = {
+            "openai": "whisper-1",
+            "groq": "whisper-large-v3-turbo",
+            "deepgram": "nova-3",
+        }
+        routes = [{"provider": requested, "model": _stt_workflow_model(
+            requested, defaults.get(requested, ""),
+        )}]
+    else:
+        cfg = workflow_config.effective(
+            settings_store.load_settings().get("workflows"), "stt",
+        )
+        routes = [
+            route for route in (cfg.get("routes") or [])
+            if str(route.get("provider") or "") in CLOUD_STT_PROVIDERS
+        ]
+        if not routes:
+            chosen = _cloud_stt_provider("auto")
+            if not chosen:
+                return None
+            routes = [{"provider": chosen, "model": _stt_workflow_model(chosen, "")}]
+    timeout = float(
+        workflow_config.effective(
+            settings_store.load_settings().get("workflows"), "stt",
+        ).get("timeout_s") or 300
+    )
+    for route in routes:
+        chosen = str(route.get("provider") or "")
+        if not settings_store.get_secret(chosen):
+            continue
+        try:
+            result = _cloud_speech(
+                wav_path, job_dir, chosen, language,
+                model=str(route.get("model") or ""), timeout=timeout,
+            )
+        except Exception:  # noqa: BLE001 - cloud failure must fall back
+            result = None
+        if result:
+            usage_store.record("stt", chosen, audio_seconds=float(result.get("seconds") or 0.0))
+            return result
+    return None
 
 
 def transcribe_apple(
     wav_path: Path | None,
     job_dir: Path,
     language: str = "en",
+    timeout: float | None = None,
 ) -> dict | None:
     """0 MB on-device transcription through Apple Speech (macOS 26)."""
     if not wav_path or not wav_path.exists():
@@ -967,7 +1041,7 @@ def transcribe_apple(
     try:
         result = subprocess.run(
             [str(helper), "--audio", str(wav_path), "--locale", locale, "--out", str(out_path)],
-            capture_output=True, text=True, timeout=3600,
+            capture_output=True, text=True, timeout=max(10.0, float(timeout or 3600)),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -1002,6 +1076,9 @@ def transcribe(
     job_dir: Path,
     duration: float,
     progress: Callable[[float, str], None],
+    *,
+    model: str | None = None,
+    timeout: float | None = None,
 ) -> dict | None:
     if not wav_path or not wav_path.exists():
         return None
@@ -1011,7 +1088,8 @@ def transcribe(
     out_dir = job_dir / "transcript"
     out_dir.mkdir(parents=True, exist_ok=True)
     model = (
-        os.environ.get("VIBECUT_WHISPER_MODEL")
+        model
+        or os.environ.get("VIBECUT_WHISPER_MODEL")
         or (settings_store.load_settings().get("stt") or {}).get("model")
         or "mlx-community/whisper-small-mlx"
     )
@@ -1026,7 +1104,7 @@ def transcribe(
         try:
             result = subprocess.run(
                 cmd, stdout=log, stderr=log,
-                timeout=max(900, min(7200, duration * 14)),
+                timeout=max(10.0, float(timeout)) if timeout else max(900, min(7200, duration * 14)),
             )
         except subprocess.TimeoutExpired:
             return None
@@ -1636,21 +1714,33 @@ def auto_hook(scenes: list[dict]) -> dict:
 
 
 def llm_available() -> bool:
-    return bool(os.environ.get("VIBECUT_LLM_URL"))
+    """True when at least one configured hook_rank provider can be called."""
+    try:
+        import audio  # noqa: PLC0415
+        for route in workflow_config.routes(
+            settings_store.load_settings().get("workflows"), "hook_rank",
+        ):
+            provider = str(route.get("provider") or "")
+            if provider == "opencode-go" and audio.opencode_available():
+                return True
+            if provider == "openrouter" and audio.openrouter_available():
+                return True
+            if provider == "ollama" and os.environ.get("VIBECUT_LLM_URL"):
+                return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
 
 
 def llm_rank_hooks(candidates: list[dict], target: int = 30) -> list[int] | None:
-    """Optional local-LLM rerank for hook candidates.
+    """Optional rerank through the ordered hook_rank admin routes.
 
-    Point VIBECUT_LLM_URL at an Ollama /api/generate endpoint. Any failure
-    falls back to the deterministic score order.
+    Any failure falls back to the deterministic score order.
     """
-    url = os.environ.get("VIBECUT_LLM_URL")
-    if not url or len(candidates) < 2:
+    if len(candidates) < 2 or not llm_available():
         return None
-    import urllib.request
+    import audio  # noqa: PLC0415
 
-    model = os.environ.get("VIBECUT_LLM_MODEL", "llama3.1")
     lines = []
     for hook in candidates:
         text = (hook.get("speech") or hook.get("ocr") or "no words").strip()
@@ -1664,28 +1754,12 @@ def llm_rank_hooks(candidates: list[dict], target: int = 30) -> list[int] | None
         + "\n".join(lines)
         + "\nReturn only a JSON array of scene ids, best first."
     )
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.2},
-    }
-    try:
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        timeout = float(os.environ.get("VIBECUT_LLM_TIMEOUT", "30"))
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
+    answer = audio._workflow_text("hook_rank", prompt, json_mode=True)
+    if not answer:
         return None
-    text = str(data.get("response") or data.get("message", {}).get("content") or "")
     known = {hook["scene"] for hook in candidates}
     order: list[int] = []
-    for value in re.findall(r"\d+", text):
+    for value in re.findall(r"\d+", str(answer)):
         scene_id = int(value)
         if scene_id in known and scene_id not in order:
             order.append(scene_id)
@@ -2424,6 +2498,82 @@ def read_scene(
     return scene
 
 
+def _transcribe_workflow(
+    wav: Path,
+    job_dir: Path,
+    duration: float,
+    language: str,
+    routes: list[dict],
+    timeout: float,
+    progress: Callable[[str, float, str], None],
+    *,
+    job_id: str = "",
+    request_id: str = "",
+) -> dict | None:
+    transcript = None
+    for route_index, route in enumerate(routes):
+        provider = str(route.get("provider") or "").lower()
+        model = str(route.get("model") or "")
+        started = time.time()
+        progress(
+            "reading", 0.70 + min(0.16, route_index * 0.02),
+            f"Transcribing speech · {provider}",
+        )
+        try:
+            if provider in {"auto", "whisper", "local"}:
+                cloud_provider = ""
+                if provider == "auto":
+                    if model == "whisper-1":
+                        cloud_provider = "openai"
+                    elif model == "nova-3":
+                        cloud_provider = "deepgram"
+                    elif model == "whisper-large-v3-turbo":
+                        cloud_provider = "groq"
+                if cloud_provider:
+                    transcript = _cloud_speech(
+                        wav, job_dir, cloud_provider, language,
+                        model=model, timeout=timeout,
+                    )
+                else:
+                    transcript = transcribe(
+                        wav, job_dir, duration,
+                        lambda fraction, message: progress(
+                            "reading", 0.70 + 0.16 * fraction, message,
+                        ),
+                        model=model or None,
+                        timeout=timeout,
+                    )
+            elif provider == "apple":
+                if str(language or "").lower() in {"", "auto"}:
+                    transcript = None
+                else:
+                    transcript = transcribe_apple(
+                        wav, job_dir, language, timeout=timeout,
+                    )
+            elif provider in CLOUD_STT_PROVIDERS:
+                transcript = _cloud_speech(
+                    wav, job_dir, provider, language,
+                    model=model, timeout=timeout,
+                )
+            else:
+                transcript = None
+        except Exception as exc:  # noqa: BLE001
+            transcript = None
+            _pipeline_log(
+                "stt", route_index, provider, model, started, False,
+                str(exc)[:300], job_id=job_id, request_id=request_id,
+            )
+            continue
+        _pipeline_log(
+            "stt", route_index, provider, model, started, bool(transcript),
+            "" if transcript else "No transcript returned.",
+            job_id=job_id, request_id=request_id,
+        )
+        if transcript:
+            break
+    return transcript
+
+
 def analyze_source(
     path: str,
     meta: dict,
@@ -2506,32 +2656,28 @@ def analyze_source(
     transcript = None
     if options.get("transcribe") and wav:
         stage = time.time()
-        engine = str(options.get("transcribe_engine") or "auto").lower()
+        job_id = str(options.get("job_id") or "")
+        request_id = str(options.get("request_id") or job_id)
         speech_language = str(
             options.get("speech_language")
             or (settings_store.load_settings().get("stt") or {}).get("language")
             or "en"
         )
-        # Transcription is local-only. Auto language means Whisper auto-detect:
-        # Apple Speech needs an explicit locale and hardcoding en-US on Chinese
-        # audio produces confident garbage. Explicit locale prefers Apple.
-        auto_language = str(speech_language or "auto").lower() in {"", "auto"}
-        # Apple has no auto-detect here. If the user chose Auto language, use
-        # Whisper for detection even when the provider is Apple.
-        use_whisper_first = engine in {"whisper", "local"} or auto_language
-        if not use_whisper_first and engine in {"auto", "apple"}:
-            progress("reading", 0.70, "Transcribing speech · Apple Speech")
-            transcript = transcribe_apple(wav, job_dir, speech_language)
-            if transcript:
-                timings["apple_speech"] = round(time.time() - stage, 2)
-        if transcript is None and engine in {"auto", "apple", "whisper", "local"}:
-            progress("reading", 0.72, "Transcribing speech · local Whisper")
-            transcript = transcribe(
-                wav, job_dir, meta["duration"],
-                lambda fraction, message: progress("reading", 0.70 + 0.16 * fraction, message),
-            )
-            if transcript:
-                timings["whisper"] = round(time.time() - stage, 2)
+        stt_cfg = workflow_config.effective(
+            settings_store.load_settings().get("workflows"), "stt",
+        )
+        routes = list(stt_cfg.get("routes") or [])
+        if not routes:
+            routes = [{
+                "provider": "auto", "model": "mlx-community/whisper-small-mlx",
+            }]
+        transcript = _transcribe_workflow(
+            wav, job_dir, meta["duration"], speech_language,
+            routes, float(stt_cfg.get("timeout_s") or 300),
+            progress, job_id=job_id, request_id=request_id,
+        )
+        if transcript:
+            timings["stt"] = round(time.time() - stage, 2)
     attach_speech(scenes, transcript)
 
     stage = time.time()

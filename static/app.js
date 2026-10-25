@@ -25,10 +25,7 @@
     setupUseRewrite: $("#setup-use-rewrite"),
     setupUseBrief: $("#setup-use-brief"),
     setupTranslationMode: $("#setup-translation-mode"),
-    setupSttProvider: $("#setup-stt-provider"),
     setupSttLanguage: $("#setup-stt-language"),
-    setupSttModel: $("#setup-stt-model"),
-    setupTtsProvider: $("#setup-tts-provider"),
     setupMinimaxKey: $("#setup-minimax-key"),
     setupTestOpencode: $("#setup-test-opencode"),
     setupTestOpenrouter: $("#setup-test-openrouter"),
@@ -346,16 +343,26 @@
     const target = $("#setup-model-routes");
     if (!target) return;
     target.replaceChildren();
-    ["story_brief", "rewrite"].forEach((name) => {
+    const labels = {
+      story_brief: "Story brief",
+      rewrite: "Script rewrite",
+      translate: "Translation",
+      hook_rank: "Hook ranking",
+      tts: "Voice-over",
+      music: "Music",
+      stt: "Transcription",
+    };
+    Object.entries(labels).forEach(([name, label]) => {
       const value = workflows?.[name];
       if (!value) return;
       const row = document.createElement("div");
       row.className = "setup-model-row";
       const title = document.createElement("strong");
-      title.textContent = name === "story_brief" ? "Story brief" : "Script rewrite";
+      title.textContent = label;
       const copy = document.createElement("span");
       const routes = (value.routes || []).map((route) => `${route.provider} · ${route.model}`);
       copy.textContent = routes.join("  →  ") || "No routes configured";
+      copy.title = copy.textContent;
       const meta = document.createElement("small");
       meta.textContent = `${value.reasoning || "no reasoning"} · ${value.max_output_tokens || 0} tokens · ${value.timeout_s || 0}s`;
       row.append(title, copy, meta);
@@ -384,18 +391,7 @@
       dom.setupOpencodeStatus.textContent = "No OpenCode key or service. Add a key here, or sign in with OpenCode, or use local MLX / Ollama.";
     }
     dom.setupOpencodeStatus.classList.toggle("warn", !runtime.opencode);
-    dom.setupSttProvider.value = (settings.stt || {}).provider || "auto";
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
-    const whisperModels = runtime.whisper_models || [];
-    const modelOptions = whisperModels.length
-      ? whisperModels.map((item) => [
-        item.id,
-        `${item.name}${item.cached ? " · cached" : ` · ~${item.size_mb} MB download`}`,
-      ])
-      : [["mlx-community/whisper-small-mlx", "Whisper small"]];
-    fillSelect(dom.setupSttModel, modelOptions);
-    dom.setupSttModel.value = (settings.stt || {}).model || "mlx-community/whisper-small-mlx";
-    dom.setupTtsProvider.value = (settings.tts || {}).provider || "auto";
     const ingest = settings.ingest || {};
     dom.setupIngestProvider.value = ["auto", "ytdlp", "cobalt", "xhs"].includes(ingest.provider)
       ? ingest.provider : "auto";
@@ -509,11 +505,8 @@
             mode: dom.setupTranslationMode.value,
           },
           stt: {
-            provider: dom.setupSttProvider.value,
             language: dom.setupSttLanguage.value,
-            model: dom.setupSttModel.value,
           },
-          tts: { provider: dom.setupTtsProvider.value },
           ingest: {
             provider: dom.setupIngestProvider.value || "auto",
             ytdlp_quality: dom.setupYtdlpQuality.value || "max",
@@ -550,13 +543,6 @@
       toast("Setup saved.");
       await loadIngestStatus(true);
       await loadAudioEngines();
-      const preferred = dom.setupTtsProvider.value;
-      if (preferred && preferred !== "auto" && preferred !== "local"
-          && state.audioEngines?.voices?.[preferred]?.available) {
-        state.audio.engine = preferred;
-        dom.audioEngine.value = preferred;
-        loadAudioVoices();
-      }
       refreshAudioStatus();
     } catch (error) {
       dom.setupStatus.textContent = error.message;
@@ -878,11 +864,11 @@
     dom.setupTestOpenrouter.addEventListener("click", () => testSetup("openrouter", dom.setupTestOpenrouter));
     dom.setupTestStt.addEventListener("click", () => testSetup("stt", dom.setupTestStt));
     dom.setupTestSttLive.addEventListener("click", () => testSetup(
-      "stt_live", dom.setupTestSttLive, { provider: dom.setupSttProvider.value },
+      "stt_live", dom.setupTestSttLive, { provider: "auto" },
     ));
     dom.setupTestTts.addEventListener("click", () => testSetup("tts", dom.setupTestTts));
     dom.setupTestTtsLive.addEventListener("click", () => testSetup(
-      "tts_live", dom.setupTestTtsLive, { engine: dom.setupTtsProvider.value },
+      "tts_live", dom.setupTestTtsLive, { engine: "auto" },
     ));
     dom.setupTestYtdlp.addEventListener("click", () => testIngest("ytdlp", dom.setupTestYtdlp));
     dom.setupYtdlpCookies.addEventListener("change", syncYtdlpCookieFields);

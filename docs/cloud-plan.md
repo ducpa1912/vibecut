@@ -1,5 +1,9 @@
 # Publishing VibeCut: open source + cloud
 
+> This is a design exploration, not implemented behavior. VibeCut ships as a
+> local/self-hosted app: no accounts, signup, hosted billing, Stripe, Decodo,
+> GCP, or YouTube Data API integration.
+
 ## Shape
 
 Open-core:
@@ -62,7 +66,7 @@ The provider layer already isolates this; cloud config picks engines.
 - One container per job, no shell interpolation of names, duration/size caps.
 - Quotas: minutes analyzed, render minutes, storage, concurrent jobs.
 - Metering: GPU-seconds and CPU-seconds per job, recorded with the job.
-- Billing: Stripe subscriptions + credit packs; free tier with monthly minutes.
+- Billing: none in VibeCut. The local app has no subscriptions or Stripe.
 - Retention: source deleted after N days, derivatives after M days; user can
   delete immediately. Backups separate from the hot bucket.
 - Moderation: upload scanning, CSAM/copyright reporting path, voice-clone
@@ -90,7 +94,7 @@ Price at 3–5× compute plus storage, or use a flat credit model that hides spi
    bundle import/export, deterministic renders.
 2. **Cloud alpha (invite only)** — API + queue + workers + R2, no billing, one
    region, 10–20 users. Goal: parity on a real 20-minute source.
-3. **Cloud beta** — auth, Stripe, quotas, metering, cancellation, retention,
+3. **Cloud beta** — auth, quotas, metering, cancellation, retention,
    abuse tooling, status page.
 4. **Scale** — GPU autoscaling, CDN, multi-region storage, per-plan concurrency,
    analytics on pipeline timings.

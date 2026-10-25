@@ -119,18 +119,10 @@ def _migrate(stored: dict) -> dict:
 
 def load_settings() -> dict:
     merged = _merge(DEFAULTS, _migrate(_read(SETTINGS_PATH)))
-    stt = merged.get("stt") or {}
-    if stt.get("provider") in {"groq", "openai", "deepgram", "cloud"}:
-        stt["provider"] = "auto"
-        merged["stt"] = stt
     translation = merged.get("translation") or {}
     if translation.get("mode") not in {"auto", "local_first", "local_only", "online_only"}:
         translation["mode"] = "auto"
         merged["translation"] = translation
-    tts = merged.get("tts") or {}
-    if tts.get("provider") in {"elevenlabs", "openai", "groq", "deepgram", "cartesia", "local"}:
-        tts["provider"] = "auto"
-        merged["tts"] = tts
     ingest = dict(merged.get("ingest") or {})
     # Secrets belong in secrets.json, never in the public settings document.
     for key in (
@@ -152,9 +144,25 @@ def save_settings(patch: dict) -> dict:
         current = load_settings()
         merged = _merge(current, patch)
         DATA.mkdir(parents=True, exist_ok=True)
-        SETTINGS_PATH.write_text(
+        try:
+            DATA.chmod(0o700)
+        except OSError:
+            pass
+        temporary = SETTINGS_PATH.with_name(
+            f"{SETTINGS_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        temporary.write_text(
             json.dumps(merged, ensure_ascii=False, indent=1), encoding="utf-8",
         )
+        try:
+            temporary.chmod(0o600)
+        except OSError:
+            pass
+        os.replace(temporary, SETTINGS_PATH)
+        try:
+            SETTINGS_PATH.chmod(0o600)
+        except OSError:
+            pass
     return merged
 
 
@@ -196,9 +204,12 @@ def secret_source(name: str) -> str:
 
 def save_secrets(updates: dict) -> None:
     clean = {
-        name: str(value).strip()
+        name: value.strip()
         for name, value in updates.items()
-        if name in SECRET_NAMES and isinstance(value, str) and value.strip()
+        if name in SECRET_NAMES
+        and isinstance(value, str)
+        and value.strip()
+        and len(value.strip()) <= 8192
     }
     clear = {
         name for name, value in updates.items()

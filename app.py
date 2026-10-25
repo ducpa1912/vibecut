@@ -311,11 +311,14 @@ def run_analysis(job_id: str) -> None:
 
     try:
         before_usage = usage_store.snapshot()
+        options = dict(job.get("options") or {})
+        options.setdefault("job_id", job_id)
+        options.setdefault("request_id", job_id)
         analysis = pipeline.analyze_source(
             job["source"]["path"],
             job["source"],
             _job_dir(job_id),
-            job.get("options") or {},
+            options,
             progress,
         )
         analysis_delta = usage_store.delta(before_usage)
@@ -1636,6 +1639,17 @@ def cleanup_storage() -> None:
             "cache prune removed %d files (%.1f MB)",
             result["removed"], result["freed_mb"],
         )
+    try:
+        removed_audit = admin_store.prune_audit()
+        removed_pipeline = admin_store.prune_pipeline_events()
+        removed_sessions = admin_store.prune_sessions()
+        if removed_audit or removed_pipeline or removed_sessions:
+            LOGGER.info(
+                "admin retention removed audit=%d pipeline=%d sessions=%d",
+                removed_audit, removed_pipeline, removed_sessions,
+            )
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("admin retention pass failed")
 
 
 def _retention_loop() -> None:
@@ -1757,6 +1771,69 @@ async def audit_admin_requests(request: Request, call_next):
         )
     except Exception:  # noqa: BLE001
         pass
+    return response
+
+
+ADMIN_PATHS = ("/_ductator", "/static/admin")
+ADMIN_HEADERS = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
+    "X-Robots-Tag": "noindex, nofollow",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+    ),
+}
+
+
+def _admin_path(path: str) -> bool:
+    return any(
+        path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + ".")
+        for prefix in ADMIN_PATHS
+    )
+
+
+def _request_secure(request: Request) -> bool:
+    if request.url.scheme == "https":
+        return True
+    if os.environ.get("VIBECUT_ADMIN_TRUST_PROXY", "").strip().lower() not in {"1", "true", "yes"}:
+        return False
+    return str(request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower() == "https"
+
+
+def _loopback_client(request: Request) -> bool:
+    import ipaddress  # noqa: PLC0415
+    host = str(getattr(request.client, "host", "") or "")
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+@app.middleware("http")
+async def admin_security_headers(request: Request, call_next):
+    path = request.url.path
+    if not _admin_path(path):
+        return await call_next(request)
+    if not _loopback_client(request) and not _request_secure(request):
+        return JSONResponse(
+            {
+                "detail": (
+                    "The admin console requires HTTPS for remote access. "
+                    "Use a TLS-terminating tunnel or open it on localhost."
+                )
+            },
+            status_code=403,
+            headers=ADMIN_HEADERS,
+        )
+    response = await call_next(request)
+    for name, value in ADMIN_HEADERS.items():
+        response.headers[name] = value
     return response
 
 
@@ -1925,6 +2002,24 @@ def _validate_ingest_patch(patch: dict) -> None:
     )
 
 
+def _setup_origin_ok(request: Request) -> bool:
+    """Reject cross-site Setup mutations while allowing CLI/curl requests."""
+    site = str(request.headers.get("sec-fetch-site") or "").lower()
+    if site == "cross-site":
+        return False
+    origin = str(request.headers.get("origin") or "")
+    if not origin:
+        return True
+    if origin == "null":
+        return False
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    host = str(request.headers.get("host") or "")
+    return bool(parsed.netloc and host and parsed.netloc.lower() == host.lower())
+
+
 def _settings_state() -> dict:
     state = settings_store.public_state()
     state["runtime"] = {
@@ -1946,6 +2041,8 @@ def get_settings() -> dict:
 
 @app.post("/api/settings")
 async def save_settings(request: Request) -> dict:
+    if not _setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site Setup writes are blocked.")
     body = await request.json()
     patch = body.get("settings") if isinstance(body, dict) else None
     secrets = body.get("secrets") if isinstance(body, dict) else None
@@ -1956,7 +2053,20 @@ async def save_settings(request: Request) -> dict:
         except Exception:  # noqa: BLE001
             before_state = None
     if isinstance(patch, dict):
+        # Model routes are admin-console owned. Setup may display the summary
+        # but the public settings API must never bypass catalog validation.
+        if "workflows" in patch:
+            raise HTTPException(
+                400, "Model routes are managed in the admin console (/_ductator/).",
+            )
+        allowed_settings = {
+            "opencode", "translation", "openrouter", "minimax", "stt", "tts", "ingest",
+        }
+        unknown = sorted(set(patch) - allowed_settings)
+        if unknown:
+            raise HTTPException(400, f"Unknown settings section: {unknown[0]}.")
         _validate_ingest_patch(patch)
+
         opencode = patch.get("opencode")
         if isinstance(opencode, dict):
             requested = str(opencode.get("model") or OPENCODE_MODEL)
@@ -2009,11 +2119,18 @@ async def save_settings(request: Request) -> dict:
         settings_store.save_settings(patch)
     if isinstance(secrets, dict):
         settings_store.save_secrets(secrets)
-        if "openrouter" in secrets:
-            audio.clear_openrouter_quarantine()
-            audio.reset_provider_breaker("openrouter")
-            audio.OPENROUTER_LAST_ERROR = ""
-            audio.OPENROUTER_LAST_STATUS = 0
+        for name in secrets:
+            if name == "openrouter":
+                audio.clear_openrouter_quarantine()
+                audio.reset_provider_breaker("openrouter")
+                audio.OPENROUTER_LAST_ERROR = ""
+                audio.OPENROUTER_LAST_STATUS = 0
+            elif name in {"opencode", "minimax", "groq", "openai", "deepgram", "elevenlabs", "cartesia"}:
+                audio.reset_provider_breaker(name)
+        try:
+            audio.clear_workflow_caches()
+        except Exception:  # noqa: BLE001
+            pass
     if before_state is not None:
         try:
             after_state = settings_store.public_state()

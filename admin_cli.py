@@ -31,7 +31,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "show":
-        user = store.get_user()
+        user = store.first_user()
         print(user["email"] if user else "no admin account")
         return 0
 
@@ -47,7 +47,7 @@ def main() -> int:
         return 0
 
     if args.command == "reset-password":
-        user = store.get_user(args.email) if args.email else store.get_user()
+        user = store.get_user(args.email) if args.email else store.first_user()
         if not user:
             print("error: no matching admin account", file=sys.stderr)
             return 1

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import threading
 import time
+import urllib.parse
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import settings_store
 import workflow_config
@@ -22,33 +23,40 @@ CSRF_HEADER = "X-VibeCut-Admin-CSRF"
 
 _LOCK = threading.Lock()
 _ATTEMPTS: dict[str, list[float]] = {}
-MAX_ATTEMPTS = 8
+MAX_EMAIL_ATTEMPTS = 8
+MAX_IP_ATTEMPTS = 30
 ATTEMPT_WINDOW = 15 * 60
+MAX_RATE_KEYS = 2048
+MAX_EMAIL_LENGTH = 320
+MAX_PASSWORD_LENGTH = 1024
+MAX_KEY_LENGTH = 8192
+MAX_ROUTE_MODEL_LENGTH = 240
 
 
 class BootstrapBody(BaseModel):
-    email: str
-    password: str
+    email: str = Field(min_length=3, max_length=MAX_EMAIL_LENGTH)
+    password: str = Field(min_length=12, max_length=MAX_PASSWORD_LENGTH)
 
 
 class LoginBody(BaseModel):
-    email: str
-    password: str
+    email: str = Field(min_length=1, max_length=MAX_EMAIL_LENGTH)
+    password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
 
 
 class AccountBody(BaseModel):
-    email: str
-    current_password: str
-    new_password: str = ""
+    email: str = Field(min_length=3, max_length=MAX_EMAIL_LENGTH)
+    current_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
+    new_password: str = Field(default="", max_length=MAX_PASSWORD_LENGTH)
 
 
 class KeyBody(BaseModel):
-    value: str = ""
+    value: str = Field(default="", max_length=MAX_KEY_LENGTH)
+    clear: bool = False
 
 
 class WorkflowBody(BaseModel):
-    routes: list[dict] = []
-    reasoning: str = ""
+    routes: list[dict] = Field(default_factory=list)
+    reasoning: str = Field(default="", max_length=32)
     max_output_tokens: int = 3200
     timeout_s: int = 300
 
@@ -57,12 +65,56 @@ def _client_ip(request: Request) -> str:
     return str(getattr(request.client, "host", "") or "")
 
 
-def _local_bootstrap_allowed() -> bool:
+def _hostname(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "://" in text:
+        try:
+            parsed = urllib.parse.urlsplit(text)
+        except ValueError:
+            return ""
+        return str(parsed.hostname or "").lower()
+    if text.startswith("["):
+        end = text.find("]")
+        return text[1:end].lower() if end > 0 else ""
+    return text.split(":", 1)[0].strip().lower()
+
+
+def _is_loopback_host(value: str) -> bool:
+    host = _hostname(value)
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_bootstrap_allowed(request: Request) -> bool:
+    """Allow bootstrap only for a genuinely local, non-proxied request."""
+    if not _is_loopback_host(_client_ip(request)):
+        return False
+    if not _is_loopback_host(str(request.headers.get("host") or "")):
+        return False
+    origin = str(request.headers.get("origin") or "")
+    if origin and not _is_loopback_host(origin):
+        return False
+    for header in (
+        "forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip",
+        "cf-connecting-ip",
+    ):
+        if request.headers.get(header):
+            return False
     try:
         import app  # noqa: PLC0415
-        return str(app.HOST) in {"127.0.0.1", "localhost", "::1"}
+        if not _is_loopback_host(str(app.HOST)):
+            return False
     except Exception:  # noqa: BLE001
         return False
+    return True
 
 
 def _audit(request: Request, actor: str, action: str, **kwargs: Any) -> None:
@@ -89,27 +141,49 @@ def _csrf(request: Request, session: dict) -> None:
         raise HTTPException(403, "Invalid admin CSRF token.")
 
 
-def _rate_key(request: Request, email: str) -> str:
-    return f"{_client_ip(request)}|{str(email).strip().lower()}"
+def _bucket_keys(request: Request, email: str) -> list[tuple[str, int]]:
+    ip = _client_ip(request) or "unknown"
+    email = str(email or "").strip().lower()[:MAX_EMAIL_LENGTH]
+    return [
+        (f"ip:{ip}", MAX_IP_ATTEMPTS),
+        (f"email:{email or 'empty'}", MAX_EMAIL_ATTEMPTS),
+    ]
+
+
+def _prune_attempts(now: float) -> None:
+    for key in list(_ATTEMPTS):
+        attempts = [item for item in _ATTEMPTS.get(key, []) if now - item < ATTEMPT_WINDOW]
+        if attempts:
+            _ATTEMPTS[key] = attempts
+        else:
+            _ATTEMPTS.pop(key, None)
+    if len(_ATTEMPTS) > MAX_RATE_KEYS:
+        oldest = sorted(
+            _ATTEMPTS, key=lambda key: max(_ATTEMPTS.get(key) or [0.0]),
+        )[: max(0, len(_ATTEMPTS) - MAX_RATE_KEYS)]
+        for key in oldest:
+            _ATTEMPTS.pop(key, None)
 
 
 def _check_rate(request: Request, email: str) -> None:
-    key = _rate_key(request, email)
     now = time.time()
     with _LOCK:
-        attempts = [item for item in _ATTEMPTS.get(key, []) if now - item < ATTEMPT_WINDOW]
-        _ATTEMPTS[key] = attempts
-        if len(attempts) >= MAX_ATTEMPTS:
-            raise HTTPException(429, "Too many login attempts. Try again later.")
+        _prune_attempts(now)
+        for key, limit in _bucket_keys(request, email):
+            if len(_ATTEMPTS.get(key, [])) >= limit:
+                raise HTTPException(429, "Too many login attempts. Try again later.")
 
 
 def _record_failure(request: Request, email: str) -> None:
-    key = _rate_key(request, email)
+    now = time.time()
     with _LOCK:
-        _ATTEMPTS.setdefault(key, []).append(time.time())
+        _prune_attempts(now)
+        for key, _limit in _bucket_keys(request, email):
+            _ATTEMPTS.setdefault(key, []).append(now)
 
 
 def _set_cookie(response: Response, token: str, request: Request) -> None:
+    forwarded = str(request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
     response.set_cookie(
         COOKIE_NAME,
         token,
@@ -117,7 +191,7 @@ def _set_cookie(response: Response, token: str, request: Request) -> None:
         path=COOKIE_PATH,
         httponly=True,
         samesite="strict",
-        secure=request.url.scheme == "https",
+        secure=request.url.scheme == "https" or forwarded == "https",
     )
 
 
@@ -152,6 +226,7 @@ def _mirror_legacy_workflow(name: str, normalized: dict[str, Any]) -> None:
         settings_store.save_settings({
             "tts": {"provider": tts_provider if tts_provider in {
                 "minimax", "fish", "gemini", "kokoro", "piper", "say", "local", "auto",
+                "openai", "elevenlabs", "groq", "deepgram", "cartesia",
             } else "auto"},
             **({"minimax": {"tts_model": model}} if provider == "minimax" else {}),
         })
@@ -159,33 +234,62 @@ def _mirror_legacy_workflow(name: str, normalized: dict[str, Any]) -> None:
         settings_store.save_settings({"minimax": {"music_model": model}})
     elif name == "stt":
         provider_map = {"auto": "auto", "apple": "apple", "whisper": "whisper", "groq": "groq", "openai": "openai", "deepgram": "deepgram"}
-        settings_store.save_settings({"stt": {"provider": provider_map.get(provider, "auto"), "model": model}})
+        legacy = {"provider": provider_map.get(provider, "auto")}
+        # The legacy Setup field only lists Whisper model IDs. Apple is a
+        # route provider, not a Whisper model, so leave the old model intact.
+        if provider != "apple":
+            legacy["model"] = model
+        settings_store.save_settings({"stt": legacy})
+
+
+def _model_kind(provider: str, item: dict[str, Any]) -> str:
+    kind = str(item.get("kind") or "").strip().lower()
+    if kind in {"text", "tts", "music", "stt"}:
+        return kind
+    return "tts" if provider == "local" else "text"
 
 
 def _safe_workflow_payload(name: str, body: WorkflowBody) -> dict[str, Any]:
-    raw = body.model_dump()
-    normalized = workflow_config.normalize_workflow(name, raw)
-    routes = normalized.get("routes") or []
-    if not routes:
+    kind = workflow_config.WORKFLOW_KIND.get(name, "text")
+    raw_routes = body.routes
+    if not isinstance(raw_routes, list) or not raw_routes:
         raise HTTPException(400, "Add at least one model route.")
-    for route in routes:
-        provider = str(route.get("provider") or "")
-        model_id = str(route.get("model") or "")
+    if len(raw_routes) > workflow_config.MAX_ROUTES:
+        raise HTTPException(400, f"At most {workflow_config.MAX_ROUTES} model routes are allowed.")
+    checked: list[dict[str, str]] = []
+    for item in raw_routes:
+        if not isinstance(item, dict):
+            raise HTTPException(400, "Every model route must be an object.")
+        provider = str(item.get("provider") or "").strip().lower()
+        model_id = str(item.get("model") or "").strip()
         if provider not in workflow_config.WORKFLOW_PROVIDERS.get(name, ()):
             raise HTTPException(400, f"Provider {provider!r} is not valid for {name}.")
+        if not model_id or len(model_id) > MAX_ROUTE_MODEL_LENGTH:
+            raise HTTPException(400, "Every model route needs a valid model id.")
         catalog_entry = catalog.catalog(provider)
-        allowed = {str(item.get("id")) for item in catalog_entry.get("models", [])}
+        models = catalog_entry.get("models") if isinstance(catalog_entry, dict) else []
+        allowed = {
+            str(entry.get("id"))
+            for entry in (models or [])
+            if isinstance(entry, dict)
+            and entry.get("id")
+            and _model_kind(provider, entry) == kind
+        }
         if not allowed:
             raise HTTPException(
                 400,
-                f"Model catalog for {provider} is unavailable. Refresh catalogs first.",
+                f"No {kind} models are available for {provider}. Refresh catalogs first.",
             )
         if model_id not in allowed:
             raise HTTPException(
                 400,
-                f"{model_id!r} is not in the current {provider} catalog.",
+                f"{model_id!r} is not a {kind} model in the current {provider} catalog.",
             )
+        checked.append({"provider": provider, "model": model_id})
+    normalized = workflow_config.normalize_workflow(name, body.model_dump())
+    normalized["routes"] = checked
     return normalized
+
 
 
 @router.get("/bootstrap")
@@ -193,7 +297,7 @@ def bootstrap_state(request: Request) -> dict:
     needed = store.count_users() == 0
     return {
         "needed": needed,
-        "allowed": bool(needed and _local_bootstrap_allowed()),
+        "allowed": bool(needed and _local_bootstrap_allowed(request)),
     }
 
 
@@ -201,12 +305,12 @@ def bootstrap_state(request: Request) -> dict:
 def bootstrap(body: BootstrapBody, request: Request, response: Response) -> dict:
     if store.count_users():
         raise HTTPException(409, "An admin already exists; signup is disabled.")
-    if not _local_bootstrap_allowed():
-        raise HTTPException(403, "Admin bootstrap is only allowed from the local app.")
+    if not _local_bootstrap_allowed(request):
+        raise HTTPException(403, "Admin bootstrap is only allowed from a direct local request.")
     try:
         user = store.create_user(body.email, body.password)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(409 if "already exists" in str(exc) else 400, str(exc)) from exc
     session = store.create_session(
         user["email"], _client_ip(request), str(request.headers.get("user-agent") or "")
     )
@@ -219,6 +323,13 @@ def bootstrap(body: BootstrapBody, request: Request, response: Response) -> dict
 def login(body: LoginBody, request: Request, response: Response) -> dict:
     email = str(body.email or "").strip().lower()
     _check_rate(request, email)
+    if not email:
+        _record_failure(request, email)
+        _audit(
+            request, "anonymous", "auth.login", resource_type="admin",
+            resource_id="", outcome="failed", detail="Empty email.",
+        )
+        raise HTTPException(401, "Invalid email or password.")
     user = store.get_user(email)
     if not user or not store.verify_password(body.password, str(user.get("password_hash") or "")):
         _record_failure(request, email)
@@ -273,7 +384,38 @@ def overview(request: Request) -> dict:
 @router.get("/keys")
 def keys(request: Request) -> dict:
     _session(request)
-    return {"keys": [_secret_info(name) for name in catalog.AI_SECRETS]}
+    return {
+        "keys": [_secret_info(name) for name in catalog.AI_SECRETS],
+        "paths": {
+            "settings": str(settings_store.SETTINGS_PATH),
+            "secrets": str(settings_store.SECRETS_PATH),
+        },
+    }
+
+
+def _clear_key_runtime(name: str) -> None:
+    """Clear quarantine, breakers, and catalog/cache state after key rotation."""
+    try:
+        import audio  # noqa: PLC0415
+        provider = {
+            "opencode": "opencode-go", "openrouter": "openrouter", "openai": "openai",
+            "groq": "groq", "elevenlabs": "elevenlabs", "minimax": "minimax",
+            "deepgram": "deepgram", "cartesia": "cartesia",
+        }.get(name, name)
+        audio.clear_openrouter_quarantine()
+        audio.reset_provider_breaker(provider)
+        audio.OPENROUTER_LAST_ERROR = ""
+        audio.OPENROUTER_LAST_STATUS = 0
+        audio.clear_workflow_caches()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        catalog.clear_cache({
+            "opencode": "opencode-go", "openrouter": "openrouter", "openai": "openai",
+            "groq": "groq", "elevenlabs": "elevenlabs",
+        }.get(name, name))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @router.post("/keys/{name}")
@@ -284,18 +426,24 @@ def save_key(name: str, body: KeyBody, request: Request) -> dict:
     if name not in catalog.AI_SECRETS:
         raise HTTPException(404, "Unknown AI key.")
     before = _secret_info(name)
+    if settings_store.secret_source(name) == "env":
+        raise HTTPException(
+            409,
+            f"{before['label']} is managed by {before.get('env') or 'the environment'}; "
+            "change or unset that environment variable to rotate it.",
+        )
+    if not body.clear and not str(body.value or "").strip():
+        raise HTTPException(400, "Enter a key before saving. Use Clear to remove it.")
     try:
-        settings_store.save_secrets({name: body.value})
+        settings_store.save_secrets({name: "" if body.clear else body.value})
     except OSError as exc:
-        raise HTTPException(500, f"Could not save key: {exc}") from exc
+        raise HTTPException(500, f"Could not save key: {store.redact_text(exc)}") from exc
     after = _secret_info(name)
-    catalog.clear_cache({
-        "opencode": "opencode-go", "openrouter": "openrouter", "openai": "openai",
-        "groq": "groq", "elevenlabs": "elevenlabs",
-    }.get(name, name))
+    _clear_key_runtime(name)
     _audit(
         request, session["email"], "keys.update", resource_type="secret", resource_id=name,
         before=before, after=after,
+        detail="cleared" if body.clear else "stored",
     )
     return {"ok": True, "key": after}
 
@@ -308,23 +456,32 @@ def test_key(name: str, request: Request) -> dict:
     if name not in catalog.AI_SECRETS:
         raise HTTPException(404, "Unknown AI key.")
     if not settings_store.get_secret(name):
-        result = {"ok": False, "detail": "Key is not configured."}
+        result = {"ok": False, "tested": False, "detail": "Key is not configured."}
     elif name in {"opencode", "openrouter"}:
         try:
             import app  # noqa: PLC0415
             result = app.test_settings(app.SettingsTestBody(kind=name))
         except Exception as exc:  # noqa: BLE001
-            result = {"ok": False, "detail": f"Test failed: {store.redact_text(exc)}"[:300]}
+            result = {
+                "ok": False, "tested": True,
+                "detail": f"Test failed: {store.redact_text(exc)}"[:300],
+            }
     else:
         result = {
             "ok": True,
-            "detail": "Key is stored. Live provider test is not available for this provider.",
+            "tested": False,
+            "detail": "Stored (not tested). This provider has no live key check in the admin console.",
         }
     _audit(
         request, session["email"], "keys.test", resource_type="secret", resource_id=name,
-        after={"ok": bool(result.get("ok")), "detail": result.get("detail") or ""},
+        outcome="ok" if result.get("ok") else "failed",
+        after={
+            "ok": bool(result.get("ok")), "tested": bool(result.get("tested")),
+            "detail": result.get("detail") or "",
+        },
     )
     return result
+
 
 
 @router.get("/catalog")
@@ -343,10 +500,11 @@ def get_catalog(
     if kind in {"text", "tts", "music", "stt"}:
         filtered = [
             item for item in result.get("models", [])
-            if not item.get("kind") or item.get("kind") == kind
+            if _model_kind(provider, item) == kind
         ]
         result = {**result, "models": filtered}
     return result
+
 
 
 @router.get("/workflows")
@@ -418,10 +576,12 @@ def get_audit(
     actor: str = "",
     action: str = "",
     resource_type: str = "",
+    include_http: int = 0,
 ) -> dict:
     session = _session(request)
     result = store.list_audit(
         limit=limit, offset=offset, actor=actor, action=action, resource_type=resource_type,
+        include_http=bool(include_http),
     )
     _audit(request, session["email"], "audit.view", resource_type="audit")
     return result
@@ -430,9 +590,19 @@ def get_audit(
 @router.get("/audit/export")
 def export_audit(request: Request) -> Response:
     session = _session(request)
-    result = store.list_audit(limit=500, offset=0)
-    body = "\n".join(json.dumps(entry, ensure_ascii=False, sort_keys=True) for entry in result["entries"])
-    _audit(request, session["email"], "audit.export", resource_type="audit", after={"entries": len(result["entries"])})
+    entries: list[dict] = []
+    offset = 0
+    while True:
+        page = store.list_audit(limit=500, offset=offset, include_http=True)
+        entries.extend(page["entries"])
+        offset += len(page["entries"])
+        if offset >= int(page["total"]) or not page["entries"]:
+            break
+    body = "\n".join(json.dumps(entry, ensure_ascii=False, sort_keys=True) for entry in entries)
+    _audit(
+        request, session["email"], "audit.export", resource_type="audit",
+        after={"entries": len(entries)},
+    )
     return Response(
         body,
         media_type="application/x-ndjson",
@@ -446,6 +616,7 @@ def verify_audit(request: Request) -> dict:
     result = store.verify_audit()
     _audit(
         request, session["email"], "audit.verify", resource_type="audit",
+        outcome="ok" if result.get("ok") else "failed",
         after=result,
     )
     return result

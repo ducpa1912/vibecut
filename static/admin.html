@@ -75,7 +75,7 @@
       <section id="tab-keys" class="admin-panel" hidden>
         <p class="eyebrow">admin / keys</p>
         <h1>AI keys</h1>
-        <p class="lede">Stored in <code>data/secrets.json</code> with mode 0600. Values are never shown in full.</p>
+        <p class="lede">Stored in <code id="keys-path">the project data directory</code> with mode 0600. Values are never shown in full.</p>
         <div id="key-cards" class="key-grid"></div>
       </section>
 
@@ -83,23 +83,26 @@
         <p class="eyebrow">admin / pipeline log</p>
         <h1>Model calls</h1>
         <div class="log-toolbar">
-          <label>Workflow <input id="pipeline-filter" type="search" placeholder="filter workflow"></label>
+          <label>Workflow <input id="pipeline-filter" type="search" placeholder="filter workflow (partial)"></label>
           <button id="reload-pipeline" class="ghost small" type="button">Reload</button>
         </div>
         <div id="pipeline-table" class="log-table"></div>
+        <button id="pipeline-more" class="ghost small load-more" type="button" hidden>Load more</button>
       </section>
 
       <section id="tab-audit" class="admin-panel" hidden>
         <p class="eyebrow">admin / admin log</p>
         <h1>Every admin action</h1>
         <div class="log-toolbar">
-          <label>Action <input id="audit-filter" type="search" placeholder="filter action"></label>
+          <label>Action <input id="audit-filter" type="search" placeholder="filter action (partial)"></label>
+          <label class="inline-check"><input id="audit-http" type="checkbox"> Include raw HTTP rows</label>
           <button id="reload-audit" class="ghost small" type="button">Reload</button>
           <button id="verify-audit" class="ghost small" type="button">Verify integrity</button>
           <a class="ghost small button-link" href="/_ductator/api/audit/export">Export JSONL</a>
         </div>
         <p id="audit-verify" class="hint"></p>
         <div id="audit-table" class="log-table"></div>
+        <button id="audit-more" class="ghost small load-more" type="button" hidden>Load more</button>
       </section>
 
       <section id="tab-access" class="admin-panel" hidden>

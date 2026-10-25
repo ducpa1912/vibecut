@@ -52,7 +52,23 @@ KOKORO_ZH_NUMERIC = (
     "zf_001", "zf_002", "zf_003", "zf_004", "zf_005", "zf_006",
     "zf_007", "zf_008", "zm_009", "zm_010", "zm_011", "zm_012",
 )
-CACHE = ROOT / "data" / "cache"
+CACHE = settings_store.DATA / "cache"
+LAST_USAGE: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+
+
+def _reset_last_usage() -> None:
+    LAST_USAGE["input_tokens"] = 0
+    LAST_USAGE["output_tokens"] = 0
+
+
+def _record_last_usage(usage: dict | None) -> None:
+    usage = usage or {}
+    try:
+        LAST_USAGE["input_tokens"] = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        LAST_USAGE["output_tokens"] = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    except (TypeError, ValueError):
+        _reset_last_usage()
+
 
 MOOD_WORDS = (
     "calm", "warm", "upbeat", "energetic", "cinematic", "dramatic",
@@ -92,6 +108,11 @@ def _pipeline_event(
     started: float,
     ok: bool,
     error: str = "",
+    *,
+    job_id: str = "",
+    request_id: str = "",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
 ) -> None:
     """Best-effort persistent pipeline log; never break generation."""
     try:
@@ -101,9 +122,13 @@ def _pipeline_event(
             provider,
             model,
             route_index=route_index,
+            job_id=job_id,
+            request_id=request_id or job_id,
             reasoning=reasoning,
             status="ok" if ok else "failed",
             latency_ms=(time.time() - started) * 1000,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             fallback=route_index > 0,
             error=error,
         )
@@ -161,6 +186,7 @@ def _workflow_text(
         provider = str(route.get("provider") or "")
         model = str(route.get("model") or "")
         started = time.time()
+        _reset_last_usage()
         try:
             if provider == "opencode-go":
                 value = _opencode_text(
@@ -189,6 +215,8 @@ def _workflow_text(
         _pipeline_event(
             workflow, index, provider, model, reasoning, started,
             bool(value), "" if value else error[:300],
+            input_tokens=int(LAST_USAGE.get("input_tokens") or 0),
+            output_tokens=int(LAST_USAGE.get("output_tokens") or 0),
         )
         if value:
             return value
@@ -675,41 +703,37 @@ def list_voices(engine: str) -> list[dict]:
     return []
 
 
-LOCAL_TTS_ORDER = ("kokoro", "say", "piper")
+def _tts_route_candidates() -> list[dict[str, str]]:
+    """Ordered TTS candidates from the admin workflow, model included."""
+    cfg = _workflow("tts")
+    candidates: list[dict[str, str]] = []
+    for route in cfg.get("routes") or []:
+        provider = str(route.get("provider") or "").lower()
+        model = str(route.get("model") or "").strip()
+        if provider == "minimax":
+            candidates.append({
+                "engine": "minimax", "provider": provider, "model": model,
+            })
+        elif provider == "openrouter":
+            engine = "fish" if "fish" in model.lower() else "gemini"
+            candidates.append({
+                "engine": engine, "provider": provider, "model": model,
+            })
+        elif provider == "local":
+            engine = model if model in {"kokoro", "piper", "say"} else "kokoro"
+            candidates.append({
+                "engine": engine, "provider": provider, "model": model or engine,
+            })
+        elif provider in {"elevenlabs", "openai", "groq", "deepgram", "cartesia"}:
+            candidates.append({
+                "engine": provider, "provider": provider, "model": model,
+            })
+    return candidates
 
 
-def _local_tts_candidates() -> list[str]:
-    available = {
-        "kokoro": kokoro_available(),
-        "say": say_available(),
-        "piper": piper_available(),
-    }
-    return [name for name in LOCAL_TTS_ORDER if available[name]]
-
-
-def _tts_candidates(engine_name: str) -> list[str]:
-    """Cloud voices first, then local engines so a bad cloud key cannot mute."""
-    primary = str(engine_name or "auto").lower()
-    if primary == "auto":
-        cloud = [
-            name for name in ("minimax", "fish", "gemini")
-            if (minimax_key() if name == "minimax" else openrouter_available())
-        ]
-    elif primary == "minimax":
-        cloud = [
-            name for name in ("minimax", "fish", "gemini")
-            if (minimax_key() if name == "minimax" else openrouter_available())
-        ]
-    elif primary == "fish":
-        cloud = [
-            name for name in ("fish", "gemini") if openrouter_available()
-        ]
-    elif primary == "gemini":
-        cloud = ["gemini"] if openrouter_available() else []
-    else:
-        cloud = []
-    local = _local_tts_candidates()
-    return [*cloud, *[name for name in local if name not in cloud]]
+def _tts_candidates(engine_name: str = "auto") -> list[str]:
+    """Compatibility helper: ordered engine names from configured routes."""
+    return [item["engine"] for item in _tts_route_candidates()]
 
 
 def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
@@ -718,6 +742,8 @@ def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
         if candidate == primary and preferred not in {"", "default"}:
             return preferred
         return ""
+    if candidate in {"elevenlabs", "cartesia"}:
+        return preferred if candidate == primary and preferred not in {"", "default"} else ""
     if candidate == primary and preferred not in {"", "default"}:
         return preferred
     if candidate == "gemini":
@@ -731,6 +757,12 @@ def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
         return voices[0]["id"] if voices else ""
     if candidate == "minimax":
         return "female-shaonv"
+    if candidate == "openai":
+        return "alloy"
+    if candidate == "groq":
+        return "troy"
+    if candidate == "deepgram":
+        return "aura-2-thalia-en"
     return preferred
 
 
@@ -898,7 +930,10 @@ def _kokoro_voice(
     ], input_text=text, timeout=900, cancel_event=cancel_event)
 
 
-def _elevenlabs_voice(text: str, voice: str, output: Path, rate: float) -> None:
+def _elevenlabs_voice(
+    text: str, voice: str, output: Path, rate: float,
+    model: str = "", timeout: float = 180,
+) -> None:
     key = elevenlabs_key()
     if not key:
         raise AudioError("Set VIBECUT_ELEVENLABS_API_KEY to use ElevenLabs.")
@@ -906,7 +941,7 @@ def _elevenlabs_voice(text: str, voice: str, output: Path, rate: float) -> None:
         raise AudioError("Pick an ElevenLabs voice first.")
     payload = json.dumps({
         "text": text,
-        "model_id": "eleven_multilingual_v2",
+        "model_id": model or "eleven_multilingual_v2",
         "voice_settings": {"stability": 0.45, "similarity_boost": 0.75},
     }).encode("utf-8")
     request = urllib.request.Request(
@@ -917,7 +952,7 @@ def _elevenlabs_voice(text: str, voice: str, output: Path, rate: float) -> None:
     )
     raw = output.with_suffix(".mp3")
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             raw.write_bytes(response.read())
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"ElevenLabs synthesis failed: {exc}") from exc
@@ -929,12 +964,15 @@ def _elevenlabs_voice(text: str, voice: str, output: Path, rate: float) -> None:
         pass
 
 
-def _openai_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+def _openai_voice(
+    text: str, voice: str, output: Path, rate: float = 1.0,
+    model: str = "", timeout: float = 300,
+) -> None:
     key = openai_key()
     if not key:
         raise AudioError("Set OPENAI_API_KEY to use OpenAI voice.")
     payload = json.dumps({
-        "model": os.environ.get("VIBECUT_OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
+        "model": model or os.environ.get("VIBECUT_OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
         "voice": voice or "alloy",
         "input": text,
         "response_format": "wav",
@@ -947,7 +985,7 @@ def _openai_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> Non
     )
     raw = output.with_name(f"{output.stem}.openai.tmp.wav")
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             raw.write_bytes(response.read())
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"OpenAI voice failed: {exc}") from exc
@@ -959,12 +997,15 @@ def _openai_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> Non
         pass
 
 
-def _groq_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+def _groq_voice(
+    text: str, voice: str, output: Path, rate: float = 1.0,
+    model: str = "", timeout: float = 300,
+) -> None:
     key = groq_key()
     if not key:
         raise AudioError("Set GROQ_API_KEY to use Groq voice.")
     payload = json.dumps({
-        "model": os.environ.get("VIBECUT_GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english"),
+        "model": model or os.environ.get("VIBECUT_GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english"),
         "voice": voice or "troy",
         "input": text,
         "response_format": "wav",
@@ -977,7 +1018,7 @@ def _groq_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
     )
     raw = output.with_name(f"{output.stem}.groq.tmp.wav")
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             raw.write_bytes(response.read())
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"Groq voice failed: {exc}") from exc
@@ -989,11 +1030,14 @@ def _groq_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
         pass
 
 
-def _deepgram_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+def _deepgram_voice(
+    text: str, voice: str, output: Path, rate: float = 1.0,
+    model: str = "", timeout: float = 300,
+) -> None:
     key = deepgram_key()
     if not key:
         raise AudioError("Set DEEPGRAM_API_KEY to use Deepgram voice.")
-    model = voice or "aura-2-thalia-en"
+    model = model or voice or "aura-2-thalia-en"
     payload = json.dumps({"text": text}).encode("utf-8")
     request = urllib.request.Request(
         f"https://api.deepgram.com/v1/speak?model={model}",
@@ -1003,7 +1047,7 @@ def _deepgram_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> N
     )
     raw = output.with_name(f"{output.stem}.deepgram.tmp.mp3")
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             raw.write_bytes(response.read())
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"Deepgram voice failed: {exc}") from exc
@@ -1015,14 +1059,17 @@ def _deepgram_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> N
         pass
 
 
-def _cartesia_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+def _cartesia_voice(
+    text: str, voice: str, output: Path, rate: float = 1.0,
+    model: str = "sonic-3.6", timeout: float = 300,
+) -> None:
     key = cartesia_key()
     if not key:
         raise AudioError("Set CARTESIA_API_KEY to use Cartesia voice.")
     if not voice:
         raise AudioError("Pick a Cartesia voice first.")
     payload = json.dumps({
-        "model_id": "sonic-3.6",
+        "model_id": model or "sonic-3.6",
         "transcript": text,
         "voice": voice,
         "output_format": {
@@ -1044,7 +1091,7 @@ def _cartesia_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> N
     )
     raw = output.with_name(f"{output.stem}.cartesia.tmp.wav")
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             raw.write_bytes(response.read())
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"Cartesia voice failed: {exc}") from exc
@@ -1056,11 +1103,14 @@ def _cartesia_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> N
         pass
 
 
-def _minimax_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> None:
+def _minimax_voice(
+    text: str, voice: str, output: Path, rate: float = 1.0,
+    model: str = "", timeout: float = 300,
+) -> None:
     key = minimax_key()
     if not key:
         raise AudioError("Set MINIMAX_API_KEY to use MiniMax voice.")
-    model = str((settings_store.load_settings().get("minimax") or {}).get("tts_model") or "speech-2.8-turbo")
+    model = model or str((settings_store.load_settings().get("minimax") or {}).get("tts_model") or "speech-2.8-turbo")
     payload = json.dumps({
         "model": model,
         "text": text,
@@ -1085,7 +1135,7 @@ def _minimax_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> No
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             data = json.loads(response.read().decode("utf-8"))
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"MiniMax voice failed: {exc}") from exc
@@ -1105,7 +1155,10 @@ def _minimax_voice(text: str, voice: str, output: Path, rate: float = 1.0) -> No
         pass
 
 
-def _openrouter_voice(text: str, voice: str, output: Path, rate: float = 1.0, engine: str = "fish") -> None:
+def _openrouter_voice(
+    text: str, voice: str, output: Path, rate: float = 1.0, engine: str = "fish",
+    model: str = "", timeout: float = 300,
+) -> None:
     key = openrouter_key()
     if not key:
         raise AudioError("Set an OpenRouter key to use this voice.")
@@ -1114,7 +1167,7 @@ def _openrouter_voice(text: str, voice: str, output: Path, rate: float = 1.0, en
             "OpenRouter is quarantined after an auth error; retry in "
             f"{openrouter_blocked_seconds()}s."
         )
-    model = _workflow_route_model(
+    model = model or _workflow_route_model(
         "tts", "openrouter",
         "fish-audio/s2.1-pro-free:free" if engine == "fish" else "google/gemini-3.8-flash-lite-tts",
     )
@@ -1134,7 +1187,7 @@ def _openrouter_voice(text: str, voice: str, output: Path, rate: float = 1.0, en
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             content = response.read()
     except urllib.error.HTTPError as exc:
         if exc.code in {401, 403}:
@@ -1161,6 +1214,9 @@ def synthesize_line(
     output: Path,
     rate: float = 1.0,
     cancel_event: threading.Event | None = None,
+    *,
+    model: str = "",
+    timeout: float = 300,
 ) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     flac = output.suffix.lower() == ".flac"
@@ -1178,17 +1234,21 @@ def synthesize_line(
             raise AudioError("Kokoro is not installed or has no model files.")
         _kokoro_voice(text, voice, target, rate, cancel_event)
     elif engine == "elevenlabs":
-        _elevenlabs_voice(text, voice, target, rate)
+        _elevenlabs_voice(text, voice, target, rate, model=model, timeout=timeout)
     elif engine == "openai":
-        _openai_voice(text, voice, target, rate)
+        _openai_voice(text, voice, target, rate, model=model, timeout=timeout)
     elif engine == "groq":
-        _groq_voice(text, voice, target, rate)
+        _groq_voice(text, voice, target, rate, model=model, timeout=timeout)
     elif engine == "deepgram":
-        _deepgram_voice(text, voice, target, rate)
+        _deepgram_voice(text, voice, target, rate, model=model, timeout=timeout)
+    elif engine == "cartesia":
+        _cartesia_voice(text, voice, target, rate, model=model, timeout=timeout)
     elif engine == "minimax":
-        _minimax_voice(text, voice, target, rate)
+        _minimax_voice(text, voice, target, rate, model=model, timeout=timeout)
     elif engine in {"fish", "gemini"}:
-        _openrouter_voice(text, voice, target, rate, engine)
+        _openrouter_voice(
+            text, voice, target, rate, engine, model=model, timeout=timeout,
+        )
     else:
         raise AudioError(f"Unknown voice engine {engine!r}.")
     if engine in usage_store.TTS_PER_CHAR:
@@ -1476,8 +1536,7 @@ def _rewrite_workflow_plan() -> list[dict[str, str]]:
             "model": str(route.get("model") or ""),
             "reasoning": str(_workflow("rewrite").get("reasoning") or "low"),
         }
-        if not any(existing["name"] == name for existing in plan):
-            plan.append(item)
+        plan.append(item)
     plan.append({"name": "rules", "provider": "rules", "model": "", "reasoning": ""})
     return plan
 
@@ -1769,11 +1828,14 @@ def music_prompt(moods: list[str], target: float) -> str:
     )
 
 
-def _minimax_music(prompt: str, seconds: float, output: Path) -> None:
+def _minimax_music(
+    prompt: str, seconds: float, output: Path,
+    model: str = "", timeout: float = 600,
+) -> None:
     key = minimax_key()
     if not key:
         raise AudioError("Set MINIMAX_API_KEY to use MiniMax music.")
-    model = str((settings_store.load_settings().get("minimax") or {}).get("music_model") or "music-3.0")
+    model = model or str((settings_store.load_settings().get("minimax") or {}).get("music_model") or "music-3.0")
     payload = json.dumps({
         "model": model,
         "prompt": prompt,
@@ -1792,7 +1854,7 @@ def _minimax_music(prompt: str, seconds: float, output: Path) -> None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=600) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             data = json.loads(response.read().decode("utf-8"))
     except Exception as exc:  # noqa: BLE001
         raise AudioError(f"MiniMax music failed: {exc}") from exc
@@ -1806,7 +1868,10 @@ def _minimax_music(prompt: str, seconds: float, output: Path) -> None:
     usage_store.record("music", "minimax")
 
 
-def _lyria_music(prompt: str, seconds: float, output: Path) -> None:
+def _lyria_music(
+    prompt: str, seconds: float, output: Path,
+    model: str = "", timeout: float = 600,
+) -> None:
     key = openrouter_key()
     if not key:
         raise AudioError("Add an OpenRouter key to use Lyria music.")
@@ -1815,7 +1880,7 @@ def _lyria_music(prompt: str, seconds: float, output: Path) -> None:
             "OpenRouter is quarantined after an auth error; retry in "
             f"{openrouter_blocked_seconds()}s."
         )
-    model = _workflow_route_model(
+    model = model or _workflow_route_model(
         "music", "openrouter",
         "google/lyria-3-pro-preview" if seconds > 32 else "google/lyria-3-clip-preview",
     )
@@ -1839,7 +1904,7 @@ def _lyria_music(prompt: str, seconds: float, output: Path) -> None:
     )
     chunks: list[bytes] = []
     try:
-        with urllib.request.urlopen(request, timeout=600) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             for raw_line in response:
                 line = raw_line.decode("utf-8", "replace").strip()
                 if not line.startswith("data:"):
@@ -1883,19 +1948,50 @@ def _lyria_music(prompt: str, seconds: float, output: Path) -> None:
         pass
 
 
+def _music_route_candidates() -> list[dict[str, str]]:
+    cfg = _workflow("music")
+    candidates: list[dict[str, str]] = []
+    for route in cfg.get("routes") or []:
+        provider = str(route.get("provider") or "").lower()
+        model = str(route.get("model") or "").strip()
+        if provider in {"minimax", "openrouter"}:
+            candidates.append({
+                "provider": provider,
+                "model": model,
+                "descriptor": f"{provider}:{model}",
+            })
+    return candidates
+
+
 def generate_music(
     model: str,
     prompt: str,
     seconds: float,
     cancel_event: threading.Event | None = None,
+    *,
+    timeout: float = 600,
 ) -> Path:
-    key = _text_hash("music", model, prompt, f"{seconds:.0f}")
+    descriptor = str(model)
+    provider = ""
+    model_name = descriptor
+    if ":" in descriptor:
+        prefix, rest = descriptor.split(":", 1)
+        if prefix in {"minimax", "openrouter"}:
+            provider, model_name = prefix, rest
+    key = _text_hash("music", descriptor, prompt, f"{seconds:.0f}")
     target = CACHE / "music" / f"{key}.wav"
     if target.is_file() and target.stat().st_size > 1024:
         return target
-    is_musicgen = model.startswith("facebook/musicgen")
-    is_minimax = model.startswith("minimax") or model.startswith("music-")
-    is_lyria = model.startswith("google/lyria")
+    is_musicgen = model_name.startswith("facebook/musicgen")
+    is_minimax = provider == "minimax" or (
+        not provider and (
+            model_name.startswith("minimax") or model_name.startswith("music-")
+        )
+    )
+    is_lyria = (
+        (provider == "openrouter" and bool(model_name))
+        or model_name.startswith("google/lyria")
+    )
     if is_lyria:
         if not openrouter_key():
             raise AudioError("Add an OpenRouter key to use Lyria music.")
@@ -1917,26 +2013,32 @@ def generate_music(
         raise AudioError("MusicGen needs transformers, torch and soundfile.")
     target.parent.mkdir(parents=True, exist_ok=True)
     if is_lyria:
-        _lyria_music(prompt, seconds, target)
+        _lyria_music(
+            prompt, seconds, target,
+            model=model_name if provider == "openrouter" else "", timeout=timeout,
+        )
     elif is_minimax:
-        _minimax_music(prompt, seconds, target)
+        _minimax_music(
+            prompt, seconds, target,
+            model=model_name if provider == "minimax" else "", timeout=timeout,
+        )
     elif is_musicgen:
         worker = ROOT / "tools" / "musicgen_generate.py"
         _run([
             sys.executable, str(worker),
-            "--model", model, "--prompt", prompt,
+            "--model", model_name, "--prompt", prompt,
             "--seconds", f"{seconds:.1f}", "--out", str(target),
         ], timeout=3600, cancel_event=cancel_event)
     else:
         worker = ROOT / "tools" / "music_generate.py"
         _run([
             sys.executable, str(worker),
-            "--model", model, "--prompt", prompt,
+            "--model", model_name, "--prompt", prompt,
             "--seconds", f"{seconds:.1f}", "--out", str(target),
         ], timeout=3600, cancel_event=cancel_event)
     if not target.is_file() or target.stat().st_size <= 1024:
-        raise AudioError("Stable Audio produced no file.")
-    save_generated_asset(target, model, prompt, seconds)
+        raise AudioError("Music generation produced no file.")
+    save_generated_asset(target, descriptor, prompt, seconds)
     return target
 
 
@@ -2528,6 +2630,7 @@ def _openrouter_text(
         return None
     OPENROUTER_LAST_STATUS = 200
     usage = data.get("usage") or {}
+    _record_last_usage(usage)
     usage_store.record(
         "llm", "openrouter", model=model,
         input_tokens=int(usage.get("prompt_tokens") or 0),
@@ -2706,6 +2809,7 @@ def _opencode_http_text(
             OPENCODE_LAST_ERROR = _redact_secret(str(exc), key)[:240]
             return None
         usage = data.get("usage") or {}
+        _record_last_usage(usage)
         usage_store.record(
             "llm", "opencode", model=model,
             input_tokens=int(usage.get("prompt_tokens") or 0),
@@ -3602,37 +3706,62 @@ def build_bed(
         base_voice_gain = float(voice_plan.get("gain_db") or 0.0)
         cache_dir = CACHE / "voice"
         prepared: list[dict] = [None] * len(script)  # type: ignore[list-item]
-        engine_name = str(voice_plan.get("engine") or "auto")
         voice_name = str(voice_plan.get("voice") or "")
-        if engine_name in {"auto", "minimax", "fish", "gemini"}:
-            candidates = _tts_candidates(engine_name)
-            if engine_name == "auto":
-                engine_name = candidates[0] if candidates else "auto"
-        else:
-            candidates = [engine_name]
+        tts_cfg = _workflow("tts")
+        candidates = _tts_route_candidates()
+        if not candidates:
+            raise AudioError("No voice routes are configured in the admin console.")
+        selected_engine = str(voice_plan.get("engine") or "auto").lower()
+        primary_engine = (
+            candidates[0]["engine"]
+            if selected_engine in {"", "auto"}
+            else selected_engine
+        )
+        tts_timeout = float(tts_cfg.get("timeout_s") or 300)
         workers = max(1, min(4, len(script)))
 
         def synth_one(index: int, line: dict) -> tuple[int, Path]:
             last_error: Exception | None = None
-            for candidate in candidates:
-                candidate_voice = _tts_voice_for(candidate, voice_name, engine_name)
+            for route_index, candidate in enumerate(candidates):
+                engine = candidate["engine"]
+                candidate_voice = _tts_voice_for(engine, voice_name, primary_engine)
+                model = candidate.get("model") or ""
                 key = _text_hash(
-                    candidate, candidate_voice, f"{float(line['rate']):.3f}", line["text"],
+                    engine, model, candidate_voice,
+                    f"{float(line['rate']):.3f}", line["text"],
                 )
                 path = _voice_cache(cache_dir, key)
+                started = time.time()
                 if path.is_file() and path.stat().st_size > 512:
-                    line["engine_used"] = candidate
+                    line["engine_used"] = engine
+                    line["model_used"] = model
+                    _pipeline_event(
+                        "tts", route_index, candidate.get("provider") or engine,
+                        model, "", started, True, "", job_id=job_dir.name,
+                    )
                     return index, path
                 try:
                     synthesize_line(
-                        candidate, candidate_voice, line["text"], path,
+                        engine, candidate_voice, line["text"], path,
                         rate=float(line["rate"]),
                         cancel_event=cancel_event,
+                        model=model,
+                        timeout=tts_timeout,
                     )
-                    line["engine_used"] = candidate
+                    line["engine_used"] = engine
+                    line["model_used"] = model
+                    _pipeline_event(
+                        "tts", route_index, candidate.get("provider") or engine,
+                        model, "", started, True, "", job_id=job_dir.name,
+                    )
                     return index, path
                 except AudioError as exc:
                     last_error = exc
+                    _pipeline_event(
+                        "tts", route_index, candidate.get("provider") or engine,
+                        model, "", started, False, str(exc)[:300],
+                        job_id=job_dir.name,
+                    )
                     if path.exists():
                         path.unlink()
             raise last_error or AudioError("All voice providers failed.")
@@ -3722,30 +3851,42 @@ def build_bed(
         progress(0.90, "Preparing music bed")
         chosen: Path | None = resolve_music_track(scenes, clips, music_plan)
         if chosen is None and music_plan.get("source") in {"minimax-music", "lyria-clip"}:
-            primary = (
-                "minimax:music"
-                if music_plan["source"] == "minimax-music"
-                else "google/lyria"
-            )
             prompt = str(music_plan.get("prompt") or "").strip()
             if not prompt or prompt == "auto":
                 prompt = music_prompt(
                     music_plan.get("moods") or scene_moods(scenes, clips),
                     min(60.0, max(15.0, total)),
                 )
-            try:
-                chosen = generate_music(primary, prompt, min(60.0, max(15.0, total)), cancel_event)
-            except AudioError:
-                fallback = (
-                    "google/lyria"
-                    if primary == "minimax:music" and openrouter_available()
-                    else "minimax:music"
-                    if primary == "google/lyria" and minimax_key()
-                    else ""
+            music_cfg = _workflow("music")
+            music_timeout = float(music_cfg.get("timeout_s") or 600)
+            candidates = _music_route_candidates()
+            if not candidates:
+                raise AudioError("No music routes are configured in the admin console.")
+            last_error: Exception | None = None
+            for route_index, candidate in enumerate(candidates):
+                started = time.time()
+                try:
+                    chosen = generate_music(
+                        candidate["descriptor"], prompt,
+                        min(60.0, max(15.0, total)), cancel_event,
+                        timeout=music_timeout,
+                    )
+                except AudioError as exc:
+                    last_error = exc
+                    _pipeline_event(
+                        "music", route_index, candidate["provider"],
+                        candidate["model"], "", started, False,
+                        str(exc)[:300], job_id=job_dir.name,
+                    )
+                    continue
+                _pipeline_event(
+                    "music", route_index, candidate["provider"],
+                    candidate["model"], "", started, True, "",
+                    job_id=job_dir.name,
                 )
-                if not fallback:
-                    raise
-                chosen = generate_music(fallback, prompt, min(60.0, max(15.0, total)), cancel_event)
+                break
+            if chosen is None:
+                raise last_error or AudioError("All music providers failed.")
         elif chosen is None and music_plan.get("source") in {"stable-small", "stable-1.0", "musicgen-small"}:
             if music_plan["source"] == "musicgen-small":
                 model = "facebook/musicgen-small"
@@ -3767,7 +3908,19 @@ def build_bed(
                 prompt = music_prompt(
                     music_plan.get("moods") or scene_moods(scenes, clips), music_seconds,
                 )
-            chosen = generate_music(model, prompt, music_seconds, cancel_event)
+            started = time.time()
+            try:
+                chosen = generate_music(model, prompt, music_seconds, cancel_event)
+            except AudioError as exc:
+                _pipeline_event(
+                    "music", 0, "local", model, "", started, False,
+                    str(exc)[:300], job_id=job_dir.name,
+                )
+                raise
+            _pipeline_event(
+                "music", 0, "local", model, "", started, True, "",
+                job_id=job_dir.name,
+            )
         if chosen and chosen.is_file():
             base_music_gain = float(music_plan.get("gain_db") or -18.0)
             beat_offset = 0.0
@@ -4703,6 +4856,8 @@ def music_mix_expression(
 
 
 def clear_workflow_caches() -> None:
-    """Invalidate brief/rewrite/translate caches after a model-route change."""
-    for directory in (BRIEFS, MEMO, REWRITE):
+    """Invalidate text, voice, and music caches after a model-route change."""
+    for directory in (
+        BRIEFS, MEMO, REWRITE, CACHE / "voice", CACHE / "music",
+    ):
         shutil.rmtree(directory, ignore_errors=True)

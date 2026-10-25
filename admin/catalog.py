@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -14,6 +15,10 @@ import settings_store
 from admin import store
 
 CATALOG_TTL = 900
+MAX_CACHE_BYTES = 4 * 1024 * 1024
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_MODELS = 2000
+CACHE_LOCK = threading.RLock()
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
@@ -90,7 +95,7 @@ _STATIC: dict[str, list[dict[str, Any]]] = {
         {"id": "mlx-community/Qwen2.5-7B-Instruct-4bit", "name": "Qwen2.5 7B Instruct 4-bit", "reasoning": False},
     ],
     "apple": [
-        {"id": "on-device-3b", "name": "Apple Foundation Model (on-device)", "reasoning": False},
+        {"id": "on-device-3b", "name": "Apple Foundation Model (on-device)", "reasoning": False, "kind": "stt"},
     ],
     "minimax": [
         {"id": "speech-2.8-turbo", "name": "Speech 2.8 Turbo", "reasoning": False, "kind": "tts"},
@@ -121,40 +126,127 @@ def _cache_path() -> Path:
     return store.data_dir() / "model_catalog.json"
 
 
+def _valid_model(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    identifier = str(item.get("id") or "").strip()
+    if not identifier or len(identifier) > 240:
+        return None
+    kind = str(item.get("kind") or "text").strip().lower()
+    if kind not in {"text", "tts", "music", "stt"}:
+        kind = "text"
+    context = item.get("context_length")
+    try:
+        context_value = int(context) if context not in (None, "") else None
+    except (TypeError, ValueError):
+        context_value = None
+    return {
+        "id": identifier,
+        "name": str(item.get("name") or identifier)[:240],
+        "reasoning": bool(item.get("reasoning")),
+        "context_length": context_value,
+        "kind": kind,
+    }
+
+
+def _valid_entry(entry: Any) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    models = entry.get("models")
+    if not isinstance(models, list):
+        return None
+    cleaned = [
+        model for model in (_valid_model(item) for item in models[:MAX_MODELS])
+        if model
+    ]
+    if not cleaned:
+        return None
+    return {
+        "provider": str(entry.get("provider") or ""),
+        "models": cleaned,
+        "source": str(entry.get("source") or "cache")[:200],
+        "fetched_at": float(entry.get("fetched_at") or 0),
+        "stale": bool(entry.get("stale")),
+        "error": str(entry.get("error") or "")[:300],
+    }
+
+
 def _read_cache() -> dict[str, Any]:
     path = _cache_path()
-    if not path.is_file():
-        return {}
     try:
+        if not path.is_file() or path.stat().st_size > MAX_CACHE_BYTES:
+            return {}
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return value if isinstance(value, dict) else {}
+    if not isinstance(value, dict):
+        return {}
+    cache: dict[str, Any] = {}
+    for provider, entry in list(value.items())[:64]:
+        cleaned = _valid_entry(entry)
+        if cleaned:
+            cleaned["provider"] = str(provider)
+            cache[str(provider)] = cleaned
+    return cache
 
 
 def _write_cache(value: dict[str, Any]) -> None:
     path = _cache_path()
-    path.write_text(json.dumps(value, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if len(payload.encode("utf-8")) > MAX_CACHE_BYTES:
+        return
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    temporary.write_text(payload, encoding="utf-8")
     try:
-        path.chmod(0o600)
+        temporary.chmod(0o600)
     except OSError:
         pass
+    os.replace(temporary, path)
 
 
 def _model(identifier: str, name: str = "", *, reasoning: bool = False, context: int | None = None, kind: str = "text") -> dict[str, Any]:
     return {
-        "id": str(identifier),
-        "name": str(name or identifier),
+        "id": str(identifier)[:240],
+        "name": str(name or identifier)[:240],
         "reasoning": bool(reasoning),
         "context_length": context,
-        "kind": kind,
+        "kind": kind if kind in {"text", "tts", "music", "stt"} else "text",
     }
 
 
 def _fetch_json(url: str, headers: dict[str, str] | None = None, timeout: float = 20) -> Any:
     request = urllib.request.Request(url, headers=headers or {}, method="GET")
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError("Provider catalog response is too large.")
+    return json.loads(raw.decode("utf-8"))
+
+
+_STATIC_BY_ID: dict[str, dict[str, Any]] = {
+    str(item.get("id")): item
+    for models in _STATIC.values()
+    for item in models
+}
+
+
+def _openrouter_kind(identifier: str, item: dict[str, Any]) -> str | None:
+    static = _STATIC_BY_ID.get(identifier)
+    if static and static.get("kind"):
+        return str(static["kind"])
+    architecture = item.get("architecture") or {}
+    outputs = architecture.get("output_modalities") if isinstance(architecture, dict) else None
+    inputs = architecture.get("input_modalities") if isinstance(architecture, dict) else None
+    outputs = {str(value).lower() for value in (outputs or [])}
+    inputs = {str(value).lower() for value in (inputs or [])}
+    lowered = identifier.lower()
+    if "audio" in outputs:
+        return "music" if any(word in lowered for word in ("lyria", "music")) else "tts"
+    if outputs and "text" not in outputs:
+        return None
+    if "text" not in inputs and inputs:
+        return None
+    return "text"
 
 
 def _fetch_opencode() -> list[dict[str, Any]]:
@@ -189,18 +281,31 @@ def _fetch_openrouter() -> list[dict[str, Any]]:
     for item in rows if isinstance(rows, list) else []:
         if not isinstance(item, dict) or not item.get("id"):
             continue
-        supported = [str(v) for v in (item.get("supported_parameters") or [])]
-        modalities = item.get("architecture") or {}
-        inputs = modalities.get("input_modalities") if isinstance(modalities, dict) else None
-        kind = "text"
-        if inputs and "text" not in inputs:
+        identifier = str(item["id"])
+        kind = _openrouter_kind(identifier, item)
+        if not kind:
             continue
+        supported = [str(v) for v in (item.get("supported_parameters") or [])]
         models.append(_model(
-            str(item["id"]), str(item.get("name") or item["id"]),
+            identifier, str(item.get("name") or identifier),
             reasoning="reasoning" in supported or "reasoning_effort" in supported,
             context=item.get("context_length"), kind=kind,
         ))
     return models
+
+
+def _openai_kind(identifier: str) -> str:
+    static = _STATIC_BY_ID.get(identifier)
+    if static and static.get("kind"):
+        return str(static["kind"])
+    lowered = identifier.lower()
+    if "whisper" in lowered or "transcribe" in lowered:
+        return "stt"
+    if any(marker in lowered for marker in ("tts", "audio", "speech")):
+        return "tts"
+    if any(marker in lowered for marker in ("embedding", "dall-e", "moderation", "image")):
+        return "text"
+    return "text"
 
 
 def _fetch_openai_compatible(url: str, secret: str) -> list[dict[str, Any]]:
@@ -214,9 +319,13 @@ def _fetch_openai_compatible(url: str, secret: str) -> list[dict[str, Any]]:
         if not isinstance(item, dict) or not item.get("id"):
             continue
         identifier = str(item["id"])
-        if any(marker in identifier for marker in ("embedding", "whisper", "tts", "dall-e", "moderation")):
+        kind = _openai_kind(identifier)
+        if kind == "text" and any(
+            marker in identifier.lower()
+            for marker in ("embedding", "dall-e", "moderation", "image")
+        ):
             continue
-        models.append(_model(identifier, identifier, reasoning=True))
+        models.append(_model(identifier, identifier, reasoning=kind == "text", kind=kind))
     return models
 
 
@@ -258,10 +367,40 @@ def _fetch(provider: str) -> tuple[list[dict[str, Any]], str]:
     return list(_STATIC.get(provider, [])), "built-in catalog"
 
 
+def _merge_static(provider: str, fetched: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in fetched:
+        cleaned = _valid_model(item)
+        if not cleaned or cleaned["id"] in by_id:
+            continue
+        by_id[cleaned["id"]] = cleaned
+        merged.append(cleaned)
+    for item in _STATIC.get(provider, []):
+        cleaned = _valid_model(item)
+        if not cleaned:
+            continue
+        existing = by_id.get(cleaned["id"])
+        if existing is None:
+            by_id[cleaned["id"]] = cleaned
+            merged.append(cleaned)
+            continue
+        # Provider metadata may improve the row, but the built-in kind wins so a
+        # static music/TTS entry cannot be re-tagged as text.
+        existing.update({
+            "name": existing.get("name") or cleaned["name"],
+            "reasoning": bool(existing.get("reasoning") or cleaned["reasoning"]),
+            "context_length": existing.get("context_length") or cleaned.get("context_length"),
+            "kind": cleaned["kind"],
+        })
+    return merged[:MAX_MODELS]
+
+
 def catalog(provider: str, *, refresh: bool = False, stale_ok: bool = True) -> dict[str, Any]:
     provider = str(provider or "").strip()
-    cache = _read_cache()
-    entry = cache.get(provider) if isinstance(cache.get(provider), dict) else {}
+    with CACHE_LOCK:
+        cache = _read_cache()
+        entry = cache.get(provider) if isinstance(cache.get(provider), dict) else {}
     now = time.time()
     fetched = float(entry.get("fetched_at") or 0)
     if not refresh and entry and now - fetched < CATALOG_TTL:
@@ -275,10 +414,8 @@ def catalog(provider: str, *, refresh: bool = False, stale_ok: bool = True) -> d
         error = store.redact_text(str(exc))[:300]
         if entry and stale_ok:
             return {**entry, "stale": True, "error": error, "provider": provider}
+    models = _merge_static(provider, models) if models else []
     if models:
-        known = {str(item.get("id")) for item in models}
-        extras = [item for item in _STATIC.get(provider, []) if item.get("id") not in known]
-        models = [*models, *extras]
         entry = {
             "provider": provider,
             "models": models,
@@ -287,17 +424,19 @@ def catalog(provider: str, *, refresh: bool = False, stale_ok: bool = True) -> d
             "stale": False,
             "error": error,
         }
-        cache[provider] = entry
-        try:
-            _write_cache(cache)
-        except OSError:
-            pass
+        with CACHE_LOCK:
+            current = _read_cache()
+            current[provider] = entry
+            try:
+                _write_cache(current)
+            except OSError:
+                pass
         return entry
     if entry and stale_ok:
         return {**entry, "stale": True, "error": error, "provider": provider}
     return {
         "provider": provider,
-        "models": list(_STATIC.get(provider, [])),
+        "models": _merge_static(provider, []),
         "source": "built-in catalog",
         "fetched_at": fetched or now,
         "stale": bool(error),
@@ -306,13 +445,14 @@ def catalog(provider: str, *, refresh: bool = False, stale_ok: bool = True) -> d
 
 
 def clear_cache(provider: str) -> None:
-    cache = _read_cache()
-    if provider in cache:
-        cache.pop(provider, None)
-        try:
-            _write_cache(cache)
-        except OSError:
-            pass
+    with CACHE_LOCK:
+        cache = _read_cache()
+        if provider in cache:
+            cache.pop(provider, None)
+            try:
+                _write_cache(cache)
+            except OSError:
+                pass
 
 
 def model_ids(provider: str, *, refresh: bool = False) -> list[str]:

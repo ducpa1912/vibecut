@@ -13,7 +13,10 @@ from typing import Any, Mapping
 MAX_ROUTES = 6
 REASONING_VALUES = ("none", "low", "medium", "high", "max")
 TEXT_PROVIDERS = ("opencode-go", "openrouter", "local-mlx", "ollama")
-TTS_PROVIDERS = ("minimax", "openrouter", "local")
+TTS_PROVIDERS = (
+    "minimax", "openrouter", "local", "elevenlabs", "openai", "groq",
+    "deepgram", "cartesia",
+)
 MUSIC_PROVIDERS = ("minimax", "openrouter")
 STT_PROVIDERS = ("auto", "apple", "whisper", "groq", "openai", "deepgram")
 
@@ -79,7 +82,14 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
         "timeout_s": 180,
     },
     "tts": {
-        "routes": [{"provider": "minimax", "model": "speech-2.8-turbo"}],
+        "routes": [
+            {"provider": "minimax", "model": "speech-2.8-turbo"},
+            {"provider": "openrouter", "model": "fish-audio/s2.1-pro-free:free"},
+            {"provider": "openrouter", "model": "google/gemini-3.8-flash-lite-tts"},
+            {"provider": "local", "model": "kokoro"},
+            {"provider": "local", "model": "say"},
+            {"provider": "local", "model": "piper"},
+        ],
         "reasoning": "",
         "max_output_tokens": 0,
         "timeout_s": 120,
@@ -91,7 +101,10 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
         "timeout_s": 600,
     },
     "stt": {
-        "routes": [{"provider": "auto", "model": "mlx-community/whisper-small-mlx"}],
+        "routes": [
+            {"provider": "apple", "model": "on-device-3b"},
+            {"provider": "auto", "model": "mlx-community/whisper-small-mlx"},
+        ],
         "reasoning": "",
         "max_output_tokens": 0,
         "timeout_s": 300,
@@ -136,14 +149,15 @@ def normalize_workflow(workflow: str, raw: Any) -> dict[str, Any]:
     else:
         reasoning = ""
     routes_raw = value.get("routes")
-    if not isinstance(routes_raw, list):
+    supplied_routes = isinstance(routes_raw, list)
+    if not supplied_routes:
         routes_raw = default.get("routes") or []
     routes = []
     for item in routes_raw[:MAX_ROUTES]:
         route = _normalize_route(workflow, item)
-        if route and route not in routes:
+        if route:
             routes.append(route)
-    if not routes and default.get("routes"):
+    if not supplied_routes and not routes and default.get("routes"):
         routes = copy.deepcopy(default["routes"])
     return {
         "routes": routes,

@@ -366,7 +366,7 @@
               </div>
               <div id="audio-voice-generate" class="audio-grid">
                 <label class="audio-field">
-                  <span>Voice engine</span>
+                  <span>Voice list</span>
                   <select id="audio-engine"></select>
                 </label>
                 <label class="audio-field">
@@ -378,6 +378,7 @@
                   <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
                 </label>
               </div>
+              <p class="hint">Provider order is set in Admin → Models. This voice list applies when that engine is the active route.</p>
               <div id="audio-voice-upload" class="audio-upload-box" hidden>
                 <input id="audio-upload" type="file" accept="audio/*" hidden>
                 <button id="audio-upload-button" class="ghost small" type="button">Choose recording</button>
@@ -496,7 +497,7 @@
         <button id="setup-close" class="icon-btn" type="button" aria-label="Close">×</button>
       </header>
       <div class="setup-body">
-        <p class="setup-note">OpenCode Go uses the login already stored on this machine — no key copy. Speech keys stay in <code>data/secrets.json</code> (0600). Local engines always remain the fallback.</p>
+        <p class="setup-note">OpenCode Go uses the login already stored on this machine — no key copy. Speech keys stay in the project's private secrets file (0600). Local engines remain available as explicit admin-route fallbacks.</p>
 
         <section class="setup-section">
           <div class="setup-title">
@@ -725,14 +726,6 @@
             <span class="setup-badge">STT</span>
           </div>
           <label class="setup-field">
-            <span>Provider</span>
-            <select id="setup-stt-provider">
-              <option value="auto">Local · Apple Speech → Whisper</option>
-              <option value="apple">Apple SpeechAnalyzer · local</option>
-              <option value="whisper">mlx-whisper · local</option>
-            </select>
-          </label>
-          <label class="setup-field">
             <span>Spoken language</span>
             <select id="setup-stt-language">
               <option value="auto">Auto detect</option>
@@ -754,11 +747,7 @@
               <option value="ar">Arabic</option>
             </select>
           </label>
-          <label class="setup-field">
-            <span>Whisper model</span>
-            <select id="setup-stt-model"></select>
-          </label>
-          <p class="setup-hint">Transcription stays local. Apple Speech runs first; mlx-whisper is the fallback. No cloud STT key needed.</p>
+          <p class="setup-hint">Spoken language is used by transcription and captions. Provider, model order, and fallbacks are controlled by the admin console model routes below. No cloud STT key is required for local Whisper.</p>
           <div class="setup-actions">
             <button id="setup-test-stt" class="ghost small" type="button">Check local STT</button>
             <button id="setup-test-stt-live" class="ghost small" type="button">Live STT</button>
@@ -771,22 +760,10 @@
             <span class="setup-badge">TTS</span>
           </div>
           <label class="setup-field">
-            <span>Preferred provider</span>
-            <select id="setup-tts-provider">
-              <option value="auto">Auto · use the Voice engine picker</option>
-              <option value="kokoro">Kokoro · local, free</option>
-              <option value="piper">Piper · local, free</option>
-              <option value="say">Apple say · local, free</option>
-              <option value="minimax">MiniMax speech-2.8-turbo</option>
-              <option value="fish">OpenRouter Fish S2.1 Pro Free</option>
-              <option value="gemini">OpenRouter Gemini 3.8 Flash-Lite TTS</option>
-            </select>
-          </label>
-          <label class="setup-field">
             <span>MiniMax key · TTS + music</span>
             <input id="setup-minimax-key" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ…">
           </label>
-          <p class="setup-hint">Local Kokoro/Piper/say stay free. Cloud voice: MiniMax → OpenRouter Fish → Gemini. Every line is cached.</p>
+          <p class="setup-hint">Provider order and voice models are controlled by the admin console model routes below. Local Kokoro/Piper/say remain available as explicit fallback routes; every line is cached.</p>
           <div class="setup-actions">
             <button id="setup-test-tts" class="ghost small" type="button">Check TTS</button>
             <button id="setup-test-tts-live" class="ghost small" type="button">Live TTS</button>
