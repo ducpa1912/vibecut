@@ -40,11 +40,14 @@ import disk
 import exports as cuts
 import history_store
 import job_queue
+import packet
 import pipeline
+import preflight
 import render
 import routes_batches
 import settings_store
 import shares
+import tighten
 import usage_store
 import vision
 from url_ingest import fallback as ingest_fallback
@@ -2871,11 +2874,17 @@ async def save_settings(request: Request) -> dict:
                 400, "Model routes are managed in the admin console (/_ductator/).",
             )
         allowed_settings = {
-            "opencode", "translation", "openrouter", "minimax", "stt", "tts", "ingest",
+            "opencode", "translation", "openrouter", "minimax", "stt", "tts",
+            "ingest", "preflight",
         }
         unknown = sorted(set(patch) - allowed_settings)
         if unknown:
             raise HTTPException(400, f"Unknown settings section: {unknown[0]}.")
+        if "preflight" in patch:
+            try:
+                preflight.validate_settings(patch["preflight"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
         _validate_ingest_patch(patch)
 
         opencode = patch.get("opencode")
@@ -5897,6 +5906,133 @@ def delete_job(job_id: str) -> dict:
             raise HTTPException(409, "Unpin artifacts and revoke review links before deleting this job.")
         shutil.rmtree(_job_dir(job_id), ignore_errors=True)
     return {"deleted": job_id}
+
+
+# ------------------------------------------------ publish packet / preflight / tighten
+
+
+class PacketBody(BaseModel):
+    story_id: str = ""
+    artifact_ids: list[str] = []
+    render_keys: list[str] = []
+    titles: list[str] = []
+    description: str = ""
+    hashtags: list[str] = []
+    cover_times: list[float] | None = None
+
+
+class TightenBody(BaseModel):
+    target: int = 30
+    hook_scene: int | None = None
+    clips: list[dict] | None = None
+    plan: dict | None = None
+    order: str = "source"
+    options: dict | None = None
+    silences: list[dict] | None = None
+    detect_silence: bool = False
+
+
+def _packet_http_error(exc: packet.PacketError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=exc.as_detail())
+
+
+@app.post("/api/jobs/{job_id}/packets")
+def build_publish_packet(job_id: str, body: PacketBody) -> dict:
+    job = load_job(job_id)
+    request = packet.PacketRequest(
+        story_id=body.story_id,
+        titles=body.titles,
+        description=body.description,
+        hashtags=body.hashtags,
+        artifact_ids=body.artifact_ids,
+        render_keys=body.render_keys,
+        cover_times=body.cover_times,
+    )
+    try:
+        return packet.build_packet(job, _job_dir(job_id), request)
+    except packet.PacketError as exc:
+        raise _packet_http_error(exc) from exc
+
+
+@app.get("/api/jobs/{job_id}/packets/{packet_id}")
+def get_publish_packet(job_id: str, packet_id: str) -> dict:
+    load_job(job_id)
+    try:
+        return packet.load_packet(_job_dir(job_id), packet_id)
+    except packet.PacketError as exc:
+        raise _packet_http_error(exc) from exc
+
+
+@app.get("/api/jobs/{job_id}/packets/{packet_id}/zip")
+def get_publish_packet_zip(job_id: str, packet_id: str) -> FileResponse:
+    load_job(job_id)
+    try:
+        path = packet.packet_zip_path(_job_dir(job_id), packet_id)
+    except packet.PacketError as exc:
+        raise _packet_http_error(exc) from exc
+    return FileResponse(
+        path, media_type="application/zip",
+        filename=path.name,
+        headers={"Cache-Control": "private, max-age=0, must-revalidate"},
+    )
+
+
+@app.get("/api/jobs/{job_id}/preflight")
+def run_job_preflight(job_id: str, story_id: str | None = None) -> dict:
+    job = load_job(job_id)
+    try:
+        return preflight.run_preflight(
+            job, story_id, _job_dir(job_id),
+            settings=settings_store.load_settings(),
+        )
+    except preflight.PreflightError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.as_detail()) from exc
+
+
+@app.post("/api/jobs/{job_id}/tighten")
+def tighten_job_plan(job_id: str, body: TightenBody) -> dict:
+    job = load_job(job_id)
+    if body.plan is not None:
+        if not isinstance(body.plan.get("clips"), list) or not body.plan.get("clips"):
+            raise HTTPException(400, "The supplied plan has no clips.")
+        plan = body.plan
+    else:
+        target = _valid_target(int(body.target))
+        try:
+            plan = _plan_for_body(
+                job, target,
+                PlanBody(
+                    target=target,
+                    hook_scene=body.hook_scene,
+                    clips=body.clips,
+                    order=body.order,
+                ),
+            )
+        except HTTPException:
+            raise
+        except (TypeError, ValueError, KeyError) as exc:
+            raise HTTPException(
+                400,
+                {
+                    "code": "clip_invalid",
+                    "message": f"The plan has invalid numeric clip fields: {exc}",
+                },
+            ) from exc
+    silences = list(body.silences or [])
+    if body.detect_silence:
+        source_path = (job.get("source") or {}).get("path")
+        if source_path:
+            silences.extend(tighten.detect_silences(source_path))
+    scenes = (job.get("analysis") or {}).get("scenes") or []
+    try:
+        value = tighten.tighten_plan(
+            plan, scenes, options=body.options, silences=silences,
+        )
+    except tighten.TightenError as exc:
+        raise HTTPException(
+            status_code=exc.status, detail=exc.as_detail(),
+        ) from exc
+    return {"plan": value}
 
 
 if __name__ == "__main__":

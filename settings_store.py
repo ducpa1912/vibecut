@@ -76,6 +76,11 @@ DEFAULTS = {
         "model": "mlx-community/whisper-small-mlx",
     },
     "tts": {"provider": "minimax"},
+    "preflight": {
+        "toggles": {},
+        "severity": {},
+        "styles": {},
+    },
     "workflows": workflow_config.default_workflows(),
     "ingest": dict(ingest_registry.DEFAULT_INGEST_SETTINGS),
 }
