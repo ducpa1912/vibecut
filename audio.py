@@ -26,6 +26,7 @@ from pathlib import Path
 
 import settings_store
 import usage_store
+import workflow_config
 
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
@@ -71,6 +72,127 @@ LANGUAGE_NAMES = {
 
 class AudioError(RuntimeError):
     pass
+
+
+def _workflow(name: str) -> dict:
+    settings = settings_store.load_settings()
+    return workflow_config.effective(settings.get("workflows"), name)
+
+
+def _workflow_routes(name: str) -> list[dict[str, str]]:
+    return list(_workflow(name).get("routes") or [])
+
+
+def _pipeline_event(
+    workflow: str,
+    route_index: int,
+    provider: str,
+    model: str,
+    reasoning: str,
+    started: float,
+    ok: bool,
+    error: str = "",
+) -> None:
+    """Best-effort persistent pipeline log; never break generation."""
+    try:
+        from admin import store  # noqa: PLC0415
+        store.record_pipeline_event(
+            workflow,
+            provider,
+            model,
+            route_index=route_index,
+            reasoning=reasoning,
+            status="ok" if ok else "failed",
+            latency_ms=(time.time() - started) * 1000,
+            fallback=route_index > 0,
+            error=error,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _ollama_workflow_text(prompt: str, model: str, timeout: float = 180) -> str | None:
+    url = os.environ.get("VIBECUT_LLM_URL")
+    if not url:
+        return None
+    payload = json.dumps({
+        "model": model or os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b"),
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.4},
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    return str(data.get("response") or data.get("message", {}).get("content") or "") or None
+
+
+def _workflow_route_model(workflow: str, provider: str, default: str = "") -> str:
+    for route in _workflow_routes(workflow):
+        if str(route.get("provider") or "") == provider:
+            return str(route.get("model") or "") or default
+    return default
+
+
+def _workflow_text(
+    workflow: str,
+    prompt: str,
+    *,
+    json_mode: bool = False,
+    max_tokens: int | None = None,
+) -> str | None:
+    """Run a text workflow through its ordered model routes.
+
+    The provider-specific functions still own their auth, retry, and fallback
+    details; this layer supplies the admin-selected model, reasoning, token,
+    and timeout values and records each attempt for the Pipeline log.
+    """
+    cfg = _workflow(workflow)
+    reasoning = str(cfg.get("reasoning") or "low")
+    token_limit = int(max_tokens or cfg.get("max_output_tokens") or 3000)
+    timeout = float(cfg.get("timeout_s") or 300)
+    for index, route in enumerate(cfg.get("routes") or []):
+        provider = str(route.get("provider") or "")
+        model = str(route.get("model") or "")
+        started = time.time()
+        try:
+            if provider == "opencode-go":
+                value = _opencode_text(
+                    prompt, json_mode=json_mode, max_tokens=token_limit,
+                    model=model, variant=reasoning, timeout=timeout,
+                )
+                error = OPENCODE_LAST_ERROR
+            elif provider == "openrouter":
+                value = _openrouter_text(
+                    prompt, json_mode=json_mode, max_tokens=token_limit,
+                    model=model, reasoning=reasoning, timeout=timeout,
+                )
+                error = OPENROUTER_LAST_ERROR
+            elif provider == "local-mlx":
+                value = _mlx_text(prompt, model=model)
+                error = "MLX returned no text." if not value else ""
+            elif provider == "ollama":
+                value = _ollama_workflow_text(prompt, model, timeout)
+                error = "Ollama returned no text." if not value else ""
+            else:
+                value = None
+                error = f"{provider} does not support text generation."
+        except Exception as exc:  # noqa: BLE001
+            value = None
+            error = str(exc)[:300]
+        _pipeline_event(
+            workflow, index, provider, model, reasoning, started,
+            bool(value), "" if value else error[:300],
+        )
+        if value:
+            return value
+    return None
 
 
 def _env_float(name: str, default: float) -> float:
@@ -992,7 +1114,10 @@ def _openrouter_voice(text: str, voice: str, output: Path, rate: float = 1.0, en
             "OpenRouter is quarantined after an auth error; retry in "
             f"{openrouter_blocked_seconds()}s."
         )
-    model = "fish-audio/s2.1-pro-free:free" if engine == "fish" else "google/gemini-3.8-flash-lite-tts"
+    model = _workflow_route_model(
+        "tts", "openrouter",
+        "fish-audio/s2.1-pro-free:free" if engine == "fish" else "google/gemini-3.8-flash-lite-tts",
+    )
     default_voice = "" if engine == "fish" else "Kore"
     voice_value = default_voice if voice in {"", "default"} else voice
     body = {
@@ -1191,7 +1316,11 @@ def _translate_apple(
     return output
 
 
-def _translate_opencode(lines: list[str], source: str, target: str) -> list[str] | None:
+def _translate_opencode(
+    lines: list[str], source: str, target: str,
+    model: str | None = None, variant: str | None = None,
+    timeout: float = 180, max_tokens: int = 2500,
+) -> list[str] | None:
     if not opencode_available():
         return None
     prompt = (
@@ -1200,7 +1329,9 @@ def _translate_opencode(lines: list[str], source: str, target: str) -> list[str]
         "sentences. Preserve every name, product, number and claim. "
         "JSON array only:\n" + json.dumps(lines, ensure_ascii=False)
     )
-    raw = _opencode_json_attempts(prompt, max_tokens=2500)
+    raw = _opencode_json_attempts(
+        prompt, max_tokens=max_tokens, model=model, variant=variant, timeout=timeout,
+    )
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -1215,14 +1346,21 @@ def _translate_opencode(lines: list[str], source: str, target: str) -> list[str]
     return [str(value) for value in values]
 
 
-def _translate_openrouter(lines: list[str], source: str, target: str) -> list[str] | None:
+def _translate_openrouter(
+    lines: list[str], source: str, target: str,
+    model: str | None = None, reasoning: str | None = None,
+    timeout: float = 180, max_tokens: int = 2500,
+) -> list[str] | None:
     prompt = (
         f"Translate these {len(lines)} subtitle lines into {_language_name(target)}. "
         "Keep the same count and order, natural spoken language, complete sentences. "
         "Preserve names and numbers. JSON array only:\n"
         + json.dumps(lines, ensure_ascii=False)
     )
-    raw = _openrouter_text(prompt, json_mode=False, max_tokens=2500)
+    raw = _openrouter_text(
+        prompt, json_mode=False, max_tokens=max_tokens,
+        model=model, reasoning=reasoning, timeout=timeout,
+    )
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -1300,6 +1438,9 @@ def _ready_providers(source: str, target: str) -> list[str]:
 
 def _rewrite_candidates() -> list[str]:
     """Rewrite-specific order: configured cloud model, local models, rules."""
+    plan = _rewrite_workflow_plan()
+    if plan:
+        return [item["name"] for item in plan]
     order: list[str] = []
     settings = settings_store.load_settings().get("opencode") or {}
     if opencode_available() and settings.get("use_rewrite", True):
@@ -1315,6 +1456,32 @@ def _rewrite_candidates() -> list[str]:
     return order
 
 
+def _rewrite_workflow_plan() -> list[dict[str, str]]:
+    """Map the admin rewrite routes onto the existing rewrite engines."""
+    mapping = {
+        "opencode-go": "opencode",
+        "openrouter": "openrouter",
+        "local-mlx": "mlx",
+        "ollama": "ollama",
+        "apple": "apple",
+    }
+    plan: list[dict[str, str]] = []
+    for route in _workflow_routes("rewrite"):
+        name = mapping.get(str(route.get("provider") or ""))
+        if not name:
+            continue
+        item = {
+            "name": name,
+            "provider": str(route.get("provider") or ""),
+            "model": str(route.get("model") or ""),
+            "reasoning": str(_workflow("rewrite").get("reasoning") or "low"),
+        }
+        if not any(existing["name"] == name for existing in plan):
+            plan.append(item)
+    plan.append({"name": "rules", "provider": "rules", "model": "", "reasoning": ""})
+    return plan
+
+
 def translation_mode() -> str:
     mode = str((settings_store.load_settings().get("translation") or {}).get("mode") or "auto")
     return mode if mode in {"auto", "local_first", "local_only", "online_only"} else "auto"
@@ -1323,13 +1490,25 @@ def translation_mode() -> str:
 def _provider_order(source: str, target: str, provider: str) -> list[str]:
     if provider and provider != "auto":
         return [provider]
-    settings = settings_store.load_settings().get("opencode") or {}
+    mapping = {"opencode-go": "opencode", "openrouter": "openrouter", "ollama": "ollama"}
     online: list[str] = []
-    if settings.get("use_translate", True) and opencode_available():
-        online.append("opencode")
-    openrouter_settings = settings_store.load_settings().get("openrouter") or {}
-    if openrouter_settings.get("use_translate", True) and openrouter_available():
-        online.append("openrouter")
+    for route in _workflow_routes("translate"):
+        candidate = mapping.get(str(route.get("provider") or ""))
+        if candidate and candidate not in online:
+            if candidate == "opencode" and not opencode_available():
+                continue
+            if candidate == "openrouter" and not openrouter_available():
+                continue
+            if candidate == "ollama" and not os.environ.get("VIBECUT_LLM_URL"):
+                continue
+            online.append(candidate)
+    if not online:
+        settings = settings_store.load_settings().get("opencode") or {}
+        if settings.get("use_translate", True) and opencode_available():
+            online.append("opencode")
+        openrouter_settings = settings_store.load_settings().get("openrouter") or {}
+        if openrouter_settings.get("use_translate", True) and openrouter_available():
+            online.append("openrouter")
     # Local mode uses Apple first, then Argos only when the pair is already
     # installed. Marian/Ollama stay advanced/explicit: they may download models.
     local: list[str] = ["apple_fm"]
@@ -1378,11 +1557,33 @@ def translate_lines(
         })
     if missing:
         errors: list[str] = []
-        for candidate in _provider_order(source_code, target_code, provider):
+        translate_cfg = _workflow("translate")
+        translate_reasoning = str(translate_cfg.get("reasoning") or "low")
+        translate_max_tokens = int(translate_cfg.get("max_output_tokens") or 2500)
+        translate_timeout = float(translate_cfg.get("timeout_s") or 300)
+        route_map = {
+            {"opencode-go": "opencode", "openrouter": "openrouter", "ollama": "ollama"}.get(
+                str(route.get("provider") or ""), ""
+            ): route
+            for route in translate_cfg.get("routes") or []
+        }
+        translation_order = _provider_order(source_code, target_code, provider)
+        for route_index, candidate in enumerate(translation_order):
+            route = route_map.get(candidate, {})
+            route_model = str(route.get("model") or "")
+            started = time.time()
             if candidate == "opencode":
-                result = _translate_opencode(missing, source_code, target_code)
+                result = _translate_opencode(
+                    missing, source_code, target_code, model=route_model or None,
+                    variant=translate_reasoning or None,
+                    max_tokens=translate_max_tokens, timeout=translate_timeout,
+                )
             elif candidate == "openrouter":
-                result = _translate_openrouter(missing, source_code, target_code)
+                result = _translate_openrouter(
+                    missing, source_code, target_code, model=route_model or None,
+                    reasoning=translate_reasoning or None,
+                    max_tokens=translate_max_tokens, timeout=translate_timeout,
+                )
             elif candidate == "apple_fm":
                 result = _translate_apple(missing, source_code, target_code, target_name)
             elif candidate == "ollama":
@@ -1393,6 +1594,10 @@ def translate_lines(
                 result = _translate_argos(missing, source_code, target_code)
             else:
                 result = None
+            _pipeline_event(
+                "translate", route_index, candidate, route_model,
+                translate_reasoning, started, bool(result),
+            )
             if result:
                 for original, translated in zip(missing, result):
                     memo[original] = translated
@@ -1962,7 +2167,10 @@ def story_brief(text: str, target: str, provider: str = "auto") -> dict | None:
         '"tone": "...", "hook_idea": "...", "payoff_idea": "...", "key_claims": ["..."]}\n'
         f"Write the values in {_language_name(target)}.\nTRANSCRIPT:\n{text[:4000]}"
     )
-    raw = _llm_text(prompt, provider)
+    if provider in {"auto", ""}:
+        raw = _workflow_text("story_brief", prompt, json_mode=True)
+    else:
+        raw = _llm_text(prompt, provider)
     if not raw:
         return None
     match = re.search(r"\{.*\}", raw, re.S)
@@ -1982,7 +2190,7 @@ def story_brief(text: str, target: str, provider: str = "auto") -> dict | None:
     return brief
 
 
-def _llm_text(prompt: str, provider: str = "auto") -> str | None:
+def _llm_text(prompt: str, provider: str = "auto", model: str | None = None) -> str | None:
     """One model call: OpenCode Go first, then MLX, then Ollama."""
     settings = settings_store.load_settings().get("opencode") or {}
     cloud_ok = (
@@ -1997,7 +2205,7 @@ def _llm_text(prompt: str, provider: str = "auto") -> str | None:
         if provider == "opencode":
             return None
     if provider in {"mlx", "auto"} and mlx_lm_available():
-        text = _mlx_text(prompt)
+        text = _mlx_text(prompt, model=model)
         if text:
             return text
         if provider == "mlx":
@@ -2005,7 +2213,7 @@ def _llm_text(prompt: str, provider: str = "auto") -> str | None:
     url = os.environ.get("VIBECUT_LLM_URL")
     if not url:
         return None
-    model = os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b")
+    model = model or os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b")
     payload = json.dumps({
         "model": model, "prompt": prompt, "stream": False, "format": "json",
         "options": {"temperature": 0.4},
@@ -2021,11 +2229,11 @@ def _llm_text(prompt: str, provider: str = "auto") -> str | None:
     return str(data.get("response") or data.get("message", {}).get("content") or "") or None
 
 
-def _mlx_text(prompt: str) -> str | None:
+def _mlx_text(prompt: str, model: str | None = None) -> str | None:
     worker = ROOT / "tools" / "rewrite_mlx.py"
     if not worker.is_file():
         return None
-    model = os.environ.get(
+    model = model or os.environ.get(
         "VIBECUT_MLX_REWRITE_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit",
     )
     try:
@@ -2238,11 +2446,12 @@ def openrouter_status() -> dict:
 
 def _openrouter_text(
     prompt: str, json_mode: bool = False, max_tokens: int = 3000,
-    force: bool = False,
+    force: bool = False, model: str | None = None,
+    reasoning: str | None = "low", timeout: float = 180,
 ) -> str | None:
     global OPENROUTER_LAST_ERROR, OPENROUTER_LAST_STATUS
     global OPENROUTER_LAST_MODEL, OPENROUTER_LAST_SOURCE, OPENROUTER_BLOCKED_UNTIL
-    model = openrouter_model()
+    model = model or openrouter_model()
     OPENROUTER_LAST_MODEL = model
     OPENROUTER_LAST_SOURCE = settings_store.secret_source("openrouter")
     key = openrouter_key()
@@ -2272,9 +2481,11 @@ def _openrouter_text(
         ],
         "temperature": 0.4,
         "max_tokens": max_tokens,
-        "reasoning": {"effort": "low"},
         "provider": {"sort": "price"},
     }
+    effort = str(reasoning or "").lower()
+    if effort and effort not in {"none", "off"}:
+        payload["reasoning"] = {"effort": effort}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     request = urllib.request.Request(
@@ -2289,7 +2500,7 @@ def _openrouter_text(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         status = int(getattr(exc, "code", 0) or 0)
@@ -2428,7 +2639,8 @@ def _opencode_api(args: list[str], body: dict | None = None, allow_empty: bool =
 
 def _opencode_http_text(
     prompt: str, max_tokens: int = 1200, json_mode: bool = False,
-    record_failure: bool = True,
+    record_failure: bool = True, model: str | None = None,
+    variant: str | None = None, timeout: float = 180,
 ) -> str | None:
     """Direct OpenCode Go API using the project's own key.
 
@@ -2441,6 +2653,8 @@ def _opencode_http_text(
     key = opencode_key()
     if not key:
         return None
+    model = model or opencode_model()
+    variant = str(variant or opencode_variant()).lower()
     attempts = (
         (False, max(64, int(max_tokens))),
         (True, max(2048, int(max_tokens) * 2)),
@@ -2448,7 +2662,7 @@ def _opencode_http_text(
     last_detail = ""
     for attempt, (reasoning_off, budget) in enumerate(attempts):
         body = {
-            "model": opencode_model(),
+            "model": model,
             "messages": [
                 {"role": "system", "content": "You write short vertical video voice overs. Reply with JSON when asked."},
                 {"role": "user", "content": prompt},
@@ -2459,6 +2673,9 @@ def _opencode_http_text(
             # can consume the whole token budget and return empty content.
             "thinking": {"type": "disabled"},
         }
+        if variant not in {"low", "none", ""} and not reasoning_off:
+            body.pop("thinking", None)
+            body["reasoning_effort"] = variant
         if reasoning_off:
             body["reasoning_effort"] = "none"
         if json_mode:
@@ -2475,7 +2692,7 @@ def _opencode_http_text(
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
+            with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             OPENCODE_LAST_ERROR = (
@@ -2487,7 +2704,7 @@ def _opencode_http_text(
             return None
         usage = data.get("usage") or {}
         usage_store.record(
-            "llm", "opencode", model=opencode_model(),
+            "llm", "opencode", model=model,
             input_tokens=int(usage.get("prompt_tokens") or 0),
             output_tokens=int(usage.get("completion_tokens") or 0),
         )
@@ -2532,6 +2749,8 @@ def _opencode_http_text(
 def _opencode_text(
     prompt: str, json_mode: bool = False, max_tokens: int = 1200,
     force: bool = False, record_failure: bool = True,
+    model: str | None = None, variant: str | None = None,
+    timeout: float = 180,
 ) -> str | None:
     """Generate text through OpenCode Go / DeepSeek V4.1 Flash at low reasoning.
 
@@ -2540,6 +2759,10 @@ def _opencode_text(
     login is used, so no API key is copied into VibeCut.
     """
     global OPENCODE_LAST_ERROR
+    model = model or opencode_model()
+    variant = str(variant or opencode_variant()).lower()
+    if variant not in {"low", "medium", "high", "max", "none"}:
+        variant = opencode_variant()
     OPENCODE_LAST_ERROR = ""
     if not force and _provider_breaker_open("opencode"):
         retry_in = provider_breaker_status("opencode")["retry_in"]
@@ -2555,9 +2778,16 @@ def _opencode_text(
     if opencode_key():
         # Prefer the project key, but do not let a direct-API empty reply or
         # auth failure disable the already-signed-in local OpenCode service.
+        http_kwargs = {}
+        if model != opencode_model():
+            http_kwargs["model"] = model
+        if variant != opencode_variant():
+            http_kwargs["variant"] = variant
+        if timeout != 180:
+            http_kwargs["timeout"] = timeout
         value = _opencode_http_text(
             prompt, max_tokens=max_tokens, json_mode=json_mode,
-            record_failure=False,
+            record_failure=False, **http_kwargs,
         )
         if value:
             _provider_breaker_ok("opencode")
@@ -2571,9 +2801,9 @@ def _opencode_text(
     created = _opencode_api(["post", "/api/session"], {
         "title": "VibeCut rewrite",
         "model": {
-            "id": opencode_model(),
+            "id": model,
             "providerID": OPENCODE_PROVIDER,
-            "variant": opencode_variant(),
+            "variant": variant,
         },
     })
     session_id = str(((created or {}).get("data") or {}).get("id") or "")
@@ -2608,18 +2838,29 @@ OPENCODE_RETRY_DELAYS = (0.0, 0.4, 1.0)
 OPENCODE_RETRY_JSON_MODES = (True, False, True)
 
 
-def _opencode_json_attempts(prompt: str, max_tokens: int) -> str:
+def _opencode_json_attempts(
+    prompt: str, max_tokens: int, model: str | None = None,
+    variant: str | None = None, timeout: float = 180,
+) -> str:
     """Bounded JSON/plain retries with short backoff for empty OpenCode replies."""
     for attempt, delay in enumerate(OPENCODE_RETRY_DELAYS):
         if attempt and _provider_breaker_open("opencode"):
             break
         if delay:
             time.sleep(delay)
+        kwargs = {}
+        if model is not None:
+            kwargs["model"] = model
+        if variant is not None:
+            kwargs["variant"] = variant
+        if timeout != 180:
+            kwargs["timeout"] = timeout
         raw = _opencode_text(
             prompt,
             json_mode=OPENCODE_RETRY_JSON_MODES[attempt],
             max_tokens=max_tokens,
             record_failure=False,
+            **kwargs,
         ) or ""
         if raw:
             return raw
@@ -2727,7 +2968,8 @@ def _line_needs_repair(text: str, duration: float, rate: float, target: str) -> 
 
 def _condense_opencode(
     values: list[str], script: list[dict], target: str, context: dict | None,
-    indices: list[int],
+    indices: list[int], model: str | None = None, variant: str | None = None,
+    timeout: float = 180,
 ) -> list[str] | None:
     """Second pass: turn overlong or broken lines into complete short sentences."""
     rows = []
@@ -2761,7 +3003,10 @@ def _condense_opencode(
     if context_text:
         parts.append("FULL VOICE SCRIPT:\n" + context_text[:4000])
     parts.append("LINES TO TIGHTEN:\n" + json.dumps(rows, ensure_ascii=False))
-    raw = _opencode_json_attempts("\n".join(parts), max_tokens=1500)
+    raw = _opencode_json_attempts(
+        "\n".join(parts), max_tokens=1500, model=model,
+        variant=variant, timeout=timeout,
+    )
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -2778,13 +3023,17 @@ def _condense_opencode(
 
 def _rewrite_opencode(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
-    context: dict | None = None,
+    context: dict | None = None, model: str | None = None,
+    variant: str | None = None, timeout: float = 180,
+    max_tokens: int = 3000,
 ) -> list[str] | None:
     settings = settings_store.load_settings().get("opencode") or {}
     if mode == "literal" or not settings.get("use_rewrite", True) or not opencode_available():
         return None
     prompt = _rewrite_prompt(script, source, target, mode, literal, context)
-    raw = _opencode_json_attempts(prompt, max_tokens=3000)
+    raw = _opencode_json_attempts(
+        prompt, max_tokens=max_tokens, model=model, variant=variant, timeout=timeout,
+    )
     if not raw:
         if not OPENCODE_LAST_ERROR:
             OPENCODE_LAST_ERROR = "OpenCode returned no usable rewrite."
@@ -2810,7 +3059,10 @@ def _rewrite_opencode(
         )
     ]
     if broken:
-        repaired = _condense_opencode(values, script, target, context, broken)
+        repaired = _condense_opencode(
+            values, script, target, context, broken,
+            model=model, variant=variant, timeout=timeout,
+        )
         if repaired:
             for offset, index in enumerate(broken):
                 values[index] = repaired[offset]
@@ -2832,14 +3084,17 @@ def _rewrite_opencode(
 
 def _rewrite_openrouter(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
-    context: dict | None = None,
+    context: dict | None = None, model: str | None = None,
+    reasoning: str | None = None, timeout: float = 180,
+    max_tokens: int = 3000,
 ) -> list[str] | None:
     settings = settings_store.load_settings().get("openrouter") or {}
     if mode == "literal" or not settings.get("use_rewrite", True) or not openrouter_available():
         return None
     raw = _openrouter_text(
         _rewrite_prompt(script, source, target, mode, literal, context),
-        json_mode=True, max_tokens=3000,
+        json_mode=True, max_tokens=max_tokens, model=model,
+        reasoning=reasoning, timeout=timeout,
     )
     if not raw:
         return None
@@ -2868,7 +3123,7 @@ def _rewrite_openrouter(
 
 def _rewrite_mlx(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
-    context: dict | None = None,
+    context: dict | None = None, model: str | None = None,
 ) -> list[str] | None:
     """Small local model rewrite (MLX worker or Apple FM via the same JSON contract)."""
     if mode == "literal":
@@ -2876,7 +3131,7 @@ def _rewrite_mlx(
     if not mlx_lm_available():
         return None
     prompt = _rewrite_prompt(script, source, target, mode, literal, context)
-    raw = _llm_text(prompt, provider="mlx")
+    raw = _llm_text(prompt, provider="mlx", model=model) if model else _llm_text(prompt, provider="mlx")
     if not raw:
         return None
     match = re.search(r"\[.*\]", raw, re.S)
@@ -3715,23 +3970,25 @@ def _context_hash(context: dict | None) -> str:
     return hashlib.sha1(str(context.get("full_text") or "").encode("utf-8")).hexdigest()[:8]
 
 
-def _rewrite_provider_tag(candidate: str) -> str:
+def _rewrite_provider_tag(
+    candidate: str, model: str | None = None, reasoning: str | None = None,
+) -> str:
     """Cache namespace for the actual rewrite provider and model."""
     name = str(candidate or "").strip()
     if name == "opencode":
-        return f"opencode:{opencode_model()}:{opencode_variant()}"
+        return f"opencode:{model or opencode_model()}:{reasoning or opencode_variant()}"
     if name == "openrouter":
-        return f"openrouter:{openrouter_model()}"
+        return f"openrouter:{model or openrouter_model()}:{reasoning or ''}"
     if name == "apple":
         return "apple:on-device-3b"
     if name == "mlx":
-        model = os.environ.get(
+        model = model or os.environ.get(
             "VIBECUT_MLX_REWRITE_MODEL",
             "mlx-community/Qwen2.5-3B-Instruct-4bit",
         )
         return f"mlx:{model}"
     if name in {"llm", "ollama"}:
-        return f"{name}:{os.environ.get('VIBECUT_LLM_MODEL', 'llama3.1')}"
+        return f"{name}:{model or os.environ.get('VIBECUT_LLM_MODEL', 'llama3.1')}"
     return name or "unknown"
 
 
@@ -3865,12 +4122,12 @@ def _rules_rewrite(
 
 def _rewrite_ollama(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
-    context: dict | None = None,
+    context: dict | None = None, model: str | None = None,
 ) -> list[str] | None:
     url = os.environ.get("VIBECUT_LLM_URL")
     if not url or mode == "literal":
         return None
-    model = os.environ.get("VIBECUT_LLM_MODEL", "llama3.1")
+    model = model or os.environ.get("VIBECUT_LLM_MODEL", "llama3.1")
     context_beats = (context or {}).get("beats") or []
     rows = []
     for index, line in enumerate(script):
@@ -3975,22 +4232,33 @@ def adapt_script(
 
     used = "literal"
     if requested:
+        route_plan: list[dict[str, str]] = []
+        route_by_name: dict[str, dict[str, str]] = {}
         if rewrite_provider and rewrite_provider not in ("auto", ""):
             order = [rewrite_provider]
         elif provider and provider not in ("auto", ""):
             order = [provider]
         else:
+            route_plan = _rewrite_workflow_plan()
             order = _rewrite_candidates()
+            route_by_name = {item["name"]: item for item in route_plan}
         resolved: dict[int, str] = {}
         attempts: list[dict] = []
         succeeded = False
         ai_providers = {"opencode", "openrouter", "mlx", "apple", "llm", "ollama"}
-        for name in order:
+        rewrite_cfg = _workflow("rewrite")
+        route_max_tokens = int(rewrite_cfg.get("max_output_tokens") or 3000)
+        route_timeout = float(rewrite_cfg.get("timeout_s") or 300)
+        for route_index, name in enumerate(order):
+            route = route_by_name.get(name, {})
+            route_model = str(route.get("model") or "")
+            route_reasoning = str(route.get("reasoning") or "")
             pending = [index for index in range(len(lines)) if index not in resolved]
             if not pending:
                 succeeded = True
                 break
-            tag = _rewrite_provider_tag(name)
+            tag = _rewrite_provider_tag(name, route_model, route_reasoning)
+            started = time.time()
             memo_hits: dict[int, str] = {}
             missing = list(pending)
             if name != "rules":
@@ -4019,25 +4287,42 @@ def adapt_script(
             subset = [lines[index] for index in missing]
             subset_literal = [literals[index] for index in missing]
             rewritten: list[str] | None = None
+            route_kwargs = {}
+            if route_model:
+                route_kwargs["model"] = route_model
             if name == "opencode":
+                if route_reasoning:
+                    route_kwargs["variant"] = route_reasoning
                 rewritten = _rewrite_opencode(
                     subset, source_lang, target_lang, mode, subset_literal, context,
+                    max_tokens=route_max_tokens, timeout=route_timeout,
+                    **route_kwargs,
                 )
             elif name == "openrouter":
+                if route_reasoning:
+                    route_kwargs["reasoning"] = route_reasoning
                 rewritten = _rewrite_openrouter(
                     subset, source_lang, target_lang, mode, subset_literal, context,
+                    max_tokens=route_max_tokens, timeout=route_timeout,
+                    **route_kwargs,
                 )
             elif name in {"llm", "ollama"}:
                 rewritten = _rewrite_ollama(
                     subset, source_lang, target_lang, mode, subset_literal, context,
+                    **route_kwargs,
                 )
             elif name in {"mlx", "apple"}:
                 rewritten = _rewrite_mlx(
                     subset, source_lang, target_lang, mode, subset_literal, context,
+                    **route_kwargs,
                 )
             elif name == "rules":
                 rewritten = _rules_rewrite(subset, source_lang, target_lang, mode, subset_literal)
             if rewritten:
+                _pipeline_event(
+                    "rewrite", route_index, route.get("provider") or name,
+                    route_model, route_reasoning, started, True,
+                )
                 for offset_index, index in enumerate(missing):
                     value = rewritten[offset_index]
                     resolved[index] = value
@@ -4070,6 +4355,11 @@ def adapt_script(
                 detail = OPENCODE_LAST_ERROR
             elif name == "openrouter":
                 detail = OPENROUTER_LAST_ERROR
+            _pipeline_event(
+                "rewrite", route_index, route.get("provider") or name,
+                route_model, route_reasoning, started,
+                bool(rewritten), str(detail or "")[:240],
+            )
             attempts.append({
                 "provider": name,
                 "error": str(detail or "")[:240],
@@ -4407,3 +4697,9 @@ def music_mix_expression(
     if not changed:
         return None
     return f"volume=volume='{expression}':eval=frame"
+
+
+def clear_workflow_caches() -> None:
+    """Invalidate brief/rewrite/translate caches after a model-route change."""
+    for directory in (BRIEFS, MEMO, REWRITE):
+        shutil.rmtree(directory, ignore_errors=True)

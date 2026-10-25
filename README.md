@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.12.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.13.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -25,6 +25,13 @@ Requirements:
 - Optional: **OpenCode Go** for DeepSeek V4.1 Flash intelligence. Use a project API key in Setup, or sign in with the OpenCode CLI. Cloud is off by default.
 
 The Swift helper is compiled automatically on first use into `bin/vision_probe`.
+
+## Admin console
+
+Local admin control room at `/_ductator/`: one password-only admin account,
+AI key rotation with first-5/last-5 masking, ordered model routes per workflow,
+provider catalogs, pipeline logs, and a tamper-evident action log. Setup remains
+available alongside it. See [docs/admin.md](docs/admin.md).
 
 ## Video links (yt-dlp first)
 

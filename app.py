@@ -25,11 +25,13 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import audio
+import admin.routes as admin_routes
+import admin.store as admin_store
 import exports as cuts
 import history_store
 import pipeline
@@ -1660,6 +1662,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="VibeCut", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.include_router(admin_routes.router)
 
 
 # ---------------------------------------------------------------- auth
@@ -1671,6 +1674,9 @@ SHARES = DATA / "shares.json"
 
 @app.middleware("http")
 async def require_token(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/_ductator"):
+        return await call_next(request)
     token = os.environ.get("VIBECUT_TOKEN")
     if not token:
         path = request.url.path
@@ -1707,6 +1713,53 @@ async def require_token(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def audit_admin_requests(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/_ductator/api"):
+        return await call_next(request)
+    started = time.time()
+    request_id = str(request.headers.get("x-request-id") or uuid.uuid4().hex[:12])
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed = (time.time() - started) * 1000
+        try:
+            session = admin_store.get_session(str(request.cookies.get("vibecut_admin") or ""))
+            admin_store.record_audit(
+                session["email"] if session else "anonymous",
+                "http.request",
+                resource_type="admin_api",
+                resource_id=path,
+                outcome="error",
+                ip=str(getattr(request.client, "host", "") or ""),
+                user_agent=str(request.headers.get("user-agent") or ""),
+                request_id=request_id,
+                latency_ms=elapsed,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+    elapsed = (time.time() - started) * 1000
+    try:
+        session = admin_store.get_session(str(request.cookies.get("vibecut_admin") or ""))
+        admin_store.record_audit(
+            session["email"] if session else "anonymous",
+            "http.request",
+            resource_type="admin_api",
+            resource_id=path,
+            outcome="ok" if response.status_code < 400 else "failed",
+            ip=str(getattr(request.client, "host", "") or ""),
+            user_agent=str(request.headers.get("user-agent") or ""),
+            request_id=request_id,
+            latency_ms=elapsed,
+            after={"method": request.method, "status": response.status_code},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return response
+
+
 # ---------------------------------------------------------------- routes
 
 
@@ -1724,6 +1777,21 @@ def ffmpeg_version() -> str:
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/_ductator/")
+def admin_index() -> FileResponse:
+    response = FileResponse(STATIC / "admin.html", media_type="text/html")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@app.get("/_ductator")
+def admin_index_redirect() -> RedirectResponse:
+    return RedirectResponse("/_ductator/", status_code=307)
 
 
 @app.get("/docs/url-ingest.md")
@@ -1881,6 +1949,12 @@ async def save_settings(request: Request) -> dict:
     body = await request.json()
     patch = body.get("settings") if isinstance(body, dict) else None
     secrets = body.get("secrets") if isinstance(body, dict) else None
+    before_state = None
+    if isinstance(patch, dict) or isinstance(secrets, dict):
+        try:
+            before_state = settings_store.public_state()
+        except Exception:  # noqa: BLE001
+            before_state = None
     if isinstance(patch, dict):
         _validate_ingest_patch(patch)
         opencode = patch.get("opencode")
@@ -1940,6 +2014,24 @@ async def save_settings(request: Request) -> dict:
             audio.reset_provider_breaker("openrouter")
             audio.OPENROUTER_LAST_ERROR = ""
             audio.OPENROUTER_LAST_STATUS = 0
+    if before_state is not None:
+        try:
+            after_state = settings_store.public_state()
+            admin_store.record_audit(
+                "setup", "settings.update", resource_type="settings",
+                before=before_state.get("settings"), after=after_state.get("settings"),
+                ip=str(getattr(request.client, "host", "") or ""),
+                user_agent=str(request.headers.get("user-agent") or ""),
+            )
+            if isinstance(secrets, dict):
+                admin_store.record_audit(
+                    "setup", "secrets.update", resource_type="secret",
+                    before=before_state.get("secrets"), after=after_state.get("secrets"),
+                    ip=str(getattr(request.client, "host", "") or ""),
+                    user_agent=str(request.headers.get("user-agent") or ""),
+                )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("setup audit write failed")
     return _settings_state()
 
 

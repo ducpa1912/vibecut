@@ -514,15 +514,9 @@
             <span>OpenRouter key · translation/TTS/music fallback</span>
             <input id="setup-openrouter-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…">
           </label>
-          <div class="setup-row">
-            <label class="setup-field">
-              <span>Model</span>
-              <input id="setup-opencode-model" type="text" value="deepseek-v4.1-flash" readonly>
-            </label>
-            <label class="setup-field narrow">
-              <span>Reasoning</span>
-              <input id="setup-opencode-variant" type="text" value="low" readonly>
-            </label>
+          <div class="setup-model-routes">
+            <div class="setup-model-head"><span>Model routes</span><a href="/_ductator/" target="_blank" rel="noopener">Open admin console ↗</a></div>
+            <div id="setup-model-routes"></div>
           </div>
           <div class="setup-toggles">
             <label class="setup-check"><input id="setup-use-rewrite" type="checkbox"> Rewrite script</label>

@@ -9,6 +9,7 @@ Full compressed plan: `~/.opencode/plan/vibecut-plan.md`.
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.13.0 | 2026-10-25 | Admin console | `/_ductator/` password-only admin; first-admin bootstrap; masked AI keys; searchable provider model catalogs; ordered model routes per workflow; reasoning/tokens/timeouts; pipeline log; hash-chained admin audit; Setup model summary |
 | 0.12.0 | 2026-10-25 | Video links | URL bar under ingest; native yt-dlp first (quality/audio/cookies/playlist/cancel); Cobalt + xhs_get optional sidecars; XHS token/cookie/login; background URL ingest + history |
 | 0.11.0 | 2026-10-24 | Rewrite/History/UI | OpenRouter project-key override + quarantine, OpenCode reasoning fix, rewrite last-good cache, script/render/upload history with restore, Moments/Smart Cut UI, audio Rewrite→Voice→Music steps, local-only STT, translation modes |
 | 0.10.0 | 2026-10-24 | Speech/Music/Upload | OpenCode→OpenRouter→Apple translation, AI rewrite fallback, MiniMax TTS/music, OpenRouter TTS/Lyria fallbacks, uploaded voice fit for Voice-over/Dub/Full Replace, audio tabs |
@@ -44,7 +45,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 - Music: MiniMax Music → OpenRouter Lyria 3 → library/CC0.
 - STT: cloud → Apple SpeechAnalyzer → mlx-whisper.
 - Setup: keys in `data/secrets.json` 0600, env overrides, masked API.
-- 478 tests pass. v0.12.0 working tree.
+- 493 tests pass. v0.13.0 working tree.
 
 ## Shipped checklist
 
@@ -81,6 +82,10 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Recent cuts: selected card, per-card delete, failed-ingest diagnostics
 - [x] Smart Cut evidence-backed reasoning: hook alternatives, source-order structure, payoff rationale, selection budget
 - [x] OCR candidate correction: low-confidence upscale retry, custom overlay words, safe LINKTREE/UNAREE selection
+- [x] Password-only local admin console at `/_ductator/` with one bootstrap account
+- [x] Masked AI key management; provider model catalogs; ordered workflow model routes with reasoning/tokens/timeouts
+- [x] Pipeline log and hash-chained admin action log
+- [x] Setup Intelligence model-route summary
 - [x] Audio Rewrite→Voice→Music steps; local-only STT; translation modes
 - [x] MiniMax Speech 2.8 Turbo + OpenRouter Fish/Gemini TTS fallback
 - [x] MiniMax Music + OpenRouter Lyria 3 fallback

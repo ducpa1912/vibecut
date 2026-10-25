@@ -789,6 +789,18 @@ def _cloud_stt_provider(preferred: str = "auto") -> str | None:
     return None
 
 
+def _stt_workflow_model(provider: str, default: str) -> str:
+    try:
+        import workflow_config  # noqa: PLC0415
+        workflows = settings_store.load_settings().get("workflows") or {}
+        for route in workflow_config.routes(workflows, "stt"):
+            if str(route.get("provider") or "") == provider and route.get("model"):
+                return str(route["model"])
+    except Exception:  # noqa: BLE001
+        pass
+    return default
+
+
 def _multipart(fields: dict, file_field: str, filename: str, content: bytes, content_type: str):
     boundary = "----vibecut" + uuid.uuid4().hex
     chunks: list[bytes] = []
@@ -827,10 +839,10 @@ def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -
     if provider in {"groq", "openai"}:
         if provider == "groq":
             endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-            model = os.environ.get("VIBECUT_GROQ_STT_MODEL", "whisper-large-v3-turbo")
+            model = os.environ.get("VIBECUT_GROQ_STT_MODEL") or _stt_workflow_model("groq", "whisper-large-v3-turbo")
         else:
             endpoint = "https://api.openai.com/v1/audio/transcriptions"
-            model = os.environ.get("VIBECUT_OPENAI_STT_MODEL", "whisper-1")
+            model = os.environ.get("VIBECUT_OPENAI_STT_MODEL") or _stt_workflow_model("openai", "whisper-1")
         fields = {
             "model": model,
             "response_format": "verbose_json",
@@ -874,7 +886,8 @@ def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -
         }
 
     # Deepgram
-    params = ["model=nova-3", "smart_format=true", "utterances=true"]
+    model = _stt_workflow_model("deepgram", "nova-3")
+    params = [f"model={model}", "smart_format=true", "utterances=true"]
     if language and language != "auto":
         params.append(f"language={language.split('-')[0]}")
     endpoint = "https://api.deepgram.com/v1/listen?" + "&".join(params)
@@ -911,7 +924,7 @@ def _cloud_speech(wav_path: Path, job_dir: Path, provider: str, language: str) -
         "text": " ".join(item["text"] for item in segments)[:4000],
         "segments": segments,
         "provider": "deepgram",
-        "model": "nova-3",
+        "model": model,
         "seconds": round(duration, 3),
     }
 

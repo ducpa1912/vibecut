@@ -1097,11 +1097,11 @@ def test_story_brief_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(audio, "BRIEFS", tmp_path / "brief")
     calls = {"count": 0}
 
-    def fake_llm(prompt, provider="auto"):
+    def fake_llm(workflow, prompt, **kwargs):
         calls["count"] += 1
         return '{"topic": "garden", "audience": "hobbyists", "promise": "easy growing"}'
 
-    monkeypatch.setattr(audio, "_llm_text", fake_llm)
+    monkeypatch.setattr(audio, "_workflow_text", fake_llm)
     first = audio.story_brief("x" * 200, "en")
     assert first and first["topic"] == "garden"
     second = audio.story_brief("x" * 200, "en")

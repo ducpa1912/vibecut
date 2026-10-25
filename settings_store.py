@@ -14,6 +14,7 @@ import os
 import threading
 from pathlib import Path
 
+import workflow_config
 from url_ingest import registry as ingest_registry
 
 ROOT = Path(__file__).resolve().parent
@@ -75,6 +76,7 @@ DEFAULTS = {
         "model": "mlx-community/whisper-small-mlx",
     },
     "tts": {"provider": "minimax"},
+    "workflows": workflow_config.default_workflows(),
     "ingest": dict(ingest_registry.DEFAULT_INGEST_SETTINGS),
 }
 
@@ -141,6 +143,7 @@ def load_settings() -> dict:
     ):
         ingest.pop(key, None)
     merged["ingest"] = ingest
+    merged["workflows"] = workflow_config.normalize_workflows(merged.get("workflows"))
     return merged
 
 

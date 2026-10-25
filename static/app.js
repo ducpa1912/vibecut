@@ -342,14 +342,36 @@
     if (dom.setupYtdlpFileField) dom.setupYtdlpFileField.hidden = mode !== "file";
   }
 
+  function renderSetupModelRoutes(workflows) {
+    const target = $("#setup-model-routes");
+    if (!target) return;
+    target.replaceChildren();
+    ["story_brief", "rewrite"].forEach((name) => {
+      const value = workflows?.[name];
+      if (!value) return;
+      const row = document.createElement("div");
+      row.className = "setup-model-row";
+      const title = document.createElement("strong");
+      title.textContent = name === "story_brief" ? "Story brief" : "Script rewrite";
+      const copy = document.createElement("span");
+      const routes = (value.routes || []).map((route) => `${route.provider} · ${route.model}`);
+      copy.textContent = routes.join("  →  ") || "No routes configured";
+      const meta = document.createElement("small");
+      meta.textContent = `${value.reasoning || "no reasoning"} · ${value.max_output_tokens || 0} tokens · ${value.timeout_s || 0}s`;
+      row.append(title, copy, meta);
+      target.append(row);
+    });
+  }
+
   function applySetup(data) {
     const settings = data.settings || {};
     const secrets = data.secrets || {};
     const sources = data.sources || {};
     const opencode = settings.opencode || {};
     dom.setupOpencodeEnabled.checked = opencode.enabled !== false;
-    dom.setupOpencodeModel.value = opencode.model || "deepseek-v4.1-flash";
-    dom.setupOpencodeVariant.value = opencode.variant || "low";
+    if (dom.setupOpencodeModel) dom.setupOpencodeModel.value = opencode.model || "deepseek-v4.1-flash";
+    if (dom.setupOpencodeVariant) dom.setupOpencodeVariant.value = opencode.variant || "low";
+    renderSetupModelRoutes(settings.workflows || {});
     dom.setupUseRewrite.checked = opencode.use_rewrite !== false;
     dom.setupUseBrief.checked = opencode.use_brief !== false;
     dom.setupTranslationMode.value = (settings.translation || {}).mode || "auto";
@@ -477,7 +499,7 @@
         settings: {
           opencode: {
             enabled: dom.setupOpencodeEnabled.checked,
-            model: dom.setupOpencodeModel.value.trim() || "deepseek-v4.1-flash",
+            model: dom.setupOpencodeModel?.value.trim() || "deepseek-v4.1-flash",
             variant: "low",
             use_rewrite: dom.setupUseRewrite.checked,
             use_brief: dom.setupUseBrief.checked,

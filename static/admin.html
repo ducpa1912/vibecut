@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>VibeCut Admin</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  <div id="admin-login" class="auth-wrap" hidden>
+    <div class="auth-card">
+      <div class="auth-brand">VibeCut<span>ADMIN</span></div>
+      <h1 id="auth-title">Admin login</h1>
+      <p id="auth-note" class="muted">Local admin only. No signup.</p>
+
+      <form id="login-form" class="auth-form">
+        <label>Email <input id="login-email" type="email" autocomplete="username" required></label>
+        <label>Password <input id="login-password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">Sign in</button>
+        <p id="login-error" class="error" hidden></p>
+      </form>
+
+      <form id="bootstrap-form" class="auth-form" hidden>
+        <label>Admin email <input id="bootstrap-email" type="email" autocomplete="username" required></label>
+        <label>Password <input id="bootstrap-password" type="password" autocomplete="new-password" minlength="12" required></label>
+        <label>Confirm password <input id="bootstrap-confirm" type="password" autocomplete="new-password" minlength="12" required></label>
+        <button class="primary" type="submit">Create admin</button>
+        <p id="bootstrap-error" class="error" hidden></p>
+      </form>
+      <a class="back-link" href="/">← Back to VibeCut</a>
+    </div>
+  </div>
+
+  <div id="admin-app" hidden>
+    <header class="admin-top">
+      <a class="admin-brand" href="/">VibeCut<span>ADMIN</span></a>
+      <nav id="admin-tabs" class="admin-tabs" aria-label="Admin sections">
+        <button type="button" data-tab="overview" class="active">Overview</button>
+        <button type="button" data-tab="models">Models</button>
+        <button type="button" data-tab="keys">Keys</button>
+        <button type="button" data-tab="pipeline">Pipeline log</button>
+        <button type="button" data-tab="audit">Admin log</button>
+        <button type="button" data-tab="access">Access</button>
+      </nav>
+      <div class="admin-account">
+        <span id="admin-email"></span>
+        <button id="logout" class="ghost small" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <main class="admin-main">
+      <section id="tab-overview" class="admin-panel">
+        <p class="eyebrow">admin / overview</p>
+        <h1>Local control room</h1>
+        <p class="lede">Keys, model routes, and every action in one place. Changes apply to new requests within 30 seconds.</p>
+        <div id="overview-cards" class="overview-grid"></div>
+        <div class="split">
+          <section class="panel"><h2>Recent model calls</h2><div id="overview-pipeline"></div></section>
+          <section class="panel"><h2>Recent admin actions</h2><div id="overview-audit"></div></section>
+        </div>
+      </section>
+
+      <section id="tab-models" class="admin-panel" hidden>
+        <p class="eyebrow">admin / models</p>
+        <h1>Model routes</h1>
+        <p class="lede">Routes run top to bottom; the next is tried when a model fails or times out. Changes apply to new requests within 30 seconds.</p>
+        <div class="models-toolbar">
+          <button id="refresh-catalogs" class="ghost small" type="button">Refresh catalogs</button>
+          <span id="catalog-status" class="muted"></span>
+        </div>
+        <div id="workflow-cards" class="workflow-list"></div>
+      </section>
+
+      <section id="tab-keys" class="admin-panel" hidden>
+        <p class="eyebrow">admin / keys</p>
+        <h1>AI keys</h1>
+        <p class="lede">Stored in <code>data/secrets.json</code> with mode 0600. Values are never shown in full.</p>
+        <div id="key-cards" class="key-grid"></div>
+      </section>
+
+      <section id="tab-pipeline" class="admin-panel" hidden>
+        <p class="eyebrow">admin / pipeline log</p>
+        <h1>Model calls</h1>
+        <div class="log-toolbar">
+          <label>Workflow <input id="pipeline-filter" type="search" placeholder="filter workflow"></label>
+          <button id="reload-pipeline" class="ghost small" type="button">Reload</button>
+        </div>
+        <div id="pipeline-table" class="log-table"></div>
+      </section>
+
+      <section id="tab-audit" class="admin-panel" hidden>
+        <p class="eyebrow">admin / admin log</p>
+        <h1>Every admin action</h1>
+        <div class="log-toolbar">
+          <label>Action <input id="audit-filter" type="search" placeholder="filter action"></label>
+          <button id="reload-audit" class="ghost small" type="button">Reload</button>
+          <button id="verify-audit" class="ghost small" type="button">Verify integrity</button>
+          <a class="ghost small button-link" href="/_ductator/api/audit/export">Export JSONL</a>
+        </div>
+        <p id="audit-verify" class="hint"></p>
+        <div id="audit-table" class="log-table"></div>
+      </section>
+
+      <section id="tab-access" class="admin-panel" hidden>
+        <p class="eyebrow">admin / access</p>
+        <h1>Your account</h1>
+        <p class="lede">One local admin account. No signup, no user accounts, no additional admins.</p>
+        <div class="split">
+          <section class="panel">
+            <h2>Email and password</h2>
+            <form id="account-form" class="auth-form">
+              <label>Admin email <input id="account-email" type="email" required></label>
+              <label>Current password <input id="account-current" type="password" autocomplete="current-password" required></label>
+              <label>New password <span class="muted">(leave blank to keep)</span><input id="account-new" type="password" autocomplete="new-password" minlength="12"></label>
+              <button class="primary" type="submit">Save account</button>
+              <p id="account-error" class="error" hidden></p>
+            </form>
+          </section>
+          <section class="panel">
+            <h2>Security notes</h2>
+            <p class="muted">Password-only login. No magic link, no SMTP, no signup.</p>
+            <p class="muted">Every admin request and change is written to the Admin log with a tamper-evident hash chain.</p>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="admin-toast" class="toast" hidden></div>
+  <script src="/static/admin.js"></script>
+</body>
+</html>
