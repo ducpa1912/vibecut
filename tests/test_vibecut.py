@@ -680,7 +680,10 @@ def test_kokoro_prefers_language_and_int8(tmp_path, monkeypatch):
     model, voices = audio._kokoro_files_for("af_heart")
     assert model.name == "kokoro-v1.0.int8.onnx"
     assert voices.name == "voices-v1.0.bin"
-    zh_model, zh_voices = audio._kokoro_files_for("zf_xiaobei")
+    named_zh_model, named_zh_voices = audio._kokoro_files_for("zf_xiaobei")
+    assert named_zh_model.name == "kokoro-v1.0.int8.onnx"
+    assert named_zh_voices.name == "voices-v1.0.bin"
+    zh_model, zh_voices = audio._kokoro_files_for("zf_001")
     assert zh_model.name == "kokoro-v1.1-zh.onnx"
     assert zh_voices.name == "voices-v1.1-zh.bin"
 
@@ -1386,6 +1389,14 @@ def test_cloud_tts_payloads(monkeypatch, tmp_path):
     assert captured["body"] == {"text": "hello"}
     assert captured["auth"] == "Token dg-key"
     assert deepgram_out.is_file()
+
+
+def test_kokoro_exposes_chinese_voices():
+    voices = {item["id"]: item for item in audio.list_voices("kokoro")}
+    for voice in ("zf_xiaobei", "zm_yunjian", "zf_001", "zm_009"):
+        assert voice in voices
+        assert voices[voice]["lang"] == "zh"
+    assert voices["af_heart"]["lang"] == "en"
 
 
 def test_openrouter_settings_survive_settings_load(monkeypatch, tmp_path):

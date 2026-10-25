@@ -38,6 +38,19 @@ VOICE_DIRS = {
     "piper": ROOT / "data" / "voices" / "piper",
     "kokoro": ROOT / "data" / "models" / "kokoro",
 }
+KOKORO_EN_VOICES = (
+    "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky",
+    "am_adam", "am_michael", "bf_emma", "bf_isabella",
+    "bm_george", "bm_lewis",
+)
+KOKORO_ZH_NAMED = (
+    "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
+    "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+)
+KOKORO_ZH_NUMERIC = (
+    "zf_001", "zf_002", "zf_003", "zf_004", "zf_005", "zf_006",
+    "zf_007", "zf_008", "zm_009", "zm_010", "zm_011", "zm_012",
+)
 CACHE = ROOT / "data" / "cache"
 
 MOOD_WORDS = (
@@ -324,8 +337,8 @@ def engine_status() -> dict:
                 "install": "Built-in. Download a Premium voice in System Settings → Spoken Content."},
         "piper": {"available": piper_available(), "size_mb": 170,
                   "install": "pip install piper-tts piper-phonemize-cross, then download a voice."},
-        "kokoro": {"available": kokoro_available(), "size_mb": 220,
-                   "install": "pip install kokoro-onnx soundfile espeak-ng, put kokoro*.onnx + voices*.bin in data/models/kokoro."},
+        "kokoro": {"available": kokoro_available(), "size_mb": 700,
+                   "install": "pip install kokoro-onnx soundfile espeak-ng, put kokoro*.onnx + voices*.bin in data/models/kokoro. Chinese: kokoro-v1.1-zh.onnx + voices-v1.1-zh.bin, plus named zh voices in v1.0."},
         "elevenlabs": {"available": bool(elevenlabs_key()), "size_mb": 0,
                        "install": "Set ELEVENLABS_API_KEY or add it in Setup. Cloud, paid."},
         "openai": {"available": bool(openai_key()), "size_mb": 0,
@@ -424,12 +437,12 @@ def list_voices(engine: str) -> list[dict]:
             except (OSError, json.JSONDecodeError):
                 names = []
         if not names:
-            names = [
-                "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky",
-                "am_adam", "am_michael", "bf_emma", "bf_isabella",
-                "bm_george", "bm_lewis",
-            ]
-        return [{"id": name, "name": name, "lang": "en"} for name in names]
+            names = [*KOKORO_EN_VOICES, *KOKORO_ZH_NAMED, *KOKORO_ZH_NUMERIC]
+        return [
+            {"id": name, "name": name,
+             "lang": "zh" if name.startswith(("zf_", "zm_")) else "en"}
+            for name in names
+        ]
 
     if engine == "minimax":
         if not minimax_key():
@@ -715,11 +728,23 @@ def _kokoro_files_for(voice: str) -> tuple[Path | None, Path | None]:
     files = sorted(VOICE_DIRS["kokoro"].glob("*.onnx"))
     if not files:
         return None, None
-    wants_zh = (voice or "").lower().startswith("z")
+    voice_name = (voice or "").lower()
+    # v1.1-zh uses numeric IDs (zf_001, zm_009). The named Chinese voices
+    # (zf_xiaobei, zm_yunjian) belong to the v1.0 multilingual model.
+    numeric_zh = bool(re.fullmatch(r"z[fm]_\d{3}", voice_name))
+    named_zh = voice_name in KOKORO_ZH_NAMED
+    wants_zh = numeric_zh
 
     def rank(path: Path):
         name = path.name.lower()
-        lang_rank = 0 if ("zh" in name) == wants_zh else 1
+        has_zh = "zh" in name
+        if wants_zh:
+            lang_rank = 0 if has_zh else 1
+        elif named_zh:
+            # named Chinese voices are in v1.0, not the numeric v1.1-zh file
+            lang_rank = 0 if not has_zh else 1
+        else:
+            lang_rank = 0 if not has_zh else 1
         if any(token in name for token in ("int8", "q8", "quant")):
             precision = 0
         elif "fp16" in name:

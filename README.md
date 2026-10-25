@@ -78,7 +78,7 @@ Keys live in `data/secrets.json` (0600). OpenRouter project keys override the en
 |---|---|
 | Intelligence | OpenCode Go default. OpenRouter DeepSeek fallback. Translation mode (Auto / Local first / Local only / Online only), rewrite/story brief toggles. |
 | Transcription | Local only: Auto / Apple / Whisper, spoken language, Whisper model. No cloud STT keys. |
-| Voice over | MiniMax Speech 2.8 Turbo, OpenRouter Fish/Gemini fallback, local Kokoro/Piper/say. Live TTS test. |
+| Voice over | MiniMax Speech 2.8 Turbo, OpenRouter Fish/Gemini fallback, local Kokoro/Piper/say; Kokoro includes English and Chinese voices. Live TTS test. |
 
 Buttons **Test OpenCode**, **Check local STT**, **Live STT**, **Check TTS**, **Live TTS** show what is ready. Live tests generate a local sample, call the local/cloud engine, and show the transcript or play the audio.
 Costs, model choices and the fallback ladder: [docs/cloud-speech.md](docs/cloud-speech.md).
@@ -173,7 +173,7 @@ cut length. It is not voice cloning. **Use my sound** accepts your own music
 file; it is looped/trimmed to the cut.
 
 Voice engines: MiniMax Speech 2.8 Turbo → OpenRouter Fish S2.1 Pro Free →
-OpenRouter Gemini 3.8 Flash-Lite TTS; local Kokoro/Piper/say.
+OpenRouter Gemini 3.8 Flash-Lite TTS; local Kokoro/Piper/say; Kokoro includes English and Chinese voices.
 
 Music sources: your own upload, library/CC0, MiniMax Music, OpenRouter Lyria 3,
 or advanced legacy Stable Audio/MusicGen. AI sources use an auto mood prompt
