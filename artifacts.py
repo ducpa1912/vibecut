@@ -503,12 +503,20 @@ def load_manifest(job_dir: str | Path, artifact: str) -> dict | None:
         return None
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(value, dict):
         return None
+    spec = value.get("spec")
+    if not isinstance(spec, dict) or artifact_id(spec) != artifact:
+        return None
+    if spec.get("resolved_encoder") not in ("videotoolbox", "libx264"):
+        return None
+    declared = str(value.get("artifact_id") or "")
+    if declared and declared != artifact:
+        return None
     value["artifact_id"] = artifact
-    value.setdefault("spec", {})
+    value["spec"] = spec
     value.setdefault("media", dict(MEDIA_FILES))
     return value
 
@@ -555,7 +563,7 @@ def load_index(job_dir: str | Path) -> dict:
     if path.is_file():
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             value = None
         if isinstance(value, dict) and isinstance(value.get("artifacts"), dict):
             return value

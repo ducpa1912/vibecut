@@ -252,23 +252,50 @@ def clean_options(raw: dict | None) -> dict:
     }
 
 
+def _legacy_media_name(value) -> str:
+    text = str(value or "")
+    if text.startswith("renders/"):
+        text = text[len("renders/"):]
+    if not text or "/" in text or ".." in Path(text).parts:
+        return ""
+    return text
+
+
 def _public_render(job_id: str, record: dict | None) -> dict | None:
     if not record:
         return None
     value = dict(record)
     if record.get("status") == "ready":
         artifact = record.get("artifact_id")
+        artifact_ready = False
+        job_dir = _job_dir(job_id)
         if artifacts.is_safe_artifact_id(artifact):
+            manifest = artifacts.load_manifest(job_dir, artifact)
+            artifact_ready = bool(
+                manifest
+                and manifest.get("status") == "ready"
+                and artifacts.has_media(job_dir, artifact)
+            )
+        suffix = f"?v={record.get('key', '') or artifact or ''}"
+        if artifact_ready:
             base = f"/api/jobs/{job_id}/artifacts/{artifact}/media"
-            suffix = f"?v={record.get('key', '') or artifact}"
             value["url"] = f"{base}/reel.mp4{suffix}"
-            value["poster_url"] = f"{base}/poster.jpg{suffix}"
-        else:
-            suffix = f"?v={record.get('key', '')}"
-            value["url"] = f"/api/jobs/{job_id}/media/{record['path']}{suffix}"
-            if record.get("poster"):
+            if artifacts.has_media(job_dir, artifact, "poster.jpg"):
+                value["poster_url"] = f"{base}/poster.jpg{suffix}"
+            elif record.get("poster"):
+                legacy_poster = _legacy_media_name(record.get("poster"))
+                if legacy_poster:
+                    value["poster_url"] = (
+                        f"/api/jobs/{job_id}/media/{legacy_poster}{suffix}"
+                    )
+        elif record.get("path"):
+            legacy_path = _legacy_media_name(record.get("path"))
+            legacy_poster = _legacy_media_name(record.get("poster"))
+            if legacy_path:
+                value["url"] = f"/api/jobs/{job_id}/media/{legacy_path}{suffix}"
+            if legacy_poster:
                 value["poster_url"] = (
-                    f"/api/jobs/{job_id}/media/{record['poster']}{suffix}"
+                    f"/api/jobs/{job_id}/media/{legacy_poster}{suffix}"
                 )
     return value
 
@@ -1203,30 +1230,51 @@ def _append_render_history(
     return _history_append(job_id, entry, snapshot)
 
 
-def _load_shares() -> dict:
-    return shares.load(SHARES)
+def _load_shares(strict: bool = True) -> dict:
+    return shares.load(SHARES, strict=strict)
 
 
-def _save_shares(value: dict) -> None:
-    shares.save(value, SHARES)
+SHARE_STORE_DETAIL = (
+    "The review share store is unreadable; refusing to continue."
+)
 
 
-def _record_media_path(job_dir: Path, record: dict, field: str = "path") -> Path | None:
-    raw = str(record.get(field) or "")
-    if not raw:
+def _share_store_unavailable(exc: Exception) -> HTTPException:
+    return HTTPException(503, SHARE_STORE_DETAIL)
+
+
+def _job_media_path(
+    job_dir: Path,
+    name: str | None,
+    default_root: str = "renders",
+) -> Path | None:
+    """Resolve only job-relative render/artifact media, never arbitrary files."""
+    text = str(name or "")
+    if not text:
         return None
-    if raw.startswith(("renders/", "artifacts/")):
-        candidate = job_dir / raw
-    elif "/" in raw:
-        candidate = job_dir / raw
+    parts = Path(text).parts
+    if not parts or ".." in parts:
+        return None
+    if len(parts) == 1:
+        candidate = job_dir / default_root / parts[0]
+    elif parts[0] in ("renders", "artifacts"):
+        if parts[0] == "artifacts" and (
+            len(parts) < 2 or not artifacts.is_safe_artifact_id(parts[1])
+        ):
+            return None
+        candidate = job_dir.joinpath(*parts)
     else:
-        candidate = job_dir / "renders" / raw
+        return None
     try:
         resolved = candidate.resolve()
         resolved.relative_to(job_dir.resolve())
     except (OSError, ValueError):
         return None
     return resolved
+
+
+def _record_media_path(job_dir: Path, record: dict, field: str = "path") -> Path | None:
+    return _job_media_path(job_dir, record.get(field))
 
 
 def _adoption_plan(job: dict, target: int, hook: int | None) -> dict:
@@ -1257,10 +1305,14 @@ def _adopt_render_artifact(
     if artifacts.is_safe_artifact_id(artifact):
         manifest = artifacts.load_manifest(job_dir, artifact)
         if manifest is not None:
+            record["artifact_id"] = artifact
+            record["resolved_encoder"] = (
+                (manifest.get("spec") or {}).get("resolved_encoder")
+                or record.get("resolved_encoder")
+            )
+            artifacts.ensure_job_schema(job, job_dir)
             return manifest
     reel = _record_media_path(job_dir, record, "path")
-    if reel is None or not reel.is_file():
-        return None
     poster = _record_media_path(job_dir, record, "poster")
     try:
         wanted_target = int(target if target is not None else record.get("target") or 0)
@@ -1270,22 +1322,46 @@ def _adopt_render_artifact(
     scenes = (job.get("analysis") or {}).get("scenes") or []
     cues = cuts.plan_cues(plan, plan.get("clips") or [], scenes)
     margin = float(record.get("caption_margin") or 0.075)
+    quality = str(record.get("quality") or "final")
+    chosen_aspect = str(aspect or record.get("aspect") or "9:16")
+    captions = bool(record.get("captions"))
+    audio_sig = str(record.get("audio_sig") or "")
     spec = artifacts.build_spec(
         job, plan,
-        quality=str(record.get("quality") or "final"),
-        aspect=str(aspect or record.get("aspect") or "9:16"),
+        quality=quality,
+        aspect=chosen_aspect,
         encoder=record.get("encoder"),
-        captions=bool(record.get("captions")),
-        audio_sig=str(record.get("audio_sig") or ""),
+        captions=captions,
+        audio_sig=audio_sig,
         preset=record.get("preset"),
         caption_margin=margin,
         cues=cues,
     )
     artifact = artifacts.artifact_id(spec)
+    record_key = str(
+        record.get("record_key")
+        or _render_key(wanted_target, quality, chosen_aspect, captions, audio_sig)
+    )
+    existing = artifacts.load_manifest(job_dir, artifact)
+    if existing is not None:
+        # Never rewrite a manifest that may already be pinned or shared.
+        record["artifact_id"] = artifact
+        record["record_key"] = record.get("record_key") or record_key
+        record["resolved_encoder"] = (
+            (existing.get("spec") or {}).get("resolved_encoder")
+            or spec.resolved_encoder
+        )
+        artifacts.ensure_job_schema(job, job_dir)
+        return existing
+    if artifacts.manifest_path(job_dir, artifact).is_file():
+        # A manifest exists but does not validate. Do not overwrite it.
+        return None
+    if reel is None or not reel.is_file():
+        return None
     manifest = artifacts.make_manifest(
         job["id"], spec,
         status="ready",
-        record_key=record.get("record_key"),
+        record_key=record_key,
         title=Path(job.get("source", {}).get("name") or "reel").stem,
         created=record.get("created") or record.get("updated"),
     )
@@ -1301,6 +1377,7 @@ def _adopt_render_artifact(
     artifacts.write_captions(job_dir, artifact, cuts.srt(cues), cuts.vtt(cues))
     manifest = artifacts.save_manifest(job_dir, manifest)
     record["artifact_id"] = artifact
+    record["record_key"] = record.get("record_key") or record_key
     record["resolved_encoder"] = spec.resolved_encoder
     artifacts.ensure_job_schema(job, job_dir)
     return manifest
@@ -1341,7 +1418,10 @@ def _artifact_for_legacy_share(job: dict, record: dict) -> dict | None:
 
 
 def _share(token: str) -> tuple[dict, dict, dict] | None:
-    stored = _load_shares().get(token)
+    try:
+        stored = _load_shares(strict=True).get(token)
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
     if not stored:
         return None
     record = shares.describe(stored, token)
@@ -1358,7 +1438,10 @@ def _share(token: str) -> tuple[dict, dict, dict] | None:
         manifest = _artifact_for_legacy_share(job, record)
         if manifest is None:
             return None
-        bound = shares.bind_artifact(token, manifest["artifact_id"], SHARES)
+        try:
+            bound = shares.bind_artifact(token, manifest["artifact_id"], SHARES)
+        except shares.ShareStoreError as exc:
+            raise _share_store_unavailable(exc) from exc
         if bound:
             record = bound
     artifact = str(record.get("artifact_id") or "")
@@ -1378,22 +1461,15 @@ def _share(token: str) -> tuple[dict, dict, dict] | None:
     return value, job, artifacts.render_record(manifest)
 
 
-def _share_captions(job: dict, artifact: str | int) -> str:
+def _share_captions(job: dict, artifact: str) -> str:
     if not artifacts.is_safe_artifact_id(str(artifact)):
-        try:
-            target = int(artifact)
-        except (TypeError, ValueError):
-            raise HTTPException(404, "Captions are not available for this artifact.") from None
-        manifest = _find_artifact_for_target(job, target, "9:16")
-        if manifest is None:
-            raise HTTPException(404, "Captions are not available for this artifact.")
-        artifact = str(manifest["artifact_id"])
+        raise HTTPException(404, "Captions are not available for this artifact.")
     path = artifacts.media_path(_job_dir(job["id"]), str(artifact), "captions.srt")
     if not path.is_file():
         raise HTTPException(404, "Captions are not available for this artifact.")
     try:
         return path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(404, "Captions are not available for this artifact.") from exc
 
 
@@ -1569,7 +1645,10 @@ def run_render(
             LOGGER.exception("artifact finalize failed for %s/%s", job_id, artifact_id)
         LOGGER.info("render %s/%s ready in %s", job_id, record_key, result["path"])
         pruned: list[str] = []
-        update_job(job_id, lambda value: pruned.extend(_prune_renders(value)))
+        try:
+            update_job(job_id, lambda value: pruned.extend(_prune_renders(value)))
+        except shares.ShareStoreError:
+            LOGGER.error("share store is unreadable; prune skipped for %s", job_id)
         if pruned:
             LOGGER.info("pruned %d old render file(s) for %s", len(pruned), job_id)
     except render.RenderCancelled:
@@ -1718,10 +1797,20 @@ def recover_jobs() -> None:
         LOGGER.info("recovered %d interrupted job(s)", fixed)
 
 
-def _active_share_state(job_id: str) -> tuple[set[str], list[tuple[int, str]]]:
+def _active_share_state(
+    job_id: str,
+    *,
+    strict: bool = False,
+) -> tuple[set[str], list[tuple[int, str]]]:
     try:
-        records = shares.active_records(SHARES, job_id=job_id)
-    except Exception:  # noqa: BLE001 - a broken share file must not block pruning
+        records = shares.active_records(SHARES, job_id=job_id, strict=strict)
+    except shares.ShareStoreError:
+        if strict:
+            raise
+        return set(), []
+    except Exception:  # noqa: BLE001 - read paths must not block on a broken file
+        if strict:
+            raise
         return set(), []
     artifact_ids: set[str] = set()
     legacy: list[tuple[int, str]] = []
@@ -1759,9 +1848,51 @@ def _packet_artifact_ids(job: dict, manifests: list[dict] | None = None) -> set[
     return found
 
 
+def _adopt_legacy_shares(job: dict) -> list[dict]:
+    """Bind active target/aspect shares to artifact ids before destructive work.
+
+    Returns the active records that could not be bound. Callers must preserve
+    their render files or abort. Raises when the share store is unreadable.
+    """
+    records = shares.active_records(
+        SHARES, job_id=job["id"], strict=True,
+    )
+    remaining: list[dict] = []
+    for record in records:
+        if record.get("artifact_id"):
+            continue
+        try:
+            target = int(record.get("target"))
+        except (TypeError, ValueError):
+            remaining.append(record)
+            continue
+        aspect = str(record.get("aspect") or "9:16")
+        manifest = _find_artifact_for_target(job, target, aspect)
+        if (
+            manifest is None
+            or manifest.get("status") != "ready"
+            or not artifacts.has_media(
+                _job_dir(job["id"]), str(manifest.get("artifact_id") or ""),
+            )
+        ):
+            remaining.append(record)
+            continue
+        artifact = str(manifest.get("artifact_id") or "")
+        token = str(record.get("token") or "")
+        if not artifacts.is_safe_artifact_id(artifact) or not token:
+            remaining.append(record)
+            continue
+        bound = shares.bind_artifact(token, artifact, SHARES)
+        if bound is None or not bound.get("artifact_id"):
+            remaining.append(record)
+    return remaining
+
+
 def _protected_artifact_ids(
     job: dict,
     manifests: list[dict] | None = None,
+    *,
+    strict_shares: bool = False,
 ) -> set[str]:
     manifests = manifests if manifests is not None else artifacts.list_manifests(_job_dir(job["id"]))
     protected = {
@@ -1769,7 +1900,7 @@ def _protected_artifact_ids(
         for manifest in manifests
         if manifest.get("pinned") and artifacts.is_safe_artifact_id(manifest.get("artifact_id"))
     }
-    shared, legacy = _active_share_state(job["id"])
+    shared, legacy = _active_share_state(job["id"], strict=strict_shares)
     protected |= {item for item in shared if artifacts.is_safe_artifact_id(item)}
     protected |= _packet_artifact_ids(job, manifests)
     for record in (job.get("renders") or {}).values():
@@ -1788,16 +1919,26 @@ def _protected_artifact_ids(
     return protected
 
 
-def _job_has_protection(job: dict) -> bool:
+def _job_has_protection(job: dict, *, strict_shares: bool = True) -> bool:
     try:
         manifests = artifacts.list_manifests(_job_dir(job["id"]))
     except Exception:  # noqa: BLE001
         manifests = []
-    if _protected_artifact_ids(job, manifests):
+    if _protected_artifact_ids(
+        job, manifests, strict_shares=strict_shares,
+    ):
         return True
     try:
-        return bool(shares.active_records(SHARES, job_id=job["id"]))
+        return bool(shares.active_records(
+            SHARES, job_id=job["id"], strict=strict_shares,
+        ))
+    except shares.ShareStoreError:
+        if strict_shares:
+            raise
+        return False
     except Exception:  # noqa: BLE001
+        if strict_shares:
+            raise
         return False
 
 
@@ -1818,21 +1959,12 @@ def _record_hook(record: dict, key: str | None = None) -> int | None:
 
 
 def _safe_unlink(job_dir: Path, name: str | None) -> str | None:
-    if not name:
-        return None
-    text = str(name)
-    if text.startswith(("renders/", "artifacts/")):
-        candidate = job_dir / text
-    else:
-        candidate = job_dir / "renders" / text
-    try:
-        path = candidate.resolve()
-        path.relative_to(job_dir.resolve())
-    except (OSError, ValueError):
+    path = _job_media_path(job_dir, name)
+    if path is None:
         return None
     try:
         path.unlink()
-        return text
+        return str(name)
     except OSError:
         return None
 
@@ -1845,12 +1977,14 @@ def _prune_renders(job: dict) -> list[str]:
     retention window for their group.
     """
     renders = job.get("renders") or {}
-    if not renders:
-        return []
     job_dir = _job_dir(job["id"])
     manifests = artifacts.list_manifests(job_dir)
-    protected_ids = _protected_artifact_ids(job, manifests)
-    _shared, legacy_targets = _active_share_state(job["id"])
+    protected_ids = _protected_artifact_ids(
+        job, manifests, strict_shares=True,
+    )
+    _shared, legacy_targets = _active_share_state(job["id"], strict=True)
+    if not renders:
+        return []
     protected_manifests = [
         manifest for manifest in manifests
         if str(manifest.get("artifact_id") or "") in protected_ids
@@ -1999,6 +2133,16 @@ def clean_job_files(job: dict, profile: str = "workfiles") -> list[str]:
     """
     directory = _job_dir(job["id"])
     removed: list[str] = []
+    shares.load(SHARES, strict=True)
+    render_profile = profile in {"renders", "all"}
+    if render_profile:
+        remaining = _adopt_legacy_shares(job)
+        if remaining:
+            LOGGER.warning(
+                "clean skipped for %s: %d live legacy share target(s) could not be adopted",
+                job["id"], len(remaining),
+            )
+            return []
     work = ("thumbs", "transcript", "audio")
     if profile in {"workfiles", "all"}:
         for name in work:
@@ -2012,9 +2156,11 @@ def clean_job_files(job: dict, profile: str = "workfiles") -> list[str]:
                 scene["deep"] = False
             analysis["deep_count"] = 0
             analysis["deep_scene_ids"] = []
-    if profile in {"renders", "all"}:
+    if render_profile:
         manifests = artifacts.list_manifests(directory)
-        protected = _protected_artifact_ids(job, manifests)
+        protected = _protected_artifact_ids(
+            job, manifests, strict_shares=True,
+        )
         kept: dict[str, dict] = {}
         deleted_artifacts = False
         for manifest in manifests:
@@ -2061,6 +2207,11 @@ def cleanup_storage() -> None:
         clean_days = float(os.environ.get("VIBECUT_JOB_CLEAN_DAYS", "0") or 0)
     except ValueError:
         clean_days = 0.0
+    try:
+        shares.load(SHARES, strict=True)
+    except shares.ShareStoreError:
+        LOGGER.error("share store is unreadable; retention aborted")
+        return
     if days > 0:
         cutoff = time.time() - days * 86400
         for path in JOBS.glob("*/job.json"):
@@ -2071,7 +2222,12 @@ def cleanup_storage() -> None:
             if job.get("status") in LIVE:
                 continue
             if float(job.get("updated", 0) or 0) < cutoff:
-                if _job_has_protection(job):
+                try:
+                    protected = _job_has_protection(job)
+                except shares.ShareStoreError:
+                    LOGGER.error("share store is unreadable; retention aborted")
+                    return
+                if protected:
                     LOGGER.info("retention kept protected job %s", job.get("id"))
                     continue
                 shutil.rmtree(path.parent, ignore_errors=True)
@@ -2098,7 +2254,11 @@ def cleanup_storage() -> None:
             continue
         if job.get("status") in LIVE or not job.get("renders"):
             continue
-        removed = _prune_renders(job)
+        try:
+            removed = _prune_renders(job)
+        except shares.ShareStoreError:
+            LOGGER.error("share store is unreadable; render retention aborted")
+            return
         if removed:
             with LOCK:
                 _save_unlocked(job)
@@ -3020,6 +3180,10 @@ def create_share(
     body: ShareBody | None = None,
 ) -> dict:
     job = load_job(job_id)
+    try:
+        shares.load(SHARES, strict=True)
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
     requested = str(body.artifact_id or "") if body else ""
     if requested:
         if not artifacts.is_safe_artifact_id(requested):
@@ -3032,17 +3196,41 @@ def create_share(
         if manifest is None:
             raise HTTPException(409, "Render this cut first, then create the review link.")
         manifest = _ready_manifest(job, str(manifest.get("artifact_id") or ""))
+        artifact = str(manifest.get("artifact_id") or "")
+        record_key = str(manifest.get("record_key") or "")
+        spec = manifest.get("spec") or {}
+
+        def merge(value: dict) -> None:
+            for record in (value.get("renders") or {}).values():
+                if not isinstance(record, dict) or record.get("artifact_id"):
+                    continue
+                if record_key and record.get("record_key") != record_key:
+                    continue
+                if not record_key and (
+                    record.get("target") != target
+                    or record.get("aspect", "9:16") != aspect
+                ):
+                    continue
+                record["artifact_id"] = artifact
+                record["resolved_encoder"] = spec.get("resolved_encoder")
+            artifacts.ensure_job_schema(value, _job_dir(job_id))
+
         try:
-            save_job(job)
-        except Exception:  # noqa: BLE001 - binding is persisted in shares.json
-            LOGGER.exception("could not save adopted artifact for %s", job_id)
+            update_job(job_id, merge)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            LOGGER.warning("adopted artifact but job %s is not on disk", job_id)
     spec = manifest.get("spec") or {}
     expires_at = _expiry(body.expires_in_days if body else None)
     label = str(body.label or "")[:120] if body else ""
-    token, _record = shares.create(
-        job_id, str(manifest["artifact_id"]),
-        expires_at=expires_at, label=label, path=SHARES,
-    )
+    try:
+        token, _record = shares.create(
+            job_id, str(manifest["artifact_id"]),
+            expires_at=expires_at, label=label, path=SHARES,
+        )
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
     return {
         "token": token,
         "url": f"/r/{token}",
@@ -3712,43 +3900,57 @@ def get_artifact(job_id: str, artifact_id: str) -> dict:
 
 @app.post("/api/jobs/{job_id}/artifacts/{artifact_id}/pin")
 def pin_artifact(job_id: str, artifact_id: str, body: PinBody | None = None) -> dict:
-    job = load_job(job_id)
+    load_job(job_id)
     pinned = True if body is None else bool(body.pinned)
-    manifest = artifacts.pin_artifact(_job_dir(job_id), artifact_id, pinned)
+    job_dir = _job_dir(job_id)
+    manifest = artifacts.pin_artifact(job_dir, artifact_id, pinned)
     if manifest is None:
         raise HTTPException(404, "Artifact not found.")
-    artifacts.ensure_job_schema(job, _job_dir(job_id))
-    save_job(job)
+    update_job(
+        job_id,
+        lambda value: artifacts.ensure_job_schema(value, job_dir),
+    )
     public = artifacts.public_manifest(manifest, job_id)
     return {**public, "artifact": public}
 
 
 @app.delete("/api/jobs/{job_id}/artifacts/{artifact_id}")
 def delete_artifact(job_id: str, artifact_id: str) -> dict:
-    job = load_job(job_id)
+    load_job(job_id)
     job_dir = _job_dir(job_id)
-    manifest = artifacts.load_manifest(job_dir, artifact_id)
-    if manifest is None:
-        raise HTTPException(404, "Artifact not found.")
-    records = [
-        record for record in (job.get("renders") or {}).values()
-        if isinstance(record, dict) and record.get("artifact_id") == artifact_id
-    ]
-    protected = _protected_artifact_ids(job, [manifest])
-    if (
-        manifest.get("pinned")
-        or artifact_id in protected
-        or any(record.get("pinned") for record in records)
-    ):
-        raise HTTPException(409, "Pinned, shared, or packet-referenced artifacts cannot be deleted.")
-    for record in records:
-        for name in (record.get("path"), record.get("poster")):
-            _safe_unlink(job_dir, name)
-    if not artifacts.delete_artifact(job_dir, artifact_id):
-        raise HTTPException(404, "Artifact not found.")
-    removed = artifacts.remove_projection(job, artifact_id)
-    artifacts.ensure_job_schema(job, job_dir)
-    save_job(job)
+    removed: list[str] = []
+
+    def mutate(job: dict) -> None:
+        manifest = artifacts.load_manifest(job_dir, artifact_id)
+        if manifest is None:
+            raise HTTPException(404, "Artifact not found.")
+        records = [
+            record for record in (job.get("renders") or {}).values()
+            if isinstance(record, dict) and record.get("artifact_id") == artifact_id
+        ]
+        try:
+            protected = _protected_artifact_ids(
+                job, [manifest], strict_shares=True,
+            )
+        except shares.ShareStoreError as exc:
+            raise _share_store_unavailable(exc) from exc
+        if (
+            manifest.get("pinned")
+            or artifact_id in protected
+            or any(record.get("pinned") for record in records)
+        ):
+            raise HTTPException(
+                409, "Pinned, shared, or packet-referenced artifacts cannot be deleted."
+            )
+        if not artifacts.delete_artifact(job_dir, artifact_id):
+            raise HTTPException(404, "Artifact not found.")
+        for record in records:
+            for name in (record.get("path"), record.get("poster")):
+                _safe_unlink(job_dir, name)
+        removed.extend(artifacts.remove_projection(job, artifact_id))
+        artifacts.ensure_job_schema(job, job_dir)
+
+    update_job(job_id, mutate)
     return {"deleted": artifact_id, "renders": removed}
 
 
@@ -3777,7 +3979,12 @@ def get_artifact_media(job_id: str, artifact_id: str, filename: str) -> FileResp
 
 @app.get("/api/shares")
 def get_shares(include_tokens: bool = False, job_id: str | None = None) -> dict:
-    rows = shares.list_records(SHARES, include_tokens=include_tokens)
+    try:
+        rows = shares.list_records(
+            SHARES, include_tokens=include_tokens, strict=True,
+        )
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
     if job_id:
         rows = [row for row in rows if row.get("job_id") == job_id]
     if include_tokens:
@@ -3790,8 +3997,6 @@ def get_shares(include_tokens: bool = False, job_id: str | None = None) -> dict:
 
 @app.patch("/api/shares/{token}")
 def patch_share(token: str, body: SharePatchBody) -> dict:
-    if shares.get(token, SHARES) is None:
-        raise HTTPException(404, "Share not found.")
     fields = body.model_fields_set
     updates: dict = {}
     if "label" in fields:
@@ -3804,7 +4009,10 @@ def patch_share(token: str, body: SharePatchBody) -> dict:
         updates["expires_in_days"] = body.expires_in_days
     if "revoked" in fields:
         updates["revoked"] = bool(body.revoked)
-    record = shares.patch(token, updates, SHARES)
+    try:
+        record = shares.patch(token, updates, SHARES)
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
     if record is None:
         raise HTTPException(404, "Share not found.")
     return {**record, "share": record}
@@ -3812,7 +4020,11 @@ def patch_share(token: str, body: SharePatchBody) -> dict:
 
 @app.delete("/api/shares/{token}")
 def delete_share(token: str) -> dict:
-    if not shares.delete(token, SHARES):
+    try:
+        deleted = shares.delete(token, SHARES)
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
+    if not deleted:
         raise HTTPException(404, "Share not found.")
     return {"deleted": True}
 
@@ -5200,15 +5412,21 @@ def cancel_render(
 @app.post("/api/jobs/{job_id}/clean")
 def clean_job(job_id: str, body: CleanBody) -> dict:
     """Delete working files for a job. Source video and job.json stay."""
-    job = load_job(job_id)
-    if job.get("status") in LIVE or any(
-        record.get("status") in ACTIVE_RENDER
-        for record in (job.get("renders") or {}).values()
-    ):
-        raise HTTPException(409, "This job is still working.")
     profile = body.profile if body.profile in {"workfiles", "renders", "all"} else "workfiles"
-    removed = clean_job_files(job, profile)
-    save_job(job)
+    removed: list[str] = []
+
+    def mutate(job: dict) -> None:
+        if job.get("status") in LIVE or any(
+            record.get("status") in ACTIVE_RENDER
+            for record in (job.get("renders") or {}).values()
+        ):
+            raise HTTPException(409, "This job is still working.")
+        removed.extend(clean_job_files(job, profile))
+
+    try:
+        update_job(job_id, mutate)
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
     LOGGER.info("cleaned %s for job %s", ", ".join(removed) or "nothing", job_id)
     return {"cleaned": removed, "profile": profile}
 
@@ -5221,7 +5439,11 @@ def delete_job(job_id: str) -> dict:
         for record in (job.get("renders") or {}).values()
     ):
         raise HTTPException(409, "This job is still working.")
-    if _job_has_protection(job):
+    try:
+        protected = _job_has_protection(job)
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
+    if protected:
         raise HTTPException(409, "Unpin artifacts and revoke review links before deleting this job.")
     shutil.rmtree(_job_dir(job_id), ignore_errors=True)
     return {"deleted": job_id}

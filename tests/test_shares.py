@@ -329,3 +329,185 @@ def test_share_api_lifecycle_and_artifact_routes(env):
     assert client.get(
         f"/api/jobs/{env.job_id}/artifacts/{artifact_id}"
     ).status_code == 404
+
+
+# ---------------------------------------------------------------- QA round 1
+
+
+def _prepare_legacy_render(env) -> dict:
+    job = app.load_job(env.job_id)
+    plan = {
+        "target": 15,
+        "total": 4.0,
+        "hook_scene": 0,
+        "auto": True,
+        "clip_count": 1,
+        "clips": [{
+            "scene": 0, "start": 0.0, "end": 4.0, "dur": 4.0, "role": "hook",
+        }],
+        "_source_lang": "en",
+    }
+    job["analysis"]["plans"] = {"15": plan}
+    renders = env.directory / "renders"
+    renders.mkdir(exist_ok=True)
+    (renders / "reel_15.mp4").write_bytes(b"legacy-mp4")
+    (renders / "reel_15.jpg").write_bytes(b"legacy-jpg")
+    job["renders"] = {
+        "15": {
+            "status": "ready",
+            "quality": "final",
+            "target": 15,
+            "aspect": "9:16",
+            "captions": False,
+            "audio_sig": "",
+            "hook": 0,
+            "updated": 1.0,
+            "path": "renders/reel_15.mp4",
+            "poster": "renders/reel_15.jpg",
+        },
+    }
+    app.save_job(job)
+    return job
+
+
+def _save_legacy_share(env, token: str = "legacy-clean-token-0123456789") -> str:
+    shares.save({
+        token: {
+            "job_id": env.job_id,
+            "created": 1.0,
+            "expires_at": None,
+            "revoked_at": None,
+            "label": "old link",
+            "target": 15,
+            "aspect": "9:16",
+        },
+    }, app.SHARES)
+    return token
+
+
+def test_clean_adopts_live_legacy_share_before_deleting_renders(env):
+    _prepare_legacy_render(env)
+    token = _save_legacy_share(env)
+    job = app.load_job(env.job_id)
+
+    removed = app.clean_job_files(job, "renders")
+
+    assert "renders" in removed
+    artifact_id = job["artifact_ids"][0]
+    assert artifacts.has_media(env.directory, artifact_id)
+    assert shares.get(token, app.SHARES)["artifact_id"] == artifact_id
+    assert "15" in job["renders"]
+    assert not (env.directory / "renders" / "reel_15.mp4").exists()
+    app.save_job(job)
+
+    found = app._share(token)
+    assert found and found[0]["artifact_id"] == artifact_id
+    assert app.review_video(token).path.read_bytes() == b"legacy-mp4"
+
+
+def test_clean_preserves_unadoptable_legacy_share_target(env, monkeypatch):
+    _prepare_legacy_render(env)
+    token = _save_legacy_share(env)
+    monkeypatch.setattr(app, "_adopt_render_artifact", lambda *args, **kwargs: None)
+    job = app.load_job(env.job_id)
+
+    removed = app.clean_job_files(job, "renders")
+
+    assert removed == []
+    assert (env.directory / "renders" / "reel_15.mp4").is_file()
+    assert "15" in job["renders"]
+    assert shares.get(token, app.SHARES)["artifact_id"] is None
+
+
+def test_corrupt_share_store_blocks_destructive_operations(env, monkeypatch):
+    manifest = make_artifact(env)
+    artifact_id = manifest["artifact_id"]
+    token, _ = shares.create(env.job_id, artifact_id, path=app.SHARES)
+    job = app.load_job(env.job_id)
+    job["renders"] = {
+        "15": {
+            "status": "ready",
+            "quality": "final",
+            "target": 15,
+            "aspect": "9:16",
+            "captions": False,
+            "audio_sig": "",
+            "hook": 0,
+            "updated": 1.0,
+            "path": f"artifacts/{artifact_id}/reel.mp4",
+            "poster": f"artifacts/{artifact_id}/poster.jpg",
+            "artifact_id": artifact_id,
+            "record_key": "15",
+        },
+    }
+    app.save_job(job)
+    app.SHARES.write_bytes(b"\xff\xfe\x00")
+
+    assert shares.load(app.SHARES, strict=False) == {}
+    with pytest.raises(shares.ShareStoreError):
+        shares.load(app.SHARES)
+    with pytest.raises(shares.ShareStoreError):
+        app._prune_renders(app.load_job(env.job_id))
+    assert artifacts.artifact_dir(env.directory, artifact_id).is_dir()
+    with pytest.raises(shares.ShareStoreError):
+        app.clean_job_files(app.load_job(env.job_id), "renders")
+    assert artifacts.artifact_dir(env.directory, artifact_id).is_dir()
+    with pytest.raises(shares.ShareStoreError):
+        app.clean_job_files(app.load_job(env.job_id), "workfiles")
+    assert artifacts.artifact_dir(env.directory, artifact_id).is_dir()
+
+    client = TestClient(app.app)
+    assert client.post(
+        f"/api/jobs/{env.job_id}/clean", json={"profile": "renders"},
+    ).status_code == 503
+    assert client.delete(
+        f"/api/jobs/{env.job_id}/artifacts/{artifact_id}"
+    ).status_code == 503
+    assert client.delete(f"/api/jobs/{env.job_id}").status_code == 503
+    assert client.delete(f"/api/shares/{token}").status_code == 503
+    assert client.get("/api/shares").status_code == 503
+    assert client.patch(
+        f"/api/shares/{token}", json={"label": "blocked"},
+    ).status_code == 503
+    assert client.post(
+        f"/api/jobs/{env.job_id}/share",
+        json={"artifact_id": artifact_id},
+    ).status_code == 503
+    assert client.get(f"/r/{token}").status_code == 503
+    assert env.directory.is_dir()
+    assert artifacts.artifact_dir(env.directory, artifact_id).is_dir()
+
+    def age(job: dict) -> None:
+        job["updated"] = time.time() - 10 * 86400
+
+    app.update_job(env.job_id, age)
+    monkeypatch.setenv("VIBECUT_RETENTION_DAYS", "1")
+    app.cleanup_storage()
+    assert env.directory.is_dir()
+
+
+def test_create_share_merges_concurrent_job_update(env, monkeypatch):
+    _prepare_legacy_render(env)
+    client = TestClient(app.app)
+    original = app._find_artifact_for_target
+
+    def find_then_concurrent(*args, **kwargs):
+        result = original(*args, **kwargs)
+        app.update_job(
+            env.job_id,
+            lambda job: job.setdefault("renders", {}).__setitem__(
+                "concurrent",
+                {"status": "ready", "path": "reel_99.mp4", "updated": 2.0},
+            ),
+        )
+        return result
+
+    monkeypatch.setattr(app, "_find_artifact_for_target", find_then_concurrent)
+    response = client.post(
+        f"/api/jobs/{env.job_id}/share?target=15&aspect=9:16",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["artifact_id"]
+    job = app.load_job(env.job_id)
+    assert "concurrent" in job["renders"]

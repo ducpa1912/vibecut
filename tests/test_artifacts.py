@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 import app
 import artifacts
@@ -552,3 +553,194 @@ def test_legacy_renders_projection_stays_in_public_job(env):
     assert public["renders"]["15"]["url"].startswith(
         f"/api/jobs/{env.job_id}/media/reel_15.mp4"
     )
+
+
+# ---------------------------------------------------------------- QA round 1
+
+
+def test_adoption_does_not_overwrite_existing_pinned_manifest(env):
+    job = app.load_job(env.job_id)
+    plan = plan_for()
+    job["analysis"]["plans"] = {"15": plan}
+    renders = env.directory / "renders"
+    renders.mkdir()
+    (renders / "reel_15.mp4").write_bytes(b"legacy-mp4")
+    (renders / "reel_15.jpg").write_bytes(b"legacy-jpg")
+    record = {
+        "status": "ready",
+        "quality": "final",
+        "target": 15,
+        "aspect": "9:16",
+        "captions": False,
+        "audio_sig": "",
+        "hook": 0,
+        "updated": 1.0,
+        "path": "reel_15.mp4",
+        "poster": "reel_15.jpg",
+    }
+    spec = artifacts.build_spec(
+        job, plan, quality="final", aspect="9:16", captions=False,
+    )
+    manifest = artifacts.make_manifest(
+        env.job_id, spec, status="ready", record_key="15",
+        title="pinned-original", created=1.0,
+    )
+    manifest = artifacts.save_manifest(env.directory, manifest)
+    manifest = artifacts.pin_artifact(
+        env.directory, manifest["artifact_id"], True,
+    )
+    before = artifacts.load_manifest(env.directory, manifest["artifact_id"])
+
+    adopted = app._adopt_render_artifact(job, record, 15, "9:16")
+
+    after = artifacts.load_manifest(env.directory, manifest["artifact_id"])
+    assert adopted and adopted["artifact_id"] == manifest["artifact_id"]
+    assert after["pinned"] is True
+    assert after["title"] == "pinned-original"
+    assert after["created"] == before["created"]
+    assert after["updated"] == before["updated"]
+    assert record["artifact_id"] == manifest["artifact_id"]
+
+
+def test_public_render_falls_back_when_artifact_media_missing(env):
+    job = app.load_job(env.job_id)
+    spec = artifacts.build_spec(job, plan_for(), captions=False)
+    manifest = artifacts.make_manifest(
+        env.job_id, spec, status="ready", record_key="15",
+    )
+    manifest = artifacts.save_manifest(env.directory, manifest)
+    record = record_for(manifest, 1.0, "15")
+    record["path"] = "reel_15.mp4"
+    record["poster"] = "reel_15.jpg"
+    record["key"] = "legacy"
+
+    public = app._public_render(env.job_id, record)
+    assert public["url"] == (
+        f"/api/jobs/{env.job_id}/media/reel_15.mp4?v=legacy"
+    )
+    assert public["poster_url"] == (
+        f"/api/jobs/{env.job_id}/media/reel_15.jpg?v=legacy"
+    )
+    prefixed = {
+        **record,
+        "path": "renders/reel_15.mp4",
+        "poster": "renders/reel_15.jpg",
+    }
+    assert app._public_render(env.job_id, prefixed)["url"] == (
+        f"/api/jobs/{env.job_id}/media/reel_15.mp4?v=legacy"
+    )
+
+    artifact_dir = artifacts.artifact_dir(env.directory, manifest["artifact_id"])
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / "reel.mp4").write_bytes(b"artifact-mp4")
+    ready = app._public_render(env.job_id, record)
+    assert ready["url"].startswith(
+        f"/api/jobs/{env.job_id}/artifacts/{manifest['artifact_id']}/media/reel.mp4"
+    )
+
+
+def test_media_path_helpers_reject_escapes_and_unknown_roots(env):
+    job_dir = env.directory
+    (job_dir / "source.mp4").write_bytes(b"source")
+    thumbs = job_dir / "thumbs"
+    thumbs.mkdir()
+    (thumbs / "00000.jpg").write_bytes(b"thumb")
+
+    assert app._record_media_path(job_dir, {"path": "thumbs/00000.jpg"}) is None
+    assert app._record_media_path(job_dir, {"path": "../source.mp4"}) is None
+    assert app._record_media_path(
+        job_dir, {"path": "artifacts/not-an-artifact/reel.mp4"},
+    ) is None
+    assert app._safe_unlink(job_dir, "thumbs/00000.jpg") is None
+    assert app._safe_unlink(job_dir, "../source.mp4") is None
+    assert (thumbs / "00000.jpg").is_file()
+    assert (job_dir / "source.mp4").is_file()
+
+    renders = job_dir / "renders"
+    renders.mkdir()
+    reel = renders / "reel_15.mp4"
+    reel.write_bytes(b"legacy")
+    assert app._record_media_path(job_dir, {"path": "reel_15.mp4"}) == reel.resolve()
+    assert app._safe_unlink(job_dir, "reel_15.mp4") == "reel_15.mp4"
+    assert not reel.exists()
+
+    artifact_id = "art_" + "a" * 24
+    artifact_dir = artifacts.artifact_dir(job_dir, artifact_id)
+    artifact_dir.mkdir(parents=True)
+    artifact_reel = artifact_dir / "reel.mp4"
+    artifact_reel.write_bytes(b"artifact")
+    assert app._record_media_path(
+        job_dir, {"path": f"artifacts/{artifact_id}/reel.mp4"},
+    ) == artifact_reel.resolve()
+
+
+def test_manifest_load_rejects_tampered_id_and_bad_utf8(tmp_path):
+    job_dir = tmp_path / "job"
+    manifest = artifacts.make_manifest("job1", base_spec(), record_key="15")
+    artifacts.save_manifest(job_dir, manifest)
+    path = artifacts.manifest_path(job_dir, manifest["artifact_id"])
+    original = json.loads(path.read_text(encoding="utf-8"))
+
+    tampered = json.loads(json.dumps(original))
+    tampered["spec"]["audio_sig"] = "tampered"
+    path.write_text(json.dumps(tampered), encoding="utf-8")
+    assert artifacts.load_manifest(job_dir, manifest["artifact_id"]) is None
+
+    declared = json.loads(json.dumps(original))
+    declared["artifact_id"] = "art_" + "b" * 24
+    path.write_text(json.dumps(declared), encoding="utf-8")
+    assert artifacts.load_manifest(job_dir, manifest["artifact_id"]) is None
+
+    path.write_bytes(b"\xff\xfe\x00")
+    assert artifacts.load_manifest(job_dir, manifest["artifact_id"]) is None
+
+
+def test_pin_route_merges_concurrent_job_update(env, monkeypatch):
+    manifest = make_artifact(env, artifacts.build_spec(env.job, plan_for()))
+    client = TestClient(app.app)
+    original = artifacts.pin_artifact
+
+    def pin_then_concurrent(job_dir, artifact_id, pinned=True):
+        result = original(job_dir, artifact_id, pinned)
+        app.update_job(
+            env.job_id,
+            lambda job: job.setdefault("renders", {}).__setitem__(
+                "concurrent",
+                {"status": "ready", "path": "reel_15.mp4", "updated": 2.0},
+            ),
+        )
+        return result
+
+    monkeypatch.setattr(artifacts, "pin_artifact", pin_then_concurrent)
+    response = client.post(
+        f"/api/jobs/{env.job_id}/artifacts/{manifest['artifact_id']}/pin",
+    )
+    assert response.status_code == 200
+    job = app.load_job(env.job_id)
+    assert "concurrent" in job["renders"]
+    stored = artifacts.load_manifest(env.directory, manifest["artifact_id"])
+    assert stored["pinned"] is True
+
+
+def test_mutating_routes_never_save_a_stale_job_snapshot(env, monkeypatch):
+    manifest = make_artifact(env, artifacts.build_spec(env.job, plan_for()))
+    artifact_id = manifest["artifact_id"]
+    client = TestClient(app.app)
+
+    def forbidden(job):
+        raise AssertionError("save_job would overwrite concurrent updates")
+
+    monkeypatch.setattr(app, "save_job", forbidden)
+    assert client.post(
+        f"/api/jobs/{env.job_id}/artifacts/{artifact_id}/pin",
+    ).status_code == 200
+    assert client.post(
+        f"/api/jobs/{env.job_id}/artifacts/{artifact_id}/pin",
+        json={"pinned": False},
+    ).status_code == 200
+    assert client.delete(
+        f"/api/jobs/{env.job_id}/artifacts/{artifact_id}"
+    ).status_code == 200
+    assert client.post(
+        f"/api/jobs/{env.job_id}/clean", json={"profile": "renders"},
+    ).status_code == 200

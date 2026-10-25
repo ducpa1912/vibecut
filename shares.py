@@ -21,7 +21,6 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import re
 import secrets
 import threading
 import time
@@ -34,12 +33,15 @@ ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("VIBECUT_DATA", ROOT / "data")).expanduser().resolve()
 SHARES_PATH = DATA / "shares.json"
 LOCK = threading.RLock()
-TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,160}$")
 MAX_LABEL = 120
 ACTIVE = "active"
 EXPIRED = "expired"
 REVOKED = "revoked"
 MISSING = "missing"
+
+
+class ShareStoreError(RuntimeError):
+    """The share store exists but cannot be read with confidence."""
 
 
 def _path(value: str | Path | None = None) -> Path:
@@ -62,20 +64,31 @@ def _locked(path: Path):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _read_unlocked(path: Path) -> dict:
+def _read_unlocked(path: Path, strict: bool = False) -> dict:
+    if not path.exists():
+        return {}
     if not path.is_file():
+        if strict:
+            raise ShareStoreError("The review share store is not a file.")
         return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        if strict:
+            raise ShareStoreError("The review share store is unreadable.") from exc
         return {}
     if not isinstance(value, dict):
+        if strict:
+            raise ShareStoreError("The review share store is not a JSON object.")
         return {}
-    return {
-        str(token): record
-        for token, record in value.items()
-        if isinstance(record, dict)
-    }
+    records: dict = {}
+    for token, record in value.items():
+        if not isinstance(record, dict):
+            if strict:
+                raise ShareStoreError("The review share store has an invalid record.")
+            continue
+        records[str(token)] = record
+    return records
 
 
 def _atomic_save_unlocked(path: Path, records: dict) -> None:
@@ -99,10 +112,10 @@ def _atomic_save_unlocked(path: Path, records: dict) -> None:
         pass
 
 
-def load(path: str | Path | None = None) -> dict:
+def load(path: str | Path | None = None, *, strict: bool = True) -> dict:
     target = _path(path)
     with _locked(target):
-        return _read_unlocked(target)
+        return _read_unlocked(target, strict=strict)
 
 
 def save(records: dict, path: str | Path | None = None) -> dict:
@@ -218,20 +231,25 @@ def create(
     }
     target = _path(path)
     with _locked(target):
-        records = _read_unlocked(target)
+        records = _read_unlocked(target, strict=True)
         token = _new_token(records)
         records[token] = record
         _atomic_save_unlocked(target, records)
     return token, _record(record, token)
 
 
-def get(token: str, path: str | Path | None = None) -> dict | None:
+def get(
+    token: str,
+    path: str | Path | None = None,
+    *,
+    strict: bool = True,
+) -> dict | None:
     token = str(token or "")
     if not token:
         return None
     target = _path(path)
     with _locked(target):
-        record = _read_unlocked(target).get(token)
+        record = _read_unlocked(target, strict=strict).get(token)
     if record is None:
         return None
     return _record(record, token)
@@ -253,10 +271,11 @@ def list_records(
     *,
     include_tokens: bool = False,
     now: float | None = None,
+    strict: bool = True,
 ) -> list[dict]:
     target = _path(path)
     with _locked(target):
-        records = _read_unlocked(target)
+        records = _read_unlocked(target, strict=strict)
     rows: list[dict] = []
     for token, record in records.items():
         item = _record(record, token)
@@ -279,7 +298,7 @@ def patch(
     target = _path(path)
     now = round(time.time() if now is None else float(now), 3)
     with _locked(target):
-        records = _read_unlocked(target)
+        records = _read_unlocked(target, strict=True)
         record = records.get(token)
         if record is None:
             return None
@@ -318,7 +337,7 @@ def bind_artifact(
     token = str(token or "")
     target = _path(path)
     with _locked(target):
-        records = _read_unlocked(target)
+        records = _read_unlocked(target, strict=True)
         record = records.get(token)
         if record is None:
             return None
@@ -349,7 +368,7 @@ def delete(token: str, path: str | Path | None = None) -> bool:
     token = str(token or "")
     target = _path(path)
     with _locked(target):
-        records = _read_unlocked(target)
+        records = _read_unlocked(target, strict=True)
         if token not in records:
             return False
         records.pop(token, None)
@@ -362,9 +381,12 @@ def active_records(
     *,
     job_id: str | None = None,
     now: float | None = None,
+    strict: bool = True,
 ) -> list[dict]:
     return [
-        item for item in list_records(path, include_tokens=True, now=now)
+        item for item in list_records(
+            path, include_tokens=True, now=now, strict=strict,
+        )
         if item.get("status") == ACTIVE
         and (job_id is None or item.get("job_id") == job_id)
     ]
@@ -375,10 +397,13 @@ def active_artifact_ids(
     *,
     job_id: str | None = None,
     now: float | None = None,
+    strict: bool = True,
 ) -> set[str]:
     return {
         str(item["artifact_id"])
-        for item in active_records(path, job_id=job_id, now=now)
+        for item in active_records(
+            path, job_id=job_id, now=now, strict=strict,
+        )
         if item.get("artifact_id")
     }
 
@@ -388,9 +413,12 @@ def active_legacy_targets(
     *,
     job_id: str | None = None,
     now: float | None = None,
+    strict: bool = True,
 ) -> list[tuple[int, str]]:
     result: list[tuple[int, str]] = []
-    for item in active_records(path, job_id=job_id, now=now):
+    for item in active_records(
+        path, job_id=job_id, now=now, strict=strict,
+    ):
         if item.get("artifact_id"):
             continue
         try:
