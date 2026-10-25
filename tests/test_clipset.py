@@ -428,6 +428,12 @@ def test_selection_v2_prompt_exclusions_and_evidence():
     assert selection.parse_exclusions(
         "no politics but make it funny"
     ) == ["politics"]
+    assert selection.parse_exclusions("no show") == ["show"]
+    assert selection.parse_exclusions("no use") == ["use"]
+    assert selection.parse_exclusions(
+        "", ["show", "tell", "use", "include"]
+    ) == ["show", "tell", "use", "include"]
+    assert selection.parse_exclusions("do not include intro") == ["intro"]
     scenes = make_scenes(150)
     story = _ranked_story(scenes)
     clean = copy.deepcopy(story)

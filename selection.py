@@ -33,7 +33,7 @@ _MARKER = (
 _MARKER_RE = re.compile(rf"(?i)\b{_MARKER}\b")
 _OPTIONAL_LEAD = re.compile(
     r"(?i)^(?:any|more|the|a|an|of|about|on|with|use|using|include|including|"
-    r"mention|mentions|talk about|anything about)\b[\s:,-]*"
+    r"mention|mentions|talk about|anything about)\b[\s:,-]+"
 )
 _BAD_TERMS = {
     "more than", "less than", "than", "only", "just", "please", "anything",
@@ -81,16 +81,27 @@ def parse_exclusions(prompt: str = "", explicit: Iterable[str] | None = None) ->
         key = value.casefold()
         if key in _BAD_TERMS or key in seen:
             return
-        if re.match(
-            r"^(?:than|more than|less than|fewer than|"
-            r"make|use|keep|add|include|write|create|give|show|tell)\b",
-            key,
-        ):
+        if re.match(r"^(?:than|more than|less than|fewer than)\b", key):
             return
         if re.fullmatch(r"[\d\s/.-]+", value):
             return
         seen.add(key)
         terms.append(value)
+
+    def add_list(parts: list[str]) -> None:
+        for index, part in enumerate(parts):
+            value = _clean(part)
+            key = value.casefold()
+            if (
+                index > 0
+                and len(key.split()) > 1
+                and re.match(
+                    r"^(?:make|use|keep|add|include|write|create|give|show|tell)\b",
+                    key,
+                )
+            ):
+                continue
+            add(value)
 
     for item in explicit or []:
         add(str(item))
@@ -108,8 +119,7 @@ def parse_exclusions(prompt: str = "", explicit: Iterable[str] | None = None) ->
             if not_only:
                 continuation = True
                 for group in not_only.groups():
-                    for part in re.split(r"\s+(?:and|or)\s+", group):
-                        add(part)
+                    add_list(re.split(r"\s+(?:and|or)\s+", group))
                 continue
             matches = list(_MARKER_RE.finditer(clause))
             if matches:
@@ -123,8 +133,7 @@ def parse_exclusions(prompt: str = "", explicit: Iterable[str] | None = None) ->
                         previous = tail
                         tail = _OPTIONAL_LEAD.sub("", tail).strip()
                     tail = re.split(r"(?i)\s+(?:but|however|then)\s+", tail, maxsplit=1)[0]
-                    for part in re.split(r"\s+(?:and|or)\s+", tail):
-                        add(part)
+                    add_list(re.split(r"\s+(?:and|or)\s+", tail))
             elif continuation:
                 stripped = clause.strip()
                 if re.match(
@@ -135,8 +144,7 @@ def parse_exclusions(prompt: str = "", explicit: Iterable[str] | None = None) ->
                     continuation = False
                     continue
                 stripped = re.sub(r"(?i)^(?:or|and)\s+", "", stripped)
-                for part in re.split(r"\s+(?:and|or)\s+", stripped):
-                    add(part)
+                add_list(re.split(r"\s+(?:and|or)\s+", stripped))
             else:
                 free = re.search(r"(?i)\b([a-z][\w -]{1,36}?)[- ]free\b", clause)
                 if free:
