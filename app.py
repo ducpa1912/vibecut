@@ -36,13 +36,16 @@ import admin.routes as admin_routes
 import admin.store as admin_store
 import batch as batch_store
 import captions as caption_engine
+import clipset
 import disk
 import exports as cuts
 import history_store
 import job_queue
+import matrix
 import pipeline
 import render
 import routes_batches
+import selection
 import settings_store
 import shares
 import usage_store
@@ -4770,6 +4773,309 @@ def job_transcript(job_id: str) -> dict:
         "segments": segments,
         "count": len(segments),
     }
+
+
+# ---------------------------------------------------------------- clip sets
+
+
+class ClipSetCreateBody(BaseModel):
+    count: int = 3
+    min_s: float = clipset.MIN_STORY_S
+    max_s: float = clipset.MAX_STORY_S
+    locks: list[int] = []
+    ban_scenes: list[int] = []
+    order: str = "source"
+
+
+class ClipSetPatchBody(BaseModel):
+    stories: list[dict] | None = None
+    excluded_sentences: list[int] | None = None
+    locks: list[int] | None = None
+    ban_scenes: list[int] | None = None
+    bans: list[int] | None = None
+    order: str | None = None
+
+
+class ClipSetPlansBody(BaseModel):
+    target: int | None = None
+
+
+class SelectionV2Body(BaseModel):
+    set_id: str | None = None
+    prompt: str = ""
+    exclusions: list[str] = []
+    count: int | None = None
+
+
+class HookMatrixBody(BaseModel):
+    set_id: str | None = None
+    story_id: str | None = None
+    prompt: str = ""
+    exclusions: list[str] = []
+    count: int = 3
+
+
+def _clipset_job(job_id: str) -> dict:
+    job = load_job(job_id)
+    if job.get("status") != "ready" or not job.get("analysis"):
+        raise HTTPException(409, "Analysis is not ready yet.")
+    return job
+
+
+def _clipset_sentences(job: dict) -> tuple[list[dict], list[dict], list[dict] | None]:
+    scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    try:
+        transcript = pipeline.read_transcript(_job_dir(job["id"]))
+    except Exception:  # noqa: BLE001
+        transcript = None
+    return clipset.source_sentences(scenes, transcript), scenes, transcript
+
+
+def _clipset_pool(
+    job: dict,
+    record: dict | None = None,
+) -> tuple[list[dict], list[dict], list[dict] | None]:
+    """Keep stored sentence ids usable after a transcript cleanup."""
+    sentences, scenes, transcript = _clipset_sentences(job)
+    if record:
+        pool = {
+            int(sentence["id"]): sentence
+            for sentence in sentences
+            if sentence.get("id") is not None
+        }
+        for story in record.get("stories") or []:
+            for sentence in story.get("sentences") or []:
+                try:
+                    sentence_id = int(sentence.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                pool.setdefault(sentence_id, sentence)
+        sentences = [pool[key] for key in sorted(pool)]
+    return sentences, scenes, transcript
+
+
+def _clip_set_records(job: dict) -> list[dict]:
+    value = job.get("clip_sets") or []
+    if isinstance(value, dict):
+        return [record for record in value.values() if isinstance(record, dict)]
+    return [record for record in value if isinstance(record, dict)]
+
+
+def _clip_set_in_job(job: dict, set_id: str) -> dict:
+    for record in _clip_set_records(job):
+        if record.get("id") == set_id:
+            return record
+    raise HTTPException(404, "Clip set not found.")
+
+
+def _find_clip_set(set_id: str) -> tuple[dict, dict]:
+    for path in sorted(JOBS.glob("*/job.json")):
+        try:
+            job = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        for record in _clip_set_records(job):
+            if record.get("id") == set_id:
+                return job, record
+    raise HTTPException(404, "Clip set not found.")
+
+
+def _store_clip_set(job_id: str, record: dict) -> dict:
+    def mutate(job: dict) -> None:
+        current = job.get("clip_sets")
+        if isinstance(current, list):
+            job["clip_sets"] = [
+                item for item in current
+                if not (isinstance(item, dict) and item.get("id") == record["id"])
+            ]
+            job["clip_sets"].append(record)
+        else:
+            job["clip_sets"] = dict(current or {})
+            job["clip_sets"][record["id"]] = record
+
+    return update_job(job_id, mutate)
+
+
+def _new_clip_set(job: dict, body: ClipSetCreateBody) -> dict:
+    sentences, scenes, transcript = _clipset_sentences(job)
+    try:
+        document = clipset.build_clipset(
+            scenes,
+            transcript,
+            float((job.get("source") or {}).get("duration") or 0.0),
+            count=body.count,
+            min_s=body.min_s,
+            max_s=body.max_s,
+            locks=body.locks,
+            ban_scenes=body.ban_scenes,
+            order=body.order,
+        )
+    except clipset.ClipSetError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    now = round(time.time(), 3)
+    document.update({
+        "id": "cs_" + uuid.uuid4().hex[:12],
+        "job_id": job["id"],
+        "created": now,
+        "updated": now,
+    })
+    return document
+
+
+def _clip_set_context(
+    job: dict,
+    count: int = 3,
+) -> tuple[list[dict], list[dict], list[dict] | None, dict]:
+    sentences, scenes, transcript = _clipset_sentences(job)
+    document = clipset.build_clipset(
+        scenes,
+        transcript,
+        float((job.get("source") or {}).get("duration") or 0.0),
+        count=count,
+    )
+    return sentences, scenes, transcript, document
+
+
+def _patch_bans(body: ClipSetPatchBody) -> list[int] | None:
+    if body.ban_scenes is None and body.bans is None:
+        return None
+    values = list(body.ban_scenes or []) + list(body.bans or [])
+    return sorted({int(value) for value in values})
+
+
+@app.post("/api/jobs/{job_id}/clip-sets")
+def create_clip_set(job_id: str, body: ClipSetCreateBody) -> dict:
+    job = _clipset_job(job_id)
+    record = _new_clip_set(job, body)
+    _store_clip_set(job_id, record)
+    return {"clip_set": record}
+
+
+@app.get("/api/jobs/{job_id}/clip-sets")
+def list_clip_sets(job_id: str) -> dict:
+    job = load_job(job_id)
+    records = _clip_set_records(job)
+    records.sort(key=lambda record: (
+        -float(record.get("created") or 0.0),
+        str(record.get("id") or ""),
+    ))
+    return {"clip_sets": records, "count": len(records)}
+
+
+@app.patch("/clip-sets/{set_id}")
+def patch_clip_set(set_id: str, body: ClipSetPatchBody) -> dict:
+    job, record = _find_clip_set(set_id)
+    if job.get("status") != "ready" or not job.get("analysis"):
+        raise HTTPException(409, "Analysis is not ready yet.")
+    sentences, scenes, _ = _clipset_pool(job, record)
+    try:
+        updated = clipset.apply_edits(
+            record,
+            sentences,
+            scenes,
+            float((job.get("source") or {}).get("duration") or 0.0),
+            excluded_sentences=body.excluded_sentences,
+            locks=body.locks,
+            ban_scenes=_patch_bans(body),
+            story_patches=body.stories,
+            order=body.order,
+        )
+    except clipset.ClipSetError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    updated["id"] = record["id"]
+    updated["job_id"] = job["id"]
+    updated["created"] = record.get("created")
+    updated["updated"] = round(time.time(), 3)
+    _store_clip_set(job["id"], updated)
+    return {"clip_set": updated}
+
+
+@app.post("/clip-sets/{set_id}/plans")
+def clip_set_plans(
+    set_id: str,
+    body: ClipSetPlansBody | None = None,
+) -> dict:
+    job, record = _find_clip_set(set_id)
+    _, scenes, _ = _clipset_sentences(job)
+    target = None
+    if body is not None and body.target is not None:
+        target = int(body.target)
+        if target < 1 or target > 180:
+            raise HTTPException(400, "target must be between 1 and 180 seconds.")
+    plans = []
+    for story in record.get("stories") or []:
+        plan = clipset.story_to_plan(
+            story, scenes, target=target, set_id=set_id,
+        )
+        plans.append({
+            "story_id": story.get("id"),
+            "title": story.get("title"),
+            "plan": plan,
+        })
+    return {"plans": plans, "count": len(plans), "set_id": set_id}
+
+
+@app.post("/api/jobs/{job_id}/selection-v2")
+def selection_v2(job_id: str, body: SelectionV2Body) -> dict:
+    job = _clipset_job(job_id)
+    if body.count is not None and (body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES):
+        raise HTTPException(400, "count must be an integer from 3 to 6.")
+    scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    if body.set_id:
+        record = _clip_set_in_job(job, body.set_id)
+        stories = record.get("stories") or []
+        source = "clip_set"
+    else:
+        _, scenes, _, document = _clip_set_context(job, count=body.count or clipset.MAX_STORIES)
+        stories = document.get("stories") or []
+        source = "generated"
+    result = selection.rank_stories(
+        stories,
+        prompt=body.prompt,
+        exclusions=body.exclusions,
+        scenes=scenes,
+        source_duration=float((job.get("source") or {}).get("duration") or 0.0),
+        limit=body.count,
+    )
+    result["job_id"] = job_id
+    result["set_id"] = body.set_id
+    result["source"] = source
+    return result
+
+
+@app.post("/api/jobs/{job_id}/hook-matrix")
+def hook_matrix(job_id: str, body: HookMatrixBody) -> dict:
+    job = _clipset_job(job_id)
+    if body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES:
+        raise HTTPException(400, "count must be an integer from 3 to 6.")
+    scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    if body.set_id:
+        record = _clip_set_in_job(job, body.set_id)
+        stories = list(record.get("stories") or [])
+        source = "clip_set"
+    else:
+        _, scenes, _, document = _clip_set_context(job, count=body.count)
+        stories = list(document.get("stories") or [])
+        source = "generated"
+    if body.story_id:
+        stories = [story for story in stories if story.get("id") == body.story_id]
+        if not stories:
+            raise HTTPException(404, "Story not found in this clip set.")
+    if body.prompt or body.exclusions:
+        ranked = selection.rank_stories(
+            stories,
+            prompt=body.prompt,
+            exclusions=body.exclusions,
+            scenes=scenes,
+            source_duration=float((job.get("source") or {}).get("duration") or 0.0),
+        )
+        stories = ranked["ranked"]
+    result = matrix.build_matrix_for_stories(stories, scenes)
+    result["job_id"] = job_id
+    result["set_id"] = body.set_id
+    result["source"] = source
+    result["queued"] = 0
+    return result
 
 
 class VoiceBody(BaseModel):
