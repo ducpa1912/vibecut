@@ -375,9 +375,11 @@ Ingest options:
 ### 2. Analyze
 
 The job record moves through `queued`, `downloading`, `scanning`, `reading`,
-`scoring`, `ready`, or `failed`. Analysis runs on one analysis worker. URL
-downloads use a separate ingest pool. A restart marks interrupted jobs failed;
-completed analysis and renders stay on disk.
+`scoring`, `ready`, `failed`, `interrupted`, or `cancelled`. Analysis runs on
+one analysis worker. URL downloads use a separate ingest pool. A restart marks
+interrupted analysis and renders `interrupted`; completed analysis and renders
+stay on disk. Retry requeues analysis, and a render retry reuses cached
+segments instead of resuming a partial ffmpeg file.
 
 Progress, message, error, source metadata and analysis timings are written to
 `job.json`. The public job response redacts the local source path.
@@ -620,7 +622,22 @@ rejected. Review links are capability URLs and do not require the app token.
 | POST | `/api/jobs/{job_id}/scene/{scene_id}/read` | Deep-read a scene on demand; may re-plan. |
 | GET | `/api/jobs/{job_id}/thumb/{scene_id}` | Scene thumbnail. |
 | GET | `/api/jobs/{job_id}/media/{filename}` | Render MP4 or poster; filename must be `reel_*.mp4`/`.jpg`. |
+| POST | `/api/jobs/{job_id}/retry` | Idempotently retry interrupted/failed analysis or renders. |
 | DELETE | `/api/jobs/{job_id}` | Delete a finished job directory. |
+
+### Batches
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/batches` | Create and start a sequential batch; max 10 items. |
+| GET | `/api/batches` | Recent batch manifests with counts and progress. |
+| GET | `/api/batches/{batch_id}` | One batch manifest and item states. |
+| POST | `/api/batches/{batch_id}/resume` | Requeue paused work; done items and outputs stay. |
+| POST | `/api/batches/{batch_id}/cancel` | Cancel pending work and best-effort stop the active job. |
+
+Batch items take exactly one of `path` or `url` plus an `options` object.
+`options.targets` (`[15, 30, 60]`) queues renders after analysis; without it the
+item completes when analysis is ready.
 
 ### Cut planning and editing
 
@@ -964,8 +981,12 @@ publishing, team accounts, cloud sync, or hosted render farm is included.
 - The render cache identity covers target, quality, aspect, captions, audio mix
   and hook. Changing a platform preset on the same aspect should use **Render
   again** if you need a separately retained file.
-- Analysis and render pools are in-process. Restart marks interrupted work
-  failed; it does not resume a partial analysis or render.
+- Analysis and render pools are in-process. A restart marks interrupted work
+  `interrupted`; retry requeues it. Partial analysis and partial ffmpeg output
+  are not resumed, but finished render segments come from the cache.
+- Private batches run sequentially, at most ten items, under
+  `data/batches/<batch_id>.json`. A restart pauses an active batch and keeps
+  completed outputs; resume requeues the remaining work.
 - The app is localhost-first. `VIBECUT_TOKEN` is a shared secret, not a
   multi-user permission model.
 - Review links are bearer capabilities without expiry or revocation UI.
@@ -985,7 +1006,7 @@ git diff --check
 `requirements-dev.txt` adds `pytest` and `httpx2`, which Starlette's
 `TestClient` needs. Runtime installs do not need them.
 
-Current suite: **540 tests**. The optional beat-grid test skips when `librosa`
+Current suite: **553 tests**. The optional beat-grid test skips when `librosa`
 is not installed. The tests use temporary `VIBECUT_DATA` directories and do not
 require ffmpeg for the fast unit set. The dependency audit checks direct
 requirements, sidecar imports, and the installed yt-dlp floor. Two existing
