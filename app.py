@@ -34,11 +34,15 @@ import artifacts
 import audio
 import admin.routes as admin_routes
 import admin.store as admin_store
+import batch as batch_store
 import captions as caption_engine
+import disk
 import exports as cuts
 import history_store
+import job_queue
 import pipeline
 import render
+import routes_batches
 import settings_store
 import shares
 import usage_store
@@ -67,13 +71,19 @@ LOGGER = logging.getLogger("vibecut")
 JOBS.mkdir(parents=True, exist_ok=True)
 SOURCES = DATA / "sources"
 
-analysis_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibecut-analyze")
+analysis_pool = job_queue.Scheduler(
+    "analysis", max_workers=1, thread_name_prefix="vibecut-analyze",
+)
 ingest_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vibecut-ingest")
-render_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibecut-render")
+render_pool = job_queue.Scheduler(
+    "render", max_workers=1, thread_name_prefix="vibecut-render",
+)
 INGEST_CANCELS: dict[str, threading.Event] = {}
+ANALYSIS_CANCELS: dict[str, threading.Event] = {}
 RENDER_CANCELS: dict[tuple[str, str], threading.Event] = {}
 QUEUE_LOCK = threading.RLock()
 ACTIVE_RENDER = {"queued", "rendering", "cancelling"}
+RENDER_SUBMIT_LOCK = threading.RLock()
 
 
 def _fnv1a(text: str) -> str:
@@ -361,8 +371,29 @@ def public_status(job: dict) -> dict:
 # ---------------------------------------------------------------- workers
 
 
+class AnalysisCancelled(RuntimeError):
+    """Best-effort cancellation raised at analysis progress checkpoints."""
+
+
+def _analysis_cancel_event(job_id: str) -> threading.Event:
+    event = ANALYSIS_CANCELS.get(job_id)
+    if event is None:
+        event = threading.Event()
+        ANALYSIS_CANCELS[job_id] = event
+    return event
+
+
 def run_analysis(job_id: str) -> None:
+    event = _analysis_cancel_event(job_id)
     job = load_job(job_id)
+    if event.is_set():
+        job["status"] = "cancelled"
+        job["progress"] = 1.0
+        job["message"] = "Cancelled"
+        job["error"] = None
+        save_job(job)
+        ANALYSIS_CANCELS.pop(job_id, None)
+        return
     job["status"] = "scanning"
     job["progress"] = 0.01
     job["message"] = "Warming up"
@@ -370,6 +401,8 @@ def run_analysis(job_id: str) -> None:
     save_job(job)
 
     def progress(stage: str, fraction: float, message: str) -> None:
+        if event.is_set():
+            raise AnalysisCancelled("Analysis cancelled.")
         job["status"] = stage if stage in ACTIVE else "scoring"
         job["progress"] = round(max(0.01, min(0.995, fraction)), 4)
         job["message"] = message
@@ -387,6 +420,8 @@ def run_analysis(job_id: str) -> None:
             options,
             progress,
         )
+        if event.is_set():
+            raise AnalysisCancelled("Analysis cancelled.")
         analysis_delta = usage_store.delta(before_usage)
         if analysis_delta["calls"] or analysis_delta["audio_seconds"] or analysis_delta["chars"]:
             job.setdefault("usage", []).append({
@@ -401,6 +436,13 @@ def run_analysis(job_id: str) -> None:
         job["error"] = None
         save_job(job)
         LOGGER.info("job %s ready in %.1fs", job_id, analysis["elapsed"])
+    except AnalysisCancelled:
+        LOGGER.info("analysis cancelled for %s", job_id)
+        job["status"] = "cancelled"
+        job["progress"] = 1.0
+        job["message"] = "Cancelled"
+        job["error"] = None
+        save_job(job)
     except Exception as exc:  # noqa: BLE001
         LOGGER.exception("analysis failed for %s", job_id)
         job["status"] = "failed"
@@ -408,6 +450,9 @@ def run_analysis(job_id: str) -> None:
         job["message"] = "Analysis failed"
         job["error"] = str(exc)[:2400]
         save_job(job)
+    finally:
+        if ANALYSIS_CANCELS.get(job_id) is event:
+            ANALYSIS_CANCELS.pop(job_id, None)
 
 
 def _set_render(job_id: str, record_key: str, **values) -> dict:
@@ -945,6 +990,7 @@ def _run_url_ingest(
             raise IngestError("The provider did not produce a video file.")
         if downloaded.stat().st_size <= 0:
             raise IngestError("The provider returned an empty video file.")
+        disk.preflight(disk.estimate_upload(downloaded.stat().st_size), DATA)
 
         display, suffix = _ingest_names(result, downloaded)
         title = str(result.title or "").strip() or Path(display).stem
@@ -1764,6 +1810,7 @@ def run_render(
 
 def recover_jobs() -> None:
     RENDER_CANCELS.clear()
+    ANALYSIS_CANCELS.clear()
     fixed = 0
     for path in JOBS.glob("*/job.json"):
         try:
@@ -1772,14 +1819,14 @@ def recover_jobs() -> None:
                 changed = False
                 ingest_failed = False
                 if job.get("status") in LIVE:
-                    job["status"] = "failed"
+                    job["status"] = "interrupted"
                     job["message"] = "Interrupted"
                     job["error"] = "The server restarted while this job was running."
                     ingest = job.get("ingest")
                     if isinstance(ingest, dict):
                         ingest.update({
-                            "phase": "failed",
-                            "status": "failed",
+                            "phase": "interrupted",
+                            "status": "interrupted",
                             "progress": 1.0,
                             "message": "Interrupted",
                             "error": job["error"],
@@ -1788,14 +1835,26 @@ def recover_jobs() -> None:
                     changed = True
                 for record in (job.get("renders") or {}).values():
                     if record.get("status") in ACTIVE_RENDER:
-                        record["status"] = "failed"
+                        record["status"] = "interrupted"
                         record["message"] = "Interrupted"
                         record["error"] = "The server restarted while this reel was rendering."
                         changed = True
+                        artifact = str(record.get("artifact_id") or "")
+                        if artifacts.is_safe_artifact_id(artifact):
+                            try:
+                                artifacts.mark_status(
+                                    _job_dir(job["id"]), artifact, "interrupted",
+                                    error=record["error"],
+                                )
+                            except Exception:  # noqa: BLE001
+                                LOGGER.exception(
+                                    "could not interrupt artifact %s for %s",
+                                    artifact, job["id"],
+                                )
                         _record_render_history(
                             job["id"], record,
                             {"target": record.get("target"), "clips": []},
-                            record.get("audio"), "failed",
+                            record.get("audio"), "interrupted",
                             script_id=record.get("script_id"),
                             error=record["error"],
                             latency_ms=0,
@@ -1809,12 +1868,34 @@ def recover_jobs() -> None:
                             job["id"],
                             str(ingest.get("provider") or ""),
                             str(ingest.get("source_url") or ""),
-                            "failed",
+                            "interrupted",
                             error=job.get("error"),
                         )
                     fixed += 1
         except Exception:
             continue
+    try:
+        for job_dir in (path.parent for path in JOBS.glob("*/job.json")):
+            try:
+                for manifest in artifacts.list_manifests(job_dir):
+                    status = str(manifest.get("status") or "")
+                    if status not in {"queued", "rendering"}:
+                        continue
+                    artifacts.mark_status(
+                        job_dir, str(manifest.get("artifact_id") or ""),
+                        "interrupted",
+                        error="The server restarted while this reel was rendering.",
+                    )
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("could not recover artifacts in %s", job_dir)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("could not scan artifact manifests")
+    try:
+        paused_batches = batch_store.recover_batches(DATA)
+        if paused_batches:
+            LOGGER.info("paused %d interrupted batch(es)", paused_batches)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("could not recover batches")
     for tmp in JOBS.glob("*/renders/tmp_*"):
         shutil.rmtree(tmp, ignore_errors=True)
     if SOURCES.is_dir():
@@ -2401,6 +2482,12 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="VibeCut", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.include_router(admin_routes.router)
+app.include_router(routes_batches.router)
+
+
+@app.exception_handler(disk.InsufficientSpace)
+async def insufficient_space(_: Request, exc: disk.InsufficientSpace) -> JSONResponse:
+    return JSONResponse(status_code=412, content=exc.as_dict())
 
 
 # ---------------------------------------------------------------- auth
@@ -3429,6 +3516,7 @@ def review_captions(token: str) -> Response:
 class PathBody(BaseModel):
     path: str
     options: dict = {}
+    job_id: str | None = None
 
 
 class InspectBody(BaseModel):
@@ -3446,6 +3534,7 @@ class FromUrlBody(BaseModel):
     provider: str | None = None
     options: dict | None = None
     ingest_options: dict | None = None
+    job_id: str | None = None
 
 
 class PlanBody(BaseModel):
@@ -3600,6 +3689,51 @@ def inspect_url(body: UrlInspectBody) -> dict:
     }
 
 
+def _reuse_partial_job_dir(directory: Path) -> bool:
+    """Remove an empty or temp-only job dir left by a crash before job.json.
+
+    Returns True only when the directory is gone afterwards.  A directory that
+    already has job.json or unexpected files is never reused.
+    """
+    if not directory.exists():
+        return True
+    if (directory / "job.json").exists():
+        return False
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return False
+    for entry in entries:
+        if not (
+            entry.is_file()
+            and entry.name.startswith(".job.")
+            and entry.name.endswith(".tmp")
+        ):
+            return False
+        try:
+            entry.unlink()
+        except OSError:
+            return False
+    try:
+        directory.rmdir()
+    except OSError:
+        return False
+    return True
+
+
+def _requested_job_id(value: str | None) -> str:
+    """Use a caller-provided job id only when it is fresh and safe."""
+    if not value:
+        return uuid.uuid4().hex[:12]
+    job_id = str(value).strip().lower()
+    if not re.fullmatch(r"[a-f0-9]{12}", job_id):
+        raise HTTPException(400, "job_id must be 12 lowercase hex characters.")
+    directory = JOBS / job_id
+    if directory.exists() and not _reuse_partial_job_dir(directory):
+        raise HTTPException(409, "That job_id already exists.")
+    return job_id
+
+
 def _new_job(
     source_path: Path,
     name: str,
@@ -3631,6 +3765,7 @@ def _new_job(
         "schema_version": artifacts.SCHEMA_VERSION,
         "render_version": artifacts.RENDER_VERSION,
         "story_id": job_id,
+        "attempts": {"analysis": 0},
     }
     save_job(job)
     analysis_pool.submit(run_analysis, job_id)
@@ -3639,6 +3774,7 @@ def _new_job(
 
 @app.post("/api/jobs/upload")
 async def upload_job(
+    request: Request,
     file: UploadFile = File(...),
     options: str = Form("{}"),
 ) -> dict:
@@ -3646,6 +3782,18 @@ async def upload_job(
         parsed_options = clean_options(json.loads(options))
     except json.JSONDecodeError:
         parsed_options = clean_options({})
+
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > MAX_UPLOAD:
+        raise HTTPException(
+            413,
+            f"Upload is larger than the {MAX_UPLOAD / 1024 ** 3:.0f} GB limit.",
+        )
+    if declared:
+        disk.preflight(disk.estimate_upload(declared), DATA)
 
     original = Path(file.filename or "video.mp4").name
     suffix = Path(original).suffix.lower()
@@ -3657,6 +3805,7 @@ async def upload_job(
     SOURCES.mkdir(parents=True, exist_ok=True)
     temp = SOURCES / f".incoming-{uuid.uuid4().hex}{suffix}"
     total = 0
+    checked = 0
     try:
         with temp.open("wb") as output:
             while True:
@@ -3669,13 +3818,17 @@ async def upload_job(
                         413,
                         f"Upload is larger than the {MAX_UPLOAD / 1024 ** 3:.0f} GB limit.",
                     )
+                if total - checked >= 64 * 1024 ** 2:
+                    disk.preflight(disk.estimate_upload(total), DATA)
+                    checked = total
                 output.write(chunk)
+        disk.preflight(disk.estimate_upload(total), DATA)
         stored = store_source(temp, suffix, original)
         destination = link_source(stored, directory, suffix)
         meta = pipeline.probe(destination)
         job = _new_job(destination, original, meta, parsed_options, job_id=job_id)
         return {"id": job["id"], "status": job["status"]}
-    except HTTPException:
+    except (HTTPException, disk.InsufficientSpace):
         temp.unlink(missing_ok=True)
         shutil.rmtree(directory, ignore_errors=True)
         raise
@@ -3692,11 +3845,20 @@ def job_from_path(body: PathBody) -> dict:
     path = Path(body.path).expanduser()
     if not path.is_file():
         raise HTTPException(404, "File not found on this machine.")
+    disk.preflight(disk.estimate_path(path), DATA)
     try:
         meta = pipeline.probe(path)
     except pipeline.PipelineError as exc:
         raise HTTPException(400, str(exc)) from exc
-    job = _new_job(path.resolve(), path.name, meta, clean_options(body.options))
+    job_id = _requested_job_id(body.job_id)
+    try:
+        (JOBS / job_id).mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise HTTPException(409, "That job_id already exists.") from None
+    job = _new_job(
+        path.resolve(), path.name, meta, clean_options(body.options),
+        job_id=job_id,
+    )
     return {"id": job["id"], "status": job["status"]}
 
 
@@ -3704,6 +3866,7 @@ def job_from_path(body: PathBody) -> dict:
 def job_from_url(body: FromUrlBody) -> dict:
     try:
         url = _validate_remote_ingest_url(body.url)
+        disk.preflight(0, DATA)
         provider_settings = _ingest_provider_settings()
         order = _ingest_provider_order(url, body.provider, provider_settings)
         options = registry.options_from_settings(provider_settings, body.ingest_options)
@@ -3723,6 +3886,17 @@ def job_from_url(body: FromUrlBody) -> dict:
                 or "This link cannot be ingested."
             )
             raise HTTPException(400, str(detail))
+        hint = inspected.get("filesize") or inspected.get("size_bytes")
+        if hint is None:
+            meta_hint = inspected.get("meta")
+            if isinstance(meta_hint, dict):
+                hint = meta_hint.get("filesize") or meta_hint.get("size_bytes")
+        try:
+            hint = disk.size_hint(hint, label="URL size hint")
+        except disk.InvalidSize:
+            hint = None
+        if hint:
+            disk.preflight(disk.estimate_upload(hint), DATA)
     except IngestError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -3733,9 +3907,12 @@ def job_from_url(body: FromUrlBody) -> dict:
     download_order = [provider_id, *[item for item in order if item != provider_id]]
     chain = _ingest_provider_chain(provider_settings, download_order)
     analysis_options = clean_options(body.options)
-    job_id = uuid.uuid4().hex[:12]
+    job_id = _requested_job_id(body.job_id)
     directory = JOBS / job_id
-    directory.mkdir(parents=True, exist_ok=False)
+    try:
+        directory.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise HTTPException(409, "That job_id already exists.") from None
     now = round(time.time(), 3)
     label = str(getattr(provider, "label", "") or provider_id)
     job = {
@@ -3770,6 +3947,7 @@ def job_from_url(body: FromUrlBody) -> dict:
         "schema_version": artifacts.SCHEMA_VERSION,
         "render_version": artifacts.RENDER_VERSION,
         "story_id": job_id,
+        "attempts": {"analysis": 0},
     }
     save_job(job)
 
@@ -4947,7 +5125,7 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
             record = _queue_render(
                 job_id, fresh, plan, quality, aspect, encoder, captions,
                 audio_plan, bool(body.force), preset=preset, caption_margin=margin,
-                script_id=script_id,
+                script_id=script_id, check_space=True,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:
@@ -5360,15 +5538,14 @@ def _queue_render(
     preset: str | None = None,
     caption_margin: float = 0.075,
     script_id: str | None = None,
+    check_space: bool = False,
 ) -> dict:
-    # Reserve generations and write manifests serially so two force requests
-    # can never race to the same artifact id.
-    with QUEUE_LOCK:
-        current = load_job(job_id)
+    """Serialize check/write/submit so one record key cannot queue twice."""
+    with RENDER_SUBMIT_LOCK:
         return _queue_render_locked(
-            job_id, current, plan, quality, aspect, encoder, captions,
-            audio_plan, force, preset=preset,
-            caption_margin=caption_margin, script_id=script_id,
+            job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
+            force, preset=preset, caption_margin=caption_margin,
+            script_id=script_id, check_space=check_space,
         )
 
 
@@ -5385,6 +5562,34 @@ def _queue_render_locked(
     preset: str | None = None,
     caption_margin: float = 0.075,
     script_id: str | None = None,
+    check_space: bool = False,
+) -> dict:
+    # Reserve generations and write manifests serially so two force requests
+    # can never race to the same artifact id.
+    with QUEUE_LOCK:
+        current = load_job(job_id)
+        return _queue_render_locked_impl(
+            job_id, current, plan, quality, aspect, encoder, captions,
+            audio_plan, force, preset=preset,
+            caption_margin=caption_margin, script_id=script_id,
+            check_space=check_space,
+        )
+
+
+def _queue_render_locked_impl(
+    job_id: str,
+    job: dict,
+    plan: dict,
+    quality: str,
+    aspect: str,
+    encoder: str | None,
+    captions: bool,
+    audio_plan: dict | None,
+    force: bool,
+    preset: str | None = None,
+    caption_margin: float = 0.075,
+    script_id: str | None = None,
+    check_space: bool = False,
 ) -> dict:
     script_id = _valid_script_id(job_id, plan, script_id)
     target = int(plan["target"])
@@ -5421,7 +5626,7 @@ def _queue_render_locked(
         "nonce": time.time() if force else None,
     }, sort_keys=True).encode()).hexdigest()[:12]
 
-    existing = (job.get("renders") or {}).get(record_key)
+    existing = (load_job(job_id).get("renders") or {}).get(record_key)
     if existing and existing.get("status") in ACTIVE_RENDER:
         if existing.get("artifact_id") == artifact and not force:
             return existing
@@ -5476,6 +5681,15 @@ def _queue_render_locked(
         update_job(job_id, reuse)
         return reused
 
+    if check_space:
+        disk.preflight(disk.estimate_render(target, quality, aspect), DATA)
+    try:
+        attempts = int((existing or {}).get("attempts") or 0)
+    except (TypeError, ValueError):
+        attempts = 0
+    if existing and existing.get("status") in {"failed", "interrupted", "cancelled"}:
+        attempts += 1
+
     if manifest is None:
         manifest = artifacts.make_manifest(
             job_id, spec, status="queued", record_key=record_key,
@@ -5513,6 +5727,14 @@ def _queue_render_locked(
         "script_id": script_id,
         "artifact_id": artifact,
         "generation": generation,
+        "attempts": attempts,
+        "plan_snapshot": {
+            "target": target,
+            "hook_scene": plan.get("hook_scene"),
+            "order": plan.get("order") or "source",
+            "auto": bool(plan.get("auto", True)),
+            "clips": plan.get("clips") or [],
+        },
     }
 
     def mutate(value: dict) -> None:
@@ -5537,6 +5759,7 @@ def _queue_render_locked(
         run_render, job_id, target, plan, key, quality, aspect, encoder, captions,
         audio_plan, audio_sig, preset, caption_margin, script_id, artifact,
         generation, prepared_clips, prepared_total,
+        task_kind="render", task_key=f"render:{job_id}:{record_key}",
     )
     return record
 
@@ -5571,7 +5794,7 @@ def start_render(job_id: str, body: PlanBody) -> dict:
     record = _queue_render(
         job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
         bool(body.force), preset=preset, caption_margin=margin,
-        script_id=_body_script_id(body, audio_plan),
+        script_id=_body_script_id(body, audio_plan), check_space=True,
     )
     return {"render": _public_render(job_id, record)}
 
@@ -5590,7 +5813,7 @@ def start_render_all(job_id: str, body: PlanBody) -> dict:
             record = _queue_render(
                 job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
                 bool(body.force), preset=preset, caption_margin=margin,
-                script_id=script_id,
+                script_id=script_id, check_space=True,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:

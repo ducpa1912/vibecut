@@ -1160,6 +1160,8 @@ def test_beat_sync_cues_follow_final_frame_snapped_clips(env, monkeypatch):
     assert grid_calls["count"] == 1
     assert [round(clip["duration"], 3) for clip in submitted[0][1][-2]] == [3.75, 4.0]
     fn, args, kwargs = submitted[0]
+    kwargs.pop("task_kind", None)
+    kwargs.pop("task_key", None)
     fn(*args, **kwargs)
 
     assert [round(clip["duration"], 3) for clip in captured["clips"]] == [3.75, 4.0]
@@ -1234,6 +1236,8 @@ def test_caption_count_agrees_when_captions_disabled(env, monkeypatch):
         env.job_id, job, plan, "final", "9:16", None, False, None, False,
     )
     fn, args, kwargs = submitted[0]
+    kwargs.pop("task_kind", None)
+    kwargs.pop("task_key", None)
     fn(*args, **kwargs)
 
     loaded = app.load_job(env.job_id)

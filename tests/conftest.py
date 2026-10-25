@@ -19,3 +19,18 @@ def reset_cloud_circuits():
     yield
     audio.clear_openrouter_quarantine()
     audio.reset_provider_breaker()
+
+
+@pytest.fixture(autouse=True)
+def generous_test_volume(monkeypatch):
+    """Keep tests independent of the workstation's real free space.
+
+    Disk-specific tests override ``disk.usage`` locally to exercise 412s.
+    """
+    import disk
+
+    gib = 1024 ** 3
+    monkeypatch.setattr(
+        disk, "usage", lambda path: (100 * gib, 10 * gib, 90 * gib)
+    )
+    yield
