@@ -226,6 +226,7 @@ def _retry_job(app, job: dict) -> tuple[bool, int]:
     if claim["error"]:
         raise HTTPException(409, claim["error"])
     if claim["analysis"]:
+        app.ANALYSIS_CANCELS.pop(job_id, None)
         app.analysis_pool.submit(app.run_analysis, job_id)
         return True, 0
     if claim["renders"]:
@@ -359,6 +360,9 @@ class _AppBackend:
                 app.cancel_url_ingest(job_id)
             except Exception:  # noqa: BLE001
                 LOGGER.exception("could not cancel URL ingest for %s", job_id)
+
+        if str(job.get("status") or "") in app.LIVE:
+            app._analysis_cancel_event(job_id).set()
 
         analysis_find = getattr(app.analysis_pool, "find_key", None)
         analysis = analysis_find("analysis", job_id) if analysis_find else None

@@ -1007,7 +1007,7 @@ git diff --check
 `requirements-dev.txt` adds `pytest` and `httpx2`, which Starlette's
 `TestClient` needs. Runtime installs do not need them.
 
-Current suite: **602 tests**. The optional beat-grid test skips when `librosa`
+Current suite: **606 tests**. The optional beat-grid test skips when `librosa`
 is not installed. The tests use temporary `VIBECUT_DATA` directories and do not
 require ffmpeg for the fast unit set. The dependency audit checks direct
 requirements, sidecar imports, and the installed yt-dlp floor. Two existing

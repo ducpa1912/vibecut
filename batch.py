@@ -348,6 +348,7 @@ class BatchManager:
         self._threads: dict[str, threading.Thread] = {}
         self._running: set[str] = set()
         self._cancels: dict[str, threading.Event] = {}
+        self._pauses: dict[str, threading.Event] = {}
 
     # -- storage --------------------------------------------------------
     def _path(self, batch_id: str) -> Path:
@@ -488,6 +489,8 @@ class BatchManager:
                 raise BatchConflict("This batch was cancelled.")
             if batch.get("status") == "done":
                 return public_batch(batch)
+            if batch.get("status") == "paused":
+                return public_batch(batch)
             if not any(item.get("state") == "queued" for item in batch.get("items") or []):
                 if batch.get("status") in {"failed", "paused"}:
                     # Nothing safe left to run.
@@ -500,6 +503,7 @@ class BatchManager:
             self.save(batch)
             event = threading.Event()
             self._cancels[batch_id] = event
+            self._pauses[batch_id] = threading.Event()
             thread = threading.Thread(
                 target=self._run_batch,
                 args=(batch_id, event),
@@ -512,22 +516,35 @@ class BatchManager:
         return self.get(batch_id)
 
     def resume(self, batch_id: str) -> dict:
-        """Requeue paused work and start the runner.  Done items stay done."""
+        """Requeue paused work and start or continue the runner."""
         with self._lock:
             batch = self.load(batch_id)
             thread = self._threads.get(batch_id)
-            if batch_id in self._running and thread and thread.is_alive():
+            active = batch_id in self._running and thread and thread.is_alive()
+            if active:
+                if batch.get("status") != "paused":
+                    return public_batch(batch)
+                pause = self._pauses.get(batch_id)
+                if pause is not None:
+                    pause.clear()
+                has_running = any(
+                    item.get("state") == "running"
+                    for item in batch.get("items") or []
+                )
+                batch["status"] = "running" if has_running else "queued"
+                batch["message"] = "Resuming after current item"
+                batch["error"] = None
+                batch["finished"] = None
+                self.save(batch)
                 return public_batch(batch)
             if batch.get("status") == "cancelled":
                 raise BatchConflict("This batch was cancelled; create a new batch.")
-            requeued = False
             for item in batch.get("items") or []:
                 if item.get("state") in {"paused", "running"}:
                     item["state"] = "queued"
                     item["message"] = "Queued for resume"
                     item["error"] = None
                     item["finished"] = None
-                    requeued = True
             if not any(item.get("state") == "queued" for item in batch.get("items") or []):
                 if all(
                     item.get("state") in TERMINAL_ITEM_STATES
@@ -548,9 +565,15 @@ class BatchManager:
             batch = self.load(batch_id)
             if batch.get("status") in {"done", "failed", "cancelled", "paused"}:
                 return public_batch(batch)
+            pause = self._pauses.get(batch_id)
+            if pause is None:
+                pause = threading.Event()
+                self._pauses[batch_id] = pause
+            pause.set()
             batch["status"] = "paused"
             batch["message"] = "Paused"
             batch["error"] = None
+            batch["current"] = None
             self.save(batch)
         return self.get(batch_id)
 
@@ -563,6 +586,9 @@ class BatchManager:
             event = self._cancels.get(batch_id)
             if event is not None:
                 event.set()
+            pause = self._pauses.get(batch_id)
+            if pause is not None:
+                pause.clear()
             now = _now()
             active_jobs: list[str] = []
             for item in batch.get("items") or []:
@@ -592,12 +618,18 @@ class BatchManager:
     def _run_batch(self, batch_id: str, event: threading.Event) -> None:
         try:
             while True:
+                pause = self._pauses.get(batch_id)
+                if pause is not None and pause.is_set():
+                    while pause.is_set() and not event.is_set():
+                        time.sleep(self.poll_interval)
+                    if event.is_set():
+                        break
                 with self._lock:
                     batch = self.load(batch_id)
                     if batch.get("status") == "cancelled" or event.is_set():
                         break
                     if batch.get("status") == "paused":
-                        return
+                        continue
                     item = next(
                         (
                             value for value in batch.get("items") or []
@@ -671,6 +703,7 @@ class BatchManager:
                 self._running.discard(batch_id)
                 self._threads.pop(batch_id, None)
                 self._cancels.pop(batch_id, None)
+                self._pauses.pop(batch_id, None)
 
     def _run_item(self, batch_id: str, item_id: str, event: threading.Event) -> dict:
         backend = self.backend

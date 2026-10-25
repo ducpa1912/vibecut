@@ -195,7 +195,7 @@ class Scheduler:
             if key is not None:
                 existing = self._tasks.get(self._active_keys.get((kind, key), ""))
                 if existing is not None and existing.state in {
-                    QueueState.QUEUED, QueueState.RUNNING, QueueState.INTERRUPTED,
+                    QueueState.QUEUED, QueueState.RUNNING,
                 }:
                     return existing
             if self._closed:
@@ -387,6 +387,7 @@ class Scheduler:
                 task.state = QueueState.INTERRUPTED
                 task.error = "Interrupted."
                 task.finished = time.time()
+                self._release_key(task)
                 task._done.set()
                 return True
             return False
@@ -416,12 +417,10 @@ class Scheduler:
         with self._lock:
             for task in self._tasks.values():
                 if task.state in {QueueState.QUEUED, QueueState.RUNNING}:
-                    was_running = task.state is QueueState.RUNNING
                     task.state = QueueState.INTERRUPTED
                     task.error = reason
                     task.finished = time.time()
-                    if not was_running:
-                        self._release_key(task)
+                    self._release_key(task)
                     task._done.set()
                     changed += 1
         return changed
@@ -441,6 +440,7 @@ class Scheduler:
                     task.state = QueueState.INTERRUPTED
                     task.error = "Scheduler shut down."
                     task.finished = time.time()
+                    self._release_key(task)
                     task._done.set()
         try:
             self._executor.shutdown(wait=wait, cancel_futures=True)

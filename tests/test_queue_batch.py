@@ -289,6 +289,25 @@ def test_scheduler_shutdown_marks_pending_work():
     gate.set()
 
 
+def test_scheduler_interrupted_task_does_not_block_same_key():
+    scheduler = job_queue.Scheduler("interrupted", max_workers=1)
+    gate = threading.Event()
+    first = scheduler.submit(
+        lambda: gate.wait(2), task_kind="analysis", task_key="job-a",
+    )
+    _wait(lambda: first.state is job_queue.QueueState.RUNNING)
+    scheduler.interrupt_all("restart")
+    assert first.state is job_queue.QueueState.INTERRUPTED
+    replacement = scheduler.submit(
+        lambda: "replacement", task_kind="analysis", task_key="job-a",
+    )
+    assert replacement.id != first.id
+    assert replacement.state is job_queue.QueueState.QUEUED
+    gate.set()
+    assert replacement.wait(2)
+    assert replacement.state is job_queue.QueueState.DONE
+
+
 def test_scheduler_cancel_key_cancels_queued_work():
     scheduler = job_queue.Scheduler("cancel", max_workers=1)
     gate = threading.Event()
@@ -443,6 +462,39 @@ def test_batch_pause_endpoint_stops_runner(data_env, monkeypatch):
                 client.get(f"/api/batches/{batch_id}").json()["status"] == "done"
             )
         )
+
+
+def test_batch_immediate_resume_after_pause_continues(data_env, monkeypatch):
+    backend = BlockingBackend("/tmp/one.mp4")
+    monkeypatch.setattr(routes_batches, "_backend", lambda: backend)
+    with TestClient(app.app) as client:
+        response = client.post(
+            "/api/batches",
+            json={
+                "name": "pause resume race",
+                "items": [{"path": "/tmp/one.mp4"}, {"path": "/tmp/two.mp4"}],
+                "max": 10,
+            },
+        )
+        assert response.status_code == 200
+        batch_id = response.json()["id"]
+        assert backend.entered.wait(2)
+        paused = client.post(f"/api/batches/{batch_id}/pause")
+        assert paused.json()["status"] == "paused"
+        assert paused.json()["current"] is None
+        resumed = client.post(f"/api/batches/{batch_id}/resume")
+        assert resumed.status_code == 200
+        assert resumed.json()["status"] in {"running", "queued"}
+        backend.release.set()
+        final = _wait(
+            lambda: (
+                client.get(f"/api/batches/{batch_id}").json()
+                if client.get(f"/api/batches/{batch_id}").json()["status"] == "done"
+                else None
+            )
+        )
+    assert backend.created == ["/tmp/one.mp4", "/tmp/two.mp4"]
+    assert all(item["state"] == "done" for item in final["items"])
 
 
 def test_batch_deterministic_job_id_survives_create_crash(tmp_path):
@@ -665,6 +717,86 @@ def test_path_job_honors_requested_job_id(data_env, monkeypatch):
     assert first.status_code == 200
     assert first.json()["id"] == "abcdef123456"
     assert second.status_code == 409
+
+
+def test_partial_deterministic_job_dir_is_reused(data_env, monkeypatch):
+    source = data_env / "source.mp4"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(
+        app.pipeline, "probe",
+        lambda path: {"duration": 12.0, "width": 1080, "height": 1920, "fps": 30.0},
+    )
+    monkeypatch.setattr(app, "analysis_pool", CapturePool())
+    empty_id = "abc123abc123"
+    (app.JOBS / empty_id).mkdir()
+    temp_id = "def456def456"
+    temp_dir = app.JOBS / temp_id
+    temp_dir.mkdir()
+    (temp_dir / ".job.deadbeef.tmp").write_text("{}", encoding="utf-8")
+    blocked_id = "aaa111bbb222"
+    blocked_dir = app.JOBS / blocked_id
+    blocked_dir.mkdir()
+    (blocked_dir / "unexpected.txt").write_text("keep", encoding="utf-8")
+    with TestClient(app.app) as client:
+        empty_response = client.post(
+            "/api/jobs/path",
+            json={"path": str(source), "job_id": empty_id},
+        )
+        temp_response = client.post(
+            "/api/jobs/path",
+            json={"path": str(source), "job_id": temp_id},
+        )
+        blocked_response = client.post(
+            "/api/jobs/path",
+            json={"path": str(source), "job_id": blocked_id},
+        )
+    assert empty_response.status_code == 200
+    assert temp_response.status_code == 200
+    assert blocked_response.status_code == 409
+    assert (app.JOBS / empty_id / "job.json").is_file()
+    assert (app.JOBS / temp_id / "job.json").is_file()
+    assert not any((app.JOBS / temp_id).glob(".job.*.tmp"))
+    assert (blocked_dir / "unexpected.txt").read_text() == "keep"
+
+
+def test_analysis_cancel_event_stops_progress(data_env, monkeypatch):
+    source = data_env / "source.mp4"
+    source.write_bytes(b"x")
+    write_job(
+        app.JOBS,
+        "analysis-cancel",
+        status="scanning",
+        analysis=None,
+        source={"path": str(source), "name": "source.mp4"},
+    )
+    started = threading.Event()
+    calls = {"count": 0}
+
+    def slow_analysis(path, meta, job_dir, options, progress):
+        started.set()
+        for index in range(100):
+            calls["count"] += 1
+            progress("scanning", index / 100.0, "working")
+            time.sleep(0.01)
+        return {"scene_count": 0, "scenes": [], "hook_scene": None, "elapsed": 1}
+
+    monkeypatch.setattr(app.pipeline, "analyze_source", slow_analysis)
+    pool = job_queue.Scheduler("analysis-cancel", max_workers=1)
+    monkeypatch.setattr(app, "analysis_pool", pool)
+    task = pool.submit(app.run_analysis, "analysis-cancel")
+    assert started.wait(2)
+    routes_batches._AppBackend().cancel_job("analysis-cancel")
+    job = _wait(
+        lambda: (
+            app.load_job("analysis-cancel")
+            if app.load_job("analysis-cancel")["status"] == "cancelled"
+            else None
+        )
+    )
+    assert job["status"] == "cancelled"
+    assert calls["count"] < 100
+    _wait(lambda: "analysis-cancel" not in app.ANALYSIS_CANCELS or None)
+    assert task.state is job_queue.QueueState.INTERRUPTED
 
 
 def test_render_submission_is_atomic_for_same_identity(data_env, monkeypatch):

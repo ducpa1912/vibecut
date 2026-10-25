@@ -79,6 +79,7 @@ render_pool = job_queue.Scheduler(
     "render", max_workers=1, thread_name_prefix="vibecut-render",
 )
 INGEST_CANCELS: dict[str, threading.Event] = {}
+ANALYSIS_CANCELS: dict[str, threading.Event] = {}
 RENDER_CANCELS: dict[tuple[str, str], threading.Event] = {}
 ACTIVE_RENDER = {"queued", "rendering", "cancelling"}
 RENDER_SUBMIT_LOCK = threading.RLock()
@@ -369,8 +370,29 @@ def public_status(job: dict) -> dict:
 # ---------------------------------------------------------------- workers
 
 
+class AnalysisCancelled(RuntimeError):
+    """Best-effort cancellation raised at analysis progress checkpoints."""
+
+
+def _analysis_cancel_event(job_id: str) -> threading.Event:
+    event = ANALYSIS_CANCELS.get(job_id)
+    if event is None:
+        event = threading.Event()
+        ANALYSIS_CANCELS[job_id] = event
+    return event
+
+
 def run_analysis(job_id: str) -> None:
+    event = _analysis_cancel_event(job_id)
     job = load_job(job_id)
+    if event.is_set():
+        job["status"] = "cancelled"
+        job["progress"] = 1.0
+        job["message"] = "Cancelled"
+        job["error"] = None
+        save_job(job)
+        ANALYSIS_CANCELS.pop(job_id, None)
+        return
     job["status"] = "scanning"
     job["progress"] = 0.01
     job["message"] = "Warming up"
@@ -378,6 +400,8 @@ def run_analysis(job_id: str) -> None:
     save_job(job)
 
     def progress(stage: str, fraction: float, message: str) -> None:
+        if event.is_set():
+            raise AnalysisCancelled("Analysis cancelled.")
         job["status"] = stage if stage in ACTIVE else "scoring"
         job["progress"] = round(max(0.01, min(0.995, fraction)), 4)
         job["message"] = message
@@ -395,6 +419,8 @@ def run_analysis(job_id: str) -> None:
             options,
             progress,
         )
+        if event.is_set():
+            raise AnalysisCancelled("Analysis cancelled.")
         analysis_delta = usage_store.delta(before_usage)
         if analysis_delta["calls"] or analysis_delta["audio_seconds"] or analysis_delta["chars"]:
             job.setdefault("usage", []).append({
@@ -409,6 +435,13 @@ def run_analysis(job_id: str) -> None:
         job["error"] = None
         save_job(job)
         LOGGER.info("job %s ready in %.1fs", job_id, analysis["elapsed"])
+    except AnalysisCancelled:
+        LOGGER.info("analysis cancelled for %s", job_id)
+        job["status"] = "cancelled"
+        job["progress"] = 1.0
+        job["message"] = "Cancelled"
+        job["error"] = None
+        save_job(job)
     except Exception as exc:  # noqa: BLE001
         LOGGER.exception("analysis failed for %s", job_id)
         job["status"] = "failed"
@@ -416,6 +449,9 @@ def run_analysis(job_id: str) -> None:
         job["message"] = "Analysis failed"
         job["error"] = str(exc)[:2400]
         save_job(job)
+    finally:
+        if ANALYSIS_CANCELS.get(job_id) is event:
+            ANALYSIS_CANCELS.pop(job_id, None)
 
 
 def _set_render(job_id: str, record_key: str, **values) -> dict:
@@ -1761,6 +1797,7 @@ def run_render(
 
 def recover_jobs() -> None:
     RENDER_CANCELS.clear()
+    ANALYSIS_CANCELS.clear()
     fixed = 0
     for path in JOBS.glob("*/job.json"):
         try:
@@ -3630,6 +3667,38 @@ def inspect_url(body: UrlInspectBody) -> dict:
     }
 
 
+def _reuse_partial_job_dir(directory: Path) -> bool:
+    """Remove an empty or temp-only job dir left by a crash before job.json.
+
+    Returns True only when the directory is gone afterwards.  A directory that
+    already has job.json or unexpected files is never reused.
+    """
+    if not directory.exists():
+        return True
+    if (directory / "job.json").exists():
+        return False
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return False
+    for entry in entries:
+        if not (
+            entry.is_file()
+            and entry.name.startswith(".job.")
+            and entry.name.endswith(".tmp")
+        ):
+            return False
+        try:
+            entry.unlink()
+        except OSError:
+            return False
+    try:
+        directory.rmdir()
+    except OSError:
+        return False
+    return True
+
+
 def _requested_job_id(value: str | None) -> str:
     """Use a caller-provided job id only when it is fresh and safe."""
     if not value:
@@ -3637,7 +3706,8 @@ def _requested_job_id(value: str | None) -> str:
     job_id = str(value).strip().lower()
     if not re.fullmatch(r"[a-f0-9]{12}", job_id):
         raise HTTPException(400, "job_id must be 12 lowercase hex characters.")
-    if (JOBS / job_id).exists():
+    directory = JOBS / job_id
+    if directory.exists() and not _reuse_partial_job_dir(directory):
         raise HTTPException(409, "That job_id already exists.")
     return job_id
 
