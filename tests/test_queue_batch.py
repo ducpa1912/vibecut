@@ -1334,9 +1334,11 @@ def test_artifact_backed_render_retry_reuses_artifact(data_env, monkeypatch):
     record = app.load_job("art-retry")["renders"]["30"]
     assert record["status"] == "queued"
     assert record["artifact_id"] == artifact
+    assert record["generation"] == 0
     assert artifact in submitted[0][0]
     stored = artifacts.load_manifest(app._job_dir("art-retry"), artifact)
     assert stored["status"] == "queued"
+    assert stored["spec"]["generation"] == 0
 
 
 def test_legacy_job_loads_without_new_fields(data_env):
