@@ -842,6 +842,7 @@ def test_snap_clips_guard_and_apply():
 def test_beat_grid_click_track(tmp_path):
     import subprocess
 
+    pytest.importorskip("librosa")
     path = tmp_path / "click.wav"
     subprocess.run([
         "ffmpeg", "-y", "-v", "error", "-f", "lavfi",

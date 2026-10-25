@@ -973,6 +973,7 @@ publishing, team accounts, cloud sync, or hosted render farm is included.
 ## Tests and release checks
 
 ```bash
+python3 -m pip install -r requirements-dev.txt
 python3 -m pytest -q
 python3 -m compileall -q app.py audio.py pipeline.py settings_store.py workflow_config.py admin
 node --check static/app.js
@@ -981,11 +982,15 @@ python3 scripts/check_proprietary_deps.py
 git diff --check
 ```
 
-Current suite: **540 tests**. The tests use temporary `VIBECUT_DATA` directories
-and do not require ffmpeg for the fast unit set. The dependency audit checks
-direct requirements, sidecar imports, and the installed yt-dlp floor. Two
-existing warnings are expected: `setuptools` and `stable-audio-tools` lack
-usable license metadata.
+`requirements-dev.txt` adds `pytest` and `httpx2`, which Starlette's
+`TestClient` needs. Runtime installs do not need them.
+
+Current suite: **540 tests**. The optional beat-grid test skips when `librosa`
+is not installed. The tests use temporary `VIBECUT_DATA` directories and do not
+require ffmpeg for the fast unit set. The dependency audit checks direct
+requirements, sidecar imports, and the installed yt-dlp floor. Two existing
+warnings are expected: `setuptools` and `stable-audio-tools` lack usable
+license metadata.
 
 ## Documentation
 
