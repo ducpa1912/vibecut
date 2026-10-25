@@ -4854,6 +4854,30 @@ def _clipset_pool(
     return sentences, scenes, transcript
 
 
+def _clip_set_source_state(
+    job: dict,
+    record: dict,
+    *,
+    require_fingerprint: bool = False,
+) -> tuple[list[dict], str | None]:
+    """Reject stale sets and warn about legacy sets without a fingerprint."""
+    current, _, _ = _clipset_sentences(job)
+    stored = str(record.get("source_fingerprint") or "")
+    if not stored:
+        message = (
+            "Clip set has no source fingerprint; source freshness is unverified."
+        )
+        if require_fingerprint:
+            raise HTTPException(409, message + " Regenerate the clip set.")
+        return current, message
+    if clipset.source_fingerprint(current) != stored:
+        raise HTTPException(
+            409,
+            "Clip set source changed since it was built; regenerate the clip set.",
+        )
+    return current, None
+
+
 def _clip_set_records(job: dict) -> list[dict]:
     value = job.get("clip_sets") or []
     if isinstance(value, dict):
@@ -4967,16 +4991,7 @@ def patch_clip_set(set_id: str, body: ClipSetPatchBody) -> dict:
     job, record = _find_clip_set(set_id)
     if job.get("status") != "ready" or not job.get("analysis"):
         raise HTTPException(409, "Analysis is not ready yet.")
-    current_sentences, _, _ = _clipset_sentences(job)
-    stored_fingerprint = record.get("source_fingerprint")
-    if (
-        stored_fingerprint
-        and clipset.source_fingerprint(current_sentences) != stored_fingerprint
-    ):
-        raise HTTPException(
-            409,
-            "Clip set source changed since it was built; regenerate the clip set.",
-        )
+    _clip_set_source_state(job, record, require_fingerprint=True)
     sentences, scenes, _ = _clipset_pool(job, record)
     try:
         updated = clipset.apply_edits(
@@ -5008,7 +5023,8 @@ def clip_set_plans(
     job, record = _find_clip_set(set_id)
     if job.get("status") != "ready" or not job.get("analysis"):
         raise HTTPException(409, "Analysis is not ready yet.")
-    _, scenes, _ = _clipset_sentences(job)
+    _, stale_warning = _clip_set_source_state(job, record)
+    scenes = list((job.get("analysis") or {}).get("scenes") or [])
     target = None
     if body is not None and body.target is not None:
         target = int(body.target)
@@ -5027,7 +5043,13 @@ def clip_set_plans(
             "title": story.get("title"),
             "plan": plan,
         })
-    return {"plans": plans, "count": len(plans), "set_id": set_id}
+    return {
+        "plans": plans,
+        "count": len(plans),
+        "set_id": set_id,
+        "stale_check": "unverified" if stale_warning else "verified",
+        "warnings": [stale_warning] if stale_warning else [],
+    }
 
 
 @app.post("/api/jobs/{job_id}/selection-v2")
@@ -5036,8 +5058,10 @@ def selection_v2(job_id: str, body: SelectionV2Body) -> dict:
     if body.count is not None and (body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES):
         raise HTTPException(400, "count must be an integer from 3 to 6.")
     scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    stale_warning = None
     if body.set_id:
         record = _clip_set_in_job(job, body.set_id)
+        _, stale_warning = _clip_set_source_state(job, record)
         stories = record.get("stories") or []
         source = "clip_set"
     else:
@@ -5055,6 +5079,11 @@ def selection_v2(job_id: str, body: SelectionV2Body) -> dict:
     result["job_id"] = job_id
     result["set_id"] = body.set_id
     result["source"] = source
+    result["stale_check"] = (
+        "not_applicable" if body.set_id is None
+        else ("unverified" if stale_warning else "verified")
+    )
+    result["warnings"] = [stale_warning] if stale_warning else []
     return result
 
 
@@ -5064,8 +5093,10 @@ def hook_matrix(job_id: str, body: HookMatrixBody) -> dict:
     if body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES:
         raise HTTPException(400, "count must be an integer from 3 to 6.")
     scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    stale_warning = None
     if body.set_id:
         record = _clip_set_in_job(job, body.set_id)
+        _, stale_warning = _clip_set_source_state(job, record)
         stories = list(record.get("stories") or [])
         source = "clip_set"
     else:
@@ -5085,14 +5116,19 @@ def hook_matrix(job_id: str, body: HookMatrixBody) -> dict:
             source_duration=float((job.get("source") or {}).get("duration") or 0.0),
         )
         stories = ranked["ranked"]
-    try:
-        result = matrix.build_matrix_for_stories(stories, scenes)
-    except matrix.MatrixError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    result = matrix.build_matrix_for_stories(stories, scenes)
     result["job_id"] = job_id
     result["set_id"] = body.set_id
     result["source"] = source
     result["queued"] = 0
+    result["stale_check"] = (
+        "not_applicable" if body.set_id is None
+        else ("unverified" if stale_warning else "verified")
+    )
+    if stale_warning:
+        result.setdefault("warnings", []).append(stale_warning)
+    else:
+        result.setdefault("warnings", [])
     return result
 
 

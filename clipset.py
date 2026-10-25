@@ -34,7 +34,7 @@ STORY_WEIGHTS = {
     "novelty": 0.12,
 }
 ORDERS = ("source", "score", "arc")
-EVIDENCE_TYPES = ("transcript", "visual", "audio", "structure")
+EVIDENCE_TYPES = ("transcript", "scene", "visual", "audio", "structure")
 
 
 class ClipSetError(ValueError):
@@ -169,20 +169,6 @@ class _SceneIndex:
                 - midpoint
             ),
         )
-
-
-def _scene_for_span(start: float, end: float, scenes: list[dict]) -> int | None:
-    return _SceneIndex(scenes).primary(start, end)
-
-
-def _scene_span_ids(start: float, end: float, scenes: list[dict]) -> list[int]:
-    index = _SceneIndex(scenes)
-    ids = index.ids_for(start, end)
-    if not ids:
-        primary = index.primary(start, end)
-        if primary is not None:
-            ids = [primary]
-    return ids
 
 
 def _timed_parts(
@@ -546,6 +532,7 @@ def _speech_coherence(
         return 0.0
     stats = stats or {}
     total = 0.0
+    spoken = 0.0
     complete = 0
     for sentence in sentences:
         try:
@@ -554,13 +541,19 @@ def _speech_coherence(
             sentence_id = -1
         item = stats.get(sentence_id)
         if item:
-            total += item["dur"]
+            duration = max(0.0, _safe_float(item.get("dur")))
+            total += duration
+            if item.get("word_count"):
+                spoken += duration
             complete += 1 if item["terminal"] else 0
         else:
-            total += max(0.0, _safe_float(sentence.get("dur")))
+            duration = max(0.0, _safe_float(sentence.get("dur")))
+            total += duration
+            if _clean(sentence.get("text")):
+                spoken += duration
             complete += 1 if _terminal_text(sentence.get("text")) else 0
     total = max(0.001, total)
-    coverage = 1.0
+    coverage = _clamp(spoken / total)
     complete_ratio = complete / max(1, len(sentences))
     if word_count is None:
         joined = " ".join(_clean(item.get("text")) for item in sentences)
@@ -709,13 +702,13 @@ def _story_evidence(story: dict, scenes: list[dict], signals: dict) -> list[dict
     last_source = str(last.get("source") or "transcript")
     evidence = [
         {
-            "type": "transcript",
+            "type": "transcript" if first_source == "transcript" else "scene",
             "text": f"Hook line ({first_source}): {_clip_text(first.get('text'), 120)}",
             "scene": first.get("scene"),
             "time": round(_safe_float(first.get("start")), 3),
         },
         {
-            "type": "transcript",
+            "type": "transcript" if last_source == "transcript" else "scene",
             "text": f"Payoff line ({last_source}): {_clip_text(last.get('text'), 120)}",
             "scene": last.get("scene"),
             "time": round(_safe_float(last.get("start")), 3),
@@ -782,8 +775,9 @@ def _clips_for_sentences(
     scenes: list[dict],
     scene_by_id: dict[int, dict] | None = None,
 ) -> list[dict]:
-    scene_index = _SceneIndex(scenes)
-    by_id = scene_by_id or scene_index.by_id
+    by_id = scene_by_id or {
+        int(scene["id"]): scene for scene in scenes if scene.get("id") is not None
+    }
     clips: list[dict] = []
     for sentence in sentences:
         start = _safe_float(sentence.get("start"))
@@ -803,7 +797,6 @@ def _clips_for_sentences(
             if scene is None:
                 continue
             prepared.append((_safe_float(scene.get("start")), scene_id, scene))
-        added = 0
         for _, scene_id, scene in sorted(prepared, key=lambda item: (item[0], item[1])):
             clip_start = max(start, _safe_float(scene.get("start")))
             clip_end = min(end, _safe_float(scene.get("end")))
@@ -817,47 +810,6 @@ def _clips_for_sentences(
                 "role": "beat",
                 "why": f"Sentence {sentence.get('id')}: {_clip_text(sentence.get('text'), 72)}",
             })
-            added += 1
-        if added:
-            continue
-
-        # Transcript timestamps can sit just outside every scene after a scan
-        # or a partial transcript. Materialize the nearest scene rather than
-        # returning a story with no clips.
-        nearest = scene_index.nearest(start, end)
-        if nearest is None:
-            continue
-        scene_start = _safe_float(nearest.get("start"))
-        scene_end = _safe_float(nearest.get("end"))
-        if end <= scene_start:
-            clip_start, clip_end = scene_start, min(scene_end, scene_start + 0.4)
-        elif start >= scene_end:
-            clip_start, clip_end = max(scene_start, scene_end - 0.4), scene_end
-        else:
-            clip_start = max(start, scene_start)
-            clip_end = min(end, scene_end)
-        if clip_end - clip_start < 0.18:
-            midpoint = (scene_start + scene_end) / 2
-            clip_start = max(scene_start, midpoint - 0.1)
-            clip_end = min(scene_end, clip_start + 0.2)
-        if clip_end - clip_start < 0.18:
-            continue
-        try:
-            scene_id = int(nearest.get("id"))
-        except (TypeError, ValueError):
-            continue
-        clips.append({
-            "scene": scene_id,
-            "start": round(clip_start, 3),
-            "end": round(clip_end, 3),
-            "dur": round(clip_end - clip_start, 3),
-            "role": "beat",
-            "fallback": True,
-            "why": (
-                f"Nearest scene fallback for sentence {sentence.get('id')}: "
-                f"{_clip_text(sentence.get('text'), 64)}"
-            ),
-        })
     if not clips:
         return []
     clips[0]["role"] = "hook"
@@ -991,18 +943,20 @@ def candidate_stories(
     scene_by_id: dict[int, dict] | None = None,
     sentence_stats: dict[int, dict] | None = None,
     scene_metrics: dict[int, dict] | None = None,
+    stats: dict | None = None,
 ) -> list[dict]:
-    """Enumerate sentence-boundary stories, then reject banned scenes."""
+    """Enumerate sentence-boundary stories, cap, then score only survivors."""
     if not sentences or not scenes:
+        if stats is not None:
+            stats.update({"candidate_total": 0, "candidate_scored": 0})
         return []
     banned = {int(value) for value in (ban_scenes or [])}
     prefix = [0.0]
     for sentence in sentences:
         prefix.append(prefix[-1] + _safe_float(sentence.get("dur")))
-    candidates: list[dict] = []
+    specs: list[dict] = []
     for start_index, first in enumerate(sentences):
-        first_scene_ids = set(first.get("scenes") or [first.get("scene")])
-        first_scene_ids.discard(None)
+        first_scene_ids = {int(value) for value in first.get("scenes") or []}
         if banned and first_scene_ids & banned:
             continue
         start = _safe_float(first.get("start"))
@@ -1014,12 +968,7 @@ def candidate_stories(
             sentences, start_index, min_s, max_s, sentence_stats,
         ):
             for index in range(cursor, end_index + 1):
-                sentence = sentences[index]
-                values = sentence.get("scenes") or (
-                    [sentence.get("scene")]
-                    if sentence.get("scene") is not None else []
-                )
-                for value in values:
+                for value in sentences[index].get("scenes") or []:
                     try:
                         scene_ids.add(int(value))
                     except (TypeError, ValueError):
@@ -1032,31 +981,45 @@ def candidate_stories(
                 continue
             if banned and scene_ids & banned:
                 continue
-            selected = sentences[start_index:end_index + 1]
-            story_id = (
-                f"st_{int(round(start * 1000)):07d}_"
-                f"{int(round(_safe_float(selected[-1].get('end')) * 1000)):07d}"
-            )
-            story = _story_from_sentences(
-                selected, scenes, source_duration, story_id,
-                materialize=False,
-                scene_by_id=scene_by_id,
-                sentence_stats=sentence_stats,
-                scene_ids=sorted(scene_ids),
-                scene_metrics=scene_metrics,
-                duration=duration,
-                start=start,
-                end=_safe_float(selected[-1].get("end")),
-            )
-            if story is None:
-                continue
-            candidates.append(story)
-    if limit > 0 and len(candidates) > limit:
-        step = (len(candidates) - 1) / max(1, limit - 1)
-        candidates = [
-            candidates[int(round(index * step))]
-            for index in range(limit)
-        ]
+            end = _safe_float(sentences[end_index].get("end"))
+            specs.append({
+                "start_index": start_index,
+                "end_index": end_index,
+                "start": start,
+                "end": end,
+                "duration": duration,
+                "scene_ids": sorted(scene_ids),
+                "story_id": (
+                    f"st_{int(round(start * 1000)):07d}_"
+                    f"{int(round(end * 1000)):07d}"
+                ),
+            })
+    total = len(specs)
+    if limit > 0 and total > limit:
+        step = (total - 1) / max(1, limit - 1)
+        specs = [specs[int(round(index * step))] for index in range(limit)]
+    candidates: list[dict] = []
+    for spec in specs:
+        selected = sentences[spec["start_index"]:spec["end_index"] + 1]
+        story = _story_from_sentences(
+            selected, scenes, source_duration, spec["story_id"],
+            materialize=False,
+            scene_by_id=scene_by_id,
+            sentence_stats=sentence_stats,
+            scene_ids=spec["scene_ids"],
+            scene_metrics=scene_metrics,
+            duration=spec["duration"],
+            start=spec["start"],
+            end=spec["end"],
+        )
+        if story is None:
+            continue
+        candidates.append(story)
+    if stats is not None:
+        stats.update({
+            "candidate_total": total,
+            "candidate_scored": len(candidates),
+        })
     return candidates
 
 
@@ -1350,6 +1313,7 @@ def build_clipset(
             default=0.0,
         )
     source_stats: dict = {}
+    candidate_stats: dict = {}
     scene_index = _SceneIndex(scenes)
     scene_metrics = _scene_metrics(scenes)
     sentences = source_sentences(
@@ -1364,6 +1328,7 @@ def build_clipset(
         scene_by_id=scene_index.by_id,
         sentence_stats=sentence_stats,
         scene_metrics=scene_metrics,
+        stats=candidate_stats,
     )
     stories = _select_stories(
         candidates, int(count), scenes, duration, effective_locks, order, min_s,
@@ -1412,7 +1377,10 @@ def build_clipset(
         "excluded_sentences": [],
         "stories": stories,
         "available": len(stories),
+        "complete": len(stories) >= int(count),
         "candidate_count": len(candidates),
+        "candidate_total": candidate_stats.get("candidate_total", len(candidates)),
+        "candidate_scored": candidate_stats.get("candidate_scored", len(candidates)),
         "sentence_count": len(sentences),
         "source_fingerprint": source_fingerprint(sentences),
         "source": {
@@ -1604,6 +1572,7 @@ def apply_edits(
     value["ban_scenes"] = sorted(banned)
     value["stories"] = rebuilt
     value["available"] = len(rebuilt)
+    value["complete"] = len(rebuilt) >= int(value.get("requested") or 0)
     warnings: list[str] = list(dict.fromkeys(value.get("warnings") or []))
     low = _safe_float(value.get("min_s"), MIN_STORY_S)
     high = _safe_float(value.get("max_s"), MAX_STORY_S)

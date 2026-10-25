@@ -207,6 +207,7 @@ def build_matrix(story: dict, scenes: list[dict], target: int | None = None) -> 
         "jobs": jobs,
         "job_count": len(jobs),
         "sequential": True,
+        "complete": True,
         "plan": plan,
         "note": (
             "Matrix metadata only. No renders are queued; queue jobs "
@@ -220,16 +221,37 @@ def build_matrix_for_stories(
     scenes: list[dict],
     target: int | None = None,
 ) -> dict:
+    matrices: list[dict] = []
+    errors: list[dict] = []
+    for story in stories or []:
+        story_id = str(story.get("id") or "story")
+        try:
+            matrices.append(build_matrix(story, scenes, target=target))
+        except MatrixError as exc:
+            errors.append({
+                "story_id": story_id,
+                "story_title": story.get("title"),
+                "error": str(exc),
+                "complete": False,
+            })
     if not stories:
-        raise MatrixError("No stories are available for a hook/cover matrix.")
-    matrices = [
-        build_matrix(story, scenes, target=target)
-        for story in stories or []
-    ]
+        errors.append({
+            "story_id": None,
+            "story_title": None,
+            "error": "No stories are available for a hook/cover matrix.",
+            "complete": False,
+        })
     return {
         "version": 2,
         "matrices": matrices,
+        "errors": errors,
         "count": len(matrices),
+        "error_count": len(errors),
+        "complete": not errors,
         "job_count": sum(matrix.get("job_count", 0) for matrix in matrices),
-        "note": "No renders were started.",
+        "note": (
+            "No renders were started."
+            if not errors
+            else "No renders were started; incomplete stories are listed in errors."
+        ),
     }

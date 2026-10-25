@@ -81,7 +81,11 @@ def parse_exclusions(prompt: str = "", explicit: Iterable[str] | None = None) ->
         key = value.casefold()
         if key in _BAD_TERMS or key in seen:
             return
-        if re.match(r"^(?:than|more than|less than|fewer than)\b", key):
+        if re.match(
+            r"^(?:than|more than|less than|fewer than|"
+            r"make|use|keep|add|include|write|create|give|show|tell)\b",
+            key,
+        ):
             return
         if re.fullmatch(r"[\d\s/.-]+", value):
             return
@@ -98,6 +102,15 @@ def parse_exclusions(prompt: str = "", explicit: Iterable[str] | None = None) ->
         # such as "but make it funny" ends that list.
         continuation = False
         for clause in re.split(r"[,;\n]+|(?<=[.!?])\s+", text):
+            not_only = re.search(
+                r"(?i)\bnot only\s+(.+?)\s+but also\s+(.+)$", clause,
+            )
+            if not_only:
+                continuation = True
+                for group in not_only.groups():
+                    for part in re.split(r"\s+(?:and|or)\s+", group):
+                        add(part)
+                continue
             matches = list(_MARKER_RE.finditer(clause))
             if matches:
                 continuation = True
@@ -109,6 +122,7 @@ def parse_exclusions(prompt: str = "", explicit: Iterable[str] | None = None) ->
                     while previous != tail:
                         previous = tail
                         tail = _OPTIONAL_LEAD.sub("", tail).strip()
+                    tail = re.split(r"(?i)\s+(?:but|however|then)\s+", tail, maxsplit=1)[0]
                     for part in re.split(r"\s+(?:and|or)\s+", tail):
                         add(part)
             elif continuation:

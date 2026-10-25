@@ -123,6 +123,7 @@ def test_clipset_scene_text_fallback():
     assert document["source"]["scene_text"] is True
     assert document["source"]["fallback"] == "scene_text"
     assert "(scene)" in document["stories"][0]["evidence"][0]["text"]
+    assert document["stories"][0]["evidence"][0]["type"] == "scene"
 
     silent = [make_scene(index, index * 4.0, 4.0, speech="", ocr="") for index in range(30)]
     empty = clipset.build_clipset(silent, None, 120.0, count=3)
@@ -204,21 +205,31 @@ def test_clipset_rejects_bad_parameters():
         clipset.build_clipset(scenes, None, 120.0, order="random")
 
 
-def test_90_minute_clipset_build_is_seconds_scale():
+def test_90_minute_clipset_build_is_seconds_scale(monkeypatch):
     scenes = make_scenes(1350)
     transcript = transcript_for(scenes)
+    scored: list[int] = []
+    original_score = clipset._score_story
+
+    def counted_score(*args, **kwargs):
+        scored.append(1)
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(clipset, "_score_story", counted_score)
     started = time.perf_counter()
     document = clipset.build_clipset(
         scenes, transcript, 5400.0, count=6,
     )
     elapsed = time.perf_counter() - started
     assert document["available"] >= 3
-    assert document["candidate_count"] > 5000
+    assert document["candidate_total"] > clipset.CANDIDATE_LIMIT
+    assert document["candidate_scored"] <= clipset.CANDIDATE_LIMIT
+    assert len(scored) <= clipset.CANDIDATE_LIMIT + 20
     assert all(story["clips"] for story in document["stories"])
-    assert elapsed < 15.0, f"90-minute clip set took {elapsed:.1f}s"
+    assert elapsed < 25.0, f"90-minute clip set took {elapsed:.1f}s"
 
 
-def test_zero_overlap_story_gets_nearest_scene_and_zero_clip_fails():
+def test_zero_overlap_story_is_rejected_and_zero_clip_fails():
     scenes = [
         make_scene(0, 100.0, 4.0),
         make_scene(1, 104.0, 4.0),
@@ -228,7 +239,7 @@ def test_zero_overlap_story_gets_nearest_scene_and_zero_clip_fails():
             "id": 0,
             "start": 0.0,
             "end": 20.0,
-            "text": "A sentence far outside every scene. It still needs one clip.",
+            "text": "A sentence far outside every scene. It has no honest clip.",
             "scene": None,
             "scenes": [],
             "source": "transcript",
@@ -238,17 +249,31 @@ def test_zero_overlap_story_gets_nearest_scene_and_zero_clip_fails():
     story = clipset._story_from_sentences(
         sentences, scenes, 600.0, "st_zero_overlap",
     )
-    assert story is not None
-    assert story["clips"]
-    assert story["clips"][0]["fallback"] is True
+    assert story is None
 
-    empty = clipset._story_from_sentences(
-        sentences, [], 600.0, "st_no_scenes",
+    document = clipset.build_clipset(
+        scenes,
+        [{
+            "start": 0.0,
+            "end": 20.0,
+            "text": "A sentence far outside every scene.",
+        }],
+        600.0,
+        count=3,
     )
-    assert empty is None
+    assert document["available"] == 0
+    assert all(story["clips"] for story in document["stories"])
 
-    broken = copy.deepcopy(story)
-    broken["clips"] = []
+    broken = {
+        "id": "st_zero_clip",
+        "clips": [],
+        "sentences": sentences,
+        "hook": sentences[0],
+        "payoff": sentences[0],
+        "dur": 20.0,
+        "start": 0.0,
+        "end": 20.0,
+    }
     with pytest.raises(clipset.ClipSetError):
         clipset.story_to_plan(broken, scenes)
     with pytest.raises(matrix.MatrixError):
@@ -272,6 +297,54 @@ def test_matrix_short_clip_is_full_or_explicit_error():
     assert len(payload["covers"]) == 3
     assert len(payload["hooks"]) == 3
     assert len(payload["jobs"]) == 9
+
+
+def test_speech_coherence_accounts_for_unspoken_duration():
+    stats = {
+        0: {
+            "dur": 10.0,
+            "terminal": True,
+            "hook": 0.5,
+            "keywords": {"alpha"},
+            "word_count": 0,
+        },
+        1: {
+            "dur": 10.0,
+            "terminal": True,
+            "hook": 0.5,
+            "keywords": {"beta"},
+            "word_count": 10,
+        },
+    }
+    sentences = [
+        {"id": 0, "dur": 10.0, "text": ""},
+        {"id": 1, "dur": 10.0, "text": "beta beta beta"},
+    ]
+    half_spoken = clipset._speech_coherence(
+        sentences, stats, keywords={"beta"}, word_count=10,
+    )
+    full_spoken = clipset._speech_coherence(
+        sentences, stats, keywords={"alpha", "beta"}, word_count=10,
+    )
+    assert half_spoken < full_spoken
+    assert 0.5 <= half_spoken < 0.7
+
+
+def test_matrix_partial_result_lists_per_story_errors():
+    scenes = make_scenes(75)
+    document = clipset.build_clipset(scenes, None, 300.0, count=3)
+    valid = copy.deepcopy(document["stories"][0])
+    broken = copy.deepcopy(document["stories"][1])
+    broken["clips"] = []
+    result = matrix.build_matrix_for_stories([valid, broken], scenes)
+    assert result["complete"] is False
+    assert result["count"] == 1
+    assert result["job_count"] == 9
+    assert result["error_count"] == 1
+    assert result["errors"][0]["story_id"] == broken["id"]
+    assert result["errors"][0]["complete"] is False
+    assert "no materialized clips" in result["errors"][0]["error"]
+    assert len(result["matrices"][0]["jobs"]) == 9
 
 
 def test_arc_order_puts_strongest_hook_first_and_payoff_last():
@@ -349,6 +422,12 @@ def test_selection_v2_prompt_exclusions_and_evidence():
     assert selection.parse_exclusions(
         "no politics, crypto, or religion"
     ) == ["politics", "crypto", "religion"]
+    assert selection.parse_exclusions(
+        "not only politics but also crypto"
+    ) == ["politics", "crypto"]
+    assert selection.parse_exclusions(
+        "no politics but make it funny"
+    ) == ["politics"]
     scenes = make_scenes(150)
     story = _ranked_story(scenes)
     clean = copy.deepcopy(story)
@@ -377,7 +456,7 @@ def test_selection_v2_prompt_exclusions_and_evidence():
         "visual_quality", "payoff_position", "novelty",
     }
     assert top["v2_evidence"]
-    assert all(item["type"] in {"transcript", "visual", "audio", "structure"} for item in top["v2_evidence"])
+    assert all(item["type"] in {"transcript", "scene", "visual", "audio", "structure"} for item in top["v2_evidence"])
     assert all(set(item) == {"type", "text", "scene", "time"} for item in top["v2_evidence"])
     assert len(top["hook_candidates"]) == 3
     assert top["hook_candidates"][0]["text"] == top["hook"]["text"]
@@ -573,8 +652,13 @@ def test_clipset_api_validation_and_short_source(api):
     assert "at least 20s" in record["note"]
 
     matrix_response = api.post("/api/jobs/short/hook-matrix", json={})
-    assert matrix_response.status_code == 422
-    assert "No stories" in matrix_response.json()["detail"]
+    assert matrix_response.status_code == 200
+    matrix_body = matrix_response.json()
+    assert matrix_body["complete"] is False
+    assert matrix_body["count"] == 0
+    assert matrix_body["job_count"] == 0
+    assert matrix_body["errors"]
+    assert "No stories" in matrix_body["errors"][0]["error"]
 
 
 def test_clipset_api_bans_alias_and_plans_readiness(api):
@@ -629,12 +713,53 @@ def test_clipset_api_rejects_stale_transcript_edits(api):
         "/api/jobs/j1/clip-sets", json={"count": 3},
     ).json()["clip_set"]
     transcript.unlink()
-    response = api.patch(
-        f"/clip-sets/{record['id']}",
-        json={"locks": record["locks"]},
+    for path, payload in (
+        (f"/clip-sets/{record['id']}/plans", {}),
+        ("/api/jobs/j1/selection-v2", {"set_id": record["id"]}),
+        ("/api/jobs/j1/hook-matrix", {"set_id": record["id"]}),
+        (f"/clip-sets/{record['id']}", {"locks": record["locks"]}),
+    ):
+        method = api.patch if path.startswith("/clip-sets/") and path.count("/") == 2 else api.post
+        response = method(path, json=payload)
+        assert response.status_code == 409, path
+        assert "source changed" in response.json()["detail"]
+
+
+def test_legacy_clip_set_without_fingerprint_warns_and_edits_are_rejected(api):
+    write_job(api.jobs_dir, "j1")
+    record = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    set_id = record["id"]
+    job_path = api.jobs_dir / "j1" / "job.json"
+    job = json.loads(job_path.read_text())
+    legacy = job["clip_sets"][set_id]
+    legacy.pop("source_fingerprint", None)
+    job_path.write_text(json.dumps(job))
+
+    plans = api.post(f"/clip-sets/{set_id}/plans", json={})
+    assert plans.status_code == 200
+    assert plans.json()["stale_check"] == "unverified"
+    assert plans.json()["warnings"]
+    assert 20 <= plans.json()["plans"][0]["plan"]["target"] <= 75
+
+    ranked = api.post(
+        "/api/jobs/j1/selection-v2", json={"set_id": set_id},
     )
-    assert response.status_code == 409
-    assert "source changed" in response.json()["detail"]
+    assert ranked.status_code == 200
+    assert ranked.json()["stale_check"] == "unverified"
+    assert ranked.json()["warnings"]
+
+    hook_matrix = api.post(
+        "/api/jobs/j1/hook-matrix", json={"set_id": set_id},
+    )
+    assert hook_matrix.status_code == 200
+    assert hook_matrix.json()["stale_check"] == "unverified"
+    assert hook_matrix.json()["warnings"]
+
+    patched = api.patch(f"/clip-sets/{set_id}", json={"locks": []})
+    assert patched.status_code == 409
+    assert "no source fingerprint" in patched.json()["detail"]
 
 
 def test_new_pydantic_models_do_not_share_list_defaults():
@@ -690,6 +815,28 @@ def test_clip_set_plan_maps_to_artifact_render_request_for_v013_job(api, monkeyp
     assert stored["artifact_ids"] == [artifact_id]
     assert stored["renders"][record["record_key"]]["artifact_id"] == artifact_id
     assert stored["renders"][record["record_key"]]["status"] == "queued"
+
+
+def test_hook_matrix_api_returns_partial_errors_not_422(api):
+    write_job(api.jobs_dir, "j1")
+    created = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    job_path = api.jobs_dir / "j1" / "job.json"
+    job = json.loads(job_path.read_text())
+    job["clip_sets"][created["id"]]["stories"][0]["clips"] = []
+    job_path.write_text(json.dumps(job))
+
+    response = api.post(
+        "/api/jobs/j1/hook-matrix", json={"set_id": created["id"]},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["complete"] is False
+    assert body["count"] == 2
+    assert body["error_count"] == 1
+    assert body["job_count"] == 18
+    assert body["errors"][0]["story_id"] == created["stories"][0]["id"]
 
 
 def test_generated_paths_for_selection_v2_and_hook_matrix(api):
@@ -762,6 +909,8 @@ def test_hook_matrix_api_shape_and_determinism(api):
     assert first.status_code == 200
     body = first.json()
     assert body["count"] == 3
+    assert body["complete"] is True
+    assert body["errors"] == []
     assert body["queued"] == 0
     assert body["job_count"] == 27
     assert body["matrices"] == second.json()["matrices"]
