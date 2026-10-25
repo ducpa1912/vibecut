@@ -2093,6 +2093,25 @@ def openrouter_key() -> str:
     return settings_store.get_secret("openrouter")
 
 
+def openrouter_key_info() -> dict:
+    """Best-effort metadata for the configured OpenRouter key."""
+    key = openrouter_key()
+    if not key:
+        return {}
+    request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/key",
+        headers={"Authorization": f"Bearer {key}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+    info = data.get("data") if isinstance(data, dict) else None
+    return info if isinstance(info, dict) else {}
+
+
 def _openrouter_configured() -> bool:
     settings = settings_store.load_settings().get("openrouter") or {}
     return bool(openrouter_key()) and bool(settings.get("enabled", True))
@@ -2507,19 +2526,23 @@ def _opencode_text(
     if not _opencode_configured():
         OPENCODE_LAST_ERROR = "OpenCode is not installed or OpenCode Go is disabled."
         return None
+    direct_error = ""
     if opencode_key():
-        # A project key is exclusive: never borrow the shared local login when
-        # this key is configured but fails.
+        # Prefer the project key, but do not let a direct-API empty reply or
+        # auth failure disable the already-signed-in local OpenCode service.
         value = _opencode_http_text(
             prompt, max_tokens=max_tokens, json_mode=json_mode,
-            record_failure=record_failure,
+            record_failure=False,
         )
         if value:
             _provider_breaker_ok("opencode")
             return value
-        if record_failure and _is_empty_reply_error(OPENCODE_LAST_ERROR):
-            _provider_breaker_fail("opencode", OPENCODE_LAST_ERROR)
-        return None
+        direct_error = OPENCODE_LAST_ERROR
+        if not opencode_bin():
+            if record_failure and _is_empty_reply_error(direct_error):
+                _provider_breaker_fail("opencode", direct_error)
+            return None
+        OPENCODE_LAST_ERROR = direct_error
     created = _opencode_api(["post", "/api/session"], {
         "title": "VibeCut rewrite",
         "model": {
@@ -2550,7 +2573,7 @@ def _opencode_text(
         _provider_breaker_ok("opencode")
         return value
     if not OPENCODE_LAST_ERROR:
-        OPENCODE_LAST_ERROR = "OpenCode returned an empty reply."
+        OPENCODE_LAST_ERROR = direct_error or "OpenCode returned an empty reply."
     if record_failure and _is_empty_reply_error(OPENCODE_LAST_ERROR):
         _provider_breaker_fail("opencode", OPENCODE_LAST_ERROR)
     return None
@@ -2738,15 +2761,20 @@ def _rewrite_opencode(
     prompt = _rewrite_prompt(script, source, target, mode, literal, context)
     raw = _opencode_json_attempts(prompt, max_tokens=3000)
     if not raw:
+        if not OPENCODE_LAST_ERROR:
+            OPENCODE_LAST_ERROR = "OpenCode returned no usable rewrite."
         return None
     match = re.search(r"\[.*\]", raw, re.S)
     if not match:
+        OPENCODE_LAST_ERROR = "OpenCode rewrite was not a JSON array."
         return None
     try:
         values = json.loads(match.group(0))
     except ValueError:
+        OPENCODE_LAST_ERROR = "OpenCode rewrite JSON could not be parsed."
         return None
     if not isinstance(values, list) or len(values) != len(script):
+        OPENCODE_LAST_ERROR = "OpenCode rewrite returned the wrong line count."
         return None
     cjk = (target or "").split("-")[0].lower() in {"zh", "ja", "ko"}
     broken = [
@@ -3606,9 +3634,9 @@ def _rewrite_status_reset(requested: bool) -> None:
 
 def _rewrite_failure_detail(attempts: list[dict]) -> str:
     errors = [
-        f"{item.get('provider')}: {item.get('error')}"
+        f"{item.get('provider')}: {str(item.get('error') or 'no usable reply')[:180]}"
         for item in attempts
-        if item.get("error")
+        if item.get("provider")
     ]
     if not errors:
         return "No rewrite provider returned usable lines."

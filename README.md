@@ -72,7 +72,7 @@ The Swift helper is compiled automatically on first use into `bin/vision_probe`.
 ## Setup · optional cloud
 
 Click **Setup** in the top bar. Nothing leaves the machine until a key is saved.
-Keys live in `data/secrets.json` (0600). OpenRouter project keys override the environment; other providers use env first.
+Keys live in `data/secrets.json` (0600). OpenRouter project keys override the environment; other providers use env first. Use a normal OpenRouter inference key: provisioning/management keys return 401 on chat and are rejected by Test OpenRouter.
 
 | Section | What you can set |
 |---|---|

@@ -1196,6 +1196,19 @@ def test_settings(body: SettingsTestBody) -> dict:
         )
         if answer:
             audio.clear_openrouter_quarantine()
+        key_info = {} if answer else audio.openrouter_key_info()
+        management = bool(key_info.get("is_management_key"))
+        detail = "OpenRouter replied."
+        if not answer:
+            if management:
+                detail = (
+                    "This is an OpenRouter management/provisioning key. "
+                    "Management keys cannot call chat/inference. Create a normal inference key."
+                )
+            else:
+                detail = "OpenRouter model check failed. " + (
+                    audio.OPENROUTER_LAST_ERROR or "No reply."
+                )
         return {
             "ok": bool(answer),
             "kind": "openrouter",
@@ -1206,11 +1219,9 @@ def test_settings(body: SettingsTestBody) -> dict:
             "retry_in": audio.openrouter_blocked_seconds(),
             "seconds": round(time.time() - started, 2),
             "answer": (answer or "")[:160],
-            "detail": (
-                "OpenRouter replied." if answer
-                else "OpenRouter model check failed. "
-                + (audio.OPENROUTER_LAST_ERROR or "No reply.")
-            ),
+            "management_key": management,
+            "key_label": key_info.get("label") or "",
+            "detail": detail,
         }
     if kind == "stt":
         apple = pipeline._apple_transcribe_helper()
