@@ -1815,7 +1815,10 @@ def _lyria_music(prompt: str, seconds: float, output: Path) -> None:
             "OpenRouter is quarantined after an auth error; retry in "
             f"{openrouter_blocked_seconds()}s."
         )
-    model = "google/lyria-3-pro-preview" if seconds > 32 else "google/lyria-3-clip-preview"
+    model = _workflow_route_model(
+        "music", "openrouter",
+        "google/lyria-3-pro-preview" if seconds > 32 else "google/lyria-3-clip-preview",
+    )
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
