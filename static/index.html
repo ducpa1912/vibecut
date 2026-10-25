@@ -6,12 +6,15 @@
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
   <link rel="stylesheet" href="/static/style.css?v=0.12.0">
+  <link rel="stylesheet" href="/static/creator.css?v=0.14.0">
   <script defer src="/static/app.js?v=0.12.0"></script>
+  <script defer src="/static/creator.js?v=0.14.0"></script>
 </head>
 <body>
   <header class="shell topbar">
     <a class="brand" href="/" id="brand">VibeCut<span class="brand-mark"></span></a>
     <div class="topbar-right">
+      <button id="creator-open" class="ghost small" type="button">Creator</button>
       <button id="setup-open" class="ghost small" type="button">Setup</button>
       <span class="local-pill"><i class="live-dot"></i> local only</span>
       <span id="health" class="health">checking engine…</span>
@@ -469,6 +472,244 @@
         <div id="history-detail" class="history-detail" hidden></div>
       </details>
 
+    </section>
+
+    <!-- creator workspace -->
+    <section id="creator-view" class="creator-view" hidden>
+      <header class="creator-head">
+        <div>
+          <p class="eyebrow"><span>✦</span> creator</p>
+          <h2>Post-ready workspace</h2>
+          <p id="creator-context" class="hint">Open a cut to load Clip Set, Caption Studio, packets and shares.</p>
+        </div>
+        <div class="creator-head-actions">
+          <input id="creator-job-input" class="creator-job-input" type="text" spellcheck="false" placeholder="job id">
+          <button id="creator-job-load" class="ghost small" type="button">Load job</button>
+          <button id="creator-close" class="ghost small" type="button">Close</button>
+        </div>
+      </header>
+
+      <nav id="creator-tabs" class="creator-tabs" aria-label="Creator screens">
+        <button type="button" data-creator-tab="queue" class="active">Queue / Batch</button>
+        <button type="button" data-creator-tab="clipset">Clip Set</button>
+        <button type="button" data-creator-tab="captions">Caption Studio</button>
+        <button type="button" data-creator-tab="packet">Packet</button>
+        <button type="button" data-creator-tab="preflight">Preflight</button>
+        <button type="button" data-creator-tab="artifacts">Artifacts &amp; Shares</button>
+      </nav>
+
+      <div id="creator-global-error" class="error creator-alert" role="alert" hidden></div>
+
+      <div class="creator-screens">
+        <section class="creator-screen" data-creator-panel="queue">
+          <div class="creator-grid creator-grid-two">
+            <form id="batch-form" class="creator-card">
+              <div class="creator-card-head">
+                <div><p class="eyebrow">batch</p><h3>Build a 10-item queue</h3></div>
+                <span class="creator-chip">local only</span>
+              </div>
+              <label class="creator-field">
+                <span>Batch name</span>
+                <input id="batch-name" type="text" maxlength="200" placeholder="Friday shorts">
+              </label>
+              <label class="creator-field">
+                <span>Local paths or URLs · one per line · max 10</span>
+                <textarea id="batch-items" rows="7" spellcheck="false" placeholder="/Users/you/Movies/episode.mp4&#10;https://example.com/video"></textarea>
+              </label>
+              <div class="creator-row">
+                <label class="creator-field creator-field-small">
+                  <span>Max items</span>
+                  <input id="batch-max" type="number" min="1" max="10" value="10">
+                </label>
+                <button id="batch-create" class="primary small" type="submit">Create batch</button>
+              </div>
+              <p class="hint">The server checks free disk before it starts. A full disk blocks the batch with an explicit error.</p>
+              <div id="batch-error" class="error" role="alert" hidden></div>
+            </form>
+            <div class="creator-card">
+              <div class="creator-card-head">
+                <div><p class="eyebrow">queue</p><h3>Batches</h3></div>
+                <button id="batch-refresh" class="ghost small" type="button">Refresh</button>
+              </div>
+              <div id="batch-list" class="creator-list"><p class="hint">No batches loaded.</p></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="creator-screen" data-creator-panel="clipset" hidden>
+          <div class="creator-toolbar">
+            <label class="creator-inline-field">Stories
+              <select id="clipset-count">
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+              </select>
+            </label>
+            <button id="clipset-build" class="primary small" type="button">Build Clip Set · v1</button>
+            <button id="clipset-v2" class="ghost small" type="button">Smart Cut v2 · explicit</button>
+            <input id="clipset-prompt" class="creator-grow" type="text" placeholder="v2 prompt · exclusions only, e.g. no politics, avoid crypto">
+            <button id="matrix-build" class="ghost small" type="button">Hook / cover matrix</button>
+            <label class="creator-inline-field">Tighten
+              <select id="tighten-target">
+                <option value="15">15s</option>
+                <option value="30" selected>30s</option>
+                <option value="60">60s</option>
+              </select>
+            </label>
+            <button id="tighten-run" class="ghost small" type="button">Tighten first story</button>
+          </div>
+          <div id="clipset-error" class="error" role="alert" hidden></div>
+          <div class="creator-grid creator-grid-two creator-grid-wide-left">
+            <div class="creator-card">
+              <div class="creator-card-head">
+                <div><p class="eyebrow">clip set</p><h3 id="clipset-title">Stories</h3></div>
+                <span id="clipset-meta" class="hint"></span>
+              </div>
+              <div id="clipset-stories" class="creator-list"><p class="hint">Build a Clip Set after analysis is ready.</p></div>
+            </div>
+            <div class="creator-side">
+              <div class="creator-card">
+                <div class="creator-card-head"><div><p class="eyebrow">selection</p><h3>Smart Cut v2</h3></div><span class="creator-chip">explicit only</span></div>
+                <div id="clipset-v2-output" class="creator-list"><p class="hint">v1 automatic plans remain the default. Run v2 only when you want ranked stories.</p></div>
+              </div>
+              <div class="creator-card">
+                <div class="creator-card-head"><div><p class="eyebrow">matrix</p><h3>Hook / cover 3×3</h3></div></div>
+                <div id="matrix-output" class="creator-list"><p class="hint">No matrix built.</p></div>
+              </div>
+              <div class="creator-card">
+                <div class="creator-card-head"><div><p class="eyebrow">tighten</p><h3>Filler / silence / punch-ins</h3></div></div>
+                <div id="tighten-output" class="creator-list"><p class="hint">Tightening returns a new plan; the source cut is not overwritten.</p></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="creator-screen" data-creator-panel="captions" hidden>
+          <div class="creator-toolbar">
+            <label class="creator-inline-field">Cut
+              <select id="caption-target">
+                <option value="15">15s</option>
+                <option value="30" selected>30s</option>
+                <option value="60">60s</option>
+              </select>
+            </label>
+            <label class="creator-inline-field">Style
+              <select id="caption-style">
+                <option value="clean" selected>Clean</option>
+                <option value="bold">Bold</option>
+                <option value="boxed">Boxed</option>
+                <option value="minimal">Minimal</option>
+              </select>
+            </label>
+            <label class="creator-inline-field">Artifact
+              <select id="caption-artifact"><option value="">Current cut</option></select>
+            </label>
+            <button id="caption-build" class="primary small" type="button">Build caption track</button>
+            <button id="caption-artifact-load" class="ghost small" type="button">Load artifact captions</button>
+            <button id="caption-save" class="ghost small" type="button">Save cues</button>
+            <button id="caption-export" class="ghost small" type="button">Download SRT</button>
+            <button id="caption-preview-run" class="ghost small" type="button">Caption preview</button>
+          </div>
+          <div id="caption-error" class="error" role="alert" hidden></div>
+          <div class="creator-grid creator-grid-two">
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">cues</p><h3>Cue list</h3></div><span id="caption-meta" class="hint"></span></div>
+              <div id="caption-cues" class="creator-list"><p class="hint">Build a track to load speech-timed cues.</p></div>
+            </div>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">caption only</p><h3>Safe-zone preview</h3></div><span class="creator-chip">no full render</span></div>
+              <div id="caption-preview" class="caption-preview">
+                <img id="caption-preview-img" alt="Caption preview still" hidden>
+                <div id="caption-preview-safe" class="caption-safe-layer" hidden></div>
+                <div id="caption-preview-text" class="caption-preview-text">No preview yet.</div>
+              </div>
+              <label class="creator-field creator-field-range">
+                <span>Cue time <b id="caption-preview-readout" class="mono">0.0s</b></span>
+                <input id="caption-preview-time" type="range" min="0" max="1" step="0.05" value="0">
+              </label>
+              <p class="hint">This preview reads the caption-only endpoint and poster. It never starts a reel render.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="creator-screen" data-creator-panel="packet" hidden>
+          <div class="creator-toolbar">
+            <label class="creator-inline-field">Story
+              <input id="packet-story" type="text" spellcheck="false" placeholder="story id">
+            </label>
+            <label class="creator-inline-field">Artifact
+              <select id="packet-artifact"><option value="">None · use render key</option></select>
+            </label>
+            <label class="creator-inline-field">Render key
+              <select id="packet-render-key"><option value="">Choose a ready render</option></select>
+            </label>
+          </div>
+          <div class="creator-grid creator-grid-two">
+            <form id="packet-form" class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">packet</p><h3>Titles, description, hashtags</h3></div><span class="creator-chip">3 titles · 2 covers</span></div>
+              <label class="creator-field"><span>Title 1</span><input id="packet-title-1" type="text" maxlength="100"></label>
+              <label class="creator-field"><span>Title 2</span><input id="packet-title-2" type="text" maxlength="100"></label>
+              <label class="creator-field"><span>Title 3</span><input id="packet-title-3" type="text" maxlength="100"></label>
+              <label class="creator-field">
+                <span>Description hook <b id="packet-desc-count" class="mono">0/125</b></span>
+                <textarea id="packet-description" rows="3" maxlength="125"></textarea>
+              </label>
+              <label class="creator-field"><span>Hashtags · 3–8, space or comma separated</span><input id="packet-hashtags" type="text" placeholder="#shorts #creator #podcast"></label>
+              <div class="creator-row">
+                <label class="creator-field creator-field-small"><span>Cover 1 · seconds</span><input id="packet-cover-1" type="number" min="0" step="0.1" value="1"></label>
+                <label class="creator-field creator-field-small"><span>Cover 2 · seconds</span><input id="packet-cover-2" type="number" min="0" step="0.1" value="5"></label>
+              </div>
+              <p class="creator-filename">Filename preview <code id="packet-filename">story-30s-&lt;packet&gt;.mp4</code></p>
+              <button id="packet-build" class="primary small" type="submit">Build packet</button>
+              <div id="packet-error" class="error" role="alert" hidden></div>
+            </form>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">result</p><h3>Publish packet</h3></div></div>
+              <div id="packet-result" class="creator-list"><p class="hint">No packet built in this session.</p></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="creator-screen" data-creator-panel="preflight" hidden>
+          <div class="creator-toolbar">
+            <label class="creator-inline-field">Story or artifact
+              <select id="preflight-story"></select>
+            </label>
+            <button id="preflight-run" class="primary small" type="button">Run preflight</button>
+            <span class="hint">Toggles filter this view. Server settings stay authoritative.</span>
+          </div>
+          <div id="preflight-error" class="error" role="alert" hidden></div>
+          <div class="creator-grid creator-grid-two creator-grid-wide-left">
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">checks</p><h3>Five checks</h3></div><span id="preflight-summary" class="hint"></span></div>
+              <div id="preflight-checks" class="creator-list"><p class="hint">Run preflight for a story or artifact.</p></div>
+            </div>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">findings</p><h3>Suggestions</h3></div></div>
+              <div id="preflight-findings" class="creator-list"><p class="hint">No findings yet.</p></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="creator-screen" data-creator-panel="artifacts" hidden>
+          <div class="creator-toolbar">
+            <button id="artifact-refresh" class="ghost small" type="button">Refresh artifacts &amp; shares</button>
+            <span class="hint">Artifact links always target that artifact. No latest-render fallback.</span>
+          </div>
+          <div id="artifact-error" class="error" role="alert" hidden></div>
+          <div class="creator-grid creator-grid-two creator-grid-wide-left">
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">trust core</p><h3>Artifacts</h3></div><span id="artifact-count" class="hint"></span></div>
+              <div id="artifact-list" class="creator-list"><p class="hint">Open a job with rendered artifacts.</p></div>
+            </div>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">review</p><h3>Shares</h3></div></div>
+              <div id="share-list" class="creator-list"><p class="hint">No shares loaded.</p></div>
+            </div>
+          </div>
+        </section>
+      </div>
     </section>
   </main>
 
