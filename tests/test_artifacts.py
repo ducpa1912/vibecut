@@ -1,0 +1,554 @@
+"""Immutable artifact identity, manifests, queue reuse and pruning."""
+
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import app
+import artifacts
+import render
+import shares
+
+
+def scene(index: int, start: float, dur: float, speech: str = "") -> dict:
+    return {
+        "id": index,
+        "start": float(start),
+        "end": float(start + dur),
+        "dur": float(dur),
+        "mid": float(start + dur / 2),
+        "hook": 60.0,
+        "score": 60.0,
+        "deep": True,
+        "visual_score": 60.0,
+        "motion_score": 60.0,
+        "audio_score": 60.0,
+        "text_score": 0.0,
+        "ocr": "",
+        "speech": speech,
+        "tags": [],
+        "crop": {"cx": 0.5, "cy": 0.5},
+        "crop_mode": "center",
+    }
+
+
+def job_record(job_id: str = "job1", root: Path | None = None) -> dict:
+    root = root or Path("/tmp")
+    return {
+        "id": job_id,
+        "created": 1.0,
+        "updated": 1.0,
+        "status": "ready",
+        "progress": 1.0,
+        "message": "Ready",
+        "error": None,
+        "source": {
+            "path": str(root / "source.mp4"),
+            "name": "source.mp4",
+            "duration": 60.0,
+            "width": 1920,
+            "height": 1080,
+            "fps": 30.0,
+            "size": 1234,
+            "has_audio": True,
+            "fingerprint": "source-fingerprint",
+        },
+        "options": {},
+        "analysis": {
+            "scene_count": 5,
+            "hook_scene": 0,
+            "deep_count": 5,
+            "deep_scene_ids": [0, 1, 2, 3, 4],
+            "engine": {"transcript_language": "en"},
+            "scenes": [
+                scene(0, 0.0, 4.0, "hello world"),
+                scene(1, 4.0, 4.0, "second beat"),
+                scene(2, 8.0, 4.0, "third beat"),
+                scene(3, 12.0, 4.0, "payoff"),
+                scene(4, 16.0, 4.0, "extra"),
+            ],
+        },
+        "renders": {},
+    }
+
+
+def plan_for(hook: int = 0, target: int = 15, auto: bool = False) -> dict:
+    return {
+        "target": target,
+        "total": 4.0,
+        "hook_scene": hook,
+        "auto": auto,
+        "clip_count": 1,
+        "clips": [{
+            "scene": hook,
+            "start": 0.0,
+            "end": 4.0,
+            "dur": 4.0,
+            "role": "hook",
+        }],
+        "_source_lang": "en",
+    }
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    jobs = data / "jobs"
+    jobs.mkdir(parents=True)
+    sources = data / "sources"
+    sources.mkdir()
+    monkeypatch.setattr(app, "DATA", data)
+    monkeypatch.setattr(app, "JOBS", jobs)
+    monkeypatch.setattr(app, "SOURCES", sources)
+    monkeypatch.setattr(app, "SHARES", tmp_path / "shares.json")
+    job = job_record("job1", tmp_path)
+    directory = jobs / job["id"]
+    directory.mkdir()
+    (directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    return SimpleNamespace(
+        tmp_path=tmp_path,
+        data=data,
+        jobs=jobs,
+        directory=directory,
+        job=job,
+        job_id=job["id"],
+    )
+
+
+def base_spec(**overrides) -> artifacts.ArtifactSpec:
+    payload = {
+        "schema_version": artifacts.SCHEMA_VERSION,
+        "render_version": artifacts.RENDER_VERSION,
+        "source_fingerprint": "src1",
+        "clips": [
+            {"scene": 0, "start": 0.0, "end": 2.5, "dur": 2.5, "role": "hook"},
+            {"scene": 1, "start": 5.0, "end": 8.5, "dur": 3.5, "role": "payoff"},
+        ],
+        "order": "source",
+        "hook_scene": 0,
+        "hook_override": True,
+        "caption": {
+            "enabled": True,
+            "style_hash": "style1",
+            "cue_hash": "cues1",
+            "text_hash": "text1",
+            "margin": 0.075,
+        },
+        "audio_sig": "aud1",
+        "quality": "final",
+        "aspect": "9:16",
+        "resolved_encoder": "libx264",
+        "story_id": "story1",
+        "target": 15,
+    }
+    payload.update(overrides)
+    return artifacts.ArtifactSpec.from_payload(payload)
+
+
+def make_artifact(
+    env,
+    spec: artifacts.ArtifactSpec,
+    *,
+    pinned: bool = False,
+    record_key: str = "15",
+    created: float | None = None,
+    srt: str = "1\n00:00:00,000 --> 00:00:02,000\nsaved cue\n",
+) -> dict:
+    job_dir = env.directory
+    manifest = artifacts.make_manifest(
+        env.job_id, spec, status="ready", record_key=record_key, created=created,
+    )
+    manifest = artifacts.save_manifest(job_dir, manifest)
+    artifact_id = manifest["artifact_id"]
+    directory = artifacts.artifact_dir(job_dir, artifact_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "reel.mp4").write_bytes(b"fake-mp4-" + artifact_id.encode())
+    (directory / "poster.jpg").write_bytes(b"fake-jpg")
+    artifacts.write_captions(job_dir, artifact_id, srt, "WEBVTT\n\n")
+    if pinned:
+        manifest = artifacts.pin_artifact(job_dir, artifact_id, True) or manifest
+    return manifest
+
+
+def record_for(manifest: dict, updated: float, record_key: str) -> dict:
+    spec = manifest.get("spec") or {}
+    caption = spec.get("caption") or {}
+    return {
+        "status": "ready",
+        "quality": spec.get("quality"),
+        "target": spec.get("target"),
+        "aspect": spec.get("aspect"),
+        "captions": bool(caption.get("enabled")),
+        "audio_sig": spec.get("audio_sig") or "",
+        "hook": spec.get("hook_scene"),
+        "updated": updated,
+        "path": f"artifacts/{manifest['artifact_id']}/reel.mp4",
+        "poster": f"artifacts/{manifest['artifact_id']}/poster.jpg",
+        "artifact_id": manifest["artifact_id"],
+        "record_key": record_key,
+    }
+
+
+# ---------------------------------------------------------------- identity
+
+
+def test_artifact_id_is_stable_and_sensitive_to_every_input():
+    spec = base_spec()
+    first = artifacts.artifact_id(spec)
+    assert first.startswith("art_")
+    assert len(first) == 4 + 24
+    assert first == artifacts.artifact_id(base_spec())
+
+    changes = {
+        "schema_version": 2,
+        "render_version": "v2",
+        "source_fingerprint": "src2",
+        "order": "arc",
+        "hook_scene": 2,
+        "hook_override": False,
+        "audio_sig": "aud2",
+        "quality": "draft",
+        "aspect": "4:5",
+        "resolved_encoder": "videotoolbox",
+        "story_id": "story2",
+        "target": 30,
+    }
+    for key, value in changes.items():
+        assert artifacts.artifact_id(base_spec(**{key: value})) != first, key
+
+    for field, value in {
+        "scene": 9,
+        "start": 0.5,
+        "end": 2.6,
+        "dur": 2.0,
+        "role": "beat",
+    }.items():
+        clips = copy.deepcopy(spec.clips)
+        clips[0][field] = value
+        assert artifacts.artifact_id(base_spec(clips=clips)) != first, field
+
+    for field, value in {
+        "enabled": False,
+        "style_hash": "style2",
+        "cue_hash": "cues2",
+        "text_hash": "text2",
+        "margin": 0.12,
+    }.items():
+        caption = copy.deepcopy(spec.caption)
+        caption[field] = value
+        assert artifacts.artifact_id(base_spec(caption=caption)) != first, field
+
+
+def test_extra_clip_metadata_does_not_change_identity():
+    spec = base_spec()
+    clips = copy.deepcopy(spec.clips)
+    clips[0]["why"] = "explanation only"
+    assert artifacts.artifact_id(base_spec(clips=clips)) == artifacts.artifact_id(spec)
+
+
+def test_build_spec_resolves_encoder_and_hook_override(env):
+    job = env.job
+    spec = artifacts.build_spec(job, plan_for(), encoder="auto", captions=True)
+    assert spec.resolved_encoder in {"videotoolbox", "libx264"}
+    assert spec.resolved_encoder != "auto"
+    assert spec.hook_override is True
+    assert spec.story_id == env.job_id
+    assert spec.caption["enabled"] is True
+    assert spec.caption["cue_hash"]
+    assert spec.caption["text_hash"]
+
+    forced = artifacts.build_spec(job, plan_for(), encoder="videotoolbox")
+    assert forced.resolved_encoder == "videotoolbox"
+    assert artifacts.artifact_id(forced) != artifacts.artifact_id(spec)
+
+
+def test_manifest_round_trip_index_and_safe_ids(tmp_path):
+    job_dir = tmp_path / "job"
+    manifest = artifacts.make_manifest("job1", base_spec(), record_key="15")
+    saved = artifacts.save_manifest(job_dir, manifest)
+    artifact_id = saved["artifact_id"]
+
+    path = artifacts.manifest_path(job_dir, artifact_id)
+    assert path == job_dir / "artifacts" / artifact_id / "manifest.json"
+    loaded = artifacts.load_manifest(job_dir, artifact_id)
+    assert loaded and loaded["artifact_id"] == artifact_id
+    assert loaded["spec"]["resolved_encoder"] == "libx264"
+
+    index = artifacts.load_index(job_dir)
+    assert index["artifact_ids"] == [artifact_id]
+    assert index["artifacts"][artifact_id]["target"] == 15
+
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.manifest_path(job_dir, "../../escape")
+    assert artifacts.load_manifest(job_dir, "../../escape") is None
+    assert artifacts.is_safe_artifact_id(artifact_id)
+
+    assert artifacts.delete_artifact(job_dir, artifact_id)
+    assert not artifacts.artifact_dir(job_dir, artifact_id).exists()
+    assert artifacts.load_index(job_dir)["artifact_ids"] == []
+
+
+# ---------------------------------------------------------------- render queue
+
+
+def test_queue_reuses_artifact_and_ready_render_keeps_projection(env, monkeypatch):
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    job = app.load_job(env.job_id)
+    plan = plan_for()
+    first = app._queue_render(
+        env.job_id, job, plan, "final", "9:16", None, False, None, False,
+    )
+    artifact_id = first["artifact_id"]
+    assert artifacts.is_safe_artifact_id(artifact_id)
+    assert len(submitted) == 1
+    manifest = artifacts.load_manifest(env.directory, artifact_id)
+    assert manifest and manifest["status"] == "queued"
+
+    again = app._queue_render(
+        env.job_id, app.load_job(env.job_id), plan, "final", "9:16",
+        None, False, None, False,
+    )
+    assert again["artifact_id"] == artifact_id
+    assert len(submitted) == 1
+
+    def fake_render_reel(source, meta, job_dir, plan, title, progress, **kwargs):
+        renders = job_dir / "renders"
+        renders.mkdir(parents=True, exist_ok=True)
+        (renders / "reel_15.mp4").write_bytes(b"fake-mp4")
+        (renders / "reel_15.jpg").write_bytes(b"fake-jpg")
+        progress(1.0, "Reel ready")
+        return {
+            "path": "reel_15.mp4",
+            "poster": "reel_15.jpg",
+            "duration": 4.0,
+            "width": 1080,
+            "height": 1920,
+            "size": 9,
+            "has_audio": True,
+            "clip_count": 1,
+            "quality": "final",
+            "aspect": "9:16",
+            "encoder": "libx264",
+            "captions": False,
+            "caption_count": 0,
+            "cached": 0,
+            "used_assets": [],
+        }
+
+    monkeypatch.setattr(render, "render_reel", fake_render_reel)
+    app.run_render(
+        env.job_id, 15, plan, first["key"], quality="final", aspect="9:16",
+        artifact_id=artifact_id,
+    )
+    stored = app.load_job(env.job_id)
+    assert stored["renders"]["15:h0"]["status"] == "ready"
+    assert stored["renders"]["15:h0"]["artifact_id"] == artifact_id
+    manifest = artifacts.load_manifest(env.directory, artifact_id)
+    assert manifest["status"] == "ready"
+    assert artifacts.has_media(env.directory, artifact_id, "reel.mp4")
+    assert "saved cue" not in artifacts.media_path(
+        env.directory, artifact_id, "captions.srt",
+    ).read_text(encoding="utf-8")
+    assert "hello world" in artifacts.media_path(
+        env.directory, artifact_id, "captions.srt",
+    ).read_text(encoding="utf-8")
+    assert artifacts.media_path(
+        env.directory, artifact_id, "captions.vtt",
+    ).read_text(encoding="utf-8").startswith("WEBVTT")
+
+    ready_again = app._queue_render(
+        env.job_id, app.load_job(env.job_id), plan, "final", "9:16",
+        None, False, None, False,
+    )
+    assert ready_again["artifact_id"] == artifact_id
+    assert len(submitted) == 1
+
+    changed = plan_for()
+    changed["clips"][0]["end"] = 3.0
+    changed["clips"][0]["dur"] = 3.0
+    changed["total"] = 3.0
+    newer = app._queue_render(
+        env.job_id, app.load_job(env.job_id), changed, "final", "9:16",
+        None, False, None, False,
+    )
+    assert newer["artifact_id"] != artifact_id
+    assert len(submitted) == 2
+
+
+def test_queue_adopts_legacy_ready_render_without_rerendering(env, monkeypatch):
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    job = app.load_job(env.job_id)
+    plan = plan_for()
+    job["analysis"]["plans"] = {"15": plan}
+    renders = env.directory / "renders"
+    renders.mkdir()
+    (renders / "reel_15.mp4").write_bytes(b"legacy-mp4")
+    (renders / "reel_15.jpg").write_bytes(b"legacy-jpg")
+    job["renders"] = {
+        "15:h0": {
+            "status": "ready",
+            "quality": "final",
+            "target": 15,
+            "aspect": "9:16",
+            "captions": False,
+            "audio_sig": "",
+            "hook": 0,
+            "updated": 1.0,
+            "path": "reel_15.mp4",
+            "poster": "reel_15.jpg",
+            "record_key": "15:h0",
+            "key": "legacy",
+        },
+    }
+    app.save_job(job)
+
+    reused = app._queue_render(
+        env.job_id, app.load_job(env.job_id), plan, "final", "9:16",
+        None, False, None, False,
+    )
+    assert reused["status"] == "ready"
+    assert artifacts.is_safe_artifact_id(reused["artifact_id"])
+    assert submitted == []
+    manifest = artifacts.load_manifest(env.directory, reused["artifact_id"])
+    assert manifest and manifest["status"] == "ready"
+    assert app.load_job(env.job_id)["renders"]["15:h0"]["artifact_id"] == (
+        reused["artifact_id"]
+    )
+
+
+# ---------------------------------------------------------------- pruning
+
+
+def test_prune_preserves_hooks_pins_and_shares(env, monkeypatch):
+    monkeypatch.setenv("VIBECUT_KEEP_RENDERS", "1")
+    monkeypatch.setenv("VIBECUT_KEEP_DRAFTS", "0")
+    job = env.job
+
+    def variant(hook: int, speech: str) -> artifacts.ArtifactSpec:
+        local = copy.deepcopy(job)
+        local["analysis"]["scenes"][hook]["speech"] = speech
+        return artifacts.build_spec(local, plan_for(hook=hook), captions=False)
+
+    new_hook0 = make_artifact(env, variant(0, "new hook"), record_key="new0")
+    pinned_hook0 = make_artifact(
+        env, variant(0, "pinned hook"), pinned=True, record_key="pin0",
+    )
+    hook1 = make_artifact(env, variant(1, "hook one"), record_key="h1")
+    shared = make_artifact(env, variant(2, "shared hook"), record_key="shared")
+    loser_new = make_artifact(env, variant(3, "new loser"), record_key="loser-new")
+    loser_old = make_artifact(env, variant(3, "old loser"), record_key="loser-old")
+
+    shares.create("job1", shared["artifact_id"], path=app.SHARES)
+    job["renders"] = {
+        "new0": record_for(new_hook0, 10.0, "new0"),
+        "pin0": record_for(pinned_hook0, 1.0, "pin0"),
+        "h1": record_for(hook1, 2.0, "h1"),
+        "shared": record_for(shared, 1.0, "shared"),
+        "loser-new": record_for(loser_new, 10.0, "loser-new"),
+        "loser-old": record_for(loser_old, 1.0, "loser-old"),
+    }
+    removed = app._prune_renders(job)
+
+    assert set(job["renders"]) == {"new0", "pin0", "h1", "shared", "loser-new"}
+    assert "loser-old" not in job["renders"]
+    assert artifacts.artifact_dir(env.directory, new_hook0["artifact_id"]).is_dir()
+    assert artifacts.artifact_dir(env.directory, pinned_hook0["artifact_id"]).is_dir()
+    assert artifacts.artifact_dir(env.directory, hook1["artifact_id"]).is_dir()
+    assert artifacts.artifact_dir(env.directory, shared["artifact_id"]).is_dir()
+    assert not artifacts.artifact_dir(env.directory, loser_old["artifact_id"]).exists()
+    assert removed
+    assert set(job["artifact_ids"]) == {
+        new_hook0["artifact_id"], pinned_hook0["artifact_id"],
+        hook1["artifact_id"], shared["artifact_id"], loser_new["artifact_id"],
+    }
+
+
+def test_clean_keeps_pinned_shared_and_packet_artifacts(env):
+    job = env.job
+    pinned = make_artifact(env, artifacts.build_spec(job, plan_for(0)), pinned=True)
+    shared = make_artifact(env, artifacts.build_spec(job, plan_for(1)))
+    packet = make_artifact(env, artifacts.build_spec(job, plan_for(2)))
+    loose = make_artifact(env, artifacts.build_spec(job, plan_for(3)))
+    shares.create("job1", shared["artifact_id"], path=app.SHARES)
+    job["packet"] = {"artifact_id": packet["artifact_id"]}
+    job["renders"] = {
+        key: record_for(manifest, 1.0, key)
+        for key, manifest in (
+            ("pin", pinned), ("shared", shared), ("packet", packet), ("loose", loose),
+        )
+    }
+    (env.directory / "renders").mkdir(exist_ok=True)
+
+    removed = app.clean_job_files(job, "renders")
+
+    assert "artifacts" in removed
+    assert "renders" in removed
+    for manifest in (pinned, shared, packet):
+        assert artifacts.artifact_dir(env.directory, manifest["artifact_id"]).is_dir()
+    assert not artifacts.artifact_dir(env.directory, loose["artifact_id"]).exists()
+    assert set(job["artifact_ids"]) == {
+        pinned["artifact_id"], shared["artifact_id"], packet["artifact_id"],
+    }
+    assert len(job["renders"]) == 3
+    assert {
+        record["artifact_id"] for record in job["renders"].values()
+    } == {pinned["artifact_id"], shared["artifact_id"], packet["artifact_id"]}
+
+
+# ---------------------------------------------------------------- legacy
+
+
+def test_legacy_v013_job_load_adds_schema_without_breaking(env):
+    legacy = {
+        "id": env.job_id,
+        "status": "ready",
+        "source": {"name": "old.mp4", "duration": 12.0},
+        "analysis": {"scenes": [], "hook_scene": None},
+        "renders": {"15": {"status": "ready", "path": "reel_15.mp4", "updated": 1}},
+    }
+    (env.directory / "job.json").write_text(json.dumps(legacy), encoding="utf-8")
+
+    loaded = app.load_job(env.job_id)
+    assert loaded["schema_version"] == artifacts.SCHEMA_VERSION
+    assert loaded["render_version"] == artifacts.RENDER_VERSION
+    assert loaded["story_id"] == env.job_id
+    assert loaded["artifacts"] == {}
+    assert loaded["artifact_ids"] == []
+    assert loaded["renders"]["15"]["path"] == "reel_15.mp4"
+
+    status = app.public_status(loaded)
+    assert status["artifact_ids"] == []
+    assert status["renders"]["15"]["status"] == "ready"
+
+
+def test_legacy_renders_projection_stays_in_public_job(env):
+    legacy = app.load_job(env.job_id)
+    legacy["renders"] = {
+        "15": {
+            "status": "ready", "path": "reel_15.mp4", "poster": "reel_15.jpg",
+            "updated": 1.0, "key": "legacy",
+        },
+    }
+    app.save_job(legacy)
+
+    public = app.public_job(app.load_job(env.job_id))
+    assert public["artifact_ids"] == []
+    assert public["artifacts"] == {}
+    assert public["renders"]["15"]["status"] == "ready"
+    assert public["renders"]["15"]["path"] == "reel_15.mp4"
+    assert public["renders"]["15"]["url"].startswith(
+        f"/api/jobs/{env.job_id}/media/reel_15.mp4"
+    )

@@ -1601,7 +1601,10 @@ def test_share_token_and_review(tmp_path, monkeypatch):
     page = app.review_page(result["token"])
     assert b"review only" in page.body
     media = app.review_video(result["token"])
-    assert media.path == video
+    assert media.path.name == "reel.mp4"
+    assert "artifacts" in str(media.path)
+    assert media.path.read_bytes() == video.read_bytes()
+    assert b"hello" in app.review_captions(result["token"]).body
 
 
 def test_clear_translation_memo_by_provider(tmp_path, monkeypatch):
