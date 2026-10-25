@@ -906,12 +906,22 @@
     }
     if (!response.ok) {
       let detail = response.statusText || "Request failed";
+      let payload = null;
       try {
-        const body = await response.json();
-        detail = body.detail || detail;
+        payload = await response.json();
+        detail = payload.detail || payload.message || payload.error || detail;
       } catch (_) { /* ignore */ }
-      if (typeof detail !== "string") detail = JSON.stringify(detail);
-      throw new Error(detail);
+      const normalized = typeof detail === "string" ? detail : (
+        detail && typeof detail.message === "string"
+          ? detail.message
+          : JSON.stringify(detail)
+      );
+      const error = new Error(normalized);
+      error.status = response.status;
+      error.detail = detail;
+      error.code = detail && typeof detail === "object" ? detail.code : null;
+      error.payload = payload;
+      throw error;
     }
     return response.json();
   }
@@ -2232,7 +2242,7 @@
         showProgressForJob(job);
         startAnalysisPoll(job.id);
       }
-      history.replaceState(null, "", `#job=${job.id}`);
+      history.replaceState(null, "", jobHash(job.id));
     } catch (error) {
       toast(error.message);
       resetToIngest();
@@ -2278,7 +2288,7 @@
     loadAudioMoods();
     loadTranslateCheck();
     loadHistory();
-    history.replaceState(null, "", `#job=${job.id}`);
+    history.replaceState(null, "", jobHash(job.id));
     document.title = `${fileStem(job.source.name)} · VibeCut`;
     const active = Object.values(job.renders || {}).some(
       (record) => record && (record.status === "queued" || record.status === "rendering" || record.status === "cancelling"),
@@ -5203,6 +5213,16 @@
     }
   }
 
+  function jobHash(id) {
+    let screen = "";
+    try {
+      screen = new URLSearchParams(location.hash.replace(/^#/, "")).get("screen") || "";
+    } catch (_) { /* ignore */ }
+    return screen
+      ? `#job=${encodeURIComponent(id)}&screen=${encodeURIComponent(screen)}`
+      : `#job=${encodeURIComponent(id)}`;
+  }
+
   function showView(view) {
     dom.ingest.hidden = view !== "ingest";
     dom.progress.hidden = view !== "progress";
@@ -5390,6 +5410,71 @@
       state.toastTimer = null;
     }, 3600);
   }
+
+  async function bridgeRequestRaw(path, options = {}) {
+    const config = { ...options };
+    const token = tokenValue();
+    if (token) {
+      config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+    }
+    const response = await fetch(path, config);
+    if (!response.ok) {
+      let detail = response.statusText || `Request failed (${response.status})`;
+      try {
+        const payload = await response.json();
+        detail = payload.detail || payload.message || detail;
+      } catch (_) { /* ignore */ }
+      const message = typeof detail === "string"
+        ? detail
+        : (detail && detail.message) || `Request failed (${response.status})`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.detail = detail;
+      error.code = detail && typeof detail === "object" ? detail.code : null;
+      throw error;
+    }
+    return response.blob();
+  }
+
+  function bridgeApplyPlan(plan) {
+    if (!state.job || !plan || !Array.isArray(plan.clips) || !plan.clips.length) {
+      return false;
+    }
+    state.target = Number(plan.target) || state.target;
+    state.plan = plan;
+    state.edited = true;
+    state.editMode = false;
+    state.overrideHook = plan.hook_scene ?? null;
+    state.scriptOverrides = {};
+    state.scriptId = null;
+    state.lastScript = null;
+    $$("#target-tabs button").forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.target) === state.target);
+    });
+    renderHook();
+    renderPlan();
+    renderScenes();
+    updateRenderPanel();
+    return true;
+  }
+
+  const shellBridge = window.vibecutBridge || {};
+  window.vibecutBridge = {
+    ...shellBridge,
+    request: shellBridge.request || api,
+    requestRaw: shellBridge.requestRaw || bridgeRequestRaw,
+    toast: shellBridge.toast || toast,
+    escapeHtml: shellBridge.escapeHtml || esc,
+    fmtTime: shellBridge.fmtTime || fmtTime,
+    fmtDuration: shellBridge.fmtDuration || fmtDuration,
+    withToken: shellBridge.withToken || withToken,
+    token: shellBridge.token || tokenValue,
+    getJob: shellBridge.getJob || (() => state.job),
+    getPlan: shellBridge.getPlan || (() => state.plan),
+    getTarget: shellBridge.getTarget || (() => state.target),
+    openJob: shellBridge.openJob || openJob,
+    applyPlan: shellBridge.applyPlan || bridgeApplyPlan,
+  };
 
   function routeFromHash() {
     const match = location.hash.match(/^#job=([a-z0-9]+)/i);
