@@ -4,12 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import captions
+import captions as caption_engine
+from pipeline import _clip_text  # reuse the same trimming used in notes
+
+
+def _clean(text: str) -> str:
+    value = " ".join(str(text or "").split())
+    return value[:200]
 
 
 def plan_cues(plan: dict, clips: list[dict], scenes: list[dict]) -> list[dict]:
-    """One cue per caption chunk, using the shared caption engine."""
-    return captions.reel_cues(plan, clips, scenes)
+    """The shared speech-timed cue list used by burn-in and SRT/VTT.
+
+    The renderer and artifacts call the same ``captions.cues_for_plan`` path,
+    so cue text, line wrapping and timing stay byte-identical across surfaces.
+    """
+    return caption_engine.cues_for_plan(plan, clips, scenes)
 
 
 def _stamp(seconds: float, decimal: bool) -> str:

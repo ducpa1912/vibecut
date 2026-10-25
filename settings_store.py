@@ -14,6 +14,7 @@ import os
 import threading
 from pathlib import Path
 
+import captions
 import workflow_config
 from url_ingest import registry as ingest_registry
 
@@ -81,6 +82,7 @@ DEFAULTS = {
         "severity": {},
         "styles": {},
     },
+    "caption_styles": captions.default_style_settings(),
     "workflows": workflow_config.default_workflows(),
     "ingest": dict(ingest_registry.DEFAULT_INGEST_SETTINGS),
 }
@@ -140,6 +142,12 @@ def load_settings() -> dict:
     ):
         ingest.pop(key, None)
     merged["ingest"] = ingest
+    try:
+        merged["caption_styles"] = captions.normalize_style_settings(
+            merged.get("caption_styles"),
+        )
+    except captions.CaptionStyleError:
+        merged["caption_styles"] = captions.default_style_settings()
     merged["workflows"] = workflow_config.normalize_workflows(merged.get("workflows"))
     return merged
 

@@ -122,12 +122,21 @@ def cue_hashes(cues: Iterable[dict] | None) -> tuple[str, str]:
     return _sha(ranges)[:16], _sha(texts)[:16]
 
 
-def style_hash(preset: str | None, margin: float) -> str:
-    return _sha({
+def style_hash(
+    preset: str | None,
+    margin: float,
+    style_key: str = "",
+) -> str:
+    payload = {
         "style_version": 1,
         "preset": str(preset or ""),
         "margin": round(_number(margin, 0.075), 4),
-    })[:16]
+    }
+    # Caption Studio styles extend the preset identity without changing the
+    # artifact schema. Empty keeps legacy artifact ids stable.
+    if style_key:
+        payload["style_key"] = str(style_key)
+    return _sha(payload)[:16]
 
 
 def resolve_encoder(requested: str | None = None) -> str:
@@ -275,6 +284,7 @@ def build_spec(
     audio_sig: str = "",
     preset: str | None = None,
     caption_margin: float = 0.075,
+    caption_style_key: str = "",
     story_id: str | None = None,
     cues: Iterable[dict] | None = None,
     generation: int = 0,
@@ -297,7 +307,7 @@ def build_spec(
         hook_override=not bool(plan.get("auto", True)),
         caption={
             "enabled": bool(captions),
-            "style_hash": style_hash(preset, caption_margin),
+            "style_hash": style_hash(preset, caption_margin, caption_style_key),
             "cue_hash": cue_hash,
             "text_hash": text_hash,
             "cue_count": len(cue_list),

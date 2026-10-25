@@ -32,10 +32,10 @@ from pydantic import BaseModel, Field
 
 import artifacts
 import audio
+import captions as caption_engine
 import admin.routes as admin_routes
 import admin.store as admin_store
 import batch as batch_store
-import captions as caption_engine
 import clipset
 import disk
 import exports as cuts
@@ -1386,12 +1386,34 @@ def _adopt_render_artifact(
         wanted_target = 0
     plan = _adoption_plan(job, wanted_target, record.get("hook"))
     prepared = render.prepare_render(plan, job.get("source") or {}, None)
-    cues = _reel_cues(job, plan, prepared["clips"])
-    margin = float(record.get("caption_margin") or 0.075)
+    prepared_cues = _reel_cues(job, plan, prepared["clips"])
     quality = str(record.get("quality") or "final")
     chosen_aspect = str(aspect or record.get("aspect") or "9:16")
     captions = bool(record.get("captions"))
     audio_sig = str(record.get("audio_sig") or "")
+    caption_track = None
+    track_id = str(record.get("caption_track_id") or "")
+    if captions and track_id:
+        caption_track = caption_engine.load_track(job_dir, track_id)
+    caption_warning = None
+    if captions and caption_track is not None:
+        cues = [cue.to_dict() for cue in caption_track.cues]
+        caption_style_key = caption_track.style_hash
+    else:
+        cues = prepared_cues
+        caption_style_key = ""
+        if captions:
+            caption_warning = (
+                "Stored caption track missing; regenerated SRT from the plan."
+                if track_id
+                else "Legacy render had no pinned caption track; regenerated SRT from the plan."
+            )
+            LOGGER.warning(
+                "legacy artifact adoption for %s/%s: %s",
+                job.get("id"), record.get("record_key") or wanted_target,
+                caption_warning,
+            )
+    margin = float(record.get("caption_margin") or 0.075)
     spec = artifacts.build_spec(
         job, plan,
         quality=quality,
@@ -1401,6 +1423,7 @@ def _adopt_render_artifact(
         audio_sig=audio_sig,
         preset=record.get("preset"),
         caption_margin=margin,
+        caption_style_key=caption_style_key,
         cues=cues,
         clips=prepared["clips"],
     )
@@ -1432,6 +1455,11 @@ def _adopt_render_artifact(
         title=Path(job.get("source", {}).get("name") or "reel").stem,
         created=record.get("created") or record.get("updated"),
     )
+    manifest["caption_source"] = "track" if caption_track is not None else "plan"
+    manifest["caption_track_id"] = caption_track.id if caption_track is not None else None
+    if caption_warning:
+        manifest["caption_warning"] = caption_warning
+        record["caption_warning"] = caption_warning
     manifest["render"] = {
         key: record.get(key)
         for key in (
@@ -1616,18 +1644,65 @@ def run_render(
                 )
         scenes = job["analysis"]["scenes"]
         plan["_scenes"] = scenes
+        source_duration = float(
+            (job.get("source") or {}).get("duration") or 0.0
+        )
+        plan["_source_duration"] = source_duration
+        raw_clip_hash = caption_engine.clip_hash(plan.get("clips"))
         if prepared_clips is None:
             prepared = render.prepare_render(
                 plan, job["source"], audio_plan,
             )
             prepared_clips = prepared["clips"]
             prepared_total = prepared["total"]
-        cues = _reel_cues(job, plan, prepared_clips)
+        cues: list[dict] = _reel_cues(job, plan, prepared_clips)
+        if captions:
+            track_plan = {
+                **plan,
+                "clips": prepared_clips,
+                "total": (
+                    prepared_total
+                    if prepared_total is not None
+                    else sum(float(clip.get("duration") or 0.0) for clip in prepared_clips)
+                ),
+            }
+            current_track = None
+            if plan.get("_caption_track"):
+                try:
+                    current_track = caption_engine.CaptionTrack.from_dict(
+                        plan["_caption_track"],
+                    )
+                except (TypeError, ValueError):
+                    current_track = None
+            prepared_hash = caption_engine.clip_hash(prepared_clips)
+            if current_track is None:
+                caption_track = _default_caption_track(
+                    job_id, job, track_plan, margin=caption_margin,
+                )
+            elif current_track.clip_hash == prepared_hash:
+                caption_track = current_track
+            elif current_track.clip_hash == raw_clip_hash:
+                caption_track = caption_engine.build_track(
+                    job, track_plan, current_track.style,
+                    job_dir=job_dir,
+                )
+            else:
+                raise HTTPException(
+                    409, "The caption track does not match this cut. Rebuild the track.",
+                )
+            _attach_caption_track(plan, caption_track)
+            cues = [cue.to_dict() for cue in caption_track.cues]
         spec = artifacts.build_spec(
             job, plan,
             quality=quality, aspect=aspect, encoder=encoder,
             captions=captions, audio_sig=audio_sig, preset=preset,
-            caption_margin=caption_margin, cues=cues, clips=prepared_clips,
+            caption_margin=caption_margin,
+            caption_style_key=(
+                (plan.get("_caption_track") or {}).get("style_hash") or ""
+            ),
+            cues=cues,
+            clips=prepared_clips,
+            story_id=plan.get("story_id"),
             generation=generation,
         )
         expected_id = artifacts.artifact_id(spec)
@@ -1683,6 +1758,7 @@ def run_render(
             caption_cues=caption_engine.cue_tuples(cues),
             render_clips=prepared_clips,
             render_total=prepared_total,
+            caption_style=plan.get("_caption_style"),
         )
         result["caption_count"] = len(cues)
         render_delta = usage_store.delta(before_usage)
@@ -1721,6 +1797,11 @@ def run_render(
             "artifact_id": artifact_id,
             "created": round(time.time(), 3),
             "script_id": script_id,
+            "caption_track_id": plan.get("_caption_key"),
+            "caption_clip_hash": (plan.get("_caption_track") or {}).get("clip_hash"),
+            "caption_style_id": (plan.get("_caption_style") or {}).get("id"),
+            "cue_hash": (plan.get("_caption_track") or {}).get("cue_hash"),
+            "style_hash": (plan.get("_caption_track") or {}).get("style_hash"),
             **result,
         }
         _record_render_history(
@@ -2878,7 +2959,7 @@ async def save_settings(request: Request) -> dict:
             )
         allowed_settings = {
             "opencode", "translation", "openrouter", "minimax", "stt", "tts",
-            "ingest", "preflight",
+            "ingest", "preflight", "caption_styles",
         }
         unknown = sorted(set(patch) - allowed_settings)
         if unknown:
@@ -2889,6 +2970,19 @@ async def save_settings(request: Request) -> dict:
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
         _validate_ingest_patch(patch)
+        if "caption_styles" in patch:
+            raw_styles = patch.get("caption_styles")
+            if raw_styles is None:
+                raise HTTPException(400, "Caption styles must be an object.")
+            current_styles = (
+                settings_store.load_settings().get("caption_styles") or {}
+            )
+            try:
+                patch["caption_styles"] = caption_engine.merge_style_settings(
+                    current_styles, raw_styles,
+                )
+            except caption_engine.CaptionStyleError as exc:
+                raise HTTPException(400, str(exc)) from exc
 
         opencode = patch.get("opencode")
         if isinstance(opencode, dict):
@@ -3563,6 +3657,25 @@ class PlanBody(BaseModel):
     order: str = "source"
     caption_margin: float | None = None
     script_id: str | None = None
+    caption_track_id: str | None = None
+    caption_style_id: str | None = None
+    caption_style: dict | None = None
+
+
+class CaptionTrackBody(BaseModel):
+    target: int = 30
+    hook_scene: int | None = None
+    clips: list[dict] | None = None
+    style_id: str | None = None
+    overrides: dict | None = None
+    order: str = "source"
+
+
+class CaptionEditBody(BaseModel):
+    cues: list[dict] | None = None
+    style: dict | None = None
+    style_id: str | None = None
+    overrides: dict | None = None
 
 
 class VariantBody(BaseModel):
@@ -4636,6 +4749,124 @@ def _plan_for_body(job: dict, target: int, body: PlanBody) -> dict:
     return _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
 
 
+def _caption_style_for(
+    style_id: str | None = None,
+    overrides: dict | None = None,
+    margin: float | None = None,
+) -> dict:
+    try:
+        style = caption_engine.resolve_style(
+            style_id,
+            settings=settings_store.load_settings(),
+            overrides=overrides,
+        )
+        explicit_zone = bool(
+            isinstance(overrides, dict)
+            and ("safe_zone" in overrides or "safe-zone" in overrides)
+        )
+        if margin is not None and style_id is None and not explicit_zone:
+            style = caption_engine.apply_margin(style, margin)
+        return style
+    except caption_engine.CaptionStyleError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _attach_caption_track(plan: dict, track: caption_engine.CaptionTrack | None) -> None:
+    if track is None:
+        return
+    plan["_caption_track"] = track.to_dict()
+    plan["_caption_cues"] = [cue.to_dict() for cue in track.cues]
+    plan["_caption_style"] = dict(track.style)
+    plan["_caption_key"] = track.id
+
+
+def _caption_track_by_id(job_id: str, track_id: str) -> caption_engine.CaptionTrack:
+    track = caption_engine.load_track(_job_dir(job_id), track_id)
+    if track is None:
+        raise HTTPException(404, "Caption track not found.")
+    return track
+
+
+def _track_validation_clips(track: caption_engine.CaptionTrack) -> list[dict]:
+    return [
+        {
+            "start": 0.0,
+            "end": float(window.get("duration") or 0.0),
+            "dur": float(window.get("duration") or 0.0),
+            "scene": window.get("scene"),
+        }
+        for window in track.clip_windows
+    ]
+
+
+def _default_caption_track(
+    job_id: str,
+    job: dict,
+    plan: dict,
+    style_id: str | None = None,
+    overrides: dict | None = None,
+    margin: float | None = None,
+) -> caption_engine.CaptionTrack:
+    style = _caption_style_for(style_id, overrides, margin)
+    try:
+        return caption_engine.build_track(
+            job,
+            plan,
+            style,
+            job_dir=_job_dir(job_id),
+        )
+    except caption_engine.CaptionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _caption_track_for_render(
+    job_id: str,
+    job: dict,
+    plan: dict,
+    body: PlanBody,
+    enabled: bool,
+    margin: float | None = None,
+) -> caption_engine.CaptionTrack | None:
+    if not enabled:
+        return None
+    if body.caption_track_id:
+        if body.caption_style_id or body.caption_style:
+            raise HTTPException(
+                400,
+                "Style belongs to the caption track. PATCH the track or omit its id.",
+            )
+        track = _caption_track_by_id(job_id, body.caption_track_id)
+        if track.clip_hash != caption_engine.clip_hash(plan.get("clips")):
+            raise HTTPException(
+                409, "The caption track does not match this cut. Rebuild the track.",
+            )
+        return track
+    return _default_caption_track(
+        job_id, job, plan, body.caption_style_id, body.caption_style, margin,
+    )
+
+
+def _caption_poster_url(job: dict, track: caption_engine.CaptionTrack) -> str | None:
+    records = [
+        record for record in (job.get("renders") or {}).values()
+        if record.get("status") == "ready" and record.get("poster")
+    ]
+    records.sort(key=lambda item: float(item.get("updated") or 0), reverse=True)
+    if records:
+        public = _public_render(job["id"], records[0]) or {}
+        if public.get("poster_url"):
+            return str(public["poster_url"])
+    if track.clip_windows:
+        scene = track.clip_windows[0].get("scene")
+        if scene is not None:
+            return f"/api/jobs/{job['id']}/thumb/{int(scene)}"
+    return None
+
+
+def _caption_track_payload(track: caption_engine.CaptionTrack) -> dict:
+    return track.to_dict()
+
+
 @app.post("/api/jobs/{job_id}/plan")
 def make_plan(job_id: str, body: PlanBody) -> dict:
     job = load_job(job_id)
@@ -5491,10 +5722,14 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
             plan = _apply_order(
                 fresh, _plan_for(fresh, target, scene["id"]), body.order,
             )
+            caption_track = _caption_track_for_render(
+                job_id, fresh, plan, body, captions, margin,
+            )
             record = _queue_render(
                 job_id, fresh, plan, quality, aspect, encoder, captions,
                 audio_plan, bool(body.force), preset=preset, caption_margin=margin,
                 script_id=script_id, check_space=True,
+                caption_track=caption_track,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:
@@ -5510,6 +5745,7 @@ def export_cut(
     hook_scene: int | None = None,
     order: str = "source",
     artifact_id: str | None = None,
+    caption_track_id: str | None = None,
 ) -> Response:
     if kind not in {"srt", "vtt", "edl", "xml"}:
         raise HTTPException(404, "Unknown export format.")
@@ -5536,11 +5772,36 @@ def export_cut(
             },
         )
     plan = _apply_order(job, _plan_for(job, _valid_target(int(target)), hook_scene), order)
+    scenes = job["analysis"]["scenes"]
     clips = plan["clips"]
     stem = Path(job["source"]["name"]).stem
     if kind in {"srt", "vtt"}:
+        plan["_scenes"] = scenes
         prepared = render.prepare_render(plan, job["source"], None)
-        cues = _reel_cues(job, plan, prepared["clips"])
+        track_plan = {
+            **plan,
+            "clips": prepared["clips"],
+            "total": prepared["total"],
+        }
+        raw_hash = caption_engine.clip_hash(clips)
+        prepared_hash = caption_engine.clip_hash(prepared["clips"])
+        if caption_track_id:
+            # A pinned track carries its own cut identity; trust it instead of
+            # comparing against whichever auto plan this request happens to use.
+            track = _caption_track_by_id(job_id, caption_track_id)
+            if track.clip_hash == raw_hash and raw_hash != prepared_hash:
+                track = caption_engine.build_track(
+                    job, track_plan, track.style, job_dir=_job_dir(job_id),
+                )
+            elif track.clip_hash != prepared_hash:
+                raise HTTPException(
+                    409, "The caption track does not match this cut. Rebuild the track.",
+                )
+        else:
+            track = _default_caption_track(
+                job_id, job, track_plan, margin=0.075,
+            )
+        cues = [cue.to_dict() for cue in track.cues]
         content = cuts.srt(cues) if kind == "srt" else cuts.vtt(cues)
         media = "text/plain; charset=utf-8"
     elif kind == "edl":
@@ -5559,6 +5820,119 @@ def export_cut(
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.post("/api/jobs/{job_id}/captions")
+def build_caption_track(job_id: str, body: CaptionTrackBody) -> dict:
+    """Build a speech-timed caption track for the requested cut."""
+    job = load_job(job_id)
+    target = _valid_target(int(body.target))
+    plan_body = PlanBody(
+        target=target,
+        hook_scene=body.hook_scene,
+        clips=body.clips,
+        order=body.order,
+    )
+    plan = _plan_for_body(job, target, plan_body)
+    style = _caption_style_for(body.style_id, body.overrides)
+    try:
+        track = caption_engine.build_track(
+            job, plan, style, job_dir=_job_dir(job_id),
+        )
+    except caption_engine.CaptionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "track": track.to_dict(),
+        "id": track.id,
+        "track_id": track.id,
+        "version": track.version,
+        "cue_count": len(track.cues),
+    }
+
+
+@app.get("/api/jobs/{job_id}/captions/{track_id}/srt")
+def caption_track_srt(job_id: str, track_id: str) -> Response:
+    track = _caption_track_by_id(job_id, track_id)
+    content = cuts.srt([cue.to_dict() for cue in track.cues])
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{track.id}.srt"',
+        },
+    )
+
+
+@app.get("/api/jobs/{job_id}/captions/{track_id}/preview")
+def caption_track_preview(job_id: str, track_id: str) -> dict:
+    """Caption-only preview payload. Never starts a full render."""
+    job = load_job(job_id)
+    track = _caption_track_by_id(job_id, track_id)
+    duration = round(sum(
+        float(window.get("duration") or 0.0)
+        for window in track.clip_windows
+    ), 3)
+    return {
+        "track_id": track.id,
+        "job_id": job_id,
+        "version": track.version,
+        "target": track.target,
+        "cues": [cue.to_dict() for cue in track.cues],
+        "style": track.style,
+        "style_id": track.style_id,
+        "style_hash": track.style_hash,
+        "cue_hash": track.cue_hash,
+        "clip_hash": track.clip_hash,
+        "safe_zones": caption_engine.safe_zone_rects(track.style),
+        "poster_url": _caption_poster_url(job, track),
+        "duration": duration,
+        "source": track.source,
+        "warnings": track.warnings,
+        "full_render": False,
+        "caption_only": True,
+    }
+
+
+@app.get("/api/jobs/{job_id}/captions/{track_id}")
+def get_caption_track(job_id: str, track_id: str) -> dict:
+    return _caption_track_payload(_caption_track_by_id(job_id, track_id))
+
+
+@app.patch("/api/jobs/{job_id}/captions/{track_id}")
+def edit_caption_track(
+    job_id: str,
+    track_id: str,
+    body: CaptionEditBody,
+) -> dict:
+    """Edit cue text/timing or style. Changed content becomes a new version."""
+    load_job(job_id)
+    track = _caption_track_by_id(job_id, track_id)
+    clips = _track_validation_clips(track)
+    total = round(sum(
+        float(window.get("duration") or 0.0)
+        for window in track.clip_windows
+    ), 3)
+    try:
+        edited, changed = caption_engine.edit_track(
+            track,
+            cues=body.cues,
+            style=body.style,
+            style_id=body.style_id,
+            overrides=body.overrides,
+            settings=settings_store.load_settings(),
+            clips=clips,
+            total=total,
+            job_dir=_job_dir(job_id),
+        )
+    except caption_engine.CaptionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "track": edited.to_dict(),
+        "id": edited.id,
+        "track_id": edited.id,
+        "version": edited.version,
+        "changed": changed,
+    }
 
 
 @app.post("/api/jobs/{job_id}/audio/script")
@@ -5908,6 +6282,7 @@ def _queue_render(
     caption_margin: float = 0.075,
     script_id: str | None = None,
     check_space: bool = False,
+    caption_track: caption_engine.CaptionTrack | None = None,
 ) -> dict:
     """Serialize check/write/submit so one record key cannot queue twice."""
     with RENDER_SUBMIT_LOCK:
@@ -5915,6 +6290,7 @@ def _queue_render(
             job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
             force, preset=preset, caption_margin=caption_margin,
             script_id=script_id, check_space=check_space,
+            caption_track=caption_track,
         )
 
 
@@ -5932,6 +6308,7 @@ def _queue_render_locked(
     caption_margin: float = 0.075,
     script_id: str | None = None,
     check_space: bool = False,
+    caption_track: caption_engine.CaptionTrack | None = None,
 ) -> dict:
     # Reserve generations and write manifests serially so two force requests
     # can never race to the same artifact id.
@@ -5941,7 +6318,7 @@ def _queue_render_locked(
             job_id, current, plan, quality, aspect, encoder, captions,
             audio_plan, force, preset=preset,
             caption_margin=caption_margin, script_id=script_id,
-            check_space=check_space,
+            check_space=check_space, caption_track=caption_track,
         )
 
 
@@ -5959,8 +6336,8 @@ def _queue_render_locked_impl(
     caption_margin: float = 0.075,
     script_id: str | None = None,
     check_space: bool = False,
+    caption_track: caption_engine.CaptionTrack | None = None,
 ) -> dict:
-    script_id = _valid_script_id(job_id, plan, script_id)
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
     record_key = _render_key(
@@ -5969,17 +6346,51 @@ def _queue_render_locked_impl(
     job_dir = _job_dir(job_id)
     job_scenes = (job.get("analysis") or {}).get("scenes") or []
     plan["_scenes"] = job_scenes
+    plan["_source_duration"] = float(
+        (job.get("source") or {}).get("duration") or 0.0
+    )
+    raw_clip_hash = caption_engine.clip_hash(plan.get("clips"))
     prepared = render.prepare_render(
         plan, job.get("source") or {}, audio_plan,
     )
     prepared_clips = prepared["clips"]
     prepared_total = prepared["total"]
-    cues = _reel_cues(job, plan, prepared_clips)
+    cues: list[dict] = _reel_cues(job, plan, prepared_clips)
+    if captions:
+        track_plan = {
+            **plan,
+            "clips": prepared_clips,
+            "total": prepared_total,
+        }
+        prepared_hash = caption_engine.clip_hash(prepared_clips)
+        if caption_track is None:
+            caption_track = _default_caption_track(
+                job_id, job, track_plan, margin=caption_margin,
+            )
+        elif caption_track.clip_hash == prepared_hash:
+            pass
+        elif caption_track.clip_hash == raw_clip_hash:
+            caption_track = caption_engine.build_track(
+                job, track_plan, caption_track.style,
+                job_dir=job_dir,
+            )
+        else:
+            raise HTTPException(
+                409, "The caption track does not match this cut. Rebuild the track.",
+            )
+        _attach_caption_track(plan, caption_track)
+        cues = [cue.to_dict() for cue in caption_track.cues]
+    caption_sig = str(plan.get("_caption_key") or "") if captions else ""
     base_spec = artifacts.build_spec(
         job, plan,
         quality=quality, aspect=aspect, encoder=encoder,
         captions=captions, audio_sig=audio_sig, preset=preset,
-        caption_margin=caption_margin, clips=prepared_clips, cues=cues,
+        caption_margin=caption_margin,
+        caption_style_key=(
+            (plan.get("_caption_track") or {}).get("style_hash") or ""
+        ),
+        cues=cues,
+        clips=prepared_clips,
         story_id=plan.get("story_id"),
     )
     generation = artifacts.resolve_generation(job_dir, base_spec, force=force)
@@ -5992,6 +6403,8 @@ def _queue_render_locked_impl(
         "aspect": aspect,
         "encoder": spec.resolved_encoder,
         "captions": captions,
+        "caption": caption_sig,
+        "caption_margin": round(float(caption_margin), 4) if captions else 0,
         "audio": audio_plan or None,
         "nonce": time.time() if force else None,
     }, sort_keys=True).encode()).hexdigest()[:12]
@@ -6043,6 +6456,14 @@ def _queue_render_locked_impl(
         reused["preset"] = preset
         reused["caption_margin"] = caption_margin
         reused["script_id"] = script_id
+        reused["caption_track_id"] = plan.get("_caption_key")
+        reused["caption_clip_hash"] = (
+            (plan.get("_caption_track") or {}).get("clip_hash")
+        )
+        reused["caption_style_id"] = (plan.get("_caption_style") or {}).get("id")
+        reused["cue_hash"] = (plan.get("_caption_track") or {}).get("cue_hash")
+        reused["style_hash"] = (plan.get("_caption_track") or {}).get("style_hash")
+        reused["caption_count"] = len(cues)
 
         def reuse(value: dict) -> None:
             value.setdefault("renders", {})[record_key] = reused
@@ -6105,6 +6526,12 @@ def _queue_render_locked_impl(
             "auto": bool(plan.get("auto", True)),
             "clips": plan.get("clips") or [],
         },
+        "caption_track_id": plan.get("_caption_key"),
+        "caption_clip_hash": (plan.get("_caption_track") or {}).get("clip_hash"),
+        "caption_style_id": (plan.get("_caption_style") or {}).get("id"),
+        "cue_hash": (plan.get("_caption_track") or {}).get("cue_hash"),
+        "style_hash": (plan.get("_caption_track") or {}).get("style_hash"),
+        "caption_count": len(cues),
     }
 
     def mutate(value: dict) -> None:
@@ -6133,7 +6560,6 @@ def _queue_render_locked_impl(
     )
     return record
 
-
 def _render_options(
     body: PlanBody,
 ) -> tuple[str, str, str | None, bool, dict | None, str | None, float]:
@@ -6161,10 +6587,14 @@ def start_render(job_id: str, body: PlanBody) -> dict:
     target = _valid_target(int(body.target))
     quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
     plan = _plan_for_body(job, target, body)
+    caption_track = _caption_track_for_render(
+        job_id, job, plan, body, captions, margin,
+    )
     record = _queue_render(
         job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
         bool(body.force), preset=preset, caption_margin=margin,
         script_id=_body_script_id(body, audio_plan), check_space=True,
+        caption_track=caption_track,
     )
     return {"render": _public_render(job_id, record)}
 
@@ -6180,10 +6610,14 @@ def start_render_all(job_id: str, body: PlanBody) -> dict:
         job = load_job(job_id)
         try:
             plan = _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
+            caption_track = _caption_track_for_render(
+                job_id, job, plan, body, captions, margin,
+            )
             record = _queue_render(
                 job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
                 bool(body.force), preset=preset, caption_margin=margin,
                 script_id=script_id, check_space=True,
+                caption_track=caption_track,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:
