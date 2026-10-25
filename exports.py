@@ -2,35 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
-from pipeline import _clip_text  # reuse the same trimming used in notes
-
-
-def _clean(text: str) -> str:
-    value = " ".join(str(text or "").split())
-    return value[:200]
+import captions
 
 
 def plan_cues(plan: dict, clips: list[dict], scenes: list[dict]) -> list[dict]:
-    """One cue per clip, reel-relative times, text from speech then OCR."""
-    by_id = {scene["id"]: scene for scene in scenes}
-    cues: list[dict] = []
-    offset = 0.0
-    for clip in clips:
-        scene = by_id.get(clip.get("scene")) or {}
-        duration = float(clip.get("dur") or clip.get("duration") or 0.0)
-        text = _clean(scene.get("speech") or scene.get("ocr") or "")
-        if text and duration > 0.2:
-            cues.append({
-                "start": offset,
-                "end": offset + duration,
-                "text": text,
-                "scene": clip.get("scene"),
-            })
-        offset += duration
-    return cues
+    """One cue per caption chunk, using the shared caption engine."""
+    return captions.reel_cues(plan, clips, scenes)
 
 
 def _stamp(seconds: float, decimal: bool) -> str:

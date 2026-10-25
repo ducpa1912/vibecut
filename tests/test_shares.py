@@ -411,12 +411,17 @@ def test_clean_preserves_unadoptable_legacy_share_target(env, monkeypatch):
     monkeypatch.setattr(app, "_adopt_render_artifact", lambda *args, **kwargs: None)
     job = app.load_job(env.job_id)
 
-    removed = app.clean_job_files(job, "renders")
+    with pytest.raises(HTTPException) as blocked:
+        app.clean_job_files(job, "renders")
 
-    assert removed == []
+    assert blocked.value.status_code == 409
     assert (env.directory / "renders" / "reel_15.mp4").is_file()
     assert "15" in job["renders"]
     assert shares.get(token, app.SHARES)["artifact_id"] is None
+    client = TestClient(app.app)
+    assert client.post(
+        f"/api/jobs/{env.job_id}/clean", json={"profile": "renders"},
+    ).status_code == 409
 
 
 def test_corrupt_share_store_blocks_destructive_operations(env, monkeypatch):
@@ -511,3 +516,15 @@ def test_create_share_merges_concurrent_job_update(env, monkeypatch):
     assert response.json()["artifact_id"]
     job = app.load_job(env.job_id)
     assert "concurrent" in job["renders"]
+
+
+def test_legacy_share_create_persists_adopted_projection(env):
+    _prepare_legacy_render(env)
+    result = app.create_share(env.job_id, 15, "9:16")
+    artifact_id = result["artifact_id"]
+    job = app.load_job(env.job_id)
+    record = job["renders"]["15"]
+    assert record["artifact_id"] == artifact_id
+    assert record["record_key"] == "15"
+    assert record["resolved_encoder"] in {"videotoolbox", "libx264"}
+    assert shares.get(result["token"], app.SHARES)["artifact_id"] == artifact_id

@@ -22,6 +22,7 @@ from typing import Callable
 from PIL import Image, ImageDraw, ImageFont
 
 import audio
+import captions
 from pipeline import PipelineError, crop_center, probe
 
 TARGET_AR = 9 / 16
@@ -450,47 +451,16 @@ def _audio_track(
 
 
 def _caption_text(scene: dict) -> str:
-    text = str(scene.get("speech") or scene.get("ocr") or "").strip()
-    text = " ".join(text.replace("\n", " ").split())
-    return text
+    return captions.caption_text(scene)
 
 
-def _caption_chunks(text: str, width: int = 72) -> list[str]:
-    if len(text) <= width:
-        return [text]
-    words = text.split()
-    if len(words) <= 1:
-        return [text[index:index + width] for index in range(0, len(text), width)]
-    chunks: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if len(candidate) > width and current:
-            chunks.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    return chunks
+def _caption_chunks(text: str, width: int = captions.CUE_WIDTH) -> list[str]:
+    return captions.chunk_text(text, width)
 
 
 def _caption_cues(plan: dict, clips: list[dict]) -> list[tuple[float, float, str]]:
-    scenes = {scene["id"]: scene for scene in plan.get("_scenes", [])}
-    cues: list[tuple[float, float, str]] = []
-    offset = 0.0
-    for clip in clips:
-        scene = scenes.get(clip["scene"]) or {}
-        text = _caption_text(scene)
-        duration = float(clip["duration"])
-        if text:
-            chunks = _caption_chunks(text)
-            share = duration / max(1, len(chunks))
-            for index, chunk in enumerate(chunks):
-                start = offset + index * share
-                cues.append((start, min(offset + duration, start + share), chunk))
-        offset += duration
-    return cues
+    cues = captions.reel_cues(plan, clips, plan.get("_scenes", []))
+    return captions.cue_tuples(cues)
 
 
 def _caption_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -700,6 +670,7 @@ def render_reel(
     audio_sig: str = "",
     caption_margin: float = 0.075,
     cancel_event: threading.Event | None = None,
+    caption_cues: list[tuple[float, float, str]] | None = None,
 ) -> dict:
     quality = "draft" if quality == "draft" else "final"
     aspect = aspect if aspect in ASPECTS else "9:16"
@@ -758,6 +729,10 @@ def render_reel(
             audio_plan["_beat_drift"] = drift
 
     master_dir = job_dir.parent.parent / "cache" / "masters" / job_dir.name
+    cues = list(caption_cues) if caption_cues is not None else _caption_cues(plan, clips)
+    if not captions:
+        cues = []
+    caption_count = len(cues)
     master_key = hashlib.sha1(json.dumps({
         "target": target,
         "clips": [
@@ -767,11 +742,15 @@ def render_reel(
         "quality": quality,
         "aspect": aspect,
         "captions": bool(captions),
+        "caption_cues": [
+            [round(start, 3), round(end, 3), text]
+            for start, end, text in cues
+        ],
+        "caption_margin": round(float(caption_margin), 4) if captions else 0.0,
         "encoder": encoder,
     }, sort_keys=True).encode()).hexdigest()[:16]
     master = master_dir / f"{master_key}.mp4"
     cached_count = 0
-    caption_count = 0
     try:
         if not master.is_file() or master.stat().st_size < 1024:
             workers = max(1, min(
@@ -817,8 +796,6 @@ def render_reel(
             _concat_video(tmp, master_tmp, segments, quality, cancel_event)
             if captions:
                 progress(0.87, "Burning captions")
-                cues = _caption_cues(plan, clips)
-                caption_count = len(cues)
                 if cues:
                     captioned = tmp / "captioned.mp4"
                     _burn_captions(
@@ -830,8 +807,6 @@ def render_reel(
             os.replace(master_tmp, master)
         else:
             progress(0.40, "Video master cached")
-            if captions:
-                caption_count = len(_caption_cues(plan, clips))
 
         audio_path = tmp / "audio.wav"
         audio_info: dict = {"mode": "keep"}

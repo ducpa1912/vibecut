@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import re
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +16,7 @@ from fastapi.testclient import TestClient
 
 import app
 import artifacts
+import audio
 import render
 import shares
 
@@ -218,6 +223,7 @@ def test_artifact_id_is_stable_and_sensitive_to_every_input():
         "resolved_encoder": "videotoolbox",
         "story_id": "story2",
         "target": 30,
+        "generation": 1,
     }
     for key, value in changes.items():
         assert artifacts.artifact_id(base_spec(**{key: value})) != first, key
@@ -238,6 +244,7 @@ def test_artifact_id_is_stable_and_sensitive_to_every_input():
         "style_hash": "style2",
         "cue_hash": "cues2",
         "text_hash": "text2",
+        "cue_count": 2,
         "margin": 0.12,
     }.items():
         caption = copy.deepcopy(spec.caption)
@@ -669,9 +676,20 @@ def test_media_path_helpers_reject_escapes_and_unknown_roots(env):
     artifact_dir.mkdir(parents=True)
     artifact_reel = artifact_dir / "reel.mp4"
     artifact_reel.write_bytes(b"artifact")
+    (artifact_dir / "manifest.json").write_text("{}", encoding="utf-8")
     assert app._record_media_path(
         job_dir, {"path": f"artifacts/{artifact_id}/reel.mp4"},
     ) == artifact_reel.resolve()
+    assert app._record_media_path(
+        job_dir, {"path": f"artifacts/{artifact_id}/manifest.json"},
+    ) is None
+    assert app._record_media_path(
+        job_dir, {"path": f"artifacts/{artifact_id}/other.mp4"},
+    ) is None
+    assert app._safe_unlink(
+        job_dir, f"artifacts/{artifact_id}/manifest.json",
+    ) is None
+    assert (artifact_dir / "manifest.json").is_file()
 
 
 def test_manifest_load_rejects_tampered_id_and_bad_utf8(tmp_path):
@@ -744,3 +762,297 @@ def test_mutating_routes_never_save_a_stale_job_snapshot(env, monkeypatch):
     assert client.post(
         f"/api/jobs/{env.job_id}/clean", json={"profile": "renders"},
     ).status_code == 200
+
+
+# ---------------------------------------------------------------- co-sign blockers
+
+
+def _parse_srt(text: str) -> list[dict]:
+    cues = []
+    for block in text.strip().split("\n\n"):
+        lines = block.splitlines()
+        if len(lines) < 3:
+            continue
+        match = re.match(
+            r"(\d\d):(\d\d):(\d\d),(\d{3}) --> (\d\d):(\d\d):(\d\d),(\d{3})",
+            lines[1],
+        )
+        if not match:
+            continue
+        values = [int(value) for value in match.groups()]
+        start = values[0] * 3600 + values[1] * 60 + values[2] + values[3] / 1000
+        end = values[4] * 3600 + values[5] * 60 + values[6] + values[7] / 1000
+        cues.append({"start": start, "end": end, "text": "\n".join(lines[2:])})
+    return cues
+
+
+def test_caption_cue_parity_end_to_end(env, monkeypatch):
+    job = app.load_job(env.job_id)
+    job["analysis"]["scenes"][0]["speech"] = (
+        "This is a deliberately long speech line that must split into several "
+        "caption chunks before the render burns it, so the artifact and the "
+        "SRT describe exactly the same cues."
+    )
+    app.save_job(job)
+    job = app.load_job(env.job_id)
+    plan = app._plan_for(job, 15, None)
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    burned: list[tuple[float, float, str]] = []
+
+    def fake_render_reel(source, meta, job_dir, plan, title, progress, **kwargs):
+        burned.extend(kwargs.get("caption_cues") or [])
+        renders = job_dir / "renders"
+        renders.mkdir(parents=True, exist_ok=True)
+        tmp = renders / ".reel-15.tmp.mp4"
+        tmp.write_bytes(b"fake-mp4")
+        os.replace(tmp, renders / "reel_15.mp4")
+        poster = renders / ".reel-15.tmp.jpg"
+        poster.write_bytes(b"fake-jpg")
+        os.replace(poster, renders / "reel_15.jpg")
+        progress(1.0, "Reel ready")
+        return {
+            "path": "reel_15.mp4",
+            "poster": "reel_15.jpg",
+            "duration": float(plan["total"]),
+            "width": 1080,
+            "height": 1920,
+            "size": 9,
+            "has_audio": True,
+            "clip_count": len(plan["clips"]),
+            "quality": "final",
+            "aspect": "9:16",
+            "encoder": "libx264",
+            "captions": True,
+            "caption_count": len(burned),
+            "cached": 0,
+            "used_assets": [],
+        }
+
+    monkeypatch.setattr(render, "render_reel", fake_render_reel)
+    record = app._queue_render(
+        env.job_id, job, plan, "final", "9:16", None, True, None, False,
+    )
+    app.run_render(
+        env.job_id, 15, plan, record["key"], quality="final", aspect="9:16",
+        captions=True, artifact_id=record["artifact_id"],
+        generation=record["generation"],
+    )
+
+    artifact_id = record["artifact_id"]
+    manifest = artifacts.load_manifest(env.directory, artifact_id)
+    srt_text = artifacts.media_path(
+        env.directory, artifact_id, "captions.srt",
+    ).read_text(encoding="utf-8")
+    vtt_text = artifacts.media_path(
+        env.directory, artifact_id, "captions.vtt",
+    ).read_text(encoding="utf-8")
+    srt_cues = _parse_srt(srt_text)
+    burned_cues = [
+        {"start": round(start, 3), "end": round(end, 3), "text": text}
+        for start, end, text in burned
+    ]
+
+    assert len(burned_cues) > 1
+    assert len(srt_cues) == len(burned_cues)
+    assert srt_cues == burned_cues
+    assert vtt_text.count("-->") == len(burned_cues)
+    spec = manifest["spec"]
+    caption = spec["caption"]
+    cue_hash, text_hash = artifacts.cue_hashes(burned_cues)
+    assert caption["cue_count"] == len(burned_cues)
+    assert caption["cue_hash"] == cue_hash
+    assert caption["text_hash"] == text_hash
+    assert manifest["render"]["caption_count"] == len(burned_cues)
+    assert app.export_cut(env.job_id, "srt", target=15).body.decode("utf-8") == srt_text
+
+
+def test_force_render_creates_new_artifact_and_preserves_shared_bytes(env, monkeypatch):
+    job = app.load_job(env.job_id)
+    plan = plan_for()
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    state = {"bytes": b"original"}
+
+    def fake_render_reel(source, meta, job_dir, plan, title, progress, **kwargs):
+        renders = job_dir / "renders"
+        renders.mkdir(parents=True, exist_ok=True)
+        tmp = renders / ".force-tmp.mp4"
+        tmp.write_bytes(state["bytes"])
+        os.replace(tmp, renders / "reel_15.mp4")
+        poster = renders / ".force-tmp.jpg"
+        poster.write_bytes(b"poster")
+        os.replace(poster, renders / "reel_15.jpg")
+        progress(1.0, "Reel ready")
+        return {
+            "path": "reel_15.mp4",
+            "poster": "reel_15.jpg",
+            "duration": 4.0,
+            "width": 1080,
+            "height": 1920,
+            "size": 9,
+            "has_audio": True,
+            "clip_count": 1,
+            "quality": "final",
+            "aspect": "9:16",
+            "encoder": "libx264",
+            "captions": False,
+            "caption_count": len(kwargs.get("caption_cues") or []),
+            "cached": 0,
+            "used_assets": [],
+        }
+
+    monkeypatch.setattr(render, "render_reel", fake_render_reel)
+    first = app._queue_render(
+        env.job_id, job, plan, "final", "9:16", None, False, None, False,
+    )
+    app.run_render(
+        env.job_id, 15, plan, first["key"], quality="final", aspect="9:16",
+        artifact_id=first["artifact_id"], generation=first["generation"],
+    )
+    artifact_a = first["artifact_id"]
+    manifest_a = artifacts.load_manifest(env.directory, artifact_a)
+    token = app.create_share(
+        env.job_id, body=app.ShareBody(artifact_id=artifact_a),
+    )["token"]
+    assert app.review_video(token).path.read_bytes() == b"original"
+
+    state["bytes"] = b"forced"
+    forced = app._queue_render(
+        env.job_id, app.load_job(env.job_id), plan,
+        "final", "9:16", None, False, None, True,
+    )
+    artifact_b = forced["artifact_id"]
+    assert artifact_b != artifact_a
+    assert forced["generation"] == 1
+    pending = artifacts.load_manifest(env.directory, artifact_b)
+    assert pending["status"] == "queued"
+    assert not artifacts.has_media(env.directory, artifact_b)
+
+    with pytest.raises(app.HTTPException) as blocked:
+        app.create_share(
+            env.job_id, body=app.ShareBody(artifact_id=artifact_b),
+        )
+    assert blocked.value.status_code == 409
+    assert app.review_video(token).path.read_bytes() == b"original"
+
+    app.run_render(
+        env.job_id, 15, plan, forced["key"], quality="final", aspect="9:16",
+        artifact_id=artifact_b,
+    )
+
+    ready_b = artifacts.load_manifest(env.directory, artifact_b)
+    ready_a = artifacts.load_manifest(env.directory, artifact_a)
+    assert ready_b["status"] == "ready"
+    assert artifacts.media_path(
+        env.directory, artifact_b, "reel.mp4",
+    ).read_bytes() == b"forced"
+    assert artifacts.media_path(
+        env.directory, artifact_a, "reel.mp4",
+    ).read_bytes() == b"original"
+    assert ready_a["updated"] == manifest_a["updated"]
+    found = app._share(token)
+    assert found and found[0]["artifact_id"] == artifact_a
+    assert app.review_video(token).path.read_bytes() == b"original"
+
+
+def test_share_publication_revalidates_after_artifact_disappears(env, monkeypatch):
+    manifest = make_artifact(env, artifacts.build_spec(env.job, plan_for()))
+    artifact_id = manifest["artifact_id"]
+    original = app._ready_manifest
+    calls = {"count": 0}
+
+    def race(job, wanted):
+        result = original(job, wanted)
+        calls["count"] += 1
+        if calls["count"] == 1:
+            artifacts.media_path(env.directory, wanted, "reel.mp4").unlink()
+        return result
+
+    monkeypatch.setattr(app, "_ready_manifest", race)
+    with pytest.raises(app.HTTPException) as blocked:
+        app.create_share(
+            env.job_id, body=app.ShareBody(artifact_id=artifact_id),
+        )
+    assert blocked.value.status_code == 409
+    assert shares.load(app.SHARES, strict=False) == {}
+
+
+def test_cleanup_storage_workfiles_does_not_save_snapshot(env, monkeypatch):
+    job = app.load_job(env.job_id)
+    job["updated"] = time.time() - 10 * 86400
+    (env.directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    thumbs = env.directory / "thumbs"
+    thumbs.mkdir()
+    (thumbs / "00000.jpg").write_bytes(b"thumb")
+    monkeypatch.setattr(audio, "CACHE", env.tmp_path / "cache")
+    monkeypatch.setenv("VIBECUT_RETENTION_DAYS", "0")
+    monkeypatch.setenv("VIBECUT_JOB_CLEAN_DAYS", "1")
+    monkeypatch.setenv("VIBECUT_CACHE_DAYS", "0")
+
+    def forbidden(job):
+        raise AssertionError("cleanup_storage saved a stale snapshot")
+
+    monkeypatch.setattr(app, "save_job", forbidden)
+    app.cleanup_storage()
+    assert not thumbs.exists()
+
+
+def test_cleanup_storage_prune_merges_concurrent_update(env, monkeypatch):
+    job = app.load_job(env.job_id)
+    job["updated"] = time.time() - 10 * 86400
+    job["renders"] = {
+        "15": {"status": "ready", "path": "reel_15.mp4", "updated": 1.0},
+    }
+    (env.directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    monkeypatch.setattr(audio, "CACHE", env.tmp_path / "cache")
+    monkeypatch.setenv("VIBECUT_RETENTION_DAYS", "0")
+    monkeypatch.setenv("VIBECUT_JOB_CLEAN_DAYS", "0")
+    monkeypatch.setenv("VIBECUT_CACHE_DAYS", "0")
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_prune(current):
+        started.set()
+        assert release.wait(3)
+        current["renders"].pop("15", None)
+        return ["reel_15.mp4"]
+
+    monkeypatch.setattr(app, "_prune_renders", fake_prune)
+
+    def run_cleanup():
+        app.cleanup_storage()
+
+    cleanup_thread = threading.Thread(target=run_cleanup)
+    cleanup_thread.start()
+    assert started.wait(3)
+
+    update_started = threading.Event()
+
+    def run_update():
+        update_started.set()
+        app.update_job(
+            env.job_id,
+            lambda current: current.__setitem__("message", "concurrent"),
+        )
+
+    update_thread = threading.Thread(target=run_update)
+    update_thread.start()
+    assert update_started.wait(3)
+    time.sleep(0.05)
+    release.set()
+    update_thread.join(5)
+    cleanup_thread.join(5)
+    assert not update_thread.is_alive()
+    assert not cleanup_thread.is_alive()
+
+    stored = app.load_job(env.job_id)
+    assert stored["message"] == "concurrent"
+    assert "15" not in stored["renders"]

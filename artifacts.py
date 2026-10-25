@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import render
+import captions
 
 SCHEMA_VERSION = 1
 RENDER_VERSION = "v0.14-artifact-1"
@@ -164,34 +165,13 @@ def source_fingerprint(job: dict | None) -> str:
 
 
 def cues_from_plan(job: dict | None, plan: dict | None) -> list[dict]:
-    """Scene-level cues, identical in shape to ``exports.plan_cues``.
-
-    The artifact stores the resulting SRT/VTT, so this is only used when the
-    artifact is first created.
-    """
+    """Canonical chunked cues shared by burn-in, exports, and artifacts."""
     analysis = (job or {}).get("analysis") or {}
-    scenes = {
-        scene.get("id"): scene
-        for scene in analysis.get("scenes") or []
-        if isinstance(scene, dict)
-    }
-    cues: list[dict] = []
-    offset = 0.0
-    for clip in (plan or {}).get("clips") or []:
-        if not isinstance(clip, dict):
-            continue
-        scene = scenes.get(clip.get("scene")) or {}
-        duration = _number(clip.get("dur", clip.get("duration")))
-        text = " ".join(str(scene.get("speech") or scene.get("ocr") or "").split())[:200]
-        if text and duration > 0.2:
-            cues.append({
-                "start": round(offset, 3),
-                "end": round(offset + duration, 3),
-                "text": text,
-                "scene": clip.get("scene"),
-            })
-        offset += duration
-    return cues
+    return captions.reel_cues(
+        plan or {},
+        (plan or {}).get("clips") or [],
+        analysis.get("scenes") or [],
+    )
 
 
 @dataclass(frozen=True)
@@ -209,6 +189,7 @@ class ArtifactSpec:
         "style_hash": "",
         "cue_hash": "",
         "text_hash": "",
+        "cue_count": 0,
         "margin": 0.075,
     })
     audio_sig: str = ""
@@ -216,6 +197,7 @@ class ArtifactSpec:
     aspect: str = "9:16"
     resolved_encoder: str = "libx264"
     source_fingerprint: str = ""
+    generation: int = 0
     schema_version: int = SCHEMA_VERSION
     render_version: str = RENDER_VERSION
 
@@ -243,6 +225,7 @@ class ArtifactSpec:
             "resolved_encoder": resolve_encoder(self.resolved_encoder),
             "story_id": str(self.story_id or ""),
             "target": int(self.target),
+            "generation": int(self.generation or 0),
         }
 
     @classmethod
@@ -263,6 +246,7 @@ class ArtifactSpec:
             aspect=str(data.get("aspect") or "9:16"),
             resolved_encoder=resolve_encoder(str(data.get("resolved_encoder") or "libx264")),
             source_fingerprint=str(data.get("source_fingerprint") or ""),
+            generation=_optional_int(data.get("generation")) or 0,
             schema_version=int(data.get("schema_version") or SCHEMA_VERSION),
             render_version=str(data.get("render_version") or RENDER_VERSION),
         )
@@ -275,6 +259,7 @@ def _caption_payload(value: dict | None) -> dict:
         "style_hash": str(data.get("style_hash") or ""),
         "cue_hash": str(data.get("cue_hash") or ""),
         "text_hash": str(data.get("text_hash") or ""),
+        "cue_count": max(0, _optional_int(data.get("cue_count")) or 0),
         "margin": round(_number(data.get("margin"), 0.075), 4),
     }
 
@@ -292,11 +277,13 @@ def build_spec(
     caption_margin: float = 0.075,
     story_id: str | None = None,
     cues: Iterable[dict] | None = None,
+    generation: int = 0,
 ) -> ArtifactSpec:
     plan = plan or {}
     if cues is None:
         cues = cues_from_plan(job, plan)
-    cue_hash, text_hash = cue_hashes(cues)
+    cue_list = list(cues or [])
+    cue_hash, text_hash = cue_hashes(cue_list)
     source = (job or {}).get("source") or {}
     return ArtifactSpec(
         clips=normalize_clips(plan.get("clips")),
@@ -310,6 +297,7 @@ def build_spec(
             "style_hash": style_hash(preset, caption_margin),
             "cue_hash": cue_hash,
             "text_hash": text_hash,
+            "cue_count": len(cue_list),
             "margin": round(_number(caption_margin, 0.075), 4),
         },
         audio_sig=str(audio_sig or ""),
@@ -317,6 +305,7 @@ def build_spec(
         aspect=str(aspect if aspect in render.ASPECTS else "9:16"),
         resolved_encoder=resolve_encoder(encoder),
         source_fingerprint=source_fingerprint(job) or str(source.get("fingerprint") or ""),
+        generation=max(0, int(generation or 0)),
         schema_version=SCHEMA_VERSION,
         render_version=RENDER_VERSION,
     )
@@ -334,6 +323,43 @@ def artifact_id(spec: ArtifactSpec | dict) -> str:
 
 
 compute_id = artifact_id
+
+
+def _base_payload(spec: ArtifactSpec) -> dict:
+    payload = spec.payload()
+    payload.pop("generation", None)
+    return payload
+
+
+def latest_generation(job_dir: str | Path, spec: ArtifactSpec) -> int:
+    """Highest stored generation for the same canonical inputs."""
+    base = _base_payload(spec)
+    latest = -1
+    for manifest in list_manifests(job_dir):
+        candidate = manifest.get("spec")
+        if not isinstance(candidate, dict):
+            continue
+        data = dict(candidate)
+        try:
+            generation = int(data.pop("generation", 0) or 0)
+        except (TypeError, ValueError):
+            generation = 0
+        if data == base:
+            latest = max(latest, generation)
+    return latest
+
+
+def resolve_generation(
+    job_dir: str | Path,
+    spec: ArtifactSpec,
+    *,
+    force: bool = False,
+) -> int:
+    """Generation for this render: latest for reuse, latest + 1 for force."""
+    latest = latest_generation(job_dir, spec)
+    if force:
+        return max(0, latest) + 1
+    return max(0, latest)
 
 
 def is_safe_artifact_id(value: str | None) -> bool:
@@ -446,10 +472,12 @@ def make_manifest(
         "hook_scene": payload.get("hook_scene"),
         "hook_override": bool(payload.get("hook_override")),
         "captions": bool((payload.get("caption") or {}).get("enabled")),
+        "caption_count": int((payload.get("caption") or {}).get("cue_count") or 0),
         "audio_sig": payload.get("audio_sig") or "",
         "story_id": payload.get("story_id") or "",
         "source_fingerprint": payload.get("source_fingerprint") or "",
         "resolved_encoder": payload.get("resolved_encoder"),
+        "generation": payload.get("generation") or 0,
         "render": None,
         "media": dict(MEDIA_FILES),
         "error": None,
@@ -474,8 +502,11 @@ def manifest_summary(manifest: dict) -> dict:
         "hook_scene": spec.get("hook_scene"),
         "hook_override": bool(spec.get("hook_override")),
         "captions": bool(caption.get("enabled")),
+        "caption_count": int(caption.get("cue_count") or 0),
+        "cue_count": int(caption.get("cue_count") or 0),
         "audio_sig": spec.get("audio_sig") or "",
         "resolved_encoder": spec.get("resolved_encoder"),
+        "generation": int(spec.get("generation") or 0),
         "reel": (manifest.get("media") or {}).get("reel"),
     }
 
@@ -743,10 +774,13 @@ def public_manifest(manifest: dict, job_id: str | None = None) -> dict:
         "hook_scene": spec.get("hook_scene"),
         "hook_override": bool(spec.get("hook_override")),
         "captions": bool(caption.get("enabled")),
+        "caption_count": int(caption.get("cue_count") or 0),
+        "cue_count": int(caption.get("cue_count") or 0),
         "audio_sig": spec.get("audio_sig") or "",
         "story_id": spec.get("story_id") or "",
         "source_fingerprint": spec.get("source_fingerprint") or "",
         "resolved_encoder": spec.get("resolved_encoder"),
+        "generation": int(spec.get("generation") or 0),
         "spec": spec,
         "media": dict(manifest.get("media") or MEDIA_FILES),
         "error": manifest.get("error"),
@@ -781,12 +815,14 @@ def render_record(manifest: dict) -> dict:
         "encoder": spec.get("resolved_encoder"),
         "resolved_encoder": spec.get("resolved_encoder"),
         "captions": bool(caption.get("enabled")),
+        "caption_count": int(caption.get("cue_count") or 0),
         "audio_sig": spec.get("audio_sig") or "",
         "record_key": manifest.get("record_key"),
         "artifact_id": artifact,
         "pinned": bool(manifest.get("pinned")),
         "created": manifest.get("created"),
         "updated": manifest.get("updated"),
+        "generation": int(spec.get("generation") or 0),
         "path": f"artifacts/{artifact}/reel.mp4",
         "poster": f"artifacts/{artifact}/poster.jpg",
         **{key: render_info.get(key) for key in (
