@@ -36,6 +36,11 @@ FILLER_MULTI = frozenset({
     ("you", "see"),
     ("you", "know", "what"),
 })
+TIGHTEN_STRIP_FIELDS = (
+    "transition", "transitions", "crossfade", "effects",
+    "sfx", "sfx_library", "broll", "b_roll", "b-roll",
+    "j_cut", "j_l_cut", "l_cut", "l_j_cut",
+)
 
 
 class TightenError(ValueError):
@@ -403,6 +408,12 @@ def _normalize_silences(raw: object) -> list[tuple[float, float]]:
     return values
 
 
+def _strip_effects(clip: dict) -> dict:
+    for key in TIGHTEN_STRIP_FIELDS:
+        clip.pop(key, None)
+    return clip
+
+
 def _role_for_piece(role: str, index: int, count: int) -> str:
     if role == "hook":
         return "hook" if index == 0 else "beat"
@@ -475,10 +486,10 @@ def tighten_plan(
                 duration = float(original.get("dur") or 0.0)
                 end = start + duration
             except (TypeError, ValueError):
-                output.append(copy.deepcopy(original))
+                output.append(_strip_effects(copy.deepcopy(original)))
                 continue
         if not math.isfinite(start) or not math.isfinite(end) or end - start <= 0.01:
-            output.append(copy.deepcopy(original))
+            output.append(_strip_effects(copy.deepcopy(original)))
             continue
         role = str(original.get("role") or "beat")
         try:
@@ -526,7 +537,7 @@ def tighten_plan(
             if piece_end - piece_start >= settings.min_clip
         ]
         if not keeps:
-            output.append(copy.deepcopy(original))
+            output.append(_strip_effects(copy.deepcopy(original)))
             continue
         overlap = _overlap_length(filler_intervals, silence_intervals)
         filler_removed += max(0.0, sum(
@@ -539,7 +550,7 @@ def tighten_plan(
         ) - overlap)
         overlap_removed += overlap
         for index, (piece_start, piece_end) in enumerate(keeps):
-            piece = copy.deepcopy(original)
+            piece = _strip_effects(copy.deepcopy(original))
             piece["start"] = round(piece_start, 3)
             piece["end"] = round(piece_end, 3)
             piece["dur"] = round(piece_end - piece_start, 3)
@@ -579,6 +590,8 @@ def tighten_plan(
     removed_seconds = round(max(actual_removed, attributed), 3)
     other_removed = round(max(0.0, removed_seconds - attributed), 3)
     result = source_plan
+    for key in TIGHTEN_STRIP_FIELDS:
+        result.pop(key, None)
     result["clips"] = output
     result["clip_count"] = len(output)
     result["total"] = total

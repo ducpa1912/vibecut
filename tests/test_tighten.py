@@ -178,6 +178,24 @@ def test_tighten_adds_simple_punch_ins_to_beat_clips():
     assert result["tighten"]["punch_ins"] == 1
 
 
+def test_tighten_strips_preexisting_transition_sfx_and_broll():
+    plan = _plan()
+    plan["clips"][1].update({
+        "transition": "crossfade",
+        "sfx": "whoosh.wav",
+        "broll": ["stock.mp4"],
+        "j_cut": True,
+    })
+    plan.update({"transition": "fade", "sfx": "bed.wav", "broll": ["x.mp4"]})
+    result = tighten.tighten_plan(plan, _scenes())
+
+    for clip in result["clips"]:
+        for key in ("transition", "sfx", "broll", "j_cut"):
+            assert key not in clip
+    for key in ("transition", "sfx", "broll"):
+        assert key not in result
+
+
 def test_tighten_options_can_disable_filler_and_punch():
     plan = _plan()
     result = tighten.tighten_plan(

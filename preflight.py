@@ -18,6 +18,7 @@ from typing import Callable
 
 import exports
 import history_store
+import packet
 
 CHECK_SPECS = (
     {
@@ -276,7 +277,7 @@ def parse_srt(text: str) -> list[dict]:
             continue
         left, right = lines[index].split("-->", 1)
         start = _parse_time(left)
-        end = _parse_time(right)
+        end = _parse_time(right.strip().split()[0] if right.strip() else "")
         body = " ".join(lines[index + 1:]).strip()
         if start is None or end is None or end <= start or not body:
             continue
@@ -539,7 +540,51 @@ def _artifact_rows(job: dict) -> dict:
     return rows
 
 
-def _select_story(job: dict, story_id: str | None) -> dict:
+def _relative_artifact_path(job_dir: Path | None, value: object) -> str | None:
+    if job_dir is None or not value:
+        return None
+    path = Path(str(value))
+    if path.is_absolute():
+        try:
+            relative = path.resolve().relative_to(Path(job_dir).resolve())
+        except (OSError, ValueError):
+            return None
+        return relative.as_posix()
+    if ".." in path.parts:
+        return None
+    return path.as_posix()
+
+
+def _artifact_entry(
+    job: dict,
+    job_dir: Path | None,
+    artifact_id: str,
+    summary: dict | None = None,
+) -> dict:
+    entry = dict(summary or {})
+    if job_dir is not None:
+        try:
+            resolved = packet.resolve_trust_artifact(job, job_dir, artifact_id)
+        except Exception:  # noqa: BLE001 - preflight stays advisory
+            resolved = None
+        if isinstance(resolved, dict):
+            entry.update({
+                key: value for key, value in resolved.items()
+                if value is not None
+            })
+    for key in ("path", "poster", "captions_path"):
+        if key in entry:
+            entry[key] = _relative_artifact_path(job_dir, entry.get(key))
+    entry.setdefault("id", artifact_id)
+    entry.setdefault("artifact_id", artifact_id)
+    return entry
+
+
+def _select_story(
+    job: dict,
+    story_id: str | None,
+    job_dir: Path | None = None,
+) -> dict:
     sid = " ".join(str(story_id or "").split())
     rows = _story_rows(job)
     records = _records(job)
@@ -551,8 +596,31 @@ def _select_story(job: dict, story_id: str | None) -> dict:
                 return row
         if sid in records:
             return {"id": sid, "render_key": sid, "record": records[sid]}
+        for key, record in records.items():
+            if str(record.get("artifact_id") or "") == sid:
+                return {
+                    "id": sid,
+                    "render_key": key,
+                    "record": record,
+                    "artifact": _artifact_entry(
+                        job, job_dir, sid, artifacts.get(sid),
+                    ),
+                    "artifact_id": sid,
+                }
         if sid in artifacts:
-            return {"id": sid, "artifact": artifacts[sid]}
+            return {
+                "id": sid,
+                "artifact": _artifact_entry(job, job_dir, sid, artifacts[sid]),
+                "artifact_id": sid,
+            }
+        if sid.startswith("art_") and job_dir is not None:
+            resolved = _artifact_entry(job, job_dir, sid, None)
+            if resolved and (resolved.get("path") or resolved.get("plan")):
+                return {
+                    "id": sid,
+                    "artifact": resolved,
+                    "artifact_id": sid,
+                }
         plan = _plan_with_target(job, sid, exact=True)
         if plan:
             return {"id": sid, "plan": plan}
@@ -604,7 +672,7 @@ def _select_story(job: dict, story_id: str | None) -> dict:
 
 
 def _context(job: dict, story_id: str | None, job_dir: Path | None) -> dict:
-    entry = _select_story(job, story_id)
+    entry = _select_story(job, story_id, job_dir)
     records = _records(job)
     render_key = str(entry.get("render_key") or entry.get("record_key") or "")
     record = entry.get("record")
@@ -612,6 +680,16 @@ def _context(job: dict, story_id: str | None, job_dir: Path | None) -> dict:
         record = records[render_key]
     record = record if isinstance(record, dict) else {}
     artifact = entry.get("artifact") if isinstance(entry.get("artifact"), dict) else {}
+    artifact_id = str(
+        entry.get("artifact_id")
+        or artifact.get("artifact_id")
+        or record.get("artifact_id")
+        or ""
+    )
+    if artifact_id and not artifact and job_dir is not None:
+        artifact = _artifact_entry(
+            job, job_dir, artifact_id, _artifact_rows(job).get(artifact_id),
+        )
     story_id = str(entry.get("id") or render_key or (record.get("target") or "story"))
 
     plan = _plan_from_entry(entry)
@@ -1097,6 +1175,7 @@ def run_preflight(
     """Run enabled checks. Findings never block unless severity is ``block``."""
     context = _context(job, story_id, Path(job_dir) if job_dir is not None else None)
     config = resolve_config(settings, job)
+    narrative_only = context.get("media_source") in {None, "source_fallback"}
     findings: list[dict] = []
     checks: dict[str, dict] = {}
     for spec in CHECK_SPECS:
@@ -1112,7 +1191,15 @@ def run_preflight(
             "severity": severity,
             "status": "disabled" if not enabled else "pass",
         }
-        if enabled:
+        if enabled and narrative_only and check_id in {
+            "safe_zone_contrast", "loudness",
+        }:
+            meta["status"] = "unavailable"
+            meta["reason"] = (
+                "No render is available; source fallback is not used for "
+                "audio or frame checks."
+            )
+        elif enabled:
             try:
                 result = CHECK_FUNCS[check_id](context)
             except Exception as exc:  # noqa: BLE001 - one bad check must not fail all
@@ -1143,6 +1230,7 @@ def run_preflight(
         "story_id": context["id"],
         "render_key": context.get("render_key"),
         "media_source": context.get("media_source"),
+        "narrative_only": narrative_only,
         "blocked": any(item["severity"] == "block" for item in findings),
         "findings": findings,
         "checks": checks,

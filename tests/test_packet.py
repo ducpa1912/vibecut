@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import functools
 import io
 import json
 import shutil
 import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -43,8 +45,21 @@ def _plan() -> dict:
     }
 
 
+@functools.lru_cache(maxsize=1)
 def _mp4_bytes() -> bytes:
-    return b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 32
+    if not shutil.which("ffmpeg"):
+        return b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 32
+    with tempfile.TemporaryDirectory(prefix="vibecut-packet-test-") as temporary:
+        path = Path(temporary) / "clip.mp4"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                "-i", "color=c=red:s=320x180:d=1", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", str(path),
+            ],
+            check=True,
+        )
+        return path.read_bytes()
 
 
 def _jpeg_bytes(color=(180, 40, 40)) -> bytes:
@@ -238,6 +253,23 @@ def test_packet_extracts_covers_from_staged_media_when_no_poster(tmp_path, monke
     assert len(seen) == 2
     assert all(path.parent.name == "media" for path in seen)
     assert all(path != video for path in seen)
+
+
+def test_packet_caption_fallback_uses_final_shared_cue_engine(tmp_path):
+    job, job_dir = _job(tmp_path)
+    job["analysis"]["scenes"][0]["speech"] = (
+        "This is a deliberately long spoken line that must be chunked into "
+        "several caption cues by the shared caption engine."
+    )
+
+    manifest = packet.build_packet(job, job_dir, _request())
+    media = manifest["media"][0]
+    captions = (
+        job_dir / "packets" / manifest["packet_id"] / media["captions_file"]
+    ).read_text(encoding="utf-8")
+
+    assert captions.count("-->") >= 2
+    assert "deliberately long spoken line" in captions
 
 
 def test_packet_builds_captions_from_analysis_when_record_has_no_plan(tmp_path):
@@ -531,6 +563,37 @@ def test_packet_rejects_empty_or_invalid_srt(tmp_path):
         assert not list(job_dir.rglob("*.zip"))
 
 
+def test_packet_accepts_legal_srt_cue_settings_and_large_hours(tmp_path):
+    job, job_dir = _job(tmp_path)
+    job["renders"]["30"]["srt"] = (
+        "1\n100:00:00,000 --> 100:00:02,000 X1:10 X2:20 Y1:30 Y2:40\n"
+        "Legal positioned cue.\n"
+    )
+
+    manifest = packet.build_packet(job, job_dir, _request())
+
+    media = manifest["media"][0]
+    assert media["captions_source"] == "artifact"
+    captions = (
+        job_dir / "packets" / manifest["packet_id"] / media["captions_file"]
+    ).read_text(encoding="utf-8")
+    assert "X1:10" in captions
+
+
+def test_packet_rejects_manifest_without_media_or_covers(tmp_path):
+    job, job_dir = _job(tmp_path)
+    manifest = packet.build_packet(job, job_dir, _request())
+    path = job_dir / "packets" / manifest["packet_id"] / "packet.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["media"] = []
+    value["covers"] = []
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(packet.PacketError) as failed:
+        packet.load_packet(job_dir, manifest["packet_id"])
+    assert failed.value.code == "packet_not_found"
+
+
 def test_packet_rejects_short_checksum_and_bad_media_signature(tmp_path):
     job, job_dir = _job(tmp_path)
     job["renders"]["30"]["sha256"] = "a" * 16
@@ -545,6 +608,31 @@ def test_packet_rejects_short_checksum_and_bad_media_signature(tmp_path):
         packet.build_packet(job, job_dir, _request())
     assert failed.value.code == "artifact_invalid_media"
     assert failed.value.status == 422
+
+
+def test_packet_rejects_truncated_mp4_via_ffprobe(tmp_path):
+    job, job_dir = _job(tmp_path)
+    (job_dir / "renders" / "reel_30.mp4").write_bytes(
+        b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 32
+    )
+    with pytest.raises(packet.PacketError) as failed:
+        packet.build_packet(job, job_dir, _request())
+    assert failed.value.code == "artifact_invalid_media"
+    assert failed.value.status == 422
+    assert "truncated or unplayable" in failed.value.message
+
+
+def test_packet_reports_ffprobe_unavailable(tmp_path, monkeypatch):
+    job, job_dir = _job(tmp_path)
+    real_which = packet.shutil.which
+    monkeypatch.setattr(
+        packet.shutil, "which",
+        lambda name: None if name == "ffprobe" else real_which(name),
+    )
+    with pytest.raises(packet.PacketError) as failed:
+        packet.build_packet(job, job_dir, _request())
+    assert failed.value.code == "media_probe_unavailable"
+    assert failed.value.status == 503
 
 
 def test_packet_rejects_duplicate_requested_sources(tmp_path):
@@ -581,10 +669,11 @@ def test_packet_preserves_resolver_error_code(tmp_path):
     assert failed.value.status == 403
 
 
-def test_packet_removes_stage_after_cover_failure(tmp_path):
+def test_packet_removes_stage_after_cover_failure(tmp_path, monkeypatch):
     job, job_dir = _job(tmp_path)
     (job_dir / "renders" / "reel_30.jpg").unlink()
     job["renders"]["30"].pop("poster")
+    monkeypatch.setattr(packet, "_extract_cover", lambda *args, **kwargs: False)
 
     with pytest.raises(packet.PacketError) as failed:
         packet.build_packet(job, job_dir, _request())

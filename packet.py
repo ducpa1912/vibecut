@@ -56,8 +56,8 @@ HASHTAG_RE = re.compile(r"^#\w{1,50}$", re.UNICODE)
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 SAFE_STEM_RE = re.compile(r"[^a-z0-9]+")
 SRT_TIME_RE = re.compile(
-    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*"
-    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})"
+    r"(\d+):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*"
+    r"(\d+):(\d{2}):(\d{2})[,.](\d{3})(?:\s+.*)?"
 )
 
 _BUILD_LOCK = threading.Lock()
@@ -143,6 +143,89 @@ def _is_valid_mp4(path: Path) -> bool:
     except OSError:
         return False
     return len(head) >= 12 and head[4:8] == b"ftyp"
+
+
+def _validate_mp4(path: Path, artifact_id: str) -> None:
+    if not _is_valid_mp4(path):
+        raise PacketError(
+            "artifact_invalid_media",
+            f"Artifact {artifact_id!r} is not a valid MP4 container.",
+            suggestion="Re-render the cut and package the final MP4.",
+            status=422, details={"artifact_id": artifact_id},
+        )
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise PacketError(
+            "media_probe_unavailable",
+            "ffprobe is not available; MP4 integrity cannot be verified.",
+            suggestion="Install ffprobe or re-run the pack on a machine that has it.",
+            status=503, details={"artifact_id": artifact_id},
+        )
+    try:
+        result = subprocess.run(
+            [
+                ffprobe, "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_type,duration",
+                "-show_entries", "format=duration", "-of", "json", str(path),
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise PacketError(
+            "artifact_invalid_media",
+            f"Artifact {artifact_id!r} could not be probed: {exc}",
+            suggestion="Re-render the cut and package the final MP4.",
+            status=422, details={"artifact_id": artifact_id},
+        ) from exc
+    if result.returncode != 0:
+        raise PacketError(
+            "artifact_invalid_media",
+            f"Artifact {artifact_id!r} is truncated or unplayable.",
+            suggestion="Re-render the cut and package the final MP4.",
+            status=422, details={"artifact_id": artifact_id},
+        )
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise PacketError(
+            "artifact_invalid_media",
+            f"Artifact {artifact_id!r} returned unreadable probe data.",
+            suggestion="Re-render the cut and package the final MP4.",
+            status=422, details={"artifact_id": artifact_id},
+        ) from exc
+    streams = payload.get("streams") if isinstance(payload, dict) else None
+    if not isinstance(streams, list) or not any(
+        isinstance(stream, dict) and stream.get("codec_type") == "video"
+        for stream in streams
+    ):
+        raise PacketError(
+            "artifact_invalid_media",
+            f"Artifact {artifact_id!r} has no playable video stream.",
+            suggestion="Re-render the cut and package the final MP4.",
+            status=422, details={"artifact_id": artifact_id},
+        )
+    duration = None
+    if isinstance(payload.get("format"), dict):
+        try:
+            duration = float(payload["format"].get("duration"))
+        except (TypeError, ValueError):
+            duration = None
+    if duration is None:
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            try:
+                duration = float(stream.get("duration"))
+                break
+            except (TypeError, ValueError):
+                continue
+    if duration is None or not math.isfinite(duration) or duration <= 0:
+        raise PacketError(
+            "artifact_invalid_media",
+            f"Artifact {artifact_id!r} has no measurable video duration.",
+            suggestion="Re-render the cut and package the final MP4.",
+            status=422, details={"artifact_id": artifact_id},
+        )
 
 
 def _is_valid_jpeg(path: Path) -> bool:
@@ -637,6 +720,11 @@ def resolve_trust_artifact(
         "path": str(reel) if reel is not None else None,
         "poster": str(poster) if poster is not None else None,
         "captions_path": str(captions) if captions is not None else None,
+        "cues": (
+            (manifest or {}).get("cues")
+            or spec.get("cues")
+            or (plan.get("cues") if isinstance(plan, dict) else None)
+        ),
         "plan": plan,
         "plan_strict": True,
         "target": target,
@@ -1015,14 +1103,8 @@ class ReadyRenderAdapter:
                 suggestion="Package the final MP4 render.", status=422,
                 details={"artifact_id": artifact_id},
             )
-        if not _is_valid_mp4(video):
-            raise PacketError(
-                "artifact_invalid_media",
-                f"Artifact {artifact_id!r} is not a valid MP4 container.",
-                suggestion="Re-render the cut and package the final MP4.",
-                status=422, details={"artifact_id": artifact_id},
-            )
         digest = _verify_digest(video, _expected_digest(record), artifact_id)
+        _validate_mp4(video, artifact_id)
         poster = _safe_job_path(
             job_dir, poster_value, subdirs=("renders", "artifacts", "media", "covers"),
         )
@@ -1417,6 +1499,17 @@ def _existing_manifest(directory: Path, packet_id: str) -> dict | None:
     if not isinstance(manifest, dict):
         return None
     if manifest.get("schema") != SCHEMA or manifest.get("packet_id") != packet_id:
+        return None
+    media = manifest.get("media")
+    covers = manifest.get("covers")
+    if not isinstance(media, list) or not media:
+        return None
+    if not isinstance(covers, list) or len(covers) < COVER_COUNT:
+        return None
+    if any(
+        not isinstance(item, dict) or not item.get("captions_file")
+        for item in media
+    ):
         return None
     for item in _manifest_files(manifest):
         file = _packet_file(directory, item.get("file"))
