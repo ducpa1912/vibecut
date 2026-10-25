@@ -20,6 +20,8 @@ class BatchItemBody(BaseModel):
     url: str | None = None
     options: dict = {}
     targets: list[int] | None = None
+    size_bytes: object = None
+    source_bytes: object = None
 
 
 class BatchBody(BaseModel):
@@ -53,6 +55,22 @@ def _validate_body(body: BatchBody) -> None:
                 400,
                 f"Item {index + 1} needs exactly one of path or url.",
             )
+        try:
+            disk.size_hint(
+                item.size_bytes,
+                label=f"Item {index + 1} size_bytes",
+            )
+            disk.size_hint(
+                item.source_bytes,
+                label=f"Item {index + 1} source_bytes",
+            )
+            disk.size_hint(
+                (item.options or {}).get("size_bytes",
+                    (item.options or {}).get("source_bytes")),
+                label=f"Item {index + 1} size_bytes",
+            )
+        except disk.InvalidSize as exc:
+            raise HTTPException(400, str(exc)) from exc
 
 
 @router.post("/api/batches")
@@ -66,10 +84,15 @@ def create_batch(body: BatchBody) -> dict:
             "url": item.url,
             "options": dict(item.options or {}),
             "targets": item.targets,
+            "size_bytes": item.size_bytes,
+            "source_bytes": item.source_bytes,
         }
         for item in body.items
     ]
-    required = disk.estimate_batch(items)
+    try:
+        required = disk.estimate_batch(items)
+    except disk.InvalidSize as exc:
+        raise HTTPException(400, str(exc)) from exc
     disk.preflight(required, app.DATA)
     manager = _manager()
     try:
@@ -114,6 +137,16 @@ def resume_batch(batch_id: str) -> dict:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
 
+@router.post("/api/batches/{batch_id}/pause")
+def pause_batch(batch_id: str) -> dict:
+    try:
+        return _manager().pause(batch_id)
+    except batch.BatchNotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except batch.BatchError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
 @router.post("/api/batches/{batch_id}/cancel")
 def cancel_batch(batch_id: str) -> dict:
     try:
@@ -141,20 +174,26 @@ def retry_job(job_id: str) -> dict:
 
 
 def _retry_job(app, job: dict) -> tuple[bool, int]:
-    """Idempotently requeue analysis or failed/interrupted renders."""
-    status = str(job.get("status") or "")
-    if status in {"queued", "downloading", "scanning", "reading", "scoring"}:
-        return False, 0
+    """Idempotently requeue analysis or failed/interrupted renders.
 
-    if not job.get("analysis"):
-        source = (job.get("source") or {}).get("path")
-        if not source or not Path(str(source)).expanduser().is_file():
-            raise HTTPException(
-                409,
-                "This job has no local source to retry. Start a new URL download.",
-            )
+    The status check and state transition happen in one ``update_job``
+    mutator, so two simultaneous retry requests cannot both claim analysis.
+    """
+    claim = {"analysis": False, "renders": False, "error": None}
+    job_id = str(job["id"])
 
-        def mutate(value: dict) -> None:
+    def mutate(value: dict) -> None:
+        status = str(value.get("status") or "")
+        if status in {"queued", "downloading", "scanning", "reading", "scoring"}:
+            return
+        if not value.get("analysis"):
+            source = (value.get("source") or {}).get("path")
+            if not source or not Path(str(source)).expanduser().is_file():
+                claim["error"] = (
+                    "This job has no local source to retry. "
+                    "Start a new URL download."
+                )
+                return
             attempts = value.get("attempts")
             if not isinstance(attempts, dict):
                 attempts = {}
@@ -175,19 +214,23 @@ def _retry_job(app, job: dict) -> tuple[bool, int]:
                     "message": "Queued for retry",
                     "error": None,
                 })
-
-        app.update_job(str(job["id"]), mutate)
-        app.analysis_pool.submit(app.run_analysis, str(job["id"]))
-        return True, 0
-
-    if status in {"interrupted", "failed"}:
-        def restore(value: dict) -> None:
+            claim["analysis"] = True
+            return
+        if status != "ready":
             value["status"] = "ready"
             value["message"] = "Ready"
             value["error"] = None
+        claim["renders"] = True
 
-        job = app.update_job(str(job["id"]), restore)
-    return False, _retry_renders(app, job)
+    updated = app.update_job(job_id, mutate)
+    if claim["error"]:
+        raise HTTPException(409, claim["error"])
+    if claim["analysis"]:
+        app.analysis_pool.submit(app.run_analysis, job_id)
+        return True, 0
+    if claim["renders"]:
+        return False, _retry_renders(app, updated)
+    return False, 0
 
 
 def _retry_renders(app, job: dict) -> int:
@@ -207,13 +250,32 @@ def _retry_renders(app, job: dict) -> int:
             quality, aspect, encoder, captions, audio_plan, preset, margin = (
                 app._render_options(body)
             )
-            app._queue_render(
+            queued_record = app._queue_render(
                 str(job["id"]), fresh, plan, quality, aspect, encoder, captions,
                 audio_plan, False, preset=preset, caption_margin=margin,
                 script_id=body.script_id, check_space=True,
             )
+            new_record = queued_record or {}
+            new_key = str(new_record.get("record_key") or "")
+            if new_key and new_key != record_key:
+                def migrate(value: dict) -> None:
+                    renders = value.get("renders")
+                    if not isinstance(renders, dict):
+                        return
+                    renders.pop(record_key, None)
+                    current = renders.get(new_key)
+                    if isinstance(current, dict):
+                        current["attempts"] = max(
+                            int(current.get("attempts") or 0),
+                            int(record.get("attempts") or 0) + 1,
+                        )
+
+                app.update_job(str(job["id"]), migrate)
             count += 1
-        except HTTPException:
+        except HTTPException as exc:
+            if exc.status_code == 409 and "already rendering" in str(exc.detail):
+                # Another retry request or a live render already owns it.
+                continue
             raise
         except disk.InsufficientSpace:
             raise
@@ -255,15 +317,18 @@ class _AppBackend:
         import app
 
         options = dict(item.get("options") or {})
+        requested_id = item.get("job_id")
         if item.get("url"):
             result = app.job_from_url(app.FromUrlBody(
                 url=str(item["url"]),
                 options=options,
+                job_id=str(requested_id) if requested_id else None,
             ))
         else:
             result = app.job_from_path(app.PathBody(
                 path=str(item["path"]),
                 options=options,
+                job_id=str(requested_id) if requested_id else None,
             ))
         return app.load_job(str(result["id"]))
 
@@ -294,9 +359,52 @@ class _AppBackend:
                 app.cancel_url_ingest(job_id)
             except Exception:  # noqa: BLE001
                 LOGGER.exception("could not cancel URL ingest for %s", job_id)
-        for (active_job, _record_key), cancel in list(app.RENDER_CANCELS.items()):
-            if active_job == job_id:
+
+        analysis_find = getattr(app.analysis_pool, "find_key", None)
+        analysis = analysis_find("analysis", job_id) if analysis_find else None
+        if analysis is not None:
+            was_queued = str(analysis.status) == "queued"
+            app.analysis_pool.cancel_key("analysis", job_id)
+            if was_queued:
+                def cancel_analysis(value: dict) -> None:
+                    value["status"] = "cancelled"
+                    value["message"] = "Cancelled"
+                    value["error"] = None
+                    ingest = value.get("ingest")
+                    if isinstance(ingest, dict):
+                        ingest.update({
+                            "phase": "cancelled",
+                            "status": "cancelled",
+                            "progress": 1.0,
+                            "message": "Cancelled",
+                            "error": None,
+                        })
+
+                try:
+                    app.update_job(job_id, cancel_analysis)
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception("could not mark job %s cancelled", job_id)
+
+        for record_key, record in list((job.get("renders") or {}).items()):
+            if not isinstance(record, dict):
+                continue
+            if record.get("status") not in app.ACTIVE_RENDER:
+                continue
+            key = f"render:{job_id}:{record_key}"
+            render_find = getattr(app.render_pool, "find_key", None)
+            task = render_find("render", key) if render_find else None
+            was_queued = bool(task is not None and str(task.status) == "queued")
+            if hasattr(app.render_pool, "cancel_key"):
+                app.render_pool.cancel_key("render", key)
+            cancel = app.RENDER_CANCELS.get((job_id, record_key))
+            if cancel is not None:
                 cancel.set()
+            if was_queued:
+                app._set_render(
+                    job_id, record_key,
+                    status="cancelled", progress=1.0,
+                    message="Cancelled", error=None, eta=None,
+                )
 
     def start_renders(
         self, job_id: str, targets: list[int], options: dict
@@ -332,9 +440,11 @@ class _AppBackend:
         result: dict[int, str] = {}
         for target in targets:
             body = _render_body(app, target, options)
-            quality, aspect, _encoder, captions, _audio, _preset, _margin = (
+            quality, aspect, _encoder, captions, audio_plan, preset, _margin = (
                 app._render_options(body)
             )
+            expected_audio = app._audio_signature(audio_plan)
+            expected_hook = options.get("hook_scene")
             matching = []
             for record in records:
                 if not isinstance(record, dict):
@@ -350,6 +460,12 @@ class _AppBackend:
                 if str(record.get("aspect") or "9:16") != aspect:
                     continue
                 if bool(record.get("captions")) != bool(captions):
+                    continue
+                if str(record.get("audio_sig") or "") != expected_audio:
+                    continue
+                if preset is not None and record.get("preset") != preset:
+                    continue
+                if expected_hook is not None and record.get("hook") != expected_hook:
                     continue
                 matching.append(record)
             latest = matching[0] if matching else None

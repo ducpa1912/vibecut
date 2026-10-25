@@ -633,6 +633,7 @@ rejected. Review links are capability URLs and do not require the app token.
 | GET | `/api/batches` | Recent batch manifests with counts and progress. |
 | GET | `/api/batches/{batch_id}` | One batch manifest and item states. |
 | POST | `/api/batches/{batch_id}/resume` | Requeue paused work; done items and outputs stay. |
+| POST | `/api/batches/{batch_id}/pause` | Pause before the next item; active work finishes. |
 | POST | `/api/batches/{batch_id}/cancel` | Cancel pending work and best-effort stop the active job. |
 
 Batch items take exactly one of `path` or `url` plus an `options` object.
@@ -996,7 +997,7 @@ publishing, team accounts, cloud sync, or hosted render farm is included.
 ```bash
 python3 -m pip install -r requirements-dev.txt
 python3 -m pytest -q
-python3 -m compileall -q app.py audio.py pipeline.py settings_store.py workflow_config.py admin
+python3 -m compileall -q app.py job_queue.py batch.py disk.py routes_batches.py audio.py pipeline.py settings_store.py workflow_config.py admin
 node --check static/app.js
 node --check static/admin.js
 python3 scripts/check_proprietary_deps.py
@@ -1006,7 +1007,7 @@ git diff --check
 `requirements-dev.txt` adds `pytest` and `httpx2`, which Starlette's
 `TestClient` needs. Runtime installs do not need them.
 
-Current suite: **553 tests**. The optional beat-grid test skips when `librosa`
+Current suite: **574 tests**. The optional beat-grid test skips when `librosa`
 is not installed. The tests use temporary `VIBECUT_DATA` directories and do not
 require ffmpeg for the fast unit set. The dependency audit checks direct
 requirements, sidecar imports, and the installed yt-dlp floor. Two existing

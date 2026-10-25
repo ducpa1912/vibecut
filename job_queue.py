@@ -10,57 +10,21 @@ existing single-worker thread pools one explicit abstraction:
 * an interrupted process can mark pending/running tasks without turning them
   into permanent failures.
 
-The file is named ``queue.py`` because that is the product-level name.  Python
-resolves imports in the application directory before the standard library, so
-this module also re-exports the standard-library ``queue`` API.  That keeps
-``concurrent.futures.ThreadPoolExecutor`` and any dependency that imports
-``queue`` working normally.
+The module is named ``job_queue`` so it never shadows the standard-library
+``queue`` module used by ``ThreadPoolExecutor`` and other dependencies.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import logging
-import os
-import sysconfig
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any, Callable
 
-LOGGER = logging.getLogger("vibecut.queue")
-
-
-def _load_stdlib_queue():
-    """Load the real standard-library queue module under a private name."""
-    try:
-        path = Path(sysconfig.get_paths()["stdlib"]) / "queue.py"
-        if not path.is_file() or path.resolve() == Path(__file__).resolve():
-            return None
-        spec = importlib.util.spec_from_file_location("_vibecut_stdlib_queue", path)
-        if spec is None or spec.loader is None:
-            return None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    except Exception:  # noqa: BLE001
-        LOGGER.exception("could not load the standard-library queue module")
-        return None
-
-
-_STDLIB_QUEUE = _load_stdlib_queue()
-if _STDLIB_QUEUE is not None:
-    for _name in ("Empty", "Full", "Queue", "LifoQueue", "PriorityQueue", "SimpleQueue"):
-        if hasattr(_STDLIB_QUEUE, _name):
-            globals()[_name] = getattr(_STDLIB_QUEUE, _name)
-    # Keep less-common standard-library names available too (deque, heappush,
-    # GenericAlias and any future public addition).
-    for _name in dir(_STDLIB_QUEUE):
-        if not _name.startswith("_") and _name not in globals():
-            globals()[_name] = getattr(_STDLIB_QUEUE, _name)
+LOGGER = logging.getLogger("vibecut.job_queue")
 
 
 class QueueState(str, Enum):
@@ -206,6 +170,7 @@ class Scheduler:
         )
         self._lock = threading.RLock()
         self._tasks: dict[str, Task] = {}
+        self._active_keys: dict[tuple[str, str], str] = {}
         self._closed = False
 
     # -- submission -----------------------------------------------------
@@ -227,6 +192,12 @@ class Scheduler:
             _scheduler=self,
         )
         with self._lock:
+            if key is not None:
+                existing = self._tasks.get(self._active_keys.get((kind, key), ""))
+                if existing is not None and existing.state in {
+                    QueueState.QUEUED, QueueState.RUNNING, QueueState.INTERRUPTED,
+                }:
+                    return existing
             if self._closed:
                 task.state = QueueState.FAILED
                 task.error = "Scheduler is shut down."
@@ -234,6 +205,8 @@ class Scheduler:
                 task._done.set()
                 return task
             self._tasks[task.id] = task
+            if key is not None:
+                self._active_keys[(kind, key)] = task.id
             self._prune()
         self._schedule(task)
         return task
@@ -265,11 +238,21 @@ class Scheduler:
                 task.state = QueueState.FAILED
                 task.error = str(exc)[:2400]
                 task.finished = time.time()
+                self._release_key(task)
             task._done.set()
+
+    def _release_key(self, task: Task) -> None:
+        """Drop the active-key registration for a terminal task."""
+        if task.key is None:
+            return
+        key = (task.kind, task.key)
+        if self._active_keys.get(key) == task.id:
+            self._active_keys.pop(key, None)
 
     def _run(self, task: Task) -> None:
         with self._lock:
             if task.state is not QueueState.QUEUED:
+                self._release_key(task)
                 task._done.set()
                 return
             task.state = QueueState.RUNNING
@@ -297,6 +280,8 @@ class Scheduler:
                     task.error = None
                     task.finished = time.time()
         finally:
+            with self._lock:
+                self._release_key(task)
             task._done.set()
 
     # -- inspection -----------------------------------------------------
@@ -323,6 +308,17 @@ class Scheduler:
                 existing = self._tasks.get(task.retried_by)
                 if existing is not None:
                     return existing
+            if task.key is not None:
+                active = self._tasks.get(
+                    self._active_keys.get((task.kind, task.key), "")
+                )
+                if (
+                    active is not None
+                    and active.id != task.id
+                    and active.state in {QueueState.QUEUED, QueueState.RUNNING}
+                ):
+                    task.retried_by = active.id
+                    return active
             if task.state not in RETRYABLE_STATES:
                 raise QueueError(
                     f"Task {task_id} is {task.state.value}; only failed or "
@@ -341,6 +337,8 @@ class Scheduler:
             )
             task.retried_by = replacement.id
             self._tasks[replacement.id] = replacement
+            if replacement.key is not None:
+                self._active_keys[(replacement.kind, replacement.key)] = replacement.id
             self._prune()
         self._schedule(replacement)
         return replacement
@@ -382,6 +380,7 @@ class Scheduler:
                 task.state = QueueState.CANCELLED
                 task.error = "Cancelled before start."
                 task.finished = time.time()
+                self._release_key(task)
                 task._done.set()
                 return True
             if task.state is QueueState.RUNNING:
@@ -392,23 +391,61 @@ class Scheduler:
                 return True
             return False
 
+    def cancel_key(self, kind: str, key: str) -> Task | None:
+        """Cancel the active task registered for ``(kind, key)``, if any."""
+        with self._lock:
+            task_id = self._active_keys.get((str(kind), str(key)))
+            if not task_id:
+                return None
+            task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        self.cancel(task.id)
+        return task
+
+    def find_key(self, kind: str, key: str) -> Task | None:
+        with self._lock:
+            task_id = self._active_keys.get((str(kind), str(key)))
+            if not task_id:
+                return None
+            return self._tasks.get(task_id)
+
     def interrupt_all(self, reason: str = "The server restarted.") -> int:
         """Mark in-flight and pending tasks interrupted without failing them."""
         changed = 0
         with self._lock:
             for task in self._tasks.values():
                 if task.state in {QueueState.QUEUED, QueueState.RUNNING}:
+                    was_running = task.state is QueueState.RUNNING
                     task.state = QueueState.INTERRUPTED
                     task.error = reason
                     task.finished = time.time()
+                    if not was_running:
+                        self._release_key(task)
                     task._done.set()
                     changed += 1
         return changed
 
     def shutdown(self, wait: bool = True) -> None:
+        """Stop accepting work and cancel/interrupt anything still pending."""
         with self._lock:
             self._closed = True
-        self._executor.shutdown(wait=wait)
+            for task in self._tasks.values():
+                if task.state is QueueState.QUEUED:
+                    task.state = QueueState.CANCELLED
+                    task.error = "Scheduler shut down."
+                    task.finished = time.time()
+                    self._release_key(task)
+                    task._done.set()
+                elif task.state is QueueState.RUNNING:
+                    task.state = QueueState.INTERRUPTED
+                    task.error = "Scheduler shut down."
+                    task.finished = time.time()
+                    task._done.set()
+        try:
+            self._executor.shutdown(wait=wait, cancel_futures=True)
+        except TypeError:  # Python < 3.9 compatibility
+            self._executor.shutdown(wait=wait)
 
     def _prune(self) -> None:
         if len(self._tasks) <= self.history_limit:
@@ -428,14 +465,7 @@ class Scheduler:
 JobQueue = Scheduler
 TaskState = QueueState
 
-# The standard-library API remains importable as ``queue.Queue`` etc.
 __all__ = [
-    "Empty",
-    "Full",
-    "Queue",
-    "LifoQueue",
-    "PriorityQueue",
-    "SimpleQueue",
     "QueueState",
     "TaskState",
     "Scheduler",

@@ -19,6 +19,28 @@ RESERVE_FRACTION = 0.05
 VALID_TARGETS = (15, 30, 60)
 
 
+class InvalidSize(ValueError):
+    """A caller-supplied size hint is not a non-negative integer."""
+
+
+def size_hint(value, *, label: str = "size_bytes") -> int | None:
+    """Validate an untrusted size hint before it reaches arithmetic."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise InvalidSize(f"{label} must be a non-negative integer.")
+    try:
+        numeric = float(value) if isinstance(value, str) else value
+        if isinstance(numeric, float) and not numeric.is_integer():
+            raise InvalidSize(f"{label} must be a non-negative integer.")
+        number = int(numeric)
+    except (TypeError, ValueError, OverflowError):
+        raise InvalidSize(f"{label} must be a non-negative integer.") from None
+    if number < 0:
+        raise InvalidSize(f"{label} must be a non-negative integer.")
+    return number
+
+
 class InsufficientSpace(RuntimeError):
     """Raised when a write would eat the reserved free-space floor."""
 
@@ -32,6 +54,8 @@ class InsufficientSpace(RuntimeError):
         *,
         reserve_bytes: int = 0,
         available_bytes: int | None = None,
+        shortfall_bytes: int | None = None,
+        volume_total_bytes: int | None = None,
         path: str | Path | None = None,
     ) -> None:
         self.required_bytes = max(0, int(required_bytes))
@@ -41,6 +65,16 @@ class InsufficientSpace(RuntimeError):
             max(0, int(available_bytes))
             if available_bytes is not None
             else max(0, self.free_bytes - self.reserve_bytes)
+        )
+        self.shortfall_bytes = (
+            max(0, int(shortfall_bytes))
+            if shortfall_bytes is not None
+            else max(0, self.required_bytes - self.available_bytes)
+        )
+        self.volume_total_bytes = (
+            max(0, int(volume_total_bytes))
+            if volume_total_bytes is not None
+            else 0
         )
         self.path = str(path) if path is not None else None
         super().__init__(
@@ -55,6 +89,9 @@ class InsufficientSpace(RuntimeError):
             "free_bytes": self.free_bytes,
             "reserve_bytes": self.reserve_bytes,
             "available_bytes": self.available_bytes,
+            "shortfall_bytes": self.shortfall_bytes,
+            "volume_total_bytes": self.volume_total_bytes,
+            "path": self.path,
             "message": str(self),
         }
 
@@ -105,7 +142,7 @@ def report(
     total, _used, free = usage(target)
     reserve = reserve_bytes(total)
     available = max(0, free - reserve)
-    ok = required <= available
+    ok = free >= reserve and required <= available
     return {
         "ok": ok,
         "code": None if ok else InsufficientSpace.code,
@@ -113,7 +150,7 @@ def report(
         "free_bytes": int(free),
         "reserve_bytes": int(reserve),
         "available_bytes": int(available),
-        "shortfall_bytes": max(0, required - available),
+        "shortfall_bytes": max(0, required + reserve - free),
         "volume_total_bytes": int(total),
         "path": str(target),
     }
@@ -139,6 +176,8 @@ def preflight(
             value["free_bytes"],
             reserve_bytes=value["reserve_bytes"],
             available_bytes=value["available_bytes"],
+            shortfall_bytes=value["shortfall_bytes"],
+            volume_total_bytes=value["volume_total_bytes"],
             path=value["path"],
         )
     return value
@@ -236,6 +275,7 @@ def estimate_batch(items: Iterable[Mapping]) -> int:
         size = item.get("size_bytes")
         if size is None:
             size = options.get("size_bytes") or options.get("source_bytes")
+        size = size_hint(size)
         if size is None and item.get("path"):
             size = _size_of(item.get("path"))
         if size:

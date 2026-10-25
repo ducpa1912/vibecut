@@ -39,8 +39,8 @@ import captions as caption_engine
 import disk
 import exports as cuts
 import history_store
+import job_queue
 import pipeline
-import queue as job_queue
 import render
 import routes_batches
 import settings_store
@@ -81,6 +81,7 @@ render_pool = job_queue.Scheduler(
 INGEST_CANCELS: dict[str, threading.Event] = {}
 RENDER_CANCELS: dict[tuple[str, str], threading.Event] = {}
 ACTIVE_RENDER = {"queued", "rendering", "cancelling"}
+RENDER_SUBMIT_LOCK = threading.RLock()
 
 
 def _fnv1a(text: str) -> str:
@@ -952,6 +953,7 @@ def _run_url_ingest(
             raise IngestError("The provider did not produce a video file.")
         if downloaded.stat().st_size <= 0:
             raise IngestError("The provider returned an empty video file.")
+        disk.preflight(disk.estimate_upload(downloaded.stat().st_size), DATA)
 
         display, suffix = _ingest_names(result, downloaded)
         title = str(result.title or "").strip() or Path(display).stem
@@ -3427,6 +3429,7 @@ def review_captions(token: str) -> Response:
 class PathBody(BaseModel):
     path: str
     options: dict = {}
+    job_id: str | None = None
 
 
 class InspectBody(BaseModel):
@@ -3444,6 +3447,7 @@ class FromUrlBody(BaseModel):
     provider: str | None = None
     options: dict | None = None
     ingest_options: dict | None = None
+    job_id: str | None = None
 
 
 class PlanBody(BaseModel):
@@ -3598,6 +3602,18 @@ def inspect_url(body: UrlInspectBody) -> dict:
     }
 
 
+def _requested_job_id(value: str | None) -> str:
+    """Use a caller-provided job id only when it is fresh and safe."""
+    if not value:
+        return uuid.uuid4().hex[:12]
+    job_id = str(value).strip().lower()
+    if not re.fullmatch(r"[a-f0-9]{12}", job_id):
+        raise HTTPException(400, "job_id must be 12 lowercase hex characters.")
+    if (JOBS / job_id).exists():
+        raise HTTPException(409, "That job_id already exists.")
+    return job_id
+
+
 def _new_job(
     source_path: Path,
     name: str,
@@ -3651,6 +3667,11 @@ async def upload_job(
         declared = int(request.headers.get("content-length") or 0)
     except ValueError:
         declared = 0
+    if declared > MAX_UPLOAD:
+        raise HTTPException(
+            413,
+            f"Upload is larger than the {MAX_UPLOAD / 1024 ** 3:.0f} GB limit.",
+        )
     if declared:
         disk.preflight(disk.estimate_upload(declared), DATA)
 
@@ -3709,7 +3730,15 @@ def job_from_path(body: PathBody) -> dict:
         meta = pipeline.probe(path)
     except pipeline.PipelineError as exc:
         raise HTTPException(400, str(exc)) from exc
-    job = _new_job(path.resolve(), path.name, meta, clean_options(body.options))
+    job_id = _requested_job_id(body.job_id)
+    try:
+        (JOBS / job_id).mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise HTTPException(409, "That job_id already exists.") from None
+    job = _new_job(
+        path.resolve(), path.name, meta, clean_options(body.options),
+        job_id=job_id,
+    )
     return {"id": job["id"], "status": job["status"]}
 
 
@@ -3717,6 +3746,7 @@ def job_from_path(body: PathBody) -> dict:
 def job_from_url(body: FromUrlBody) -> dict:
     try:
         url = _validate_remote_ingest_url(body.url)
+        disk.preflight(0, DATA)
         provider_settings = _ingest_provider_settings()
         order = _ingest_provider_order(url, body.provider, provider_settings)
         options = registry.options_from_settings(provider_settings, body.ingest_options)
@@ -3736,6 +3766,17 @@ def job_from_url(body: FromUrlBody) -> dict:
                 or "This link cannot be ingested."
             )
             raise HTTPException(400, str(detail))
+        hint = inspected.get("filesize") or inspected.get("size_bytes")
+        if hint is None:
+            meta_hint = inspected.get("meta")
+            if isinstance(meta_hint, dict):
+                hint = meta_hint.get("filesize") or meta_hint.get("size_bytes")
+        try:
+            hint = disk.size_hint(hint, label="URL size hint")
+        except disk.InvalidSize:
+            hint = None
+        if hint:
+            disk.preflight(disk.estimate_upload(hint), DATA)
     except IngestError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -3746,9 +3787,12 @@ def job_from_url(body: FromUrlBody) -> dict:
     download_order = [provider_id, *[item for item in order if item != provider_id]]
     chain = _ingest_provider_chain(provider_settings, download_order)
     analysis_options = clean_options(body.options)
-    job_id = uuid.uuid4().hex[:12]
+    job_id = _requested_job_id(body.job_id)
     directory = JOBS / job_id
-    directory.mkdir(parents=True, exist_ok=False)
+    try:
+        directory.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise HTTPException(409, "That job_id already exists.") from None
     now = round(time.time(), 3)
     label = str(getattr(provider, "label", "") or provider_id)
     job = {
@@ -5322,6 +5366,30 @@ def _queue_render(
     script_id: str | None = None,
     check_space: bool = False,
 ) -> dict:
+    """Serialize check/write/submit so one record key cannot queue twice."""
+    with RENDER_SUBMIT_LOCK:
+        return _queue_render_locked(
+            job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
+            force, preset=preset, caption_margin=caption_margin,
+            script_id=script_id, check_space=check_space,
+        )
+
+
+def _queue_render_locked(
+    job_id: str,
+    job: dict,
+    plan: dict,
+    quality: str,
+    aspect: str,
+    encoder: str | None,
+    captions: bool,
+    audio_plan: dict | None,
+    force: bool,
+    preset: str | None = None,
+    caption_margin: float = 0.075,
+    script_id: str | None = None,
+    check_space: bool = False,
+) -> dict:
     script_id = _valid_script_id(job_id, plan, script_id)
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
@@ -5349,7 +5417,7 @@ def _queue_render(
         "nonce": time.time() if force else None,
     }, sort_keys=True).encode()).hexdigest()[:12]
 
-    existing = (job.get("renders") or {}).get(record_key)
+    existing = (load_job(job_id).get("renders") or {}).get(record_key)
     if existing and existing.get("status") in ACTIVE_RENDER:
         if existing.get("artifact_id") == artifact and not force:
             return existing
@@ -5482,6 +5550,7 @@ def _queue_render(
         run_render, job_id, target, plan, key, quality, aspect, encoder, captions,
         audio_plan, audio_sig, preset, caption_margin, script_id, artifact,
         generation,
+        task_kind="render", task_key=f"render:{job_id}:{record_key}",
     )
     return record
 

@@ -32,6 +32,7 @@ the existing segment cache; no partial ffmpeg output is resumed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -152,23 +153,64 @@ def _read_manifest(path: Path) -> dict:
         raise BatchError(f"Batch data is unreadable: {path.name}") from exc
     if not isinstance(value, dict):
         raise BatchError(f"Batch data is invalid: {path.name}")
+    _validate_manifest(value, path)
     return value
+
+
+def _validate_manifest(batch: dict, path: Path | None = None) -> None:
+    """Reject corrupt manifests before any caller indexes into them."""
+    label = path.name if path is not None else str(batch.get("id") or "batch")
+    batch_id = batch.get("id")
+    if not isinstance(batch_id, str) or not _ID_RE.match(batch_id):
+        raise BatchError(f"Batch data is invalid: {label} has no valid id")
+    if path is not None and batch_id != path.stem:
+        raise BatchError(
+            f"Batch data is invalid: {label} id does not match its filename"
+        )
+    items = batch.get("items")
+    if not isinstance(items, list):
+        raise BatchError(f"Batch data is invalid: {label} items is not a list")
+    status = batch.get("status")
+    if status is not None and status not in BATCH_STATES:
+        raise BatchError(f"Batch data is invalid: {label} status {status!r}")
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise BatchError(
+                f"Batch data is invalid: {label} item {index + 1} is not an object"
+            )
+        item_id = item.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            raise BatchError(
+                f"Batch data is invalid: {label} item {index + 1} has no id"
+            )
+        state = item.get("state")
+        if state is not None and state not in ITEM_STATES:
+            raise BatchError(
+                f"Batch data is invalid: {label} item {index + 1} has state {state!r}"
+            )
 
 
 def _counts(batch: dict) -> dict:
     counts = {state: 0 for state in ITEM_STATES}
-    for item in batch.get("items") or []:
+    items = batch.get("items")
+    if not isinstance(items, list):
+        return counts
+    for item in items:
+        if not isinstance(item, dict):
+            counts["failed"] = counts.get("failed", 0) + 1
+            continue
         state = str(item.get("state") or "queued")
         counts[state] = counts.get(state, 0) + 1
     return counts
 
 
 def _progress(batch: dict) -> float:
-    items = batch.get("items") or []
-    if not items:
+    items = batch.get("items")
+    if not isinstance(items, list) or not items:
         return 0.0
     terminal = sum(
-        1 for item in items if item.get("state") in TERMINAL_ITEM_STATES
+        1 for item in items
+        if isinstance(item, dict) and item.get("state") in TERMINAL_ITEM_STATES
     )
     return round(terminal / len(items), 4)
 
@@ -195,27 +237,84 @@ def recover_batches(data_dir: str | Path) -> int:
     for path in sorted(directory.glob("*.json")):
         try:
             batch = _read_manifest(path)
-        except BatchError:
+            touched = False
+            if batch.get("status") in ACTIVE_BATCH_STATES:
+                batch["status"] = "paused"
+                batch["message"] = "Paused after restart"
+                batch["error"] = "The server restarted while this batch was active."
+                batch["current"] = None
+                touched = True
+            for item in batch.get("items") or []:
+                if item.get("state") == "running":
+                    item["state"] = "paused"
+                    item["message"] = "Paused after restart"
+                    touched = True
+            if touched:
+                batch["updated"] = _now()
+                batch["progress"] = _progress(batch)
+                _atomic_write(path, batch)
+                changed += 1
+        except Exception:  # noqa: BLE001
             LOGGER.exception("could not recover batch %s", path)
             continue
-        touched = False
-        if batch.get("status") in ACTIVE_BATCH_STATES:
-            batch["status"] = "paused"
-            batch["message"] = "Paused after restart"
-            batch["error"] = "The server restarted while this batch was active."
-            batch["current"] = None
-            touched = True
-        for item in batch.get("items") or []:
-            if item.get("state") == "running":
-                item["state"] = "paused"
-                item["message"] = "Paused after restart"
-                touched = True
-        if touched:
-            batch["updated"] = _now()
-            batch["progress"] = _progress(batch)
-            _atomic_write(path, batch)
-            changed += 1
     return changed
+
+
+def _references_by_target(references: list[dict]) -> dict[int, dict]:
+    result: dict[int, dict] = {}
+    for reference in references:
+        try:
+            target = int(reference.get("target") or 0)
+        except (TypeError, ValueError):
+            continue
+        if target not in result:
+            result[target] = reference
+    return result
+
+
+def _render_identity(record: dict) -> dict:
+    return {
+        "target": int(record.get("target") or 0),
+        "quality": str(record.get("quality") or "final"),
+        "aspect": str(record.get("aspect") or "9:16"),
+        "captions": bool(record.get("captions")),
+        "audio_sig": str(record.get("audio_sig") or ""),
+        "hook": record.get("hook"),
+        "preset": record.get("preset"),
+        "record_key": str(record.get("record_key") or ""),
+    }
+
+
+def _same_render_identity(left: dict, right: dict) -> bool:
+    a = _render_identity(left)
+    b = _render_identity(right)
+    if a["record_key"] and b["record_key"] and a["record_key"] != b["record_key"]:
+        return False
+    return all(a[key] == b[key] for key in (
+        "target", "quality", "aspect", "captions", "audio_sig", "hook", "preset",
+        "record_key",
+    ))
+
+
+def _resolve_render(job: dict, reference: dict) -> dict | None:
+    records = job.get("renders")
+    if not isinstance(records, dict):
+        return None
+    record_key = str(reference.get("record_key") or "")
+    current = records.get(record_key) if record_key else None
+    if isinstance(current, dict) and _same_render_identity(reference, current):
+        return current
+    candidates = [
+        record for record in records.values()
+        if isinstance(record, dict) and _same_render_identity(reference, record)
+    ]
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda value: value.get("updated") or value.get("created") or 0,
+        reverse=True,
+    )
+    return candidates[0]
 
 
 class BatchManager:
@@ -232,6 +331,18 @@ class BatchManager:
         self.directory = self.data_dir / "batches"
         self.backend = backend
         self.poll_interval = max(0.01, float(poll_interval))
+        try:
+            self.analysis_timeout = float(
+                os.environ.get("VIBECUT_BATCH_ANALYSIS_TIMEOUT", "21600") or 21600
+            )
+        except ValueError:
+            self.analysis_timeout = 21600.0
+        try:
+            self.render_timeout = float(
+                os.environ.get("VIBECUT_BATCH_RENDER_TIMEOUT", "7200") or 7200
+            )
+        except ValueError:
+            self.render_timeout = 7200.0
         self._lock = threading.RLock()
         self._threads: dict[str, threading.Thread] = {}
         self._running: set[str] = set()
@@ -272,6 +383,10 @@ class BatchManager:
             limit = int(max_items)
         except (TypeError, ValueError):
             raise BatchError("max must be an integer from 1 to 10.") from None
+        if isinstance(max_items, bool) or (
+            isinstance(max_items, float) and not max_items.is_integer()
+        ):
+            raise BatchError("max must be an integer from 1 to 10.")
         if limit < 1 or limit > MAX_ITEMS:
             raise BatchError("max must be between 1 and 10.")
         if not items:
@@ -352,7 +467,7 @@ class BatchManager:
         for path in self.directory.glob("*.json"):
             try:
                 values.append(public_batch(_read_manifest(path)))
-            except BatchError:
+            except Exception:  # noqa: BLE001
                 LOGGER.exception("could not read batch %s", path)
         values.sort(key=lambda item: item.get("created") or 0, reverse=True)
         return values
@@ -426,6 +541,18 @@ class BatchManager:
             self.save(batch)
         return self.start(batch_id)
 
+    def pause(self, batch_id: str) -> dict:
+        """Stop before the next item.  Active work is allowed to finish."""
+        with self._lock:
+            batch = self.load(batch_id)
+            if batch.get("status") in {"done", "failed", "cancelled", "paused"}:
+                return public_batch(batch)
+            batch["status"] = "paused"
+            batch["message"] = "Paused"
+            batch["error"] = None
+            self.save(batch)
+        return self.get(batch_id)
+
     def cancel(self, batch_id: str) -> dict:
         """Cancel pending work and ask the active job to stop when possible."""
         with self._lock:
@@ -439,7 +566,7 @@ class BatchManager:
             active_jobs: list[str] = []
             for item in batch.get("items") or []:
                 if item.get("state") in {"queued", "running", "paused"}:
-                    if item.get("state") == "running" and item.get("job_id"):
+                    if item.get("state") in {"running", "paused"} and item.get("job_id"):
                         active_jobs.append(str(item["job_id"]))
                     item["state"] = "cancelled"
                     item["message"] = "Cancelled"
@@ -468,6 +595,8 @@ class BatchManager:
                     batch = self.load(batch_id)
                     if batch.get("status") == "cancelled" or event.is_set():
                         break
+                    if batch.get("status") == "paused":
+                        return
                     item = next(
                         (
                             value for value in batch.get("items") or []
@@ -549,6 +678,15 @@ class BatchManager:
         item = self._item(batch_id, item_id)
         job: dict | None = None
         job_id = str(item.get("job_id") or "")
+        if not job_id:
+            # Persist a deterministic id before creating the job.  A crash
+            # between these two steps resumes into the same job dir instead of
+            # creating a duplicate.
+            job_id = hashlib.sha1(
+                f"{batch_id}:{item_id}".encode("utf-8")
+            ).hexdigest()[:12]
+            self._checkpoint_item(batch_id, item_id, job_id=job_id)
+            item = self._item(batch_id, item_id)
         if job_id:
             try:
                 job = backend.load_job(job_id)
@@ -559,7 +697,8 @@ class BatchManager:
             job_id = str(job.get("id") or "")
             if not job_id:
                 raise BatchError("The job backend returned no job id.")
-            self._checkpoint_item(batch_id, item_id, job_id=job_id)
+            if str(item.get("job_id") or "") != job_id:
+                self._checkpoint_item(batch_id, item_id, job_id=job_id)
 
         status = str(job.get("status") or "")
         if status in {"failed", "interrupted"}:
@@ -582,29 +721,34 @@ class BatchManager:
         )
         outputs: list[dict] = []
         if targets:
-            backend.start_renders(job_id, targets, dict(item.get("options") or {}))
-            job = self._wait_for_renders(job_id, targets, item, event)
-            outputs = self._outputs(job, targets, dict(item.get("options") or {}))
+            queued = backend.start_renders(
+                job_id, targets, dict(item.get("options") or {}),
+            )
+            job = self._wait_for_renders(
+                job_id, targets, item, event, queued,
+            )
+            outputs = self._outputs(
+                job, targets, dict(item.get("options") or {}), queued,
+            )
         return {"job_id": job_id, "outputs": outputs}
 
     def _wait_for_analysis(self, job_id: str, event: threading.Event) -> dict:
         backend = self.backend
         assert backend is not None
+        started = time.monotonic()
         while True:
             if event.is_set():
                 self._safe_cancel(job_id)
                 raise _BatchCancelled()
+            if self.analysis_timeout > 0 and time.monotonic() - started > self.analysis_timeout:
+                raise BatchItemError(
+                    f"Analysis timed out after {self.analysis_timeout:.0f}s."
+                )
             job = backend.load_job(job_id)
             status = str(job.get("status") or "")
             if status in {"ready", "failed", "interrupted", "cancelled"}:
                 return job
-            if status not in {
-                "queued", "downloading", "scanning", "reading", "scoring",
-            }:
-                # Unknown but non-terminal state: keep polling, but do not spin.
-                time.sleep(self.poll_interval)
-            else:
-                time.sleep(self.poll_interval)
+            time.sleep(self.poll_interval)
 
     def _wait_for_renders(
         self,
@@ -612,16 +756,22 @@ class BatchManager:
         targets: list[int],
         item: dict,
         event: threading.Event,
+        references: list[dict] | None = None,
     ) -> dict:
         backend = self.backend
         assert backend is not None
         options = dict(item.get("options") or {})
+        started = time.monotonic()
         while True:
             if event.is_set():
                 self._safe_cancel(job_id)
                 raise _BatchCancelled()
-            states = backend.render_states(job_id, targets, options)
-            states = {int(key): str(value) for key, value in states.items()}
+            if self.render_timeout > 0 and time.monotonic() - started > self.render_timeout:
+                raise BatchItemError(
+                    f"Render timed out after {self.render_timeout:.0f}s."
+                )
+            job = backend.load_job(job_id)
+            states = self._render_states(job, targets, options, references, backend, job_id)
             missing = [
                 target for target in targets
                 if states.get(target) not in {"ready", "failed", "interrupted", "cancelled"}
@@ -632,21 +782,45 @@ class BatchManager:
                     if states.get(target) != "ready"
                 ]
                 if bad:
-                    job = backend.load_job(job_id)
-                    details = [
-                        str(
-                            ((job.get("renders") or {}).get(key) or {}).get("error")
-                            or ""
-                        )
-                        for key, record in (job.get("renders") or {}).items()
-                        if int(record.get("target") or 0) in bad
-                    ]
-                    detail = next((value for value in details if value), "")
+                    details = []
+                    for record in (job.get("renders") or {}).values():
+                        if not isinstance(record, dict):
+                            continue
+                        if int(record.get("target") or 0) in bad and record.get("error"):
+                            details.append(str(record["error"]))
+                    detail = details[0] if details else ""
                     raise BatchItemError(
                         detail or f"Render failed for target(s): {', '.join(map(str, bad))}."
                     )
-                return backend.load_job(job_id)
+                return job
             time.sleep(self.poll_interval)
+
+    def _render_states(
+        self,
+        job: dict,
+        targets: list[int],
+        options: dict,
+        references: list[dict] | None,
+        backend: BatchBackend,
+        job_id: str,
+    ) -> dict[int, str]:
+        """Resolve state by full render identity, not just target duration."""
+        references = [ref for ref in (references or []) if isinstance(ref, dict)]
+        if not references:
+            states = backend.render_states(job_id, targets, options)
+            return {int(key): str(value) for key, value in states.items()}
+        by_target = _references_by_target(references)
+        states: dict[int, str] = {}
+        for target in targets:
+            reference = by_target.get(target)
+            if not reference:
+                states[target] = "missing"
+                continue
+            current = _resolve_render(job, reference)
+            states[target] = str(
+                (current or reference).get("status") or "missing"
+            )
+        return states
 
     def _safe_cancel(self, job_id: str) -> None:
         try:
@@ -725,27 +899,35 @@ class BatchManager:
         batch["progress"] = _progress(batch)
         self.save(batch)
 
-    def _outputs(self, job: dict, targets: list[int], options: dict) -> list[dict]:
-        records = list((job.get("renders") or {}).values())
-        records.sort(
-            key=lambda value: value.get("updated") or value.get("created") or 0,
-            reverse=True,
-        )
+    def _outputs(
+        self,
+        job: dict,
+        targets: list[int],
+        options: dict,
+        references: list[dict] | None = None,
+    ) -> list[dict]:
+        references = [ref for ref in (references or []) if isinstance(ref, dict)]
+        if not references:
+            return []
+        by_target = _references_by_target(references)
         found: dict[int, dict] = {}
-        for record in records:
-            try:
-                target = int(record.get("target") or 0)
-            except (TypeError, ValueError):
+        for target in targets:
+            reference = by_target.get(target)
+            if not reference:
                 continue
-            if target not in targets or target in found:
+            record = _resolve_render(job, reference)
+            if record is None and reference.get("status") == "ready":
+                record = reference
+            if not isinstance(record, dict) or record.get("status") != "ready":
                 continue
-            if record.get("status") != "ready":
+            if not _same_render_identity(reference, record):
                 continue
             found[target] = {
                 "target": target,
                 "path": record.get("path"),
                 "poster": record.get("poster"),
                 "key": record.get("key"),
+                "record_key": record.get("record_key"),
                 "duration": record.get("duration"),
             }
         return [found[target] for target in targets if target in found]
