@@ -3,12 +3,19 @@
 The renderer, SRT/VTT export, review links, and artifact identity all describe
 the same cue list. The module reads the transcript analysis already wrote,
 builds deterministic cues per cut, and stores versioned sidecars under
-``data/jobs/<id>/caption_tracks``.
+``data/jobs/<id>/caption_tracks``. Both the renderer and the export layer call
+:func:`cues_for_plan`, so cue text and timing cannot drift between the burned
+MP4, the caption-only preview, the artifact SRT/VTT, and the subtitle file.
 
 Trust-core callers also use the lightweight compatibility API:
 ``CUE_WIDTH``, :func:`caption_text`, :func:`chunk_text`, :func:`reel_cues`,
 and :func:`cue_tuples`. Those adapters preserve the pre-Caption-Studio contract
 without maintaining a second cue engine.
+
+Sparse speech policy: a short word held over a long silence is capped at
+``MAX_CUE`` seconds and reported in ``warnings`` rather than stretched into a
+cue longer than four seconds. Cue timing is quantized to rendered frames when
+the job source duration is known, matching the burned video.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ CUE_WIDTH = 72
 MIN_CUE = 0.6
 MAX_CUE = 4.0
 TIME_EPSILON = 0.002
+FRAME_FPS = 30
 DATA = Path(
     os.environ.get("VIBECUT_DATA", Path(__file__).resolve().parent / "data"),
 ).expanduser().resolve()
@@ -72,7 +80,16 @@ STYLE_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 STYLE_KEYS = tuple(STYLE_DEFAULTS)
-SENTENCE_RE = re.compile(r"(?<=[.!?…。！？；;])\s*")
+SENTENCE_END_RE = re.compile(r"[.!?…。！？；;]+")
+ABBREVIATIONS = frozenset({
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc",
+    "e.g", "i.e", "u.s", "u.k", "a.m", "p.m", "fig", "dept",
+    "est", "inc", "ltd", "corp", "approx",
+})
+EMOJI_ZWJ = "\u200d"
+EMOJI_VARIATION = frozenset({"\ufe0e", "\ufe0f"})
+EMOJI_MODIFIERS = frozenset(chr(code) for code in range(0x1F3FB, 0x1F400))
+REGIONAL_INDICATORS = frozenset(chr(code) for code in range(0x1F1E6, 0x1F200))
 
 
 class CaptionError(ValueError):
@@ -336,7 +353,10 @@ def normalize_style_settings(raw: dict | None) -> dict:
             raise CaptionStyleError("Caption style ids must contain letters, numbers, - or _.")
         if not isinstance(value, dict):
             raise CaptionStyleError(f"Caption style {key} must be an object.")
-        styles[key] = normalize_style({**STYLE_DEFAULTS, **value}, style_id=key)
+        styles[key] = normalize_style(
+            apply_style_overrides(styles.get(key) or {}, value),
+            style_id=key,
+        )
     default = _clean_style_id(raw.get("default") or DEFAULT_STYLE_ID) or DEFAULT_STYLE_ID
     if default not in styles:
         default = DEFAULT_STYLE_ID if DEFAULT_STYLE_ID in styles else next(iter(styles))
@@ -373,12 +393,71 @@ def resolve_style(
         raise CaptionStyleError("Unknown caption style.")
     if requested not in section["styles"]:
         raise CaptionStyleError(f"Unknown caption style: {requested}.")
-    merged = {**section["styles"][requested]}
-    if overrides:
-        if not isinstance(overrides, dict):
-            raise CaptionStyleError("Caption style overrides must be an object.")
-        merged.update({key: value for key, value in overrides.items() if key in STYLE_KEYS})
-    return normalize_style(merged, style_id=requested)
+    return apply_style_overrides(
+        section["styles"][requested],
+        overrides,
+    ) | {"id": requested}
+
+
+def apply_style_overrides(style: dict, overrides: dict | None) -> dict:
+    """Merge overrides onto a style, preserving the base safe zone."""
+    base = dict(style)
+    if overrides is None:
+        return normalize_style(base, style_id=base.get("id"))
+    if not isinstance(overrides, dict):
+        raise CaptionStyleError("Caption style overrides must be an object.")
+    zone = overrides.get("safe_zone", overrides.get("safe-zone"))
+    if isinstance(zone, dict):
+        base["safe_zone"] = {
+            **(base.get("safe_zone") or STYLE_DEFAULTS["safe_zone"]),
+            **zone,
+        }
+        overrides = {
+            key: value for key, value in overrides.items()
+            if key not in {"safe_zone", "safe-zone"}
+        }
+    base.update(overrides)
+    return normalize_style(base, style_id=base.get("id"))
+
+
+def apply_margin(style: dict, margin: float | None) -> dict:
+    """Apply the legacy platform caption margin to a complete style."""
+    normalized = normalize_style(style)
+    if margin is None:
+        return normalized
+    zone = dict(normalized["safe_zone"])
+    zone["bottom"] = round(
+        _finite_number(margin, zone["bottom"], 0.0, 0.45), 3,
+    )
+    normalized["safe_zone"] = zone
+    return normalize_style(normalized, style_id=normalized["id"])
+
+
+def merge_style_settings(current: dict | None, patch: dict | None) -> dict:
+    """Validate a settings patch and merge it onto the current styles."""
+    if patch is not None and not isinstance(patch, dict):
+        raise CaptionStyleError("Caption styles must be an object.")
+    if current is not None and not isinstance(current, dict):
+        current = None
+    current = current or default_style_settings()
+    patch = patch or {}
+    if "default" in patch and not isinstance(patch["default"], str):
+        raise CaptionStyleError("caption_styles.default must be a string.")
+    patch_styles = patch.get("styles")
+    if "styles" in patch and not isinstance(patch_styles, dict):
+        raise CaptionStyleError("caption_styles.styles must be an object.")
+    for style_id, value in (patch_styles or {}).items():
+        if not isinstance(value, dict):
+            raise CaptionStyleError(f"Caption style {style_id} must be an object.")
+    current_styles = current.get("styles")
+    if not isinstance(current_styles, dict):
+        current_styles = {}
+    merged = {
+        **current,
+        **patch,
+        "styles": {**current_styles, **(patch_styles or {})},
+    }
+    return normalize_style_settings(merged)
 
 
 def style_hash(style: dict) -> str:
@@ -395,18 +474,74 @@ def normalize_text(text: Any) -> str:
 
 
 def split_sentences(text: str) -> list[str]:
-    """Split on sentence punctuation without requiring spaces (CJK safe)."""
+    """Split on sentence punctuation without breaking decimals/abbreviations."""
     value = normalize_text(text)
     if not value:
         return []
-    parts = [part.strip() for part in SENTENCE_RE.split(value) if part.strip()]
+    parts: list[str] = []
+    cursor = 0
+    for match in SENTENCE_END_RE.finditer(value):
+        mark = match.group(0)
+        after = match.end()
+        if mark == ".":
+            before = value[match.start() - 1] if match.start() else ""
+            following = value[after] if after < len(value) else ""
+            if before.isdigit() and following.isdigit():
+                continue
+            token = re.search(r"([A-Za-z][A-Za-z.]*)$", value[:match.start()])
+            token_text = token.group(1) if token else ""
+            if token_text.lower().strip(".") in ABBREVIATIONS:
+                continue
+            if len(token_text) == 1 and following.isalpha():
+                # Initials and dotted forms such as U.S. or e.g.
+                continue
+        chunk = value[cursor:after].strip()
+        if chunk:
+            parts.append(chunk)
+        cursor = after
+    tail = value[cursor:].strip()
+    if tail:
+        parts.append(tail)
     return parts or [value]
+
+
+def _grapheme_clusters(text: str) -> list[str]:
+    """Small grapheme grouping so emoji ZWJ sequences are never split."""
+    clusters: list[str] = []
+    for char in text:
+        if not clusters:
+            clusters.append(char)
+            continue
+        previous = clusters[-1]
+        if (
+            char == EMOJI_ZWJ
+            or previous.endswith(EMOJI_ZWJ)
+            or char in EMOJI_VARIATION
+            or char in EMOJI_MODIFIERS
+            or (
+                char in REGIONAL_INDICATORS
+                and previous[-1] in REGIONAL_INDICATORS
+                and len(previous) == 1
+            )
+        ):
+            clusters[-1] += char
+        else:
+            clusters.append(char)
+    return clusters or [text]
 
 
 def _hard_split(word: str, width: int) -> list[str]:
     if width <= 0:
         return [word]
-    return [word[index:index + width] for index in range(0, len(word), width)] or [word]
+    clusters = _grapheme_clusters(word)
+    return [
+        "".join(clusters[index:index + width])
+        for index in range(0, len(clusters), width)
+    ] or [word]
+
+
+def _visible_length(text: str) -> int:
+    return len(_grapheme_clusters(text))
 
 
 def wrap_lines(text: str, max_chars: int) -> list[str]:
@@ -415,7 +550,7 @@ def wrap_lines(text: str, max_chars: int) -> list[str]:
     if not value:
         return []
     width = max(8, int(max_chars))
-    if len(value) <= width:
+    if _visible_length(value) <= width:
         return [value]
     words = value.split()
     if len(words) <= 1:
@@ -423,10 +558,10 @@ def wrap_lines(text: str, max_chars: int) -> list[str]:
     lines: list[str] = []
     current = ""
     for word in words:
-        pieces = _hard_split(word, width) if len(word) > width else [word]
+        pieces = _hard_split(word, width) if _visible_length(word) > width else [word]
         for piece in pieces:
             candidate = f"{current} {piece}".strip()
-            if len(candidate) <= width:
+            if _visible_length(candidate) <= width:
                 current = candidate
             else:
                 if current:
@@ -557,7 +692,7 @@ def _text_chunks(text: str, style: dict) -> list[str]:
 
 
 def _visible_weight(text: str) -> int:
-    return max(1, len(normalize_text(text)))
+    return max(1, _visible_length(normalize_text(text)))
 
 
 def _split_words_evenly(text: str, count: int, style: dict) -> list[str]:
@@ -568,7 +703,7 @@ def _split_words_evenly(text: str, count: int, style: dict) -> list[str]:
     if len(words) <= 1:
         if not value:
             return [text]
-        size = max(1, math.ceil(len(value) / count))
+        size = max(1, math.ceil(_visible_length(value) / count))
         return _hard_split(value, size)
     total = sum(len(word) + 1 for word in words)
     target = max(1, math.ceil(total / count))
@@ -595,7 +730,10 @@ def _style_safe(text: str, style: dict) -> bool:
     lines = [line for line in str(text).splitlines() if line.strip()]
     if not lines or len(lines) > int(style["max_lines"]):
         return False
-    return all(len(line) <= int(style["max_chars"]) for line in lines)
+    return all(
+        _visible_length(line) <= int(style["max_chars"])
+        for line in lines
+    )
 
 
 # ---------------------------------------------------------------- transcript
@@ -640,24 +778,40 @@ def read_transcript_segments(job_dir: Path | None) -> list[dict]:
     return []
 
 
-def _clip_windows(plan: dict) -> list[dict]:
+def _frames_for(start: float, duration: float, source_duration: float) -> int:
+    """Mirror render._frames_for so cue times land on rendered frames."""
+    frames = max(1, int(round(duration * FRAME_FPS)))
+    if source_duration > 0:
+        room = max(1, int((source_duration - start) * FRAME_FPS + 1e-6))
+        frames = min(frames, room)
+    return frames
+
+
+def _clip_windows(plan: dict, source_duration: float | None = None) -> list[dict]:
     windows: list[dict] = []
     offset = 0.0
-    for index, clip in enumerate(plan.get("clips") or []):
+    source = float(source_duration or 0.0)
+    for clip in plan.get("clips") or []:
         if not isinstance(clip, dict):
             continue
         try:
-            start = float(clip.get("start") or 0.0)
-            end = float(
+            start = max(0.0, float(clip.get("start") or 0.0))
+            raw_end = float(
                 clip.get("end")
                 if clip.get("end") is not None
                 else start + float(clip.get("dur") or clip.get("duration") or 0.0)
             )
         except (TypeError, ValueError):
             continue
-        if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+        if not math.isfinite(start) or not math.isfinite(raw_end) or raw_end <= start:
             continue
-        duration = end - start
+        if source > 0:
+            frames = _frames_for(start, max(0.2, raw_end - start), source)
+            duration = frames / FRAME_FPS
+            end = start + duration
+        else:
+            duration = raw_end - start
+            end = raw_end
         windows.append({
             "index": len(windows),
             "scene": clip.get("scene"),
@@ -700,8 +854,22 @@ def _slice_segment_text(segment: dict, start: float, end: float) -> str:
         return ""
     if overlap_start <= seg_start + TIME_EPSILON and overlap_end >= seg_end - TIME_EPSILON:
         return str(segment.get("text") or "")
-    words = str(segment.get("text") or "").split()
+    text = str(segment.get("text") or "")
+    words = text.split()
     if len(words) <= 1:
+        clusters = _grapheme_clusters(normalize_text(text))
+        if len(clusters) > 1 and re.search(
+            r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", text,
+        ):
+            first = int(math.floor(
+                (overlap_start - seg_start) / seg_duration * len(clusters),
+            ))
+            last = int(math.ceil(
+                (overlap_end - seg_start) / seg_duration * len(clusters),
+            ))
+            first = max(0, min(len(clusters) - 1, first))
+            last = max(first + 1, min(len(clusters), last))
+            return "".join(clusters[first:last])
         return " ".join(words)
     first = int(math.floor((overlap_start - seg_start) / seg_duration * len(words)))
     last = int(math.ceil((overlap_end - seg_start) / seg_duration * len(words)))
@@ -833,11 +1001,31 @@ def _piece_times(piece: dict, style: dict) -> list[dict]:
     }]
 
 
-def _fit_cue_text_and_timing(cue: dict, style: dict) -> list[dict]:
+def _cap_cue(cue: dict, warnings: list[str], reason: str = "") -> dict:
+    if float(cue["end"]) - float(cue["start"]) <= MAX_CUE + TIME_EPSILON:
+        return cue
+    capped = {**cue, "end": round(float(cue["start"]) + MAX_CUE, 3)}
+    suffix = f" {reason}" if reason else ""
+    warnings.append(
+        f"Clip {int(cue.get('clip_index') or 0) + 1}: cue at "
+        f"{float(cue['start']):.2f}s capped at {MAX_CUE:.1f}s;{suffix}".strip()
+    )
+    return capped
+
+
+def _fit_cue_text_and_timing(
+    cue: dict,
+    style: dict,
+    warnings: list[str] | None = None,
+) -> list[dict]:
     """Split a long cue at word boundaries so no cue exceeds MAX_CUE."""
+    warnings = warnings if warnings is not None else []
     duration = max(0.0, float(cue["end"]) - float(cue["start"]))
     if duration <= MAX_CUE + TIME_EPSILON:
         return [cue]
+    words = normalize_text(cue["text"]).split()
+    if len(words) <= 1:
+        return [_cap_cue(cue, warnings, "sparse speech")]
     count = max(2, int(math.ceil(duration / MAX_CUE)))
     chunks: list[str] = []
     for _ in range(10):
@@ -849,19 +1037,19 @@ def _fit_cue_text_and_timing(cue: dict, style: dict) -> list[dict]:
             break
         count += 1
     if len(chunks) <= 1:
-        return [cue]
+        return [_cap_cue(cue, warnings, "sparse speech")]
     weights = [_visible_weight(chunk) for chunk in chunks]
     total = max(1, sum(weights))
     result = []
     cursor = float(cue["start"])
     for index, chunk in enumerate(chunks):
         end = float(cue["end"]) if index == len(chunks) - 1 else cursor + duration * weights[index] / total
-        result.append({
+        result.append(_cap_cue({
             **cue,
             "start": cursor,
             "end": max(cursor, end),
             "text": chunk,
-        })
+        }, warnings, "sparse speech"))
         cursor = end
     return result
 
@@ -883,6 +1071,10 @@ def _fit_clip_cues(cues: list[dict], window: dict, style: dict, warnings: list[s
         start = max(clip_start, min(clip_end, float(cue["start"])))
         end = max(start, min(clip_end, float(cue["end"])))
         if end - start < 0.01:
+            warnings.append(
+                f"Clip {window['index'] + 1}: dropped a cue shorter than 0.01s "
+                f"at {start:.3f}s."
+            )
             continue
         items.append({**cue, "start": start, "end": end})
     items.sort(key=lambda item: (float(item["start"]), float(item["end"])))
@@ -894,11 +1086,17 @@ def _fit_clip_cues(cues: list[dict], window: dict, style: dict, warnings: list[s
         start = max(previous_end, float(cue["start"]))
         end = min(clip_end, max(start, float(cue["end"])))
         if end - start < 0.02:
+            merged = None
             if ordered:
                 merged = _merge_text(ordered[-1]["text"], cue["text"], style)
                 if merged:
                     ordered[-1]["text"] = merged
                     ordered[-1]["end"] = max(ordered[-1]["end"], end)
+            if not merged:
+                warnings.append(
+                    f"Clip {window['index'] + 1}: dropped a cue shorter than "
+                    f"0.02s at {start:.3f}s."
+                )
             continue
         ordered.append({**cue, "start": start, "end": end})
         previous_end = end
@@ -906,7 +1104,7 @@ def _fit_clip_cues(cues: list[dict], window: dict, style: dict, warnings: list[s
     # Split anything longer than the maximum.
     split: list[dict] = []
     for cue in ordered:
-        split.extend(_fit_cue_text_and_timing(cue, style))
+        split.extend(_fit_cue_text_and_timing(cue, style, warnings))
 
     # Enforce the minimum by merging neighbours or borrowing silence.
     index = 0
@@ -960,9 +1158,16 @@ def _fit_clip_cues(cues: list[dict], window: dict, style: dict, warnings: list[s
         start = round(max(last_end, float(cue["start"])), 3)
         end = round(min(clip_end, float(cue["end"])), 3)
         if end <= start:
+            warnings.append(
+                f"Clip {window['index'] + 1}: dropped a cue that rounded to "
+                f"zero duration at {start:.3f}s."
+            )
             continue
         text = str(cue["text"]).strip()
         if not text:
+            warnings.append(
+                f"Clip {window['index'] + 1}: dropped an empty cue at {start:.3f}s."
+            )
             continue
         result.append({
             **cue,
@@ -1001,9 +1206,29 @@ def _cues_from_pieces(
                     float(cue["end"]) - window["start"] + window["offset"], 3,
                 ),
             })
-    for index, cue in enumerate(cue_rows, 1):
+    # Rounded clip boundaries can leave a 1ms seam between clips. Clamp once
+    # more in reel order so the persisted track never overlaps.
+    total = round(
+        (windows[-1]["offset"] + windows[-1]["duration"]) if windows else 0.0,
+        3,
+    )
+    last_end = 0.0
+    clean: list[dict] = []
+    for cue in cue_rows:
+        start = round(max(last_end, float(cue["start"])), 3)
+        end = round(min(total, float(cue["end"])), 3)
+        if end <= start:
+            warnings.append(
+                f"Dropped a cue that rounded to zero duration at {start:.3f}s."
+            )
+            continue
+        cue["start"] = start
+        cue["end"] = end
+        clean.append(cue)
+        last_end = end
+    for index, cue in enumerate(clean, 1):
         cue["id"] = f"c{index:03d}"
-    return cue_rows
+    return clean
 
 
 def build_cues(
@@ -1011,10 +1236,11 @@ def build_cues(
     *,
     style: dict | None = None,
     segments: list[dict] | None = None,
+    source_duration: float | None = None,
 ) -> tuple[list[dict], str, list[str]]:
     """Build cue dictionaries from a plan. Pure and deterministic."""
     normalized_style = normalize_style(style)
-    windows = _clip_windows(plan)
+    windows = _clip_windows(plan, source_duration)
     warnings: list[str] = []
     pieces, used = _raw_pieces(plan, windows, segments or [], normalized_style, warnings)
     cues = _cues_from_pieces(pieces, windows, normalized_style, warnings)
@@ -1028,6 +1254,7 @@ def cues_for_plan(
     *,
     style: dict | None = None,
     segments: list[dict] | None = None,
+    source_duration: float | None = None,
 ) -> list[dict]:
     """The single cue path used by burn-in, generic exports and previews."""
     supplied = plan.get("_caption_cues")
@@ -1044,8 +1271,14 @@ def cues_for_plan(
         if segments is not None
         else plan.get("_transcript_segments") or []
     )
+    chosen_source = (
+        source_duration
+        if source_duration is not None
+        else plan.get("_source_duration")
+    )
     cues, _source, _warnings = build_cues(
         working, style=chosen_style, segments=chosen_segments,
+        source_duration=chosen_source,
     )
     return cues
 
@@ -1093,8 +1326,11 @@ def cue_hash(cues: Iterable[dict | CaptionCue] | None) -> str:
     return _hash_json(rows)
 
 
-def total_duration(plan: dict) -> float:
-    return round(sum(window["duration"] for window in _clip_windows(plan)), 3)
+def total_duration(plan: dict, source_duration: float | None = None) -> float:
+    return round(
+        sum(window["duration"] for window in _clip_windows(plan, source_duration)),
+        3,
+    )
 
 
 # ---------------------------------------------------------------- track storage
@@ -1208,12 +1444,7 @@ def build_track(
     elif style is None:
         chosen_style = resolve_style(None, settings=settings, overrides=overrides)
     elif isinstance(style, dict):
-        merged_style = dict(style)
-        if overrides:
-            merged_style.update({
-                key: value for key, value in overrides.items() if key in STYLE_KEYS
-            })
-        chosen_style = normalize_style(merged_style)
+        chosen_style = apply_style_overrides(style, overrides)
     else:
         raise CaptionStyleError("Caption style must be a name or an object.")
     job_id = str(job.get("id") or "")
@@ -1225,8 +1456,14 @@ def build_track(
         working["_scenes"] = scenes
     if segments is None and job_dir is not None:
         segments = read_transcript_segments(job_dir)
+    source_duration = float(
+        (job.get("source") or {}).get("duration")
+        or plan.get("_source_duration")
+        or 0.0
+    )
     cues, source, warnings = build_cues(
         working, style=chosen_style, segments=segments or [],
+        source_duration=source_duration,
     )
     target = int(plan.get("target") or 0)
     cue_key = cue_hash(cues)
@@ -1259,11 +1496,11 @@ def build_track(
             {
                 "index": window["index"],
                 "scene": _optional_int(window.get("scene")),
-                "start": round(window["start"], 3),
-                "end": round(window["end"], 3),
-                "duration": round(window["duration"], 3),
+                "start": round(window["start"], 6),
+                "end": round(window["end"], 6),
+                "duration": round(window["duration"], 6),
             }
-            for window in _clip_windows(working)
+            for window in _clip_windows(working, source_duration)
         ],
         created=round(time.time(), 3),
     )
@@ -1292,9 +1529,16 @@ def _normalize_edited_cue(
     text = str(raw.get("text") if raw.get("text") is not None else (fallback.text if fallback else ""))
     if style.get("uppercase"):
         text = text.upper()
-    text = "\n".join(
-        line.strip() for line in str(text).replace("\r", "\n").splitlines() if line.strip()
-    )
+    lines = wrap_lines(text, int(style["max_chars"]))
+    if not lines:
+        raise CaptionValidationError("Caption text is empty.")
+    if len(lines) > int(style["max_lines"]):
+        raise CaptionValidationError(
+            f"Cue {cue_id} needs {len(lines)} lines; the style allows "
+            f"{style['max_lines']} at {style['max_chars']} characters. "
+            "Shorten the text or raise max_chars/max_lines."
+        )
+    text = "\n".join(lines)
     clip_index = raw.get("clip_index", fallback.clip_index if fallback else None)
     scene = raw.get("scene", fallback.scene if fallback else None)
     source_segment = raw.get(
@@ -1394,16 +1638,12 @@ def edit_track(
         base = (
             resolve_style(style_id, settings=settings, overrides=overrides)
             if style_id
-            else dict(track.style)
+            else apply_style_overrides(track.style, overrides)
         )
-        if overrides and not style_id:
-            base.update(overrides)
-        new_style = normalize_style(
-            {**base, **style},
-            style_id=style.get("id") or base.get("id") or track.style_id,
-        )
+        new_style = apply_style_overrides(base, style)
+        new_style["id"] = style.get("id") or new_style.get("id") or track.style_id
     elif overrides:
-        new_style = normalize_style({**track.style, **overrides}, style_id=track.style_id)
+        new_style = apply_style_overrides(track.style, overrides)
     else:
         new_style = normalize_style(track.style, style_id=track.style_id)
 
@@ -1556,9 +1796,13 @@ def validate_track(
             raise CaptionValidationError(
                 f"Cue at {start:.3f}s has zero or negative duration.",
             )
-        if require_limits and (end - start < MIN_CUE - TIME_EPSILON or end - start > MAX_CUE + TIME_EPSILON):
+        if end - start > MAX_CUE + 1e-6:
             raise CaptionValidationError(
-                f"Cue at {start:.3f}s is outside {MIN_CUE}-{MAX_CUE}s.",
+                f"Cue at {start:.3f}s is longer than {MAX_CUE:.1f}s.",
+            )
+        if require_limits and end - start < MIN_CUE - TIME_EPSILON:
+            raise CaptionValidationError(
+                f"Cue at {start:.3f}s is shorter than {MIN_CUE:.1f}s.",
             )
         if start < -TIME_EPSILON:
             raise CaptionValidationError(f"Cue at {start:.3f}s starts before zero.")
@@ -1588,6 +1832,15 @@ def validate_track(
             raise CaptionValidationError(
                 f"Cue at {start:.3f}s has {lines} lines; "
                 f"the style allows {chosen_style['max_lines']}.",
+            )
+        overlong = [
+            line for line in text.splitlines()
+            if _visible_length(line) > int(chosen_style["max_chars"])
+        ]
+        if overlong:
+            raise CaptionValidationError(
+                f"Cue at {start:.3f}s has a line longer than "
+                f"{chosen_style['max_chars']} characters.",
             )
 
 

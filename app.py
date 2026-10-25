@@ -121,7 +121,6 @@ def _render_key(
     captions: bool = False,
     audio_sig: str = "",
     hook_marker: int | None = None,
-    caption_sig: str = "",
 ) -> str:
     key = str(int(target))
     if quality != "final":
@@ -130,8 +129,6 @@ def _render_key(
         key += f":{aspect.replace(':', 'x')}"
     if captions:
         key += ":cap"
-        if caption_sig:
-            key += f":c{caption_sig}"
     if audio_sig:
         key += f":a{audio_sig}"
     if hook_marker is not None:
@@ -1390,12 +1387,34 @@ def _adopt_render_artifact(
         wanted_target = 0
     plan = _adoption_plan(job, wanted_target, record.get("hook"))
     prepared = render.prepare_render(plan, job.get("source") or {}, None)
-    cues = _reel_cues(job, plan, prepared["clips"])
-    margin = float(record.get("caption_margin") or 0.075)
+    prepared_cues = _reel_cues(job, plan, prepared["clips"])
     quality = str(record.get("quality") or "final")
     chosen_aspect = str(aspect or record.get("aspect") or "9:16")
     captions = bool(record.get("captions"))
     audio_sig = str(record.get("audio_sig") or "")
+    caption_track = None
+    track_id = str(record.get("caption_track_id") or "")
+    if captions and track_id:
+        caption_track = caption_engine.load_track(job_dir, track_id)
+    caption_warning = None
+    if captions and caption_track is not None:
+        cues = [cue.to_dict() for cue in caption_track.cues]
+        caption_style_key = caption_track.style_hash
+    else:
+        cues = prepared_cues
+        caption_style_key = ""
+        if captions:
+            caption_warning = (
+                "Stored caption track missing; regenerated SRT from the plan."
+                if track_id
+                else "Legacy render had no pinned caption track; regenerated SRT from the plan."
+            )
+            LOGGER.warning(
+                "legacy artifact adoption for %s/%s: %s",
+                job.get("id"), record.get("record_key") or wanted_target,
+                caption_warning,
+            )
+    margin = float(record.get("caption_margin") or 0.075)
     spec = artifacts.build_spec(
         job, plan,
         quality=quality,
@@ -1405,6 +1424,7 @@ def _adopt_render_artifact(
         audio_sig=audio_sig,
         preset=record.get("preset"),
         caption_margin=margin,
+        caption_style_key=caption_style_key,
         cues=cues,
         clips=prepared["clips"],
     )
@@ -1436,6 +1456,11 @@ def _adopt_render_artifact(
         title=Path(job.get("source", {}).get("name") or "reel").stem,
         created=record.get("created") or record.get("updated"),
     )
+    manifest["caption_source"] = "track" if caption_track is not None else "plan"
+    manifest["caption_track_id"] = caption_track.id if caption_track is not None else None
+    if caption_warning:
+        manifest["caption_warning"] = caption_warning
+        record["caption_warning"] = caption_warning
     manifest["render"] = {
         key: record.get(key)
         for key in (
@@ -1620,9 +1645,10 @@ def run_render(
                 )
         scenes = job["analysis"]["scenes"]
         plan["_scenes"] = scenes
-        plan["_source_duration"] = float(
+        source_duration = float(
             (job.get("source") or {}).get("duration") or 0.0
         )
+        plan["_source_duration"] = source_duration
         raw_clip_hash = caption_engine.clip_hash(plan.get("clips"))
         if prepared_clips is None:
             prepared = render.prepare_render(
@@ -1671,7 +1697,12 @@ def run_render(
             job, plan,
             quality=quality, aspect=aspect, encoder=encoder,
             captions=captions, audio_sig=audio_sig, preset=preset,
-            caption_margin=caption_margin, cues=cues, clips=prepared_clips,
+            caption_margin=caption_margin,
+            caption_style_key=(
+                (plan.get("_caption_track") or {}).get("style_hash") or ""
+            ),
+            cues=cues,
+            clips=prepared_clips,
             generation=generation,
         )
         expected_id = artifacts.artifact_id(spec)
@@ -2941,22 +2972,14 @@ async def save_settings(request: Request) -> dict:
         _validate_ingest_patch(patch)
         if "caption_styles" in patch:
             raw_styles = patch.get("caption_styles")
-            if not isinstance(raw_styles, dict):
+            if raw_styles is None:
                 raise HTTPException(400, "Caption styles must be an object.")
             current_styles = (
                 settings_store.load_settings().get("caption_styles") or {}
             )
-            merged_styles = {
-                **current_styles,
-                **raw_styles,
-                "styles": {
-                    **(current_styles.get("styles") or {}),
-                    **(raw_styles.get("styles") or {}),
-                },
-            }
             try:
-                patch["caption_styles"] = caption_engine.normalize_style_settings(
-                    merged_styles,
+                patch["caption_styles"] = caption_engine.merge_style_settings(
+                    current_styles, raw_styles,
                 )
             except caption_engine.CaptionStyleError as exc:
                 raise HTTPException(400, str(exc)) from exc
@@ -4729,13 +4752,21 @@ def _plan_for_body(job: dict, target: int, body: PlanBody) -> dict:
 def _caption_style_for(
     style_id: str | None = None,
     overrides: dict | None = None,
+    margin: float | None = None,
 ) -> dict:
     try:
-        return caption_engine.resolve_style(
+        style = caption_engine.resolve_style(
             style_id,
             settings=settings_store.load_settings(),
             overrides=overrides,
         )
+        explicit_zone = bool(
+            isinstance(overrides, dict)
+            and ("safe_zone" in overrides or "safe-zone" in overrides)
+        )
+        if margin is not None and style_id is None and not explicit_zone:
+            style = caption_engine.apply_margin(style, margin)
+        return style
     except caption_engine.CaptionStyleError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -4774,8 +4805,9 @@ def _default_caption_track(
     plan: dict,
     style_id: str | None = None,
     overrides: dict | None = None,
+    margin: float | None = None,
 ) -> caption_engine.CaptionTrack:
-    style = _caption_style_for(style_id, overrides)
+    style = _caption_style_for(style_id, overrides, margin)
     try:
         return caption_engine.build_track(
             job,
@@ -4793,6 +4825,7 @@ def _caption_track_for_render(
     plan: dict,
     body: PlanBody,
     enabled: bool,
+    margin: float | None = None,
 ) -> caption_engine.CaptionTrack | None:
     if not enabled:
         return None
@@ -4809,7 +4842,7 @@ def _caption_track_for_render(
             )
         return track
     return _default_caption_track(
-        job_id, job, plan, body.caption_style_id, body.caption_style,
+        job_id, job, plan, body.caption_style_id, body.caption_style, margin,
     )
 
 
@@ -5690,7 +5723,7 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
                 fresh, _plan_for(fresh, target, scene["id"]), body.order,
             )
             caption_track = _caption_track_for_render(
-                job_id, fresh, plan, body, captions,
+                job_id, fresh, plan, body, captions, margin,
             )
             record = _queue_render(
                 job_id, fresh, plan, quality, aspect, encoder, captions,
@@ -5753,6 +5786,8 @@ def export_cut(
         raw_hash = caption_engine.clip_hash(clips)
         prepared_hash = caption_engine.clip_hash(prepared["clips"])
         if caption_track_id:
+            # A pinned track carries its own cut identity; trust it instead of
+            # comparing against whichever auto plan this request happens to use.
             track = _caption_track_by_id(job_id, caption_track_id)
             if track.clip_hash == raw_hash and raw_hash != prepared_hash:
                 track = caption_engine.build_track(
@@ -6303,7 +6338,6 @@ def _queue_render_locked_impl(
     check_space: bool = False,
     caption_track: caption_engine.CaptionTrack | None = None,
 ) -> dict:
-    script_id = _valid_script_id(job_id, plan, script_id)
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
     record_key = _render_key(
@@ -6351,7 +6385,12 @@ def _queue_render_locked_impl(
         job, plan,
         quality=quality, aspect=aspect, encoder=encoder,
         captions=captions, audio_sig=audio_sig, preset=preset,
-        caption_margin=caption_margin, clips=prepared_clips, cues=cues,
+        caption_margin=caption_margin,
+        caption_style_key=(
+            (plan.get("_caption_track") or {}).get("style_hash") or ""
+        ),
+        cues=cues,
+        clips=prepared_clips,
     )
     generation = artifacts.resolve_generation(job_dir, base_spec, force=force)
     spec = replace(base_spec, generation=generation)
@@ -6548,7 +6587,7 @@ def start_render(job_id: str, body: PlanBody) -> dict:
     quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
     plan = _plan_for_body(job, target, body)
     caption_track = _caption_track_for_render(
-        job_id, job, plan, body, captions,
+        job_id, job, plan, body, captions, margin,
     )
     record = _queue_render(
         job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
@@ -6571,7 +6610,7 @@ def start_render_all(job_id: str, body: PlanBody) -> dict:
         try:
             plan = _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
             caption_track = _caption_track_for_render(
-                job_id, job, plan, body, captions,
+                job_id, job, plan, body, captions, margin,
             )
             record = _queue_render(
                 job_id, job, plan, quality, aspect, encoder, captions, audio_plan,

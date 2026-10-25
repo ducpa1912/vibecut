@@ -314,6 +314,44 @@ def prepare_render(plan: dict, meta: dict, audio_plan: dict | None = None) -> di
     return {"clips": clips, "total": total, "audio_plan": audio_plan}
 
 
+def sync_beat_clips(
+    plan: dict,
+    scenes: list[dict],
+    source_duration: float,
+    audio_plan: dict | None,
+) -> tuple[dict, dict]:
+    """Compatibility adapter: prepare the final clip list before captions."""
+    prepared = prepare_render(
+        {**plan, "_scenes": scenes},
+        {"duration": source_duration},
+        audio_plan,
+    )
+    prepared_clips = prepared["clips"]
+    clips: list[dict] = []
+    for original, current in zip(plan.get("clips") or [], prepared_clips):
+        clips.append({
+            **original,
+            "start": current["start"],
+            "end": round(current["start"] + current["duration"], 6),
+            "dur": round(current["duration"], 6),
+            "role": original.get("role") or "beat",
+        })
+    total = round(sum(float(clip["dur"]) for clip in clips), 6)
+    info = {
+        "bpm": (prepared.get("audio_plan") or {}).get("_beat_bpm"),
+        "drift": (prepared.get("audio_plan") or {}).get("_beat_drift"),
+    }
+    return {
+        **plan,
+        "clips": clips,
+        "clip_count": len(clips),
+        "total": total,
+        "_beat_snapped": bool(audio_plan and audio_plan.get("beat_sync")),
+        "_beat_bpm": info["bpm"],
+        "_beat_drift": info["drift"],
+    }, info
+
+
 def _link_or_copy(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -570,7 +608,7 @@ def _wrap_caption(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) ->
             current = char
     if current:
         lines.append(current)
-    return lines[:4]
+    return lines
 
 
 def _rgba(value: str, alpha: int = 255) -> tuple[int, int, int, int]:
@@ -630,7 +668,7 @@ def _caption_pngs(
         lines = [
             line.strip() for line in value.splitlines() if line.strip()
         ] or [value.strip()]
-        lines = [line for line in lines if line][: int(style["max_lines"])]
+        lines = [line for line in lines if line]
         if lines:
             prepared.append((start, end, lines))
     if not prepared:
@@ -660,7 +698,7 @@ def _caption_pngs(
             rows: list[str] = []
             for line in lines:
                 rows.extend(_wrap_caption(measure, line, font, max_width))
-            wrapped.append((start, end, rows[: int(style["max_lines"])]))
+            wrapped.append((start, end, rows))
         prepared = wrapped
     line_height = max(1, int(font_size * 1.22))
     stroke = max(0, int(round(float(style["stroke_width"]) * scale)))
@@ -826,6 +864,41 @@ def _mux(
     _run(fallback, timeout=1200, cancel_event=cancel_event)
 
 
+def _caption_cache_signature(
+    plan: dict,
+    captions: bool,
+    caption_style: dict | None = None,
+    caption_margin: float = 0.075,
+) -> str:
+    """Identity for caption pixels, including style and legacy margin."""
+    if not captions:
+        return ""
+    requested = caption_style or plan.get("_caption_style")
+    if requested:
+        style = caption_engine.normalize_style(requested)
+    else:
+        style = caption_engine.apply_margin(
+            caption_engine.normalize_style({}), caption_margin,
+        )
+    track = plan.get("_caption_track") or {}
+    if track.get("id"):
+        base = str(track["id"])
+    else:
+        rows = caption_engine.cues_for_plan(
+            plan,
+            plan.get("clips") or [],
+            plan.get("_scenes") or [],
+            style=style,
+            source_duration=plan.get("_source_duration"),
+        )
+        base = (
+            caption_engine.cue_hash(rows)
+            + ":"
+            + caption_engine.style_hash(style)
+        )
+    return f"{base}:m{float(caption_margin):.4f}"
+
+
 def render_reel(
     source: str,
     meta: dict,
@@ -886,6 +959,7 @@ def render_reel(
             if render_total is not None
             else sum(float(clip.get("duration") or 0.0) for clip in clips)
         )
+    plan["_source_duration"] = float(meta.get("duration") or 0)
 
     if cancel_event is not None and cancel_event.is_set():
         raise RenderCancelled("Render cancelled.")
@@ -896,15 +970,16 @@ def render_reel(
         and not plan.get("_transcript_segments")
     ):
         plan["_transcript_segments"] = caption_engine.read_transcript_segments(job_dir)
-    effective_style = caption_style or plan.get("_caption_style")
-    normalized_style = caption_engine.normalize_style(effective_style or {})
-    caption_sig = ""
-    if captions:
-        track = plan.get("_caption_track") or {}
-        if track.get("id"):
-            caption_sig = str(track["id"])
-        else:
-            caption_sig = caption_engine.style_hash(normalized_style)
+    requested_style = caption_style or plan.get("_caption_style")
+    if requested_style:
+        effective_style = caption_engine.normalize_style(requested_style)
+    else:
+        effective_style = caption_engine.apply_margin(
+            caption_engine.normalize_style({}), caption_margin,
+        )
+    caption_sig = _caption_cache_signature(
+        plan, captions, effective_style, caption_margin,
+    )
 
     master_dir = job_dir.parent.parent / "cache" / "masters" / job_dir.name
     cues = list(caption_cues) if caption_cues is not None else _caption_cues(plan, clips)
@@ -923,7 +998,7 @@ def render_reel(
             for start, end, text in cues
         ] if captions else [],
         "caption_sig": caption_sig,
-        "caption_margin": round(float(caption_margin), 4) if captions else 0.0,
+        "caption_margin": round(float(caption_margin), 4) if captions else 0,
         "encoder": encoder,
     }, sort_keys=True).encode()).hexdigest()[:16]
     master = master_dir / f"{master_key}.mp4"
