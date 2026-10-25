@@ -22,7 +22,7 @@ from typing import Callable
 from PIL import Image, ImageDraw, ImageFont
 
 import audio
-import captions
+import captions as caption_engine
 from pipeline import PipelineError, crop_center, probe
 
 TARGET_AR = 9 / 16
@@ -484,32 +484,74 @@ def _audio_track(
 
 
 def _caption_text(scene: dict) -> str:
-    return captions.caption_text(scene)
+    return caption_engine.caption_text(scene)
 
 
-def _caption_chunks(text: str, width: int = captions.CUE_WIDTH) -> list[str]:
-    return captions.chunk_text(text, width)
+def _caption_chunks(text: str, width: int = caption_engine.CUE_WIDTH) -> list[str]:
+    return caption_engine.chunk_text(text, width)
 
 
 def _caption_cues(plan: dict, clips: list[dict]) -> list[tuple[float, float, str]]:
-    cues = captions.reel_cues(plan, clips, plan.get("_scenes", []))
-    return captions.cue_tuples(cues)
+    """Burn-in cues. Delegates to the one cue engine also used by SRT/VTT."""
+    style = plan.get("_caption_style")
+    rows = caption_engine.cues_for_plan(
+        plan,
+        plan.get("clips") or clips,
+        plan.get("_scenes") or [],
+        style=style,
+        source_duration=plan.get("_source_duration"),
+    )
+    return caption_engine.cue_tuples(rows)
 
 
-def _caption_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = [
-        os.environ.get("VIBECUT_CAPTION_FONT_FILE"),
+_FONT_NAMES = {
+    "arial": "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "arial unicode": "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "helvetica": "/System/Library/Fonts/Helvetica.ttc",
+    "hiragino": "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "hiragino sans gb": "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "dejavu": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "dejavu sans": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "noto": "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    "noto sans": "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    "noto sans cjk": "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+}
+
+
+def _caption_font(
+    size: int,
+    font_name: str | None = None,
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    candidates: list[str] = []
+    requested = str(font_name or "").strip()
+    if requested:
+        path = Path(requested).expanduser()
+        if path.is_file():
+            candidates.append(str(path))
+        else:
+            named = _FONT_NAMES.get(requested.lower())
+            if named:
+                candidates.append(named)
+    candidates.append(os.environ.get("VIBECUT_CAPTION_FONT_FILE") or "")
+    candidates.extend([
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/Helvetica.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-    ]
+    ])
+    seen: set[str] = set()
     for candidate in candidates:
-        if candidate and Path(candidate).is_file():
-            try:
-                return ImageFont.truetype(candidate, size)
-            except OSError:
-                continue
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if not Path(candidate).is_file():
+            continue
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError:
+            continue
     return ImageFont.load_default()
 
 
@@ -531,29 +573,124 @@ def _wrap_caption(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) ->
     return lines[:4]
 
 
+def _rgba(value: str, alpha: int = 255) -> tuple[int, int, int, int]:
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(char * 2 for char in text)
+    if len(text) not in (6, 8) or any(char not in "0123456789abcdefABCDEF" for char in text):
+        return 255, 255, 255, alpha
+    red, green, blue = (int(text[index:index + 2], 16) for index in (0, 2, 4))
+    if len(text) == 8:
+        alpha = int(int(text[6:8], 16) * alpha / 255)
+    return red, green, blue, alpha
+
+
 def _caption_pngs(
     tmp: Path,
     cues: list[tuple[float, float, str]],
     out_w: int,
     out_h: int,
     margin_fraction: float = 0.075,
+    style: dict | None = None,
 ) -> list[Path]:
-    font_size = max(22, int(out_h * 0.032))
-    font = _caption_font(font_size)
-    margin = max(40, int(out_h * max(0.03, min(0.3, margin_fraction))))
-    stroke = max(2, font_size // 18)
+    if style is None:
+        style = caption_engine.normalize_style({
+            "safe_zone": {
+                "top": 0.08, "right": 0.07,
+                "bottom": max(0.03, min(0.3, margin_fraction)),
+                "left": 0.07,
+            },
+        })
+    else:
+        style = caption_engine.normalize_style(style)
+    scale = out_h / 1920.0
+    font_size = max(12, int(round(float(style["font_size"]) * scale)))
+    zone = style["safe_zone"]
+    left = int(out_w * float(zone["left"]))
+    right = int(out_w * float(zone["right"]))
+    top = int(out_h * float(zone["top"]))
+    bottom = int(out_h * float(zone["bottom"]))
+    max_width = max(40, out_w - left - right)
+    fill = _rgba(str(style["color"]))
+    stroke_fill = _rgba(str(style["stroke_color"]))
+    background = _rgba(
+        str(style["background"]),
+        int(round(float(style["background_opacity"]) * 255)),
+    )
+
+    # Keep every stored line. CJK glyphs are roughly font-size wide, so a
+    # character count that fits Latin text can overflow; shrink the whole
+    # track's font once instead of dropping lines or rewrapping into a
+    # different cue.
+    prepared: list[tuple[float, float, list[str]]] = []
+    for start, end, text in cues:
+        value = str(text)
+        if style.get("uppercase"):
+            value = value.upper()
+        lines = [
+            line.strip() for line in value.splitlines() if line.strip()
+        ] or [value.strip()]
+        lines = [line for line in lines if line][: int(style["max_lines"])]
+        if lines:
+            prepared.append((start, end, lines))
+    if not prepared:
+        return []
+
+    measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    font = _caption_font(font_size, style.get("font"))
+    widest = max(
+        measure.textlength(line, font=font)
+        for _start, _end, lines in prepared
+        for line in lines
+    )
+    if widest > max_width:
+        fitted_size = max(12, int(font_size * max_width / max(1.0, widest)) - 1)
+        if fitted_size < font_size:
+            font_size = fitted_size
+            font = _caption_font(font_size, style.get("font"))
+            widest = max(
+                measure.textlength(line, font=font)
+                for _start, _end, lines in prepared
+                for line in lines
+            )
+    if widest > max_width:
+        # Last resort for pathological edits: wrap to the safe width.
+        wrapped: list[tuple[float, float, list[str]]] = []
+        for start, end, lines in prepared:
+            rows: list[str] = []
+            for line in lines:
+                rows.extend(_wrap_caption(measure, line, font, max_width))
+            wrapped.append((start, end, rows[: int(style["max_lines"])]))
+        prepared = wrapped
+    line_height = max(1, int(font_size * 1.22))
+    stroke = max(0, int(round(float(style["stroke_width"]) * scale)))
     paths: list[Path] = []
-    for index, (_start, _end, text) in enumerate(cues):
+    for index, (_start, _end, lines) in enumerate(prepared):
         image = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
-        lines = _wrap_caption(draw, text, font, int(out_w * 0.86))
-        line_height = int(font_size * 1.22)
-        y = out_h - margin - line_height * len(lines)
+        if style["position"] == "top":
+            y = top
+        elif style["position"] == "center":
+            y = max(0, (out_h - line_height * len(lines)) // 2)
+        else:
+            y = max(0, out_h - bottom - line_height * len(lines))
+        if background[3] > 0:
+            padding = max(4, int(font_size * 0.18))
+            draw.rounded_rectangle(
+                (
+                    left - padding,
+                    y - padding,
+                    left + max_width + padding,
+                    y + line_height * len(lines) + padding,
+                ),
+                radius=max(2, int(font_size * 0.18)),
+                fill=background,
+            )
+        x = left + max_width // 2
         for line in lines:
             draw.text(
-                (out_w // 2, y), line, font=font, anchor="ma",
-                fill=(255, 255, 255, 255),
-                stroke_width=stroke, stroke_fill=(0, 0, 0, 255),
+                (x, y), line, font=font, anchor="ma",
+                fill=fill, stroke_width=stroke, stroke_fill=stroke_fill,
             )
             y += line_height
         path = tmp / f"caption-{index:03d}.png"
@@ -574,8 +711,9 @@ def _burn_captions(
     encoder: str,
     margin_fraction: float = 0.075,
     cancel_event: threading.Event | None = None,
+    style: dict | None = None,
 ) -> None:
-    pngs = _caption_pngs(tmp, cues, out_w, out_h, margin_fraction)
+    pngs = _caption_pngs(tmp, cues, out_w, out_h, margin_fraction, style=style)
     cmd = [_ffmpeg(), "-y", "-v", "error", "-i", str(video)]
     for png in pngs:
         cmd += ["-loop", "1", "-i", str(png)]
@@ -706,6 +844,7 @@ def render_reel(
     caption_cues: list[tuple[float, float, str]] | None = None,
     render_clips: list[dict] | None = None,
     render_total: float | None = None,
+    caption_style: dict | None = None,
 ) -> dict:
     quality = "draft" if quality == "draft" else "final"
     aspect = aspect if aspect in ASPECTS else "9:16"
@@ -751,6 +890,22 @@ def render_reel(
     if cancel_event is not None and cancel_event.is_set():
         raise RenderCancelled("Render cancelled.")
 
+    if (
+        captions
+        and not plan.get("_caption_cues")
+        and not plan.get("_transcript_segments")
+    ):
+        plan["_transcript_segments"] = caption_engine.read_transcript_segments(job_dir)
+    effective_style = caption_style or plan.get("_caption_style")
+    normalized_style = caption_engine.normalize_style(effective_style or {})
+    caption_sig = ""
+    if captions:
+        track = plan.get("_caption_track") or {}
+        if track.get("id"):
+            caption_sig = str(track["id"])
+        else:
+            caption_sig = caption_engine.style_hash(normalized_style)
+
     master_dir = job_dir.parent.parent / "cache" / "masters" / job_dir.name
     cues = list(caption_cues) if caption_cues is not None else _caption_cues(plan, clips)
     caption_count = len(cues)
@@ -767,6 +922,7 @@ def render_reel(
             [round(start, 3), round(end, 3), text]
             for start, end, text in cues
         ] if captions else [],
+        "caption_sig": caption_sig,
         "caption_margin": round(float(caption_margin), 4) if captions else 0.0,
         "encoder": encoder,
     }, sort_keys=True).encode()).hexdigest()[:16]
@@ -822,6 +978,7 @@ def render_reel(
                     _burn_captions(
                         master_tmp, cues, captioned, tmp, out_w, out_h, total,
                         quality, encoder, caption_margin, cancel_event,
+                        style=effective_style,
                     )
                     os.replace(captioned, master_tmp)
             master_dir.mkdir(parents=True, exist_ok=True)
