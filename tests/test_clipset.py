@@ -14,6 +14,7 @@ import app
 import artifacts
 import clipset
 import matrix
+import render
 import selection
 
 
@@ -811,7 +812,11 @@ def test_clip_set_plan_maps_to_artifact_render_request_for_v013_job(api, monkeyp
     manifest = artifacts.load_manifest(app._job_dir("j1"), artifact_id)
     assert manifest is not None
     spec = manifest["spec"]
-    assert spec["clips"] == artifacts.normalize_clips(plan["clips"])
+    stored_job = app.load_job("j1")
+    prepared = render.prepare_render(
+        plan, stored_job.get("source") or {}, None,
+    )
+    assert spec["clips"] == artifacts.normalize_clips(prepared["clips"])
     assert spec["target"] == plan["target"]
     assert spec["hook_scene"] == plan["hook_scene"]
     assert spec["story_id"] == plan["story_id"]
