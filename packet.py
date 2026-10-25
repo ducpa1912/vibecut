@@ -10,11 +10,12 @@ A packet is a self-contained hand-off for one story:
       covers/<ascii-name>-cover-2.jpg
       <ascii-name>-packet-<short-id>.zip
 
-The current build reads ready render records from ``job["renders"]``. The same
-adapter also accepts explicit artifact records under ``job["artifacts"]`` so the
-trust-core workstream can supply IDs without this module inventing a second
-artifact identity. Packet manifests reference the supplied artifact ID or the
-existing render record key.
+The current build reads ready render records from ``job["renders"]`` and
+trust-core manifests/summaries under ``job["artifacts"]`` or
+``artifacts/<id>/``. The adapter uses ``artifacts.load_manifest`` and
+``media_path`` when that module is present, with a job-relative disk fallback.
+Packet manifests reference the supplied artifact ID or the existing render
+record key; this module never derives a second artifact identity.
 
 Packet JSON never contains source paths, the job directory, secrets, or other
 absolute paths.
@@ -49,9 +50,15 @@ COVER_COUNT = 2
 HASHTAG_MIN = 3
 HASHTAG_MAX = 8
 PACKET_ID_RE = re.compile(r"^[a-f0-9]{24}$")
+ARTIFACT_ID_RE = re.compile(r"^art_[0-9a-f]{24}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 HASHTAG_RE = re.compile(r"^#\w{1,50}$", re.UNICODE)
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 SAFE_STEM_RE = re.compile(r"[^a-z0-9]+")
+SRT_TIME_RE = re.compile(
+    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*"
+    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})"
+)
 
 _BUILD_LOCK = threading.Lock()
 
@@ -108,6 +115,7 @@ class PacketSource:
     sha256: str
     size: int
     duration: float
+    poster_sha256: str = ""
     target: int | None = None
     width: int | None = None
     height: int | None = None
@@ -126,6 +134,71 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _is_valid_mp4(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(64)
+    except OSError:
+        return False
+    return len(head) >= 12 and head[4:8] == b"ftyp"
+
+
+def _is_valid_jpeg(path: Path) -> bool:
+    try:
+        size = path.stat().st_size
+        if size < 4:
+            return False
+        with path.open("rb") as handle:
+            head = handle.read(3)
+            handle.seek(-2, os.SEEK_END)
+            tail = handle.read(2)
+        if not head.startswith(b"\xff\xd8\xff") or tail != b"\xff\xd9":
+            return False
+        from PIL import Image
+
+        with Image.open(path) as image:
+            image.verify()
+    except Exception:  # noqa: BLE001 - undecodable image is not a cover
+        return False
+    return True
+
+
+def _parse_srt_cues(text: str) -> list[dict]:
+    normalized = str(text or "").replace("\ufeff", "").replace("\r\n", "\n")
+    cues: list[dict] = []
+    for block in re.split(r"\n\s*\n", normalized):
+        lines = [line.strip() for line in block.split("\n") if line.strip()]
+        match = None
+        for line in lines:
+            match = SRT_TIME_RE.fullmatch(line)
+            if match:
+                break
+        if not match:
+            continue
+        values = [int(match.group(index)) for index in (1, 2, 3, 4, 5, 6, 7, 8)]
+        start = values[0] * 3600 + values[1] * 60 + values[2] + values[3] / 1000
+        end = values[4] * 3600 + values[5] * 60 + values[6] + values[7] / 1000
+        try:
+            text_index = lines.index(match.group(0)) + 1
+        except ValueError:
+            text_index = 1
+        body = " ".join(lines[text_index:]).strip()
+        if body and end > start:
+            cues.append({"start": start, "end": end, "text": body})
+    return cues
+
+
+def _validate_captions(text: str, artifact_id: str) -> None:
+    if not _parse_srt_cues(text):
+        raise PacketError(
+            "captions_invalid",
+            f"Artifact {artifact_id!r} has no valid SRT cues.",
+            suggestion="Write at least one timed, non-empty caption cue before packaging.",
+            status=422,
+            details={"artifact_id": artifact_id},
+        )
 
 
 def _clean_text(value: object) -> str:
@@ -356,6 +429,231 @@ def _artifact_entries(job: dict) -> list[dict]:
     return rows
 
 
+def _trust_artifacts():
+    try:
+        import artifacts as module
+    except Exception:  # noqa: BLE001 - packet must also run on branches without trust-core
+        return None
+    return module if hasattr(module, "load_manifest") else None
+
+
+def _artifact_is_safe(artifact_id: object) -> bool:
+    module = _trust_artifacts()
+    if module is not None:
+        try:
+            return bool(module.is_safe_artifact_id(str(artifact_id or "")))
+        except Exception:  # noqa: BLE001
+            pass
+    return bool(ARTIFACT_ID_RE.fullmatch(str(artifact_id or "")))
+
+
+def _manifest_from_disk(job_dir: Path, artifact_id: str) -> dict | None:
+    path = Path(job_dir) / "artifacts" / artifact_id / "manifest.json"
+    try:
+        root = Path(job_dir).resolve()
+        resolved = path.resolve()
+    except OSError:
+        return None
+    if resolved != root and root not in resolved.parents:
+        return None
+    if not resolved.is_file():
+        return None
+    try:
+        value = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PacketError(
+            "artifact_manifest_invalid",
+            f"Artifact {artifact_id!r} has an unreadable manifest.",
+            suggestion="Rebuild the artifact manifest before packaging.",
+            status=422,
+            details={"artifact_id": artifact_id},
+        ) from exc
+    if not isinstance(value, dict) or not isinstance(value.get("spec"), dict):
+        raise PacketError(
+            "artifact_manifest_invalid",
+            f"Artifact {artifact_id!r} has an invalid manifest.",
+            suggestion="Rebuild the artifact manifest before packaging.",
+            status=422,
+            details={"artifact_id": artifact_id},
+        )
+    if str(value.get("artifact_id") or artifact_id) != artifact_id:
+        raise PacketError(
+            "artifact_manifest_invalid",
+            f"Artifact {artifact_id!r} manifest points at another artifact.",
+            suggestion="Refresh the artifact index.",
+            status=422,
+            details={"artifact_id": artifact_id},
+        )
+    return value
+
+
+def _artifact_plan(manifest: dict) -> dict | None:
+    spec = manifest.get("spec") if isinstance(manifest.get("spec"), dict) else {}
+    plan = manifest.get("plan")
+    clips = plan.get("clips") if isinstance(plan, dict) else None
+    if not isinstance(clips, list) or not clips:
+        clips = spec.get("clips")
+    if not isinstance(clips, list) or not clips:
+        clips = spec.get("plan", {}).get("clips") if isinstance(spec.get("plan"), dict) else None
+    if not isinstance(clips, list) or not clips:
+        return None
+    total = 0.0
+    for clip in clips:
+        if isinstance(clip, dict):
+            try:
+                total += float(clip.get("dur") or 0.0)
+            except (TypeError, ValueError):
+                pass
+    target = spec.get("target")
+    if target is None and isinstance(plan, dict):
+        target = plan.get("target")
+    hook = spec.get("hook_scene")
+    if hook is None and isinstance(plan, dict):
+        hook = plan.get("hook_scene")
+    return {
+        "target": target,
+        "total": round(total, 3),
+        "hook_scene": hook,
+        "auto": not bool(spec.get("hook_override")),
+        "clip_count": len(clips),
+        "clips": clips,
+    }
+
+
+def _record_for_artifact(job: dict, artifact_id: str) -> dict:
+    for record in (job.get("renders") or {}).values():
+        if isinstance(record, dict) and str(record.get("artifact_id") or "") == artifact_id:
+            return record
+    return {}
+
+
+def resolve_trust_artifact(
+    job: dict,
+    job_dir: Path | str,
+    artifact_id: str,
+) -> dict | None:
+    """Resolve a trust-core artifact summary or manifest to packable paths.
+
+    Uses ``artifacts.load_manifest``/``media_path`` when that module is present
+    (the integrated v0.14 tree). A disk manifest reader keeps packet-only
+    branches and fixtures usable, without deriving a second artifact identity.
+    """
+    artifact_id = str(artifact_id or "").strip()
+    if not _artifact_is_safe(artifact_id):
+        raise PacketError(
+            "artifact_id_invalid", "Artifact id is not valid.",
+            suggestion="Use an artifact id returned by the trust-core store.",
+            status=400, details={"artifact_id": artifact_id},
+        )
+    directory = Path(job_dir)
+    module = _trust_artifacts()
+    manifest: dict | None = None
+    if module is not None:
+        try:
+            manifest = module.load_manifest(directory, artifact_id)
+        except Exception as exc:  # noqa: BLE001 - preserve trust-core failure class
+            raise PacketError(
+                "artifact_manifest_error",
+                f"Artifact store could not load {artifact_id!r}: {exc}",
+                suggestion="Check the artifact store, then retry.",
+                status=500, details={"artifact_id": artifact_id},
+            ) from exc
+        manifest_file = directory / "artifacts" / artifact_id / "manifest.json"
+        if manifest is None and manifest_file.is_file():
+            raise PacketError(
+                "artifact_manifest_invalid",
+                f"Artifact {artifact_id!r} manifest failed trust-core validation.",
+                suggestion="Rebuild the artifact manifest before packaging.",
+                status=422, details={"artifact_id": artifact_id},
+            )
+    else:
+        manifest = _manifest_from_disk(directory, artifact_id)
+
+    summary = next(
+        (
+            row for row in _artifact_entries(job)
+            if str(row.get("id") or "") == artifact_id
+        ),
+        {},
+    )
+    record = _record_for_artifact(job, artifact_id)
+    if manifest is None and not summary and not record:
+        return None
+
+    spec = (manifest or {}).get("spec") if isinstance((manifest or {}).get("spec"), dict) else {}
+    render_info = (manifest or {}).get("render")
+    render_info = render_info if isinstance(render_info, dict) else {}
+    plan = _artifact_plan(manifest or {})
+
+    def artifact_media(name: str) -> Path | None:
+        if module is not None:
+            try:
+                path = Path(module.media_path(directory, artifact_id, name))
+                if path.is_file():
+                    return path
+            except Exception:  # noqa: BLE001
+                pass
+        path = directory / "artifacts" / artifact_id / name
+        return path if path.is_file() else None
+
+    reel = artifact_media("reel.mp4")
+    if reel is None and record.get("path"):
+        reel = _safe_job_path(
+            directory, record.get("path"), subdirs=("renders", "artifacts", "media"),
+        )
+    poster = artifact_media("poster.jpg")
+    if poster is None and record.get("poster"):
+        poster = _safe_job_path(
+            directory, record.get("poster"), subdirs=("renders", "artifacts", "media"),
+        )
+    captions = artifact_media("captions.srt")
+    if captions is None:
+        captions = _safe_job_path(
+            directory,
+            record.get("captions_path") or record.get("srt_path"),
+            subdirs=("captions", "renders", "artifacts"),
+        )
+
+    status = (
+        (manifest or {}).get("status")
+        or summary.get("status")
+        or record.get("status")
+        or "ready"
+    )
+    target = spec.get("target", summary.get("target", record.get("target")))
+    quality = spec.get("quality") or summary.get("quality") or record.get("quality")
+    aspect = spec.get("aspect") or summary.get("aspect") or record.get("aspect")
+    duration = (
+        render_info.get("duration")
+        or summary.get("duration")
+        or record.get("duration")
+        or record.get("total")
+        or target
+    )
+    return {
+        "id": artifact_id,
+        "artifact_id": artifact_id,
+        "status": status,
+        "path": str(reel) if reel is not None else None,
+        "poster": str(poster) if poster is not None else None,
+        "captions_path": str(captions) if captions is not None else None,
+        "plan": plan,
+        "plan_strict": True,
+        "target": target,
+        "quality": quality,
+        "aspect": aspect,
+        "duration": duration,
+        "width": render_info.get("width") or record.get("width"),
+        "height": render_info.get("height") or record.get("height"),
+        "updated": (manifest or {}).get("updated") or record.get("updated"),
+        "record_key": (
+            (manifest or {}).get("record_key")
+            or summary.get("record_key")
+            or record.get("record_key")
+        ),
+    }
+
+
 def _plan_from_history(job_dir: Path, record: dict) -> dict | None:
     entry_id = str(record.get("history_id") or "").strip()
     if not entry_id:
@@ -389,7 +687,13 @@ def _simple_plan(job: dict, target: int) -> dict | None:
         scene for scene in ((job.get("analysis") or {}).get("scenes") or [])
         if isinstance(scene, dict) and not scene.get("black")
     ]
-    scenes.sort(key=lambda scene: (float(scene.get("start") or 0.0), scene.get("id") or 0))
+    def scene_start(scene: dict) -> float:
+        try:
+            return float(scene.get("start") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    scenes.sort(key=lambda scene: (scene_start(scene), scene.get("id") or 0))
     if not scenes:
         return None
     clips: list[dict] = []
@@ -491,6 +795,8 @@ def _resolve_plan(
     plan = _plan_from_clips(record)
     if plan:
         return plan
+    if record.get("plan_strict") or record.get("_artifact_plan_strict"):
+        return None
     plan = _plan_from_history(Path(job_dir), record)
     if plan:
         return plan
@@ -512,8 +818,11 @@ def _srt_for_plan(plan: dict, scenes: list[dict]) -> str:
     clips = plan.get("clips") or []
     if not clips:
         return ""
-    cues = exports.plan_cues(plan, clips, scenes)
-    return exports.srt(cues)
+    try:
+        cues = exports.plan_cues(plan, clips, scenes)
+        return exports.srt(cues)
+    except (TypeError, ValueError, KeyError):
+        return ""
 
 
 def _captions_from_record(
@@ -557,11 +866,14 @@ def _expected_digest(record: dict) -> str:
 def _verify_digest(path: Path, expected: str, artifact_id: str) -> str:
     digest = _sha256_file(path)
     if expected:
-        if len(expected) <= len(digest):
-            matched = digest.startswith(expected)
-        else:
-            matched = expected.startswith(digest)
-        if not matched:
+        if not SHA256_RE.fullmatch(expected):
+            raise PacketError(
+                "artifact_checksum_invalid",
+                f"Artifact {artifact_id!r} has a malformed SHA-256 checksum.",
+                suggestion="Refresh the artifact record with a full 64-character SHA-256.",
+                status=422, details={"artifact_id": artifact_id},
+            )
+        if digest != expected:
             raise PacketError(
                 "artifact_stale",
                 f"Artifact {artifact_id!r} does not match its recorded checksum.",
@@ -575,7 +887,7 @@ class ReadyRenderAdapter:
     """Resolve render keys and optional trust-core artifact IDs for a job."""
 
     def __init__(self, artifact_resolver: Callable[..., dict | None] | None = None):
-        self.artifact_resolver = artifact_resolver
+        self.artifact_resolver = artifact_resolver or resolve_trust_artifact
 
     def resolve(
         self,
@@ -588,51 +900,66 @@ class ReadyRenderAdapter:
         used_paths: set[Path] = set()
         artifacts = {str(row.get("id")): row for row in _artifact_entries(job)}
 
-        for artifact_id in request.artifact_ids:
-            if artifact_id in used:
-                continue
-            entry = artifacts.get(artifact_id)
-            if entry is None and self.artifact_resolver is not None:
-                try:
-                    entry = self.artifact_resolver(job, job_dir, artifact_id)
-                except Exception as exc:  # noqa: BLE001
-                    raise PacketError(
-                        "artifact_resolver_failed",
-                        f"Artifact resolver failed for {artifact_id!r}: {exc}",
-                        suggestion="Check the artifact store, then retry.",
-                    ) from exc
-            if not isinstance(entry, dict):
-                raise PacketError(
-                    "artifact_missing",
-                    f"Artifact {artifact_id!r} is not available for this job.",
-                    suggestion="Refresh the artifact list or pass a ready render key.",
-                    details={"artifact_id": artifact_id},
-                )
-            source = self._from_artifact(job, Path(job_dir), entry)
+        def duplicate(identifier: str) -> None:
+            raise PacketError(
+                "duplicate_artifact",
+                f"Artifact {identifier!r} was requested more than once.",
+                suggestion="Send each artifact id or render key only once.",
+                details={"artifact_id": identifier},
+            )
+
+        def add_source(source: PacketSource) -> None:
             if source.artifact_id in used or source.video_path in used_paths:
-                continue
+                duplicate(source.artifact_id)
             used.add(source.artifact_id)
             used_paths.add(source.video_path)
             sources.append(source)
 
+        for artifact_id in request.artifact_ids:
+            if artifact_id in used:
+                duplicate(artifact_id)
+            summary = artifacts.get(artifact_id)
+            try:
+                resolved = self.artifact_resolver(job, job_dir, artifact_id)
+            except PacketError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - preserve non-packet failures
+                raise PacketError(
+                    "artifact_resolver_error",
+                    f"Artifact resolver failed for {artifact_id!r}: {exc}",
+                    suggestion="Check the artifact store, then retry.",
+                    status=500,
+                    details={"artifact_id": artifact_id},
+                ) from exc
+            if not isinstance(resolved, dict) and not isinstance(summary, dict):
+                raise PacketError(
+                    "artifact_missing",
+                    f"Artifact {artifact_id!r} is not available for this job.",
+                    suggestion="Refresh the artifact list or pass a ready render key.",
+                    status=404, details={"artifact_id": artifact_id},
+                )
+            entry = dict(summary or {})
+            if isinstance(resolved, dict):
+                entry.update({
+                    key: value for key, value in resolved.items()
+                    if value is not None
+                })
+            entry.setdefault("id", artifact_id)
+            add_source(self._from_artifact(job, Path(job_dir), entry))
+
         renders = job.get("renders") or {}
         for render_key in request.render_keys:
             if render_key in used:
-                continue
+                duplicate(render_key)
             record = renders.get(render_key)
             if not isinstance(record, dict):
                 raise PacketError(
                     "artifact_missing",
                     f"Render {render_key!r} is not part of this job.",
                     suggestion="Choose a render key that exists in job.renders.",
-                    details={"render_key": render_key},
+                    status=404, details={"render_key": render_key},
                 )
-            source = self._from_render(job, Path(job_dir), render_key, record)
-            if source.artifact_id in used or source.video_path in used_paths:
-                continue
-            used.add(source.artifact_id)
-            used_paths.add(source.video_path)
-            sources.append(source)
+            add_source(self._from_render(job, Path(job_dir), render_key, record))
 
         if not sources:
             raise PacketError(
@@ -685,14 +1012,23 @@ class ReadyRenderAdapter:
         if video.suffix.lower() != ".mp4":
             raise PacketError(
                 "artifact_not_mp4", f"Artifact {artifact_id!r} is not an MP4.",
-                suggestion="Package the final MP4 render.", details={"artifact_id": artifact_id},
+                suggestion="Package the final MP4 render.", status=422,
+                details={"artifact_id": artifact_id},
+            )
+        if not _is_valid_mp4(video):
+            raise PacketError(
+                "artifact_invalid_media",
+                f"Artifact {artifact_id!r} is not a valid MP4 container.",
+                suggestion="Re-render the cut and package the final MP4.",
+                status=422, details={"artifact_id": artifact_id},
             )
         digest = _verify_digest(video, _expected_digest(record), artifact_id)
         poster = _safe_job_path(
             job_dir, poster_value, subdirs=("renders", "artifacts", "media", "covers"),
         )
-        if poster is not None and not poster.is_file():
+        if poster is not None and (not poster.is_file() or not _is_valid_jpeg(poster)):
             poster = None
+        poster_digest = _sha256_file(poster) if poster is not None else ""
         scenes = (job.get("analysis") or {}).get("scenes") or []
         if captions is None:
             captions = _captions_from_record(job, job_dir, record, plan)
@@ -704,6 +1040,7 @@ class ReadyRenderAdapter:
                 suggestion="Attach captions to the artifact, or render with a saved plan.",
                 details={"artifact_id": artifact_id},
             )
+        _validate_captions(captions_srt, artifact_id)
 
         def as_int(value):
             try:
@@ -724,6 +1061,7 @@ class ReadyRenderAdapter:
             poster_path=poster,
             sha256=digest,
             size=video.stat().st_size,
+            poster_sha256=poster_digest,
             duration=as_float(
                 record.get("duration")
                 or record.get("total")
@@ -748,16 +1086,45 @@ class ReadyRenderAdapter:
         render_key: str,
         record: dict,
     ) -> PacketSource:
-        artifact_id = str(record.get("artifact_id") or render_key)
-        plan = _resolve_plan(job, job_dir, record)
+        requested_artifact = str(record.get("artifact_id") or "")
+        artifact_id = requested_artifact or render_key
+        merged = dict(record)
+        if _artifact_is_safe(requested_artifact):
+            try:
+                entry = self.artifact_resolver(job, job_dir, requested_artifact)
+            except PacketError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise PacketError(
+                    "artifact_resolver_error",
+                    f"Artifact resolver failed for {requested_artifact!r}: {exc}",
+                    suggestion="Check the artifact store, then retry.",
+                    status=500, details={"artifact_id": requested_artifact},
+                ) from exc
+            if isinstance(entry, dict):
+                merged.update({
+                    key: value for key, value in entry.items()
+                    if value is not None
+                })
+            merged["_artifact_plan_strict"] = True
+        plan = _resolve_plan(job, job_dir, merged)
         return self._base_source(
             job,
             job_dir,
-            record,
+            merged,
             artifact_id=artifact_id,
             render_key=render_key,
-            path_value=record.get("path") or record.get("file"),
-            poster_value=record.get("poster") or record.get("poster_path"),
+            path_value=(
+                merged.get("path")
+                or merged.get("artifact_path")
+                or merged.get("video")
+                or merged.get("file")
+            ),
+            poster_value=(
+                merged.get("poster")
+                or merged.get("poster_path")
+                or merged.get("cover")
+            ),
             plan=plan,
         )
 
@@ -773,6 +1140,7 @@ class ReadyRenderAdapter:
                 "artifact_id_missing", "Artifact record has no id.",
                 suggestion="Attach the trust-core artifact ID before packaging.",
             )
+        entry["plan_strict"] = True
         plan = _resolve_plan(job, job_dir, entry, prefer=entry.get("plan"))
         replay = dict(entry)
         if entry.get("status") is None:
@@ -820,25 +1188,39 @@ def _default_cover_times(source: PacketSource) -> list[float]:
     return [round(min(0.5, duration * 0.15), 3), round(min(duration * 0.55, duration - 0.05), 3)]
 
 
-def _packet_id(job_id: str, request: PacketRequest, sources: list[PacketSource]) -> str:
+def _packet_id(
+    job_id: str,
+    request: PacketRequest,
+    sources: list[PacketSource],
+    cover_times: list[float],
+    source_name: str,
+) -> str:
     fingerprints = []
     for source in sorted(sources, key=lambda item: item.artifact_id):
         fingerprints.append({
             "artifact_id": source.artifact_id,
             "render_key": source.render_key,
             "sha256": source.sha256,
+            "poster_sha256": source.poster_sha256,
             "captions_sha256": hashlib.sha256(
                 source.captions_srt.encode("utf-8")
             ).hexdigest(),
+            "duration": source.duration,
+            "target": source.target,
+            "width": source.width,
+            "height": source.height,
+            "aspect": source.aspect,
+            "quality": source.quality,
         })
     seed = {
         "schema": SCHEMA,
         "job_id": job_id,
         "story_id": request.story_id,
+        "source_name": source_name,
         "titles": request.titles,
         "description": request.description,
         "hashtags": request.hashtags,
-        "cover_times": request.cover_times,
+        "cover_times": cover_times,
         "artifacts": fingerprints,
     }
     canonical = json.dumps(
@@ -889,17 +1271,22 @@ def _extract_cover(video: Path, seconds: float, destination: Path) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         destination.unlink(missing_ok=True)
         return False
-    if result.returncode != 0 or not destination.is_file() or destination.stat().st_size <= 0:
+    if (
+        result.returncode != 0
+        or not destination.is_file()
+        or destination.stat().st_size <= 0
+        or not _is_valid_jpeg(destination)
+    ):
         destination.unlink(missing_ok=True)
         return False
     return True
 
 
 def _cover_copy(poster: Path | None, destination: Path) -> str:
-    if poster is None or not poster.is_file():
+    if poster is None or not poster.is_file() or not _is_valid_jpeg(poster):
         return "missing"
     shutil.copyfile(poster, destination)
-    return "poster"
+    return "poster" if _is_valid_jpeg(destination) else "missing"
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -937,14 +1324,86 @@ def _zip_packet(directory: Path, destination: Path) -> None:
 def _manifest_files(manifest: dict) -> list[dict]:
     files = []
     for item in manifest.get("media") or []:
-        files.append({"file": item.get("file"), "bytes": item.get("bytes")})
-        files.append({"file": item.get("captions_file"), "bytes": item.get("captions_bytes")})
+        files.append({
+            "file": item.get("file"),
+            "bytes": item.get("bytes"),
+            "sha256": item.get("sha256"),
+        })
+        files.append({
+            "file": item.get("captions_file"),
+            "bytes": item.get("captions_bytes"),
+            "sha256": item.get("captions_sha256"),
+        })
     for item in manifest.get("covers") or []:
-        files.append({"file": item.get("file"), "bytes": item.get("bytes")})
-    zip_file = manifest.get("zip_file")
-    if zip_file:
-        files.append({"file": zip_file, "bytes": None})
+        files.append({
+            "file": item.get("file"),
+            "bytes": item.get("bytes"),
+            "sha256": item.get("sha256"),
+        })
     return [item for item in files if item.get("file")]
+
+
+def _packet_file(directory: Path, name: object) -> Path | None:
+    text = str(name or "")
+    if not text or Path(text).is_absolute() or ".." in Path(text).parts:
+        return None
+    path = (directory / text).resolve()
+    root = directory.resolve()
+    if path != root and root not in path.parents:
+        return None
+    return path if path.is_file() else None
+
+
+def _zip_end_is_clean(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            if size < 22:
+                return False
+            handle.seek(-22, os.SEEK_END)
+            tail = handle.read(22)
+    except OSError:
+        return False
+    if not tail.startswith(b"PK\x05\x06"):
+        return False
+    comment_length = int.from_bytes(tail[20:22], "little")
+    return comment_length == 0
+
+
+def _zip_is_intact(path: Path, manifest: dict) -> bool:
+    if not path.is_file() or path.stat().st_size <= 0:
+        return False
+    if not _zip_end_is_clean(path):
+        return False
+    required = {"packet.json"}
+    sizes: dict[str, int] = {}
+    for item in _manifest_files(manifest):
+        name = str(item["file"])
+        required.add(name)
+        try:
+            sizes[name] = int(item["bytes"])
+        except (TypeError, ValueError):
+            return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if archive.testzip() is not None:
+                return False
+            names = set(archive.namelist())
+            if names != required:
+                return False
+            for name, size in sizes.items():
+                if archive.getinfo(name).file_size != size:
+                    return False
+            zipped = json.loads(archive.read("packet.json"))
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(zipped, dict)
+        and zipped.get("schema") == SCHEMA
+        and zipped.get("packet_id") == manifest.get("packet_id")
+        and zipped == manifest
+    )
 
 
 def _existing_manifest(directory: Path, packet_id: str) -> dict | None:
@@ -953,26 +1412,33 @@ def _existing_manifest(directory: Path, packet_id: str) -> dict | None:
         return None
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(manifest, dict):
         return None
     if manifest.get("schema") != SCHEMA or manifest.get("packet_id") != packet_id:
         return None
     for item in _manifest_files(manifest):
-        file = directory / str(item["file"])
-        if not file.is_file():
+        file = _packet_file(directory, item.get("file"))
+        if file is None:
             return None
-        if item.get("bytes") is None:
-            if file.stat().st_size <= 0:
-                return None
-            continue
         try:
             size = int(item.get("bytes"))
         except (TypeError, ValueError):
             return None
-        if file.stat().st_size != size:
+        if size < 0 or file.stat().st_size != size:
             return None
+        digest = str(item.get("sha256") or "")
+        if not SHA256_RE.fullmatch(digest):
+            return None
+        if _sha256_file(file) != digest:
+            return None
+    zip_name = str(manifest.get("zip_file") or "")
+    if not zip_name:
+        return None
+    zip_path = _packet_file(directory, zip_name)
+    if zip_path is None or not _zip_is_intact(zip_path, manifest):
+        return None
     return manifest
 
 
@@ -991,10 +1457,8 @@ def build_packet(
     request: PacketRequest | dict,
     *,
     adapter: ReadyRenderAdapter | None = None,
-    settings: dict | None = None,
 ) -> dict:
     """Build or return an existing packet. Raises ``PacketError`` on block."""
-    del settings  # reserved for packet-level preferences; limits are product-fixed
     job_dir = Path(job_dir)
     normalized = normalize_request(request)
     job_id = str(job.get("id") or job_dir.name)
@@ -1005,7 +1469,19 @@ def build_packet(
     resolver = adapter or ReadyRenderAdapter()
     sources = resolver.resolve(job, job_dir, normalized)
     sources = sorted(sources, key=lambda item: (item.target or 0, item.artifact_id))
-    packet_id = _packet_id(job_id, normalized, sources)
+    source_name = str((job.get("source") or {}).get("name") or "")
+    if source_name:
+        source_name = Path(source_name.replace("\\", "/")).name[:240]
+    primary = sources[0]
+    cover_times = normalized.cover_times or _default_cover_times(primary)
+    cover_times = [
+        round(
+            max(0.0, min(float(value), max(0.0, primary.duration - 0.05))),
+            3,
+        )
+        for value in cover_times
+    ]
+    packet_id = _packet_id(job_id, normalized, sources, cover_times, source_name)
     directory = job_dir / PACKET_ROOT / packet_id
 
     with _BUILD_LOCK:
@@ -1018,19 +1494,11 @@ def build_packet(
             shutil.rmtree(stage, ignore_errors=True)
         stage.mkdir(parents=True)
         try:
-            primary = sources[0]
-            cover_times = normalized.cover_times or _default_cover_times(primary)
-            cover_times = [
-                round(
-                    max(0.0, min(float(value), max(0.0, primary.duration - 0.05))),
-                    3,
-                )
-                for value in cover_times
-            ]
-            slug = safe_filename(normalized.story_id or (job.get("source") or {}).get("name"))
+            slug = safe_filename(normalized.story_id or source_name)
             short = packet_id[:8]
             used_names: set[str] = set()
             media_rows: list[dict] = []
+            primary_media: Path | None = None
             for index, source in enumerate(sources):
                 target = source.target or index + 1
                 stem = f"{slug}-{int(target)}s-{short}"
@@ -1044,6 +1512,8 @@ def build_packet(
                 digest, size = _copy_verified(
                     source.video_path, media_path, source.sha256, source.artifact_id,
                 )
+                if index == 0:
+                    primary_media = media_path
                 captions_text = source.captions_srt
                 if captions_text and not captions_text.endswith("\n"):
                     captions_text += "\n"
@@ -1074,14 +1544,24 @@ def build_packet(
                 cover_name = f"{slug}-cover-{index}-{short}.jpg"
                 cover_path = stage / "covers" / cover_name
                 cover_path.parent.mkdir(parents=True, exist_ok=True)
-                source_kind = "ffmpeg" if _extract_cover(
-                    primary.video_path, seconds, cover_path,
+                source_kind = "ffmpeg" if (
+                    primary_media is not None
+                    and _extract_cover(primary_media, seconds, cover_path)
                 ) else _cover_copy(primary.poster_path, cover_path)
                 if source_kind == "missing":
                     raise PacketError(
                         "cover_unavailable",
                         "Could not extract a cover and the render has no poster.",
                         suggestion="Keep the render poster, or install ffmpeg and retry.",
+                        status=422,
+                        details={"artifact_id": primary.artifact_id, "time": seconds},
+                    )
+                if not _is_valid_jpeg(cover_path):
+                    raise PacketError(
+                        "cover_invalid",
+                        "The generated cover is not a valid JPEG.",
+                        suggestion="Install ffmpeg or keep a valid render poster.",
+                        status=422,
                         details={"artifact_id": primary.artifact_id, "time": seconds},
                     )
                 cover_rows.append({
@@ -1094,9 +1574,6 @@ def build_packet(
                 })
 
             zip_name = f"{slug}-packet-{short}.zip"
-            source_name = str((job.get("source") or {}).get("name") or "")
-            if source_name:
-                source_name = Path(source_name.replace("\\", "/")).name[:240]
             manifest = {
                 "schema": SCHEMA,
                 "packet_id": packet_id,
@@ -1124,10 +1601,17 @@ def build_packet(
             if directory.exists():
                 shutil.rmtree(directory, ignore_errors=True)
             os.replace(stage, directory)
-        except Exception:
+        finally:
             shutil.rmtree(stage, ignore_errors=True)
-            raise
-        return _public(_existing_manifest(directory, packet_id) or manifest)
+        final = _existing_manifest(directory, packet_id)
+        if final is None:
+            raise PacketError(
+                "packet_write_failed",
+                "The packet was written but failed integrity verification.",
+                suggestion="Check disk health, then build the packet again.",
+                status=500,
+            )
+        return _public(final)
 
 
 def load_packet(job_dir: Path | str, packet_id: str) -> dict:

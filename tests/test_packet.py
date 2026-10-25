@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 import app
 import packet
@@ -41,12 +43,22 @@ def _plan() -> dict:
     }
 
 
+def _mp4_bytes() -> bytes:
+    return b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 32
+
+
+def _jpeg_bytes(color=(180, 40, 40)) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (32, 32), color=color).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
 def _job(root: Path, job_id: str = "job1") -> tuple[dict, Path]:
     job_dir = root / "jobs" / job_id
     renders = job_dir / "renders"
     renders.mkdir(parents=True)
-    (renders / "reel_30.mp4").write_bytes(b"fake-mp4-payload" * 8)
-    (renders / "reel_30.jpg").write_bytes(b"fake-jpeg")
+    (renders / "reel_30.mp4").write_bytes(_mp4_bytes())
+    (renders / "reel_30.jpg").write_bytes(_jpeg_bytes())
     job = {
         "id": job_id,
         "status": "ready",
@@ -120,6 +132,17 @@ def test_packet_completeness_and_sidecar_schema(tmp_path):
     assert "fake-mp4" not in text
 
 
+def test_packet_old_v013_render_record_without_artifact_identity(tmp_path):
+    job, job_dir = _job(tmp_path)
+    assert "artifact_id" not in job["renders"]["30"]
+
+    manifest = packet.build_packet(job, job_dir, _request())
+
+    media = manifest["media"][0]
+    assert media["artifact_id"] == "30"
+    assert media["captions_source"] == "plan"
+
+
 def test_packet_never_serializes_an_absolute_source_name(tmp_path):
     job, job_dir = _job(tmp_path)
     job["source"]["name"] = "/Users/someone/private/source.mp4"
@@ -186,7 +209,7 @@ def test_packet_zip_contents(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
-def test_packet_extracts_covers_from_video_when_no_poster(tmp_path):
+def test_packet_extracts_covers_from_staged_media_when_no_poster(tmp_path, monkeypatch):
     job, job_dir = _job(tmp_path)
     video = job_dir / "renders" / "reel_30.mp4"
     subprocess.run(
@@ -198,13 +221,23 @@ def test_packet_extracts_covers_from_video_when_no_poster(tmp_path):
     )
     (job_dir / "renders" / "reel_30.jpg").unlink()
     job["renders"]["30"].pop("poster")
+    seen: list[Path] = []
+    original = packet._extract_cover
 
+    def wrapped(path, seconds, destination):
+        seen.append(Path(path))
+        return original(path, seconds, destination)
+
+    monkeypatch.setattr(packet, "_extract_cover", wrapped)
     manifest = packet.build_packet(
         job, job_dir, _request(cover_times=[0.1, 0.7]),
     )
 
     assert [cover["source"] for cover in manifest["covers"]] == ["ffmpeg", "ffmpeg"]
     assert all(cover["bytes"] > 0 for cover in manifest["covers"])
+    assert len(seen) == 2
+    assert all(path.parent.name == "media" for path in seen)
+    assert all(path != video for path in seen)
 
 
 def test_packet_builds_captions_from_analysis_when_record_has_no_plan(tmp_path):
@@ -266,15 +299,16 @@ def test_packet_artifact_id_adapter_refuses_unknown_id(tmp_path):
     with pytest.raises(packet.PacketError) as failed:
         packet.build_packet(
             job, job_dir,
-            _request(render_keys=[], artifact_ids=["trust-artifact-1"]),
+            _request(render_keys=[], artifact_ids=["art_" + "c" * 24]),
         )
     assert failed.value.code == "artifact_missing"
 
 
 def test_packet_accepts_trust_core_artifact_ids_without_new_identity(tmp_path):
+    artifact_id = "art_" + "c" * 24
     job, job_dir = _job(tmp_path)
     job["artifacts"] = {
-        "trust-artifact-1": {
+        artifact_id: {
             "status": "ready",
             "path": "renders/reel_30.mp4",
             "poster": "reel_30.jpg",
@@ -286,13 +320,277 @@ def test_packet_accepts_trust_core_artifact_ids_without_new_identity(tmp_path):
 
     manifest = packet.build_packet(
         job, job_dir,
-        _request(render_keys=[], artifact_ids=["trust-artifact-1"]),
+        _request(render_keys=[], artifact_ids=[artifact_id]),
     )
 
     assert len(manifest["media"]) == 1
-    assert manifest["media"][0]["artifact_id"] == "trust-artifact-1"
+    assert manifest["media"][0]["artifact_id"] == artifact_id
     assert manifest["media"][0]["render_key"] is None
     assert manifest["media"][0]["captions_source"] == "plan"
+
+
+ARTIFACT_ID = "art_" + "a" * 24
+
+
+def _trust_artifact(job: dict, job_dir: Path, caption: str = "1\n00:00:00,000 --> 00:00:02,000\nSaved artifact cue\n") -> dict:
+    manifest = {
+        "schema_version": 1,
+        "job_id": job["id"],
+        "status": "ready",
+        "record_key": "30",
+        "title": "Trust artifact",
+        "created": 1.0,
+        "updated": 1.0,
+        "spec": {
+            "schema_version": 1,
+            "render_version": "v0.14-artifact-1",
+            "source_fingerprint": "src",
+            "clips": _plan()["clips"],
+            "order": "source",
+            "hook_scene": 0,
+            "hook_override": False,
+            "caption": {
+                "enabled": True, "style_hash": "s", "cue_hash": "c",
+                "text_hash": "t", "margin": 0.075,
+            },
+            "audio_sig": "",
+            "quality": "final",
+            "aspect": "9:16",
+            "resolved_encoder": "libx264",
+            "story_id": "story1",
+            "target": 30,
+        },
+        "render": {"duration": 10.0, "width": 1080, "height": 1920, "size": 128},
+        "media": {
+            "reel": "reel.mp4",
+            "poster": "poster.jpg",
+            "captions_srt": "captions.srt",
+            "captions_vtt": "captions.vtt",
+        },
+    }
+    try:
+        import artifacts as artifact_store
+
+        artifact_id = artifact_store.artifact_id(manifest["spec"])
+    except Exception:  # noqa: BLE001 - packet branch may not vendor trust-core
+        artifact_id = ARTIFACT_ID
+    manifest["artifact_id"] = artifact_id
+    directory = job_dir / "artifacts" / artifact_id
+    directory.mkdir(parents=True)
+    (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (directory / "reel.mp4").write_bytes(_mp4_bytes())
+    (directory / "poster.jpg").write_bytes(_jpeg_bytes((20, 40, 160)))
+    (directory / "captions.srt").write_text(caption, encoding="utf-8")
+    (directory / "captions.vtt").write_text("WEBVTT\n\n", encoding="utf-8")
+    job["artifacts"] = {
+        artifact_id: {
+            "artifact_id": artifact_id,
+            "status": "ready",
+            "reel": "reel.mp4",
+            "record_key": "30",
+            "target": 30,
+            "quality": "final",
+            "aspect": "9:16",
+            "captions": True,
+        },
+    }
+    job["artifact_ids"] = [artifact_id]
+    job["renders"] = {
+        "30": {
+            "status": "ready",
+            "path": f"artifacts/{artifact_id}/reel.mp4",
+            "poster": f"artifacts/{artifact_id}/poster.jpg",
+            "artifact_id": artifact_id,
+            "record_key": "30",
+            "target": 30,
+            "quality": "final",
+            "aspect": "9:16",
+            "duration": 10.0,
+            "captions": True,
+        },
+    }
+    return manifest
+
+
+def test_packet_uses_real_trust_artifact_manifest_for_render_key(tmp_path):
+    job, job_dir = _job(tmp_path)
+    artifact = _trust_artifact(job, job_dir)
+    job["analysis"]["scenes"][0]["speech"] = "unrelated analysis plan text"
+
+    manifest = packet.build_packet(job, job_dir, _request(render_keys=["30"]))
+
+    media = manifest["media"][0]
+    assert media["artifact_id"] == artifact["artifact_id"]
+    assert media["captions_source"] == "artifact"
+    captions = (
+        job_dir / "packets" / manifest["packet_id"] / media["captions_file"]
+    ).read_text(encoding="utf-8")
+    assert "Saved artifact cue" in captions
+    assert "unrelated analysis plan text" not in captions
+
+
+def test_packet_uses_trust_artifact_summary_without_paths(tmp_path):
+    job, job_dir = _job(tmp_path)
+    artifact = _trust_artifact(job, job_dir)
+    # The summary has no path, plan, or captions; only the manifest does.
+    job["renders"] = {}
+
+    manifest = packet.build_packet(
+        job, job_dir,
+        _request(render_keys=[], artifact_ids=[artifact["artifact_id"]]),
+    )
+
+    assert manifest["media"][0]["artifact_id"] == artifact["artifact_id"]
+    assert manifest["media"][0]["captions_source"] == "artifact"
+    assert (
+        job_dir / "artifacts" / artifact["artifact_id"] / "reel.mp4"
+    ).is_file()
+
+
+def test_packet_uses_rebased_trust_core_load_manifest(tmp_path, monkeypatch):
+    import artifacts
+
+    job, job_dir = _job(tmp_path)
+    artifact = _trust_artifact(job, job_dir)
+    calls: list[str] = []
+    original = artifacts.load_manifest
+
+    def wrapped(job_dir, artifact_id):
+        calls.append(artifact_id)
+        return original(job_dir, artifact_id)
+
+    monkeypatch.setattr(artifacts, "load_manifest", wrapped)
+    manifest = packet.build_packet(
+        job, job_dir,
+        _request(render_keys=[], artifact_ids=[artifact["artifact_id"]]),
+    )
+
+    assert calls == [artifact["artifact_id"]]
+    assert manifest["media"][0]["artifact_id"] == artifact["artifact_id"]
+
+
+def test_packet_id_changes_after_poster_and_quality_edits(tmp_path):
+    job, job_dir = _job(tmp_path)
+    first = packet.build_packet(job, job_dir, _request())
+
+    (job_dir / "renders" / "reel_30.jpg").write_bytes(_jpeg_bytes((10, 190, 30)))
+    second = packet.build_packet(job, job_dir, _request())
+    assert second["packet_id"] != first["packet_id"]
+
+    job["renders"]["30"]["quality"] = "draft"
+    third = packet.build_packet(job, job_dir, _request())
+    assert third["packet_id"] not in {first["packet_id"], second["packet_id"]}
+    assert (job_dir / "packets" / first["packet_id"]).is_dir()
+    assert (job_dir / "packets" / third["packet_id"]).is_dir()
+
+
+def test_packet_rejects_corrupt_packet_and_zip(tmp_path):
+    job, job_dir = _job(tmp_path)
+    manifest = packet.build_packet(job, job_dir, _request())
+    directory = job_dir / "packets" / manifest["packet_id"]
+    media = directory / manifest["media"][0]["file"]
+    media.write_bytes(media.read_bytes() + b"corrupt")
+
+    with pytest.raises(packet.PacketError) as failed:
+        packet.load_packet(job_dir, manifest["packet_id"])
+    assert failed.value.code == "packet_not_found"
+    assert failed.value.status == 404
+
+    rebuilt = packet.build_packet(job, job_dir, _request())
+    assert packet.load_packet(job_dir, rebuilt["packet_id"])["packet_id"] == rebuilt["packet_id"]
+
+    zip_path = directory / rebuilt["zip_file"]
+    zip_path.write_bytes(zip_path.read_bytes() + b"corrupt")
+    with pytest.raises(packet.PacketError) as failed:
+        packet.load_packet(job_dir, rebuilt["packet_id"])
+    assert failed.value.code == "packet_not_found"
+
+
+def test_packet_malformed_manifest_checksum_is_rejected(tmp_path):
+    job, job_dir = _job(tmp_path)
+    manifest = packet.build_packet(job, job_dir, _request())
+    path = job_dir / "packets" / manifest["packet_id"] / "packet.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["media"][0]["sha256"] = "abc"
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(packet.PacketError) as failed:
+        packet.load_packet(job_dir, manifest["packet_id"])
+    assert failed.value.code == "packet_not_found"
+
+
+def test_packet_rejects_empty_or_invalid_srt(tmp_path):
+    for caption in ("", "not an srt without cues\n"):
+        job, job_dir = _job(tmp_path / caption.replace(" ", "_")[:12])
+        job["renders"]["30"].pop("plan", None)
+        job["renders"]["30"]["srt"] = caption
+        with pytest.raises(packet.PacketError) as failed:
+            packet.build_packet(job, job_dir, _request())
+        assert failed.value.code == "captions_invalid"
+        assert failed.value.status == 422
+        assert not list(job_dir.rglob("*.zip"))
+
+
+def test_packet_rejects_short_checksum_and_bad_media_signature(tmp_path):
+    job, job_dir = _job(tmp_path)
+    job["renders"]["30"]["sha256"] = "a" * 16
+    with pytest.raises(packet.PacketError) as failed:
+        packet.build_packet(job, job_dir, _request())
+    assert failed.value.code == "artifact_checksum_invalid"
+    assert failed.value.status == 422
+
+    job, job_dir = _job(tmp_path / "bad-media")
+    (job_dir / "renders" / "reel_30.mp4").write_bytes(b"not an mp4" * 4)
+    with pytest.raises(packet.PacketError) as failed:
+        packet.build_packet(job, job_dir, _request())
+    assert failed.value.code == "artifact_invalid_media"
+    assert failed.value.status == 422
+
+
+def test_packet_rejects_duplicate_requested_sources(tmp_path):
+    job, job_dir = _job(tmp_path)
+    with pytest.raises(packet.PacketError) as failed:
+        packet.build_packet(job, job_dir, _request(render_keys=["30", "30"]))
+    assert failed.value.code == "duplicate_artifact"
+
+    artifact = _trust_artifact(job, job_dir)
+    with pytest.raises(packet.PacketError) as failed:
+        packet.build_packet(
+            job, job_dir,
+            _request(artifact_ids=[artifact["artifact_id"]], render_keys=["30"]),
+        )
+    assert failed.value.code == "duplicate_artifact"
+
+
+def test_packet_preserves_resolver_error_code(tmp_path):
+    job, job_dir = _job(tmp_path)
+
+    def denied(job, job_dir, artifact_id):
+        raise packet.PacketError(
+            "artifact_denied", "Denied by artifact policy.", status=403,
+        )
+
+    adapter = packet.ReadyRenderAdapter(artifact_resolver=denied)
+    with pytest.raises(packet.PacketError) as failed:
+        packet.build_packet(
+            job, job_dir,
+            _request(render_keys=[], artifact_ids=["art_" + "b" * 24]),
+            adapter=adapter,
+        )
+    assert failed.value.code == "artifact_denied"
+    assert failed.value.status == 403
+
+
+def test_packet_removes_stage_after_cover_failure(tmp_path):
+    job, job_dir = _job(tmp_path)
+    (job_dir / "renders" / "reel_30.jpg").unlink()
+    job["renders"]["30"].pop("poster")
+
+    with pytest.raises(packet.PacketError) as failed:
+        packet.build_packet(job, job_dir, _request())
+    assert failed.value.code == "cover_unavailable"
+    packets = job_dir / "packets"
+    assert not packets.exists() or not list(packets.iterdir())
 
 
 @pytest.fixture
@@ -321,6 +619,7 @@ def _write_api_job(jobs: Path) -> dict:
 
 def test_packet_api_build_get_and_zip(api):
     job = _write_api_job(api.jobs_dir)
+    assert "artifact_id" not in job["renders"]["30"]
     body = {
         "story_id": "story one",
         "render_keys": ["30"],
@@ -350,6 +649,6 @@ def test_packet_api_build_get_and_zip(api):
         "/api/jobs/job1/packets",
         json={**body, "render_keys": ["60"]},
     )
-    assert missing.status_code == 409
+    assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "artifact_missing"
     assert job["renders"]["30"]["status"] == "ready"

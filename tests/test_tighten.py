@@ -96,6 +96,63 @@ def test_tighten_keeps_every_piece_inside_original_boundaries_and_hard_cuts():
     assert result["tighten"]["preserved_roles"] == ["hook", "payoff"]
 
 
+def test_tighten_keeps_meaningful_like():
+    plan = {
+        "target": 15,
+        "total": 2.0,
+        "hook_scene": 0,
+        "clips": [{"scene": 0, "start": 0.0, "end": 2.0, "dur": 2.0, "role": "hook"}],
+    }
+    words = [
+        {"text": "I", "start": 0.1, "end": 0.3},
+        {"text": "like", "start": 0.3, "end": 0.6},
+        {"text": "this", "start": 0.6, "end": 0.9},
+        {"text": "product.", "start": 0.9, "end": 1.5},
+    ]
+    scenes = [{"id": 0, "start": 0.0, "end": 2.0, "dur": 2.0, "words": words}]
+
+    result = tighten.tighten_plan(plan, scenes)
+
+    assert result["tighten"]["filler_removed_seconds"] == 0.0
+    assert result["tighten"]["removed_seconds"] == 0.0
+    assert len(result["clips"]) == 1
+    assert result["total"] == pytest.approx(2.0)
+
+
+def test_tighten_removes_contextual_like_near_filler():
+    plan = {
+        "target": 15,
+        "total": 2.0,
+        "hook_scene": 0,
+        "clips": [{"scene": 0, "start": 0.0, "end": 2.0, "dur": 2.0, "role": "hook"}],
+    }
+    words = [
+        {"text": "um", "start": 0.1, "end": 0.3},
+        {"text": "like", "start": 0.3, "end": 0.6},
+        {"text": "this", "start": 0.6, "end": 0.9},
+    ]
+    scenes = [{"id": 0, "start": 0.0, "end": 2.0, "dur": 2.0, "words": words}]
+
+    result = tighten.tighten_plan(plan, scenes)
+
+    assert result["tighten"]["filler_removed_seconds"] > 0
+
+
+def test_tighten_removal_accounting_is_disjoint():
+    result = tighten.tighten_plan(
+        _plan(), _scenes(), options={"min_silence": 0.6, "punch_ins": True},
+    )
+    report = result["tighten"]
+
+    parts = (
+        report["filler_removed_seconds"]
+        + report["silence_removed_seconds"]
+        + report["overlap_removed_seconds"]
+        + report["other_removed_seconds"]
+    )
+    assert parts == pytest.approx(report["removed_seconds"], abs=0.01)
+
+
 def test_tighten_adds_simple_punch_ins_to_beat_clips():
     plan = {
         "target": 30,
@@ -211,3 +268,37 @@ def test_tighten_api_returns_new_plan_and_leaves_job_unchanged(api):
     assert plan["total"] < 13.0
     assert path.read_bytes() == before
     assert not (directory / "renders").exists()
+
+
+def test_tighten_api_rejects_malformed_plan_numbers(api):
+    job = {
+        "id": "job1",
+        "status": "ready",
+        "source": {"name": "source.mp4", "duration": 10.0},
+        "analysis": {"scenes": _scenes(), "plans": {"30": _plan()}},
+        "renders": {},
+    }
+    directory = api.jobs_dir / "job1"
+    directory.mkdir()
+    (directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+
+    response = api.post("/api/jobs/job1/tighten", json={
+        "plan": {
+            "target": 30,
+            "clips": [{"scene": 0, "start": "abc", "end": 2.0, "dur": "abc"}],
+        },
+    })
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "clip_invalid"
+
+
+def test_tighten_option_boolean_coercion():
+    options = tighten.normalize_options({
+        "filler": 0,
+        "silence": "off",
+        "punch": 1,
+    })
+    assert options.remove_filler is False
+    assert options.remove_silence is False
+    assert options.punch_ins is True

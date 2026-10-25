@@ -2880,8 +2880,11 @@ async def save_settings(request: Request) -> dict:
         unknown = sorted(set(patch) - allowed_settings)
         if unknown:
             raise HTTPException(400, f"Unknown settings section: {unknown[0]}.")
-        if "preflight" in patch and not isinstance(patch["preflight"], dict):
-            raise HTTPException(400, "preflight must be an object.")
+        if "preflight" in patch:
+            try:
+                preflight.validate_settings(patch["preflight"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
         _validate_ingest_patch(patch)
 
         opencode = patch.get("opencode")
@@ -5946,10 +5949,7 @@ def build_publish_packet(job_id: str, body: PacketBody) -> dict:
         cover_times=body.cover_times,
     )
     try:
-        return packet.build_packet(
-            job, _job_dir(job_id), request,
-            settings=settings_store.load_settings(),
-        )
+        return packet.build_packet(job, _job_dir(job_id), request)
     except packet.PacketError as exc:
         raise _packet_http_error(exc) from exc
 
@@ -5998,24 +5998,40 @@ def tighten_job_plan(job_id: str, body: TightenBody) -> dict:
         plan = body.plan
     else:
         target = _valid_target(int(body.target))
-        plan = _plan_for_body(
-            job, target,
-            PlanBody(
-                target=target,
-                hook_scene=body.hook_scene,
-                clips=body.clips,
-                order=body.order,
-            ),
-        )
+        try:
+            plan = _plan_for_body(
+                job, target,
+                PlanBody(
+                    target=target,
+                    hook_scene=body.hook_scene,
+                    clips=body.clips,
+                    order=body.order,
+                ),
+            )
+        except HTTPException:
+            raise
+        except (TypeError, ValueError, KeyError) as exc:
+            raise HTTPException(
+                400,
+                {
+                    "code": "clip_invalid",
+                    "message": f"The plan has invalid numeric clip fields: {exc}",
+                },
+            ) from exc
     silences = list(body.silences or [])
     if body.detect_silence:
         source_path = (job.get("source") or {}).get("path")
         if source_path:
             silences.extend(tighten.detect_silences(source_path))
     scenes = (job.get("analysis") or {}).get("scenes") or []
-    value = tighten.tighten_plan(
-        plan, scenes, options=body.options, silences=silences,
-    )
+    try:
+        value = tighten.tighten_plan(
+            plan, scenes, options=body.options, silences=silences,
+        )
+    except tighten.TightenError as exc:
+        raise HTTPException(
+            status_code=exc.status, detail=exc.as_detail(),
+        ) from exc
     return {"plan": value}
 
 

@@ -149,6 +149,15 @@ def _severity(value: object) -> str | None:
     return SEVERITY_ALIASES.get(str(value or "").strip().lower())
 
 
+def validate_settings(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("preflight must be an object.")
+    for key in ("toggles", "checks", "severity", "severities", "styles", "style"):
+        if key in value and value[key] is not None and not isinstance(value[key], dict):
+            raise ValueError(f"preflight.{key} must be an object.")
+    return value
+
+
 def resolve_config(settings: dict | None = None, job: dict | None = None) -> dict:
     """Merge global and per-job toggles/severities/styles. Job wins."""
     toggles = {spec["id"]: bool(spec["default_toggle"]) for spec in CHECK_SPECS}
@@ -217,16 +226,31 @@ def _job_path(job_dir: Path | None, raw: object, subdirs: tuple[str, ...] = ()) 
     if not text:
         return None
     path = Path(text)
-    if path.is_absolute():
-        return path if path.is_file() else None
-    root = Path(job_dir)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    root = Path(job_dir).resolve()
     candidates = [root / path]
     if len(path.parts) == 1:
         candidates.extend(root / name / path for name in subdirs)
     for candidate in candidates:
-        if candidate.is_file():
-            return candidate
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved != root and root not in resolved.parents:
+            continue
+        if resolved.is_file():
+            return resolved
     return None
+
+
+def _source_media_path(job: dict) -> Path | None:
+    """Job-owned source path. Never accept a story/artifact absolute import."""
+    source_path = str((job.get("source") or {}).get("path") or "").strip()
+    if not source_path:
+        return None
+    path = Path(source_path)
+    return path if path.is_absolute() and path.is_file() else None
 
 
 def _parse_time(value: str) -> float | None:
@@ -366,7 +390,9 @@ def _simple_plan(job: dict, target: int) -> dict | None:
         scene for scene in ((job.get("analysis") or {}).get("scenes") or [])
         if isinstance(scene, dict) and not scene.get("black")
     ]
-    scenes.sort(key=lambda scene: (float(scene.get("start") or 0.0), scene.get("id") or 0))
+    scenes.sort(key=lambda scene: (
+        _number(scene.get("start")) or 0.0, scene.get("id") or 0,
+    ))
     if not scenes:
         return None
     clips: list[dict] = []
@@ -651,10 +677,15 @@ def _context(job: dict, story_id: str | None, job_dir: Path | None) -> dict:
         or artifact.get("file")
         or record.get("path")
     )
+    render_story = bool(record or render_key or artifact or path_value)
     media_path = _job_path(job_dir, path_value, ("renders", "artifacts", "media"))
-    if media_path is None:
-        source_path = (job.get("source") or {}).get("path")
-        media_path = _job_path(job_dir, source_path) if source_path else None
+    if media_path is not None:
+        media_source = "artifact" if artifact else "render"
+    elif render_story:
+        media_source = "missing_render"
+    else:
+        media_path = _source_media_path(job)
+        media_source = "source_fallback" if media_path is not None else None
 
     image_path = _job_path(
         job_dir,
@@ -682,6 +713,7 @@ def _context(job: dict, story_id: str | None, job_dir: Path | None) -> dict:
         "scenes": scenes,
         "cues": cues,
         "media_path": media_path,
+        "media_source": media_source,
         "image_path": image_path,
         "hook_text": str(entry.get("hook_text") or record.get("hook_text") or "").strip(),
     }
@@ -933,7 +965,11 @@ def check_safe_zone_contrast(context: dict) -> dict | None:
         measured = _safe_zone_measure(context["image_path"])
         if measured is not None:
             measured["source"] = "poster"
-    if measured is None and context.get("media_path") is not None:
+    if (
+        measured is None
+        and context.get("media_path") is not None
+        and context.get("media_source") in {"render", "artifact"}
+    ):
         with tempfile.TemporaryDirectory(prefix="vibecut-preflight-") as temporary:
             cover = Path(temporary) / "cover.jpg"
             if _extract_cover_frame(context["media_path"], cover):
@@ -1000,12 +1036,27 @@ def measure_loudness(path: Path | str, timeout: float = 120.0) -> float | None:
 
 def check_loudness(context: dict) -> dict | None:
     value = _loudness_from_context(context)
+    media_source = context.get("media_source")
     source = "metadata"
+    if value is None and media_source == "missing_render":
+        return {
+            "unavailable": True,
+            "reason": "Render media is missing; source fallback was not used.",
+            "media_source": media_source,
+        }
     if value is None and context.get("media_path") is not None:
         value = measure_loudness(context["media_path"])
-        source = "ffmpeg"
+        source = (
+            "ffmpeg_source_fallback"
+            if media_source == "source_fallback"
+            else "ffmpeg_render"
+        )
     if value is None:
-        return {"unavailable": True, "reason": "Loudness could not be measured."}
+        return {
+            "unavailable": True,
+            "reason": "Loudness could not be measured.",
+            "media_source": media_source,
+        }
     if LOW_LUFS <= value <= HIGH_LUFS:
         return None
     if value < LOW_LUFS:
@@ -1023,6 +1074,7 @@ def check_loudness(context: dict) -> dict | None:
             "low_lufs": LOW_LUFS,
             "high_lufs": HIGH_LUFS,
             "source": source,
+            "media_source": media_source,
         },
     }
 
@@ -1067,6 +1119,10 @@ def run_preflight(
                 meta["status"] = "error"
                 meta["error"] = str(exc)[:240]
                 result = None
+            if result and result.get("media_source"):
+                meta["media_source"] = result["media_source"]
+            elif check_id == "loudness":
+                meta["media_source"] = context.get("media_source")
             if result and result.get("unavailable"):
                 meta["status"] = "unavailable"
                 meta["reason"] = result.get("reason")
@@ -1086,6 +1142,7 @@ def run_preflight(
         "job_id": str(job.get("id") or ""),
         "story_id": context["id"],
         "render_key": context.get("render_key"),
+        "media_source": context.get("media_source"),
         "blocked": any(item["severity"] == "block" for item in findings),
         "findings": findings,
         "checks": checks,

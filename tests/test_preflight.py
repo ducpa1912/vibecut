@@ -146,7 +146,8 @@ def test_preflight_low_and_high_loudness_via_mock(tmp_path, monkeypatch):
     low_finding = next(item for item in low["findings"] if item["id"] == "loudness")
     assert "below" in low_finding["message"]
     assert low["checks"]["loudness"]["details"]["integrated_lufs"] == -30.0
-    assert low["checks"]["loudness"]["details"]["source"] == "ffmpeg"
+    assert low["checks"]["loudness"]["details"]["source"] == "ffmpeg_render"
+    assert low["checks"]["loudness"]["details"]["media_source"] == "render"
 
     monkeypatch.setattr(preflight, "measure_loudness", lambda path: -6.0)
     high = preflight.run_preflight(job, "30", tmp_path)
@@ -241,6 +242,109 @@ def test_preflight_falls_back_to_a_plan_from_scenes(tmp_path):
 
     assert result["story_id"] == "30"
     assert result["checks"]["caption_density"]["status"] in {"pass", "unavailable"}
+
+
+def test_preflight_measures_render_before_source(tmp_path, monkeypatch):
+    render = tmp_path / "renders" / "reel_30.mp4"
+    render.parent.mkdir()
+    render.write_bytes(b"render")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    job = _job(
+        source={"name": "source.mp4", "duration": 10.0, "path": str(source)},
+        renders={
+            "30": {
+                "status": "ready",
+                "path": "reel_30.mp4",
+                "target": 30,
+                "duration": 10.0,
+                "plan": _plan(),
+            },
+        },
+    )
+    calls: list[str] = []
+
+    def measure(path):
+        calls.append(str(path))
+        return -14.0
+
+    monkeypatch.setattr(preflight, "measure_loudness", measure)
+    result = preflight.run_preflight(job, "30", tmp_path)
+
+    assert calls == [str(render)]
+    assert result["media_source"] == "render"
+
+
+def test_preflight_source_fallback_is_explicit(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    job = _job(source={"name": "source.mp4", "duration": 10.0, "path": str(source)})
+    calls: list[str] = []
+    monkeypatch.setattr(
+        preflight, "measure_loudness",
+        lambda path: calls.append(str(path)) or -30.0,
+    )
+    result = preflight.run_preflight(job, "30", tmp_path)
+
+    assert calls == [str(source)]
+    assert result["media_source"] == "source_fallback"
+    assert result["checks"]["loudness"]["details"]["media_source"] == "source_fallback"
+    assert result["checks"]["loudness"]["details"]["source"] == "ffmpeg_source_fallback"
+
+
+def test_preflight_missing_render_does_not_measure_source(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    job = _job(
+        source={"name": "source.mp4", "duration": 10.0, "path": str(source)},
+        renders={
+            "30": {
+                "status": "ready",
+                "path": "missing.mp4",
+                "target": 30,
+                "duration": 10.0,
+                "plan": _plan(),
+            },
+        },
+    )
+    monkeypatch.setattr(
+        preflight, "measure_loudness",
+        lambda path: pytest.fail("source fallback must not be measured"),
+    )
+    result = preflight.run_preflight(job, "30", tmp_path)
+
+    assert result["media_source"] == "missing_render"
+    assert result["checks"]["loudness"]["status"] == "unavailable"
+    assert "source fallback was not used" in result["checks"]["loudness"]["reason"]
+
+
+def test_preflight_rejects_absolute_and_parent_import_paths(tmp_path):
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"fake")
+    secret = tmp_path / "secret.mp4"
+    secret.write_bytes(b"fake")
+    job = _job()
+    job["analysis"]["scenes"][0]["speech"] = "Neutral opening."
+    job["analysis"]["scenes"][1]["speech"] = "Neutral ending."
+    job["stories"] = [{
+        "id": "story1",
+        "plan": _plan(),
+        "media_path": str(secret),
+        "poster_path": "../outside.jpg",
+        "loudness_lufs": -14.0,
+    }]
+    result = preflight.run_preflight(job, "story1", tmp_path / "jobdir")
+
+    assert result["media_source"] == "missing_render"
+    assert result["checks"]["safe_zone_contrast"]["status"] == "unavailable"
+    assert not result["findings"]
+
+
+def test_preflight_settings_validation():
+    assert preflight.validate_settings({"toggles": {"loudness": False}})
+    for value in (None, [], {"toggles": "off"}, {"severity": []}):
+        with pytest.raises(ValueError):
+            preflight.validate_settings(value)
 
 
 def test_preflight_unknown_story_is_explicit(tmp_path):

@@ -26,7 +26,7 @@ SILENCE_END_RE = re.compile(r"silence_end:\s*(-?\d+(?:\.\d+)?)")
 
 FILLER_SINGLE = frozenset({
     "um", "uh", "uhm", "umm", "erm", "er", "ah", "eh", "hmm", "hm", "mm", "mmm",
-    "like", "basically", "actually", "literally", "honestly",
+    "basically", "actually", "literally", "honestly",
 })
 FILLER_MULTI = frozenset({
     ("you", "know"),
@@ -36,6 +36,19 @@ FILLER_MULTI = frozenset({
     ("you", "see"),
     ("you", "know", "what"),
 })
+
+
+class TightenError(ValueError):
+    def __init__(self, code: str, message: str, *, status: int = 400) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = int(status)
+
+    def as_detail(self) -> dict:
+        return {"code": self.code, "message": self.message}
+
+
 @dataclass(frozen=True)
 class TightenOptions:
     remove_filler: bool = True
@@ -59,6 +72,8 @@ class Word:
 def _bool(value: object, fallback: bool) -> bool:
     if isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        return bool(value)
     if isinstance(value, str):
         lowered = value.strip().lower()
         if lowered in {"1", "true", "yes", "on"}:
@@ -111,6 +126,55 @@ def normalize_options(raw: dict | None) -> TightenOptions:
     )
 
 
+def _finite_number(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _clip_duration(clip: dict) -> float:
+    duration = _finite_number(clip.get("dur"))
+    if duration is not None:
+        return max(0.0, duration)
+    start = _finite_number(clip.get("start"))
+    end = _finite_number(clip.get("end"))
+    if start is not None and end is not None and end > start:
+        return end - start
+    return 0.0
+
+
+def validate_plan(plan: dict) -> dict:
+    if not isinstance(plan, dict):
+        raise TightenError("plan_invalid", "Plan must be an object.")
+    clips = plan.get("clips")
+    if not isinstance(clips, list) or not clips:
+        raise TightenError("plan_invalid", "Plan must contain at least one clip.")
+    target = plan.get("target")
+    if target is not None and _finite_number(target) is None:
+        raise TightenError("plan_invalid", "Plan target must be a number.")
+    for index, clip in enumerate(clips, 1):
+        if not isinstance(clip, dict):
+            raise TightenError("clip_invalid", f"Clip {index} must be an object.")
+        start = _finite_number(clip.get("start"))
+        if start is None:
+            raise TightenError("clip_invalid", f"Clip {index} has an invalid start.")
+        end = _finite_number(clip.get("end"))
+        duration = _finite_number(clip.get("dur"))
+        if clip.get("end") is not None and end is None:
+            raise TightenError("clip_invalid", f"Clip {index} has an invalid end.")
+        if clip.get("dur") is not None and duration is None:
+            raise TightenError("clip_invalid", f"Clip {index} has an invalid duration.")
+        if end is None and duration is None:
+            raise TightenError("clip_invalid", f"Clip {index} has no valid end or duration.")
+        if end is not None and end <= start:
+            raise TightenError("clip_invalid", f"Clip {index} ends before it starts.")
+        if duration is not None and duration < 0:
+            raise TightenError("clip_invalid", f"Clip {index} has a negative duration.")
+    return plan
+
+
 def _merge(intervals: Iterable[tuple[float, float]]) -> list[tuple[float, float]]:
     ordered = sorted(
         (max(0.0, float(start)), max(0.0, float(end)))
@@ -144,6 +208,26 @@ def _subtract(
     if cursor < end - 0.0005:
         keeps.append((cursor, end))
     return keeps
+
+
+def _overlap_length(
+    left: Iterable[tuple[float, float]],
+    right: Iterable[tuple[float, float]],
+) -> float:
+    left_rows = _merge(left)
+    right_rows = _merge(right)
+    total = 0.0
+    left_index = 0
+    right_index = 0
+    while left_index < len(left_rows) and right_index < len(right_rows):
+        left_start, left_end = left_rows[left_index]
+        right_start, right_end = right_rows[right_index]
+        total += max(0.0, min(left_end, right_end) - max(left_start, right_start))
+        if left_end <= right_end:
+            left_index += 1
+        else:
+            right_index += 1
+    return total
 
 
 def _normal_word(text: str) -> str:
@@ -226,6 +310,21 @@ def _clip_words(clip: dict, scene: dict | None, start: float, end: float) -> lis
     return clipped
 
 
+def _like_is_filler(words: list[Word], normalized: list[str], index: int) -> bool:
+    """Keep ``like`` when it carries meaning, e.g. "I like this product"."""
+    previous = normalized[index - 1] if index > 0 else ""
+    following = normalized[index + 1] if index + 1 < len(normalized) else ""
+    following_two = normalized[index + 2] if index + 2 < len(normalized) else ""
+    if previous in FILLER_SINGLE or following in FILLER_SINGLE:
+        return True
+    if following == "you" and following_two == "know":
+        return True
+    raw = str(words[index].text or "").strip().lower()
+    if raw.endswith(",") and following in {"so", "just", "really", "um", "uh"}:
+        return True
+    return False
+
+
 def _filler_intervals(words: list[Word], pad: float) -> list[tuple[float, float]]:
     normalized = [_normal_word(word.text) for word in words]
     marked: set[int] = set()
@@ -242,7 +341,11 @@ def _filler_intervals(words: list[Word], pad: float) -> list[tuple[float, float]
                 marked.update(range(index, index + size))
         if index in marked:
             continue
-        if normalized[index] in FILLER_SINGLE:
+        token = normalized[index]
+        is_filler = token in FILLER_SINGLE
+        if token == "like" and not is_filler:
+            is_filler = _like_is_filler(words, normalized, index)
+        if is_filler:
             intervals.append((words[index].start - pad, words[index].end + pad))
             marked.add(index)
     return _merge(intervals)
@@ -336,8 +439,7 @@ def tighten_plan(
     silences: list[dict] | list[tuple] | None = None,
 ) -> dict:
     """Return a new tightened plan. The source plan and scenes are untouched."""
-    if not isinstance(plan, dict):
-        raise ValueError("plan must be an object")
+    validate_plan(plan)
     source_plan = copy.deepcopy(plan)
     source_clips = [
         copy.deepcopy(clip)
@@ -361,6 +463,7 @@ def tighten_plan(
     output: list[dict] = []
     filler_removed = 0.0
     silence_removed = 0.0
+    overlap_removed = 0.0
 
     for original in source_clips:
         try:
@@ -405,14 +508,16 @@ def tighten_plan(
                 item for item in silence_intervals
                 if item[0] > start + 0.0005 and item[1] < end - 0.0005
             ]
-        filler_removed += sum(
-            max(0.0, min(end, item[1]) - max(start, item[0]))
+        filler_intervals = _merge([
+            (max(start, item[0]), min(end, item[1]))
             for item in filler_intervals
-        )
-        silence_removed += sum(
-            max(0.0, min(end, item[1]) - max(start, item[0]))
+            if min(end, item[1]) > max(start, item[0])
+        ])
+        silence_intervals = _merge([
+            (max(start, item[0]), min(end, item[1]))
             for item in silence_intervals
-        )
+            if min(end, item[1]) > max(start, item[0])
+        ])
         removals = _merge([*filler_intervals, *silence_intervals])
         keeps = _subtract(start, end, removals)
         keeps = [
@@ -423,6 +528,16 @@ def tighten_plan(
         if not keeps:
             output.append(copy.deepcopy(original))
             continue
+        overlap = _overlap_length(filler_intervals, silence_intervals)
+        filler_removed += max(0.0, sum(
+            max(0.0, min(end, item[1]) - max(start, item[0]))
+            for item in filler_intervals
+        ) - overlap)
+        silence_removed += max(0.0, sum(
+            max(0.0, min(end, item[1]) - max(start, item[0]))
+            for item in silence_intervals
+        ) - overlap)
+        overlap_removed += overlap
         for index, (piece_start, piece_end) in enumerate(keeps):
             piece = copy.deepcopy(original)
             piece["start"] = round(piece_start, 3)
@@ -457,10 +572,12 @@ def tighten_plan(
             }
             punch_count += 1
 
-    source_total = round(sum(
-        max(0.0, float(clip.get("dur") or 0.0)) for clip in source_clips
-    ), 3)
-    total = round(sum(max(0.0, float(clip.get("dur") or 0.0)) for clip in output), 3)
+    source_total = round(sum(_clip_duration(clip) for clip in source_clips), 3)
+    total = round(sum(_clip_duration(clip) for clip in output), 3)
+    actual_removed = round(max(0.0, source_total - total), 3)
+    attributed = round(filler_removed + silence_removed + overlap_removed, 3)
+    removed_seconds = round(max(actual_removed, attributed), 3)
+    other_removed = round(max(0.0, removed_seconds - attributed), 3)
     result = source_plan
     result["clips"] = output
     result["clip_count"] = len(output)
@@ -471,9 +588,11 @@ def tighten_plan(
         "source_clip_count": len(source_clips),
         "source_total": source_total,
         "source_hash": _source_hash(source_clips),
-        "removed_seconds": round(max(0.0, source_total - total), 3),
+        "removed_seconds": removed_seconds,
         "filler_removed_seconds": round(max(0.0, filler_removed), 3),
         "silence_removed_seconds": round(max(0.0, silence_removed), 3),
+        "overlap_removed_seconds": round(max(0.0, overlap_removed), 3),
+        "other_removed_seconds": other_removed,
         "punch_ins": punch_count,
         "options": {
             "remove_filler": settings.remove_filler,
