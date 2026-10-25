@@ -281,6 +281,39 @@ def _frames_for(start: float, duration: float, source_duration: float) -> int:
     return frames
 
 
+def prepare_render(plan: dict, meta: dict, audio_plan: dict | None = None) -> dict:
+    """Final frame-rounded, beat-snapped clips used for burn and captions."""
+    source_duration = float(meta.get("duration") or 0)
+    clips: list[dict] = []
+    for clip in plan.get("clips") or []:
+        start = max(0.0, float(clip["start"]))
+        duration_hint = clip.get("dur", clip.get("duration"))
+        end = clip.get("end")
+        if end is None:
+            end = start + float(duration_hint or 0.0)
+        wanted = max(0.2, float(end) - start)
+        frames = _frames_for(start, wanted, source_duration)
+        clips.append({
+            "scene": clip["scene"],
+            "role": clip.get("role") or "beat",
+            "start": start,
+            "frames": frames,
+            "duration": frames / OUT_FPS,
+        })
+    total = sum(clip["duration"] for clip in clips)
+    if audio_plan and audio_plan.get("beat_sync"):
+        track = audio.resolve_music_track(
+            plan.get("_scenes", []), clips, audio_plan.get("music") or {},
+        )
+        grid = audio.beat_grid(track) if track else None
+        if grid:
+            clips, drift = audio.snap_clips(clips, grid)
+            total = sum(clip["duration"] for clip in clips)
+            audio_plan["_beat_bpm"] = grid.get("bpm")
+            audio_plan["_beat_drift"] = drift
+    return {"clips": clips, "total": total, "audio_plan": audio_plan}
+
+
 def _link_or_copy(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -671,6 +704,8 @@ def render_reel(
     caption_margin: float = 0.075,
     cancel_event: threading.Event | None = None,
     caption_cues: list[tuple[float, float, str]] | None = None,
+    render_clips: list[dict] | None = None,
+    render_total: float | None = None,
 ) -> dict:
     quality = "draft" if quality == "draft" else "final"
     aspect = aspect if aspect in ASPECTS else "9:16"
@@ -701,37 +736,23 @@ def render_reel(
 
     scenes = {scene["id"]: scene for scene in plan.get("_scenes", [])}
     scene_list = plan.get("_scenes", [])
-    source_duration = float(meta.get("duration") or 0)
-    clips: list[dict] = []
-    for clip in plan["clips"]:
-        start = max(0.0, float(clip["start"]))
-        wanted = max(0.2, float(clip["end"]) - start)
-        frames = _frames_for(start, wanted, source_duration)
-        clips.append({
-            "scene": clip["scene"],
-            "role": clip.get("role") or "beat",
-            "start": start,
-            "frames": frames,
-            "duration": frames / OUT_FPS,
-        })
+    if render_clips is None:
+        prepared = prepare_render(plan, meta, audio_plan)
+        clips = prepared["clips"]
+        total = prepared["total"]
+    else:
+        clips = [dict(clip) for clip in render_clips]
+        total = (
+            float(render_total)
+            if render_total is not None
+            else sum(float(clip.get("duration") or 0.0) for clip in clips)
+        )
 
-    total = sum(clip["duration"] for clip in clips)
     if cancel_event is not None and cancel_event.is_set():
         raise RenderCancelled("Render cancelled.")
 
-    if audio_plan and audio_plan.get("beat_sync"):
-        track = audio.resolve_music_track(scene_list, clips, audio_plan.get("music") or {})
-        grid = audio.beat_grid(track) if track else None
-        if grid:
-            clips, drift = audio.snap_clips(clips, grid)
-            total = sum(clip["duration"] for clip in clips)
-            audio_plan["_beat_bpm"] = grid.get("bpm")
-            audio_plan["_beat_drift"] = drift
-
     master_dir = job_dir.parent.parent / "cache" / "masters" / job_dir.name
     cues = list(caption_cues) if caption_cues is not None else _caption_cues(plan, clips)
-    if not captions:
-        cues = []
     caption_count = len(cues)
     master_key = hashlib.sha1(json.dumps({
         "target": target,
@@ -745,7 +766,7 @@ def render_reel(
         "caption_cues": [
             [round(start, 3), round(end, 3), text]
             for start, end, text in cues
-        ],
+        ] if captions else [],
         "caption_margin": round(float(caption_margin), 4) if captions else 0.0,
         "encoder": encoder,
     }, sort_keys=True).encode()).hexdigest()[:16]

@@ -713,31 +713,50 @@ def test_manifest_load_rejects_tampered_id_and_bad_utf8(tmp_path):
     assert artifacts.load_manifest(job_dir, manifest["artifact_id"]) is None
 
 
-def test_pin_route_merges_concurrent_job_update(env, monkeypatch):
+def test_pin_and_delete_serialize_on_artifact_lock(env, monkeypatch):
     manifest = make_artifact(env, artifacts.build_spec(env.job, plan_for()))
-    client = TestClient(app.app)
+    artifact_id = manifest["artifact_id"]
     original = artifacts.pin_artifact
+    entered = threading.Event()
+    release = threading.Event()
 
-    def pin_then_concurrent(job_dir, artifact_id, pinned=True):
-        result = original(job_dir, artifact_id, pinned)
-        app.update_job(
-            env.job_id,
-            lambda job: job.setdefault("renders", {}).__setitem__(
-                "concurrent",
-                {"status": "ready", "path": "reel_15.mp4", "updated": 2.0},
-            ),
-        )
-        return result
+    def slow_pin(job_dir, wanted, pinned=True):
+        entered.set()
+        assert release.wait(3)
+        return original(job_dir, wanted, pinned)
 
-    monkeypatch.setattr(artifacts, "pin_artifact", pin_then_concurrent)
-    response = client.post(
-        f"/api/jobs/{env.job_id}/artifacts/{manifest['artifact_id']}/pin",
-    )
-    assert response.status_code == 200
-    job = app.load_job(env.job_id)
-    assert "concurrent" in job["renders"]
-    stored = artifacts.load_manifest(env.directory, manifest["artifact_id"])
-    assert stored["pinned"] is True
+    monkeypatch.setattr(artifacts, "pin_artifact", slow_pin)
+    outcomes: dict = {}
+
+    def do_pin():
+        try:
+            outcomes["pin"] = app.pin_artifact(env.job_id, artifact_id)
+        except app.HTTPException as exc:
+            outcomes["pin_error"] = exc.status_code
+
+    pin_thread = threading.Thread(target=do_pin)
+    pin_thread.start()
+    assert entered.wait(3)
+
+    def do_delete():
+        try:
+            outcomes["delete"] = app.delete_artifact(env.job_id, artifact_id)
+        except app.HTTPException as exc:
+            outcomes["delete_error"] = exc.status_code
+
+    delete_thread = threading.Thread(target=do_delete)
+    delete_thread.start()
+    time.sleep(0.05)
+    assert delete_thread.is_alive(), "delete escaped the pin transaction"
+    release.set()
+    pin_thread.join(5)
+    delete_thread.join(5)
+    assert not pin_thread.is_alive()
+    assert not delete_thread.is_alive()
+    assert "pin_error" not in outcomes
+    assert outcomes.get("delete_error") == 409
+    stored = artifacts.load_manifest(env.directory, artifact_id)
+    assert stored is not None and stored["pinned"] is True
 
 
 def test_mutating_routes_never_save_a_stale_job_snapshot(env, monkeypatch):
@@ -868,6 +887,9 @@ def test_caption_cue_parity_end_to_end(env, monkeypatch):
     assert caption["text_hash"] == text_hash
     assert manifest["render"]["caption_count"] == len(burned_cues)
     assert app.export_cut(env.job_id, "srt", target=15).body.decode("utf-8") == srt_text
+    assert app.export_cut(
+        env.job_id, "srt", artifact_id=artifact_id,
+    ).body.decode("utf-8") == srt_text
 
 
 def test_force_render_creates_new_artifact_and_preserves_shared_bytes(env, monkeypatch):
@@ -1056,3 +1078,262 @@ def test_cleanup_storage_prune_merges_concurrent_update(env, monkeypatch):
     stored = app.load_job(env.job_id)
     assert stored["message"] == "concurrent"
     assert "15" not in stored["renders"]
+
+
+def test_beat_sync_cues_follow_final_frame_snapped_clips(env, monkeypatch):
+    job = app.load_job(env.job_id)
+    job["analysis"]["scenes"][0]["speech"] = (
+        "A long opening line that will be split across several caption chunks "
+        "after the first clip is snapped from four seconds to three point seven five."
+    )
+    app.save_job(job)
+    job = app.load_job(env.job_id)
+    plan = {
+        "target": 15,
+        "total": 8.02,
+        "hook_scene": 0,
+        "auto": False,
+        "clip_count": 2,
+        "clips": [
+            {"scene": 0, "start": 0.0, "end": 4.01, "dur": 4.01, "role": "hook"},
+            {"scene": 1, "start": 5.0, "end": 9.01, "dur": 4.01, "role": "payoff"},
+        ],
+        "_source_lang": "en",
+    }
+    audio_plan = {
+        "mode": "full",
+        "beat_sync": True,
+        "music": {"source": "cc0", "track": "bed"},
+    }
+    grid_calls = {"count": 0}
+    monkeypatch.setattr(
+        audio, "resolve_music_track", lambda *args, **kwargs: Path("/tmp/bed.mp3"),
+    )
+
+    def fake_grid(track):
+        grid_calls["count"] += 1
+        return {"bpm": 160.0, "beats": [0.0, 3.75, 7.75, 11.75]}
+
+    monkeypatch.setattr(audio, "beat_grid", fake_grid)
+    submitted = []
+
+    def fake_submit(fn, *args, **kwargs):
+        submitted.append((fn, args, kwargs))
+
+    monkeypatch.setattr(app.render_pool, "submit", fake_submit)
+    captured: dict = {}
+
+    def fake_render_reel(source, meta, job_dir, plan, title, progress, **kwargs):
+        captured["clips"] = [dict(clip) for clip in kwargs.get("render_clips") or []]
+        captured["cues"] = list(kwargs.get("caption_cues") or [])
+        renders = job_dir / "renders"
+        renders.mkdir(parents=True, exist_ok=True)
+        tmp = renders / ".beatsync-tmp.mp4"
+        tmp.write_bytes(b"beat-mp4")
+        os.replace(tmp, renders / "reel_15.mp4")
+        poster = renders / ".beatsync-tmp.jpg"
+        poster.write_bytes(b"poster")
+        os.replace(poster, renders / "reel_15.jpg")
+        progress(1.0, "Reel ready")
+        return {
+            "path": "reel_15.mp4",
+            "poster": "reel_15.jpg",
+            "duration": sum(clip["duration"] for clip in captured["clips"]),
+            "width": 1080,
+            "height": 1920,
+            "size": 9,
+            "has_audio": True,
+            "clip_count": len(captured["clips"]),
+            "quality": "final",
+            "aspect": "9:16",
+            "encoder": "libx264",
+            "captions": True,
+            "caption_count": len(captured["cues"]),
+            "cached": 0,
+            "used_assets": [],
+        }
+
+    monkeypatch.setattr(render, "render_reel", fake_render_reel)
+    record = app._queue_render(
+        env.job_id, job, plan, "final", "9:16", None, True, audio_plan, False,
+    )
+    assert grid_calls["count"] == 1
+    assert [round(clip["duration"], 3) for clip in submitted[0][1][-2]] == [3.75, 4.0]
+    fn, args, kwargs = submitted[0]
+    fn(*args, **kwargs)
+
+    assert [round(clip["duration"], 3) for clip in captured["clips"]] == [3.75, 4.0]
+    assert grid_calls["count"] == 1
+    artifact_id = record["artifact_id"]
+    manifest = artifacts.load_manifest(env.directory, artifact_id)
+    spec = manifest["spec"]
+    assert [clip["dur"] for clip in spec["clips"]] == [3.75, 4.0]
+    srt_text = artifacts.media_path(
+        env.directory, artifact_id, "captions.srt",
+    ).read_text(encoding="utf-8")
+    srt_cues = _parse_srt(srt_text)
+    burned = [
+        {"start": round(start, 3), "end": round(end, 3), "text": text}
+        for start, end, text in captured["cues"]
+    ]
+    assert srt_cues == burned
+    cue_hash, text_hash = artifacts.cue_hashes(burned)
+    assert spec["caption"]["cue_hash"] == cue_hash
+    assert spec["caption"]["text_hash"] == text_hash
+    assert spec["caption"]["cue_count"] == len(burned)
+    assert manifest["render"]["caption_count"] == len(burned)
+    assert srt_cues[-1]["end"] <= 7.75
+
+
+def test_caption_count_agrees_when_captions_disabled(env, monkeypatch):
+    job = app.load_job(env.job_id)
+    job["analysis"]["scenes"][0]["speech"] = (
+        "This caption text is present even when burn-in is disabled, so the "
+        "saved caption count must agree everywhere."
+    )
+    app.save_job(job)
+    job = app.load_job(env.job_id)
+    plan = app._plan_for(job, 15, None)
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda fn, *args, **kwargs: submitted.append((fn, args, kwargs)),
+    )
+
+    def fake_render_reel(source, meta, job_dir, plan, title, progress, **kwargs):
+        renders = job_dir / "renders"
+        renders.mkdir(parents=True, exist_ok=True)
+        tmp = renders / ".nocap-tmp.mp4"
+        tmp.write_bytes(b"nocap")
+        os.replace(tmp, renders / "reel_15.mp4")
+        poster = renders / ".nocap-tmp.jpg"
+        poster.write_bytes(b"poster")
+        os.replace(poster, renders / "reel_15.jpg")
+        progress(1.0, "Reel ready")
+        return {
+            "path": "reel_15.mp4",
+            "poster": "reel_15.jpg",
+            "duration": float(plan["total"]),
+            "width": 1080,
+            "height": 1920,
+            "size": 9,
+            "has_audio": True,
+            "clip_count": len(kwargs.get("render_clips") or []),
+            "quality": "final",
+            "aspect": "9:16",
+            "encoder": "libx264",
+            "captions": False,
+            # Deliberately wrong: the app must normalize to the cue count.
+            "caption_count": 0,
+            "cached": 0,
+            "used_assets": [],
+        }
+
+    monkeypatch.setattr(render, "render_reel", fake_render_reel)
+    record = app._queue_render(
+        env.job_id, job, plan, "final", "9:16", None, False, None, False,
+    )
+    fn, args, kwargs = submitted[0]
+    fn(*args, **kwargs)
+
+    loaded = app.load_job(env.job_id)
+    render_record = loaded["renders"][record["record_key"]]
+    manifest = artifacts.load_manifest(env.directory, record["artifact_id"])
+    cue_count = manifest["spec"]["caption"]["cue_count"]
+    assert cue_count > 1
+    assert manifest["render"]["caption_count"] == cue_count
+    assert manifest["caption_count"] == cue_count
+    assert artifacts.public_manifest(manifest, env.job_id)["caption_count"] == cue_count
+    assert render_record["caption_count"] == cue_count
+
+
+def test_artifact_caption_preview_route(env):
+    manifest = make_artifact(
+        env, artifacts.build_spec(
+            env.job, plan_for(), captions=True,
+            cues=[{"start": 0.0, "end": 1.0, "text": "preview cue"}],
+        ),
+        srt="1\n00:00:00,000 --> 00:00:01,000\npreview cue\n",
+    )
+    payload = app.get_artifact_captions(env.job_id, manifest["artifact_id"])
+    assert payload["cue_count"] == 1
+    assert payload["cues"] == [
+        {"start": 0.0, "end": 1.0, "text": "preview cue"},
+    ]
+    assert payload["srt_url"].endswith("/captions.srt")
+
+
+def test_concurrent_force_requests_do_not_share_generation(env, monkeypatch):
+    job = app.load_job(env.job_id)
+    plan = plan_for()
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda fn, *args, **kwargs: submitted.append((fn, args, kwargs)),
+    )
+    barrier = threading.Barrier(3)
+    outcomes: list[dict] = []
+    lock = threading.Lock()
+
+    def race():
+        barrier.wait(3)
+        try:
+            record = app._queue_render(
+                env.job_id, app.load_job(env.job_id), plan,
+                "final", "9:16", None, False, None, True,
+            )
+            with lock:
+                outcomes.append({"artifact_id": record["artifact_id"]})
+        except app.HTTPException as exc:
+            with lock:
+                outcomes.append({"error": exc.status_code})
+
+    threads = [threading.Thread(target=race) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait(3)
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
+
+    assert len(outcomes) == 2
+    successes = [item for item in outcomes if "artifact_id" in item]
+    errors = [item for item in outcomes if "error" in item]
+    assert len(successes) == 1
+    assert errors and all(item["error"] == 409 for item in errors)
+
+
+def test_cleanup_storage_skips_job_with_active_artifact(env, monkeypatch):
+    job = app.load_job(env.job_id)
+    job["updated"] = time.time() - 10 * 86400
+    (env.directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    spec = artifacts.build_spec(env.job, plan_for())
+    manifest = artifacts.make_manifest(
+        env.job_id, spec, status="queued", record_key="15",
+    )
+    manifest = artifacts.save_manifest(env.directory, manifest)
+    monkeypatch.setattr(audio, "CACHE", env.tmp_path / "cache")
+    monkeypatch.setenv("VIBECUT_RETENTION_DAYS", "1")
+    monkeypatch.setenv("VIBECUT_JOB_CLEAN_DAYS", "0")
+    monkeypatch.setenv("VIBECUT_CACHE_DAYS", "0")
+
+    app.cleanup_storage()
+
+    assert env.directory.is_dir()
+    assert artifacts.load_manifest(env.directory, manifest["artifact_id"]) is not None
+
+
+def test_share_does_not_publish_without_job_record(env, monkeypatch):
+    manifest = make_artifact(env, artifacts.build_spec(env.job, plan_for()))
+    artifact_id = manifest["artifact_id"]
+    job = app.load_job(env.job_id)
+    (env.directory / "job.json").unlink()
+    monkeypatch.setattr(app, "load_job", lambda job_id: job)
+
+    with pytest.raises(app.HTTPException) as missing_job:
+        app.create_share(
+            env.job_id, body=app.ShareBody(artifact_id=artifact_id),
+        )
+
+    assert missing_job.value.status_code == 404
+    assert shares.load(app.SHARES, strict=False) == {}

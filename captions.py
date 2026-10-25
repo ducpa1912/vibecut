@@ -7,6 +7,7 @@ only has to change this module and its callers keep parity.
 
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 CUE_WIDTH = 72
@@ -97,3 +98,27 @@ def cue_tuples(cues: Iterable[dict]) -> list[tuple[float, float, str]]:
         for cue in cues
         if isinstance(cue, dict)
     ]
+
+
+def parse_srt(text: str) -> list[dict]:
+    """Parse a saved SRT back into the canonical cue shape for preview."""
+    cues: list[dict] = []
+    for block in str(text or "").strip().split("\n\n"):
+        lines = block.splitlines()
+        if len(lines) < 3:
+            continue
+        match = re.match(
+            r"(\d\d):(\d\d):(\d\d),(\d{3}) --> (\d\d):(\d\d):(\d\d),(\d{3})",
+            lines[1],
+        )
+        if not match:
+            continue
+        values = [int(value) for value in match.groups()]
+        start = values[0] * 3600 + values[1] * 60 + values[2] + values[3] / 1000
+        end = values[4] * 3600 + values[5] * 60 + values[6] + values[7] / 1000
+        cues.append({
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "text": "\n".join(lines[2:]),
+        })
+    return cues

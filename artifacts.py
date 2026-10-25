@@ -278,6 +278,7 @@ def build_spec(
     story_id: str | None = None,
     cues: Iterable[dict] | None = None,
     generation: int = 0,
+    clips: Iterable[dict] | None = None,
 ) -> ArtifactSpec:
     plan = plan or {}
     if cues is None:
@@ -286,7 +287,9 @@ def build_spec(
     cue_hash, text_hash = cue_hashes(cue_list)
     source = (job or {}).get("source") or {}
     return ArtifactSpec(
-        clips=normalize_clips(plan.get("clips")),
+        clips=normalize_clips(
+            clips if clips is not None else plan.get("clips")
+        ),
         target=int(plan.get("target") or 0),
         story_id=str(story_id or (job or {}).get("story_id") or (job or {}).get("id") or ""),
         order=str(plan.get("order") or "source"),
@@ -604,25 +607,26 @@ def load_index(job_dir: str | Path) -> dict:
 def delete_artifact(job_dir: str | Path, artifact: str) -> bool:
     if not is_safe_artifact_id(artifact):
         return False
-    path = artifact_dir(job_dir, artifact)
-    if not path.is_dir():
-        return False
-    manifest = load_manifest(job_dir, artifact)
-    if manifest is not None and manifest.get("pinned"):
-        return False
     with LOCK:
+        path = artifact_dir(job_dir, artifact)
+        if not path.is_dir():
+            return False
+        manifest = load_manifest(job_dir, artifact)
+        if manifest is not None and manifest.get("pinned"):
+            return False
         shutil.rmtree(path, ignore_errors=True)
         refresh_index(job_dir)
     return True
 
 
 def pin_artifact(job_dir: str | Path, artifact: str, pinned: bool = True) -> dict | None:
-    manifest = load_manifest(job_dir, artifact)
-    if manifest is None:
-        return None
-    manifest["pinned"] = bool(pinned)
-    manifest["pinned_at"] = round(time.time(), 3) if pinned else None
-    return save_manifest(job_dir, manifest)
+    with LOCK:
+        manifest = load_manifest(job_dir, artifact)
+        if manifest is None:
+            return None
+        manifest["pinned"] = bool(pinned)
+        manifest["pinned_at"] = round(time.time(), 3) if pinned else None
+        return save_manifest(job_dir, manifest)
 
 
 def mark_status(
@@ -632,15 +636,16 @@ def mark_status(
     *,
     error: str | None = None,
 ) -> dict | None:
-    manifest = load_manifest(job_dir, artifact)
-    if manifest is None:
-        return None
-    # A failed forced re-render must not downgrade a previously ready copy.
-    if manifest.get("status") == "ready" and status != "ready":
-        return manifest
-    manifest["status"] = str(status)
-    manifest["error"] = error
-    return save_manifest(job_dir, manifest)
+    with LOCK:
+        manifest = load_manifest(job_dir, artifact)
+        if manifest is None:
+            return None
+        # A failed forced re-render must not downgrade a previously ready copy.
+        if manifest.get("status") == "ready" and status != "ready":
+            return manifest
+        manifest["status"] = str(status)
+        manifest["error"] = error
+        return save_manifest(job_dir, manifest)
 
 
 # ---------------------------------------------------------------- media
@@ -689,17 +694,18 @@ def complete_artifact(
     vtt: str = "",
     render_info: dict | None = None,
 ) -> dict | None:
-    manifest = load_manifest(job_dir, artifact)
-    if manifest is None:
-        return None
-    store_media(job_dir, artifact, reel, poster)
-    write_captions(job_dir, artifact, srt, vtt)
-    manifest["status"] = "ready"
-    manifest["error"] = None
-    manifest["completed"] = round(time.time(), 3)
-    if render_info is not None:
-        manifest["render"] = render_info
-    return save_manifest(job_dir, manifest)
+    with LOCK:
+        manifest = load_manifest(job_dir, artifact)
+        if manifest is None:
+            return None
+        store_media(job_dir, artifact, reel, poster)
+        write_captions(job_dir, artifact, srt, vtt)
+        manifest["status"] = "ready"
+        manifest["error"] = None
+        manifest["completed"] = round(time.time(), 3)
+        if render_info is not None:
+            manifest["render"] = render_info
+        return save_manifest(job_dir, manifest)
 
 
 # ---------------------------------------------------------------- job helpers

@@ -72,6 +72,7 @@ ingest_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vibecut-inge
 render_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibecut-render")
 INGEST_CANCELS: dict[str, threading.Event] = {}
 RENDER_CANCELS: dict[tuple[str, str], threading.Event] = {}
+QUEUE_LOCK = threading.RLock()
 ACTIVE_RENDER = {"queued", "rendering", "cancelling"}
 
 
@@ -87,11 +88,11 @@ def _audio_signature(audio_plan: dict | None) -> str:
     return audio.signature(audio_plan)
 
 
-def _reel_cues(job: dict, plan: dict) -> list[dict]:
+def _reel_cues(job: dict, plan: dict, clips: list[dict] | None = None) -> list[dict]:
     analysis = (job or {}).get("analysis") or {}
     return caption_engine.reel_cues(
         plan or {},
-        (plan or {}).get("clips") or [],
+        clips if clips is not None else (plan or {}).get("clips") or [],
         analysis.get("scenes") or [],
     )
 
@@ -1332,7 +1333,8 @@ def _adopt_render_artifact(
     except (TypeError, ValueError):
         wanted_target = 0
     plan = _adoption_plan(job, wanted_target, record.get("hook"))
-    cues = _reel_cues(job, plan)
+    prepared = render.prepare_render(plan, job.get("source") or {}, None)
+    cues = _reel_cues(job, plan, prepared["clips"])
     margin = float(record.get("caption_margin") or 0.075)
     quality = str(record.get("quality") or "final")
     chosen_aspect = str(aspect or record.get("aspect") or "9:16")
@@ -1348,6 +1350,7 @@ def _adopt_render_artifact(
         preset=record.get("preset"),
         caption_margin=margin,
         cues=cues,
+        clips=prepared["clips"],
     )
     artifact = artifacts.artifact_id(spec)
     record_key = str(
@@ -1539,6 +1542,8 @@ def run_render(
     script_id: str | None = None,
     artifact_id: str | None = None,
     generation: int = 0,
+    prepared_clips: list[dict] | None = None,
+    prepared_total: float | None = None,
 ) -> None:
     plan["_source_lang"] = plan.get("_source_lang") or "en"
     record_key = _render_key(
@@ -1559,12 +1564,18 @@ def run_render(
                 )
         scenes = job["analysis"]["scenes"]
         plan["_scenes"] = scenes
-        cues = _reel_cues(job, plan)
+        if prepared_clips is None:
+            prepared = render.prepare_render(
+                plan, job["source"], audio_plan,
+            )
+            prepared_clips = prepared["clips"]
+            prepared_total = prepared["total"]
+        cues = _reel_cues(job, plan, prepared_clips)
         spec = artifacts.build_spec(
             job, plan,
             quality=quality, aspect=aspect, encoder=encoder,
             captions=captions, audio_sig=audio_sig, preset=preset,
-            caption_margin=caption_margin, cues=cues,
+            caption_margin=caption_margin, cues=cues, clips=prepared_clips,
             generation=generation,
         )
         expected_id = artifacts.artifact_id(spec)
@@ -1618,16 +1629,18 @@ def run_render(
             caption_margin=caption_margin,
             cancel_event=cancel_event,
             caption_cues=caption_engine.cue_tuples(cues),
+            render_clips=prepared_clips,
+            render_total=prepared_total,
         )
-        if captions:
-            result["caption_count"] = len(cues)
+        result["caption_count"] = len(cues)
         render_delta = usage_store.delta(before_usage)
         _append_usage(job_id, "render", render_delta)
         _set_render(
             job_id, record_key,
             status="ready", progress=1.0, message="Reel ready",
             error=None, key=key, hook=plan["hook_scene"],
-            total=plan["total"], eta=0, audio_sig=audio_sig,
+            total=prepared_total if prepared_total is not None else plan["total"],
+            eta=0, audio_sig=audio_sig,
             preset=preset, caption_margin=caption_margin,
             usage=render_delta, artifact_id=artifact_id,
             resolved_encoder=spec.resolved_encoder,
@@ -1640,7 +1653,7 @@ def run_render(
             "error": None,
             "key": key,
             "hook": plan["hook_scene"],
-            "total": plan["total"],
+            "total": prepared_total if prepared_total is not None else plan["total"],
             "eta": 0,
             "audio_sig": audio_sig,
             "preset": preset,
@@ -1950,6 +1963,17 @@ def _protected_artifact_ids(
     return protected
 
 
+def _has_active_artifacts(job: dict) -> bool:
+    try:
+        manifests = artifacts.list_manifests(_job_dir(job["id"]))
+    except Exception:  # noqa: BLE001
+        return False
+    return any(
+        manifest.get("status") in ACTIVE_RENDER
+        for manifest in manifests
+    )
+
+
 def _job_has_protection(job: dict, *, strict_shares: bool = True) -> bool:
     try:
         manifests = artifacts.list_manifests(_job_dir(job["id"]))
@@ -2164,6 +2188,8 @@ def clean_job_files(job: dict, profile: str = "workfiles") -> list[str]:
     """
     directory = _job_dir(job["id"])
     removed: list[str] = []
+    if _has_active_artifacts(job):
+        raise HTTPException(409, "An artifact is still rendering.")
     shares.load(SHARES, strict=True)
     render_profile = profile in {"renders", "all"}
     if render_profile:
@@ -2249,23 +2275,33 @@ def cleanup_storage() -> None:
     if days > 0:
         cutoff = time.time() - days * 86400
         for path in JOBS.glob("*/job.json"):
+            job_id = path.parent.name
+            removed_job = False
             try:
-                job = json.loads(path.read_text())
-            except (OSError, json.JSONDecodeError):
-                continue
-            if job.get("status") in LIVE:
-                continue
-            if float(job.get("updated", 0) or 0) < cutoff:
-                try:
+                with LOCK:
+                    job = _load_unlocked(job_id)
+                    if job.get("status") in LIVE or _has_active_artifacts(job):
+                        continue
+                    if any(
+                        record.get("status") in ACTIVE_RENDER
+                        for record in (job.get("renders") or {}).values()
+                    ):
+                        continue
+                    if float(job.get("updated", 0) or 0) >= cutoff:
+                        continue
                     protected = _job_has_protection(job)
-                except shares.ShareStoreError:
-                    LOGGER.error("share store is unreadable; retention aborted")
-                    return
-                if protected:
-                    LOGGER.info("retention kept protected job %s", job.get("id"))
-                    continue
-                shutil.rmtree(path.parent, ignore_errors=True)
-                LOGGER.info("retention removed job %s", job.get("id"))
+                    if protected:
+                        LOGGER.info("retention kept protected job %s", job_id)
+                        continue
+                    shutil.rmtree(path.parent, ignore_errors=True)
+                    removed_job = True
+            except (HTTPException, OSError, json.JSONDecodeError):
+                continue
+            except shares.ShareStoreError:
+                LOGGER.error("share store is unreadable; retention aborted")
+                return
+            if removed_job:
+                LOGGER.info("retention removed job %s", job_id)
     if clean_days > 0:
         cutoff = time.time() - clean_days * 86400
         for path in JOBS.glob("*/job.json"):
@@ -2294,7 +2330,11 @@ def cleanup_storage() -> None:
         try:
             with LOCK:
                 job = _load_unlocked(job_id)
-                if job.get("status") in LIVE or not job.get("renders"):
+                if (
+                    job.get("status") in LIVE
+                    or not job.get("renders")
+                    or _has_active_artifacts(job)
+                ):
                     continue
                 removed = _prune_renders(job)
                 if removed:
@@ -3258,7 +3298,6 @@ def _publish_share(
     expires_at: float | None,
     label: str,
     merge_legacy: bool,
-    fallback_job: dict,
 ) -> tuple[str, dict]:
     artifact = str(manifest.get("artifact_id") or "")
     spec = manifest.get("spec") or {}
@@ -3280,24 +3319,7 @@ def _publish_share(
         result["token"] = token
         result["manifest"] = ready
 
-    try:
-        update_job(job_id, mutate)
-    except HTTPException as exc:
-        if exc.status_code != 404:
-            raise
-        # Tests and tooling may hold a job in memory without job.json. Keep
-        # that compatibility while the normal path stays locked.
-        ready = _ready_manifest(fallback_job, artifact)
-        if merge_legacy:
-            _merge_adopted_record(
-                fallback_job, artifact, record_key, target, aspect, spec,
-            )
-        token, _record = shares.create(
-            job_id, artifact,
-            expires_at=expires_at, label=label, path=SHARES,
-        )
-        result["token"] = token
-        result["manifest"] = ready
+    update_job(job_id, mutate)
     return str(result.get("token") or ""), result.get("manifest") or manifest
 
 
@@ -3335,7 +3357,7 @@ def create_share(
         token, manifest = _publish_share(
             job_id, manifest, target, aspect,
             expires_at=expires_at, label=label,
-            merge_legacy=merge_legacy, fallback_job=job,
+            merge_legacy=merge_legacy,
         )
     except shares.ShareStoreError as exc:
         raise _share_store_unavailable(exc) from exc
@@ -4009,16 +4031,19 @@ def get_artifact(job_id: str, artifact_id: str) -> dict:
 
 @app.post("/api/jobs/{job_id}/artifacts/{artifact_id}/pin")
 def pin_artifact(job_id: str, artifact_id: str, body: PinBody | None = None) -> dict:
-    load_job(job_id)
     pinned = True if body is None else bool(body.pinned)
     job_dir = _job_dir(job_id)
-    manifest = artifacts.pin_artifact(job_dir, artifact_id, pinned)
-    if manifest is None:
-        raise HTTPException(404, "Artifact not found.")
-    update_job(
-        job_id,
-        lambda value: artifacts.ensure_job_schema(value, job_dir),
-    )
+    result: dict = {}
+
+    def mutate(job: dict) -> None:
+        manifest = artifacts.pin_artifact(job_dir, artifact_id, pinned)
+        if manifest is None:
+            raise HTTPException(404, "Artifact not found.")
+        result["manifest"] = manifest
+        artifacts.ensure_job_schema(job, job_dir)
+
+    update_job(job_id, mutate)
+    manifest = result["manifest"]
     public = artifacts.public_manifest(manifest, job_id)
     return {**public, "artifact": public}
 
@@ -4033,6 +4058,8 @@ def delete_artifact(job_id: str, artifact_id: str) -> dict:
         manifest = artifacts.load_manifest(job_dir, artifact_id)
         if manifest is None:
             raise HTTPException(404, "Artifact not found.")
+        if manifest.get("status") in ACTIVE_RENDER:
+            raise HTTPException(409, "This artifact is still rendering.")
         records = [
             record for record in (job.get("renders") or {}).values()
             if isinstance(record, dict) and record.get("artifact_id") == artifact_id
@@ -4084,6 +4111,32 @@ def get_artifact_media(job_id: str, artifact_id: str, filename: str) -> FileResp
         path, media_type=media_type,
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@app.get("/api/jobs/{job_id}/artifacts/{artifact_id}/captions")
+def get_artifact_captions(job_id: str, artifact_id: str) -> dict:
+    """Caption-only preview of the exact cues saved for one artifact."""
+    load_job(job_id)
+    job_dir = _job_dir(job_id)
+    manifest = artifacts.load_manifest(job_dir, artifact_id)
+    if manifest is None:
+        raise HTTPException(404, "Artifact not found.")
+    path = artifacts.media_path(job_dir, artifact_id, "captions.srt")
+    if not path.is_file():
+        raise HTTPException(404, "Artifact captions not found.")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise HTTPException(404, "Artifact captions not found.") from exc
+    cues = caption_engine.parse_srt(text)
+    base = f"/api/jobs/{job_id}/artifacts/{artifact_id}/media"
+    return {
+        "artifact_id": artifact_id,
+        "cue_count": len(cues),
+        "cues": cues,
+        "srt_url": f"{base}/captions.srt",
+        "vtt_url": f"{base}/captions.vtt",
+    }
 
 
 @app.get("/api/shares")
@@ -4909,15 +4962,38 @@ def export_cut(
     target: int = 30,
     hook_scene: int | None = None,
     order: str = "source",
+    artifact_id: str | None = None,
 ) -> Response:
     if kind not in {"srt", "vtt", "edl", "xml"}:
         raise HTTPException(404, "Unknown export format.")
     job = load_job(job_id)
+    if artifact_id:
+        if kind not in {"srt", "vtt"}:
+            raise HTTPException(400, "Artifact exports support SRT and VTT only.")
+        manifest = artifacts.load_manifest(_job_dir(job_id), artifact_id)
+        if manifest is None:
+            raise HTTPException(404, "Artifact not found.")
+        name = "captions.srt" if kind == "srt" else "captions.vtt"
+        path = artifacts.media_path(_job_dir(job_id), artifact_id, name)
+        if not path.is_file():
+            raise HTTPException(404, "Artifact captions not found.")
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise HTTPException(404, "Artifact captions not found.") from exc
+        return Response(
+            content=content,
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{artifact_id}.{kind}"',
+            },
+        )
     plan = _apply_order(job, _plan_for(job, _valid_target(int(target)), hook_scene), order)
     clips = plan["clips"]
     stem = Path(job["source"]["name"]).stem
     if kind in {"srt", "vtt"}:
-        cues = _reel_cues(job, plan)
+        prepared = render.prepare_render(plan, job["source"], None)
+        cues = _reel_cues(job, plan, prepared["clips"])
         content = cuts.srt(cues) if kind == "srt" else cuts.vtt(cues)
         media = "text/plain; charset=utf-8"
     elif kind == "edl":
@@ -5285,6 +5361,31 @@ def _queue_render(
     caption_margin: float = 0.075,
     script_id: str | None = None,
 ) -> dict:
+    # Reserve generations and write manifests serially so two force requests
+    # can never race to the same artifact id.
+    with QUEUE_LOCK:
+        current = load_job(job_id)
+        return _queue_render_locked(
+            job_id, current, plan, quality, aspect, encoder, captions,
+            audio_plan, force, preset=preset,
+            caption_margin=caption_margin, script_id=script_id,
+        )
+
+
+def _queue_render_locked(
+    job_id: str,
+    job: dict,
+    plan: dict,
+    quality: str,
+    aspect: str,
+    encoder: str | None,
+    captions: bool,
+    audio_plan: dict | None,
+    force: bool,
+    preset: str | None = None,
+    caption_margin: float = 0.075,
+    script_id: str | None = None,
+) -> dict:
     script_id = _valid_script_id(job_id, plan, script_id)
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
@@ -5292,11 +5393,19 @@ def _queue_render(
         target, quality, aspect, captions, audio_sig, _hook_marker(plan),
     )
     job_dir = _job_dir(job_id)
+    job_scenes = (job.get("analysis") or {}).get("scenes") or []
+    plan["_scenes"] = job_scenes
+    prepared = render.prepare_render(
+        plan, job.get("source") or {}, audio_plan,
+    )
+    prepared_clips = prepared["clips"]
+    prepared_total = prepared["total"]
+    cues = _reel_cues(job, plan, prepared_clips)
     base_spec = artifacts.build_spec(
         job, plan,
         quality=quality, aspect=aspect, encoder=encoder,
         captions=captions, audio_sig=audio_sig, preset=preset,
-        caption_margin=caption_margin,
+        caption_margin=caption_margin, clips=prepared_clips, cues=cues,
     )
     generation = artifacts.resolve_generation(job_dir, base_spec, force=force)
     spec = replace(base_spec, generation=generation)
@@ -5427,7 +5536,7 @@ def _queue_render(
     render_pool.submit(
         run_render, job_id, target, plan, key, quality, aspect, encoder, captions,
         audio_plan, audio_sig, preset, caption_margin, script_id, artifact,
-        generation,
+        generation, prepared_clips, prepared_total,
     )
     return record
 
@@ -5548,9 +5657,13 @@ def clean_job(job_id: str, body: CleanBody) -> dict:
 def delete_job(job_id: str) -> dict:
     with LOCK:
         job = _load_unlocked(job_id)
-        if job.get("status") in LIVE or any(
-            record.get("status") in ACTIVE_RENDER
-            for record in (job.get("renders") or {}).values()
+        if (
+            job.get("status") in LIVE
+            or _has_active_artifacts(job)
+            or any(
+                record.get("status") in ACTIVE_RENDER
+                for record in (job.get("renders") or {}).values()
+            )
         ):
             raise HTTPException(409, "This job is still working.")
         try:

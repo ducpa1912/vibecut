@@ -1594,6 +1594,7 @@ def test_share_token_and_review(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "SHARES", tmp_path / "shares.json")
     monkeypatch.setattr(app, "_job_dir", lambda job_id: job_dir)
     monkeypatch.setattr(app, "load_job", lambda job_id: job)
+    (job_dir / "job.json").write_text(json.dumps(job), encoding="utf-8")
     result = app.create_share("job1", 15, "9:16")
     assert result["url"].startswith("/r/")
     found = app._share(result["token"])
