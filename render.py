@@ -314,44 +314,6 @@ def prepare_render(plan: dict, meta: dict, audio_plan: dict | None = None) -> di
     return {"clips": clips, "total": total, "audio_plan": audio_plan}
 
 
-def sync_beat_clips(
-    plan: dict,
-    scenes: list[dict],
-    source_duration: float,
-    audio_plan: dict | None,
-) -> tuple[dict, dict]:
-    """Compatibility adapter: prepare the final clip list before captions."""
-    prepared = prepare_render(
-        {**plan, "_scenes": scenes},
-        {"duration": source_duration},
-        audio_plan,
-    )
-    prepared_clips = prepared["clips"]
-    clips: list[dict] = []
-    for original, current in zip(plan.get("clips") or [], prepared_clips):
-        clips.append({
-            **original,
-            "start": current["start"],
-            "end": round(current["start"] + current["duration"], 6),
-            "dur": round(current["duration"], 6),
-            "role": original.get("role") or "beat",
-        })
-    total = round(sum(float(clip["dur"]) for clip in clips), 6)
-    info = {
-        "bpm": (prepared.get("audio_plan") or {}).get("_beat_bpm"),
-        "drift": (prepared.get("audio_plan") or {}).get("_beat_drift"),
-    }
-    return {
-        **plan,
-        "clips": clips,
-        "clip_count": len(clips),
-        "total": total,
-        "_beat_snapped": bool(audio_plan and audio_plan.get("beat_sync")),
-        "_beat_bpm": info["bpm"],
-        "_beat_drift": info["drift"],
-    }, info
-
-
 def _link_or_copy(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     try:

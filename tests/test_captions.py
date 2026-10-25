@@ -168,6 +168,21 @@ def test_cjk_partial_segment_clips_only_in_window_text():
     assert "第三句" not in text
 
 
+def test_emoji_only_partial_segment_clips_in_window_text():
+    scenes = [_scene(0, 3.0, 3.0)]
+    plan = _plan([_clip(0, 3.0, 3.0)], scenes)
+    cues, _source, _warnings = captions.build_cues(
+        plan,
+        style=captions.resolve_style(),
+        segments=[{
+            "index": 0, "start": 0.0, "end": 9.0,
+            "text": "🌱🌻🌳",
+        }],
+    )
+    assert cues
+    assert "".join(cue["text"] for cue in cues) == "🌻"
+
+
 def test_cue_durations_stay_inside_min_and_max():
     style = captions.resolve_style()
     short_plan = _plan([_clip(0, 0.0, 5.0)], [_scene(0, 0.0, 5.0)])
@@ -269,17 +284,22 @@ def test_beat_sync_snaps_clips_before_caption_timing(tmp_path, monkeypatch):
             "beats": [round(index * 0.5, 3) for index in range(40)],
         },
     )
-    synced, info = render.sync_beat_clips(
-        plan, scenes, 10.0, {"beat_sync": True, "music": {}},
+    prepared = render.prepare_render(
+        {**plan, "_scenes": scenes},
+        {"duration": 10.0},
+        {"beat_sync": True, "music": {}},
     )
-    assert synced["_beat_snapped"] is True
-    assert info["bpm"] == 120.0
-    assert synced["clips"][0]["dur"] == pytest.approx(3.0)
-    assert synced["clips"][1]["dur"] == pytest.approx(3.1)
-    assert synced["total"] == pytest.approx(6.1)
+    assert prepared["clips"][0]["duration"] == pytest.approx(3.0)
+    assert prepared["clips"][1]["duration"] == pytest.approx(3.1)
+    assert prepared["total"] == pytest.approx(6.1)
+    track_plan = {
+        **plan,
+        "clips": prepared["clips"],
+        "total": prepared["total"],
+    }
     track = captions.build_track(
         job,
-        synced,
+        track_plan,
         captions.resolve_style(),
         segments=[
             {"index": 0, "start": 0.0, "end": 3.1, "text": "First beat."},
@@ -309,17 +329,23 @@ def test_queue_uses_beat_synced_clips_for_artifact(tmp_path, monkeypatch):
         {"scene": 0, "start": 0.0, "end": 3.1, "dur": 3.1, "role": "hook"},
         {"scene": 1, "start": 3.1, "end": 6.2, "dur": 3.1, "role": "beat"},
     ], scenes)
-    synced = {
-        **_plan([
-            {"scene": 0, "start": 0.0, "end": 2.0, "dur": 2.0, "role": "hook"},
-            {"scene": 1, "start": 2.0, "end": 4.0, "dur": 2.0, "role": "beat"},
-        ], scenes),
-        "_beat_snapped": True,
-        "_beat_bpm": 120.0,
+    prepared = {
+        "clips": [
+            {
+                "scene": 0, "role": "hook", "start": 0.0,
+                "frames": 60, "duration": 2.0,
+            },
+            {
+                "scene": 1, "role": "beat", "start": 2.0,
+                "frames": 60, "duration": 2.0,
+            },
+        ],
+        "total": 4.0,
+        "audio_plan": {},
     }
     monkeypatch.setattr(
-        render, "sync_beat_clips",
-        lambda *args, **kwargs: (dict(synced), {"bpm": 120.0, "drift": -1.0}),
+        render, "prepare_render",
+        lambda *args, **kwargs: prepared,
     )
     monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
     record = app._queue_render(
@@ -910,6 +936,126 @@ def test_caption_margin_applies_to_default_style_and_cache():
     )
     assert low != high
     assert low != styled
+
+
+def _beat_api_env(tmp_path, monkeypatch, job_id: str):
+    scenes = [
+        _scene(0, 0.0, 3.1, speech="Beat one.", hook=50.0),
+        _scene(1, 3.1, 3.1, speech="Beat two.", hook=40.0),
+        _scene(2, 6.2, 3.1, speech="Beat three.", hook=30.0),
+    ]
+    job = _job(scenes, job_id=job_id)
+    job["source"]["duration"] = 20.0
+    jobs = tmp_path / "jobs"
+    job_dir = jobs / job["id"]
+    job_dir.mkdir(parents=True)
+    (job_dir / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    monkeypatch.setattr(app, "JOBS", jobs)
+    plan = _plan([
+        {"scene": 0, "start": 0.0, "end": 3.1, "dur": 3.1, "role": "hook"},
+        {"scene": 1, "start": 3.1, "end": 6.2, "dur": 3.1, "role": "beat"},
+        {"scene": 2, "start": 6.2, "end": 9.3, "dur": 3.1, "role": "payoff"},
+    ], scenes)
+    prepared = {
+        "clips": [
+            {
+                "scene": 0, "role": "hook", "start": 0.0,
+                "frames": 60, "duration": 2.0,
+            },
+            {
+                "scene": 1, "role": "beat", "start": 2.0,
+                "frames": 60, "duration": 2.0,
+            },
+            {
+                "scene": 2, "role": "payoff", "start": 4.0,
+                "frames": 60, "duration": 2.0,
+            },
+        ],
+        "total": 6.0,
+        "audio_plan": {},
+    }
+    monkeypatch.setattr(
+        render, "prepare_render",
+        lambda *args, **kwargs: prepared,
+    )
+    monkeypatch.setattr(app, "_plan_for_body", lambda current, target, body: dict(plan, target=target))
+    monkeypatch.setattr(app, "_plan_for", lambda current, target, hook: dict(plan, target=target))
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
+    client = TestClient(app.app, base_url="http://127.0.0.1")
+    return job, job_dir, plan, prepared, client
+
+
+def _beat_body(**extra):
+    body = {
+        "target": 30,
+        "captions": True,
+        "audio": {"mode": "music", "beat_sync": True, "music": {}},
+    }
+    body.update(extra)
+    return body
+
+
+def test_single_render_caption_beat_sync_rebuilds_track(tmp_path, monkeypatch):
+    job, job_dir, _plan_raw, synced, client = _beat_api_env(
+        tmp_path, monkeypatch, "beat-single",
+    )
+    response = client.post(f"/api/jobs/{job['id']}/render", json=_beat_body())
+    assert response.status_code == 200, response.text
+    record = response.json()["render"]
+    assert record["status"] == "queued"
+    assert record["caption_count"] > 0
+    assert record["caption_track_id"]
+    track = captions.load_track(job_dir, record["caption_track_id"])
+    assert track is not None
+    assert track.clip_hash == captions.clip_hash(synced["clips"])
+    manifest = artifacts.load_manifest(job_dir, record["artifact_id"])
+    assert [clip["dur"] for clip in manifest["spec"]["clips"]] == pytest.approx(
+        [2.0, 2.0, 2.0],
+    )
+
+
+def test_client_caption_track_with_beat_sync_is_rebuilt(tmp_path, monkeypatch):
+    job, job_dir, raw_plan, synced, client = _beat_api_env(
+        tmp_path, monkeypatch, "beat-client-track",
+    )
+    raw_track = captions.build_track(
+        job, raw_plan, captions.resolve_style(), job_dir=job_dir,
+    )
+    response = client.post(
+        f"/api/jobs/{job['id']}/render",
+        json=_beat_body(caption_track_id=raw_track.id),
+    )
+    assert response.status_code == 200, response.text
+    record = response.json()["render"]
+    assert record["caption_track_id"] != raw_track.id
+    track = captions.load_track(job_dir, record["caption_track_id"])
+    assert track is not None
+    assert track.clip_hash == captions.clip_hash(synced["clips"])
+    assert track.style_id == raw_track.style_id
+
+
+def test_render_all_caption_beat_sync_has_no_conflicts(tmp_path, monkeypatch):
+    job, _job_dir, _raw_plan, _synced, client = _beat_api_env(
+        tmp_path, monkeypatch, "beat-all",
+    )
+    response = client.post(f"/api/jobs/{job['id']}/render-all", json=_beat_body())
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["errors"] == []
+    assert len(payload["renders"]) == 3
+    assert all(record["caption_count"] > 0 for record in payload["renders"])
+
+
+def test_ab_package_caption_beat_sync_has_no_conflicts(tmp_path, monkeypatch):
+    job, _job_dir, _raw_plan, _synced, client = _beat_api_env(
+        tmp_path, monkeypatch, "beat-ab",
+    )
+    response = client.post(f"/api/jobs/{job['id']}/ab", json=_beat_body())
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["errors"] == []
+    assert payload["renders"]
+    assert all(record["caption_count"] > 0 for record in payload["renders"])
 
 
 def test_settings_reject_malformed_caption_style_shapes(tmp_path, monkeypatch):

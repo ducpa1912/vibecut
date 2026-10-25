@@ -858,9 +858,10 @@ def _slice_segment_text(segment: dict, start: float, end: float) -> str:
     words = text.split()
     if len(words) <= 1:
         clusters = _grapheme_clusters(normalize_text(text))
-        if len(clusters) > 1 and re.search(
+        single_script = bool(re.search(
             r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", text,
-        ):
+        )) or not re.search(r"[A-Za-z0-9]", text)
+        if len(clusters) > 1 and single_script:
             first = int(math.floor(
                 (overlap_start - seg_start) / seg_duration * len(clusters),
             ))

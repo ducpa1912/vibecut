@@ -36,7 +36,6 @@ import captions as caption_engine
 import admin.routes as admin_routes
 import admin.store as admin_store
 import batch as batch_store
-import captions as caption_engine
 import clipset
 import disk
 import exports as cuts
@@ -1656,7 +1655,7 @@ def run_render(
             )
             prepared_clips = prepared["clips"]
             prepared_total = prepared["total"]
-        cues: list[dict] = []
+        cues: list[dict] = _reel_cues(job, plan, prepared_clips)
         if captions:
             track_plan = {
                 **plan,
@@ -6355,7 +6354,7 @@ def _queue_render_locked_impl(
     )
     prepared_clips = prepared["clips"]
     prepared_total = prepared["total"]
-    cues: list[dict] = []
+    cues: list[dict] = _reel_cues(job, plan, prepared_clips)
     if captions:
         track_plan = {
             **plan,
