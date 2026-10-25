@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — long video to reels</title>
-  <link rel="stylesheet" href="/static/style.css?v=0.11.4">
-  <script defer src="/static/app.js?v=0.11.4"></script>
+  <link rel="stylesheet" href="/static/style.css?v=0.12.0">
+  <script defer src="/static/app.js?v=0.12.0"></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -48,6 +48,20 @@
             </div>
             <button id="clear-file" class="icon-btn" aria-label="Remove file">×</button>
           </div>
+
+          <form id="url-form" class="url-ingest" autocomplete="off" novalidate>
+            <div class="url-head">
+              <label class="url-label" for="url-input">Paste a video link</label>
+              <span id="url-provider-label" class="url-auto">provider auto</span>
+            </div>
+            <div class="url-input-row">
+              <input id="url-input" name="url" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://… or a RedNote share link">
+              <button id="url-get" class="primary small" type="submit">Get video</button>
+            </div>
+            <p id="url-hint" class="url-hint">yt-dlp for most sites · XHS / RedNote for share links.</p>
+            <div id="url-status" class="url-status" role="status" aria-live="polite" hidden></div>
+            <div id="url-error" class="error url-error" role="alert" hidden></div>
+          </form>
 
           <details class="path-row">
             <summary>Use a local path instead <span>no copy</span></summary>
@@ -104,6 +118,7 @@
           <div><p class="eyebrow">recent</p><h2>Recent cuts</h2></div>
           <span id="recent-count" class="muted"></span>
         </div>
+        <p id="recent-error" class="error recent-alert" role="alert" hidden></p>
         <div id="recent" class="recent-grid"></div>
       </section>
     </section>
@@ -131,7 +146,10 @@
 
         <p class="hint progress-hint">Runs locally. Leave this tab open.</p>
         <div id="progress-error" class="error" hidden></div>
-        <button id="progress-back" class="ghost" hidden>Back to ingest</button>
+        <div class="progress-actions">
+          <button id="progress-cancel-url" class="ghost" hidden>Cancel download</button>
+          <button id="progress-back" class="ghost" hidden>Back to ingest</button>
+        </div>
       </div>
     </section>
 
@@ -217,6 +235,10 @@
         <div id="timeline" class="timeline" aria-label="Smart Cut timeline"></div>
         <div id="timeline-drop" class="timeline-drop" hidden>Drop a moment here to add it · drag a clip here to remove it</div>
         <p id="plan-why" class="plan-why"></p>
+        <details id="plan-reasoning" class="plan-reasoning" hidden>
+          <summary>Why this cut</summary>
+          <div id="plan-reasoning-body" class="plan-reasoning-body"></div>
+        </details>
         <div id="edit-bar" class="edit-bar" hidden>
           <span id="edit-hint" class="hint">← / → select · Alt+← / → reorder · − / + trim · Del remove · e edit · s save · r draft · Space play</span>
           <input id="variant-name" class="variant-name" placeholder="Variant name" maxlength="40">
@@ -520,6 +542,187 @@
             <button id="setup-test-opencode" class="ghost small" type="button">Test OpenCode</button>
             <button id="setup-test-openrouter" class="ghost small" type="button">Test OpenRouter</button>
           </div>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Video links · yt-dlp</h3>
+            <span id="setup-ytdlp-status" class="setup-chip">Not checked</span>
+          </div>
+          <p class="setup-hint">Native Python downloader for most sites. No Node, Docker, Cobalt, or cloud upload. Highest quality + audio by default; H.264/MP4 preferred for editing. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <label class="setup-field">
+            <span>Link provider</span>
+            <select id="setup-ingest-provider">
+              <option value="auto">Auto · yt-dlp first</option>
+              <option value="ytdlp">yt-dlp only</option>
+              <option value="cobalt">Cobalt only · external</option>
+              <option value="xhs">XHS only · external</option>
+            </select>
+          </label>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>Quality</span>
+              <select id="setup-ytdlp-quality">
+                <option value="max">Maximum</option>
+                <option value="2160">2160p</option>
+                <option value="1440">1440p</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+                <option value="360">360p</option>
+              </select>
+            </label>
+            <label class="setup-field">
+              <span>Codec</span>
+              <select id="setup-ytdlp-codec">
+                <option value="h264">H.264 · compatible</option>
+                <option value="any">Best available</option>
+              </select>
+            </label>
+          </div>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>Container</span>
+              <select id="setup-ytdlp-container">
+                <option value="mp4">MP4</option>
+                <option value="mkv">MKV</option>
+                <option value="webm">WebM</option>
+              </select>
+            </label>
+            <label class="setup-field">
+              <span>Audio</span>
+              <select id="setup-ytdlp-audio">
+                <option value="best">Best available</option>
+                <option value="192">192 kbps max</option>
+                <option value="128">128 kbps max</option>
+              </select>
+            </label>
+          </div>
+          <label class="setup-field">
+            <span>Cookies</span>
+            <select id="setup-ytdlp-cookies">
+              <option value="none">None</option>
+              <option value="browser">Browser cookies</option>
+              <option value="file">cookies.txt file</option>
+            </select>
+          </label>
+          <label id="setup-ytdlp-browser-field" class="setup-field">
+            <span>Browser</span>
+            <select id="setup-ytdlp-browser">
+              <option value="safari">Safari</option>
+              <option value="chrome">Chrome</option>
+              <option value="chromium">Chromium</option>
+              <option value="firefox">Firefox</option>
+              <option value="edge">Edge</option>
+              <option value="brave">Brave</option>
+              <option value="opera">Opera</option>
+              <option value="vivaldi">Vivaldi</option>
+              <option value="whale">Whale</option>
+            </select>
+          </label>
+          <label id="setup-ytdlp-file-field" class="setup-field">
+            <span>Cookie file</span>
+            <input id="setup-ytdlp-cookie-file" type="text" spellcheck="false" placeholder="/Users/you/cookies.txt">
+          </label>
+          <div class="setup-actions setup-ingest-actions">
+            <button id="setup-test-ytdlp" class="ghost small" type="button">Test yt-dlp</button>
+            <span class="setup-hint">No sidecar needed.</span>
+          </div>
+          <p id="setup-ytdlp-detail" class="setup-hint"></p>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Video links · Cobalt</h3>
+            <span id="setup-cobalt-status" class="setup-chip">Not checked</span>
+          </div>
+          <p class="setup-hint">Optional external fallback. Point VibeCut at your own cobalt instance. It sends the link over HTTP; no cobalt code runs here. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <label class="setup-field">
+            <span>Service URL</span>
+            <input id="setup-cobalt-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:9000/">
+          </label>
+          <label class="setup-field">
+            <span>API key · optional</span>
+            <input id="setup-cobalt-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set">
+          </label>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>Quality</span>
+              <select id="setup-cobalt-quality">
+                <option value="max">Maximum</option>
+                <option value="4320">4320p</option>
+                <option value="2160">2160p</option>
+                <option value="1440">1440p</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+                <option value="360">360p</option>
+                <option value="240">240p</option>
+                <option value="144">144p</option>
+              </select>
+            </label>
+            <label class="setup-field">
+              <span>Codec</span>
+              <select id="setup-cobalt-codec">
+                <option value="h264">H.264 · compatible</option>
+                <option value="av1">AV1 · smaller</option>
+                <option value="vp9">VP9 · WebM</option>
+              </select>
+            </label>
+          </div>
+          <label class="setup-field">
+            <span>Local processing</span>
+            <select id="setup-cobalt-local">
+              <option value="preferred">Preferred · cobalt decides</option>
+              <option value="forced">Forced · merge with local ffmpeg</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="setup-cobalt-fallback" type="checkbox">
+            <span class="check-box"></span>
+            <span class="check-copy"><strong>Fallback after yt-dlp</strong><small>only on yt-dlp failure</small></span>
+          </label>
+          <div class="setup-actions setup-ingest-actions">
+            <button id="setup-test-cobalt" class="ghost small" type="button">Test Cobalt</button>
+            <span class="setup-hint">Uses saved settings.</span>
+          </div>
+          <p id="setup-cobalt-detail" class="setup-hint"></p>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>RedNote · XHS</h3>
+            <span id="setup-xhs-status" class="setup-chip">Not checked</span>
+          </div>
+          <p class="setup-hint">RedNote needs a signed-in <code>xhs_get</code> session. The cookie stays in xhs_get; VibeCut never stores or reads it. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <label class="setup-field">
+            <span>Service URL</span>
+            <input id="setup-xhs-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:5789">
+          </label>
+          <label class="setup-field">
+            <span>Access token · friends mode</span>
+            <input id="setup-xhs-token" type="password" autocomplete="off" spellcheck="false" placeholder="not set">
+          </label>
+          <label class="setup-field">
+            <span>Cookie · one-shot handoff</span>
+            <input id="setup-xhs-cookie" type="password" autocomplete="off" spellcheck="false" placeholder="paste full Cookie header: web_session=…; a1=…; …">
+          </label>
+          <div class="setup-inline">
+            <label class="setup-check"><input id="setup-xhs-no-record" type="checkbox" checked> Fresh download · skip history</label>
+            <label class="setup-field setup-inline-field">
+              <span>Interval · seconds</span>
+              <input id="setup-xhs-interval" type="number" min="0" step="0.5" value="12">
+            </label>
+          </div>
+          <div class="setup-actions setup-ingest-actions">
+            <button id="setup-xhs-open" class="ghost small" type="button">Open sign-in</button>
+            <button id="setup-xhs-invite" class="ghost small" type="button">Copy login link</button>
+            <button id="setup-xhs-copy" class="ghost small" type="button">Copy service URL</button>
+            <button id="setup-xhs-check" class="ghost small" type="button">Check session</button>
+            <button id="setup-xhs-send-cookie" class="ghost small" type="button">Send cookie</button>
+            <button id="setup-test-xhs" class="ghost small" type="button">Test XHS</button>
+          </div>
+          <p id="setup-xhs-detail" class="setup-hint">Open sign-in, scan the QR code in xhs_get, then Check session.</p>
         </section>
 
         <section class="setup-section">

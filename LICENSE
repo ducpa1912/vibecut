@@ -1,0 +1,10 @@
+Copyright (c) 2026 VibeCut. All rights reserved.
+
+VibeCut is proprietary software. No license or permission is granted to use,
+copy, modify, distribute, sublicense, or sell this software or its source code
+except under a separate written agreement with the copyright holder.
+
+Third-party components remain under their own licenses. See
+THIRD_PARTY_NOTICES.md and docs/licensing.md before distributing a build.
+Cobalt and xhs_get are optional, separate processes and are not part of this
+proprietary source tree.

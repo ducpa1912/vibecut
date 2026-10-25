@@ -37,7 +37,49 @@
     setupTestTts: $("#setup-test-tts"),
     setupTestTtsLive: $("#setup-test-tts-live"),
     setupTtsAudio: $("#setup-tts-audio"),
+    setupIngestProvider: $("#setup-ingest-provider"),
+    setupYtdlpStatus: $("#setup-ytdlp-status"),
+    setupYtdlpQuality: $("#setup-ytdlp-quality"),
+    setupYtdlpCodec: $("#setup-ytdlp-codec"),
+    setupYtdlpContainer: $("#setup-ytdlp-container"),
+    setupYtdlpAudio: $("#setup-ytdlp-audio"),
+    setupYtdlpCookies: $("#setup-ytdlp-cookies"),
+    setupYtdlpBrowser: $("#setup-ytdlp-browser"),
+    setupYtdlpBrowserField: $("#setup-ytdlp-browser-field"),
+    setupYtdlpCookieFile: $("#setup-ytdlp-cookie-file"),
+    setupYtdlpFileField: $("#setup-ytdlp-file-field"),
+    setupYtdlpDetail: $("#setup-ytdlp-detail"),
+    setupTestYtdlp: $("#setup-test-ytdlp"),
+    setupCobaltStatus: $("#setup-cobalt-status"),
+    setupCobaltUrl: $("#setup-cobalt-url"),
+    setupCobaltKey: $("#setup-cobalt-key"),
+    setupCobaltQuality: $("#setup-cobalt-quality"),
+    setupCobaltCodec: $("#setup-cobalt-codec"),
+    setupCobaltLocal: $("#setup-cobalt-local"),
+    setupCobaltFallback: $("#setup-cobalt-fallback"),
+    setupCobaltDetail: $("#setup-cobalt-detail"),
+    setupTestCobalt: $("#setup-test-cobalt"),
+    setupXhsStatus: $("#setup-xhs-status"),
+    setupXhsUrl: $("#setup-xhs-url"),
+    setupXhsToken: $("#setup-xhs-token"),
+    setupXhsNoRecord: $("#setup-xhs-no-record"),
+    setupXhsInterval: $("#setup-xhs-interval"),
+    setupXhsDetail: $("#setup-xhs-detail"),
+    setupXhsOpen: $("#setup-xhs-open"),
+    setupXhsCopy: $("#setup-xhs-copy"),
+    setupXhsInvite: $("#setup-xhs-invite"),
+    setupXhsCheck: $("#setup-xhs-check"),
+    setupXhsCookie: $("#setup-xhs-cookie"),
+    setupXhsSendCookie: $("#setup-xhs-send-cookie"),
+    setupTestXhs: $("#setup-test-xhs"),
     dropzone: $("#dropzone"),
+    urlForm: $("#url-form"),
+    urlInput: $("#url-input"),
+    urlGet: $("#url-get"),
+    urlHint: $("#url-hint"),
+    urlProviderLabel: $("#url-provider-label"),
+    urlStatus: $("#url-status"),
+    urlError: $("#url-error"),
     fileInput: $("#file-input"),
     fileCard: $("#file-card"),
     fileName: $("#file-name"),
@@ -62,6 +104,7 @@
     stages: $("#stages"),
     progressError: $("#progress-error"),
     progressBack: $("#progress-back"),
+    progressCancelUrl: $("#progress-cancel-url"),
     resultTitle: $("#result-title"),
     resultMeta: $("#result-meta"),
     usageReadout: $("#usage-readout"),
@@ -92,6 +135,8 @@
     transcriptToggle: $("#transcript-toggle"),
     transcriptPanel: $("#transcript-panel"),
     planWhy: $("#plan-why"),
+    planReasoning: $("#plan-reasoning"),
+    planReasoningBody: $("#plan-reasoning-body"),
     timeline: $("#timeline"),
     timelineDrop: $("#timeline-drop"),
     momentsSection: $("#moments-section"),
@@ -178,6 +223,7 @@
     recentSection: $("#recent-section"),
     recent: $("#recent"),
     recentCount: $("#recent-count"),
+    recentError: $("#recent-error"),
     historyPanel: $("#history-panel"),
     historyCount: $("#history-count"),
     historyList: $("#history-list"),
@@ -193,6 +239,11 @@
     localPath: null,
     meta: null,
     fileName: "",
+    urlBusy: false,
+    urlButtonLabel: "",
+    urlInspect: null,
+    urlInspectUrl: "",
+    ingestStatus: null,
     job: null,
     plan: null,
     target: 30,
@@ -229,6 +280,8 @@
     lastScript: null,
     history: [],
     historyEntry: null,
+    recentJobs: [],
+    recentSelectedId: "",
     showLiteral: false,
     order: "source",
     preset: "",
@@ -248,12 +301,15 @@
     pollTimer: null,
     pollStart: null,
     toastTimer: null,
+    ingestJob: null,
+    cancelRequested: false,
   };
 
   init();
 
   function init() {
     bind();
+    updateUrlState();
     loadHealth();
     loadRecent();
     loadSetup(true);
@@ -277,6 +333,13 @@
       ? "configured · leave blank to keep"
       : (input.dataset.empty || "not set");
     input.dataset.configured = configured ? "1" : "0";
+  }
+
+  function syncYtdlpCookieFields() {
+    if (!dom.setupYtdlpCookies) return;
+    const mode = dom.setupYtdlpCookies.value;
+    if (dom.setupYtdlpBrowserField) dom.setupYtdlpBrowserField.hidden = mode !== "browser";
+    if (dom.setupYtdlpFileField) dom.setupYtdlpFileField.hidden = mode !== "file";
   }
 
   function applySetup(data) {
@@ -311,10 +374,53 @@
     fillSelect(dom.setupSttModel, modelOptions);
     dom.setupSttModel.value = (settings.stt || {}).model || "mlx-community/whisper-small-mlx";
     dom.setupTtsProvider.value = (settings.tts || {}).provider || "auto";
+    const ingest = settings.ingest || {};
+    dom.setupIngestProvider.value = ["auto", "ytdlp", "cobalt", "xhs"].includes(ingest.provider)
+      ? ingest.provider : "auto";
+    if (dom.urlProviderLabel) {
+      dom.urlProviderLabel.textContent = `provider ${{
+        auto: "auto",
+        ytdlp: "yt-dlp",
+        cobalt: "Cobalt",
+        xhs: "XHS",
+      }[dom.setupIngestProvider.value] || "auto"}`;
+    }
+    dom.setupYtdlpQuality.value = ["max", "2160", "1440", "1080", "720", "480", "360"].includes(ingest.ytdlp_quality)
+      ? ingest.ytdlp_quality : "max";
+    dom.setupYtdlpCodec.value = ingest.ytdlp_codec === "any" ? "any" : "h264";
+    dom.setupYtdlpContainer.value = ["mp4", "mkv", "webm"].includes(ingest.ytdlp_container)
+      ? ingest.ytdlp_container : "mp4";
+    dom.setupYtdlpAudio.value = ["best", "192", "128"].includes(ingest.ytdlp_audio)
+      ? ingest.ytdlp_audio : "best";
+    dom.setupYtdlpCookies.value = ["none", "browser", "file"].includes(ingest.ytdlp_cookies)
+      ? ingest.ytdlp_cookies : "none";
+    dom.setupYtdlpBrowser.value = ["safari", "chrome", "chromium", "firefox", "edge", "brave", "opera", "vivaldi", "whale"].includes(ingest.ytdlp_browser)
+      ? ingest.ytdlp_browser : "safari";
+    dom.setupYtdlpCookieFile.value = ingest.ytdlp_cookie_file || "";
+    syncYtdlpCookieFields();
+    dom.setupCobaltUrl.value = ingest.cobalt_url || "";
+    dom.setupCobaltQuality.value = ["max", "4320", "2160", "1440", "1080", "720", "480", "360", "240", "144"].includes(ingest.cobalt_quality)
+      ? ingest.cobalt_quality : "1080";
+    dom.setupCobaltCodec.value = ["h264", "av1", "vp9"].includes(ingest.cobalt_codec)
+      ? ingest.cobalt_codec : "h264";
+    dom.setupCobaltLocal.value = ingest.cobalt_local_processing === "forced" ? "forced" : "preferred";
+    dom.setupCobaltFallback.checked = ingest.cobalt_fallback === true;
+    dom.setupXhsUrl.value = ingest.xhs_url || "";
+    dom.setupXhsNoRecord.checked = ingest.xhs_no_record !== false;
+    dom.setupXhsInterval.value = ingest.xhs_interval ?? 12;
     setSecretHint(dom.setupOpencodeKey, !!secrets.opencode, sources.opencode);
     setSecretHint(dom.setupOpenrouterKey, !!secrets.openrouter, sources.openrouter, true);
     setSecretHint(dom.setupMinimaxKey, !!secrets.minimax, sources.minimax);
-    [dom.setupOpencodeKey, dom.setupOpenrouterKey, dom.setupMinimaxKey].forEach((input) => {
+    setSecretHint(dom.setupCobaltKey, !!secrets.cobalt, sources.cobalt);
+    setSecretHint(dom.setupXhsToken, !!secrets.xhs, sources.xhs);
+    [
+      dom.setupOpencodeKey,
+      dom.setupOpenrouterKey,
+      dom.setupMinimaxKey,
+      dom.setupCobaltKey,
+      dom.setupXhsToken,
+      dom.setupXhsCookie,
+    ].forEach((input) => {
       if (input) input.value = "";
     });
     state.setup = settings;
@@ -344,7 +450,7 @@
   async function openSetup() {
     dom.setup.hidden = false;
     dom.setupStatus.textContent = "Loading…";
-    await loadSetup();
+    await Promise.all([loadSetup(), loadIngestStatus()]);
   }
 
   function closeSetup() {
@@ -356,6 +462,8 @@
       opencode: dom.setupOpencodeKey.value.trim(),
       openrouter: dom.setupOpenrouterKey.value.trim(),
       minimax: dom.setupMinimaxKey.value.trim(),
+      cobalt: dom.setupCobaltKey.value.trim(),
+      xhs: dom.setupXhsToken.value.trim(),
     };
     return Object.fromEntries(Object.entries(values).filter(([, value]) => value));
   }
@@ -363,6 +471,7 @@
   async function saveSetup() {
     dom.setupSave.disabled = true;
     dom.setupStatus.textContent = "Saving…";
+    const pendingXhsCookie = dom.setupXhsCookie.value.trim();
     try {
       const payload = {
         settings: {
@@ -383,6 +492,24 @@
             model: dom.setupSttModel.value,
           },
           tts: { provider: dom.setupTtsProvider.value },
+          ingest: {
+            provider: dom.setupIngestProvider.value || "auto",
+            ytdlp_quality: dom.setupYtdlpQuality.value || "max",
+            ytdlp_codec: dom.setupYtdlpCodec.value || "h264",
+            ytdlp_container: dom.setupYtdlpContainer.value || "mp4",
+            ytdlp_audio: dom.setupYtdlpAudio.value || "best",
+            ytdlp_cookies: dom.setupYtdlpCookies.value || "none",
+            ytdlp_browser: dom.setupYtdlpBrowser.value || "safari",
+            ytdlp_cookie_file: dom.setupYtdlpCookieFile.value.trim(),
+            cobalt_url: dom.setupCobaltUrl.value.trim(),
+            cobalt_quality: dom.setupCobaltQuality.value || "1080",
+            cobalt_codec: dom.setupCobaltCodec.value || "h264",
+            cobalt_local_processing: dom.setupCobaltLocal.value || "preferred",
+            cobalt_fallback: dom.setupCobaltFallback.checked,
+            xhs_url: dom.setupXhsUrl.value.trim(),
+            xhs_no_record: dom.setupXhsNoRecord.checked,
+            xhs_interval: readInterval(dom.setupXhsInterval.value, 12),
+          },
         },
         secrets: setupSecrets(),
       };
@@ -390,9 +517,16 @@
         method: "POST",
         body: JSON.stringify(payload),
       });
+      if (pendingXhsCookie) {
+        await api("/api/ingest/xhs/cookie", {
+          method: "POST",
+          body: JSON.stringify({ cookie: pendingXhsCookie }),
+        });
+      }
       applySetup(data);
       dom.setupStatus.textContent = "Saved. Local fallback still active.";
       toast("Setup saved.");
+      await loadIngestStatus(true);
       await loadAudioEngines();
       const preferred = dom.setupTtsProvider.value;
       if (preferred && preferred !== "auto" && preferred !== "local"
@@ -439,6 +573,278 @@
     }
   }
 
+  function setSetupChip(element, text, tone = "", title = "") {
+    if (!element) return;
+    element.textContent = text;
+    element.classList.toggle("ok", tone === "ok");
+    element.classList.toggle("warn", tone === "warn");
+    element.title = title || text;
+  }
+
+  function applyYtdlpStatus(entry) {
+    const value = entry && typeof entry === "object" ? entry : {};
+    const error = String(value.error || "").trim();
+    const version = String(value.version || "").trim();
+    if (value.available === true) {
+      setSetupChip(dom.setupYtdlpStatus, version ? `Ready · ${version}` : "Ready", "ok", error);
+      if (dom.setupYtdlpDetail) {
+        dom.setupYtdlpDetail.textContent = `Native yt-dlp${version ? ` ${version}` : ""} is ready. No sidecar needed.`;
+        dom.setupYtdlpDetail.classList.remove("warn");
+      }
+      return;
+    }
+    setSetupChip(dom.setupYtdlpStatus, value.configured === false ? "Unavailable" : "Not ready", "warn", error);
+    if (dom.setupYtdlpDetail) {
+      dom.setupYtdlpDetail.textContent = error || "Install yt-dlp from requirements.txt.";
+      dom.setupYtdlpDetail.classList.add("warn");
+    }
+  }
+
+  function applyCobaltStatus(entry) {
+    const value = entry && typeof entry === "object" ? entry : {};
+    const error = String(value.error || "").trim();
+    if (value.available === true) {
+      setSetupChip(dom.setupCobaltStatus, "Reachable", "ok", error);
+      if (dom.setupCobaltDetail) {
+        dom.setupCobaltDetail.textContent = "Instance reachable.";
+        dom.setupCobaltDetail.classList.remove("warn");
+      }
+      return;
+    }
+    if (value.configured === false) {
+      setSetupChip(dom.setupCobaltStatus, "Not set", "warn", error);
+    } else if (value.available === false) {
+      setSetupChip(dom.setupCobaltStatus, "Offline", "warn", error);
+    } else {
+      setSetupChip(dom.setupCobaltStatus, "Not checked", "", error);
+    }
+    if (dom.setupCobaltDetail) {
+      dom.setupCobaltDetail.textContent = error || "Set the service URL, then Test Cobalt.";
+      dom.setupCobaltDetail.classList.toggle("warn", !!error);
+    }
+  }
+
+  function applyXhsStatus(entry) {
+    const value = entry && typeof entry === "object" ? entry : {};
+    const session = value.session && typeof value.session === "object" ? value.session : {};
+    const cookieSet = !!(value.cookie_set ?? session.cookie_set);
+    const sessionRaw = value.session_ok !== undefined ? value.session_ok : session.session_ok;
+    const sessionOk = sessionRaw === true ? true : sessionRaw === false ? false : null;
+    const user = String(value.user || session.user || "").trim();
+    const error = String(value.error || "").trim();
+    const tokenProblem = /token/i.test(error)
+      && /(missing|invalid|required|not set|unauthori[sz]ed|forbidden|401|403)/i.test(error);
+    const offline = /not reachable|connection refused|unreachable|timed? out|network|failed to connect|start xhs/i.test(error);
+    const configured = value.configured !== false
+      && !!(value.service_url || value.configured || value.id || value.label);
+    let text = "Not checked";
+    let tone = "";
+    let detail = "Open sign-in, scan the QR code in xhs_get, then Check session.";
+
+    if (value.available === true) {
+      text = sessionOk === false ? "Session expired" : cookieSet ? "Cookie set · signed in" : "Reachable";
+      tone = sessionOk === false ? "warn" : "ok";
+      detail = user
+        ? `Signed in to xhs_get as ${user}. The cookie stays in xhs_get.`
+        : "Cookie set in xhs_get. VibeCut never stores it.";
+    } else if (configured === false) {
+      text = "Not set";
+      tone = "warn";
+      detail = error || "Set the XHS service URL, then save.";
+    } else if (error || value.available === false) {
+      if (tokenProblem) text = "Needs token";
+      else if (offline) text = "Offline";
+      else if (!cookieSet) text = "No cookie";
+      else if (sessionOk === false) text = "Session expired";
+      else text = "Offline";
+      tone = "warn";
+      detail = error || (cookieSet
+        ? "xhs_get is not reachable. Check the service URL."
+        : "No signed-in cookie. Use Open sign-in, then Check session.");
+    }
+
+    setSetupChip(dom.setupXhsStatus, text, tone, error);
+    if (dom.setupXhsDetail) {
+      dom.setupXhsDetail.textContent = detail;
+      dom.setupXhsDetail.classList.toggle("warn", tone === "warn");
+    }
+  }
+
+  function applyIngestStatus(data) {
+    state.ingestStatus = data || null;
+    const providers = data && typeof data === "object" ? (data.providers || data) : {};
+    if (providers.ytdlp) applyYtdlpStatus(providers.ytdlp);
+    if (providers.cobalt) applyCobaltStatus(providers.cobalt);
+    if (providers.xhs) applyXhsStatus(providers.xhs);
+  }
+
+  async function loadIngestStatus(quiet = false) {
+    try {
+      const data = await api("/api/ingest/status");
+      applyIngestStatus(data);
+      return data;
+    } catch (error) {
+      setSetupChip(dom.setupYtdlpStatus, "Status unavailable", "warn", error.message);
+      setSetupChip(dom.setupCobaltStatus, "Status unavailable", "warn", error.message);
+      setSetupChip(dom.setupXhsStatus, "Status unavailable", "warn", error.message);
+      if (!quiet && dom.setupStatus) dom.setupStatus.textContent = error.message;
+      return null;
+    }
+  }
+
+  async function testIngest(kind, button) {
+    const old = button.textContent;
+    button.disabled = true;
+    button.textContent = "Testing…";
+    dom.setupStatus.textContent = "";
+    try {
+      const result = await api("/api/settings/test", {
+        method: "POST",
+        body: JSON.stringify({ kind }),
+      });
+      if (kind === "ytdlp") {
+        applyYtdlpStatus(result.status || result);
+      } else if (kind === "cobalt") {
+        applyCobaltStatus(result);
+      } else {
+        applyXhsStatus(result);
+      }
+      const seconds = result.seconds !== undefined ? ` · ${result.seconds}s` : "";
+      dom.setupStatus.textContent = `${result.detail || (result.ok ? "Reachable." : "Not ready.")}${seconds}`;
+      toast(result.ok
+        ? `${result.label || kind} is reachable.`
+        : `${result.label || kind} is not ready.`);
+    } catch (error) {
+      dom.setupStatus.textContent = error.message;
+      if (kind === "ytdlp") {
+        setSetupChip(dom.setupYtdlpStatus, "Unavailable", "warn", error.message);
+        if (dom.setupYtdlpDetail) dom.setupYtdlpDetail.textContent = error.message;
+      } else if (kind === "cobalt") {
+        setSetupChip(dom.setupCobaltStatus, "Offline", "warn", error.message);
+        if (dom.setupCobaltDetail) dom.setupCobaltDetail.textContent = error.message;
+      } else {
+        setSetupChip(dom.setupXhsStatus, "Offline", "warn", error.message);
+        if (dom.setupXhsDetail) dom.setupXhsDetail.textContent = error.message;
+      }
+    } finally {
+      button.disabled = false;
+      button.textContent = old;
+    }
+  }
+
+  async function sendXhsCookie() {
+    const cookie = dom.setupXhsCookie.value.trim();
+    if (!cookie) {
+      dom.setupXhsDetail.textContent = "Paste a RedNote cookie first.";
+      return;
+    }
+    dom.setupXhsSendCookie.disabled = true;
+    dom.setupXhsDetail.textContent = "Sending cookie to xhs_get…";
+    try {
+      await api("/api/ingest/xhs/cookie", {
+        method: "POST",
+        body: JSON.stringify({
+          cookie,
+          url: dom.setupXhsUrl.value.trim(),
+          token: dom.setupXhsToken.value.trim(),
+        }),
+      });
+      dom.setupXhsCookie.value = "";
+      dom.setupXhsDetail.textContent = "Cookie accepted by xhs_get. Checking session…";
+      await checkXhsSession(dom.setupXhsCheck);
+    } catch (error) {
+      dom.setupXhsDetail.textContent = error.message;
+    } finally {
+      dom.setupXhsSendCookie.disabled = false;
+    }
+  }
+
+  async function checkXhsSession(button) {
+    const old = button.textContent;
+    button.disabled = true;
+    button.textContent = "Checking…";
+    dom.setupStatus.textContent = "";
+    try {
+      const data = await api("/api/ingest/xhs/check", {
+        method: "POST",
+        body: JSON.stringify({
+          url: dom.setupXhsUrl.value.trim(),
+          token: dom.setupXhsToken.value.trim(),
+        }),
+      });
+      const xhs = data.status || {};
+      dom.setupStatus.textContent = xhs.available
+        ? "XHS session is ready."
+        : (xhs.error || "XHS is not ready. Open sign-in, then retry.");
+    } finally {
+      button.disabled = false;
+      button.textContent = old;
+    }
+  }
+
+  function xhsServiceUrl() {
+    const saved = state.ingestStatus?.providers?.xhs?.service_url
+      || state.ingestStatus?.xhs?.service_url
+      || "";
+    return httpUrl(dom.setupXhsUrl.value) || httpUrl(saved);
+  }
+
+  async function xhsLoginUrl() {
+    const fallback = xhsServiceUrl();
+    if (!fallback) return "";
+    try {
+      const data = await api("/api/ingest/xhs/invite", {
+        method: "POST",
+        body: JSON.stringify({
+          url: dom.setupXhsUrl.value.trim(),
+          token: dom.setupXhsToken.value.trim(),
+        }),
+      });
+      return httpUrl(data.url) || fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  async function openXhsSignIn() {
+    const url = await xhsLoginUrl();
+    if (!url) {
+      dom.setupStatus.textContent = "Set the XHS / RedNote service URL first.";
+      dom.setupXhsUrl.focus();
+      return;
+    }
+    window.open(url, "_blank", "noopener");
+  }
+
+  async function copyXhsInvite() {
+    const url = await xhsLoginUrl();
+    if (!url) {
+      dom.setupXhsDetail.textContent = "Set the XHS / RedNote service URL first.";
+      return;
+    }
+    copyText(url, "XHS login link copied.");
+  }
+
+  function copyXhsServiceUrl() {
+    copyText(xhsServiceUrl(), "XHS service URL copied.");
+  }
+
+  function httpUrl(value) {
+    try {
+      const parsed = new URL(String(value || "").trim());
+      return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function readInterval(value, fallback) {
+    const text = String(value ?? "").trim();
+    if (!text) return fallback;
+    const number = Number(text);
+    return Number.isFinite(number) && number >= 0 ? number : fallback;
+  }
+
   function bindSetup() {
     dom.setupOpen.addEventListener("click", openSetup);
     dom.setupClose.addEventListener("click", closeSetup);
@@ -456,6 +862,15 @@
     dom.setupTestTtsLive.addEventListener("click", () => testSetup(
       "tts_live", dom.setupTestTtsLive, { engine: dom.setupTtsProvider.value },
     ));
+    dom.setupTestYtdlp.addEventListener("click", () => testIngest("ytdlp", dom.setupTestYtdlp));
+    dom.setupYtdlpCookies.addEventListener("change", syncYtdlpCookieFields);
+    dom.setupTestCobalt.addEventListener("click", () => testIngest("cobalt", dom.setupTestCobalt));
+    dom.setupTestXhs.addEventListener("click", () => testIngest("xhs", dom.setupTestXhs));
+    dom.setupXhsCheck.addEventListener("click", () => checkXhsSession(dom.setupXhsCheck));
+    dom.setupXhsSendCookie.addEventListener("click", sendXhsCookie);
+    dom.setupXhsOpen.addEventListener("click", openXhsSignIn);
+    dom.setupXhsCopy.addEventListener("click", copyXhsServiceUrl);
+    dom.setupXhsInvite.addEventListener("click", copyXhsInvite);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !dom.setup.hidden) closeSetup();
     });
@@ -558,38 +973,136 @@
     }
   }
 
+  const LIVE_JOB_STATUS = new Set(["queued", "downloading", "scanning", "reading", "scoring"]);
+
   async function loadRecent() {
     try {
       const data = await api("/api/jobs");
       const jobs = data.jobs || [];
+      state.recentJobs = jobs;
+      if (state.job?.id) state.recentSelectedId = state.job.id;
+      if (state.recentSelectedId && !jobs.some((job) => job.id === state.recentSelectedId)) {
+        state.recentSelectedId = "";
+      }
+      clearRecentError();
       if (!jobs.length) {
         dom.recentSection.hidden = true;
+        dom.recentCount.textContent = "";
+        dom.recent.innerHTML = "";
         return;
       }
       dom.recentSection.hidden = false;
       dom.recentCount.textContent = `${jobs.length} local`;
-      dom.recent.innerHTML = jobs.map((job) => {
-        const status = job.status === "ready"
-          ? "ready"
-          : job.status === "failed"
-            ? "failed"
-            : `${Math.round((job.progress || 0) * 100)}%`;
-        const thumb = job.hook_thumb
-          ? `<img src="${esc(job.hook_thumb)}" alt="" loading="lazy">`
-          : `<div class="empty">${job.scene_count ? `${job.scene_count} scenes` : "working"}</div>`;
-        return `
-          <button class="recent-card" data-id="${esc(job.id)}">
-            <div class="recent-thumb">${thumb}</div>
-            <div class="recent-copy">
-              <strong title="${esc(job.name || "Untitled video")}">${esc(job.name || "Untitled video")}</strong>
-              <span>${esc(fmtDuration(job.duration))} · ${esc(formatDate(job.created))}</span>
-            </div>
-            <div class="recent-status"><span>${esc(job.scene_count ? `${job.scene_count} scenes` : job.message || "queued")}</span><span class="dot">${esc(status)}</span></div>
-          </button>`;
-      }).join("");
+      dom.recent.innerHTML = jobs.map(recentCard).join("");
     } catch (_) {
+      state.recentJobs = [];
       dom.recentSection.hidden = true;
+      dom.recentCount.textContent = "";
     }
+  }
+
+  function recentCard(job) {
+    const name = job.name || "Untitled video";
+    const selected = state.recentSelectedId === job.id || state.job?.id === job.id;
+    const failed = job.status === "failed";
+    const progress = Math.max(0, Math.min(1, Number(job.progress) || 0));
+    const status = job.status === "ready"
+      ? "ready"
+      : failed
+        ? "failed"
+        : job.status === "downloading"
+          ? "downloading"
+          : job.status === "queued"
+            ? "queued"
+            : `${Math.round(progress * 100)}%`;
+    const statusText = failed
+      ? job.message || "Ingest failed"
+      : job.scene_count
+        ? `${job.scene_count} scenes`
+        : job.message || (job.status === "ready" ? "ready" : "queued");
+    const error = String(job.error || job.ingest_error || (failed ? job.message : "") || "").trim();
+    const provider = job.provider_label || job.provider || "";
+    const meta = [fmtDuration(job.duration), formatDate(job.created), provider].filter(Boolean);
+    const blocked = LIVE_JOB_STATUS.has(job.status);
+    const blockReason = job.status === "downloading"
+      ? "Cancel download first."
+      : blocked ? "This job is still working." : "";
+    const deleteLabel = blockReason ? `Delete ${name}: ${blockReason}` : `Delete ${name}`;
+    const thumb = job.hook_thumb
+      ? `<img src="${esc(withToken(job.hook_thumb))}" alt="" loading="lazy">`
+      : `<span class="empty">${job.scene_count ? `${job.scene_count} scenes` : "working"}</span>`;
+    return `
+      <div class="recent-item">
+        <button type="button" class="recent-card${selected ? " selected" : ""}" data-id="${esc(job.id)}" aria-pressed="${selected ? "true" : "false"}">
+          <span class="recent-thumb">${thumb}</span>
+          <span class="recent-copy">
+            <strong title="${esc(name)}">${esc(name)}</strong>
+            <span>${meta.map(esc).join(" · ")}</span>
+          </span>
+          <span class="recent-status">
+            <span class="recent-status-text">${esc(statusText)}</span>
+            <span class="dot${failed ? " failed" : blocked ? " live" : ""}">${esc(status)}</span>
+          </span>
+          ${error ? `<span class="recent-error" title="${esc(error)}">${esc(error)}</span>` : ""}
+        </button>
+        <button type="button" class="recent-delete" data-delete-id="${esc(job.id)}"
+          ${blockReason ? `data-delete-blocked="${esc(blockReason)}" aria-disabled="true"` : ""}
+          aria-label="${esc(deleteLabel)}" title="${esc(blockReason || deleteLabel)}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+        </button>
+      </div>`;
+  }
+
+  function syncRecentSelection(id) {
+    state.recentSelectedId = id || "";
+    $$(".recent-card", dom.recent).forEach((card) => {
+      const selected = card.dataset.id === id;
+      card.classList.toggle("selected", selected);
+      card.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+  }
+
+  async function deleteRecentJob(id, button) {
+    const job = state.recentJobs.find((item) => item.id === id);
+    if (!job) return;
+    const name = job.name || "this cut";
+    if (!confirm(`Delete “${name}” and its rendered reels?`)) return;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    clearRecentError();
+    try {
+      await api(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (state.job?.id === id) {
+        state.recentSelectedId = "";
+        resetToIngest();
+      } else {
+        await loadRecent();
+      }
+      toast("Job deleted.");
+    } catch (error) {
+      const message = error.message || "Could not delete this cut.";
+      showRecentError(message);
+      toast(message);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
+    }
+  }
+
+  function showRecentError(message) {
+    if (!dom.recentError) return;
+    dom.recentError.textContent = message || "Could not delete this cut.";
+    dom.recentError.hidden = false;
+  }
+
+  function clearRecentError() {
+    if (!dom.recentError) return;
+    dom.recentError.textContent = "";
+    dom.recentError.hidden = true;
   }
 
   // ---------------------------------------------------------------- events
@@ -633,9 +1146,26 @@
     dom.pathInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") inspectPath();
     });
+    dom.urlForm.addEventListener("submit", submitUrl);
+    dom.urlInput.addEventListener("input", () => {
+      if (state.urlInspect && dom.urlInput.value.trim() !== state.urlInspectUrl) {
+        resetUrlInspect();
+      }
+    });
     dom.analyze.addEventListener("click", startAnalysis);
     dom.optCrop.addEventListener("change", syncOptions);
     dom.progressBack.addEventListener("click", resetToIngest);
+    dom.progressCancelUrl.addEventListener("click", async () => {
+      if (!state.ingestJob) return;
+      state.cancelRequested = true;
+      dom.progressCancelUrl.disabled = true;
+      dom.progressCancelUrl.textContent = "Cancelling…";
+      try {
+        await api(`/api/jobs/${state.ingestJob}/url/cancel`, { method: "POST" });
+      } catch (error) {
+        showProgressError(error.message);
+      }
+    });
     dom.newVideo.addEventListener("click", resetToIngest);
     dom.deleteJob.addEventListener("click", deleteJob);
     dom.cleanJob.addEventListener("click", cleanJobFiles);
@@ -907,8 +1437,24 @@
       });
     });
     dom.recent.addEventListener("click", (event) => {
+      const remove = event.target.closest("[data-delete-id]");
+      if (remove) {
+        event.preventDefault();
+        event.stopPropagation();
+        const blocked = remove.dataset.deleteBlocked || "";
+        if (blocked) {
+          showRecentError(blocked);
+          toast(blocked);
+          return;
+        }
+        deleteRecentJob(remove.dataset.deleteId, remove);
+        return;
+      }
       const card = event.target.closest("[data-id]");
-      if (card) openJob(card.dataset.id);
+      if (card) {
+        syncRecentSelection(card.dataset.id);
+        openJob(card.dataset.id);
+      }
     });
     dom.historyList.addEventListener("click", (event) => {
       const row = event.target.closest("[data-history-entry]");
@@ -1031,6 +1577,7 @@
     state.meta = null;
     state.fileName = file.name;
     dom.ingestError.hidden = true;
+    resetUrlInspect();
     dom.dropzone.hidden = true;
     dom.fileCard.hidden = false;
     dom.fileName.textContent = file.name;
@@ -1105,6 +1652,7 @@
         method: "POST",
         body: JSON.stringify({ path }),
       });
+      resetUrlInspect();
       state.file = null;
       state.localPath = path;
       state.meta = meta;
@@ -1187,6 +1735,282 @@
 
   function updateAnalyzeState() {
     dom.analyze.disabled = state.busy || (!state.file && !state.localPath);
+    updateUrlState();
+  }
+
+  // ---------------------------------------------------------------- url ingest
+
+  const URL_HINT_DEFAULT = "yt-dlp for most sites · XHS / RedNote for share links.";
+
+  function ingestLabel(provider, label) {
+    if (label) return label;
+    if (provider === "ytdlp") return "yt-dlp";
+    if (provider === "xhs") return "XHS / RedNote";
+    if (provider === "cobalt") return "Cobalt";
+    return "yt-dlp";
+  }
+
+  function resetUrlHint() {
+    dom.urlHint.textContent = URL_HINT_DEFAULT;
+    dom.urlHint.removeAttribute("data-provider");
+  }
+
+  function setUrlBusy(busy, label = "") {
+    state.urlBusy = busy;
+    state.urlButtonLabel = busy ? label : "";
+    updateUrlState();
+  }
+
+  function updateUrlState() {
+    const busy = state.busy || state.urlBusy;
+    dom.urlInput.disabled = busy;
+    dom.urlGet.disabled = busy;
+    dom.urlGet.textContent = state.urlBusy ? (state.urlButtonLabel || "Working…") : "Get video";
+    dom.urlForm.classList.toggle("busy", busy);
+    dom.urlForm.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  function resetUrlInspect() {
+    state.urlInspect = null;
+    state.urlInspectUrl = "";
+    dom.urlStatus.hidden = true;
+    dom.urlStatus.replaceChildren();
+    dom.urlError.hidden = true;
+    dom.urlError.textContent = "";
+    resetUrlHint();
+  }
+
+  function showUrlError(message) {
+    dom.urlError.textContent = message || "Could not use this link.";
+    dom.urlError.hidden = false;
+  }
+
+  function showUrlLines(lines) {
+    dom.urlStatus.replaceChildren();
+    const items = (lines || []).filter((line) => line && line.text);
+    if (!items.length) {
+      dom.urlStatus.hidden = true;
+      return;
+    }
+    items.forEach((line) => {
+      const row = document.createElement("div");
+      row.className = `url-status-line ${line.tone || ""}`.trim();
+      row.textContent = line.text;
+      dom.urlStatus.append(row);
+    });
+    dom.urlStatus.hidden = false;
+  }
+
+  function showUrlChoices(choices, inspected) {
+    if (!Array.isArray(choices) || !choices.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "url-choices";
+    const heading = document.createElement("p");
+    heading.className = "url-choices-title";
+    heading.textContent = `Choose one of ${choices.length} videos`;
+    wrap.append(heading);
+    choices.forEach((choice, index) => {
+      if (!choice || !choice.url) return;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "url-choice";
+      const title = document.createElement("strong");
+      title.textContent = choice.title || `Video ${index + 1}`;
+      const meta = document.createElement("span");
+      const bits = [];
+      if (choice.uploader) bits.push(choice.uploader);
+      if (Number(choice.duration)) bits.push(fmtDuration(choice.duration));
+      meta.textContent = bits.join(" · ") || urlHost(choice.url);
+      button.append(title, meta);
+      button.addEventListener("click", () => startUrlChoice(choice, inspected));
+      wrap.append(button);
+    });
+    dom.urlStatus.append(wrap);
+    dom.urlStatus.hidden = false;
+  }
+
+  async function startUrlChoice(choice, inspected) {
+    if (!choice?.url || state.urlBusy || state.busy) return;
+    const url = choice.url;
+    dom.urlInput.value = url;
+    state.urlInspectUrl = url;
+    setUrlBusy(true, "Starting…");
+    try {
+      const job = await api("/api/jobs/from-url", {
+        method: "POST",
+        body: JSON.stringify({ url, options: readOptions() }),
+      });
+      startUrlJob(job, { ...inspected, title: choice.title || inspected.title }, url);
+    } catch (error) {
+      setUrlBusy(false);
+      showUrlError(error.message);
+    }
+  }
+
+  function tidyWarning(value) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    const seen = new Set();
+    return text
+      .replace(/([.!?])\s+/g, "$1\n")
+      .split("\n")
+      .filter((part) => {
+        const key = part.trim();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .join(" ");
+  }
+
+  function renderUrlInspect(inspected) {
+    const provider = inspected.provider || "ytdlp";
+    const label = ingestLabel(provider, inspected.label);
+    const title = String(inspected.title || "").trim();
+    const duration = Number(inspected.duration);
+    const durationBit = Number.isFinite(duration) && duration > 0 ? ` · ${fmtDuration(duration)}` : "";
+    dom.urlHint.textContent = `${label} · ${title || (provider === "xhs" ? "RedNote share link" : "video link")}${durationBit}`;
+    dom.urlHint.dataset.provider = provider;
+
+    const lines = [];
+    const session = inspected.session && typeof inspected.session === "object"
+      ? inspected.session : {};
+    if (provider === "xhs") {
+      const cookieSet = !!(session.cookie_set ?? inspected.cookie_set);
+      const sessionRaw = session.session_ok !== undefined
+        ? session.session_ok : inspected.session_ok;
+      const sessionOk = sessionRaw === true ? true : sessionRaw === false ? false : null;
+      const user = String(session.user || inspected.user || "").trim();
+      if (cookieSet && sessionOk === false) {
+        lines.push({
+          text: "RedNote session · expired. Sign in again in xhs_get.",
+          tone: "warn",
+        });
+      } else if (cookieSet) {
+        lines.push({
+          text: `RedNote session · signed in${user ? ` as ${user}` : ""}.`,
+          tone: "ok",
+        });
+      } else if (!/cookie|session/i.test(String(inspected.warning || ""))) {
+        lines.push({
+          text: "RedNote session · not verified.",
+          tone: "warn",
+        });
+      }
+    }
+    if (inspected.warning) {
+      lines.push({ text: tidyWarning(inspected.warning), tone: "warn" });
+    } else if (inspected.available === false) {
+      lines.push({
+        text: "This link is not ready. Check Setup and try again.",
+        tone: "error",
+      });
+    }
+    showUrlLines(lines);
+    const choices = Array.isArray(inspected.choices)
+      ? inspected.choices
+      : (Array.isArray(inspected.meta?.choices) ? inspected.meta.choices : []);
+    if (choices.length) {
+      if (!lines.length) dom.urlStatus.hidden = false;
+      showUrlChoices(choices, inspected);
+    }
+  }
+
+  async function submitUrl(event) {
+    event.preventDefault();
+    if (state.urlBusy || state.busy) return;
+    const url = dom.urlInput.value.trim();
+    if (!url) {
+      showUrlError("Paste a video link first.");
+      dom.urlInput.focus();
+      return;
+    }
+    dom.urlError.hidden = true;
+    dom.urlError.textContent = "";
+    dom.urlStatus.hidden = true;
+    dom.urlStatus.replaceChildren();
+    resetUrlHint();
+    state.urlInspect = null;
+    state.urlInspectUrl = "";
+    setUrlBusy(true, "Checking…");
+
+    let inspected;
+    try {
+      inspected = await api("/api/url/inspect", {
+        method: "POST",
+        body: JSON.stringify({ url }),
+      });
+    } catch (error) {
+      setUrlBusy(false);
+      showUrlError(error.message);
+      dom.urlInput.focus();
+      return;
+    }
+
+    state.urlInspect = inspected;
+    state.urlInspectUrl = url;
+    renderUrlInspect(inspected);
+    if (inspected.available === false) {
+      setUrlBusy(false);
+      return;
+    }
+    const meta = inspected.meta && typeof inspected.meta === "object" ? inspected.meta : {};
+    const xhsTokenMissing = (inspected.provider || "") === "xhs" && (
+      (meta.has_xsec_token === false && meta.short_link !== true)
+      || /no xsec_token/i.test(String(inspected.warning || ""))
+    );
+    if (xhsTokenMissing) {
+      setUrlBusy(false);
+      return;
+    }
+    const choices = Array.isArray(inspected.choices)
+      ? inspected.choices
+      : (Array.isArray(meta.choices) ? meta.choices : []);
+    if (inspected.needs_choice || choices.length) {
+      setUrlBusy(false);
+      if (!choices.length) showUrlError("This link contains multiple videos, but no selectable entries were returned.");
+      return;
+    }
+
+    setUrlBusy(true, "Starting…");
+    try {
+      const job = await api("/api/jobs/from-url", {
+        method: "POST",
+        body: JSON.stringify({ url, options: readOptions() }),
+      });
+      startUrlJob(job, inspected, url);
+    } catch (error) {
+      setUrlBusy(false);
+      showUrlError(error.message);
+    }
+  }
+
+  function startUrlJob(job, inspected, url) {
+    const provider = inspected.provider || job.provider || "ytdlp";
+    const label = ingestLabel(provider, inspected.label || job.label);
+    setUrlBusy(false);
+    state.busy = true;
+    state.ingestJob = job.id;
+    state.cancelRequested = false;
+    state.pollStart = Date.now();
+    state.progressStart = Date.now();
+    updateAnalyzeState();
+    showView("progress");
+    setProgressFile(`${label} · ${inspected.title || urlHost(url)}`);
+    updateProgress({
+      status: "downloading",
+      progress: 0,
+      message: "Preparing download",
+    });
+    startAnalysisPoll(job.id);
+  }
+
+  function urlHost(value) {
+    try {
+      return new URL(value).hostname.replace(/^www\./, "") || value;
+    } catch (_) {
+      return value;
+    }
   }
 
   // ---------------------------------------------------------------- analysis
@@ -1196,6 +2020,7 @@
     const options = readOptions();
     dom.ingestError.hidden = true;
     state.busy = true;
+    state.ingestJob = null;
     updateAnalyzeState();
     state.pollStart = Date.now();
     state.progressStart = Date.now();
@@ -1245,11 +2070,15 @@
         updateProgress(status);
         if (status.status === "ready") {
           stopPoll();
+          state.ingestJob = null;
+          state.cancelRequested = false;
           await openJob(id);
           return;
         }
         if (status.status === "failed") {
           stopPoll();
+          state.ingestJob = null;
+          state.cancelRequested = false;
           state.busy = false;
           updateAnalyzeState();
           showProgressError(status.error || status.message || "Analysis failed.");
@@ -1283,8 +2112,16 @@
       dom.progressError.textContent = status.error || status.message || "Analysis failed.";
     }
     dom.progressBack.hidden = status.status !== "failed";
+    if (dom.progressCancelUrl) {
+      const downloading = status.status === "downloading" && !!state.ingestJob;
+      dom.progressCancelUrl.hidden = !downloading;
+      dom.progressCancelUrl.disabled = !!state.cancelRequested;
+      dom.progressCancelUrl.textContent = state.cancelRequested
+        ? "Cancelling…" : "Cancel download";
+    }
 
     const titles = {
+      downloading: "Downloading the video",
       queued: "Queued",
       scanning: "Finding the cuts",
       reading: "Reading the video",
@@ -1372,6 +2209,9 @@
         syncAudioVisibility();
       }
       state.job = job;
+      syncRecentSelection(job.id);
+      state.ingestJob = job.status === "downloading" ? job.id : null;
+      state.cancelRequested = false;
       if (job.status === "ready") {
         prepareResult(job);
       } else if (job.status === "failed") {
@@ -1502,7 +2342,8 @@
     dom.hookImg.style.objectPosition = objectPosition(scene.crop);
     dom.hookTime.textContent = `${fmtTime(scene.start, 1)} – ${fmtTime(scene.end, 1)} · ${scene.dur.toFixed(1)}s`;
     dom.hookCopy.textContent = sceneLine(scene);
-    dom.hookWhy.textContent = state.plan?.hook_why
+    dom.hookWhy.textContent = state.plan?.reasoning?.hook?.headline
+      || state.plan?.hook_why
       || `Picked as the opening: ${sceneLine(scene)}`;
     dom.transcriptToggle.hidden = !state.job?.analysis?.engine?.whisper;
     if (dom.transcriptToggle.hidden) {
@@ -1520,6 +2361,48 @@
     dom.hookCrop.textContent = cropLabel(scene);
   }
 
+  function renderReasoning(plan) {
+    if (!dom.planReasoning || !dom.planReasoningBody) return;
+    const reasoning = plan?.reasoning;
+    if (!reasoning || typeof reasoning !== "object") {
+      dom.planReasoning.hidden = true;
+      dom.planReasoningBody.replaceChildren();
+      return;
+    }
+    dom.planReasoning.hidden = false;
+    dom.planReasoningBody.replaceChildren();
+    const addBlock = (title, lines) => {
+      const items = (lines || []).filter((line) => line && String(line).trim());
+      if (!items.length) return;
+      const block = document.createElement("section");
+      block.className = "reasoning-block";
+      const heading = document.createElement("h4");
+      heading.textContent = title;
+      const list = document.createElement("ul");
+      items.forEach((line) => {
+        const item = document.createElement("li");
+        item.textContent = String(line);
+        list.append(item);
+      });
+      block.append(heading, list);
+      dom.planReasoningBody.append(block);
+    };
+    const hook = reasoning.hook || {};
+    addBlock("Opening", [hook.headline, ...(hook.evidence || [])]);
+    addBlock(
+      "Alternatives",
+      (hook.alternatives || []).map((alternative) => (
+        `Scene ${Number(alternative.scene) + 1}: ${alternative.why_not || "not selected"}`
+      )),
+    );
+    const structure = reasoning.structure || {};
+    addBlock("Structure", [structure.why]);
+    const payoff = reasoning.payoff || {};
+    addBlock("Ending", [payoff.headline, ...(payoff.evidence || [])]);
+    const selection = reasoning.selection || {};
+    addBlock("Selection", [selection.strategy, ...(selection.evidence || [])]);
+  }
+
   function renderPlan() {
     const plan = state.plan;
     if (!plan) return;
@@ -1530,10 +2413,11 @@
     dom.resetHook.hidden = state.overrideHook === null;
     dom.editCut.textContent = state.editMode ? "Editing…" : "Edit cut";
     dom.editBar.hidden = !state.editMode;
-    dom.planWhy.textContent = [
+    dom.planWhy.textContent = plan.reasoning?.summary || [
       plan.hook_why ? `Hook: ${plan.hook_why}` : "",
       plan.payoff_why ? `Payoff: ${plan.payoff_why}` : "",
     ].filter(Boolean).join(" ");
+    renderReasoning(plan);
     if (state.editIndex !== null) {
       state.editIndex = Math.max(0, Math.min(plan.clips.length - 1, state.editIndex));
     }
@@ -1981,10 +2865,82 @@
     window.addEventListener("resize", () => drawMixer());
   }
 
+  function manualPlanReasoning(plan, clips, note) {
+    const target = Number(plan.target) || state.target || 30;
+    const sourceDuration = Number(state.job?.source?.duration) || 0;
+    const total = Math.round(clips.reduce((sum, clip) => sum + (Number(clip.dur) || 0), 0) * 1000) / 1000;
+    const body = clips.filter((clip) => clip.role === "beat");
+    const bodyOrder = body.every((clip, index) => index === 0
+      || Number(clip.start) >= Number(body[index - 1].start));
+    const starts = clips.map((clip) => Number(clip.start) || 0);
+    const ends = clips.map((clip) => Number(clip.end) || 0);
+    const hookScene = clips[0]?.scene;
+    const payoffScene = clips[clips.length - 1]?.scene;
+    const orderText = bodyOrder
+      ? "Bridge beats remain in source order."
+      : "Bridge beats were reordered; source order no longer holds.";
+    return {
+      target,
+      source_duration: sourceDuration,
+      summary: `${note}: ${clips.length} clip${clips.length === 1 ? "" : "s"}, ${total.toFixed(1)}s of a ${target}s target. ${orderText} Automatic hook/payoff scoring does not describe this manual cut.`,
+      hook: {
+        headline: Number.isInteger(hookScene) ? `Manual opening: scene ${hookScene + 1}.` : "Manual opening.",
+        evidence: ["opening clip supplied by the manual edit"],
+        alternatives: [],
+      },
+      structure: {
+        roles: clips.map((clip) => clip.role || "beat"),
+        clip_count: clips.length,
+        beat_count: body.length,
+        body_order: bodyOrder ? "source" : "manual",
+        body_in_source_order: bodyOrder,
+        hook_first: clips[0]?.role === "hook",
+        source_span: clips.length ? { start: Math.min(...starts), end: Math.max(...ends) } : null,
+        why: `${note} controls the clip list. ${orderText} The original automatic hook/payoff explanation is not used.`,
+      },
+      payoff: {
+        headline: Number.isInteger(payoffScene) ? `Manual ending: scene ${payoffScene + 1}.` : "Manual ending.",
+        evidence: ["last clip supplied by the manual edit"],
+        why_late: null,
+        position_pct: null,
+        late_zone_pct: 68,
+        candidates: 0,
+      },
+      selection: {
+        strategy: `${note}: automatic ranking, spacing, and budget claims were replaced by the manual clip list.`,
+        evidence: [
+          `${clips.length} manual clips totalling ${total.toFixed(1)}s`,
+          orderText,
+          "re-run automatic Smart Cut to restore scored reasoning",
+        ],
+        kept: clips.map((clip) => ({
+          scene: clip.scene,
+          role: clip.role || "beat",
+          start: Number(clip.start) || 0,
+          end: Number(clip.end) || 0,
+          dur: Number(clip.dur) || 0,
+          why: clip.why || "",
+          evidence: [],
+        })),
+        target_budget: {
+          target,
+          source_duration: sourceDuration,
+          total,
+          headroom: Math.max(0, target - total),
+          over_target: Math.max(0, total - target),
+        },
+      },
+    };
+  }
+
   function syncEditedPlan() {
     if (!state.plan) return;
-    const clips = state.plan.clips;
+    const clips = state.plan.clips.map((clip) => ({
+      ...clip,
+      why: `Manual ${clip.role || "clip"}: ${(Number(clip.dur) || 0).toFixed(1)}s at ${(Number(clip.start) || 0).toFixed(1)}s.`,
+    }));
     const total = Math.round(clips.reduce((sum, clip) => sum + clip.dur, 0) * 1000) / 1000;
+    const reasoning = manualPlanReasoning(state.plan, clips, "Manual edit");
     state.plan = {
       ...state.plan,
       clips,
@@ -1993,6 +2949,9 @@
       hook_scene: clips.length ? clips[0].scene : state.plan.hook_scene,
       auto: false,
       note: "Manual edit",
+      reasoning,
+      hook_why: reasoning.hook.headline,
+      payoff_why: reasoning.payoff.headline,
     };
     state.edited = true;
     state.scriptId = null;
@@ -2169,7 +3128,10 @@
   async function loadVariant(variantId) {
     const variant = (state.job?.variants || []).find((item) => item.id === variantId);
     if (!variant) return;
-    const clips = variant.clips.map((clip) => ({ ...clip }));
+    const clips = variant.clips.map((clip) => ({
+      ...clip,
+      why: `Manual ${clip.role || "clip"}: ${(Number(clip.dur) || 0).toFixed(1)}s at ${(Number(clip.start) || 0).toFixed(1)}s.`,
+    }));
     normalizePlanRoles(clips);
     const target = [15, 30, 60].includes(Number(variant.target)) ? Number(variant.target) : state.target;
     state.target = target;
@@ -2191,6 +3153,10 @@
       clips,
       note: `Variant · ${variant.name}`,
     };
+    const reasoning = manualPlanReasoning(state.plan, clips, `Variant · ${variant.name}`);
+    state.plan.reasoning = reasoning;
+    state.plan.hook_why = reasoning.hook.headline;
+    state.plan.payoff_why = reasoning.payoff.headline;
     state.edited = true;
     state.editMode = true;
     renderHook();
@@ -4113,6 +5079,9 @@
   // ---------------------------------------------------------------- navigation
 
   function resetToIngest() {
+    if (state.ingestJob) {
+      api(`/api/jobs/${state.ingestJob}/url/cancel`, { method: "POST" }).catch(() => {});
+    }
     stopPoll();
     closeDrawer();
     state.job = null;
@@ -4128,6 +5097,10 @@
     state.sort = "best";
     state.visible = 96;
     state.busy = false;
+    state.urlBusy = false;
+    state.urlButtonLabel = "";
+    state.ingestJob = null;
+    state.cancelRequested = false;
     state.progressStart = null;
     state.pollStart = null;
     state.file = null;
@@ -4141,6 +5114,7 @@
     dom.fileName.textContent = "";
     dom.fileInfo.textContent = "";
     dom.ingestError.hidden = true;
+    resetUrlInspect();
     dom.progressError.hidden = true;
     dom.progressBack.hidden = true;
     dom.renderError.hidden = true;
@@ -4153,6 +5127,11 @@
     }
     if (dom.historyCount) dom.historyCount.textContent = "";
     dom.ingestNote.textContent = "ffmpeg cuts first. Analysis follows.";
+    if (dom.planReasoning) {
+      dom.planReasoning.hidden = true;
+      dom.planReasoning.open = false;
+    }
+    if (dom.planReasoningBody) dom.planReasoningBody.replaceChildren();
     dom.optSpeech.checked = false;
     dom.optCrop.checked = true;
     dom.optOcr.checked = state.health ? state.health.vision : true;

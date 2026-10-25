@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import html as html_lib
+import ipaddress
 import json
 import logging
+import math
 import os
+import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -17,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -32,6 +37,9 @@ import render
 import settings_store
 import usage_store
 import vision
+from url_ingest import fallback as ingest_fallback
+from url_ingest import registry
+from url_ingest.base import IngestError, IngestOptions
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -41,7 +49,7 @@ HOST = os.environ.get("VIBECUT_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VIBECUT_PORT", "8787"))
 MAX_UPLOAD = int(float(os.environ.get("VIBECUT_MAX_UPLOAD_GB", "20")) * 1024 ** 3)
 ACTIVE = {"scanning", "reading", "scoring"}
-LIVE = ACTIVE | {"queued"}
+LIVE = ACTIVE | {"queued", "downloading"}
 LOCK = threading.RLock()
 
 logging.basicConfig(
@@ -54,7 +62,9 @@ JOBS.mkdir(parents=True, exist_ok=True)
 SOURCES = DATA / "sources"
 
 analysis_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibecut-analyze")
+ingest_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vibecut-ingest")
 render_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibecut-render")
+INGEST_CANCELS: dict[str, threading.Event] = {}
 RENDER_CANCELS: dict[tuple[str, str], threading.Event] = {}
 ACTIVE_RENDER = {"queued", "rendering", "cancelling"}
 
@@ -375,6 +385,599 @@ def _history_append(job_id: str, entry: dict, snapshot: dict | None = None) -> d
     except Exception:  # noqa: BLE001
         LOGGER.exception("history append failed for %s", job_id)
         return None
+
+
+# ---------------------------------------------------------------- url ingest
+
+INGEST_QUALITY_VALUES = frozenset(
+    {"max", "best", "source", "4320", "2160", "1440", "1080", "720", "480", "360", "240", "144"}
+)
+INGEST_CODEC_VALUES = frozenset({"h264", "av1", "vp9"})
+INGEST_LOCAL_VALUES = frozenset({"preferred", "forced"})
+YTDLP_QUALITY_VALUES = frozenset({"max", "2160", "1440", "1080", "720", "480", "360"})
+YTDLP_CODEC_VALUES = frozenset({"h264", "any"})
+YTDLP_CONTAINER_VALUES = frozenset({"mp4", "mkv", "webm"})
+YTDLP_AUDIO_VALUES = frozenset({"best", "192", "128"})
+YTDLP_COOKIE_VALUES = frozenset({"none", "browser", "file"})
+YTDLP_BROWSER_VALUES = frozenset(
+    {"safari", "chrome", "chromium", "firefox", "edge", "brave", "opera", "vivaldi", "whale"}
+)
+INGEST_VIDEO_SUFFIXES = frozenset(
+    {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".mpg", ".mpeg", ".ts", ".flv"}
+)
+_INGEST_SECRET_KEYS = frozenset(
+    {
+        "cobalt_api_key",
+        "cobalt_key",
+        "xhs_token",
+        "xhs_api_key",
+        "xhs_access_token",
+        "xhs_get_token",
+    }
+)
+_INGEST_SESSION_FIELDS = (
+    "cookie_set",
+    "session_ok",
+    "auth_required",
+    "user",
+    "login_site",
+    "cookie_hint",
+    "service_url",
+)
+
+
+def _public_ingest_settings(settings: dict) -> dict:
+    """Return the safe, non-secret ingest settings for API responses."""
+    ingest = settings.get("ingest") if isinstance(settings, dict) else {}
+    ingest = ingest if isinstance(ingest, dict) else {}
+    return {
+        "provider": ingest.get("provider", registry.AUTO),
+        "ytdlp_quality": ingest.get("ytdlp_quality", "max"),
+        "ytdlp_codec": ingest.get("ytdlp_codec", "h264"),
+        "ytdlp_container": ingest.get("ytdlp_container", "mp4"),
+        "ytdlp_audio": ingest.get("ytdlp_audio", "best"),
+        "ytdlp_cookies": ingest.get("ytdlp_cookies", "none"),
+        "ytdlp_browser": ingest.get("ytdlp_browser", "safari"),
+        "ytdlp_cookie_file": ingest.get("ytdlp_cookie_file", ""),
+        "cobalt_fallback": ingest.get("cobalt_fallback", False),
+        "cobalt_url": ingest.get("cobalt_url", ""),
+        "cobalt_quality": ingest.get("cobalt_quality", "1080"),
+        "cobalt_codec": ingest.get("cobalt_codec", "h264"),
+        "cobalt_local_processing": ingest.get("cobalt_local_processing", "preferred"),
+        "xhs_url": ingest.get("xhs_url", ""),
+        "xhs_no_record": ingest.get("xhs_no_record", True),
+        "xhs_interval": ingest.get("xhs_interval", 12.0),
+    }
+
+
+def _ingest_provider_settings(
+    xhs_url: str | None = None,
+    xhs_token: str | None = None,
+) -> dict:
+    """Load ingest settings and inject provider secrets for sidecar calls."""
+    normalized = registry.normalize_settings(settings_store.load_settings())
+    values = {
+        "provider": normalized.get("provider", registry.AUTO),
+        "ytdlp_quality": normalized.get("ytdlp_quality", "max"),
+        "ytdlp_codec": normalized.get("ytdlp_codec", "h264"),
+        "ytdlp_container": normalized.get("ytdlp_container", "mp4"),
+        "ytdlp_audio": normalized.get("ytdlp_audio", "best"),
+        "ytdlp_cookies": normalized.get("ytdlp_cookies", "none"),
+        "ytdlp_browser": normalized.get("ytdlp_browser", "safari"),
+        "ytdlp_cookie_file": normalized.get("ytdlp_cookie_file", ""),
+        "cobalt_fallback": normalized.get("cobalt_fallback", False),
+        "cobalt_url": normalized.get("cobalt_url", ""),
+        "cobalt_quality": normalized.get("cobalt_quality", "1080"),
+        "cobalt_codec": normalized.get("cobalt_codec", "h264"),
+        "cobalt_local_processing": normalized.get("cobalt_local_processing", "preferred"),
+        "cobalt_api_key": settings_store.get_secret("cobalt"),
+        "xhs_url": xhs_url if xhs_url is not None else normalized.get("xhs_url", ""),
+        "xhs_token": xhs_token if xhs_token is not None else settings_store.get_secret("xhs"),
+        "xhs_no_record": normalized.get("xhs_no_record", True),
+        "xhs_interval": normalized.get("xhs_interval", 12.0),
+    }
+    return {"ingest": values}
+
+
+def _is_public_address(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return bool(address.is_global)
+
+
+@lru_cache(maxsize=512)
+def _resolved_addresses(host: str) -> tuple[str, ...]:
+    """Resolve a host once and return all A/AAAA addresses.
+
+    ``getaddrinfo`` also normalizes legacy IPv4 spellings such as ``127.1``,
+    integer hosts, and hex hosts, so those cannot bypass the literal check.
+    """
+    infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    return tuple(sorted({str(info[4][0]) for info in infos if info[4]}))
+
+
+def _validate_remote_ingest_url(url: str) -> str:
+    """Validate a user URL and block local/private/link-local targets.
+
+    Local files should use the path input. Literal addresses, legacy IPv4
+    spellings, DNS aliases and common internal names are checked before a
+    provider can fetch the URL. Network egress policy remains the final guard
+    against a DNS rebinding race.
+    """
+    value = registry.validate_url(url)
+    host = (urlsplit(value).hostname or "").lower().rstrip(".")
+    if (
+        host in {"localhost", "localhost.localdomain"}
+        or host.endswith(".localhost")
+        or host.endswith(".local")
+        or host.endswith(".internal")
+    ):
+        raise IngestError("URL ingest only accepts public internet links. Use a local path instead.")
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if not literal.is_global:
+            raise IngestError("URL ingest only accepts public internet links. Use a local path instead.")
+        return value
+    try:
+        addresses = _resolved_addresses(host)
+    except OSError as exc:
+        raise IngestError("URL ingest could not resolve this public host.") from exc
+    if not addresses:
+        raise IngestError("URL ingest could not resolve this public host.")
+    if any(not _is_public_address(address) for address in addresses):
+        raise IngestError("URL ingest only accepts public internet links. Use a local path instead.")
+    return value
+
+
+def _ingest_provider_order(url: str, override: str | None, settings: dict) -> list[str]:
+    """Return the ordered provider ids for this link.
+
+    Auto mode starts with yt-dlp. A non-empty Cobalt endpoint is an optional
+    second attempt after a yt-dlp failure; a down Cobalt service never blocks
+    the primary path. RedNote stays on xhs.
+    """
+    ingest = settings.get("ingest") if isinstance(settings, dict) else {}
+    ingest = ingest if isinstance(ingest, dict) else {}
+    if override is not None and str(override).strip():
+        configured = registry.normalize_provider_id(override, strict=True)
+    else:
+        configured = registry.normalize_provider_id(ingest.get("provider"))
+    cobalt_url = str(ingest.get("cobalt_url") or "").strip()
+    try:
+        registry.validate_url(cobalt_url)
+        cobalt_configured = bool(cobalt_url) and bool(ingest.get("cobalt_fallback"))
+    except IngestError:
+        cobalt_configured = False
+    try:
+        from url_ingest import ytdlp as ytdlp_ingest
+
+        ytdlp_available = ytdlp_ingest.ytdlp_available()
+    except Exception:  # noqa: BLE001
+        ytdlp_available = False
+    return ingest_fallback.fallback_provider_ids(
+        configured,
+        registry.detect(url),
+        ytdlp_available,
+        cobalt_configured,
+    )
+
+
+def _ingest_provider_chain(settings: dict, order: list[str]):
+    sources = {
+        registry.YTDLP: lambda: registry.provider(registry.YTDLP, settings),
+        registry.COBALT: lambda: registry.provider(registry.COBALT, settings),
+        registry.XHS: lambda: registry.provider(registry.XHS, settings),
+    }
+    return ingest_fallback.ProviderChain(sources, order=order)
+
+
+def _provider_status_entry(provider, settings: dict, *, optimistic: bool = False) -> dict:
+    """Call a provider's live status without letting it break an API route."""
+    fallback = {
+        "id": str(getattr(provider, "id", "") or ""),
+        "label": str(getattr(provider, "label", "") or ""),
+        "configured": optimistic,
+        "available": optimistic,
+        "error": "",
+    }
+    method = getattr(provider, "status", None)
+    if not callable(method):
+        return fallback
+    try:
+        entry = method(settings)
+    except TypeError:
+        try:
+            entry = method()
+        except Exception as exc:  # noqa: BLE001
+            return {**fallback, "error": _short_ingest_error(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {**fallback, "error": _short_ingest_error(exc)}
+    if not isinstance(entry, dict):
+        return {**fallback, "error": "Provider status returned an invalid result."}
+    result = {**fallback, **entry}
+    result["available"] = bool(result.get("available"))
+    result["configured"] = bool(result.get("configured", result["available"]))
+    return result
+
+
+_SENSITIVE_QUERY_MARKERS = (
+    "xsec_source", "token", "secret", "password", "passwd", "auth",
+    "signature", "sig", "api_key", "api-key", "apikey", "session",
+    "cookie", "credential",
+)
+
+
+def _is_sensitive_query_key(key: str) -> bool:
+    lowered = str(key or "").lower()
+    return (
+        lowered == "key"
+        or any(marker in lowered for marker in _SENSITIVE_QUERY_MARKERS)
+    )
+
+
+def _redact_ingest_text(value: str) -> str:
+    """Redact token-like query pairs from logs, errors, and metadata."""
+    text = " ".join(str(value or "").split())
+    return re.sub(
+        r"(?i)\b([a-z0-9_.-]*(?:xsec_source|token|secret|password|passwd|auth|signature|sig|api[_-]?key|apikey|session|cookie|credential|key)[a-z0-9_.-]*)=([^&\s]+)",
+        r"\1=redacted",
+        text,
+    )
+
+
+def _short_ingest_error(exc: BaseException) -> str:
+    text = _redact_ingest_text(str(exc))
+    return (text or exc.__class__.__name__)[:400]
+
+
+def _ingest_session(entry: dict) -> dict:
+    session = entry.get("session") if isinstance(entry, dict) else None
+    session = dict(session) if isinstance(session, dict) else {}
+    if isinstance(entry, dict):
+        for key in _INGEST_SESSION_FIELDS:
+            if key not in session and key in entry:
+                session[key] = entry.get(key)
+    return session
+
+
+def _ingest_warning(*values) -> str:
+    warnings: list[str] = []
+    for value in values:
+        text = " ".join(str(value or "").split())
+        if text and text not in warnings:
+            warnings.append(text)
+    return " ".join(warnings)
+
+
+def _ingest_progress(job_id: str, fraction: float, message: str) -> None:
+    try:
+        value = max(0.0, min(0.99, float(fraction)))
+    except (TypeError, ValueError):
+        return
+    text = " ".join(str(message or "").split())[:240] or "Downloading"
+
+    def mutate(job: dict) -> None:
+        if job.get("status") != "downloading":
+            return
+        job["progress"] = round(value, 4)
+        job["message"] = text
+        ingest = job.setdefault("ingest", {})
+        ingest["progress"] = job["progress"]
+        ingest["message"] = text
+
+    try:
+        update_job(job_id, mutate)
+    except Exception:  # noqa: BLE001
+        # Progress is advisory; a removed/unreadable job must not stop download.
+        pass
+
+
+def _redact_source_url(value: str) -> str:
+    """Remove share/access tokens from URLs before storing or returning them."""
+    raw = str(value or "")
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return raw
+    if not parts.scheme or not parts.netloc:
+        return raw
+    query = [
+        (key, "redacted" if _is_sensitive_query_key(key) else val)
+        for key, val in parse_qsl(parts.query, keep_blank_values=True)
+    ]
+    netloc = parts.netloc.rsplit("@", 1)[-1]
+    return urlunsplit((
+        parts.scheme, netloc, parts.path,
+        urlencode(query, doseq=True), "",
+    ))
+
+
+def _redact_ingest_value(value):
+    if isinstance(value, dict):
+        clean = {}
+        for key, item in value.items():
+            if (
+                _is_sensitive_query_key(str(key))
+                and isinstance(item, str)
+                and item.strip()
+            ):
+                clean[key] = "redacted"
+            else:
+                clean[key] = _redact_ingest_value(item)
+        return clean
+    if isinstance(value, (list, tuple)):
+        return [_redact_ingest_value(item) for item in value]
+    if isinstance(value, str):
+        redacted = _redact_ingest_text(value)
+        if redacted != value:
+            return redacted
+        try:
+            parts = urlsplit(value)
+        except ValueError:
+            return redacted
+        if parts.scheme in {"http", "https"} and parts.netloc:
+            return _redact_source_url(value)
+    return value
+
+
+def _redact_ingest_meta(meta: dict | None) -> dict:
+    """Return provider metadata with tokens removed at every nesting level."""
+    return _redact_ingest_value(dict(meta or {}))
+
+
+def _attempts_payload(attempts) -> list[dict]:
+    return _redact_ingest_value([
+        attempt.as_dict()
+        for attempt in attempts or ()
+        if hasattr(attempt, "as_dict")
+    ])
+
+
+def _cleanup_ingest_temp(temp: Path | None) -> None:
+    """Remove the app temp and any yt-dlp output that stripped its dot prefix."""
+    if temp is None:
+        return
+    names = {temp.name, temp.name.lstrip(".")}
+    for name in names:
+        for path in SOURCES.glob(f"{name}*"):
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _ingest_temp_path(job_id: str, source_url: str) -> Path:
+    suffix = ""
+    try:
+        suffix = Path(urlsplit(source_url).path).suffix.lower()
+    except (TypeError, ValueError):
+        suffix = ""
+    if suffix not in INGEST_VIDEO_SUFFIXES:
+        suffix = ".mp4"
+    SOURCES.mkdir(parents=True, exist_ok=True)
+    return SOURCES / f".ingest-{job_id}-{uuid.uuid4().hex}{suffix}"
+
+
+def _ingest_names(result, downloaded: Path) -> tuple[str, str]:
+    raw = result.filename or result.title or downloaded.name or "url-video"
+    display = registry.safe_filename(raw, "url-video", max_length=140)
+    suffix = Path(display).suffix.lower()
+    if suffix not in INGEST_VIDEO_SUFFIXES:
+        actual = downloaded.suffix.lower()
+        suffix = actual if actual in INGEST_VIDEO_SUFFIXES else ".mp4"
+        stem = Path(display).stem or "url-video"
+        display = registry.safe_filename(f"{stem}{suffix}", f"url-video{suffix}", max_length=140)
+    return display, suffix
+
+
+def _record_ingest_history(
+    job_id: str,
+    provider_id: str,
+    source_url: str,
+    status: str,
+    *,
+    title: str = "",
+    path: str | None = None,
+    duration: float | None = None,
+    size: int | None = None,
+    error: str | None = None,
+    warning: str | None = None,
+    meta: dict | None = None,
+) -> dict | None:
+    source_url = _redact_source_url(source_url)
+    safe_meta = _redact_ingest_meta(meta)
+    safe_title = _redact_ingest_text(title or "")
+    safe_error = _redact_ingest_text(error or "") or None
+    safe_warning = _redact_ingest_text(warning or "") or None
+    entry = {
+        "id": uuid.uuid4().hex[:12],
+        "type": "ingest",
+        "created": round(time.time(), 3),
+        "status": status,
+        "kind": provider_id,
+        "style": provider_id,
+        "name": safe_title or (Path(path).name if path else provider_id),
+        "path": path,
+        "duration": duration,
+        "target": None,
+        "source_lang": None,
+        "target_lang": None,
+        "provider": provider_id,
+        "fallback": False,
+        "tried": [],
+        "model": None,
+        "latency_ms": 0,
+        "usage": {},
+        "warning": safe_warning,
+        "error": safe_error,
+        "script_id": None,
+        "size": size,
+        "source_url": source_url,
+        "title": safe_title,
+    }
+    snapshot = {
+        "provider": provider_id,
+        "source_url": source_url,
+        "title": safe_title,
+        "path": path,
+        "duration": duration,
+        "size": size,
+        "status": status,
+        "error": safe_error,
+        "meta": safe_meta,
+    }
+    return _history_append(job_id, entry, snapshot)
+
+
+def _run_url_ingest(
+    job_id: str,
+    chain,
+    provider_id: str,
+    provider_label: str,
+    source_url: str,
+    options: IngestOptions,
+    cancel_event: threading.Event,
+    analysis_options: dict,
+) -> None:
+    temp: Path | None = None
+    destination: Path | None = None
+    metadata: dict = {}
+    title = ""
+    try:
+        if cancel_event.is_set():
+            raise IngestError("Download cancelled.")
+        temp = _ingest_temp_path(job_id, source_url)
+        result = chain.download(
+            source_url,
+            temp,
+            options,
+            lambda fraction, message: _ingest_progress(job_id, fraction, message),
+            cancel_event,
+        )
+        if cancel_event.is_set():
+            raise IngestError("Download cancelled.")
+        provider_id = str(chain.last_provider_id or result.provider or provider_id)
+        provider_label = str(
+            getattr(chain.last_provider, "label", "") or provider_label or provider_id
+        )
+
+        downloaded = Path(result.path).expanduser()
+        if not downloaded.is_file():
+            raise IngestError("The provider did not produce a video file.")
+        if downloaded.stat().st_size <= 0:
+            raise IngestError("The provider returned an empty video file.")
+
+        display, suffix = _ingest_names(result, downloaded)
+        title = str(result.title or "").strip() or Path(display).stem
+        stored = store_source(downloaded, suffix, display)
+        destination = link_source(stored, _job_dir(job_id), suffix)
+        if cancel_event.is_set():
+            raise IngestError("Download cancelled.")
+        metadata = pipeline.probe(destination)
+        duration = metadata.get("duration")
+        if duration is None:
+            duration = result.duration
+            if duration is not None:
+                metadata["duration"] = duration
+        if cancel_event.is_set():
+            raise IngestError("Download cancelled.")
+
+        def finish(job: dict) -> None:
+            job["status"] = "queued"
+            job["progress"] = 0.0
+            job["message"] = "Queued for analysis"
+            job["error"] = None
+            job["source"] = {"path": str(destination), "name": display, **metadata}
+            job["options"] = analysis_options
+            ingest = job.setdefault("ingest", {})
+            ingest.update({
+                "provider": provider_id,
+                "label": provider_label,
+                "source_url": _redact_source_url(source_url),
+                "title": title,
+                "thumbnail": _redact_ingest_value(result.thumbnail),
+                "duration": duration,
+                "meta": _redact_ingest_meta(result.meta),
+                "options": options.as_dict(),
+                "progress": 0.0,
+                "message": "Queued for analysis",
+                "phase": "queued",
+                "status": "queued",
+                "error": None,
+            })
+
+        update_job(job_id, finish)
+        _record_ingest_history(
+            job_id,
+            provider_id,
+            source_url,
+            "ok",
+            title=title,
+            path=str(destination),
+            duration=duration,
+            size=metadata.get("size"),
+            meta=_redact_ingest_meta(result.meta),
+        )
+        try:
+            analysis_pool.submit(run_analysis, job_id)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("could not queue analysis for %s", job_id)
+    except Exception as exc:  # noqa: BLE001
+        cancelled = cancel_event.is_set()
+        error = (
+            "Download cancelled."
+            if cancelled
+            else _short_ingest_error(exc)
+        )
+        message = "Download cancelled" if cancelled else "URL ingest failed"
+        LOGGER.info("url ingest failed for %s: %s", job_id, error)
+        attempts = _attempts_payload(getattr(exc, "attempts", ()))
+
+        def fail(job: dict) -> None:
+            job["status"] = "failed"
+            job["progress"] = 1.0
+            job["message"] = message
+            job["error"] = error
+            ingest = job.setdefault("ingest", {})
+            ingest.update({
+                "phase": "failed",
+                "status": "failed",
+                "progress": 1.0,
+                "message": message,
+                "error": error,
+            })
+            if attempts:
+                ingest["attempts"] = attempts
+
+        try:
+            update_job(job_id, fail)
+        except Exception:  # noqa: BLE001
+            # A removed job still gets a history entry when possible.
+            LOGGER.exception("could not mark url job %s failed", job_id)
+        _record_ingest_history(
+            job_id,
+            provider_id,
+            source_url,
+            "failed",
+            title=title,
+            path=str(destination) if destination else None,
+            duration=metadata.get("duration"),
+            size=metadata.get("size"),
+            error=error,
+            meta={**metadata, **({"attempts": attempts} if attempts else {})},
+        )
+    finally:
+        _cleanup_ingest_temp(temp)
+        INGEST_CANCELS.pop(job_id, None)
+
 
 
 def _clip_hash(clips: list[dict] | None) -> str:
@@ -809,10 +1412,21 @@ def recover_jobs() -> None:
             with LOCK:
                 job = json.loads(path.read_text())
                 changed = False
+                ingest_failed = False
                 if job.get("status") in LIVE:
                     job["status"] = "failed"
                     job["message"] = "Interrupted"
                     job["error"] = "The server restarted while this job was running."
+                    ingest = job.get("ingest")
+                    if isinstance(ingest, dict):
+                        ingest.update({
+                            "phase": "failed",
+                            "status": "failed",
+                            "progress": 1.0,
+                            "message": "Interrupted",
+                            "error": job["error"],
+                        })
+                        ingest_failed = bool(ingest.get("source_url"))
                     changed = True
                 for record in (job.get("renders") or {}).values():
                     if record.get("status") in ACTIVE_RENDER:
@@ -831,11 +1445,40 @@ def recover_jobs() -> None:
                         )
                 if changed:
                     _save_unlocked(job)
+                    if ingest_failed:
+                        ingest = job.get("ingest") or {}
+                        _record_ingest_history(
+                            job["id"],
+                            str(ingest.get("provider") or ""),
+                            str(ingest.get("source_url") or ""),
+                            "failed",
+                            error=job.get("error"),
+                        )
                     fixed += 1
         except Exception:
             continue
     for tmp in JOBS.glob("*/renders/tmp_*"):
         shutil.rmtree(tmp, ignore_errors=True)
+    if SOURCES.is_dir():
+        for pattern in (
+            ".ingest-*", "ingest-*",
+            ".cobalt-*", "cobalt-*",
+            ".incoming-*", "incoming-*",
+        ):
+            for stale in SOURCES.glob(pattern):
+                try:
+                    if stale.is_dir():
+                        shutil.rmtree(stale, ignore_errors=True)
+                    else:
+                        stale.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        for pattern in (".*.part", "*.part"):
+            for stale in SOURCES.glob(pattern):
+                try:
+                    stale.unlink(missing_ok=True)
+                except OSError:
+                    pass
     if fixed:
         LOGGER.info("recovered %d interrupted job(s)", fixed)
 
@@ -1022,7 +1665,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 # ---------------------------------------------------------------- auth
 
 
-PUBLIC_PATHS = {"/", "/index.html", "/favicon.ico", "/api/health"}
+PUBLIC_PATHS = {"/", "/index.html", "/favicon.ico", "/api/health", "/docs/url-ingest.md"}
 SHARES = DATA / "shares.json"
 
 
@@ -1030,6 +1673,19 @@ SHARES = DATA / "shares.json"
 async def require_token(request: Request, call_next):
     token = os.environ.get("VIBECUT_TOKEN")
     if not token:
+        path = request.url.path
+        if path.startswith("/api/") and path != "/api/health" and HOST not in {
+            "127.0.0.1", "localhost", "::1",
+        }:
+            return JSONResponse(
+                {
+                    "detail": (
+                        "VibeCut is bound beyond loopback without VIBECUT_TOKEN. "
+                        "Set VIBECUT_TOKEN before using the API remotely."
+                    )
+                },
+                status_code=403,
+            )
         return await call_next(request)
     path = request.url.path
     if path in PUBLIC_PATHS or path.startswith("/static") or path.startswith("/r/"):
@@ -1070,6 +1726,14 @@ def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
+@app.get("/docs/url-ingest.md")
+def url_ingest_docs() -> FileResponse:
+    path = ROOT / "docs" / "url-ingest.md"
+    if not path.is_file():
+        raise HTTPException(404, "URL ingest guide not found.")
+    return FileResponse(path, media_type="text/markdown; charset=utf-8")
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
@@ -1104,6 +1768,95 @@ class SettingsTestBody(BaseModel):
     provider: str = ""
 
 
+def _validate_ingest_patch(patch: dict) -> None:
+    """Validate and normalise the ingest settings before they are persisted."""
+    ingest = patch.get("ingest")
+    if ingest is None:
+        return
+    if not isinstance(ingest, dict):
+        raise HTTPException(400, "Ingest settings must be an object.")
+
+    cleaned = {
+        key: value
+        for key, value in ingest.items()
+        if key not in _INGEST_SECRET_KEYS
+    }
+
+    provider_id = registry.AUTO
+    if "provider" in cleaned:
+        if cleaned.get("provider") not in (None, ""):
+            try:
+                provider_id = registry.normalize_provider_id(cleaned["provider"], strict=True)
+            except IngestError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        cleaned["provider"] = provider_id
+
+    for field, allowed, label in (
+        ("ytdlp_quality", YTDLP_QUALITY_VALUES, "yt-dlp quality"),
+        ("ytdlp_codec", YTDLP_CODEC_VALUES, "yt-dlp codec"),
+        ("ytdlp_container", YTDLP_CONTAINER_VALUES, "yt-dlp container"),
+        ("ytdlp_audio", YTDLP_AUDIO_VALUES, "yt-dlp audio quality"),
+        ("ytdlp_cookies", YTDLP_COOKIE_VALUES, "yt-dlp cookie source"),
+        ("ytdlp_browser", YTDLP_BROWSER_VALUES, "yt-dlp cookie browser"),
+    ):
+        value = cleaned.get(field)
+        if value in (None, ""):
+            continue
+        normalized = str(value).strip().lower()
+        if normalized not in allowed:
+            raise HTTPException(400, f"Unknown {label}.")
+        cleaned[field] = normalized
+
+    cookie_file = cleaned.get("ytdlp_cookie_file")
+    if cookie_file not in (None, ""):
+        cookie_file = str(cookie_file).strip()
+        if len(cookie_file) > 4096:
+            raise HTTPException(400, "The yt-dlp cookie file path is too long.")
+        cleaned["ytdlp_cookie_file"] = cookie_file
+
+    quality = cleaned.get("cobalt_quality")
+    if quality not in (None, ""):
+        quality = str(quality).strip().lower()
+        if quality not in INGEST_QUALITY_VALUES:
+            raise HTTPException(400, "Unknown Cobalt video quality.")
+        cleaned["cobalt_quality"] = quality
+
+    codec = cleaned.get("cobalt_codec")
+    if codec not in (None, ""):
+        codec = str(codec).strip().lower()
+        if codec not in INGEST_CODEC_VALUES:
+            raise HTTPException(400, "Unknown Cobalt video codec.")
+        cleaned["cobalt_codec"] = codec
+
+    local = cleaned.get("cobalt_local_processing")
+    if local not in (None, ""):
+        local = str(local).strip().lower()
+        if local not in INGEST_LOCAL_VALUES:
+            raise HTTPException(400, "Unknown Cobalt local processing mode.")
+        cleaned["cobalt_local_processing"] = local
+
+    interval = cleaned.get("xhs_interval")
+    if interval not in (None, ""):
+        try:
+            number = float(interval)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, "XHS interval must be a number.") from exc
+        if not math.isfinite(number) or number < 0:
+            raise HTTPException(400, "XHS interval must be zero or more seconds.")
+        cleaned["xhs_interval"] = number
+
+    current = settings_store.load_settings().get("ingest")
+    current = current if isinstance(current, dict) else {}
+    current = {
+        key: value
+        for key, value in current.items()
+        if key not in _INGEST_SECRET_KEYS
+    }
+    patch["ingest"] = registry.normalize_settings(
+        {"ingest": {**current, **cleaned}}
+    )
+
+
 def _settings_state() -> dict:
     state = settings_store.public_state()
     state["runtime"] = {
@@ -1129,6 +1882,7 @@ async def save_settings(request: Request) -> dict:
     patch = body.get("settings") if isinstance(body, dict) else None
     secrets = body.get("secrets") if isinstance(body, dict) else None
     if isinstance(patch, dict):
+        _validate_ingest_patch(patch)
         opencode = patch.get("opencode")
         if isinstance(opencode, dict):
             requested = str(opencode.get("model") or OPENCODE_MODEL)
@@ -1149,6 +1903,32 @@ async def save_settings(request: Request) -> dict:
         translation = patch.get("translation")
         if isinstance(translation, dict) and translation.get("mode") not in (None, "", "auto", "local_first", "local_only", "online_only"):
             raise HTTPException(400, "Unknown translation mode.")
+        ingest = patch.get("ingest")
+        if isinstance(ingest, dict):
+            for key in ("cobalt_url", "xhs_url"):
+                value = ingest.get(key)
+                if value:
+                    try:
+                        registry.validate_url(str(value))
+                    except IngestError as exc:
+                        raise HTTPException(400, f"Invalid {key}: {exc}") from exc
+            for key, allowed in (
+                ("cobalt_quality", {"max", "4320", "2160", "1440", "1080", "720", "480", "360", "240", "144"}),
+                ("cobalt_codec", {"h264", "av1", "vp9"}),
+                ("cobalt_local_processing", {"preferred", "forced"}),
+            ):
+                value = ingest.get(key)
+                if value not in (None, "") and str(value) not in allowed:
+                    raise HTTPException(400, f"Invalid {key}.")
+            if "xhs_no_record" in ingest and not isinstance(ingest["xhs_no_record"], bool):
+                raise HTTPException(400, "xhs_no_record must be true or false.")
+            if "xhs_interval" in ingest:
+                try:
+                    interval = float(ingest["xhs_interval"])
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(400, "xhs_interval must be numeric.") from exc
+                if interval < 0 or not math.isfinite(interval):
+                    raise HTTPException(400, "xhs_interval must be a non-negative number.")
         tts = patch.get("tts")
         if isinstance(tts, dict) and tts.get("provider") not in (None, "") and tts["provider"] not in TTS_PROVIDERS:
             raise HTTPException(400, "Unknown voice provider.")
@@ -1165,7 +1945,57 @@ async def save_settings(request: Request) -> dict:
 
 @app.post("/api/settings/test")
 def test_settings(body: SettingsTestBody) -> dict:
-    kind = (body.kind or "opencode").lower()
+    kind = (body.kind or "opencode").strip().lower()
+    if kind in {"xhs_get", "xhs-get", "xhsget", "rednote", "xiaohongshu"}:
+        kind = registry.XHS
+    if kind in {"yt-dlp", "yt_dlp", "youtube-dl"}:
+        kind = registry.YTDLP
+    if kind in {registry.YTDLP, registry.COBALT, registry.XHS}:
+        started = time.time()
+        provider_settings = _ingest_provider_settings()
+        try:
+            instance = registry.provider(kind, provider_settings)
+            entry = _provider_status_entry(instance, provider_settings)
+        except Exception as exc:  # noqa: BLE001
+            entry = {
+                "id": kind,
+                "label": kind,
+                "configured": False,
+                "available": False,
+                "error": _short_ingest_error(exc),
+            }
+        ok = bool(entry.get("available"))
+        label = str(entry.get("label") or kind)
+        error = str(entry.get("error") or "")
+        if kind == registry.YTDLP:
+            version = str(entry.get("version") or "").strip()
+            detail = (
+                f"{label} is ready{f' · {version}' if version else ''}."
+                if ok else (error or f"{label} is not available. Install it with requirements.txt.")
+            )
+        else:
+            detail = f"{label} is reachable." if ok else (
+                error or f"{label} is not available. Check Setup."
+            )
+        result = {
+            "ok": ok,
+            "kind": kind,
+            "provider": kind,
+            "label": label,
+            "configured": bool(entry.get("configured")),
+            "available": ok,
+            "error": error,
+            "seconds": round(time.time() - started, 2),
+            "status": entry,
+            "detail": detail,
+        }
+        session = _ingest_session(entry)
+        if session:
+            result["session"] = session
+            for key in _INGEST_SESSION_FIELDS:
+                if key in session:
+                    result[key] = session[key]
+        return result
     if kind == "opencode":
         started = time.time()
         answer = audio._opencode_text(
@@ -1321,6 +2151,128 @@ def test_settings(body: SettingsTestBody) -> dict:
     raise HTTPException(400, "Unknown test kind.")
 
 
+@app.post("/api/ingest/xhs/cookie")
+def ingest_xhs_cookie(body: XhsCookieBody) -> dict:
+    value = str(body.cookie or "").strip()
+    if not value:
+        raise HTTPException(400, "RedNote cookie is empty.")
+    try:
+        instance = registry.provider(
+            registry.XHS,
+            _ingest_provider_settings(
+                xhs_url=(body.url.strip() if body.url.strip() else None),
+                xhs_token=(body.token.strip() if body.token.strip() else None),
+            ),
+        )
+        setter = getattr(instance, "set_cookie", None)
+        if not callable(setter):
+            raise IngestError("XHS provider cannot accept a cookie.")
+        result = setter(value)
+    except IngestError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "result": result}
+
+
+class XhsInviteBody(BaseModel):
+    url: str = ""
+    token: str = ""
+
+
+class XhsCookieBody(BaseModel):
+    cookie: str = ""
+    url: str = ""
+    token: str = ""
+
+
+def _xhs_invite_response(base: str, token: str) -> dict:
+    base = str(base or "").strip().rstrip("/")
+    token = str(token or "").strip()
+    if not base:
+        raise HTTPException(400, "Set the XHS service URL first.")
+    if not token:
+        return {"url": base + "/", "token": False,
+                "detail": "No access token saved; open the service URL and use the local account."}
+    return {
+        "url": f"{base}/#t={quote(token, safe='')}",
+        "token": True,
+        "detail": "Invite link includes the xhs_get access token.",
+    }
+
+
+@app.get("/api/ingest/xhs/invite")
+def ingest_xhs_invite_get() -> dict:
+    settings = _ingest_provider_settings().get("ingest") or {}
+    return _xhs_invite_response(
+        str(settings.get("xhs_url") or ""), str(settings.get("xhs_token") or ""),
+    )
+
+
+@app.post("/api/ingest/xhs/invite")
+def ingest_xhs_invite(body: XhsInviteBody | None = None) -> dict:
+    settings = _ingest_provider_settings(
+        xhs_url=(body.url.strip() if body and body.url.strip() else None),
+        xhs_token=(body.token.strip() if body and body.token.strip() else None),
+    ).get("ingest") or {}
+    return _xhs_invite_response(
+        str(settings.get("xhs_url") or ""), str(settings.get("xhs_token") or ""),
+    )
+
+
+@app.post("/api/ingest/xhs/check")
+def ingest_xhs_check(body: XhsInviteBody | None = None) -> dict:
+    settings = _ingest_provider_settings(
+        xhs_url=(body.url.strip() if body and body.url.strip() else None),
+        xhs_token=(body.token.strip() if body and body.token.strip() else None),
+    )
+    try:
+        instance = registry.provider(registry.XHS, settings)
+        return {"ok": True, "status": _provider_status_entry(instance, settings)}
+    except IngestError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/ingest/status")
+def ingest_status() -> dict:
+    provider_settings = _ingest_provider_settings()
+    reported = registry.status(provider_settings)
+    providers = dict(reported) if isinstance(reported, dict) else {}
+
+    direct: dict = {}
+    try:
+        instance = registry.provider(registry.XHS, provider_settings)
+        direct = _provider_status_entry(instance, provider_settings)
+    except Exception as exc:  # noqa: BLE001
+        direct = {
+            "id": registry.XHS,
+            "label": "XHS / RedNote",
+            "configured": False,
+            "available": False,
+            "error": _short_ingest_error(exc),
+            "session": {},
+        }
+
+    existing = providers.get(registry.XHS)
+    xhs = dict(existing) if isinstance(existing, dict) else dict(direct)
+    xhs.setdefault("id", registry.XHS)
+    xhs.setdefault("label", "XHS / RedNote")
+    xhs.setdefault("configured", bool(direct.get("configured")))
+    xhs.setdefault("available", bool(direct.get("available")))
+    xhs.setdefault("error", str(direct.get("error") or ""))
+    if "token" in str(xhs.get("error") or "").lower():
+        xhs["auth_required"] = True
+    for key in _INGEST_SESSION_FIELDS:
+        if direct.get(key) is not None:
+            xhs[key] = direct.get(key)
+    xhs["session"] = _ingest_session(direct or xhs)
+    providers[registry.XHS] = xhs
+
+    return {
+        **providers,
+        "providers": providers,
+        "settings": _public_ingest_settings(provider_settings),
+    }
+
+
 @app.get("/api/settings/tts-test/{engine}.wav")
 def settings_tts_test(engine: str) -> FileResponse:
     safe = "".join(ch for ch in engine if ch.isalnum() or ch in "-_")
@@ -1415,6 +2367,19 @@ class InspectBody(BaseModel):
     path: str
 
 
+class UrlInspectBody(BaseModel):
+    url: str
+    provider: str | None = None
+    options: dict | None = None
+
+
+class FromUrlBody(BaseModel):
+    url: str
+    provider: str | None = None
+    options: dict | None = None
+    ingest_options: dict | None = None
+
+
 class PlanBody(BaseModel):
     target: int = 30
     hook_scene: int | None = None
@@ -1449,6 +2414,122 @@ def inspect(body: InspectBody) -> dict:
         raise HTTPException(400, str(exc)) from exc
     meta.pop("path", None)
     return meta
+
+
+@app.post("/api/url/inspect")
+def inspect_url(body: UrlInspectBody) -> dict:
+    try:
+        url = _validate_remote_ingest_url(body.url)
+        provider_settings = _ingest_provider_settings()
+        order = _ingest_provider_order(url, body.provider, provider_settings)
+        options = registry.options_from_settings(provider_settings, body.options)
+        chain = _ingest_provider_chain(provider_settings, order)
+    except IngestError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    provider_id = order[0]
+    instance = None
+    try:
+        inspected = chain.inspect(url, options)
+        if not isinstance(inspected, dict):
+            raise IngestError("The ingest provider returned an invalid inspection result.")
+        provider_id = chain.last_provider_id or provider_id
+        instance = chain.last_provider
+    except Exception as exc:  # noqa: BLE001
+        # Show the primary provider and its error. Fallback attempts stay in
+        # metadata so a down Cobalt service cannot obscure the yt-dlp reason.
+        provider_id = order[0]
+        instance = chain.last_provider if chain.last_provider_id == provider_id else None
+        status_entry = (
+            _provider_status_entry(instance, provider_settings, optimistic=True)
+            if instance is not None
+            else {"configured": True, "available": False, "error": ""}
+        )
+        label = str(
+            getattr(instance, "label", "")
+            or {
+                registry.YTDLP: "yt-dlp",
+                registry.COBALT: "Cobalt",
+                registry.XHS: "XHS / RedNote",
+            }.get(provider_id)
+            or provider_id
+        )
+        warning = _ingest_warning(
+            _short_ingest_error(exc),
+            _redact_ingest_text(status_entry.get("error") or ""),
+            "Could not inspect this URL.",
+        )
+        attempts = _attempts_payload(getattr(chain, "last_attempts", ()))
+        return {
+            "provider": provider_id,
+            "label": label,
+            "available": False,
+            "configured": bool(status_entry.get("configured")),
+            "warning": warning,
+            "session": _ingest_session(status_entry),
+            "meta": {"error": _short_ingest_error(exc), "attempts": attempts},
+            "title": "",
+            "options": options.as_dict(),
+            "provider_status": _redact_ingest_meta(status_entry),
+        }
+
+    status_entry = _provider_status_entry(instance, provider_settings, optimistic=True)
+    meta = _redact_ingest_meta(inspected)
+    label = str(
+        getattr(instance, "label", "")
+        or inspected.get("label")
+        or status_entry.get("label")
+        or provider_id
+    )
+    status_available = bool(status_entry.get("available"))
+    inspected_available = inspected.get("available")
+    available = (
+        bool(inspected_available)
+        if isinstance(inspected_available, bool)
+        else status_available
+    )
+    inspected_warning = inspected.get("warning") or inspected.get("error")
+    warning = _ingest_warning(
+        inspected_warning,
+        "" if inspected_warning else (status_entry.get("error") if not available else ""),
+    )
+    session = _ingest_session(inspected)
+    status_session = _ingest_session(status_entry)
+    for key, value in status_session.items():
+        if key == "auth_required" or key not in session:
+            session[key] = value
+    if status_entry.get("auth_required"):
+        session["auth_required"] = True
+    title = str(inspected.get("title") or meta.get("title") or "").strip()
+    if not title and meta.get("filename"):
+        title = Path(str(meta["filename"])).stem
+    choices = inspected.get("choices")
+    if not isinstance(choices, list):
+        choices = meta.get("choices") if isinstance(meta.get("choices"), list) else []
+    choices = _redact_ingest_value(choices)
+    needs_choice = bool(
+        inspected.get("needs_choice")
+        or str(inspected.get("status") or "") == "picker"
+    )
+    attempts = _attempts_payload(getattr(chain, "last_attempts", ()))
+    return {
+        "provider": provider_id,
+        "label": label,
+        "available": available,
+        "configured": bool(status_entry.get("configured", True)),
+        "warning": warning,
+        "session": session,
+        "meta": meta,
+        "title": title,
+        "duration": inspected.get("duration"),
+        "thumbnail": _redact_ingest_value(inspected.get("thumbnail")),
+        "uploader": inspected.get("uploader") or meta.get("uploader"),
+        "needs_choice": needs_choice,
+        "choices": choices,
+        "options": inspected.get("options") if isinstance(inspected.get("options"), dict) else options.as_dict(),
+        "provider_status": _redact_ingest_meta(status_entry),
+        "attempts": attempts,
+    }
 
 
 def _new_job(
@@ -1546,6 +2627,114 @@ def job_from_path(body: PathBody) -> dict:
     return {"id": job["id"], "status": job["status"]}
 
 
+@app.post("/api/jobs/from-url")
+def job_from_url(body: FromUrlBody) -> dict:
+    try:
+        url = _validate_remote_ingest_url(body.url)
+        provider_settings = _ingest_provider_settings()
+        order = _ingest_provider_order(url, body.provider, provider_settings)
+        options = registry.options_from_settings(provider_settings, body.ingest_options)
+        chain = _ingest_provider_chain(provider_settings, order)
+        inspected = chain.inspect(url, options)
+        if not isinstance(inspected, dict):
+            raise IngestError("The ingest provider returned an invalid inspection result.")
+        if inspected.get("needs_choice") or str(inspected.get("status") or "") == "picker":
+            raise HTTPException(
+                409,
+                "This link contains multiple items. Choose one entry from the picker.",
+            )
+        if inspected.get("available") is False:
+            detail = (
+                inspected.get("warning")
+                or inspected.get("error")
+                or "This link cannot be ingested."
+            )
+            raise HTTPException(400, str(detail))
+    except IngestError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    provider_id = str(chain.last_provider_id or order[0])
+    provider = chain.last_provider
+    # If inspection already found the primary unavailable, start the download
+    # with the provider that answered instead of repeating the failed attempt.
+    download_order = [provider_id, *[item for item in order if item != provider_id]]
+    chain = _ingest_provider_chain(provider_settings, download_order)
+    analysis_options = clean_options(body.options)
+    job_id = uuid.uuid4().hex[:12]
+    directory = JOBS / job_id
+    directory.mkdir(parents=True, exist_ok=False)
+    now = round(time.time(), 3)
+    label = str(getattr(provider, "label", "") or provider_id)
+    job = {
+        "id": job_id,
+        "created": now,
+        "updated": now,
+        "status": "downloading",
+        "progress": 0.0,
+        "message": "Preparing download",
+        "error": None,
+        "source": {"path": None, "name": "URL video"},
+        "options": analysis_options,
+        "ingest": {
+            "provider": provider_id,
+            "label": label,
+            "source_url": _redact_source_url(url),
+            "title": "",
+            "thumbnail": None,
+            "duration": None,
+            "meta": {},
+            "options": options.as_dict(),
+            "progress": 0.0,
+            "message": "Preparing download",
+            "phase": "downloading",
+            "status": "downloading",
+            "error": None,
+        },
+        "analysis": None,
+        "renders": {},
+    }
+    save_job(job)
+
+    cancel_event = threading.Event()
+    INGEST_CANCELS[job_id] = cancel_event
+    try:
+        ingest_pool.submit(
+            _run_url_ingest,
+            job_id,
+            chain,
+            provider_id,
+            label,
+            url,
+            options,
+            cancel_event,
+            analysis_options,
+        )
+    except Exception as exc:  # noqa: BLE001
+        INGEST_CANCELS.pop(job_id, None)
+        error = _short_ingest_error(exc)
+
+        def fail(job: dict) -> None:
+            job["status"] = "failed"
+            job["progress"] = 1.0
+            job["message"] = "URL ingest failed"
+            job["error"] = error
+            job.setdefault("ingest", {}).update({
+                "phase": "failed",
+                "status": "failed",
+                "progress": 1.0,
+                "message": "URL ingest failed",
+                "error": error,
+            })
+
+        update_job(job_id, fail)
+        _record_ingest_history(
+            job_id, provider_id, url, "failed", error=error
+        )
+        raise HTTPException(500, "Could not start the URL download.") from exc
+
+    return {"id": job_id, "status": "downloading", "provider": provider_id, "label": label}
+
+
 @app.get("/api/jobs")
 def list_jobs() -> dict:
     items = []
@@ -1557,6 +2746,7 @@ def list_jobs() -> dict:
             continue
         analysis = job.get("analysis") or {}
         scenes = analysis.get("scenes") or []
+        ingest = job.get("ingest") or {}
         hook_id = analysis.get("hook_scene")
         hook_thumb = None
         if hook_id is not None:
@@ -1569,6 +2759,11 @@ def list_jobs() -> dict:
             "status": job.get("status"),
             "progress": job.get("progress", 0),
             "message": job.get("message"),
+            "error": job.get("error"),
+            "provider": ingest.get("provider"),
+            "provider_label": ingest.get("label") or ingest.get("provider"),
+            "ingest_status": ingest.get("status"),
+            "ingest_error": ingest.get("error"),
             "scene_count": analysis.get("scene_count"),
             "hook_thumb": hook_thumb,
         })
@@ -1588,6 +2783,41 @@ def get_usage(job_id: str) -> dict:
 @app.get("/api/jobs/{job_id}/status")
 def get_status(job_id: str) -> dict:
     return public_status(load_job(job_id))
+
+
+@app.post("/api/jobs/{job_id}/url/cancel")
+def cancel_url_ingest(job_id: str) -> dict:
+    job = load_job(job_id)
+    event = INGEST_CANCELS.get(job_id)
+    active = job.get("status") == "downloading"
+    if event is not None:
+        event.set()
+    if active:
+        def mark(job: dict) -> None:
+            ingest = job.setdefault("ingest", {})
+            ingest["cancel_requested"] = True
+            if event is None:
+                job["status"] = "failed"
+                job["progress"] = 1.0
+                job["message"] = "Download cancelled"
+                job["error"] = "Download worker is no longer running."
+                ingest.update({
+                    "phase": "failed", "status": "failed", "progress": 1.0,
+                    "message": "Download cancelled",
+                    "error": job["error"],
+                })
+
+        try:
+            job = update_job(job_id, mark)
+            if event is None:
+                _record_ingest_history(
+                    job_id, str((job.get("ingest") or {}).get("provider") or ""),
+                    str((job.get("ingest") or {}).get("source_url") or ""),
+                    "failed", error=job.get("error"),
+                )
+        except Exception:  # noqa: BLE001
+            pass
+    return {"ok": True, "id": job_id, "cancelled": bool(active)}
 
 
 @app.get("/api/jobs/{job_id}/history")
@@ -1747,6 +2977,109 @@ def _plan_for(job: dict, target: int, hook_scene: int | None) -> dict:
     return plan
 
 
+def _manual_plan_reasoning(plan: dict, note: str, source_duration: float) -> dict:
+    """Truthful reasoning for a manually edited, custom, or arc-ordered cut.
+
+    Automatic hook/payoff/selection claims no longer describe the resulting
+    clips, so this deliberately drops those claims and reports only what can
+    be verified from the current clip list.
+    """
+    clips = [clip for clip in plan.get("clips", []) if isinstance(clip, dict)]
+    total = round(sum(float(clip.get("dur") or 0.0) for clip in clips), 3)
+    body = [clip for clip in clips if str(clip.get("role") or "") == "beat"]
+    body_order = all(
+        float(body[index].get("start") or 0.0)
+        <= float(body[index + 1].get("start") or 0.0) + 0.001
+        for index in range(len(body) - 1)
+    )
+    starts = [float(clip.get("start") or 0.0) for clip in clips]
+    ends = [float(clip.get("end") or 0.0) for clip in clips]
+    target = int(plan.get("target") or 30)
+    hook = clips[0] if clips else {}
+    payoff = clips[-1] if clips else {}
+    hook_scene = hook.get("scene")
+    payoff_scene = payoff.get("scene")
+    order_text = (
+        "Bridge beats remain in source order."
+        if body_order
+        else "Bridge beats were reordered; source order no longer holds."
+    )
+    return {
+        "target": target,
+        "source_duration": round(float(source_duration or 0.0), 3),
+        "summary": (
+            f"{note}: {len(clips)} clip{'s' if len(clips) != 1 else ''}, "
+            f"{total:.1f}s of a {target}s target. {order_text} "
+            "Automatic hook/payoff scoring does not describe this manual cut."
+        ),
+        "hook": {
+            "headline": (
+                f"Manual opening: scene {hook_scene + 1}."
+                if isinstance(hook_scene, int) else "Manual opening."
+            ),
+            "evidence": ["opening clip supplied by the manual edit"],
+            "alternatives": [],
+        },
+        "structure": {
+            "roles": [str(clip.get("role") or "beat") for clip in clips],
+            "clip_count": len(clips),
+            "beat_count": len(body),
+            "body_order": "source" if body_order else "manual",
+            "body_in_source_order": body_order,
+            "hook_first": bool(clips and str(clips[0].get("role")) == "hook"),
+            "source_span": {
+                "start": round(min(starts), 3) if starts else None,
+                "end": round(max(ends), 3) if ends else None,
+            },
+            "why": (
+                f"{note} controls the clip list. {order_text} "
+                "The original automatic hook/payoff explanation is not used."
+            ),
+        },
+        "payoff": {
+            "headline": (
+                f"Manual ending: scene {payoff_scene + 1}."
+                if isinstance(payoff_scene, int) else "Manual ending."
+            ),
+            "evidence": ["last clip supplied by the manual edit"],
+            "why_late": None,
+            "position_pct": None,
+            "late_zone_pct": round(pipeline.PAYOFF_ZONE * 100, 1),
+            "candidates": 0,
+        },
+        "selection": {
+            "strategy": (
+                f"{note}: automatic ranking, spacing, and budget claims were "
+                "replaced by the manual clip list."
+            ),
+            "evidence": [
+                f"{len(clips)} manual clips totalling {total:.1f}s",
+                order_text,
+                "re-run automatic Smart Cut to restore scored reasoning",
+            ],
+            "kept": [
+                {
+                    "scene": clip.get("scene"),
+                    "role": str(clip.get("role") or "beat"),
+                    "start": round(float(clip.get("start") or 0.0), 3),
+                    "end": round(float(clip.get("end") or 0.0), 3),
+                    "dur": round(float(clip.get("dur") or 0.0), 3),
+                    "why": str(clip.get("why") or ""),
+                    "evidence": [],
+                }
+                for clip in clips
+            ],
+            "target_budget": {
+                "target": target,
+                "source_duration": round(float(source_duration or 0.0), 3),
+                "total": total,
+                "headroom": round(max(0.0, target - total), 3),
+                "over_target": round(max(0.0, total - target), 3),
+            },
+        },
+    }
+
+
 def _custom_plan(
     job: dict,
     target: int,
@@ -1787,14 +3120,14 @@ def _custom_plan(
             "end": round(end, 3),
             "dur": round(end - start, 3),
             "role": role,
-            "why": str(raw.get("why") or "")[:240],
+            "why": f"Manual {role}: {end - start:.1f}s at {start:.1f}s.",
         })
     if not built:
         raise HTTPException(400, "The cut is empty.")
     total = round(sum(clip["dur"] for clip in built), 3)
     hook_clip = next((clip for clip in built if clip["role"] == "hook"), built[0])
     payoff_clip = next((clip for clip in built if clip["role"] == "payoff"), None)
-    return {
+    value = {
         "target": int(target),
         "total": total,
         "hook_scene": hook["id"] if hook else built[0]["scene"],
@@ -1808,6 +3141,12 @@ def _custom_plan(
             (analysis.get("engine") or {}).get("transcript_language") or "en"
         ),
     }
+    value["reasoning"] = _manual_plan_reasoning(
+        value, "Manual edit", float((job.get("source") or {}).get("duration") or 0.0)
+    )
+    value["hook_why"] = value["reasoning"]["hook"]["headline"]
+    value["payoff_why"] = value["reasoning"]["payoff"]["headline"]
+    return value
 
 
 def _apply_order(job: dict, plan: dict, order: str) -> dict:
@@ -1826,6 +3165,13 @@ def _apply_order(job: dict, plan: dict, order: str) -> dict:
         "total": total,
         "order": "arc",
     }
+    value["reasoning"] = _manual_plan_reasoning(
+        value,
+        "Story-arc order",
+        float((job.get("source") or {}).get("duration") or 0.0),
+    )
+    value["hook_why"] = value["reasoning"]["hook"]["headline"]
+    value["payoff_why"] = value["reasoning"]["payoff"]["headline"]
     return value
 
 
@@ -1913,6 +3259,7 @@ def save_variant(job_id: str, body: VariantBody) -> dict:
         "total": plan["total"],
         "clip_count": plan["clip_count"],
         "clips": plan["clips"],
+        "reasoning": plan.get("reasoning"),
         "created": round(time.time(), 3),
     }
 

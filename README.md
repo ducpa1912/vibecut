@@ -4,7 +4,7 @@ Self-hosted long-video → short-reel cutter. Drop a minutes- or hours-long vide
 
 Everything runs on this machine by default. No account, no cloud upload, no watermark. Cloud keys are optional and off until you add one.
 
-**v0.11.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
+**v0.12.0** · version history and checklist: [ROADMAP.md](ROADMAP.md).
 
 ## Run
 
@@ -18,13 +18,38 @@ Open <http://127.0.0.1:8787>.
 Requirements:
 
 - `ffmpeg` / `ffprobe` on `PATH`
-- Python 3.10+
+- Python 3.11+
 - Python packages in `requirements.txt`
 - macOS: `swiftc` (Xcode Command Line Tools) for Apple Vision text + face + saliency reading. Without it, crops fall back to center and on-screen text is skipped.
 - Optional: `mlx_whisper` for local speech transcription. Apple Speech is built in on macOS 26.
 - Optional: **OpenCode Go** for DeepSeek V4.1 Flash intelligence. Use a project API key in Setup, or sign in with the OpenCode CLI. Cloud is off by default.
 
 The Swift helper is compiled automatically on first use into `bin/vision_probe`.
+
+## Video links (yt-dlp first)
+
+The ingest screen has a **Paste a video link** bar directly below **Drop a video**.
+The normal path is the native Python **yt-dlp** API (Unlicense): no Node, no
+Docker, no Cobalt server, no cloud upload. VibeCut downloads the highest
+quality video + audio it can, prefers H.264/MP4 for editing compatibility, then
+starts dissection only after the download is complete.
+
+- **yt-dlp** — normal sites, playlists (choose one entry), cookies from a browser
+  or `cookies.txt`, progress and cancel.
+- **Cobalt** — optional external sidecar; enable **Fallback after yt-dlp** in
+  Setup to retry only when yt-dlp fails. Never required for normal ingest and
+  never imported into VibeCut.
+- **xhs_get** — optional external sidecar for one RedNote / Xiaohongshu note at
+  a time. RedNote cookies stay in xhs_get; VibeCut never stores or reads them.
+
+URL ingest accepts public internet links only; use **Use a local path instead**
+for local files. If the app is bound beyond loopback, set `VIBECUT_TOKEN`
+before using the app or its API.
+
+Setup includes yt-dlp quality/codec/container/audio, cookie source and browser.
+Playlist entries are shown as choices before download. Cobalt and XHS sidecar
+settings are optional. License boundary and sidecar setup:
+[docs/url-ingest.md](docs/url-ingest.md).
 
 ## What it does
 

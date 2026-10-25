@@ -9,6 +9,7 @@ Full compressed plan: `~/.opencode/plan/vibecut-plan.md`.
 
 | Version | Date | Theme | Key changes |
 |---|---|---|---|
+| 0.12.0 | 2026-10-25 | Video links | URL bar under ingest; native yt-dlp first (quality/audio/cookies/playlist/cancel); Cobalt + xhs_get optional sidecars; XHS token/cookie/login; background URL ingest + history |
 | 0.11.0 | 2026-10-24 | Rewrite/History/UI | OpenRouter project-key override + quarantine, OpenCode reasoning fix, rewrite last-good cache, script/render/upload history with restore, Moments/Smart Cut UI, audio Rewrite→Voice→Music steps, local-only STT, translation modes |
 | 0.10.0 | 2026-10-24 | Speech/Music/Upload | OpenCode→OpenRouter→Apple translation, AI rewrite fallback, MiniMax TTS/music, OpenRouter TTS/Lyria fallbacks, uploaded voice fit for Voice-over/Dub/Full Replace, audio tabs |
 | 0.9.2 | 2026-10-24 | AI music fix | Stable Audio preflight + gated-weight guidance; ungated MusicGen Small fallback with worker |
@@ -43,7 +44,7 @@ this table, and gets one commit. Patch bumps for fixes only.
 - Music: MiniMax Music → OpenRouter Lyria 3 → library/CC0.
 - STT: cloud → Apple SpeechAnalyzer → mlx-whisper.
 - Setup: keys in `data/secrets.json` 0600, env overrides, masked API.
-- 132 tests pass. v0.11.0 working tree.
+- 478 tests pass. v0.12.0 working tree.
 
 ## Shipped checklist
 
@@ -69,9 +70,17 @@ this table, and gets one commit. Patch bumps for fixes only.
 - [x] Direct OpenCode Go project API key mode (project-local secret, no shared login)
 - [x] OpenRouter DeepSeek translation/rewrite fallback
 - [x] OpenRouter project key override, 401 quarantine, model error reporting
+- [x] URL bar with native yt-dlp first: Python API, no Node/Docker/Cobalt, highest quality/audio, H.264/MP4 preference, cookies, playlist picker, progress + cancel
+- [x] URL bar for optional Cobalt and xhs_get single-note ingest
+- [x] Cobalt Setup options and local-processing merge/remux
+- [x] XHS Setup token, one-shot cookie, sign-in/invite, session check
+- [x] Background URL ingest with cancel + history
 - [x] Rewrite reasoning/empty-reply retry, last-good script, no silent rules cache
 - [x] Persistent translation/rewrite/render/upload history with restore
 - [x] Moments rail + Smart Cut drag/drop/trim/remove UI
+- [x] Recent cuts: selected card, per-card delete, failed-ingest diagnostics
+- [x] Smart Cut evidence-backed reasoning: hook alternatives, source-order structure, payoff rationale, selection budget
+- [x] OCR candidate correction: low-confidence upscale retry, custom overlay words, safe LINKTREE/UNAREE selection
 - [x] Audio Rewrite→Voice→Music steps; local-only STT; translation modes
 - [x] MiniMax Speech 2.8 Turbo + OpenRouter Fish/Gemini TTS fallback
 - [x] MiniMax Music + OpenRouter Lyria 3 fallback

@@ -1,5 +1,10 @@
+# VibeCut runtime dependencies.
+# Python 3.11+ and ffmpeg/ffprobe on PATH are required; see docs/licensing.md.
 fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 numpy>=1.26
 pillow>=10.0
+# Default URL ingest path. Unlicense. Site extractors change often, so keep
+# this current in release builds (`python3 -m pip install -U yt-dlp`).
+yt-dlp>=2025.10.22

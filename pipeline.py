@@ -1298,9 +1298,121 @@ def crop_center(
 # ---------------------------------------------------------------- planning
 
 
+PAYOFF_ZONE = 0.68
+MIN_LATE_BEAT = 0.8
+HOOK_CAP = 3.0
+HOOK_FLOOR = 0.7
+PER_CLIP_BUDGET = {15: 3.1, 30: 3.8, 60: 4.4}
+
+
 def _clip_text(value: str, limit: int = 56) -> str:
     text = " ".join(str(value or "").split())
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _safe_float(value, fallback: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if math.isfinite(number) else fallback
+
+
+def _source_span(scene: dict) -> str:
+    start = _safe_float(scene.get("start"))
+    end = _safe_float(scene.get("end"))
+    if 0.0 <= start < end < 10.0:
+        return f"{start:.1f}s–{end:.1f}s"
+    return f"{_clock(start)}–{_clock(end)}"
+
+
+def _rank_fact(scene: dict, pool: list[dict], key: str = "score") -> tuple[float, int, int, int]:
+    """Return value, rank (1 best), pool size, and top-percent for one score."""
+    value = _safe_float(scene.get(key))
+    values = [_safe_float(item.get(key)) for item in pool]
+    better = sum(1 for item_score in values if item_score > value)
+    count = max(1, len(values))
+    rank = better + 1
+    top = max(1, min(100, round(rank / count * 100)))
+    return value, rank, count, top
+
+
+def _text_evidence(scene: dict) -> list[str]:
+    facts: list[str] = []
+    speech = " ".join(str(scene.get("speech") or "").split())
+    if speech:
+        facts.append(f'spoken line "{_clip_text(speech)}"')
+    ocr = " ".join(str(scene.get("ocr") or "").split())
+    if ocr:
+        facts.append(f'on-screen text "{_clip_text(ocr)}"')
+    if not facts:
+        facts.append("no speech or on-screen text in the read signals")
+    return facts
+
+
+def _subject_evidence(scene: dict) -> str:
+    if scene.get("face"):
+        return "face in frame"
+    if scene.get("subject"):
+        return "clear salient subject"
+    return "no face or salient subject in the read signals"
+
+
+def _flag_evidence(scene: dict) -> list[str]:
+    facts: list[str] = []
+    if scene.get("black"):
+        facts.append("black frame flagged")
+    if scene.get("freeze"):
+        facts.append("freeze flagged (very low motion)")
+    return facts
+
+
+def _score_evidence(scene: dict, pool: list[dict]) -> str:
+    interest, rank, count, _ = _rank_fact(scene, pool, "score")
+    hook = _safe_float(scene.get("hook"))
+    return (
+        f"interest {interest:.0f}/100 (rank {rank} of {count}), hook {hook:.0f}/100, "
+        f"visual {_safe_float(scene.get('visual_score')):.0f}/100, "
+        f"motion {_safe_float(scene.get('motion_score')):.0f}/100, "
+        f"audio {_safe_float(scene.get('audio_score')):.0f}/100, "
+        f"text {_safe_float(scene.get('text_score')):.0f}/100"
+    )
+
+
+def _scene_evidence(scene: dict, pool: list[dict]) -> list[str]:
+    return [
+        f"scene {scene.get('id')} at {_source_span(scene)}, {_safe_float(scene.get('dur')):.1f}s long",
+        *_text_evidence(scene),
+        _subject_evidence(scene),
+        _score_evidence(scene, pool),
+        *_flag_evidence(scene),
+    ]
+
+
+def _target_fit(
+    role: str,
+    clip_dur: float,
+    target: float,
+    per_clip: float,
+    body_budget: float,
+    total: float,
+) -> str:
+    target_seconds = max(1, int(round(_safe_float(target, 15.0))))
+    if role == "hook":
+        return (
+            f"{clip_dur:.1f}s opening cut against the {HOOK_CAP:.1f}s hook cap; "
+            f"leaves {max(0.0, body_budget):.1f}s of the {target_seconds}s target for the body"
+        )
+    if role == "payoff":
+        headroom = max(0.0, target_seconds - total)
+        return (
+            f"{clip_dur:.1f}s payoff cut; the {target_seconds}s reel totals "
+            f"{total:.1f}s with {headroom:.1f}s headroom"
+        )
+    return (
+        f"{clip_dur:.1f}s cut against the {per_clip:.1f}s per-beat budget; "
+        f"the {target_seconds}s reel totals {total:.1f}s"
+    )
 
 
 def scene_note(scene: dict) -> str:
@@ -1324,23 +1436,181 @@ def scene_note(scene: dict) -> str:
     return ", ".join(bits)
 
 
-def hook_reason(scene: dict, scenes: list[dict]) -> str:
-    """Explain why this beat was picked as the opening."""
-    pool = [s for s in scenes if s.get("deep", True) and not s.get("black")] or scenes
-    score = float(scene.get("hook", 0.0))
-    better = sum(1 for s in pool if float(s.get("hook", 0.0)) > score)
-    percentile = max(1, round((better + 1) / max(1, len(pool)) * 100))
-    opening = f"Hook score {score:.0f}, top {percentile}% of this source."
-    return f"{opening} Opens with {scene_note(scene)}."
+def hook_reason(
+    scene: dict,
+    scenes: list[dict],
+    clip: dict | None = None,
+    target: float | None = None,
+    body_budget: float | None = None,
+    total: float | None = None,
+    pool: list[dict] | None = None,
+) -> str:
+    """Explain why this beat was picked as the opening, with observed evidence."""
+    if pool is None:
+        pool = [s for s in scenes if s.get("deep", True) and not s.get("black")] or scenes
+    pool = [s for s in pool if isinstance(s, dict)] or [scene]
+    score, rank, count, top = _rank_fact(scene, pool, "hook")
+    if count <= 1:
+        opening = f"Hook score {score:.0f}, the only hook candidate."
+    else:
+        opening = f"Hook score {score:.0f}, rank {rank} of {count} (top {top}%)."
+    facts = [
+        f"scene {scene.get('id')} at {_source_span(scene)}, "
+        f"{_safe_float(scene.get('dur')):.1f}s long",
+        *_text_evidence(scene),
+        _subject_evidence(scene),
+        _score_evidence(scene, pool),
+        *_flag_evidence(scene),
+    ]
+    if clip is not None and target is None:
+        facts.append(
+            f"opening clip keeps {_safe_float(clip.get('dur')):.1f}s "
+            f"from source {_clock(_safe_float(clip.get('start')))}–"
+            f"{_clock(_safe_float(clip.get('end')))}"
+        )
+    if target is not None and body_budget is not None and total is not None and clip is not None:
+        facts.append(_target_fit(
+            "hook", _safe_float(clip.get("dur")), target, 0.0, body_budget, total,
+        ))
+    return f"{opening} Opening hook: " + "; ".join(facts) + "."
 
 
-def payoff_reason(scene: dict, source_duration: float) -> str:
-    position = scene.get("start", 0.0) / max(1.0, source_duration) * 100
-    return (
-        f"Best late beat: {position:.0f}% into the source, "
-        f"interest {float(scene.get('score', 0.0)):.0f}. "
-        f"It gives {scene_note(scene)} and a place for the reel to land."
+def payoff_reason(
+    scene: dict,
+    source_duration: float,
+    clip: dict | None = None,
+    target: float | None = None,
+    total: float | None = None,
+    pool: list[dict] | None = None,
+) -> str:
+    """Explain why this late beat closes the reel, with observed evidence."""
+    position = (
+        _safe_float(scene.get("start")) / max(1.0, _safe_float(source_duration, 1.0)) * 100
     )
+    candidates = [s for s in (pool or [scene]) if isinstance(s, dict)] or [scene]
+    score, rank, count, _ = _rank_fact(scene, candidates, "score")
+    ranking = f" (rank {rank} of {count} late candidates)" if count > 1 else ""
+    head = (
+        f"Best late beat: {position:.0f}% into the source, "
+        f"interest {score:.0f}{ranking}."
+    )
+    facts = [
+        f"scene {scene.get('id')} at {_source_span(scene)}, "
+        f"{_safe_float(scene.get('dur')):.1f}s long",
+        *_text_evidence(scene),
+        _subject_evidence(scene),
+        _score_evidence(scene, candidates),
+        *_flag_evidence(scene),
+    ]
+    if clip is not None and target is None:
+        facts.append(
+            f"payoff clip keeps {_safe_float(clip.get('dur')):.1f}s, "
+            f"end-aligned at source {_clock(_safe_float(clip.get('start')))}–"
+            f"{_clock(_safe_float(clip.get('end')))}"
+        )
+    elif clip is not None:
+        facts.append(
+            f"end-aligned at source {_clock(_safe_float(clip.get('start')))}–"
+            f"{_clock(_safe_float(clip.get('end')))}"
+        )
+    if target is not None and total is not None and clip is not None:
+        facts.append(_target_fit(
+            "payoff", _safe_float(clip.get("dur")), target, 0.0, 0.0, total,
+        ))
+    return f"{head} Payoff: " + "; ".join(facts) + "."
+
+
+def beat_reason(
+    scene: dict,
+    pool: list[dict],
+    clip: dict,
+    target: float,
+    per_clip: float,
+    total: float,
+) -> str:
+    """Explain a bridge beat from scores and observed signals only."""
+    score, rank, count, _ = _rank_fact(scene, pool, "score")
+    facts = [
+        f"scene {scene.get('id')} at {_source_span(scene)}",
+        *_text_evidence(scene),
+        _subject_evidence(scene),
+        _score_evidence(scene, pool),
+        *_flag_evidence(scene),
+        _target_fit("beat", _safe_float(clip.get("dur")), target, per_clip, 0.0, total),
+    ]
+    return (
+        f"Bridge beat: interest {score:.0f}/100, rank {rank} of {count}; "
+        + "; ".join(facts)
+        + "."
+    )
+
+
+def _hook_alternatives(
+    hook: dict,
+    pool: list[dict],
+    requested: bool,
+) -> list[dict]:
+    """Best two or three other hooks and the observed reason each lost."""
+    hook_score = _safe_float(hook.get("hook"))
+    others = [s for s in pool if s.get("id") != hook.get("id")]
+    others.sort(
+        key=lambda s: (
+            -_safe_float(s.get("hook")),
+            _safe_float(s.get("start")),
+            _safe_float(s.get("id")),
+        )
+    )
+    alternatives: list[dict] = []
+    for alt in others[:3]:
+        alt_score = _safe_float(alt.get("hook"))
+        reasons: list[str] = []
+        if alt_score > hook_score + 0.05:
+            if requested:
+                reasons.append(
+                    f"higher hook score {alt_score:.0f} vs {hook_score:.0f}, "
+                    f"but scene {hook.get('id')} was requested"
+                )
+            else:
+                reasons.append(
+                    f"higher hook score {alt_score:.0f} vs {hook_score:.0f}, "
+                    "but ranked below the selected hook"
+                )
+        elif hook_score > alt_score + 0.05:
+            reasons.append(
+                f"hook score {alt_score:.0f} vs {hook_score:.0f} "
+                f"({hook_score - alt_score:.0f} lower)"
+            )
+        elif _safe_float(alt.get("start")) > _safe_float(hook.get("start")) + 0.05:
+            reasons.append(
+                f"ties at hook score {alt_score:.0f} but starts "
+                f"{_safe_float(alt.get('start')) - _safe_float(hook.get('start')):.1f}s later"
+            )
+        else:
+            reasons.append(
+                f"ties at hook score {alt_score:.0f} but ranks lower on the start-time tiebreak"
+            )
+        if (hook.get("speech") or hook.get("ocr")) and not (alt.get("speech") or alt.get("ocr")):
+            reasons.append("no speech or on-screen text in the read signals")
+        if hook.get("face") and not alt.get("face"):
+            reasons.append("no face in frame")
+        if alt.get("freeze"):
+            reasons.append("freeze flagged")
+        if alt.get("black"):
+            reasons.append("black frame flagged")
+        alt_dur = _safe_float(alt.get("dur"))
+        if alt_dur < 1.0:
+            reasons.append(f"{alt_dur:.1f}s is below the 1.0s hook window")
+        elif alt_dur > 4.5:
+            reasons.append(f"{alt_dur:.1f}s is above the 4.5s comfortable hook window")
+        alternatives.append({
+            "scene": int(alt["id"]) if alt.get("id") is not None else None,
+            "start": round(_safe_float(alt.get("start")), 3),
+            "dur": round(alt_dur, 3),
+            "hook": round(alt_score, 1),
+            "score": round(_safe_float(alt.get("score")), 1),
+            "why_not": "; ".join(reasons) or "lower deterministic rank",
+        })
+    return alternatives
 
 
 def auto_hook(scenes: list[dict]) -> dict:
@@ -1427,6 +1697,437 @@ def _overlaps(scene: dict, start: float, end: float) -> bool:
     return min(scene["end"], end) - max(scene["start"], start) > 0.05
 
 
+def _reasoning_payload(
+    *,
+    scenes: list[dict],
+    usable: list[dict],
+    hook: dict,
+    payoff: dict | None,
+    clips: list[dict],
+    target: float,
+    source_duration: float,
+    per_clip: float,
+    gap: float,
+    total: float,
+    note: str | None,
+    requested_hook: bool,
+    hook_pool: list[dict],
+    payoff_candidates: list[dict],
+) -> dict:
+    """Build the JSON-safe explanation attached to a generated plan."""
+    by_id = {scene.get("id"): scene for scene in usable}
+    target_seconds = max(1, int(round(_safe_float(target, 15.0))))
+    hook_score, hook_rank, hook_count, hook_top = _rank_fact(hook, hook_pool, "hook")
+
+    if hook_count <= 1:
+        hook_headline = (
+            f"Scene {hook.get('id')} is the only hook candidate: hook score {hook_score:.0f}."
+        )
+    elif requested_hook and hook_rank > 1:
+        hook_headline = (
+            f"Scene {hook.get('id')} is the requested opening: hook score {hook_score:.0f}, "
+            f"rank {hook_rank} of {hook_count} (top {hook_top}%)."
+        )
+    elif hook_rank == 1:
+        hook_headline = (
+            f"Scene {hook.get('id')} is the strongest opening: hook score {hook_score:.0f}, "
+            f"rank 1 of {hook_count} (top {hook_top}%)."
+        )
+    else:
+        hook_headline = (
+            f"Scene {hook.get('id')} is the best available opening: hook score {hook_score:.0f}, "
+            f"rank {hook_rank} of {hook_count} (top {hook_top}%)."
+        )
+    hook_clip = next((clip for clip in clips if clip.get("role") == "hook"), None)
+    hook_evidence = [
+        f"source {_source_span(hook)}, {_safe_float(hook.get('dur')):.1f}s long",
+        *_text_evidence(hook),
+        _subject_evidence(hook),
+        _score_evidence(hook, hook_pool),
+        *_flag_evidence(hook),
+    ]
+    if hook_clip is not None:
+        hook_evidence.append(
+            f"opening cut keeps {_safe_float(hook_clip.get('dur')):.1f}s at source "
+            f"{_clock(_safe_float(hook_clip.get('start')))}–"
+            f"{_clock(_safe_float(hook_clip.get('end')))}"
+        )
+    if requested_hook and hook_rank > 1:
+        hook_evidence.append(
+            f"requested by the caller; {hook_rank - 1} hook candidates score higher"
+        )
+    elif not requested_hook:
+        hook_evidence.append("chosen automatically from the top deterministic hook score")
+
+    hook_section = {
+        "headline": hook_headline,
+        "evidence": hook_evidence,
+        "alternatives": _hook_alternatives(hook, hook_pool, requested_hook),
+    }
+
+    roles = [str(clip.get("role") or "beat") for clip in clips]
+    body_clips = [clip for clip in clips if clip.get("role") == "beat"]
+    all_starts = [_safe_float(clip.get("start")) for clip in clips]
+    all_ends = [_safe_float(clip.get("end")) for clip in clips]
+    other_clips = [clip for clip in clips if clip.get("role") != "hook"]
+    hook_earliest = not other_clips or _safe_float(hook.get("start")) <= min(
+        _safe_float(clip.get("start")) for clip in other_clips
+    ) + 0.001
+    if not clips:
+        structure_why = "There are no beats to order."
+    elif len(clips) == 1:
+        structure_why = (
+            "Only one clip fits this target, so there is no body order to break."
+        )
+    elif hook_earliest:
+        structure_why = (
+            f"All {len(clips)} clips run in source order from "
+            f"{_clock(min(all_starts))} to {_clock(max(all_ends))}, so any actions, "
+            "spoken lines or on-screen text keep their original sequence; the hook "
+            "is also the earliest selected beat."
+        )
+    elif body_clips:
+        ordered_tail = list(body_clips)
+        if payoff is not None:
+            payoff_clip = next(
+                (clip for clip in clips if clip.get("role") == "payoff"), None,
+            )
+            if payoff_clip is not None:
+                ordered_tail.append(payoff_clip)
+        tail_label = (
+            f"The {len(body_clips)} bridge beat"
+            f"{'s' if len(body_clips) != 1 else ''} and the payoff"
+            if payoff is not None
+            else f"The {len(body_clips)} bridge beat"
+            f"{'s' if len(body_clips) != 1 else ''}"
+        )
+        structure_why = (
+            f"{tail_label} stay in source order from "
+            f"{_clock(min(_safe_float(clip.get('start')) for clip in ordered_tail))} "
+            f"to {_clock(max(_safe_float(clip.get('end')) for clip in ordered_tail))}, "
+            "so any actions, spoken lines or on-screen text keep their original "
+            f"sequence; only the hook is lifted from "
+            f"{_clock(_safe_float(hook.get('start')))} to the front."
+        )
+    else:
+        payoff_clip = next(
+            (clip for clip in clips if clip.get("role") == "payoff"), None,
+        )
+        structure_why = (
+            "The hook and payoff are the only clips; the hook is lifted from "
+            f"{_clock(_safe_float(hook.get('start')))} to the front"
+            + (
+                f", while the payoff stays at {_clock(_safe_float(payoff_clip.get('start')))}"
+                if payoff_clip is not None else ""
+            )
+            + ", leaving no bridge beats to reorder."
+        )
+    structure_section = {
+        "roles": roles,
+        "clip_count": len(clips),
+        "beat_count": len(body_clips),
+        "body_order": "source",
+        "body_in_source_order": all(
+            _safe_float(body_clips[index].get("start"))
+            <= _safe_float(body_clips[index + 1].get("start")) + 0.001
+            for index in range(len(body_clips) - 1)
+        ),
+        "hook_first": bool(clips and clips[0].get("role") == "hook"),
+        "source_span": {
+            "start": round(min(all_starts), 3) if all_starts else None,
+            "end": round(max(all_ends), 3) if all_ends else None,
+        },
+        "why": structure_why,
+    }
+
+    late_zone = _safe_float(source_duration) * PAYOFF_ZONE
+    if payoff is not None:
+        position = (
+            _safe_float(payoff.get("start"))
+            / max(1.0, _safe_float(source_duration, 1.0))
+            * 100
+        )
+        payoff_score, payoff_rank, payoff_count, _ = _rank_fact(
+            payoff, payoff_candidates or [payoff], "score",
+        )
+        payoff_clip = next(
+            (clip for clip in clips if clip.get("role") == "payoff"), None,
+        )
+        payoff_headline = (
+            f"Scene {payoff.get('id')} is the strongest late beat: interest "
+            f"{payoff_score:.0f}/100, {position:.0f}% into the source."
+        )
+        payoff_evidence = [
+            f"starts at {_clock(_safe_float(payoff.get('start')))}, inside the final "
+            f"{round((1.0 - PAYOFF_ZONE) * 100)}% of the source",
+            *_text_evidence(payoff),
+            _subject_evidence(payoff),
+            _score_evidence(payoff, payoff_candidates or usable),
+            *_flag_evidence(payoff),
+        ]
+        if payoff_clip is not None:
+            payoff_evidence.append(
+                f"payoff cut keeps {_safe_float(payoff_clip.get('dur')):.1f}s, "
+                "end-aligned to the beat's last frame"
+            )
+        payoff_why_late = (
+            f"It is the highest-interest of {max(1, payoff_count)} late candidate"
+            f"{'s' if payoff_count != 1 else ''} and sits at {position:.0f}% of the "
+            f"source, so the {target_seconds}s reel lands on a late beat "
+            f"{'after the bridge beats' if body_clips else 'as the final clip'} "
+            "instead of stopping early."
+        )
+    else:
+        if source_duration <= late_zone:
+            payoff_headline = "No payoff beat: the source has no late-beat window."
+            payoff_evidence = [
+                f"source is {_safe_float(source_duration):.1f}s long; the "
+                f"{round(PAYOFF_ZONE * 100)}% late-beat line falls at {late_zone:.1f}s",
+                f"the {len(clips)} selected clip{'s' if len(clips) != 1 else ''} "
+                f"cover {total:.1f}s",
+            ]
+            payoff_why_late = (
+                "The cut ends on the last selected beat because the source never "
+                "reaches the late-beat zone."
+            )
+        else:
+            payoff_headline = "No payoff beat qualified in the final third."
+            payoff_evidence = [
+                f"no non-hook scene starting at or after {late_zone:.1f}s is at least "
+                f"{MIN_LATE_BEAT:.1f}s long",
+                "the hook scene is excluded as a payoff candidate",
+            ]
+            payoff_why_late = (
+                "The cut ends on the last selected beat; no qualifying late beat was "
+                "available to land on."
+            )
+    payoff_section = {
+        "headline": payoff_headline,
+        "evidence": payoff_evidence,
+        "why_late": payoff_why_late,
+        "position_pct": (
+            round(
+                _safe_float(payoff.get("start"))
+                / max(1.0, _safe_float(source_duration, 1.0))
+                * 100,
+                1,
+            )
+            if payoff is not None else None
+        ),
+        "late_zone_pct": round(PAYOFF_ZONE * 100, 1),
+        "candidates": len(payoff_candidates) if payoff is not None else 0,
+    }
+
+    kept: list[dict] = []
+    for clip in clips:
+        scene = by_id.get(clip.get("scene"))
+        if scene is None and clip.get("scene") == hook.get("id"):
+            scene = hook
+        if scene is None and payoff is not None and clip.get("scene") == payoff.get("id"):
+            scene = payoff
+        scene = scene or {}
+        kept.append({
+            "scene": clip.get("scene"),
+            "role": str(clip.get("role") or "beat"),
+            "source_start": round(_safe_float(scene.get("start")), 3),
+            "source_end": round(_safe_float(scene.get("end")), 3),
+            "start": round(_safe_float(clip.get("start")), 3),
+            "end": round(_safe_float(clip.get("end")), 3),
+            "dur": round(_safe_float(clip.get("dur")), 3),
+            "score": round(_safe_float(scene.get("score")), 1),
+            "hook": round(_safe_float(scene.get("hook")), 1),
+            "why": str(clip.get("why") or ""),
+            "evidence": _scene_evidence(scene, usable) if scene else [],
+        })
+
+    scene_lookup = [by_id.get(clip.get("scene")) or {} for clip in clips]
+    text_clips = sum(
+        1 for scene in scene_lookup if scene.get("speech") or scene.get("ocr")
+    )
+    face_clips = sum(
+        1 for scene in scene_lookup if scene.get("face") or scene.get("subject")
+    )
+    motion_clips = sum(
+        1 for scene in scene_lookup if "motion" in (scene.get("tags") or [])
+    )
+    freeze_clips = sum(1 for scene in scene_lookup if scene.get("freeze"))
+    durations = [_safe_float(clip.get("dur")) for clip in clips]
+    all_black = bool(usable) and all(scene.get("black") for scene in usable)
+    black_removed = sum(1 for scene in scenes if scene.get("black"))
+    if all_black:
+        selection_strategy = (
+            f"No clean beat was available, so all {len(usable)} usable read beats are "
+            f"black-flagged; ranked them by interest, used a {max(0.0, gap):.2f}s "
+            f"midpoint spacing preference where possible, and aimed at the "
+            f"{target_seconds}s target hook-first."
+        )
+    else:
+        selection_strategy = (
+            f"Ranked {len(usable)} usable read beats by interest, excluded black frames, "
+            f"used a {max(0.0, gap):.2f}s midpoint spacing preference where possible, "
+            f"preserved source order for the body, and aimed at the {target_seconds}s "
+            "target hook-first."
+        )
+    budget = {
+        "target": target_seconds,
+        "source_duration": round(_safe_float(source_duration), 3),
+        "hook": round(sum(
+            _safe_float(clip.get("dur")) for clip in clips
+            if clip.get("role") == "hook"
+        ), 3),
+        "beats": round(sum(
+            _safe_float(clip.get("dur")) for clip in clips
+            if clip.get("role") == "beat"
+        ), 3),
+        "payoff": round(sum(
+            _safe_float(clip.get("dur")) for clip in clips
+            if clip.get("role") == "payoff"
+        ), 3),
+        "total": round(_safe_float(total), 3),
+        "headroom": round(max(0.0, target_seconds - _safe_float(total)), 3),
+        "over_target": round(max(0.0, _safe_float(total) - target_seconds), 3),
+        "per_beat": round(per_clip, 3),
+        "payoff_cap_pct": 34,
+        "spacing": round(max(0.0, gap), 3),
+    }
+    selection_evidence = [
+        f"{len(clips)} clips kept from {len(usable)} usable read beats; "
+        f"{black_removed} black-flagged beat{'s' if black_removed != 1 else ''} in the source",
+        f"speech or on-screen text in {text_clips} of {len(clips)} kept clips",
+        f"face or clear subject in {face_clips} of {len(clips)} kept clips",
+        f"strong-motion tag in {motion_clips} of {len(clips)} kept clips",
+        (
+            f"kept lengths {min(durations):.1f}s–{max(durations):.1f}s against a "
+            f"{per_clip:.1f}s per-beat budget"
+        ) if durations else "no clip durations to report",
+        (
+            f"budget: hook {budget['hook']:.1f}s + beats {budget['beats']:.1f}s + "
+            f"payoff {budget['payoff']:.1f}s = {budget['total']:.1f}s of "
+            f"{target_seconds}s"
+        ),
+    ]
+    if freeze_clips:
+        selection_evidence.append(
+            f"{freeze_clips} kept clip{'s are' if freeze_clips != 1 else ' is'} "
+            "freeze-flagged and scored down"
+        )
+    if note:
+        selection_evidence.append(f"constraint: {note}")
+
+    hook_text = bool(hook.get("speech") or hook.get("ocr"))
+    hook_face = bool(hook.get("face"))
+    hook_desc = (
+        "with speech or on-screen text" if hook_text
+        else "with a face in frame" if hook_face
+        else "with no text or face in the read signals"
+    )
+    bridge_label = (
+        "no bridge beats" if not body_clips
+        else f"{len(body_clips)} bridge beat{'s' if len(body_clips) != 1 else ''}"
+    )
+    if payoff is not None:
+        position = (
+            _safe_float(payoff.get("start"))
+            / max(1.0, _safe_float(source_duration, 1.0))
+            * 100
+        )
+        payoff_score = _safe_float(payoff.get("score"))
+        summary = (
+            f"Open on scene {hook.get('id')} (hook {hook_score:.0f}/100, {hook_desc}) "
+            f"and land on scene {payoff.get('id')} (interest {payoff_score:.0f}/100 at "
+            f"{position:.0f}% into the source), with {bridge_label} in source order, "
+            f"targeting a {target_seconds}s cut from {_safe_float(source_duration):.1f}s "
+            "of source."
+        )
+    else:
+        summary = (
+            f"Open on scene {hook.get('id')} (hook {hook_score:.0f}/100, {hook_desc}) "
+            f"and build toward a {target_seconds}s cut from "
+            f"{_safe_float(source_duration):.1f}s of source with {bridge_label}; no late "
+            "payoff beat qualified, so the cut ends on the last selected beat."
+        )
+    hook_selection = (
+        "uses the requested opening"
+        if requested_hook
+        else "ranks the hook by hook score"
+    )
+    summary += (
+        f" Selection {hook_selection}, then ranks body beats and payoff by "
+        "interest score, and keeps the body in chronological order; "
+        f"{text_clips} of {len(clips)} clips carry speech or on-screen text, "
+        f"{face_clips} carry a face or clear subject, and the cut totals "
+        f"{_safe_float(total):.1f}s of the {target_seconds}s target"
+    )
+    if note:
+        summary += f"; {note[0].lower() + note[1:]}"
+    summary += "."
+
+    return {
+        "target": target_seconds,
+        "source_duration": round(_safe_float(source_duration), 3),
+        "summary": summary,
+        "hook": hook_section,
+        "structure": structure_section,
+        "payoff": payoff_section,
+        "selection": {
+            "strategy": selection_strategy,
+            "evidence": selection_evidence,
+            "kept": kept,
+            "target_budget": budget,
+        },
+    }
+
+
+def _empty_reasoning(target: float, source_duration: float) -> dict:
+    target_seconds = max(1, int(round(_safe_float(target, 15.0))))
+    return {
+        "target": target_seconds,
+        "source_duration": round(_safe_float(source_duration), 3),
+        "summary": "No scenes were available, so this target has no cut to explain.",
+        "hook": {
+            "headline": "No opening candidate.",
+            "evidence": [],
+            "alternatives": [],
+        },
+        "structure": {
+            "roles": [],
+            "clip_count": 0,
+            "beat_count": 0,
+            "body_order": "source",
+            "body_in_source_order": True,
+            "hook_first": False,
+            "source_span": None,
+            "why": "There are no beats to order.",
+        },
+        "payoff": {
+            "headline": "No payoff candidate.",
+            "evidence": [],
+            "why_late": None,
+            "position_pct": None,
+            "late_zone_pct": round(PAYOFF_ZONE * 100, 1),
+            "candidates": 0,
+        },
+        "selection": {
+            "strategy": "No usable scene was returned by the scan.",
+            "evidence": [],
+            "kept": [],
+            "target_budget": {
+                "target": target_seconds,
+                "source_duration": round(_safe_float(source_duration), 3),
+                "hook": 0.0,
+                "beats": 0.0,
+                "payoff": 0.0,
+                "total": 0.0,
+                "headroom": float(target_seconds),
+                "over_target": 0.0,
+                "per_beat": PER_CLIP_BUDGET.get(target_seconds, 3.8),
+                "payoff_cap_pct": 34,
+                "spacing": 0.0,
+            },
+        },
+    }
+
+
 def build_plan(
     scenes: list[dict],
     source_duration: float,
@@ -1434,33 +2135,52 @@ def build_plan(
     hook_id: int | None = None,
     auto_hook_id: int | None = None,
 ) -> dict:
+    if not scenes:
+        return {
+            "target": int(target),
+            "total": 0.0,
+            "hook_scene": None,
+            "auto": True,
+            "clip_count": 0,
+            "clips": [],
+            "note": "No scenes available to cut",
+            "hook_why": None,
+            "payoff_why": None,
+            "reasoning": _empty_reasoning(target, source_duration),
+        }
+
     usable = [scene for scene in scenes if scene.get("deep", True)] or scenes
     clean = [scene for scene in usable if not scene.get("black")]
     if clean:
         usable = clean
     by_id = {scene["id"]: scene for scene in usable}
-    if hook_id is None or hook_id not in by_id:
+    requested_hook = hook_id is not None and hook_id in by_id
+    if not requested_hook:
         hook = auto_hook(usable)
     else:
         hook = by_id[hook_id]
+    hook_pool = [
+        scene for scene in usable if _safe_float(scene.get("dur")) >= 0.55
+    ] or usable
 
-    hook_wanted = min(3.0, hook["dur"])
-    hook_wanted = max(0.7, hook_wanted)
+    hook_wanted = min(HOOK_CAP, _safe_float(hook.get("dur")))
+    hook_wanted = max(HOOK_FLOOR, hook_wanted)
     hook_start, hook_end = _window(
         hook, hook_wanted,
         prefer_start=bool(hook.get("ocr") or hook.get("speech")),
     )
     hook_dur = hook_end - hook_start
     body_budget = max(0.0, target - hook_dur)
-    per_clip = {15: 3.1, 30: 3.8, 60: 4.4}.get(int(target), 3.8)
+    per_clip = PER_CLIP_BUDGET.get(int(target), 3.8)
 
     # Payoff: best beat near the end, so the reel lands somewhere.
-    last_zone = source_duration * 0.68
+    last_zone = source_duration * PAYOFF_ZONE
     payoff = None
     payoff_dur = 0.0
     payoff_candidates = [
         scene for scene in usable
-        if scene["id"] != hook["id"] and scene["start"] >= last_zone and scene["dur"] >= 0.8
+        if scene["id"] != hook["id"] and scene["start"] >= last_zone
+        and scene["dur"] >= MIN_LATE_BEAT
     ]
     if payoff_candidates:
         payoff = max(payoff_candidates, key=lambda s: s["score"])
@@ -1571,6 +2291,41 @@ def build_plan(
         note = f"Source supports {total:.1f}s here"
     if source_duration < target:
         note = f"Source is only {source_duration:.1f}s long"
+
+    for clip in clips:
+        scene = by_id.get(clip["scene"])
+        if scene is None:
+            continue
+        if clip["role"] == "hook":
+            clip["why"] = hook_reason(
+                scene, scenes, clip=clip, target=target,
+                body_budget=body_budget, total=total, pool=hook_pool,
+            )
+        elif clip["role"] == "payoff":
+            clip["why"] = payoff_reason(
+                scene, source_duration, clip=clip, target=target,
+                total=total, pool=payoff_candidates,
+            )
+        else:
+            clip["why"] = beat_reason(scene, usable, clip, target, per_clip, total)
+
+    reasoning = _reasoning_payload(
+        scenes=scenes,
+        usable=usable,
+        hook=hook,
+        payoff=payoff,
+        clips=clips,
+        target=target,
+        source_duration=source_duration,
+        per_clip=per_clip,
+        gap=gap,
+        total=total,
+        note=note,
+        requested_hook=requested_hook,
+        hook_pool=hook_pool,
+        payoff_candidates=payoff_candidates,
+    )
+    payoff_clip = next((clip for clip in clips if clip.get("role") == "payoff"), None)
     return {
         "target": int(target),
         "total": total,
@@ -1580,7 +2335,8 @@ def build_plan(
         "clips": clips,
         "note": note,
         "hook_why": clips[0]["why"],
-        "payoff_why": payoff_reason(payoff, source_duration) if payoff else None,
+        "payoff_why": payoff_clip["why"] if payoff_clip else None,
+        "reasoning": reasoning,
     }
 
 

@@ -14,13 +14,18 @@ import os
 import threading
 from pathlib import Path
 
+from url_ingest import registry as ingest_registry
+
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("VIBECUT_DATA", ROOT / "data")).expanduser().resolve()
 SETTINGS_PATH = DATA / "settings.json"
 SECRETS_PATH = DATA / "secrets.json"
 LOCK = threading.Lock()
 
-SECRET_NAMES = ("opencode", "openrouter", "minimax", "groq", "openai", "deepgram", "elevenlabs", "cartesia")
+SECRET_NAMES = (
+    "opencode", "openrouter", "minimax", "groq", "openai", "deepgram",
+    "elevenlabs", "cartesia", "cobalt", "xhs",
+)
 
 # A saved project key beats the environment for these providers.
 PROJECT_FIRST = frozenset({"openrouter"})
@@ -34,6 +39,8 @@ ENV_KEYS = {
     "deepgram": ("VIBECUT_DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY"),
     "elevenlabs": ("VIBECUT_ELEVENLABS_API_KEY", "ELEVENLABS_API_KEY"),
     "cartesia": ("VIBECUT_CARTESIA_API_KEY", "CARTESIA_API_KEY"),
+    "cobalt": ("VIBECUT_COBALT_API_KEY", "COBALT_API_KEY"),
+    "xhs": ("VIBECUT_XHS_GET_TOKEN", "XHS_GET_TOKEN"),
 }
 
 DEFAULTS = {
@@ -68,6 +75,7 @@ DEFAULTS = {
         "model": "mlx-community/whisper-small-mlx",
     },
     "tts": {"provider": "minimax"},
+    "ingest": dict(ingest_registry.DEFAULT_INGEST_SETTINGS),
 }
 
 
@@ -121,6 +129,18 @@ def load_settings() -> dict:
     if tts.get("provider") in {"elevenlabs", "openai", "groq", "deepgram", "cartesia", "local"}:
         tts["provider"] = "auto"
         merged["tts"] = tts
+    ingest = dict(merged.get("ingest") or {})
+    # Secrets belong in secrets.json, never in the public settings document.
+    for key in (
+        "cobalt_api_key",
+        "cobalt_key",
+        "xhs_token",
+        "xhs_api_key",
+        "xhs_access_token",
+        "xhs_get_token",
+    ):
+        ingest.pop(key, None)
+    merged["ingest"] = ingest
     return merged
 
 
