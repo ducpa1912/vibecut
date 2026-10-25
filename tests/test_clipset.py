@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app
+import artifacts
 import clipset
 import matrix
 import selection
@@ -645,6 +646,50 @@ def test_new_pydantic_models_do_not_share_list_defaults():
     assert second.ban_scenes == []
     assert app.SelectionV2Body().exclusions == []
     assert app.HookMatrixBody().exclusions == []
+
+
+def test_clip_set_plan_maps_to_artifact_render_request_for_v013_job(api, monkeypatch):
+    directory = write_job(api.jobs_dir, "j1")
+    legacy = json.loads((directory / "job.json").read_text())
+    assert "artifact_ids" not in legacy
+    assert "source_fingerprint" not in legacy["source"]
+
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool,
+        "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    created = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    payload = api.post(
+        f"/clip-sets/{created['id']}/plans", json={},
+    ).json()
+    plan = payload["plans"][0]["plan"]
+    assert 20 <= plan["target"] <= 75
+    assert plan["story_id"]
+    assert plan["clips"]
+
+    record = app._queue_render(
+        "j1", app.load_job("j1"), plan, "final", "9:16", None, False, None, False,
+    )
+    assert submitted, "artifact-backed render request was not queued"
+    artifact_id = record["artifact_id"]
+    assert artifacts.is_safe_artifact_id(artifact_id)
+    manifest = artifacts.load_manifest(app._job_dir("j1"), artifact_id)
+    assert manifest is not None
+    spec = manifest["spec"]
+    assert spec["clips"] == artifacts.normalize_clips(plan["clips"])
+    assert spec["target"] == plan["target"]
+    assert spec["hook_scene"] == plan["hook_scene"]
+    assert spec["story_id"] == plan["story_id"]
+    assert spec["source_fingerprint"]
+
+    stored = app.load_job("j1")
+    assert stored["artifact_ids"] == [artifact_id]
+    assert stored["renders"][record["record_key"]]["artifact_id"] == artifact_id
+    assert stored["renders"][record["record_key"]]["status"] == "queued"
 
 
 def test_generated_paths_for_selection_v2_and_hook_matrix(api):

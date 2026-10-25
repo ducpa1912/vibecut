@@ -5935,6 +5935,7 @@ def _queue_render_locked_impl(
         quality=quality, aspect=aspect, encoder=encoder,
         captions=captions, audio_sig=audio_sig, preset=preset,
         caption_margin=caption_margin, clips=prepared_clips, cues=cues,
+        story_id=plan.get("story_id"),
     )
     generation = artifacts.resolve_generation(job_dir, base_spec, force=force)
     spec = replace(base_spec, generation=generation)
