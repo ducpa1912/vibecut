@@ -1424,6 +1424,7 @@ def _adopt_render_artifact(
         preset=record.get("preset"),
         caption_margin=margin,
         caption_style_key=caption_style_key,
+        story_id=plan.get("story_id"),
         cues=cues,
         clips=prepared["clips"],
     )
@@ -1700,6 +1701,7 @@ def run_render(
             caption_style_key=(
                 (plan.get("_caption_track") or {}).get("style_hash") or ""
             ),
+            story_id=plan.get("story_id"),
             cues=cues,
             clips=prepared_clips,
             generation=generation,
@@ -6388,6 +6390,7 @@ def _queue_render_locked_impl(
         caption_style_key=(
             (plan.get("_caption_track") or {}).get("style_hash") or ""
         ),
+        story_id=plan.get("story_id"),
         cues=cues,
         clips=prepared_clips,
     )
