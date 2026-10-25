@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app
+import artifacts
 import batch
 import disk
 import job_queue
@@ -1103,6 +1104,107 @@ def test_app_imports_after_stdlib_queue(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "Scheduler" in result.stdout
+
+
+def test_recover_marks_artifact_backed_render_interrupted(data_env):
+    source = data_env / "source.mp4"
+    source.write_bytes(b"x")
+    write_job(
+        app.JOBS,
+        "art-live",
+        source={"path": str(source), "name": "source.mp4", "fingerprint": "fp1"},
+        analysis={"scene_count": 0, "scenes": [], "hook_scene": None},
+    )
+    job = app.load_job("art-live")
+    plan = {
+        "target": 30, "total": 0, "hook_scene": 0, "auto": True, "clips": [],
+    }
+    spec = artifacts.build_spec(job, plan, captions=False)
+    artifact = artifacts.artifact_id(spec)
+    manifest = artifacts.make_manifest(
+        "art-live", spec, status="queued", record_key="30",
+    )
+    artifacts.save_manifest(app._job_dir("art-live"), manifest)
+    orphan_plan = {**plan, "target": 60}
+    orphan_spec = artifacts.build_spec(job, orphan_plan, captions=False)
+    orphan = artifacts.make_manifest(
+        "art-live", orphan_spec, status="queued", record_key="60",
+    )
+    artifacts.save_manifest(app._job_dir("art-live"), orphan)
+    orphan_id = artifacts.artifact_id(orphan_spec)
+    job["renders"] = {
+        "30": {
+            "status": "rendering",
+            "target": 30,
+            "quality": "final",
+            "aspect": "9:16",
+            "captions": False,
+            "record_key": "30",
+            "artifact_id": artifact,
+        }
+    }
+    app.save_job(job)
+
+    app.recover_jobs()
+
+    record = app.load_job("art-live")["renders"]["30"]
+    assert record["status"] == "interrupted"
+    stored = artifacts.load_manifest(app._job_dir("art-live"), artifact)
+    assert stored["status"] == "interrupted"
+    orphan_stored = artifacts.load_manifest(app._job_dir("art-live"), orphan_id)
+    assert orphan_stored["status"] == "interrupted"
+
+
+def test_artifact_backed_render_retry_reuses_artifact(data_env, monkeypatch):
+    source = data_env / "source.mp4"
+    source.write_bytes(b"x")
+    write_job(
+        app.JOBS,
+        "art-retry",
+        source={"path": str(source), "name": "source.mp4", "fingerprint": "fp2"},
+        analysis={"scene_count": 0, "scenes": [], "hook_scene": None},
+    )
+    job = app.load_job("art-retry")
+    plan = {
+        "target": 30, "total": 0, "hook_scene": 0, "auto": True, "clips": [],
+    }
+    spec = artifacts.build_spec(job, plan, captions=False)
+    artifact = artifacts.artifact_id(spec)
+    manifest = artifacts.make_manifest(
+        "art-retry", spec, status="interrupted", record_key="30",
+    )
+    artifacts.save_manifest(app._job_dir("art-retry"), manifest)
+    job["renders"] = {
+        "30": {
+            "status": "interrupted",
+            "target": 30,
+            "quality": "final",
+            "aspect": "9:16",
+            "captions": False,
+            "record_key": "30",
+            "artifact_id": artifact,
+            "error": "restart",
+        }
+    }
+    app.save_job(job)
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    monkeypatch.setattr(app, "_plan_for_body", lambda job, target, body: dict(plan))
+
+    analysis, renders = routes_batches._retry_job(app, app.load_job("art-retry"))
+
+    assert analysis is False
+    assert renders == 1
+    assert len(submitted) == 1
+    record = app.load_job("art-retry")["renders"]["30"]
+    assert record["status"] == "queued"
+    assert record["artifact_id"] == artifact
+    assert artifact in submitted[0][0]
+    stored = artifacts.load_manifest(app._job_dir("art-retry"), artifact)
+    assert stored["status"] == "queued"
 
 
 def test_legacy_job_loads_without_new_fields(data_env):

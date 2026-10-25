@@ -282,6 +282,7 @@ def _render_identity(record: dict) -> dict:
         "hook": record.get("hook"),
         "preset": record.get("preset"),
         "record_key": str(record.get("record_key") or ""),
+        "artifact_id": str(record.get("artifact_id") or ""),
     }
 
 
@@ -292,7 +293,7 @@ def _same_render_identity(left: dict, right: dict) -> bool:
         return False
     return all(a[key] == b[key] for key in (
         "target", "quality", "aspect", "captions", "audio_sig", "hook", "preset",
-        "record_key",
+        "record_key", "artifact_id",
     ))
 
 
@@ -928,6 +929,7 @@ class BatchManager:
                 "poster": record.get("poster"),
                 "key": record.get("key"),
                 "record_key": record.get("record_key"),
+                "artifact_id": record.get("artifact_id"),
                 "duration": record.get("duration"),
             }
         return [found[target] for target in targets if target in found]

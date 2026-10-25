@@ -1789,6 +1789,18 @@ def recover_jobs() -> None:
                         record["message"] = "Interrupted"
                         record["error"] = "The server restarted while this reel was rendering."
                         changed = True
+                        artifact = str(record.get("artifact_id") or "")
+                        if artifacts.is_safe_artifact_id(artifact):
+                            try:
+                                artifacts.mark_status(
+                                    _job_dir(job["id"]), artifact, "interrupted",
+                                    error=record["error"],
+                                )
+                            except Exception:  # noqa: BLE001
+                                LOGGER.exception(
+                                    "could not interrupt artifact %s for %s",
+                                    artifact, job["id"],
+                                )
                         _record_render_history(
                             job["id"], record,
                             {"target": record.get("target"), "clips": []},
@@ -1812,6 +1824,22 @@ def recover_jobs() -> None:
                     fixed += 1
         except Exception:
             continue
+    try:
+        for job_dir in (path.parent for path in JOBS.glob("*/job.json")):
+            try:
+                for manifest in artifacts.list_manifests(job_dir):
+                    status = str(manifest.get("status") or "")
+                    if status not in {"queued", "rendering"}:
+                        continue
+                    artifacts.mark_status(
+                        job_dir, str(manifest.get("artifact_id") or ""),
+                        "interrupted",
+                        error="The server restarted while this reel was rendering.",
+                    )
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("could not recover artifacts in %s", job_dir)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("could not scan artifact manifests")
     try:
         paused_batches = batch_store.recover_batches(DATA)
         if paused_batches:
