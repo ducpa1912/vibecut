@@ -1424,6 +1424,7 @@ def _adopt_render_artifact(
         preset=record.get("preset"),
         caption_margin=margin,
         caption_style_key=caption_style_key,
+        story_id=plan.get("story_id"),
         cues=cues,
         clips=prepared["clips"],
     )

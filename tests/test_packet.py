@@ -269,7 +269,7 @@ def test_packet_caption_fallback_uses_final_shared_cue_engine(tmp_path):
     ).read_text(encoding="utf-8")
 
     assert captions.count("-->") >= 2
-    assert "deliberately long spoken line" in " ".join(captions.split())
+    assert "deliberately long spoken line" in captions
 
 
 def test_packet_builds_captions_from_analysis_when_record_has_no_plan(tmp_path):

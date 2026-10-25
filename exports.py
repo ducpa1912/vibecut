@@ -14,12 +14,14 @@ def _clean(text: str) -> str:
 
 
 def plan_cues(plan: dict, clips: list[dict], scenes: list[dict]) -> list[dict]:
-    """The shared speech-timed cue list used by burn-in and SRT/VTT.
+    """Cue compatibility adapter for packet/legacy callers.
 
-    The renderer and artifacts call the same ``captions.cues_for_plan`` path,
-    so cue text, line wrapping and timing stay byte-identical across surfaces.
+    A plan carrying an attached Caption Studio track returns those exact cues;
+    otherwise the trust-core scene-level contract is used.
     """
-    return caption_engine.cues_for_plan(plan, clips, scenes)
+    if plan.get("_caption_cues"):
+        return caption_engine.cues_for_plan(plan, clips, scenes)
+    return caption_engine.reel_cues(plan, clips, scenes)
 
 
 def _stamp(seconds: float, decimal: bool) -> str:
