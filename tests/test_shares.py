@@ -279,7 +279,9 @@ def test_share_api_lifecycle_and_artifact_routes(env):
     assert rows["count"] == 1
     assert rows["shares"][0]["label"] == "Client"
     assert "token" not in rows["shares"][0]
-    assert client.get("/api/shares?include_tokens=true").json()["shares"][0]["token"] == token
+    leaked = client.get("/api/shares?include_tokens=true").json()
+    assert "token" not in leaked["shares"][0]
+    assert token not in leaked["shares"][0].get("url", "")
 
     assert client.get(f"/r/{token}").status_code == 200
     assert client.get(f"/r/{token}/video").content == b"fake-mp4"
@@ -385,44 +387,76 @@ def _save_legacy_share(env, token: str = "legacy-clean-token-0123456789") -> str
     return token
 
 
-def test_review_token_recopy_is_job_scoped_and_loopback_only(env, monkeypatch):
+def test_share_listing_never_exposes_tokens_from_any_query(env):
+    manifest = make_artifact(env)
+    token, _ = shares.create(
+        env.job_id, manifest["artifact_id"], path=app.SHARES,
+    )
+    client = TestClient(app.app)
+    for query in (
+        "",
+        "?include_tokens=true",
+        "?include_tokens=1",
+        "?include_tokens=true&job_id=" + env.job_id,
+        "?token=" + token,
+    ):
+        response = client.get("/api/shares" + query)
+        assert response.status_code == 200
+        payload = response.json()
+        assert token not in response.text
+        assert payload["count"] == 1
+        assert "token" not in payload["shares"][0]
+        assert "url" not in payload["shares"][0]
+
+
+def test_review_token_recopy_is_job_scoped_and_loopback_only(env):
     manifest = make_artifact(env)
     token, _ = shares.create(
         env.job_id, manifest["artifact_id"], label="Client", path=app.SHARES,
     )
-    monkeypatch.setattr(app, "_loopback_client", lambda request: True)
-    client = TestClient(app.app)
+    loopback = TestClient(app.app, client=("127.0.0.1", 51234))
+    ipv6 = TestClient(app.app, client=("::1", 51235))
+    remote = TestClient(app.app, client=("203.0.113.10", 51236))
+    url = f"/api/jobs/{env.job_id}/share-token"
 
-    copied = client.post(
-        f"/api/jobs/{env.job_id}/share-token", json={"token": token},
-    )
+    copied = loopback.post(url, json={"token": token})
     assert copied.status_code == 200, copied.text
     body = copied.json()
     assert body["token"] == token
     assert body["url"] == f"/r/{token}"
     assert body["artifact_id"] == manifest["artifact_id"]
     assert body["label"] == "Client"
+    assert ipv6.post(url, json={"token": token}).status_code == 200
 
     # The normal listing still redacts every token.
-    listed = client.get("/api/shares").json()
+    listed = loopback.get("/api/shares").json()
     assert listed["count"] == 1
     assert "token" not in listed["shares"][0]
 
     other_token, _ = shares.create(
         "job2", manifest["artifact_id"], path=app.SHARES,
     )
-    wrong_job = client.post(
-        f"/api/jobs/{env.job_id}/share-token", json={"token": other_token},
-    )
+    wrong_job = loopback.post(url, json={"token": other_token})
     assert wrong_job.status_code == 404
     assert other_token not in wrong_job.text
 
-    monkeypatch.setattr(app, "_loopback_client", lambda request: False)
-    denied = client.post(
-        f"/api/jobs/{env.job_id}/share-token", json={"token": token},
-    )
+    denied = remote.post(url, json={"token": token})
     assert denied.status_code == 403
     assert token not in denied.text
+
+    shares.patch(token, {"expires_at": time.time() - 10}, app.SHARES)
+    expired = loopback.post(url, json={"token": token})
+    assert expired.status_code == 410
+    assert token not in expired.text
+
+    shares.patch(
+        token, {"expires_at": time.time() + 3600, "revoked": False}, app.SHARES,
+    )
+    assert loopback.post(url, json={"token": token}).status_code == 200
+    shares.patch(token, {"revoked": True}, app.SHARES)
+    revoked = loopback.post(url, json={"token": token})
+    assert revoked.status_code == 410
+    assert token not in revoked.text
 
 
 def test_clean_adopts_live_legacy_share_before_deleting_renders(env):

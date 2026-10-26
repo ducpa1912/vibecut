@@ -1215,6 +1215,64 @@ def test_story_retry_keeps_37s_4x5_edited_track_identity(api, monkeypatch):
     assert manifest["caption_track_id"] == edited_id
 
 
+def test_public_plan_and_render_cannot_forge_story_identity(api, monkeypatch):
+    """Public PlanBody ignores story ids and cannot collide with a story key."""
+    write_job(api.jobs_dir, "j1")
+    record = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
+    set_id = record["id"]
+    story = record["stories"][0]
+
+    job_path = api.jobs_dir / "j1" / "job.json"
+    job = json.loads(job_path.read_text())
+    stored_story = next(
+        item for item in job["clip_sets"][set_id]["stories"]
+        if item["id"] == story["id"]
+    )
+    stored_story["dur"] = 30.0
+    job_path.write_text(json.dumps(job))
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
+
+    plan_body = {
+        "target": 30,
+        "clips": story["clips"],
+        "story_id": story["id"],
+        "set_id": set_id,
+    }
+    planned = api.post("/api/jobs/j1/plan", json=plan_body)
+    assert planned.status_code == 200, planned.text
+    assert "story_id" not in planned.json()["plan"]
+    assert "clip_set_id" not in planned.json()["plan"]
+
+    story_render = api.post(
+        f"/api/jobs/j1/clip-sets/{set_id}/stories/{story['id']}/render",
+        json={"aspect": "9:16", "captions": True},
+    )
+    assert story_render.status_code == 200, story_render.text
+    story_artifact = story_render.json()["artifact_id"]
+    _job = app.load_job("j1")
+    story_key = next(
+        key for key, value in _job["renders"].items()
+        if value.get("artifact_id") == story_artifact
+    )
+    assert story_key.endswith(f":s{story['id']}")
+
+    public = api.post(
+        "/api/jobs/j1/render",
+        json={**plan_body, "aspect": "9:16", "captions": True},
+    )
+    assert public.status_code == 200, public.text
+    public_record = public.json()["render"]
+    assert public_record["record_key"] != story_key
+    assert not public_record["record_key"].endswith(f":s{story['id']}")
+    assert not public_record.get("story_id")
+    assert public_record["artifact_id"] != story_artifact
+
+    latest = app.load_job("j1")
+    assert story_key in latest["renders"]
+    assert latest["renders"][story_key]["artifact_id"] == story_artifact
+    assert latest["renders"][story_key]["story_id"] == story["id"]
+
+
 def test_story_versions_are_monotonic_and_old_versions_are_labelled(api, monkeypatch):
     """FR-10: v{n} per story/aspect; old artifacts stay, labelled superseded."""
     write_job(api.jobs_dir, "j1")

@@ -690,6 +690,7 @@ def api(tmp_path, monkeypatch):
     jobs.mkdir(parents=True)
     monkeypatch.setattr(app, "DATA", data)
     monkeypatch.setattr(app, "JOBS", jobs)
+    monkeypatch.setattr(app, "SHARES", data / "shares.json")
     client = TestClient(app.app)
     client.jobs_dir = jobs  # type: ignore[attr-defined]
     return client
@@ -819,6 +820,37 @@ def test_packet_build_persists_artifact_refs_and_blocks_delete(api):
     deleted = api.delete(f"/api/jobs/job1/artifacts/{artifact}")
     assert deleted.status_code == 200, deleted.text
     assert deleted.json()["deleted"] == artifact
+
+
+def test_clean_keeps_packet_referenced_artifact(api):
+    _job_record, artifact = _write_artifact_api_job(api.jobs_dir)
+    body = {
+        "story_id": "story one",
+        "artifact_ids": [artifact],
+        "titles": ["One", "Two", "Three"],
+        "description": "A short hook that earns the click.",
+        "hashtags": ["#a", "#b", "#c"],
+        "cover_times": [0.1, 0.5],
+    }
+    created = api.post("/api/jobs/job1/packets", json=body)
+    assert created.status_code == 200, created.text
+    packet_id = created.json()["packet_id"]
+    job = app.load_job("job1")
+    assert job["packet_refs"][packet_id]["artifact_ids"] == [artifact]
+
+    # Even a legacy job with no packet_refs keeps the artifact because the
+    # packet manifest on disk still references it.
+    app.update_job("job1", lambda value: value.pop("packet_refs", None))
+    cleaned = api.post("/api/jobs/job1/clean", json={"profile": "all"})
+    assert cleaned.status_code == 200, cleaned.text
+    job_dir = api.jobs_dir / "job1"
+    manifest = artifacts.load_manifest(job_dir, artifact)
+    assert manifest is not None
+    assert manifest["status"] == "ready"
+    assert artifacts.has_media(job_dir, artifact)
+    assert (job_dir / "packets" / packet_id / "packet.json").is_file()
+    blocked = api.delete(f"/api/jobs/job1/artifacts/{artifact}")
+    assert blocked.status_code == 409
 
 
 def test_packet_pin_comment_copy_blocks_and_copy_file(tmp_path):

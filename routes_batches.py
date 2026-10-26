@@ -234,38 +234,232 @@ def _retry_job(app, job: dict) -> tuple[bool, int]:
     return False, 0
 
 
-def _retry_plan(app, fresh: dict, target: int, body, record: dict) -> dict:
-    """Rebuild the stored plan exactly; never fall back to a current default."""
+def _retry_snapshot(record: dict) -> dict:
     snapshot = record.get("plan_snapshot")
-    if (
-        isinstance(snapshot, dict)
-        and snapshot.get("auto") is False
-        and isinstance(snapshot.get("clips"), list)
-        and snapshot["clips"]
-    ):
-        clips = [
-            dict(clip) for clip in snapshot["clips"] if isinstance(clip, dict)
-        ]
-        total = round(sum(
-            float(clip.get("dur") or clip.get("duration") or 0.0)
-            for clip in clips
-        ), 3)
-        plan = {
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _retry_clip_seconds(clip: dict) -> float:
+    value = clip.get("dur", clip.get("duration"))
+    if value is not None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            pass
+    try:
+        return max(
+            0.0,
+            float(clip.get("end") or 0.0) - float(clip.get("start") or 0.0),
+        )
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _retry_snapshot_clips(record: dict) -> list[dict] | None:
+    """Validate stored plan clips without consulting the current analysis."""
+    snapshot = _retry_snapshot(record)
+    clips = snapshot.get("clips")
+    if not isinstance(clips, list) or not clips:
+        return None
+    cleaned: list[dict] = []
+    for clip in clips:
+        if not isinstance(clip, dict):
+            return None
+        try:
+            int(clip.get("scene"))
+            start = float(clip.get("start"))
+            end = clip.get("end")
+            if end is None:
+                duration = clip.get("dur", clip.get("duration"))
+                if duration is None:
+                    return None
+                end = start + float(duration)
+            else:
+                end = float(end)
+        except (TypeError, ValueError):
+            return None
+        if end <= start:
+            return None
+        cleaned.append(dict(clip))
+    return cleaned
+
+
+def _clip_set_story_rows(app, job: dict) -> list[tuple[str, str, dict]]:
+    rows: list[tuple[str, str, dict]] = []
+    for record in app._clip_set_records(job):
+        if not isinstance(record, dict):
+            continue
+        set_id = str(record.get("id") or "")
+        for story in record.get("stories") or []:
+            if not isinstance(story, dict):
+                continue
+            story_id = str(story.get("id") or "")
+            if story_id:
+                rows.append((set_id, story_id, story))
+    return rows
+
+
+def _story_key_matches(record_key: str, story_ids: set[str]) -> list[str]:
+    key = str(record_key or "")
+    return sorted(
+        story_id for story_id in story_ids
+        if story_id and key.endswith(f":s{story_id}")
+    )
+
+
+def _story_id_from_record_key(record_key: str) -> str | None:
+    _prefix, marker, suffix = str(record_key or "").rpartition(":s")
+    if not marker or not suffix:
+        return None
+    if ":" in suffix or "/" in suffix:
+        return None
+    return suffix
+
+
+def _resolve_retry_story_identity(
+    app,
+    job: dict,
+    record_key: str,
+    record: dict,
+    target: int,
+    snapshot: dict,
+    clips: list[dict] | None,
+) -> tuple[str | None, str | None, bool]:
+    """Resolve a story render's stored identity without trusting the caller.
+
+    Public plan/render bodies cannot carry a story id. A retry may only use the
+    id stored on the record, the id embedded in its record key, or an
+    unambiguous exact clip-set match.
+    """
+    rows = _clip_set_story_rows(app, job)
+    story_ids = {row[1] for row in rows}
+    key_matches = _story_key_matches(record_key, story_ids)
+    if len(key_matches) > 1:
+        raise HTTPException(
+            409,
+            f"Could not retry render {record_key}: "
+            "its record key matches more than one story.",
+        )
+    key_story = key_matches[0] if key_matches else _story_id_from_record_key(record_key)
+    explicit_story = str(
+        record.get("story_id") or snapshot.get("story_id") or ""
+    )
+    explicit_set = str(record.get("set_id") or snapshot.get("set_id") or "")
+    if explicit_story and key_story and explicit_story != key_story:
+        raise HTTPException(
+            409,
+            f"Could not retry render {record_key}: "
+            "its stored story id conflicts with its record key.",
+        )
+    story_id = explicit_story or key_story or ""
+    set_id = explicit_set
+    storyish = bool(story_id or set_id) or target not in (15, 30, 60)
+    if story_id:
+        if set_id:
+            exact = [
+                row for row in rows
+                if row[0] == set_id and row[1] == story_id
+            ]
+            if exact:
+                return story_id, set_id, True
+            if rows:
+                raise HTTPException(
+                    409,
+                    f"Could not retry render {record_key}: "
+                    "its stored story is not in the stored clip set.",
+                )
+            return story_id, set_id, True
+        matches = [row for row in rows if row[1] == story_id]
+        if len(matches) == 1:
+            return story_id, matches[0][0], True
+        if len(matches) > 1:
+            raise HTTPException(
+                409,
+                f"Could not retry render {record_key}: "
+                "its story id is ambiguous across clip sets.",
+            )
+        if rows:
+            raise HTTPException(
+                409,
+                f"Could not retry render {record_key}: "
+                "its stored story is not in any clip set.",
+            )
+        return story_id, None, True
+    pool = rows
+    if set_id:
+        pool = [row for row in rows if row[0] == set_id]
+        if rows and not pool:
+            raise HTTPException(
+                409,
+                f"Could not retry render {record_key}: "
+                "its stored clip set no longer exists.",
+            )
+    if clips:
+        signature = app.caption_engine.clip_hash(clips)
+        candidates = []
+        for row_set, row_story, story in pool:
+            story_duration = story.get("dur")
+            if story_duration is None:
+                story_duration = sum(
+                    _retry_clip_seconds(clip)
+                    for clip in story.get("clips") or []
+                    if isinstance(clip, dict)
+                )
+            try:
+                story_target = int(round(float(story_duration or 0.0)))
+            except (TypeError, ValueError):
+                continue
+            if story_target != target:
+                continue
+            if app.caption_engine.clip_hash(story.get("clips") or []) != signature:
+                continue
+            candidates.append((row_set, row_story))
+        if len(candidates) == 1:
+            return candidates[0][1], candidates[0][0], True
+        if len(candidates) > 1:
+            raise HTTPException(
+                409,
+                f"Could not retry render {record_key}: "
+                "its story identity is ambiguous.",
+            )
+    if not storyish:
+        return None, None, False
+    raise HTTPException(
+        409,
+        f"Could not retry render {record_key}: "
+        "its story identity is missing.",
+    )
+
+
+def _retry_plan(
+    app,
+    fresh: dict,
+    target: int,
+    body,
+    record: dict,
+    clips: list[dict] | None,
+    is_story: bool,
+) -> dict:
+    """Rebuild the stored plan exactly; never fall back to a current default."""
+    snapshot = _retry_snapshot(record)
+    if clips:
+        return {
             "target": int(target),
-            "total": total,
-            "hook_scene": snapshot.get("hook_scene"),
-            "auto": False,
+            "total": round(sum(
+                _retry_clip_seconds(clip)
+                for clip in clips
+            ), 3),
+            "hook_scene": snapshot.get("hook_scene", record.get("hook")),
+            "auto": bool(snapshot.get("auto", False)),
             "clip_count": len(clips),
             "clips": clips,
-            "order": str(snapshot.get("order") or "source"),
+            "order": str(snapshot.get("order") or record.get("order") or "source"),
         }
-        story_id = record.get("story_id") or snapshot.get("story_id")
-        set_id = record.get("set_id") or snapshot.get("set_id")
-        if story_id:
-            plan["story_id"] = str(story_id)
-        if set_id:
-            plan["clip_set_id"] = str(set_id)
-        return plan
+    if is_story:
+        raise HTTPException(
+            409,
+            "Could not retry story render: its stored plan clips are missing.",
+        )
     return app._plan_for_body(fresh, target, body)
 
 
@@ -290,22 +484,17 @@ def _retry_renders(app, job: dict) -> int:
                 f"Could not retry render {record_key}: "
                 f"{record.get('recovery_error') or 'its stored plan is incomplete.'}",
             )
-        snapshot = record.get("plan_snapshot")
-        if not isinstance(snapshot, dict):
-            snapshot = {}
-        story_id = str(
-            record.get("story_id") or snapshot.get("story_id") or ""
-        ) or None
-        set_id = str(record.get("set_id") or snapshot.get("set_id") or "") or None
-        is_story = bool(story_id or set_id) or target not in (15, 30, 60)
-        if is_story:
-            clips = snapshot.get("clips")
-            if not isinstance(clips, list) or not clips:
-                raise HTTPException(
-                    409,
-                    f"Could not retry render {record_key}: "
-                    "its stored plan clips are missing.",
-                )
+        snapshot = _retry_snapshot(record)
+        clips = _retry_snapshot_clips(record)
+        story_id, set_id, is_story = _resolve_retry_story_identity(
+            app, job, str(record_key), record, target, snapshot, clips,
+        )
+        if is_story and not clips:
+            raise HTTPException(
+                409,
+                f"Could not retry render {record_key}: "
+                "its stored plan clips are missing.",
+            )
         caption_track = None
         if record.get("captions"):
             track_id = str(record.get("caption_track_id") or "")
@@ -330,7 +519,14 @@ def _retry_renders(app, job: dict) -> int:
         fresh = app.load_job(str(job["id"]))
         try:
             body = _retry_body(app, record, target)
-            plan = _retry_plan(app, fresh, target, body, record)
+            plan = _retry_plan(
+                app, fresh, target, body, record, clips, is_story,
+            )
+            # Identity is attached only after the stored plan is rebuilt.
+            if story_id:
+                plan["story_id"] = story_id
+            if set_id:
+                plan["clip_set_id"] = set_id
             quality, aspect, encoder, captions, audio_plan, preset, margin = (
                 app._render_options(body)
             )
@@ -374,10 +570,8 @@ def _retry_renders(app, job: dict) -> int:
 
 
 def _retry_body(app, record: dict, target: int):
-    snapshot = record.get("plan_snapshot")
-    if not isinstance(snapshot, dict):
-        snapshot = {}
-    clips = snapshot.get("clips") if snapshot.get("auto") is False else None
+    snapshot = _retry_snapshot(record)
+    clips = _retry_snapshot_clips(record)
     encoder = record.get("encoder")
     return app.PlanBody(
         target=target,
@@ -393,8 +587,6 @@ def _retry_body(app, record: dict, target: int):
         caption_margin=record.get("caption_margin"),
         script_id=record.get("script_id"),
         caption_track_id=record.get("caption_track_id"),
-        story_id=record.get("story_id") or snapshot.get("story_id"),
-        set_id=record.get("set_id") or snapshot.get("set_id"),
     )
 
 

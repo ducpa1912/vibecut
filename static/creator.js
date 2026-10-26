@@ -2795,7 +2795,8 @@
             artifact_id: artifactId,
             label,
           });
-          // The create response is the only place a token is returned.
+          // Tokens are returned at creation and by the loopback job-scoped
+          // re-copy endpoint only; listings always redact them.
           await copyText(absoluteUrl(share.url || `/r/${share.token}`));
         }
         await loadShares();

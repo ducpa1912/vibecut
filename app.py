@@ -4019,6 +4019,13 @@ def recopy_share_token(
         raise _share_store_unavailable(exc) from exc
     if record is None or str(record.get("job_id") or "") != str(job["id"]):
         raise HTTPException(404, "Review link not found for this job.")
+    state = shares.state(record)
+    if state == shares.EXPIRED:
+        raise HTTPException(410, "This review link has expired.")
+    if state == shares.REVOKED:
+        raise HTTPException(410, "This review link was revoked.")
+    if state != shares.ACTIVE:
+        raise HTTPException(404, "Review link not found for this job.")
     public = {
         **record,
         "token": token,
@@ -4130,8 +4137,6 @@ class PlanBody(BaseModel):
     caption_track_id: str | None = None
     caption_style_id: str | None = None
     caption_style: dict | None = None
-    story_id: str | None = None
-    set_id: str | None = None
 
 
 class CaptionTrackBody(BaseModel):
@@ -5017,20 +5022,19 @@ def get_artifact_captions(job_id: str, artifact_id: str) -> dict:
 
 
 @app.get("/api/shares")
-def get_shares(include_tokens: bool = False, job_id: str | None = None) -> dict:
+def get_shares(job_id: str | None = None) -> dict:
+    """List review links without returning capabilities.
+
+    A token is only returned once at creation or by the loopback-only,
+    job-scoped re-copy endpoint. Listing never exposes a token, even if an
+    unknown query parameter asks for it.
+    """
     try:
-        rows = shares.list_records(
-            SHARES, include_tokens=include_tokens, strict=True,
-        )
+        rows = shares.list_records(SHARES, include_tokens=False, strict=True)
     except shares.ShareStoreError as exc:
         raise _share_store_unavailable(exc) from exc
     if job_id:
         rows = [row for row in rows if row.get("job_id") == job_id]
-    if include_tokens:
-        for row in rows:
-            token = row.get("token")
-            if token:
-                row["url"] = f"/r/{token}"
     return {"shares": rows, "count": len(rows)}
 
 
@@ -5319,20 +5323,8 @@ def _apply_order(job: dict, plan: dict, order: str) -> dict:
 
 def _plan_for_body(job: dict, target: int, body: PlanBody) -> dict:
     if body.clips is not None:
-        plan = _apply_order(
-            job, _custom_plan(job, target, body.hook_scene, body.clips),
-            body.order,
-        )
-    else:
-        plan = _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
-    # A retry rebuilds the exact stored plan, not whichever default plan the
-    # current analysis would choose. Keep the story identity on that plan so
-    # the render key and artifact stay the same object.
-    if body.story_id:
-        plan["story_id"] = str(body.story_id)
-    if body.set_id:
-        plan["clip_set_id"] = str(body.set_id)
-    return plan
+        return _apply_order(job, _custom_plan(job, target, body.hook_scene, body.clips), body.order)
+    return _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
 
 
 def _caption_style_for(
