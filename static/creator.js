@@ -4,7 +4,7 @@
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
-  const SCREENS = ["queue", "clipset", "captions", "packet", "preflight", "artifacts"];
+  const SCREENS = ["clipset", "captions", "preflight", "packet", "artifacts", "queue"];
   const br = () => window.vibecutBridge || {};
 
   const dom = {
@@ -12,14 +12,18 @@
     close: $("#creator-close"),
     view: $("#creator-view"),
     tabs: $("#creator-tabs"),
+    recent: $("#creator-recent"),
     jobInput: $("#creator-job-input"),
     jobLoad: $("#creator-job-load"),
+    debug: $("#creator-debug"),
     context: $("#creator-context"),
     globalError: $("#creator-global-error"),
 
     batchForm: $("#batch-form"),
     batchName: $("#batch-name"),
     batchMax: $("#batch-max"),
+    batchMode: $("#batch-mode"),
+    batchTargets: $("#batch-target-fieldset"),
     batchItems: $("#batch-items"),
     batchCreate: $("#batch-create"),
     batchError: $("#batch-error"),
@@ -29,6 +33,12 @@
     clipsetCount: $("#clipset-count"),
     clipsetPrompt: $("#clipset-prompt"),
     clipsetBuild: $("#clipset-build"),
+    clipsetReadAnalysis: $("#clipset-read-analysis"),
+    clipsetAnalysis: $("#clipset-analysis"),
+    analysisTabs: $("#analysis-tabs"),
+    analysisOriginal: $("#analysis-original"),
+    analysisBeta: $("#analysis-beta"),
+    clipsetOriginalOutput: $("#clipset-original-output"),
     clipsetV2: $("#clipset-v2"),
     matrixBuild: $("#matrix-build"),
     clipsetError: $("#clipset-error"),
@@ -49,6 +59,11 @@
     captionSave: $("#caption-save"),
     captionExport: $("#caption-export"),
     captionPreviewRun: $("#caption-preview-run"),
+    captionFontSize: $("#caption-font-size"),
+    captionColor: $("#caption-color"),
+    captionBgOpacity: $("#caption-bg-opacity"),
+    captionPosition: $("#caption-position"),
+    captionUppercase: $("#caption-uppercase"),
     captionError: $("#caption-error"),
     captionMeta: $("#caption-meta"),
     captionCues: $("#caption-cues"),
@@ -56,6 +71,7 @@
     captionPreviewImg: $("#caption-preview-img"),
     captionPreviewSafe: $("#caption-preview-safe"),
     captionPreviewText: $("#caption-preview-text"),
+    captionPreviewEmpty: $("#caption-preview-empty"),
     captionPreviewTime: $("#caption-preview-time"),
     captionPreviewReadout: $("#caption-preview-readout"),
 
@@ -63,14 +79,23 @@
     packetStory: $("#packet-story"),
     packetArtifact: $("#packet-artifact"),
     packetRenderKey: $("#packet-render-key"),
+    packetNeedsRender: $("#packet-needs-render"),
+    packetRenderStory: $("#packet-render-story"),
+    packetSuggest: $("#packet-suggest"),
     packetTitle1: $("#packet-title-1"),
     packetTitle2: $("#packet-title-2"),
     packetTitle3: $("#packet-title-3"),
+    packetTitle1Count: $("#packet-title-1-count"),
+    packetTitle2Count: $("#packet-title-2-count"),
+    packetTitle3Count: $("#packet-title-3-count"),
     packetDescription: $("#packet-description"),
     packetDescCount: $("#packet-desc-count"),
     packetHashtags: $("#packet-hashtags"),
+    packetPinComment: $("#packet-pin-comment"),
     packetCover1: $("#packet-cover-1"),
     packetCover2: $("#packet-cover-2"),
+    packetCoverImg1: $("#packet-cover-img-1"),
+    packetCoverImg2: $("#packet-cover-img-2"),
     packetFilename: $("#packet-filename"),
     packetBuild: $("#packet-build"),
     packetError: $("#packet-error"),
@@ -91,14 +116,21 @@
   };
 
   const state = {
-    screen: "queue",
+    screen: "clipset",
     jobId: "",
     job: null,
     loadingJob: "",
+    jobLoading: false,
+    recentJobs: [],
+    recentLoading: false,
     artifacts: [],
+    artifactRenders: {},
+    artifactLoading: false,
     shares: [],
+    freshShares: [],
     clipset: null,
     clipsetEdits: {},
+    clipsetLoading: false,
     locks: new Set(),
     bans: new Set(),
     selection: null,
@@ -113,9 +145,16 @@
     packet: null,
     preflight: null,
     preflightHidden: new Set(),
+    preflightLoading: false,
+    preflightSelection: "",
     batches: [],
     batchTimer: null,
+    batchLoading: false,
     confirm: {},
+    selectedArtifact: "",
+    renderJobs: {},
+    renderPollers: {},
+    renderInFlight: false,
   };
 
   // ---------------------------------------------------------------- helpers
@@ -167,14 +206,22 @@
     node.hidden = false;
   }
 
+  function redactPaths(text) {
+    return String(text || "")
+      .replace(/(?:[A-Za-z]:\\|\/Users\/|\/home\/|\/Volumes\/|\/private\/|\/var\/|\/tmp\/|\/opt\/|\/mnt\/)[^\s"'<>]+/g, "[local path]")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
   function humanError(error) {
     const detail = error && (error.detail || (error.payload && error.payload.detail));
     let message = error && error.message ? error.message : "Request failed.";
     let code = error && error.code ? error.code : "";
+    let suggestion = "";
     if (detail && typeof detail === "object") {
       code = code || detail.code || "";
       message = detail.message || message;
-      if (detail.suggestion) message += ` ${detail.suggestion}`;
+      suggestion = detail.suggestion || "";
     } else if (typeof detail === "string") {
       message = detail;
     }
@@ -182,7 +229,33 @@
       const match = message.match(/"code"\s*:\s*"([^"]+)"/);
       if (match) code = match[1];
     }
-    return `${code ? `${code}: ` : ""}${message}`.trim();
+    if (typeof message === "string") {
+      const trimmed = message.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed && typeof parsed === "object") {
+            code = code || parsed.code || "";
+            message = parsed.message || message;
+            suggestion = suggestion || parsed.suggestion || "";
+          }
+        } catch (_) { /* keep the original text */ }
+      }
+    }
+    const friendly = {
+      story_render_unavailable: "Story rendering is not available in this build yet. Open the story in Smart Cut instead.",
+      render_failed: "The render did not finish. Try again, or render a shorter story.",
+      artifact_not_found: "That render is not ready yet. Wait for it to finish, then refresh artifacts.",
+      artifact_not_ready: "That artifact is still rendering. Wait for it to finish, then refresh artifacts.",
+      captions_missing: "This cut has no caption track yet. Build captions first.",
+      packet_artifact_missing: "Build a packet from a ready artifact. Render the story first.",
+      share_store_unreadable: "The review-link store cannot be read. Check the data folder, then retry.",
+    }[code];
+    let text = friendly || (typeof message === "string" ? message : "Request failed.");
+    if (["", "null", "undefined", "[object Object]"].includes(text.trim())) text = "Request failed.";
+    if (!friendly && suggestion) text = `${text} ${suggestion}`;
+    text = redactPaths(text);
+    return text || "Request failed.";
   }
 
   function setError(node, error) {
@@ -308,6 +381,84 @@
     if (node) node.innerHTML = `<div class="creator-empty-state"><p>${escapeHtml(message)}</p></div>`;
   }
 
+  function captureFocus() {
+    const node = document.activeElement;
+    if (!node || !dom.view || !dom.view.contains(node)) return null;
+    const key = node.dataset ? node.dataset.focusKey || "" : "";
+    const id = node.id || "";
+    if (!key && !id) return null;
+    const snapshot = { key, id };
+    if (typeof node.selectionStart === "number" && typeof node.selectionEnd === "number") {
+      try {
+        snapshot.start = node.selectionStart;
+        snapshot.end = node.selectionEnd;
+      } catch (_) { /* not a text control */ }
+    }
+    return snapshot;
+  }
+
+  function restoreFocus(snapshot) {
+    if (!snapshot) return;
+    let node = null;
+    if (snapshot.key) {
+      const escaped = window.CSS && CSS.escape ? CSS.escape(snapshot.key) : snapshot.key.replace(/"/g, '\\"');
+      node = dom.view.querySelector(`[data-focus-key="${escaped}"]`);
+    }
+    if (!node && snapshot.id) node = document.getElementById(snapshot.id);
+    if (!node || typeof node.focus !== "function") return;
+    node.focus({ preventScroll: true });
+    if (typeof snapshot.start === "number" && typeof node.setSelectionRange === "function") {
+      try { node.setSelectionRange(snapshot.start, snapshot.end); } catch (_) { /* not a text control */ }
+    }
+  }
+
+  function withFocusPreserved(render) {
+    const snapshot = captureFocus();
+    render();
+    restoreFocus(snapshot);
+  }
+
+  function focusByKey(key) {
+    if (!key || !dom.view) return;
+    const escaped = window.CSS && CSS.escape ? CSS.escape(key) : key.replace(/"/g, '\\"');
+    const node = dom.view.querySelector(`[data-focus-key="${escaped}"]`);
+    if (node) node.focus({ preventScroll: true });
+  }
+
+  function readyLegacyRenders() {
+    const renders = state.artifactRenders && Object.keys(state.artifactRenders).length
+      ? state.artifactRenders
+      : (state.job?.renders || {});
+    return Object.entries(renders || {})
+      .filter(([, record]) => record && record.status === "ready")
+      .map(([key, record]) => ({ key, record }));
+  }
+
+  function storyById(storyId) {
+    return (state.clipset?.stories || []).find((story) => story.id === storyId) || null;
+  }
+
+  function artifactForStory(storyId) {
+    if (!storyId) return null;
+    const exact = state.artifacts.find((item) => item.story_id === storyId && item.status === "ready");
+    if (exact) return exact;
+    const assigned = state.artifacts.find((item) => item.story_id === storyId);
+    if (assigned) return assigned;
+    const story = storyById(storyId);
+    if (!story) return null;
+    const target = Math.max(1, Math.round(Number(story.dur) || 0));
+    const candidates = state.artifacts.filter((item) => Number(item.target) === target);
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  function artifactById(artifactId) {
+    return state.artifacts.find((item) => item.artifact_id === artifactId) || null;
+  }
+
+  function artifactForPacketSelection(value) {
+    return artifactById(value) || artifactForStory(value);
+  }
+
   function parseHash() {
     try {
       const params = new URLSearchParams(String(location.hash || "").replace(/^#/, ""));
@@ -366,11 +517,19 @@
 
   function setTabs(screen) {
     $$("[data-creator-tab]", dom.tabs).forEach((button) => {
-      button.classList.toggle("active", button.dataset.creatorTab === screen);
+      const active = button.dataset.creatorTab === screen;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+      button.tabIndex = active ? 0 : -1;
     });
     $$("[data-creator-panel]", dom.view).forEach((panel) => {
       panel.hidden = panel.dataset.creatorPanel !== screen;
     });
+  }
+
+  function focusActiveTab() {
+    const button = dom.tabs?.querySelector('[role="tab"][aria-selected="true"]');
+    if (button) button.focus({ preventScroll: true });
   }
 
   function setScreen(screen, jobId) {
@@ -399,8 +558,9 @@
 
   function openCreator(screen, jobId) {
     const params = parseHash();
-    const chosen = screen || params.screen || state.screen || "queue";
-    const wanted = jobId || params.job || state.jobId || (br().getJob && br().getJob()?.id) || "";
+    const bridgeJob = br().getJob && br().getJob();
+    const wanted = jobId || (bridgeJob && bridgeJob.id) || (state.job && state.job.id) || params.job || "";
+    const chosen = wanted ? (screen || params.screen || "clipset") : "queue";
     document.body.classList.add("creator-mode");
     dom.view.hidden = false;
     if (wanted) {
@@ -408,6 +568,8 @@
       dom.jobInput.value = wanted;
     }
     setScreen(chosen, wanted);
+    loadRecentJobs().catch(() => {});
+    requestAnimationFrame(focusActiveTab);
   }
 
   function closeCreator() {
@@ -417,6 +579,8 @@
       clearInterval(state.batchTimer);
       state.batchTimer = null;
     }
+    Object.values(state.renderPollers).forEach((timer) => clearTimeout(timer));
+    state.renderPollers = {};
     writeHash(state.jobId, "");
     const job = state.job || (br().getJob && br().getJob());
     if (job && job.id && br().openJob) {
@@ -439,30 +603,50 @@
       if (changed) {
         state.packet = null;
         state.preflight = null;
+        state.preflightSelection = "";
         state.selection = null;
         state.matrix = null;
+        state.clipset = null;
+        state.selectedArtifact = "";
+        state.renderJobs = {};
+        state.freshShares = [];
+        state.artifacts = [];
+        state.artifactRenders = {};
+        state.shares = [];
+        Object.values(state.renderPollers).forEach((timer) => clearTimeout(timer));
+        state.renderPollers = {};
         const oldPreviewUrl = state.caption.previewUrl;
         state.caption = { track: null, cues: [], artifactId: "", preview: null, previewUrl: "" };
         state.preflightHidden = new Set();
         if (oldPreviewUrl) URL.revokeObjectURL(oldPreviewUrl);
+        for (const input of [dom.packetTitle1, dom.packetTitle2, dom.packetTitle3, dom.packetDescription, dom.packetHashtags, dom.packetPinComment]) {
+          if (input) input.value = "";
+        }
+        if (dom.packetRenderKey) dom.packetRenderKey.value = "";
+        updateTitleCounts();
+        updateDescriptionCount();
         renderPacket(null);
         renderPreflight();
         renderCaptionCues();
         renderSelection();
         renderMatrix();
+        renderArtifacts();
+        renderShares();
         if (dom.captionPreviewImg) {
           dom.captionPreviewImg.hidden = true;
           dom.captionPreviewImg.removeAttribute("src");
         }
-        if (dom.captionPreviewText) dom.captionPreviewText.textContent = "No preview yet.";
+        if (dom.captionPreviewText) dom.captionPreviewText.hidden = true;
+        if (dom.captionPreviewEmpty) dom.captionPreviewEmpty.hidden = false;
         if (dom.captionPreviewSafe) dom.captionPreviewSafe.innerHTML = "";
       }
       writeHash(state.jobId, state.screen);
       setJobContext();
       await loadArtifacts().catch((error) => setError(dom.globalError, error));
-      await loadClipSets().catch(() => {});
+      await loadClipSets().catch((error) => setError(dom.clipsetError, error));
       populateCommonSelects();
       await refreshScreen(state.screen);
+      loadRecentJobs().catch(() => {});
       const bridge = br();
       if (typeof bridge.openJob === "function" && bridge.getJob && bridge.getJob()?.id !== state.jobId) {
         try { await bridge.openJob(state.jobId); } catch (_) { /* editor sync is best effort */ }
@@ -493,15 +677,19 @@
     if (screen === "captions") {
       populateCommonSelects();
       renderCaptionCues();
+      updateCaptionControls();
       return;
     }
     if (screen === "packet") {
       populateCommonSelects();
+      updatePacketNeedsRender();
       updatePacketFilename();
+      updatePacketCovers();
       return;
     }
     if (screen === "preflight") {
       populateCommonSelects();
+      maybeAutoPreflight();
       return;
     }
     if (screen === "artifacts") {
@@ -512,86 +700,237 @@
     }
   }
 
+  function packetStoryValue() {
+    return dom.packetStory?.value || "";
+  }
+
+  function selectedPacketStory() {
+    const value = packetStoryValue();
+    if (!value) return null;
+    return storyById(value) || null;
+  }
+
+  function packetStoryId() {
+    const value = packetStoryValue();
+    if (!value) return "";
+    const story = storyById(value);
+    if (story) return story.id;
+    const artifact = artifactById(value);
+    return artifact?.story_id || value;
+  }
+
+  function shortTitle(value, limit = 64) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text;
+  }
+
+  function titleCandidates(story) {
+    const fallback = story ? shortTitle(story.title || "Untitled story", 90) : "Untitled story";
+    const hook = shortTitle((story?.hook || {}).text || "", 90);
+    const payoff = shortTitle((story?.payoff || {}).text || "", 90);
+    const values = [fallback, hook, payoff, `${fallback} · alt`]
+      .map((value) => shortTitle(value, 100))
+      .filter(Boolean);
+    const unique = [];
+    for (const value of values) {
+      if (!unique.some((item) => item.toLowerCase() === value.toLowerCase())) unique.push(value);
+      if (unique.length === 3) break;
+    }
+    while (unique.length < 3) unique.push(`${fallback} ${unique.length + 1}`.slice(0, 100));
+    return unique;
+  }
+
+  function hashtagsForStory(story) {
+    const stop = new Set([
+      "the", "and", "for", "with", "this", "that", "your", "you", "from", "have",
+      "about", "into", "they", "them", "there", "their", "what", "when", "where",
+      "will", "just", "like", "more", "than", "then", "very", "can", "not", "but",
+      "are", "was", "were", "our", "out", "get", "got", "has", "how", "why", "who",
+      "all", "one", "two", "his", "her", "its", "it's", "i'm", "don't", "doesn't",
+    ]);
+    const source = [
+      story?.title || "",
+      (story?.hook || {}).text || "",
+      (story?.payoff || {}).text || "",
+    ].join(" ").toLowerCase();
+    const tags = [];
+    for (const word of source.match(/[a-z0-9]{3,}/g) || []) {
+      if (stop.has(word) || tags.includes(`#${word}`)) continue;
+      tags.push(`#${word}`);
+      if (tags.length >= 6) break;
+    }
+    for (const tag of ["#shorts", "#creator", "#video"]) {
+      if (!tags.includes(tag)) tags.push(tag);
+      if (tags.length >= 3) break;
+    }
+    return tags.slice(0, 8).join(" ");
+  }
+
+  function storyCopy(story) {
+    const titles = titleCandidates(story);
+    const hook = String((story?.hook || {}).text || "").replace(/\s+/g, " ").trim();
+    const description = (hook || story?.title || "").slice(0, 125);
+    return {
+      titles,
+      description,
+      hashtags: hashtagsForStory(story),
+      pin: hook ? `${hook.slice(0, 160)}${hook.length > 160 ? "…" : ""}` : (story?.title || ""),
+    };
+  }
+
+  function updateTitleCounts() {
+    const pairs = [
+      [dom.packetTitle1, dom.packetTitle1Count],
+      [dom.packetTitle2, dom.packetTitle2Count],
+      [dom.packetTitle3, dom.packetTitle3Count],
+    ];
+    for (const [input, counter] of pairs) {
+      if (input && counter) setText(counter, `${input.value.length}/100`);
+    }
+  }
+
+  function fillPacketCopy({ force = false } = {}) {
+    const story = selectedPacketStory();
+    const artifact = artifactById(dom.packetArtifact?.value || "") || artifactForStory(story?.id);
+    if (!story && !artifact) return false;
+    const copy = storyCopy(story || { title: artifact?.title, hook: { text: "" } });
+    const fill = (input, value) => {
+      if (!input) return;
+      if (force || !input.value.trim()) input.value = value;
+    };
+    fill(dom.packetTitle1, copy.titles[0]);
+    fill(dom.packetTitle2, copy.titles[1]);
+    fill(dom.packetTitle3, copy.titles[2]);
+    fill(dom.packetDescription, copy.description);
+    fill(dom.packetHashtags, copy.hashtags);
+    fill(dom.packetPinComment, copy.pin);
+    updateTitleCounts();
+    updateDescriptionCount();
+    return true;
+  }
+
+
+
+  function setSelectOptions(select, options, preferred = "") {
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = options.map((item) => (
+      `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`
+    )).join("");
+    const values = options.map((item) => String(item.value));
+    const desired = [current, preferred, state.selectedArtifact]
+      .map((value) => String(value || ""))
+      .find((value) => value && values.includes(value));
+    if (desired) select.value = desired;
+    else if (values.includes("")) select.value = "";
+    else select.value = options[0]?.value || "";
+  }
+
   function populateCommonSelects() {
     const job = state.job;
     if (!job) return;
-    const renders = job.renders || {};
-    const readyRenders = Object.entries(renders)
-      .filter(([, record]) => record && record.status === "ready")
-      .map(([key, record]) => ({ key, record }));
-    const keep = (select, options) => {
-      if (!select) return;
-      const current = select.value;
-      select.innerHTML = options.map((item) => (
-        `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`
-      )).join("");
-      if (options.some((item) => item.value === current)) select.value = current;
-      else if (options.length) select.value = options[0].value;
-    };
-    keep(dom.packetRenderKey, [
+    const readyRenders = readyLegacyRenders();
+
+    setSelectOptions(dom.packetRenderKey, [
       { value: "", label: "Choose a ready render" },
       ...readyRenders.map(({ key, record }) => ({
         value: key,
         label: `${key} · ${record.target || "?"}s · ${record.aspect || "9:16"}`,
       })),
     ]);
-    const artifactOptions = [
-      { value: "", label: "Current cut" },
-      ...state.artifacts.map((artifact) => ({
+
+    const artifactOptions = state.artifacts.map((artifact) => ({
+      value: artifact.artifact_id,
+      label: `${artifact.title || "Artifact"} · ${artifact.status || "unknown"} · ${artifact.target || "?"}s`,
+    }));
+    const selectedArtifact = artifactById(state.selectedArtifact);
+    setSelectOptions(dom.captionArtifact, [{ value: "", label: "Current cut" }, ...artifactOptions], state.caption.artifactId);
+    setSelectOptions(dom.packetArtifact, [{ value: "", label: "Choose a ready artifact" }, ...artifactOptions], selectedArtifact?.artifact_id || "");
+
+    const storyOptions = (state.clipset?.stories || []).map((story) => ({
+      value: story.id,
+      label: `${story.title || "Story"} · ${fmtDuration(story.dur)}`,
+    }));
+    const storyIds = new Set((state.clipset?.stories || []).map((story) => story.id));
+    const orphanArtifacts = state.artifacts
+      .filter((artifact) => !artifact.story_id || !storyIds.has(artifact.story_id))
+      .map((artifact) => ({
         value: artifact.artifact_id,
-        label: `${artifact.title || artifact.artifact_id} · ${artifact.status || ""}`,
-      })),
+        label: `Artifact · ${artifact.title || artifact.artifact_id} · ${artifact.target || "?"}s`,
+      }));
+    const packetStoryOptions = [...storyOptions, ...orphanArtifacts];
+    if (!packetStoryOptions.length) packetStoryOptions.push({ value: "", label: "No stories yet" });
+    const preferredStory = selectedArtifact?.story_id && storyIds.has(selectedArtifact.story_id)
+      ? selectedArtifact.story_id
+      : (packetStoryOptions.find((item) => item.value)?.value || "");
+    setSelectOptions(dom.packetStory, packetStoryOptions, preferredStory);
+    const inferredArtifact = artifactForStory(packetStoryValue());
+    if (inferredArtifact && !dom.packetArtifact.value) {
+      dom.packetArtifact.value = inferredArtifact.artifact_id;
+    }
+
+    const preflightOptions = [
+      ...storyOptions.map((item) => ({ ...item, label: `Story · ${item.label}` })),
+      ...artifactOptions.map((item) => ({ ...item, label: `Artifact · ${item.label}` })),
     ];
-    keep(dom.captionArtifact, artifactOptions);
-    keep(dom.packetArtifact, [
-      { value: "", label: "None · use render key" },
-      ...state.artifacts.map((artifact) => ({
-        value: artifact.artifact_id,
-        label: `${artifact.title || artifact.artifact_id} · ${artifact.status || ""}`,
-      })),
-    ]);
-    const storyOptions = [];
-    for (const story of (state.clipset?.stories || [])) {
-      storyOptions.push({
-        value: story.id,
-        label: `${story.id} · ${story.title || "story"} · ${fmtDuration(story.dur)}`,
-      });
-    }
-    for (const artifact of state.artifacts) {
-      storyOptions.push({
-        value: artifact.artifact_id,
-        label: `artifact ${artifact.artifact_id} · ${artifact.target || "?"}s`,
-      });
-    }
-    for (const { key, record } of readyRenders) {
-      storyOptions.push({
-        value: key,
-        label: `render ${key} · ${record.target || "?"}s · ${record.aspect || "9:16"}`,
-      });
-    }
-    const knownStories = new Set(storyOptions.map((item) => item.value));
-    for (const target of [30, 15, 60]) {
-      if (!knownStories.has(String(target))) {
-        storyOptions.push({ value: String(target), label: `auto plan · ${target}s` });
+    if (!preflightOptions.length) {
+      for (const target of [30, 15, 60]) {
+        preflightOptions.push({ value: String(target), label: `Auto plan · ${target}s` });
       }
     }
-    keep(dom.preflightStory, storyOptions);
-    if (!dom.packetStory.value) {
-      dom.packetStory.value = state.clipset?.stories?.[0]?.id || state.artifacts[0]?.artifact_id || readyRenders[0]?.key || "";
+    setSelectOptions(dom.preflightStory, preflightOptions, selectedArtifact?.artifact_id || state.artifacts[0]?.artifact_id || "");
+
+    const targetMap = new Map();
+    const pushTarget = (value, label) => {
+      const key = String(value || "");
+      if (!key || targetMap.has(key)) return;
+      targetMap.set(key, label);
+    };
+    const currentArtifact = artifactById(state.caption.artifactId) || selectedArtifact || state.artifacts[0];
+    if (currentArtifact?.target) {
+      pushTarget(currentArtifact.target, `Artifact · ${currentArtifact.title || "render"} · ${currentArtifact.target}s`);
     }
-    if (dom.packetTitle1 && !dom.packetTitle1.value) {
-      dom.packetTitle1.value = state.clipset?.stories?.[0]?.title || "";
+    for (const story of (state.clipset?.stories || [])) {
+      const target = Math.max(1, Math.round(Number(story.dur) || 0));
+      pushTarget(target, `Story · ${story.title || story.id} · ${target}s`);
     }
-    if (dom.packetDescription && !dom.packetDescription.value) {
-      dom.packetDescription.value = (state.clipset?.stories?.[0]?.hook?.text || "").slice(0, 125);
-      updateDescriptionCount();
-    }
-    if (dom.packetHashtags && !dom.packetHashtags.value) {
-      dom.packetHashtags.value = "#shorts #creator #video";
-    }
+    for (const target of [15, 30, 60]) pushTarget(target, `Preset · ${target}s`);
+    setSelectOptions(dom.captionTarget, [...targetMap.entries()].map(([value, label]) => ({ value, label })), currentArtifact?.target || "");
+
+    fillPacketCopy({ onlyBlank: true });
+    updatePacketNeedsRender();
+    updatePacketFilename();
+    updatePacketCovers();
   }
 
   // ---------------------------------------------------------------- queue / batch
+
+  async function loadRecentJobs() {
+    if (state.recentLoading) return;
+    state.recentLoading = true;
+    try {
+      const data = await request("/api/jobs");
+      state.recentJobs = Array.isArray(data.jobs) ? data.jobs : [];
+      if (dom.recent) {
+        const current = state.jobId;
+        dom.recent.innerHTML = [
+          '<option value="">Choose a recent job</option>',
+          ...state.recentJobs.map((job) => {
+            const bits = [job.name || job.id, fmtDuration(job.duration), job.status || ""]
+              .filter(Boolean).join(" · ");
+            return `<option value="${escapeHtml(job.id)}">${escapeHtml(bits)}</option>`;
+          }),
+        ].join("");
+        if (state.recentJobs.some((job) => job.id === current)) dom.recent.value = current;
+      }
+    } catch (error) {
+      if (state.screen === "queue") setError(dom.batchError, error);
+      throw error;
+    } finally {
+      state.recentLoading = false;
+    }
+  }
 
   function batchStateTag(value) {
     const stateName = String(value || "queued");
@@ -602,6 +941,10 @@
   }
 
   function renderBatches() {
+    withFocusPreserved(renderBatchesInner);
+  }
+
+  function renderBatchesInner() {
     if (!dom.batchList) return;
     if (!state.batches.length) {
       renderEmpty(dom.batchList, "No batches yet. Add local paths or URLs above and create one.");
@@ -612,6 +955,7 @@
       const items = (batch.items || []).map((item) => {
         const path = item.path || item.url || "(missing source)";
         const canRetry = item.job_id && ["failed", "interrupted", "cancelled"].includes(item.state);
+        const targets = Array.isArray(item.targets) ? item.targets : [];
         return `
           <div class="creator-item-row">
             <div>
@@ -619,13 +963,14 @@
               <div class="creator-meta-row">
                 ${batchStateTag(item.state)}
                 <span class="creator-tag">try ${Number(item.attempts || 0)}</span>
+                ${targets.length ? `<span class="creator-tag">render ${targets.map((target) => `${target}s`).join(", ")}</span>` : '<span class="creator-tag">analysis only</span>'}
                 ${item.job_id ? `<span class="creator-tag">job ${escapeHtml(item.job_id)}</span>` : ""}
               </div>
-              ${item.error ? `<p class="hint">${escapeHtml(item.error)}</p>` : ""}
+              ${item.error ? `<p class="hint">${escapeHtml(redactPaths(item.error))}</p>` : ""}
             </div>
             <div class="creator-actions">
-              ${item.job_id ? `<button class="ghost small" type="button" data-open-job="${escapeHtml(item.job_id)}">Open</button>` : ""}
-              ${canRetry ? `<button class="ghost small" type="button" data-retry-job="${escapeHtml(item.job_id)}">Retry job</button>` : ""}
+              ${item.job_id ? `<button class="ghost small" type="button" data-focus-key="batch-open:${escapeHtml(item.job_id)}" data-open-job="${escapeHtml(item.job_id)}">Open</button>` : ""}
+              ${canRetry ? `<button class="ghost small" type="button" data-focus-key="batch-retry:${escapeHtml(item.job_id)}" data-retry-job="${escapeHtml(item.job_id)}">Retry job</button>` : ""}
             </div>
           </div>`;
       }).join("");
@@ -648,14 +993,14 @@
             <span class="creator-tag mono">${Math.round(Number(batch.progress || 0) * 100)}%</span>
           </header>
           <div class="creator-bar"><i style="width:${Math.round(Number(batch.progress || 0) * 100)}%"></i></div>
-          ${batch.error ? `<p class="hint">${escapeHtml(batch.error)}</p>` : ""}
+          ${batch.error ? `<p class="hint">${escapeHtml(redactPaths(batch.error))}</p>` : ""}
           <div class="creator-actions" style="margin-top:9px">
-            ${canResume ? `<button class="ghost small" type="button" data-batch-action="resume" data-batch="${escapeHtml(batch.id)}">Resume</button>` : ""}
-            ${canPause ? `<button class="ghost small" type="button" data-batch-action="pause" data-batch="${escapeHtml(batch.id)}">Pause</button>` : ""}
+            ${canResume ? `<button class="ghost small" type="button" data-focus-key="batch:${escapeHtml(batch.id)}:resume" data-batch-action="resume" data-batch="${escapeHtml(batch.id)}">Resume</button>` : ""}
+            ${canPause ? `<button class="ghost small" type="button" data-focus-key="batch:${escapeHtml(batch.id)}:pause" data-batch-action="pause" data-batch="${escapeHtml(batch.id)}">Pause</button>` : ""}
             ${canCancel ? (
               confirming
-                ? `<span class="creator-inline-confirm">Cancel batch? <button class="ghost small danger" type="button" data-batch-action="cancel-confirm" data-batch="${escapeHtml(batch.id)}">Confirm cancel</button><button class="ghost small" type="button" data-batch-action="cancel-abort" data-batch="${escapeHtml(batch.id)}">Keep</button></span>`
-                : `<button class="ghost small" type="button" data-batch-action="cancel" data-batch="${escapeHtml(batch.id)}">Cancel</button>`
+                ? `<span class="creator-inline-confirm">Cancel batch? <button class="ghost small danger" type="button" data-focus-key="batch:${escapeHtml(batch.id)}:cancel-confirm" data-batch-action="cancel-confirm" data-batch="${escapeHtml(batch.id)}">Confirm cancel</button><button class="ghost small" type="button" data-focus-key="batch:${escapeHtml(batch.id)}:cancel-abort" data-batch-action="cancel-abort" data-batch="${escapeHtml(batch.id)}">Keep</button></span>`
+                : `<button class="ghost small" type="button" data-focus-key="batch:${escapeHtml(batch.id)}:cancel" data-batch-action="cancel" data-batch="${escapeHtml(batch.id)}">Cancel</button>`
             ) : ""}
           </div>
           <div class="creator-item-list">${items || '<p class="hint">No items.</p>'}</div>
@@ -664,6 +1009,8 @@
   }
 
   async function loadBatches() {
+    if (state.batchLoading) return;
+    state.batchLoading = true;
     try {
       const data = await request("/api/batches");
       state.batches = data.batches || [];
@@ -681,6 +1028,8 @@
       }
     } catch (error) {
       setError(dom.batchError, error);
+    } finally {
+      state.batchLoading = false;
     }
   }
 
@@ -702,8 +1051,19 @@
       setError(dom.batchError, new Error(`This batch allows at most ${max} items.`));
       return;
     }
+    const mode = dom.batchMode?.value || "analyze_render";
+    const targets = $$('input[name="batch-target"]:checked', dom.batchForm)
+      .map((input) => Number(input.value))
+      .filter((value) => [15, 30, 60].includes(value))
+      .sort((a, b) => a - b);
+    if (mode === "analyze_render" && !targets.length) {
+      setError(dom.batchError, new Error("Choose at least one render target, or switch to Analyze only."));
+      return;
+    }
     const items = lines.map((line) => (
-      /^https?:\/\//i.test(line) ? { url: line } : { path: line }
+      /^https?:\/\//i.test(line)
+        ? { url: line, targets: mode === "analyze_render" ? targets : [] }
+        : { path: line, targets: mode === "analyze_render" ? targets : [] }
     ));
     await withBusy(dom.batchCreate, async () => {
       try {
@@ -721,16 +1081,29 @@
     }, "Creating…");
   }
 
+  function syncBatchMode() {
+    const analyzeOnly = (dom.batchMode?.value || "") === "analyze_only";
+    if (dom.batchTargets) {
+      dom.batchTargets.disabled = analyzeOnly;
+      dom.batchTargets.classList.toggle("is-disabled", analyzeOnly);
+      $$('input[name="batch-target"]', dom.batchTargets).forEach((input) => {
+        input.disabled = analyzeOnly;
+      });
+    }
+  }
+
   async function batchAction(action, batchId) {
     clearError(dom.batchError);
     if (action === "cancel") {
       state.confirm[`batch:${batchId}`] = "cancel";
       renderBatches();
+      focusByKey(`batch:${batchId}:cancel-confirm`);
       return;
     }
     if (action === "cancel-abort") {
       delete state.confirm[`batch:${batchId}`];
       renderBatches();
+      focusByKey(`batch:${batchId}:cancel`);
       return;
     }
     if (action === "cancel-confirm") {
@@ -770,18 +1143,27 @@
   }
 
   async function loadClipSets() {
-    if (!state.jobId) return;
+    if (!state.jobId || state.clipsetLoading) return;
+    const requestJobId = state.jobId;
+    state.clipsetLoading = true;
     try {
-      const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/clip-sets`);
+      const data = await request(`/api/jobs/${encodeURIComponent(requestJobId)}/clip-sets`);
+      if (state.jobId !== requestJobId) return;
       const list = data.clip_sets || [];
       state.clipset = list.length ? list[0] : null;
       initClipsetEdits(state.clipset);
       renderClipSet();
+      renderSelection();
+      renderOriginalAnalysis();
       populateCommonSelects();
     } catch (error) {
+      if (state.jobId !== requestJobId) return;
       state.clipset = null;
       renderClipSet();
+      setError(dom.clipsetError, error);
       throw error;
+    } finally {
+      state.clipsetLoading = false;
     }
   }
 
@@ -799,6 +1181,10 @@
   }
 
   function renderClipSet() {
+    withFocusPreserved(renderClipSetInner);
+  }
+
+  function renderClipSetInner() {
     if (!dom.clipsetStories) return;
     const record = state.clipset;
     if (!state.job) {
@@ -809,7 +1195,7 @@
     if (!record) {
       setText(dom.clipsetTitle, "Stories");
       setText(dom.clipsetMeta, "");
-      renderEmpty(dom.clipsetStories, "No Clip Set yet. Build the v1 automatic set first.");
+      renderEmpty(dom.clipsetStories, "No Clip Set yet. Auto Select reads the analysis and builds stories.");
       return;
     }
     setText(dom.clipsetTitle, "Stories");
@@ -822,7 +1208,7 @@
     const warnings = [...(record.warnings || [])];
     if (record.note) warnings.unshift(record.note);
     const warningHtml = warnings.length
-      ? `<div class="creator-card" style="margin-bottom:10px"><p class="hint">${warnings.map(escapeHtml).join("<br>")}</p></div>`
+      ? `<div class="creator-card" style="margin-bottom:10px"><p class="hint">${warnings.map((item) => escapeHtml(redactPaths(item))).join("<br>")}</p></div>`
       : "";
     const stories = record.stories || [];
     if (!stories.length) {
@@ -847,9 +1233,9 @@
               <small>${fmtClock(sentence.start)} → ${fmtClock(sentence.end)} · s${escapeHtml(id)}</small>
             </div>
             <div class="sentence-tools">
-              <button class="ghost small" type="button" data-sentence-action="up" ${!included || selectedIndex <= 0 ? "disabled" : ""} aria-label="Move sentence up">↑</button>
-              <button class="ghost small" type="button" data-sentence-action="down" ${!included || selectedIndex < 0 || selectedIndex >= ids.length - 1 ? "disabled" : ""} aria-label="Move sentence down">↓</button>
-              <button class="ghost small" type="button" data-sentence-action="${included ? "exclude" : "include"}">${included ? "Exclude" : "Include"}</button>
+              <button class="ghost small" type="button" data-focus-key="sentence:${escapeHtml(story.id)}:${escapeHtml(id)}:up" data-sentence-action="up" ${!included || selectedIndex <= 0 ? "disabled" : ""} aria-label="Move sentence up">↑</button>
+              <button class="ghost small" type="button" data-focus-key="sentence:${escapeHtml(story.id)}:${escapeHtml(id)}:down" data-sentence-action="down" ${!included || selectedIndex < 0 || selectedIndex >= ids.length - 1 ? "disabled" : ""} aria-label="Move sentence down">↓</button>
+              <button class="ghost small" type="button" data-focus-key="sentence:${escapeHtml(story.id)}:${escapeHtml(id)}:toggle" data-sentence-action="${included ? "exclude" : "include"}">${included ? "Exclude" : "Include"}</button>
             </div>
           </div>`;
       }).join("");
@@ -862,13 +1248,29 @@
         return `
           <span class="beat-chip ${locked ? "locked" : ""} ${banned ? "banned" : ""}">
             s${sceneId} · ${fmtDuration(clip.dur || 0)}
-            <button type="button" data-beat-action="lock" data-scene-id="${sceneId}" data-story-id="${escapeHtml(story.id)}" title="Lock beat">${locked ? "unlock" : "lock"}</button>
-            <button type="button" data-beat-action="ban" data-scene-id="${sceneId}" data-story-id="${escapeHtml(story.id)}" title="Ban beat">${banned ? "unban" : "ban"}</button>
+            <button type="button" data-focus-key="beat:${escapeHtml(story.id)}:${sceneId}:lock" data-beat-action="lock" data-scene-id="${sceneId}" data-story-id="${escapeHtml(story.id)}" title="Lock beat">${locked ? "unlock" : "lock"}</button>
+            <button type="button" data-focus-key="beat:${escapeHtml(story.id)}:${sceneId}:ban" data-beat-action="ban" data-scene-id="${sceneId}" data-story-id="${escapeHtml(story.id)}" title="Ban beat">${banned ? "unban" : "ban"}</button>
           </span>`;
       }).join("");
-      const score = story.v2_score ?? story.score;
       const overlap = overlapForStory(story);
       const evidence = (story.evidence || []).slice(0, 3).map((item) => `<li>${escapeHtml(item.text || "")}</li>`).join("");
+      const renderState = state.renderJobs[story.id] || null;
+      const busy = renderState && ["starting", "rendering", "polling"].includes(renderState.status);
+      const artifact = artifactForStory(story.id);
+      const ready = artifact && artifact.status === "ready";
+      const renderLabel = busy
+        ? (renderState.status === "starting" ? "Starting…" : `Rendering ${Number(renderState.progress || 0)}%`)
+        : (ready ? "Render again" : "Render story");
+      let statusHtml = "";
+      if (renderState?.error) {
+        statusHtml = `<p class="story-render bad">${escapeHtml(renderState.error)}</p>`;
+      } else if (busy) {
+        statusHtml = `<p class="story-render warn">Rendering story${renderState.artifactId ? ` · ${escapeHtml(renderState.artifactId)}` : ""}. Keep this panel open; artifacts refresh when ready.</p>`;
+      } else if (ready) {
+        statusHtml = `<p class="story-render ok">Ready artifact ${escapeHtml(artifact.title || artifact.artifact_id)} · ${escapeHtml(artifact.artifact_id)}. Packet and preflight use this artifact.</p>`;
+      } else if (artifact) {
+        statusHtml = `<p class="story-render warn">Artifact ${escapeHtml(artifact.artifact_id)} is ${escapeHtml(artifact.status || "pending")}. Wait for ready, then refresh artifacts.</p>`;
+      }
       return `
         <article class="story-card" data-story-card="${escapeHtml(story.id)}">
           <header>
@@ -878,21 +1280,23 @@
                 <span class="creator-tag">${fmtDuration(story.dur)}</span>
                 <span class="creator-tag">${fmtClock(story.start)} → ${fmtClock(story.end)}</span>
                 <span class="creator-tag ${overlap > 0.2 ? "warn" : "ok"}">overlap ${overlap.toFixed(1)}s</span>
-                ${Number.isFinite(Number(score)) ? `<span class="creator-tag ok">score ${Number(score).toFixed(1)}</span>` : ""}
+                ${ready ? '<span class="creator-tag ok">render ready</span>' : ""}
               </div>
             </div>
             <div class="creator-actions">
-              <button class="ghost small" type="button" data-story-packet="${escapeHtml(story.id)}">Build packet</button>
-              <button class="ghost small" type="button" data-story-matrix="${escapeHtml(story.id)}">3×3 matrix</button>
+              <button class="primary small" type="button" data-focus-key="story-render:${escapeHtml(story.id)}" data-story-render="${escapeHtml(story.id)}" ${busy ? "disabled" : ""}>${escapeHtml(renderLabel)}</button>
+              <button class="ghost small" type="button" data-focus-key="story-smartcut:${escapeHtml(story.id)}" data-story-smartcut="${escapeHtml(story.id)}">Open in Smart Cut</button>
+              <button class="ghost small" type="button" data-focus-key="story-packet:${escapeHtml(story.id)}" data-story-packet="${escapeHtml(story.id)}">Build packet</button>
             </div>
           </header>
+          ${statusHtml}
           <p class="story-copy"><strong>Hook</strong> ${escapeHtml((story.hook || {}).text || "—")}</p>
           <p class="story-copy"><strong>Payoff</strong> ${escapeHtml((story.payoff || {}).text || "—")}</p>
           ${evidence ? `<ul class="story-evidence">${evidence}</ul>` : ""}
           <div class="beat-list">${beats || '<span class="hint">No scene beats.</span>'}</div>
           <div class="sentence-list">${sentences || '<p class="hint">No sentences.</p>'}</div>
           <div class="creator-actions" style="margin-top:10px">
-            <button class="ghost small" type="button" data-clipset-save="1">Save edits</button>
+            <button class="ghost small" type="button" data-focus-key="clipset-save:${escapeHtml(story.id)}" data-clipset-save="1">Save edits</button>
             <span class="hint">Reorder, include/exclude, lock or ban. Save updates the set.</span>
           </div>
         </article>`;
@@ -919,16 +1323,27 @@
         state.matrix = null;
         state.packet = null;
         state.preflight = null;
+        state.selectedArtifact = "";
+        state.renderJobs = {};
+        for (const input of [dom.packetTitle1, dom.packetTitle2, dom.packetTitle3, dom.packetDescription, dom.packetHashtags, dom.packetPinComment]) {
+          if (input) input.value = "";
+        }
+        if (dom.packetArtifact) dom.packetArtifact.value = "";
+        updateTitleCounts();
+        updateDescriptionCount();
+        renderPacket(null);
         initClipsetEdits(state.clipset);
         renderClipSet();
         renderSelection();
+        renderOriginalAnalysis();
         renderMatrix();
         populateCommonSelects();
-        toast("Clip Set built with automatic v1 selection.");
+        setAnalysisOpen(false);
+        toast("Clip Set built. Review the stories, then render one or open it in Smart Cut.");
       } catch (error) {
         setError(dom.clipsetError, error);
       }
-    }, "Building…");
+    }, "Selecting…");
   }
 
   async function saveClipSetEdits() {
@@ -937,12 +1352,13 @@
       setError(dom.clipsetError, new Error("Build a Clip Set first."));
       return;
     }
-    const excluded = new Set((state.clipset.excluded_sentences || []).map(Number));
+    const excluded = new Set();
     const stories = (state.clipset.stories || []).map((story) => {
       const selected = (state.clipsetEdits[story.id] || []).map(Number);
-      const all = new Set((story.sentences || []).map((sentence) => Number(sentence.id)));
-      for (const id of all) {
-        if (!selected.includes(id)) excluded.add(id);
+      const selectedSet = new Set(selected);
+      for (const sentence of (story.sentences || [])) {
+        const id = Number(sentence.id);
+        if (!selectedSet.has(id)) excluded.add(id);
       }
       return { id: story.id, sentences: selected };
     });
@@ -981,10 +1397,60 @@
     renderClipSet();
   }
 
+  function setAnalysisOpen(open) {
+    if (!dom.clipsetAnalysis) return;
+    dom.clipsetAnalysis.hidden = !open;
+    dom.clipsetReadAnalysis?.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) renderOriginalAnalysis();
+  }
+
+  function setAnalysisTab(tab) {
+    const chosen = tab === "beta" ? "beta" : "original";
+    $$("[data-analysis-tab]", dom.analysisTabs).forEach((button) => {
+      const active = button.dataset.analysisTab === chosen;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+      button.tabIndex = active ? 0 : -1;
+    });
+    if (dom.analysisOriginal) dom.analysisOriginal.hidden = chosen !== "original";
+    if (dom.analysisBeta) dom.analysisBeta.hidden = chosen !== "beta";
+    if (chosen === "original") renderOriginalAnalysis();
+  }
+
+  function renderOriginalAnalysis() {
+    withFocusPreserved(renderOriginalAnalysisInner);
+  }
+
+  function renderOriginalAnalysisInner() {
+    if (!dom.clipsetOriginalOutput) return;
+    if (!state.job) {
+      dom.clipsetOriginalOutput.innerHTML = '<p class="hint">Open a job to read its analysis.</p>';
+      return;
+    }
+    if (!state.clipset) {
+      dom.clipsetOriginalOutput.innerHTML = '<p class="hint">No Clip Set yet. Use Auto Select to build the original story read.</p>';
+      return;
+    }
+    const stories = state.clipset.stories || [];
+    if (!stories.length) {
+      dom.clipsetOriginalOutput.innerHTML = '<p class="hint">The Clip Set has no stories to read.</p>';
+      return;
+    }
+    dom.clipsetOriginalOutput.innerHTML = stories.map((story) => `
+      <div class="batch-card">
+        <header><div><h4>${escapeHtml(story.title || story.id)}</h4><div class="creator-meta-row">
+          <span class="creator-tag">${fmtDuration(story.dur)}</span>
+          <span class="creator-tag">${fmtClock(story.start)} → ${fmtClock(story.end)}</span>
+        </div></div><button class="ghost small" type="button" data-focus-key="original-render:${escapeHtml(story.id)}" data-story-render="${escapeHtml(story.id)}">Render story</button></header>
+        <p class="hint"><strong>Hook</strong> ${escapeHtml((story.hook || {}).text || "—")}</p>
+        <p class="hint"><strong>Payoff</strong> ${escapeHtml((story.payoff || {}).text || "—")}</p>
+      </div>`).join("");
+  }
+
   async function runSelectionV2() {
     clearError(dom.clipsetError);
     if (!state.job || !state.clipset) {
-      setError(dom.clipsetError, new Error("Build a Clip Set before Smart Cut v2."));
+      setError(dom.clipsetError, new Error("Build a Clip Set before the beta read."));
       return;
     }
     await withBusy(dom.clipsetV2, async () => {
@@ -1001,25 +1467,28 @@
       } catch (error) {
         setError(dom.clipsetError, error);
       }
-    }, "Ranking…");
+    }, "Reading…");
   }
 
   function renderSelection() {
     if (!dom.clipsetV2Output) return;
     const data = state.selection;
     if (!data) {
-      dom.clipsetV2Output.innerHTML = '<p class="hint">v1 automatic plans remain the default. Run v2 only when you want ranked stories.</p>';
+      dom.clipsetV2Output.innerHTML = '<p class="hint">No beta read yet. This optional pass ranks the current stories; the original read stays available.</p>';
       return;
     }
     const ranked = (data.ranked || []).map((story) => `
       <div class="batch-card">
-        <header><div><h4>${escapeHtml(story.title || story.id)}</h4><div class="creator-meta-row"><span class="creator-tag ok">v2 ${Number(story.v2_score || 0).toFixed(1)}</span><span class="creator-tag">${fmtDuration(story.dur)}</span></div></div></header>
+        <header><div><h4>${escapeHtml(story.title || story.id)}</h4><div class="creator-meta-row"><span class="creator-tag ok">rank ${Number(story.v2_score || 0).toFixed(1)}</span><span class="creator-tag">${fmtDuration(story.dur)}</span></div></div></header>
         <p class="hint">${escapeHtml(story.why || "")}</p>
         ${(story.hook_candidates || []).length ? `<p class="hint">Hooks: ${(story.hook_candidates || []).map((hook) => escapeHtml(hook.text || "")).join(" · ")}</p>` : `<p class="hint">Incomplete hook set.</p>`}
       </div>`).join("");
     const excluded = (data.excluded || []).map((story) => `
       <div class="batch-card"><header><div><h4>${escapeHtml(story.title || story.id)}</h4><div class="creator-meta-row"><span class="creator-tag bad">excluded</span></div></div></header><p class="hint">${escapeHtml(story.why || "Prompt exclusion matched.")}</p></div>`).join("");
-    dom.clipsetV2Output.innerHTML = (ranked || '<p class="hint">No stories ranked.</p>') + excluded + (
+    const stale = (data.warnings || []).length
+      ? `<p class="hint">${escapeHtml(data.warnings.join(" "))}</p>`
+      : "";
+    dom.clipsetV2Output.innerHTML = (ranked || '<p class="hint">No stories ranked.</p>') + excluded + stale + (
       data.note ? `<p class="hint">${escapeHtml(data.note)}</p>` : ""
     );
   }
@@ -1067,10 +1536,239 @@
         </div>`;
     }).join("");
     const errors = (data.errors || []).map((item) => `
-      <div class="matrix-cell error"><strong>${escapeHtml(item.story_title || item.story_id || "story")}</strong>${escapeHtml(item.error || "incomplete")}</div>`).join("");
+      <div class="matrix-cell error"><strong>${escapeHtml(item.story_title || item.story_id || "story")}</strong>${escapeHtml(redactPaths(item.error || "incomplete"))}</div>`).join("");
     dom.matrixOutput.innerHTML = (matrices || "") + (errors ? `<div class="matrix-grid">${errors}</div>` : "") + (
       !matrices && !errors ? '<p class="hint">No matrix built.</p>' : ""
     );
+  }
+
+  function setSelectedArtifact(artifactId) {
+    state.selectedArtifact = artifactId || "";
+    if (!artifactId) return;
+    populateCommonSelects();
+    if (dom.packetArtifact) dom.packetArtifact.value = artifactId;
+    if (dom.preflightStory) dom.preflightStory.value = artifactId;
+    updatePacketNeedsRender();
+    updatePacketCovers();
+  }
+
+  function setRenderProgress(storyId, patch) {
+    state.renderJobs[storyId] = {
+      ...(state.renderJobs[storyId] || {}),
+      ...patch,
+    };
+    renderClipSet();
+    renderOriginalAnalysis();
+    updatePacketNeedsRender();
+  }
+
+  function storyRenderTarget(story) {
+    const value = Math.round(Number(story?.dur) || 0);
+    return Math.max(1, Math.min(180, value || 30));
+  }
+
+  function renderRecordStatus(record) {
+    return String(record?.status || "").toLowerCase();
+  }
+
+  async function refreshArtifactsOnly() {
+    if (!state.jobId) return;
+    const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/artifacts`);
+    state.artifacts = data.artifacts || [];
+    state.artifactRenders = data.renders || state.artifactRenders || {};
+    populateCommonSelects();
+    renderArtifacts();
+  }
+
+  async function completeStoryRender(storyId, artifactId) {
+    clearTimeout(state.renderPollers[storyId]);
+    delete state.renderPollers[storyId];
+    await refreshArtifactsOnly().catch(() => {});
+    const artifact = artifactById(artifactId);
+    if (artifact && artifact.status === "ready") {
+      setRenderProgress(storyId, {
+        status: "ready",
+        progress: 100,
+        artifactId: artifact.artifact_id,
+        error: "",
+      });
+      setSelectedArtifact(artifact.artifact_id);
+      if (dom.packetStory) dom.packetStory.value = storyId;
+      toast("Story render ready. Packet and preflight now use its artifact.");
+    } else {
+      setRenderProgress(storyId, {
+        status: "error",
+        progress: 100,
+        artifactId,
+        error: "The render finished, but its artifact is not listed yet. Refresh artifacts.",
+      });
+    }
+    renderClipSet();
+    renderOriginalAnalysis();
+    updatePacketNeedsRender();
+    updatePacketCovers();
+    if (state.screen === "preflight") maybeAutoPreflight(true);
+  }
+
+  function scheduleRenderPoll(storyId, artifactId, renderKey, target) {
+    clearTimeout(state.renderPollers[storyId]);
+    const started = Date.now();
+    const pollJobId = state.jobId;
+    const timeout = 20 * 60 * 1000;
+    const tick = async () => {
+      if (state.jobId !== pollJobId) {
+        delete state.renderPollers[storyId];
+        return;
+      }
+      if (Date.now() - started > timeout) {
+        setRenderProgress(storyId, {
+          status: "error",
+          error: "Rendering is taking longer than expected. Refresh artifacts when it finishes.",
+        });
+        delete state.renderPollers[storyId];
+        return;
+      }
+      if (state.renderInFlight) {
+        state.renderPollers[storyId] = setTimeout(tick, 1200);
+        return;
+      }
+      state.renderInFlight = true;
+      try {
+        const job = await request(`/api/jobs/${encodeURIComponent(state.jobId)}`);
+        state.job = job;
+        const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/artifacts`);
+        state.artifacts = data.artifacts || [];
+        state.artifactRenders = data.renders || {};
+        if (state.jobId !== pollJobId) return;
+        let artifact = artifactId ? artifactById(artifactId) : null;
+        if (!artifact) artifact = artifactForStory(storyId);
+        const records = state.artifactRenders || {};
+        const record = (renderKey && records[renderKey])
+          || Object.values(records).find((item) => item && artifactId && item.artifact_id === artifactId)
+          || Object.values(records).find((item) => item && Number(item.target) === Number(target))
+          || null;
+        if (artifact?.status === "ready" || renderRecordStatus(record) === "ready") {
+          state.renderInFlight = false;
+          await completeStoryRender(storyId, artifact?.artifact_id || artifactId || record?.artifact_id || "");
+          return;
+        }
+        if (["failed", "cancelled", "interrupted"].includes(renderRecordStatus(artifact || record))) {
+          setRenderProgress(storyId, {
+            status: "error",
+            artifactId: artifact?.artifact_id || artifactId,
+            error: "The story render failed. Try again, or open the story in Smart Cut and render from there.",
+          });
+          delete state.renderPollers[storyId];
+          return;
+        }
+        const rawProgress = Number(record?.progress);
+        const progress = Number.isFinite(rawProgress)
+          ? Math.max(0, Math.min(100, Math.round(rawProgress * 100)))
+          : 0;
+        setRenderProgress(storyId, {
+          status: "rendering",
+          progress,
+          artifactId: artifact?.artifact_id || artifactId,
+        });
+        renderArtifacts();
+        populateCommonSelects();
+        state.renderPollers[storyId] = setTimeout(tick, 2500);
+      } catch (error) {
+        setRenderProgress(storyId, {
+          status: "rendering",
+          error: "",
+          progress: Number(state.renderJobs[storyId]?.progress || 0),
+        });
+        state.renderPollers[storyId] = setTimeout(tick, 3500);
+      } finally {
+        state.renderInFlight = false;
+      }
+    };
+    state.renderPollers[storyId] = setTimeout(tick, 900);
+  }
+
+  async function renderStory(storyId, button) {
+    clearError(dom.clipsetError);
+    const story = storyById(storyId);
+    if (!story || !state.clipset || !state.job) {
+      setError(dom.clipsetError, new Error("Build a Clip Set before rendering a story."));
+      return;
+    }
+    const target = storyRenderTarget(story);
+    const requestJobId = state.jobId;
+    const requestSetId = state.clipset.id;
+    setRenderProgress(storyId, {
+      status: "starting",
+      progress: 0,
+      artifactId: "",
+      error: "",
+      target,
+    });
+    await withBusy(button, async () => {
+      try {
+        const data = await request(`/api/jobs/${encodeURIComponent(requestJobId)}/clip-sets/${encodeURIComponent(requestSetId)}/stories/${encodeURIComponent(storyId)}/render`, {
+          method: "POST",
+          body: JSON.stringify({
+            target,
+            quality: "final",
+            aspect: "9:16",
+            captions: true,
+          }),
+        });
+        if (state.jobId !== requestJobId) return;
+        const render = data.render || {};
+        const artifactId = data.artifact_id || data.artifact?.artifact_id || render.artifact_id || "";
+        const renderKey = data.render_key || render.key || render.record_key || "";
+        if (data.artifact?.status === "ready" || renderRecordStatus(render) === "ready") {
+          await completeStoryRender(storyId, artifactId || data.artifact?.artifact_id || "");
+          return;
+        }
+        setRenderProgress(storyId, {
+          status: "rendering",
+          progress: Math.max(0, Math.min(100, Number(render.progress || 0) * 100)),
+          artifactId,
+          renderKey,
+        });
+        scheduleRenderPoll(storyId, artifactId, renderKey, target);
+        toast("Story render started. Progress updates in the card.");
+      } catch (error) {
+        const message = error.status === 404
+          ? "Story rendering is not available in this build yet. Open the story in Smart Cut instead."
+          : humanError(error);
+        setRenderProgress(storyId, { status: "error", error: message });
+        setError(dom.clipsetError, error);
+      }
+    }, "Starting…");
+  }
+
+  async function openStoryInSmartCut(storyId, button) {
+    clearError(dom.clipsetError);
+    const story = storyById(storyId);
+    if (!story || !state.clipset || !state.job) {
+      setError(dom.clipsetError, new Error("Build a Clip Set before opening a story in Smart Cut."));
+      return;
+    }
+    const target = storyRenderTarget(story);
+    await withBusy(button, async () => {
+      try {
+        const data = await request(`/clip-sets/${encodeURIComponent(state.clipset.id)}/plans`, {
+          method: "POST",
+          body: JSON.stringify({ target }),
+        });
+        const row = (data.plans || []).find((item) => item.story_id === storyId) || (data.plans || [])[0];
+        const plan = row?.plan;
+        if (!plan) throw new Error("This story has no plan to open.");
+        const applied = br().applyPlan ? br().applyPlan(plan) : false;
+        if (applied) {
+          toast("Story loaded into Smart Cut.");
+          closeCreator();
+        } else {
+          toast("Plan is ready. Smart Cut could not apply it automatically.");
+        }
+      } catch (error) {
+        setError(dom.clipsetError, error);
+      }
+    }, "Opening…");
   }
 
   async function runTighten() {
@@ -1128,9 +1826,60 @@
     return Boolean(dom.captionArtifact?.value);
   }
 
+  function captionOverrides() {
+    const zones = {
+      bottom: { top: 0.08, right: 0.08, bottom: 0.16, left: 0.08 },
+      center: { top: 0.36, right: 0.08, bottom: 0.36, left: 0.08 },
+      top: { top: 0.12, right: 0.08, bottom: 0.4, left: 0.08 },
+    };
+    return {
+      font_size: Number(dom.captionFontSize?.value) || 56,
+      color: dom.captionColor?.value || "#ffffff",
+      background: "#000000",
+      background_opacity: Number(dom.captionBgOpacity?.value) || 0,
+      safe_zone: zones[dom.captionPosition?.value] || zones.bottom,
+      uppercase: Boolean(dom.captionUppercase?.checked),
+    };
+  }
+
+  function updateCaptionControls() {
+    const hasCues = (state.caption.cues || []).length > 0;
+    if (dom.captionSave) dom.captionSave.disabled = !hasCues || Boolean(state.caption.artifactId);
+    if (dom.captionExport) dom.captionExport.disabled = !hasCues && !state.caption.track && !state.caption.artifactId;
+    if (dom.captionPreviewRun) dom.captionPreviewRun.disabled = !hasCues;
+  }
+
+  function showCaptionEmpty(message) {
+    if (dom.captionPreviewEmpty) {
+      dom.captionPreviewEmpty.innerHTML = `<strong>No caption preview yet</strong><span>${escapeHtml(message)}</span>`;
+      dom.captionPreviewEmpty.hidden = false;
+    }
+    if (dom.captionPreviewText) dom.captionPreviewText.hidden = true;
+    if (dom.captionPreviewImg) dom.captionPreviewImg.hidden = true;
+    if (dom.captionPreviewSafe) dom.captionPreviewSafe.innerHTML = "";
+  }
+
+  function applyCaptionPreviewStyle() {
+    const style = state.caption.preview?.style || {};
+    const overrides = captionOverrides();
+    if (!dom.captionPreviewText) return;
+    dom.captionPreviewText.style.color = overrides.color || style.color || "#ffffff";
+    dom.captionPreviewText.style.textTransform = overrides.uppercase ? "uppercase" : "none";
+    const scale = (dom.captionPreview?.clientWidth || 360) / 1080;
+    const size = Number(overrides.font_size || style.font_size || 56) * scale;
+    dom.captionPreviewText.style.fontSize = `${Math.max(11, Math.min(30, size)).toFixed(1)}px`;
+    const opacity = Number(overrides.background_opacity);
+    dom.captionPreviewText.style.background = Number.isFinite(opacity)
+      ? `rgba(0,0,0,${Math.max(0, Math.min(1, opacity))})`
+      : "rgba(0,0,0,0.55)";
+    const zone = overrides.safe_zone || style.safe_zone || { bottom: 0.16 };
+    dom.captionPreviewText.style.bottom = `${Math.max(2, Number(zone.bottom || 0.16) * 100)}%`;
+  }
+
   function renderCaptionCues() {
     if (!dom.captionCues) return;
     const cues = state.caption.cues || [];
+    updateCaptionControls();
     if (!cues.length) {
       dom.captionCues.innerHTML = '<p class="hint">Build a track to load speech-timed cues.</p>';
       setText(dom.captionMeta, "");
@@ -1150,6 +1899,26 @@
       </div>`).join("");
   }
 
+  async function planForCaptionTarget(target) {
+    const bridgePlan = br().getPlan ? br().getPlan() : null;
+    if (bridgePlan && Number(bridgePlan.target) === target && Array.isArray(bridgePlan.clips)) {
+      return bridgePlan;
+    }
+    if (!state.clipset) return null;
+    try {
+      const data = await request(`/clip-sets/${encodeURIComponent(state.clipset.id)}/plans`, {
+        method: "POST",
+        body: JSON.stringify({ target }),
+      });
+      const rows = data.plans || [];
+      const story = (state.clipset.stories || []).find((item) => Math.round(Number(item.dur) || 0) === target);
+      const row = (story && rows.find((item) => item.story_id === story.id)) || rows[0];
+      return row?.plan || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function buildCaptionTrack() {
     clearError(dom.captionError);
     if (!state.job) {
@@ -1159,15 +1928,16 @@
     await withBusy(dom.captionBuild, async () => {
       try {
         const target = Number(dom.captionTarget.value) || 30;
-        const bridgePlan = br().getPlan ? br().getPlan() : null;
+        const plan = await planForCaptionTarget(target);
         const body = {
           target,
           style_id: dom.captionStyle.value || "clean",
           order: "source",
+          overrides: captionOverrides(),
         };
-        if (bridgePlan && Number(bridgePlan.target) === target && Array.isArray(bridgePlan.clips)) {
-          body.clips = bridgePlan.clips;
-          body.hook_scene = bridgePlan.hook_scene;
+        if (plan && Array.isArray(plan.clips)) {
+          body.clips = plan.clips;
+          body.hook_scene = plan.hook_scene;
         }
         const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/captions`, {
           method: "POST",
@@ -1242,7 +2012,7 @@
       try {
         const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/captions/${encodeURIComponent(state.caption.track.id)}`, {
           method: "PATCH",
-          body: JSON.stringify({ cues, style_id: dom.captionStyle.value || "clean" }),
+          body: JSON.stringify({ cues, style_id: dom.captionStyle.value || "clean", overrides: captionOverrides() }),
         });
         state.caption.track = data.track || data;
         state.caption.cues = (data.track?.cues || cues).map((cue) => ({ ...cue }));
@@ -1273,6 +2043,11 @@
     let poster = "";
     let safe = defaultSafeZones();
     let duration = cues.reduce((max, cue) => Math.max(max, Number(cue.end) || 0), 0);
+    if (!cues.length) {
+      state.caption.preview = null;
+      showCaptionEmpty("Build a caption track for this target, or load captions from a ready artifact. The poster appears automatically.");
+      return;
+    }
     if (state.caption.artifactId) {
       poster = artifactPosterPath(state.caption.artifactId);
     } else if (state.caption.track) {
@@ -1282,10 +2057,11 @@
       safe = preview.safe_zones || safe;
       duration = Number(preview.duration) || duration;
     }
-    if (!cues.length) throw new Error("No cues to preview.");
     state.caption.preview = { cues, safe_zones: safe, duration, style: state.caption.track?.style || {} };
     if (poster) {
-      await setCaptionPreviewImage(poster);
+      await setCaptionPreviewImage(poster).catch(() => {
+        if (dom.captionPreviewImg) dom.captionPreviewImg.hidden = true;
+      });
     } else if (dom.captionPreviewImg) {
       dom.captionPreviewImg.hidden = true;
     }
@@ -1303,6 +2079,7 @@
     if (dom.captionPreviewImg) dom.captionPreviewImg.hidden = true;
     const blob = await requestRaw(path, { cache: "no-store" });
     state.caption.previewUrl = URL.createObjectURL(blob);
+    dom.captionPreviewImg.onerror = () => { dom.captionPreviewImg.hidden = true; };
     dom.captionPreviewImg.src = state.caption.previewUrl;
     dom.captionPreviewImg.hidden = false;
   }
@@ -1320,25 +2097,22 @@
 
   function updateCaptionPreviewText(time) {
     const preview = state.caption.preview;
-    if (!preview) return;
+    if (!preview) {
+      showCaptionEmpty("Build a caption track for this target, or load captions from a ready artifact. The poster appears automatically.");
+      return;
+    }
     const cues = preview.cues || [];
     const cue = cues.find((item) => Number(item.start) <= time && time <= Number(item.end))
       || cues.filter((item) => Number(item.start) <= time).slice(-1)[0]
       || cues[0];
-    dom.captionPreviewText.textContent = cue ? cue.text : "No cue at this time.";
-    if (preview.style) {
-      if (preview.style.color) dom.captionPreviewText.style.color = preview.style.color;
-      dom.captionPreviewText.style.textTransform = preview.style.uppercase ? "uppercase" : "none";
-      const scale = (dom.captionPreview?.clientWidth || 360) / 1080;
-      const size = Number(preview.style.font_size || 56) * scale;
-      dom.captionPreviewText.style.fontSize = `${Math.max(11, Math.min(28, size)).toFixed(1)}px`;
-      if (preview.style.background && preview.style.background !== "#000000") {
-        dom.captionPreviewText.style.background = preview.style.background;
-      }
-      if (preview.style.background_opacity !== undefined) {
-        dom.captionPreviewText.style.background = `rgba(0,0,0,${Number(preview.style.background_opacity) || 0.55})`;
-      }
+    if (!cue) {
+      showCaptionEmpty("This track has no cues near this time.");
+      return;
     }
+    if (dom.captionPreviewEmpty) dom.captionPreviewEmpty.hidden = true;
+    if (dom.captionPreviewText) dom.captionPreviewText.hidden = false;
+    dom.captionPreviewText.textContent = cue.text;
+    applyCaptionPreviewStyle();
     dom.captionPreviewReadout.textContent = `${Number(time).toFixed(1)}s`;
   }
 
@@ -1372,12 +2146,77 @@
     setText(dom.packetDescCount, `${length}/125`);
   }
 
+  function packetStoryThumb(story) {
+    const scenes = state.job?.analysis?.scenes || [];
+    for (const clip of story?.clips || []) {
+      const scene = scenes.find((item) => Number(item.id) === Number(clip.scene));
+      if (scene?.thumb_url) return scene.thumb_url;
+    }
+    return "";
+  }
+
+  function currentPacketArtifact() {
+    const chosen = artifactById(dom.packetArtifact?.value || "");
+    if (chosen) return chosen;
+    const story = selectedPacketStory();
+    return (story ? artifactForStory(story.id) : null) || artifactById(packetStoryValue());
+  }
+
+  function updatePacketNeedsRender() {
+    if (!dom.packetNeedsRender) return;
+    const story = selectedPacketStory();
+    const artifact = currentPacketArtifact();
+    const renderState = story ? state.renderJobs[story.id] : null;
+    const busy = renderState && ["starting", "rendering", "polling"].includes(renderState.status);
+    const ready = artifact && artifact.status === "ready";
+    const legacy = dom.packetRenderKey?.value;
+    const selected = packetStoryValue();
+    const needs = Boolean(selected) && !ready && !legacy;
+    dom.packetNeedsRender.hidden = !needs;
+    if (!needs) return;
+    const text = busy
+      ? `Rendering story · ${Number(renderState.progress || 0)}%. Keep this panel open; packet fields unlock when the artifact is ready.`
+      : (story
+        ? "Render the story first. Packet, preflight and review links unlock when the artifact is ready."
+        : "This artifact is still rendering. Wait for it to become ready, then refresh artifacts.");
+    dom.packetNeedsRender.querySelector("p")?.replaceChildren(document.createTextNode(text));
+    if (dom.packetRenderStory) {
+      dom.packetRenderStory.hidden = !story;
+      dom.packetRenderStory.disabled = Boolean(busy);
+      dom.packetRenderStory.textContent = busy ? `Rendering ${Number(renderState.progress || 0)}%` : "Render story";
+    }
+  }
+
+  function updatePacketCovers() {
+    const artifact = currentPacketArtifact();
+    const story = selectedPacketStory();
+    const poster = artifact?.poster_url || "";
+    const thumb = packetStoryThumb(story);
+    const sources = [poster || thumb, thumb || poster];
+    [dom.packetCoverImg1, dom.packetCoverImg2].forEach((img, index) => {
+      if (!img) return;
+      const src = sources[index];
+      if (!src) {
+        img.hidden = true;
+        img.removeAttribute("src");
+        return;
+      }
+      img.hidden = false;
+      img.onerror = () => { img.hidden = true; };
+      img.src = absoluteUrl(src);
+    });
+  }
+
   function updatePacketFilename() {
     if (!dom.packetFilename) return;
-    const story = dom.packetStory.value || "story";
+    const story = packetStoryId() || "story";
     const render = dom.packetRenderKey.value || "";
-    const artifact = state.artifacts.find((item) => item.artifact_id === dom.packetArtifact.value);
-    const target = artifact?.target || (render && state.job?.renders?.[render]?.target) || 30;
+    const artifact = artifactById(dom.packetArtifact.value) || (!render ? currentPacketArtifact() : null);
+    const selectedStory = selectedPacketStory();
+    const target = artifact?.target
+      || (render && state.job?.renders?.[render]?.target)
+      || Math.round(Number(selectedStory?.dur) || 0)
+      || 30;
     dom.packetFilename.textContent = `${slug(story)}-${target}s-<packet>.mp4 · ${slug(story)}-packet-<packet>.zip`;
   }
 
@@ -1391,16 +2230,24 @@
     const titles = [dom.packetTitle1.value.trim(), dom.packetTitle2.value.trim(), dom.packetTitle3.value.trim()];
     const description = dom.packetDescription.value.trim();
     const hashtags = dom.packetHashtags.value.split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean);
-    const artifactId = dom.packetArtifact.value;
+    let artifactId = dom.packetArtifact.value;
+    if (!artifactId && !dom.packetRenderKey.value) {
+      const inferred = currentPacketArtifact();
+      if (inferred) {
+        artifactId = inferred.artifact_id;
+        dom.packetArtifact.value = artifactId;
+      }
+    }
     const renderKey = dom.packetRenderKey.value;
-    const story = dom.packetStory.value.trim() || artifactId || renderKey;
+    const story = packetStoryId() || artifactId || renderKey;
     const coverTimes = [Number(dom.packetCover1.value), Number(dom.packetCover2.value)];
     if (!coverTimes.every((value) => Number.isFinite(value) && value >= 0)) {
       setError(dom.packetError, new Error("Both cover times must be non-negative numbers."));
       return;
     }
     if (!story) {
-      setError(dom.packetError, new Error("Choose a story, artifact or render key."));
+      setError(dom.packetError, new Error("Choose a story first."));
+      updatePacketNeedsRender();
       return;
     }
     if (!titles.every(Boolean)) {
@@ -1412,7 +2259,17 @@
       return;
     }
     if (!artifactId && !renderKey) {
-      setError(dom.packetError, new Error("Choose an artifact or a ready render key."));
+      updatePacketNeedsRender();
+      setError(dom.packetError, new Error("This story has no ready artifact. Use Render story above, or a legacy render key under Advanced."));
+      return;
+    }
+    const artifact = artifactById(artifactId);
+    if (artifact && artifact.status !== "ready") {
+      setError(dom.packetError, new Error(`Artifact ${artifactId} is ${artifact.status || "pending"}. Wait for ready, then refresh artifacts.`));
+      return;
+    }
+    if (!hashtags.length) {
+      setError(dom.packetError, new Error("Add 3 to 8 hashtags."));
       return;
     }
     await withBusy(dom.packetBuild, async () => {
@@ -1475,35 +2332,86 @@
 
   // ---------------------------------------------------------------- preflight
 
-  async function runPreflight() {
+  const PREFLIGHT_CHECKS = [
+    { id: "dangling_claims", label: "Dangling claims", style: "copy" },
+    { id: "truncated_payoff", label: "Truncated payoff", style: "edit" },
+    { id: "caption_density", label: "Caption density", style: "captions" },
+    { id: "safe_zone_contrast", label: "Safe-zone contrast", style: "frame" },
+    { id: "loudness", label: "Loudness", style: "audio" },
+  ];
+
+  const PREFLIGHT_FIX = {
+    caption_density: "captions",
+    safe_zone_contrast: "captions",
+    dangling_claims: "clipset",
+    truncated_payoff: "clipset",
+  };
+
+  function renderPreflightPlaceholder() {
+    if (!dom.preflightChecks) return;
+    dom.preflightChecks.innerHTML = PREFLIGHT_CHECKS.map((check) => `
+      <div class="check-row is-off" data-check-id="${escapeHtml(check.id)}">
+        <input type="checkbox" disabled aria-label="${escapeHtml(check.label)}">
+        <div>
+          <h4>${escapeHtml(check.label)} <span class="creator-tag">not run</span></h4>
+          <p>${escapeHtml(check.style)} check · selected story or artifact</p>
+        </div>
+        <span class="creator-tag">pending</span>
+      </div>`).join("");
+    dom.preflightFindings.innerHTML = '<p class="hint">Findings appear after preflight runs.</p>';
+    setText(dom.preflightSummary, "Not run");
+  }
+
+  function maybeAutoPreflight(force = false) {
+    if (state.screen !== "preflight" || !state.job) return;
+    const story = dom.preflightStory?.value || "";
+    if (!story) {
+      renderPreflightPlaceholder();
+      return;
+    }
+    if (!force && state.preflight && state.preflightSelection === story) return;
+    runPreflight(true, story);
+  }
+
+  async function runPreflight(auto = false, preset = "") {
+    if (state.preflightLoading) return;
     clearError(dom.preflightError);
     if (!state.job) {
       setError(dom.preflightError, new Error("Open a job first."));
       return;
     }
-    const story = dom.preflightStory.value;
+    const story = preset || dom.preflightStory.value;
     if (!story) {
-      setError(dom.preflightError, new Error("Choose a story, artifact or render key."));
+      setError(dom.preflightError, new Error("Choose a story or artifact."));
       return;
     }
-    await withBusy(dom.preflightRun, async () => {
-      try {
-        const result = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/preflight?story_id=${encodeURIComponent(story)}`);
-        state.preflight = result;
-        state.preflightHidden = new Set();
-        renderPreflight();
-      } catch (error) {
-        setError(dom.preflightError, error);
+    state.preflightLoading = true;
+    if (!auto) setBusy(dom.preflightRun, true, "Checking…");
+    try {
+      const result = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/preflight?story_id=${encodeURIComponent(story)}`);
+      state.preflight = result;
+      state.preflightSelection = story;
+      state.preflightHidden = new Set();
+      renderPreflight();
+    } catch (error) {
+      setError(dom.preflightError, error);
+    } finally {
+      state.preflightLoading = false;
+      if (!auto) setBusy(dom.preflightRun, false);
+      if (state.screen === "preflight" && dom.preflightStory?.value && dom.preflightStory.value !== state.preflightSelection) {
+        setTimeout(() => maybeAutoPreflight(true), 0);
       }
-    }, "Checking…");
+    }
   }
 
   function renderPreflight() {
+    withFocusPreserved(renderPreflightInner);
+  }
+
+  function renderPreflightInner() {
     const data = state.preflight;
     if (!data) {
-      renderEmpty(dom.preflightChecks, "Run preflight for a story or artifact.");
-      renderEmpty(dom.preflightFindings, "No findings yet.");
-      setText(dom.preflightSummary, "");
+      renderPreflightPlaceholder();
       return;
     }
     const checks = Object.entries(data.checks || {});
@@ -1516,10 +2424,10 @@
       const visible = enabled && !state.preflightHidden.has(id);
       return `
         <div class="check-row ${visible ? "" : "is-off"}" data-check-id="${escapeHtml(id)}">
-          <input type="checkbox" ${visible ? "checked" : ""} ${enabled ? "" : "disabled"} data-preflight-toggle="${escapeHtml(id)}" aria-label="View ${escapeHtml(check.label || id)}">
+          <input type="checkbox" ${visible ? "checked" : ""} ${enabled ? "" : "disabled"} data-focus-key="preflight-toggle:${escapeHtml(id)}" data-preflight-toggle="${escapeHtml(id)}" aria-label="View ${escapeHtml(check.label || id)}">
           <div>
             <h4>${escapeHtml(check.label || id)} <span class="creator-tag ${check.severity === "block" ? "bad" : check.severity === "warn" ? "warn" : "ok"}">${escapeHtml(check.severity || "warn")}</span></h4>
-            <p>${escapeHtml(check.style || "style")} · toggle ${escapeHtml(check.toggle || id)} · ${escapeHtml(check.status || "pass")}${check.reason ? ` · ${escapeHtml(check.reason)}` : ""}</p>
+            <p>${escapeHtml(check.style || "style")} · ${escapeHtml(check.status || "pass")}${check.reason ? ` · ${escapeHtml(redactPaths(check.reason))}` : ""}</p>
           </div>
           <span class="creator-tag">${escapeHtml(check.status || "")}</span>
         </div>`;
@@ -1531,12 +2439,17 @@
     const data = state.preflight;
     if (!data) return;
     const visible = (data.findings || []).filter((finding) => !state.preflightHidden.has(finding.id));
-    dom.preflightFindings.innerHTML = visible.length ? visible.map((finding) => `
-      <div class="finding-card ${escapeHtml(finding.severity === "block" ? "block" : finding.severity === "warn" ? "warn" : "info")}">
-        <header><div><h4>${escapeHtml(finding.toggle || finding.id)}</h4><div class="creator-meta-row"><span class="creator-tag ${finding.severity === "block" ? "bad" : finding.severity === "warn" ? "warn" : "ok"}">${escapeHtml(finding.severity)}</span></div></div></header>
-        <p>${escapeHtml(finding.message || "")}</p>
-        <p class="finding-suggestion">${escapeHtml(finding.suggestion || "")}</p>
-      </div>`).join("") : '<div class="creator-empty-state"><p>No visible findings. Toggles here only change this view; server settings remain authoritative.</p></div>';
+    dom.preflightFindings.innerHTML = visible.length ? visible.map((finding) => {
+      const fix = PREFLIGHT_FIX[finding.id];
+      const fixLabel = fix === "captions" ? "Fix in Captions" : "Fix in Clip Set";
+      return `
+        <div class="finding-card ${escapeHtml(finding.severity === "block" ? "block" : finding.severity === "warn" ? "warn" : "info")}">
+          <header><div><h4>${escapeHtml(finding.toggle || finding.id)}</h4><div class="creator-meta-row"><span class="creator-tag ${finding.severity === "block" ? "bad" : finding.severity === "warn" ? "warn" : "ok"}">${escapeHtml(finding.severity)}</span></div></div></header>
+          <p>${escapeHtml(redactPaths(finding.message || ""))}</p>
+          <p class="finding-suggestion">${escapeHtml(redactPaths(finding.suggestion || ""))}</p>
+          ${fix ? `<div class="finding-actions"><button class="ghost small" type="button" data-preflight-fix="${fix}">${fixLabel}</button></div>` : ""}
+        </div>`;
+    }).join("") : '<div class="creator-empty-state"><p>No visible findings. Toggles here only change this view; server settings remain authoritative.</p></div>';
   }
 
   // ---------------------------------------------------------------- artifacts + shares
@@ -1546,10 +2459,19 @@
       state.artifacts = [];
       return;
     }
-    const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/artifacts`);
-    state.artifacts = data.artifacts || [];
-    populateCommonSelects();
-    renderArtifacts();
+    if (state.artifactLoading) return;
+    const requestJobId = state.jobId;
+    state.artifactLoading = true;
+    try {
+      const data = await request(`/api/jobs/${encodeURIComponent(requestJobId)}/artifacts`);
+      if (state.jobId !== requestJobId) return;
+      state.artifacts = data.artifacts || [];
+      state.artifactRenders = data.renders || state.artifactRenders || {};
+      populateCommonSelects();
+      renderArtifacts();
+    } finally {
+      state.artifactLoading = false;
+    }
   }
 
   async function loadShares() {
@@ -1557,7 +2479,11 @@
       state.shares = [];
       return;
     }
-    const data = await request(`/api/shares?include_tokens=true&job_id=${encodeURIComponent(state.jobId)}`);
+    const requestJobId = state.jobId;
+    // Tokens are capabilities. List records without them and copy only a token
+    // returned by the create call in this session.
+    const data = await request(`/api/shares?job_id=${encodeURIComponent(requestJobId)}`);
+    if (state.jobId !== requestJobId) return;
     state.shares = data.shares || [];
     renderShares();
   }
@@ -1567,68 +2493,99 @@
   }
 
   function renderArtifacts() {
+    withFocusPreserved(renderArtifactsInner);
+  }
+
+  function renderArtifactsInner() {
     if (!dom.artifactList) return;
-    setText(dom.artifactCount, `${state.artifacts.length} artifact${state.artifacts.length === 1 ? "" : "s"}`);
+    const legacy = readyLegacyRenders();
+    const count = state.artifacts.length || legacy.length;
+    if (!count) setText(dom.artifactCount, "0 artifacts");
+    else setText(dom.artifactCount, `${count} ${state.artifacts.length ? "artifact" : "ready render"}${count === 1 ? "" : "s"}`);
     if (!state.artifacts.length) {
-      renderEmpty(dom.artifactList, "No artifacts. Render a cut with the trust-core pipeline first.");
+      if (legacy.length) {
+        dom.artifactList.innerHTML = legacy.map(({ key, record }) => `
+          <article class="artifact-card is-ready" data-artifact-id="${escapeHtml(key)}">
+            <header>
+              <div><h4>${escapeHtml(key)}</h4><div class="creator-meta-row">
+                <span class="creator-tag ok">ready</span>
+                <span class="creator-tag">legacy render</span>
+                <span class="creator-tag">${record.target || "?"}s · ${escapeHtml(record.aspect || "9:16")}</span>
+              </div></div>
+            </header>
+            <p class="hint">This render is ready. Refresh artifacts to adopt it as an artifact, or use its render key under Packet → Advanced.</p>
+          </article>`).join("");
+        return;
+      }
+      renderEmpty(dom.artifactList, "No artifacts yet. Render a story from Clip Set to create one.");
       return;
     }
     dom.artifactList.innerHTML = state.artifacts.map((artifact) => {
       const id = artifact.artifact_id;
+      const ready = artifact.status === "ready" || Boolean(artifact.completed);
       const share = state.shares.find((row) => row.artifact_id === id && row.status !== "revoked");
+      const freshIndex = state.freshShares.findIndex((row) => row.artifact_id === id && !row.revoked);
+      const fresh = freshIndex >= 0 ? state.freshShares[freshIndex] : null;
       return `
-        <article class="artifact-card" data-artifact-id="${escapeHtml(id)}">
+        <article class="artifact-card ${ready ? "is-ready" : ""}" data-artifact-id="${escapeHtml(id)}">
           <header>
             <div><h4>${escapeHtml(artifact.title || id)}</h4><div class="creator-meta-row">
-              <span class="creator-tag ${artifact.status === "ready" ? "ok" : "bad"}">${escapeHtml(artifact.status || "unknown")}</span>
+              <span class="creator-tag ${ready ? "ok" : "bad"}">${escapeHtml(ready ? "ready" : (artifact.status || "unknown"))}</span>
               <span class="creator-tag">${escapeHtml(id)}</span>
               ${artifact.pinned ? '<span class="creator-tag ok">pinned</span>' : ""}
               <span class="creator-tag">${artifact.target || "?"}s · ${escapeHtml(artifact.aspect || "9:16")}</span>
               ${artifact.generation ? `<span class="creator-tag">gen ${artifact.generation}</span>` : ""}
+              ${share ? '<span class="creator-tag ok">review link</span>' : ""}
             </div></div>
-            <button class="ghost small" type="button" data-artifact-pin="${escapeHtml(id)}" data-pinned="${artifact.pinned ? "1" : "0"}">${artifact.pinned ? "Unpin" : "Pin"}</button>
+            <button class="ghost small" type="button" data-focus-key="artifact-pin:${escapeHtml(id)}" data-artifact-pin="${escapeHtml(id)}" data-pinned="${artifact.pinned ? "1" : "0"}">${artifact.pinned ? "Unpin" : "Pin"}</button>
           </header>
           <p class="hint">${escapeHtml(artifact.record_key || "")} · ${escapeHtml(artifact.resolved_encoder || "")} · ${artifact.cue_count ? `${artifact.cue_count} cues` : "no caption track"}</p>
           <div class="artifact-links">
-            <button class="ghost small" type="button" data-artifact-download="${escapeHtml(id)}" data-kind="captions.srt">SRT</button>
-            <button class="ghost small" type="button" data-artifact-download="${escapeHtml(id)}" data-kind="captions.vtt">VTT</button>
-            <button class="ghost small" type="button" data-artifact-caption-preview="${escapeHtml(id)}">Caption preview</button>
-            ${share ? `<button class="ghost small" type="button" data-share-copy="${escapeHtml(share.token || "")}">Copy review link</button>` : ""}
+            ${ready ? `<button class="ghost small" type="button" data-focus-key="artifact-srt:${escapeHtml(id)}" data-artifact-download="${escapeHtml(id)}" data-kind="captions.srt">SRT</button>
+            <button class="ghost small" type="button" data-focus-key="artifact-vtt:${escapeHtml(id)}" data-artifact-download="${escapeHtml(id)}" data-kind="captions.vtt">VTT</button>
+            <button class="ghost small" type="button" data-focus-key="artifact-captions:${escapeHtml(id)}" data-artifact-caption-preview="${escapeHtml(id)}">Caption preview</button>` : ""}
+            ${fresh ? `<button class="ghost small" type="button" data-focus-key="artifact-fresh:${escapeHtml(id)}" data-fresh-copy="${freshIndex}">Copy new review link</button>` : ""}
           </div>
           <div class="share-form">
-            <input type="text" maxlength="120" placeholder="Review label" data-share-label="${escapeHtml(id)}">
+            <input type="text" maxlength="120" placeholder="Review label" data-share-label="${escapeHtml(id)}" aria-label="Review label">
             <input type="number" min="0" step="1" value="7" aria-label="Expiry days" data-share-days="${escapeHtml(id)}">
-            <button class="primary small" type="button" data-share-create="${escapeHtml(id)}">Create review link</button>
+            <button class="primary small" type="button" data-focus-key="share-create:${escapeHtml(id)}" data-share-create="${escapeHtml(id)}">Create review link</button>
           </div>
         </article>`;
     }).join("");
   }
 
   function renderShares() {
+    withFocusPreserved(renderSharesInner);
+  }
+
+  function renderSharesInner() {
     if (!dom.shareList) return;
     if (!state.shares.length) {
-      renderEmpty(dom.shareList, "No review links for this job.");
+      renderEmpty(dom.shareList, "No review links for this job. Create one from an artifact.");
       return;
     }
-    dom.shareList.innerHTML = state.shares.map((share) => {
-      const token = share.token || "";
-      const confirming = state.confirm[`share:${token}`] === "revoke";
+    dom.shareList.innerHTML = state.shares.map((share, index) => {
       const status = share.status || (share.revoked_at ? "revoked" : "active");
       const expiry = share.expires_at ? new Date(Number(share.expires_at) * 1000).toLocaleString() : "never";
+      const fresh = state.freshShares.find((row) => row.artifact_id === share.artifact_id && (row.label || "") === (share.label || "") && !row.revoked);
+      const freshIndex = fresh ? state.freshShares.indexOf(fresh) : -1;
+      const confirming = freshIndex >= 0 && state.confirm[`fresh:${freshIndex}`] === "revoke";
       return `
-        <article class="share-card">
+        <article class="share-card" data-share-index="${index}">
           <header><div><h4>${escapeHtml(share.label || "review link")}</h4><div class="creator-meta-row">
             <span class="creator-tag ${status === "active" ? "ok" : status === "expired" ? "warn" : "bad"}">${escapeHtml(status)}</span>
             ${share.artifact_id ? `<span class="creator-tag">${escapeHtml(share.artifact_id)}</span>` : ""}
             <span class="creator-tag">expires ${escapeHtml(expiry)}</span>
           </div></div></header>
           <div class="creator-actions">
-            ${token ? `<button class="ghost small" type="button" data-share-copy="${escapeHtml(token)}">Copy URL</button>` : ""}
-            ${token && status !== "revoked" ? (
+            ${freshIndex >= 0 ? `<button class="ghost small" type="button" data-focus-key="fresh-copy:${freshIndex}" data-fresh-copy="${freshIndex}">Copy new link</button>` : ""}
+            ${freshIndex >= 0 && status !== "revoked" ? (
               confirming
-                ? `<span class="creator-inline-confirm">Revoke link? <button class="ghost small danger" type="button" data-share-revoke-confirm="${escapeHtml(token)}">Confirm revoke</button><button class="ghost small" type="button" data-share-revoke-abort="${escapeHtml(token)}">Keep</button></span>`
-                : `<button class="ghost small" type="button" data-share-revoke="${escapeHtml(token)}">Revoke</button>`
+                ? `<span class="creator-inline-confirm">Revoke link? <button class="ghost small danger" type="button" data-focus-key="fresh-revoke-confirm:${freshIndex}" data-fresh-revoke-confirm="${freshIndex}">Confirm revoke</button><button class="ghost small" type="button" data-focus-key="fresh-revoke-abort:${freshIndex}" data-fresh-revoke-abort="${freshIndex}">Keep</button></span>`
+                : `<button class="ghost small" type="button" data-focus-key="fresh-revoke:${freshIndex}" data-fresh-revoke="${freshIndex}">Revoke</button>`
             ) : ""}
+            ${freshIndex < 0 ? '<span class="hint">Token is only available when the link is created.</span>' : ""}
           </div>
         </article>`;
     }).join("");
@@ -1654,8 +2611,17 @@
             expires_in_days: Number.isFinite(days) && days > 0 ? days : 0,
           }),
         });
+        if (share.token) {
+          state.freshShares.unshift({
+            token: share.token,
+            url: share.url || `/r/${share.token}`,
+            artifact_id: artifactId,
+            label,
+          });
+          // The create response is the only place a token is returned.
+          await copyText(absoluteUrl(share.url || `/r/${share.token}`));
+        }
         await loadShares();
-        if (share.url) await copyText(absoluteUrl(share.url));
         toast("Review link created for this artifact.");
         renderArtifacts();
       } catch (error) {
@@ -1678,14 +2644,20 @@
     }
   }
 
-  async function revokeShare(token) {
+  async function revokeFreshShare(index) {
     clearError(dom.artifactError);
+    const fresh = state.freshShares[index];
+    if (!fresh?.token) {
+      setError(dom.artifactError, new Error("That review link token is no longer available in this session."));
+      return;
+    }
     try {
-      await request(`/api/shares/${encodeURIComponent(token)}`, {
+      await request(`/api/shares/${encodeURIComponent(fresh.token)}`, {
         method: "PATCH",
         body: JSON.stringify({ revoked: true }),
       });
-      delete state.confirm[`share:${token}`];
+      delete state.confirm[`fresh:${index}`];
+      state.freshShares.splice(index, 1);
       await loadShares();
       renderArtifacts();
       toast("Review link revoked.");
@@ -1708,6 +2680,17 @@
   function bind() {
     dom.open?.addEventListener("click", () => openCreator());
     dom.close?.addEventListener("click", closeCreator);
+    dom.recent?.addEventListener("change", () => {
+      const jobId = dom.recent.value;
+      if (!jobId) return;
+      state.jobId = jobId;
+      loadJob(jobId)
+        .then(() => {
+          setScreen("clipset", jobId);
+          writeHash(jobId, "clipset");
+        })
+        .catch((error) => setError(dom.globalError, error));
+    });
     dom.jobLoad?.addEventListener("click", () => {
       const jobId = dom.jobInput.value.trim();
       if (!jobId) {
@@ -1715,7 +2698,7 @@
         return;
       }
       state.jobId = jobId;
-      loadJob(jobId).then(() => setScreen(state.screen)).catch((error) => setError(dom.globalError, error));
+      loadJob(jobId).then(() => setScreen(state.screen, jobId)).catch((error) => setError(dom.globalError, error));
     });
     dom.jobInput?.addEventListener("keydown", (event) => {
       if (event.key === "Enter") dom.jobLoad?.click();
@@ -1723,6 +2706,20 @@
     dom.tabs?.addEventListener("click", (event) => {
       const button = event.target.closest("[data-creator-tab]");
       if (button) setScreen(button.dataset.creatorTab);
+    });
+    dom.tabs?.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const buttons = $$('[role="tab"]', dom.tabs);
+      const current = buttons.indexOf(document.activeElement);
+      if (current < 0) return;
+      event.preventDefault();
+      let next = current;
+      if (event.key === "ArrowLeft") next = (current - 1 + buttons.length) % buttons.length;
+      if (event.key === "ArrowRight") next = (current + 1) % buttons.length;
+      if (event.key === "Home") next = 0;
+      if (event.key === "End") next = buttons.length - 1;
+      buttons[next].focus();
+      setScreen(buttons[next].dataset.creatorTab);
     });
     window.addEventListener("hashchange", () => {
       const params = parseHash();
@@ -1735,10 +2732,13 @@
           clearInterval(state.batchTimer);
           state.batchTimer = null;
         }
+        Object.values(state.renderPollers).forEach((timer) => clearTimeout(timer));
+        state.renderPollers = {};
       }
     });
 
     dom.batchForm?.addEventListener("submit", createBatch);
+    dom.batchMode?.addEventListener("change", syncBatchMode);
     dom.batchRefresh?.addEventListener("click", () => loadBatches());
     dom.batchList?.addEventListener("click", (event) => {
       const open = event.target.closest("[data-open-job]");
@@ -1757,23 +2757,55 @@
     });
 
     dom.clipsetBuild?.addEventListener("click", buildClipSet);
+    dom.clipsetReadAnalysis?.addEventListener("click", () => {
+      const open = Boolean(dom.clipsetAnalysis?.hidden);
+      setAnalysisOpen(open);
+      if (open) dom.analysisTabs?.querySelector('[role="tab"][aria-selected="true"]')?.focus();
+    });
+    dom.analysisTabs?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-analysis-tab]");
+      if (button) setAnalysisTab(button.dataset.analysisTab);
+    });
+    dom.analysisTabs?.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const buttons = $$('[role="tab"]', dom.analysisTabs);
+      const current = buttons.indexOf(document.activeElement);
+      if (current < 0) return;
+      event.preventDefault();
+      let next = current;
+      if (event.key === "ArrowLeft") next = (current - 1 + buttons.length) % buttons.length;
+      if (event.key === "ArrowRight") next = (current + 1) % buttons.length;
+      if (event.key === "Home") next = 0;
+      if (event.key === "End") next = buttons.length - 1;
+      buttons[next].focus();
+      setAnalysisTab(buttons[next].dataset.analysisTab);
+    });
     dom.clipsetV2?.addEventListener("click", runSelectionV2);
     dom.matrixBuild?.addEventListener("click", () => runMatrix(""));
     dom.tightenRun?.addEventListener("click", runTighten);
-    dom.clipsetStories?.addEventListener("click", (event) => {
+    const clipsetClick = (event) => {
       const packet = event.target.closest("[data-story-packet]");
       if (packet) {
         const storyId = packet.dataset.storyPacket;
-        const story = (state.clipset?.stories || []).find((item) => item.id === storyId);
         dom.packetStory.value = storyId;
-        if (story && dom.packetTitle1 && !dom.packetTitle1.value) dom.packetTitle1.value = story.title || "";
+        const artifact = artifactForStory(storyId);
+        dom.packetArtifact.value = artifact ? artifact.artifact_id : "";
+        dom.packetRenderKey.value = "";
+        fillPacketCopy({ onlyBlank: true });
+        updatePacketNeedsRender();
         updatePacketFilename();
+        updatePacketCovers();
         setScreen("packet");
         return;
       }
-      const matrix = event.target.closest("[data-story-matrix]");
-      if (matrix) {
-        runMatrix(matrix.dataset.storyMatrix);
+      const render = event.target.closest("[data-story-render]");
+      if (render) {
+        renderStory(render.dataset.storyRender, render);
+        return;
+      }
+      const smartcut = event.target.closest("[data-story-smartcut]");
+      if (smartcut) {
+        openStoryInSmartCut(smartcut.dataset.storySmartcut, smartcut);
         return;
       }
       if (event.target.closest("[data-clipset-save]")) {
@@ -1811,7 +2843,9 @@
         }
         renderClipSet();
       }
-    });
+    };
+    dom.clipsetStories?.addEventListener("click", clipsetClick);
+    dom.clipsetOriginalOutput?.addEventListener("click", clipsetClick);
     dom.clipsetStories?.addEventListener("change", (event) => {
       const toggle = event.target.closest("[data-sentence-toggle]");
       if (!toggle) return;
@@ -1833,6 +2867,14 @@
     dom.captionExport?.addEventListener("click", exportCaptionSrt);
     dom.captionPreviewRun?.addEventListener("click", () => loadCaptionPreview().catch((error) => setError(dom.captionError, error)));
     dom.captionPreviewTime?.addEventListener("input", () => updateCaptionPreviewText(Number(dom.captionPreviewTime.value)));
+    const brandPreview = () => {
+      if (state.caption.preview) updateCaptionPreviewText(Number(dom.captionPreviewTime?.value || 0));
+    };
+    dom.captionFontSize?.addEventListener("input", brandPreview);
+    dom.captionColor?.addEventListener("input", brandPreview);
+    dom.captionBgOpacity?.addEventListener("input", brandPreview);
+    dom.captionPosition?.addEventListener("change", brandPreview);
+    dom.captionUppercase?.addEventListener("change", brandPreview);
     dom.captionArtifact?.addEventListener("change", () => {
       if (dom.captionArtifact.value) {
         loadArtifactCaptions();
@@ -1840,33 +2882,108 @@
         state.caption.artifactId = "";
         state.caption.track = null;
         state.caption.cues = [];
+        state.caption.preview = null;
         renderCaptionCues();
+        showCaptionEmpty("Build a caption track for this target, or load captions from a ready artifact. The poster appears automatically.");
       }
     });
 
     dom.packetForm?.addEventListener("submit", buildPacket);
     dom.packetDescription?.addEventListener("input", updateDescriptionCount);
-    dom.packetStory?.addEventListener("input", updatePacketFilename);
+    for (const input of [dom.packetTitle1, dom.packetTitle2, dom.packetTitle3]) {
+      input?.addEventListener("input", updateTitleCounts);
+    }
+    dom.packetSuggest?.addEventListener("click", () => {
+      if (!selectedPacketStory()) {
+        setError(dom.packetError, new Error("Choose a story first."));
+        return;
+      }
+      const fields = [dom.packetTitle1, dom.packetTitle2, dom.packetTitle3, dom.packetDescription, dom.packetHashtags, dom.packetPinComment];
+      const blank = fields.some((input) => input && !input.value.trim());
+      if (!blank) {
+        toast("All packet fields already have copy.");
+        return;
+      }
+      fillPacketCopy();
+      toast("Blank packet fields filled from the selected story.");
+    });
+    dom.packetRenderStory?.addEventListener("click", () => {
+      const story = selectedPacketStory();
+      if (!story) {
+        setError(dom.packetError, new Error("Choose a story first."));
+        return;
+      }
+      renderStory(story.id, dom.packetRenderStory);
+    });
+    dom.packetStory?.addEventListener("change", () => {
+      const artifact = artifactForPacketSelection(packetStoryValue());
+      dom.packetArtifact.value = artifact ? artifact.artifact_id : "";
+      if (artifact) dom.packetRenderKey.value = "";
+      fillPacketCopy({ onlyBlank: true });
+      updatePacketNeedsRender();
+      updatePacketFilename();
+      updatePacketCovers();
+    });
     dom.packetArtifact?.addEventListener("change", () => {
       if (dom.packetArtifact.value) dom.packetRenderKey.value = "";
+      updatePacketNeedsRender();
       updatePacketFilename();
+      updatePacketCovers();
     });
     dom.packetRenderKey?.addEventListener("change", () => {
       if (dom.packetRenderKey.value) dom.packetArtifact.value = "";
+      updatePacketNeedsRender();
       updatePacketFilename();
+    });
+    dom.packetForm?.addEventListener("click", (event) => {
+      const copy = event.target.closest("[data-copy-field]");
+      if (!copy) return;
+      const kind = copy.dataset.copyField;
+      let value = "";
+      if (kind === "titles") {
+        value = [dom.packetTitle1.value, dom.packetTitle2.value, dom.packetTitle3.value]
+          .map((item) => item.trim()).filter(Boolean).join("\n");
+      } else if (kind === "description") {
+        value = dom.packetDescription.value.trim();
+      } else if (kind === "hashtags") {
+        value = dom.packetHashtags.value.trim();
+      } else if (kind === "pin") {
+        value = dom.packetPinComment.value.trim();
+      }
+      if (!value) {
+        setError(dom.packetError, new Error("That field is empty."));
+        return;
+      }
+      copyText(value);
     });
     dom.packetResult?.addEventListener("click", (event) => {
       const button = event.target.closest("[data-packet-zip]");
       if (button) downloadPacketZip(button.dataset.packetZip);
     });
 
-    dom.preflightRun?.addEventListener("click", runPreflight);
+    dom.preflightRun?.addEventListener("click", () => runPreflight(false));
+    dom.preflightStory?.addEventListener("change", () => maybeAutoPreflight(true));
     dom.preflightChecks?.addEventListener("change", (event) => {
       const toggle = event.target.closest("[data-preflight-toggle]");
       if (!toggle) return;
       if (toggle.checked) state.preflightHidden.delete(toggle.dataset.preflightToggle);
       else state.preflightHidden.add(toggle.dataset.preflightToggle);
       renderPreflight();
+    });
+    dom.preflightFindings?.addEventListener("click", (event) => {
+      const fix = event.target.closest("[data-preflight-fix]");
+      if (!fix) return;
+      if (fix.dataset.preflightFix === "clipset") {
+        setScreen("clipset");
+        return;
+      }
+      const candidate = state.preflight?.story_id || dom.preflightStory.value;
+      const artifact = artifactById(candidate);
+      if (artifact) dom.captionArtifact.value = artifact.artifact_id;
+      setScreen("captions");
+      if (artifact && artifact.status === "ready") {
+        loadArtifactCaptions().catch((error) => setError(dom.captionError, error));
+      }
     });
 
     dom.artifactRefresh?.addEventListener("click", () => {
@@ -1879,6 +2996,12 @@
       const pin = event.target.closest("[data-artifact-pin]");
       if (pin) {
         pinArtifact(pin.dataset.artifactPin, pin.dataset.pinned === "1");
+        return;
+      }
+      const fresh = event.target.closest("[data-fresh-copy]");
+      if (fresh) {
+        const item = state.freshShares[Number(fresh.dataset.freshCopy)];
+        if (item) copyText(absoluteUrl(item.url));
         return;
       }
       const download = event.target.closest("[data-artifact-download]");
@@ -1899,26 +3022,28 @@
       }
     });
     dom.shareList?.addEventListener("click", (event) => {
-      const copy = event.target.closest("[data-share-copy]");
+      const copy = event.target.closest("[data-fresh-copy]");
       if (copy) {
-        const token = copy.dataset.shareCopy;
-        if (token) copyText(absoluteUrl(`/r/${token}`));
+        const item = state.freshShares[Number(copy.dataset.freshCopy)];
+        if (item) copyText(absoluteUrl(item.url));
         return;
       }
-      const revoke = event.target.closest("[data-share-revoke]");
+      const revoke = event.target.closest("[data-fresh-revoke]");
       if (revoke) {
-        state.confirm[`share:${revoke.dataset.shareRevoke}`] = "revoke";
+        state.confirm[`fresh:${revoke.dataset.freshRevoke}`] = "revoke";
         renderShares();
+        focusByKey(`fresh-revoke-confirm:${revoke.dataset.freshRevoke}`);
         return;
       }
-      const abort = event.target.closest("[data-share-revoke-abort]");
+      const abort = event.target.closest("[data-fresh-revoke-abort]");
       if (abort) {
-        delete state.confirm[`share:${abort.dataset.shareRevokeAbort}`];
+        delete state.confirm[`fresh:${abort.dataset.freshRevokeAbort}`];
         renderShares();
+        focusByKey(`fresh-revoke:${abort.dataset.freshRevokeAbort}`);
         return;
       }
-      const confirm = event.target.closest("[data-share-revoke-confirm]");
-      if (confirm) revokeShare(confirm.dataset.shareRevokeConfirm);
+      const confirm = event.target.closest("[data-fresh-revoke-confirm]");
+      if (confirm) revokeFreshShare(Number(confirm.dataset.freshRevokeConfirm));
     });
   }
 
@@ -1927,11 +3052,16 @@
   function init() {
     bind();
     updateDescriptionCount();
+    updateTitleCounts();
+    syncBatchMode();
+    renderPreflightPlaceholder();
+    renderCaptionCues();
+    showCaptionEmpty("Build a caption track for this target, or load captions from a ready artifact. The poster appears automatically.");
     const params = parseHash();
     if (params.screen) {
       openCreator(params.screen, params.job || "");
     } else if (document.body.classList.contains("creator-mode")) {
-      openCreator(state.screen, params.job || "");
+      openCreator(undefined, params.job || "");
     }
   }
 
