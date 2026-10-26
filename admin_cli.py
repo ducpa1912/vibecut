@@ -22,10 +22,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="VibeCut admin account manager")
     sub = parser.add_subparsers(dest="command", required=True)
     create = sub.add_parser("create-admin", help="Create the single admin account")
-    create.add_argument("--email", required=True)
     create.add_argument("--password", default="")
     reset = sub.add_parser("reset-password", help="Reset the single admin password")
-    reset.add_argument("--email", default="")
     reset.add_argument("--password", default="")
     sub.add_parser("show", help="Show whether an admin account exists")
     args = parser.parse_args()
@@ -38,7 +36,7 @@ def main() -> int:
     if args.command == "create-admin":
         password = args.password or _password("New admin password: ")
         try:
-            user = store.create_user(args.email, password)
+            user = store.create_user(password)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -47,13 +45,13 @@ def main() -> int:
         return 0
 
     if args.command == "reset-password":
-        user = store.get_user(args.email) if args.email else store.first_user()
+        user = store.first_user()
         if not user:
-            print("error: no matching admin account", file=sys.stderr)
+            print("error: no admin account", file=sys.stderr)
             return 1
         password = args.password or _password("New password: ")
         try:
-            updated = store.update_user(user["email"], password)
+            updated = store.update_user(password)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1

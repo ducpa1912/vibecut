@@ -210,7 +210,7 @@ Create the first admin in one of two ways:
 2. Use the CLI:
 
 ```bash
-python3 admin_cli.py create-admin --email admin@example.com
+python3 admin_cli.py create-admin
 python3 admin_cli.py reset-password
 python3 admin_cli.py show
 ```
@@ -565,14 +565,16 @@ or `draft`. `aspect` is `9:16`, `4:5`, `1:1` or `16:9`. `order` is `source` or
 When `VIBECUT_TOKEN` is set, supply it as:
 
 ```text
-Authorization: Bearer <token>
-?token=<token>
-vibecut_token cookie
+Authorization: Bearer <token>        any method
+vibecut_token cookie                 GET/HEAD only (media and thumbnails)
 ```
 
-`/`, `/static/*`, `/docs/url-ingest.md`, `/api/health`, `/r/*`, and the admin
-prefix have separate rules. `/api/*` on a non-loopback bind without a token is
-rejected. Review links are capability URLs and do not require the app token.
+Tokens are never accepted in a URL query string. `/`, `/static/*`,
+`/docs/url-ingest.md`, `/api/health`, `/r/*`, and the admin prefix have
+separate rules. On a non-loopback bind without a token, every other route is
+rejected with 403 (default deny). Review links are capability URLs and do not
+require the app token. All clip-set routes live under
+`/api/jobs/{job_id}/clip-sets`.
 
 ### Pages and review
 
@@ -610,7 +612,15 @@ rejected. Review links are capability URLs and do not require the app token.
 | POST | `/api/jobs/upload` | Multipart upload; fields `file` and JSON `options`. |
 | POST | `/api/jobs/path` | Create a job from a local path. |
 | POST | `/api/jobs/from-url` | Create a background URL-ingest job. |
-| GET | `/api/jobs` | Recent jobs, newest first, capped at 24. |
+| GET | `/api/jobs` | Jobs newest first, no cap; `q` searches source name, job id, story title, date (`YYYY-MM-DD`); `limit` (≤200), `offset`. |
+| POST | `/api/jobs/{job_id}/clip-sets/{set_id}/stories/{story_id}/render` | Render one story at its stored duration; `aspect` `9:16` or `4:5`; captions on by default and burn the story's current caption track. |
+| POST | `/api/jobs/{job_id}/captions` | With `set_id` + `story_id`, build the story's caption track at its own length. |
+| POST | `/api/story-queues` | Queue up to 10 story items (`job_id`, `set_id`, `story_id`, `aspect`); they render one at a time. |
+| GET | `/api/story-queues` | Queues plus `interrupted` (queues waiting for a manual resume). |
+| POST | `/api/story-queues/{id}/{pause\|resume\|cancel}` | Queue controls. Nothing resumes automatically after a restart. |
+| GET | `/api/jobs/{job_id}/packets` | Packet history read from disk; survives relaunch. |
+| GET | `/api/jobs/{job_id}/source` | Source references before delete. |
+| POST | `/api/jobs/{job_id}/source/delete` | Delete the source and write `deletion_receipt.json`. |
 | GET | `/api/jobs/{job_id}` | Public job record, analysis, renders, usage. |
 | GET | `/api/jobs/{job_id}/usage` | Usage/cost summary for one job. |
 | GET | `/api/jobs/{job_id}/status` | Poll status, progress, message, renders. |
@@ -706,7 +716,7 @@ Prefix: `/_ductator/api`. All routes except `GET /bootstrap` and `POST
 | GET | `/_ductator/api/audit/export` | Full JSONL audit export. |
 | GET | `/_ductator/api/audit/verify` | Verify hash chain and signed anchor. |
 | GET | `/_ductator/api/pipeline` | Pipeline entries; filters `workflow`, `provider`, `status`, `job_id`. |
-| POST | `/_ductator/api/account` | Change admin email and/or password; revokes other sessions. |
+| POST | `/_ductator/api/account` | Change the admin password; revokes other sessions. |
 
 ### Request body notes
 
@@ -850,8 +860,16 @@ bin/                            Compiled Swift helpers and local tools
 
 The source store uses a SHA-1 content digest (first 16 hex characters). Jobs
 hardlink the stored file; if the filesystem cannot hardlink, VibeCut copies it.
-`GET /api/sources` lists entries and link counts. `VIBECUT_SOURCES_GC_DAYS`
-(default 30) removes unreferenced uploads; referenced hardlinks are kept.
+`GET /api/sources` lists entries and link counts. Sources are never removed
+automatically: `VIBECUT_SOURCES_GC_DAYS` (default 0, off) is an opt-in sweep
+for unreferenced entries. To remove client footage, use
+`POST /api/jobs/{job_id}/source/delete` (preview with `GET
+/api/jobs/{job_id}/source`). It removes the job link, deletes the store entry
+when no other job links it, verifies the path is gone and writes
+`deletion_receipt.json`. Renders, packets and review links stay; when any
+exist the request needs `{"cascade": true}`. A file imported by path is your
+own file and is never deleted. Receipts prove app-level deletion only; SSDs may
+keep physical blocks until reused.
 
 ### Retention and cleanup
 
@@ -861,9 +879,12 @@ hardlink the stored file; if the filesystem cannot hardlink, VibeCut copies it.
 | `VIBECUT_JOB_CLEAN_DAYS` | `0` (off) | Delete job work files after this age. |
 | `VIBECUT_CACHE_DAYS` | `14` | Age-prune caches. |
 | `VIBECUT_CACHE_MAX_GB` | `2` | LRU cap across caches. |
-| `VIBECUT_KEEP_RENDERS` | `1` | Newest finals kept per target/aspect/captions/mix. |
+| `VIBECUT_PRUNE_RENDERS` | `0` (off) | Opt in to pruning older unprotected renders. |
+| `VIBECUT_KEEP_RENDERS` | `1` | With pruning on: newest finals kept per group. |
 | `VIBECUT_KEEP_DRAFTS` | `0` | Keep drafts after a final exists. |
-| `VIBECUT_SOURCES_GC_DAYS` | `30` | Remove unreferenced source-store entries. |
+| `VIBECUT_SOURCES_GC_DAYS` | `0` (off) | Opt-in sweep of unreferenced source-store entries. |
+| `VIBECUT_STORY_TIMEOUT` | `1800` | Seconds before the story queue watchdog stops a render. |
+| `VIBECUT_EXPERIMENTAL` | `0` | Enables post-v1 routes such as the hook matrix. |
 | `VIBECUT_HISTORY_MAX` | `50` | History entries per job; hard maximum 200. |
 
 **Clean** in the job header deletes work files (thumbs, transcript, audio) or
@@ -923,8 +944,9 @@ environment wins.
 ### Running with a token
 
 When `VIBECUT_TOKEN` is set, the UI asks for it once and stores it in
-`localStorage`. Media and thumbnail URLs carry `?token=` so the video player
-keeps working. This is a shared bearer secret, not multi-user authentication.
+`localStorage`. Media and thumbnails authenticate with a `SameSite=Strict`
+`vibecut_token` cookie that the server accepts for reads only; tokens never go
+in URLs. This is a shared bearer secret, not multi-user authentication.
 For network use, put VibeCut behind a reverse proxy and use the proxy's access
 controls as well.
 
@@ -939,7 +961,7 @@ at `/data`, and serves port `8787`. Apple Vision and MLX Whisper are
 macOS-only, so the container falls back to center crop and no Apple speech. Set
 `VIBECUT_TOKEN` for any non-loopback use. The container binds `0.0.0.0`, so
 admin bootstrap from a remote browser is rejected; create the admin with
-`docker compose exec vibecut python3 admin_cli.py create-admin --email ...`.
+`docker compose exec vibecut python3 admin_cli.py create-admin`.
 Remote admin access requires HTTPS.
 
 ## Legacy and compatibility

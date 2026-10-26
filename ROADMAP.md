@@ -1,5 +1,10 @@
 # VibeCut Roadmap
 
+> **Superseded for product scope.** Paid v1 scope, red lines and gates live in
+> [PRD.md](PRD.md) and [ROADMAP_V1.md](ROADMAP_V1.md). This file is the
+> engineering version history. Items below that conflict with the PRD (cloud
+> or open-core packaging, quotas/metering, SFX, voice cloning) are not planned.
+
 Version history, shipped checklist, current plan and future proposal.
 `[x]` shipped, `[~]` in progress, `[ ]` planned, `[!]` parked on purpose.
 

@@ -525,6 +525,8 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "DATA", data)
     monkeypatch.setattr(app, "JOBS", jobs)
     monkeypatch.setattr(app, "SOURCES", sources)
+    # Hook matrix is post-v1; these tests exercise it behind the dev flag.
+    monkeypatch.setenv("VIBECUT_EXPERIMENTAL", "1")
     client = TestClient(app.app)
     client.jobs_dir = jobs  # type: ignore[attr-defined]
     return client
@@ -603,7 +605,7 @@ def test_clipset_api_create_get_patch_plans(api):
     lock_scene = story["scenes"][-1]
     ban_scene = record["stories"][1]["scenes"][0]
     patched = api.patch(
-        f"/clip-sets/{set_id}",
+        f"/api/jobs/j1/clip-sets/{set_id}",
         json={
             "stories": [{"id": story["id"], "sentences": list(reversed(ids))}],
             "excluded_sentences": [excluded],
@@ -629,7 +631,7 @@ def test_clipset_api_create_get_patch_plans(api):
     assert persisted["ban_scenes"] == [ban_scene]
     assert persisted["excluded_sentences"] == [excluded]
 
-    plans = api.post(f"/clip-sets/{set_id}/plans", json={})
+    plans = api.post(f"/api/jobs/j1/clip-sets/{set_id}/plans", json={})
     assert plans.status_code == 200
     body = plans.json()
     assert body["count"] == len(updated["stories"])
@@ -675,7 +677,7 @@ def test_clipset_api_bans_alias_and_plans_readiness(api):
     ).json()["clip_set"]
     set_id = record["id"]
     banned = record["stories"][1]["scenes"][0]
-    patched = api.patch(f"/clip-sets/{set_id}", json={"bans": [banned]})
+    patched = api.patch(f"/api/jobs/j1/clip-sets/{set_id}", json={"bans": [banned]})
     assert patched.status_code == 200
     updated = patched.json()["clip_set"]
     assert updated["ban_scenes"] == [banned]
@@ -685,7 +687,7 @@ def test_clipset_api_bans_alias_and_plans_readiness(api):
     job = json.loads(job_path.read_text())
     job["status"] = "scanning"
     job_path.write_text(json.dumps(job))
-    assert api.post(f"/clip-sets/{set_id}/plans", json={}).status_code == 409
+    assert api.post(f"/api/jobs/j1/clip-sets/{set_id}/plans", json={}).status_code == 409
 
 
 def test_clipset_api_rejects_overlapping_edits(api):
@@ -698,7 +700,7 @@ def test_clipset_api_rejects_overlapping_edits(api):
     ids = [sentence["id"] for sentence in first["sentences"]]
     ids.append(second["sentences"][0]["id"])
     response = api.patch(
-        f"/clip-sets/{set_id}",
+        f"/api/jobs/j1/clip-sets/{set_id}",
         json={"stories": [{"id": first["id"], "sentences": ids}]},
     )
     assert response.status_code == 400
@@ -721,12 +723,12 @@ def test_clipset_api_rejects_stale_transcript_edits(api):
     ).json()["clip_set"]
     transcript.unlink()
     for path, payload in (
-        (f"/clip-sets/{record['id']}/plans", {}),
+        (f"/api/jobs/j1/clip-sets/{record['id']}/plans", {}),
         ("/api/jobs/j1/selection-v2", {"set_id": record["id"]}),
         ("/api/jobs/j1/hook-matrix", {"set_id": record["id"]}),
-        (f"/clip-sets/{record['id']}", {"locks": record["locks"]}),
+        (f"/api/jobs/j1/clip-sets/{record['id']}", {"locks": record["locks"]}),
     ):
-        method = api.patch if path.startswith("/clip-sets/") and path.count("/") == 2 else api.post
+        method = api.patch if path.split("/")[-2] == "clip-sets" else api.post
         response = method(path, json=payload)
         assert response.status_code == 409, path
         assert "source changed" in response.json()["detail"]
@@ -744,7 +746,7 @@ def test_legacy_clip_set_without_fingerprint_warns_and_edits_are_rejected(api):
     legacy.pop("source_fingerprint", None)
     job_path.write_text(json.dumps(job))
 
-    plans = api.post(f"/clip-sets/{set_id}/plans", json={})
+    plans = api.post(f"/api/jobs/j1/clip-sets/{set_id}/plans", json={})
     assert plans.status_code == 200
     assert plans.json()["stale_check"] == "unverified"
     assert plans.json()["warnings"]
@@ -764,7 +766,7 @@ def test_legacy_clip_set_without_fingerprint_warns_and_edits_are_rejected(api):
     assert hook_matrix.json()["stale_check"] == "unverified"
     assert hook_matrix.json()["warnings"]
 
-    patched = api.patch(f"/clip-sets/{set_id}", json={"locks": []})
+    patched = api.patch(f"/api/jobs/j1/clip-sets/{set_id}", json={"locks": []})
     assert patched.status_code == 409
     assert "no source fingerprint" in patched.json()["detail"]
 
@@ -796,7 +798,7 @@ def test_clip_set_plan_maps_to_artifact_render_request_for_v013_job(api, monkeyp
         "/api/jobs/j1/clip-sets", json={"count": 3},
     ).json()["clip_set"]
     payload = api.post(
-        f"/clip-sets/{created['id']}/plans", json={},
+        f"/api/jobs/j1/clip-sets/{created['id']}/plans", json={},
     ).json()
     plan = payload["plans"][0]["plan"]
     assert 20 <= plan["target"] <= 75
@@ -843,12 +845,13 @@ def test_story_render_queues_artifact_and_returns_plan(api, monkeypatch):
 
     response = api.post(
         f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story['id']}/render",
-        json={"target": 30, "quality": "final", "aspect": "9:16", "captions": False},
+        json={"quality": "final", "aspect": "9:16", "captions": False},
     )
     assert response.status_code == 200
     body = response.json()
+    stored = int(round(story["dur"]))
     assert body["plan"]["story_id"] == story["id"]
-    assert body["plan"]["target"] == 30
+    assert body["plan"]["target"] == stored
     assert body["plan"]["clips"][0]["role"] == "hook"
     assert "_scenes" not in body["plan"]
     assert artifacts.is_safe_artifact_id(body["artifact_id"])
@@ -860,7 +863,7 @@ def test_story_render_queues_artifact_and_returns_plan(api, monkeypatch):
     assert manifest is not None
     assert manifest["status"] == "queued"
     assert manifest["spec"]["story_id"] == story["id"]
-    assert manifest["spec"]["target"] == 30
+    assert manifest["spec"]["target"] == stored
     assert manifest["record_key"] == body["render"]["record_key"]
     assert body["render"]["record_key"].endswith(f":s{story['id']}")
 
@@ -881,11 +884,11 @@ def test_story_render_accepts_draft_aspect_and_captions(api, monkeypatch):
 
     response = api.post(
         f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story['id']}/render",
-        json={"target": 60, "quality": "draft", "aspect": "4:5", "captions": True},
+        json={"quality": "draft", "aspect": "4:5", "captions": True},
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["plan"]["target"] == 60
+    assert body["plan"]["target"] == int(round(story["dur"]))
     manifest = artifacts.load_manifest(app._job_dir("j1"), body["artifact_id"])
     assert manifest is not None
     assert manifest["spec"]["quality"] == "draft"
@@ -910,15 +913,18 @@ def test_story_render_validation_and_duplicate_active(api, monkeypatch):
     assert api.post(
         f"/api/jobs/j1/clip-sets/{set_id}/stories/missing/render", json={},
     ).status_code == 404
-    assert api.post(url, json={"target": 181}).status_code == 400
+    stored = int(round(record["stories"][0]["dur"]))
+    # Stored story duration is authoritative: no 1–180 override.
+    assert api.post(url, json={"target": stored + 7}).status_code == 400
     assert api.post(url, json={"target": 0}).status_code == 400
-    assert api.post(url, json={"target": 45}).status_code == 200
     assert api.post(url, json={"quality": "cinema"}).status_code == 400
     assert api.post(url, json={"aspect": "21:9"}).status_code == 400
+    assert api.post(url, json={"aspect": "1:1"}).status_code == 400
+    assert api.post(url, json={"aspect": "16:9"}).status_code == 400
 
-    first = api.post(url, json={"target": 30})
+    first = api.post(url, json={"target": stored})
     assert first.status_code == 200
-    duplicate = api.post(url, json={"target": 30})
+    duplicate = api.post(url, json={})
     assert duplicate.status_code == 409
     assert "already rendering" in duplicate.json()["detail"]
 
@@ -926,7 +932,7 @@ def test_story_render_validation_and_duplicate_active(api, monkeypatch):
     job = json.loads(job_path.read_text())
     job["status"] = "scanning"
     job_path.write_text(json.dumps(job))
-    assert api.post(url, json={"target": 30}).status_code == 409
+    assert api.post(url, json={}).status_code == 409
 
 
 def test_story_render_rejects_missing_clips(api):
@@ -943,7 +949,7 @@ def test_story_render_rejects_missing_clips(api):
 
     response = api.post(
         f"/api/jobs/j1/clip-sets/{set_id}/stories/{story_id}/render",
-        json={"target": 30},
+        json={},
     )
     assert response.status_code == 422
 
@@ -1054,3 +1060,122 @@ def test_hook_matrix_api_shape_and_determinism(api):
         assert payload["sequential"] is True
         assert payload["plan"]["clips"]
         assert "No renders" in payload["note"]
+
+
+def test_story_caption_lineage_survives_edit_into_render(api, monkeypatch):
+    """G2: the edited story track is the one the story render burns."""
+    write_job(api.jobs_dir, "j1")
+    record = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
+    set_id = record["id"]
+    story = record["stories"][0]
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
+
+    built = api.post(
+        "/api/jobs/j1/captions", json={"set_id": set_id, "story_id": story["id"]},
+    )
+    assert built.status_code == 200, built.text
+    track = built.json()["track"]
+    assert built.json()["duration"] > 0
+    cues = [dict(cue) for cue in track["cues"]]
+    assert cues
+    cues[0]["text"] = "Edited first cue"
+    edited = api.patch(f"/api/jobs/j1/captions/{track['id']}", json={"cues": cues})
+    assert edited.status_code == 200, edited.text
+    edited_id = edited.json()["id"]
+    assert edited_id != track["id"]
+    assert app.load_job("j1")["story_captions"][f"{set_id}:{story['id']}"] == edited_id
+
+    rendered = api.post(
+        f"/api/jobs/j1/clip-sets/{set_id}/stories/{story['id']}/render", json={},
+    )
+    assert rendered.status_code == 200, rendered.text
+    assert rendered.json()["caption_track_id"] == edited_id
+    manifest = artifacts.load_manifest(app._job_dir("j1"), rendered.json()["artifact_id"])
+    burned = manifest["spec"]["caption"]
+    assert burned["enabled"] is True
+    edited_cues = edited.json()["track"]["cues"]
+    assert edited_cues[0]["text"] == "Edited first cue"
+    assert burned["cue_hash"] == artifacts.cue_hashes(edited_cues)[0]
+    assert burned["cue_count"] == len(edited_cues)
+
+
+def test_story_render_4x5_is_a_separate_artifact(api, monkeypatch):
+    write_job(api.jobs_dir, "j1")
+    record = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
+    story = record["stories"][0]
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
+    url = f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story['id']}/render"
+    vertical = api.post(url, json={"aspect": "9:16"}).json()
+    portrait = api.post(url, json={"aspect": "4:5"}).json()
+    assert vertical["artifact_id"] != portrait["artifact_id"]
+    job_dir = app._job_dir("j1")
+    assert artifacts.load_manifest(job_dir, vertical["artifact_id"])["spec"]["aspect"] == "9:16"
+    assert artifacts.load_manifest(job_dir, portrait["artifact_id"])["spec"]["aspect"] == "4:5"
+
+
+def test_story_versions_are_monotonic_and_old_versions_are_labelled(api, monkeypatch):
+    """FR-10: v{n} per story/aspect; old artifacts stay, labelled superseded."""
+    write_job(api.jobs_dir, "j1")
+    record = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
+    story = record["stories"][0]
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
+    url = f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story['id']}/render"
+    first = api.post(url, json={"captions": False}).json()["artifact_id"]
+    second = api.post(url, json={"captions": True}).json()["artifact_id"]
+    other_aspect = api.post(url, json={"aspect": "4:5", "captions": False}).json()["artifact_id"]
+    job_dir = app._job_dir("j1")
+
+    one = artifacts.load_manifest(job_dir, first)
+    two = artifacts.load_manifest(job_dir, second)
+    portrait = artifacts.load_manifest(job_dir, other_aspect)
+    assert (one["version"], two["version"], portrait["version"]) == (1, 2, 1)
+    assert two["supersedes"] == first
+    assert portrait["supersedes"] is None
+
+    for manifest in (one, two):
+        manifest["status"] = "ready"
+        artifacts.save_manifest(job_dir, manifest)
+    listed = {row["artifact_id"]: row["versions"] for row in api.get("/api/jobs/j1/artifacts").json()["artifacts"]}
+    assert listed[second]["label"] == "v2 · current"
+    assert listed[first]["current"] is False
+    assert listed[first]["label"].startswith("v1 · superseded by v2 on ")
+    assert listed[first]["superseded_by"]["artifact_id"] == second
+
+
+def test_story_queue_api_queues_story_items_and_resume_banner(api, monkeypatch):
+    write_job(api.jobs_dir, "j1")
+    record = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
+    submitted = []
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: submitted.append(args))
+    body = {"items": [
+        {"job_id": "j1", "set_id": record["id"], "story_id": story["id"], "aspect": aspect}
+        for story in record["stories"][:2] for aspect in ("9:16", "4:5")
+    ]}
+    created = api.post("/api/story-queues", json=body)
+    assert created.status_code == 200, created.text
+    queue_id = created.json()["queue"]["id"]
+    manager = app.story_queues()
+    deadline = time.time() + 5
+    while time.time() < deadline and not manager.get(queue_id)["items"][0].get("artifact_id"):
+        time.sleep(0.02)
+    first = manager.get(queue_id)["items"][0]
+    assert first["state"] == "running" and first["artifact_id"]
+    assert len(submitted) == 1  # strictly sequential: item 2 waits
+
+    cancelled = api.post(f"/api/story-queues/{queue_id}/cancel")
+    assert cancelled.status_code == 200
+    assert manager.wait(queue_id, 5)
+    listed = api.get("/api/story-queues").json()
+    assert listed["queues"][0]["status"] == "cancelled"
+    assert listed["interrupted"] == []
+
+    missing = api.post("/api/story-queues", json={"items": [
+        {"job_id": "j1", "set_id": record["id"], "story_id": "nope"},
+    ]})
+    assert missing.status_code == 404
+
+
+def test_hook_matrix_is_off_without_the_experimental_flag(api, monkeypatch):
+    write_job(api.jobs_dir, "j1")
+    monkeypatch.delenv("VIBECUT_EXPERIMENTAL", raising=False)
+    assert api.post("/api/jobs/j1/hook-matrix", json={}).status_code == 404

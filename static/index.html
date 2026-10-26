@@ -508,13 +508,25 @@
         <button id="creator-tab-preflight" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-preflight" tabindex="-1" data-creator-tab="preflight">Preflight</button>
         <button id="creator-tab-packet" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-packet" tabindex="-1" data-creator-tab="packet">Packet</button>
         <button id="creator-tab-artifacts" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-artifacts" tabindex="-1" data-creator-tab="artifacts">Artifacts &amp; Shares</button>
-        <button id="creator-tab-queue" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-queue" tabindex="-1" data-creator-tab="queue">Queue / Batch</button>
+        <button id="creator-tab-queue" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-queue" tabindex="-1" data-creator-tab="queue">Queue</button>
       </nav>
 
       <div id="creator-global-error" class="error creator-alert" role="alert" hidden></div>
+      <div id="story-queue-banner" class="creator-alert creator-banner" role="status" aria-live="polite" hidden></div>
 
       <div class="creator-screens">
         <section id="creator-panel-queue" class="creator-screen" data-creator-panel="queue" role="tabpanel" aria-labelledby="creator-tab-queue" tabindex="0" hidden>
+          <div class="creator-card">
+            <div class="creator-card-head">
+              <div><p class="eyebrow">stories</p><h3>Story render queue</h3></div>
+              <button id="story-queue-refresh" class="ghost small" type="button">Refresh</button>
+            </div>
+            <p class="hint">Up to 10 stories render one after another. If VibeCut stops, the queue waits for you to resume; it never restarts on its own.</p>
+            <div id="story-queue-error" class="error" role="alert" hidden></div>
+            <div id="story-queue-list" class="creator-list" aria-live="polite"><p class="hint">No story queues yet. Use Queue stories on the Clip Set screen.</p></div>
+          </div>
+          <details class="creator-advanced">
+            <summary>Compatibility · source batches (15/30/60)</summary>
           <div class="creator-grid creator-grid-two">
             <form id="batch-form" class="creator-card">
               <div class="creator-card-head">
@@ -560,6 +572,7 @@
               <div id="batch-list" class="creator-list"><p class="hint">No batches loaded.</p></div>
             </div>
           </div>
+          </details>
         </section>
 
         <section id="creator-panel-clipset" class="creator-screen" data-creator-panel="clipset" role="tabpanel" aria-labelledby="creator-tab-clipset" tabindex="0">
@@ -573,6 +586,7 @@
               </select>
             </label>
             <button id="clipset-build" class="primary small" type="button">Auto Select</button>
+            <button id="clipset-queue" class="ghost small" type="button">Queue stories</button>
             <button id="clipset-read-analysis" class="ghost small" type="button" aria-expanded="false" aria-controls="clipset-analysis">Read Analysis</button>
             <label class="creator-inline-field">Tighten
               <select id="tighten-target" aria-label="Tighten target">
@@ -612,14 +626,6 @@
                   </label>
                   <button id="clipset-v2" class="ghost small" type="button">Run beta read</button>
                   <div id="clipset-v2-output" class="creator-list" aria-live="polite"><p class="hint">No beta read yet. This optional pass ranks the current stories; the original read stays available.</p></div>
-                  <details class="creator-advanced">
-                    <summary>Advanced preview</summary>
-                    <div class="creator-advanced-body">
-                      <p class="hint">Hook and cover combinations are metadata only. No renders are queued.</p>
-                      <button id="matrix-build" class="ghost small" type="button">Build hook / cover matrix</button>
-                      <div id="matrix-output" class="creator-list"><p class="hint">No matrix built.</p></div>
-                    </div>
-                  </details>
                 </div>
               </div>
               <div class="creator-card">
@@ -782,6 +788,10 @@
             <div class="creator-card">
               <div class="creator-card-head"><div><p class="eyebrow">result</p><h3>Publish packet</h3></div></div>
               <div id="packet-result" class="creator-list"><p class="hint">No packet built in this session.</p></div>
+            </div>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">history</p><h3>Packets for this job</h3></div></div>
+              <div id="packet-history" class="creator-list" aria-live="polite"><p class="hint">No packets yet.</p></div>
             </div>
           </div>
         </section>

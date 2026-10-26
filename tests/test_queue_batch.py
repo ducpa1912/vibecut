@@ -1373,7 +1373,7 @@ def test_disk_preflight_reserve_and_payload():
     assert payload["free_bytes"] > 0
 
 
-def test_path_upload_batch_and_render_return_412(data_env, monkeypatch):
+def test_path_batch_render_412_and_upload_507(data_env, monkeypatch):
     monkeypatch.setattr(disk, "usage", lambda path: _usage(100 * GIB, 5 * GIB + 10 ** 7))
     source = data_env / "small.mp4"
     source.write_bytes(b"x" * 16)
@@ -1404,10 +1404,25 @@ def test_path_upload_batch_and_render_return_412(data_env, monkeypatch):
         render_response = client.post("/api/jobs/render-me/render", json={"target": 30})
         monkeypatch.setattr(app, "_plan_for_body", original_plan)
 
+    # Uploads report 507 (storage failure); preflights before work report 412.
+    expected = {id(upload_response): 507}
     for response in (path_response, upload_response, batch_response, render_response):
-        assert response.status_code == 412, response.text
+        assert response.status_code == expected.get(id(response), 412), response.text
         body = response.json()
         assert body["code"] == "insufficient_space"
         assert body["required_bytes"] > 0
         assert body["free_bytes"] >= 0
         assert {"shortfall_bytes", "volume_total_bytes", "path"} <= set(body)
+
+
+def test_reserve_formula_matches_cto_rule():
+    # min(5 GiB, max(2 GiB, 5% of volume))
+    assert disk.reserve_bytes(245 * 10 ** 9) == 5 * GIB
+    assert disk.reserve_bytes(20 * GIB) == 2 * GIB
+    assert disk.reserve_bytes(60 * GIB) == 3 * GIB
+
+
+def test_245gb_volume_with_10_4gb_free_allows_30s_final(monkeypatch, tmp_path):
+    monkeypatch.setattr(disk, "usage", lambda path: _usage(245 * 10 ** 9, int(10.4 * 10 ** 9)))
+    report = disk.check(disk.estimate_render(30, "final"), tmp_path)
+    assert report["ok"] is True

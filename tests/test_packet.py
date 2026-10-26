@@ -741,3 +741,58 @@ def test_packet_api_build_get_and_zip(api):
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "artifact_missing"
     assert job["renders"]["30"]["status"] == "ready"
+
+
+def test_packet_pin_comment_copy_blocks_and_copy_file(tmp_path):
+    job, job_dir = _job(tmp_path)
+    manifest = packet.build_packet(
+        job, job_dir, _request(pin_comment="Full episode link in bio.\nWhich take wins?"),
+    )
+    assert manifest["pin_comment"] == "Full episode link in bio.\nWhich take wins?"
+    kinds = [block["kind"] for block in manifest["copy_blocks"]]
+    assert kinds == ["title", "title", "title", "description", "hashtags", "pin_comment"]
+    directory = job_dir / "packets" / manifest["packet_id"]
+    text = (directory / "copy.txt").read_text(encoding="utf-8")
+    assert text.index("Title 1") < text.index("Description") < text.index("Pin comment")
+    with zipfile.ZipFile(packet.packet_zip_path(job_dir, manifest["packet_id"])) as archive:
+        assert archive.read("copy.txt").decode("utf-8") == text
+
+
+def test_packet_without_pin_comment_keeps_its_old_id(tmp_path):
+    job, job_dir = _job(tmp_path)
+    plain = packet.build_packet(job, job_dir, _request())
+    pinned = packet.build_packet(job, job_dir, _request(pin_comment="Pinned"))
+    assert plain["packet_id"] != pinned["packet_id"]
+    assert packet.build_packet(job, job_dir, _request())["packet_id"] == plain["packet_id"]
+
+
+def test_packet_rejects_oversized_pin_comment(tmp_path):
+    job, job_dir = _job(tmp_path)
+    with pytest.raises(packet.PacketError) as error:
+        packet.build_packet(job, job_dir, _request(pin_comment="x" * 501))
+    assert error.value.code == "pin_comment_invalid"
+
+
+def test_packet_list_survives_reload_and_zip_bytes_match(api):
+    _write_api_job(api.jobs_dir)
+    body = {
+        "story_id": "story one",
+        "render_keys": ["30"],
+        "titles": ["One", "Two", "Three"],
+        "description": "A short hook.",
+        "hashtags": ["#a", "#b", "#c"],
+        "cover_times": [1.0, 5.0],
+        "pin_comment": "Link in bio",
+    }
+    created = api.post("/api/jobs/job1/packets", json=body).json()
+    first_zip = api.get(created["zip_url"]).content
+
+    # A fresh client stands in for closing and reopening the app.
+    from fastapi.testclient import TestClient
+    reopened = TestClient(app.app)
+    listed = reopened.get("/api/jobs/job1/packets")
+    assert listed.status_code == 200
+    rows = listed.json()["packets"]
+    assert [row["packet_id"] for row in rows] == [created["packet_id"]]
+    assert rows[0]["title"] == "One"
+    assert reopened.get(rows[0]["zip_url"]).content == first_zip

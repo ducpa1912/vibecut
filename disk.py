@@ -1,7 +1,7 @@
 """Free-space preflight for uploads, local paths, renders and batches.
 
 The rule is deliberately simple and conservative: a write is allowed only when
-it leaves ``max(5 GiB, 5% of the volume)`` free.  Nothing here deletes files.
+it leaves ``min(5 GiB, max(2 GiB, 5% of the volume))`` free.  Nothing here deletes files.
 Callers either get a report or an :class:`InsufficientSpace` exception that the
 API turns into HTTP 412 with a stable payload.
 """
@@ -14,7 +14,8 @@ from typing import Iterable, Mapping
 
 GIB = 1024 ** 3
 MIB = 1024 ** 2
-MIN_RESERVE_BYTES = 5 * GIB
+MIN_RESERVE_BYTES = 2 * GIB
+MAX_RESERVE_BYTES = 5 * GIB
 RESERVE_FRACTION = 0.05
 VALID_TARGETS = (15, 30, 60)
 
@@ -113,9 +114,12 @@ def _existing_path(path: Path) -> Path:
 
 
 def reserve_bytes(total_bytes: int) -> int:
-    """The floor a write must leave free: 5 GiB or 5% of the volume."""
+    """The floor a write must leave free: 5% of the volume, clamped to 2–5 GiB."""
     total = max(0, int(total_bytes or 0))
-    return max(MIN_RESERVE_BYTES, int(round(total * RESERVE_FRACTION)))
+    return min(
+        MAX_RESERVE_BYTES,
+        max(MIN_RESERVE_BYTES, int(round(total * RESERVE_FRACTION))),
+    )
 
 
 def usage(path: str | Path) -> shutil._ntuple_diskusage:  # type: ignore[attr-defined]

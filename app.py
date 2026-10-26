@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
+import hmac
 import html as html_lib
 import ipaddress
 import json
@@ -11,6 +13,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -22,7 +25,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -50,6 +53,7 @@ import routes_batches
 import selection
 import settings_store
 import shares
+import story_queue
 import tighten
 import usage_store
 import vision
@@ -191,9 +195,9 @@ def link_source(stored: Path, job_dir: Path, suffix: str) -> Path:
 
 def gc_sources() -> int:
     try:
-        days = float(os.environ.get("VIBECUT_SOURCES_GC_DAYS", "30") or 0)
+        days = float(os.environ.get("VIBECUT_SOURCES_GC_DAYS", "0") or 0)
     except ValueError:
-        days = 30.0
+        days = 0.0
     if days <= 0 or not SOURCES.is_dir():
         return 0
     cutoff = time.time() - days * 86400
@@ -1462,6 +1466,7 @@ def _adopt_render_artifact(
         title=Path(job.get("source", {}).get("name") or "reel").stem,
         created=record.get("created") or record.get("updated"),
     )
+    artifacts.assign_version(job_dir, manifest)
     manifest["caption_source"] = "track" if caption_track is not None else "plan"
     manifest["caption_track_id"] = caption_track.id if caption_track is not None else None
     if caption_warning:
@@ -1543,8 +1548,15 @@ def _adopt_ready_artifacts(job_id: str) -> tuple[dict, list[dict]]:
     return job, list(adopted.values())
 
 
-def _find_artifact_for_target(job: dict, target: int, aspect: str) -> dict | None:
-    """Resolve the artifact a legacy target/aspect link would serve today."""
+def _find_artifact_for_target(
+    job: dict, target: int, aspect: str, not_after: float | None = None,
+) -> dict | None:
+    """Resolve the artifact a legacy target/aspect link would serve today.
+
+    ``not_after`` binds an existing legacy link: the file at the legacy path is
+    what that link always served, and a manifest made after the link was
+    created is never a candidate, so an old link cannot jump to a newer cut.
+    """
     record = _find_share_render(job, target, aspect)
     if record:
         manifest = _adopt_render_artifact(job, record, target, aspect)
@@ -1555,6 +1567,8 @@ def _find_artifact_for_target(job: dict, target: int, aspect: str) -> dict | Non
     for manifest in artifacts.list_manifests(job_dir):
         spec = manifest.get("spec") or {}
         if manifest.get("status") != "ready":
+            continue
+        if not_after is not None and float(manifest.get("created") or 0) > not_after:
             continue
         if int(spec.get("target") or 0) != int(target):
             continue
@@ -1574,7 +1588,8 @@ def _artifact_for_legacy_share(job: dict, record: dict) -> dict | None:
     except (TypeError, ValueError):
         return None
     aspect = str(record.get("aspect") or "9:16")
-    return _find_artifact_for_target(job, target, aspect)
+    created = float(record.get("created") or 0.0)
+    return _find_artifact_for_target(job, target, aspect, not_after=created)
 
 
 def _share(token: str) -> tuple[dict, dict, dict] | None:
@@ -1618,6 +1633,8 @@ def _share(token: str) -> tuple[dict, dict, dict] | None:
     value["target"] = spec.get("target")
     value["aspect"] = spec.get("aspect")
     value["job_id"] = record.get("job_id") or job["id"]
+    # A link stays pinned to its artifact; the label says when it is old.
+    value["versions"] = artifacts.version_info(_job_dir(job["id"]), manifest)
     return value, job, artifacts.render_record(manifest)
 
 
@@ -1792,6 +1809,7 @@ def run_render(
                 job_id, spec, status="queued", record_key=record_key,
                 title=f"{Path(job['source']['name']).stem} · {target}s cut",
             )
+            artifacts.assign_version(job_dir, manifest)
             artifacts.save_manifest(job_dir, manifest)
         history_id = str(
             ((job.get("renders") or {}).get(record_key) or {}).get("history_id") or ""
@@ -1889,7 +1907,8 @@ def run_render(
         LOGGER.info("render %s/%s ready in %s", job_id, record_key, result["path"])
         pruned: list[str] = []
         try:
-            update_job(job_id, lambda value: pruned.extend(_prune_renders(value)))
+            if _render_pruning_enabled():
+                update_job(job_id, lambda value: pruned.extend(_prune_renders(value)))
         except shares.ShareStoreError:
             LOGGER.error("share store is unreadable; prune skipped for %s", job_id)
         if pruned:
@@ -1961,7 +1980,45 @@ def run_render(
         RENDER_CANCELS.pop((job_id, record_key), None)
 
 
+def _stop_orphan_encoders() -> int:
+    """Stop ffmpeg/ffprobe left running by a crashed VibeCut process.
+
+    Encoders run in their own process group so a timeout can kill the whole
+    tree, which also means they outlive a SIGKILL of the server. Any encoder
+    still writing under this data directory at startup is an orphan.
+    """
+    marker = str(JOBS)
+    try:
+        listing = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,command="],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    stopped = 0
+    for line in listing.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 3 or not parts[0].isdigit():
+            continue
+        pid, command = int(parts[0]), parts[2]
+        name = Path(command.split(" ", 1)[0]).name
+        if name not in {"ffmpeg", "ffprobe"} or marker not in command or pid == os.getpid():
+            continue
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                continue
+        stopped += 1
+    if stopped:
+        LOGGER.warning("stopped %d orphaned encoder process(es) from a previous run", stopped)
+    return stopped
+
+
 def recover_jobs() -> None:
+    _stop_orphan_encoders()
     RENDER_CANCELS.clear()
     ANALYSIS_CANCELS.clear()
     fixed = 0
@@ -2049,6 +2106,12 @@ def recover_jobs() -> None:
             LOGGER.info("paused %d interrupted batch(es)", paused_batches)
     except Exception:  # noqa: BLE001
         LOGGER.exception("could not recover batches")
+    try:
+        paused_stories = story_queues().recover()
+        if paused_stories:
+            LOGGER.info("paused %d interrupted story queue(s); resume is manual", paused_stories)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("could not recover story queues")
     for tmp in JOBS.glob("*/renders/tmp_*"):
         shutil.rmtree(tmp, ignore_errors=True)
     if SOURCES.is_dir():
@@ -2145,7 +2208,9 @@ def _adopt_legacy_shares(job: dict) -> list[dict]:
             remaining.append(record)
             continue
         aspect = str(record.get("aspect") or "9:16")
-        manifest = _find_artifact_for_target(job, target, aspect)
+        manifest = _find_artifact_for_target(
+            job, target, aspect, not_after=float(record.get("created") or 0.0),
+        )
         if (
             manifest is None
             or manifest.get("status") != "ready"
@@ -2256,6 +2321,18 @@ def _safe_unlink(job_dir: Path, name: str | None) -> str | None:
         return str(name)
     except OSError:
         return None
+
+
+def _render_pruning_enabled() -> bool:
+    """Rendered artifacts are immutable outputs, not caches.
+
+    Pruning older cuts is opt-in (``VIBECUT_PRUNE_RENDERS=1``) so a superseded
+    v1 is never deleted behind the owner's back, after a render or on the
+    retention pass.
+    """
+    return os.environ.get("VIBECUT_PRUNE_RENDERS", "0").lower() not in (
+        "0", "false", "no", "off", "",
+    )
 
 
 def _prune_renders(job: dict) -> list[str]:
@@ -2558,7 +2635,7 @@ def cleanup_storage() -> None:
                 return
             if removed:
                 LOGGER.info("cleaned %s for job %s", ", ".join(removed), job_id)
-    for path in JOBS.glob("*/job.json"):
+    for path in (JOBS.glob("*/job.json") if _render_pruning_enabled() else ()):
         job_id = path.parent.name
         removed: list[str] = []
         try:
@@ -2650,40 +2727,43 @@ PUBLIC_PATHS = {"/", "/index.html", "/favicon.ico", "/api/health", "/docs/url-in
 SHARES = DATA / "shares.json"
 
 
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
 @app.middleware("http")
 async def require_token(request: Request, call_next):
+    """Default-deny for every creator route.
+
+    Loopback binds need no token. Any other bind needs ``VIBECUT_TOKEN``, sent
+    as a bearer header. Tokens never travel in URLs; the ``vibecut_token``
+    cookie only authorises reads, so ``<img>``/``<video>`` work without
+    making cross-site writes possible. ``/_ductator`` has its own password,
+    session and CSRF checks.
+    """
     path = request.url.path
     if path.startswith("/_ductator"):
         return await call_next(request)
-    token = os.environ.get("VIBECUT_TOKEN")
-    if not token:
-        path = request.url.path
-        if path.startswith("/api/") and path != "/api/health" and HOST not in {
-            "127.0.0.1", "localhost", "::1",
-        }:
-            return JSONResponse(
-                {
-                    "detail": (
-                        "VibeCut is bound beyond loopback without VIBECUT_TOKEN. "
-                        "Set VIBECUT_TOKEN before using the API remotely."
-                    )
-                },
-                status_code=403,
-            )
-        return await call_next(request)
-    path = request.url.path
     if path in PUBLIC_PATHS or path.startswith("/static") or path.startswith("/r/"):
         return await call_next(request)
+    token = os.environ.get("VIBECUT_TOKEN")
+    if not token:
+        if HOST in LOOPBACK_HOSTS:
+            return await call_next(request)
+        return JSONResponse(
+            {
+                "detail": (
+                    "VibeCut is bound beyond loopback without VIBECUT_TOKEN. "
+                    "Set VIBECUT_TOKEN before using the API remotely."
+                )
+            },
+            status_code=403,
+        )
     supplied = request.headers.get("authorization") or ""
-    if supplied.lower().startswith("bearer "):
-        supplied = supplied[7:]
-    supplied = (
-        supplied.strip()
-        or request.query_params.get("token")
-        or request.cookies.get("vibecut_token")
-        or ""
-    )
-    if supplied != token:
+    supplied = supplied[7:].strip() if supplied.lower().startswith("bearer ") else ""
+    if not supplied and request.method in SAFE_METHODS:
+        supplied = unquote(request.cookies.get("vibecut_token") or "")
+    if not supplied or not hmac.compare_digest(supplied.encode(), token.encode()):
         return JSONResponse(
             {"detail": "Unauthorized. Provide VIBECUT_TOKEN."},
             status_code=401,
@@ -3639,6 +3719,12 @@ def review_page(token: str) -> Response:
         raise HTTPException(404, "Review link not found.")
     record, job, render_record = found
     title = html_lib.escape(Path(job["source"]["name"]).stem)
+    versions = record.get("versions") or {}
+    label = html_lib.escape(str(versions.get("label") or ""))
+    version_banner = ""
+    if label:
+        kind = "current" if versions.get("current") else "superseded"
+        version_banner = f'<p class="version {kind}" role="status">{label}</p>'
     html = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
@@ -3651,8 +3737,11 @@ h1{{font-size:20px;font-weight:500;margin:0 0 4px}}
 p{{color:#8b8a86;font-size:12px;margin:0 0 18px}}
 video{{width:100%;border-radius:14px;background:#000}}
 a{{display:inline-block;margin:16px 12px 0 0;color:#e8a266;text-decoration:none}}
+.version{{display:inline-block;padding:4px 10px;border-radius:999px;font-size:13px;color:#f2f0ec;background:#2a2a2d}}
+.version.superseded{{background:#5a3a14;color:#ffd9a8}}
 </style></head><body><main>
 <h1>{title}</h1><p>{record['target']}s · {record['aspect']} · review only</p>
+{version_banner}
 <video controls playsinline src="/r/{token}/video"></video>
 <div><a href="/r/{token}/video" download>Download MP4</a>
 <a href="/r/{token}/captions.srt">Captions SRT</a></div>
@@ -3730,6 +3819,8 @@ class PlanBody(BaseModel):
 
 class CaptionTrackBody(BaseModel):
     target: int = 30
+    set_id: str | None = None
+    story_id: str | None = None
     hook_scene: int | None = None
     clips: list[dict] | None = None
     style_id: str | None = None
@@ -3984,7 +4075,10 @@ async def upload_job(
             f"Upload is larger than the {MAX_UPLOAD / 1024 ** 3:.0f} GB limit.",
         )
     if declared:
-        disk.preflight(disk.estimate_upload(declared), DATA)
+        try:
+            disk.preflight(disk.estimate_upload(declared), DATA)
+        except disk.InsufficientSpace as exc:
+            return JSONResponse(status_code=507, content=exc.as_dict())
 
     original = Path(file.filename or "video.mp4").name
     suffix = Path(original).suffix.lower()
@@ -4019,10 +4113,25 @@ async def upload_job(
         meta = pipeline.probe(destination)
         job = _new_job(destination, original, meta, parsed_options, job_id=job_id)
         return {"id": job["id"], "status": job["status"]}
-    except (HTTPException, disk.InsufficientSpace):
+    except HTTPException:
         temp.unlink(missing_ok=True)
         shutil.rmtree(directory, ignore_errors=True)
         raise
+    except disk.InsufficientSpace as exc:
+        # An upload that runs out of room is a storage failure, not a
+        # precondition: report 507 and leave no partial source behind.
+        temp.unlink(missing_ok=True)
+        shutil.rmtree(directory, ignore_errors=True)
+        return JSONResponse(status_code=507, content=exc.as_dict())
+    except OSError as exc:
+        temp.unlink(missing_ok=True)
+        shutil.rmtree(directory, ignore_errors=True)
+        if exc.errno == errno.ENOSPC:
+            return JSONResponse(
+                status_code=507,
+                content={"error": "insufficient_storage", "detail": "The disk filled up during upload. Nothing was kept."},
+            )
+        raise HTTPException(400, f"Could not ingest this video: {exc}") from exc
     except Exception as exc:
         temp.unlink(missing_ok=True)
         shutil.rmtree(directory, ignore_errors=True)
@@ -4182,39 +4291,104 @@ def job_from_url(body: FromUrlBody) -> dict:
     return {"id": job_id, "status": "downloading", "provider": provider_id, "label": label}
 
 
-@app.get("/api/jobs")
-def list_jobs() -> dict:
-    items = []
-    paths = sorted(JOBS.glob("*/job.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:24]
-    for path in paths:
+# Derived job index: one row per job.json, keyed by file mtime so a row is
+# re-read only when its job changes. job.json stays the source of truth; the
+# index is rebuilt from it on demand and never written back.
+_JOB_INDEX: dict[str, tuple[int, dict]] = {}
+_JOB_INDEX_LOCK = threading.Lock()
+
+
+def _job_index_row(job: dict) -> dict:
+    analysis = job.get("analysis") or {}
+    ingest = job.get("ingest") or {}
+    source = job.get("source") or {}
+    hook_id = analysis.get("hook_scene")
+    stories = [
+        str(story.get("title") or "")
+        for record in _clip_set_records(job)
+        for story in record.get("stories") or []
+        if isinstance(story, dict) and story.get("title")
+    ]
+    created = float(job.get("created") or 0)
+    return {
+        "id": job.get("id"),
+        "created": job.get("created"),
+        "name": source.get("name"),
+        "duration": source.get("duration"),
+        "status": job.get("status"),
+        "progress": job.get("progress", 0),
+        "message": job.get("message"),
+        "error": job.get("error"),
+        "provider": ingest.get("provider"),
+        "provider_label": ingest.get("label") or ingest.get("provider"),
+        "ingest_status": ingest.get("status"),
+        "ingest_error": ingest.get("error"),
+        "scene_count": analysis.get("scene_count"),
+        "hook_thumb": (
+            f"/api/jobs/{job['id']}/thumb/{hook_id}" if hook_id is not None else None
+        ),
+        "story_titles": stories[:24],
+        "source_deleted": bool(source.get("deleted_at")),
+        "_search": " ".join([
+            str(job.get("id") or ""),
+            str(source.get("name") or ""),
+            time.strftime("%Y-%m-%d", time.localtime(created)) if created else "",
+            *stories,
+        ]).casefold(),
+    }
+
+
+def job_index() -> list[tuple[float, dict]]:
+    """``(mtime, row)`` for every readable job, newest first. No cap."""
+    rows: list[tuple[float, dict]] = []
+    seen: set[str] = set()
+    for path in JOBS.glob("*/job.json"):
+        key = str(path)
+        seen.add(key)
         try:
-            job = json.loads(path.read_text())
-        except Exception:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
             continue
-        analysis = job.get("analysis") or {}
-        scenes = analysis.get("scenes") or []
-        ingest = job.get("ingest") or {}
-        hook_id = analysis.get("hook_scene")
-        hook_thumb = None
-        if hook_id is not None:
-            hook_thumb = f"/api/jobs/{job['id']}/thumb/{hook_id}"
-        items.append({
-            "id": job.get("id"),
-            "created": job.get("created"),
-            "name": (job.get("source") or {}).get("name"),
-            "duration": (job.get("source") or {}).get("duration"),
-            "status": job.get("status"),
-            "progress": job.get("progress", 0),
-            "message": job.get("message"),
-            "error": job.get("error"),
-            "provider": ingest.get("provider"),
-            "provider_label": ingest.get("label") or ingest.get("provider"),
-            "ingest_status": ingest.get("status"),
-            "ingest_error": ingest.get("error"),
-            "scene_count": analysis.get("scene_count"),
-            "hook_thumb": hook_thumb,
-        })
-    return {"jobs": items}
+        with _JOB_INDEX_LOCK:
+            cached = _JOB_INDEX.get(key)
+        if cached is None or cached[0] != stamp:
+            try:
+                job = json.loads(path.read_text())
+                row = _job_index_row(job)
+            except Exception:  # noqa: BLE001 - one unreadable job never hides the rest
+                continue
+            cached = (stamp, row)
+            with _JOB_INDEX_LOCK:
+                _JOB_INDEX[key] = cached
+        rows.append((cached[0] / 1e9, cached[1]))
+    with _JOB_INDEX_LOCK:
+        for key in [key for key in _JOB_INDEX if key not in seen]:
+            _JOB_INDEX.pop(key, None)
+    rows.sort(key=lambda item: item[0], reverse=True)
+    return rows
+
+
+@app.get("/api/jobs")
+def list_jobs(q: str = "", limit: int = 24, offset: int = 0) -> dict:
+    """Search jobs by source name, job id, story title or date (YYYY-MM-DD)."""
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    terms = [term for term in str(q or "").casefold().split() if term]
+    matched = [
+        row for _, row in job_index()
+        if all(term in row["_search"] for term in terms)
+    ]
+    page = [
+        {key: value for key, value in row.items() if not key.startswith("_")}
+        for row in matched[offset:offset + limit]
+    ]
+    return {
+        "jobs": page,
+        "total": len(matched),
+        "offset": offset,
+        "limit": limit,
+        "q": q,
+    }
 
 
 @app.get("/api/jobs/{job_id}")
@@ -4376,8 +4550,15 @@ def get_media(job_id: str, filename: str) -> FileResponse:
 @app.get("/api/jobs/{job_id}/artifacts")
 def get_artifacts(job_id: str) -> dict:
     job, adopted = _adopt_ready_artifacts(job_id)
-    manifests = artifacts.list_manifests(_job_dir(job_id))
-    rows = [artifacts.public_manifest(item, job_id) for item in manifests]
+    job_dir = _job_dir(job_id)
+    manifests = artifacts.list_manifests(job_dir)
+    rows = [
+        {
+            **artifacts.public_manifest(item, job_id),
+            "versions": artifacts.version_info(job_dir, item),
+        }
+        for item in manifests
+    ]
     return {
         "artifacts": rows,
         "artifact_ids": [item["artifact_id"] for item in rows],
@@ -4398,7 +4579,10 @@ def get_artifact(job_id: str, artifact_id: str) -> dict:
     manifest = artifacts.load_manifest(_job_dir(job_id), artifact_id)
     if manifest is None:
         raise HTTPException(404, "Artifact not found.")
-    public = artifacts.public_manifest(manifest, job_id)
+    public = {
+        **artifacts.public_manifest(manifest, job_id),
+        "versions": artifacts.version_info(_job_dir(job_id), manifest),
+    }
     return {**public, "artifact": public}
 
 
@@ -4417,7 +4601,10 @@ def pin_artifact(job_id: str, artifact_id: str, body: PinBody | None = None) -> 
 
     update_job(job_id, mutate)
     manifest = result["manifest"]
-    public = artifacts.public_manifest(manifest, job_id)
+    public = {
+        **artifacts.public_manifest(manifest, job_id),
+        "versions": artifacts.version_info(_job_dir(job_id), manifest),
+    }
     return {**public, "artifact": public}
 
 
@@ -5110,11 +5297,15 @@ class ClipSetPlansBody(BaseModel):
     target: int | None = None
 
 
+STORY_ASPECTS = ("9:16", "4:5")
+
+
 class StoryRenderBody(BaseModel):
     target: int | None = None
     quality: str = "final"
     aspect: str = "9:16"
-    captions: bool = False
+    captions: bool = True
+    caption_track_id: str | None = None
 
 
 class SelectionV2Body(BaseModel):
@@ -5209,16 +5400,9 @@ def _clip_set_in_job(job: dict, set_id: str) -> dict:
     raise HTTPException(404, "Clip set not found.")
 
 
-def _find_clip_set(set_id: str) -> tuple[dict, dict]:
-    for path in sorted(JOBS.glob("*/job.json")):
-        try:
-            job = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        for record in _clip_set_records(job):
-            if record.get("id") == set_id:
-                return job, record
-    raise HTTPException(404, "Clip set not found.")
+def _find_clip_set(job_id: str, set_id: str) -> tuple[dict, dict]:
+    job = load_job(job_id)
+    return job, _clip_set_in_job(job, set_id)
 
 
 def _store_clip_set(job_id: str, record: dict) -> dict:
@@ -5303,9 +5487,9 @@ def list_clip_sets(job_id: str) -> dict:
     return {"clip_sets": records, "count": len(records)}
 
 
-@app.patch("/clip-sets/{set_id}")
-def patch_clip_set(set_id: str, body: ClipSetPatchBody) -> dict:
-    job, record = _find_clip_set(set_id)
+@app.patch("/api/jobs/{job_id}/clip-sets/{set_id}")
+def patch_clip_set(job_id: str, set_id: str, body: ClipSetPatchBody) -> dict:
+    job, record = _find_clip_set(job_id, set_id)
     if job.get("status") != "ready" or not job.get("analysis"):
         raise HTTPException(409, "Analysis is not ready yet.")
     _clip_set_source_state(job, record, require_fingerprint=True)
@@ -5332,12 +5516,13 @@ def patch_clip_set(set_id: str, body: ClipSetPatchBody) -> dict:
     return {"clip_set": updated}
 
 
-@app.post("/clip-sets/{set_id}/plans")
+@app.post("/api/jobs/{job_id}/clip-sets/{set_id}/plans")
 def clip_set_plans(
+    job_id: str,
     set_id: str,
     body: ClipSetPlansBody | None = None,
 ) -> dict:
-    job, record = _find_clip_set(set_id)
+    job, record = _find_clip_set(job_id, set_id)
     if job.get("status") != "ready" or not job.get("analysis"):
         raise HTTPException(409, "Analysis is not ready yet.")
     _, stale_warning = _clip_set_source_state(job, record)
@@ -5376,34 +5561,46 @@ def render_clip_set_story(
     story_id: str,
     body: StoryRenderBody | None = None,
 ) -> dict:
-    """Queue one clip-set story through the shared artifact render path."""
+    """Queue one clip-set story through the shared artifact render path.
+
+    Duration is the stored story duration. Captions default on and burn the
+    story's current caption track, so preview, burn, SRT and packet share one
+    track id and style hash.
+    """
+    return _queue_story_render(
+        job_id, set_id, story_id, body or StoryRenderBody(), reject_active=True,
+    )
+
+
+def _queue_story_render(
+    job_id: str,
+    set_id: str,
+    story_id: str,
+    body: StoryRenderBody,
+    *,
+    reject_active: bool,
+) -> dict:
     job = _clipset_job(job_id)
     record = _clip_set_in_job(job, set_id)
     _clip_set_source_state(job, record)
-    story = next(
-        (
-            item for item in record.get("stories") or []
-            if isinstance(item, dict) and item.get("id") == story_id
-        ),
-        None,
-    )
-    if story is None:
-        raise HTTPException(404, "Story not found in this clip set.")
-    body = body or StoryRenderBody()
-    target = 30 if body.target is None else int(body.target)
-    if target < 1 or target > 180:
-        raise HTTPException(400, "Story target must be between 1 and 180 seconds.")
+    story = _story_in_set(record, story_id)
     if body.quality not in ("final", "draft"):
         raise HTTPException(400, "Quality must be final or draft.")
-    if body.aspect not in render.ASPECTS:
-        raise HTTPException(400, "Aspect must be 9:16, 4:5, 1:1 or 16:9.")
-    scenes = list((job.get("analysis") or {}).get("scenes") or [])
-    try:
-        plan = clipset.story_to_plan(
-            story, scenes, target=target, set_id=set_id,
+    if body.aspect not in STORY_ASPECTS:
+        raise HTTPException(400, "Story renders support 9:16 and 4:5.")
+    plan = _story_plan(job, record, story, set_id)
+    if body.target is not None and int(body.target) != int(plan["target"]):
+        raise HTTPException(
+            400,
+            f"Story renders use the stored story duration ({plan['target']}s); omit target.",
         )
-    except clipset.ClipSetError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    caption_track = None
+    if body.captions:
+        track_id = body.caption_track_id or str(
+            (job.get("story_captions") or {}).get(_story_key(set_id, story_id)) or ""
+        )
+        if track_id:
+            caption_track = _caption_track_by_id(job_id, track_id)
     public_plan = {
         key: value for key, value in plan.items() if not key.startswith("_")
     }
@@ -5418,13 +5615,124 @@ def render_clip_set_story(
         None,
         False,
         check_space=True,
-        reject_active=True,
+        caption_track=caption_track,
+        reject_active=reject_active,
     )
     return {
         "plan": public_plan,
         "render": _public_render(job_id, queued),
         "artifact_id": queued.get("artifact_id"),
+        "caption_track_id": caption_track.id if caption_track is not None else None,
     }
+
+
+class StoryRenderBackend:
+    """Story queue items render through the same path as a single story."""
+
+    def start(self, item: dict) -> str:
+        result = _queue_story_render(
+            item["job_id"], item["set_id"], item["story_id"],
+            StoryRenderBody(aspect=item["aspect"], quality=item["quality"]),
+            reject_active=False,
+        )
+        artifact = str(result.get("artifact_id") or "")
+        if not artifacts.is_safe_artifact_id(artifact):
+            raise HTTPException(500, "The story render returned no artifact.")
+        return artifact
+
+    def status(self, item: dict, artifact_id: str) -> str:
+        job_dir = _job_dir(item["job_id"])
+        manifest = artifacts.load_manifest(job_dir, artifact_id)
+        if manifest is None:
+            return "failed"
+        status = str(manifest.get("status") or "")
+        if status == "ready" and not artifacts.has_media(job_dir, artifact_id):
+            return "failed"
+        return status
+
+    def cancel(self, item: dict, artifact_id: str) -> None:
+        job = load_job(item["job_id"])
+        for key, record in (job.get("renders") or {}).items():
+            if record.get("artifact_id") == artifact_id and record.get("status") in ACTIVE_RENDER:
+                RENDER_CANCELS.setdefault((item["job_id"], key), threading.Event()).set()
+                _set_render(
+                    item["job_id"], key,
+                    status="cancelling", message="Stopping…", error=None,
+                )
+
+    def timeout_for(self, item: dict) -> float:
+        try:
+            fixed = float(os.environ.get("VIBECUT_STORY_TIMEOUT", "0") or 0)
+        except ValueError:
+            fixed = 0.0
+        if fixed > 0:
+            return fixed
+        return 1800.0
+
+
+_STORY_QUEUES: dict[str, story_queue.StoryQueueManager] = {}
+
+
+def story_queues() -> story_queue.StoryQueueManager:
+    key = str(DATA)
+    manager = _STORY_QUEUES.get(key)
+    if manager is None:
+        manager = story_queue.StoryQueueManager(DATA, StoryRenderBackend())
+        _STORY_QUEUES[key] = manager
+    return manager
+
+
+def _queue_http(exc: story_queue.QueueError) -> HTTPException:
+    return HTTPException(exc.status_code, str(exc))
+
+
+class StoryQueueBody(BaseModel):
+    items: list[dict] = Field(default_factory=list)
+
+
+@app.post("/api/story-queues")
+def create_story_queue(body: StoryQueueBody) -> dict:
+    """Up to ten story items render one after another; nothing auto-resumes."""
+    for item in body.items:
+        if isinstance(item, dict) and item.get("job_id"):
+            job = _clipset_job(str(item["job_id"]))
+            record = _clip_set_in_job(job, str(item.get("set_id") or ""))
+            _story_in_set(record, str(item.get("story_id") or ""))
+    try:
+        return {"queue": story_queues().create(body.items)}
+    except story_queue.QueueError as exc:
+        raise _queue_http(exc) from exc
+
+
+@app.get("/api/story-queues")
+def list_story_queues() -> dict:
+    manager = story_queues()
+    rows = manager.list()
+    return {
+        "queues": rows,
+        "interrupted": [row for row in rows if row["needs_resume"]],
+    }
+
+
+@app.get("/api/story-queues/{queue_id}")
+def get_story_queue(queue_id: str) -> dict:
+    try:
+        return {"queue": story_queues().get(queue_id)}
+    except story_queue.QueueError as exc:
+        raise _queue_http(exc) from exc
+
+
+@app.post("/api/story-queues/{queue_id}/{action}")
+def act_on_story_queue(queue_id: str, action: str) -> dict:
+    manager = story_queues()
+    handlers = {"pause": manager.pause, "cancel": manager.cancel, "resume": manager.resume}
+    handler = handlers.get(action)
+    if handler is None:
+        raise HTTPException(404, "Unknown queue action.")
+    try:
+        return {"queue": handler(queue_id)}
+    except story_queue.QueueError as exc:
+        raise _queue_http(exc) from exc
 
 
 @app.post("/api/jobs/{job_id}/selection-v2")
@@ -5462,8 +5770,18 @@ def selection_v2(job_id: str, body: SelectionV2Body) -> dict:
     return result
 
 
+def _experimental_enabled() -> bool:
+    return os.environ.get("VIBECUT_EXPERIMENTAL", "0").lower() not in (
+        "0", "false", "no", "off", "",
+    )
+
+
 @app.post("/api/jobs/{job_id}/hook-matrix")
 def hook_matrix(job_id: str, body: HookMatrixBody) -> dict:
+    # The hook/cover matrix is post-v1 scope; it stays reachable only for
+    # development with VIBECUT_EXPERIMENTAL=1.
+    if not _experimental_enabled():
+        raise HTTPException(404, "The hook matrix is not part of this release.")
     job = _clipset_job(job_id)
     if body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES:
         raise HTTPException(400, "count must be an integer from 3 to 6.")
@@ -5957,10 +6275,88 @@ def export_cut(
     )
 
 
+def _story_key(set_id: str, story_id: str) -> str:
+    return f"{set_id}:{story_id}"
+
+
+def _story_in_set(record: dict, story_id: str) -> dict:
+    story = next(
+        (
+            item for item in record.get("stories") or []
+            if isinstance(item, dict) and item.get("id") == story_id
+        ),
+        None,
+    )
+    if story is None:
+        raise HTTPException(404, "Story not found in this clip set.")
+    return story
+
+
+def _story_plan(job: dict, record: dict, story: dict, set_id: str) -> dict:
+    """The story at its stored duration; never a 15/30/60 remap."""
+    scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    try:
+        return clipset.story_to_plan(story, scenes, target=None, set_id=set_id)
+    except clipset.ClipSetError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _story_track_plan(job: dict, plan: dict) -> dict:
+    """Plan with the clips render will actually burn, so the track is reused as-is."""
+    plan = {**plan, "_scenes": (job.get("analysis") or {}).get("scenes") or []}
+    prepared = render.prepare_render(plan, job.get("source") or {}, None)
+    return {**plan, "clips": prepared["clips"], "total": prepared["total"]}
+
+
+def _set_story_track(job_id: str, key: str, track_id: str) -> None:
+    def mutate(job: dict) -> None:
+        tracks = job.get("story_captions")
+        if not isinstance(tracks, dict):
+            tracks = {}
+        tracks[key] = track_id
+        job["story_captions"] = tracks
+
+    update_job(job_id, mutate)
+
+
+def _build_story_caption_track(job_id: str, job: dict, body: CaptionTrackBody) -> dict:
+    if not (body.set_id and body.story_id):
+        raise HTTPException(400, "Send both set_id and story_id for a story track.")
+    if job.get("status") != "ready" or not job.get("analysis"):
+        raise HTTPException(409, "Analysis is not ready yet.")
+    record = _clip_set_in_job(job, body.set_id)
+    _clip_set_source_state(job, record)
+    story = _story_in_set(record, body.story_id)
+    plan = _story_track_plan(job, _story_plan(job, record, story, body.set_id))
+    style = _caption_style_for(body.style_id, body.overrides)
+    try:
+        track = caption_engine.build_track(job, plan, style, job_dir=_job_dir(job_id))
+    except caption_engine.CaptionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _set_story_track(job_id, _story_key(body.set_id, body.story_id), track.id)
+    return {
+        "track": track.to_dict(),
+        "id": track.id,
+        "track_id": track.id,
+        "version": track.version,
+        "cue_count": len(track.cues),
+        "set_id": body.set_id,
+        "story_id": body.story_id,
+        "duration": plan["total"],
+    }
+
+
 @app.post("/api/jobs/{job_id}/captions")
 def build_caption_track(job_id: str, body: CaptionTrackBody) -> dict:
-    """Build a speech-timed caption track for the requested cut."""
+    """Build a speech-timed caption track for the requested cut.
+
+    With ``set_id``/``story_id`` the track is built for the story at its stored
+    duration, against the exact clips the story render will burn, and becomes
+    that story's current track.
+    """
     job = load_job(job_id)
+    if body.set_id or body.story_id:
+        return _build_story_caption_track(job_id, job, body)
     target = _valid_target(int(body.target))
     plan_body = PlanBody(
         target=target,
@@ -6061,6 +6457,13 @@ def edit_caption_track(
         )
     except caption_engine.CaptionError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if changed and edited.id != track_id:
+        story_keys = [
+            key for key, value in (load_job(job_id).get("story_captions") or {}).items()
+            if value == track_id
+        ]
+        for key in story_keys:
+            _set_story_track(job_id, key, edited.id)
     return {
         "track": edited.to_dict(),
         "id": edited.id,
@@ -6628,6 +7031,7 @@ def _queue_render_locked_impl(
             job_id, spec, status="queued", record_key=record_key,
             title=f"{Path(job.get('source', {}).get('name') or 'reel').stem} · {target}s cut",
         )
+        artifacts.assign_version(job_dir, manifest)
     elif manifest.get("status") != "ready":
         manifest["status"] = "queued"
         manifest["error"] = None
@@ -6779,7 +7183,10 @@ def cancel_render(
     record_key: str | None = None,
     story_id: str | None = None,
 ) -> dict:
-    target = _valid_target(int(target))
+    # Story renders carry their stored duration and a record key; only the
+    # legacy key derivation needs a 15/30/60 target.
+    if not record_key:
+        target = _valid_target(int(target))
     quality = quality if quality in ("final", "draft") else "final"
     aspect = aspect if aspect in render.ASPECTS else "9:16"
     if not record_key:
@@ -6847,6 +7254,155 @@ def delete_job(job_id: str) -> dict:
     return {"deleted": job_id}
 
 
+# ------------------------------------------------ explicit source delete
+
+
+RECEIPT_NAME = "deletion_receipt.json"
+
+
+class SourceDeleteBody(BaseModel):
+    cascade: bool = False
+
+
+def _cas_entry_for(path: Path) -> Path | None:
+    """The source-store file that shares this job file's inode, if any."""
+    if not SOURCES.is_dir() or not path.is_file():
+        return None
+    for directory in SOURCES.iterdir():
+        if not directory.is_dir():
+            continue
+        for item in directory.iterdir():
+            if item.is_file() and item.name.startswith("source"):
+                try:
+                    if os.path.samefile(item, path):
+                        return item
+                except OSError:
+                    continue
+    return None
+
+
+def _source_refs(job: dict) -> dict:
+    job_dir = _job_dir(job["id"])
+    source = job.get("source") or {}
+    path = Path(str(source.get("path") or ""))
+    in_job = bool(source.get("path")) and path.parent.resolve() == job_dir.resolve()
+    cas = _cas_entry_for(path) if in_job else None
+    manifests = artifacts.list_manifests(job_dir)
+    try:
+        live = shares.active_records(SHARES, job_id=job["id"], strict=True)
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
+    return {
+        "job_id": job["id"],
+        "source_name": source.get("name"),
+        "present": path.is_file(),
+        "managed": in_job,
+        "bytes": path.stat().st_size if path.is_file() else 0,
+        "cas_id": cas.parent.name if cas is not None else None,
+        "refcount": (cas.stat().st_nlink - 1) if cas is not None else (1 if path.is_file() else 0),
+        "artifacts": sum(1 for item in manifests if item.get("status") == "ready"),
+        "packets": len(packet.list_packets(job_dir)),
+        "shares": len(live),
+        "deleted_at": source.get("deleted_at"),
+    }
+
+
+@app.get("/api/jobs/{job_id}/source")
+def source_references(job_id: str) -> dict:
+    """What deleting this source would touch: CAS refs, artifacts, packets, links."""
+    return _source_refs(load_job(job_id))
+
+
+@app.post("/api/jobs/{job_id}/source/delete")
+def delete_source_now(job_id: str, body: SourceDeleteBody | None = None) -> dict:
+    """Delete client footage on request and prove it left the store.
+
+    Artifacts, packets and review links are outputs and stay. Because they
+    pin this source's cuts, deleting with any of them present needs
+    ``cascade: true``. A file imported by path is the user's own file and is
+    never deleted; only the job's reference to it is dropped.
+    """
+    body = body or SourceDeleteBody()
+    with LOCK:
+        job = _load_unlocked(job_id)
+        if job.get("status") in LIVE or _has_active_artifacts(job) or any(
+            record.get("status") in ACTIVE_RENDER
+            for record in (job.get("renders") or {}).values()
+        ):
+            raise HTTPException(409, "This job is still working.")
+        refs = _source_refs(job)
+        if refs["deleted_at"]:
+            raise HTTPException(409, "This source was already deleted.")
+        if (refs["artifacts"] or refs["packets"] or refs["shares"]) and not body.cascade:
+            raise HTTPException(
+                409,
+                {
+                    "code": "source_referenced",
+                    "message": "Renders, packets or review links use this source. Confirm to delete it anyway; they stay.",
+                    "refs": refs,
+                },
+            )
+        source = job.get("source") or {}
+        path = Path(str(source.get("path") or ""))
+        job_dir = _job_dir(job_id)
+        cas = _cas_entry_for(path) if refs["managed"] else None
+        before = refs["refcount"]
+        removed: list[str] = []
+        if refs["managed"] and path.is_file():
+            path.unlink()
+            removed.append(path.name)
+        after = (cas.stat().st_nlink - 1) if cas is not None and cas.is_file() else 0
+        cas_deleted = False
+        if cas is not None and cas.is_file() and cas.stat().st_nlink <= 1:
+            shutil.rmtree(cas.parent, ignore_errors=True)
+            cas_deleted = not cas.parent.exists()
+            after = 0
+        for derived in (job_dir / "audio", DATA / "cache" / "masters" / job_id):
+            if derived.exists():
+                shutil.rmtree(derived, ignore_errors=True)
+                removed.append(str(derived.relative_to(DATA)))
+        absent = not path.exists() if refs["managed"] else True
+        cas_absent = cas is None or not cas.exists() or after > 0
+        receipt = {
+            "job_id": job_id,
+            "source_name": refs["source_name"],
+            "source_hash": refs["cas_id"],
+            "bytes": refs["bytes"],
+            "managed": refs["managed"],
+            "refcount_before": before,
+            "refcount_after": after,
+            "cas_deleted": cas_deleted,
+            "removed": removed,
+            "path_absent": absent,
+            "kept": {
+                "artifacts": refs["artifacts"],
+                "packets": refs["packets"],
+                "shares": refs["shares"],
+            },
+            "time": round(time.time(), 3),
+            "result": "deleted" if absent and cas_absent else "incomplete",
+            "note": (
+                "App-level deletion. SSDs may retain physical blocks until the OS reuses them."
+                if refs["managed"]
+                else "Imported by path: your original file was left in place; only VibeCut's reference was removed."
+            ),
+        }
+        artifacts.atomic_write_json(job_dir / RECEIPT_NAME, receipt)
+        source["deleted_at"] = receipt["time"]
+        job["source"] = source
+        _save_unlocked(job)
+    return {"receipt": receipt}
+
+
+@app.get("/api/jobs/{job_id}/source/receipt")
+def source_deletion_receipt(job_id: str) -> dict:
+    load_job(job_id)
+    path = _job_dir(job_id) / RECEIPT_NAME
+    if not path.is_file():
+        raise HTTPException(404, "No deletion receipt for this job.")
+    return {"receipt": json.loads(path.read_text(encoding="utf-8"))}
+
+
 # ------------------------------------------------ publish packet / preflight / tighten
 
 
@@ -6858,6 +7414,7 @@ class PacketBody(BaseModel):
     description: str = ""
     hashtags: list[str] = []
     cover_times: list[float] | None = None
+    pin_comment: str = ""
 
 
 class TightenBody(BaseModel):
@@ -6886,11 +7443,19 @@ def build_publish_packet(job_id: str, body: PacketBody) -> dict:
         artifact_ids=body.artifact_ids,
         render_keys=body.render_keys,
         cover_times=body.cover_times,
+        pin_comment=body.pin_comment,
     )
     try:
         return packet.build_packet(job, _job_dir(job_id), request)
     except packet.PacketError as exc:
         raise _packet_http_error(exc) from exc
+
+
+@app.get("/api/jobs/{job_id}/packets")
+def list_publish_packets(job_id: str) -> dict:
+    """Packet history for a job, read from disk so it survives relaunch."""
+    load_job(job_id)
+    return {"packets": packet.list_packets(_job_dir(job_id))}
 
 
 @app.get("/api/jobs/{job_id}/packets/{packet_id}")

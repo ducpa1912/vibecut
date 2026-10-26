@@ -1137,6 +1137,7 @@ def test_cleanup_storage_workfiles_does_not_save_snapshot(env, monkeypatch):
 
 
 def test_cleanup_storage_prune_merges_concurrent_update(env, monkeypatch):
+    monkeypatch.setenv("VIBECUT_PRUNE_RENDERS", "1")
     job = app.load_job(env.job_id)
     job["updated"] = time.time() - 10 * 86400
     job["renders"] = {
