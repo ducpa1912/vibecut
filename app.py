@@ -120,6 +120,7 @@ def _render_key(
     captions: bool = False,
     audio_sig: str = "",
     hook_marker: int | None = None,
+    story_id: str | None = None,
 ) -> str:
     key = str(int(target))
     if quality != "final":
@@ -132,6 +133,8 @@ def _render_key(
         key += f":a{audio_sig}"
     if hook_marker is not None:
         key += f":h{hook_marker}"
+    if story_id:
+        key += f":s{story_id}"
     return key
 
 
@@ -1431,7 +1434,10 @@ def _adopt_render_artifact(
     artifact = artifacts.artifact_id(spec)
     record_key = str(
         record.get("record_key")
-        or _render_key(wanted_target, quality, chosen_aspect, captions, audio_sig)
+        or _render_key(
+            wanted_target, quality, chosen_aspect, captions, audio_sig,
+            story_id=plan.get("story_id"),
+        )
     )
     existing = artifacts.load_manifest(job_dir, artifact)
     if existing is not None:
@@ -1477,6 +1483,64 @@ def _adopt_render_artifact(
     record["resolved_encoder"] = spec.resolved_encoder
     artifacts.ensure_job_schema(job, job_dir)
     return manifest
+
+
+def _adopt_ready_artifacts(job_id: str) -> tuple[dict, list[dict]]:
+    """Adopt ready legacy renders before exposing the artifact list.
+
+    A legacy render is ready when its record is ready and its media path
+    resolves. Failed, queued, and rendering records are never touched, so
+    adoption cannot make unfinished work look publishable. The record's
+    artifact id makes a second call a read-only no-op.
+    """
+    job_dir = _job_dir(job_id)
+    adopted: dict[str, dict] = {}
+    with RENDER_SUBMIT_LOCK:
+        with LOCK:
+            job = _load_unlocked(job_id)
+            changed = False
+            for record in (job.get("renders") or {}).values():
+                if not isinstance(record, dict):
+                    continue
+                if record.get("status") != "ready" or not record.get("path"):
+                    continue
+                artifact = record.get("artifact_id")
+                previous = (
+                    artifacts.load_manifest(job_dir, artifact)
+                    if artifacts.is_safe_artifact_id(artifact)
+                    else None
+                )
+                before = (
+                    record.get("artifact_id"),
+                    record.get("record_key"),
+                    record.get("resolved_encoder"),
+                    record.get("caption_warning"),
+                )
+                manifest = _adopt_render_artifact(
+                    job,
+                    record,
+                    record.get("target"),
+                    record.get("aspect"),
+                )
+                if manifest is None or manifest.get("status") != "ready":
+                    continue
+                if (
+                    previous is None
+                    and manifest.get("artifact_id") not in adopted
+                ):
+                    adopted[manifest["artifact_id"]] = manifest
+                after = (
+                    record.get("artifact_id"),
+                    record.get("record_key"),
+                    record.get("resolved_encoder"),
+                    record.get("caption_warning"),
+                )
+                if after != before:
+                    changed = True
+            if changed:
+                artifacts.ensure_job_schema(job, job_dir)
+                _save_unlocked(job)
+    return job, list(adopted.values())
 
 
 def _find_artifact_for_target(job: dict, target: int, aspect: str) -> dict | None:
@@ -1629,6 +1693,7 @@ def run_render(
     plan["_source_lang"] = plan.get("_source_lang") or "en"
     record_key = _render_key(
         target, quality, aspect, captions, audio_sig, _hook_marker(plan),
+        story_id=plan.get("story_id"),
     )
     cancel_event = RENDER_CANCELS.setdefault((job_id, record_key), threading.Event())
     started = time.time()
@@ -4310,12 +4375,16 @@ def get_media(job_id: str, filename: str) -> FileResponse:
 
 @app.get("/api/jobs/{job_id}/artifacts")
 def get_artifacts(job_id: str) -> dict:
-    job = load_job(job_id)
+    job, adopted = _adopt_ready_artifacts(job_id)
     manifests = artifacts.list_manifests(_job_dir(job_id))
     rows = [artifacts.public_manifest(item, job_id) for item in manifests]
     return {
         "artifacts": rows,
         "artifact_ids": [item["artifact_id"] for item in rows],
+        "adopted": [
+            artifacts.public_manifest(item, job_id) for item in adopted
+        ],
+        "adopted_ids": [item["artifact_id"] for item in adopted],
         "renders": {
             key: _public_render(job_id, record)
             for key, record in (job.get("renders") or {}).items()
@@ -5041,6 +5110,13 @@ class ClipSetPlansBody(BaseModel):
     target: int | None = None
 
 
+class StoryRenderBody(BaseModel):
+    target: int | None = None
+    quality: str = "final"
+    aspect: str = "9:16"
+    captions: bool = False
+
+
 class SelectionV2Body(BaseModel):
     set_id: str | None = None
     prompt: str = ""
@@ -5290,6 +5366,62 @@ def clip_set_plans(
         "set_id": set_id,
         "stale_check": "unverified" if stale_warning else "verified",
         "warnings": [stale_warning] if stale_warning else [],
+    }
+
+
+@app.post("/api/jobs/{job_id}/clip-sets/{set_id}/stories/{story_id}/render")
+def render_clip_set_story(
+    job_id: str,
+    set_id: str,
+    story_id: str,
+    body: StoryRenderBody | None = None,
+) -> dict:
+    """Queue one clip-set story through the shared artifact render path."""
+    job = _clipset_job(job_id)
+    record = _clip_set_in_job(job, set_id)
+    _clip_set_source_state(job, record)
+    story = next(
+        (
+            item for item in record.get("stories") or []
+            if isinstance(item, dict) and item.get("id") == story_id
+        ),
+        None,
+    )
+    if story is None:
+        raise HTTPException(404, "Story not found in this clip set.")
+    body = body or StoryRenderBody()
+    target = 30 if body.target is None else _valid_target(int(body.target))
+    if body.quality not in ("final", "draft"):
+        raise HTTPException(400, "Quality must be final or draft.")
+    if body.aspect not in render.ASPECTS:
+        raise HTTPException(400, "Aspect must be 9:16, 4:5, 1:1 or 16:9.")
+    scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    try:
+        plan = clipset.story_to_plan(
+            story, scenes, target=target, set_id=set_id,
+        )
+    except clipset.ClipSetError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    public_plan = {
+        key: value for key, value in plan.items() if not key.startswith("_")
+    }
+    queued = _queue_render(
+        job_id,
+        job,
+        plan,
+        body.quality,
+        body.aspect,
+        None,
+        bool(body.captions),
+        None,
+        False,
+        check_space=True,
+        reject_active=True,
+    )
+    return {
+        "plan": public_plan,
+        "render": _public_render(job_id, queued),
+        "artifact_id": queued.get("artifact_id"),
     }
 
 
@@ -6284,6 +6416,7 @@ def _queue_render(
     script_id: str | None = None,
     check_space: bool = False,
     caption_track: caption_engine.CaptionTrack | None = None,
+    reject_active: bool = False,
 ) -> dict:
     """Serialize check/write/submit so one record key cannot queue twice."""
     with RENDER_SUBMIT_LOCK:
@@ -6291,7 +6424,7 @@ def _queue_render(
             job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
             force, preset=preset, caption_margin=caption_margin,
             script_id=script_id, check_space=check_space,
-            caption_track=caption_track,
+            caption_track=caption_track, reject_active=reject_active,
         )
 
 
@@ -6310,6 +6443,7 @@ def _queue_render_locked(
     script_id: str | None = None,
     check_space: bool = False,
     caption_track: caption_engine.CaptionTrack | None = None,
+    reject_active: bool = False,
 ) -> dict:
     # Reserve generations and write manifests serially so two force requests
     # can never race to the same artifact id.
@@ -6320,6 +6454,7 @@ def _queue_render_locked(
             audio_plan, force, preset=preset,
             caption_margin=caption_margin, script_id=script_id,
             check_space=check_space, caption_track=caption_track,
+            reject_active=reject_active,
         )
 
 
@@ -6338,11 +6473,13 @@ def _queue_render_locked_impl(
     script_id: str | None = None,
     check_space: bool = False,
     caption_track: caption_engine.CaptionTrack | None = None,
+    reject_active: bool = False,
 ) -> dict:
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
     record_key = _render_key(
         target, quality, aspect, captions, audio_sig, _hook_marker(plan),
+        story_id=plan.get("story_id"),
     )
     job_dir = _job_dir(job_id)
     job_scenes = (job.get("analysis") or {}).get("scenes") or []
@@ -6412,6 +6549,8 @@ def _queue_render_locked_impl(
 
     existing = (load_job(job_id).get("renders") or {}).get(record_key)
     if existing and existing.get("status") in ACTIVE_RENDER:
+        if reject_active:
+            raise HTTPException(409, "That story is already rendering.")
         if existing.get("artifact_id") == artifact and not force:
             return existing
         raise HTTPException(409, "That reel is already rendering.")
@@ -6636,6 +6775,7 @@ def cancel_render(
     audio_sig: str = "",
     hook_marker: int | None = None,
     record_key: str | None = None,
+    story_id: str | None = None,
 ) -> dict:
     target = _valid_target(int(target))
     quality = quality if quality in ("final", "draft") else "final"
@@ -6644,6 +6784,7 @@ def cancel_render(
         record_key = _render_key(
             target, quality, aspect, captions, audio_sig,
             int(hook_marker) if hook_marker is not None else None,
+            story_id=story_id,
         )
     job = load_job(job_id)
     record = (job.get("renders") or {}).get(record_key)

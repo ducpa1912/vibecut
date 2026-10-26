@@ -828,6 +828,124 @@ def test_clip_set_plan_maps_to_artifact_render_request_for_v013_job(api, monkeyp
     assert stored["renders"][record["record_key"]]["status"] == "queued"
 
 
+def test_story_render_queues_artifact_and_returns_plan(api, monkeypatch):
+    write_job(api.jobs_dir, "j1")
+    record = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    story = record["stories"][0]
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool,
+        "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+
+    response = api.post(
+        f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story['id']}/render",
+        json={"target": 30, "quality": "final", "aspect": "9:16", "captions": False},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plan"]["story_id"] == story["id"]
+    assert body["plan"]["target"] == 30
+    assert body["plan"]["clips"][0]["role"] == "hook"
+    assert "_scenes" not in body["plan"]
+    assert artifacts.is_safe_artifact_id(body["artifact_id"])
+    assert body["render"]["artifact_id"] == body["artifact_id"]
+    assert body["render"]["status"] == "queued"
+    assert submitted
+
+    manifest = artifacts.load_manifest(app._job_dir("j1"), body["artifact_id"])
+    assert manifest is not None
+    assert manifest["status"] == "queued"
+    assert manifest["spec"]["story_id"] == story["id"]
+    assert manifest["spec"]["target"] == 30
+    assert manifest["record_key"] == body["render"]["record_key"]
+    assert body["render"]["record_key"].endswith(f":s{story['id']}")
+
+    stored = app.load_job("j1")
+    assert stored["artifact_ids"] == [body["artifact_id"]]
+    assert stored["renders"][body["render"]["record_key"]]["artifact_id"] == (
+        body["artifact_id"]
+    )
+
+
+def test_story_render_accepts_draft_aspect_and_captions(api, monkeypatch):
+    write_job(api.jobs_dir, "j1")
+    record = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    story = record["stories"][1]
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
+
+    response = api.post(
+        f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story['id']}/render",
+        json={"target": 60, "quality": "draft", "aspect": "4:5", "captions": True},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plan"]["target"] == 60
+    manifest = artifacts.load_manifest(app._job_dir("j1"), body["artifact_id"])
+    assert manifest is not None
+    assert manifest["spec"]["quality"] == "draft"
+    assert manifest["spec"]["aspect"] == "4:5"
+    assert manifest["spec"]["caption"]["enabled"] is True
+    assert manifest["spec"]["story_id"] == story["id"]
+
+
+def test_story_render_validation_and_duplicate_active(api, monkeypatch):
+    write_job(api.jobs_dir, "j1")
+    record = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    set_id = record["id"]
+    story_id = record["stories"][0]["id"]
+    url = f"/api/jobs/j1/clip-sets/{set_id}/stories/{story_id}/render"
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
+
+    assert api.post(
+        f"/api/jobs/j1/clip-sets/missing/stories/{story_id}/render", json={},
+    ).status_code == 404
+    assert api.post(
+        f"/api/jobs/j1/clip-sets/{set_id}/stories/missing/render", json={},
+    ).status_code == 404
+    assert api.post(url, json={"target": 45}).status_code == 400
+    assert api.post(url, json={"quality": "cinema"}).status_code == 400
+    assert api.post(url, json={"aspect": "21:9"}).status_code == 400
+
+    first = api.post(url, json={"target": 30})
+    assert first.status_code == 200
+    duplicate = api.post(url, json={"target": 30})
+    assert duplicate.status_code == 409
+    assert "already rendering" in duplicate.json()["detail"]
+
+    job_path = api.jobs_dir / "j1" / "job.json"
+    job = json.loads(job_path.read_text())
+    job["status"] = "scanning"
+    job_path.write_text(json.dumps(job))
+    assert api.post(url, json={"target": 30}).status_code == 409
+
+
+def test_story_render_rejects_missing_clips(api):
+    write_job(api.jobs_dir, "j1")
+    record = api.post(
+        "/api/jobs/j1/clip-sets", json={"count": 3},
+    ).json()["clip_set"]
+    set_id = record["id"]
+    story_id = record["stories"][0]["id"]
+    job_path = api.jobs_dir / "j1" / "job.json"
+    job = json.loads(job_path.read_text())
+    job["clip_sets"][set_id]["stories"][0]["clips"] = []
+    job_path.write_text(json.dumps(job))
+
+    response = api.post(
+        f"/api/jobs/j1/clip-sets/{set_id}/stories/{story_id}/render",
+        json={"target": 30},
+    )
+    assert response.status_code == 422
+
+
 def test_hook_matrix_api_returns_partial_errors_not_422(api):
     write_job(api.jobs_dir, "j1")
     created = api.post(
