@@ -6,6 +6,8 @@
 **Verdict:** **ALPHA ONLY** until the five paid-v1 gates pass.  
 **Rule:** *Committed* means funded and scheduled. *Conditional* means no date, price, or promise. *Alpha-lab* means not sold.
 
+> **Scope correction 2026-10-26:** Flow 1/2 are superseded by [BUILD_PLAN.md](BUILD_PLAN.md). Flow 2 is the full Compose UI/UX, not retention-only; Flow 1 is the cleanup pre-pass in the same editor. Paid 1.0 remains unchanged.
+
 ---
 
 ## 1. Current state and paid 1.0

@@ -5,6 +5,8 @@
 **Version:** 1.1 · **Date:** 2026-10-26  
 **Sources:** [Founder brief](FOUNDER_BRIEF.md), [round_1.md](round_1.md), [round_2.md](round_2.md), [round_3.md](round_3.md), current code at `2228066`.
 
+> **Scope correction 2026-10-26:** Flow 1 and Flow 2 are not a cleanup add-on and a retention sidecar. They are one Detect → Dissect → Compose workflow. Flow 2 is the full Compose UI/UX; Flow 1 is the cleanup pre-pass. See [BUILD_PLAN.md](BUILD_PLAN.md). Paid 1.0 scope below is unchanged.
+
 ---
 
 ## 1. Executive summary
