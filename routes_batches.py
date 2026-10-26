@@ -333,7 +333,11 @@ def _resolve_retry_story_identity(
     """
     rows = _clip_set_story_rows(app, job)
     story_ids = {row[1] for row in rows}
-    key_matches = _story_key_matches(record_key, story_ids)
+    job_id = str(job.get("id") or "")
+    key_matches = [
+        story_id for story_id in _story_key_matches(record_key, story_ids)
+        if story_id != job_id
+    ]
     if len(key_matches) > 1:
         raise HTTPException(
             409,
@@ -341,10 +345,14 @@ def _resolve_retry_story_identity(
             "its record key matches more than one story.",
         )
     key_story = key_matches[0] if key_matches else _story_id_from_record_key(record_key)
+    if key_story == job_id:
+        # A legacy recovery could write the job id into the key as a fake
+        # story suffix. It is never a story identity.
+        key_story = None
     explicit_story = str(
         record.get("story_id") or snapshot.get("story_id") or ""
     )
-    if explicit_story and explicit_story == str(job.get("id") or ""):
+    if explicit_story and explicit_story == job_id:
         # Older recovery wrote the job id where build_spec fell back to it.
         # That is not a story identity.
         explicit_story = ""
@@ -450,6 +458,11 @@ def _retry_plan(
     """Rebuild the stored plan exactly; never fall back to a current default."""
     snapshot = _retry_snapshot(record)
     if clips:
+        auto = (
+            bool(snapshot.get("auto"))
+            if "auto" in snapshot
+            else not is_story
+        )
         return {
             "target": int(target),
             "total": round(sum(
@@ -457,7 +470,7 @@ def _retry_plan(
                 for clip in clips
             ), 3),
             "hook_scene": snapshot.get("hook_scene", record.get("hook")),
-            "auto": bool(snapshot.get("auto", True)),
+            "auto": auto,
             "clip_count": len(clips),
             "clips": clips,
             "order": str(snapshot.get("order") or record.get("order") or "source"),
@@ -493,6 +506,15 @@ def _retry_renders(app, job: dict) -> int:
             )
         snapshot = _retry_snapshot(record)
         clips = _retry_snapshot_clips(record)
+        job_id = str(job.get("id") or "")
+        raw_explicit_story = str(
+            record.get("story_id") or snapshot.get("story_id") or ""
+        )
+        raw_key_story = _story_id_from_record_key(str(record_key))
+        legacy_fake_story = bool(
+            job_id
+            and job_id in {raw_explicit_story, raw_key_story}
+        )
         story_id, set_id, is_story = _resolve_retry_story_identity(
             app, job, str(record_key), record, target, snapshot, clips,
         )
@@ -534,6 +556,15 @@ def _retry_renders(app, job: dict) -> int:
                 plan["story_id"] = story_id
             if set_id:
                 plan["clip_set_id"] = set_id
+            if (
+                legacy_fake_story
+                and not story_id
+                and ":h" not in str(record_key)
+            ):
+                # e4476d0 recovery hardcoded auto=False and derived a fake
+                # story key without a hook marker. The key proves the original
+                # plan was automatic; restore that so retry returns to "30".
+                plan["auto"] = True
             quality, aspect, encoder, captions, audio_plan, preset, margin = (
                 app._render_options(body)
             )

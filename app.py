@@ -2023,7 +2023,7 @@ def _stop_orphan_encoders() -> int:
     return stopped
 
 
-def _manifest_record_key(manifest: dict) -> str:
+def _manifest_record_key(manifest: dict, job: dict | None = None) -> str:
     """The render key a queued manifest was created under, or derive it."""
     key = str(manifest.get("record_key") or "").strip()
     if key:
@@ -2042,6 +2042,16 @@ def _manifest_record_key(manifest: dict) -> str:
             hook = int(spec.get("hook_scene"))
         except (TypeError, ValueError):
             hook = None
+    story_id = str(spec.get("story_id") or "") or None
+    ignored = {str(manifest.get("job_id") or "")}
+    if job is not None:
+        ignored |= {
+            str(job.get("id") or ""),
+            str(job.get("story_id") or ""),
+        }
+    ignored.discard("")
+    if story_id in ignored:
+        story_id = None
     return _render_key(
         target,
         str(spec.get("quality") or "final"),
@@ -2049,7 +2059,7 @@ def _manifest_record_key(manifest: dict) -> str:
         bool(caption.get("enabled")),
         str(spec.get("audio_sig") or ""),
         hook,
-        story_id=str(spec.get("story_id") or "") or None,
+        story_id=story_id,
     )
 
 
@@ -2117,8 +2127,12 @@ def _recovery_story_identity(
     must also match the job's clip sets when they are present.
     """
     story_id = str(spec_story_id or "")
-    job_id = str(job.get("id") or "")
-    if not story_id or story_id == job_id:
+    ignored = {
+        str(job.get("id") or ""),
+        str(job.get("story_id") or ""),
+    }
+    ignored.discard("")
+    if not story_id or story_id in ignored:
         return None, None
     rows: list[tuple[str, str]] = []
     has_clip_sets = False
@@ -2262,7 +2276,7 @@ def _reconcile_orphan_manifests(job: dict, job_dir: Path) -> bool:
             ),
             "",
         )
-        key = existing_key or _manifest_record_key(manifest)
+        key = existing_key or _manifest_record_key(manifest, job)
         if not key:
             continue
         current = renders.get(key)
