@@ -344,6 +344,10 @@ def _resolve_retry_story_identity(
     explicit_story = str(
         record.get("story_id") or snapshot.get("story_id") or ""
     )
+    if explicit_story and explicit_story == str(job.get("id") or ""):
+        # Older recovery wrote the job id where build_spec fell back to it.
+        # That is not a story identity.
+        explicit_story = ""
     explicit_set = str(record.get("set_id") or snapshot.get("set_id") or "")
     if explicit_story and key_story and explicit_story != key_story:
         raise HTTPException(
@@ -385,6 +389,11 @@ def _resolve_retry_story_identity(
                 "its stored story is not in any clip set.",
             )
         return story_id, None, True
+    # Clip-hash inference is only safe when the record already looks like a
+    # story: explicit set/marker, or a non-preset target. A normal 15/30/60
+    # retry must never be reclassified just because a story shares its cut.
+    if not storyish:
+        return None, None, False
     pool = rows
     if set_id:
         pool = [row for row in rows if row[0] == set_id]
@@ -422,8 +431,6 @@ def _resolve_retry_story_identity(
                 f"Could not retry render {record_key}: "
                 "its story identity is ambiguous.",
             )
-    if not storyish:
-        return None, None, False
     raise HTTPException(
         409,
         f"Could not retry render {record_key}: "
@@ -450,7 +457,7 @@ def _retry_plan(
                 for clip in clips
             ), 3),
             "hook_scene": snapshot.get("hook_scene", record.get("hook")),
-            "auto": bool(snapshot.get("auto", False)),
+            "auto": bool(snapshot.get("auto", True)),
             "clip_count": len(clips),
             "clips": clips,
             "order": str(snapshot.get("order") or record.get("order") or "source"),

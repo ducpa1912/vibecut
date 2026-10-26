@@ -134,7 +134,7 @@ def test_create_token_once_and_list_redacts_token(tmp_path):
     rows = shares.list_records(path)
     assert len(rows) == 2
     assert all("token" not in row for row in rows)
-    assert all(row.get("token_hint") for row in rows)
+    assert all("token_hint" not in row for row in rows)
     exposed = shares.list_records(path, include_tokens=True)
     assert {row["token"] for row in exposed} == {token, token2}
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -406,6 +406,7 @@ def test_share_listing_never_exposes_tokens_from_any_query(env):
         assert token not in response.text
         assert payload["count"] == 1
         assert "token" not in payload["shares"][0]
+        assert "token_hint" not in payload["shares"][0]
         assert "url" not in payload["shares"][0]
 
 

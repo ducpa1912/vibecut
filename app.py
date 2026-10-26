@@ -2106,6 +2106,41 @@ def _manifest_caption_track(job_dir: Path, manifest: dict):
     return matches[0] if len(matches) == 1 else None
 
 
+def _recovery_story_identity(
+    job: dict,
+    spec_story_id: object,
+) -> tuple[str | None, str | None]:
+    """Resolve a manifest's story id without treating a job id as a story.
+
+    ``artifacts.build_spec`` falls back to the job id when no caller story id
+    exists, so that value is not evidence of a story render. A real story id
+    must also match the job's clip sets when they are present.
+    """
+    story_id = str(spec_story_id or "")
+    job_id = str(job.get("id") or "")
+    if not story_id or story_id == job_id:
+        return None, None
+    rows: list[tuple[str, str]] = []
+    has_clip_sets = False
+    for record in _clip_set_records(job):
+        has_clip_sets = True
+        set_id = str(record.get("id") or "")
+        for story in record.get("stories") or []:
+            if not isinstance(story, dict):
+                continue
+            candidate = str(story.get("id") or "")
+            if candidate == story_id:
+                rows.append((set_id, candidate))
+    if not has_clip_sets:
+        return story_id, None
+    if not rows:
+        return None, None
+    set_ids = {row[0] for row in rows}
+    if len(set_ids) == 1:
+        return story_id, rows[0][0]
+    return story_id, None
+
+
 def _recovered_manifest_record(
     manifest: dict,
     job: dict,
@@ -2125,6 +2160,12 @@ def _recovered_manifest_record(
     error = "The server restarted while this reel was rendering."
     track = _manifest_caption_track(job_dir, manifest)
     captions = bool(caption.get("enabled"))
+    auto = not bool(spec.get("hook_override"))
+    story_id, set_id = _recovery_story_identity(job, spec.get("story_id"))
+    if story_id and not set_id:
+        set_id = str(manifest.get("set_id") or "") or None
+    if not story_id:
+        set_id = None
     record = artifacts.render_record(manifest)
     record.update({
         "status": "interrupted",
@@ -2136,8 +2177,8 @@ def _recovered_manifest_record(
             float(clip.get("dur") or clip.get("duration") or 0.0)
             for clip in clips
         ), 3),
-        "story_id": str(spec.get("story_id") or "") or None,
-        "set_id": str(manifest.get("set_id") or "") or None,
+        "story_id": story_id or None,
+        "set_id": set_id or None,
         "captions": captions,
         "caption_margin": float(caption.get("margin") or 0.075),
         "caption_track_id": track.id if track is not None else None,
@@ -2162,10 +2203,10 @@ def _recovered_manifest_record(
             "target": target,
             "hook_scene": spec.get("hook_scene"),
             "order": str(spec.get("order") or "source"),
-            "auto": False,
+            "auto": auto,
             "clips": clips,
-            "story_id": str(spec.get("story_id") or "") or None,
-            "set_id": str(manifest.get("set_id") or "") or None,
+            "story_id": story_id or None,
+            "set_id": set_id or None,
         },
         "recovered_from_manifest": True,
     })
