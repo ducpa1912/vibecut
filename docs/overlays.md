@@ -33,8 +33,13 @@ VIBECUT_ENABLE_OVERLAYS=1
 ```
 
 Accepted on values: `1`, `true`, `yes`, `on` (case-insensitive). Anything
-else, including unset, keeps the routes hidden. When off, even a malformed
-request returns `404`; no overlay capability is advertised.
+else, including unset, keeps the routes hidden.
+
+An app-level middleware checks the overlay path before FastAPI parses the
+request body. When the flag is off, valid JSON, malformed JSON, a missing body
+and a wrong content type all return `404` with `{"detail": "Not found."}`. The
+router keeps its own dependency gate as defence in depth. When the flag is on,
+body errors are handled normally as `400` or `422`.
 
 ## API contract
 
@@ -70,11 +75,16 @@ Request:
 `story_id` and `artifact_id` are optional. Omit both to plan against the job's
 source duration and all analysis scenes.
 
-- `story_id` must match a story in the job's stored clip sets. The plan uses
-  the story's duration and records `clip_set_id` and `story_title`.
+- `story_id` must match exactly one story across the job's stored clip sets. If
+  the same id appears in more than one clip set, the request returns `409`;
+  use `artifact_id` to disambiguate. The plan uses the story's duration and
+  records `clip_set_id` and `story_title`.
 - `artifact_id` must be an existing artifact manifest in this job. The plan
   uses the artifact's duration and story id.
-- Supplying both is allowed only when the artifact belongs to that story.
+- Supplying both requires the artifact **spec** to carry a non-empty
+  `story_id` equal to `story_id`. A legacy artifact whose spec has no story id
+  cannot be combined with explicit story context and returns `409`;
+  unverifiable story context is never accepted.
 - `aspect` is required and must be `9:16` or `4:5`; an artifact must match the
   requested aspect.
 
@@ -196,8 +206,8 @@ HTTP behavior:
 | `200` | Valid plan |
 | `400` | Unsupported aspect |
 | `404` | Flag off, job missing, story missing, or artifact missing |
-| `409` | Artifact aspect or story conflicts with the request |
-| `422` | Layer validation or malformed request body |
+| `409` | Artifact aspect/story conflict, ambiguous story id, or unverifiable legacy artifact |
+| `422` | Layer validation or malformed request body with the flag on |
 
 The route is read-only. It never writes `job.json`, `overlays.json`, renders,
 or any other file. It never calls a network service.

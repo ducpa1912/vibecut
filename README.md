@@ -1019,7 +1019,7 @@ publishing, team accounts, cloud sync, or hosted render farm is included.
 ```bash
 python3 -m pip install -r requirements-dev.txt
 python3 -m pytest -q
-python3 -m compileall -q app.py job_queue.py batch.py disk.py routes_batches.py audio.py pipeline.py settings_store.py workflow_config.py admin
+python3 -m compileall -q app.py overlays.py routes_overlays.py job_queue.py batch.py disk.py routes_batches.py audio.py pipeline.py settings_store.py workflow_config.py admin
 node --check static/app.js
 node --check static/admin.js
 python3 scripts/check_proprietary_deps.py

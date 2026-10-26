@@ -49,12 +49,13 @@ def require_feature() -> None:
 router = APIRouter(dependencies=[Depends(require_feature)])
 
 
-def _find_story(job: dict, story_id: str) -> tuple[dict, dict] | None:
+def _find_story(job: dict, story_id: str) -> list[tuple[dict, dict]]:
+    matches: list[tuple[dict, dict]] = []
     records = job.get("clip_sets")
     if isinstance(records, dict):
         records = list(records.values())
     if not isinstance(records, list):
-        return None
+        return matches
     for record in records:
         if not isinstance(record, dict):
             continue
@@ -63,8 +64,8 @@ def _find_story(job: dict, story_id: str) -> tuple[dict, dict] | None:
             continue
         for story in stories:
             if isinstance(story, dict) and str(story.get("id") or "") == story_id:
-                return record, story
-    return None
+                matches.append((record, story))
+    return matches
 
 
 def _load_artifact(job_id: str, artifact_id: str) -> dict:
@@ -97,10 +98,15 @@ def plan_overlays(job_id: str, body: OverlayPlanBody) -> dict:
     story = None
     clip_set_id = None
     if story_id:
-        found = _find_story(job, story_id)
-        if found is None:
+        matches = _find_story(job, story_id)
+        if not matches:
             raise HTTPException(404, "Story not found.")
-        record, story = found
+        if len(matches) > 1:
+            raise HTTPException(
+                409,
+                "Story id is ambiguous across clip sets; use artifact_id instead.",
+            )
+        record, story = matches[0]
         clip_set_id = str(record.get("id") or "") or None
 
     try:

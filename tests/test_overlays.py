@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -122,10 +123,45 @@ def _layer(**overrides) -> dict:
 def test_feature_flag_off_returns_404_before_body_validation(env, monkeypatch):
     monkeypatch.delenv("VIBECUT_ENABLE_OVERLAYS", raising=False)
     client = TestClient(app.app)
+    path = f"/api/jobs/{env.job_id}/overlays/plan"
     valid = {"aspect": "9:16", "layers": [_layer()]}
     assert _post(client, env, valid).status_code == 404
     assert _post(client, env, {}).status_code == 404
     assert _post(client, env, valid).json() == {"detail": "Not found."}
+
+    malformed = client.post(
+        path,
+        content=b'{"aspect": "9:16", "layers": [',
+        headers={"content-type": "application/json"},
+    )
+    assert malformed.status_code == 404
+    assert malformed.json() == {"detail": "Not found."}
+
+    wrong_type = client.post(
+        path,
+        content=b"aspect=9:16",
+        headers={"content-type": "text/plain"},
+    )
+    assert wrong_type.status_code == 404
+    assert wrong_type.json() == {"detail": "Not found."}
+
+
+def test_malformed_body_with_flag_on_is_a_validation_error(env):
+    client = TestClient(app.app)
+    path = f"/api/jobs/{env.job_id}/overlays/plan"
+    malformed = client.post(
+        path,
+        content=b'{"aspect": "9:16", "layers": [',
+        headers={"content-type": "application/json"},
+    )
+    assert malformed.status_code == 422, malformed.text
+
+    wrong_type = client.post(
+        path,
+        content=b"aspect=9:16",
+        headers={"content-type": "text/plain"},
+    )
+    assert wrong_type.status_code in {400, 422}, wrong_type.text
 
 
 def test_valid_plan_normalizes_and_returns_hash(env):
@@ -156,6 +192,97 @@ def test_valid_plan_normalizes_and_returns_hash(env):
     assert [layer["z"] for layer in plan["layers"]] == [0, 2]
     assert plan["layers"][0]["anchor"] == "top-center"
     assert plan["layers"][1]["anchor"] == "center"
+
+
+def test_lower_third_and_cta_kinds(env):
+    client = TestClient(app.app)
+    response = _post(client, env, {
+        "aspect": "9:16",
+        "layers": [
+            _layer(
+                kind="lower_third", text="Reporter name",
+                start=0.0, end=3.0,
+            ),
+            _layer(
+                kind="cta", text="Follow for part two", start=4.0, end=6.0,
+                anchor="bottom-right", z=1,
+            ),
+        ],
+    })
+    assert response.status_code == 200, response.text
+    layers = response.json()["plan"]["layers"]
+    assert [layer["kind"] for layer in layers] == ["lower_third", "cta"]
+    assert layers[0]["anchor"] == "bottom-left"
+    assert layers[1]["anchor"] == "bottom-right"
+
+
+def test_opacity_and_box_bounds(env):
+    client = TestClient(app.app)
+    visible = _post(client, env, {
+        "aspect": "4:5",
+        "layers": [
+            _layer(text="Clear", opacity=0.0),
+            _layer(kind="cta", text="Solid", start=2.0, end=4.0, opacity=1.0),
+        ],
+    })
+    assert visible.status_code == 200, visible.text
+    assert [layer["opacity"] for layer in visible.json()["plan"]["layers"]] == [0.0, 1.0]
+
+    for opacity in (-0.01, 1.01):
+        response = _post(client, env, {
+            "aspect": "9:16",
+            "layers": [_layer(opacity=opacity)],
+        })
+        assert response.status_code == 422, response.text
+
+    edge = _post(client, env, {
+        "aspect": "4:5",
+        "layers": [
+            _layer(
+                kind="cta", text="Edge box",
+                box={"width": 1.0, "height": 1.0},
+            ),
+        ],
+    })
+    assert edge.status_code == 200, edge.text
+
+    for box in ({"w": 0.049, "h": 0.2}, {"w": 0.5, "h": 0.029}):
+        response = _post(client, env, {
+            "aspect": "9:16",
+            "layers": [_layer(text="Bad box", box=box)],
+        })
+        assert response.status_code == 422, response.text
+
+
+def test_duplicate_layer_ids_are_rejected(env):
+    client = TestClient(app.app)
+    response = _post(client, env, {
+        "aspect": "9:16",
+        "layers": [
+            _layer(id="hook_a", text="First"),
+            _layer(id="hook_a", text="Second", start=4.0, end=6.0),
+        ],
+    })
+    assert response.status_code == 422
+    assert "Duplicate layer id" in response.json()["detail"]
+
+
+def test_safe_zone_false_is_echoed_but_warnings_stay_advisory(env):
+    client = TestClient(app.app)
+    response = _post(client, env, {
+        "aspect": "9:16",
+        "layers": [
+            _layer(
+                kind="caption", text="Intentional overlap",
+                anchor="center", box={"w": 0.9, "h": 0.5},
+                safe_zone=False,
+            ),
+        ],
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["plan"]["layers"][0]["safe_zone"] is False
+    assert any(item["code"] == "safe_zone" for item in body["warnings"])
 
 
 def test_safe_zone_warning_for_reserved_chrome(env):
@@ -376,7 +503,39 @@ def test_story_context_is_resolved_and_missing_story_is_404(env):
     assert missing.status_code == 404
 
 
-def _store_artifact(env, *, aspect: str = "9:16", story_id: str = "s1") -> str:
+def test_duplicate_story_across_clip_sets_is_409(env):
+    job = _job()
+    job["clip_sets"].append({
+        "id": "cs_2",
+        "stories": [
+            {
+                "id": "s1",
+                "title": "Duplicate story",
+                "dur": 20.0,
+                "start": 10.0,
+                "end": 30.0,
+                "clips": [],
+            },
+        ],
+    })
+    _write_job(env.directory, job)
+    client = TestClient(app.app)
+    response = _post(client, env, {
+        "story_id": "s1",
+        "aspect": "9:16",
+        "layers": [_layer()],
+    })
+    assert response.status_code == 409
+    assert "ambiguous" in response.json()["detail"].lower()
+
+
+def _store_artifact(
+    env,
+    *,
+    aspect: str = "9:16",
+    story_id: str = "s1",
+    legacy: bool = False,
+) -> str:
     plan = {
         "target": 30,
         "clips": [
@@ -390,6 +549,8 @@ def _store_artifact(env, *, aspect: str = "9:16", story_id: str = "s1") -> str:
     spec = artifacts.build_spec(
         env.job, plan, aspect=aspect, cues=[], story_id=story_id,
     )
+    if legacy:
+        spec = replace(spec, story_id="")
     manifest = artifacts.make_manifest(
         env.job_id, spec, status="ready", record_key="30",
     )
@@ -418,6 +579,59 @@ def test_artifact_context_and_aspect_conflict(env):
     assert plan["artifact_id"] == artifact_id
     assert plan["story_id"] == "s1"
     assert plan["duration"] == 30.0
+
+    matched_story = _post(client, env, {
+        "artifact_id": artifact_id,
+        "story_id": "s1",
+        "aspect": "9:16",
+        "layers": [_layer()],
+    })
+    assert matched_story.status_code == 200, matched_story.text
+    assert matched_story.json()["plan"]["story_id"] == "s1"
+
+
+def test_artifact_story_mismatch_is_409(env):
+    artifact_id = _store_artifact(env)
+    job = _job()
+    job["clip_sets"][0]["stories"].append({
+        "id": "s2",
+        "title": "Other story",
+        "dur": 20.0,
+        "start": 10.0,
+        "end": 30.0,
+        "clips": [],
+    })
+    _write_job(env.directory, job)
+    client = TestClient(app.app)
+    conflict = _post(client, env, {
+        "artifact_id": artifact_id,
+        "story_id": "s2",
+        "aspect": "9:16",
+        "layers": [_layer()],
+    })
+    assert conflict.status_code == 409
+    assert "different story" in conflict.json()["detail"].lower()
+
+
+def test_legacy_artifact_cannot_be_verified_against_explicit_story(env):
+    artifact_id = _store_artifact(env, legacy=True)
+    client = TestClient(app.app)
+    conflict = _post(client, env, {
+        "artifact_id": artifact_id,
+        "story_id": "s1",
+        "aspect": "9:16",
+        "layers": [_layer()],
+    })
+    assert conflict.status_code == 409
+    assert "cannot be verified" in conflict.json()["detail"]
+
+    no_context = _post(client, env, {
+        "artifact_id": artifact_id,
+        "aspect": "9:16",
+        "layers": [_layer()],
+    })
+    assert no_context.status_code == 200, no_context.text
+    assert no_context.json()["plan"]["story_id"] is None
 
 
 def test_missing_job_artifact_and_style_anchor_errors(env):

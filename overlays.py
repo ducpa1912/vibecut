@@ -905,19 +905,29 @@ def build_plan(
     chosen_aspect = normalize_aspect(aspect)
 
     artifact_story = ""
+    artifact_spec_story = ""
     artifact_aspect = ""
     if isinstance(artifact, dict):
         spec = artifact.get("spec") if isinstance(artifact.get("spec"), dict) else {}
         artifact_aspect = str(spec.get("aspect") or artifact.get("aspect") or "")
-        artifact_story = str(spec.get("story_id") or artifact.get("story_id") or "")
+        artifact_spec_story = str(spec.get("story_id") or "").strip()
+        artifact_story = artifact_spec_story or str(
+            artifact.get("story_id") or ""
+        ).strip()
         if artifact_aspect and artifact_aspect != chosen_aspect:
             raise OverlayConflict(
                 f"Artifact aspect is {artifact_aspect}, not {chosen_aspect}."
             )
-    if isinstance(story, dict) and artifact_story:
-        story_value = str(story.get("id") or "")
-        if story_value and story_value != artifact_story:
-            raise OverlayConflict("The artifact belongs to a different story.")
+    if isinstance(story, dict):
+        story_value = str(story.get("id") or "").strip()
+        if isinstance(artifact, dict):
+            if not artifact_spec_story:
+                raise OverlayConflict(
+                    "Artifact spec has no story id; explicit story context "
+                    "cannot be verified."
+                )
+            if not story_value or story_value != artifact_spec_story:
+                raise OverlayConflict("The artifact belongs to a different story.")
 
     duration = round(_plan_seconds(story, artifact, job), 3)
     max_end = duration if duration > 0 else MAX_TIMELINE

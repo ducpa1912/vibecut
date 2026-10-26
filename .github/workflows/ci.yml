@@ -28,7 +28,7 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Compile Python
-        run: python -m py_compile app.py pipeline.py render.py vision.py cli.py
+        run: python -m py_compile app.py pipeline.py render.py vision.py cli.py overlays.py routes_overlays.py
 
       - name: Check JavaScript
         run: node --check static/app.js
