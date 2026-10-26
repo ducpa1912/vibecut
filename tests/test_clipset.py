@@ -910,7 +910,9 @@ def test_story_render_validation_and_duplicate_active(api, monkeypatch):
     assert api.post(
         f"/api/jobs/j1/clip-sets/{set_id}/stories/missing/render", json={},
     ).status_code == 404
-    assert api.post(url, json={"target": 45}).status_code == 400
+    assert api.post(url, json={"target": 181}).status_code == 400
+    assert api.post(url, json={"target": 0}).status_code == 400
+    assert api.post(url, json={"target": 45}).status_code == 200
     assert api.post(url, json={"quality": "cinema"}).status_code == 400
     assert api.post(url, json={"aspect": "21:9"}).status_code == 400
 

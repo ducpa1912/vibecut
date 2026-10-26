@@ -5390,7 +5390,9 @@ def render_clip_set_story(
     if story is None:
         raise HTTPException(404, "Story not found in this clip set.")
     body = body or StoryRenderBody()
-    target = 30 if body.target is None else _valid_target(int(body.target))
+    target = 30 if body.target is None else int(body.target)
+    if target < 1 or target > 180:
+        raise HTTPException(400, "Story target must be between 1 and 180 seconds.")
     if body.quality not in ("final", "draft"):
         raise HTTPException(400, "Quality must be final or draft.")
     if body.aspect not in render.ASPECTS:
