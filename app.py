@@ -45,12 +45,14 @@ import exports as cuts
 import history_store
 import job_queue
 import matrix
+import overlays
 import packet
 import pipeline
 import preflight
 import render
 import routes_batches
 import routes_cleanup
+import routes_overlays
 import selection
 import settings_store
 import shares
@@ -3046,6 +3048,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.include_router(admin_routes.router)
 app.include_router(routes_batches.router)
 app.include_router(routes_cleanup.router)
+app.include_router(routes_overlays.router)
 
 
 @app.exception_handler(disk.InsufficientSpace)
@@ -3227,6 +3230,23 @@ async def admin_security_headers(request: Request, call_next):
     for name, value in ADMIN_HEADERS.items():
         response.headers[name] = value
     return response
+
+
+_OVERLAY_ROUTE = re.compile(r"^/api/jobs/[^/]+/overlays(?:/|$)")
+
+
+@app.middleware("http")
+async def gate_overlay_routes(request: Request, call_next):
+    """Hide Flow 2 before FastAPI parses a request body.
+
+    The router also has a dependency gate. This middleware is the outer layer
+    because malformed JSON and wrong content types must return 404, not 422,
+    when the feature is off.
+    """
+
+    if _OVERLAY_ROUTE.match(request.url.path) and not overlays.enabled():
+        return JSONResponse({"detail": "Not found."}, status_code=404)
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------- routes
