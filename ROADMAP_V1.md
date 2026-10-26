@@ -4,6 +4,8 @@
 **Version:** 1.1 · **Date:** 2026-10-26  
 **Related:** [PRD.md](PRD.md) · [PLAN.md](PLAN.md) · [FOUNDER_BRIEF.md](FOUNDER_BRIEF.md) · [round_3.md](round_3.md)
 
+> **Superseded for post-1.0 scope:** [ROADMAP_V2.md](ROADMAP_V2.md) is the CTO rebuild. This file remains the paid-v1 plan and historical record.
+
 ---
 
 ## One page for the founder

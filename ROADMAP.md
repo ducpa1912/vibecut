@@ -10,7 +10,7 @@ Version history, shipped checklist, current plan and future proposal.
 
 Full compressed plan: `~/.opencode/plan/vibecut-plan.md`.
 
-Paid v1 product docs: [PRD.md](PRD.md) · [PLAN.md](PLAN.md) · [ROADMAP_V1.md](ROADMAP_V1.md) · [FOUNDER_BRIEF.md](FOUNDER_BRIEF.md).
+Paid v1 product docs: [PRD.md](PRD.md) · [PLAN.md](PLAN.md) · [ROADMAP_V1.md](ROADMAP_V1.md) · [ROADMAP_V2.md](ROADMAP_V2.md) · [FOUNDER_BRIEF.md](FOUNDER_BRIEF.md) · [round_4.md](round_4.md).
 
 ## Version control
 
