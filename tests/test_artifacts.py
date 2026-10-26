@@ -565,6 +565,116 @@ def test_legacy_renders_projection_stays_in_public_job(env):
 # ---------------------------------------------------------------- QA round 1
 
 
+def test_artifacts_endpoint_adopts_ready_legacy_render_once(env):
+    job = app.load_job(env.job_id)
+    job["analysis"]["plans"] = {"15": plan_for()}
+    renders = env.directory / "renders"
+    renders.mkdir()
+    (renders / "reel_15.mp4").write_bytes(b"legacy-mp4")
+    (renders / "reel_15.jpg").write_bytes(b"legacy-jpg")
+    job["renders"] = {
+        "15:h0": {
+            "status": "ready",
+            "quality": "final",
+            "target": 15,
+            "aspect": "9:16",
+            "captions": False,
+            "audio_sig": "",
+            "hook": 0,
+            "updated": 1.0,
+            "path": "reel_15.mp4",
+            "poster": "reel_15.jpg",
+            "record_key": "15:h0",
+            "key": "legacy",
+        },
+    }
+    app.save_job(job)
+
+    client = TestClient(app.app)
+    first = client.get(f"/api/jobs/{env.job_id}/artifacts")
+    assert first.status_code == 200
+    body = first.json()
+    assert len(body["adopted"]) == 1
+    adopted = body["adopted"][0]
+    artifact_id = adopted["artifact_id"]
+    assert body["adopted_ids"] == [artifact_id]
+    assert body["artifact_ids"] == [artifact_id]
+    assert body["artifacts"][0]["source_fingerprint"]
+
+    manifest = artifacts.load_manifest(env.directory, artifact_id)
+    assert manifest is not None
+    assert manifest["status"] == "ready"
+    assert manifest["spec"]["target"] == 15
+    assert artifacts.has_media(env.directory, artifact_id, "reel.mp4")
+    stored = app.load_job(env.job_id)
+    assert stored["renders"]["15:h0"]["artifact_id"] == artifact_id
+    assert stored["artifacts"][artifact_id]["status"] == "ready"
+
+    second = client.get(f"/api/jobs/{env.job_id}/artifacts")
+    assert second.status_code == 200
+    again = second.json()
+    assert again["adopted"] == []
+    assert again["adopted_ids"] == []
+    assert again["artifact_ids"] == [artifact_id]
+    assert len(artifacts.list_manifests(env.directory)) == 1
+    assert app.load_job(env.job_id)["renders"]["15:h0"]["artifact_id"] == (
+        artifact_id
+    )
+
+
+def test_artifacts_endpoint_ignores_unready_and_failed_legacy_renders(env):
+    job = app.load_job(env.job_id)
+    job["analysis"]["plans"] = {
+        "30": plan_for(target=30),
+        "60": plan_for(target=60),
+    }
+    renders = env.directory / "renders"
+    renders.mkdir()
+    (renders / "reel_30.mp4").write_bytes(b"unfinished")
+    (renders / "reel_60.mp4").write_bytes(b"failed")
+    job["renders"] = {
+        "30:h0": {
+            "status": "rendering",
+            "quality": "final",
+            "target": 30,
+            "aspect": "9:16",
+            "hook": 0,
+            "path": "reel_30.mp4",
+            "record_key": "30:h0",
+        },
+        "60:h0": {
+            "status": "failed",
+            "quality": "final",
+            "target": 60,
+            "aspect": "9:16",
+            "hook": 0,
+            "path": "reel_60.mp4",
+            "record_key": "60:h0",
+            "error": "ffmpeg failed",
+        },
+        "15:h0": {
+            "status": "ready",
+            "quality": "final",
+            "target": 15,
+            "aspect": "9:16",
+            "hook": 0,
+            "path": "missing.mp4",
+            "record_key": "15:h0",
+        },
+    }
+    before = copy.deepcopy(job["renders"])
+    app.save_job(job)
+
+    response = TestClient(app.app).get(f"/api/jobs/{env.job_id}/artifacts")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["adopted"] == []
+    assert body["artifact_ids"] == []
+    assert body["artifacts"] == []
+    assert artifacts.list_manifests(env.directory) == []
+    assert app.load_job(env.job_id)["renders"] == before
+
+
 def test_adoption_does_not_overwrite_existing_pinned_manifest(env):
     job = app.load_job(env.job_id)
     plan = plan_for()
