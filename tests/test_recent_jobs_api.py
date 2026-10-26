@@ -91,7 +91,7 @@ def test_failed_recent_cut_can_be_deleted(api):
     assert response.status_code == 200
     assert response.json() == {"deleted": "fail2"}
     assert not directory.exists()
-    assert api.get("/api/jobs").json() == {"jobs": []}
+    assert api.get("/api/jobs").json()["jobs"] == []
 
 
 def test_downloading_recent_cut_delete_is_blocked(api):

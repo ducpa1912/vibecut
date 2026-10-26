@@ -580,6 +580,84 @@ def list_manifests(job_dir: str | Path) -> list[dict]:
     return result
 
 
+def version_group(manifest: dict) -> str:
+    """Versions count per story and aspect; legacy cuts group by target."""
+    spec = manifest.get("spec") or {}
+    story = str(manifest.get("story_id") or spec.get("story_id") or "")
+    aspect = str(manifest.get("aspect") or spec.get("aspect") or "9:16")
+    if story:
+        return f"story:{story}|{aspect}"
+    target = manifest.get("target") or spec.get("target") or 0
+    return f"target:{int(target or 0)}|{aspect}"
+
+
+def assign_version(job_dir: str | Path, manifest: dict) -> dict:
+    """Stamp a new manifest with the next monotonic ``v{n}`` in its group.
+
+    ``supersedes`` names the newest earlier artifact in the group. Existing
+    artifacts are never renumbered or rewritten.
+    """
+    if manifest.get("version"):
+        return manifest
+    group = version_group(manifest)
+    prior = [
+        item for item in list_manifests(job_dir)
+        if item.get("artifact_id") != manifest.get("artifact_id")
+        and version_group(item) == group
+    ]
+    highest = max((int(item.get("version") or 0) for item in prior), default=0)
+    manifest["version"] = max(highest, len(prior)) + 1
+    manifest["version_group"] = group
+    latest = max(prior, key=lambda item: float(item.get("created") or 0), default=None)
+    manifest["supersedes"] = str(latest.get("artifact_id")) if latest else None
+    return manifest
+
+
+def version_info(job_dir: str | Path, manifest: dict) -> dict:
+    """Label an artifact against its group: ``v2 · current`` or superseded."""
+    group = version_group(manifest)
+    artifact = str(manifest.get("artifact_id") or "")
+    version = int(manifest.get("version") or 0)
+    ready = [
+        item for item in list_manifests(job_dir)
+        if version_group(item) == group and item.get("status") == "ready"
+    ]
+    newer = [
+        item for item in ready
+        if item.get("artifact_id") != artifact
+        and float(item.get("created") or 0) > float(manifest.get("created") or 0)
+    ]
+    current = (
+        max(ready, key=lambda item: float(item.get("created") or 0))
+        if ready else None
+    )
+    superseded_by = (
+        min(newer, key=lambda item: float(item.get("created") or 0)) if newer else None
+    )
+    label = f"v{version}" if version else "v?"
+    is_current = bool(current and current.get("artifact_id") == artifact)
+    if is_current:
+        label += " · current"
+    elif superseded_by is not None:
+        when = time.strftime("%-d %b", time.localtime(float(superseded_by.get("created") or 0)))
+        label += f" · superseded by v{int(superseded_by.get('version') or 0) or '?'} on {when}"
+    return {
+        "version": version or None,
+        "label": label,
+        "current": is_current,
+        "supersedes": manifest.get("supersedes"),
+        "superseded_by": (
+            {
+                "artifact_id": superseded_by.get("artifact_id"),
+                "version": superseded_by.get("version"),
+                "created": superseded_by.get("created"),
+            }
+            if superseded_by is not None else None
+        ),
+        "current_artifact_id": current.get("artifact_id") if current else None,
+    }
+
+
 def refresh_index(job_dir: str | Path) -> dict:
     """Rebuild and atomically write the per-job artifact index."""
     with LOCK:

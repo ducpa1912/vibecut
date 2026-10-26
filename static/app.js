@@ -305,6 +305,7 @@
   init();
 
   function init() {
+    syncTokenCookie();
     bind();
     updateUrlState();
     loadHealth();
@@ -900,6 +901,7 @@
       const supplied = window.prompt("VibeCut token");
       if (supplied) {
         try { localStorage.setItem("vibecut_token", supplied.trim()); } catch (_) { /* ignore */ }
+        syncTokenCookie();
         config.__retried = true;
         return api(path, config);
       }
@@ -930,10 +932,17 @@
     try { return localStorage.getItem("vibecut_token") || ""; } catch (_) { return ""; }
   }
 
-  function withToken(url) {
+  // Media elements cannot send headers. The token rides in a SameSite=Strict
+  // cookie the server accepts for reads only; it never goes in a URL.
+  function syncTokenCookie() {
     const token = tokenValue();
-    if (!token || !url) return url;
-    return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+    const value = token ? encodeURIComponent(token) : "";
+    const expiry = token ? "" : "; Max-Age=0";
+    document.cookie = `vibecut_token=${value}; Path=/; SameSite=Strict${expiry}`;
+  }
+
+  function withToken(url) {
+    return url;
   }
 
   function uploadFile(file, options, onProgress) {
@@ -3912,11 +3921,9 @@
 
   function exportCut(kind) {
     if (!state.job) return;
-    const token = tokenValue();
     const url = `/api/jobs/${state.job.id}/export/${kind}?target=${state.target}`
       + `&order=${encodeURIComponent(state.order)}`
-      + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : "")
-      + (token ? `&token=${encodeURIComponent(token)}` : "");
+      + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : "");
     window.open(url, "_blank");
   }
 

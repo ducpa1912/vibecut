@@ -15,14 +15,14 @@
       <p id="auth-note" class="muted">Local admin only. No signup.</p>
 
       <form id="login-form" class="auth-form">
-        <label>Email <input id="login-email" type="email" autocomplete="username" required></label>
+        <input id="login-account" type="text" name="username" value="admin" autocomplete="username" hidden>
         <label>Password <input id="login-password" type="password" autocomplete="current-password" required></label>
         <button class="primary" type="submit">Sign in</button>
         <p id="login-error" class="error" hidden></p>
       </form>
 
       <form id="bootstrap-form" class="auth-form" hidden>
-        <label>Admin email <input id="bootstrap-email" type="email" autocomplete="username" required></label>
+        <input id="bootstrap-account" type="text" name="username" value="admin" autocomplete="username" hidden>
         <label>Password <input id="bootstrap-password" type="password" autocomplete="new-password" minlength="12" required></label>
         <label>Confirm password <input id="bootstrap-confirm" type="password" autocomplete="new-password" minlength="12" required></label>
         <button class="primary" type="submit">Create admin</button>
@@ -44,7 +44,7 @@
         <button type="button" data-tab="access">Access</button>
       </nav>
       <div class="admin-account">
-        <span id="admin-email"></span>
+        <span id="admin-account"></span>
         <button id="logout" class="ghost small" type="button">Sign out</button>
       </div>
     </header>
@@ -111,9 +111,8 @@
         <p class="lede">One local admin account. No signup, no user accounts, no additional admins.</p>
         <div class="split">
           <section class="panel">
-            <h2>Email and password</h2>
+            <h2>Password</h2>
             <form id="account-form" class="auth-form">
-              <label>Admin email <input id="account-email" type="email" required></label>
               <label>Current password <input id="account-current" type="password" autocomplete="current-password" required></label>
               <label>New password <span class="muted">(leave blank to keep)</span><input id="account-new" type="password" autocomplete="new-password" minlength="12"></label>
               <button class="primary" type="submit">Save account</button>

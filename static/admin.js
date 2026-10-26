@@ -5,7 +5,7 @@
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const state = {
     csrf: "",
-    email: "",
+    account: "",
     workflows: null,
     providerMeta: {},
     catalogs: {},
@@ -73,8 +73,8 @@
 
   function saveSession(data) {
     state.csrf = String(data.csrf || "");
-    state.email = String(data.email || "");
-    $("#admin-email").textContent = state.email;
+    state.account = String(data.account || "admin");
+    $("#admin-account").textContent = state.account;
   }
 
   async function init() {
@@ -179,7 +179,7 @@
       0,
     );
     const cards = [
-      [data.email, "signed in"],
+      [data.account || "admin", "signed in"],
       [`${configured} / ${(data.keys || []).length}`, "AI keys configured"],
       [routeCount, `model routes · ${Object.keys(workflows).length} workflows`],
       [`${(data.pipeline || []).length}`, "recent model calls"],
@@ -697,7 +697,7 @@
   }
 
   function loadAccess() {
-    $("#account-email").value = state.email;
+    $("#account-current").value = "";
   }
 
   function bind() {
@@ -708,7 +708,7 @@
       try {
         const data = await api("/login", {
           method: "POST",
-          body: { email: $("#login-email").value, password: $("#login-password").value },
+          body: { password: $("#login-password").value },
         });
         saveSession(data);
         showApp();
@@ -726,7 +726,7 @@
       try {
         const data = await api("/bootstrap", {
           method: "POST",
-          body: { email: $("#bootstrap-email").value, password: $("#bootstrap-password").value },
+          body: { password: $("#bootstrap-password").value },
         });
         saveSession(data);
         showApp();
@@ -739,7 +739,6 @@
     $("#logout").addEventListener("click", async () => {
       try { await api("/logout", { method: "POST" }); } catch (_) { /* already gone */ }
       state.csrf = "";
-      $("#login-email").value = "";
       $("#login-password").value = "";
       showLogin();
     });
@@ -773,13 +772,12 @@
           method: "POST",
           noAuthRedirect: true,
           body: {
-            email: $("#account-email").value,
             current_password: $("#account-current").value,
             new_password: $("#account-new").value,
           },
         });
-        state.email = data.email;
-        $("#admin-email").textContent = state.email;
+        state.account = String(data.account || "admin");
+        $("#admin-account").textContent = state.account;
         $("#account-current").value = "";
         $("#account-new").value = "";
         toast("Account updated.");
