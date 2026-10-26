@@ -50,6 +50,7 @@ import pipeline
 import preflight
 import render
 import routes_batches
+import routes_cleanup
 import selection
 import settings_store
 import shares
@@ -2713,6 +2714,7 @@ app = FastAPI(title="VibeCut", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.include_router(admin_routes.router)
 app.include_router(routes_batches.router)
+app.include_router(routes_cleanup.router)
 
 
 @app.exception_handler(disk.InsufficientSpace)
