@@ -333,10 +333,14 @@ def _resolve_retry_story_identity(
     """
     rows = _clip_set_story_rows(app, job)
     story_ids = {row[1] for row in rows}
-    job_id = str(job.get("id") or "")
+    ignored = {
+        str(job.get("id") or ""),
+        str(job.get("story_id") or ""),
+    }
+    ignored.discard("")
     key_matches = [
         story_id for story_id in _story_key_matches(record_key, story_ids)
-        if story_id != job_id
+        if story_id not in ignored
     ]
     if len(key_matches) > 1:
         raise HTTPException(
@@ -345,15 +349,15 @@ def _resolve_retry_story_identity(
             "its record key matches more than one story.",
         )
     key_story = key_matches[0] if key_matches else _story_id_from_record_key(record_key)
-    if key_story == job_id:
-        # A legacy recovery could write the job id into the key as a fake
-        # story suffix. It is never a story identity.
+    if key_story in ignored:
+        # A legacy recovery could write the job id or job-level story id into
+        # the key as a fake story suffix. It is never a story identity.
         key_story = None
     explicit_story = str(
         record.get("story_id") or snapshot.get("story_id") or ""
     )
-    if explicit_story and explicit_story == job_id:
-        # Older recovery wrote the job id where build_spec fell back to it.
+    if explicit_story in ignored:
+        # Older recovery wrote a job-level fallback where build_spec used it.
         # That is not a story identity.
         explicit_story = ""
     explicit_set = str(record.get("set_id") or snapshot.get("set_id") or "")
@@ -507,13 +511,16 @@ def _retry_renders(app, job: dict) -> int:
         snapshot = _retry_snapshot(record)
         clips = _retry_snapshot_clips(record)
         job_id = str(job.get("id") or "")
+        job_story = str(job.get("story_id") or "")
+        ignored = {job_id, job_story}
+        ignored.discard("")
         raw_explicit_story = str(
             record.get("story_id") or snapshot.get("story_id") or ""
         )
         raw_key_story = _story_id_from_record_key(str(record_key))
         legacy_fake_story = bool(
-            job_id
-            and job_id in {raw_explicit_story, raw_key_story}
+            ignored
+            and (raw_explicit_story in ignored or raw_key_story in ignored)
         )
         story_id, set_id, is_story = _resolve_retry_story_identity(
             app, job, str(record_key), record, target, snapshot, clips,

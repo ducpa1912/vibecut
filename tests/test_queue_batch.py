@@ -1622,6 +1622,76 @@ def test_legacy_fake_job_story_key_retries_as_normal(data_env, monkeypatch):
     assert record["plan_snapshot"]["auto"] is True
 
 
+def test_legacy_fake_job_level_story_key_retries_as_normal(
+    data_env, monkeypatch,
+):
+    job_id = "legacy-job"
+    job_story = "legacy-job-story"
+    source = data_env / "fake-job-story.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    old_key = f"30:s{job_story}"
+    write_job(
+        app.JOBS,
+        job_id,
+        source={"path": str(source), "name": "source.mp4"},
+        story_id=job_story,
+        clip_sets={
+            "cs_other": {
+                "id": "cs_other",
+                "stories": [{
+                    "id": "st_other",
+                    "dur": 20.0,
+                    "clips": [{
+                        "scene": 0, "start": 0.0, "end": 4.0,
+                        "dur": 4.0, "role": "beat",
+                    }],
+                }],
+            },
+        },
+        renders={
+            old_key: {
+                "status": "failed",
+                "target": 30,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "story_id": job_story,
+                "record_key": old_key,
+                "plan_snapshot": {
+                    "target": 30,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": False,
+                    "clips": clips,
+                    "story_id": job_story,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job(job_id),
+    )
+    assert analysis is False
+    assert renders == 1
+    latest = app.load_job(job_id)["renders"]
+    assert "30" in latest
+    assert old_key not in latest
+    assert not any(key.endswith(f":s{job_story}") for key in latest)
+    record = latest["30"]
+    assert record["status"] == "queued"
+    assert record["record_key"] == "30"
+    assert not record.get("story_id")
+    assert not record.get("set_id")
+    assert not record["plan_snapshot"].get("story_id")
+    assert not record["plan_snapshot"].get("set_id")
+    assert record["plan_snapshot"]["auto"] is True
+
+
 def test_legacy_story_snapshot_defaults_auto_false(data_env, monkeypatch):
     source = data_env / "legacy-story-auto.mp4"
     source.write_bytes(b"x")
