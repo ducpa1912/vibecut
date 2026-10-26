@@ -1238,6 +1238,926 @@ def test_app_imports_after_stdlib_queue(tmp_path):
     assert "Scheduler" in result.stdout
 
 
+def _story_retry_clip(scene: int = 0) -> dict:
+    return {
+        "scene": scene, "start": 0.0, "end": 8.0, "dur": 8.0, "role": "hook",
+    }
+
+
+def _story_retry_scene(scene: int = 0) -> dict:
+    return {
+        "id": scene, "start": 0.0, "end": 8.0, "dur": 8.0, "deep": True,
+        "speech": "A story line for retry.", "crop": {"cx": 0.5, "cy": 0.5},
+    }
+
+
+def test_story_retry_preserves_auto_true_snapshot_clips(data_env, monkeypatch):
+    source = data_env / "auto-story.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    key = app._render_key(
+        37, "final", "9:16", False, "", None, story_id="st_auto",
+    )
+    write_job(
+        app.JOBS,
+        "auto-story",
+        source={"path": str(source), "name": "source.mp4"},
+        analysis={
+            "scene_count": 1, "scenes": [_story_retry_scene()], "hook_scene": 0,
+        },
+        renders={
+            key: {
+                "status": "failed",
+                "target": 37,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "story_id": "st_auto",
+                "record_key": key,
+                "attempts": 1,
+                "plan_snapshot": {
+                    "target": 37,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": True,
+                    "clips": clips,
+                    "story_id": "st_auto",
+                    "set_id": None,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+
+    def fail_default(*args, **kwargs):
+        raise AssertionError("story retry must not rebuild a default plan")
+
+    monkeypatch.setattr(app, "_plan_for_body", fail_default)
+
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("auto-story"),
+    )
+    assert analysis is False
+    assert renders == 1
+    record = app.load_job("auto-story")["renders"][key]
+    assert record["status"] == "queued"
+    assert record["plan_snapshot"]["auto"] is True
+    assert record["plan_snapshot"]["clips"] == clips
+    assert record["story_id"] == "st_auto"
+
+
+def test_story_retry_missing_snapshot_is_rejected(data_env):
+    source = data_env / "missing-snapshot.mp4"
+    source.write_bytes(b"x")
+    key = app._render_key(
+        37, "final", "9:16", False, "", 0, story_id="st_missing",
+    )
+    write_job(
+        app.JOBS,
+        "missing-snapshot",
+        source={"path": str(source), "name": "source.mp4"},
+        renders={
+            key: {
+                "status": "failed",
+                "target": 37,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "story_id": "st_missing",
+                "record_key": key,
+            },
+        },
+    )
+    with pytest.raises(app.HTTPException) as caught:
+        routes_batches._retry_job(app, app.load_job("missing-snapshot"))
+    assert caught.value.status_code == 409
+    assert "plan clips are missing" in caught.value.detail
+
+
+def test_story_retry_missing_caption_track_is_rejected(data_env):
+    source = data_env / "missing-track.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    key = app._render_key(
+        37, "final", "9:16", True, "", 0, story_id="st_track",
+    )
+    write_job(
+        app.JOBS,
+        "missing-track",
+        source={"path": str(source), "name": "source.mp4"},
+        renders={
+            key: {
+                "status": "failed",
+                "target": 37,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": True,
+                "story_id": "st_track",
+                "record_key": key,
+                "caption_track_id": "cap_missing",
+                "plan_snapshot": {
+                    "target": 37,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": False,
+                    "clips": clips,
+                    "story_id": "st_track",
+                    "set_id": None,
+                },
+            },
+        },
+    )
+    with pytest.raises(app.HTTPException) as caught:
+        routes_batches._retry_job(app, app.load_job("missing-track"))
+    assert caught.value.status_code == 409
+    assert "caption track" in caught.value.detail.lower()
+
+
+def test_story_retry_infers_legacy_identity_from_key_and_clip_set(
+    data_env, monkeypatch,
+):
+    source = data_env / "legacy-story.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    set_id = "cs_legacy"
+    story_id = "st_legacy"
+    key = app._render_key(
+        37, "final", "9:16", False, "", 0, story_id=story_id,
+    )
+    write_job(
+        app.JOBS,
+        "legacy-story",
+        source={"path": str(source), "name": "source.mp4"},
+        analysis={
+            "scene_count": 1, "scenes": [_story_retry_scene()], "hook_scene": 0,
+        },
+        clip_sets={
+            set_id: {
+                "id": set_id,
+                "stories": [{
+                    "id": story_id,
+                    "dur": 37.0,
+                    "clips": clips,
+                }],
+            },
+        },
+        renders={
+            key: {
+                "status": "failed",
+                "target": 37,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "record_key": key,
+                "attempts": 1,
+                "plan_snapshot": {
+                    "target": 37,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": False,
+                    "clips": clips,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("legacy-story"),
+    )
+    assert analysis is False
+    assert renders == 1
+    record = app.load_job("legacy-story")["renders"][key]
+    assert record["status"] == "queued"
+    assert record["story_id"] == story_id
+    assert record["set_id"] == set_id
+    assert record["plan_snapshot"]["story_id"] == story_id
+    assert record["plan_snapshot"]["set_id"] == set_id
+    assert record["plan_snapshot"]["clips"] == clips
+
+
+def test_story_retry_missing_identity_is_rejected(data_env):
+    source = data_env / "anonymous-story.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    key = "37:final"
+    write_job(
+        app.JOBS,
+        "anonymous-story",
+        source={"path": str(source), "name": "source.mp4"},
+        renders={
+            key: {
+                "status": "failed",
+                "target": 37,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "record_key": key,
+                "plan_snapshot": {
+                    "target": 37,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": False,
+                    "clips": clips,
+                },
+            },
+        },
+    )
+    with pytest.raises(app.HTTPException) as caught:
+        routes_batches._retry_job(app, app.load_job("anonymous-story"))
+    assert caught.value.status_code == 409
+    assert "identity is missing" in caught.value.detail
+
+
+def test_normal_retry_does_not_reclassify_identical_story_clip(
+    data_env, monkeypatch,
+):
+    source = data_env / "normal-retry.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    write_job(
+        app.JOBS,
+        "normal-retry",
+        source={"path": str(source), "name": "source.mp4"},
+        clip_sets={
+            "cs_same": {
+                "id": "cs_same",
+                "stories": [{
+                    "id": "st_same",
+                    "dur": 30.0,
+                    "clips": clips,
+                }],
+            },
+        },
+        renders={
+            "30": {
+                "status": "failed",
+                "target": 30,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "record_key": "30",
+                "plan_snapshot": {
+                    "target": 30,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": True,
+                    "clips": clips,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("normal-retry"),
+    )
+    assert analysis is False
+    assert renders == 1
+    latest = app.load_job("normal-retry")["renders"]
+    assert "30" in latest
+    assert not any(key.endswith(":sst_same") for key in latest)
+    record = latest["30"]
+    assert record["status"] == "queued"
+    assert record["record_key"] == "30"
+    assert not record.get("story_id")
+    assert not record["plan_snapshot"].get("story_id")
+    assert record["plan_snapshot"]["auto"] is True
+
+
+def test_legacy_retry_snapshot_defaults_auto_true(data_env, monkeypatch):
+    source = data_env / "legacy-auto.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    write_job(
+        app.JOBS,
+        "legacy-auto",
+        source={"path": str(source), "name": "source.mp4"},
+        renders={
+            "30": {
+                "status": "failed",
+                "target": 30,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "record_key": "30",
+                "plan_snapshot": {
+                    "target": 30,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "clips": clips,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("legacy-auto"),
+    )
+    assert analysis is False
+    assert renders == 1
+    record = app.load_job("legacy-auto")["renders"]["30"]
+    assert record["status"] == "queued"
+    assert record["record_key"] == "30"
+    assert record["plan_snapshot"]["auto"] is True
+    assert not record.get("story_id")
+
+
+def test_legacy_fake_job_story_key_retries_as_normal(data_env, monkeypatch):
+    job_id = "fakejob"
+    source = data_env / "fake-story.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    old_key = f"30:s{job_id}"
+    write_job(
+        app.JOBS,
+        job_id,
+        source={"path": str(source), "name": "source.mp4"},
+        renders={
+            old_key: {
+                "status": "failed",
+                "target": 30,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "story_id": job_id,
+                "record_key": old_key,
+                "plan_snapshot": {
+                    "target": 30,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": False,
+                    "clips": clips,
+                    "story_id": job_id,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job(job_id),
+    )
+    assert analysis is False
+    assert renders == 1
+    latest = app.load_job(job_id)["renders"]
+    assert "30" in latest
+    assert old_key not in latest
+    record = latest["30"]
+    assert record["status"] == "queued"
+    assert record["record_key"] == "30"
+    assert not record.get("story_id")
+    assert not record["plan_snapshot"].get("story_id")
+    assert record["plan_snapshot"]["auto"] is True
+
+
+def test_legacy_fake_job_level_story_key_retries_as_normal(
+    data_env, monkeypatch,
+):
+    job_id = "legacy-job"
+    job_story = "legacy-job-story"
+    source = data_env / "fake-job-story.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    old_key = f"30:s{job_story}"
+    write_job(
+        app.JOBS,
+        job_id,
+        source={"path": str(source), "name": "source.mp4"},
+        story_id=job_story,
+        clip_sets={
+            "cs_other": {
+                "id": "cs_other",
+                "stories": [{
+                    "id": "st_other",
+                    "dur": 20.0,
+                    "clips": [{
+                        "scene": 0, "start": 0.0, "end": 4.0,
+                        "dur": 4.0, "role": "beat",
+                    }],
+                }],
+            },
+        },
+        renders={
+            old_key: {
+                "status": "failed",
+                "target": 30,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "story_id": job_story,
+                "record_key": old_key,
+                "plan_snapshot": {
+                    "target": 30,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": False,
+                    "clips": clips,
+                    "story_id": job_story,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job(job_id),
+    )
+    assert analysis is False
+    assert renders == 1
+    latest = app.load_job(job_id)["renders"]
+    assert "30" in latest
+    assert old_key not in latest
+    assert not any(key.endswith(f":s{job_story}") for key in latest)
+    record = latest["30"]
+    assert record["status"] == "queued"
+    assert record["record_key"] == "30"
+    assert not record.get("story_id")
+    assert not record.get("set_id")
+    assert not record["plan_snapshot"].get("story_id")
+    assert not record["plan_snapshot"].get("set_id")
+    assert record["plan_snapshot"]["auto"] is True
+
+
+def test_legacy_story_snapshot_defaults_auto_false(data_env, monkeypatch):
+    source = data_env / "legacy-story-auto.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    story_id = "st_legacy_auto"
+    key = app._render_key(
+        37, "final", "9:16", False, "", 0, story_id=story_id,
+    )
+    write_job(
+        app.JOBS,
+        "legacy-story-auto",
+        source={"path": str(source), "name": "source.mp4"},
+        renders={
+            key: {
+                "status": "failed",
+                "target": 37,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "story_id": story_id,
+                "record_key": key,
+                "plan_snapshot": {
+                    "target": 37,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "clips": clips,
+                    "story_id": story_id,
+                    "set_id": None,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("legacy-story-auto"),
+    )
+    assert analysis is False
+    assert renders == 1
+    latest = app.load_job("legacy-story-auto")["renders"]
+    assert key in latest
+    record = latest[key]
+    assert record["status"] == "queued"
+    assert record["plan_snapshot"]["auto"] is False
+    assert record["story_id"] == story_id
+    assert record["plan_snapshot"]["story_id"] == story_id
+
+
+def test_story_retry_ambiguous_clip_set_identity_is_rejected(data_env):
+    source = data_env / "ambiguous-story.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    story_id = "st_dupe"
+    key = app._render_key(
+        37, "final", "9:16", False, "", 0, story_id=story_id,
+    )
+    story = {"id": story_id, "dur": 37.0, "clips": clips}
+    write_job(
+        app.JOBS,
+        "ambiguous-story",
+        source={"path": str(source), "name": "source.mp4"},
+        clip_sets={
+            "cs_one": {"id": "cs_one", "stories": [dict(story)]},
+            "cs_two": {"id": "cs_two", "stories": [dict(story)]},
+        },
+        renders={
+            key: {
+                "status": "failed",
+                "target": 37,
+                "quality": "final",
+                "aspect": "9:16",
+                "captions": False,
+                "record_key": key,
+                "plan_snapshot": {
+                    "target": 37,
+                    "hook_scene": 0,
+                    "order": "source",
+                    "auto": False,
+                    "clips": clips,
+                },
+            },
+        },
+    )
+    with pytest.raises(app.HTTPException) as caught:
+        routes_batches._retry_job(app, app.load_job("ambiguous-story"))
+    assert caught.value.status_code == 409
+    assert "ambiguous" in caught.value.detail
+
+
+def test_recover_reconciles_orphan_story_manifest_into_retryable_record(data_env, monkeypatch):
+    source = data_env / "source.mp4"
+    source.write_bytes(b"x")
+    scenes = [{
+        "id": 0, "start": 0.0, "end": 8.0, "dur": 8.0, "deep": True,
+        "speech": "Story line for recovery.", "crop": {"cx": 0.5, "cy": 0.5},
+    }]
+    write_job(
+        app.JOBS,
+        "orphan-story",
+        source={"path": str(source), "name": "source.mp4"},
+        analysis={"scene_count": 1, "scenes": scenes, "hook_scene": 0},
+    )
+    job = app.load_job("orphan-story")
+    plan = {
+        "target": 37,
+        "total": 8.0,
+        "hook_scene": 0,
+        "auto": False,
+        "clips": [{
+            "scene": 0, "start": 0.0, "end": 8.0, "dur": 8.0, "role": "hook",
+        }],
+        "story_id": "story-37",
+    }
+    spec = artifacts.build_spec(
+        job, plan, quality="draft", aspect="4:5", captions=False,
+        story_id="story-37",
+    )
+    artifact = artifacts.artifact_id(spec)
+    key = app._render_key(
+        37, "draft", "4:5", False, "", 0, story_id="story-37",
+    )
+    manifest = artifacts.make_manifest(
+        "orphan-story", spec, status="queued", record_key=key,
+    )
+    artifacts.save_manifest(app._job_dir("orphan-story"), manifest)
+
+    app.recover_jobs()
+
+    recovered = app.load_job("orphan-story")["renders"][key]
+    assert recovered["status"] == "interrupted"
+    assert recovered["recoverable"] is True
+    assert recovered["recovered_from_manifest"] is True
+    assert recovered["artifact_id"] == artifact
+    assert recovered["target"] == 37
+    assert recovered["quality"] == "draft"
+    assert recovered["aspect"] == "4:5"
+    assert recovered["story_id"] == "story-37"
+    assert recovered["plan_snapshot"]["story_id"] == "story-37"
+    assert recovered["plan_snapshot"]["clips"] == plan["clips"]
+    assert artifacts.load_manifest(
+        app._job_dir("orphan-story"), artifact,
+    )["status"] == "interrupted"
+
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("orphan-story"),
+    )
+    assert analysis is False
+    assert renders == 1
+    assert len(submitted) == 1
+    retried = app.load_job("orphan-story")["renders"][key]
+    assert retried["status"] == "queued"
+    assert retried["artifact_id"] == artifact
+    assert retried["target"] == 37
+    assert retried["aspect"] == "4:5"
+    assert retried["story_id"] == "story-37"
+    assert retried["plan_snapshot"]["story_id"] == "story-37"
+    stored = artifacts.load_manifest(app._job_dir("orphan-story"), artifact)
+    assert stored["status"] == "queued"
+    assert stored["spec"]["target"] == 37
+    assert stored["spec"]["aspect"] == "4:5"
+    assert stored["spec"]["story_id"] == "story-37"
+
+
+def test_recover_auto_plan_with_clip_set_stays_non_story(data_env, monkeypatch):
+    source = data_env / "auto-recover.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    write_job(
+        app.JOBS,
+        "auto-recover",
+        source={"path": str(source), "name": "source.mp4"},
+        analysis={
+            "scene_count": 1, "scenes": [_story_retry_scene()], "hook_scene": 0,
+        },
+        clip_sets={
+            "cs_other": {
+                "id": "cs_other",
+                "stories": [{
+                    "id": "st_other",
+                    "dur": 20.0,
+                    "clips": [{
+                        "scene": 0, "start": 0.0, "end": 4.0,
+                        "dur": 4.0, "role": "beat",
+                    }],
+                }],
+            },
+        },
+    )
+    job = app.load_job("auto-recover")
+    plan = {
+        "target": 30,
+        "total": 8.0,
+        "hook_scene": 0,
+        "auto": True,
+        "clips": clips,
+    }
+    spec = artifacts.build_spec(
+        job, plan, quality="final", aspect="9:16", captions=False, clips=clips,
+    )
+    assert spec.payload()["story_id"] == job["id"]
+    assert spec.payload()["hook_override"] is False
+    artifact = artifacts.artifact_id(spec)
+    key = app._render_key(30, "final", "9:16", False, "", None)
+    manifest = artifacts.make_manifest(
+        "auto-recover", spec, status="queued",
+    )
+    artifacts.save_manifest(app._job_dir("auto-recover"), manifest)
+
+    app.recover_jobs()
+
+    recovered = app.load_job("auto-recover")["renders"][key]
+    assert recovered["status"] == "interrupted"
+    assert recovered["recoverable"] is True
+    assert not recovered.get("story_id")
+    assert not recovered.get("set_id")
+    assert recovered["plan_snapshot"]["auto"] is True
+    assert not recovered["plan_snapshot"].get("story_id")
+    assert recovered["artifact_id"] == artifact
+
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("auto-recover"),
+    )
+    assert analysis is False
+    assert renders == 1
+    latest = app.load_job("auto-recover")["renders"]
+    assert key in latest
+    assert not any(value.endswith(f":s{job['id']}") for value in latest)
+    retried = latest[key]
+    assert retried["status"] == "queued"
+    assert retried["artifact_id"] == artifact
+    assert not retried.get("story_id")
+    assert retried["plan_snapshot"]["auto"] is True
+    stored = artifacts.load_manifest(app._job_dir("auto-recover"), artifact)
+    assert stored["status"] == "queued"
+    assert stored["spec"]["story_id"] == job["id"]
+    assert stored["spec"]["hook_override"] is False
+
+
+def test_recover_ignores_job_level_story_fallback(data_env):
+    source = data_env / "job-level-recover.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    write_job(
+        app.JOBS,
+        "job-level-recover",
+        source={"path": str(source), "name": "source.mp4"},
+        story_id="legacy-job-story",
+        analysis={
+            "scene_count": 1, "scenes": [_story_retry_scene()], "hook_scene": 0,
+        },
+    )
+    job = app.load_job("job-level-recover")
+    assert job["story_id"] == "legacy-job-story"
+    plan = {
+        "target": 30,
+        "total": 8.0,
+        "hook_scene": 0,
+        "auto": True,
+        "clips": clips,
+    }
+    spec = artifacts.build_spec(
+        job, plan, quality="final", aspect="9:16", captions=False, clips=clips,
+    )
+    assert spec.payload()["story_id"] == "legacy-job-story"
+    artifact = artifacts.artifact_id(spec)
+    manifest = artifacts.make_manifest(
+        "job-level-recover", spec, status="queued",
+    )
+    artifacts.save_manifest(app._job_dir("job-level-recover"), manifest)
+
+    app.recover_jobs()
+
+    latest = app.load_job("job-level-recover")["renders"]
+    assert "30" in latest
+    assert not any(key.endswith(":slegacy-job-story") for key in latest)
+    record = latest["30"]
+    assert record["status"] == "interrupted"
+    assert record["recoverable"] is True
+    assert not record.get("story_id")
+    assert not record.get("set_id")
+    assert record["plan_snapshot"]["auto"] is True
+    assert record["plan_snapshot"]["story_id"] is None
+    assert record["artifact_id"] == artifact
+
+
+def test_recover_derives_real_story_record_key(data_env):
+    source = data_env / "real-story-recover.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    write_job(
+        app.JOBS,
+        "real-story-recover",
+        source={"path": str(source), "name": "source.mp4"},
+        analysis={
+            "scene_count": 1, "scenes": [_story_retry_scene()], "hook_scene": 0,
+        },
+    )
+    job = app.load_job("real-story-recover")
+    story_id = "st_real_recover"
+    plan = {
+        "target": 37,
+        "total": 8.0,
+        "hook_scene": 0,
+        "auto": False,
+        "clips": clips,
+        "story_id": story_id,
+    }
+    spec = artifacts.build_spec(
+        job, plan, quality="final", aspect="9:16", captions=False,
+        story_id=story_id, clips=clips,
+    )
+    artifact = artifacts.artifact_id(spec)
+    manifest = artifacts.make_manifest(
+        "real-story-recover", spec, status="queued",
+    )
+    artifacts.save_manifest(app._job_dir("real-story-recover"), manifest)
+
+    app.recover_jobs()
+
+    expected = app._render_key(
+        37, "final", "9:16", False, "", 0, story_id=story_id,
+    )
+    latest = app.load_job("real-story-recover")["renders"]
+    assert expected in latest
+    assert expected.endswith(f":s{story_id}")
+    record = latest[expected]
+    assert record["status"] == "interrupted"
+    assert record["story_id"] == story_id
+    assert record["plan_snapshot"]["story_id"] == story_id
+    assert record["plan_snapshot"]["auto"] is False
+    assert record["artifact_id"] == artifact
+
+
+def test_recover_marks_captioned_orphan_unrecoverable_without_track(data_env):
+    source = data_env / "orphan-caption.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    plan = {
+        "target": 37,
+        "total": 8.0,
+        "hook_scene": 0,
+        "auto": False,
+        "clips": clips,
+        "story_id": "st_orphan_caption",
+    }
+    write_job(
+        app.JOBS,
+        "orphan-caption",
+        source={"path": str(source), "name": "source.mp4"},
+        analysis={
+            "scene_count": 1, "scenes": [_story_retry_scene()], "hook_scene": 0,
+        },
+    )
+    job = app.load_job("orphan-caption")
+    spec = artifacts.build_spec(
+        job, plan, quality="final", aspect="9:16", captions=True,
+        caption_style_key="missing-style",
+        cues=[{
+            "start": 0.0, "end": 2.0, "text": "A cue with no stored track.",
+        }],
+        clips=clips, story_id="st_orphan_caption",
+    )
+    artifact = artifacts.artifact_id(spec)
+    key = app._render_key(
+        37, "final", "9:16", True, "", 0,
+        story_id="st_orphan_caption",
+    )
+    manifest = artifacts.make_manifest(
+        "orphan-caption", spec, status="queued", record_key=key,
+    )
+    artifacts.save_manifest(app._job_dir("orphan-caption"), manifest)
+
+    app.recover_jobs()
+
+    record = app.load_job("orphan-caption")["renders"][key]
+    assert record["status"] == "interrupted"
+    assert record["recoverable"] is False
+    assert record["caption_track_id"] is None
+    assert "caption track" in record["recovery_error"].lower()
+    assert artifacts.load_manifest(
+        app._job_dir("orphan-caption"), artifact,
+    )["status"] == "interrupted"
+    with pytest.raises(app.HTTPException) as caught:
+        routes_batches._retry_job(
+            app, app.load_job("orphan-caption"),
+        )
+    assert caught.value.status_code == 409
+    assert "caption track" in caught.value.detail.lower()
+
+
+def test_recover_finds_exact_legacy_caption_track(data_env, monkeypatch):
+    source = data_env / "legacy-track-story.mp4"
+    source.write_bytes(b"x")
+    clips = [_story_retry_clip()]
+    plan = {
+        "target": 37,
+        "total": 8.0,
+        "hook_scene": 0,
+        "auto": False,
+        "clips": clips,
+        "story_id": "st_legacy_track",
+    }
+    write_job(
+        app.JOBS,
+        "legacy-track-story",
+        source={"path": str(source), "name": "source.mp4"},
+        analysis={
+            "scene_count": 1, "scenes": [_story_retry_scene()], "hook_scene": 0,
+        },
+    )
+    job = app.load_job("legacy-track-story")
+    track = app._default_caption_track(
+        "legacy-track-story", job, plan,
+    )
+    cues = [cue.to_dict() for cue in track.cues]
+    spec = artifacts.build_spec(
+        job, plan, quality="draft", aspect="4:5", captions=True,
+        caption_style_key=track.style_hash, cues=cues, clips=clips,
+        story_id="st_legacy_track",
+    )
+    artifact = artifacts.artifact_id(spec)
+    key = app._render_key(
+        37, "draft", "4:5", True, "", 0, story_id="st_legacy_track",
+    )
+    manifest = artifacts.make_manifest(
+        "legacy-track-story", spec, status="queued", record_key=key,
+    )
+    assert "caption_track_id" not in manifest
+    artifacts.save_manifest(app._job_dir("legacy-track-story"), manifest)
+
+    app.recover_jobs()
+
+    record = app.load_job("legacy-track-story")["renders"][key]
+    assert record["status"] == "interrupted"
+    assert record["recoverable"] is True
+    assert record["caption_track_id"] == track.id
+    assert record["caption_clip_hash"] == track.clip_hash
+    assert record["cue_hash"] == track.cue_hash
+    assert record["style_hash"] == track.style_hash
+
+    monkeypatch.setattr(
+        app.render_pool, "submit", lambda *args, **kwargs: None,
+    )
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("legacy-track-story"),
+    )
+    assert analysis is False
+    assert renders == 1
+    retried = app.load_job("legacy-track-story")["renders"][key]
+    assert retried["status"] == "queued"
+    assert retried["artifact_id"] == artifact
+    assert retried["caption_track_id"] == track.id
+    assert retried["cue_hash"] == track.cue_hash
+    assert retried["style_hash"] == track.style_hash
+
+
 def test_recover_marks_artifact_backed_render_interrupted(data_env):
     source = data_env / "source.mp4"
     source.write_bytes(b"x")

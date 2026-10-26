@@ -117,8 +117,11 @@ VibeCut keeps one local job record per source. The pipeline is:
 
 The review token is a capability. Anyone with the URL can view that render.
 Tokens live in `data/shares.json`; there is no account or per-viewer permission.
-To revoke a link, remove its token entry from that file while the server is
-stopped. Treat review links as shareable secrets.
+`GET /api/shares` never returns a token. A local owner can re-copy one token
+after creation with `POST /api/jobs/{job_id}/share-token`; that route is
+loopback-only and requires both the job id and the exact token. To revoke a
+link, remove its token entry from that file while the server is stopped.
+Treat review links as shareable secrets.
 
 ## Setup drawer
 
@@ -660,6 +663,7 @@ item completes when analysis is ready.
 | DELETE | `/api/jobs/{job_id}/variants/{variant_id}` | Delete a variant. |
 | GET | `/api/jobs/{job_id}/transcript` | Timestamped transcript and search segments. |
 | POST | `/api/jobs/{job_id}/share` | Create a review link for a ready render. |
+| POST | `/api/jobs/{job_id}/share-token` | Re-copy one active review token; loopback-only. |
 | GET | `/api/jobs/{job_id}/mixer` | Reel-time clip sections and audio envelopes. |
 | POST | `/api/jobs/{job_id}/ab` | Queue one render for each of the top three hooks. |
 | GET | `/api/jobs/{job_id}/export/{kind}` | `srt`, `vtt`, `edl` or `xml` export. |
@@ -766,6 +770,8 @@ Plan/render body (`PlanBody`):
 
 `clips` is optional. When omitted, VibeCut builds the automatic plan. When
 provided, each clip must reference a scene and be at least 0.2 seconds.
+Story identity (`story_id`/`set_id`) is not accepted from this body; story
+renders use the clip-set route, and retries use the stored record identity.
 
 Script body (`POST /api/jobs/{job_id}/audio/script`):
 

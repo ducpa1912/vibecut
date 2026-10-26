@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import app
+import artifacts
 import packet
 
 
@@ -689,6 +690,7 @@ def api(tmp_path, monkeypatch):
     jobs.mkdir(parents=True)
     monkeypatch.setattr(app, "DATA", data)
     monkeypatch.setattr(app, "JOBS", jobs)
+    monkeypatch.setattr(app, "SHARES", data / "shares.json")
     client = TestClient(app.app)
     client.jobs_dir = jobs  # type: ignore[attr-defined]
     return client
@@ -704,6 +706,37 @@ def _write_api_job(jobs: Path) -> dict:
         job_dir = jobs / "job1"
     (jobs / "job1" / "job.json").write_text(json.dumps(job), encoding="utf-8")
     return job
+
+
+def _write_artifact_api_job(jobs: Path) -> tuple[dict, str]:
+    job, job_dir = _job(jobs.parent, "job1")
+    if job_dir != jobs / "job1":
+        shutil.move(str(job_dir), str(jobs / "job1"))
+        job_dir = jobs / "job1"
+    (job_dir / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    job = app.load_job("job1")
+    spec = artifacts.build_spec(
+        job, _plan(), captions=False, story_id="story one",
+    )
+    manifest = artifacts.make_manifest(
+        "job1", spec, status="ready", record_key="30",
+    )
+    manifest = artifacts.save_manifest(job_dir, manifest)
+    artifact = manifest["artifact_id"]
+    artifacts.store_media(
+        job_dir, artifact,
+        job_dir / "renders" / "reel_30.mp4",
+        job_dir / "renders" / "reel_30.jpg",
+    )
+    artifacts.write_captions(
+        job_dir, artifact,
+        "1\n00:00:00,000 --> 00:00:02,000\nSaved artifact cue\n",
+        "WEBVTT\n\n00:00.000 --> 00:02.000\nSaved artifact cue\n",
+    )
+    job = app.load_job("job1")
+    job["renders"]["30"]["artifact_id"] = artifact
+    (job_dir / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    return job, artifact
 
 
 def test_packet_api_build_get_and_zip(api):
@@ -741,6 +774,83 @@ def test_packet_api_build_get_and_zip(api):
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "artifact_missing"
     assert job["renders"]["30"]["status"] == "ready"
+
+
+def test_packet_build_persists_artifact_refs_and_blocks_delete(api):
+    _job_record, artifact = _write_artifact_api_job(api.jobs_dir)
+    body = {
+        "story_id": "story one",
+        "artifact_ids": [artifact],
+        "titles": ["One", "Two", "Three"],
+        "description": "A short hook that earns the click.",
+        "hashtags": ["#a", "#b", "#c"],
+        "cover_times": [0.1, 0.5],
+    }
+
+    created = api.post("/api/jobs/job1/packets", json=body)
+    assert created.status_code == 200, created.text
+    manifest = created.json()
+    job = app.load_job("job1")
+    refs = job["packet_refs"][manifest["packet_id"]]
+    assert refs["artifact_ids"] == [artifact]
+    assert refs["story_id"] == "story one"
+
+    # Existing read paths still see the packet after the job reference write.
+    listed = api.get("/api/jobs/job1/packets")
+    assert listed.status_code == 200
+    assert listed.json()["packets"][0]["packet_id"] == manifest["packet_id"]
+    fetched = api.get(f"/api/jobs/job1/packets/{manifest['packet_id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["media"][0]["artifact_id"] == artifact
+    archive = api.get(f"/api/jobs/job1/packets/{manifest['packet_id']}/zip")
+    assert archive.status_code == 200
+    assert archive.content[:2] == b"PK"
+
+    blocked = api.delete(f"/api/jobs/job1/artifacts/{artifact}")
+    assert blocked.status_code == 409
+    assert "packet" in blocked.json()["detail"]
+
+    # Older job files have no packet_refs. The packet manifest on disk still
+    # protects the artifact after the job reference is cleared.
+    app.update_job("job1", lambda value: value.pop("packet_refs", None))
+    legacy_blocked = api.delete(f"/api/jobs/job1/artifacts/{artifact}")
+    assert legacy_blocked.status_code == 409
+
+    shutil.rmtree(api.jobs_dir / "job1" / "packets")
+    deleted = api.delete(f"/api/jobs/job1/artifacts/{artifact}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted"] == artifact
+
+
+def test_clean_keeps_packet_referenced_artifact(api):
+    _job_record, artifact = _write_artifact_api_job(api.jobs_dir)
+    body = {
+        "story_id": "story one",
+        "artifact_ids": [artifact],
+        "titles": ["One", "Two", "Three"],
+        "description": "A short hook that earns the click.",
+        "hashtags": ["#a", "#b", "#c"],
+        "cover_times": [0.1, 0.5],
+    }
+    created = api.post("/api/jobs/job1/packets", json=body)
+    assert created.status_code == 200, created.text
+    packet_id = created.json()["packet_id"]
+    job = app.load_job("job1")
+    assert job["packet_refs"][packet_id]["artifact_ids"] == [artifact]
+
+    # Even a legacy job with no packet_refs keeps the artifact because the
+    # packet manifest on disk still references it.
+    app.update_job("job1", lambda value: value.pop("packet_refs", None))
+    cleaned = api.post("/api/jobs/job1/clean", json={"profile": "all"})
+    assert cleaned.status_code == 200, cleaned.text
+    job_dir = api.jobs_dir / "job1"
+    manifest = artifacts.load_manifest(job_dir, artifact)
+    assert manifest is not None
+    assert manifest["status"] == "ready"
+    assert artifacts.has_media(job_dir, artifact)
+    assert (job_dir / "packets" / packet_id / "packet.json").is_file()
+    blocked = api.delete(f"/api/jobs/job1/artifacts/{artifact}")
+    assert blocked.status_code == 409
 
 
 def test_packet_pin_comment_copy_blocks_and_copy_file(tmp_path):
