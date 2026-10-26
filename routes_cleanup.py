@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 import cleanup
 
+
 class CleanupPlanBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -26,14 +27,14 @@ class CleanupPlanBody(BaseModel):
     range: dict | list | None = None
 
 
-def _enabled() -> bool:
+def cleanup_enabled() -> bool:
     return os.environ.get("VIBECUT_ENABLE_CLEANUP", "0").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
 
 def _require_enabled() -> None:
-    if not _enabled():
+    if not cleanup_enabled():
         raise HTTPException(404, "Cleanup is not enabled in this build.")
 
 

@@ -13,7 +13,10 @@ VIBECUT_ENABLE_CLEANUP=1
 ```
 
 Accepted truthy values: `1`, `true`, `yes`, `on`. When the flag is off, the
-endpoint returns `404`. No cloud provider is called and no new dependency is
+endpoint returns `404`. **The gate runs in HTTP middleware before FastAPI
+parses the body**: malformed JSON, a missing body, or a wrong `Content-Type`
+still returns `404` when cleanup is off. When the flag is on, those malformed
+requests return `422`. No cloud provider is called and no new dependency is
 required.
 
 ## Endpoint
@@ -173,16 +176,29 @@ not executed and is not an ffmpeg command.
 | Code | Case |
 |---|---|
 | `200` | Plan returned. No job mutation. |
-| `404` | Feature flag off; job, artifact, or story missing. |
+| `404` | Feature flag off (checked before body parsing); job, artifact, or story missing. |
 | `409` | Artifact not ready, media missing, analysis not ready, or ambiguous story id. |
-| `422` | Invalid box/aspect/range, unsupported method, watermark/inpaint intent, or missing attestation. |
+| `422` | Invalid box/aspect/range, malformed body while enabled, unsupported method, watermark/inpaint intent, or missing attestation. |
+
+## Watermark policy
+
+- There is **no automatic watermark detection**. Scene OCR reads on-screen text
+  and may not preserve geometry; it is not a watermark classifier.
+- Cleanup targets are explicit operator boxes (or OCR text geometry when
+  retained). The ownership attestation is required for every plan.
+- Methods and box labels that explicitly name a watermark are refused, even
+  with an attestation. Do not use this API to remove a third-party watermark.
+- Detection is intent-level only: there is no content classifier proving that a
+  box is or is not a watermark. The operator is responsible for owning the
+  content or having permission to edit it.
 
 ## Limits
 
 - **Plausible cleanup, not restoration.** Covered, blurred, or cropped pixels
   are not recovered. There is no temporal reconstruction.
 - **No watermark removal.** Supplying a watermark method or labelled box is
-  rejected. No guarantee that every text overlay is removed.
+  rejected. There is no automatic watermark detection and no guarantee that
+  every text overlay is removed.
 - **No generative repair.** No inpainting, face repair, logo repair, or
   generative fill.
 - **Review is required.** OCR detection is advisory and approximate when exact

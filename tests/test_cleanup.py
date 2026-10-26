@@ -162,6 +162,22 @@ def test_feature_flag_off_returns_404_and_leaves_paid_job_untouched(env, monkeyp
     assert env.client.get(f"/api/jobs/{JOB_ID}").status_code == 200
 
 
+@pytest.mark.parametrize(("headers", "content"), [
+    ({"content-type": "application/json"}, b"{"),
+    ({"content-type": "text/plain"}, b"{"),
+])
+def test_feature_gate_precedes_body_parsing(env, monkeypatch, headers, content):
+    monkeypatch.delenv("VIBECUT_ENABLE_CLEANUP", raising=False)
+    url = f"/api/jobs/{JOB_ID}/cleanup/plan"
+    off = env.client.post(url, content=content, headers=headers)
+    assert off.status_code == 404
+    assert off.json()["detail"] == "Cleanup is not enabled in this build."
+
+    monkeypatch.setenv("VIBECUT_ENABLE_CLEANUP", "1")
+    on = env.client.post(url, content=content, headers=headers)
+    assert on.status_code in (400, 422)
+
+
 def test_valid_crop_plan_is_deterministic_and_does_not_mutate_job(env):
     before = env.job_path.read_bytes()
     first = _plan(env, method="crop", boxes=[{"x": 0.08, "y": 0.7, "w": 0.84, "h": 0.2}])
@@ -196,6 +212,44 @@ def test_valid_cover_plan_returns_drawbox_chain(env):
     assert plan["filter_chain"][0]["color"] == "black"
     assert plan["filter_chain"][0]["thickness"] == "fill"
     assert plan["quality_report"]["residual_risk"] == "low"
+
+
+def test_planning_does_not_write_job_or_call_render_or_network(env, monkeypatch):
+    import http.client
+    import socket
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("planning must not write, render, or use the network")
+
+    monkeypatch.setattr(app, "save_job", forbidden)
+    monkeypatch.setattr(app, "update_job", forbidden)
+    monkeypatch.setattr(app.render, "render_reel", forbidden)
+    monkeypatch.setattr(app.render, "_run", forbidden)
+    monkeypatch.setattr(app.render_pool, "submit", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(http.client.HTTPConnection, "request", forbidden)
+
+    before_bytes = env.job_path.read_bytes()
+    before_mtime = env.job_path.stat().st_mtime_ns
+    response = _plan(env, method="cover")
+    assert response.status_code == 200
+    assert env.job_path.read_bytes() == before_bytes
+    assert env.job_path.stat().st_mtime_ns == before_mtime
+
+
+def test_ambiguous_duplicate_story_id_returns_409(env):
+    job = json.loads(env.job_path.read_text(encoding="utf-8"))
+    story = json.loads(json.dumps(job["clip_sets"][0]["stories"][0]))
+    job["clip_sets"].append({
+        "id": "cs_duplicate",
+        "job_id": JOB_ID,
+        "stories": [story],
+    })
+    env.job_path.write_text(json.dumps(job), encoding="utf-8")
+    response = _plan(env, story_id=STORY_ID)
+    assert response.status_code == 409
+    assert "ambiguous" in response.json()["detail"].lower()
 
 
 def test_valid_blur_plan_uses_approximate_ocr_fallback(env):

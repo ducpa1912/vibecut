@@ -2731,6 +2731,21 @@ SHARES = DATA / "shares.json"
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+CLEANUP_PLAN_PATH = re.compile(r"^/api/jobs/[^/]+/cleanup/plan/?$")
+
+
+@app.middleware("http")
+async def gate_cleanup(request: Request, call_next):
+    """Hide cleanup before FastAPI parses a body or validates content type."""
+    if (
+        CLEANUP_PLAN_PATH.fullmatch(request.url.path)
+        and not routes_cleanup.cleanup_enabled()
+    ):
+        return JSONResponse(
+            {"detail": "Cleanup is not enabled in this build."},
+            status_code=404,
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")
