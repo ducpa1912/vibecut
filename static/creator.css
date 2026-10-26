@@ -157,6 +157,20 @@ body.creator-mode .creator-view {
 }
 
 .creator-alert { margin: 0 0 18px; }
+.creator-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+.story-queue-items { margin: 8px 0 0; padding-left: 0; list-style: none; display: grid; gap: 6px; }
+.story-queue-items li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .creator-screens { min-width: 0; }
 .creator-screen { min-width: 0; }
 

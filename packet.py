@@ -8,6 +8,8 @@ A packet is a self-contained hand-off for one story:
       captions/<ascii-name>.srt
       covers/<ascii-name>-cover-1.jpg
       covers/<ascii-name>-cover-2.jpg
+      copy.txt                      ordered post copy: titles, description,
+                                    hashtags, pin comment
       <ascii-name>-packet-<short-id>.zip
 
 The current build reads ready render records from ``job["renders"]`` and
@@ -45,6 +47,8 @@ import history_store
 SCHEMA = "vibecut.publish_packet/1"
 PACKET_ROOT = "packets"
 DESCRIPTION_LIMIT = 125
+PIN_COMMENT_LIMIT = 500
+COPY_FILE = "copy.txt"
 TITLE_COUNT = 3
 COVER_COUNT = 2
 HASHTAG_MIN = 3
@@ -102,6 +106,7 @@ class PacketRequest:
     artifact_ids: list[str] = field(default_factory=list)
     render_keys: list[str] = field(default_factory=list)
     cover_times: list[float] | None = None
+    pin_comment: str = ""
 
 
 @dataclass
@@ -126,6 +131,8 @@ class PacketSource:
     captions_srt: str = ""
     captions_source: str = "plan"
     updated: float | None = None
+    version: int | None = None
+    supersedes: str | None = None
 
 
 def _sha256_file(path: Path) -> str:
@@ -321,6 +328,7 @@ def normalize_request(raw: PacketRequest | dict) -> PacketRequest:
             artifact_ids=_list_of_strings(raw.get("artifact_ids")),
             render_keys=_list_of_strings(raw.get("render_keys")),
             cover_times=raw.get("cover_times"),
+            pin_comment=str(raw.get("pin_comment") or ""),
         )
     else:
         raise PacketError(
@@ -432,6 +440,17 @@ def normalize_request(raw: PacketRequest | dict) -> PacketRequest:
                 )
             cover_times.append(number)
 
+    pin_comment = "\n".join(
+        line.strip() for line in str(data.pin_comment or "").strip().splitlines()
+    ).strip()
+    if len(pin_comment) > PIN_COMMENT_LIMIT or CONTROL_RE.search(pin_comment.replace("\n", " ")):
+        raise PacketError(
+            "pin_comment_invalid",
+            f"Pin comment must be plain text up to {PIN_COMMENT_LIMIT} characters.",
+            suggestion="Shorten the pin comment and remove control characters.", status=400,
+            details={"length": len(pin_comment), "limit": PIN_COMMENT_LIMIT},
+        )
+
     return PacketRequest(
         story_id=story_id,
         titles=titles,
@@ -440,6 +459,7 @@ def normalize_request(raw: PacketRequest | dict) -> PacketRequest:
         artifact_ids=artifact_ids,
         render_keys=render_keys,
         cover_times=cover_times,
+        pin_comment=pin_comment,
     )
 
 
@@ -734,6 +754,8 @@ def resolve_trust_artifact(
         "width": render_info.get("width") or record.get("width"),
         "height": render_info.get("height") or record.get("height"),
         "updated": (manifest or {}).get("updated") or record.get("updated"),
+        "version": (manifest or {}).get("version"),
+        "supersedes": (manifest or {}).get("supersedes"),
         "record_key": (
             (manifest or {}).get("record_key")
             or summary.get("record_key")
@@ -1154,6 +1176,8 @@ class ReadyRenderAdapter:
             height=as_int(record.get("height")),
             aspect=str(record.get("aspect") or "") or None,
             quality=str(record.get("quality") or "") or None,
+            version=as_int(record.get("version")),
+            supersedes=str(record.get("supersedes") or "") or None,
             plan=plan,
             scenes=scenes,
             captions_srt=captions_srt,
@@ -1305,6 +1329,10 @@ def _packet_id(
         "cover_times": cover_times,
         "artifacts": fingerprints,
     }
+    if request.pin_comment:
+        # Only present when set, so packets built before pin comments keep
+        # their ids and still re-download by the same packet_id.
+        seed["pin_comment"] = request.pin_comment
     canonical = json.dumps(
         seed, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     )
@@ -1422,7 +1450,30 @@ def _manifest_files(manifest: dict) -> list[dict]:
             "bytes": item.get("bytes"),
             "sha256": item.get("sha256"),
         })
+    if manifest.get("copy_file"):
+        files.append({
+            "file": manifest.get("copy_file"),
+            "bytes": manifest.get("copy_bytes"),
+            "sha256": manifest.get("copy_sha256"),
+        })
     return [item for item in files if item.get("file")]
+
+
+def copy_blocks(request: PacketRequest) -> list[dict]:
+    """The post copy in paste order: title, description, hashtags, pin."""
+    blocks = [
+        {"kind": "title", "label": f"Title {index}", "text": title}
+        for index, title in enumerate(request.titles, 1)
+    ]
+    blocks.append({"kind": "description", "label": "Description", "text": request.description})
+    blocks.append({"kind": "hashtags", "label": "Hashtags", "text": " ".join(request.hashtags)})
+    if request.pin_comment:
+        blocks.append({"kind": "pin_comment", "label": "Pin comment", "text": request.pin_comment})
+    return blocks
+
+
+def _copy_text(blocks: list[dict]) -> str:
+    return "\n\n".join(f"{block['label']}\n{block['text']}" for block in blocks) + "\n"
 
 
 def _packet_file(directory: Path, name: object) -> Path | None:
@@ -1616,6 +1667,8 @@ def build_packet(
                 captions_sha = hashlib.sha256(captions_text.encode("utf-8")).hexdigest()
                 media_rows.append({
                     "artifact_id": source.artifact_id,
+                    "version": source.version,
+                    "supersedes": source.supersedes,
                     "render_key": source.render_key,
                     "target": source.target,
                     "quality": source.quality,
@@ -1666,6 +1719,9 @@ def build_packet(
                     "sha256": _sha256_file(cover_path),
                 })
 
+            blocks = copy_blocks(normalized)
+            copy_path = stage / COPY_FILE
+            copy_path.write_text(_copy_text(blocks), encoding="utf-8")
             zip_name = f"{slug}-packet-{short}.zip"
             manifest = {
                 "schema": SCHEMA,
@@ -1680,12 +1736,18 @@ def build_packet(
                 "titles": normalized.titles,
                 "description": normalized.description,
                 "hashtags": normalized.hashtags,
+                "pin_comment": normalized.pin_comment,
+                "copy_blocks": blocks,
+                "copy_file": COPY_FILE,
+                "copy_bytes": copy_path.stat().st_size,
+                "copy_sha256": _sha256_file(copy_path),
                 "media": media_rows,
                 "covers": cover_rows,
                 "zip_file": zip_name,
                 "total_bytes": sum(row["bytes"] for row in media_rows)
                 + sum(row["captions_bytes"] for row in media_rows)
-                + sum(row["bytes"] for row in cover_rows),
+                + sum(row["bytes"] for row in cover_rows)
+                + copy_path.stat().st_size,
             }
             _write_json(stage / "packet.json", manifest)
             zip_path = stage / zip_name
@@ -1721,6 +1783,35 @@ def load_packet(job_dir: Path | str, packet_id: str) -> dict:
             suggestion="Build the packet again from its ready render.",
         )
     return _public(manifest)
+
+
+def list_packets(job_dir: Path | str) -> list[dict]:
+    """Every intact packet for a job, newest first. Survives relaunch."""
+    root = Path(job_dir) / PACKET_ROOT
+    if not root.is_dir():
+        return []
+    rows: list[dict] = []
+    for directory in root.iterdir():
+        if not directory.is_dir() or not PACKET_ID_RE.fullmatch(directory.name):
+            continue
+        manifest = _existing_manifest(directory, directory.name)
+        if manifest is None:
+            continue
+        media = manifest.get("media") or []
+        public = _public(manifest)
+        rows.append({
+            "packet_id": manifest["packet_id"],
+            "story_id": manifest.get("story_id"),
+            "created": manifest.get("created"),
+            "title": (manifest.get("titles") or [""])[0],
+            "aspects": sorted({str(item.get("aspect") or "") for item in media}),
+            "versions": [item.get("version") for item in media],
+            "zip_file": manifest.get("zip_file"),
+            "zip_url": public["zip_url"],
+            "packet_url": public["packet_url"],
+        })
+    rows.sort(key=lambda item: float(item.get("created") or 0), reverse=True)
+    return rows
 
 
 def packet_zip_path(job_dir: Path | str, packet_id: str) -> Path:

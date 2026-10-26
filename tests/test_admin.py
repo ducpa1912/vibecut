@@ -44,7 +44,7 @@ def admin_api(tmp_path, monkeypatch):
 def bootstrap(client):
     response = client.post(
         "/_ductator/api/bootstrap",
-        json={"email": "admin@example.com", "password": "correct horse battery"},
+        json={"password": "correct horse battery"},
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -58,11 +58,12 @@ def test_admin_page_and_bootstrap(admin_api):
     state = admin_api.get("/_ductator/api/bootstrap").json()
     assert state == {"needed": True, "allowed": True}
     data = bootstrap(admin_api)
-    assert data["email"] == "admin@example.com"
+    assert data["account"] == "admin"
+    assert "email" not in data
     assert data["csrf"]
     me = admin_api.get("/_ductator/api/me")
     assert me.status_code == 200
-    assert me.json()["email"] == "admin@example.com"
+    assert me.json()["account"] == "admin"
     assert admin_api.get("/_ductator/api/bootstrap").json()["needed"] is False
     assert (admin_api.data_dir / "admin").stat().st_mode & 0o777 == 0o700
     assert (admin_api.data_dir / "admin" / "admin.sqlite3").stat().st_mode & 0o777 == 0o600
@@ -72,7 +73,7 @@ def test_admin_no_signup_or_second_bootstrap(admin_api):
     bootstrap(admin_api)
     response = admin_api.post(
         "/_ductator/api/bootstrap",
-        json={"email": "other@example.com", "password": "correct horse battery"},
+        json={"password": "correct horse battery"},
     )
     assert response.status_code == 409
     assert "signup" in response.json()["detail"].lower()
@@ -84,7 +85,7 @@ def test_admin_login_csrf_and_logout(admin_api):
     assert admin_api.get("/_ductator/api/me").status_code == 401
     login = admin_api.post(
         "/_ductator/api/login",
-        json={"email": "admin@example.com", "password": "correct horse battery"},
+        json={"password": "correct horse battery"},
     )
     assert login.status_code == 200
     csrf = login.json()["csrf"]
@@ -200,25 +201,46 @@ def test_admin_bootstrap_rejected_on_remote_bind(admin_api, monkeypatch):
     assert state == {"needed": True, "allowed": False}
     response = admin_api.post(
         "/_ductator/api/bootstrap",
-        json={"email": "admin@example.com", "password": "correct horse battery"},
+        json={"password": "correct horse battery"},
     )
     assert response.status_code == 403
 
 
-def test_admin_account_email_and_password_change(admin_api):
+def test_admin_account_password_change_has_no_email(admin_api):
     data = bootstrap(admin_api)
     response = admin_api.post(
         "/_ductator/api/account",
         json={
-            "email": "owner@example.com",
             "current_password": "correct horse battery",
             "new_password": "a new long password",
         },
         headers={"X-VibeCut-Admin-CSRF": data["csrf"]},
     )
     assert response.status_code == 200
-    assert response.json()["email"] == "owner@example.com"
-    assert admin_api.get("/_ductator/api/me").json()["email"] == "owner@example.com"
+    assert response.json()["account"] == "admin"
+    admin_api.post("/_ductator/api/logout", headers={"X-VibeCut-Admin-CSRF": data["csrf"]})
+    assert admin_api.post(
+        "/_ductator/api/login", json={"password": "correct horse battery"},
+    ).status_code == 401
+    assert admin_api.post(
+        "/_ductator/api/login", json={"password": "a new long password"},
+    ).status_code == 200
+
+
+def test_alpha_email_row_migrates_to_fixed_account(admin_api):
+    store.init_db()
+    with store._connect() as db:
+        db.execute(
+            "INSERT INTO admin_users(email, password_hash, created, updated) VALUES (?, ?, 0, 0)",
+            ("old@example.com", store._hash_password("correct horse battery")),
+        )
+        db.commit()
+    store._READY_PATHS.clear()
+    store.init_db()
+    assert store.first_user()["email"] == store.ADMIN_ACCOUNT
+    assert admin_api.post(
+        "/_ductator/api/login", json={"password": "correct horse battery"},
+    ).status_code == 200
 
 
 def test_admin_audit_contains_redacted_setup_changes(admin_api):
@@ -261,19 +283,19 @@ def test_bootstrap_requires_local_client_and_safe_headers(admin_api):
     assert evil_host.json() == {"needed": True, "allowed": False}
     blocked = admin_api.post(
         "/_ductator/api/bootstrap",
-        json={"email": "admin@example.com", "password": "correct horse battery"},
+        json={"password": "correct horse battery"},
         headers={"Host": "evil.example"},
     )
     assert blocked.status_code == 403
     proxied = admin_api.post(
         "/_ductator/api/bootstrap",
-        json={"email": "admin@example.com", "password": "correct horse battery"},
+        json={"password": "correct horse battery"},
         headers={"X-Forwarded-For": "203.0.113.10"},
     )
     assert proxied.status_code == 403
     evil_origin = admin_api.post(
         "/_ductator/api/bootstrap",
-        json={"email": "admin@example.com", "password": "correct horse battery"},
+        json={"password": "correct horse battery"},
         headers={"Origin": "https://evil.example"},
     )
     assert evil_origin.status_code == 403
@@ -288,7 +310,7 @@ def test_bootstrap_rejects_remote_client_even_with_local_host(admin_api):
     assert state.json() == {"needed": True, "allowed": False}
     response = remote.post(
         "/_ductator/api/bootstrap",
-        json={"email": "admin@example.com", "password": "correct horse battery"},
+        json={"password": "correct horse battery"},
     )
     assert response.status_code == 403
     remote.close()
@@ -299,7 +321,7 @@ def test_create_user_is_atomic_singleton(admin_api):
 
     def attempt(index: int):
         try:
-            store.create_user(f"admin{index}@example.com", "correct horse battery")
+            store.create_user("correct horse battery")
             return True
         except ValueError:
             return False
@@ -310,17 +332,15 @@ def test_create_user_is_atomic_singleton(admin_api):
     assert store.count_users() == 1
 
 
-def test_store_and_login_reject_empty_email_and_short_password(admin_api):
-    with pytest.raises(ValueError):
-        store.create_user("", "correct horse battery")
-    with pytest.raises(ValueError):
-        store.create_user("  ", "correct horse battery")
+def test_store_and_login_reject_short_password_and_wrong_password(admin_api):
+    with pytest.raises(ValueError, match="at least 12"):
+        store.create_user("short")
     bootstrap(admin_api)
     with pytest.raises(ValueError, match="at least 12"):
-        store.update_user("admin@example.com", "short")
+        store.update_user("short")
     response = admin_api.post(
         "/_ductator/api/login",
-        json={"email": "   ", "password": "correct horse battery"},
+        json={"password": "   "},
     )
     assert response.status_code == 401
 
@@ -528,7 +548,7 @@ def test_login_rate_limit_buckets_are_bounded(admin_api):
     for index in range(40):
         response = admin_api.post(
             "/_ductator/api/login",
-            json={"email": f"nobody{index}@example.com", "password": "wrong password"},
+            json={"password": f"wrong password {index}"},
         )
         statuses.append(response.status_code)
     assert 429 in statuses
@@ -799,7 +819,7 @@ def test_admin_export_is_not_truncated_at_500(admin_api):
 
 
 def test_sessions_expire_idle_and_revoke(admin_api):
-    user = store.create_user("owner@example.com", "correct horse battery")
+    user = store.create_user("correct horse battery")
     session = store.create_session(user["email"])
     assert store.get_session(session["token"]) is not None
 

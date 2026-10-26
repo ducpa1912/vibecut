@@ -34,17 +34,14 @@ MAX_ROUTE_MODEL_LENGTH = 240
 
 
 class BootstrapBody(BaseModel):
-    email: str = Field(min_length=3, max_length=MAX_EMAIL_LENGTH)
     password: str = Field(min_length=12, max_length=MAX_PASSWORD_LENGTH)
 
 
 class LoginBody(BaseModel):
-    email: str = Field(min_length=1, max_length=MAX_EMAIL_LENGTH)
     password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
 
 
 class AccountBody(BaseModel):
-    email: str = Field(min_length=3, max_length=MAX_EMAIL_LENGTH)
     current_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
     new_password: str = Field(default="", max_length=MAX_PASSWORD_LENGTH)
 
@@ -308,7 +305,7 @@ def bootstrap(body: BootstrapBody, request: Request, response: Response) -> dict
     if not _local_bootstrap_allowed(request):
         raise HTTPException(403, "Admin bootstrap is only allowed from a direct local request.")
     try:
-        user = store.create_user(body.email, body.password)
+        user = store.create_user(body.password)
     except ValueError as exc:
         raise HTTPException(409 if "already exists" in str(exc) else 400, str(exc)) from exc
     session = store.create_session(
@@ -316,34 +313,27 @@ def bootstrap(body: BootstrapBody, request: Request, response: Response) -> dict
     )
     _set_cookie(response, session["token"], request)
     _audit(request, user["email"], "admin.bootstrap", resource_type="admin", resource_id=user["email"])
-    return {"ok": True, "email": user["email"], "csrf": session["csrf"], "expires": session["expires"]}
+    return {"ok": True, "account": user["email"], "csrf": session["csrf"], "expires": session["expires"]}
 
 
 @router.post("/login")
 def login(body: LoginBody, request: Request, response: Response) -> dict:
-    email = str(body.email or "").strip().lower()
-    _check_rate(request, email)
-    if not email:
-        _record_failure(request, email)
+    account = store.ADMIN_ACCOUNT
+    _check_rate(request, account)
+    user = store.first_user()
+    if not user or not store.verify_password(body.password, str(user.get("password_hash") or "")):
+        _record_failure(request, account)
         _audit(
             request, "anonymous", "auth.login", resource_type="admin",
-            resource_id="", outcome="failed", detail="Empty email.",
+            resource_id=account, outcome="failed",
         )
-        raise HTTPException(401, "Invalid email or password.")
-    user = store.get_user(email)
-    if not user or not store.verify_password(body.password, str(user.get("password_hash") or "")):
-        _record_failure(request, email)
-        _audit(
-            request, email or "anonymous", "auth.login", resource_type="admin",
-            resource_id=email, outcome="failed",
-        )
-        raise HTTPException(401, "Invalid email or password.")
+        raise HTTPException(401, "Invalid password.")
     session = store.create_session(
         user["email"], _client_ip(request), str(request.headers.get("user-agent") or "")
     )
     _set_cookie(response, session["token"], request)
     _audit(request, user["email"], "auth.login", resource_type="admin", resource_id=user["email"])
-    return {"ok": True, "email": user["email"], "csrf": session["csrf"], "expires": session["expires"]}
+    return {"ok": True, "account": user["email"], "csrf": session["csrf"], "expires": session["expires"]}
 
 
 @router.post("/logout")
@@ -360,7 +350,7 @@ def logout(request: Request, response: Response) -> dict:
 def me(request: Request) -> dict:
     session = _session(request)
     return {
-        "email": session["email"],
+        "account": session["email"],
         "csrf": session["csrf"],
         "expires": session["expires"],
         "bootstrap_needed": store.count_users() == 0,
@@ -373,7 +363,7 @@ def overview(request: Request) -> dict:
     audit = store.list_audit(limit=8)
     pipeline = store.list_pipeline_events(limit=8)
     return {
-        "email": session["email"],
+        "account": session["email"],
         "keys": [_secret_info(name) for name in catalog.AI_SECRETS],
         "workflows": settings_store.load_settings().get("workflows") or {},
         "audit": audit["entries"],
@@ -646,21 +636,18 @@ def update_account(body: AccountBody, request: Request, response: Response) -> d
     user = store.get_user(user_id=session["user_id"])
     if not user or not store.verify_password(body.current_password, str(user.get("password_hash") or "")):
         raise HTTPException(401, "Current password is incorrect.")
-    new_email = str(body.email or "").strip().lower()
-    if new_email != user["email"] and store.get_user(new_email):
-        raise HTTPException(409, "That admin email is already in use.")
     new_password = str(body.new_password or "")
     if new_password and len(new_password) < 12:
         raise HTTPException(400, "New password must be at least 12 characters.")
-    before = {"email": user["email"], "password": "changed" if new_password else "unchanged"}
+    before = {"password": "unchanged"}
     try:
-        updated = store.update_user(new_email, new_password or None)
+        updated = store.update_user(new_password or None)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     store.delete_other_sessions(int(updated["id"]), keep_hash=session["token_hash"])
-    after = {"email": updated["email"], "password": "changed" if new_password else "unchanged"}
+    after = {"password": "changed" if new_password else "unchanged"}
     _audit(
         request, updated["email"], "account.update", resource_type="admin",
         resource_id=updated["email"], before=before, after=after,
     )
-    return {"ok": True, "email": updated["email"], "csrf": session["csrf"]}
+    return {"ok": True, "account": updated["email"], "csrf": session["csrf"]}

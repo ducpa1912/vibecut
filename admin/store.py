@@ -328,6 +328,11 @@ def _ensure_anchor(db: sqlite3.Connection) -> dict[str, Any] | None:
     return _read_anchor()
 
 
+# One fixed local account. The legacy ``email`` column now only stores this
+# name; there is no email, SMTP, signup or recovery address.
+ADMIN_ACCOUNT = "admin"
+
+
 def init_db() -> None:
     path = str(db_path())
     with LOCK:
@@ -398,6 +403,11 @@ def init_db() -> None:
                         CREATE INDEX IF NOT EXISTS pipeline_events_ts ON pipeline_events(ts DESC);
                         CREATE INDEX IF NOT EXISTS pipeline_events_workflow ON pipeline_events(workflow);
                         """
+                    )
+                    # Migrate an alpha row that was keyed by an email address.
+                    db.execute(
+                        "UPDATE admin_users SET email = ? WHERE email != ?",
+                        (ADMIN_ACCOUNT, ADMIN_ACCOUNT),
                     )
                 _READY_PATHS.add(path)
                 return
@@ -471,11 +481,9 @@ def first_user() -> dict | None:
         return dict(row) if row else None
 
 
-def create_user(email: str, password: str) -> dict:
+def create_user(password: str) -> dict:
+    """Create the single local admin. Password only; 12+ characters."""
     init_db()
-    email = str(email or "").strip().lower()
-    if not email or "@" not in email or len(email) > 320:
-        raise ValueError("A valid admin email is required.")
     if len(str(password or "")) < 12:
         raise ValueError("Admin password must be at least 12 characters.")
     stamp = now()
@@ -488,12 +496,14 @@ def create_user(email: str, password: str) -> dict:
                 """INSERT INTO admin_users(email, password_hash, created, updated)
                    SELECT ?, ?, ?, ?
                    WHERE NOT EXISTS (SELECT 1 FROM admin_users)""",
-                (email, _hash_password(password), stamp, stamp),
+                (ADMIN_ACCOUNT, _hash_password(password), stamp, stamp),
             )
             if cursor.rowcount != 1:
                 db.rollback()
                 raise ValueError("An admin already exists; signup is disabled.")
-            row = db.execute("SELECT * FROM admin_users WHERE email = ?", (email,)).fetchone()
+            row = db.execute(
+                "SELECT * FROM admin_users WHERE email = ?", (ADMIN_ACCOUNT,),
+            ).fetchone()
             db.commit()
         except sqlite3.IntegrityError as exc:
             db.rollback()
@@ -501,11 +511,9 @@ def create_user(email: str, password: str) -> dict:
         return dict(row)
 
 
-def update_user(email: str, password: str | None = None) -> dict:
+def update_user(password: str | None = None) -> dict:
+    """Change the single admin's password."""
     init_db()
-    email = str(email or "").strip().lower()
-    if not email or "@" not in email or len(email) > 320:
-        raise ValueError("A valid admin email is required.")
     if password is not None and len(str(password)) < 12:
         raise ValueError("Admin password must be at least 12 characters.")
     with LOCK, _connect() as db:
@@ -515,20 +523,16 @@ def update_user(email: str, password: str | None = None) -> dict:
             db.rollback()
             raise ValueError("No admin account exists.")
         hash_value = _hash_password(password) if password else user["password_hash"]
-        try:
-            db.execute(
-                "UPDATE admin_users SET email = ?, password_hash = ?, updated = ? WHERE id = ?",
-                (email, hash_value, now(), int(user["id"])),
-            )
-        except sqlite3.IntegrityError as exc:
-            db.rollback()
-            raise ValueError("That admin email is already in use.") from exc
+        db.execute(
+            "UPDATE admin_users SET email = ?, password_hash = ?, updated = ? WHERE id = ?",
+            (ADMIN_ACCOUNT, hash_value, now(), int(user["id"])),
+        )
         updated = db.execute("SELECT * FROM admin_users WHERE id = ?", (int(user["id"]),)).fetchone()
         db.commit()
         return dict(updated)
 
 
-def create_session(email: str, ip: str = "", user_agent: str = "") -> dict:
+def create_session(email: str = ADMIN_ACCOUNT, ip: str = "", user_agent: str = "") -> dict:
     init_db()
     user = get_user(email)
     if not user:

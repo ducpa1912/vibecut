@@ -157,8 +157,6 @@ def _record(record: dict | None, token: str | None = None) -> dict:
             pass
     if data.get("aspect"):
         value["aspect"] = str(data["aspect"])
-    if token is not None:
-        value["token_hint"] = _hint(token)
     value["status"] = state(value)
     return value
 
@@ -166,11 +164,6 @@ def _record(record: dict | None, token: str | None = None) -> dict:
 def describe(record: dict | None, token: str | None = None) -> dict:
     """Public, normalised view of one stored record."""
     return _record(record, token)
-
-
-def _hint(token: str) -> str:
-    text = str(token or "")
-    return (text[:8] + "…") if len(text) > 8 else text
 
 
 def state(record: dict, now: float | None = None) -> str:

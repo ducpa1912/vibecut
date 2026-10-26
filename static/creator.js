@@ -27,6 +27,11 @@
     batchItems: $("#batch-items"),
     batchCreate: $("#batch-create"),
     batchError: $("#batch-error"),
+    storyQueueList: $("#story-queue-list"),
+    storyQueueError: $("#story-queue-error"),
+    storyQueueRefresh: $("#story-queue-refresh"),
+    storyQueueBanner: $("#story-queue-banner"),
+    clipsetQueue: $("#clipset-queue"),
     batchList: $("#batch-list"),
     batchRefresh: $("#batch-refresh"),
 
@@ -100,6 +105,7 @@
     packetBuild: $("#packet-build"),
     packetError: $("#packet-error"),
     packetResult: $("#packet-result"),
+    packetHistory: $("#packet-history"),
 
     preflightStory: $("#preflight-story"),
     preflightRun: $("#preflight-run"),
@@ -131,6 +137,9 @@
     clipset: null,
     clipsetEdits: {},
     clipsetLoading: false,
+    storyAspects: {},
+    storyQueues: [],
+    storyQueueTimer: null,
     locks: new Set(),
     bans: new Set(),
     selection: null,
@@ -143,6 +152,7 @@
       previewUrl: "",
     },
     packet: null,
+    packets: [],
     preflight: null,
     preflightHidden: new Set(),
     preflightLoading: false,
@@ -569,6 +579,7 @@
     }
     setScreen(chosen, wanted);
     loadRecentJobs().catch(() => {});
+    loadStoryQueues().catch(() => {});
     requestAnimationFrame(focusActiveTab);
   }
 
@@ -662,7 +673,10 @@
   }
 
   async function refreshScreen(screen) {
-    if (screen === "queue") return loadBatches();
+    if (screen === "queue") {
+      loadStoryQueues().catch((error) => setError(dom.storyQueueError, error));
+      return loadBatches();
+    }
     if (!state.job) {
       if (screen === "artifacts") return loadArtifacts().then(() => renderArtifacts());
       return;
@@ -682,6 +696,7 @@
     }
     if (screen === "packet") {
       populateCommonSelects();
+      loadPacketHistory().catch((error) => setError(dom.packetError, error));
       updatePacketNeedsRender();
       updatePacketFilename();
       updatePacketCovers();
@@ -891,12 +906,13 @@
     if (currentArtifact?.target) {
       pushTarget(currentArtifact.target, `Artifact · ${currentArtifact.title || "render"} · ${currentArtifact.target}s`);
     }
-    for (const story of (state.clipset?.stories || [])) {
-      const target = Math.max(1, Math.round(Number(story.dur) || 0));
-      pushTarget(target, `Story · ${story.title || story.id} · ${target}s`);
+    const stories = state.clipset?.stories || [];
+    for (const story of stories) {
+      pushTarget(`story:${story.id}`, `Story · ${story.title || story.id} · ${fmtDuration(story.dur)}`);
     }
-    for (const target of [15, 30, 60]) pushTarget(target, `Preset · ${target}s`);
-    setSelectOptions(dom.captionTarget, [...targetMap.entries()].map(([value, label]) => ({ value, label })), currentArtifact?.target || "");
+    for (const target of [15, 30, 60]) pushTarget(target, `Compatibility · ${target}s`);
+    const captionDefault = stories.length ? `story:${stories[0].id}` : (currentArtifact?.target || "");
+    setSelectOptions(dom.captionTarget, [...targetMap.entries()].map(([value, label]) => ({ value, label })), dom.captionTarget.value || captionDefault);
 
     fillPacketCopy({ onlyBlank: true });
     updatePacketNeedsRender();
@@ -1006,6 +1022,110 @@
           <div class="creator-item-list">${items || '<p class="hint">No items.</p>'}</div>
         </article>`;
     }).join("");
+  }
+
+  // ---------------------------------------------------------------- story queue
+
+  const QUEUE_LABELS = {
+    queued: "waiting", running: "rendering", done: "done", failed: "failed",
+    interrupted: "interrupted", cancelled: "cancelled", paused: "paused",
+  };
+
+  async function loadStoryQueues() {
+    const data = await request("/api/story-queues");
+    state.storyQueues = data.queues || [];
+    renderStoryQueues();
+    renderStoryQueueBanner(data.interrupted || []);
+    const active = state.storyQueues.some((queue) => ["queued", "running"].includes(queue.status));
+    if (active && !state.storyQueueTimer) {
+      state.storyQueueTimer = setInterval(() => {
+        if (!document.body.classList.contains("creator-mode")) return;
+        loadStoryQueues().catch(() => {});
+      }, 3500);
+    }
+    if (!active && state.storyQueueTimer) {
+      clearInterval(state.storyQueueTimer);
+      state.storyQueueTimer = null;
+      refreshArtifactsOnly().catch(() => {});
+    }
+  }
+
+  function renderStoryQueueBanner(interrupted) {
+    if (!dom.storyQueueBanner) return;
+    if (!interrupted.length) {
+      dom.storyQueueBanner.hidden = true;
+      dom.storyQueueBanner.innerHTML = "";
+      return;
+    }
+    const waiting = interrupted.reduce((total, queue) => total + (queue.items || []).filter((item) => ["queued", "interrupted"].includes(item.state)).length, 0);
+    dom.storyQueueBanner.innerHTML = `
+      <span>VibeCut stopped during a story queue. ${waiting} stor${waiting === 1 ? "y is" : "ies are"} waiting; finished stories are kept.</span>
+      <button class="primary small" type="button" data-story-queue-action="resume" data-queue-id="${escapeHtml(interrupted[0].id)}">Resume</button>`;
+    dom.storyQueueBanner.hidden = false;
+  }
+
+  function renderStoryQueues() {
+    if (!dom.storyQueueList) return;
+    if (!state.storyQueues.length) {
+      dom.storyQueueList.innerHTML = '<p class="hint">No story queues yet. Use Queue stories on the Clip Set screen.</p>';
+      return;
+    }
+    dom.storyQueueList.innerHTML = state.storyQueues.map((queue) => {
+      const actions = [];
+      if (["queued", "running"].includes(queue.status)) actions.push(["pause", "Pause"], ["cancel", "Cancel"]);
+      if (queue.status === "paused") actions.push(["resume", "Resume"], ["cancel", "Cancel"]);
+      const rows = (queue.items || []).map((item, index) => `
+        <li><span class="mono">${index + 1}.</span> ${escapeHtml(item.title || item.story_id)} · ${escapeHtml(item.aspect)}
+          <span class="creator-tag ${item.state === "done" ? "ok" : (["failed", "interrupted"].includes(item.state) ? "bad" : "")}">${escapeHtml(QUEUE_LABELS[item.state] || item.state)}</span>
+          ${item.error ? `<span class="hint">${escapeHtml(item.error)}</span>` : ""}</li>`).join("");
+      return `
+        <article class="batch-card">
+          <header><div><h4>${escapeHtml(queue.message || queue.status)}</h4><div class="creator-meta-row">
+            <span class="creator-tag">${Math.round(Number(queue.progress || 0) * 100)}%</span>
+            <span class="creator-tag">${(queue.items || []).length} stories</span>
+          </div></div>
+          <div class="creator-actions">${actions.map(([action, label]) => `<button class="ghost small" type="button" data-story-queue-action="${action}" data-queue-id="${escapeHtml(queue.id)}">${label}</button>`).join("")}</div></header>
+          <ol class="story-queue-items">${rows}</ol>
+        </article>`;
+    }).join("");
+  }
+
+  async function storyQueueAction(action, queueId, button) {
+    clearError(dom.storyQueueError);
+    await withBusy(button, async () => {
+      try {
+        await request(`/api/story-queues/${encodeURIComponent(queueId)}/${encodeURIComponent(action)}`, { method: "POST" });
+        await loadStoryQueues();
+        toast(action === "resume" ? "Queue resumed." : `Queue ${action === "pause" ? "paused" : "cancelled"}.`);
+      } catch (error) {
+        setError(dom.storyQueueError, error);
+      }
+    }, "Working…");
+  }
+
+  async function queueStories(button) {
+    clearError(dom.clipsetError);
+    const stories = state.clipset?.stories || [];
+    if (!stories.length || !state.jobId) {
+      setError(dom.clipsetError, new Error("Build a Clip Set before queueing stories."));
+      return;
+    }
+    const items = stories.slice(0, 10).map((story) => ({
+      job_id: state.jobId,
+      set_id: state.clipset.id,
+      story_id: story.id,
+      aspect: storyAspect(story.id),
+      title: story.title || story.id,
+    }));
+    await withBusy(button, async () => {
+      try {
+        await request("/api/story-queues", { method: "POST", body: JSON.stringify({ items }) });
+        toast(`${items.length} stor${items.length === 1 ? "y" : "ies"} queued.`);
+        setScreen("queue", state.jobId);
+      } catch (error) {
+        setError(dom.clipsetError, error);
+      }
+    }, "Queueing…");
   }
 
   async function loadBatches() {
@@ -1284,6 +1404,12 @@
               </div>
             </div>
             <div class="creator-actions">
+              <label class="creator-inline-field">Aspect
+                <select data-story-aspect="${escapeHtml(story.id)}" aria-label="Render aspect for ${escapeHtml(story.title || story.id)}">
+                  <option value="9:16" ${storyAspect(story.id) === "9:16" ? "selected" : ""}>9:16</option>
+                  <option value="4:5" ${storyAspect(story.id) === "4:5" ? "selected" : ""}>4:5</option>
+                </select>
+              </label>
               <button class="primary small" type="button" data-focus-key="story-render:${escapeHtml(story.id)}" data-story-render="${escapeHtml(story.id)}" ${busy ? "disabled" : ""}>${escapeHtml(renderLabel)}</button>
               <button class="ghost small" type="button" data-focus-key="story-smartcut:${escapeHtml(story.id)}" data-story-smartcut="${escapeHtml(story.id)}">Open in Smart Cut</button>
               <button class="ghost small" type="button" data-focus-key="story-packet:${escapeHtml(story.id)}" data-story-packet="${escapeHtml(story.id)}">Build packet</button>
@@ -1363,7 +1489,7 @@
       return { id: story.id, sentences: selected };
     });
     try {
-      const data = await request(`/clip-sets/${encodeURIComponent(state.clipset.id)}`, {
+      const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/clip-sets/${encodeURIComponent(state.clipset.id)}`, {
         method: "PATCH",
         body: JSON.stringify({
           stories,
@@ -1562,6 +1688,10 @@
     updatePacketNeedsRender();
   }
 
+  function storyAspect(storyId) {
+    return state.storyAspects[storyId] === "4:5" ? "4:5" : "9:16";
+  }
+
   function storyRenderTarget(story) {
     const value = Math.round(Number(story?.dur) || 0);
     return Math.max(1, Math.min(180, value || 30));
@@ -1708,10 +1838,11 @@
       try {
         const data = await request(`/api/jobs/${encodeURIComponent(requestJobId)}/clip-sets/${encodeURIComponent(requestSetId)}/stories/${encodeURIComponent(storyId)}/render`, {
           method: "POST",
+          // Duration is the stored story duration and captions burn the
+          // story's current caption track; the server owns both.
           body: JSON.stringify({
-            target,
             quality: "final",
-            aspect: "9:16",
+            aspect: storyAspect(storyId),
             captions: true,
           }),
         });
@@ -1751,7 +1882,7 @@
     const target = storyRenderTarget(story);
     await withBusy(button, async () => {
       try {
-        const data = await request(`/clip-sets/${encodeURIComponent(state.clipset.id)}/plans`, {
+        const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/clip-sets/${encodeURIComponent(state.clipset.id)}/plans`, {
           method: "POST",
           body: JSON.stringify({ target }),
         });
@@ -1783,7 +1914,7 @@
         let plan = null;
         let sourceLabel = "current plan";
         if (state.clipset) {
-          const plans = await request(`/clip-sets/${encodeURIComponent(state.clipset.id)}/plans`, {
+          const plans = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/clip-sets/${encodeURIComponent(state.clipset.id)}/plans`, {
             method: "POST",
             body: JSON.stringify({ target }),
           });
@@ -1906,7 +2037,7 @@
     }
     if (!state.clipset) return null;
     try {
-      const data = await request(`/clip-sets/${encodeURIComponent(state.clipset.id)}/plans`, {
+      const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/clip-sets/${encodeURIComponent(state.clipset.id)}/plans`, {
         method: "POST",
         body: JSON.stringify({ target }),
       });
@@ -1927,17 +2058,25 @@
     }
     await withBusy(dom.captionBuild, async () => {
       try {
-        const target = Number(dom.captionTarget.value) || 30;
-        const plan = await planForCaptionTarget(target);
+        const choice = String(dom.captionTarget.value || "");
         const body = {
-          target,
           style_id: dom.captionStyle.value || "clean",
           order: "source",
           overrides: captionOverrides(),
         };
-        if (plan && Array.isArray(plan.clips)) {
-          body.clips = plan.clips;
-          body.hook_scene = plan.hook_scene;
+        if (choice.startsWith("story:") && state.clipset) {
+          // A story track is built at the story's own length and becomes the
+          // track its render, SRT and packet use.
+          body.set_id = state.clipset.id;
+          body.story_id = choice.slice("story:".length);
+        } else {
+          const target = Number(choice) || 30;
+          const plan = await planForCaptionTarget(target);
+          body.target = target;
+          if (plan && Array.isArray(plan.clips)) {
+            body.clips = plan.clips;
+            body.hook_scene = plan.hook_scene;
+          }
         }
         const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/captions`, {
           method: "POST",
@@ -2282,6 +2421,7 @@
           cover_times: coverTimes,
           artifact_ids: artifactId ? [artifactId] : [],
           render_keys: !artifactId && renderKey ? [renderKey] : [],
+          pin_comment: (dom.packetPinComment?.value || "").trim(),
         };
         const packet = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/packets`, {
           method: "POST",
@@ -2289,6 +2429,7 @@
         });
         state.packet = packet;
         renderPacket(packet);
+        await loadPacketHistory().catch(() => {});
         toast("Publish packet built.");
       } catch (error) {
         setError(dom.packetError, error);
@@ -2317,10 +2458,46 @@
       </div>`;
   }
 
+  async function loadPacketHistory() {
+    if (!state.jobId) return;
+    const data = await request(`/api/jobs/${encodeURIComponent(state.jobId)}/packets`);
+    state.packets = data.packets || [];
+    renderPacketHistory();
+  }
+
+  function renderPacketHistory() {
+    if (!dom.packetHistory) return;
+    if (!state.packets.length) {
+      dom.packetHistory.innerHTML = '<p class="hint">No packets yet. Packets stay here after you close the app.</p>';
+      return;
+    }
+    dom.packetHistory.innerHTML = state.packets.map((row) => {
+      const when = row.created ? new Date(Number(row.created) * 1000).toLocaleString() : "";
+      const versions = (row.versions || []).filter(Boolean).map((value) => `v${value}`).join(", ");
+      return `
+        <div class="creator-item-row"><div><strong>${escapeHtml(row.title || row.packet_id)}</strong><div class="creator-meta-row">
+          <span class="creator-tag">${escapeHtml(row.story_id || "")}</span>
+          <span class="creator-tag">${escapeHtml((row.aspects || []).join(" · "))}</span>
+          ${versions ? `<span class="creator-tag">${escapeHtml(versions)}</span>` : ""}
+          <span class="creator-tag">${escapeHtml(when)}</span>
+        </div></div>
+        <button class="ghost small" type="button" data-packet-history-zip="${escapeHtml(row.packet_id)}" aria-label="Download packet ${escapeHtml(row.title || row.packet_id)}">Download ZIP</button></div>`;
+    }).join("");
+  }
+
   async function downloadPacketZip(packetId) {
     const packet = state.packet;
     if (!packet || packet.packet_id !== packetId) {
-      setError(dom.packetError, new Error("Build the packet again before downloading."));
+      const row = state.packets.find((item) => item.packet_id === packetId);
+      if (!row) {
+        setError(dom.packetError, new Error("Packet not found. Refresh the packet history."));
+        return;
+      }
+      try {
+        await downloadPath(row.zip_url, row.zip_file || `${packetId}.zip`);
+      } catch (error) {
+        setError(dom.packetError, error);
+      }
       return;
     }
     try {
@@ -2534,7 +2711,7 @@
               <span class="creator-tag">${escapeHtml(id)}</span>
               ${artifact.pinned ? '<span class="creator-tag ok">pinned</span>' : ""}
               <span class="creator-tag">${artifact.target || "?"}s · ${escapeHtml(artifact.aspect || "9:16")}</span>
-              ${artifact.generation ? `<span class="creator-tag">gen ${artifact.generation}</span>` : ""}
+              ${artifact.versions?.label ? `<span class="creator-tag ${artifact.versions.current ? "ok" : "warn"}">${escapeHtml(artifact.versions.label)}</span>` : ""}
               ${share ? '<span class="creator-tag ok">review link</span>' : ""}
             </div></div>
             <button class="ghost small" type="button" data-focus-key="artifact-pin:${escapeHtml(id)}" data-artifact-pin="${escapeHtml(id)}" data-pinned="${artifact.pinned ? "1" : "0"}">${artifact.pinned ? "Unpin" : "Pin"}</button>
@@ -2618,7 +2795,8 @@
             artifact_id: artifactId,
             label,
           });
-          // The create response is the only place a token is returned.
+          // Tokens are returned at creation and by the loopback job-scoped
+          // re-copy endpoint only; listings always redact them.
           await copyText(absoluteUrl(share.url || `/r/${share.token}`));
         }
         await loadShares();
@@ -2757,6 +2935,14 @@
     });
 
     dom.clipsetBuild?.addEventListener("click", buildClipSet);
+    dom.clipsetQueue?.addEventListener("click", () => queueStories(dom.clipsetQueue));
+    dom.storyQueueRefresh?.addEventListener("click", () => loadStoryQueues().catch((error) => setError(dom.storyQueueError, error)));
+    for (const host of [dom.storyQueueList, dom.storyQueueBanner]) {
+      host?.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-story-queue-action]");
+        if (button) storyQueueAction(button.dataset.storyQueueAction, button.dataset.queueId, button);
+      });
+    }
     dom.clipsetReadAnalysis?.addEventListener("click", () => {
       const open = Boolean(dom.clipsetAnalysis?.hidden);
       setAnalysisOpen(open);
@@ -2800,6 +2986,8 @@
       }
       const render = event.target.closest("[data-story-render]");
       if (render) {
+        const picker = document.querySelector(`[data-story-aspect="${CSS.escape(render.dataset.storyRender)}"]`);
+        if (picker) state.storyAspects[render.dataset.storyRender] = picker.value;
         renderStory(render.dataset.storyRender, render);
         return;
       }
@@ -2845,6 +3033,10 @@
       }
     };
     dom.clipsetStories?.addEventListener("click", clipsetClick);
+    dom.clipsetStories?.addEventListener("change", (event) => {
+      const picker = event.target.closest("[data-story-aspect]");
+      if (picker) state.storyAspects[picker.dataset.storyAspect] = picker.value === "4:5" ? "4:5" : "9:16";
+    });
     dom.clipsetOriginalOutput?.addEventListener("click", clipsetClick);
     dom.clipsetStories?.addEventListener("change", (event) => {
       const toggle = event.target.closest("[data-sentence-toggle]");
@@ -2959,6 +3151,10 @@
     dom.packetResult?.addEventListener("click", (event) => {
       const button = event.target.closest("[data-packet-zip]");
       if (button) downloadPacketZip(button.dataset.packetZip);
+    });
+    dom.packetHistory?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-packet-history-zip]");
+      if (button) downloadPacketZip(button.dataset.packetHistoryZip);
     });
 
     dom.preflightRun?.addEventListener("click", () => runPreflight(false));
