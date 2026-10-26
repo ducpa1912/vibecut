@@ -1238,6 +1238,85 @@ def test_app_imports_after_stdlib_queue(tmp_path):
     assert "Scheduler" in result.stdout
 
 
+def test_recover_reconciles_orphan_story_manifest_into_retryable_record(data_env, monkeypatch):
+    source = data_env / "source.mp4"
+    source.write_bytes(b"x")
+    scenes = [{
+        "id": 0, "start": 0.0, "end": 8.0, "dur": 8.0, "deep": True,
+        "speech": "Story line for recovery.", "crop": {"cx": 0.5, "cy": 0.5},
+    }]
+    write_job(
+        app.JOBS,
+        "orphan-story",
+        source={"path": str(source), "name": "source.mp4"},
+        analysis={"scene_count": 1, "scenes": scenes, "hook_scene": 0},
+    )
+    job = app.load_job("orphan-story")
+    plan = {
+        "target": 37,
+        "total": 8.0,
+        "hook_scene": 0,
+        "auto": False,
+        "clips": [{
+            "scene": 0, "start": 0.0, "end": 8.0, "dur": 8.0, "role": "hook",
+        }],
+        "story_id": "story-37",
+    }
+    spec = artifacts.build_spec(
+        job, plan, quality="draft", aspect="4:5", captions=False,
+        story_id="story-37",
+    )
+    artifact = artifacts.artifact_id(spec)
+    key = app._render_key(
+        37, "draft", "4:5", False, "", 0, story_id="story-37",
+    )
+    manifest = artifacts.make_manifest(
+        "orphan-story", spec, status="queued", record_key=key,
+    )
+    artifacts.save_manifest(app._job_dir("orphan-story"), manifest)
+
+    app.recover_jobs()
+
+    recovered = app.load_job("orphan-story")["renders"][key]
+    assert recovered["status"] == "interrupted"
+    assert recovered["recoverable"] is True
+    assert recovered["recovered_from_manifest"] is True
+    assert recovered["artifact_id"] == artifact
+    assert recovered["target"] == 37
+    assert recovered["quality"] == "draft"
+    assert recovered["aspect"] == "4:5"
+    assert recovered["story_id"] == "story-37"
+    assert recovered["plan_snapshot"]["story_id"] == "story-37"
+    assert recovered["plan_snapshot"]["clips"] == plan["clips"]
+    assert artifacts.load_manifest(
+        app._job_dir("orphan-story"), artifact,
+    )["status"] == "interrupted"
+
+    submitted = []
+    monkeypatch.setattr(
+        app.render_pool, "submit",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    analysis, renders = routes_batches._retry_job(
+        app, app.load_job("orphan-story"),
+    )
+    assert analysis is False
+    assert renders == 1
+    assert len(submitted) == 1
+    retried = app.load_job("orphan-story")["renders"][key]
+    assert retried["status"] == "queued"
+    assert retried["artifact_id"] == artifact
+    assert retried["target"] == 37
+    assert retried["aspect"] == "4:5"
+    assert retried["story_id"] == "story-37"
+    assert retried["plan_snapshot"]["story_id"] == "story-37"
+    stored = artifacts.load_manifest(app._job_dir("orphan-story"), artifact)
+    assert stored["status"] == "queued"
+    assert stored["spec"]["target"] == 37
+    assert stored["spec"]["aspect"] == "4:5"
+    assert stored["spec"]["story_id"] == "story-37"
+
+
 def test_recover_marks_artifact_backed_render_interrupted(data_env):
     source = data_env / "source.mp4"
     source.write_bytes(b"x")

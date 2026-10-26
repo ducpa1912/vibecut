@@ -1113,6 +1113,108 @@ def test_story_render_4x5_is_a_separate_artifact(api, monkeypatch):
     assert artifacts.load_manifest(job_dir, portrait["artifact_id"])["spec"]["aspect"] == "4:5"
 
 
+def test_story_retry_keeps_37s_4x5_edited_track_identity(api, monkeypatch):
+    """A failed story render retries the same 37s 4:5 object and edited track."""
+    write_job(api.jobs_dir, "j1")
+    record = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
+    set_id = record["id"]
+    story = record["stories"][0]
+
+    job_path = api.jobs_dir / "j1" / "job.json"
+    job = json.loads(job_path.read_text())
+    stored_story = next(
+        item for item in job["clip_sets"][set_id]["stories"]
+        if item["id"] == story["id"]
+    )
+    stored_story["dur"] = 37.0
+    job_path.write_text(json.dumps(job))
+
+    monkeypatch.setattr(app.render_pool, "submit", lambda *args, **kwargs: None)
+    built = api.post(
+        "/api/jobs/j1/captions",
+        json={"set_id": set_id, "story_id": story["id"]},
+    )
+    assert built.status_code == 200, built.text
+    track = built.json()["track"]
+    cues = [dict(cue) for cue in track["cues"]]
+    cues[0]["text"] = "Edited retry cue"
+    edited = api.patch(
+        f"/api/jobs/j1/captions/{track['id']}", json={"cues": cues},
+    )
+    assert edited.status_code == 200, edited.text
+    edited_track = edited.json()["track"]
+    edited_id = edited.json()["id"]
+
+    rendered = api.post(
+        f"/api/jobs/j1/clip-sets/{set_id}/stories/{story['id']}/render",
+        json={"aspect": "4:5", "quality": "draft"},
+    )
+    assert rendered.status_code == 200, rendered.text
+    artifact_id = rendered.json()["artifact_id"]
+
+    job = app.load_job("j1")
+    record_key, queued = next(
+        (key, value) for key, value in job["renders"].items()
+        if value.get("artifact_id") == artifact_id
+    )
+    assert queued["target"] == 37
+    assert queued["aspect"] == "4:5"
+    assert queued["caption_track_id"] == edited_id
+    assert queued["plan_snapshot"]["story_id"] == story["id"]
+    assert queued["plan_snapshot"]["set_id"] == set_id
+    snapshot_clips = [dict(clip) for clip in queued["plan_snapshot"]["clips"]]
+    track_dir = app._job_dir("j1") / "caption_tracks"
+    tracks_before = len(list(track_dir.glob("*.json")))
+
+    def fail(value: dict) -> None:
+        value["renders"][record_key]["status"] = "failed"
+        value["renders"][record_key]["error"] = "encoder failed"
+        value["renders"][record_key]["attempts"] = 1
+
+    app.update_job("j1", fail)
+    artifacts.mark_status(
+        app._job_dir("j1"), artifact_id, "interrupted", error="encoder failed",
+    )
+
+    response = api.post("/api/jobs/j1/retry")
+    assert response.status_code == 200, response.text
+    retried = response.json()
+    assert retried["retry"]["renders"] == 1
+
+    latest = app.load_job("j1")
+    assert record_key in latest["renders"]
+    retry = latest["renders"][record_key]
+    assert retry["status"] == "queued"
+    assert retry["target"] == 37
+    assert retry["quality"] == "draft"
+    assert retry["aspect"] == "4:5"
+    assert retry["captions"] is True
+    assert retry["story_id"] == story["id"]
+    assert retry["set_id"] == set_id
+    assert retry["plan_snapshot"]["story_id"] == story["id"]
+    assert retry["plan_snapshot"]["set_id"] == set_id
+    assert retry["plan_snapshot"]["clips"] == snapshot_clips
+    assert retry["caption_track_id"] == edited_id
+    assert retry["caption_style_id"] == edited_track["style_id"]
+    assert retry["style_hash"] == edited_track["style_hash"]
+    assert retry["cue_hash"] == edited_track["cue_hash"]
+    assert retry["artifact_id"] == artifact_id
+    assert retry["attempts"] == 2
+    assert len(list(track_dir.glob("*.json"))) == tracks_before
+
+    manifest = artifacts.load_manifest(app._job_dir("j1"), artifact_id)
+    assert manifest["status"] == "queued"
+    assert manifest["spec"]["caption"]["cue_hash"] == (
+        artifacts.cue_hashes(edited_track["cues"])[0]
+    )
+    assert manifest["spec"]["caption"]["style_hash"] == artifacts.style_hash(
+        None, 0.075, edited_track["style_hash"],
+    )
+    assert manifest["spec"]["target"] == 37
+    assert manifest["spec"]["aspect"] == "4:5"
+    assert manifest["caption_track_id"] == edited_id
+
+
 def test_story_versions_are_monotonic_and_old_versions_are_labelled(api, monkeypatch):
     """FR-10: v{n} per story/aspect; old artifacts stay, labelled superseded."""
     write_job(api.jobs_dir, "j1")

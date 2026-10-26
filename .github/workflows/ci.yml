@@ -31,7 +31,10 @@ jobs:
         run: python -m py_compile app.py pipeline.py render.py vision.py cli.py
 
       - name: Check JavaScript
-        run: node --check static/app.js
+        run: |
+          node --check static/app.js
+          node --check static/creator.js
+          node --check static/admin.js
 
       - name: Run tests
         run: pytest -q

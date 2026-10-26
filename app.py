@@ -1469,6 +1469,9 @@ def _adopt_render_artifact(
     artifacts.assign_version(job_dir, manifest)
     manifest["caption_source"] = "track" if caption_track is not None else "plan"
     manifest["caption_track_id"] = caption_track.id if caption_track is not None else None
+    manifest["caption_style_id"] = (
+        caption_track.style_id if caption_track is not None else None
+    )
     if caption_warning:
         manifest["caption_warning"] = caption_warning
         record["caption_warning"] = caption_warning
@@ -1810,6 +1813,9 @@ def run_render(
                 title=f"{Path(job['source']['name']).stem} · {target}s cut",
             )
             artifacts.assign_version(job_dir, manifest)
+            manifest["caption_track_id"] = plan.get("_caption_key")
+            manifest["caption_style_id"] = (plan.get("_caption_style") or {}).get("id")
+            manifest["set_id"] = plan.get("clip_set_id")
             artifacts.save_manifest(job_dir, manifest)
         history_id = str(
             ((job.get("renders") or {}).get(record_key) or {}).get("history_id") or ""
@@ -2017,6 +2023,232 @@ def _stop_orphan_encoders() -> int:
     return stopped
 
 
+def _manifest_record_key(manifest: dict) -> str:
+    """The render key a queued manifest was created under, or derive it."""
+    key = str(manifest.get("record_key") or "").strip()
+    if key:
+        return key
+    spec = manifest.get("spec") or {}
+    try:
+        target = int(spec.get("target") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if target <= 0:
+        return ""
+    caption = spec.get("caption") or {}
+    hook = None
+    if spec.get("hook_override") and spec.get("hook_scene") is not None:
+        try:
+            hook = int(spec.get("hook_scene"))
+        except (TypeError, ValueError):
+            hook = None
+    return _render_key(
+        target,
+        str(spec.get("quality") or "final"),
+        str(spec.get("aspect") or "9:16"),
+        bool(caption.get("enabled")),
+        str(spec.get("audio_sig") or ""),
+        hook,
+        story_id=str(spec.get("story_id") or "") or None,
+    )
+
+
+def _manifest_caption_track(job_dir: Path, manifest: dict):
+    """Recover the exact track a queued captioned manifest used.
+
+    New manifests carry ``caption_track_id``. Older manifests only carry the
+    style/cue/clip hashes, so an exact, unique track match is required. A
+    near-match is refused: retry must not silently burn a different track.
+    """
+    spec = manifest.get("spec") or {}
+    caption = spec.get("caption") or {}
+    if not caption.get("enabled"):
+        return None
+    track_id = str(manifest.get("caption_track_id") or "")
+    if track_id:
+        track = caption_engine.load_track(job_dir, track_id)
+        if track is not None:
+            return track
+    wanted_clip = caption_engine.clip_hash(spec.get("clips") or [])
+    wanted_cue = str(caption.get("cue_hash") or "")
+    wanted_style = str(caption.get("style_hash") or "")
+    try:
+        target = int(spec.get("target") or 0)
+    except (TypeError, ValueError):
+        target = 0
+    try:
+        margin = float(caption.get("margin") or 0.075)
+    except (TypeError, ValueError):
+        margin = 0.075
+    presets = (None, *render.PRESETS.keys())
+    matches = []
+    try:
+        rows = caption_engine.list_tracks(job_dir)
+    except Exception:  # noqa: BLE001 - recovery must not fail on one bad track
+        rows = []
+    for row in rows:
+        track = caption_engine.load_track(job_dir, str(row.get("id") or ""))
+        if track is None or int(track.target or 0) != target:
+            continue
+        if track.clip_hash != wanted_clip:
+            continue
+        cue_hash, _text_hash = artifacts.cue_hashes(
+            cue.to_dict() for cue in track.cues
+        )
+        if cue_hash != wanted_cue:
+            continue
+        if not any(
+            artifacts.style_hash(preset, margin, track.style_hash) == wanted_style
+            for preset in presets
+        ):
+            continue
+        matches.append(track)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _recovered_manifest_record(
+    manifest: dict,
+    job: dict,
+    job_dir: Path,
+) -> dict:
+    """Project an orphan queued/rendering manifest back into a retryable record."""
+    spec = manifest.get("spec") or {}
+    caption = spec.get("caption") or {}
+    clips = [
+        dict(clip) for clip in (spec.get("clips") or [])
+        if isinstance(clip, dict)
+    ]
+    try:
+        target = int(spec.get("target") or manifest.get("target") or 0)
+    except (TypeError, ValueError):
+        target = 0
+    error = "The server restarted while this reel was rendering."
+    track = _manifest_caption_track(job_dir, manifest)
+    captions = bool(caption.get("enabled"))
+    record = artifacts.render_record(manifest)
+    record.update({
+        "status": "interrupted",
+        "progress": 0.0,
+        "message": "Interrupted",
+        "error": error,
+        "target": target,
+        "total": round(sum(
+            float(clip.get("dur") or clip.get("duration") or 0.0)
+            for clip in clips
+        ), 3),
+        "story_id": str(spec.get("story_id") or "") or None,
+        "set_id": str(manifest.get("set_id") or "") or None,
+        "captions": captions,
+        "caption_margin": float(caption.get("margin") or 0.075),
+        "caption_track_id": track.id if track is not None else None,
+        "caption_clip_hash": (
+            track.clip_hash if track is not None
+            else caption_engine.clip_hash(clips) if captions else None
+        ),
+        "caption_style_id": (
+            track.style_id if track is not None
+            else manifest.get("caption_style_id")
+        ),
+        "cue_hash": (
+            track.cue_hash if track is not None
+            else str(caption.get("cue_hash") or "") or None
+        ),
+        "style_hash": (
+            track.style_hash if track is not None
+            else str(caption.get("style_hash") or "") or None
+        ),
+        "attempts": 0,
+        "plan_snapshot": {
+            "target": target,
+            "hook_scene": spec.get("hook_scene"),
+            "order": str(spec.get("order") or "source"),
+            "auto": False,
+            "clips": clips,
+            "story_id": str(spec.get("story_id") or "") or None,
+            "set_id": str(manifest.get("set_id") or "") or None,
+        },
+        "recovered_from_manifest": True,
+    })
+    record["recoverable"] = bool(clips) and (not captions or track is not None)
+    if not record["recoverable"]:
+        if captions and track is None:
+            record["recovery_error"] = (
+                "The original caption track is missing; retry would change the captions."
+            )
+        else:
+            record["recovery_error"] = (
+                "The interrupted render has no stored plan clips to retry."
+            )
+    artifacts.ensure_job_schema(job, job_dir)
+    return record
+
+
+def _reconcile_orphan_manifests(job: dict, job_dir: Path) -> bool:
+    """Tie queued/rendering manifests to a retryable interrupted record.
+
+    A crash can leave an artifact manifest queued while ``job.json`` has no
+    record for it. Retry only sees records, so the orphan would be stuck. The
+    recovered record is always ``interrupted`` and never ``ready``.
+    """
+    changed = False
+    manifests = artifacts.list_manifests(job_dir)
+    if not manifests:
+        return changed
+    renders = job.get("renders")
+    if not isinstance(renders, dict):
+        renders = {}
+        job["renders"] = renders
+    for manifest in manifests:
+        if str(manifest.get("status") or "") not in ACTIVE_RENDER:
+            continue
+        artifact = str(manifest.get("artifact_id") or "")
+        error = "The server restarted while this reel was rendering."
+        try:
+            marked = artifacts.mark_status(
+                job_dir, artifact, "interrupted", error=error,
+            )
+            changed = True
+        except Exception:  # noqa: BLE001 - keep scanning other artifacts
+            LOGGER.exception("could not interrupt artifact %s", artifact)
+            continue
+        if marked is not None:
+            manifest = marked
+        existing_key = next(
+            (
+                str(key) for key, record in renders.items()
+                if isinstance(record, dict)
+                and str(record.get("artifact_id") or "") == artifact
+            ),
+            "",
+        )
+        key = existing_key or _manifest_record_key(manifest)
+        if not key:
+            continue
+        current = renders.get(key)
+        if current is not None and not isinstance(current, dict):
+            continue
+        if current is not None and str(current.get("artifact_id") or "") not in ("", artifact):
+            # Another render owns this key; never overwrite a real record.
+            continue
+        if current is None:
+            renders[key] = _recovered_manifest_record(manifest, job, job_dir)
+            changed = True
+            continue
+        if current.get("status") in ACTIVE_RENDER or current.get("status") == "ready":
+            current.update({
+                "status": "interrupted",
+                "progress": 0.0,
+                "message": "Interrupted",
+                "error": error,
+            })
+            changed = True
+        if str(current.get("artifact_id") or "") == artifact:
+            current.setdefault("story_id", str(
+                (manifest.get("spec") or {}).get("story_id") or ""
+            ) or None)
+    return changed
+
+
 def recover_jobs() -> None:
     _stop_orphan_encoders()
     RENDER_CANCELS.clear()
@@ -2070,6 +2302,14 @@ def recover_jobs() -> None:
                             latency_ms=0,
                             entry_id=record.get("history_id"),
                         )
+                try:
+                    if _reconcile_orphan_manifests(job, _job_dir(job["id"])):
+                        changed = True
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception(
+                        "could not reconcile interrupted artifacts for %s",
+                        job.get("id"),
+                    )
                 if changed:
                     _save_unlocked(job)
                     if ingest_failed:
@@ -2180,12 +2420,48 @@ def _collect_artifact_refs(value, found: set[str]) -> None:
             _collect_artifact_refs(item, found)
 
 
+def _packet_disk_refs(job_id: str) -> set[str]:
+    """Artifact ids referenced by packets already written to disk.
+
+    Older jobs may not have ``packet_refs`` in ``job.json`` yet. Reading the
+    packet manifests keeps those packets protected without a migration and
+    without rewriting the packet store.
+    """
+    found: set[str] = set()
+    root = _job_dir(job_id) / packet.PACKET_ROOT
+    if not root.is_dir():
+        return found
+    try:
+        directories = list(root.iterdir())
+    except OSError:
+        return found
+    for directory in directories:
+        if not directory.is_dir() or not packet.PACKET_ID_RE.fullmatch(directory.name):
+            continue
+        try:
+            manifest = json.loads(
+                (directory / "packet.json").read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        if str(manifest.get("packet_id") or "") != directory.name:
+            continue
+        _collect_artifact_refs(manifest.get("media"), found)
+    return found
+
+
 def _packet_artifact_ids(job: dict, manifests: list[dict] | None = None) -> set[str]:
     found: set[str] = set()
     for key in ("packet", "packets", "packet_refs", "packet_artifact_ids"):
         _collect_artifact_refs(job.get(key), found)
     for manifest in manifests or []:
         _collect_artifact_refs(manifest.get("packet_refs"), found)
+    try:
+        found |= _packet_disk_refs(str(job.get("id") or ""))
+    except Exception:  # noqa: BLE001 - a broken packet must not unlock deletion
+        LOGGER.exception("could not read packet refs for %s", job.get("id"))
     return found
 
 
@@ -3567,6 +3843,10 @@ class SharePatchBody(BaseModel):
     revoked: bool | None = None
 
 
+class ShareTokenBody(BaseModel):
+    token: str = ""
+
+
 class PinBody(BaseModel):
     pinned: bool = True
 
@@ -3712,6 +3992,41 @@ def create_share(
     }
 
 
+@app.post("/api/jobs/{job_id}/share-token")
+def recopy_share_token(
+    job_id: str,
+    body: ShareTokenBody,
+    request: Request,
+) -> dict:
+    """Return one job-scoped review token to the local owner.
+
+    The creating session may have closed without the token being copied. This
+    is deliberately not a token listing: it needs the job id and the exact
+    token, and it is only available to a loopback client.
+    """
+    if not _loopback_client(request):
+        raise HTTPException(
+            403,
+            "Review links can only be re-copied on this Mac.",
+        )
+    job = load_job(job_id)
+    token = str(body.token or "").strip()
+    if not token:
+        raise HTTPException(400, "Send the review token to re-copy.")
+    try:
+        record = shares.get(token, SHARES)
+    except shares.ShareStoreError as exc:
+        raise _share_store_unavailable(exc) from exc
+    if record is None or str(record.get("job_id") or "") != str(job["id"]):
+        raise HTTPException(404, "Review link not found for this job.")
+    public = {
+        **record,
+        "token": token,
+        "url": f"/r/{token}",
+    }
+    return {**public, "share": record}
+
+
 @app.get("/r/{token}")
 def review_page(token: str) -> Response:
     found = _share(token)
@@ -3815,6 +4130,8 @@ class PlanBody(BaseModel):
     caption_track_id: str | None = None
     caption_style_id: str | None = None
     caption_style: dict | None = None
+    story_id: str | None = None
+    set_id: str | None = None
 
 
 class CaptionTrackBody(BaseModel):
@@ -5002,8 +5319,20 @@ def _apply_order(job: dict, plan: dict, order: str) -> dict:
 
 def _plan_for_body(job: dict, target: int, body: PlanBody) -> dict:
     if body.clips is not None:
-        return _apply_order(job, _custom_plan(job, target, body.hook_scene, body.clips), body.order)
-    return _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
+        plan = _apply_order(
+            job, _custom_plan(job, target, body.hook_scene, body.clips),
+            body.order,
+        )
+    else:
+        plan = _apply_order(job, _plan_for(job, target, body.hook_scene), body.order)
+    # A retry rebuilds the exact stored plan, not whichever default plan the
+    # current analysis would choose. Keep the story identity on that plan so
+    # the render key and artifact stay the same object.
+    if body.story_id:
+        plan["story_id"] = str(body.story_id)
+    if body.set_id:
+        plan["clip_set_id"] = str(body.set_id)
+    return plan
 
 
 def _caption_style_for(
@@ -7009,6 +7338,8 @@ def _queue_render_locked_impl(
         reused["cue_hash"] = (plan.get("_caption_track") or {}).get("cue_hash")
         reused["style_hash"] = (plan.get("_caption_track") or {}).get("style_hash")
         reused["caption_count"] = len(cues)
+        reused["story_id"] = plan.get("story_id")
+        reused["set_id"] = plan.get("clip_set_id")
 
         def reuse(value: dict) -> None:
             value.setdefault("renders", {})[record_key] = reused
@@ -7039,6 +7370,9 @@ def _queue_render_locked_impl(
         manifest["spec"] = spec.payload()
     if manifest.get("artifact_id") not in (None, artifact):
         manifest["artifact_id"] = artifact
+    manifest["caption_track_id"] = plan.get("_caption_key")
+    manifest["caption_style_id"] = (plan.get("_caption_style") or {}).get("id")
+    manifest["set_id"] = plan.get("clip_set_id")
     artifacts.save_manifest(job_dir, manifest)
 
     record = {
@@ -7065,12 +7399,16 @@ def _queue_render_locked_impl(
         "artifact_id": artifact,
         "generation": generation,
         "attempts": attempts,
+        "story_id": plan.get("story_id"),
+        "set_id": plan.get("clip_set_id"),
         "plan_snapshot": {
             "target": target,
             "hook_scene": plan.get("hook_scene"),
             "order": plan.get("order") or "source",
             "auto": bool(plan.get("auto", True)),
             "clips": plan.get("clips") or [],
+            "story_id": plan.get("story_id"),
+            "set_id": plan.get("clip_set_id"),
         },
         "caption_track_id": plan.get("_caption_key"),
         "caption_clip_hash": (plan.get("_caption_track") or {}).get("clip_hash"),
@@ -7432,6 +7770,47 @@ def _packet_http_error(exc: packet.PacketError) -> HTTPException:
     return HTTPException(status_code=exc.status, detail=exc.as_detail())
 
 
+def _record_packet_refs(job_id: str, manifest: dict) -> None:
+    """Persist the artifact ids a built packet references in its job.
+
+    ``job.json`` is the fast path for delete/clean protection. The packet
+    manifest on disk remains authoritative; this reference table only makes
+    the job state self-describing and lets cleanup see old packets too.
+    """
+    packet_id = str(manifest.get("packet_id") or "")
+    if not packet.PACKET_ID_RE.fullmatch(packet_id):
+        return
+    artifact_ids: set[str] = set()
+    render_keys: set[str] = set()
+    for item in manifest.get("media") or []:
+        if not isinstance(item, dict):
+            continue
+        artifact = str(item.get("artifact_id") or "")
+        if artifacts.is_safe_artifact_id(artifact):
+            artifact_ids.add(artifact)
+        render_key = str(item.get("render_key") or "")
+        if render_key:
+            render_keys.add(render_key)
+    refs = {
+        "packet_id": packet_id,
+        "schema": manifest.get("schema"),
+        "created": manifest.get("created"),
+        "story_id": manifest.get("story_id"),
+        "artifact_ids": sorted(artifact_ids),
+        "render_keys": sorted(render_keys),
+    }
+
+    def mutate(job: dict) -> None:
+        table = job.get("packet_refs")
+        if not isinstance(table, dict):
+            table = {}
+        table[packet_id] = refs
+        job["packet_refs"] = table
+        artifacts.ensure_job_schema(job, _job_dir(job_id))
+
+    update_job(job_id, mutate)
+
+
 @app.post("/api/jobs/{job_id}/packets")
 def build_publish_packet(job_id: str, body: PacketBody) -> dict:
     job = load_job(job_id)
@@ -7446,9 +7825,11 @@ def build_publish_packet(job_id: str, body: PacketBody) -> dict:
         pin_comment=body.pin_comment,
     )
     try:
-        return packet.build_packet(job, _job_dir(job_id), request)
+        manifest = packet.build_packet(job, _job_dir(job_id), request)
     except packet.PacketError as exc:
         raise _packet_http_error(exc) from exc
+    _record_packet_refs(job_id, manifest)
+    return manifest
 
 
 @app.get("/api/jobs/{job_id}/packets")

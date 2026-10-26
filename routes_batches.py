@@ -234,6 +234,41 @@ def _retry_job(app, job: dict) -> tuple[bool, int]:
     return False, 0
 
 
+def _retry_plan(app, fresh: dict, target: int, body, record: dict) -> dict:
+    """Rebuild the stored plan exactly; never fall back to a current default."""
+    snapshot = record.get("plan_snapshot")
+    if (
+        isinstance(snapshot, dict)
+        and snapshot.get("auto") is False
+        and isinstance(snapshot.get("clips"), list)
+        and snapshot["clips"]
+    ):
+        clips = [
+            dict(clip) for clip in snapshot["clips"] if isinstance(clip, dict)
+        ]
+        total = round(sum(
+            float(clip.get("dur") or clip.get("duration") or 0.0)
+            for clip in clips
+        ), 3)
+        plan = {
+            "target": int(target),
+            "total": total,
+            "hook_scene": snapshot.get("hook_scene"),
+            "auto": False,
+            "clip_count": len(clips),
+            "clips": clips,
+            "order": str(snapshot.get("order") or "source"),
+        }
+        story_id = record.get("story_id") or snapshot.get("story_id")
+        set_id = record.get("set_id") or snapshot.get("set_id")
+        if story_id:
+            plan["story_id"] = str(story_id)
+        if set_id:
+            plan["clip_set_id"] = str(set_id)
+        return plan
+    return app._plan_for_body(fresh, target, body)
+
+
 def _retry_renders(app, job: dict) -> int:
     count = 0
     for record_key, record in list((job.get("renders") or {}).items()):
@@ -241,13 +276,61 @@ def _retry_renders(app, job: dict) -> int:
             continue
         if record.get("status") not in {"failed", "interrupted"}:
             continue
-        target = int(record.get("target") or 0)
-        if target not in (15, 30, 60):
+        try:
+            target = int(record.get("target") or 0)
+        except (TypeError, ValueError):
             continue
+        # Story renders use their stored duration (1-180s), not only the
+        # legacy 15/30/60 presets.
+        if target < 1 or target > 180:
+            continue
+        if record.get("recoverable") is False:
+            raise HTTPException(
+                409,
+                f"Could not retry render {record_key}: "
+                f"{record.get('recovery_error') or 'its stored plan is incomplete.'}",
+            )
+        snapshot = record.get("plan_snapshot")
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        story_id = str(
+            record.get("story_id") or snapshot.get("story_id") or ""
+        ) or None
+        set_id = str(record.get("set_id") or snapshot.get("set_id") or "") or None
+        is_story = bool(story_id or set_id) or target not in (15, 30, 60)
+        if is_story:
+            clips = snapshot.get("clips")
+            if not isinstance(clips, list) or not clips:
+                raise HTTPException(
+                    409,
+                    f"Could not retry render {record_key}: "
+                    "its stored plan clips are missing.",
+                )
+        caption_track = None
+        if record.get("captions"):
+            track_id = str(record.get("caption_track_id") or "")
+            if track_id:
+                try:
+                    caption_track = app._caption_track_by_id(
+                        str(job["id"]), track_id,
+                    )
+                except HTTPException as exc:
+                    raise HTTPException(
+                        409,
+                        f"Could not retry render {record_key}: "
+                        f"{str(exc.detail)[:240]}",
+                    ) from exc
+            elif is_story:
+                # A story retry must not silently build a new default track.
+                raise HTTPException(
+                    409,
+                    f"Could not retry render {record_key}: "
+                    "its caption track is missing.",
+                )
         fresh = app.load_job(str(job["id"]))
         try:
             body = _retry_body(app, record, target)
-            plan = app._plan_for_body(fresh, target, body)
+            plan = _retry_plan(app, fresh, target, body, record)
             quality, aspect, encoder, captions, audio_plan, preset, margin = (
                 app._render_options(body)
             )
@@ -255,6 +338,7 @@ def _retry_renders(app, job: dict) -> int:
                 str(job["id"]), fresh, plan, quality, aspect, encoder, captions,
                 audio_plan, False, preset=preset, caption_margin=margin,
                 script_id=body.script_id, check_space=True,
+                caption_track=caption_track,
             )
             new_record = queued_record or {}
             new_key = str(new_record.get("record_key") or "")
@@ -308,6 +392,9 @@ def _retry_body(app, record: dict, target: int):
         order=str(record.get("order") or "source"),
         caption_margin=record.get("caption_margin"),
         script_id=record.get("script_id"),
+        caption_track_id=record.get("caption_track_id"),
+        story_id=record.get("story_id") or snapshot.get("story_id"),
+        set_id=record.get("set_id") or snapshot.get("set_id"),
     )
 
 

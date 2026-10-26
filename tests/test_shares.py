@@ -385,6 +385,46 @@ def _save_legacy_share(env, token: str = "legacy-clean-token-0123456789") -> str
     return token
 
 
+def test_review_token_recopy_is_job_scoped_and_loopback_only(env, monkeypatch):
+    manifest = make_artifact(env)
+    token, _ = shares.create(
+        env.job_id, manifest["artifact_id"], label="Client", path=app.SHARES,
+    )
+    monkeypatch.setattr(app, "_loopback_client", lambda request: True)
+    client = TestClient(app.app)
+
+    copied = client.post(
+        f"/api/jobs/{env.job_id}/share-token", json={"token": token},
+    )
+    assert copied.status_code == 200, copied.text
+    body = copied.json()
+    assert body["token"] == token
+    assert body["url"] == f"/r/{token}"
+    assert body["artifact_id"] == manifest["artifact_id"]
+    assert body["label"] == "Client"
+
+    # The normal listing still redacts every token.
+    listed = client.get("/api/shares").json()
+    assert listed["count"] == 1
+    assert "token" not in listed["shares"][0]
+
+    other_token, _ = shares.create(
+        "job2", manifest["artifact_id"], path=app.SHARES,
+    )
+    wrong_job = client.post(
+        f"/api/jobs/{env.job_id}/share-token", json={"token": other_token},
+    )
+    assert wrong_job.status_code == 404
+    assert other_token not in wrong_job.text
+
+    monkeypatch.setattr(app, "_loopback_client", lambda request: False)
+    denied = client.post(
+        f"/api/jobs/{env.job_id}/share-token", json={"token": token},
+    )
+    assert denied.status_code == 403
+    assert token not in denied.text
+
+
 def test_clean_adopts_live_legacy_share_before_deleting_renders(env):
     _prepare_legacy_render(env)
     token = _save_legacy_share(env)
