@@ -50,6 +50,7 @@ import pipeline
 import preflight
 import render
 import routes_batches
+import routes_cleanup
 import selection
 import settings_store
 import shares
@@ -3044,6 +3045,7 @@ app = FastAPI(title="VibeCut", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.include_router(admin_routes.router)
 app.include_router(routes_batches.router)
+app.include_router(routes_cleanup.router)
 
 
 @app.exception_handler(disk.InsufficientSpace)
@@ -3060,6 +3062,21 @@ SHARES = DATA / "shares.json"
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+CLEANUP_PLAN_PATH = re.compile(r"^/api/jobs/[^/]+/cleanup/plan/?$")
+
+
+@app.middleware("http")
+async def gate_cleanup(request: Request, call_next):
+    """Hide cleanup before FastAPI parses a body or validates content type."""
+    if (
+        CLEANUP_PLAN_PATH.fullmatch(request.url.path)
+        and not routes_cleanup.cleanup_enabled()
+    ):
+        return JSONResponse(
+            {"detail": "Cleanup is not enabled in this build."},
+            status_code=404,
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")
