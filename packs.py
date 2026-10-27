@@ -168,6 +168,78 @@ def pack_dir(pack_id: str, root: str | Path | None = None) -> Path:
     return (base / pack_id).resolve()
 
 
+def installed_dir(pack_id: str, root: str | Path | None = None) -> Path | None:
+    """Return an installed pack directory, or ``None`` when it is absent.
+
+    A directory is considered installed when it exists, is not a symlink and
+    is non-empty. The install metadata file is not required so a manually
+    staged or development pack works the same way as an installer-created one.
+    """
+    directory = pack_dir(pack_id, root)
+    if not directory.is_dir() or directory.is_symlink():
+        return None
+    try:
+        next(directory.iterdir())
+    except StopIteration:
+        return None
+    except OSError:
+        return None
+    return directory
+
+
+def find_asset(
+    pack_id: str,
+    *relative: str,
+    root: str | Path | None = None,
+) -> Path | None:
+    """Find a file inside an installed pack.
+
+    Each candidate is tried under the pack root and under ``bin/`` and
+    ``runtime/bin/`` so both flat archives and a Unix-style runtime layout work.
+    """
+    base = installed_dir(pack_id, root)
+    if base is None:
+        return None
+    for candidate in relative:
+        wanted = str(candidate or "").strip()
+        if not wanted:
+            continue
+        for prefix in ("", "bin", "runtime/bin"):
+            path = base / prefix / wanted if prefix else base / wanted
+            if path.is_file() and not path.is_symlink():
+                return path
+    return None
+
+
+def find_dir(
+    pack_id: str,
+    *relative: str,
+    root: str | Path | None = None,
+) -> Path | None:
+    """Find a directory inside an installed pack (``""`` means its root)."""
+    base = installed_dir(pack_id, root)
+    if base is None:
+        return None
+    for candidate in relative:
+        wanted = str(candidate or "").strip()
+        target = base if not wanted else base / wanted
+        if target.is_dir() and not target.is_symlink():
+            return target
+    return None
+
+
+def find_command(
+    pack_id: str,
+    *names: str,
+    root: str | Path | None = None,
+) -> Path | None:
+    """Find an executable inside an installed pack."""
+    found = find_asset(pack_id, *names, root=root)
+    if found is None:
+        return None
+    return found if os.access(found, os.X_OK) else None
+
+
 def verify_sha256(path: str | Path, expected: str) -> str:
     """Stream a file through SHA-256 and compare it to the pinned digest."""
     target = Path(path)
