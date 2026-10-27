@@ -36,8 +36,20 @@ const EMPTY_STATE = {
   check: "none", stories: 0, missing: false,
 };
 
+const STOPPED = new Set(["cancelled", "interrupted"]);
+
 function isReading(status) {
-  return Boolean(status) && status !== "ready" && status !== "failed" && status !== "error";
+  return Boolean(status) && status !== "ready" && status !== "failed" && status !== "error"
+    && !STOPPED.has(status);
+}
+
+/** The top strip's one action: stop a read, or start a stopped one again. */
+export function readingAction(status) {
+  if (isReading(status)) return { kind: "cancel", label: "Cancel reading" };
+  if (STOPPED.has(status) || status === "failed" || status === "error") {
+    return { kind: "retry", label: "Read again" };
+  }
+  return null;
 }
 
 function checkState(payload) {
@@ -130,6 +142,7 @@ export function startStudio() {
             <div id="st-top-progress" class="st-top-progress" role="status" aria-live="polite" hidden>
               <div class="st-progress-bar"><i id="st-top-progress-fill"></i></div>
               <span id="st-top-progress-text"></span>
+              <button id="st-top-reading-action" class="st-btn st-btn-quiet st-btn-small" type="button" hidden></button>
             </div>
           </div>
           <div class="st-top-actions">
@@ -209,6 +222,7 @@ export function startStudio() {
     progress: root.querySelector("#st-top-progress"),
     progressFill: root.querySelector("#st-top-progress-fill"),
     progressText: root.querySelector("#st-top-progress-text"),
+    readingAction: root.querySelector("#st-top-reading-action"),
     library: root.querySelector("#st-library-dialog"),
     librarySearch: root.querySelector("#st-library-search"),
     libraryList: root.querySelector("#st-library-list"),
@@ -233,12 +247,42 @@ export function startStudio() {
       ? `${name || currentJob.id}${status ? ` · ${status}` : ""}`
       : "No video open.";
     dom.forget.disabled = !currentJob;
-    const reading = Boolean(currentJob) && jobState.jobId === currentJob.id && isReading(jobState.status);
-    dom.progress.hidden = !reading;
+    const known = Boolean(currentJob) && jobState.jobId === currentJob.id;
+    const reading = known && isReading(jobState.status);
+    const action = known ? readingAction(jobState.status) : null;
+    dom.progress.hidden = !action;
     if (reading) {
       const percent = Math.max(0, Math.min(100, Math.round(Number(jobState.progress || 0) * 100)));
       dom.progressFill.style.width = `${percent}%`;
       dom.progressText.textContent = `Reading the video · ${percent}%${jobState.message ? ` · ${jobState.message}` : ""}`;
+    } else if (action) {
+      dom.progressFill.style.width = "0%";
+      dom.progressText.textContent = STOPPED.has(jobState.status)
+        ? "Reading stopped. Other videos can read now."
+        : "Reading this video failed.";
+    }
+    dom.readingAction.hidden = !action;
+    if (action && !dom.readingAction.dataset.busy) {
+      dom.readingAction.textContent = action.label;
+      dom.readingAction.dataset.kind = action.kind;
+    }
+  }
+
+  async function readingButton() {
+    const jobId = currentJob?.id;
+    const kind = dom.readingAction.dataset.kind;
+    if (!jobId || !kind || dom.readingAction.dataset.busy) return;
+    dom.readingAction.dataset.busy = "1";
+    dom.readingAction.disabled = true;
+    dom.readingAction.textContent = kind === "cancel" ? "Stopping…" : "Starting…";
+    try {
+      await request(`/api/jobs/${encodeURIComponent(jobId)}/reading/${kind}`, { method: "POST", body: {} });
+    } catch (error) {
+      showNotice(error?.message || (kind === "cancel" ? "Could not stop reading." : "Could not read this video again."));
+    } finally {
+      delete dom.readingAction.dataset.busy;
+      dom.readingAction.disabled = false;
+      await refreshState();
     }
   }
 
@@ -250,7 +294,10 @@ export function startStudio() {
     if (jobState.jobId !== currentJob.id || !jobState.loaded) return "";
     if (jobState.missing) return "This video is no longer on file. Choose another one.";
     if (jobState.status === "failed" || jobState.status === "error") {
-      return "Reading this video failed. Import it again.";
+      return "Reading this video failed. Press Read again at the top, or import it again.";
+    }
+    if (STOPPED.has(jobState.status)) {
+      return "Reading was stopped. Press Read again at the top.";
     }
     if (isReading(jobState.status)) {
       const percent = Math.round(Number(jobState.progress || 0) * 100);
@@ -267,6 +314,7 @@ export function startStudio() {
     if (stepGate(stepId)) {
       if (!currentJob) return { state: "locked", text: "Needs a video" };
       if (isReading(jobState.status)) return { state: "locked", text: "Waits for reading" };
+      if (STOPPED.has(jobState.status)) return { state: "locked", text: "Reading stopped" };
       if (stepId === "edit" || stepId === "finish") return { state: "locked", text: "Needs stories" };
       return { state: "locked", text: "Not available" };
     }
@@ -275,6 +323,8 @@ export function startStudio() {
       if (isReading(jobState.status)) {
         return { state: "working", text: `Reading ${Math.round(Number(jobState.progress || 0) * 100)}%` };
       }
+      if (STOPPED.has(jobState.status)) return { state: "open", text: "Reading stopped" };
+      if (jobState.status === "failed" || jobState.status === "error") return { state: "open", text: "Reading failed" };
       return { state: "done", text: "Video ready" };
     }
     if (stepId === "check") {
@@ -537,6 +587,7 @@ export function startStudio() {
     button.addEventListener("click", () => go(button.dataset.step));
   }
   dom.change.addEventListener("click", openLibrary);
+  dom.readingAction.addEventListener("click", () => { void readingButton(); });
   for (const button of root.querySelectorAll("[data-library-close]")) {
     button.addEventListener("click", () => dom.library.close());
   }

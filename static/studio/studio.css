@@ -1186,7 +1186,9 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
   margin-top: -2px;
 }
 .st-top-progress .st-progress-bar { flex: 0 0 min(320px, 40%); }
-.st-top-progress span { color: var(--st-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-top-progress span { color: var(--st-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+.st-top-progress .st-btn { flex: 0 0 auto; min-height: 28px; padding: 4px 11px; }
+#studio-root .st-top-progress .st-btn[hidden] { display: none; }
 
 /* ---------------------------------------------------------- video library */
 #studio-root dialog.st-library-dialog { width: min(680px, calc(100vw - 36px)); }

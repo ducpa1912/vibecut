@@ -457,6 +457,8 @@ def run_analysis(job_id: str) -> None:
         job["message"] = message
         save_job(job)
 
+    # Lets Cancel reading stop a speech engine that is mid-file.
+    pipeline.stt.set_cancel_event(event)
     try:
         before_usage = usage_store.snapshot()
         options = dict(job.get("options") or {})
@@ -485,7 +487,7 @@ def run_analysis(job_id: str) -> None:
         job["error"] = None
         save_job(job)
         LOGGER.info("job %s ready in %.1fs", job_id, analysis["elapsed"])
-    except AnalysisCancelled:
+    except (AnalysisCancelled, pipeline.stt.SttCancelled):
         LOGGER.info("analysis cancelled for %s", job_id)
         job["status"] = "cancelled"
         job["progress"] = 1.0
@@ -500,6 +502,7 @@ def run_analysis(job_id: str) -> None:
         job["error"] = str(exc)[:2400]
         save_job(job)
     finally:
+        pipeline.stt.set_cancel_event(None)
         if ANALYSIS_CANCELS.get(job_id) is event:
             ANALYSIS_CANCELS.pop(job_id, None)
 
@@ -4912,6 +4915,60 @@ def cancel_url_ingest(job_id: str) -> dict:
         except Exception:  # noqa: BLE001
             pass
     return {"ok": True, "id": job_id, "cancelled": bool(active)}
+
+
+@app.post("/api/jobs/{job_id}/reading/cancel")
+def cancel_reading(job_id: str) -> dict:
+    """Stop reading one video so the single analysis slot frees up.
+
+    A queued read is dropped at once. A running one stops at its next
+    checkpoint, or immediately when a speech engine is mid-file.
+    """
+    job = load_job(job_id)
+    status = str(job.get("status") or "")
+    if status not in ACTIVE and status != "queued":
+        return {"ok": True, "id": job_id, "cancelled": False, "status": status}
+    _analysis_cancel_event(job_id).set()
+    task = analysis_pool.find_key("analysis", job_id)
+    if task is None or task.state is job_queue.QueueState.QUEUED:
+        analysis_pool.cancel_key("analysis", job_id)
+
+        def mark(current: dict) -> None:
+            current["status"] = "cancelled"
+            current["progress"] = 1.0
+            current["message"] = "Cancelled"
+            current["error"] = None
+
+        job = update_job(job_id, mark)
+        ANALYSIS_CANCELS.pop(job_id, None)
+    else:
+        def stopping(current: dict) -> None:
+            current["message"] = "Stopping…"
+
+        job = update_job(job_id, stopping)
+    return {"ok": True, "id": job_id, "cancelled": True, "status": job.get("status")}
+
+
+@app.post("/api/jobs/{job_id}/reading/retry")
+def retry_reading(job_id: str) -> dict:
+    """Read a cancelled, failed or interrupted video again."""
+    job = load_job(job_id)
+    if job.get("status") not in {"cancelled", "failed", "interrupted"}:
+        raise HTTPException(409, "This video is not stopped, so it can't be read again.")
+    source = Path(str((job.get("source") or {}).get("path") or ""))
+    if not source.is_file():
+        raise HTTPException(409, f"The original file was moved or deleted: {source}")
+    ANALYSIS_CANCELS.pop(job_id, None)
+
+    def mark(current: dict) -> None:
+        current["status"] = "queued"
+        current["progress"] = 0.0
+        current["message"] = "Queued"
+        current["error"] = None
+
+    job = update_job(job_id, mark)
+    analysis_pool.submit(run_analysis, job_id)
+    return {"ok": True, "id": job_id, "status": job.get("status")}
 
 
 @app.get("/api/jobs/{job_id}/history")

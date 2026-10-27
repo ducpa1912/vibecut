@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import urllib.parse
@@ -231,6 +232,50 @@ def _stt_workflow_model(provider: str, default: str) -> str:
     except Exception:  # noqa: BLE001
         pass
     return default
+
+
+class SttCancelled(RuntimeError):
+    """The read was cancelled while a speech engine was running."""
+
+
+_CANCEL = threading.local()
+
+
+def set_cancel_event(event: threading.Event | None) -> None:
+    """Bind a cancel event to this thread's speech-to-text children.
+
+    Analysis runs one job per worker thread, so a thread-local is enough to
+    let "Cancel reading" stop a Whisper child that is mid-file instead of
+    waiting for it to return to a progress checkpoint.
+    """
+    _CANCEL.event = event
+
+
+def _child_run(cmd: list[str], *, stdout, stderr, timeout: float, env=None):
+    """``subprocess.run`` that also stops when the thread's cancel event fires."""
+    event = getattr(_CANCEL, "event", None)
+    if event is None:
+        return subprocess.run(cmd, stdout=stdout, stderr=stderr, timeout=timeout, env=env)
+    process = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, env=env)
+    deadline = time.monotonic() + float(timeout)
+    try:
+        while True:
+            try:
+                process.wait(timeout=0.25)
+                return subprocess.CompletedProcess(cmd, process.returncode)
+            except subprocess.TimeoutExpired:
+                pass
+            if event.is_set():
+                raise SttCancelled("Speech-to-text cancelled.")
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
 
 
 def _hf_hub_dir() -> Path:
@@ -1135,7 +1180,7 @@ def transcribe(
     progress(0.08, "Transcribing speech · local Whisper")
     with log_path.open("w") as log:
         try:
-            result = subprocess.run(
+            result = _child_run(
                 cmd, stdout=log, stderr=log,
                 timeout=whisper_timeout(duration, timeout),
                 env=_whisper_env(chosen_model),
@@ -1708,6 +1753,8 @@ def transcribe_source(
                 language=language, vocabulary=terms,
                 timeout=timeout, progress=progress, helper=helper,
             )
+        except SttCancelled:
+            raise
         except Exception as exc:  # noqa: BLE001 - route falls through
             merged = None
             _log_route(

@@ -18,11 +18,20 @@ NODE = shutil.which("node")
 needs_node = pytest.mark.skipif(not NODE, reason="node is not installed")
 
 
-def run_module(module: str, body: str):
+# shell.js boots Studio on import; a page with no #studio-root is a no-op.
+NO_PAGE = (
+    "globalThis.document = {readyState: 'complete', getElementById: () => null,"
+    " addEventListener: () => {}, documentElement: {dataset: {}}};\n"
+    "globalThis.window = {addEventListener: () => {}, location: {hash: ''}};\n"
+)
+
+
+def run_module(module: str, body: str, prelude: str = ""):
     """Import ``static/studio/<module>`` as ``m``, run ``body``, return its JSON."""
     url = (STUDIO / module).as_uri()
     script = (
-        f"const m = await import({json.dumps(url)});\n"
+        prelude
+        + f"const m = await import({json.dumps(url)});\n"
         f"const out = await (async () => {{ {body} }})();\n"
         "process.stdout.write(JSON.stringify(out));\n"
     )
@@ -55,6 +64,19 @@ def test_error_detail_reads_structured_detail_message():
         "Plain text.",
         "count: too big",
     ]
+
+
+# ---------------------------------------------------------------- shell.js (QA #10)
+
+
+@needs_node
+def test_reading_action_cancels_a_read_and_restarts_a_stopped_one():
+    out = run_module("shell.js", """
+        return ["queued", "reading", "scoring", "cancelled", "interrupted", "failed", "ready"]
+          .map((status) => m.readingAction(status));
+    """, prelude=NO_PAGE)
+    kinds = [row["kind"] if row else None for row in out]
+    assert kinds == ["cancel", "cancel", "cancel", "retry", "retry", "retry", None]
 
 
 # ---------------------------------------------------------------- edit/overlay.js (QA #6)
