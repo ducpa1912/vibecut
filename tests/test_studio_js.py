@@ -104,6 +104,31 @@ def test_check_samples_short_sources_at_one_fps():
     assert out == [1, 1, 0.5, 0.5]
 
 
+# ---------------------------------------------------------------- edit/model.js (QA #20)
+
+
+@needs_node
+def test_hook_card_starts_at_zero_with_the_story_hook_in_bold():
+    import overlays
+
+    out = run_module("edit/model.js", """
+        const hook = m.newTextLayer("hook", {duration: 30, playhead: 14.5,
+          hookText: "During an open AI cyber security test, AI agents found ways around their controls."});
+        const title = m.newTextLayer("title", {duration: 30, playhead: 14.5});
+        const empty = m.newTextLayer("hook", {duration: 30, playhead: 4});
+        return {hook, title, empty};
+    """)
+    hook = out["hook"]
+    assert hook["start"] == 0 and hook["end"] == 3
+    assert hook["text"].startswith("During an open AI cyber security test") and hook["text"].endswith("…")
+    assert len(hook["text"]) <= 61
+    assert hook["style"]["weight"] == 900 and hook["style"]["background"] == "#000000b3"
+    assert out["title"]["start"] == 14.5
+    assert out["empty"]["text"] == "Your hook" and out["empty"]["start"] == 0
+    # The server accepts the default hook style as is.
+    overlays.edit_text_layer({k: hook[k] for k in ("kind", "text", "start", "end", "style")})
+
+
 # ---------------------------------------------------------------- shell.js (QA #10)
 
 
