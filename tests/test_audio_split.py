@@ -27,12 +27,12 @@ def test_audio_reexports_stt_keys():
     assert audio.openai_key is stt.openai_key
 
 
-def test_stt_module_has_no_local_engine():
+def test_stt_module_owns_local_engines_without_removed_cloud_ladder():
     source = stt.__file__
     with open(source, encoding="utf-8") as handle:
         body = handle.read().lower()
-    assert "mlx_whisper" not in body
-    assert "whisper" not in body
+    assert "mlx_whisper" in body
+    assert "api.openai.com" not in body
     assert "argostranslate" not in body
 
 
