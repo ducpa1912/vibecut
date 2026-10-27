@@ -136,28 +136,6 @@ def _pipeline_event(
         pass
 
 
-def _ollama_workflow_text(prompt: str, model: str, timeout: float = 180) -> str | None:
-    url = os.environ.get("VIBECUT_LLM_URL")
-    if not url:
-        return None
-    payload = json.dumps({
-        "model": model or os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b"),
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.4},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
-    return str(data.get("response") or data.get("message", {}).get("content") or "") or None
-
-
 def _workflow_route_model(workflow: str, provider: str, default: str = "") -> str:
     for route in _workflow_routes(workflow):
         if str(route.get("provider") or "") == provider:
@@ -200,12 +178,6 @@ def _workflow_text(
                     model=model, reasoning=reasoning, timeout=timeout,
                 )
                 error = OPENROUTER_LAST_ERROR
-            elif provider == "local-mlx":
-                value = _mlx_text(prompt, model=model)
-                error = "MLX returned no text." if not value else ""
-            elif provider == "ollama":
-                value = _ollama_workflow_text(prompt, model, timeout)
-                error = "Ollama returned no text." if not value else ""
             else:
                 value = None
                 error = f"{provider} does not support text generation."
@@ -361,22 +333,9 @@ def demucs_available() -> bool:
     return _module("demucs")
 
 
-def mlx_lm_available() -> bool:
-    return _module("mlx_lm")
-
-
 def rewrite_models() -> list[dict]:
-    """Small local models that fit an M1 and a short rewrite prompt."""
-    current = os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b")
+    """Text models that fit a short rewrite prompt, cloud and on-device."""
     return [
-        {"id": "mlx", "name": "MLX local (no server)",
-         "model": os.environ.get("VIBECUT_MLX_REWRITE_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit"),
-         "available": mlx_lm_available(), "size_mb": 1800,
-         "install": "pip install mlx-lm (first run downloads ~1.8 GB)"},
-        {"id": "ollama", "name": "Ollama",
-         "model": current,
-         "available": bool(os.environ.get("VIBECUT_LLM_URL")), "size_mb": 2000,
-         "install": "install Ollama, then: ollama pull qwen2.5:3b"},
         {"id": "apple", "name": "Apple Foundation Models",
          "model": "on-device 3B",
          "available": sys.platform == "darwin", "size_mb": 0,
@@ -444,13 +403,6 @@ def translate_providers() -> list[dict]:
         "install": "Built-in on macOS 26. Install language packs in System Settings → General → Language & Region.",
         "size_mb": 0,
     })
-    providers.append({
-        "id": "ollama",
-        "name": "Ollama / local LLM",
-        "available": bool(os.environ.get("VIBECUT_LLM_URL")),
-        "install": "Set VIBECUT_LLM_URL to an Ollama /api/generate endpoint.",
-        "size_mb": 3000,
-    })
     return [item for item in providers if item["id"] in {"opencode", "openrouter", "apple_fm"}]
 
 
@@ -501,7 +453,6 @@ def engine_status() -> dict:
         "voices": voices,
         "music": music,
         "rewrite_models": rewrite_models(),
-        "mlx_lm": mlx_lm_available(),
         "translation": translate_providers(),
         "separation": {
             "demucs": {"available": demucs_available(), "size_mb": 700,
@@ -736,13 +687,11 @@ def _ready_providers(source: str, target: str) -> list[str]:
     ready: list[str] = []
     if apple_pair_status(source, target) == "installed":
         ready.append("apple_fm")
-    if os.environ.get("VIBECUT_LLM_URL"):
-        ready.append("ollama")
     return ready
 
 
 def _rewrite_candidates() -> list[str]:
-    """Rewrite-specific order: configured cloud model, local models, rules."""
+    """Rewrite-specific order: configured cloud model, then rules."""
     plan = _rewrite_workflow_plan()
     if plan:
         return [item["name"] for item in plan]
@@ -753,10 +702,6 @@ def _rewrite_candidates() -> list[str]:
     openrouter_settings = settings_store.load_settings().get("openrouter") or {}
     if openrouter_available() and openrouter_settings.get("use_rewrite", True):
         order.append("openrouter")
-    if mlx_lm_available():
-        order.append("mlx")
-    if os.environ.get("VIBECUT_LLM_URL"):
-        order.append("ollama")
     order.append("rules")
     return order
 
@@ -766,8 +711,6 @@ def _rewrite_workflow_plan() -> list[dict[str, str]]:
     mapping = {
         "opencode-go": "opencode",
         "openrouter": "openrouter",
-        "local-mlx": "mlx",
-        "ollama": "ollama",
         "apple": "apple",
     }
     plan: list[dict[str, str]] = []
@@ -794,7 +737,7 @@ def translation_mode() -> str:
 def _provider_order(source: str, target: str, provider: str) -> list[str]:
     if provider and provider != "auto":
         return [provider]
-    mapping = {"opencode-go": "opencode", "openrouter": "openrouter", "ollama": "ollama"}
+    mapping = {"opencode-go": "opencode", "openrouter": "openrouter"}
     online: list[str] = []
     for route in _workflow_routes("translate"):
         candidate = mapping.get(str(route.get("provider") or ""))
@@ -802,8 +745,6 @@ def _provider_order(source: str, target: str, provider: str) -> list[str]:
             if candidate == "opencode" and not opencode_available():
                 continue
             if candidate == "openrouter" and not openrouter_available():
-                continue
-            if candidate == "ollama" and not os.environ.get("VIBECUT_LLM_URL"):
                 continue
             online.append(candidate)
     if not online:
@@ -813,7 +754,7 @@ def _provider_order(source: str, target: str, provider: str) -> list[str]:
         openrouter_settings = settings_store.load_settings().get("openrouter") or {}
         if openrouter_settings.get("use_translate", True) and openrouter_available():
             online.append("openrouter")
-    # Local mode uses Apple. Ollama stays explicit: it needs a local server.
+    # Local mode uses Apple Translation.
     local: list[str] = ["apple_fm"]
     mode = translation_mode()
     if mode == "local_only":
@@ -863,7 +804,7 @@ def translate_lines(
         translate_max_tokens = int(translate_cfg.get("max_output_tokens") or 2500)
         translate_timeout = float(translate_cfg.get("timeout_s") or 300)
         route_map = {
-            {"opencode-go": "opencode", "openrouter": "openrouter", "ollama": "ollama"}.get(
+            {"opencode-go": "opencode", "openrouter": "openrouter"}.get(
                 str(route.get("provider") or ""), ""
             ): route
             for route in translate_cfg.get("routes") or []
@@ -887,8 +828,6 @@ def translate_lines(
                 )
             elif candidate == "apple_fm":
                 result = _translate_apple(missing, source_code, target_code, target_name)
-            elif candidate == "ollama":
-                result = _translate_ollama(missing, source_code, target_name)
             else:
                 result = None
             _pipeline_event(
@@ -1235,62 +1174,15 @@ def story_brief(text: str, target: str, provider: str = "auto") -> dict | None:
 
 
 def _llm_text(prompt: str, provider: str = "auto", model: str | None = None) -> str | None:
-    """One model call: OpenCode Go first, then MLX, then Ollama."""
+    """One JSON text call through the configured cloud route."""
     settings = settings_store.load_settings().get("opencode") or {}
-    cloud_ok = (
+    if (
         provider in {"opencode", "auto", "apple_fm", ""}
         and settings.get("use_brief", True)
         and opencode_available()
-    )
-    if cloud_ok:
-        text = _opencode_text(prompt, json_mode=True)
-        if text:
-            return text
-        if provider == "opencode":
-            return None
-    if provider in {"mlx", "auto"} and mlx_lm_available():
-        text = _mlx_text(prompt, model=model)
-        if text:
-            return text
-        if provider == "mlx":
-            return None
-    url = os.environ.get("VIBECUT_LLM_URL")
-    if not url:
-        return None
-    model = model or os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b")
-    payload = json.dumps({
-        "model": model, "prompt": prompt, "stream": False, "format": "json",
-        "options": {"temperature": 0.4},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=240) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
-    return str(data.get("response") or data.get("message", {}).get("content") or "") or None
-
-
-def _mlx_text(prompt: str, model: str | None = None) -> str | None:
-    worker = ROOT / "tools" / "rewrite_mlx.py"
-    if not worker.is_file():
-        return None
-    model = model or os.environ.get(
-        "VIBECUT_MLX_REWRITE_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit",
-    )
-    try:
-        result = subprocess.run(
-            [sys.executable, str(worker), "--model", model],
-            input=json.dumps({"prompt": prompt, "system": "You write short video voice overs. Reply with JSON when asked."}),
-            capture_output=True, text=True, timeout=1800,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return (result.stdout or "").strip() or None
+    ):
+        return _opencode_text(prompt, json_mode=True)
+    return None
 
 
 OPENCODE_PROVIDER = "opencode-go"
@@ -2165,36 +2057,6 @@ def _rewrite_openrouter(
             return None
         cleaned.append(text)
     return cleaned
-
-
-def _rewrite_mlx(
-    script: list[dict], source: str, target: str, mode: str, literal: list[str],
-    context: dict | None = None, model: str | None = None,
-) -> list[str] | None:
-    """Small local model rewrite (MLX worker or Apple FM via the same JSON contract)."""
-    if mode == "literal":
-        return None
-    if not mlx_lm_available():
-        return None
-    prompt = _rewrite_prompt(script, source, target, mode, literal, context)
-    raw = _llm_text(prompt, provider="mlx", model=model) if model else _llm_text(prompt, provider="mlx")
-    if not raw:
-        return None
-    match = re.search(r"\[.*\]", raw, re.S)
-    if not match:
-        return None
-    try:
-        values = json.loads(match.group(0))
-    except ValueError:
-        return None
-    if not isinstance(values, list) or len(values) != len(script):
-        return None
-    fits = all(
-        estimate_seconds(str(value), float(script[index].get("rate") or 1.0))
-        <= max(1.0, float(script[index].get("duration") or 1.0))
-        for index, value in enumerate(values)
-    )
-    return [str(value).strip() for value in values] if fits else None
 
 
 def transcript_context(
@@ -3076,14 +2938,6 @@ def _rewrite_provider_tag(
         return f"openrouter:{model or openrouter_model()}:{reasoning or ''}"
     if name == "apple":
         return "apple:on-device-3b"
-    if name == "mlx":
-        model = model or os.environ.get(
-            "VIBECUT_MLX_REWRITE_MODEL",
-            "mlx-community/Qwen2.5-3B-Instruct-4bit",
-        )
-        return f"mlx:{model}"
-    if name in {"llm", "ollama"}:
-        return f"{name}:{model or os.environ.get('VIBECUT_LLM_MODEL', 'llama3.1')}"
     return name or "unknown"
 
 
@@ -3133,7 +2987,7 @@ def clear_rewrite_memo(
     """Drop rewrite cache entries for one provider/model, or all known ones."""
     tags = [provider] if provider else [
         _rewrite_provider_tag(name)
-        for name in ("opencode", "openrouter", "mlx", "apple", "llm", "ollama")
+        for name in ("opencode", "openrouter", "apple")
     ]
     if provider and ":" not in provider:
         tags = [_rewrite_provider_tag(provider)]
@@ -3215,86 +3069,6 @@ def _rules_rewrite(
     return out
 
 
-def _rewrite_ollama(
-    script: list[dict], source: str, target: str, mode: str, literal: list[str],
-    context: dict | None = None, model: str | None = None,
-) -> list[str] | None:
-    url = os.environ.get("VIBECUT_LLM_URL")
-    if not url or mode == "literal":
-        return None
-    model = model or os.environ.get("VIBECUT_LLM_MODEL", "llama3.1")
-    context_beats = (context or {}).get("beats") or []
-    rows = []
-    for index, line in enumerate(script):
-        source_line = ""
-        if index < len(context_beats):
-            source_line = str(context_beats[index].get("source") or "")
-        rows.append({
-            "beat": index,
-            "role": str(line.get("role") or "beat"),
-            "seconds": round(float(line.get("duration") or 0.0) - 0.25, 2),
-            "source_line": source_line or line.get("text") or "",
-            "literal": literal[index],
-        })
-    style = {
-        "smooth": "natural, flowing, conversational, connected sentences",
-        "viral": "punchy short-video style: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
-        "fun": "playful, warm, light and witty",
-        "creative": "vivid, surprising and visual, facts unchanged",
-        "sad": "melancholic, intimate and restrained",
-        "chill": "calm, relaxed and understated",
-    }.get(mode, "faithful")
-    full_text = str(
-        (context or {}).get("target_text") or (context or {}).get("full_text") or ""
-    ).strip()
-    brief = (context or {}).get("brief")
-    prompt = (
-        f"You are editing a short vertical video. Below is the FULL TRANSCRIPT of the "
-        f"source video. Read it first to understand the story, the product, the claims "
-        f"and the intended audience. Then write a {len(rows)}-beat voice over in "
-        f"{_language_name(target)} for the selected beats, in order.\n"
-        f"Style: {style}.\n"
-        "Rules: keep every fact and number from the source, invent nothing, keep the "
-        "story coherent from beat to beat (setup, proof, payoff), each line must fit its "
-        "seconds budget at normal speaking pace. Reply with a JSON array of strings "
-        "only, same order and count.\n"
-        + (f"STORY BRIEF:\n{json.dumps(brief, ensure_ascii=False)}\n\n" if brief else "")
-        + (f"FULL TRANSCRIPT:\n{full_text}\n\n" if full_text else "")
-        + "SELECTED BEATS:\n"
-        + json.dumps(rows, ensure_ascii=False)
-    )
-    payload = json.dumps({
-        "model": model, "prompt": prompt, "stream": False,
-        "options": {"temperature": 0.6},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=240) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
-    body = str(data.get("response") or data.get("message", {}).get("content") or "")
-    match = re.search(r"\[.*\]", body, re.S)
-    if not match:
-        return None
-    try:
-        values = json.loads(match.group(0))
-    except ValueError:
-        return None
-    if not isinstance(values, list) or len(values) != len(script):
-        return None
-    fits = all(
-        estimate_seconds(str(value), float(script[index].get("rate") or 1.0))
-        <= max(1.0, float(script[index].get("duration") or 1.0))
-        for index, value in enumerate(values)
-    )
-    if not fits:
-        return None
-    return [str(value).strip() for value in values]
-
-
 def adapt_script(
     script: list[dict],
     source_lang: str,
@@ -3340,7 +3114,7 @@ def adapt_script(
         resolved: dict[int, str] = {}
         attempts: list[dict] = []
         succeeded = False
-        ai_providers = {"opencode", "openrouter", "mlx", "apple", "llm", "ollama"}
+        ai_providers = {"opencode", "openrouter", "apple"}
         rewrite_cfg = _workflow("rewrite")
         route_max_tokens = int(rewrite_cfg.get("max_output_tokens") or 3000)
         route_timeout = float(rewrite_cfg.get("timeout_s") or 300)
@@ -3401,16 +3175,6 @@ def adapt_script(
                     max_tokens=route_max_tokens, timeout=route_timeout,
                     **route_kwargs,
                 )
-            elif name in {"llm", "ollama"}:
-                rewritten = _rewrite_ollama(
-                    subset, source_lang, target_lang, mode, subset_literal, context,
-                    **route_kwargs,
-                )
-            elif name in {"mlx", "apple"}:
-                rewritten = _rewrite_mlx(
-                    subset, source_lang, target_lang, mode, subset_literal, context,
-                    **route_kwargs,
-                )
             elif name == "rules":
                 rewritten = _rules_rewrite(subset, source_lang, target_lang, mode, subset_literal)
             if rewritten:
@@ -3427,7 +3191,7 @@ def adapt_script(
                             value, context, tag,
                         )
                 resolved.update(memo_hits)
-                used = "llm" if name in {"llm", "ollama"} else name
+                used = name
                 ai_failed = any(
                     item.get("provider") in ai_providers for item in attempts
                 )

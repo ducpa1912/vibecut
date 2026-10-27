@@ -1011,25 +1011,25 @@ def test_adapt_script_passes_context_to_llm(monkeypatch, tmp_path):
     monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
     captured: dict = {}
 
-    def fake_llm(script, source, target, mode, literal, context=None):
+    def fake_llm(script, source, target, mode, literal, context=None, **kwargs):
         captured["context"] = context
         captured["literal"] = literal
         return [f"rewritten {index}" for index in range(len(script))]
 
-    monkeypatch.setattr(audio, "_rewrite_ollama", fake_llm)
+    monkeypatch.setattr(audio, "_rewrite_openrouter", fake_llm)
     monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
     script = [{
         "scene": 0, "clip": 0, "role": "hook", "duration": 3.0, "rate": 1.0,
         "text": "original",
     }]
     context = {"full_text": "the whole video transcript", "beats": [{"scene": 0, "source": "original"}]}
-    result = audio.adapt_script(script, "zh", "en", "viral", "llm", context)
+    result = audio.adapt_script(script, "zh", "en", "viral", "openrouter", context)
     assert captured["context"]["full_text"] == "the whole video transcript"
     assert result[0]["text"] == "rewritten 0"
     # memo key depends on the context
     files_first = len(list((tmp_path / "rewrite").rglob("*.txt")))
     other = {"full_text": "different transcript", "beats": []}
-    audio.adapt_script(script, "zh", "en", "viral", "llm", other)
+    audio.adapt_script(script, "zh", "en", "viral", "openrouter", other)
     assert len(list((tmp_path / "rewrite").rglob("*.txt"))) > files_first
 
 
@@ -1106,66 +1106,10 @@ def test_story_brief_cached(tmp_path, monkeypatch):
     assert calls["count"] == 1
 
 
-def test_rewrite_mlx_prompt_uses_brief_and_relevant(monkeypatch, tmp_path):
-    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
-    captured = {}
-
-    def fake_llm(prompt, provider="auto"):
-        captured["prompt"] = prompt
-        return json.dumps(["hook rewrite", "beat rewrite"])
-
-    monkeypatch.setattr(audio, "_llm_text", fake_llm)
-    monkeypatch.setattr(audio, "mlx_lm_available", lambda: True)
-    script = [
-        {"scene": 0, "role": "hook", "duration": 3.0, "rate": 1.0, "text": "hook"},
-        {"scene": 1, "role": "beat", "duration": 3.0, "rate": 1.0, "text": "beat"},
-    ]
-    context = {
-        "full_text": "source text",
-        "target_text": "Sentence one about the soil mix. Sentence two about watering. Sentence three about fruit.",
-        "brief": {"topic": "garden", "promise": "easy"},
-        "aesthetic": {"moods": ["calm"], "pace": "measured"},
-        "beats": [
-            {"scene": 0, "role": "hook", "seconds": 2.75, "source": "hook source"},
-            {"scene": 1, "role": "beat", "seconds": 2.75, "source": "beat source"},
-        ],
-    }
-    result = audio._rewrite_mlx(script, "zh", "en", "viral", ["hook literal", "beat literal"], context)
-    assert result and result[0] == "hook rewrite"
-    assert "STORY BRIEF" in captured["prompt"]
-    assert "RELEVANT VOICE SCRIPT LINES" in captured["prompt"]
-    assert "BEAT SLOTS" in captured["prompt"]
-    assert '"max_chars"' in captured["prompt"]
-    assert '"max_words"' in captured["prompt"]
-    assert "VIDEO AESTHETIC" in captured["prompt"]
-
-
-def test_adapt_script_rewrite_provider_routing(monkeypatch, tmp_path):
-    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
-    called = {}
-
-    def fake_mlx(script, source, target, mode, literal, context=None):
-        called["mlx"] = True
-        return [f"mlx {index}" for index in range(len(script))]
-
-    def fake_ollama(script, source, target, mode, literal, context=None):
-        called["ollama"] = True
-        return ["ollama line"]
-
-    monkeypatch.setattr(audio, "_rewrite_mlx", fake_mlx)
-    monkeypatch.setattr(audio, "_rewrite_ollama", fake_ollama)
-    monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
-    script = [{"scene": 0, "role": "hook", "duration": 3.0, "rate": 1.0, "text": "orig"}]
-    result = audio.adapt_script(script, "zh", "en", "smooth", "auto", None, "mlx")
-    assert called.get("mlx") and not called.get("ollama")
-    assert result[0]["text"] == "mlx 0"
-    assert result[0]["rewrite"] == "mlx"
-
-
 def test_rewrite_models_shape():
     models = audio.rewrite_models()
     ids = {model["id"] for model in models}
-    assert {"mlx", "ollama", "apple"} <= ids
+    assert {"apple", "opencode", "openrouter"} == ids
     for model in models:
         assert "available" in model and "size_mb" in model
 
@@ -1263,7 +1207,6 @@ def test_opencode_service_pins_model_and_low_variant(monkeypatch):
 
 def test_opencode_leads_rewrite_candidates(monkeypatch):
     monkeypatch.setattr(audio, "opencode_available", lambda: True)
-    monkeypatch.setattr(audio, "mlx_lm_available", lambda: True)
     monkeypatch.setattr(settings_store, "load_settings", lambda: {
         "opencode": {"enabled": True, "use_rewrite": True},
     })
