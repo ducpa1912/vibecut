@@ -7,13 +7,58 @@
   <title>VibeCut — long video to reels</title>
   <link rel="stylesheet" href="/static/style.css?v=0.12.0">
   <link rel="stylesheet" href="/static/creator.css?v=0.14.0">
-  <script defer src="/static/app.js?v=0.12.0"></script>
-  <script defer src="/static/creator.js?v=0.14.0"></script>
+  <link rel="stylesheet" href="/static/studio/studio.css?v=0.1.0">
+  <script>
+    /* Choose the workspace before first paint. Studio is the default; Classic
+       stays reachable from Settings → "Use Classic editor" (saved here). */
+    (function () {
+      var mode = "studio";
+      var requested = "";
+      try {
+        var params = new URLSearchParams(window.location.search);
+        if (params.get("classic") === "1") requested = "classic";
+        else if (params.get("studio") === "1") requested = "studio";
+      } catch (_) { /* URL parsing is unavailable; fall through */ }
+      try {
+        if (requested) localStorage.setItem("vibecut.editor", requested);
+        if (localStorage.getItem("vibecut.editor") === "classic") mode = "classic";
+      } catch (_) { /* storage may be unavailable; Studio still opens */ }
+      if (requested) mode = requested;
+      document.documentElement.dataset.editor = mode;
+    })();
+  </script>
+  <script>
+    /* Classic scripts load only when Classic is selected, so Studio never
+       starts the old app underneath its overlay. */
+    (function () {
+      if (document.documentElement.dataset.editor !== "classic") return;
+      function loadClassic() {
+        var sources = [
+          "/static/app.js?v=0.12.0",
+          "/static/creator.js?v=0.14.0"
+        ];
+        for (var i = 0; i < sources.length; i += 1) {
+          var script = document.createElement("script");
+          script.src = sources[i];
+          script.async = false;
+          document.head.appendChild(script);
+        }
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", loadClassic, { once: true });
+      } else {
+        loadClassic();
+      }
+    })();
+  </script>
+  <script type="module" src="/static/studio/shell.js?v=0.1.0"></script>
 </head>
 <body>
+  <div id="studio-root"></div>
   <header class="shell topbar">
     <a class="brand" href="/" id="brand">VibeCut<span class="brand-mark"></span></a>
     <div class="topbar-right">
+      <a id="classic-studio-return" href="/?studio=1">Open Studio</a>
       <button id="creator-open" class="ghost small" type="button">Creator</button>
       <button id="setup-open" class="ghost small" type="button">Setup</button>
       <span class="local-pill"><i class="live-dot"></i> local only</span>
