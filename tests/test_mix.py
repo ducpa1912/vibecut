@@ -421,6 +421,8 @@ def test_live_fixture_b_apple_stt_and_ducked_music(tmp_path):
 
     source = Path(os.environ["VIBECUT_FIXTURE_B"]).expanduser()
     assert source.is_file(), source
+    total = audio.media_duration(source)
+    assert total > 0, "could not read fixture duration"
     job_dir = tmp_path / "job"
     job_dir.mkdir()
     wav = _fixture_audio(source, tmp_path / "source.wav")
@@ -434,12 +436,12 @@ def test_live_fixture_b_apple_stt_and_ducked_music(tmp_path):
     stt.save_transcript(job_dir, stt.build_transcript(
         engine="apple", model="on-device-3b", language="zh",
         segments=transcript["segments"], words=transcript["words"],
-        audio_duration=30.0, source_hash="fixture-b",
+        audio_duration=total, source_hash="fixture-b",
     ))
     scenes, clips = _fixture_scenes(segments)
-    bed = _synthetic_bed(tmp_path / "bed.wav", 30.0)
+    bed = _synthetic_bed(tmp_path / "bed.wav", total + 4.0)
     uploaded = audio.store_uploaded_music(bed, job_dir)
-    plan = {"clips": clips, "total": 30.0, "_scenes": scenes}
+    plan = {"clips": clips, "total": total, "_scenes": scenes}
     audio_plan = {
         "mode": "original_bed", "duck": True, "duck_db": -12,
         "loudness": {"lufs": -14, "true_peak": -1.5},
@@ -453,7 +455,7 @@ def test_live_fixture_b_apple_stt_and_ducked_music(tmp_path):
     tmp.mkdir()
     final = audio.build_bed(
         str(source), {"fingerprint": "fixture-b"}, plan, clips, scenes,
-        job_dir, audio_plan, 30.0, tmp, lambda *args: None, source_lang="zh",
+        job_dir, audio_plan, total, tmp, lambda *args: None, source_lang="zh",
     )
     loudness = audio.measure_loudness(final)
     assert loudness is not None
@@ -467,9 +469,9 @@ def test_live_fixture_b_apple_stt_and_ducked_music(tmp_path):
     assert payload["source"] == "upload" and payload["file_hash"]
     assert payload["licence"]["type"] == "own"
     assert payload["brief"] and payload["duck"]["db"] == -12.0
-    assert audio.media_duration(final) >= 29.0
+    assert audio.media_duration(final) >= total - 1.0
     print(
-        f"live B: zh words={len(transcript['words'])} "
+        f"live B: duration={total:.2f}s zh words={len(transcript['words'])} "
         f"lufs={loudness['integrated_lufs']} tp={loudness['true_peak_dbtp']} "
         f"snr={snr}dB music_json={payload['source']}",
     )
@@ -486,6 +488,8 @@ def test_live_fixture_a_dub_slot_fit(tmp_path, monkeypatch):
 
     source = Path(os.environ["VIBECUT_FIXTURE_A"]).expanduser()
     assert source.is_file(), source
+    total = audio.media_duration(source)
+    assert total > 0, "could not read fixture duration"
     job_dir = tmp_path / "job"
     job_dir.mkdir()
     wav = _fixture_audio(source, tmp_path / "source.wav")
@@ -498,7 +502,7 @@ def test_live_fixture_a_dub_slot_fit(tmp_path, monkeypatch):
     stt.save_transcript(job_dir, stt.build_transcript(
         engine="apple", model="on-device-3b", language="en",
         segments=transcript["segments"], words=transcript["words"],
-        audio_duration=30.0, source_hash="fixture-a",
+        audio_duration=total, source_hash="fixture-a",
     ))
     scenes, clips = _fixture_scenes(segments)
     engine = "kokoro" if audio.kokoro_available() else "say"
@@ -507,7 +511,7 @@ def test_live_fixture_a_dub_slot_fit(tmp_path, monkeypatch):
         audio, "_tts_route_candidates",
         lambda: [{"engine": engine, "provider": "local", "model": engine}],
     )
-    plan = {"clips": clips, "total": 30.0, "_scenes": scenes}
+    plan = {"clips": clips, "total": total, "_scenes": scenes}
     audio_plan = {
         "mode": "dub", "duck": True, "duck_db": -12,
         "loudness": {"lufs": -14, "true_peak": -1.5},
@@ -522,15 +526,16 @@ def test_live_fixture_a_dub_slot_fit(tmp_path, monkeypatch):
     tmp.mkdir()
     final = audio.build_bed(
         str(source), {"fingerprint": "fixture-a"}, plan, clips, scenes,
-        job_dir, audio_plan, 30.0, tmp, lambda *args: None, source_lang="en",
+        job_dir, audio_plan, total, tmp, lambda *args: None, source_lang="en",
     )
     summary = audio_plan.get("_slot_fit") or {}
     assert summary.get("percent", 0) >= 90.0, summary
     loudness = audio.measure_loudness(final)
     assert loudness is not None and abs(loudness["integrated_lufs"] + 14.0) <= 1.0
-    assert audio.media_duration(final) >= 29.0
+    assert audio.media_duration(final) >= total - 1.0
     print(
-        f"live A: engine={engine} voice={voice} slot_fit={summary.get('percent')}% "
+        f"live A: duration={total:.2f}s segments={len(segments)} "
+        f"engine={engine} voice={voice} slot_fit={summary.get('percent')}% "
         f"({summary.get('fitted')}/{summary.get('total')}) "
         f"lufs={loudness['integrated_lufs']} tp={loudness['true_peak_dbtp']}",
     )
