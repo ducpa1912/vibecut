@@ -7,13 +7,31 @@
   <title>VibeCut — long video to reels</title>
   <link rel="stylesheet" href="/static/style.css?v=0.12.0">
   <link rel="stylesheet" href="/static/creator.css?v=0.14.0">
+  <link rel="stylesheet" href="/static/studio/studio.css?v=0.1.0">
+  <script>
+    /* Choose the workspace before first paint. Studio is the default; Classic
+       stays reachable from Settings → "Use Classic editor" (saved here). */
+    (function () {
+      var mode = "studio";
+      try {
+        var params = new URLSearchParams(window.location.search);
+        if (params.get("classic") === "1") localStorage.setItem("vibecut.editor", "classic");
+        else if (params.get("studio") === "1") localStorage.setItem("vibecut.editor", "studio");
+        if (localStorage.getItem("vibecut.editor") === "classic") mode = "classic";
+      } catch (_) { /* storage may be unavailable; Studio still opens */ }
+      document.documentElement.dataset.editor = mode;
+    })();
+  </script>
   <script defer src="/static/app.js?v=0.12.0"></script>
   <script defer src="/static/creator.js?v=0.14.0"></script>
+  <script type="module" src="/static/studio/shell.js?v=0.1.0"></script>
 </head>
 <body>
+  <div id="studio-root"></div>
   <header class="shell topbar">
     <a class="brand" href="/" id="brand">VibeCut<span class="brand-mark"></span></a>
     <div class="topbar-right">
+      <a id="classic-studio-return" href="/?studio=1">Open Studio</a>
       <button id="creator-open" class="ghost small" type="button">Creator</button>
       <button id="setup-open" class="ghost small" type="button">Setup</button>
       <span class="local-pill"><i class="live-dot"></i> local only</span>
