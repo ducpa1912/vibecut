@@ -41,6 +41,7 @@ import admin.store as admin_store
 import batch as batch_store
 import clipset
 import disk
+import edits
 import exports as cuts
 import history_store
 import job_queue
@@ -1714,6 +1715,7 @@ def run_render(
     generation: int = 0,
     prepared_clips: list[dict] | None = None,
     prepared_total: float | None = None,
+    edit: dict | None = None,
 ) -> None:
     plan["_source_lang"] = plan.get("_source_lang") or "en"
     record_key = _render_key(
@@ -1795,6 +1797,7 @@ def run_render(
             clips=prepared_clips,
             story_id=plan.get("story_id"),
             generation=generation,
+            edit_hash=(edit or {}).get("hash") or "",
         )
         expected_id = artifacts.artifact_id(spec)
         if not artifacts.is_safe_artifact_id(artifact_id):
@@ -1854,6 +1857,7 @@ def run_render(
             render_clips=prepared_clips,
             render_total=prepared_total,
             caption_style=plan.get("_caption_style"),
+            edit=edit,
         )
         result["caption_count"] = len(cues)
         render_delta = usage_store.delta(before_usage)
@@ -5980,13 +5984,62 @@ def render_clip_set_story(
 ) -> dict:
     """Queue one clip-set story through the shared artifact render path.
 
-    Duration is the stored story duration. Captions default on and burn the
-    story's current caption track, so preview, burn, SRT and packet share one
-    track id and style hash.
+    Duration is the stored story duration. When the story has a current Edit
+    for the requested aspect, render_reel compiles that Edit: clean, motion,
+    colour, text, graphics and captions. Without an Edit the legacy plan path
+    runs unchanged and captions default on.
     """
     return _queue_story_render(
         job_id, set_id, story_id, body or StoryRenderBody(), reject_active=True,
     )
+
+
+def _story_edit_for_render(
+    job: dict,
+    story: dict,
+    set_id: str,
+    aspect: str,
+) -> dict | None:
+    """Return the story's current Edit for one aspect, or None.
+
+    A stale or unreadable Edit never blocks the render: the legacy plan path
+    is used instead, exactly as if no Edit existed.
+    """
+    key = edits.story_key(set_id, str(story.get("id") or ""), aspect)
+    edit_id = edits.pointer_edit_id(job, key)
+    if not edit_id:
+        return None
+    try:
+        edit = edits.load_edit(_job_dir(job["id"]), edit_id)
+    except edits.EditError:
+        LOGGER.warning("story %s has an unreadable Edit %s", key, edit_id)
+        return None
+    if edit is None or edit.get("aspect") != aspect:
+        return None
+    if edits.clip_snapshot_hash(story.get("clips") or []) != (
+        edit.get("story_ref") or {}
+    ).get("clip_hash"):
+        LOGGER.warning("story %s changed since Edit %s; using the plan path", key, edit_id)
+        return None
+    return edit
+
+
+def _edit_caption_track(
+    job_id: str,
+    edit: dict,
+) -> tuple[bool, caption_engine.CaptionTrack | None]:
+    """Resolve the Edit's caption track; a deleted track renders no captions."""
+    captions = edit.get("captions") or {}
+    track_id = captions.get("track_id")
+    if not captions.get("enabled", True) or not track_id:
+        return False, None
+    try:
+        return True, _caption_track_by_id(job_id, str(track_id))
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        LOGGER.warning("Edit %s references missing caption track %s", edit["id"], track_id)
+        return False, None
 
 
 def _queue_story_render(
@@ -6011,13 +6064,18 @@ def _queue_story_render(
             400,
             f"Story renders use the stored story duration ({plan['target']}s); omit target.",
         )
+    edit = _story_edit_for_render(job, story, set_id, body.aspect)
     caption_track = None
-    if body.captions:
+    captions_on = False
+    if edit is not None:
+        captions_on, caption_track = _edit_caption_track(job_id, edit)
+    elif body.captions:
         track_id = body.caption_track_id or str(
             (job.get("story_captions") or {}).get(_story_key(set_id, story_id)) or ""
         )
         if track_id:
             caption_track = _caption_track_by_id(job_id, track_id)
+        captions_on = True
     public_plan = {
         key: value for key, value in plan.items() if not key.startswith("_")
     }
@@ -6028,18 +6086,21 @@ def _queue_story_render(
         body.quality,
         body.aspect,
         None,
-        bool(body.captions),
+        captions_on,
         None,
         False,
         check_space=True,
         caption_track=caption_track,
         reject_active=reject_active,
+        edit=edit,
     )
     return {
         "plan": public_plan,
         "render": _public_render(job_id, queued),
         "artifact_id": queued.get("artifact_id"),
         "caption_track_id": caption_track.id if caption_track is not None else None,
+        "edit_id": edit["id"] if edit is not None else None,
+        "edit_hash": edit["hash"] if edit is not None else None,
     }
 
 
@@ -7230,6 +7291,7 @@ def _queue_render(
     check_space: bool = False,
     caption_track: caption_engine.CaptionTrack | None = None,
     reject_active: bool = False,
+    edit: dict | None = None,
 ) -> dict:
     """Serialize check/write/submit so one record key cannot queue twice."""
     with RENDER_SUBMIT_LOCK:
@@ -7238,6 +7300,7 @@ def _queue_render(
             force, preset=preset, caption_margin=caption_margin,
             script_id=script_id, check_space=check_space,
             caption_track=caption_track, reject_active=reject_active,
+            edit=edit,
         )
 
 
@@ -7257,6 +7320,7 @@ def _queue_render_locked(
     check_space: bool = False,
     caption_track: caption_engine.CaptionTrack | None = None,
     reject_active: bool = False,
+    edit: dict | None = None,
 ) -> dict:
     # Reserve generations and write manifests serially so two force requests
     # can never race to the same artifact id.
@@ -7267,7 +7331,7 @@ def _queue_render_locked(
             audio_plan, force, preset=preset,
             caption_margin=caption_margin, script_id=script_id,
             check_space=check_space, caption_track=caption_track,
-            reject_active=reject_active,
+            reject_active=reject_active, edit=edit,
         )
 
 
@@ -7287,6 +7351,7 @@ def _queue_render_locked_impl(
     check_space: bool = False,
     caption_track: caption_engine.CaptionTrack | None = None,
     reject_active: bool = False,
+    edit: dict | None = None,
 ) -> dict:
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
@@ -7343,6 +7408,7 @@ def _queue_render_locked_impl(
         cues=cues,
         clips=prepared_clips,
         story_id=plan.get("story_id"),
+        edit_hash=(edit or {}).get("hash") or "",
     )
     generation = artifacts.resolve_generation(job_dir, base_spec, force=force)
     spec = replace(base_spec, generation=generation)
@@ -7480,6 +7546,8 @@ def _queue_render_locked_impl(
         "attempts": attempts,
         "story_id": plan.get("story_id"),
         "set_id": plan.get("clip_set_id"),
+        "edit_id": (edit or {}).get("id"),
+        "edit_hash": (edit or {}).get("hash"),
         "plan_snapshot": {
             "target": target,
             "hook_scene": plan.get("hook_scene"),
@@ -7519,6 +7587,7 @@ def _queue_render_locked_impl(
         run_render, job_id, target, plan, key, quality, aspect, encoder, captions,
         audio_plan, audio_sig, preset, caption_margin, script_id, artifact,
         generation, prepared_clips, prepared_total,
+        edit=edit,
         task_kind="render", task_key=f"render:{job_id}:{record_key}",
     )
     return record

@@ -207,6 +207,7 @@ class ArtifactSpec:
     resolved_encoder: str = "libx264"
     source_fingerprint: str = ""
     generation: int = 0
+    edit_hash: str = ""
     schema_version: int = SCHEMA_VERSION
     render_version: str = RENDER_VERSION
 
@@ -219,7 +220,7 @@ class ArtifactSpec:
             )
 
     def payload(self) -> dict:
-        return {
+        payload = {
             "schema_version": int(self.schema_version),
             "render_version": str(self.render_version),
             "source_fingerprint": str(self.source_fingerprint),
@@ -236,6 +237,11 @@ class ArtifactSpec:
             "target": int(self.target),
             "generation": int(self.generation or 0),
         }
+        # Edit identity extends the artifact hash only when a render carries an
+        # Edit, so legacy artifact ids and pinned links stay byte-stable.
+        if self.edit_hash:
+            payload["edit_hash"] = str(self.edit_hash)
+        return payload
 
     @classmethod
     def from_payload(cls, payload: dict | None) -> "ArtifactSpec":
@@ -256,6 +262,7 @@ class ArtifactSpec:
             resolved_encoder=resolve_encoder(str(data.get("resolved_encoder") or "libx264")),
             source_fingerprint=str(data.get("source_fingerprint") or ""),
             generation=_optional_int(data.get("generation")) or 0,
+            edit_hash=str(data.get("edit_hash") or ""),
             schema_version=int(data.get("schema_version") or SCHEMA_VERSION),
             render_version=str(data.get("render_version") or RENDER_VERSION),
         )
@@ -289,6 +296,7 @@ def build_spec(
     cues: Iterable[dict] | None = None,
     generation: int = 0,
     clips: Iterable[dict] | None = None,
+    edit_hash: str = "",
 ) -> ArtifactSpec:
     plan = plan or {}
     if cues is None:
@@ -319,6 +327,7 @@ def build_spec(
         resolved_encoder=resolve_encoder(encoder),
         source_fingerprint=source_fingerprint(job) or str(source.get("fingerprint") or ""),
         generation=max(0, int(generation or 0)),
+        edit_hash=str(edit_hash or ""),
         schema_version=SCHEMA_VERSION,
         render_version=RENDER_VERSION,
     )

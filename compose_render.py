@@ -23,6 +23,7 @@ import re
 from typing import Any, Iterable
 
 import edits
+import fx
 import overlays
 
 SCHEMA_VERSION = 1
@@ -626,7 +627,7 @@ def _caption_layers(
     return layers, metadata
 
 
-def _graphic_layers(edit: dict) -> list[dict]:
+def _graphic_layers(edit: dict, warnings: list[dict]) -> list[dict]:
     layers: list[dict] = []
     for item in edit.get("graphics") or []:
         rect = _overlay_rect(item["anchor"], item["box"])
@@ -662,8 +663,40 @@ def _graphic_layers(edit: dict) -> list[dict]:
             }
             if item.get("asset"):
                 value["asset"] = dict(item["asset"])
+                if item["kind"] == "sticker":
+                    resolved = _sticker_asset_path(item, warnings)
+                    if resolved is None:
+                        continue
+                    value["asset_path"] = resolved
             layers.append(value)
     return layers
+
+
+def _sticker_asset_path(item: dict, warnings: list[dict]) -> str | None:
+    """Resolve a sticker's bundled PNG, refusing a different asset version."""
+    asset = item.get("asset") or {}
+    asset_id = str(asset.get("id") or "")
+    try:
+        path = fx.sticker_path(asset_id)
+        digest = fx.sticker_file_hash(asset_id)
+    except fx.FxError:
+        warnings.append({
+            "code": "sticker_unavailable",
+            "message": f"Sticker asset {asset_id or '?'} is not bundled; layer skipped.",
+            "layer_id": item["id"],
+        })
+        return None
+    if digest != str(asset.get("hash") or "").lower():
+        warnings.append({
+            "code": "sticker_hash_mismatch",
+            "message": (
+                f"Sticker {asset_id} no longer matches the Edit's asset hash; "
+                "layer skipped."
+            ),
+            "layer_id": item["id"],
+        })
+        return None
+    return str(path)
 
 
 # ---------------------------------------------------------------- layers
@@ -692,6 +725,12 @@ def _layer_raster(layer: dict, out_w: int, out_h: int) -> dict:
         "mode": "sequence" if animated else "static",
         "frames": frames,
     }
+    # Asset keys stay conditional so existing text and progress-bar rasters
+    # keep their exact hashes.
+    if layer.get("asset"):
+        payload["asset"] = layer["asset"]
+    if layer.get("asset_path"):
+        payload["asset_path"] = layer["asset_path"]
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
     ).hexdigest()[:24]
@@ -767,16 +806,27 @@ def compile_edit(
     include_captions: bool = True,
     size: tuple[int, int] | None = None,
     motion_engine: str = "zoompan",
+    beats: object = None,
 ) -> dict:
     """Compile one Edit. Pure: no media access and no ffmpeg call.
 
     ``size`` compiles for a draft or proxy canvas. ``motion_engine`` selects
     ``zoompan`` (legacy plans) or ``perspective`` (subpixel Edit renders).
+    ``beats`` accepts ``audio.beat_grid``'s dict or a plain list of seconds;
+    motion and graphic boundaries inside ±120 ms move onto the nearest beat.
     """
     try:
         normalized = edits.normalize_edit(edit)
     except edits.EditError as exc:
         raise ComposeError(str(exc)) from exc
+    beat_list = fx.beat_times(beats)
+    if beat_list:
+        # Snap a copy; the stored Edit and its hash never change.
+        normalized = {
+            **normalized,
+            "motion": fx.snap_motion(normalized["motion"], beat_list),
+            "graphics": fx.snap_graphics(normalized["graphics"], beat_list),
+        }
     motion_engine = str(motion_engine or "zoompan").strip().lower()
     if motion_engine not in MOTION_ENGINES:
         raise ComposeInputError(
@@ -914,7 +964,7 @@ def compile_edit(
             "filter": ",".join(chain),
         })
 
-    graphic_layers = _graphic_layers(normalized)
+    graphic_layers = _graphic_layers(normalized, warnings)
     if include_captions:
         caption_layers, caption_metadata = _caption_layers(
             normalized, caption_track, warnings,
@@ -958,6 +1008,11 @@ def compile_edit(
         "segments": segments,
         "overlays": overlay_layers,
         "captions": caption_metadata,
+        "beat_snap": {
+            "enabled": bool(beat_list),
+            "beats": len(beat_list),
+            "window": fx.BEAT_WINDOW,
+        },
         "counts": {
             "segments": len(segments),
             "overlays": len(overlay_layers),

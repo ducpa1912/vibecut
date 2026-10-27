@@ -959,6 +959,70 @@ def build_plan(
     return replace(plan, warnings=warnings)
 
 
+# ---------------------------------------------------------------- Edit text layers
+
+# Overlay plans predate the Edit document. Their ``caption`` kind is a generic
+# on-screen text slot; in an Edit that becomes an ``emphasis`` word layer.
+# Every other kind maps one to one.
+EDIT_TEXT_KINDS = {
+    "hook": "hook",
+    "title": "title",
+    "caption": "emphasis",
+    "lower_third": "lower_third",
+    "cta": "cta",
+}
+
+
+def _edit_text_entry(layer: OverlayLayer) -> dict:
+    """Map one validated overlay layer to an Edit ``graphics`` text entry."""
+    return {
+        "id": layer.id,
+        "type": "text",
+        "kind": EDIT_TEXT_KINDS[layer.kind],
+        "text": layer.text,
+        "start": layer.start,
+        "end": layer.end,
+        "anchor": layer.anchor,
+        "box": dict(layer.box),
+        "z": layer.z,
+        "style": dict(layer.style),
+        "safe_zone": layer.safe_zone,
+        "opacity": layer.opacity,
+    }
+
+
+def edit_text_layer(
+    raw: object,
+    *,
+    max_end: float | None = None,
+) -> dict:
+    """Validate one overlay layer and return an Edit text layer.
+
+    The overlay validators stay the single source of truth for text, timing,
+    anchor, box, z-order, style and opacity. ``max_end`` caps the layer at the
+    story duration, exactly as :func:`build_plan` does.
+    """
+    layer = normalize_layers([raw], max_end=max_end)[0]
+    return _edit_text_entry(layer)
+
+
+def edit_text_layers(
+    raw_layers: object,
+    *,
+    max_end: float | None = None,
+) -> list[dict]:
+    """Validate overlay layers and return them as Edit ``graphics`` entries."""
+    return [
+        _edit_text_entry(layer)
+        for layer in normalize_layers(raw_layers, max_end=max_end)
+    ]
+
+
+def plan_text_layers(plan: OverlayPlan) -> list[dict]:
+    """Return a validated plan's layers as Edit ``graphics`` text entries."""
+    return [_edit_text_entry(layer) for layer in plan.layers]
+
+
 def overlay_hash(payload: dict) -> str:
     """Return a stable ``ov_`` hash over the canonical plan payload."""
 
