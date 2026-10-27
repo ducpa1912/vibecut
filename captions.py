@@ -168,6 +168,7 @@ class CaptionTrack:
     warnings: list[str] = field(default_factory=list)
     clip_windows: list[dict] = field(default_factory=list)
     created: float = field(default_factory=time.time)
+    transcript_id: str | None = None
 
     def to_dict(self) -> dict:
         value = asdict(self)
@@ -209,6 +210,9 @@ class CaptionTrack:
                 if isinstance(item, dict)
             ],
             created=float(value.get("created") or time.time()),
+            transcript_id=(
+                str(value["transcript_id"]) if value.get("transcript_id") else None
+            ),
         )
 
 
@@ -739,10 +743,88 @@ def _style_safe(text: str, style: dict) -> bool:
 # ---------------------------------------------------------------- transcript
 
 
+def read_transcript_v2(job_dir: Path | None) -> dict | None:
+    """Newest Transcript v2 for a job, if one exists."""
+    if job_dir is None:
+        return None
+    try:
+        import stt  # noqa: PLC0415 - keeps caption-only imports light
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        value = stt.load_latest_transcript(Path(job_dir))
+    except Exception:  # noqa: BLE001
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _v2_words_by_segment(transcript: dict) -> dict[int, list[dict]]:
+    grouped: dict[int, list[dict]] = {}
+    for raw in transcript.get("words") or []:
+        if not isinstance(raw, dict):
+            continue
+        text = normalize_text(raw.get("w") or raw.get("word"))
+        if not text:
+            continue
+        try:
+            start = float(raw.get("start", 0.0))
+            end = float(raw.get("end", start))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+            continue
+        try:
+            index = int(raw.get("segment") or 0)
+        except (TypeError, ValueError):
+            index = 0
+        grouped.setdefault(index, []).append({
+            "w": text,
+            "start": start,
+            "end": end,
+            "confidence": raw.get("confidence"),
+        })
+    return grouped
+
+
+def _segments_from_v2(transcript: dict) -> list[dict]:
+    words_by_segment = _v2_words_by_segment(transcript)
+    segments: list[dict] = []
+    for position, item in enumerate(transcript.get("segments") or []):
+        if not isinstance(item, dict):
+            continue
+        text = normalize_text(item.get("text"))
+        if not text:
+            continue
+        try:
+            start = float(item.get("start", 0.0))
+            end = float(item.get("end", start))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+            continue
+        index = len(segments)
+        segment = {
+            "index": index,
+            "start": start,
+            "end": end,
+            "text": text,
+        }
+        words = words_by_segment.get(position)
+        if words:
+            segment["words"] = words
+        segments.append(segment)
+    return segments
+
+
 def read_transcript_segments(job_dir: Path | None) -> list[dict]:
-    """Read the same transcript analysis used for speech, with Apple fallback."""
+    """Read speech timing: Transcript v2 words first, legacy JSON as fallback."""
     if job_dir is None:
         return []
+    transcript = read_transcript_v2(job_dir)
+    if transcript is not None:
+        segments = _segments_from_v2(transcript)
+        if segments:
+            return segments
     directory = Path(job_dir) / "transcript"
     for name in ("transcript.json", "transcript_apple.json"):
         path = directory / name
@@ -890,6 +972,82 @@ def _scene_for(plan: dict, clip_index: int, scene_id: Any) -> dict:
     return {}
 
 
+def _ends_sentence(text: str) -> bool:
+    value = str(text or "").rstrip("\"'”’)]}")
+    return bool(value) and value[-1] in ".!?…。！？"
+
+
+def _join_caption_words(words: Iterable[str]) -> str:
+    values = [value for value in words if value]
+    if not values:
+        return ""
+    cjk = re.compile(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+    if all(cjk.search(value) for value in values):
+        return "".join(values)
+    return " ".join(values)
+
+
+def _format_word_cue(words: list[dict], style: dict) -> str:
+    text = _join_caption_words([str(word["w"]) for word in words])
+    if style.get("uppercase"):
+        text = text.upper()
+    return "\n".join(wrap_lines(text, int(style["max_chars"])))
+
+
+def _segment_words(segment: dict, start: float, end: float) -> list[dict]:
+    rows: list[dict] = []
+    for raw in segment.get("words") or []:
+        if not isinstance(raw, dict):
+            continue
+        text = normalize_text(raw.get("w") or raw.get("word"))
+        if not text:
+            continue
+        try:
+            word_start = float(raw.get("start", 0.0))
+            word_end = float(raw.get("end", word_start))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(word_start) or not math.isfinite(word_end):
+            continue
+        if word_end <= start + TIME_EPSILON or word_start >= end - TIME_EPSILON:
+            continue
+        word_start = max(start, word_start)
+        word_end = min(end, word_end)
+        if word_end <= word_start:
+            continue
+        rows.append({"w": text, "start": word_start, "end": word_end})
+    rows.sort(key=lambda item: (item["start"], item["end"]))
+    return rows
+
+
+def _word_cues(words: list[dict], style: dict) -> list[dict]:
+    """Group measured words into display cues and keep their real times."""
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    for word in words:
+        candidate = current + [word]
+        text = _format_word_cue(candidate, style)
+        if current and not _style_safe(text, style):
+            groups.append(current)
+            current = [word]
+        else:
+            current = candidate
+        if _ends_sentence(str(word["w"])) and current:
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    cues: list[dict] = []
+    for group in groups:
+        start = float(group[0]["start"])
+        end = float(group[-1]["end"])
+        text = _format_word_cue(group, style)
+        if not text or end <= start:
+            continue
+        cues.append({"start": start, "end": end, "text": text})
+    return cues
+
+
 def _raw_pieces(
     plan: dict,
     windows: list[dict],
@@ -920,6 +1078,17 @@ def _raw_pieces(
             overlap_start = max(clip_start, segment_start)
             overlap_end = min(clip_end, segment_end)
             if overlap_end - overlap_start <= 0.04:
+                continue
+            words = _segment_words(segment, overlap_start, overlap_end)
+            if words:
+                for cue in _word_cues(words, style):
+                    local_pieces.append({
+                        "start": cue["start"],
+                        "end": cue["end"],
+                        "text": cue["text"],
+                        "source_segment": segment_index,
+                        "word_timed": True,
+                    })
                 continue
             text = _slice_segment_text(segment, overlap_start, overlap_end)
             if not normalize_text(text):
@@ -955,6 +1124,16 @@ def _raw_pieces(
                     f"Clip {window['index'] + 1}: no transcript, speech or OCR text."
                 )
         for piece in local_pieces:
+            if piece.get("word_timed"):
+                pieces.append({
+                    "start": float(piece["start"]),
+                    "end": float(piece["end"]),
+                    "text": piece["text"],
+                    "source_segment": piece.get("source_segment"),
+                    "clip_index": window["index"],
+                    "scene": window["scene"],
+                })
+                continue
             chunks = _text_chunks(piece["text"], style)
             if not chunks:
                 continue
@@ -1452,11 +1631,16 @@ def build_track(
     if job_dir is None and job_id and "/" not in job_id and ".." not in job_id:
         job_dir = DATA / "jobs" / job_id
     working = dict(plan)
+    transcript_v2: dict | None = None
     scenes = (job.get("analysis") or {}).get("scenes")
     if scenes:
         working["_scenes"] = scenes
     if segments is None and job_dir is not None:
-        segments = read_transcript_segments(job_dir)
+        transcript_v2 = read_transcript_v2(job_dir)
+        if transcript_v2 is not None:
+            segments = _segments_from_v2(transcript_v2)
+        if not segments:
+            segments = read_transcript_segments(job_dir)
     source_duration = float(
         (job.get("source") or {}).get("duration")
         or plan.get("_source_duration")
@@ -1504,6 +1688,10 @@ def build_track(
             for window in _clip_windows(working, source_duration)
         ],
         created=round(time.time(), 3),
+        transcript_id=(
+            str(transcript_v2.get("id"))
+            if transcript_v2 and transcript_v2.get("id") else None
+        ),
     )
     if job_dir is not None:
         existing = load_track(job_dir, identifier)
@@ -1718,6 +1906,7 @@ def edit_track(
         warnings=list(track.warnings),
         clip_windows=[dict(item) for item in track.clip_windows],
         created=round(time.time(), 3),
+        transcript_id=track.transcript_id,
     )
     if job_dir is not None:
         save_track(job_dir, edited)
