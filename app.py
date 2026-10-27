@@ -51,6 +51,7 @@ import pipeline
 import preflight
 import render
 import routes_batches
+import routes_check
 import routes_cleanup
 import routes_overlays
 import selection
@@ -3047,6 +3048,7 @@ app = FastAPI(title="VibeCut", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.include_router(admin_routes.router)
 app.include_router(routes_batches.router)
+app.include_router(routes_check.router)
 app.include_router(routes_cleanup.router)
 app.include_router(routes_overlays.router)
 
