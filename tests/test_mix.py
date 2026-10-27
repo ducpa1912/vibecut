@@ -534,4 +534,3 @@ def test_live_fixture_a_dub_slot_fit(tmp_path, monkeypatch):
         f"({summary.get('fitted')}/{summary.get('total')}) "
         f"lufs={loudness['integrated_lufs']} tp={loudness['true_peak_dbtp']}",
     )
-
