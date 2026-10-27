@@ -2446,7 +2446,7 @@ def analyze_source(
         "audio": audio_info,
         "engine": {
             "vision": bool(vision_data),
-            "whisper": bool(transcript),
+            "whisper": bool(transcript and transcript.get("segments")),
             "transcript_provider": (transcript or {}).get("provider") or "local",
             "transcript_language": (transcript or {}).get("language"),
         },
@@ -2455,6 +2455,7 @@ def analyze_source(
             "language": transcript.get("language"),
             "text": transcript.get("text", "")[:1000],
             "segments": len(transcript.get("segments", [])),
+            "no_speech": bool(transcript.get("no_speech")),
         },
         "scenes": scenes,
         "plans": plans,
