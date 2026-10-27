@@ -5,7 +5,24 @@ from __future__ import annotations
 import pytest
 
 import clipset
-from test_clipset import make_scenes, transcript_for
+from test_clipset import api, make_scenes, transcript_for, write_job  # noqa: F401
+
+
+def test_a_story_range_moves_by_one_sentence_through_the_patch(api):  # noqa: F811
+    """The ± start/end controls send this PATCH (QA #14)."""
+    write_job(api.jobs_dir, "j1")
+    record = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
+    story = record["stories"][0]
+    ids = [int(item["id"]) for item in story["sentences"]]
+    wider = ids + [ids[-1] + 1]
+    response = api.patch(
+        f"/api/jobs/j1/clip-sets/{record['id']}",
+        json={"stories": [{"id": story["id"], "sentences": wider}]},
+    )
+    assert response.status_code == 200, response.text
+    updated = next(item for item in response.json()["clip_set"]["stories"] if item["id"] == story["id"])
+    assert [int(item["id"]) for item in updated["sentences"]] == wider
+    assert updated["end"] > story["end"]
 
 
 def test_up_to_twelve_stories_from_a_long_source():

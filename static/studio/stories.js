@@ -16,6 +16,7 @@ import {
   getJob,
   getJobStatus,
   listClipSets,
+  patchClipSetStories,
   renderStory,
 } from "./api.js";
 import {
@@ -38,6 +39,25 @@ export const LENGTH_PRESETS = {
   medium: { label: "Medium · 30–60 s", min: 30, max: 60 },
   long: { label: "Long · 45–90 s", min: 45, max: 90 },
 };
+
+/**
+ * A story's sentence ids after moving one edge by one sentence.
+ * Sentence ids run in source order, so the start edge grows to `first - 1`
+ * and the end edge to `last + 1`. A story never drops below one sentence.
+ */
+export function adjustSentences(ids, edge, delta) {
+  const rows = (Array.isArray(ids) ? ids : [])
+    .map((value) => Number(typeof value === "object" && value ? value.id : value))
+    .filter(Number.isInteger)
+    .sort((left, right) => left - right);
+  if (!rows.length) return null;
+  if (edge === "start") {
+    if (delta < 0) return rows[0] > 0 ? [rows[0] - 1, ...rows] : null;
+    return rows.length > 1 ? rows.slice(1) : null;
+  }
+  if (delta > 0) return [...rows, rows[rows.length - 1] + 1];
+  return rows.length > 1 ? rows.slice(0, -1) : null;
+}
 
 /** Which preset a stored set was built with, or "auto". */
 export function lengthPreset(set) {
@@ -196,6 +216,25 @@ export function mount(root, ctx) {
       ]),
     ]);
     const note = el("p", { class: "st-story-note", role: "status", "aria-live": "polite", hidden: true });
+    const trim = el("div", { class: "st-story-trim", role: "group", "aria-label": "Adjust story range" });
+    for (const [edge, delta, text, label] of [
+      ["start", -1, "− start", "Start one sentence earlier"],
+      ["start", 1, "+ start", "Start one sentence later"],
+      ["end", -1, "− end", "End one sentence earlier"],
+      ["end", 1, "+ end", "End one sentence later"],
+    ]) {
+      const next = adjustSentences(story.sentences, edge, delta);
+      const control = el("button", {
+        class: "st-btn st-btn-quiet st-btn-small",
+        type: "button",
+        text,
+        title: label,
+        "aria-label": label,
+        disabled: !next,
+      });
+      control.addEventListener("click", () => { void adjustStory(story, next, note, trim); });
+      trim.append(control);
+    }
     const button = el("button", {
       class: "st-btn st-btn-ghost st-btn-small",
       type: "button",
@@ -212,8 +251,33 @@ export function mount(root, ctx) {
       el("span", { class: "st-hint", text: formatCount(story.sentences?.length, "sentence") }),
       el("div", { class: "st-story-actions" }, [button, editButton]),
     ]);
-    card.append(head, meta, quotes, foot, note);
+    card.append(head, meta, quotes, trim, foot, note);
     return card;
+  }
+
+  async function adjustStory(story, sentences, note, group) {
+    if (!job || !activeSetId || !sentences) return;
+    for (const control of group.querySelectorAll("button")) control.disabled = true;
+    note.hidden = false;
+    setStatus(note, "Updating the story range…");
+    try {
+      const result = await patchClipSetStories(job.id, activeSetId, [{ id: story.id, sentences }]);
+      if (disposed) return;
+      const record = result?.clip_set;
+      if (record?.id) sets = sets.map((item) => (item.id === record.id ? record : item));
+      const updated = (record?.stories || []).find((item) => item.id === story.id);
+      renderStories();
+      showStatus(
+        updated
+          ? `Story is now ${formatDuration(updated.start)} → ${formatDuration(updated.end)} (${formatDuration(updated.dur)}). Its edit starts fresh.`
+          : "Story range updated.",
+        "ok",
+      );
+    } catch (error) {
+      if (disposed) return;
+      setStatus(note, error?.message || "Could not change this story's range.", "bad");
+      for (const control of group.querySelectorAll("button")) control.disabled = false;
+    }
   }
 
   function controlsCard() {

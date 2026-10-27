@@ -205,6 +205,14 @@ export function listClipSets(jobId) {
   return request(jobPath(jobId, "/clip-sets"));
 }
 
+/** Change stories' sentence ranges. `PATCH /api/jobs/{id}/clip-sets/{set}`. */
+export function patchClipSetStories(jobId, setId, stories) {
+  return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}`), {
+    method: "PATCH",
+    body: { stories },
+  });
+}
+
 /** Build a new story set. `POST /api/jobs/{id}/clip-sets`. */
 export function createClipSet(jobId, { count = 3, order = "source", minS = null, maxS = null } = {}) {
   const body = { count, order };

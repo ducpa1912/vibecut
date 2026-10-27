@@ -85,6 +85,18 @@ def test_story_length_presets_match_the_server():
     assert out["picked"] == ["short", "auto", "auto"]
 
 
+@needs_node
+def test_adjust_sentences_moves_one_edge_by_one_sentence():
+    """Story cards' ± start/end controls (QA #14)."""
+    out = run_module("stories.js", """
+        const ids = [{id: 5}, {id: 6}, {id: 7}];
+        return [m.adjustSentences(ids, "start", -1), m.adjustSentences(ids, "start", 1),
+          m.adjustSentences(ids, "end", 1), m.adjustSentences(ids, "end", -1),
+          m.adjustSentences([{id: 0}], "start", -1), m.adjustSentences([3], "end", -1)];
+    """)
+    assert out == [[4, 5, 6, 7], [6, 7], [5, 6, 7, 8], [5, 6], None, None]
+
+
 # ---------------------------------------------------------------- shell.js (QA #10)
 
 

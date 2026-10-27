@@ -744,6 +744,8 @@ body.st-active { overflow: hidden; }
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+.st-story-trim { display: flex; flex-wrap: wrap; gap: 5px; }
+.st-story-trim .st-btn { min-height: 28px; padding: 3px 10px; font-size: 12px; }
 .st-story-foot {
   margin-top: auto;
   display: flex;
