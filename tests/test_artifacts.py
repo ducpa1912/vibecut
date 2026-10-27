@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 import app
 import artifacts
 import audio
+import edits
 import render
 import shares
 
@@ -1452,3 +1453,83 @@ def test_share_does_not_publish_without_job_record(env, monkeypatch):
 
     assert missing_job.value.status_code == 404
     assert shares.load(app.SHARES, strict=False) == {}
+
+
+# ---------------------------------------------------------------- v2 identity
+
+
+def test_build_spec_covers_transcript_and_audio_music_hashes(env):
+    job = app.load_job(env.job_id)
+    plan = {
+        **plan_for(),
+        "_caption_track": {
+            "track_id": "cap_1",
+            "transcript_id": "tr_1234567890_abcd1234",
+        },
+    }
+    audio_plan = {
+        "mode": "dub",
+        "music": {"source": "library", "file_hash": "b" * 64},
+        "voice": {"engine": "say", "voice": "Tingting"},
+        "translate": {"target": "zh", "mode": "smooth"},
+    }
+    spec = artifacts.build_spec(
+        job, plan, captions=True, story_id="s1", audio_plan=audio_plan,
+    )
+    payload = spec.payload()
+    assert payload["transcript_id"] == "tr_1234567890_abcd1234"
+    audio_hash, music_hash = artifacts.audio_hashes(audio_plan)
+    assert payload["audio_hash"] == audio_hash
+    assert payload["music_hash"] == "b" * 64
+
+    legacy = artifacts.build_spec(job, plan_for(), captions=False, story_id="s1")
+    assert "transcript_id" not in legacy.payload()
+    assert "audio_hash" not in legacy.payload()
+    assert artifacts.artifact_id(spec) != artifacts.artifact_id(legacy)
+
+    changed = artifacts.build_spec(
+        job, plan, captions=True, story_id="s1",
+        audio_plan={**audio_plan, "duck_db": -18},
+    )
+    assert artifacts.artifact_id(changed) != artifacts.artifact_id(spec)
+
+
+def test_save_manifest_stamps_edit_version_for_review_links(env):
+    job = app.load_job(env.job_id)
+    clips = plan_for()["clips"]
+    edit = edits.build_edit(
+        story_ref={
+            "set_id": "cs_1",
+            "story_id": "s1",
+            "clip_hash": edits.clip_snapshot_hash(clips),
+            "duration": 4.0,
+            "clip_count": 1,
+        },
+        aspect="9:16",
+        motion=[{"kind": "punch_in", "start": 0.4, "end": 1.4}],
+    )
+    edits.save_edit(env.directory, edit)
+    job["story_edits"] = {"cs_1:s1:9:16": edit["id"]}
+    (env.directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+
+    spec = artifacts.build_spec(
+        job, plan_for(), story_id="s1", edit_hash=edit["hash"],
+    )
+    manifest = artifacts.make_manifest("job1", spec, status="ready", record_key="15")
+    manifest["set_id"] = "cs_1"
+    manifest = artifacts.assign_version(env.directory, manifest)
+    saved = artifacts.save_manifest(env.directory, manifest)
+
+    assert saved["edit_id"] == edit["id"]
+    assert saved["edit_version"] == 1
+    info = artifacts.version_info(env.directory, saved)
+    assert info["edit"] == {
+        "id": edit["id"],
+        "hash": edit["hash"],
+        "version": 1,
+        "label": "Edit v1",
+    }
+    assert info["label"].startswith("v1 · Edit v1")
+    record = artifacts.render_record(saved)
+    assert record["edit_version"] == 1
+    assert record["edit_hash"] == edit["hash"]

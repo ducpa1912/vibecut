@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import app
 import artifacts
+import edits
 import shares
 
 
@@ -603,3 +604,53 @@ def test_legacy_share_create_persists_adopted_projection(env):
     assert record["record_key"] == "15"
     assert record["resolved_encoder"] in {"videotoolbox", "libx264"}
     assert shares.get(result["token"], app.SHARES)["artifact_id"] == artifact_id
+
+
+def test_review_page_shows_the_edit_version(env):
+    job = app.load_job(env.job_id)
+    clips = [{
+        "scene": 0, "start": 0.0, "end": 4.0, "dur": 4.0, "role": "hook",
+    }]
+    edit = edits.build_edit(
+        story_ref={
+            "set_id": "cs_1",
+            "story_id": "story",
+            "clip_hash": edits.clip_snapshot_hash(clips),
+            "duration": 4.0,
+            "clip_count": 1,
+        },
+        aspect="9:16",
+        motion=[{"kind": "punch_in", "start": 0.5, "end": 1.5}],
+    )
+    edits.save_edit(env.directory, edit)
+    job["story_edits"] = {"cs_1:story:9:16": edit["id"]}
+    (env.directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+
+    spec = artifacts.build_spec(
+        job,
+        {
+            "target": 15,
+            "clips": clips,
+            "story_id": "story",
+        },
+        story_id="story",
+        edit_hash=edit["hash"],
+    )
+    manifest = artifacts.make_manifest("job1", spec, status="ready", record_key="15")
+    manifest["set_id"] = "cs_1"
+    manifest = artifacts.assign_version(env.directory, manifest)
+    manifest = artifacts.save_manifest(env.directory, manifest)
+    artifact_id = manifest["artifact_id"]
+    directory = artifacts.artifact_dir(env.directory, artifact_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "reel.mp4").write_bytes(b"fake-mp4")
+    (directory / "poster.jpg").write_bytes(b"fake-jpg")
+    artifacts.write_captions(env.directory, artifact_id, "1\n00:00:00,000 --> 00:00:02,000\nHi\n", "WEBVTT\n")
+
+    token, _ = shares.create("job1", artifact_id, path=app.SHARES)
+    client = TestClient(app.app)
+    response = client.get(f"/r/{token}")
+    assert response.status_code == 200
+    assert "Edit v1" in response.text
+    assert "v1 · Edit v1 · current" in response.text
+    assert manifest["edit_id"] == edit["id"]
