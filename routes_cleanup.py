@@ -75,9 +75,15 @@ class RightsBody(BaseModel):
 
 
 def cleanup_enabled() -> bool:
-    return os.environ.get("VIBECUT_ENABLE_CLEANUP", "0").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
+    """Clean is core: on unless the operator explicitly disables it.
+
+    Unset, blank and unknown values keep Clean on. ``0``, ``false``, ``no``
+    and ``off`` are the explicit off switches.
+    """
+    value = os.environ.get("VIBECUT_ENABLE_CLEANUP")
+    if value is None or not value.strip():
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _require_enabled() -> None:

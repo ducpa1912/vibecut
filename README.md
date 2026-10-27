@@ -509,6 +509,24 @@ Rendered files live in `data/jobs/<id>/renders/`. A render is a conventional
 H.264 MP4 at 30 fps. The renderer cuts each beat separately, joins with the
 concat demuxer, muxes the audio bed, and writes a poster frame.
 
+### 6. Clean (Flow 1)
+
+Clean removes baked-in text with deterministic layers: `crop_guard`, `blur`,
+`plate` and `mask`. It does not inpaint, regenerate or remove a platform
+watermark. The own-footage attestation is still required before a Clean layer
+saves, and the server checks it; the routes use `/api/jobs/{id}/cleanup/*`.
+
+Clean is **on by default**. Set `VIBECUT_ENABLE_CLEANUP=0` (also `false`, `no`
+or `off`) to disable the Clean planning and layer routes. The rights routes
+stay available either way so Import and Check can record the attestation.
+
+Old jobs are migrated once at startup: a story's saved caption track becomes a
+captions-only 9:16 Edit, and `job["story_captions"]` keeps pointing at the same
+track. The track file is not moved or rewritten, a story that already has an
+Edit is left alone, and no render is started. The Classic UI still reads and
+writes those tracks, and a 4:5 render of a legacy story without a 4:5 Edit
+continues on the legacy render path.
+
 ## URL ingest: yt-dlp first, sidecars optional
 
 The URL bar is for public internet links. Use **Use a local path instead** for
