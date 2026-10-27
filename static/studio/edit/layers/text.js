@@ -94,6 +94,7 @@ export function mountTextPanel(host, ctx) {
       duration: ctx.getDuration(),
       playhead: ctx.getPlayhead(),
       index: (ctx.getEdit()?.graphics || []).length,
+      hookText: ctx.getStory?.()?.hook?.text || "",
     });
     const graphics = [...(ctx.getEdit()?.graphics || []), next];
     ctx.setGraphics(graphics);

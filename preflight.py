@@ -1968,6 +1968,9 @@ def uncovered_text_markers(
             high = float(item.get("end") or duration)
             if high - low <= 0.001:
                 continue
+            # Only text inside this story's cut matters, at story time.
+            if _output_window(compiled, low, high) is None:
+                continue
             covered = False
             for layer in clean:
                 layer_box = layer.get("box")
@@ -1994,9 +1997,9 @@ def uncovered_text_markers(
                 break
         if uncovered is None:
             continue
-        window = _output_window(compiled, uncovered[0], uncovered[1]) or (
-            0.0, duration,
-        )
+        window = _output_window(compiled, uncovered[0], uncovered[1])
+        if window is None:
+            continue
         sample = " ".join(str(tracklet.get("text_sample") or "").split())[:80]
         markers.append(_marker(
             window[0], window[1], "residual_text",

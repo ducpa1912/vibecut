@@ -65,11 +65,15 @@ body.st-active { overflow: hidden; }
 
 /* ------------------------------------------------------------------ shell */
 
+/* One bounded row: without it the implicit grid row grows to fit the
+   content, .st-main never gets a height, and nothing scrolls. */
 .st-shell {
   display: grid;
   grid-template-columns: 238px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   height: 100dvh;
+  overflow: hidden;
 }
 
 .st-skip {
@@ -220,9 +224,11 @@ body.st-active { overflow: hidden; }
 
 .st-main-wrap {
   min-width: 0;
+  min-height: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .st-top {
@@ -738,6 +744,8 @@ body.st-active { overflow: hidden; }
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+.st-story-trim { display: flex; flex-wrap: wrap; gap: 5px; }
+.st-story-trim .st-btn { min-height: 28px; padding: 3px 10px; font-size: 12px; }
 .st-story-foot {
   margin-top: auto;
   display: flex;
@@ -1005,7 +1013,11 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
 .st-finish-version-copy { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; }
 .st-finish-version-copy strong { font-size: 12px; font-weight: 560; }
 .st-finish-version-copy small { color: var(--st-dim); font-size: 10.5px; }
-.st-finish-version-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.st-finish-version-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; flex: 0 1 auto; }
+.st-finish-version:has(.st-finish-version-error) { flex-wrap: wrap; }
+.st-finish-version-error { flex: 1 0 100%; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.st-finish-single-video { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--st-line); }
+.st-finish-single-video video { max-width: 260px; }
 .st-finish-compare {
   display: grid;
   gap: 8px;
@@ -1176,7 +1188,9 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
   margin-top: -2px;
 }
 .st-top-progress .st-progress-bar { flex: 0 0 min(320px, 40%); }
-.st-top-progress span { color: var(--st-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-top-progress span { color: var(--st-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+.st-top-progress .st-btn { flex: 0 0 auto; min-height: 28px; padding: 4px 11px; }
+#studio-root .st-top-progress .st-btn[hidden] { display: none; }
 
 /* ---------------------------------------------------------- video library */
 #studio-root dialog.st-library-dialog { width: min(680px, calc(100vw - 36px)); }

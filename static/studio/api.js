@@ -37,11 +37,19 @@ function syncTokenCookie() {
   document.cookie = `vibecut_token=${value}; Path=/; SameSite=Strict${expiry}`;
 }
 
-function errorDetail(payload) {
+export function errorDetail(payload) {
   if (!payload) return "";
   if (typeof payload === "string") return payload;
   const detail = payload.detail;
   if (typeof detail === "string") return detail;
+  // Structured errors ({detail: {code, message, suggestion}}) carry the
+  // human sentence in message; fall back to the code so it is never generic.
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const message = typeof detail.message === "string" ? detail.message.trim() : "";
+    const suggestion = typeof detail.suggestion === "string" ? detail.suggestion.trim() : "";
+    if (message) return suggestion ? `${message} ${suggestion}` : message;
+    if (typeof detail.code === "string" && detail.code) return detail.code.replace(/_/g, " ");
+  }
   if (Array.isArray(detail)) {
     const parts = detail
       .map((item) => {
@@ -80,6 +88,8 @@ export async function request(path, options = {}) {
     headers,
     credentials: "same-origin",
     signal: options.signal,
+    // Lets a save started while the page unloads finish after it is gone.
+    keepalive: Boolean(options.keepalive),
   };
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -137,7 +147,7 @@ export function getJobStatus(jobId) {
  * Upload a local video. `POST /api/jobs/upload`.
  * Upload uses XHR so the creator sees byte progress on long files.
  */
-export function uploadVideo(file, options, onProgress) {
+export function uploadVideo(file, options, onProgress, { rights = null } = {}) {
   syncTokenCookie();
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -172,23 +182,24 @@ export function uploadVideo(file, options, onProgress) {
     const form = new FormData();
     form.append("file", file);
     form.append("options", JSON.stringify(options || {}));
+    if (rights !== null) form.append("rights", rights ? "true" : "false");
     xhr.send(form);
   });
 }
 
 /** Use a video already on this Mac. `POST /api/jobs/path`. */
-export function createJobFromPath(path, options) {
+export function createJobFromPath(path, options, { rights = null } = {}) {
   return request("/api/jobs/path", {
     method: "POST",
-    body: { path, options: options || {} },
+    body: { path, options: options || {}, rights },
   });
 }
 
 /** Bring in a link. `POST /api/jobs/from-url`. */
-export function createJobFromUrl(url, options, provider = null) {
+export function createJobFromUrl(url, options, provider = null, { rights = null } = {}) {
   return request("/api/jobs/from-url", {
     method: "POST",
-    body: { url, options: options || {}, provider: provider || null },
+    body: { url, options: options || {}, provider: provider || null, rights },
   });
 }
 
@@ -197,11 +208,21 @@ export function listClipSets(jobId) {
   return request(jobPath(jobId, "/clip-sets"));
 }
 
+/** Change stories' sentence ranges. `PATCH /api/jobs/{id}/clip-sets/{set}`. */
+export function patchClipSetStories(jobId, setId, stories) {
+  return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}`), {
+    method: "PATCH",
+    body: { stories },
+  });
+}
+
 /** Build a new story set. `POST /api/jobs/{id}/clip-sets`. */
-export function createClipSet(jobId, { count = 3, order = "source" } = {}) {
+export function createClipSet(jobId, { count = 3, order = "source", minS = null, maxS = null } = {}) {
+  const body = { count, order };
+  if (Number.isFinite(minS) && Number.isFinite(maxS)) Object.assign(body, { min_s: minS, max_s: maxS });
   return request(jobPath(jobId, "/clip-sets"), {
     method: "POST",
-    body: { count, order },
+    body,
   });
 }
 

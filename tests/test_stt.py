@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+import wave
 from pathlib import Path
 
 import pytest
@@ -153,8 +154,10 @@ def test_whisper_uses_word_timestamps_and_turbo_default(tmp_path, monkeypatch):
     class Result:
         returncode = 0
 
-    def fake_run(cmd, stdout=None, stderr=None, timeout=None):
+    def fake_run(cmd, stdout=None, stderr=None, timeout=None, env=None):
         captured["cmd"] = cmd
+        captured["timeout"] = timeout
+        captured["env"] = env
         output_dir = Path(cmd[cmd.index("--output-dir") + 1])
         name = cmd[cmd.index("--output-name") + 1]
         _write(output_dir / f"{name}.json", {
@@ -183,6 +186,89 @@ def test_whisper_uses_word_timestamps_and_turbo_default(tmp_path, monkeypatch):
     assert cmd[cmd.index("--initial-prompt") + 1] == "Acme"
     assert result["model"] == stt.DEFAULT_WHISPER_MODEL
     assert [word["w"] for word in result["words"]] == ["Hello", "world"]
+    # A 1 s clip never waits the long default budget (QA #9).
+    assert captured["timeout"] <= 130
+    assert captured["env"] is not None
+
+
+# ---------------------------------------------------------------- QA #9
+
+
+def _pcm(path: Path, samples, rate: int = 16000) -> Path:
+    import numpy as np
+
+    data = np.asarray(samples, dtype=np.float64)
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(rate)
+        writer.writeframes((data * 32767).astype("<i2").tobytes())
+    return path
+
+
+def test_speech_gate_tells_silence_from_sound(tmp_path):
+    import numpy as np
+
+    silent = _pcm(tmp_path / "silent.wav", np.zeros(32000))
+    hiss = _pcm(tmp_path / "hiss.wav", np.random.default_rng(1).normal(0, 0.0005, 32000))
+    tone = np.sin(np.linspace(0, 2 * np.pi * 220 * 2, 32000)) * 0.2
+    voiced = _pcm(tmp_path / "tone.wav", tone)
+    assert stt.has_speech_energy(silent) is False
+    assert stt.has_speech_energy(hiss) is False
+    assert stt.has_speech_energy(voiced) is True
+    assert stt.has_speech_energy(tmp_path / "missing.wav") is None
+
+
+def test_silent_audio_skips_every_engine(tmp_path, monkeypatch):
+    import numpy as np
+
+    silent = _pcm(tmp_path / "silent.wav", np.zeros(32000))
+    called = []
+    monkeypatch.setattr(stt, "_chunked_run", lambda *args, **kwargs: called.append(1))
+    messages = []
+    result = stt.transcribe_source(
+        silent, tmp_path, 2.0, lambda fraction, message: messages.append(message),
+        engine="whisper",
+    )
+    assert called == []
+    assert result["no_speech"] is True and result["segments"] == []
+    assert messages == ["No speech found"]
+    assert not list(tmp_path.glob("transcript/transcript_v2*.json"))
+
+
+def test_transcribe_source_says_transcribing_before_the_first_chunk(tmp_path, monkeypatch):
+    import numpy as np
+
+    tone = np.sin(np.linspace(0, 2 * np.pi * 220 * 2, 32000)) * 0.2
+    voiced = _pcm(tmp_path / "tone.wav", tone)
+    messages = []
+    monkeypatch.setattr(stt, "_engine_ready", lambda provider, model: True)
+    monkeypatch.setattr(
+        stt, "_chunked_run",
+        lambda *args, **kwargs: messages.append("chunk") or None,
+    )
+    stt.transcribe_source(
+        voiced, tmp_path, 2.0, lambda fraction, message: messages.append(message),
+        engine="whisper",
+    )
+    assert messages[:2] == ["Transcribing speech · local Whisper", "chunk"]
+
+
+def test_whisper_env_is_offline_only_for_a_cached_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    model = "mlx-community/whisper-large-v3-turbo"
+    assert "HF_HUB_OFFLINE" not in stt._whisper_env(model)
+    (tmp_path / "models--mlx-community--whisper-large-v3-turbo").mkdir()
+    env = stt._whisper_env(model)
+    assert env["HF_HUB_OFFLINE"] == "1" and env["TRANSFORMERS_OFFLINE"] == "1"
+
+
+def test_whisper_timeout_is_relative_to_clip_length():
+    assert stt.whisper_timeout(2.0, 300) == pytest.approx(128.0)
+    assert stt.whisper_timeout(600.0, 300) == 300
+    assert stt.whisper_timeout(600.0) == pytest.approx(2520.0)
+    assert stt.whisper_timeout(0.0, 5) == 30.0
 
 
 def test_whisper_payload_drops_hallucinations_and_their_words():

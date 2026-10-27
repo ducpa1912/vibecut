@@ -7,6 +7,7 @@ boundaries exact and lets us cache and parallelize the expensive part.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import math
@@ -36,7 +37,10 @@ TARGET_AR = 9 / 16
 OUT_W = 1080
 OUT_H = 1920
 OUT_FPS = 30
-LAYER_CACHE_VERSION = "layers-v1"
+# v2: weighted fonts, colour emoji and caption stroke widths (QA #12).
+LAYER_CACHE_VERSION = "layers-v2"
+# Captions are bold by default; text layers carry their own style.weight.
+CAPTION_WEIGHT = 700
 
 PRESETS = {
     "tiktok": {"aspect": "9:16", "captions": True, "caption_margin": 0.12},
@@ -578,21 +582,356 @@ def _caption_font(
     return ImageFont.load_default()
 
 
+# ---------------------------------------------------------------- text fonts
+#
+# Burned-in text used one regular-weight font (Arial Unicode) with no colour
+# glyphs, so style.weight was ignored and emoji drew as tofu boxes. Text now
+# draws in runs: weighted San Francisco (or Helvetica Neue) for the scripts it
+# covers, the old wide-coverage chain for everything else (CJK and more), and
+# Apple Color Emoji bitmaps for emoji. All are macOS system fonts; on a host
+# without them the old single-font path is used unchanged.
+
+SYSTEM_SANS = "/System/Library/Fonts/SFNS.ttf"
+SYSTEM_SANS_STATIC = "/System/Library/Fonts/HelveticaNeue.ttc"
+EMOJI_FONT = "/System/Library/Fonts/Apple Color Emoji.ttc"
+EMOJI_STRIKE = 160  # Apple Color Emoji only rasterizes at its bitmap strikes.
+# Helvetica Neue faces by CSS weight (index into HelveticaNeue.ttc).
+_HELVETICA_NEUE_FACES = {100: 12, 200: 5, 300: 7, 400: 0, 500: 10, 600: 10, 700: 1, 800: 1, 900: 1}
+_SANS_NAMES = {"", "sans", "sans-serif", "system", "sf", "sf pro"}
+_FONT_CACHE: dict[tuple, object] = {}
+_FONT_LOCK = threading.Lock()
+
+
+def _cached_font(key: tuple, build: Callable[[], object]):
+    with _FONT_LOCK:
+        if key in _FONT_CACHE:
+            return _FONT_CACHE[key]
+    value = build()
+    with _FONT_LOCK:
+        _FONT_CACHE[key] = value
+    return value
+
+
+def _weighted_sans(size: int, weight: int):
+    """San Francisco at ``weight`` (variable axes), else Helvetica Neue, else None."""
+    weight = max(100, min(900, int(round(weight / 100.0)) * 100))
+
+    def build():
+        if Path(SYSTEM_SANS).is_file():
+            try:
+                font = ImageFont.truetype(SYSTEM_SANS, size)
+                axes = font.get_variation_axes()
+                values = []
+                for axis in axes:
+                    name = axis.get("name")
+                    name = name.decode() if isinstance(name, bytes) else str(name)
+                    if name.lower() == "weight":
+                        value = weight
+                    elif name.lower() == "optical size":
+                        value = size
+                    else:
+                        value = axis.get("default")
+                    values.append(max(axis["minimum"], min(axis["maximum"], value)))
+                font.set_variation_by_axes(values)
+                return font
+            except (OSError, ValueError, KeyError, AttributeError):
+                pass
+        if Path(SYSTEM_SANS_STATIC).is_file():
+            try:
+                return ImageFont.truetype(
+                    SYSTEM_SANS_STATIC, size, index=_HELVETICA_NEUE_FACES[weight],
+                )
+            except OSError:
+                pass
+        return None
+
+    return _cached_font(("sans", size, weight), build)
+
+
+def _emoji_font():
+    def build():
+        if not Path(EMOJI_FONT).is_file():
+            return None
+        try:
+            return ImageFont.truetype(EMOJI_FONT, EMOJI_STRIKE)
+        except OSError:
+            return None
+
+    return _cached_font(("emoji",), build)
+
+
+_EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF),  # pictographs, emoticons, transport, flags, symbols
+    (0x2600, 0x27BF),    # misc symbols and dingbats
+    (0x2B00, 0x2BFF),    # arrows and stars used as emoji
+    (0x2300, 0x23FF),    # watch, hourglass, media keys
+)
+_EMOJI_JOINERS = {"‍", "️", "⃣"}
+
+
+def _is_emoji(char: str) -> bool:
+    code = ord(char)
+    return any(low <= code <= high for low, high in _EMOJI_RANGES)
+
+
+def _cmap_ranges(path: str, index: int = 0) -> list[tuple[int, int]] | None:
+    """Code point ranges a font maps, read from its ``cmap`` table.
+
+    A tiny reader for formats 4 and 12 (all macOS system text fonts use one
+    of them), so coverage is known without a font library. Returns None when
+    the file can't be read; callers then fall back to a glyph comparison.
+    """
+    import struct  # noqa: PLC0415
+
+    def build():
+        try:
+            data = Path(path).read_bytes()
+            base = 0
+            if data[:4] == b"ttcf":
+                count = struct.unpack(">I", data[8:12])[0]
+                if index >= count:
+                    return None
+                base = struct.unpack(">I", data[12 + 4 * index:16 + 4 * index])[0]
+            tables = struct.unpack(">H", data[base + 4:base + 6])[0]
+            cmap = None
+            for row in range(tables):
+                entry = base + 12 + 16 * row
+                if data[entry:entry + 4] == b"cmap":
+                    cmap = struct.unpack(">I", data[entry + 8:entry + 12])[0]
+                    break
+            if cmap is None:
+                return None
+            subtables = struct.unpack(">H", data[cmap + 2:cmap + 4])[0]
+            best = None
+            for row in range(subtables):
+                platform, encoding, offset = struct.unpack(
+                    ">HHI", data[cmap + 4 + 8 * row:cmap + 12 + 8 * row],
+                )
+                fmt = struct.unpack(">H", data[cmap + offset:cmap + offset + 2])[0]
+                rank = {(3, 10, 12): 0, (0, 4, 12): 0, (0, 3, 4): 1, (3, 1, 4): 1}.get(
+                    (platform, encoding, fmt), 2 if fmt in (4, 12) else None,
+                )
+                if rank is not None and (best is None or rank < best[0]):
+                    best = (rank, cmap + offset, fmt)
+            if best is None:
+                return None
+            _rank, start, fmt = best
+            ranges: list[tuple[int, int]] = []
+            if fmt == 12:
+                groups = struct.unpack(">I", data[start + 12:start + 16])[0]
+                for group in range(groups):
+                    low, high, _glyph = struct.unpack(
+                        ">III", data[start + 16 + 12 * group:start + 28 + 12 * group],
+                    )
+                    ranges.append((low, high))
+            else:
+                segments = struct.unpack(">H", data[start + 6:start + 8])[0] // 2
+                ends = struct.unpack(f">{segments}H", data[start + 14:start + 14 + 2 * segments])
+                starts_at = start + 16 + 2 * segments
+                starts = struct.unpack(f">{segments}H", data[starts_at:starts_at + 2 * segments])
+                ranges = [
+                    (low, high) for low, high in zip(starts, ends) if low != 0xFFFF
+                ]
+            return sorted(ranges)
+        except (OSError, struct.error, IndexError, ValueError):
+            return None
+
+    return _cached_font(("cmap", str(path), int(index)), build)
+
+
+class TextFonts:
+    """A primary font plus per-character fallbacks and colour emoji.
+
+    ``runs`` splits a line into ``(text, font)`` pieces; ``font is None``
+    marks an emoji run. Widths are summed per run, so wrapping and centring
+    see the same geometry that is drawn.
+    """
+
+    def __init__(self, size: int, primary, fallbacks: list, emoji=None):
+        self.size = int(size)
+        self.primary = primary
+        self.fallbacks = [font for font in fallbacks if font is not None and font is not primary]
+        self.emoji = emoji
+        self._covers: dict[tuple[int, str], bool] = {}
+        self._notdef: dict[int, bytes] = {}
+        try:
+            self.ascent = int(primary.getmetrics()[0])
+        except (AttributeError, TypeError):
+            self.ascent = int(size * 0.8)
+
+    def _has_glyph(self, font, char: str) -> bool:
+        if char.isspace() or not self.fallbacks:
+            return True
+        key = (id(font), char)
+        if key not in self._covers:
+            ranges = _cmap_ranges(getattr(font, "path", ""), getattr(font, "index", 0) or 0)
+            if ranges is not None:
+                code = ord(char)
+                position = bisect.bisect_right(ranges, (code, 0x10FFFF)) - 1
+                self._covers[key] = position >= 0 and ranges[position][0] <= code <= ranges[position][1]
+                return self._covers[key]
+            try:
+                if id(font) not in self._notdef:
+                    self._notdef[id(font)] = font.getmask("\U0010fffd").tobytes()
+                self._covers[key] = font.getmask(char).tobytes() != self._notdef[id(font)]
+            except (AttributeError, OSError, ValueError):
+                self._covers[key] = True
+        return self._covers[key]
+
+    def _font_for(self, char: str):
+        if self.emoji is not None and (_is_emoji(char) or char in _EMOJI_JOINERS):
+            return None
+        if self._has_glyph(self.primary, char):
+            return self.primary
+        for font in self.fallbacks:
+            if self._has_glyph(font, char):
+                return font
+        return self.primary
+
+    def runs(self, text: str) -> list[tuple[str, object]]:
+        rows: list[tuple[str, object]] = []
+        for char in str(text):
+            font = self._font_for(char)
+            if rows and rows[-1][1] is font:
+                rows[-1] = (rows[-1][0] + char, font)
+            else:
+                rows.append((char, font))
+        return rows
+
+    def _emoji_glyphs(self, text: str) -> list[str]:
+        return [char for char in text if char not in _EMOJI_JOINERS]
+
+    def width(self, text: str) -> float:
+        total = 0.0
+        for piece, font in self.runs(text):
+            if font is None:
+                total += len(self._emoji_glyphs(piece)) * self.size * 1.08
+            else:
+                total += float(font.getlength(piece))
+        return total
+
+    def _emoji_image(self, char: str, alpha: float):
+        def build():
+            canvas = Image.new("RGBA", (EMOJI_STRIKE + 40, EMOJI_STRIKE + 40), (0, 0, 0, 0))
+            ImageDraw.Draw(canvas).text((0, 0), char, font=self.emoji, embedded_color=True)
+            box = canvas.getbbox()
+            return canvas.crop(box) if box else None
+
+        glyph = _cached_font(("emoji-glyph", char), build)
+        if glyph is None:
+            return None
+        scale = self.size / float(EMOJI_STRIKE)
+        image = glyph.resize(
+            (max(1, int(round(glyph.width * scale))), max(1, int(round(glyph.height * scale)))),
+            Image.LANCZOS,
+        )
+        if alpha < 0.999:
+            image.putalpha(image.getchannel("A").point(lambda value: int(value * alpha)))
+        return image
+
+    def draw_line(
+        self,
+        image: Image.Image,
+        x: float,
+        top: float,
+        text: str,
+        *,
+        align: str = "center",
+        fill=None,
+        stroke_width: int = 0,
+        stroke_fill=None,
+        emoji: bool = True,
+        alpha: float = 1.0,
+    ) -> None:
+        """Draw one line whose ascender top is ``top``; ``x`` is its anchor."""
+        draw = ImageDraw.Draw(image)
+        total = self.width(text)
+        cursor = x - total / 2.0 if align == "center" else x - total if align == "right" else x
+        baseline = top + self.ascent
+        for piece, font in self.runs(text):
+            if font is not None:
+                draw.text(
+                    (cursor, baseline), piece, font=font, anchor="ls",
+                    fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill,
+                )
+                cursor += float(font.getlength(piece))
+                continue
+            for char in self._emoji_glyphs(piece):
+                step = self.size * 1.08
+                glyph = self._emoji_image(char, alpha) if emoji else None
+                if glyph is not None:
+                    gx = int(round(cursor + (step - glyph.width) / 2.0))
+                    gy = int(round(baseline - self.size * 0.86))
+                    image.alpha_composite(glyph, (max(0, gx), max(0, gy)))
+                cursor += step
+
+
+def _text_fonts(size: int, font_name: str | None = None, weight: int | None = 400) -> TextFonts:
+    """Fonts for one text style: weighted sans first for the default family."""
+    base = _caption_font(size, font_name)
+    requested = str(font_name or "").strip().lower()
+    primary = None
+    if requested in _SANS_NAMES and not os.environ.get("VIBECUT_CAPTION_FONT_FILE"):
+        primary = _weighted_sans(size, int(weight or 400))
+    fallbacks = [base]
+    hiragino = "/System/Library/Fonts/Hiragino Sans GB.ttc"
+    if Path(hiragino).is_file():
+        fallbacks.append(_cached_font(("hiragino", size), lambda: ImageFont.truetype(hiragino, size)))
+    if primary is None:
+        primary = base
+    return TextFonts(size, primary, fallbacks if isinstance(primary, ImageFont.FreeTypeFont) else [], _emoji_font())
+
+
 def _wrap_caption(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
+    """Wrap text to ``max_width`` pixels, keeping the author's line breaks.
+
+    Caption cues and text layers store explicit ``\\n`` breaks, and PIL's
+    ``textlength`` refuses multiline strings, so each stored line is wrapped
+    on its own. Spaced scripts break between words; a word wider than the
+    box, or unspaced CJK text, falls back to breaking between characters.
+    """
     if not text:
         return []
     lines: list[str] = []
-    current = ""
-    for char in text:
-        candidate = current + char
-        if draw.textlength(candidate, font=font) <= max_width:
-            current = candidate
-        else:
+
+    def fits(value: str) -> bool:
+        if isinstance(font, TextFonts):
+            return font.width(value) <= max_width
+        return draw.textlength(value, font=font) <= max_width
+
+    def by_char(word: str) -> list[str]:
+        rows: list[str] = []
+        current = ""
+        for char in word:
+            if current and not fits(current + char):
+                rows.append(current)
+                current = char
+            else:
+                current += char
+        if current:
+            rows.append(current)
+        return rows
+
+    for paragraph in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        current = ""
+        for word in paragraph.split():
+            candidate = f"{current} {word}" if current else word
+            if fits(candidate):
+                current = candidate
+                continue
             if current:
                 lines.append(current)
-            current = char
-    if current:
-        lines.append(current)
+            if fits(word):
+                current = word
+            else:
+                pieces = by_char(word)
+                lines.extend(pieces[:-1])
+                current = pieces[-1] if pieces else ""
+        if current:
+            lines.append(current)
     return lines
 
 
@@ -660,9 +999,9 @@ def _caption_pngs(
         return []
 
     measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    font = _caption_font(font_size, style.get("font"))
+    font = _text_fonts(font_size, style.get("font"), CAPTION_WEIGHT)
     widest = max(
-        measure.textlength(line, font=font)
+        font.width(line)
         for _start, _end, lines in prepared
         for line in lines
     )
@@ -670,9 +1009,9 @@ def _caption_pngs(
         fitted_size = max(12, int(font_size * max_width / max(1.0, widest)) - 1)
         if fitted_size < font_size:
             font_size = fitted_size
-            font = _caption_font(font_size, style.get("font"))
+            font = _text_fonts(font_size, style.get("font"), CAPTION_WEIGHT)
             widest = max(
-                measure.textlength(line, font=font)
+                font.width(line)
                 for _start, _end, lines in prepared
                 for line in lines
             )
@@ -711,8 +1050,8 @@ def _caption_pngs(
             )
         x = left + max_width // 2
         for line in lines:
-            draw.text(
-                (x, y), line, font=font, anchor="ma",
+            font.draw_line(
+                image, x, y, line, align="center",
                 fill=fill, stroke_width=stroke, stroke_fill=stroke_fill,
             )
             y += line_height
@@ -801,26 +1140,28 @@ def _render_text_layer(layer: dict, out_w: int, out_h: int) -> Image.Image:
     if not text.strip():
         return image
     size = _layer_font_size(style, out_h)
-    font = _caption_font(size, style.get("font"))
+    weight = _style_weight(style)
+    font = _text_fonts(size, style.get("font"), weight)
     measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     lines: list[str] = []
     while size >= 10:
         lines = _wrap_caption(measure, text, font, max(8, w - 8))
         if not lines:
             break
-        widest = max(measure.textlength(line, font=font) for line in lines)
+        widest = max(font.width(line) for line in lines)
         line_height = max(1, int(size * 1.18))
         if widest <= max(8, w - 8) and line_height * len(lines) <= h:
             break
         size -= 2
-        font = _caption_font(size, style.get("font"))
+        font = _text_fonts(size, style.get("font"), weight)
     if not lines:
         return image
 
-    fill = _rgba(str(style.get("color") or "#ffffff"), int(round(float(layer.get("opacity", 1.0)) * 255)))
+    opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+    fill = _rgba(str(style.get("color") or "#ffffff"), int(round(opacity * 255)))
     background = str(style.get("background") or "none")
     if background not in {"none", "", "None"}:
-        plate = _rgba(background, int(round(float(layer.get("opacity", 1.0)) * 255)))
+        plate = _rgba(background, int(round(opacity * 255)))
         if plate[3] > 0:
             draw.rounded_rectangle(
                 (0, 0, w - 1, h - 1),
@@ -831,35 +1172,49 @@ def _render_text_layer(layer: dict, out_w: int, out_h: int) -> Image.Image:
     stroke_fill = None
     stroke_width = 0
     if stroke_value and str(stroke_value).lower() not in {"none", ""}:
-        stroke_fill = _rgba(str(stroke_value), int(round(float(layer.get("opacity", 1.0)) * 255)))
-        stroke_width = max(1, int(round(size * 0.055)))
+        stroke_fill = _rgba(str(stroke_value), int(round(opacity * 255)))
+        stroke_width = _stroke_px(style, size, out_h)
     line_height = max(1, int(size * 1.18))
     total_height = line_height * len(lines)
     top = max(0, (h - total_height) // 2)
+    align = str(style.get("align") or "center")
+    align = align if align in {"left", "right"} else "center"
+    px = {"left": 4, "right": w - 4}.get(align, w // 2)
     if style.get("shadow"):
         shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        shadow_draw = ImageDraw.Draw(shadow)
         offset = max(1, int(round(size * 0.06)))
         for index, line in enumerate(lines):
-            anchor = {"left": "la", "right": "ra"}.get(str(style.get("align") or "center"), "ma")
-            px = {"left": 4, "right": w - 4}.get(str(style.get("align") or "center"), w // 2)
-            shadow_draw.text(
-                (px + offset, top + index * line_height + offset),
-                line, font=font, anchor=anchor,
-                fill=(0, 0, 0, int(150 * float(layer.get("opacity", 1.0)))),
-                stroke_width=stroke_width, stroke_fill=(0, 0, 0, 150),
+            font.draw_line(
+                shadow, px + offset, top + index * line_height + offset, line,
+                align=align, fill=(0, 0, 0, int(150 * opacity)),
+                stroke_width=stroke_width, stroke_fill=(0, 0, 0, 150), emoji=False,
             )
         image = Image.alpha_composite(image, shadow)
-        draw = ImageDraw.Draw(image)
     for index, line in enumerate(lines):
-        anchor = {"left": "la", "right": "ra"}.get(str(style.get("align") or "center"), "ma")
-        px = {"left": 4, "right": w - 4}.get(str(style.get("align") or "center"), w // 2)
-        draw.text(
-            (px, top + index * line_height),
-            line, font=font, anchor=anchor,
-            fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill,
+        font.draw_line(
+            image, px, top + index * line_height, line,
+            align=align, fill=fill, stroke_width=stroke_width,
+            stroke_fill=stroke_fill, alpha=opacity,
         )
     return image
+
+
+def _style_weight(style: dict) -> int:
+    try:
+        return max(100, min(900, int(round(float(style.get("weight") or 400)))))
+    except (TypeError, ValueError):
+        return 400
+
+
+def _stroke_px(style: dict, size: int, out_h: int) -> int:
+    """Outline width: the style's own width (1920-tall units) or ~8% of size."""
+    try:
+        explicit = float(style.get("stroke_width"))
+    except (TypeError, ValueError):
+        explicit = None
+    if explicit is not None and math.isfinite(explicit):
+        return max(0, int(round(explicit * out_h / 1920.0)))
+    return max(1, int(round(size * 0.08)))
 
 
 def _render_fx_layer(
@@ -1689,6 +2044,8 @@ def render_reel(
         "encoder": encoder,
         "edit": compiled.get("edit_hash") if compiled is not None else None,
         "layers": layer_sig,
+        # Text raster version: a font change must not reuse an old master.
+        "text_skin": LAYER_CACHE_VERSION,
     }, sort_keys=True).encode()).hexdigest()[:16]
     master = master_dir / f"{master_key}.mp4"
     cached_count = 0

@@ -995,6 +995,12 @@ def _format_word_cue(words: list[dict], style: dict) -> str:
 
 
 def _segment_words(segment: dict, start: float, end: float) -> list[dict]:
+    """The segment's measured words that belong to the window ``[start, end)``.
+
+    A word belongs to the one window holding its midpoint. Taking every word
+    that merely overlapped repeated a boundary word in two adjacent clips
+    (``…HAS TO`` / ``TO LOOK…``); a word mostly outside the cut is not heard.
+    """
     rows: list[dict] = []
     for raw in segment.get("words") or []:
         if not isinstance(raw, dict):
@@ -1010,6 +1016,9 @@ def _segment_words(segment: dict, start: float, end: float) -> list[dict]:
         if not math.isfinite(word_start) or not math.isfinite(word_end):
             continue
         if word_end <= start + TIME_EPSILON or word_start >= end - TIME_EPSILON:
+            continue
+        middle = (word_start + word_end) / 2.0
+        if middle < start or middle >= end:
             continue
         word_start = max(start, word_start)
         word_end = min(end, word_end)
@@ -1062,6 +1071,7 @@ def _raw_pieces(
         clip_start = window["start"]
         clip_end = window["end"]
         local_pieces: list[dict] = []
+        word_covered = False
         for position, segment in enumerate(segments):
             if not isinstance(segment, dict):
                 continue
@@ -1079,8 +1089,13 @@ def _raw_pieces(
             overlap_end = min(clip_end, segment_end)
             if overlap_end - overlap_start <= 0.04:
                 continue
-            words = _segment_words(segment, overlap_start, overlap_end)
-            if words:
+            # Words belong to their segment already; the clip decides which
+            # of them are heard, so test against the clip, not the overlap.
+            words = _segment_words(segment, clip_start, clip_end)
+            if segment.get("words"):
+                word_covered = True
+                # Measured words are the truth: none heard here means no
+                # text, never a character-share guess of the segment.
                 for cue in _word_cues(words, style):
                     local_pieces.append({
                         "start": cue["start"],
@@ -1099,7 +1114,7 @@ def _raw_pieces(
                 "text": text,
                 "source_segment": segment_index,
             })
-        if local_pieces:
+        if local_pieces or word_covered:
             used.append("transcript")
         else:
             scene = _scene_for(plan, window["index"], window["scene"])

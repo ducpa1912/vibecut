@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import urllib.parse
@@ -231,6 +232,141 @@ def _stt_workflow_model(provider: str, default: str) -> str:
     except Exception:  # noqa: BLE001
         pass
     return default
+
+
+class SttCancelled(RuntimeError):
+    """The read was cancelled while a speech engine was running."""
+
+
+_CANCEL = threading.local()
+
+
+def set_cancel_event(event: threading.Event | None) -> None:
+    """Bind a cancel event to this thread's speech-to-text children.
+
+    Analysis runs one job per worker thread, so a thread-local is enough to
+    let "Cancel reading" stop a Whisper child that is mid-file instead of
+    waiting for it to return to a progress checkpoint.
+    """
+    _CANCEL.event = event
+
+
+def _child_run(cmd: list[str], *, stdout, stderr, timeout: float, env=None):
+    """``subprocess.run`` that also stops when the thread's cancel event fires."""
+    event = getattr(_CANCEL, "event", None)
+    if event is None:
+        return subprocess.run(cmd, stdout=stdout, stderr=stderr, timeout=timeout, env=env)
+    process = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, env=env)
+    deadline = time.monotonic() + float(timeout)
+    try:
+        while True:
+            try:
+                process.wait(timeout=0.25)
+                return subprocess.CompletedProcess(cmd, process.returncode)
+            except subprocess.TimeoutExpired:
+                pass
+            if event.is_set():
+                raise SttCancelled("Speech-to-text cancelled.")
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
+
+def _hf_hub_dir() -> Path:
+    if os.environ.get("HF_HUB_CACHE"):
+        return Path(os.environ["HF_HUB_CACHE"]).expanduser()
+    home = os.environ.get("HF_HOME")
+    base = Path(home).expanduser() if home else Path.home() / ".cache" / "huggingface"
+    return base / "hub"
+
+
+def whisper_model_cached(model: str) -> bool:
+    """True when the Whisper weights are already on this machine."""
+    value = str(model or "").strip()
+    if not value:
+        return False
+    if Path(value).expanduser().is_dir():
+        return True
+    return (_hf_hub_dir() / ("models--" + value.replace("/", "--"))).is_dir()
+
+
+def _whisper_env(model: str) -> dict[str, str]:
+    """Child environment for Whisper. A cached model never touches the hub.
+
+    Without these the Hugging Face client still opens an HTTPS connection to
+    check for updates during a "local" read, and a slow or hung lookup
+    stalls the read. Downloads belong to the Setup / packs flow.
+    """
+    env = dict(os.environ)
+    if whisper_model_cached(model):
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
+        env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    return env
+
+
+def whisper_timeout(duration: float, timeout: float | None = None) -> float:
+    """Whisper's time limit, relative to the audio length.
+
+    A configured route timeout is an upper bound; a short clip never waits
+    the whole budget (a 2 s silent clip used to hold the read for 5 min).
+    """
+    seconds = max(0.0, float(duration or 0.0))
+    base = float(timeout) if timeout else max(900.0, min(7200.0, seconds * 14))
+    relative = 120.0 + seconds * 4.0
+    return max(30.0, min(base, relative))
+
+
+# Speech gate: a window is voiced above this level, and a file needs this
+# much voiced time before speech-to-text is worth running.
+SPEECH_FLOOR_DBFS = -45.0
+MIN_VOICED_SECONDS = 0.3
+
+
+def has_speech_energy(path: Path, *, floor_dbfs: float = SPEECH_FLOOR_DBFS) -> bool | None:
+    """Loudness gate before STT. False means silence; None means unreadable.
+
+    It reads the raw (not loudness-normalised) 16-bit PCM in 30 ms windows
+    and stops at the first ``MIN_VOICED_SECONDS`` of signal, so long files
+    with speech return almost at once.
+    """
+    try:
+        import numpy as np  # noqa: PLC0415 - keeps stt import light
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        with wave.open(str(path), "rb") as reader:
+            if reader.getsampwidth() != 2:
+                return None
+            rate = reader.getframerate() or 16000
+            channels = max(1, reader.getnchannels())
+            window = max(1, int(rate * 0.03))
+            need = max(1, int(math.ceil(MIN_VOICED_SECONDS / 0.03)))
+            threshold = 32768.0 * (10.0 ** (floor_dbfs / 20.0))
+            voiced = 0
+            while True:
+                raw = reader.readframes(window * 2000)
+                if not raw:
+                    return False
+                samples = np.frombuffer(raw, dtype="<i2").astype(np.float64)
+                if channels > 1:
+                    samples = samples[: len(samples) // channels * channels]
+                    samples = samples.reshape(-1, channels).mean(axis=1)
+                usable = len(samples) // window * window
+                if usable:
+                    blocks = samples[:usable].reshape(-1, window)
+                    rms = np.sqrt((blocks * blocks).mean(axis=1))
+                    voiced += int((rms > threshold).sum())
+                    if voiced >= need:
+                        return True
+    except (OSError, EOFError, wave.Error, ValueError):
+        return None
 
 
 def _whisper_binary() -> str | None:
@@ -1044,11 +1180,10 @@ def transcribe(
     progress(0.08, "Transcribing speech · local Whisper")
     with log_path.open("w") as log:
         try:
-            result = subprocess.run(
+            result = _child_run(
                 cmd, stdout=log, stderr=log,
-                timeout=max(10.0, float(timeout)) if timeout else max(
-                    900, min(7200, float(duration) * 14),
-                ),
+                timeout=whisper_timeout(duration, timeout),
+                env=_whisper_env(chosen_model),
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -1535,6 +1670,31 @@ def _log_route(
         pass
 
 
+ENGINE_LABELS = {
+    "apple": "Apple speech",
+    "whisper": "local Whisper",
+    "groq": "Groq",
+    "deepgram": "Deepgram",
+}
+
+
+def no_speech_transcript(language: str = "en") -> dict:
+    """What a read returns when the loudness gate finds no speech.
+
+    Not persisted: there is nothing to cache, and a later read with speech
+    must not be shadowed. ``no_speech`` lets callers say "No speech found"
+    instead of "transcription did not run".
+    """
+    return {
+        "language": _base_language(language, "en"),
+        "text": "",
+        "segments": [],
+        "words": [],
+        "provider": "none",
+        "no_speech": True,
+    }
+
+
 def transcribe_source(
     wav_path: Path | None,
     job_dir: Path,
@@ -1559,6 +1719,11 @@ def transcribe_source(
     source = Path(wav_path) if wav_path else None
     if not source or not source.exists():
         return None
+    # Gate on the raw audio: loudness normalisation would lift room noise.
+    if has_speech_energy(source) is False:
+        if progress is not None:
+            progress(1.0, "No speech found")
+        return no_speech_transcript(language)
     if prepared is None:
         prepared_path, prepared_hash = prepare_audio(
             source, job_dir, source_hash=source_hash,
@@ -1577,6 +1742,9 @@ def transcribe_source(
         if not _engine_ready(provider, route_model):
             continue
         started = time.time()
+        if progress is not None:
+            # Said before the first chunk, or the previous stage's text stays up.
+            progress(0.0, f"Transcribing speech · {ENGINE_LABELS.get(provider, provider)}")
         try:
             merged = _chunked_run(
                 prepared_path, Path(job_dir), float(duration),
@@ -1585,6 +1753,8 @@ def transcribe_source(
                 language=language, vocabulary=terms,
                 timeout=timeout, progress=progress, helper=helper,
             )
+        except SttCancelled:
+            raise
         except Exception as exc:  # noqa: BLE001 - route falls through
             merged = None
             _log_route(
@@ -1723,26 +1893,50 @@ def transcribe_routes(
 # ---------------------------------------------------------------- readers
 
 
-def read_transcript(job_dir: Path) -> list[dict] | None:
+def read_transcript(job_dir: Path, *, words: bool = False) -> list[dict] | None:
     """Load transcript segments for speech/script callers.
 
     Transcript v2 wins; legacy ``transcript.json`` / ``transcript_apple.json``
-    remain readable for old jobs.
+    remain readable for old jobs. With ``words=True`` each v2 segment also
+    carries its measured ``words`` (``{"w", "start", "end"}``), so callers
+    that cut on sentence edges can place them on real word boundaries.
     """
     latest = load_latest_transcript(job_dir)
     if latest:
+        by_segment: dict[int, list[dict]] = {}
+        if words:
+            for raw in latest.get("words") or []:
+                if not isinstance(raw, Mapping):
+                    continue
+                text = _clean_text(raw.get("w") or raw.get("word")).strip()
+                start = _float(raw.get("start"))
+                end = _float(raw.get("end"), start)
+                if not text or end <= start:
+                    continue
+                try:
+                    index = int(raw.get("segment") or 0)
+                except (TypeError, ValueError):
+                    index = 0
+                by_segment.setdefault(index, []).append(
+                    {"w": text, "start": start, "end": end},
+                )
         segments = []
-        for item in latest.get("segments") or []:
+        for position, item in enumerate(latest.get("segments") or []):
             if not isinstance(item, Mapping):
                 continue
             value = " ".join(_clean_text(item.get("text")).split())
             if not value:
                 continue
-            segments.append({
+            segment = {
                 "start": _float(item.get("start")),
                 "end": _float(item.get("end")),
                 "text": value,
-            })
+            }
+            if by_segment.get(position):
+                segment["words"] = sorted(
+                    by_segment[position], key=lambda row: (row["start"], row["end"]),
+                )
+            segments.append(segment)
         if segments:
             return segments
     directory = Path(job_dir) / "transcript"

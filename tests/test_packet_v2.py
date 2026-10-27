@@ -331,6 +331,36 @@ def test_packet_route_builds_and_records_refs(tmp_path, monkeypatch):
     assert missing.status_code == 404
 
 
+def test_packet_route_takes_the_story_from_the_artifact(tmp_path, monkeypatch):
+    """Studio Finish may omit story_id; the path artifact names it (QA #4)."""
+    data = tmp_path / "data"
+    jobs = data / "jobs"
+    jobs.mkdir(parents=True)
+    job, source_dir = _job(tmp_path)
+    job_dir = jobs / "job1"
+    shutil.move(str(source_dir), str(job_dir))
+    bed = _music_bed(job_dir)
+    edit = _edit_for(job, job_dir, bed["file_hash"])
+    artifact = _artifact(job, job_dir, edit)
+    (job_dir / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    monkeypatch.setattr(packet, "_frame_cover", lambda *args, **kwargs: _jpeg_bytes())
+    monkeypatch.setattr(app, "DATA", data)
+    monkeypatch.setattr(app, "JOBS", jobs)
+    monkeypatch.setattr(app, "SHARES", data / "shares.json")
+    client = TestClient(app.app)
+    response = client.post(
+        f"/api/jobs/job1/artifacts/{artifact['artifact_id']}/packet",
+        json={
+            "titles": ["One", "Two", "Three"],
+            "description": "Route packet.",
+            "hashtags": ["#a", "#b", "#c"],
+            "cover_times": [1.0, 5.0],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["story_id"] == "s1"
+
+
 def test_packet_without_a_bed_has_no_music_document(tmp_path, monkeypatch):
     job, job_dir = _job(tmp_path)
     plan = _plan()

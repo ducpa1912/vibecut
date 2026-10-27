@@ -117,7 +117,35 @@ def _audio_signature(audio_plan: dict | None) -> str:
 
 
 def _reel_cues(job: dict, plan: dict, clips: list[dict] | None = None) -> list[dict]:
+    """Sidecar cues for a cut: the words spoken inside its clips.
+
+    With a transcript the cues come from the same timed engine as caption
+    tracks, so the SRT matches the cut's speech and timing. Without one the
+    scene-level text contract is kept.
+    """
     analysis = (job or {}).get("analysis") or {}
+    job_id = str((job or {}).get("id") or "")
+    segments: list[dict] = []
+    if job_id and "/" not in job_id and ".." not in job_id:
+        segments = caption_engine.read_transcript_segments(_job_dir(job_id))
+    if segments:
+        cues, _source, _warnings = caption_engine.build_cues(
+            {
+                **(plan or {}),
+                "clips": clips if clips is not None else (plan or {}).get("clips") or [],
+                "_scenes": analysis.get("scenes") or [],
+            },
+            segments=segments,
+            source_duration=float(((job or {}).get("source") or {}).get("duration") or 0.0),
+        )
+        if cues:
+            return [
+                {
+                    "start": cue["start"], "end": cue["end"],
+                    "text": cue["text"], "scene": cue.get("scene"),
+                }
+                for cue in cues
+            ]
     return caption_engine.reel_cues(
         plan or {},
         clips if clips is not None else (plan or {}).get("clips") or [],
@@ -343,6 +371,48 @@ def _public_render(job_id: str, record: dict | None) -> dict | None:
     return value
 
 
+def _source_exists(path: str) -> bool:
+    try:
+        return Path(path).is_file()
+    except OSError:
+        return False
+
+
+def source_missing(job: dict) -> str | None:
+    """The source path when the original file is gone, else None.
+
+    Jobs keep a path, not a copy, so a moved or deleted file must be named
+    plainly instead of Check reporting "Checked" over an ffmpeg error and
+    Stories finding nothing. A URL download still in flight has no file yet.
+    """
+    if str(job.get("status") or "") in {"downloading", "failed"} and not job.get("analysis"):
+        return None
+    path = str((job.get("source") or {}).get("path") or "")
+    if not path:
+        return None
+    return None if _source_exists(path) else path
+
+
+def source_missing_message(path: str) -> str:
+    return f"The original file was moved or deleted: {path}. Put it back or import it again."
+
+
+def require_source(job: dict) -> None:
+    """Refuse work that reads the source when the file is gone (409)."""
+    missing = source_missing(job)
+    if missing:
+        raise HTTPException(409, source_missing_message(missing))
+
+
+def _source_state(job: dict) -> dict:
+    missing = source_missing(job)
+    return {
+        "source_missing": bool(missing),
+        "source_missing_path": missing,
+        "source_missing_message": source_missing_message(missing) if missing else None,
+    }
+
+
 def public_job(job: dict) -> dict:
     artifacts.ensure_job_schema(job)
     value = dict(job)
@@ -366,6 +436,7 @@ def public_job(job: dict) -> dict:
         for key in ("name", "duration", "width", "height", "fps", "has_audio", "size")
     }
     value["usage"] = _usage_summary(job)
+    value.update(_source_state(job))
     analysis = value.get("analysis")
     if analysis:
         for scene in analysis.get("scenes", []):
@@ -386,6 +457,7 @@ def public_status(job: dict) -> dict:
             key: _public_render(job["id"], record)
             for key, record in (job.get("renders") or {}).items()
         },
+        **_source_state(job),
     }
 
 
@@ -429,6 +501,8 @@ def run_analysis(job_id: str) -> None:
         job["message"] = message
         save_job(job)
 
+    # Lets Cancel reading stop a speech engine that is mid-file.
+    pipeline.stt.set_cancel_event(event)
     try:
         before_usage = usage_store.snapshot()
         options = dict(job.get("options") or {})
@@ -453,11 +527,12 @@ def run_analysis(job_id: str) -> None:
         job["analysis"] = analysis
         job["status"] = "ready"
         job["progress"] = 1.0
-        job["message"] = f"{analysis['scene_count']} moments · hook found"
+        count = int(analysis["scene_count"])
+        job["message"] = f"{count} {'moment' if count == 1 else 'moments'} · hook found"
         job["error"] = None
         save_job(job)
         LOGGER.info("job %s ready in %.1fs", job_id, analysis["elapsed"])
-    except AnalysisCancelled:
+    except (AnalysisCancelled, pipeline.stt.SttCancelled):
         LOGGER.info("analysis cancelled for %s", job_id)
         job["status"] = "cancelled"
         job["progress"] = 1.0
@@ -472,6 +547,7 @@ def run_analysis(job_id: str) -> None:
         job["error"] = str(exc)[:2400]
         save_job(job)
     finally:
+        pipeline.stt.set_cancel_event(None)
         if ANALYSIS_CANCELS.get(job_id) is event:
             ANALYSIS_CANCELS.pop(job_id, None)
 
@@ -4223,6 +4299,8 @@ class PathBody(BaseModel):
     path: str
     options: dict = {}
     job_id: str | None = None
+    # The own-footage note from Import. Stored on the job; policy is unchanged.
+    rights: bool | None = None
 
 
 class InspectBody(BaseModel):
@@ -4241,6 +4319,7 @@ class FromUrlBody(BaseModel):
     options: dict | None = None
     ingest_options: dict | None = None
     job_id: str | None = None
+    rights: bool | None = None
 
 
 class PlanBody(BaseModel):
@@ -4287,15 +4366,37 @@ class VariantBody(BaseModel):
     clips: list[dict]
 
 
-@app.post("/api/inspect")
-def inspect(body: InspectBody) -> dict:
-    path = Path(body.path).expanduser()
+UNREADABLE_VIDEO = (
+    "This file isn't a readable video. Try exporting it again as MP4 (H.264)."
+)
+
+
+def _local_video_path(raw: str) -> Path:
+    """A local path that names a file, with plain errors for the rest."""
+    path = Path(raw).expanduser()
+    if path.is_dir():
+        raise HTTPException(400, "That path is a folder; choose a video file.")
     if not path.is_file():
         raise HTTPException(404, "File not found on this machine.")
+    return path
+
+
+def _probe_video(path: Path) -> dict:
+    """ffprobe a source; its raw stderr goes to the log, not the creator."""
     try:
-        meta = pipeline.probe(path)
+        return pipeline.probe(path)
     except pipeline.PipelineError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        LOGGER.warning("probe failed for %s: %s", path, str(exc)[:600])
+        message = str(exc)
+        # pipeline's own short sentences are already plain; tool output isn't.
+        plain = "\n" not in message and "ffprobe" not in message and len(message) <= 120
+        raise HTTPException(400, message if plain else UNREADABLE_VIDEO) from exc
+
+
+@app.post("/api/inspect")
+def inspect(body: InspectBody) -> dict:
+    path = _local_video_path(body.path)
+    meta = _probe_video(path)
     meta.pop("path", None)
     return meta
 
@@ -4461,12 +4562,25 @@ def _requested_job_id(value: str | None) -> str:
     return job_id
 
 
+def import_rights(attested: bool | None) -> dict | None:
+    """The rights record an import stores, or None when Import sent none.
+
+    Studio's Import asks for the own-footage note; it used to live only in
+    browser storage. The record has the same shape POST /rights writes, with
+    ``source: "import"``, so Check prefills from it and Clean's gate reads it.
+    """
+    if attested is None:
+        return None
+    return {"attested": bool(attested), "at": round(time.time(), 3), "source": "import"}
+
+
 def _new_job(
     source_path: Path,
     name: str,
     meta: dict,
     options: dict,
     job_id: str | None = None,
+    rights: dict | None = None,
 ) -> dict:
     job_id = job_id or uuid.uuid4().hex[:12]
     directory = JOBS / job_id
@@ -4494,6 +4608,8 @@ def _new_job(
         "story_id": job_id,
         "attempts": {"analysis": 0},
     }
+    if rights is not None:
+        job["rights"] = dict(rights)
     save_job(job)
     analysis_pool.submit(run_analysis, job_id)
     return job
@@ -4504,6 +4620,7 @@ async def upload_job(
     request: Request,
     file: UploadFile = File(...),
     options: str = Form("{}"),
+    rights: str = Form(""),
 ) -> dict:
     try:
         parsed_options = clean_options(json.loads(options))
@@ -4555,8 +4672,12 @@ async def upload_job(
         disk.preflight(disk.estimate_upload(total), DATA)
         stored = store_source(temp, suffix, original)
         destination = link_source(stored, directory, suffix)
-        meta = pipeline.probe(destination)
-        job = _new_job(destination, original, meta, parsed_options, job_id=job_id)
+        meta = _probe_video(destination)
+        attested = {"true": True, "1": True, "false": False, "0": False}.get(rights.strip().lower())
+        job = _new_job(
+            destination, original, meta, parsed_options, job_id=job_id,
+            rights=import_rights(attested),
+        )
         return {"id": job["id"], "status": job["status"]}
     except HTTPException:
         temp.unlink(missing_ok=True)
@@ -4587,14 +4708,9 @@ async def upload_job(
 
 @app.post("/api/jobs/path")
 def job_from_path(body: PathBody) -> dict:
-    path = Path(body.path).expanduser()
-    if not path.is_file():
-        raise HTTPException(404, "File not found on this machine.")
+    path = _local_video_path(body.path)
     disk.preflight(disk.estimate_path(path), DATA)
-    try:
-        meta = pipeline.probe(path)
-    except pipeline.PipelineError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    meta = _probe_video(path)
     job_id = _requested_job_id(body.job_id)
     try:
         (JOBS / job_id).mkdir(parents=True, exist_ok=False)
@@ -4602,7 +4718,7 @@ def job_from_path(body: PathBody) -> dict:
         raise HTTPException(409, "That job_id already exists.") from None
     job = _new_job(
         path.resolve(), path.name, meta, clean_options(body.options),
-        job_id=job_id,
+        job_id=job_id, rights=import_rights(body.rights),
     )
     return {"id": job["id"], "status": job["status"]}
 
@@ -4694,6 +4810,9 @@ def job_from_url(body: FromUrlBody) -> dict:
         "story_id": job_id,
         "attempts": {"analysis": 0},
     }
+    rights = import_rights(body.rights)
+    if rights is not None:
+        job["rights"] = rights
     save_job(job)
 
     cancel_event = threading.Event()
@@ -4774,6 +4893,7 @@ def _job_index_row(job: dict) -> dict:
         ),
         "story_titles": stories[:24],
         "source_deleted": bool(source.get("deleted_at")),
+        "source_missing": bool(source_missing(job)),
         "_search": " ".join([
             str(job.get("id") or ""),
             str(source.get("name") or ""),
@@ -4884,6 +5004,60 @@ def cancel_url_ingest(job_id: str) -> dict:
         except Exception:  # noqa: BLE001
             pass
     return {"ok": True, "id": job_id, "cancelled": bool(active)}
+
+
+@app.post("/api/jobs/{job_id}/reading/cancel")
+def cancel_reading(job_id: str) -> dict:
+    """Stop reading one video so the single analysis slot frees up.
+
+    A queued read is dropped at once. A running one stops at its next
+    checkpoint, or immediately when a speech engine is mid-file.
+    """
+    job = load_job(job_id)
+    status = str(job.get("status") or "")
+    if status not in ACTIVE and status != "queued":
+        return {"ok": True, "id": job_id, "cancelled": False, "status": status}
+    _analysis_cancel_event(job_id).set()
+    task = analysis_pool.find_key("analysis", job_id)
+    if task is None or task.state is job_queue.QueueState.QUEUED:
+        analysis_pool.cancel_key("analysis", job_id)
+
+        def mark(current: dict) -> None:
+            current["status"] = "cancelled"
+            current["progress"] = 1.0
+            current["message"] = "Cancelled"
+            current["error"] = None
+
+        job = update_job(job_id, mark)
+        ANALYSIS_CANCELS.pop(job_id, None)
+    else:
+        def stopping(current: dict) -> None:
+            current["message"] = "Stopping…"
+
+        job = update_job(job_id, stopping)
+    return {"ok": True, "id": job_id, "cancelled": True, "status": job.get("status")}
+
+
+@app.post("/api/jobs/{job_id}/reading/retry")
+def retry_reading(job_id: str) -> dict:
+    """Read a cancelled, failed or interrupted video again."""
+    job = load_job(job_id)
+    if job.get("status") not in {"cancelled", "failed", "interrupted"}:
+        raise HTTPException(409, "This video is not stopped, so it can't be read again.")
+    source = Path(str((job.get("source") or {}).get("path") or ""))
+    if not source.is_file():
+        raise HTTPException(409, f"The original file was moved or deleted: {source}")
+    ANALYSIS_CANCELS.pop(job_id, None)
+
+    def mark(current: dict) -> None:
+        current["status"] = "queued"
+        current["progress"] = 0.0
+        current["message"] = "Queued"
+        current["error"] = None
+
+    job = update_job(job_id, mark)
+    analysis_pool.submit(run_analysis, job_id)
+    return {"ok": True, "id": job_id, "status": job.get("status")}
 
 
 @app.get("/api/jobs/{job_id}/history")
@@ -5116,6 +5290,28 @@ def get_artifact_media(job_id: str, artifact_id: str, filename: str) -> FileResp
         path, media_type=media_type,
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@app.post("/api/jobs/{job_id}/artifacts/{artifact_id}/reveal")
+def reveal_artifact(job_id: str, artifact_id: str) -> dict:
+    """Show one finished cut in Finder. Local Mac only; nothing leaves the machine."""
+    load_job(job_id)
+    try:
+        path = artifacts.media_path(_job_dir(job_id), artifact_id, "reel.mp4")
+    except (artifacts.ArtifactError, OSError) as exc:
+        raise HTTPException(404, "Artifact media not found.") from exc
+    if not path.is_file():
+        raise HTTPException(404, "Artifact media not found.")
+    if sys.platform != "darwin":
+        raise HTTPException(501, "Reveal in Finder works on a Mac only.")
+    try:
+        subprocess.Popen(
+            ["open", "-R", str(path)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise HTTPException(500, "Could not open Finder.") from exc
+    return {"revealed": True, "path": str(path)}
 
 
 @app.get("/api/jobs/{job_id}/artifacts/{artifact_id}/captions")
@@ -5771,13 +5967,23 @@ def _clipset_job(job_id: str) -> dict:
     job = load_job(job_id)
     if job.get("status") != "ready" or not job.get("analysis"):
         raise HTTPException(409, "Analysis is not ready yet.")
+    require_source(job)
     return job
 
 
-def _clipset_sentences(job: dict) -> tuple[list[dict], list[dict], list[dict] | None]:
+def _clipset_sentences(
+    job: dict,
+    record: dict | None = None,
+) -> tuple[list[dict], list[dict], list[dict] | None]:
+    """Source sentences the way ``record`` was built (new sets: word-timed).
+
+    Clip sets made before word timing kept character-share sentence edges;
+    they are re-read the same way so their fingerprint still matches.
+    """
     scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    words = record is None or record.get("sentence_timing") == "words"
     try:
-        transcript = pipeline.read_transcript(_job_dir(job["id"]))
+        transcript = pipeline.read_transcript(_job_dir(job["id"]), words=words)
     except Exception:  # noqa: BLE001
         transcript = None
     return clipset.source_sentences(scenes, transcript), scenes, transcript
@@ -5788,7 +5994,7 @@ def _clipset_pool(
     record: dict | None = None,
 ) -> tuple[list[dict], list[dict], list[dict] | None]:
     """Keep stored sentence ids usable after a transcript cleanup."""
-    sentences, scenes, transcript = _clipset_sentences(job)
+    sentences, scenes, transcript = _clipset_sentences(job, record)
     if record:
         pool = {
             int(sentence["id"]): sentence
@@ -5813,7 +6019,7 @@ def _clip_set_source_state(
     require_fingerprint: bool = False,
 ) -> tuple[list[dict], str | None]:
     """Reject stale sets and warn about legacy sets without a fingerprint."""
-    current, _, _ = _clipset_sentences(job)
+    current, _, _ = _clipset_sentences(job, record)
     stored = str(record.get("source_fingerprint") or "")
     if not stored:
         message = (
@@ -6091,6 +6297,8 @@ def _queue_story_render(
     caption_track = None
     captions_on = False
     edit_audio_plan = None
+    if edit is not None and body.captions:
+        edit = _edit_with_default_captions(job_id, job, story, set_id, edit)
     if edit is not None:
         captions_on, caption_track = _edit_caption_track(job_id, edit)
         # The Edit's audio layer (bed, voice-over, dub) is mixed like any
@@ -6212,10 +6420,64 @@ def create_story_queue(body: StoryQueueBody) -> dict:
         raise _queue_http(exc) from exc
 
 
+def _live_queue(queue: dict) -> dict:
+    """Add each running item's render progress, message and ETA.
+
+    Queue progress used to count only finished items, so one long render sat
+    at 50% with no sign of life. Running items now carry the render record's
+    own progress and ETA, and the queue's progress and ETA include them.
+    """
+    jobs: dict[str, dict] = {}
+    items = queue.get("items") or []
+    partial = 0.0
+    eta_total = 0.0
+    eta_known = False
+    for item in items:
+        if item.get("state") != "running" or not item.get("artifact_id"):
+            continue
+        job_id = str(item.get("job_id") or "")
+        try:
+            job = jobs.get(job_id) or load_job(job_id)
+        except HTTPException:
+            continue
+        jobs[job_id] = job
+        record = next(
+            (
+                value for value in (job.get("renders") or {}).values()
+                if isinstance(value, dict) and value.get("artifact_id") == item["artifact_id"]
+            ),
+            None,
+        )
+        if record is None:
+            continue
+        fraction = max(0.0, min(1.0, float(record.get("progress") or 0.0)))
+        item["progress"] = round(fraction, 4)
+        item["message"] = record.get("message") or item.get("message")
+        if record.get("eta") is not None:
+            item["eta"] = round(float(record["eta"]), 1)
+            eta_total += float(record["eta"])
+            eta_known = True
+        partial += fraction
+    if items:
+        done = sum(1 for item in items if item.get("state") in story_queue.TERMINAL_ITEMS)
+        queue["progress"] = round((done + partial) / len(items), 4)
+    waiting = sum(1 for item in items if item.get("state") == "queued")
+    if eta_known:
+        # Items still waiting are estimated at the running item's full length.
+        running = [item for item in items if item.get("eta") is not None and item.get("state") == "running"]
+        per_item = 0.0
+        if running:
+            item = running[0]
+            spent = float(item.get("progress") or 0.0)
+            per_item = float(item["eta"]) / max(0.05, 1.0 - spent) if spent < 1 else 0.0
+        queue["eta"] = round(eta_total + waiting * per_item, 1)
+    return queue
+
+
 @app.get("/api/story-queues")
 def list_story_queues() -> dict:
     manager = story_queues()
-    rows = manager.list()
+    rows = [_live_queue(row) for row in manager.list()]
     return {
         "queues": rows,
         "interrupted": [row for row in rows if row["needs_resume"]],
@@ -6225,7 +6487,7 @@ def list_story_queues() -> dict:
 @app.get("/api/story-queues/{queue_id}")
 def get_story_queue(queue_id: str) -> dict:
     try:
-        return {"queue": story_queues().get(queue_id)}
+        return {"queue": _live_queue(story_queues().get(queue_id))}
     except story_queue.QueueError as exc:
         raise _queue_http(exc) from exc
 
@@ -6247,7 +6509,7 @@ def act_on_story_queue(queue_id: str, action: str) -> dict:
 def selection_v2(job_id: str, body: SelectionV2Body) -> dict:
     job = _clipset_job(job_id)
     if body.count is not None and (body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES):
-        raise HTTPException(400, "count must be an integer from 3 to 6.")
+        raise HTTPException(400, clipset.COUNT_MESSAGE)
     scenes = list((job.get("analysis") or {}).get("scenes") or [])
     stale_warning = None
     if body.set_id:
@@ -6256,7 +6518,8 @@ def selection_v2(job_id: str, body: SelectionV2Body) -> dict:
         stories = record.get("stories") or []
         source = "clip_set"
     else:
-        _, scenes, _, document = _clip_set_context(job, count=body.count or clipset.MAX_STORIES)
+        # Ranking defaults to six candidates; MAX_STORIES grew to 12 for Stories.
+        _, scenes, _, document = _clip_set_context(job, count=body.count or 6)
         stories = document.get("stories") or []
         source = "generated"
     result = selection.rank_stories(
@@ -6292,7 +6555,7 @@ def hook_matrix(job_id: str, body: HookMatrixBody) -> dict:
         raise HTTPException(404, "The hook matrix is not part of this release.")
     job = _clipset_job(job_id)
     if body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES:
-        raise HTTPException(400, "count must be an integer from 3 to 6.")
+        raise HTTPException(400, clipset.COUNT_MESSAGE)
     scenes = list((job.get("analysis") or {}).get("scenes") or [])
     stale_warning = None
     if body.set_id:
@@ -6820,7 +7083,7 @@ def _story_track_plan(job: dict, plan: dict) -> dict:
     return {**plan, "clips": prepared["clips"], "total": prepared["total"]}
 
 
-def _set_story_track(job_id: str, key: str, track_id: str) -> None:
+def _record_story_track(job_id: str, key: str, track_id: str) -> None:
     def mutate(job: dict) -> None:
         tracks = job.get("story_captions")
         if not isinstance(tracks, dict):
@@ -6829,7 +7092,85 @@ def _set_story_track(job_id: str, key: str, track_id: str) -> None:
         job["story_captions"] = tracks
 
     update_job(job_id, mutate)
+
+
+def _set_story_track(job_id: str, key: str, track_id: str) -> None:
+    _record_story_track(job_id, key, track_id)
     _sync_story_edit_captions(job_id, key, track_id)
+
+
+def default_story_caption_track(
+    job_id: str,
+    set_id: str,
+    story_id: str,
+) -> caption_engine.CaptionTrack | None:
+    """The story's caption track in the default style, built when needed.
+
+    Captions are on by default: a story Edit that never had a track gets the
+    story's current track, or a new one built from the job's speech in the
+    default style. Returns None when the job has no speech to caption or the
+    story can't be resolved; this never raises, so it can't block an Edit or
+    a render.
+    """
+    try:
+        job = load_job(job_id)
+        if job.get("status") != "ready" or not job.get("analysis"):
+            return None
+        job_dir = _job_dir(job_id)
+        key = _story_key(set_id, story_id)
+        existing = str((job.get("story_captions") or {}).get(key) or "")
+        if existing:
+            track = caption_engine.load_track(job_dir, existing)
+            if track is not None and track.cues:
+                return track
+        segments = caption_engine.read_transcript_segments(job_dir)
+        if not segments:
+            return None
+        record = _clip_set_in_job(job, set_id)
+        _clip_set_source_state(job, record)
+        story = _story_in_set(record, story_id)
+        plan = _story_track_plan(job, _story_plan(job, record, story, set_id))
+        track = caption_engine.build_track(
+            job, plan, _caption_style_for(None),
+            segments=segments, job_dir=job_dir,
+        )
+        if not track.cues:
+            return None
+        _record_story_track(job_id, key, track.id)
+        return track
+    except (HTTPException, caption_engine.CaptionError, OSError, ValueError) as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        LOGGER.warning("No default captions for %s %s:%s: %s", job_id, set_id, story_id, detail)
+        return None
+
+
+def _edit_with_default_captions(
+    job_id: str,
+    job: dict,
+    story: dict,
+    set_id: str,
+    edit: dict,
+) -> dict:
+    """Give an Edit that never had captions the story's default track.
+
+    Edits made before captions were on by default (or migrated captions-only
+    Edits) have ``enabled`` true but no track, which rendered no captions.
+    Turning captions off stores ``enabled: false`` and is respected here.
+    """
+    captions = dict(edit.get("captions") or {})
+    if captions.get("track_id") or captions.get("enabled") is False:
+        return edit
+    story_id = str(story.get("id") or "")
+    track = default_story_caption_track(job_id, set_id, story_id)
+    if track is None:
+        return edit
+    captions.update({"track_id": track.id, "style_id": track.style_id, "enabled": True})
+    try:
+        routes_edits.patch_edit(job_id, edit["id"], routes_edits.EditPatchBody(captions=captions))
+    except HTTPException as exc:
+        LOGGER.warning("Edit %s kept no captions: %s", edit["id"], exc.detail)
+        return edit
+    return _story_edit_for_render(load_job(job_id), story, set_id, edit["aspect"]) or edit
 
 
 def _sync_story_edit_captions(job_id: str, key: str, track_id: str) -> None:
@@ -7364,6 +7705,7 @@ def _queue_render(
     edit: dict | None = None,
 ) -> dict:
     """Serialize check/write/submit so one record key cannot queue twice."""
+    require_source(job)
     with RENDER_SUBMIT_LOCK:
         return _queue_render_locked(
             job_id, job, plan, quality, aspect, encoder, captions, audio_plan,

@@ -33,11 +33,43 @@ const WATCH_BUSY_MS = 2000;
 const WATCH_IDLE_MS = 15000;
 const EMPTY_STATE = {
   jobId: "", loaded: false, status: "", progress: 0, message: "",
-  check: "none", stories: 0, missing: false,
+  check: "none", stories: 0, missing: false, sourceMissing: "",
 };
 
+const STOPPED = new Set(["cancelled", "interrupted"]);
+
 function isReading(status) {
-  return Boolean(status) && status !== "ready" && status !== "failed" && status !== "error";
+  return Boolean(status) && status !== "ready" && status !== "failed" && status !== "error"
+    && !STOPPED.has(status);
+}
+
+/**
+ * Whether a light refresh may keep the last Check and Stories answers:
+ * same ready video, still ready, and no Check running.
+ */
+export function canReuseSteps(previous, jobId, status, light) {
+  return Boolean(light) && previous?.jobId === jobId && Boolean(previous?.loaded)
+    && previous?.status === "ready" && status === "ready" && previous?.check !== "running";
+}
+
+/** The step where a video's work continues (boot and the video library). */
+export function bestStepFor(hasJob, state) {
+  if (!hasJob) return "import";
+  const status = state?.status;
+  if (isReading(status) || state?.missing || STOPPED.has(status)
+    || status === "failed" || status === "error" || state?.sourceMissing) return "import";
+  if (state?.stories) return "edit";
+  if (state?.check === "done") return "stories";
+  return "check";
+}
+
+/** The top strip's one action: stop a read, or start a stopped one again. */
+export function readingAction(status) {
+  if (isReading(status)) return { kind: "cancel", label: "Cancel reading" };
+  if (STOPPED.has(status) || status === "failed" || status === "error") {
+    return { kind: "retry", label: "Read again" };
+  }
+  return null;
 }
 
 function checkState(payload) {
@@ -130,6 +162,7 @@ export function startStudio() {
             <div id="st-top-progress" class="st-top-progress" role="status" aria-live="polite" hidden>
               <div class="st-progress-bar"><i id="st-top-progress-fill"></i></div>
               <span id="st-top-progress-text"></span>
+              <button id="st-top-reading-action" class="st-btn st-btn-quiet st-btn-small" type="button" hidden></button>
             </div>
           </div>
           <div class="st-top-actions">
@@ -209,6 +242,7 @@ export function startStudio() {
     progress: root.querySelector("#st-top-progress"),
     progressFill: root.querySelector("#st-top-progress-fill"),
     progressText: root.querySelector("#st-top-progress-text"),
+    readingAction: root.querySelector("#st-top-reading-action"),
     library: root.querySelector("#st-library-dialog"),
     librarySearch: root.querySelector("#st-library-search"),
     libraryList: root.querySelector("#st-library-list"),
@@ -229,16 +263,54 @@ export function startStudio() {
     dom.currentStatus.textContent = status;
     dom.currentStatus.dataset.tone = currentJob?.status === "ready" ? "ok"
       : currentJob?.status === "failed" ? "bad" : "quiet";
+    dom.currentStatus.title = "";
+    if (currentJob && jobState.jobId === currentJob.id && jobState.sourceMissing) {
+      // Said where the creator looks first, not only on a locked step.
+      dom.currentStatus.hidden = false;
+      dom.currentStatus.textContent = "Original file missing";
+      dom.currentStatus.dataset.tone = "bad";
+      dom.currentStatus.title = jobState.sourceMissing;
+    }
     dom.dialogJob.textContent = currentJob
       ? `${name || currentJob.id}${status ? ` · ${status}` : ""}`
       : "No video open.";
     dom.forget.disabled = !currentJob;
-    const reading = Boolean(currentJob) && jobState.jobId === currentJob.id && isReading(jobState.status);
-    dom.progress.hidden = !reading;
+    const known = Boolean(currentJob) && jobState.jobId === currentJob.id;
+    const reading = known && isReading(jobState.status);
+    const action = known ? readingAction(jobState.status) : null;
+    dom.progress.hidden = !action;
     if (reading) {
       const percent = Math.max(0, Math.min(100, Math.round(Number(jobState.progress || 0) * 100)));
       dom.progressFill.style.width = `${percent}%`;
       dom.progressText.textContent = `Reading the video · ${percent}%${jobState.message ? ` · ${jobState.message}` : ""}`;
+    } else if (action) {
+      dom.progressFill.style.width = "0%";
+      dom.progressText.textContent = STOPPED.has(jobState.status)
+        ? "Reading stopped. Other videos can read now."
+        : "Reading this video failed.";
+    }
+    dom.readingAction.hidden = !action;
+    if (action && !dom.readingAction.dataset.busy) {
+      dom.readingAction.textContent = action.label;
+      dom.readingAction.dataset.kind = action.kind;
+    }
+  }
+
+  async function readingButton() {
+    const jobId = currentJob?.id;
+    const kind = dom.readingAction.dataset.kind;
+    if (!jobId || !kind || dom.readingAction.dataset.busy) return;
+    dom.readingAction.dataset.busy = "1";
+    dom.readingAction.disabled = true;
+    dom.readingAction.textContent = kind === "cancel" ? "Stopping…" : "Starting…";
+    try {
+      await request(`/api/jobs/${encodeURIComponent(jobId)}/reading/${kind}`, { method: "POST", body: {} });
+    } catch (error) {
+      showNotice(error?.message || (kind === "cancel" ? "Could not stop reading." : "Could not read this video again."));
+    } finally {
+      delete dom.readingAction.dataset.busy;
+      dom.readingAction.disabled = false;
+      await refreshState();
     }
   }
 
@@ -249,8 +321,12 @@ export function startStudio() {
     if (!currentJob) return "Open or import a video first.";
     if (jobState.jobId !== currentJob.id || !jobState.loaded) return "";
     if (jobState.missing) return "This video is no longer on file. Choose another one.";
+    if (jobState.sourceMissing) return jobState.sourceMissing;
     if (jobState.status === "failed" || jobState.status === "error") {
-      return "Reading this video failed. Import it again.";
+      return "Reading this video failed. Press Read again at the top, or import it again.";
+    }
+    if (STOPPED.has(jobState.status)) {
+      return "Reading was stopped. Press Read again at the top.";
     }
     if (isReading(jobState.status)) {
       const percent = Math.round(Number(jobState.progress || 0) * 100);
@@ -267,6 +343,8 @@ export function startStudio() {
     if (stepGate(stepId)) {
       if (!currentJob) return { state: "locked", text: "Needs a video" };
       if (isReading(jobState.status)) return { state: "locked", text: "Waits for reading" };
+      if (STOPPED.has(jobState.status)) return { state: "locked", text: "Reading stopped" };
+      if (jobState.sourceMissing) return { state: "locked", text: "Original file missing" };
       if (stepId === "edit" || stepId === "finish") return { state: "locked", text: "Needs stories" };
       return { state: "locked", text: "Not available" };
     }
@@ -275,6 +353,9 @@ export function startStudio() {
       if (isReading(jobState.status)) {
         return { state: "working", text: `Reading ${Math.round(Number(jobState.progress || 0) * 100)}%` };
       }
+      if (STOPPED.has(jobState.status)) return { state: "open", text: "Reading stopped" };
+      if (jobState.status === "failed" || jobState.status === "error") return { state: "open", text: "Reading failed" };
+      if (jobState.sourceMissing) return { state: "open", text: "Original file missing" };
       return { state: "done", text: "Video ready" };
     }
     if (stepId === "check") {
@@ -311,19 +392,21 @@ export function startStudio() {
   }
 
   function bestStep() {
-    if (!currentJob) return "import";
-    if (isReading(jobState.status) || jobState.missing) return "import";
-    if (jobState.stories) return "edit";
-    if (jobState.check === "done") return "stories";
-    return "check";
+    return bestStepFor(Boolean(currentJob), jobState);
   }
 
   function scheduleWatch(delay) {
     if (watchTimer) window.clearTimeout(watchTimer);
-    watchTimer = window.setTimeout(() => { void refreshState(); }, delay);
+    watchTimer = window.setTimeout(() => { void refreshState({ light: true }); }, delay);
   }
 
-  async function refreshState() {
+  /**
+   * Re-read the job's step state. `light` (the idle watcher, step changes)
+   * reads only the status once the video is ready and nothing runs, reusing
+   * the last Check and Stories answers; panels call ctx.refreshSteps() after
+   * they change those. Each poll used to fetch status, check and clip-sets.
+   */
+  async function refreshState({ light = false } = {}) {
     if (watchTimer) window.clearTimeout(watchTimer);
     watchTimer = 0;
     const jobId = currentJob?.id || "";
@@ -340,11 +423,15 @@ export function startStudio() {
       next.status = String(status?.status || "");
       next.progress = Number(status?.progress || 0);
       next.message = String(status?.message || "");
+      next.sourceMissing = status?.source_missing ? String(status.source_missing_message || "") : "";
     } catch (error) {
       if (error?.status === 404) next.missing = true;
       else next.loaded = false;
     }
-    if (next.status === "ready") {
+    if (canReuseSteps(jobState, jobId, next.status, light)) {
+      next.check = jobState.check;
+      next.stories = jobState.stories;
+    } else if (next.status === "ready") {
       const [check, sets] = await Promise.allSettled([
         request(`/api/jobs/${encodeURIComponent(jobId)}/check`),
         listClipSets(jobId),
@@ -537,6 +624,7 @@ export function startStudio() {
     button.addEventListener("click", () => go(button.dataset.step));
   }
   dom.change.addEventListener("click", openLibrary);
+  dom.readingAction.addEventListener("click", () => { void readingButton(); });
   for (const button of root.querySelectorAll("[data-library-close]")) {
     button.addEventListener("click", () => dom.library.close());
   }
@@ -617,7 +705,7 @@ export function startStudio() {
   window.addEventListener("hashchange", () => {
     const step = routeFromHash();
     if (step) activate(step);
-    void refreshState();
+    void refreshState({ light: true });
   });
   window.addEventListener("popstate", () => {
     const step = routeFromHash();
@@ -626,10 +714,24 @@ export function startStudio() {
 
   renderJob();
   renderRail();
-  void refreshState();
-  const initial = routeFromHash() || "import";
-  if (location.hash !== `#/${initial}`) history.replaceState(null, "", `#/${initial}`);
-  activate(initial, { focus: false });
+  // `?studio=1` only opts in; once Studio runs it should not stay in the URL.
+  const params = new URLSearchParams(location.search);
+  if (params.has("studio")) {
+    params.delete("studio");
+    const query = params.toString();
+    history.replaceState(null, "", `${location.pathname}${query ? `?${query}` : ""}${location.hash}`);
+  }
+  const hashed = routeFromHash();
+  if (hashed || !currentJob) {
+    void refreshState();
+    const initial = hashed || "import";
+    if (location.hash !== `#/${initial}`) history.replaceState(null, "", `#/${initial}`);
+    activate(initial, { focus: false });
+  } else {
+    // A reload with a video open resumes where its work continues, the same
+    // rule the video library uses, instead of always landing on Import.
+    void openJobAndContinue(currentJob.id, currentJob);
+  }
 }
 
 if (document.readyState === "loading") {

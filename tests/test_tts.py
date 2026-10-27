@@ -284,3 +284,22 @@ def test_openrouter_model_comes_from_the_matching_engine_route(monkeypatch, tmp_
     for engine in ("fish", "gemini"):
         tts._openrouter_voice("hi", "", tmp_path / f"{engine}.wav", 1.0, engine)
     assert sent == ["fish-audio/s2.1-pro-free:free", "google/gemini-3.8-flash-lite-tts"]
+
+
+def test_say_voices_hide_novelty_and_list_natural_first(monkeypatch):
+    """QA #22: Zarvox, Bells and friends are not voice-overs."""
+    listing = "\n".join([
+        "Zarvox              en_US    # Hello",
+        "Bad News            en_US    # Hello",
+        "Fred                en_US    # Hello",
+        "Eddy (English (UK))  en_GB    # Hello",
+        "Samantha            en_US    # Hello",
+        "Daniel              en_GB    # Hello",
+        "Ava (Premium)       en_US    # Hello",
+    ])
+    monkeypatch.setattr(audio, "say_available", lambda: True)
+    monkeypatch.setattr(
+        audio, "_run", lambda cmd, timeout=None: type("R", (), {"stdout": listing})(),
+    )
+    names = [voice["name"] for voice in tts.list_voices("say")]
+    assert names == ["Ava (Premium)", "Daniel", "Samantha", "Eddy (English (UK))", "Fred"]

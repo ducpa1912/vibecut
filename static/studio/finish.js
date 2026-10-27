@@ -166,6 +166,142 @@ function artifactLabel(artifact) {
   return [version, quality, when].filter(Boolean).join(" · ");
 }
 
+/**
+ * Count how the work that was running ended. Queue items are the source of
+ * truth; artifacts that were rendering outside a queue are counted too.
+ */
+export function finishOutcome(queues, queueIds, artifactRows, artifactIds) {
+  const watched = new Set(queueIds || []);
+  let done = 0;
+  let failed = 0;
+  const counted = new Set();
+  for (const queue of queues || []) {
+    if (!watched.has(queue?.id)) continue;
+    for (const item of queue.items || []) {
+      const state = String(item?.state || "");
+      if (item?.artifact_id) counted.add(String(item.artifact_id));
+      if (state === "done") done += 1;
+      else if (state === "failed") failed += 1;
+    }
+  }
+  for (const item of artifactRows || []) {
+    const id = String(item?.artifact_id || "");
+    if (!(artifactIds || []).includes(id) || counted.has(id)) continue;
+    if (item.status === "ready") done += 1;
+    else if (item.status === "failed" || item.status === "interrupted") failed += 1;
+  }
+  return { done, failed };
+}
+
+/** The banner after renders stop. Never green when something failed. */
+export function finishBanner({ done = 0, failed = 0 } = {}) {
+  if (failed && done) {
+    return {
+      text: `${done} of ${done + failed} renders finished; ${failed} failed. The reason and Retry are under Versions.`,
+      tone: "bad",
+    };
+  }
+  if (failed) {
+    return {
+      text: `${failed === 1 ? "The render" : `All ${failed} renders`} failed. The reason and Retry are under Versions.`,
+      tone: "bad",
+    };
+  }
+  if (done) return { text: `${done === 1 ? "Render" : `${done} renders`} finished. New versions are ready.`, tone: "ok" };
+  return { text: "Renders stopped.", tone: "" };
+}
+
+/**
+ * Say what Apply to all really did. `results` holds one row per target:
+ * `{name, changed: [field], skipped: [{field, reason}], error}`.
+ */
+export function applySummary(results) {
+  const rows = Array.isArray(results) ? results : [];
+  const changed = rows.filter((row) => !row.error && row.changed.length);
+  const failed = rows.filter((row) => row.error);
+  const counts = new Map();
+  for (const row of changed) {
+    for (const field of new Set(row.changed)) counts.set(field, (counts.get(field) || 0) + 1);
+  }
+  const parts = [];
+  if (changed.length) {
+    const what = [...counts.entries()].map(([field, count]) => `${field} on ${count}`).join(", ");
+    parts.push(`Updated ${changed.length} ${changed.length === 1 ? "story" : "stories"} (${what}).`);
+  } else {
+    parts.push("No story changed.");
+  }
+  const skipped = rows.flatMap((row) => row.skipped.map((item) => `${row.name}: ${item.field}, ${item.reason}`));
+  if (skipped.length) parts.push(`Skipped ${skipped.slice(0, 3).join("; ")}${skipped.length > 3 ? ` and ${skipped.length - 3} more` : ""}.`);
+  if (failed.length) parts.push(`${failed.length} could not be updated: ${failed[0].name}: ${failed[0].error}`);
+  return { text: parts.join(" "), tone: failed.length ? "bad" : changed.length ? "ok" : "" };
+}
+
+export const RENDER_FIRST_NOTE = "Render this story first; checks run on the render.";
+
+/** Why preflight could not run, in one line. Never a bare "could not run". */
+export function checksFailedNote(error) {
+  if (Number(error?.status) === 404) return RENDER_FIRST_NOTE;
+  const reason = String(error?.message || "").trim();
+  return reason ? `Checks could not run for this story: ${reason}` : "Checks could not run for this story. Try Check again.";
+}
+
+/**
+ * The current Edit's history, newest first: the head and its parents.
+ * Autosaves folded into one version leave their old sidecars on disk; they
+ * are not in the chain, so they are not listed.
+ */
+export function editChain(rows, headId) {
+  const byId = new Map((rows || []).map((row) => [row.id, row]));
+  if (!headId || !byId.has(headId)) {
+    return [...(rows || [])].sort((left, right) => Number(right.version || 0) - Number(left.version || 0));
+  }
+  const chain = [];
+  const seen = new Set();
+  let cursor = byId.get(headId);
+  while (cursor && !seen.has(cursor.id)) {
+    seen.add(cursor.id);
+    chain.push(cursor);
+    cursor = cursor.parent ? byId.get(cursor.parent) : null;
+  }
+  return chain;
+}
+
+/** "1 min 20 s" style remaining time. */
+export function etaText(seconds) {
+  const value = Math.max(0, Math.round(Number(seconds) || 0));
+  if (value < 60) return `${value} s`;
+  const minutes = Math.floor(value / 60);
+  const rest = value % 60;
+  return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
+}
+
+/** A running queue item's live progress: "42% · about 1 min left". */
+export function itemProgressText(item) {
+  const fraction = Math.max(0, Math.min(1, Number(item?.progress) || 0));
+  const eta = Number(item?.eta);
+  return `${Math.round(fraction * 100)}%${Number.isFinite(eta) && item?.eta !== null ? ` · about ${etaText(eta)} left` : ""}`;
+}
+
+/** One readable line from a failed artifact or queue item. */
+export function failureReason(item) {
+  const raw = String(item?.error || "").trim();
+  if (!raw) {
+    const message = String(item?.message || "").trim();
+    return message && !/^render failed\.?$/i.test(message) ? message : "No reason was recorded.";
+  }
+  const line = raw.split("\n").map((part) => part.trim()).find(Boolean) || raw;
+  return line.length > 240 ? `${line.slice(0, 237)}…` : line;
+}
+
+/** A file name for a downloaded cut: story-01-9x16-v2.mp4. */
+export function downloadName(artifact, index = 0) {
+  const shape = artifactAspect(artifact).replace(":", "x");
+  const version = artifact?.versions?.version || artifact?.version || "";
+  const story = `story-${String(Math.max(0, index) + 1).padStart(2, "0")}`;
+  return [story, shape, version ? `v${version}` : "", artifact?.quality === "draft" ? "draft" : ""]
+    .filter(Boolean).join("-") + ".mp4";
+}
+
 function normalizePacket(result) {
   if (!result || typeof result !== "object") return null;
   if (result.packet && typeof result.packet === "object") return result.packet;
@@ -231,6 +367,9 @@ export function mount(root, ctx) {
   let shareBusy = false;
   let applyBusy = false;
   let applyNotice = "";
+  let applyTone = "";
+  // Set by copyCaptionStyle: false when the target track already had the style.
+  let captionChanged = true;
   let applySourceId = "";
   let applyFields = {
     captions: true,
@@ -369,9 +508,8 @@ export function mount(root, ctx) {
 
   function editRowsFor(storyId = selectedStory()?.id, shape = aspect) {
     const key = storyKey(activeSetId, String(storyId || ""), shape);
-    return edits
-      .filter((item) => item.key === key)
-      .sort((left, right) => Number(right.version || 0) - Number(left.version || 0));
+    const rows = edits.filter((item) => item.key === key);
+    return editChain(rows, editPointers[key]);
   }
 
   function editHead(storyId = selectedStory()?.id, shape = aspect) {
@@ -460,7 +598,15 @@ export function mount(root, ctx) {
     }
     if (!payload) {
       const params = new URLSearchParams({ story_id: story.id });
-      payload = await request(`${jobRoot(job.id)}/preflight?${params.toString()}`);
+      try {
+        payload = await request(`${jobRoot(job.id)}/preflight?${params.toString()}`);
+      } catch (error) {
+        if (Number(error?.status) !== 404) throw error;
+        // No Edit and no render yet: say what to do, not "could not run".
+        if (disposed || seq !== checkSeq) return;
+        checks = { markers: [], blocked: false, note: RENDER_FIRST_NOTE, fallback: true };
+        return;
+      }
       fallback = true;
     }
     if (disposed || seq !== checkSeq) return;
@@ -482,11 +628,11 @@ export function mount(root, ctx) {
       await loadSets();
       await Promise.all([loadArtifacts(), loadQueues(), loadEdits(), loadPackets(), loadShares()]);
       if (stories().length) {
-        await loadChecks().catch(() => {
+        await loadChecks().catch((error) => {
           checks = {
             markers: [],
             blocked: false,
-            note: "Checks could not run for this story.",
+            note: checksFailedNote(error),
             fallback: true,
           };
         });
@@ -511,6 +657,12 @@ export function mount(root, ctx) {
   async function poll() {
     if (disposed || loading) return;
     const wasActive = hasActiveWork();
+    const queueIds = queues
+      .filter((queue) => ACTIVE_QUEUE.has(String(queue?.status || "")))
+      .map((queue) => queue.id);
+    const artifactIds = artifacts
+      .filter((item) => ["queued", "rendering"].includes(String(item?.status || "")))
+      .map((item) => String(item.artifact_id || ""));
     try {
       await Promise.all([loadQueues(), loadArtifacts()]);
       if (disposed) return;
@@ -521,7 +673,8 @@ export function mount(root, ctx) {
         renderVersionsCard();
         renderPacketCard();
         renderShareCard();
-        announce("Renders finished. New versions are ready.", "ok");
+        const banner = finishBanner(finishOutcome(queues, queueIds, artifacts, artifactIds));
+        announce(banner.text, banner.tone);
         return;
       }
       schedulePoll();
@@ -746,7 +899,7 @@ export function mount(root, ctx) {
       const head = el("div", { class: "st-finish-queue-head" }, [
         el("strong", { text: queue.message || statusText(status) }),
         el("span", { class: `st-chip st-chip-${statusTone(status)}`, text: statusText(status) }),
-        el("span", { class: "st-mono st-hint", text: `${Math.round(progress * 100)}%` }),
+        el("span", { class: "st-mono st-hint", text: `${Math.round(progress * 100)}%${active && Number.isFinite(Number(queue.eta)) ? ` · ${etaText(queue.eta)} left` : ""}` }),
         queue.created ? el("span", { class: "st-hint", text: shortDate(queue.created) }) : null,
       ]);
       const track = el("div", {
@@ -768,6 +921,7 @@ export function mount(root, ctx) {
           }),
           el("span", { class: "st-finish-queue-name", text: name }),
           el("span", { class: "st-mono st-hint", text: item.aspect || "9:16" }),
+          itemState === "running" ? el("span", { class: "st-mono st-hint", text: itemProgressText(item) }) : null,
         ]));
         if (item.error) items.append(el("p", { class: "st-error", text: String(item.error).slice(0, 300) }));
       }
@@ -808,6 +962,7 @@ export function mount(root, ctx) {
           text: `${storyName(story, selectedIndex())} · ${aspect}. Old renders and old edits stay side by side.`,
         }),
       ]),
+      downloadAllButton(),
     ]));
 
     const rows = allArtifactsFor();
@@ -855,9 +1010,35 @@ export function mount(root, ctx) {
             text: item.pinned ? "Unpin" : "Keep",
           });
           pin.addEventListener("click", () => { void togglePin(item, pin); });
-          actions.append(use, pin);
+          const download = el("a", {
+            class: "st-btn st-btn-ghost st-btn-small",
+            href: item.url,
+            download: downloadName(item, selectedIndex()),
+            text: "Download",
+          });
+          const reveal = el("button", {
+            class: "st-btn st-btn-quiet st-btn-small",
+            type: "button",
+            text: "Show in Finder",
+          });
+          reveal.addEventListener("click", () => { void revealArtifact(item, reveal); });
+          actions.append(use, download, reveal, pin);
+        } else if (["failed", "interrupted"].includes(String(item.status || ""))) {
+          const retry = el("button", {
+            class: "st-btn st-btn-primary st-btn-small",
+            type: "button",
+            text: "Retry",
+            disabled: busy,
+          });
+          retry.addEventListener("click", () => {
+            void queueStories([story], retry, artifactAspect(item));
+          });
+          actions.append(retry);
         }
         row.append(actions);
+        if (!ready && ["failed", "interrupted"].includes(String(item.status || ""))) {
+          row.append(el("p", { class: "st-error st-finish-version-error", text: failureReason(item) }));
+        }
         row.addEventListener("click", (event) => {
           if (event.target.closest("button")) return;
           if (!ready) return;
@@ -873,6 +1054,20 @@ export function mount(root, ctx) {
       card.append(list);
 
       const readyRows = rows.filter(artifactReady);
+      if (readyRows.length === 1) {
+        // One finished cut still gets a player; compare needs two.
+        const item = readyRows[0];
+        const box = el("figure", { class: "st-finish-compare-video st-finish-single-video" });
+        box.append(el("figcaption", { class: "st-label", text: artifactLabel(item).replace(" · current", "") }));
+        box.append(el("video", {
+          src: item.url,
+          poster: item.poster_url || null,
+          controls: true,
+          preload: "metadata",
+          playsinline: true,
+        }));
+        card.append(box);
+      }
       if (readyRows.length > 1) {
         const compare = el("div", { class: "st-finish-compare" });
         const pick = (which) => {
@@ -934,7 +1129,7 @@ export function mount(root, ctx) {
               text: [
                 row.created ? shortDate(row.created) : "",
                 row.layer_counts?.clean ? `${row.layer_counts.clean} clean` : "",
-                row.layer_counts?.graphics ? `${row.layer_counts.graphics} graphics` : "",
+                row.layer_counts?.graphics ? formatCount(row.layer_counts.graphics, "graphic") : "",
               ].filter(Boolean).join(" · ") || "Saved",
             }),
           ]),
@@ -1063,6 +1258,8 @@ export function mount(root, ctx) {
     }
     const artifact = packetArtifact() || ready[0];
     if (!artifact) return card;
+    // Build uses the cut this card shows, including the first-ready fallback.
+    packetArtifactId = artifact.artifact_id;
 
     const select = el("select", { "aria-label": "Cut for the publish kit" });
     for (const item of ready) {
@@ -1242,6 +1439,7 @@ export function mount(root, ctx) {
     announce("Building the publish kit. This writes the video, captions and covers…");
     clearError();
     const body = {
+      story_id: artifactStoryId(artifact),
       titles,
       description: String(packetDraft.description).trim(),
       hashtags: tags,
@@ -1261,7 +1459,6 @@ export function mount(root, ctx) {
           method: "POST",
           body: {
             ...body,
-            story_id: artifactStoryId(artifact),
             artifact_ids: [artifact.artifact_id],
           },
         });
@@ -1485,7 +1682,7 @@ export function mount(root, ctx) {
 
     const fields = el("div", { class: "st-finish-apply-fields" });
     for (const [key, title, copy] of [
-      ["captions", "Caption style", "Same font, colour and size on every story with captions."],
+      ["captions", "Caption style", "Same font, colour and size everywhere. Stories without captions get them built."],
       ["text", "Text style", "Same look for hook, title and call-to-action text."],
       ["color", "Colour preset", "Same colour look and sliders."],
       ["music", "Music brief", "Same mood, energy, genre and tempo for generated beds."],
@@ -1517,7 +1714,7 @@ export function mount(root, ctx) {
     if (applyNotice) {
       card.append(el("p", {
         class: "st-status",
-        dataset: { tone: applyNotice.startsWith("Could not") ? "bad" : "ok" },
+        dataset: { tone: applyTone },
         text: applyNotice,
       }));
     }
@@ -1536,6 +1733,7 @@ export function mount(root, ctx) {
     const selected = Object.entries(applyFields).filter(([, value]) => value).map(([key]) => key);
     if (!selected.length) {
       applyNotice = "Pick at least one thing to copy.";
+      applyTone = "bad";
       renderApplyCard();
       return;
     }
@@ -1561,11 +1759,33 @@ export function mount(root, ctx) {
       const sourceVoice = sourceEdit.audio?.voice || null;
 
       const targets = stories().filter((story) => story.id !== sourceStory.id);
-      let changed = 0;
-      let skipped = 0;
-      const problems = [];
+      const results = [];
       for (const story of targets) {
+        const result = { name: storyName(story, stories().indexOf(story)), changed: [], skipped: [], error: "" };
+        results.push(result);
         try {
+          // Captions go first: building or restyling a track re-points the
+          // story's 9:16 Edit on the server, so the Edit is read after it.
+          let captionValue = null;
+          captionChanged = true;
+          const before = await currentEditFor(story.id, aspect);
+          if (applyFields.captions) {
+            if (!sourceCaptions?.style) {
+              result.skipped.push({ field: "captions", reason: "the source story has no captions" });
+            } else if (before?.edit?.captions?.enabled === false) {
+              result.skipped.push({ field: "captions", reason: "captions are turned off" });
+            } else if (before?.edit?.captions?.track_id) {
+              captionValue = await copyCaptionStyle(before.edit, sourceCaptions, sourceEdit);
+              if (captionValue && !captionChanged) {
+                result.skipped.push({ field: "captions", reason: "already in this style" });
+              }
+            } else {
+              captionValue = await buildCaptionsLike(story, sourceCaptions, sourceEdit);
+              if (!captionValue) {
+                result.skipped.push({ field: "captions", reason: "no speech to caption" });
+              }
+            }
+          }
           const current = await currentEditFor(story.id, aspect);
           if (!current?.edit) {
             const created = await createAppliedEdit(story, {
@@ -1573,9 +1793,9 @@ export function mount(root, ctx) {
               textStyle: applyFields.text ? sourceStyle : null,
               brief: applyFields.music ? sourceBrief : null,
               voice: applyFields.voice ? sourceVoice : null,
+              captions: captionValue,
             });
-            if (created) changed += 1;
-            else skipped += 1;
+            result.changed.push(...created);
             continue;
           }
           const target = current.edit;
@@ -1586,6 +1806,7 @@ export function mount(root, ctx) {
               item?.type === "text" ? { ...item, style: sourceStyle } : item
             )) : [];
             if (graphics.some((item) => item?.type === "text")) patch.graphics = graphics;
+            else result.skipped.push({ field: "text", reason: "no text layer" });
           }
           if (applyFields.music || applyFields.voice) {
             const audio = JSON.parse(JSON.stringify(target.audio || {}));
@@ -1597,37 +1818,40 @@ export function mount(root, ctx) {
             }
             if (Object.keys(audio).length) patch.audio = audio;
           }
-          if (applyFields.captions && sourceCaptions && target.captions?.track_id) {
-            const caption = await copyCaptionStyle(target, sourceCaptions, sourceEdit);
-            if (caption) patch.captions = caption;
+          if (captionValue) {
+            if (target.captions?.track_id !== captionValue.track_id
+              || target.captions?.style_id !== captionValue.style_id) {
+              patch.captions = { ...(target.captions || {}), ...captionValue };
+            }
+            // The track itself changed even when the server already re-pointed the Edit.
+            if (captionChanged) result.changed.push("captions");
           }
-          if (!Object.keys(patch).length) {
-            skipped += 1;
-            continue;
+          for (const field of ["color", "graphics", "audio"]) {
+            if (!(field in patch)) continue;
+            if (JSON.stringify(patch[field]) === JSON.stringify(target[field])) delete patch[field];
+            else result.changed.push(field === "graphics" ? "text" : field === "audio" ? "sound" : "colour");
           }
+          if (!Object.keys(patch).length) continue;
           await request(`${jobRoot(job.id)}/edits/${encodeURIComponent(target.id)}`, {
             method: "PATCH",
             body: patch,
           });
-          changed += 1;
         } catch (error) {
-          problems.push(`${storyName(story, stories().indexOf(story))}: ${error?.message || "could not apply"}`);
+          result.error = error?.message || "could not apply";
         }
       }
       await loadEdits();
       if (disposed) return;
-      applyNotice = changed
-        ? `Applied to ${formatCount(changed, "story", "stories")}.${skipped ? ` ${skipped} had nothing to change.` : ""}`
-        : "No story needed a change.";
-      if (problems.length) {
-        applyNotice = `Applied to ${formatCount(changed, "story", "stories")}. ${problems.length} could not be updated: ${problems[0]}`;
-      }
+      const summary = applySummary(results);
+      applyNotice = summary.text;
+      applyTone = summary.tone;
       renderApplyCard();
       renderVersionsCard();
-      announce(applyNotice, problems.length ? "bad" : "ok");
+      announce(applyNotice, summary.tone);
     } catch (error) {
       if (disposed) return;
       applyNotice = error?.message || "Could not apply the style.";
+      applyTone = "bad";
       renderApplyCard();
       announce(applyNotice, "bad");
     } finally {
@@ -1665,9 +1889,42 @@ export function mount(root, ctx) {
     if (values.voice) audio.voice = { ...values.voice };
     if (values.brief) audio.music = { brief: { ...values.brief } };
     if (Object.keys(audio).length) body.audio = audio;
-    if (!values.color && !values.textStyle && !Object.keys(audio).length) return false;
+    if (values.captions) body.captions = values.captions;
+    const changed = [
+      values.captions ? "captions" : "",
+      values.color ? "colour" : "",
+      values.textStyle ? "text" : "",
+      Object.keys(audio).length ? "sound" : "",
+    ].filter(Boolean);
+    if (!changed.length) return [];
     await request(`${jobRoot(job.id)}/edits`, { method: "POST", body });
-    return true;
+    return changed;
+  }
+
+  /** Build a caption track for a story that has none, in the source's style. */
+  async function buildCaptionsLike(story, sourceTrack, sourceEdit) {
+    const styleId = sourceTrack.style_id || sourceEdit.captions?.style_id || "clean";
+    let built;
+    try {
+      built = await request(`${jobRoot(job.id)}/captions`, {
+        method: "POST",
+        body: { target: 30, set_id: activeSetId, story_id: story.id, style_id: styleId },
+      });
+    } catch (error) {
+      if (Number(error?.status) === 400) return null;
+      throw error;
+    }
+    const track = built?.track || built;
+    if (!track?.id || !(track.cues || []).length) return null;
+    const styled = await request(`${jobRoot(job.id)}/captions/${encodeURIComponent(track.id)}`, {
+      method: "PATCH",
+      body: { style: sourceTrack.style, style_id: styleId },
+    });
+    return {
+      track_id: String(styled?.track_id || styled?.id || track.id),
+      style_id: styleId,
+      enabled: true,
+    };
   }
 
   async function copyCaptionStyle(targetEdit, sourceTrack, sourceEdit) {
@@ -1683,6 +1940,7 @@ export function mount(root, ctx) {
       { method: "PATCH", body },
     );
     const nextTrack = String(result?.track_id || result?.id || trackId);
+    captionChanged = result?.changed !== false;
     return {
       ...(targetEdit.captions || {}),
       track_id: nextTrack,
@@ -1758,6 +2016,55 @@ export function mount(root, ctx) {
         button.disabled = false;
         button.textContent = previous;
       }
+    }
+  }
+
+  /** The newest ready cut of every story in the current shape. */
+  function latestReadyCuts(shape = aspect) {
+    const rows = [];
+    for (const [index, story] of stories().entries()) {
+      const newest = artifactsFor(story.id, shape)[0];
+      if (newest) rows.push({ artifact: newest, index });
+    }
+    return rows;
+  }
+
+  function downloadAllButton() {
+    const cuts = latestReadyCuts();
+    if (cuts.length < 2) return null;
+    const button = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: `Download all · ${cuts.length}`,
+    });
+    button.addEventListener("click", () => {
+      // One anchor click per file; browsers queue them as separate downloads.
+      latestReadyCuts().forEach(({ artifact, index }, order) => {
+        window.setTimeout(() => {
+          const link = el("a", { href: artifact.url, download: downloadName(artifact, index) });
+          document.body.append(link);
+          link.click();
+          link.remove();
+        }, order * 400);
+      });
+      announce(`Downloading ${formatCount(cuts.length, "cut")}.`, "ok");
+    });
+    return button;
+  }
+
+  async function revealArtifact(artifact, button) {
+    if (!job || !artifact?.artifact_id) return;
+    button.disabled = true;
+    try {
+      await request(
+        `${jobRoot(job.id)}/artifacts/${encodeURIComponent(artifact.artifact_id)}/reveal`,
+        { method: "POST", body: {} },
+      );
+      announce("Shown in Finder.", "ok");
+    } catch (error) {
+      announce(error?.message || "Could not open Finder.", "bad");
+    } finally {
+      if (button.isConnected) button.disabled = false;
     }
   }
 

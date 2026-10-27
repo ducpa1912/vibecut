@@ -9,6 +9,7 @@ Storage and validation live in :mod:`edits`; preview compilation lives in
 from __future__ import annotations
 
 import math
+import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -57,6 +58,13 @@ class EditPatchBody(BaseModel):
     graphics: list[dict] = Field(default_factory=list)
     captions: dict = Field(default_factory=dict)
     audio: dict = Field(default_factory=dict)
+    # Studio autosave sets this: a save within COALESCE_S of the head it
+    # replaces folds into that version instead of adding one per keystroke.
+    coalesce: bool = False
+
+
+# Autosaves this close together become one version in the history.
+COALESCE_S = 5.0
 
 
 class EditRestoreBody(BaseModel):
@@ -272,7 +280,7 @@ class _StaleHead(Exception):
     pass
 
 
-def _persist(job_id: str, edit: dict) -> dict:
+def _persist(job_id: str, edit: dict, *, replaces: str | None = None) -> dict:
     try:
         saved = edits.save_edit(_job_dir(job_id), edit)
     except edits.EditError as exc:
@@ -284,7 +292,9 @@ def _persist(job_id: str, edit: dict) -> dict:
     def mutate(job: dict) -> None:
         # Compare-and-swap: a concurrent save moved the head after this edit
         # was built from it, so refuse instead of forking the version chain.
-        if edits.pointer_edit_id(job, key) != saved.get("parent"):
+        # A folded autosave replaces the head instead of extending it.
+        expected = replaces or saved.get("parent")
+        if edits.pointer_edit_id(job, key) != expected:
             raise _StaleHead()
         edits.set_pointer(job, saved)
 
@@ -376,6 +386,22 @@ def current_edit(
     }
 
 
+def _default_captions(job_id: str, set_id: str, story_id: str, value) -> dict | None:
+    """Captions are on by default: a new story Edit without a track gets the
+    story's track in the default style when the job has speech. An explicit
+    ``enabled: false`` or a malformed value is left for validation."""
+    if value is not None and not isinstance(value, dict):
+        return value
+    captions = dict(value or {})
+    if captions.get("track_id") or captions.get("enabled") is False:
+        return value
+    track = _app().default_story_caption_track(job_id, set_id, story_id)
+    if track is None:
+        return value
+    captions.update({"track_id": track.id, "style_id": track.style_id, "enabled": True})
+    return captions
+
+
 @router.post("/api/jobs/{job_id}/edits")
 def create_edit(job_id: str, body: EditCreateBody) -> dict:
     job = _app().load_job(job_id)
@@ -399,6 +425,9 @@ def create_edit(job_id: str, body: EditCreateBody) -> dict:
     else:
         layers = {key: values.get(key) for key in _LAYER_FIELDS}
         parent = None
+        layers["captions"] = _default_captions(
+            job_id, body.set_id, body.story_id, layers.get("captions"),
+        )
     try:
         edited = edits.build_edit(
             story_ref=story_ref,
@@ -432,13 +461,22 @@ def patch_edit(job_id: str, edit_id: str, body: EditPatchBody) -> dict:
             409, "Story clips changed since this Edit was created; create a new Edit.",
         )
     values = body.model_dump(exclude_unset=True)
+    coalesce = bool(values.pop("coalesce", False))
     layers = _merge_layers(edit, values)
+    # Fold a burst of autosaves into one version: the new head takes the
+    # replaced head's place in the chain (same parent and number). The old
+    # sidecar stays on disk, immutable, but is no longer in the history.
+    fold = (
+        coalesce
+        and edit.get("parent")
+        and time.time() - float(edit.get("created") or 0.0) < COALESCE_S
+    )
     try:
         edited = edits.build_edit(
             story_ref=edit["story_ref"],
             aspect=edit["aspect"],
-            version=edit["version"] + 1,
-            parent=edit["id"],
+            version=edit["version"] if fold else edit["version"] + 1,
+            parent=edit["parent"] if fold else edit["id"],
             **layers,
         )
     except edits.EditError as exc:
@@ -449,7 +487,7 @@ def patch_edit(job_id: str, edit_id: str, body: EditPatchBody) -> dict:
     _require_clean_kinds(job, edited, _job_dir(job_id))
     if edited["hash"] == edit["hash"]:
         return _payload(edit, changed=False, job=job)
-    _persist(job_id, edited)
+    _persist(job_id, edited, replaces=edit["id"] if fold else None)
     return _payload(edited, changed=True, job=_app().load_job(job_id))
 
 
@@ -599,6 +637,7 @@ def _fresh_story(
 ) -> tuple[dict, dict, dict]:
     """Load the job, Edit and story, refusing a stale story with 409."""
     job = _app().load_job(job_id)
+    _app().require_source(job)
     edit = _load(edit_id, _job_dir(job_id))
     record, story = _resolve_story(
         job, edit["story_ref"]["set_id"], edit["story_ref"]["story_id"],

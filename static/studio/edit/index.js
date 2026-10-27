@@ -78,6 +78,8 @@ export function mount(root, ctx) {
   let saving = false;
   let savePromise = null;
   let saveTimer = 0;
+  // Set on pagehide: the remaining saves use keepalive requests.
+  let unloading = false;
   let loadSeq = 0;
   let timelineRaf = 0;
   let staleReload = false;
@@ -547,8 +549,10 @@ export function mount(root, ctx) {
             body[field] = clone(state.edit[field]);
             revisions[field] = state.revisions[field] || 0;
           }
+          // Autosaves within a few seconds fold into one version on the server.
+          body.coalesce = true;
           try {
-            const result = await patchEdit(state.job.id, state.edit.id, body);
+            const result = await patchEdit(state.job.id, state.edit.id, body, { keepalive: unloading });
             if (disposed) return true;
             if (!result?.edit) throw new Error("The server did not return the saved edit.");
             applySaved(result.edit, fields, revisions);
@@ -894,10 +898,18 @@ export function mount(root, ctx) {
   }
 
   function onVisibilityChange() {
-    if (document.visibilityState === "hidden" && state.dirty.size) void saveNow();
+    if (document.visibilityState === "hidden" && state.dirty.size) void flushSave();
+  }
+
+  // A reload inside the 450 ms debounce used to drop the last edit. Flush
+  // with a keepalive request so the save survives the page going away.
+  function onPageHide() {
+    unloading = true;
+    if (state.dirty.size || saveTimer) void flushSave();
   }
 
   window.addEventListener("beforeunload", onBeforeUnload);
+  window.addEventListener("pagehide", onPageHide);
   document.addEventListener("visibilitychange", onVisibilityChange);
   void boot();
 
@@ -909,6 +921,7 @@ export function mount(root, ctx) {
     preview?.destroy();
     timeline?.destroy();
     window.removeEventListener("beforeunload", onBeforeUnload);
+    window.removeEventListener("pagehide", onPageHide);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     root.replaceChildren();
   };

@@ -2522,8 +2522,19 @@ def build_artifact_packet(
         )
     application = _app()
     job = application.load_job(job_id)
+    story_id = body.story_id
+    if not str(story_id or "").strip():
+        # The path names one artifact, so its manifest knows the story.
+        module = _trust_artifacts()
+        manifest = (
+            module.load_manifest(application._job_dir(job_id), artifact_id)
+            if module is not None else None
+        ) or {}
+        story_id = str(
+            manifest.get("story_id") or (manifest.get("spec") or {}).get("story_id") or ""
+        )
     request = PacketRequest(
-        story_id=body.story_id,
+        story_id=story_id,
         titles=body.titles,
         description=body.description,
         hashtags=body.hashtags,

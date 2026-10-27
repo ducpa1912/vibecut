@@ -399,3 +399,93 @@ def test_classic_caption_change_becomes_a_new_edit_version(api, monkeypatch):
     app._set_story_track("j1", key, "cap_new")
     assert app.load_job("j1")["story_captions"][key] == "cap_new"
     assert calls == [(edit["id"], {**edit["captions"], "track_id": "cap_new"})]
+
+
+# ---------------------------------------------------------------- captions on by default (QA #3)
+
+
+def write_transcript(directory: Path) -> None:
+    folder = directory / "transcript"
+    folder.mkdir(parents=True, exist_ok=True)
+    segments = [
+        {"start": index * 4.0 + 0.2, "end": index * 4.0 + 3.6,
+         "text": f"This is sentence {index} about the build."}
+        for index in range(40)
+    ]
+    (folder / "transcript.json").write_text(json.dumps({"segments": segments}))
+
+
+def test_new_story_edit_gets_default_captions_when_the_job_has_speech(api):
+    write_transcript(write_job(api.jobs_dir))
+    record, story_value = story(api)
+    response = api.post("/api/jobs/j1/edits", json={
+        "set_id": record["id"], "story_id": story_value["id"],
+        "aspect": "9:16", "captions": {"enabled": True},
+    })
+    assert response.status_code == 200, response.text
+    captions = response.json()["edit"]["captions"]
+    assert captions["track_id"] and captions["enabled"] is True
+    track = app.caption_engine.load_track(app._job_dir("j1"), captions["track_id"])
+    assert track is not None and track.cues
+    key = f"{record['id']}:{story_value['id']}"
+    assert app.load_job("j1")["story_captions"][key] == captions["track_id"]
+
+
+def test_new_story_edit_without_speech_has_no_captions(api):
+    write_job(api.jobs_dir)
+    record, story_value = story(api)
+    response = api.post("/api/jobs/j1/edits", json={
+        "set_id": record["id"], "story_id": story_value["id"], "aspect": "9:16",
+    })
+    assert response.status_code == 200, response.text
+    assert not response.json()["edit"]["captions"].get("track_id")
+
+
+def test_captions_turned_off_stay_off(api):
+    write_transcript(write_job(api.jobs_dir))
+    record, story_value = story(api)
+    response = api.post("/api/jobs/j1/edits", json={
+        "set_id": record["id"], "story_id": story_value["id"],
+        "aspect": "9:16", "captions": {"enabled": False},
+    })
+    assert response.status_code == 200, response.text
+    captions = response.json()["edit"]["captions"]
+    assert captions["enabled"] is False and not captions.get("track_id")
+
+
+def test_story_render_burns_default_captions_into_an_edit_without_a_track(api, monkeypatch):
+    write_transcript(write_job(api.jobs_dir))
+    record, story_value = story(api)
+    # An Edit saved before captions were on by default: enabled, no track.
+    edit = edits.build_edit(
+        story_ref={
+            "set_id": record["id"],
+            "story_id": story_value["id"],
+            "clip_hash": edits.clip_snapshot_hash(story_value["clips"]),
+            "title": story_value["title"],
+            "duration": story_value["dur"],
+            "clip_count": len(story_value["clips"]),
+        },
+        aspect="9:16",
+        graphics=[overlays.edit_text_layer({
+            "kind": "hook", "text": "Hook", "start": 0.0, "end": 2.0,
+        })],
+        captions={"enabled": True},
+    )
+    edits.save_edit(app._job_dir("j1"), edit)
+    app.update_job("j1", lambda job: edits.set_pointer(job, edit))
+    submitted = stub_submit(monkeypatch)
+
+    response = api.post(
+        f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story_value['id']}/render",
+        json={},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["caption_track_id"]
+    assert submitted[-1][0][8] is True
+    rendered = submitted[-1][1]["edit"]
+    assert rendered["captions"]["track_id"] == body["caption_track_id"]
+    assert rendered["version"] == edit["version"] + 1
+    # The layers the creator made are kept on the new version.
+    assert rendered["graphics"] == edit["graphics"]

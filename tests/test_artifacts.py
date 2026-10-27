@@ -1533,3 +1533,25 @@ def test_save_manifest_stamps_edit_version_for_review_links(env):
     record = artifacts.render_record(saved)
     assert record["edit_version"] == 1
     assert record["edit_hash"] == edit["hash"]
+
+
+def test_reveal_shows_the_cut_in_finder(env, monkeypatch):
+    """Finish → Show in Finder runs `open -R` on the artifact's reel (QA #5)."""
+    artifact = "art_" + "a" * 24
+    folder = artifacts.artifact_dir(env.directory, artifact)
+    folder.mkdir(parents=True)
+    (folder / "reel.mp4").write_bytes(b"mp4")
+    calls = []
+    monkeypatch.setattr(app.sys, "platform", "darwin")
+    monkeypatch.setattr(app.subprocess, "Popen", lambda args, **kwargs: calls.append(args))
+    client = TestClient(app.app)
+
+    response = client.post(f"/api/jobs/{env.job_id}/artifacts/{artifact}/reveal")
+    assert response.status_code == 200, response.text
+    assert calls == [["open", "-R", str(folder / "reel.mp4")]]
+
+    missing = client.post(f"/api/jobs/{env.job_id}/artifacts/art_{'b' * 24}/reveal")
+    assert missing.status_code == 404
+    escape = client.post(f"/api/jobs/{env.job_id}/artifacts/..%2Fjob.json/reveal")
+    assert escape.status_code == 404
+    assert len(calls) == 1

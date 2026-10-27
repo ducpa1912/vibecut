@@ -518,21 +518,37 @@ export function colorFilter(color) {
   return parts.join(" ");
 }
 
-export function newTextLayer(kind, { duration = 5, playhead = 0, index = 0 } = {}) {
-  const preset = TEXT_KINDS[kind] || TEXT_KINDS.hook;
-  const start = clamp(playhead, 0, Math.max(0, duration - 0.5));
+/** A hook sentence trimmed to a card: whole words, at most `limit` characters. */
+export function hookCardText(sentence, limit = 60) {
+  const value = String(sentence || "").replace(/\s+/g, " ").trim();
+  if (!value) return "";
+  if (value.length <= limit) return value;
+  const cut = value.slice(0, limit + 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > limit * 0.5 ? cut.slice(0, space) : value.slice(0, limit)).replace(/[,;:\-–—]+$/, "")}…`;
+}
+
+/** A bold plate that reads over any footage; the default for hook cards. */
+export const HOOK_STYLE = { size: 64, weight: 900, background: "#000000b3", stroke: "none", shadow: false };
+
+export function newTextLayer(kind, { duration = 5, playhead = 0, index = 0, hookText = "" } = {}) {
+  const chosen = TEXT_KINDS[kind] ? kind : "hook";
+  const preset = TEXT_KINDS[chosen];
+  // A hook opens the story; titles and lower thirds go where the playhead is.
+  const start = chosen === "hook" ? 0 : clamp(playhead, 0, Math.max(0, duration - 0.5));
   const end = clamp(start + 3, start + 0.4, Math.max(start + 0.5, duration));
+  const text = chosen === "hook" ? (hookCardText(hookText) || preset.sample) : preset.sample;
   return {
     id: uid("tx"),
     type: "text",
-    kind: TEXT_KINDS[kind] ? kind : "hook",
-    text: preset.sample,
+    kind: chosen,
+    text,
     start: round(start),
     end: round(end),
     anchor: preset.anchor,
     box: { ...preset.box },
     z: 10 + index,
-    style: { ...TEXT_STYLE_DEFAULTS },
+    style: { ...TEXT_STYLE_DEFAULTS, ...(chosen === "hook" ? HOOK_STYLE : {}) },
     safe_zone: true,
     opacity: 1,
   };

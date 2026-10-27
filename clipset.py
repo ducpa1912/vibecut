@@ -21,8 +21,18 @@ from pipeline import hook_text_score
 
 MIN_STORY_S = 20.0
 MAX_STORY_S = 75.0
+# Bounds a caller may ask for; the default window above stays 20-75 s.
+LENGTH_FLOOR_S = 15.0
+LENGTH_CEIL_S = 90.0
+# Studio's length presets (seconds).
+LENGTH_PRESETS = {
+    "short": (15.0, 30.0),
+    "medium": (30.0, 60.0),
+    "long": (45.0, 90.0),
+}
 MIN_STORIES = 3
-MAX_STORIES = 6
+MAX_STORIES = 12
+COUNT_MESSAGE = f"count must be an integer from {MIN_STORIES} to {MAX_STORIES}."
 SENTENCE_LIMIT = 4000
 CANDIDATE_LIMIT = 8000
 STORY_WEIGHTS = {
@@ -47,6 +57,64 @@ _DANGLING = {
     "however", "if", "in", "into", "like", "of", "on", "or", "so", "than",
     "that", "the", "then", "to", "which", "while", "with", "yet",
 }
+# Housekeeping talk: calls to action, sponsor reads, giveaways and channel
+# admin make poor shorts. A story that leans on them is scored down.
+_HOUSEKEEPING = re.compile(
+    r"\b("
+    r"subscribe|hit the bell|notification bell|"
+    r"link (?:is )?(?:below|in (?:the|my) (?:description|bio))|in the description|"
+    r"tell me in the comments|let me know in the comments|comment below|"
+    r"sponsor(?:ed)?|this video is brought to you|promo code|discount code|use code|"
+    r"giveaway|congrat(?:s|ulations) to|won a free|"
+    r"patreon|membership|merch|"
+    r"in (?:my|our|the) (?:last|previous|next) video|"
+    r"we(?:'ll| will) (?:make|do) a (?:separate )?video|"
+    r"your answers are going to help"
+    r")\b",
+    re.IGNORECASE,
+)
+# Openers that lean on something said before the story starts.
+_DANGLING_OPENERS = {
+    "and", "but", "so", "or", "also", "because", "then", "now", "which",
+    "plus", "however", "anyway", "otherwise", "besides",
+}
+
+
+def _housekeeping_share(sentences: list[dict]) -> float:
+    """Share of a story's sentences that are housekeeping (0..1)."""
+    if not sentences:
+        return 0.0
+    hits = sum(
+        1 for item in sentences if _HOUSEKEEPING.search(str(item.get("text") or ""))
+    )
+    return hits / len(sentences)
+
+
+def _dangling_opener(sentences: list[dict]) -> bool:
+    if not sentences:
+        return False
+    words = re.findall(r"[A-Za-z']+", str(sentences[0].get("text") or ""))
+    return bool(words) and words[0].lower() in _DANGLING_OPENERS
+
+
+def _story_penalty(sentences: list[dict]) -> tuple[float, dict]:
+    """Score multiplier (<= 1) for housekeeping and dangling openers."""
+    share = _housekeeping_share(sentences)
+    opener = _dangling_opener(sentences)
+    first_housekeeping = bool(
+        sentences and _HOUSEKEEPING.search(str(sentences[0].get("text") or "")),
+    )
+    factor = 1.0 - min(0.6, 0.9 * share) - (0.15 if first_housekeeping else 0.0)
+    if opener:
+        factor -= 0.12
+    factor = max(0.2, factor)
+    return factor, {
+        "housekeeping": round(share, 4),
+        "dangling_opener": opener,
+        "factor": round(factor, 4),
+    }
+
+
 _STOPWORDS = {
     "about", "after", "again", "also", "because", "been", "before", "being",
     "both", "could", "does", "doing", "done", "from", "have", "having",
@@ -171,6 +239,72 @@ class _SceneIndex:
         )
 
 
+# A sentence cut starts this far before its first measured word (never
+# before the previous sentence's last word), so the attack is not clipped.
+WORD_LEAD_S = 0.08
+
+
+def _word_boundaries(
+    parts: list[str],
+    words: list[dict] | None,
+    start: float,
+    end: float,
+) -> list[float] | None:
+    """Inner sentence edges placed on measured word edges, or None.
+
+    Character-share timing guesses where each sentence of a multi-sentence
+    segment starts. The guess lands mid-word, which cut the first word of a
+    story and repeated a word across adjacent clips. With word timings each
+    word is assigned to one sentence by its position in the text, and the
+    edge sits just before that sentence's first word.
+    """
+    rows = sorted(
+        (
+            row for row in words or []
+            if isinstance(row, dict) and str(row.get("w") or "").strip()
+            and _safe_float(row.get("end")) > _safe_float(row.get("start"))
+        ),
+        key=lambda row: (_safe_float(row.get("start")), _safe_float(row.get("end"))),
+    )
+    if len(parts) < 2 or len(rows) < len(parts):
+        return None
+    spaced = any(" " in part for part in parts)
+
+    def weight(value: str) -> int:
+        return max(1, len(value.split()) if spaced else len(value.replace(" ", "")))
+
+    part_weights = [weight(part) for part in parts]
+    word_weights = [1 if spaced else weight(str(row["w"])) for row in rows]
+    part_total = float(sum(part_weights))
+    word_total = float(sum(word_weights))
+    edges: list[float] = []
+    cumulative = 0.0
+    for value in part_weights[:-1]:
+        cumulative += value
+        edges.append(cumulative / part_total)
+    owner: list[int] = []
+    seen = 0.0
+    for value in word_weights:
+        middle = (seen + value / 2.0) / word_total
+        seen += value
+        owner.append(sum(1 for edge in edges if middle >= edge))
+    groups: list[list[dict]] = [[] for _ in parts]
+    for index, row in zip(owner, rows):
+        groups[index].append(row)
+    if any(not group for group in groups):
+        return None
+    bounds: list[float] = []
+    for index in range(1, len(groups)):
+        first = _safe_float(groups[index][0].get("start"))
+        last = _safe_float(groups[index - 1][-1].get("end"))
+        edge = max(last, first - WORD_LEAD_S)
+        edge = min(max(edge, start), end)
+        if bounds and edge <= bounds[-1]:
+            return None
+        bounds.append(edge)
+    return bounds
+
+
 def _timed_parts(
     text: str,
     start: float,
@@ -178,6 +312,7 @@ def _timed_parts(
     scene: int | None,
     source: str,
     scene_index: _SceneIndex,
+    words: list[dict] | None = None,
 ) -> list[dict]:
     parts = _split_text(text)
     if not parts or end <= start:
@@ -185,10 +320,13 @@ def _timed_parts(
     total_chars = sum(max(1, len(part)) for part in parts)
     span = end - start
     cursor = start
+    bounds = _word_boundaries(parts, words, start, end)
     out: list[dict] = []
     for index, part in enumerate(parts):
         if index == len(parts) - 1:
             stop = end
+        elif bounds is not None:
+            stop = bounds[index]
         else:
             stop = cursor + span * len(part) / total_chars
         mid = (cursor + stop) / 2
@@ -254,7 +392,10 @@ def source_sentences(
             scene = None
         transcript_raw.extend(_timed_parts(
             text, start, end, scene, "transcript", scene_index,
+            words=segment.get("words"),
         ))
+        if segment.get("words") and stats is not None:
+            stats["word_timed"] = True
         for scene_id in scene_index.ids_for(start, end):
             scene = scene_index.by_id.get(scene_id)
             if scene is None:
@@ -674,15 +815,17 @@ def _score_story(
         ),
         "novelty": round(_clamp(novelty), 4),
     }
-    total = sum(STORY_WEIGHTS[key] * signals[key] for key in STORY_WEIGHTS)
+    factor, penalties = _story_penalty(sentences)
+    total = factor * sum(STORY_WEIGHTS[key] * signals[key] for key in STORY_WEIGHTS)
     story["_base_total"] = round(
-        sum(
+        factor * sum(
             STORY_WEIGHTS[key] * signals[key]
             for key in STORY_WEIGHTS
             if key != "novelty"
         ),
         9,
     )
+    story["penalties"] = penalties
     story["score_breakdown"] = signals
     story["score"] = round(total * 100, 2)
     story["evidence"] = (
@@ -1281,13 +1424,15 @@ def _validate_params(count: int, min_s: float, max_s: float, order: str) -> None
     try:
         count = int(count)
     except (TypeError, ValueError):
-        raise ClipSetError("count must be an integer from 3 to 6.") from None
+        raise ClipSetError(COUNT_MESSAGE) from None
     if count < MIN_STORIES or count > MAX_STORIES:
-        raise ClipSetError("count must be an integer from 3 to 6.")
+        raise ClipSetError(COUNT_MESSAGE)
     min_s = _safe_float(min_s, MIN_STORY_S)
     max_s = _safe_float(max_s, MAX_STORY_S)
-    if min_s < MIN_STORY_S or max_s > MAX_STORY_S or max_s < min_s:
-        raise ClipSetError("min_s and max_s must fit inside 20-75 seconds.")
+    if min_s < LENGTH_FLOOR_S or max_s > LENGTH_CEIL_S or max_s < min_s:
+        raise ClipSetError(
+            f"min_s and max_s must fit inside {LENGTH_FLOOR_S:.0f}-{LENGTH_CEIL_S:.0f} seconds.",
+        )
     if order not in ORDERS:
         raise ClipSetError("order must be source, score or arc.")
 
@@ -1383,6 +1528,9 @@ def build_clipset(
         "candidate_scored": candidate_stats.get("candidate_scored", len(candidates)),
         "sentence_count": len(sentences),
         "source_fingerprint": source_fingerprint(sentences),
+        # "words": sentence edges sit on measured word edges. Older sets used
+        # character-share timing and keep it, so their fingerprints still match.
+        "sentence_timing": "words" if source_stats.get("word_timed") else "text",
         "source": {
             "transcript": used_transcript,
             "scene_text": used_scene,

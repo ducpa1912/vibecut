@@ -150,6 +150,7 @@ def start_check(job_id: str, body: CheckBody | None = None):
     analysis = job.get("analysis") or {}
     if job.get("status") != "ready" or not analysis.get("scenes"):
         raise HTTPException(409, "Analysis is not ready yet.")
+    app.require_source(job)
 
     record = _check_record(job)
     task_id = record.get("task_id")

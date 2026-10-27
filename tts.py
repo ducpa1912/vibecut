@@ -316,6 +316,30 @@ def kokoro_model_dir() -> Path:
     return audio.VOICE_DIRS["kokoro"]
 
 
+# Apple's novelty voices (sound effects and singing) are never a voice-over.
+SAY_NOVELTY = frozenset({
+    "Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos",
+    "Good News", "Jester", "Organ", "Superstar", "Trinoids", "Whisper",
+    "Wobble", "Zarvox",
+})
+# Older synthetic voices: kept, but listed after the natural ones.
+SAY_SYNTHETIC = frozenset({
+    "Fred", "Junior", "Kathy", "Ralph",
+    "Eddy", "Flo", "Grandma", "Grandpa", "Reed", "Rocko", "Sandy", "Shelley",
+})
+
+
+def _say_base_name(name: str) -> str:
+    return name.split(" (", 1)[0].strip()
+
+
+def _say_voice_rank(name: str) -> int:
+    """0 premium/enhanced, 1 natural, 2 older synthetic voices."""
+    if "(Premium)" in name or "(Enhanced)" in name:
+        return 0
+    return 2 if _say_base_name(name) in SAY_SYNTHETIC else 1
+
+
 def list_voices(engine: str) -> list[dict]:
     engine = str(engine or "").strip().lower()
     if engine == "say":
@@ -328,9 +352,12 @@ def list_voices(engine: str) -> list[dict]:
             if not match:
                 continue
             name = match.group("name").strip()
+            if _say_base_name(name) in SAY_NOVELTY:
+                continue
             lang = match.group("lang").strip()
             voices.append({"id": name, "name": name, "lang": lang})
-        voices.sort(key=lambda item: (item["lang"], item["name"]))
+        # Natural voices first; within a rank, by language then name.
+        voices.sort(key=lambda item: (_say_voice_rank(item["name"]), item["lang"], item["name"]))
         return voices
 
     if engine == "kokoro":
