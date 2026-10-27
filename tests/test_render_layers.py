@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import app
+import audio
 import compose_render
 import edits
 import pipeline
@@ -751,3 +752,83 @@ def test_real_proxy_is_540p_and_reused(real_env):
     assert second.status_code == 200
     assert second.content == first.content
     assert proxy.stat().st_mtime_ns == mtime
+
+
+# ---------------------------------------------------------------- beat grid
+
+
+def _beat_edit(start: float) -> dict:
+    return {
+        "audio": {"mode": "dub"},
+        "motion": [{"kind": "punch_in", "start": start, "end": start + 1.0}],
+        "graphics": [],
+    }
+
+
+def test_edit_beat_grid_uses_only_the_locked_bed(tmp_path, monkeypatch):
+    audio_plan = {
+        "mode": "dub",
+        "music": {"source": "library", "locked_hash": "a" * 64},
+    }
+    calls = {"locked": [], "grid": []}
+    monkeypatch.setattr(
+        audio, "resolve_locked_track",
+        lambda job_dir, digest: (calls["locked"].append(digest), tmp_path / "bed.wav")[1],
+    )
+    monkeypatch.setattr(
+        audio, "beat_grid",
+        lambda path: (calls["grid"].append(path), {"bpm": 120.0, "beats": [1.0, 2.0]})[1],
+    )
+
+    assert render.edit_beat_grid(tmp_path, _beat_edit(1.0), audio_plan) == {
+        "bpm": 120.0, "beats": [1.0, 2.0],
+    }
+    assert calls["locked"] == ["a" * 64]
+    assert calls["grid"] == [tmp_path / "bed.wav"]
+
+    off_beat = render.edit_beat_grid(tmp_path, _beat_edit(1.5), audio_plan)
+    assert off_beat is None
+
+    unlocked = render.edit_beat_grid(
+        tmp_path, _beat_edit(1.0),
+        {"mode": "dub", "music": {"source": "library"}},
+    )
+    assert unlocked is None
+
+
+def test_edit_beat_grid_ignores_original_audio_and_missing_bed(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio, "resolve_locked_track", lambda *args: None)
+    monkeypatch.setattr(audio, "resolve_music_track", lambda *args: None)
+    monkeypatch.setattr(audio, "beat_grid", lambda *args: {"bpm": 120.0, "beats": [1.0]})
+    assert render.edit_beat_grid(
+        tmp_path, _beat_edit(1.0), {"mode": "original"},
+    ) is None
+    assert render.edit_beat_grid(
+        tmp_path, _beat_edit(1.0),
+        {"mode": "dub", "music": {"source": "library", "locked_hash": "b" * 64}},
+    ) is None
+
+
+def test_render_reel_passes_the_locked_beat_grid_to_compile(tmp_path, monkeypatch):
+    grid = {"bpm": 120.0, "beats": [1.0, 2.0]}
+    captured: dict = {}
+
+    monkeypatch.setattr(render, "edit_beat_grid", lambda *args: grid)
+
+    def fake_compile(edit, **kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("stop after compile")
+
+    monkeypatch.setattr(compose_render, "compile_edit", fake_compile)
+    with pytest.raises(RuntimeError, match="stop after compile"):
+        render.render_reel(
+            str(tmp_path / "source.mp4"),
+            {"path": str(tmp_path / "source.mp4"), "duration": 2.0},
+            tmp_path,
+            {"target": 2, "clips": [{"scene": 0, "start": 0.0, "end": 2.0}]},
+            "Title",
+            lambda *args: None,
+            edit={"audio": {"mode": "dub"}},
+            audio_plan={"mode": "dub", "music": {"locked_hash": "a" * 64}},
+        )
+    assert captured["beats"] == grid

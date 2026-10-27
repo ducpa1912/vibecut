@@ -27,6 +27,7 @@ import audio
 import captions as caption_engine
 import compose_render
 import edits
+import fx
 from compose_render import path_expression as _path_expression
 from compose_render import path_value as _path_value
 from pipeline import PipelineError, crop_center, probe
@@ -1480,6 +1481,61 @@ def build_story_proxy(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def edit_beat_grid(
+    job_dir: Path,
+    edit: dict | None,
+    audio_plan: dict | None = None,
+) -> dict | None:
+    """Beat grid for an Edit whose layers already sit on the locked bed.
+
+    Only a locked (content-hashed) bed is considered. The grid is returned
+    when at least one motion or graphic boundary is already within the snap
+    window of a beat; unsnapped edits keep their stored times. Nothing here
+    mixes audio or changes the Edit itself.
+    """
+    if not isinstance(edit, dict):
+        return None
+    layers = [
+        layer
+        for key in ("motion", "graphics")
+        for layer in (edit.get(key) or [])
+        if isinstance(layer, dict)
+    ]
+    if not layers:
+        return None
+    plan = audio_plan if isinstance(audio_plan, dict) else audio.plan_from_edit(
+        edit.get("audio"),
+    )
+    if not isinstance(plan, dict) or audio.mixer_mode(plan.get("mode")) == "keep":
+        return None
+    music_plan = plan.get("music") if isinstance(plan.get("music"), dict) else {}
+    locked = str(
+        music_plan.get("locked_hash") or music_plan.get("file_hash") or "",
+    ).strip().lower()
+    track = audio.resolve_locked_track(job_dir, locked) if locked else None
+    if track is None:
+        track = audio.resolve_music_track([], [], music_plan)
+    if track is None:
+        return None
+    grid = audio.beat_grid(track)
+    beats = fx.beat_times(grid)
+    if not beats:
+        return None
+    boundaries = [
+        float(layer.get(key))
+        for layer in layers
+        for key in ("start", "end")
+        if isinstance(layer.get(key), (int, float))
+    ]
+    if not any(
+        abs(boundary - beat) <= fx.BEAT_WINDOW + 1e-6
+        for boundary in boundaries
+        for beat in beats
+    ):
+        return None
+    return grid
+
+
 def render_reel(
     source: str,
     meta: dict,
@@ -1541,6 +1597,7 @@ def render_reel(
             caption_track=plan.get("_caption_track"),
             size=(out_w, out_h),
             motion_engine=compose_render.EDIT_MOTION_ENGINE,
+            beats=edit_beat_grid(job_dir, edit, audio_plan),
         )
     edit_segments: list[dict] = []
     layers: list[dict] = []
