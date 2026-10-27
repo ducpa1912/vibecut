@@ -200,16 +200,16 @@ def _add_render_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--audio-mode", choices=("keep", "full", "bed", "voice", "music"),
                         default="keep", help="Replace or keep the original audio.")
     parser.add_argument("--translate", default=None, help="Target language code, e.g. en.")
-    parser.add_argument("--translate-provider", choices=("auto", "opencode", "openrouter", "apple_fm", "argos", "marian", "ollama"),
+    parser.add_argument("--translate-provider", choices=("auto", "opencode", "openrouter", "apple_fm"),
                         default="auto")
     parser.add_argument("--voice-engine", choices=("say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram", "minimax", "fish", "gemini", "cartesia"),
                         default="say")
     parser.add_argument("--voice", default="", help="Voice id for the chosen engine.")
     parser.add_argument("--voice-rate", type=float, default=1.0)
-    parser.add_argument("--music", choices=("none", "library", "cc0", "minimax-music", "lyria-clip", "stable-small", "stable-1.0", "musicgen-small"),
+    parser.add_argument("--music", choices=("none", "library", "minimax-music", "lyria-clip"),
                         default="none")
     parser.add_argument("--music-track", default="", help="Track path or name; empty = auto mood.")
-    parser.add_argument("--music-prompt", default="", help="Prompt for Stable Audio; empty = auto.")
+    parser.add_argument("--music-prompt", default="", help="Prompt for cloud music generation; empty = auto.")
     parser.set_defaults(targets=None)
 
 
@@ -333,9 +333,6 @@ AUDIT_PACKAGES = (
     ("piper-tts", "piper"),
     ("kokoro-onnx", "kokoro_onnx"),
     ("demucs", "demucs"),
-    ("argostranslate", "argostranslate"),
-    ("ctranslate2", "ctranslate2"),
-    ("stable-audio-tools", "stable_audio_tools"),
     ("soundfile", "soundfile"),
 )
 
@@ -412,10 +409,6 @@ def _audit(data: Path, pairs: list[list[str]]) -> None:
         for model in sorted(hub.glob("models--*")):
             print(f"  HF {model.name[8:]:40} {_mb(_dir_size(model)):>12}")
 
-    argos = Path.home() / ".local" / "share" / "argos-translate" / "packages"
-    if argos.is_dir():
-        for package in sorted(argos.glob("*")):
-            print(f"  argos {package.name:38} {_mb(_dir_size(package)):>12}")
     print()
 
     print("Python packages used by VibeCut")
@@ -446,9 +439,8 @@ def _audit(data: Path, pairs: list[list[str]]) -> None:
     print("Remove hints")
     print("  cache only   : python3 cli.py clean --all")
     print("  one job      : python3 cli.py clean --job <id> [--profile renders|all]")
-    print("  argos pair   : rm -rf ~/.local/share/argos-translate")
     print("  kokoro fp32  : delete data/models/kokoro/*.onnx not int8/fp16")
-    print("  pip engines  : python3 -m pip uninstall argostranslate ctranslate2 demucs piper-tts kokoro-onnx")
+    print("  pip engines  : python3 -m pip uninstall demucs piper-tts kokoro-onnx")
 
 
 def main(argv: list[str] | None = None) -> int:

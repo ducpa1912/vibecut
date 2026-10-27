@@ -6267,15 +6267,6 @@ class CleanBody(BaseModel):
     profile: str = "workfiles"
 
 
-def _install_argos_safe(source: str = "", target: str = "") -> None:
-    try:
-        audio.install_argos()
-        if source and target and source.split("-")[0] != target.split("-")[0]:
-            audio.ensure_argos_pair(source, target)
-    except Exception:  # noqa: BLE001
-        LOGGER.exception("argos install failed")
-
-
 @app.get("/api/audio/engines")
 def audio_engines() -> dict:
     return audio.engine_status()
@@ -6290,7 +6281,7 @@ def audio_voices(engine: str = "say") -> dict:
 
 
 @app.get("/api/audio/music")
-def audio_music(source: str = "cc0") -> dict:
+def audio_music(source: str = "library") -> dict:
     return {"source": source, "tracks": audio.list_music(source)}
 
 
@@ -6473,7 +6464,7 @@ def voice_sample(job_id: str, body: VoiceBody) -> FileResponse:
 
 
 @app.get("/api/audio/beats")
-def audio_beats(source: str = "cc0", track: str = "") -> dict:
+def audio_beats(source: str = "library", track: str = "") -> dict:
     path = audio.resolve_music_track([], [], {"source": source, "track": track})
     if not path:
         raise HTTPException(404, "No track found for beat detection.")
