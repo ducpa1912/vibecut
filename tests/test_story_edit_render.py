@@ -294,3 +294,56 @@ def test_stale_edit_warning_is_logged(api, caplog):
         )
     assert resolved is None
     assert any("changed since Edit" in row.message for row in caplog.records)
+
+
+def test_edit_captions_enable_the_track_for_the_edit_render(api, monkeypatch):
+    import captions as caption_engine
+
+    write_job(api.jobs_dir)
+    record, story_value = story(api)
+    plan = app._story_plan(
+        app.load_job("j1"), record, story_value, record["id"],
+    )
+    prepared = render.prepare_render(plan, app.load_job("j1")["source"], None)
+    track = caption_engine.CaptionTrack(
+        id="cap_edit",
+        job_id="j1",
+        version=1,
+        target=int(plan["target"]),
+        cues=[caption_engine.CaptionCue.from_value({
+            "id": "c1", "start": 0.0, "end": 1.0, "text": "Hello", "clip_index": 0,
+        })],
+        clip_hash=caption_engine.clip_hash(prepared["clips"]),
+    )
+    edit = edits.build_edit(
+        story_ref={
+            "set_id": record["id"],
+            "story_id": story_value["id"],
+            "clip_hash": edits.clip_snapshot_hash(story_value["clips"]),
+            "title": story_value["title"],
+            "duration": story_value["dur"],
+            "clip_count": len(story_value["clips"]),
+        },
+        aspect="9:16",
+        graphics=[overlays.edit_text_layer({
+            "kind": "hook", "text": "Hook", "start": 0.0, "end": 2.0,
+        })],
+        captions={"track_id": "cap_edit", "enabled": True},
+    )
+    edits.save_edit(app._job_dir("j1"), edit)
+    app.update_job("j1", lambda job: edits.set_pointer(job, edit))
+    monkeypatch.setattr(app, "_caption_track_by_id", lambda job_id, track_id: track)
+    submitted = stub_submit(monkeypatch)
+
+    response = api.post(
+        f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story_value['id']}/render",
+        json={},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["caption_track_id"] == "cap_edit"
+    assert submitted[-1][0][8] is True
+    assert submitted[-1][1]["edit"] == edit
+    manifest = app.artifacts.load_manifest(app._job_dir("j1"), body["artifact_id"])
+    assert manifest["spec"]["caption"]["enabled"] is True
+    assert manifest["spec"]["edit_hash"] == edit["hash"]
