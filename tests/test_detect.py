@@ -291,6 +291,22 @@ def test_read_text_samples_marks_vision_unavailable(monkeypatch, tmp_path):
     assert result["frames"][0]["text"] == []
 
 
+def test_read_text_samples_treats_an_empty_probe_as_unavailable(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(
+        pipeline, "extract_text_frames",
+        lambda *args, **kwargs: [{
+            "index": 0, "file": "000001.jpg", "t": 0.0,
+            "start": 0.0, "end": 2.0, "ocr_available": True,
+        }],
+    )
+    monkeypatch.setattr(pipeline.vision, "available", lambda: True)
+    monkeypatch.setattr(pipeline.vision, "probe_images", lambda directory: {})
+    result = pipeline.read_text_samples("/tmp/source.mp4", tmp_path, 10.0)
+    assert result["vision"] is False
+
+
 def test_read_text_samples_maps_records_to_frames(monkeypatch, tmp_path):
     monkeypatch.setattr(
         pipeline, "extract_text_frames",
