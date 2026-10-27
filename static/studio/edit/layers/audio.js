@@ -32,7 +32,7 @@ const ENGINE_LABELS = {
   kokoro: "Kokoro · Voice Pack",
   minimax: "MiniMax · cloud",
   elevenlabs: "ElevenLabs · cloud",
-  heygen: "HeyGen Voice Turbo · cloud, free",
+  heygen: "HeyGen Voice Turbo · free until 30 Nov 2026",
   fish: "Fish Audio · cloud",
   gemini: "Gemini TTS · cloud",
 };
@@ -96,6 +96,39 @@ function storyLanguage(ctx) {
   return "en";
 }
 
+function storySeconds(ctx) {
+  const story = ctx.getStory();
+  const direct = Number(story?.dur ?? story?.duration);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const clips = Array.isArray(story?.clips) ? story.clips : [];
+  const total = clips.reduce((sum, clip) => {
+    const dur = Number(clip?.dur);
+    if (Number.isFinite(dur) && dur > 0) return sum + dur;
+    return sum + Math.max(0, numberOr(clip?.end, 0) - numberOr(clip?.start, 0));
+  }, 0);
+  return total > 0 ? total : 30;
+}
+
+function briefTarget(seconds) {
+  const value = numberOr(seconds, 30);
+  if (value <= 22) return 15;
+  if (value <= 45) return 30;
+  return 60;
+}
+
+function briefPrompt(brief) {
+  const tempo = brief?.tempo || {};
+  const low = Math.round(numberOr(tempo.min, 90));
+  const high = Math.round(numberOr(tempo.max, 112));
+  const energy = String(brief?.energy?.shape || "steady").replace(/_/g, " to ");
+  const seconds = Math.max(8, Math.round(numberOr(brief?.duration, numberOr(brief?.seconds, 30))));
+  return `${brief?.genre || "cinematic ambient"} instrumental bed, ${brief?.mood || "cinematic"} mood, ${energy} energy, ${low}-${high} BPM, no vocals, clean loop, ${seconds} seconds`;
+}
+
+function lockPath(entry) {
+  return String(entry?.path || entry?.file || "");
+}
+
 function licenseLabel(license) {
   if (!license) return "No licence note";
   if (typeof license === "string") return license;
@@ -112,6 +145,7 @@ export function mountAudioPanel(host, ctx) {
   let plan = clone(edit?.audio || { mode: "original" });
   if (!AUDIO_LABELS[plan.mode]) plan.mode = "original";
   let engines = null;
+  let engineData = null;
   let engineError = "";
   let voiceList = [];
   let voiceError = "";
@@ -125,6 +159,19 @@ export function mountAudioPanel(host, ctx) {
   let selectedTrack = typeof plan.music?.track === "string" ? plan.music.track : "";
   let previewLoading = false;
   let uploadLoading = false;
+  let musicBrief = plan.music?.brief && typeof plan.music.brief === "object"
+    ? clone(plan.music.brief)
+    : null;
+  let briefLoading = false;
+  let briefError = "";
+  let candidates = [];
+  let candidateBusy = false;
+  let candidateError = "";
+  let candidatePreview = -1;
+  let candidatePlayer = null;
+  let lockedTracks = [];
+  let lockedLoading = false;
+  let lockedError = "";
   let notice = "";
   let noticeTone = "";
   let dirty = false;
@@ -176,13 +223,15 @@ export function mountAudioPanel(host, ctx) {
         ? "library"
         : existing.source === "generated" ? "generated" : "upload";
     }
-    return {
+    const result = {
       ...existing,
       source,
       track: selectedTrack,
       name: track?.name || existing.name || baseName(selectedTrack),
       license: track?.license === undefined ? (existing.license ?? null) : track.license,
     };
+    if (source === "generated" && musicBrief) result.brief = clone(musicBrief);
+    return result;
   }
 
   function syncEditorChrome() {
@@ -328,6 +377,7 @@ export function mountAudioPanel(host, ctx) {
     engineError = "";
     try {
       const result = await request("/api/audio/engines");
+      engineData = result && typeof result === "object" ? result : null;
       engines = result?.voices && typeof result.voices === "object" ? result.voices : {};
       const available = Object.entries(engines)
         .filter(([, value]) => value?.available)
@@ -345,6 +395,10 @@ export function mountAudioPanel(host, ctx) {
       engineError = error?.message || "Could not read voice engines.";
     }
     if (!disposed) render();
+    if (!disposed) {
+      void loadLockedTracks();
+      if (!musicBrief) void ensureBrief(true);
+    }
   }
 
   async function loadLibrary() {
@@ -393,6 +447,232 @@ export function mountAudioPanel(host, ctx) {
     setNotice("");
     scheduleSave();
     render();
+  }
+
+  function generationAvailable() {
+    const music = engineData?.music || {};
+    return ["minimax-music", "lyria-clip"].some((key) => Boolean(music[key]?.available));
+  }
+
+  async function ensureBrief(quiet = false) {
+    const jobId = currentJobId();
+    if (!jobId || briefLoading) return;
+    briefLoading = true;
+    briefError = "";
+    if (!quiet) setNotice("Reading the story for a music brief…");
+    try {
+      const target = briefTarget(storySeconds(ctx));
+      const result = await request(
+        `/api/jobs/${encodeURIComponent(jobId)}/music/brief?target=${target}`,
+      );
+      if (disposed) return;
+      if (result?.brief && typeof result.brief === "object") {
+        musicBrief = clone(result.brief);
+        if (!quiet) setNotice("Music brief ready. Edit the four fields, then generate two beds.", "ok");
+      }
+    } catch (error) {
+      if (disposed) return;
+      briefError = error?.message || "Could not build a music brief from this story.";
+    } finally {
+      briefLoading = false;
+      if (!disposed) render();
+    }
+  }
+
+  function editBriefField(key, value) {
+    if (!musicBrief) return;
+    if (key === "mood" || key === "genre") musicBrief[key] = String(value || "").slice(0, 80);
+    if (key === "energy") {
+      musicBrief.energy = { ...(musicBrief.energy || {}), shape: String(value || "hook_payoff") };
+    }
+    if (key === "tempo") {
+      const low = clamp(numberOr(value?.min, 90), 40, 200);
+      const high = clamp(numberOr(value?.max, 112), 40, 200);
+      musicBrief.tempo = { min: Math.min(low, high), max: Math.max(low, high) };
+    }
+    musicBrief.prompt = briefPrompt(musicBrief);
+    setNotice("Brief changed. Generate again to hear the new direction.");
+    render();
+  }
+
+  async function generateCandidates() {
+    const jobId = currentJobId();
+    if (!jobId || candidateBusy) return;
+    if (!generationAvailable()) {
+      setNotice("Cloud generation needs a MiniMax or OpenRouter key.", "bad");
+      render();
+      return;
+    }
+    if (!musicBrief) {
+      await ensureBrief();
+      if (!musicBrief) {
+        setNotice(briefError || "Read a music brief first.", "bad");
+        render();
+        return;
+      }
+    }
+    candidateBusy = true;
+    candidateError = "";
+    setNotice("Generating two music candidates. This can take a minute…");
+    render();
+    try {
+      const result = await request(
+        `/api/jobs/${encodeURIComponent(jobId)}/music/candidates`,
+        { method: "POST", body: { brief: musicBrief, count: 2 } },
+      );
+      if (disposed) return;
+      candidates = Array.isArray(result?.candidates) ? result.candidates : [];
+      if (!candidates.length) throw new Error("No music candidate came back.");
+      setNotice("Two candidates ready. Preview A and B, then use one.", "ok");
+    } catch (error) {
+      if (disposed) return;
+      candidateError = error?.message || "Could not generate music candidates.";
+      setNotice(candidateError, "bad");
+    } finally {
+      candidateBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function stopCandidatePreview() {
+    if (candidatePlayer) {
+      try {
+        candidatePlayer.pause();
+        candidatePlayer.removeAttribute("src");
+        candidatePlayer.load();
+      } catch (_) {
+        /* A failed stop must not block the panel. */
+      }
+    }
+    candidatePlayer = null;
+    candidatePreview = -1;
+  }
+
+  async function previewCandidate(index) {
+    const jobId = currentJobId();
+    if (!jobId) return;
+    if (candidatePreview === index) {
+      stopCandidatePreview();
+      render();
+      return;
+    }
+    stopCandidatePreview();
+    try {
+      syncMediaCookie();
+      candidatePlayer = new Audio(
+        `/api/jobs/${encodeURIComponent(jobId)}/music/candidates/${index}?v=${Date.now()}`,
+      );
+      candidatePlayer.addEventListener("ended", () => {
+        candidatePreview = -1;
+        candidatePlayer = null;
+        if (!disposed) render();
+      }, { once: true });
+      await candidatePlayer.play();
+      candidatePreview = index;
+      setNotice(`Playing candidate ${index === 0 ? "A" : "B"}. Ducking is applied when the story renders.`, "ok");
+    } catch (error) {
+      stopCandidatePreview();
+      setNotice(error?.message || "Could not play that candidate.", "bad");
+    }
+    if (!disposed) render();
+  }
+
+  async function lockCandidate(index) {
+    const jobId = currentJobId();
+    const candidate = candidates[index];
+    if (!jobId || !candidate || candidateBusy) return;
+    candidateBusy = true;
+    candidateError = "";
+    setNotice(`Locking candidate ${index === 0 ? "A" : "B"} into this story…`);
+    render();
+    try {
+      const result = await request(
+        `/api/jobs/${encodeURIComponent(jobId)}/music/lock`,
+        {
+          method: "POST",
+          body: {
+            path: String(candidate.path || ""),
+            source_type: "generated",
+            brief: musicBrief,
+            provider: {
+              provider: candidate.provider || candidate.descriptor || "",
+              model: candidate.model || "",
+              prompt: musicBrief?.prompt || "",
+            },
+            licence: candidate.licence || candidate.license || null,
+          },
+        },
+      );
+      if (disposed) return;
+      const locked = result?.locked;
+      if (!locked?.file) throw new Error("The lock response came back without a file.");
+      applyLocked(locked);
+      await loadLockedTracks();
+      setNotice(`Candidate ${index === 0 ? "A" : "B"} locked. It is content-hashed into the edit.`, "ok");
+      await save();
+    } catch (error) {
+      if (disposed) return;
+      candidateError = error?.message || "Could not lock that candidate.";
+      setNotice(candidateError, "bad");
+    } finally {
+      candidateBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function applyLocked(entry) {
+    const file = String(entry?.file || entry?.path || "");
+    if (!file) throw new Error("That locked bed has no file.");
+    const music = {
+      ...clone(entry),
+      track: file,
+      source: String(entry?.source || "generated"),
+      license: entry?.licence ?? entry?.license ?? null,
+    };
+    plan.music = music;
+    selectedTrack = file;
+    if (plan.mode === "original") plan.mode = "original_bed";
+    if (!library.some((track) => String(track.id) === file)) {
+      library = [{
+        id: file,
+        name: entry?.file ? baseName(entry.file) : "Locked music",
+        moods: [],
+        source: music.source,
+        license: music.license,
+        duration: entry?.duration,
+      }, ...library];
+    }
+    dirty = true;
+    revision += 1;
+    setNotice("Music bed selected. It will be used by the next render.", "ok");
+    render();
+  }
+
+  async function loadLockedTracks() {
+    const jobId = currentJobId();
+    if (!jobId) return;
+    lockedLoading = true;
+    lockedError = "";
+    try {
+      const result = await request(`/api/jobs/${encodeURIComponent(jobId)}/music/locked`);
+      lockedTracks = Array.isArray(result?.locked) ? result.locked : [];
+    } catch (error) {
+      lockedTracks = [];
+      lockedError = error?.message || "Could not read locked music.";
+    } finally {
+      lockedLoading = false;
+    }
+    if (!disposed) render();
+  }
+
+  async function chooseLocked(entry) {
+    try {
+      applyLocked(entry);
+      await save();
+    } catch (error) {
+      setNotice(error?.message || "Could not use that locked bed.", "bad");
+      render();
+    }
   }
 
   async function previewVoice() {
@@ -531,10 +811,189 @@ export function mountAudioPanel(host, ctx) {
     return card;
   }
 
-  function musicCard() {
+  function briefCard() {
     const card = el("div", { class: "st-card st-check-card" });
-    card.append(el("h3", { text: "Music bed" }));
-    card.append(el("p", { class: "st-hint", text: "Library candidates from this Mac. Uploads stay in this job. No cloud generation runs here." }));
+    const head = el("div", { class: "st-layer-stage-head" }, [
+      el("h3", { text: "Music brief" }),
+      el("span", { class: "st-mono st-hint", text: musicBrief?.seconds ? `${Math.round(numberOr(musicBrief.seconds, 0))} s` : "" }),
+    ]);
+    const read = el("button", {
+      class: "st-btn st-btn-quiet st-btn-small",
+      type: "button",
+      text: briefLoading ? "Reading…" : musicBrief ? "Read again" : "Read the story",
+      disabled: briefLoading,
+    });
+    read.addEventListener("click", () => { void ensureBrief(); });
+    head.append(read);
+    card.append(head);
+    card.append(el("p", { class: "st-hint", text: "Four plain fields. The cloud prompt is built from them; you never edit a raw prompt." }));
+    if (briefError) card.append(el("p", { class: "st-error", text: briefError }));
+    if (!musicBrief) {
+      if (!briefError) card.append(el("p", { class: "st-hint", text: "Read the story to get a mood, energy, genre and tempo suggestion." }));
+      return card;
+    }
+
+    const mood = el("input", {
+      type: "text", maxlength: "80", value: musicBrief.mood || "",
+      "aria-label": "Music mood",
+    });
+    mood.addEventListener("change", () => editBriefField("mood", mood.value));
+    const genre = el("input", {
+      type: "text", maxlength: "80", value: musicBrief.genre || "",
+      "aria-label": "Music genre",
+    });
+    genre.addEventListener("change", () => editBriefField("genre", genre.value));
+    const energy = el("select", { "aria-label": "Music energy" });
+    for (const [value, label] of [
+      ["hook_payoff", "Hook then payoff"],
+      ["rise", "Slow rise"],
+      ["steady", "Steady"],
+      ["calm", "Calm"],
+    ]) {
+      energy.append(el("option", {
+        value, label, selected: String(musicBrief.energy?.shape || "hook_payoff") === value,
+      }));
+    }
+    energy.addEventListener("change", () => editBriefField("energy", energy.value));
+    const tempoMin = el("input", {
+      type: "number", min: "40", max: "200", step: "1",
+      value: String(numberOr(musicBrief.tempo?.min, 90)),
+      "aria-label": "Tempo low",
+    });
+    const tempoMax = el("input", {
+      type: "number", min: "40", max: "200", step: "1",
+      value: String(numberOr(musicBrief.tempo?.max, 112)),
+      "aria-label": "Tempo high",
+    });
+    const commitTempo = () => editBriefField("tempo", { min: tempoMin.value, max: tempoMax.value });
+    tempoMin.addEventListener("change", commitTempo);
+    tempoMax.addEventListener("change", commitTempo);
+    const tempo = el("div", { class: "st-range-row" }, [
+      el("span", { class: "st-field-label", text: "Tempo" }),
+      tempoMin,
+      el("span", { class: "st-hint", text: "to" }),
+      tempoMax,
+      el("span", { class: "st-hint", text: "BPM" }),
+    ]);
+    card.append(el("div", { class: "st-control-grid" }, [
+      field("Mood", mood),
+      field("Genre", genre),
+      field("Energy", energy),
+      field("Tempo", tempo),
+    ]));
+    card.append(el("p", { class: "st-field-hint", text: musicBrief.prompt || briefPrompt(musicBrief) }));
+    return card;
+  }
+
+  function candidateRows() {
+    const wrap = el("div", { class: "st-layer-list", style: "margin-top:9px" });
+    if (candidateError) wrap.append(el("p", { class: "st-error", text: candidateError }));
+    if (!candidates.length && !candidateBusy) {
+      wrap.append(el("p", { class: "st-hint", text: "Two candidates appear here. Preview both against the story, then use one." }));
+      return wrap;
+    }
+    candidates.forEach((candidate, index) => {
+      const letter = index === 0 ? "A" : "B";
+      const failed = Boolean(candidate.error);
+      const selected = String(candidate.file || baseName(candidate.path)) === baseName(selectedTrack);
+      const row = el("div", { class: `st-layer-row st-layer-row-static${selected ? " is-active" : ""}` }, [
+        el("span", { class: "st-layer-badge", text: letter }),
+        el("span", { class: "st-layer-name" }, [
+          el("strong", { text: failed ? "Candidate failed" : `Candidate ${letter}`, style: "display:block;color:var(--st-text);font-weight:500" }),
+          el("small", {
+            text: failed
+              ? String(candidate.error).slice(0, 220)
+              : [candidate.provider, candidate.model, candidate.seed !== undefined ? `seed ${candidate.seed}` : ""].filter(Boolean).join(" · ") || "Generated bed",
+          }),
+        ]),
+      ]);
+      const actions = el("div", { class: "st-layer-add", style: "margin:0;flex:0 0 auto" });
+      if (!failed) {
+        const preview = el("button", {
+          class: "st-btn st-btn-ghost st-btn-small",
+          type: "button",
+          text: candidatePreview === index ? "Stop" : `Preview ${letter}`,
+        });
+        preview.addEventListener("click", () => { void previewCandidate(index); });
+        const use = el("button", {
+          class: "st-btn st-btn-primary st-btn-small",
+          type: "button",
+          text: selected ? "Used" : `Use ${letter}`,
+          disabled: selected || candidateBusy,
+        });
+        use.addEventListener("click", () => { void lockCandidate(index); });
+        actions.append(preview, use);
+      }
+      row.append(actions);
+      wrap.append(row);
+    });
+    if (candidateBusy) wrap.append(el("p", { class: "st-hint", text: "Working on the cloud request…" }));
+    return wrap;
+  }
+
+  function cloudCard() {
+    const card = el("div", { class: "st-card st-check-card" });
+    const ready = generationAvailable();
+    card.append(el("div", { class: "st-layer-stage-head" }, [
+      el("h3", { text: "Generate a bed" }),
+      el("span", { class: `st-chip ${ready ? "st-chip-ok" : "st-chip-busy"}`, text: ready ? "Cloud ready" : "Needs key" }),
+    ]));
+    if (!ready) {
+      card.append(el("p", { class: "st-warning", text: "Cloud generation needs a MiniMax or OpenRouter key." }));
+      card.append(el("p", { class: "st-hint", text: "Library tracks and uploads still work offline. Add a key in Setup to generate two new beds here." }));
+      return card;
+    }
+    card.append(el("p", { class: "st-hint", text: "Two instrumental beds from the brief above. Each is cached by provider, model, brief and seed." }));
+    const generate = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: candidateBusy ? "Generating…" : "Generate two candidates",
+      disabled: candidateBusy || briefLoading || !musicBrief,
+    });
+    generate.addEventListener("click", () => { void generateCandidates(); });
+    card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [generate]));
+    card.append(candidateRows());
+    return card;
+  }
+
+  function lockedCard() {
+    const card = el("div", { class: "st-card st-check-card" });
+    card.append(el("div", { class: "st-layer-stage-head" }, [
+      el("h3", { text: "Locked beds" }),
+      lockedLoading ? el("span", { class: "st-hint", text: "Reading…" }) : null,
+    ]));
+    if (lockedError) card.append(el("p", { class: "st-error", text: lockedError }));
+    if (!lockedTracks.length && !lockedLoading) {
+      card.append(el("p", { class: "st-hint", text: "Generated and library beds you lock are copied into this job and kept in this list." }));
+      return card;
+    }
+    const list = el("div", { class: "st-layer-list", style: "margin-top:9px" });
+    for (const entry of lockedTracks.slice(0, 20)) {
+      const path = lockPath(entry);
+      const active = path && path === selectedTrack;
+      const row = el("button", {
+        class: `st-layer-row${active ? " is-active" : ""}`,
+        type: "button",
+        "aria-pressed": active ? "true" : "false",
+        title: path,
+      }, [
+        el("span", { class: "st-layer-badge", text: entry.source === "generated" ? "AI" : "Locked" }),
+        el("span", { class: "st-layer-name" }, [
+          el("strong", { text: baseName(path) || "Locked bed", style: "color:var(--st-text);font-weight:500" }),
+          el("small", { text: entry.brief?.mood ? `${entry.brief.mood} · ${entry.brief.genre || ""}` : licenseLabel(entry.licence || entry.license) }),
+        ]),
+      ]);
+      row.addEventListener("click", () => { void chooseLocked(entry); });
+      list.append(row);
+    }
+    card.append(list);
+    return card;
+  }
+
+  function libraryCard() {
+    const card = el("div", { class: "st-card st-check-card" });
+    card.append(el("h3", { text: "Library and upload" }));
+    card.append(el("p", { class: "st-hint", text: "Your own tracks always work, with the network off." }));
     if (libraryLoading) {
       card.append(el("p", { class: "st-hint", text: "Reading the music library…" }));
     } else if (libraryError) {
@@ -600,6 +1059,17 @@ export function mountAudioPanel(host, ctx) {
     return card;
   }
 
+  function musicCard() {
+    const card = el("div", { class: "st-card st-check-card" });
+    card.append(el("h3", { text: "Music bed" }));
+    card.append(el("p", { class: "st-hint", text: "Pick a library track, upload your own, or generate two candidates from a four-field brief. Locking copies the bed into this job." }));
+    card.append(briefCard());
+    card.append(cloudCard());
+    card.append(lockedCard());
+    card.append(libraryCard());
+    return card;
+  }
+
   function voiceCard() {
     const card = el("div", { class: "st-card st-check-card" });
     card.append(el("h3", { text: "Voice" }));
@@ -658,6 +1128,9 @@ export function mountAudioPanel(host, ctx) {
         field("Rate", rate, "1.0 is the recorded pace."),
       ]));
       if (voiceError) card.append(el("p", { class: "st-error", text: voiceError }));
+      if (selectedEngine === "heygen") {
+        card.append(el("p", { class: "st-field-hint", text: "HeyGen Voice Turbo is free until 30 Nov 2026 on OpenRouter. It is a first-class voice, not a fallback." }));
+      }
 
       const preview = el("button", {
         class: "st-btn st-btn-ghost st-btn-small",
@@ -757,6 +1230,7 @@ export function mountAudioPanel(host, ctx) {
 
   return () => {
     if (saveTimer) window.clearTimeout(saveTimer);
+    stopCandidatePreview();
     if (dirty && !saving) {
       const jobId = currentJobId();
       const current = ctx.getEdit();
