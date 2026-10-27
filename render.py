@@ -1715,6 +1715,7 @@ def render_reel(
             os.replace(master_tmp, master)
         else:
             progress(0.40, "Video master cached")
+            layer_count = len(layers)
 
         audio_path = tmp / "audio.wav"
         audio_info: dict = {"mode": "keep"}

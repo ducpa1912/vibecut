@@ -553,6 +553,22 @@ def test_frame_route_returns_jpeg_from_render(env, monkeypatch):
     assert calls["compiled"]["canvas"] == {"w": 1080, "h": 1920}
 
 
+def test_frame_route_uses_aspect_canvas_for_draft(env, monkeypatch):
+    edit = _save_current(env, _edit(aspect="4:5"))
+    calls = {}
+
+    def fake_frame(source, meta, job_dir, compiled, at, **kwargs):
+        calls["canvas"] = compiled["canvas"]
+        return b"\xff\xd8jpeg\xff\xd9"
+
+    monkeypatch.setattr(render, "render_story_frame", fake_frame)
+    response = env["client"].get(
+        f"/api/jobs/job1/edits/{edit['id']}/frame?t=1.0",
+    )
+    assert response.status_code == 200
+    assert calls["canvas"] == {"w": 540, "h": 676}
+
+
 def test_proxy_route_returns_mp4_and_reuses_build(env, monkeypatch):
     edit = _save_current(env, _edit())
     calls = []
