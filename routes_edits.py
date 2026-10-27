@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import captions
 import compose_render
+import detect
 import edits
 import history_store
 import render
@@ -153,6 +154,33 @@ def _caption_track(job_id: str, edit: dict, *, missing: int = 404):
 
 def _validate_edit(job_id: str, edit: dict) -> None:
     _caption_track(job_id, edit)
+
+
+def _clean_rights_attested(job: dict) -> bool:
+    rights = job.get("rights")
+    if not isinstance(rights, dict):
+        # Jobs created before the rights field existed keep working. A job
+        # that has a rights record (all new imports/checks) is always gated.
+        return True
+    return detect.normalize_attestation(rights.get("attested"))
+
+
+def _require_clean_rights(job: dict, edit: dict) -> None:
+    """Enforce the server-side rights gate on every save of Clean layers.
+
+    The gate reads ``job["rights"]`` only. It never trusts a request body or
+    browser storage. Missing rights on a legacy job is allowed for migration;
+    an explicit unattested record is refused.
+    """
+    if not edit.get("clean"):
+        return
+    if _clean_rights_attested(job):
+        return
+    raise HTTPException(
+        409,
+        "Rights attestation is required before saving a Clean layer. "
+        "Attest at Import or Check.",
+    )
 
 
 def _current(job: dict, edit: dict) -> str:
@@ -320,6 +348,7 @@ def create_edit(job_id: str, body: EditCreateBody) -> dict:
     except edits.EditError as exc:
         raise _http(exc) from exc
     _validate_edit(job_id, edited)
+    _require_clean_rights(job, edited)
     if base is not None and edited["hash"] == base["hash"]:
         return _payload(base, changed=False, job=job)
     _persist(job_id, edited)
@@ -352,6 +381,8 @@ def patch_edit(job_id: str, edit_id: str, body: EditPatchBody) -> dict:
     except edits.EditError as exc:
         raise _http(exc) from exc
     _validate_edit(job_id, edited)
+    if "clean" in values:
+        _require_clean_rights(job, edited)
     if edited["hash"] == edit["hash"]:
         return _payload(edit, changed=False, job=job)
     _persist(job_id, edited)
@@ -408,6 +439,7 @@ def undo_edit(job_id: str, edit_id: str) -> dict:
     except edits.EditError as exc:
         raise _http(exc) from exc
     _validate_edit(job_id, restored)
+    _require_clean_rights(job, restored)
     _persist(job_id, restored)
     return _payload(restored, changed=True, job=_app().load_job(job_id))
 
@@ -435,6 +467,7 @@ def restore_edit(job_id: str, edit_id: str, body: EditRestoreBody) -> dict:
     except edits.EditError as exc:
         raise _http(exc) from exc
     _validate_edit(job_id, restored)
+    _require_clean_rights(job, restored)
     _persist(job_id, restored)
     return _payload(restored, changed=True, job=_app().load_job(job_id))
 
