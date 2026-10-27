@@ -32,7 +32,6 @@ ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 MUSIC_DIRS = {
     "library": ASSETS / "music" / "library",
-    "cc0": ASSETS / "music" / "cc0",
     "generated": ASSETS / "music" / "generated",
 }
 VOICE_DIRS = {
@@ -136,28 +135,6 @@ def _pipeline_event(
         pass
 
 
-def _ollama_workflow_text(prompt: str, model: str, timeout: float = 180) -> str | None:
-    url = os.environ.get("VIBECUT_LLM_URL")
-    if not url:
-        return None
-    payload = json.dumps({
-        "model": model or os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b"),
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.4},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
-    return str(data.get("response") or data.get("message", {}).get("content") or "") or None
-
-
 def _workflow_route_model(workflow: str, provider: str, default: str = "") -> str:
     for route in _workflow_routes(workflow):
         if str(route.get("provider") or "") == provider:
@@ -200,12 +177,6 @@ def _workflow_text(
                     model=model, reasoning=reasoning, timeout=timeout,
                 )
                 error = OPENROUTER_LAST_ERROR
-            elif provider == "local-mlx":
-                value = _mlx_text(prompt, model=model)
-                error = "MLX returned no text." if not value else ""
-            elif provider == "ollama":
-                value = _ollama_workflow_text(prompt, model, timeout)
-                error = "Ollama returned no text." if not value else ""
             else:
                 value = None
                 error = f"{provider} does not support text generation."
@@ -346,17 +317,6 @@ def elevenlabs_key() -> str:
     return settings_store.get_secret("elevenlabs")
 
 
-def openai_key() -> str:
-    return settings_store.get_secret("openai")
-
-
-def groq_key() -> str:
-    return settings_store.get_secret("groq")
-
-
-def deepgram_key() -> str:
-    return settings_store.get_secret("deepgram")
-
 
 def cartesia_key() -> str:
     return settings_store.get_secret("cartesia")
@@ -372,22 +332,9 @@ def demucs_available() -> bool:
     return _module("demucs")
 
 
-def mlx_lm_available() -> bool:
-    return _module("mlx_lm")
-
-
 def rewrite_models() -> list[dict]:
-    """Small local models that fit an M1 and a short rewrite prompt."""
-    current = os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b")
+    """Text models that fit a short rewrite prompt, cloud and on-device."""
     return [
-        {"id": "mlx", "name": "MLX local (no server)",
-         "model": os.environ.get("VIBECUT_MLX_REWRITE_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit"),
-         "available": mlx_lm_available(), "size_mb": 1800,
-         "install": "pip install mlx-lm (first run downloads ~1.8 GB)"},
-        {"id": "ollama", "name": "Ollama",
-         "model": current,
-         "available": bool(os.environ.get("VIBECUT_LLM_URL")), "size_mb": 2000,
-         "install": "install Ollama, then: ollama pull qwen2.5:3b"},
         {"id": "apple", "name": "Apple Foundation Models",
          "model": "on-device 3B",
          "available": sys.platform == "darwin", "size_mb": 0,
@@ -401,33 +348,6 @@ def rewrite_models() -> list[dict]:
          "available": openrouter_available(), "size_mb": 0,
          "install": "Add an OpenRouter key in Setup."},
     ]
-
-
-def _hf_token_present() -> bool:
-    if any(os.environ.get(name) for name in (
-        "HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN",
-    )):
-        return True
-    return (Path.home() / ".cache" / "huggingface" / "token").is_file()
-
-
-def stable_audio_available() -> bool:
-    # stable-audio-tools imports pkg_resources via k_diffusion; setuptools >= 80
-    # removed it, so a bare module check gives a false positive. The weights are
-    # also gated, so a Hugging Face token must be present.
-    return (
-        _module("stable_audio_tools")
-        and _module("pkg_resources")
-        and _hf_token_present()
-    )
-
-
-def musicgen_available() -> bool:
-    return (
-        _module("transformers")
-        and _module("torch")
-        and _module("soundfile")
-    )
 
 
 def translate_providers() -> list[dict]:
@@ -454,27 +374,6 @@ def translate_providers() -> list[dict]:
         ),
         "install": "Built-in on macOS 26. Install language packs in System Settings → General → Language & Region.",
         "size_mb": 0,
-    })
-    providers.append({
-        "id": "ollama",
-        "name": "Ollama / local LLM",
-        "available": bool(os.environ.get("VIBECUT_LLM_URL")),
-        "install": "Set VIBECUT_LLM_URL to an Ollama /api/generate endpoint.",
-        "size_mb": 3000,
-    })
-    providers.append({
-        "id": "marian",
-        "name": "Marian / opus-mt (on device, ~300 MB per pair)",
-        "available": _module("transformers") and _module("torch"),
-        "install": "pip install transformers torch. Downloads the opus-mt pair on first use.",
-        "size_mb": 300,
-    })
-    providers.append({
-        "id": "argos",
-        "name": "Argos Translate (offline)",
-        "available": _module("argostranslate"),
-        "install": "pip install argostranslate && install the language pair.",
-        "size_mb": 250,
     })
     return [item for item in providers if item["id"] in {"opencode", "openrouter", "apple_fm"}]
 
@@ -509,14 +408,6 @@ def engine_status() -> dict:
     music = {
         "library": {"available": True, "size_mb": 0,
                     "install": "Drop your own tracks in assets/music/library."},
-        "cc0": {"available": True, "size_mb": 0,
-                "install": "Drop CC0 tracks in assets/music/cc0. Check each track license."},
-        "stable-small": {"available": stable_audio_available(), "size_mb": 2048,
-                         "install": "Accept the gated model license and run hf auth login. pip install 'setuptools<80' stable-audio-tools."},
-        "stable-1.0": {"available": stable_audio_available(), "size_mb": 6192,
-                       "install": "Accept the gated model license and run hf auth login. pip install 'setuptools<80' stable-audio-tools. CC-BY-NC weights."},
-        "musicgen-small": {"available": musicgen_available(), "size_mb": 2200,
-                           "install": "pip install transformers torch soundfile. Ungated MusicGen Small; slow on M1, but no HF license gate."},
         "minimax-music": {"available": bool(minimax_key()), "size_mb": 0,
                           "install": "Set MINIMAX_API_KEY. MiniMax Music, instrumental."},
         "lyria-clip": {"available": openrouter_available(), "size_mb": 0,
@@ -526,7 +417,6 @@ def engine_status() -> dict:
         "voices": voices,
         "music": music,
         "rewrite_models": rewrite_models(),
-        "mlx_lm": mlx_lm_available(),
         "translation": translate_providers(),
         "separation": {
             "demucs": {"available": demucs_available(), "size_mb": 700,
@@ -536,237 +426,11 @@ def engine_status() -> dict:
         "kokoro_model": str(kokoro_model) if kokoro_model else None,
         "assets": {
             "library": len(list(MUSIC_DIRS["library"].glob("*"))) if MUSIC_DIRS["library"].is_dir() else 0,
-            "cc0": len(list(MUSIC_DIRS["cc0"].glob("*"))) if MUSIC_DIRS["cc0"].is_dir() else 0,
         },
     }
 
 
-# ---------------------------------------------------------------- voices
-
-
-_SAY_VOICE_RE = re.compile(r"^(?P<name>.+?)\s{2,}(?P<lang>[a-zA-Z_-]+)\s*(?:#.*)?$")
-
-
-def list_voices(engine: str) -> list[dict]:
-    if engine == "say":
-        if not say_available():
-            return []
-        result = _run(["say", "-v", "?"], timeout=30)
-        voices: list[dict] = []
-        for line in (result.stdout or "").splitlines():
-            match = _SAY_VOICE_RE.match(line.strip())
-            if not match:
-                continue
-            name = match.group("name").strip()
-            lang = match.group("lang").strip()
-            voices.append({"id": name, "name": name, "lang": lang})
-        voices.sort(key=lambda item: (item["lang"], item["name"]))
-        return voices
-
-    if engine == "piper":
-        voices = []
-        for directory in (VOICE_DIRS["piper"], Path.home() / ".local/share/piper"):
-            if not directory.is_dir():
-                continue
-            for model in sorted(directory.glob("**/*.onnx")):
-                voices.append({
-                    "id": str(model),
-                    "name": model.stem,
-                    "lang": model.stem.split("-")[0] if "-" in model.stem else "",
-                })
-        return voices
-
-    if engine == "kokoro":
-        directory = VOICE_DIRS["kokoro"]
-        names: list[str] = []
-        meta = directory / "voices.json"
-        if meta.is_file():
-            try:
-                data = json.loads(meta.read_text())
-                names = sorted(data.keys()) if isinstance(data, dict) else []
-            except (OSError, json.JSONDecodeError):
-                names = []
-        if not names:
-            names = [*KOKORO_EN_VOICES, *KOKORO_ZH_NAMED, *KOKORO_ZH_NUMERIC]
-        return [
-            {"id": name, "name": name,
-             "lang": "zh" if name.startswith(("zf_", "zm_")) else "en"}
-            for name in names
-        ]
-
-    if engine == "minimax":
-        if not minimax_key():
-            return []
-        names = [
-            "female-shaonv", "female-yujie", "female-chengshu", "female-tianmei",
-            "male-qn-qingse", "male-qn-jingying", "presenter_female", "presenter_male",
-        ]
-        return [{"id": name, "name": name, "lang": "multi"} for name in names]
-
-    if engine == "fish":
-        if not openrouter_available():
-            return []
-        return [{"id": "default", "name": "Fish default", "lang": "multi"}]
-
-    if engine == "gemini":
-        if not openrouter_available():
-            return []
-        names = ["Kore", "Zephyr", "Puck", "Charon", "Leda", "Aoede", "Fenrir"]
-        return [{"id": name, "name": name, "lang": "multi"} for name in names]
-
-    if engine == "openai":
-        if not openai_key():
-            return []
-        names = ["alloy", "ash", "ballad", "coral", "echo", "fable",
-                 "nova", "onyx", "sage", "shimmer", "verse"]
-        return [{"id": name, "name": name, "lang": "multi"} for name in names]
-
-    if engine == "groq":
-        if not groq_key():
-            return []
-        names = ["autumn", "diana", "hannah", "austin", "daniel", "troy"]
-        return [{"id": name, "name": name, "lang": "en"} for name in names]
-
-    if engine == "deepgram":
-        if not deepgram_key():
-            return []
-        names = [
-            "aura-2-thalia-en", "aura-2-andromeda-en", "aura-2-helena-en",
-            "aura-2-apollo-en", "aura-2-arcas-en", "aura-2-aries-en",
-            "aura-2-amalthea-en", "aura-2-atlas-en", "aura-2-aurora-en",
-            "aura-2-callista-en", "aura-2-cora-en", "aura-2-cordelia-en",
-            "aura-2-delia-en", "aura-2-draco-en", "aura-2-electra-en",
-            "aura-2-harmonia-en", "aura-2-hera-en", "aura-2-hyperion-en",
-            "aura-2-iris-en", "aura-2-janus-en",
-            "aura-2-juno-en", "aura-2-jupiter-en", "aura-2-luna-en",
-            "aura-2-mars-en", "aura-2-minerva-en", "aura-2-neptune-en",
-            "aura-2-odysseus-en", "aura-2-ophelia-en", "aura-2-orion-en",
-            "aura-2-perseus-en", "aura-2-phoebe-en", "aura-2-pluto-en",
-            "aura-2-saturn-en", "aura-2-selene-en", "aura-2-theia-en",
-            "aura-2-vesta-en", "aura-2-zeus-en",
-        ]
-        return [{"id": name, "name": name, "lang": "en"} for name in names]
-
-    if engine == "cartesia":
-        key = cartesia_key()
-        if not key:
-            return []
-        request = urllib.request.Request(
-            "https://api.cartesia.ai/voices?limit=100",
-            headers={
-                "X-API-Key": key,
-                "Cartesia-Version": "2026-08-14",
-            },
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise AudioError(f"Cartesia voices failed: {exc}") from exc
-        items = data.get("data") if isinstance(data, dict) else data
-        voices = []
-        for item in items or []:
-            if not isinstance(item, dict):
-                continue
-            voice_id = item.get("id")
-            if not voice_id:
-                continue
-            voices.append({
-                "id": voice_id,
-                "name": item.get("name") or voice_id,
-                "lang": str(item.get("language") or "multi"),
-            })
-        return voices
-
-    if engine == "elevenlabs":
-        key = elevenlabs_key()
-        if not key:
-            return []
-        request = urllib.request.Request(
-            "https://api.elevenlabs.io/v1/voices",
-            headers={"xi-api-key": key},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise AudioError(f"ElevenLabs voices failed: {exc}") from exc
-        voices = []
-        for item in data.get("voices", []):
-            voices.append({
-                "id": item.get("voice_id"),
-                "name": item.get("name") or item.get("voice_id"),
-                "lang": ",".join((item.get("labels") or {}).get("language", "").split()) or "multi",
-            })
-        return voices
-
-    return []
-
-
-def _tts_route_candidates() -> list[dict[str, str]]:
-    """Ordered TTS candidates from the admin workflow, model included."""
-    cfg = _workflow("tts")
-    candidates: list[dict[str, str]] = []
-    for route in cfg.get("routes") or []:
-        provider = str(route.get("provider") or "").lower()
-        model = str(route.get("model") or "").strip()
-        if provider == "minimax":
-            candidates.append({
-                "engine": "minimax", "provider": provider, "model": model,
-            })
-        elif provider == "openrouter":
-            engine = "fish" if "fish" in model.lower() else "gemini"
-            candidates.append({
-                "engine": engine, "provider": provider, "model": model,
-            })
-        elif provider == "local":
-            engine = model if model in {"kokoro", "piper", "say"} else "kokoro"
-            candidates.append({
-                "engine": engine, "provider": provider, "model": model or engine,
-            })
-        elif provider in {"elevenlabs", "openai", "groq", "deepgram", "cartesia"}:
-            candidates.append({
-                "engine": provider, "provider": provider, "model": model,
-            })
-    return candidates
-
-
-def _tts_candidates(engine_name: str = "auto") -> list[str]:
-    """Compatibility helper: ordered engine names from configured routes."""
-    return [item["engine"] for item in _tts_route_candidates()]
-
-
-def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
-    preferred = str(preferred or "")
-    if candidate == "fish":
-        if candidate == primary and preferred not in {"", "default"}:
-            return preferred
-        return ""
-    if candidate in {"elevenlabs", "cartesia"}:
-        return preferred if candidate == primary and preferred not in {"", "default"} else ""
-    if candidate == primary and preferred not in {"", "default"}:
-        return preferred
-    if candidate == "gemini":
-        return "Kore"
-    if candidate == "kokoro":
-        return "af_heart"
-    if candidate == "say":
-        return "Samantha"
-    if candidate == "piper":
-        voices = list_voices("piper")
-        return voices[0]["id"] if voices else ""
-    if candidate == "minimax":
-        return "female-shaonv"
-    if candidate == "openai":
-        return "alloy"
-    if candidate == "groq":
-        return "troy"
-    if candidate == "deepgram":
-        return "aura-2-thalia-en"
-    return preferred
-
-
-# ---------------------------------------------------------------- speech
+# ---------------------------------------------------------------- shared hashes
 
 
 def _text_hash(*parts: str) -> str:
@@ -826,459 +490,6 @@ def _memo_put(source: str, target: str, text: str, value: str, provider: str = "
         path.write_text(value, encoding="utf-8")
     except OSError:
         pass
-
-
-def _voice_cache(cache_dir: Path, key: str, suffix: str = ".flac") -> Path:
-    return cache_dir / f"{key}{suffix}"
-
-
-def _to_flac(source: Path, output: Path, mono: bool = True) -> Path:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    _run([
-        _ffmpeg(), "-y", "-v", "error", "-i", str(source),
-        "-ar", "32000" if mono else "48000",
-        "-ac", "1" if mono else "2",
-        "-c:a", "flac", str(output),
-    ])
-    return output
-
-
-def _say_voice(text: str, voice: str, rate: float, output: Path) -> None:
-    words_per_minute = int(max(90, min(360, 180 * float(rate or 1.0))))
-    raw = output.with_suffix(".aiff")
-    _run([
-        "say", "-v", voice or "Samantha", "-r", str(words_per_minute),
-        "-o", str(raw), text,
-    ], timeout=300)
-    _convert(raw, output)
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def _piper_voice(
-    text: str, voice: str, output: Path, rate: float = 1.0, cancel_event=None,
-) -> None:
-    model = Path(voice)
-    if not model.is_file():
-        raise AudioError("Pick a Piper voice model (.onnx) first.")
-    binary = shutil.which("piper")
-    base = [binary, "-m", str(model)] if binary else [
-        sys.executable, "-m", "piper", "-m", str(model),
-    ]
-    length_scale = max(0.65, min(1.6, 1.0 / max(0.6, float(rate or 1.0))))
-    with_rate = [*base, "--length-scale", f"{length_scale:.3f}", "-f", str(output)]
-    try:
-        _run(with_rate, input_text=text, timeout=600, cancel_event=cancel_event)
-        return
-    except AudioError:
-        pass
-    _run([*base, "-f", str(output)], input_text=text, timeout=600, cancel_event=cancel_event)
-
-
-def _kokoro_files_for(voice: str) -> tuple[Path | None, Path | None]:
-    """Prefer the model whose language matches the voice, then the smallest precision."""
-    files = sorted(VOICE_DIRS["kokoro"].glob("*.onnx"))
-    if not files:
-        return None, None
-    voice_name = (voice or "").lower()
-    # v1.1-zh uses numeric IDs (zf_001, zm_009). The named Chinese voices
-    # (zf_xiaobei, zm_yunjian) belong to the v1.0 multilingual model.
-    numeric_zh = bool(re.fullmatch(r"z[fm]_\d{3}", voice_name))
-    named_zh = voice_name in KOKORO_ZH_NAMED
-    wants_zh = numeric_zh
-
-    def rank(path: Path):
-        name = path.name.lower()
-        has_zh = "zh" in name
-        if wants_zh:
-            lang_rank = 0 if has_zh else 1
-        elif named_zh:
-            # named Chinese voices are in v1.0, not the numeric v1.1-zh file
-            lang_rank = 0 if not has_zh else 1
-        else:
-            lang_rank = 0 if not has_zh else 1
-        if any(token in name for token in ("int8", "q8", "quant")):
-            precision = 0
-        elif "fp16" in name:
-            precision = 1
-        else:
-            precision = 2
-        return (lang_rank, precision, name)
-
-    model = sorted(files, key=rank)[0]
-    version = "1.1" if "1.1" in model.name else "1.0"
-    voices = sorted(VOICE_DIRS["kokoro"].glob(f"voices*{version}*.bin"))
-    if not voices:
-        voices = sorted(VOICE_DIRS["kokoro"].glob("voices*.bin"))
-    return model, (voices[0] if voices else None)
-
-
-def _kokoro_voice(
-    text: str, voice: str, output: Path, rate: float = 1.0, cancel_event=None,
-) -> None:
-    model, voices = _kokoro_files_for(voice)
-    if not model or not voices:
-        raise AudioError("Kokoro model files are missing from data/models/kokoro.")
-    worker = ROOT / "tools" / "tts_kokoro.py"
-    _run([
-        sys.executable, str(worker),
-        "--model", str(model), "--voices", str(voices),
-        "--voice", voice or "af_heart", "--out", str(output),
-        "--speed", f"{max(0.6, min(1.6, float(rate or 1.0))):.3f}",
-    ], input_text=text, timeout=900, cancel_event=cancel_event)
-
-
-def _elevenlabs_voice(
-    text: str, voice: str, output: Path, rate: float,
-    model: str = "", timeout: float = 180,
-) -> None:
-    key = elevenlabs_key()
-    if not key:
-        raise AudioError("Set VIBECUT_ELEVENLABS_API_KEY to use ElevenLabs.")
-    if not voice:
-        raise AudioError("Pick an ElevenLabs voice first.")
-    payload = json.dumps({
-        "text": text,
-        "model_id": model or "eleven_multilingual_v2",
-        "voice_settings": {"stability": 0.45, "similarity_boost": 0.75},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        f"https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128",
-        data=payload,
-        headers={"xi-api-key": key, "Content-Type": "application/json"},
-        method="POST",
-    )
-    raw = output.with_suffix(".mp3")
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            raw.write_bytes(response.read())
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"ElevenLabs synthesis failed: {exc}") from exc
-    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    _convert(raw, output, extra)
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def _openai_voice(
-    text: str, voice: str, output: Path, rate: float = 1.0,
-    model: str = "", timeout: float = 300,
-) -> None:
-    key = openai_key()
-    if not key:
-        raise AudioError("Set OPENAI_API_KEY to use OpenAI voice.")
-    payload = json.dumps({
-        "model": model or os.environ.get("VIBECUT_OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
-        "voice": voice or "alloy",
-        "input": text,
-        "response_format": "wav",
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        "https://api.openai.com/v1/audio/speech",
-        data=payload,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    raw = output.with_name(f"{output.stem}.openai.tmp.wav")
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            raw.write_bytes(response.read())
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"OpenAI voice failed: {exc}") from exc
-    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    _convert(raw, output, extra)
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def _groq_voice(
-    text: str, voice: str, output: Path, rate: float = 1.0,
-    model: str = "", timeout: float = 300,
-) -> None:
-    key = groq_key()
-    if not key:
-        raise AudioError("Set GROQ_API_KEY to use Groq voice.")
-    payload = json.dumps({
-        "model": model or os.environ.get("VIBECUT_GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english"),
-        "voice": voice or "troy",
-        "input": text,
-        "response_format": "wav",
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        "https://api.groq.com/openai/v1/audio/speech",
-        data=payload,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    raw = output.with_name(f"{output.stem}.groq.tmp.wav")
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            raw.write_bytes(response.read())
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"Groq voice failed: {exc}") from exc
-    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    _convert(raw, output, extra)
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def _deepgram_voice(
-    text: str, voice: str, output: Path, rate: float = 1.0,
-    model: str = "", timeout: float = 300,
-) -> None:
-    key = deepgram_key()
-    if not key:
-        raise AudioError("Set DEEPGRAM_API_KEY to use Deepgram voice.")
-    model = model or voice or "aura-2-thalia-en"
-    payload = json.dumps({"text": text}).encode("utf-8")
-    request = urllib.request.Request(
-        f"https://api.deepgram.com/v1/speak?model={model}",
-        data=payload,
-        headers={"Authorization": f"Token {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    raw = output.with_name(f"{output.stem}.deepgram.tmp.mp3")
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            raw.write_bytes(response.read())
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"Deepgram voice failed: {exc}") from exc
-    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    _convert(raw, output, extra)
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def _cartesia_voice(
-    text: str, voice: str, output: Path, rate: float = 1.0,
-    model: str = "sonic-3.6", timeout: float = 300,
-) -> None:
-    key = cartesia_key()
-    if not key:
-        raise AudioError("Set CARTESIA_API_KEY to use Cartesia voice.")
-    if not voice:
-        raise AudioError("Pick a Cartesia voice first.")
-    payload = json.dumps({
-        "model_id": model or "sonic-3.6",
-        "transcript": text,
-        "voice": voice,
-        "output_format": {
-            "container": "wav",
-            "encoding": "pcm_s16le",
-            "sample_rate": 44100,
-        },
-        "generation_config": {"speed": 1.0, "volume": 1.0},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        "https://api.cartesia.ai/tts/bytes",
-        data=payload,
-        headers={
-            "X-API-Key": key,
-            "Cartesia-Version": "2026-08-14",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    raw = output.with_name(f"{output.stem}.cartesia.tmp.wav")
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            raw.write_bytes(response.read())
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"Cartesia voice failed: {exc}") from exc
-    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    _convert(raw, output, extra)
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def _minimax_voice(
-    text: str, voice: str, output: Path, rate: float = 1.0,
-    model: str = "", timeout: float = 300,
-) -> None:
-    key = minimax_key()
-    if not key:
-        raise AudioError("Set MINIMAX_API_KEY to use MiniMax voice.")
-    model = model or str((settings_store.load_settings().get("minimax") or {}).get("tts_model") or "speech-2.8-turbo")
-    payload = json.dumps({
-        "model": model,
-        "text": text,
-        "stream": False,
-        "voice_setting": {
-            "voice_id": voice or "female-shaonv",
-            "speed": max(0.5, min(2.0, float(rate or 1.0))),
-            "vol": 1.0,
-            "pitch": 0,
-        },
-        "audio_setting": {
-            "sample_rate": 44100,
-            "bitrate": 128000,
-            "format": "wav",
-        },
-        "language_boost": "auto",
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        "https://api.minimax.io/v1/t2a_v2",
-        data=payload,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"MiniMax voice failed: {exc}") from exc
-    status = ((data.get("base_resp") or {}).get("status_code"))
-    if status not in (None, 0):
-        raise AudioError(f"MiniMax voice failed: {data.get('base_resp')}")
-    audio_hex = str((data.get("data") or {}).get("audio") or "")
-    if not audio_hex:
-        raise AudioError("MiniMax voice returned no audio.")
-    raw = output.with_name(f"{output.stem}.minimax.tmp.wav")
-    raw.write_bytes(bytes.fromhex(audio_hex))
-    extra = ["-filter:a", f"atempo={max(0.8, min(1.25, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    _convert(raw, output, extra)
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def _openrouter_voice(
-    text: str, voice: str, output: Path, rate: float = 1.0, engine: str = "fish",
-    model: str = "", timeout: float = 300,
-) -> None:
-    key = openrouter_key()
-    if not key:
-        raise AudioError("Set an OpenRouter key to use this voice.")
-    if openrouter_blocked():
-        raise AudioError(
-            "OpenRouter is quarantined after an auth error; retry in "
-            f"{openrouter_blocked_seconds()}s."
-        )
-    model = model or _workflow_route_model(
-        "tts", "openrouter",
-        "fish-audio/s2.1-pro-free:free" if engine == "fish" else "google/gemini-3.8-flash-lite-tts",
-    )
-    default_voice = "" if engine == "fish" else "Kore"
-    voice_value = default_voice if voice in {"", "default"} else voice
-    body = {
-        "model": model,
-        "input": text,
-        "voice": voice_value,
-        # OpenRouter speech returns MP3 or PCM, not WAV. Convert afterwards.
-        "response_format": "mp3",
-    }
-    request = urllib.request.Request(
-        "https://openrouter.ai/api/v1/audio/speech",
-        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            content = response.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code in {401, 403}:
-            _openrouter_auth_failure(
-                int(exc.code), _openrouter_http_error_text(exc, key),
-            )
-        raise AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
-    raw = output.with_name(f"{output.stem}.{engine}.tmp.mp3")
-    raw.write_bytes(content)
-    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    _convert(raw, output, extra)
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def synthesize_line(
-    engine: str,
-    voice: str,
-    text: str,
-    output: Path,
-    rate: float = 1.0,
-    cancel_event: threading.Event | None = None,
-    *,
-    model: str = "",
-    timeout: float = 300,
-) -> Path:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    flac = output.suffix.lower() == ".flac"
-    target = output.with_suffix(".wav") if flac else output
-    if engine == "say":
-        if not say_available():
-            raise AudioError("Apple say is not available.")
-        _say_voice(text, voice, rate, target)
-    elif engine == "piper":
-        if not piper_available():
-            raise AudioError("Piper is not installed. pip install piper-tts")
-        _piper_voice(text, voice, target, rate, cancel_event)
-    elif engine == "kokoro":
-        if not kokoro_available():
-            raise AudioError("Kokoro is not installed or has no model files.")
-        _kokoro_voice(text, voice, target, rate, cancel_event)
-    elif engine == "elevenlabs":
-        _elevenlabs_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "openai":
-        _openai_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "groq":
-        _groq_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "deepgram":
-        _deepgram_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "cartesia":
-        _cartesia_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "minimax":
-        _minimax_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine in {"fish", "gemini"}:
-        _openrouter_voice(
-            text, voice, target, rate, engine, model=model, timeout=timeout,
-        )
-    else:
-        raise AudioError(f"Unknown voice engine {engine!r}.")
-    if engine in usage_store.TTS_PER_CHAR:
-        usage_store.record("tts", engine, chars=len(text))
-    if not target.is_file() or target.stat().st_size == 0:
-        raise AudioError("Voice synthesis produced no audio.")
-    if flac:
-        _to_flac(target, output, mono=True)
-        try:
-            target.unlink()
-        except OSError:
-            pass
-        if not output.is_file() or output.stat().st_size == 0:
-            raise AudioError("Voice cache conversion produced no audio.")
-        return output
-    return target
-
-
-def voice_sample(
-    engine: str,
-    voice: str,
-    text: str,
-    cache_dir: Path,
-    rate: float = 1.0,
-) -> Path:
-    key = _text_hash(engine, voice, f"{rate:.2f}", text)
-    target = _voice_cache(cache_dir, key, ".wav")
-    if target.is_file() and target.stat().st_size > 512:
-        return target
-    return synthesize_line(engine, voice, text, target, rate=rate)
 
 
 # ---------------------------------------------------------------- translation
@@ -1435,69 +646,15 @@ def _translate_openrouter(
     return [str(value) for value in values]
 
 
-def argos_pair_ready(source: str, target: str) -> bool:
-    try:
-        from argostranslate import translate as argos_translate  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
-        return False
-    source_code = (source or "en").split("-")[0]
-    target_code = (target or "en").split("-")[0]
-    if source_code == target_code:
-        return True
-    try:
-        return argos_translate.get_translation_from_codes(source_code, target_code) is not None
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _translate_argos(lines: list[str], source: str, target: str) -> list[str] | None:
-    try:
-        from argostranslate import translate as argos_translate  # noqa: PLC0415
-        translation = argos_translate.get_translation_from_codes(
-            (source or "en").split("-")[0], (target or "en").split("-")[0],
-        )
-        if translation is None:
-            return None
-        return [str(translation.translate(line)) for line in lines]
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _translate_marian(lines: list[str], source: str, target: str) -> list[str] | None:
-    """Small on-device seq2seq model, ~300 MB per language pair."""
-    if not (_module("transformers") and _module("torch")):
-        return None
-    source_code = (source or "en").split("-")[0]
-    target_code = (target or "en").split("-")[0]
-    model_id = f"Helsinki-NLP/opus-mt-{source_code}-{target_code}"
-    try:
-        import torch  # noqa: PLC0415
-        from transformers import pipeline  # noqa: PLC0415
-
-        device = "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu"
-        translator = pipeline("translation", model=model_id, device=device)
-        results = translator(lines, max_length=400)
-        texts = [str(item.get("translation_text") or "").strip() for item in results]
-        return texts if len(texts) == len(lines) else None
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def _ready_providers(source: str, target: str) -> list[str]:
     ready: list[str] = []
-    if argos_pair_ready(source, target):
-        ready.append("argos")
     if apple_pair_status(source, target) == "installed":
         ready.append("apple_fm")
-    if _module("transformers") and _module("torch"):
-        ready.append("marian")
-    if os.environ.get("VIBECUT_LLM_URL"):
-        ready.append("ollama")
     return ready
 
 
 def _rewrite_candidates() -> list[str]:
-    """Rewrite-specific order: configured cloud model, local models, rules."""
+    """Rewrite-specific order: configured cloud model, then rules."""
     plan = _rewrite_workflow_plan()
     if plan:
         return [item["name"] for item in plan]
@@ -1508,10 +665,6 @@ def _rewrite_candidates() -> list[str]:
     openrouter_settings = settings_store.load_settings().get("openrouter") or {}
     if openrouter_available() and openrouter_settings.get("use_rewrite", True):
         order.append("openrouter")
-    if mlx_lm_available():
-        order.append("mlx")
-    if os.environ.get("VIBECUT_LLM_URL"):
-        order.append("ollama")
     order.append("rules")
     return order
 
@@ -1521,8 +674,6 @@ def _rewrite_workflow_plan() -> list[dict[str, str]]:
     mapping = {
         "opencode-go": "opencode",
         "openrouter": "openrouter",
-        "local-mlx": "mlx",
-        "ollama": "ollama",
         "apple": "apple",
     }
     plan: list[dict[str, str]] = []
@@ -1549,7 +700,7 @@ def translation_mode() -> str:
 def _provider_order(source: str, target: str, provider: str) -> list[str]:
     if provider and provider != "auto":
         return [provider]
-    mapping = {"opencode-go": "opencode", "openrouter": "openrouter", "ollama": "ollama"}
+    mapping = {"opencode-go": "opencode", "openrouter": "openrouter"}
     online: list[str] = []
     for route in _workflow_routes("translate"):
         candidate = mapping.get(str(route.get("provider") or ""))
@@ -1557,8 +708,6 @@ def _provider_order(source: str, target: str, provider: str) -> list[str]:
             if candidate == "opencode" and not opencode_available():
                 continue
             if candidate == "openrouter" and not openrouter_available():
-                continue
-            if candidate == "ollama" and not os.environ.get("VIBECUT_LLM_URL"):
                 continue
             online.append(candidate)
     if not online:
@@ -1568,11 +717,8 @@ def _provider_order(source: str, target: str, provider: str) -> list[str]:
         openrouter_settings = settings_store.load_settings().get("openrouter") or {}
         if openrouter_settings.get("use_translate", True) and openrouter_available():
             online.append("openrouter")
-    # Local mode uses Apple first, then Argos only when the pair is already
-    # installed. Marian/Ollama stay advanced/explicit: they may download models.
+    # Local mode uses Apple Translation.
     local: list[str] = ["apple_fm"]
-    if argos_pair_ready(source, target):
-        local.append("argos")
     mode = translation_mode()
     if mode == "local_only":
         return local
@@ -1621,7 +767,7 @@ def translate_lines(
         translate_max_tokens = int(translate_cfg.get("max_output_tokens") or 2500)
         translate_timeout = float(translate_cfg.get("timeout_s") or 300)
         route_map = {
-            {"opencode-go": "opencode", "openrouter": "openrouter", "ollama": "ollama"}.get(
+            {"opencode-go": "opencode", "openrouter": "openrouter"}.get(
                 str(route.get("provider") or ""), ""
             ): route
             for route in translate_cfg.get("routes") or []
@@ -1645,12 +791,6 @@ def translate_lines(
                 )
             elif candidate == "apple_fm":
                 result = _translate_apple(missing, source_code, target_code, target_name)
-            elif candidate == "ollama":
-                result = _translate_ollama(missing, source_code, target_name)
-            elif candidate == "marian":
-                result = _translate_marian(missing, source_code, target_code)
-            elif candidate == "argos":
-                result = _translate_argos(missing, source_code, target_code)
             else:
                 result = None
             _pipeline_event(
@@ -1743,306 +883,7 @@ def separate_vocals(
     return cached
 
 
-# ---------------------------------------------------------------- music
-
-
-def list_music(source: str) -> list[dict]:
-    directory = MUSIC_DIRS.get(source)
-    tracks: list[dict] = []
-    if not directory or not directory.is_dir():
-        return tracks
-    for path in sorted(directory.rglob("*")):
-        if path.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"}:
-            continue
-        name = path.stem.lower()
-        moods = [word for word in MOOD_WORDS if word in name]
-        tracks.append({
-            "id": str(path),
-            "name": path.stem,
-            "moods": moods,
-            "size": path.stat().st_size,
-            "license": asset_license(path),
-        })
-    return tracks
-
-
-def scene_moods(scenes: list[dict], clips: list[dict]) -> list[str]:
-    """Derive simple moods from the beats that actually made the cut."""
-    by_id = {scene["id"]: scene for scene in scenes}
-    motion = 0
-    calm = 0
-    warm = 0
-    for clip in clips:
-        scene = by_id.get(clip.get("scene"))
-        if not scene:
-            continue
-        tags = scene.get("tags") or []
-        if "motion" in tags:
-            motion += 1
-        if scene.get("dur", 0) >= 3.0:
-            calm += 1
-        if scene.get("face") or "subject" in tags:
-            warm += 1
-    total = max(1, len(clips))
-    moods: list[str] = []
-    if motion / total >= 0.35:
-        moods += ["upbeat", "energetic", "groove"]
-    if calm / total >= 0.25:
-        moods += ["calm", "ambient", "soft"]
-    if warm / total >= 0.35:
-        moods += ["warm", "cinematic", "piano"]
-    if not moods:
-        moods = ["ambient", "calm", "lofi"]
-    return moods
-
-
-def pick_music(tracks: list[dict], moods: list[str]) -> dict | None:
-    if not tracks:
-        return None
-    for mood in moods:
-        for track in tracks:
-            if mood in (track.get("moods") or []):
-                return track
-    return tracks[0]
-
-
-def resolve_music_track(scenes: list[dict], clips: list[dict], music_plan: dict) -> Path | None:
-    """Pick one library/CC0/generated track without generating anything."""
-    source = str(music_plan.get("source") or "none")
-    if source not in MUSIC_DIRS:
-        return None
-    track_id = str(music_plan.get("track") or "")
-    if track_id and Path(track_id).is_file():
-        return Path(track_id)
-    tracks = list_music(source)
-    moods = music_plan.get("moods") or scene_moods(scenes, clips)
-    picked = pick_music(tracks, moods)
-    return Path(picked["id"]) if picked else None
-
-
-def music_prompt(moods: list[str], target: float) -> str:
-    primary = moods[0] if moods else "ambient"
-    return (
-        f"{primary} background music bed for a short vertical video, "
-        f"soft, no vocals, clean loop, {int(max(8, min(47, target)))} seconds"
-    )
-
-
-def _minimax_music(
-    prompt: str, seconds: float, output: Path,
-    model: str = "", timeout: float = 600,
-) -> None:
-    key = minimax_key()
-    if not key:
-        raise AudioError("Set MINIMAX_API_KEY to use MiniMax music.")
-    model = model or str((settings_store.load_settings().get("minimax") or {}).get("music_model") or "music-3.0")
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "is_instrumental": True,
-        "output_format": "hex",
-        "audio_setting": {
-            "sample_rate": 44100,
-            "bitrate": 256000,
-            "format": "wav",
-        },
-    }, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(
-        "https://api.minimax.io/v1/music_generation",
-        data=payload,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"MiniMax music failed: {exc}") from exc
-    status = ((data.get("base_resp") or {}).get("status_code"))
-    if status not in (None, 0):
-        raise AudioError(f"MiniMax music failed: {data.get('base_resp')}")
-    audio_hex = str((data.get("data") or {}).get("audio") or "")
-    if not audio_hex:
-        raise AudioError("MiniMax music returned no audio.")
-    output.write_bytes(bytes.fromhex(audio_hex))
-    usage_store.record("music", "minimax")
-
-
-def _lyria_music(
-    prompt: str, seconds: float, output: Path,
-    model: str = "", timeout: float = 600,
-) -> None:
-    key = openrouter_key()
-    if not key:
-        raise AudioError("Add an OpenRouter key to use Lyria music.")
-    if openrouter_blocked():
-        raise AudioError(
-            "OpenRouter is quarantined after an auth error; retry in "
-            f"{openrouter_blocked_seconds()}s."
-        )
-    model = model or _workflow_route_model(
-        "music", "openrouter",
-        "google/lyria-3-pro-preview" if seconds > 32 else "google/lyria-3-clip-preview",
-    )
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "modalities": ["text", "audio"],
-        "audio": {"format": "mp3"},
-        "stream": True,
-    }
-    request = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:8787",
-            "X-Title": "VibeCut",
-        },
-        method="POST",
-    )
-    chunks: list[bytes] = []
-    try:
-        with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
-            for raw_line in response:
-                line = raw_line.decode("utf-8", "replace").strip()
-                if not line.startswith("data:"):
-                    continue
-                body = line[5:].strip()
-                if not body or body == "[DONE]":
-                    continue
-                try:
-                    event = json.loads(body)
-                except ValueError:
-                    continue
-                choices = event.get("choices") or []
-                if not choices:
-                    continue
-                audio = (choices[0].get("delta") or {}).get("audio") or {}
-                value = audio.get("data")
-                if value:
-                    try:
-                        chunks.append(base64.b64decode(value))
-                    except (ValueError, TypeError):
-                        continue
-    except urllib.error.HTTPError as exc:
-        if exc.code in {401, 403}:
-            _openrouter_auth_failure(
-                int(exc.code), _openrouter_http_error_text(exc, key),
-            )
-        raise AudioError(f"Lyria music failed: {exc}") from exc
-    except Exception as exc:  # noqa: BLE001
-        raise AudioError(f"Lyria music failed: {exc}") from exc
-    if not chunks:
-        raise AudioError("Lyria returned no audio chunks.")
-    raw = output.with_name(f"{output.stem}.lyria.tmp.mp3")
-    raw.write_bytes(b"".join(chunks))
-    _convert(raw, output, ["-ar", "48000"])
-    usage_store.record(
-        "music", "lyria-pro" if model.endswith("-pro-preview") else "lyria-clip",
-    )
-    try:
-        raw.unlink()
-    except OSError:
-        pass
-
-
-def _music_route_candidates() -> list[dict[str, str]]:
-    cfg = _workflow("music")
-    candidates: list[dict[str, str]] = []
-    for route in cfg.get("routes") or []:
-        provider = str(route.get("provider") or "").lower()
-        model = str(route.get("model") or "").strip()
-        if provider in {"minimax", "openrouter"}:
-            candidates.append({
-                "provider": provider,
-                "model": model,
-                "descriptor": f"{provider}:{model}",
-            })
-    return candidates
-
-
-def generate_music(
-    model: str,
-    prompt: str,
-    seconds: float,
-    cancel_event: threading.Event | None = None,
-    *,
-    timeout: float = 600,
-) -> Path:
-    descriptor = str(model)
-    provider = ""
-    model_name = descriptor
-    if ":" in descriptor:
-        prefix, rest = descriptor.split(":", 1)
-        if prefix in {"minimax", "openrouter"}:
-            provider, model_name = prefix, rest
-    key = _text_hash("music", descriptor, prompt, f"{seconds:.0f}")
-    target = CACHE / "music" / f"{key}.wav"
-    if target.is_file() and target.stat().st_size > 1024:
-        return target
-    is_musicgen = model_name.startswith("facebook/musicgen")
-    is_minimax = provider == "minimax" or (
-        not provider and (
-            model_name.startswith("minimax") or model_name.startswith("music-")
-        )
-    )
-    is_lyria = (
-        (provider == "openrouter" and bool(model_name))
-        or model_name.startswith("google/lyria")
-    )
-    if is_lyria:
-        if not openrouter_key():
-            raise AudioError("Add an OpenRouter key to use Lyria music.")
-        if openrouter_blocked():
-            raise AudioError(
-                "OpenRouter is quarantined after an auth error; retry in "
-                f"{openrouter_blocked_seconds()}s."
-            )
-    elif is_minimax:
-        if not minimax_key():
-            raise AudioError("Set MINIMAX_API_KEY to use MiniMax music.")
-    elif not is_musicgen and not stable_audio_available():
-        raise AudioError(
-            "Stable Audio is not usable. Install setuptools<80 and stable-audio-tools, "
-            "accept the model license on Hugging Face, then run hf auth login. "
-            "Or choose MusicGen Small, which is ungated."
-        )
-    if is_musicgen and not musicgen_available():
-        raise AudioError("MusicGen needs transformers, torch and soundfile.")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if is_lyria:
-        _lyria_music(
-            prompt, seconds, target,
-            model=model_name if provider == "openrouter" else "", timeout=timeout,
-        )
-    elif is_minimax:
-        _minimax_music(
-            prompt, seconds, target,
-            model=model_name if provider == "minimax" else "", timeout=timeout,
-        )
-    elif is_musicgen:
-        worker = ROOT / "tools" / "musicgen_generate.py"
-        _run([
-            sys.executable, str(worker),
-            "--model", model_name, "--prompt", prompt,
-            "--seconds", f"{seconds:.1f}", "--out", str(target),
-        ], timeout=3600, cancel_event=cancel_event)
-    else:
-        worker = ROOT / "tools" / "music_generate.py"
-        _run([
-            sys.executable, str(worker),
-            "--model", model_name, "--prompt", prompt,
-            "--seconds", f"{seconds:.1f}", "--out", str(target),
-        ], timeout=3600, cancel_event=cancel_event)
-    if not target.is_file() or target.stat().st_size <= 1024:
-        raise AudioError("Music generation produced no file.")
-    save_generated_asset(target, descriptor, prompt, seconds)
-    return target
-
-
-# ---------------------------------------------------------------- mix
+# ---------------------------------------------------------------- mixer
 
 
 def _music_loop(
@@ -2296,62 +1137,15 @@ def story_brief(text: str, target: str, provider: str = "auto") -> dict | None:
 
 
 def _llm_text(prompt: str, provider: str = "auto", model: str | None = None) -> str | None:
-    """One model call: OpenCode Go first, then MLX, then Ollama."""
+    """One JSON text call through the configured cloud route."""
     settings = settings_store.load_settings().get("opencode") or {}
-    cloud_ok = (
-        provider in {"opencode", "auto", "argos", "marian", "apple_fm", ""}
+    if (
+        provider in {"opencode", "auto", "apple_fm", ""}
         and settings.get("use_brief", True)
         and opencode_available()
-    )
-    if cloud_ok:
-        text = _opencode_text(prompt, json_mode=True)
-        if text:
-            return text
-        if provider == "opencode":
-            return None
-    if provider in {"mlx", "auto"} and mlx_lm_available():
-        text = _mlx_text(prompt, model=model)
-        if text:
-            return text
-        if provider == "mlx":
-            return None
-    url = os.environ.get("VIBECUT_LLM_URL")
-    if not url:
-        return None
-    model = model or os.environ.get("VIBECUT_LLM_MODEL", "qwen2.5:3b")
-    payload = json.dumps({
-        "model": model, "prompt": prompt, "stream": False, "format": "json",
-        "options": {"temperature": 0.4},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=240) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
-    return str(data.get("response") or data.get("message", {}).get("content") or "") or None
-
-
-def _mlx_text(prompt: str, model: str | None = None) -> str | None:
-    worker = ROOT / "tools" / "rewrite_mlx.py"
-    if not worker.is_file():
-        return None
-    model = model or os.environ.get(
-        "VIBECUT_MLX_REWRITE_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit",
-    )
-    try:
-        result = subprocess.run(
-            [sys.executable, str(worker), "--model", model],
-            input=json.dumps({"prompt": prompt, "system": "You write short video voice overs. Reply with JSON when asked."}),
-            capture_output=True, text=True, timeout=1800,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return (result.stdout or "").strip() or None
+    ):
+        return _opencode_text(prompt, json_mode=True)
+    return None
 
 
 OPENCODE_PROVIDER = "opencode-go"
@@ -3228,36 +2022,6 @@ def _rewrite_openrouter(
     return cleaned
 
 
-def _rewrite_mlx(
-    script: list[dict], source: str, target: str, mode: str, literal: list[str],
-    context: dict | None = None, model: str | None = None,
-) -> list[str] | None:
-    """Small local model rewrite (MLX worker or Apple FM via the same JSON contract)."""
-    if mode == "literal":
-        return None
-    if not mlx_lm_available():
-        return None
-    prompt = _rewrite_prompt(script, source, target, mode, literal, context)
-    raw = _llm_text(prompt, provider="mlx", model=model) if model else _llm_text(prompt, provider="mlx")
-    if not raw:
-        return None
-    match = re.search(r"\[.*\]", raw, re.S)
-    if not match:
-        return None
-    try:
-        values = json.loads(match.group(0))
-    except ValueError:
-        return None
-    if not isinstance(values, list) or len(values) != len(script):
-        return None
-    fits = all(
-        estimate_seconds(str(value), float(script[index].get("rate") or 1.0))
-        <= max(1.0, float(script[index].get("duration") or 1.0))
-        for index, value in enumerate(values)
-    )
-    return [str(value).strip() for value in values] if fits else None
-
-
 def transcript_context(
     segments: list[dict],
     clips: list[dict],
@@ -3887,40 +2651,6 @@ def build_bed(
                 break
             if chosen is None:
                 raise last_error or AudioError("All music providers failed.")
-        elif chosen is None and music_plan.get("source") in {"stable-small", "stable-1.0", "musicgen-small"}:
-            if music_plan["source"] == "musicgen-small":
-                model = "facebook/musicgen-small"
-                progress(0.90, "Generating AI music · MusicGen can take minutes")
-            else:
-                model = (
-                    "stabilityai/stable-audio-open-small"
-                    if music_plan["source"] == "stable-small"
-                    else "stabilityai/stable-audio-open-1.0"
-                )
-                progress(0.90, "Generating AI music · Stable Audio")
-            music_seconds = min(47.0, max(8.0, total))
-            if music_plan["source"] == "musicgen-small":
-                # MusicGen is autoregressive and much slower beyond a few
-                # seconds; generate a short ungated bed and loop it.
-                music_seconds = 4.0
-            prompt = str(music_plan.get("prompt") or "").strip()
-            if not prompt or prompt == "auto":
-                prompt = music_prompt(
-                    music_plan.get("moods") or scene_moods(scenes, clips), music_seconds,
-                )
-            started = time.time()
-            try:
-                chosen = generate_music(model, prompt, music_seconds, cancel_event)
-            except AudioError as exc:
-                _pipeline_event(
-                    "music", 0, "local", model, "", started, False,
-                    str(exc)[:300], job_id=job_dir.name,
-                )
-                raise
-            _pipeline_event(
-                "music", 0, "local", model, "", started, True, "",
-                job_id=job_dir.name,
-            )
         if chosen and chosen.is_file():
             base_music_gain = float(music_plan.get("gain_db") or -18.0)
             beat_offset = 0.0
@@ -4137,14 +2867,6 @@ def _rewrite_provider_tag(
         return f"openrouter:{model or openrouter_model()}:{reasoning or ''}"
     if name == "apple":
         return "apple:on-device-3b"
-    if name == "mlx":
-        model = model or os.environ.get(
-            "VIBECUT_MLX_REWRITE_MODEL",
-            "mlx-community/Qwen2.5-3B-Instruct-4bit",
-        )
-        return f"mlx:{model}"
-    if name in {"llm", "ollama"}:
-        return f"{name}:{model or os.environ.get('VIBECUT_LLM_MODEL', 'llama3.1')}"
     return name or "unknown"
 
 
@@ -4194,7 +2916,7 @@ def clear_rewrite_memo(
     """Drop rewrite cache entries for one provider/model, or all known ones."""
     tags = [provider] if provider else [
         _rewrite_provider_tag(name)
-        for name in ("opencode", "openrouter", "mlx", "apple", "llm", "ollama")
+        for name in ("opencode", "openrouter", "apple")
     ]
     if provider and ":" not in provider:
         tags = [_rewrite_provider_tag(provider)]
@@ -4276,86 +2998,6 @@ def _rules_rewrite(
     return out
 
 
-def _rewrite_ollama(
-    script: list[dict], source: str, target: str, mode: str, literal: list[str],
-    context: dict | None = None, model: str | None = None,
-) -> list[str] | None:
-    url = os.environ.get("VIBECUT_LLM_URL")
-    if not url or mode == "literal":
-        return None
-    model = model or os.environ.get("VIBECUT_LLM_MODEL", "llama3.1")
-    context_beats = (context or {}).get("beats") or []
-    rows = []
-    for index, line in enumerate(script):
-        source_line = ""
-        if index < len(context_beats):
-            source_line = str(context_beats[index].get("source") or "")
-        rows.append({
-            "beat": index,
-            "role": str(line.get("role") or "beat"),
-            "seconds": round(float(line.get("duration") or 0.0) - 0.25, 2),
-            "source_line": source_line or line.get("text") or "",
-            "literal": literal[index],
-        })
-    style = {
-        "smooth": "natural, flowing, conversational, connected sentences",
-        "viral": "punchy short-video style: hook grabs in the first words, one idea per beat, payoff ends with a light call to action",
-        "fun": "playful, warm, light and witty",
-        "creative": "vivid, surprising and visual, facts unchanged",
-        "sad": "melancholic, intimate and restrained",
-        "chill": "calm, relaxed and understated",
-    }.get(mode, "faithful")
-    full_text = str(
-        (context or {}).get("target_text") or (context or {}).get("full_text") or ""
-    ).strip()
-    brief = (context or {}).get("brief")
-    prompt = (
-        f"You are editing a short vertical video. Below is the FULL TRANSCRIPT of the "
-        f"source video. Read it first to understand the story, the product, the claims "
-        f"and the intended audience. Then write a {len(rows)}-beat voice over in "
-        f"{_language_name(target)} for the selected beats, in order.\n"
-        f"Style: {style}.\n"
-        "Rules: keep every fact and number from the source, invent nothing, keep the "
-        "story coherent from beat to beat (setup, proof, payoff), each line must fit its "
-        "seconds budget at normal speaking pace. Reply with a JSON array of strings "
-        "only, same order and count.\n"
-        + (f"STORY BRIEF:\n{json.dumps(brief, ensure_ascii=False)}\n\n" if brief else "")
-        + (f"FULL TRANSCRIPT:\n{full_text}\n\n" if full_text else "")
-        + "SELECTED BEATS:\n"
-        + json.dumps(rows, ensure_ascii=False)
-    )
-    payload = json.dumps({
-        "model": model, "prompt": prompt, "stream": False,
-        "options": {"temperature": 0.6},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=240) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
-    body = str(data.get("response") or data.get("message", {}).get("content") or "")
-    match = re.search(r"\[.*\]", body, re.S)
-    if not match:
-        return None
-    try:
-        values = json.loads(match.group(0))
-    except ValueError:
-        return None
-    if not isinstance(values, list) or len(values) != len(script):
-        return None
-    fits = all(
-        estimate_seconds(str(value), float(script[index].get("rate") or 1.0))
-        <= max(1.0, float(script[index].get("duration") or 1.0))
-        for index, value in enumerate(values)
-    )
-    if not fits:
-        return None
-    return [str(value).strip() for value in values]
-
-
 def adapt_script(
     script: list[dict],
     source_lang: str,
@@ -4401,7 +3043,7 @@ def adapt_script(
         resolved: dict[int, str] = {}
         attempts: list[dict] = []
         succeeded = False
-        ai_providers = {"opencode", "openrouter", "mlx", "apple", "llm", "ollama"}
+        ai_providers = {"opencode", "openrouter", "apple"}
         rewrite_cfg = _workflow("rewrite")
         route_max_tokens = int(rewrite_cfg.get("max_output_tokens") or 3000)
         route_timeout = float(rewrite_cfg.get("timeout_s") or 300)
@@ -4462,16 +3104,6 @@ def adapt_script(
                     max_tokens=route_max_tokens, timeout=route_timeout,
                     **route_kwargs,
                 )
-            elif name in {"llm", "ollama"}:
-                rewritten = _rewrite_ollama(
-                    subset, source_lang, target_lang, mode, subset_literal, context,
-                    **route_kwargs,
-                )
-            elif name in {"mlx", "apple"}:
-                rewritten = _rewrite_mlx(
-                    subset, source_lang, target_lang, mode, subset_literal, context,
-                    **route_kwargs,
-                )
             elif name == "rules":
                 rewritten = _rules_rewrite(subset, source_lang, target_lang, mode, subset_literal)
             if rewritten:
@@ -4488,7 +3120,7 @@ def adapt_script(
                             value, context, tag,
                         )
                 resolved.update(memo_hits)
-                used = "llm" if name in {"llm", "ollama"} else name
+                used = name
                 ai_failed = any(
                     item.get("provider") in ai_providers for item in attempts
                 )
@@ -4550,147 +3182,7 @@ def adapt_script(
     return lines
 
 
-# ---------------------------------------------------------------- assets + licenses
-
-
-def asset_license(path: Path) -> dict | None:
-    sidecar = Path(str(path) + ".license.json")
-    if sidecar.is_file():
-        try:
-            return json.loads(sidecar.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"license": "unknown"}
-    mapping = path.parent / "LICENSE.json"
-    if mapping.is_file():
-        try:
-            data = json.loads(mapping.read_text(encoding="utf-8"))
-            entry = data.get(path.name)
-            if entry:
-                return entry if isinstance(entry, dict) else {"license": str(entry)}
-        except (OSError, json.JSONDecodeError):
-            pass
-    if (path.parent / "LICENSE.txt").is_file():
-        return {"license": "file"}
-    return None
-
-
-def ensure_licensed(paths: list[Path]) -> list[dict]:
-    strict = os.environ.get("VIBECUT_AUDIO_LICENSE", "").lower() == "strict"
-    used: list[dict] = []
-    missing: list[str] = []
-    for path in paths:
-        meta = asset_license(path)
-        try:
-            shown = str(path.relative_to(ASSETS))
-        except ValueError:
-            shown = path.name
-        used.append({"path": shown, "license": (meta or {}).get("license") or "unknown"})
-        if not meta:
-            missing.append(path.name)
-    if strict and missing:
-        raise AudioError(
-            "Strict license mode: add a .license.json for " + ", ".join(missing)
-        )
-    return used
-
-
-def _slug(text: str, limit: int = 36) -> str:
-    value = re.sub(r"[^a-zA-Z0-9]+", "-", str(text or "")).strip("-").lower()
-    return (value or "bed")[:limit]
-
-
-def save_generated_asset(source: Path, model: str, prompt: str, seconds: float) -> Path:
-    """Keep an AI bed as a reusable library track, not only a render cache."""
-    directory = MUSIC_DIRS["generated"]
-    directory.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha1(
-        f"{model}|{prompt}|{seconds:.0f}|{source.stat().st_size}".encode("utf-8"),
-    ).hexdigest()[:8]
-    out = directory / f"{_slug(prompt)}-{digest}.wav"
-    if not out.is_file():
-        shutil.copy2(source, out)
-    sidecar = Path(str(out) + ".license.json")
-    if not sidecar.is_file():
-        sidecar.write_text(json.dumps({
-            "license": "generated",
-            "model": model,
-            "prompt": prompt,
-            "seconds": round(float(seconds), 1),
-            "created": round(time.time(), 3),
-        }, ensure_ascii=False, indent=1), encoding="utf-8")
-    return out
-
-
-# ---------------------------------------------------------------- beats
-
-
-BEATS = CACHE / "beats"
-
-
-def beat_grid(path: Path) -> dict | None:
-    """BPM and beat times for a music file, cached. Uses librosa when present."""
-    if not _module("librosa") or not path.is_file():
-        return None
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
-    key = hashlib.sha1(f"{path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()[:24]
-    cached = BEATS / f"{key}.json"
-    if cached.is_file():
-        try:
-            return json.loads(cached.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            pass
-    try:
-        import librosa  # noqa: PLC0415
-
-        samples, rate = librosa.load(str(path), mono=True, sr=22050)
-        tempo, beats = librosa.beat.beat_track(y=samples, sr=rate, units="time")
-        bpm = float(tempo[0] if hasattr(tempo, "__len__") else tempo)
-        grid = {
-            "bpm": round(bpm, 2),
-            "beats": [round(float(value), 3) for value in beats][:4000],
-        }
-    except Exception:  # noqa: BLE001
-        return None
-    try:
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        cached.write_text(json.dumps(grid), encoding="utf-8")
-    except OSError:
-        pass
-    return grid
-
-
-def snap_clips(
-    clips: list[dict],
-    grid: dict | None,
-    max_shift: float = 0.25,
-    min_duration: float = 0.5,
-    max_drift: float = 0.4,
-) -> tuple[list[dict], float]:
-    """Move cut points onto nearby beats by trimming the previous clip."""
-    if not grid or not grid.get("beats") or len(clips) < 2:
-        return clips, 0.0
-    beats = grid["beats"]
-    out = [dict(clip) for clip in clips]
-    drift = 0.0
-    boundary = 0.0
-    for index in range(len(out) - 1):
-        boundary += float(out[index].get("duration") or 0.0)
-        target = min(beats, key=lambda beat: abs(beat - boundary))
-        delta = target - boundary
-        if abs(delta) > max_shift:
-            continue
-        new_duration = float(out[index]["duration"]) + delta
-        if new_duration < min_duration:
-            continue
-        if abs(drift + delta) > max_drift:
-            continue
-        out[index]["duration"] = round(new_duration, 3)
-        drift += delta
-        boundary = target
-    return out, round(drift, 3)
+# ---------------------------------------------------------------- mix helpers
 
 
 def _db_to_linear(db: float) -> str:
@@ -4861,3 +3353,48 @@ def clear_workflow_caches() -> None:
         BRIEFS, MEMO, REWRITE, CACHE / "voice", CACHE / "music",
     ):
         shutil.rmtree(directory, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- split modules
+# Re-exports keep every existing caller (and `audio.*` monkeypatch) working.
+from stt import CLOUD_STT_PROVIDERS, cloud_stt_key, deepgram_key, groq_key, openai_key  # noqa: E402,F401
+from tts import (  # noqa: E402,F401
+    _SAY_VOICE_RE,
+    _cartesia_voice,
+    _deepgram_voice,
+    _elevenlabs_voice,
+    _groq_voice,
+    _kokoro_files_for,
+    _kokoro_voice,
+    _minimax_voice,
+    _openai_voice,
+    _openrouter_voice,
+    _piper_voice,
+    _say_voice,
+    _to_flac,
+    _tts_candidates,
+    _tts_route_candidates,
+    _tts_voice_for,
+    _voice_cache,
+    list_voices,
+    synthesize_line,
+    voice_sample,
+)
+from music import (  # noqa: E402,F401
+    BEATS,
+    _lyria_music,
+    _minimax_music,
+    _music_route_candidates,
+    _slug,
+    asset_license,
+    beat_grid,
+    ensure_licensed,
+    generate_music,
+    list_music,
+    music_prompt,
+    pick_music,
+    resolve_music_track,
+    save_generated_asset,
+    scene_moods,
+    snap_clips,
+)

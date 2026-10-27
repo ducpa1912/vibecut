@@ -57,7 +57,7 @@ def test_audio_signature_stable_and_sensitive():
         "mode": "full",
         "translate": {"target": "vi", "provider": "auto"},
         "voice": {"engine": "say", "voice": "Samantha", "rate": 1, "gain_db": 0},
-        "music": {"source": "cc0", "prompt": "auto", "gain_db": -18, "duck": True},
+        "music": {"source": "library", "prompt": "auto", "gain_db": -18, "duck": True},
     }
     first = app._audio_signature(plan)
     assert first and first == app._audio_signature(dict(plan))
@@ -94,12 +94,12 @@ def test_scene_moods_and_music_pick():
 
 
 def test_music_listing_reads_assets(tmp_path, monkeypatch):
-    directory = tmp_path / "cc0"
+    directory = tmp_path / "library"
     directory.mkdir()
     (directory / "morning-calm-loop.mp3").write_bytes(b"x" * 64)
     (directory / "notes.txt").write_text("skip me")
-    monkeypatch.setitem(audio.MUSIC_DIRS, "cc0", directory)
-    tracks = audio.list_music("cc0")
+    monkeypatch.setitem(audio.MUSIC_DIRS, "library", directory)
+    tracks = audio.list_music("library")
     assert len(tracks) == 1
     assert tracks[0]["name"] == "morning-calm-loop"
     assert "calm" in tracks[0]["moods"]
@@ -132,7 +132,7 @@ def test_engine_status_shape():
         "say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram",
         "cartesia", "minimax", "fish", "gemini",
     }
-    assert "stable-small" in status["music"]
+    assert {"library", "minimax-music", "lyria-clip"} == set(status["music"])
     assert "demucs" in status["separation"]
     for entry in status["voices"].values():
         assert "available" in entry and "install" in entry
@@ -586,13 +586,12 @@ def test_provider_order_prefers_ready_engine(monkeypatch):
     monkeypatch.setattr(audio, "opencode_available", lambda: False)
     monkeypatch.setattr(audio, "openrouter_available", lambda: False)
     monkeypatch.setattr(audio, "apple_pair_status", lambda source, target: "installed")
-    monkeypatch.setattr(audio, "argos_pair_ready", lambda source, target: False)
     order = audio._provider_order("zh", "en", "auto")
     assert order == ["apple_fm"]
 
 
 def test_provider_order_explicit_wins():
-    assert audio._provider_order("zh", "en", "marian") == ["marian"]
+    assert audio._provider_order("zh", "en", "opencode") == ["opencode"]
 
 
 def test_scene_emotion_labels():
@@ -1012,25 +1011,25 @@ def test_adapt_script_passes_context_to_llm(monkeypatch, tmp_path):
     monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
     captured: dict = {}
 
-    def fake_llm(script, source, target, mode, literal, context=None):
+    def fake_llm(script, source, target, mode, literal, context=None, **kwargs):
         captured["context"] = context
         captured["literal"] = literal
         return [f"rewritten {index}" for index in range(len(script))]
 
-    monkeypatch.setattr(audio, "_rewrite_ollama", fake_llm)
+    monkeypatch.setattr(audio, "_rewrite_openrouter", fake_llm)
     monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
     script = [{
         "scene": 0, "clip": 0, "role": "hook", "duration": 3.0, "rate": 1.0,
         "text": "original",
     }]
     context = {"full_text": "the whole video transcript", "beats": [{"scene": 0, "source": "original"}]}
-    result = audio.adapt_script(script, "zh", "en", "viral", "llm", context)
+    result = audio.adapt_script(script, "zh", "en", "viral", "openrouter", context)
     assert captured["context"]["full_text"] == "the whole video transcript"
     assert result[0]["text"] == "rewritten 0"
     # memo key depends on the context
     files_first = len(list((tmp_path / "rewrite").rglob("*.txt")))
     other = {"full_text": "different transcript", "beats": []}
-    audio.adapt_script(script, "zh", "en", "viral", "llm", other)
+    audio.adapt_script(script, "zh", "en", "viral", "openrouter", other)
     assert len(list((tmp_path / "rewrite").rglob("*.txt"))) > files_first
 
 
@@ -1107,66 +1106,10 @@ def test_story_brief_cached(tmp_path, monkeypatch):
     assert calls["count"] == 1
 
 
-def test_rewrite_mlx_prompt_uses_brief_and_relevant(monkeypatch, tmp_path):
-    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
-    captured = {}
-
-    def fake_llm(prompt, provider="auto"):
-        captured["prompt"] = prompt
-        return json.dumps(["hook rewrite", "beat rewrite"])
-
-    monkeypatch.setattr(audio, "_llm_text", fake_llm)
-    monkeypatch.setattr(audio, "mlx_lm_available", lambda: True)
-    script = [
-        {"scene": 0, "role": "hook", "duration": 3.0, "rate": 1.0, "text": "hook"},
-        {"scene": 1, "role": "beat", "duration": 3.0, "rate": 1.0, "text": "beat"},
-    ]
-    context = {
-        "full_text": "source text",
-        "target_text": "Sentence one about the soil mix. Sentence two about watering. Sentence three about fruit.",
-        "brief": {"topic": "garden", "promise": "easy"},
-        "aesthetic": {"moods": ["calm"], "pace": "measured"},
-        "beats": [
-            {"scene": 0, "role": "hook", "seconds": 2.75, "source": "hook source"},
-            {"scene": 1, "role": "beat", "seconds": 2.75, "source": "beat source"},
-        ],
-    }
-    result = audio._rewrite_mlx(script, "zh", "en", "viral", ["hook literal", "beat literal"], context)
-    assert result and result[0] == "hook rewrite"
-    assert "STORY BRIEF" in captured["prompt"]
-    assert "RELEVANT VOICE SCRIPT LINES" in captured["prompt"]
-    assert "BEAT SLOTS" in captured["prompt"]
-    assert '"max_chars"' in captured["prompt"]
-    assert '"max_words"' in captured["prompt"]
-    assert "VIDEO AESTHETIC" in captured["prompt"]
-
-
-def test_adapt_script_rewrite_provider_routing(monkeypatch, tmp_path):
-    monkeypatch.setattr(audio, "REWRITE", tmp_path / "rewrite")
-    called = {}
-
-    def fake_mlx(script, source, target, mode, literal, context=None):
-        called["mlx"] = True
-        return [f"mlx {index}" for index in range(len(script))]
-
-    def fake_ollama(script, source, target, mode, literal, context=None):
-        called["ollama"] = True
-        return ["ollama line"]
-
-    monkeypatch.setattr(audio, "_rewrite_mlx", fake_mlx)
-    monkeypatch.setattr(audio, "_rewrite_ollama", fake_ollama)
-    monkeypatch.setattr(audio, "translate_lines", lambda lines, s, t, p="auto": [f"L:{x}" for x in lines])
-    script = [{"scene": 0, "role": "hook", "duration": 3.0, "rate": 1.0, "text": "orig"}]
-    result = audio.adapt_script(script, "zh", "en", "smooth", "auto", None, "mlx")
-    assert called.get("mlx") and not called.get("ollama")
-    assert result[0]["text"] == "mlx 0"
-    assert result[0]["rewrite"] == "mlx"
-
-
 def test_rewrite_models_shape():
     models = audio.rewrite_models()
     ids = {model["id"] for model in models}
-    assert {"mlx", "ollama", "apple"} <= ids
+    assert {"apple", "opencode", "openrouter"} == ids
     for model in models:
         assert "available" in model and "size_mb" in model
 
@@ -1264,7 +1207,6 @@ def test_opencode_service_pins_model_and_low_variant(monkeypatch):
 
 def test_opencode_leads_rewrite_candidates(monkeypatch):
     monkeypatch.setattr(audio, "opencode_available", lambda: True)
-    monkeypatch.setattr(audio, "mlx_lm_available", lambda: True)
     monkeypatch.setattr(settings_store, "load_settings", lambda: {
         "opencode": {"enabled": True, "use_rewrite": True},
     })
@@ -1617,29 +1559,26 @@ def test_clear_translation_memo_by_provider(tmp_path, monkeypatch):
     assert audio._memo_get("zh", "en", "你好", "opencode") is None
 
 
-def test_generate_music_selects_worker(tmp_path, monkeypatch):
+def test_generate_music_rejects_removed_local_models(tmp_path, monkeypatch):
     monkeypatch.setattr(audio, "CACHE", tmp_path / "cache")
-    monkeypatch.setattr(audio, "stable_audio_available", lambda: True)
-    monkeypatch.setattr(audio, "musicgen_available", lambda: True)
-    monkeypatch.setattr(audio, "save_generated_asset", lambda *args: None)
     calls = []
 
     def fake_run(cmd, timeout=None, cancel_event=None):
         calls.append(cmd)
-        target = __import__("pathlib").Path(cmd[cmd.index("--out") + 1])
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(b"RIFF" + b"0" * 2048)
 
     monkeypatch.setattr(audio, "_run", fake_run)
-    audio.generate_music("facebook/musicgen-small", "calm bed", 8.0)
-    assert "musicgen_generate.py" in calls[-1][1]
-    audio.generate_music("stabilityai/stable-audio-open-small", "calm bed", 8.0)
-    assert "music_generate.py" in calls[-1][1]
+    with pytest.raises(audio.AudioError, match="Unsupported music source"):
+        audio.generate_music("facebook/musicgen-small", "calm bed", 8.0)
+    with pytest.raises(audio.AudioError, match="Unsupported music source"):
+        audio.generate_music("stabilityai/stable-audio-open-small", "calm bed", 8.0)
+    assert calls == []
 
 
-def test_music_engine_lists_musicgen():
+def test_music_engine_lists_cloud_only():
     status = audio.engine_status()
-    assert "musicgen-small" in status["music"]
+    assert "musicgen-small" not in status["music"]
+    assert "stable-small" not in status["music"]
+    assert "cc0" not in status["music"]
 
 
 def test_openrouter_text_payload_and_fallback_order(monkeypatch):
