@@ -57,6 +57,56 @@ def test_error_detail_reads_structured_detail_message():
     ]
 
 
+# ---------------------------------------------------------------- edit/overlay.js (QA #6)
+
+
+@needs_node
+def test_overlay_draws_active_text_fx_and_caption_cue():
+    out = run_module("edit/overlay.js", """
+        const edit = {
+          graphics: [
+            {id: "t1", type: "text", kind: "hook", text: "Hook", start: 0, end: 3,
+             anchor: "top-center", box: {w: 0.76, h: 0.16}, style: {size: 64}},
+            {id: "t2", type: "text", kind: "title", text: "Later", start: 5, end: 6},
+            {id: "p1", type: "fx", kind: "progress_bar", start: 0, end: 4,
+             anchor: "bottom-center", box: {w: 0.9, h: 0.01}},
+          ],
+          captions: {track_id: "cap1", enabled: true},
+        };
+        const captions = {id: "cap1", style: {font_size: 72, color: "#ffd400",
+          stroke_width: 4, stroke_color: "#111111", position: "bottom"},
+          cues: [{start: 0.5, end: 1.5, text: "FIRST\\nLINE"}, {start: 1.5, end: 2.5, text: "NEXT"}]};
+        const at1 = m.overlayLayers(edit, captions, 1.0);
+        const off = m.overlayLayers({...edit, captions: {track_id: "cap1", enabled: false}}, captions, 1.0);
+        return {at1: at1.map((row) => [row.type, row.kind, row.text || null]),
+          fraction: at1.find((row) => row.kind === "progress_bar").fraction,
+          caption: at1.find((row) => row.kind === "caption"),
+          off: off.map((row) => row.kind),
+          late: m.overlayLayers(edit, captions, 5.5).map((row) => row.text)};
+    """)
+    assert out["at1"] == [
+        ["text", "hook", "Hook"], ["fx", "progress_bar", None], ["text", "caption", "FIRST\nLINE"],
+    ]
+    assert out["fraction"] == 0.25
+    caption = out["caption"]
+    assert caption["style"]["size"] == 72 and caption["style"]["color"] == "#ffd400"
+    assert caption["style"]["stroke"] == "#111111"
+    # Bottom-center caption box above the 8% bottom margin, like the server.
+    assert caption["rect"] == {"x": 0.12, "y": 0.8, "w": 0.76, "h": 0.12}
+    assert out["off"] == ["hook", "progress_bar"]
+    assert out["late"] == ["Later"]
+
+
+@needs_node
+def test_overlay_wrap_keeps_line_breaks_like_the_renderer():
+    out = run_module("edit/overlay.js", """
+        const measure = (value) => value.length * 10;
+        return [m.wrapText(measure, "ONE TWO THREE\\nFOUR", 75),
+                m.wrapText(measure, "ABCDEFGHIJ", 40)];
+    """)
+    assert out == [["ONE TWO", "THREE", "FOUR"], ["ABCD", "EFGH", "IJ"]]
+
+
 # ---------------------------------------------------------------- finish.js (QA #5)
 
 

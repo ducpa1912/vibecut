@@ -18,6 +18,7 @@ import {
   safeZoneRects,
 } from "./model.js";
 import { fetchFrame, framePath, proxyPath, syncMediaCookie } from "./api.js";
+import { drawOverlay } from "./overlay.js";
 
 const FADE_IN_SKIP = 0.15;
 
@@ -293,6 +294,9 @@ export function mountPreview(root, options = {}) {
       }
       drawCover(source, width, height);
       ctx.restore();
+      // The proxy is the raw story range; the exact frame already has every
+      // layer burned in, so only the proxy gets the live overlay.
+      if (source === proxyVideo) drawOverlay(ctx, state.edit, state.captions, state.time, width, height);
     } else {
       drawPlaceholder(width, height);
     }
