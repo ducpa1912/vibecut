@@ -579,20 +579,53 @@ def _caption_font(
 
 
 def _wrap_caption(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
+    """Wrap text to ``max_width`` pixels, keeping the author's line breaks.
+
+    Caption cues and text layers store explicit ``\\n`` breaks, and PIL's
+    ``textlength`` refuses multiline strings, so each stored line is wrapped
+    on its own. Spaced scripts break between words; a word wider than the
+    box, or unspaced CJK text, falls back to breaking between characters.
+    """
     if not text:
         return []
     lines: list[str] = []
-    current = ""
-    for char in text:
-        candidate = current + char
-        if draw.textlength(candidate, font=font) <= max_width:
-            current = candidate
-        else:
+
+    def fits(value: str) -> bool:
+        return draw.textlength(value, font=font) <= max_width
+
+    def by_char(word: str) -> list[str]:
+        rows: list[str] = []
+        current = ""
+        for char in word:
+            if current and not fits(current + char):
+                rows.append(current)
+                current = char
+            else:
+                current += char
+        if current:
+            rows.append(current)
+        return rows
+
+    for paragraph in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        current = ""
+        for word in paragraph.split():
+            candidate = f"{current} {word}" if current else word
+            if fits(candidate):
+                current = candidate
+                continue
             if current:
                 lines.append(current)
-            current = char
-    if current:
-        lines.append(current)
+            if fits(word):
+                current = word
+            else:
+                pieces = by_char(word)
+                lines.extend(pieces[:-1])
+                current = pieces[-1] if pieces else ""
+        if current:
+            lines.append(current)
     return lines
 
 

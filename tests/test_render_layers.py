@@ -15,6 +15,7 @@ from PIL import Image
 
 import app
 import audio
+import captions
 import compose_render
 import edits
 import pipeline
@@ -832,3 +833,104 @@ def test_render_reel_passes_the_locked_beat_grid_to_compile(tmp_path, monkeypatc
             audio_plan={"mode": "dub", "music": {"locked_hash": "a" * 64}},
         )
     assert captured["beats"] == grid
+
+
+# ---------------------------------------------------------------- multiline captions (QA #1)
+
+
+def _multiline_track():
+    return captions.CaptionTrack(
+        id="cap_multi",
+        job_id="job1",
+        version=1,
+        target=2,
+        cues=[
+            captions.CaptionCue(
+                id="c1", start=0.0, end=2.0,
+                text="THAT DOESN'T MEAN THAT\nYOUR RESPONSE HAS TO",
+                clip_index=0,
+            ),
+        ],
+        style=captions.normalize_style({}),
+        style_id="bold",
+        clip_hash=edits.clip_snapshot_hash(CLIPS),
+        clip_windows=[{"index": 0, "scene": 0, "start": 0.0, "end": 2.0, "duration": 2.0}],
+        created=1.0,
+    )
+
+
+def _measure():
+    return render.ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+
+def test_wrap_caption_keeps_stored_line_breaks():
+    font = render._caption_font(48)
+    lines = render._wrap_caption(
+        _measure(), "THAT DOESN'T MEAN THAT\nYOUR RESPONSE HAS TO", font, 2000,
+    )
+    assert lines == ["THAT DOESN'T MEAN THAT", "YOUR RESPONSE HAS TO"]
+
+
+def test_wrap_caption_breaks_between_words_then_characters():
+    draw = _measure()
+    font = render._caption_font(48)
+    width = int(draw.textlength("HELLO WORLD", font=font)) + 2
+    lines = render._wrap_caption(draw, "HELLO WORLD AGAIN\r\nNEXT", font, width)
+    assert lines == ["HELLO WORLD", "AGAIN", "NEXT"]
+    narrow = int(draw.textlength("ABC", font=font)) + 1
+    pieces = render._wrap_caption(draw, "ABCDEFGHI", font, narrow)
+    assert "".join(pieces) == "ABCDEFGHI" and len(pieces) >= 3
+    assert all(draw.textlength(piece, font=font) <= narrow for piece in pieces)
+
+
+def test_multiline_caption_layer_rasterizes_two_rows():
+    layer = {
+        "type": "caption", "kind": "caption",
+        "text": "FIRST LINE\nSECOND LINE",
+        "rect": {"x": 0.07, "y": 0.7, "w": 0.86, "h": 0.14},
+        "style": {"size": 64, "color": "#ffffff"},
+        "opacity": 1.0,
+    }
+    image = render._render_text_layer(layer, 1080, 1920)
+    alpha = np.asarray(image)[..., 3]
+    rows = np.nonzero(alpha.max(axis=1) > 0)[0]
+    assert rows.size > 0
+    assert (np.diff(rows) > 1).any(), "expected two separate text rows"
+
+
+def _white_pixels_low(pixels: np.ndarray) -> int:
+    lower = pixels[int(pixels.shape[0] * 0.6):]
+    return int((lower > 230).all(axis=2).sum())
+
+
+@needs_ffmpeg
+def test_real_frame_and_render_burn_a_multiline_caption(real_env):
+    env = real_env
+    track = _multiline_track()
+    captions.save_track(env["dir"], track)
+    edit = _save_current(env, _edit(captions={"track_id": track.id, "style_id": "bold"}))
+
+    response = env["client"].get(
+        f"/api/jobs/job1/edits/{edit['id']}/frame?t=1.0&quality=draft",
+    )
+    assert response.status_code == 200, response.text
+    frame = np.asarray(Image.open(io.BytesIO(response.content)).convert("RGB"))
+    assert _white_pixels_low(frame) > 200, "caption missing from the frame"
+
+    plan = _plan()
+    plan["_caption_track"] = {
+        "track_id": track.id,
+        "style_id": track.style_id,
+        "style": track.style,
+        "cues": [cue.to_dict() for cue in track.cues],
+    }
+    source, meta = env["source"], env["meta"]
+    result = render.render_reel(
+        str(source), meta, env["dir"], plan, "Test", lambda *args: None,
+        quality="draft", aspect="9:16", edit=edit,
+    )
+    final = env["dir"] / "renders" / result["path"]
+    assert final.is_file()
+    still = _extract_frame(final, 30, env["data"] / "multi.png")
+    pixels = np.asarray(Image.open(still).convert("RGB"))
+    assert _white_pixels_low(pixels) > 200, "caption missing from the render"
