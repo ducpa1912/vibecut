@@ -53,6 +53,7 @@ import packet
 import pipeline
 import preflight
 import render
+import rights
 import routes_batches
 import routes_check
 import routes_cleanup
@@ -436,6 +437,7 @@ def public_job(job: dict) -> dict:
         for key in ("name", "duration", "width", "height", "fps", "has_audio", "size")
     }
     value["usage"] = _usage_summary(job)
+    value["rights_policy"] = rights.policy(job)
     value.update(_source_state(job))
     analysis = value.get("analysis")
     if analysis:
@@ -3558,6 +3560,12 @@ def get_settings() -> dict:
     return _settings_state()
 
 
+@app.get("/api/rights/policy")
+def get_rights_policy() -> dict:
+    """The rights policy for a new import, with no job attached."""
+    return rights.policy()
+
+
 @app.post("/api/settings")
 async def save_settings(request: Request) -> dict:
     if not _setup_origin_ok(request):
@@ -3580,11 +3588,22 @@ async def save_settings(request: Request) -> dict:
             )
         allowed_settings = {
             "opencode", "translation", "openrouter", "minimax", "stt", "tts",
-            "ingest", "preflight", "caption_styles",
+            "ingest", "preflight", "caption_styles", "rights",
         }
         unknown = sorted(set(patch) - allowed_settings)
         if unknown:
             raise HTTPException(400, f"Unknown settings section: {unknown[0]}.")
+        if "rights" in patch:
+            section = patch["rights"]
+            if not isinstance(section, dict):
+                raise HTTPException(400, "rights must be an object.")
+            unknown_rights = sorted(set(section) - {"lock"})
+            if unknown_rights:
+                raise HTTPException(
+                    400, f"Unknown rights setting: {unknown_rights[0]}.",
+                )
+            if "lock" in section and not isinstance(section["lock"], bool):
+                raise HTTPException(400, "rights.lock must be true or false.")
         if "preflight" in patch:
             try:
                 preflight.validate_settings(patch["preflight"])
@@ -4562,6 +4581,12 @@ def _requested_job_id(value: str | None) -> str:
     return job_id
 
 
+def _require_import_rights(attested: bool | None) -> None:
+    """Refuse an import while the rights lock is on and the tick is missing."""
+    if not rights.may_import(attested):
+        raise HTTPException(409, rights.IMPORT_CONFIRMATION)
+
+
 def import_rights(attested: bool | None) -> dict | None:
     """The rights record an import stores, or None when Import sent none.
 
@@ -4626,6 +4651,10 @@ async def upload_job(
         parsed_options = clean_options(json.loads(options))
     except json.JSONDecodeError:
         parsed_options = clean_options({})
+    attested = {"true": True, "1": True, "false": False, "0": False}.get(
+        rights.strip().lower()
+    )
+    _require_import_rights(attested)
 
     try:
         declared = int(request.headers.get("content-length") or 0)
@@ -4673,7 +4702,6 @@ async def upload_job(
         stored = store_source(temp, suffix, original)
         destination = link_source(stored, directory, suffix)
         meta = _probe_video(destination)
-        attested = {"true": True, "1": True, "false": False, "0": False}.get(rights.strip().lower())
         job = _new_job(
             destination, original, meta, parsed_options, job_id=job_id,
             rights=import_rights(attested),
@@ -4708,6 +4736,7 @@ async def upload_job(
 
 @app.post("/api/jobs/path")
 def job_from_path(body: PathBody) -> dict:
+    _require_import_rights(body.rights)
     path = _local_video_path(body.path)
     disk.preflight(disk.estimate_path(path), DATA)
     meta = _probe_video(path)
@@ -4725,6 +4754,7 @@ def job_from_path(body: PathBody) -> dict:
 
 @app.post("/api/jobs/from-url")
 def job_from_url(body: FromUrlBody) -> dict:
+    _require_import_rights(body.rights)
     try:
         url = _validate_remote_ingest_url(body.url)
         disk.preflight(0, DATA)
