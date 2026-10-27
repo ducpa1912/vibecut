@@ -6,13 +6,14 @@ not render, modify, or queue media.
 
 ## Enable
 
-Cleanup is **off by default**. Set:
+Cleanup is **on by default** since Wave 4; the rights attestation gates it.
+To turn it off, set:
 
 ```bash
-VIBECUT_ENABLE_CLEANUP=1
+VIBECUT_ENABLE_CLEANUP=0
 ```
 
-Accepted truthy values: `1`, `true`, `yes`, `on`. When the flag is off, the
+Accepted off values: `0`, `false`, `no`, `off`. When the flag is off, the
 endpoint returns `404`. **The gate runs in HTTP middleware before FastAPI
 parses the body**: malformed JSON, a missing body, or a wrong `Content-Type`
 still returns `404` when cleanup is off. When the flag is on, those malformed

@@ -3044,8 +3044,10 @@ def _retention_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     JOBS.mkdir(parents=True, exist_ok=True)
-    recover_jobs()
+    # Migrate before recover_jobs restarts workers: migration rewrites
+    # job.json without the job lock, so nothing else may be writing yet.
     migrations.migrate_all(JOBS)
+    recover_jobs()
     cleanup_storage()
     threading.Thread(target=_retention_loop, daemon=True).start()
     threading.Thread(target=vision.available, daemon=True).start()
@@ -6074,8 +6076,15 @@ def _queue_story_render(
     edit = _story_edit_for_render(job, story, set_id, body.aspect)
     caption_track = None
     captions_on = False
+    edit_audio_plan = None
     if edit is not None:
         captions_on, caption_track = _edit_caption_track(job_id, edit)
+        # The Edit's audio layer (bed, voice-over, dub) is mixed like any
+        # AudioPlan. "original" stays None so captions-only Edits keep the
+        # legacy audio signature.
+        edit_audio_plan = audio.plan_from_edit(edit.get("audio"))
+        if edit_audio_plan and audio.mixer_mode(edit_audio_plan.get("mode")) == "keep":
+            edit_audio_plan = None
     elif body.captions:
         track_id = body.caption_track_id or str(
             (job.get("story_captions") or {}).get(_story_key(set_id, story_id)) or ""
@@ -6094,7 +6103,7 @@ def _queue_story_render(
         body.aspect,
         None,
         captions_on,
-        None,
+        edit_audio_plan,
         False,
         check_space=True,
         caption_track=caption_track,
@@ -6806,6 +6815,33 @@ def _set_story_track(job_id: str, key: str, track_id: str) -> None:
         job["story_captions"] = tracks
 
     update_job(job_id, mutate)
+    _sync_story_edit_captions(job_id, key, track_id)
+
+
+def _sync_story_edit_captions(job_id: str, key: str, track_id: str) -> None:
+    """Point the story's current 9:16 Edit at a new Classic caption track.
+
+    Migrated stories render through their Edit, so a Classic caption change
+    must become a new Edit version or the next render would burn the old
+    track. Same track is a no-op; any refusal leaves the Edit as it was.
+    """
+    set_id, _, story_id = key.partition(":")
+    edit_key = edits.story_key(set_id, story_id, "9:16")
+    edit_id = edits.pointer_edit_id(load_job(job_id), edit_key)
+    if not edit_id:
+        return
+    try:
+        edit = edits.load_edit(_job_dir(job_id), edit_id)
+    except edits.EditError:
+        return
+    captions = dict((edit or {}).get("captions") or {})
+    if not edit or captions.get("track_id") == track_id:
+        return
+    captions["track_id"] = track_id
+    try:
+        routes_edits.patch_edit(job_id, edit_id, routes_edits.EditPatchBody(captions=captions))
+    except HTTPException as exc:
+        LOGGER.warning("Edit %s kept its caption track: %s", edit_id, exc.detail)
 
 
 def _build_story_caption_track(job_id: str, job: dict, body: CaptionTrackBody) -> dict:

@@ -347,3 +347,55 @@ def test_edit_captions_enable_the_track_for_the_edit_render(api, monkeypatch):
     manifest = app.artifacts.load_manifest(app._job_dir("j1"), body["artifact_id"])
     assert manifest["spec"]["caption"]["enabled"] is True
     assert manifest["spec"]["edit_hash"] == edit["hash"]
+
+
+def _submitted_audio_plan(submitted: list[tuple]) -> dict | None:
+    args = submitted[-1][0]
+    run_args = args[1:] if callable(args[0]) else args
+    return run_args[8]  # job_id, target, plan, key, quality, aspect, encoder, captions, audio_plan
+
+
+def test_story_render_mixes_the_edit_audio_layer(api, monkeypatch):
+    write_job(api.jobs_dir)
+    record, story_value = story(api)
+    edit = make_edit(api, record, story_value)
+    patched = api.patch(f"/api/jobs/j1/edits/{edit['id']}", json={
+        "audio": {"mode": "original_bed", "duck_db": -10},
+    })
+    assert patched.status_code == 200, patched.text
+    submitted = stub_submit(monkeypatch)
+    response = api.post(
+        f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story_value['id']}/render",
+        json={"quality": "final", "aspect": "9:16"},
+    )
+    assert response.status_code == 200, response.text
+    plan = _submitted_audio_plan(submitted)
+    assert plan is not None and plan["mode"] == "original_bed"
+
+
+def test_captions_only_edit_keeps_the_legacy_audio_path(api, monkeypatch):
+    write_job(api.jobs_dir)
+    record, story_value = story(api)
+    make_edit(api, record, story_value)
+    submitted = stub_submit(monkeypatch)
+    response = api.post(
+        f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story_value['id']}/render",
+        json={"quality": "final", "aspect": "9:16"},
+    )
+    assert response.status_code == 200, response.text
+    assert _submitted_audio_plan(submitted) is None
+
+
+def test_classic_caption_change_becomes_a_new_edit_version(api, monkeypatch):
+    write_job(api.jobs_dir)
+    record, story_value = story(api)
+    edit = make_edit(api, record, story_value)
+    calls = []
+    monkeypatch.setattr(
+        app.routes_edits, "patch_edit",
+        lambda job_id, edit_id, body: calls.append((edit_id, body.captions)),
+    )
+    key = f"{record['id']}:{story_value['id']}"
+    app._set_story_track("j1", key, "cap_new")
+    assert app.load_job("j1")["story_captions"][key] == "cap_new"
+    assert calls == [(edit["id"], {**edit["captions"], "track_id": "cap_new"})]
