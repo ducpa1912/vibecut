@@ -132,9 +132,19 @@ preferences and optional keys, but it cannot edit workflow model routes.
 |---|---|
 | **Intelligence** | OpenCode Go model settings; OpenRouter fallback settings; translation mode; rewrite and story-brief toggles. |
 | **Transcription** | Spoken language. Provider, model order, and fallbacks are admin-owned transcription routes. |
-| **Voice over** | MiniMax key and voice readiness. Provider order is admin-owned. Local Kokoro/Piper/say can be configured as fallback routes. |
+| **Voice over** | MiniMax, ElevenLabs or OpenRouter key and voice readiness. Provider order is admin-owned. Kokoro and Apple `say` are on-device fallbacks. |
 | **Music** | Music generation availability and route readiness. Provider order is admin-owned. |
+| **Packs** | Optional Speech, Voice and Separation downloads with size shown before download. |
 | **Video links** | yt-dlp quality, codec, container, audio, cookie source and browser; optional Cobalt fallback URL; optional xhs_get URL and token. |
+
+Final engine set:
+
+| Kind | Engines |
+|---|---|
+| Voice | MiniMax Speech 2.8, ElevenLabs, OpenRouter (Fish 2.1 / Gemini Flash-Lite), Kokoro (Voice Pack), Apple `say` |
+| Transcription | Apple SpeechAnalyzer, Whisper large-v3-turbo (Speech Pack), Deepgram nova-3, Groq whisper-large-v3-turbo |
+| Music | Library/upload, MiniMax Music 3.0, OpenRouter Lyria 3 |
+| AI text | OpenCode Go, OpenRouter; Apple Translation on-device for translation; deterministic `rules` for rewrite |
 
 Buttons such as **Test OpenCode**, **Check local STT**, **Live STT**,
 **Check TTS**, and **Live TTS** report what is ready. Live tests use a local
@@ -142,16 +152,18 @@ sample and do not write a user job.
 
 ### Keys and precedence
 
-The admin console manages the eight AI provider keys:
+The admin console manages the six active AI provider keys:
 
 - OpenCode Go
 - OpenRouter
 - MiniMax
-- Groq
-- OpenAI
-- Deepgram
+- Groq (transcription)
+- Deepgram (transcription)
 - ElevenLabs
-- Cartesia
+
+Old OpenAI and Cartesia keys belong to removed engines. They are hidden from
+the key list and deleted only after the creator confirms **Delete stored keys**
+in the admin console.
 
 Cobalt and xhs_get credentials remain in the existing Setup drawer because
 they are optional URL sidecars, not AI model providers.
@@ -173,14 +185,29 @@ Common environment key names:
 
 ```text
 OPENCODE_GO_API_KEY   OPENROUTER_API_KEY   MINIMAX_API_KEY
-GROQ_API_KEY          OPENAI_API_KEY       DEEPGRAM_API_KEY
-ELEVENLABS_API_KEY    CARTESIA_API_KEY
+GROQ_API_KEY          DEEPGRAM_API_KEY     ELEVENLABS_API_KEY
 VIBECUT_COBALT_API_KEY
 VIBECUT_XHS_GET_TOKEN
 ```
 
 `VIBECUT_OPENCODE_API_KEY` is also accepted for OpenCode. See
 [Configuration](#configuration).
+
+### Optional packs
+
+The app bundle ships no model weights. Core import, Check, Stories, Edit,
+render and packet work without a pack. Each pack is optional, lists its size
+before download, is pinned by SHA-256 and installs under
+`~/Library/Application Support/VibeCut/packs/`:
+
+| Pack | Size | Contents |
+|---|---|---|
+| **Speech Pack** | ~1.9 GB | `mlx`, `mlx-whisper`, Whisper large-v3-turbo |
+| **Voice Pack** | ~0.8 GB | `onnxruntime`, `kokoro-onnx`, Kokoro v1.0 + v1.1-zh |
+| **Separation Pack** | ~0.8 GB | CPU/MPS `torch`, `demucs`, HTDemucs |
+
+Packs can be removed from Setup. Without a pack, the app falls back to Apple
+Speech, Apple `say`, and ducking instead of stem separation.
 
 ### OpenCode Go without a key
 
@@ -287,13 +314,13 @@ Defaults are intentionally local-friendly:
 
 | Workflow | Default routes |
 |---|---|
-| Story brief | OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek → MLX Qwen |
-| Script rewrite | OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek → MLX Qwen |
+| Story brief | OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek |
+| Script rewrite | OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek |
 | Translation | OpenCode Go → OpenRouter |
 | Hook ranking | OpenCode Go → OpenRouter |
-| Voice-over | MiniMax Speech 2.8 Turbo → OpenRouter Fish → OpenRouter Gemini → local Kokoro → Apple say → Piper |
+| Voice-over | MiniMax Speech 2.8 Turbo → OpenRouter Fish → OpenRouter Gemini → on-device Kokoro → Apple say |
 | Music | MiniMax Music 3.0 |
-| Transcription | Apple SpeechAnalyzer → mlx-whisper |
+| Transcription | Apple SpeechAnalyzer → Whisper large-v3-turbo (Speech Pack) |
 
 Catalog sources:
 
@@ -301,12 +328,9 @@ Catalog sources:
 |---|---|
 | OpenRouter | `GET https://openrouter.ai/api/v1/models` |
 | OpenCode Go | `opencode models`, filtered to `opencode-go/` |
-| OpenAI | `GET https://api.openai.com/v1/models` |
 | Groq | `GET https://api.groq.com/openai/v1/models` |
-| Ollama | `GET http://127.0.0.1:11434/api/tags` |
 | ElevenLabs | `GET https://api.elevenlabs.io/v1/models` |
-| MLX | local catalog |
-| MiniMax, Deepgram, Cartesia, Apple | built-in catalogs |
+| MiniMax, Deepgram, Apple, local Kokoro/say | built-in catalogs |
 
 Catalogs are cached at `data/admin/model_catalog.json` for 15 minutes. A failed
 refresh keeps the last good list. If no list is available, the UI reports the
@@ -436,10 +460,12 @@ The audio panel is three steps:
 2. **Voice** — choose a voice from the admin voice-over route. **Use my
    recording** appears in Voice-over, Dub and Full Replace; it fits your
    recording to the cut and is not voice cloning. **Live TTS** tests the engine.
-3. **Music** — choose your own upload, a library/CC0 track, MiniMax Music, or
-   OpenRouter Lyria 3. **Use my sound** accepts your own file. AI sources use an
-   automatic mood prompt built from the cut. The normal picker hides Stable
-   Audio and MusicGen, which remain advanced legacy options.
+   One story keeps one engine and one voice: if any sentence fails, the whole
+   story moves to the next routed engine. Each sentence is cached by engine,
+   model, voice, text, rate and language.
+3. **Music** — choose your own upload, a library track (with a licence
+   attestation), MiniMax Music, or OpenRouter Lyria 3. **Use my sound** accepts
+   your own file. AI sources use an automatic mood prompt built from the cut.
 
 **Automation mixer**: one section per clip, a music lane and a voice lane. The
 lane starts at 100% (0 dB). Click to add a node, drag anywhere in time or gain,
@@ -452,9 +478,8 @@ and starts the loop on a beat.
 
 **Translation** is a Setup mode, not a visible engine: **Auto** (online → local),
 **Local first**, **Local only**, **Online only**. The visible online providers
-are OpenCode and OpenRouter; local is Apple Translation with Argos available as
-an advanced fallback. Apple batches are split and retried. Translations are
-cached in `data/cache/translate`.
+are OpenCode and OpenRouter; local is Apple Translation. Apple batches are
+split and retried. Translations are cached in `data/cache/translate`.
 
 The voice script builder strips fillers and stage directions, drops
 near-duplicate lines, prefers speech over on-screen text, fits each line to its
@@ -555,7 +580,7 @@ python3 cli.py audit                       # what is installed and how big
 `render` reuses the newest analyzed job for a file when one exists. `--target`
 can be repeated. `--encoder auto|videotoolbox|libx264` overrides the default.
 Audio replacement: `--audio-mode keep|full|bed|voice|music`,
-`--translate <lang>`, `--translate-provider auto|opencode|apple_fm|argos|marian|ollama`,
+`--translate <lang>`, `--translate-provider auto|opencode|apple_fm`,
 `--voice-engine`, `--voice`, `--music`.
 
 ## API reference
@@ -674,7 +699,7 @@ item completes when analysis is ready.
 |---|---|---|
 | GET | `/api/audio/engines` | Local/cloud voice and music engine readiness. |
 | GET | `/api/audio/voices?engine=...` | Voices for one engine. |
-| GET | `/api/audio/music?source=...` | Library/CC0/generated tracks. |
+| GET | `/api/audio/music?source=...` | Library/generated tracks. |
 | GET | `/api/audio/translate/status` | Translation provider readiness. |
 | POST | `/api/audio/translate/install` | Legacy install endpoint; returns Apple Translation guidance. |
 | GET | `/api/jobs/{job_id}/audio/moods` | Scene moods and music prompt for a cut. |
@@ -855,11 +880,9 @@ data/
     translate/                  Translation memo
     stt-test/                   Live STT test clip/transcript
     voice-test/                 Live TTS test clips
-  models/kokoro/                Optional Kokoro model files
-  voices/piper/                 Optional Piper voices
+  models/kokoro/                Kokoro model files when the Voice Pack is installed
 assets/music/
-  library/                      User library tracks
-  cc0/                          CC0 tracks
+  library/                      User library tracks (own / licensed / CC)
   generated/                    AI beds kept as reusable library tracks
 bin/                            Compiled Swift helpers and local tools
 ```
@@ -921,27 +944,21 @@ Model and local engine variables:
 | `VIBECUT_OPENCODE_API_KEY` / `OPENCODE_GO_API_KEY` | unset | OpenCode Go key. |
 | `VIBECUT_OPENROUTER_API_KEY` | unset | OpenRouter key. |
 | `VIBECUT_MINIMAX_API_KEY` | unset | MiniMax TTS/music key. |
-| `VIBECUT_GROQ_API_KEY` | unset | Groq STT/TTS/text key. |
-| `VIBECUT_OPENAI_API_KEY` | unset | OpenAI STT/TTS/text key. |
-| `VIBECUT_DEEPGRAM_API_KEY` | unset | Deepgram STT/TTS key. |
+| `VIBECUT_GROQ_API_KEY` | unset | Groq STT/text key. |
+| `VIBECUT_DEEPGRAM_API_KEY` | unset | Deepgram STT key. |
 | `VIBECUT_ELEVENLABS_API_KEY` | unset | ElevenLabs TTS key. |
-| `VIBECUT_CARTESIA_API_KEY` | unset | Cartesia TTS key. |
 | `VIBECUT_COBALT_API_KEY` | unset | Optional Cobalt instance key. |
 | `VIBECUT_XHS_GET_TOKEN` | unset | Optional xhs_get friends-mode token. |
 | `VIBECUT_OPENCODE_BIN` | `opencode` on `PATH` | OpenCode CLI path. |
-| `VIBECUT_MLX_REWRITE_MODEL` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | MLX rewrite model. |
-| `VIBECUT_LLM_URL` | unset | Ollama `/api/generate` URL. |
-| `VIBECUT_LLM_MODEL` | `qwen2.5:3b` | Ollama model. |
 | `VIBECUT_REWRITE_CONTEXT_CHARS` | `6000` | Transcript context cap. |
-| `VIBECUT_WHISPER_MODEL` | `mlx-community/whisper-small-mlx` | MLX Whisper model. |
+| `VIBECUT_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` | Whisper model from the Speech Pack. |
 | `VIBECUT_GROQ_STT_MODEL` | route/default | Groq STT model override. |
-| `VIBECUT_OPENAI_STT_MODEL` | route/default | OpenAI STT model override. |
-| `VIBECUT_GROQ_TTS_MODEL` | route/default | Groq TTS model override. |
-| `VIBECUT_OPENAI_TTS_MODEL` | route/default | OpenAI TTS model override. |
 | `VIBECUT_OPENROUTER_QUARANTINE_SECONDS` | `300` | OpenRouter auth-failure quarantine. |
 | `VIBECUT_PROVIDER_BREAKER_FAILURES` | `3` | Failures before a provider breaker opens. |
 | `VIBECUT_PROVIDER_BREAKER_SECONDS` | `90` | Breaker cooldown. |
 | `VIBECUT_AUDIO_LICENSE` | `normal` | `strict` requires music/voice license metadata. |
+| `VIBECUT_PACKS_DIR` | Application Support | Override the pack install root. |
+| `VIBECUT_PACK_MANIFEST` | built in | Override the pack manifest JSON. |
 
 Environment keys are read-only in the admin UI. A project key saved for
 OpenRouter overrides its environment variable; for other providers the
@@ -972,19 +989,22 @@ Remote admin access requires HTTPS.
 
 ## Legacy and compatibility
 
-VibeCut keeps some older paths for existing jobs and advanced installs:
+VibeCut keeps older jobs and import paths working, but removed engines stay
+removed:
 
-- **Stable Audio / MusicGen** stay in `audio.py`, `tools/music_generate.py`, and
-  `tools/musicgen_generate.py` for advanced/legacy music plans, but are hidden
-  from the normal music picker.
-- **Argos / Marian / Ollama translation** remain as advanced local fallbacks.
-  The normal visible translation providers are OpenCode, OpenRouter and Apple.
-- **Local LLM hook ranking** is available only through a configured `ollama`
-  route and `VIBECUT_LLM_URL`.
+- **Removed engines:** Piper, OpenAI TTS/STT, Groq Orpheus, Deepgram Aura,
+  Cartesia TTS, local-mlx, Ollama, Marian, Argos, MusicGen, Stable Audio and the
+  `cc0` music bucket are not offered or called. Old settings migrate on load:
+  Piper routes become Kokoro, other removed TTS engines become MiniMax,
+  `local-mlx`/`ollama` text routes are dropped, and a workflow that loses every
+  route falls back to its default list.
+- **Old keys:** OpenAI and Cartesia keys are hidden from the admin key list.
+  Setup deletes the stored copies only after confirmation; environment-managed
+  keys stay until the variable is unset.
 - **Cobalt and xhs_get** are optional external sidecars. They are never
   bundled, imported, or required for common URLs.
-- **Old settings** are migrated on load. v0.7 OpenRouter settings are copied to
-  OpenCode when no OpenCode section exists.
+- **Old settings** are migrated once on load and written back. v0.7 OpenRouter
+  settings are copied to OpenCode when no OpenCode section exists.
 - **Old jobs** without variants, history, crop tracking, or newer render keys
   keep working; missing optional fields are treated as empty/defaults.
 - **Old renders** remain in `data/jobs/<id>/renders/`. Review links can fall
@@ -1039,8 +1059,7 @@ Current suite: **612 tests**. The optional beat-grid test skips when `librosa`
 is not installed. The tests use temporary `VIBECUT_DATA` directories and do not
 require ffmpeg for the fast unit set. The dependency audit checks direct
 requirements, sidecar imports, and the installed yt-dlp floor. Two existing
-warnings are expected: `setuptools` and `stable-audio-tools` lack usable
-license metadata.
+warnings are expected: `setuptools` lacks usable license metadata.
 
 ## Documentation
 

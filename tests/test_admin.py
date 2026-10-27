@@ -389,13 +389,13 @@ def test_blank_key_save_is_rejected_and_clear_is_explicit(admin_api):
 
 def test_env_managed_keys_are_read_only(admin_api, monkeypatch):
     data = bootstrap(admin_api)
-    monkeypatch.setenv("VIBECUT_OPENAI_API_KEY", "env-openai-secret")
+    monkeypatch.setenv("VIBECUT_ELEVENLABS_API_KEY", "env-elevenlabs-secret")
     keys = admin_api.get("/_ductator/api/keys").json()["keys"]
-    openai = next(item for item in keys if item["name"] == "openai")
-    assert openai["source"] == "env"
+    elevenlabs = next(item for item in keys if item["name"] == "elevenlabs")
+    assert elevenlabs["source"] == "env"
     response = admin_api.post(
-        "/_ductator/api/keys/openai",
-        json={"value": "file-openai-secret"},
+        "/_ductator/api/keys/elevenlabs",
+        json={"value": "file-elevenlabs-secret"},
         headers={"X-VibeCut-Admin-CSRF": data["csrf"]},
     )
     assert response.status_code == 409
@@ -725,7 +725,7 @@ def test_workflow_rejects_wrong_kind_models(admin_api, monkeypatch):
     ])
     assert rewrite_tts.status_code == 400
     stt_text = _save_workflow(admin_api, data["csrf"], "stt", [
-        {"provider": "openai", "model": "gpt-5.6-luna"},
+        {"provider": "groq", "model": "openai/gpt-oss-120b"},
     ])
     assert stt_text.status_code == 400
     music_tts = _save_workflow(admin_api, data["csrf"], "music", [
@@ -733,7 +733,7 @@ def test_workflow_rejects_wrong_kind_models(admin_api, monkeypatch):
     ])
     assert music_tts.status_code == 400
     valid = _save_workflow(admin_api, data["csrf"], "tts", [
-        {"provider": "cartesia", "model": "sonic-3.6"},
+        {"provider": "elevenlabs", "model": "eleven_multilingual_v2"},
         {"provider": "local", "model": "kokoro"},
     ])
     assert valid.status_code == 200, valid.text
@@ -744,7 +744,7 @@ def test_workflow_rejects_model_id_traversal_and_query_injection(admin_api, monk
     _install_fake_catalog(monkeypatch)
     for model in ("../../etc/passwd", "model?token=SECRET", "model#fragment", ""):
         response = _save_workflow(admin_api, data["csrf"], "rewrite", [
-            {"provider": "local-mlx", "model": model},
+            {"provider": "openrouter", "model": model},
         ])
         assert response.status_code == 400
 
@@ -910,3 +910,76 @@ def test_setup_rejects_cross_site_and_cross_origin_writes(admin_api):
         headers={"Origin": "http://127.0.0.1", "Sec-Fetch-Site": "same-origin"},
     )
     assert same.status_code == 200
+
+
+def test_admin_hides_removed_engine_keys_and_confirms_deletion(admin_api):
+    data = bootstrap(admin_api)
+    settings_store.SECRETS_PATH.write_text(json.dumps({
+        "openai": "sk-old-openai-key-123456",
+        "cartesia": "cartesia-old-key-123456",
+        "minimax": "mm-live-key-123456",
+    }), encoding="utf-8")
+
+    payload = admin_api.get("/_ductator/api/keys").json()
+    names = {item["name"] for item in payload["keys"]}
+    assert "openai" not in names and "cartesia" not in names
+    assert "minimax" in names
+    assert {item["name"] for item in payload["stale_secrets"]} == {
+        "openai", "cartesia",
+    }
+
+    refused = admin_api.post(
+        "/_ductator/api/keys/confirm-removals",
+        json={"confirm": False},
+        headers={"X-VibeCut-Admin-CSRF": data["csrf"]},
+    )
+    assert refused.status_code == 400
+
+    confirmed = admin_api.post(
+        "/_ductator/api/keys/confirm-removals",
+        json={"confirm": True},
+        headers={"X-VibeCut-Admin-CSRF": data["csrf"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert set(confirmed.json()["removed"]) == {"openai", "cartesia"}
+    secrets = json.loads(settings_store.SECRETS_PATH.read_text())
+    assert set(secrets) == {"minimax"}
+    assert admin_api.get("/_ductator/api/keys").json()["stale_secrets"] == []
+
+
+def test_admin_workflow_providers_match_final_engines(admin_api):
+    bootstrap(admin_api)
+    payload = admin_api.get("/_ductator/api/workflows").json()
+    providers = payload["providers"]
+    assert providers["tts"] == ["minimax", "openrouter", "local", "elevenlabs"]
+    assert providers["stt"] == ["apple", "whisper", "groq", "deepgram"]
+    for name in ("story_brief", "rewrite", "translate", "hook_rank"):
+        assert providers[name] == ["opencode-go", "openrouter"]
+    meta_ids = {item["id"] for item in payload["provider_meta"]}
+    for removed in ("openai", "cartesia", "local-mlx", "ollama", "auto"):
+        assert removed not in meta_ids
+
+
+def test_admin_catalog_hides_piper_and_removed_providers(admin_api, monkeypatch):
+    bootstrap(admin_api)
+    _install_fake_catalog(monkeypatch)
+    local = admin_api.get("/_ductator/api/catalog?provider=local&workflow=tts").json()
+    ids = [item["id"] for item in local["models"]]
+    assert "kokoro" in ids and "say" in ids
+    assert "piper" not in ids
+    removed = admin_api.get("/_ductator/api/catalog?provider=cartesia&workflow=tts")
+    assert removed.status_code == 400
+
+
+def test_admin_workflow_rejects_piper_and_removed_provider(admin_api, monkeypatch):
+    data = bootstrap(admin_api)
+    _install_fake_catalog(monkeypatch)
+    piper = _save_workflow(admin_api, data["csrf"], "tts", [
+        {"provider": "local", "model": "piper"},
+    ])
+    assert piper.status_code == 400
+    assert "Piper" in piper.json()["detail"]
+    openai = _save_workflow(admin_api, data["csrf"], "tts", [
+        {"provider": "openai", "model": "gpt-4o-mini-tts"},
+    ])
+    assert openai.status_code == 400
