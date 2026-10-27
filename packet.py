@@ -1794,7 +1794,7 @@ def _job_relative(value: object) -> str:
     return Path(text).name if "/" in text or "\\" in text else text
 
 
-def _packet_edit(edit: dict, assets: list[dict]) -> dict:
+def _packet_edit(edit: dict, assets: list[dict], prefix: str = "") -> dict:
     """Copy an Edit for the packet without absolute machine paths.
 
     The original ``id``/``hash`` stay intact so the packet still names the
@@ -1811,7 +1811,7 @@ def _packet_edit(edit: dict, assets: list[dict]) -> dict:
             None,
         )
         if match is not None:
-            lut["path"] = f"assets/{match['kind']}/{match['file_name']}"
+            lut["path"] = f"{prefix}assets/{match['kind']}/{match['file_name']}"
     audio_section = value.get("audio")
     if isinstance(audio_section, dict):
         music_section = audio_section.get("music")
@@ -2241,7 +2241,11 @@ def build_packet(
                     edit_ref = _write_document(
                         stage,
                         prefix + "edit.json",
-                        _packet_edit(identity["edit"], identity["assets"]),
+                        _packet_edit(
+                            identity["edit"],
+                            identity["assets"],
+                            "" if index == 0 else "../../",
+                        ),
                     )
                     edit_ref.update({
                         "id": str(identity["edit"].get("id") or ""),
