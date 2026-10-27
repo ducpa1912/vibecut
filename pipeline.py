@@ -527,6 +527,106 @@ def extract_tracking_frames(
     return files
 
 
+CHECK_SAMPLE_FPS = 0.5
+CHECK_SAMPLE_MAX_FRAMES = 3600
+CHECK_FRAME_WIDTH = 960
+
+
+def extract_text_frames(
+    path: str,
+    job_dir: Path,
+    duration: float,
+    *,
+    fps: float = CHECK_SAMPLE_FPS,
+    max_frames: int = CHECK_SAMPLE_MAX_FRAMES,
+    out_dir: Path | None = None,
+) -> list[dict]:
+    """Extract evenly spaced stills for the Check text pass.
+
+    The default cadence is 0.5 fps (one frame every two seconds). Long sources
+    lower the cadence so the pass never exceeds ``max_frames``. Frame times are
+    the sample starts; each frame represents ``1 / cadence`` seconds.
+    """
+    duration = max(0.0, float(duration or 0.0))
+    if duration <= 0:
+        return []
+    cadence = min(max(float(fps or CHECK_SAMPLE_FPS), 0.05), 4.0)
+    if duration * cadence > max_frames:
+        cadence = max(0.05, max_frames / duration)
+    directory = Path(out_dir) if out_dir else job_dir / "check" / "frames"
+    if directory.exists():
+        shutil.rmtree(directory, ignore_errors=True)
+    directory.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        _ffmpeg(), "-y", "-v", "error", "-i", path,
+        "-vf", f"fps={cadence:.4f},scale={CHECK_FRAME_WIDTH}:-2",
+        "-q:v", "4", str(directory / "%06d.jpg"),
+    ]
+    _run(cmd, timeout=max(300, int(duration * 1.5)))
+    files = sorted(directory.glob("*.jpg"))
+    if not files:
+        return []
+    window = 1.0 / cadence
+    return [
+        {
+            "index": index,
+            "file": frame.name,
+            "t": round(index * window, 3),
+            "start": round(index * window, 3),
+            "end": round(min(duration, (index + 1) * window), 3),
+            "ocr_available": True,
+        }
+        for index, frame in enumerate(files)
+    ]
+
+
+def read_text_samples(
+    path: str,
+    job_dir: Path,
+    duration: float,
+    *,
+    fps: float = CHECK_SAMPLE_FPS,
+    max_frames: int = CHECK_SAMPLE_MAX_FRAMES,
+    keep: bool | None = None,
+) -> dict:
+    """Run the 0.5 fps text pass and return OCR lines with geometry.
+
+    The result always reports whether Vision was available, so a caller can
+    tell "no text in these frames" from "this machine cannot read text".
+    """
+    keep = (
+        str(os.environ.get("VIBECUT_KEEP_CHECK_FRAMES", "0")).strip().lower()
+        in {"1", "true", "yes", "on"}
+        if keep is None
+        else bool(keep)
+    )
+    directory = job_dir / "check" / "frames"
+    frames = extract_text_frames(
+        path, job_dir, duration, fps=fps, max_frames=max_frames, out_dir=directory,
+    )
+    if not frames:
+        return {"frames": [], "vision": False, "fps": fps, "duration": duration}
+    available = vision.available()
+    records = vision.probe_images(directory) if available else {}
+    samples = []
+    for frame in frames:
+        record = records.get(frame["file"]) or {}
+        samples.append({
+            **frame,
+            "text": ocr_lines(record),
+            "width": int(record.get("width") or 0) or None,
+            "height": int(record.get("height") or 0) or None,
+        })
+    if not keep:
+        shutil.rmtree(directory, ignore_errors=True)
+    return {
+        "frames": samples,
+        "vision": bool(available and records),
+        "fps": round(len(samples) / duration, 4) if duration else fps,
+        "duration": round(duration, 3),
+    }
+
+
 def _attention_from_record(record: dict) -> dict | None:
     faces = record.get("faces") or []
     salient = record.get("salient") or []
@@ -2468,14 +2568,83 @@ def make_plans(
 # ---------------------------------------------------------------- orchestration
 
 
+OCR_MIN_CONFIDENCE = 0.18
+OCR_MIN_TEXT = 2
+
+
+def _box(value) -> dict | None:
+    """Return one normalized top-left box, or ``None`` when unusable."""
+    if isinstance(value, (list, tuple)) and len(value) == 4:
+        value = {"x": value[0], "y": value[1], "w": value[2], "h": value[3]}
+    if not isinstance(value, dict):
+        return None
+    try:
+        x = float(value.get("x"))
+        y = float(value.get("y"))
+        w = float(value.get("w"))
+        h = float(value.get("h"))
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(number) for number in (x, y, w, h)):
+        return None
+    if w <= 0 or h <= 0 or x < 0 or y < 0 or x >= 1 or y >= 1:
+        return None
+    w = min(w, 1.0 - x)
+    h = min(h, 1.0 - y)
+    if w <= 0.002 or h <= 0.002:
+        return None
+    return {
+        "x": round(x, 6), "y": round(y, 6),
+        "w": round(w, 6), "h": round(h, 6),
+    }
+
+
+def ocr_lines(record: dict) -> list[dict]:
+    """Keep every accepted OCR line with its geometry and confidence.
+
+    The Vision helper already reports one normalized ``box`` per line. Older
+    records may omit it, so a line without a usable box still contributes text
+    but no geometry. Callers decide how to treat that.
+    """
+    lines: list[dict] = []
+    for line in (record or {}).get("text", []) or []:
+        if not isinstance(line, dict):
+            continue
+        text = " ".join(str(line.get("text") or "").split())
+        if len(text) < OCR_MIN_TEXT:
+            continue
+        try:
+            confidence = float(line.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if not math.isfinite(confidence) or confidence < OCR_MIN_CONFIDENCE:
+            continue
+        lines.append({
+            "text": text,
+            "confidence": round(min(1.0, max(0.0, confidence)), 4),
+            "box": _box(line.get("box")),
+        })
+    return lines
+
+
 def _apply_scene_read(scene: dict, job_dir: Path, record: dict, read_text: bool) -> None:
-    lines = [
-        line for line in (record or {}).get("text", [])
-        if line.get("confidence", 0) >= 0.18
-        and len(str(line.get("text") or "").strip()) >= 2
-    ]
-    ocr = " · ".join(str(line["text"]).strip() for line in lines)[:260]
+    lines = ocr_lines(record)
+    ocr = " · ".join(line["text"] for line in lines)[:260]
     scene["ocr"] = ocr if read_text else ""
+    scene["ocr_boxes"] = [
+        {
+            "text": line["text"],
+            "confidence": line["confidence"],
+            "box": line["box"],
+        }
+        for line in lines
+        if read_text and line["box"]
+    ]
+    if read_text and lines:
+        confidences = [line["confidence"] for line in lines]
+        scene["ocr_confidence"] = round(sum(confidences) / len(confidences), 4)
+    else:
+        scene["ocr_confidence"] = 0.0
     scene["faces"] = (record or {}).get("faces", [])
     scene["salient"] = (record or {}).get("salient", [])
     scene["visual"] = image_features(job_dir / "thumbs" / f"{scene['id']:05d}.jpg")
