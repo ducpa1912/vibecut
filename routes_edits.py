@@ -174,17 +174,32 @@ def _merge_layers(base: dict, values: dict) -> dict:
     return merged
 
 
+class _StaleHead(Exception):
+    pass
+
+
 def _persist(job_id: str, edit: dict) -> dict:
     try:
         saved = edits.save_edit(_job_dir(job_id), edit)
     except edits.EditError as exc:
         raise _http(exc) from exc
-    edits.append_history(_job_dir(job_id), saved)
+    key = edits.story_key(
+        saved["story_ref"]["set_id"], saved["story_ref"]["story_id"], saved["aspect"],
+    )
 
     def mutate(job: dict) -> None:
+        # Compare-and-swap: a concurrent save moved the head after this edit
+        # was built from it, so refuse instead of forking the version chain.
+        if edits.pointer_edit_id(job, key) != saved.get("parent"):
+            raise _StaleHead()
         edits.set_pointer(job, saved)
 
-    return _app().update_job(job_id, mutate)
+    try:
+        job = _app().update_job(job_id, mutate)
+    except _StaleHead:
+        raise HTTPException(409, "This story changed in another window. Reload and try again.")
+    edits.append_history(_job_dir(job_id), saved)
+    return job
 
 
 def _payload(edit: dict, *, changed: bool = False, job: dict | None = None) -> dict:
@@ -422,24 +437,17 @@ def restore_edit(job_id: str, edit_id: str, body: EditRestoreBody) -> dict:
 
 @router.delete("/api/jobs/{job_id}/edits/{edit_id}")
 def delete_edit(job_id: str, edit_id: str) -> dict:
+    """Reset the story/aspect to "no edit". Versions stay on disk: they are
+    immutable and rendered artifacts may reference their hashes."""
     job = _app().load_job(job_id)
     edit = _load(edit_id, _job_dir(job_id))
     key = _current(job, edit)
-    rows = edits.list_edits(_job_dir(job_id), key=key)
-    deleted: list[str] = []
-    for row in rows:
-        edits.delete_version(_job_dir(job_id), row["id"])
-        try:
-            history_store.delete_entry(_job_dir(job_id), row["id"])
-        except Exception:  # noqa: BLE001 - deletion is best-effort
-            pass
-        deleted.append(row["id"])
 
     def mutate(current: dict) -> None:
         edits.clear_pointer(current, key)
 
     _app().update_job(job_id, mutate)
-    return {"deleted": deleted, "count": len(deleted), "key": key}
+    return {"cleared": key, "kept_versions": len(edits.list_edits(_job_dir(job_id), key=key))}
 
 
 @router.get("/api/jobs/{job_id}/edits/{edit_id}/compile")

@@ -13,6 +13,8 @@ import app
 import captions
 import edits
 import history_store
+import routes_edits
+from fastapi import HTTPException
 
 STORY_REF = {
     "set_id": "cs_1",
@@ -551,27 +553,38 @@ def test_get_list_and_current_routes(env):
     assert partial.status_code == 422
 
 
-def test_delete_current_edit_removes_versions_history_and_pointer(env):
+def test_delete_clears_pointer_and_keeps_immutable_versions(env):
     client = env["client"]
     first = _create(client, env["job_id"])
     second = client.patch(
         f"/api/jobs/{env['job_id']}/edits/{first['id']}",
         json={"color": {"preset": "warm_film"}},
     ).json()
-    deleted = client.delete(
-        f"/api/jobs/{env['job_id']}/edits/{second['id']}",
-    )
+    deleted = client.delete(f"/api/jobs/{env['job_id']}/edits/{second['id']}")
     assert deleted.status_code == 200, deleted.text
-    body = deleted.json()
-    assert body["count"] == 2
-    assert set(body["deleted"]) == {first["id"], second["id"]}
-    assert not edits.edits_dir(env["dir"]).exists() or not list(
-        edits.edits_dir(env["dir"]).glob("ed_*.json")
-    )
+    assert deleted.json() == {"cleared": "cs_1:s1:9:16", "kept_versions": 2}
     assert edits.pointer_edit_id(app.load_job(env["job_id"]), "cs_1:s1:9:16") is None
-    assert history_store.list_entries(env["dir"]) == []
-    missing = client.get(f"/api/jobs/{env['job_id']}/edits/{second['id']}")
-    assert missing.status_code == 404
+    kept = client.get(f"/api/jobs/{env['job_id']}/edits/{second['id']}")
+    assert kept.status_code == 200
+
+
+def test_stale_head_is_refused_instead_of_forking(env):
+    client = env["client"]
+    first = _create(client, env["job_id"])
+    ahead = client.patch(
+        f"/api/jobs/{env['job_id']}/edits/{first['id']}",
+        json={"color": {"preset": "warm_film"}},
+    ).json()
+    base = edits.load_edit(env["dir"], first["id"])
+    built_from_first = edits.build_edit(
+        story_ref=base["story_ref"], aspect="9:16", version=2, parent=base["id"],
+        **{key: base[key] for key in routes_edits._LAYER_FIELDS if key != "motion"},
+        motion=[{"kind": "punch_in", "start": 0.0, "end": 1.0, "amount": 0.1}],
+    )
+    with pytest.raises(HTTPException) as caught:
+        routes_edits._persist(env["job_id"], built_from_first)
+    assert caught.value.status_code == 409
+    assert edits.pointer_edit_id(app.load_job(env["job_id"]), "cs_1:s1:9:16") == ahead["id"]
 
 
 def test_aspects_fork_independently(env):
