@@ -43,6 +43,15 @@ function isReading(status) {
     && !STOPPED.has(status);
 }
 
+/**
+ * Whether a light refresh may keep the last Check and Stories answers:
+ * same ready video, still ready, and no Check running.
+ */
+export function canReuseSteps(previous, jobId, status, light) {
+  return Boolean(light) && previous?.jobId === jobId && Boolean(previous?.loaded)
+    && previous?.status === "ready" && status === "ready" && previous?.check !== "running";
+}
+
 /** The top strip's one action: stop a read, or start a stopped one again. */
 export function readingAction(status) {
   if (isReading(status)) return { kind: "cancel", label: "Cancel reading" };
@@ -381,10 +390,16 @@ export function startStudio() {
 
   function scheduleWatch(delay) {
     if (watchTimer) window.clearTimeout(watchTimer);
-    watchTimer = window.setTimeout(() => { void refreshState(); }, delay);
+    watchTimer = window.setTimeout(() => { void refreshState({ light: true }); }, delay);
   }
 
-  async function refreshState() {
+  /**
+   * Re-read the job's step state. `light` (the idle watcher, step changes)
+   * reads only the status once the video is ready and nothing runs, reusing
+   * the last Check and Stories answers; panels call ctx.refreshSteps() after
+   * they change those. Each poll used to fetch status, check and clip-sets.
+   */
+  async function refreshState({ light = false } = {}) {
     if (watchTimer) window.clearTimeout(watchTimer);
     watchTimer = 0;
     const jobId = currentJob?.id || "";
@@ -406,7 +421,10 @@ export function startStudio() {
       if (error?.status === 404) next.missing = true;
       else next.loaded = false;
     }
-    if (next.status === "ready") {
+    if (canReuseSteps(jobState, jobId, next.status, light)) {
+      next.check = jobState.check;
+      next.stories = jobState.stories;
+    } else if (next.status === "ready") {
       const [check, sets] = await Promise.allSettled([
         request(`/api/jobs/${encodeURIComponent(jobId)}/check`),
         listClipSets(jobId),
@@ -680,7 +698,7 @@ export function startStudio() {
   window.addEventListener("hashchange", () => {
     const step = routeFromHash();
     if (step) activate(step);
-    void refreshState();
+    void refreshState({ light: true });
   });
   window.addEventListener("popstate", () => {
     const step = routeFromHash();

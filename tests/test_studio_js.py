@@ -104,6 +104,22 @@ def test_check_samples_short_sources_at_one_fps():
     assert out == [1, 1, 0.5, 0.5]
 
 
+@needs_node
+def test_idle_watcher_polls_status_only():
+    """QA #21: an idle ready video re-reads status, not check and clip-sets."""
+    out = run_module("shell.js", """
+        const ready = {jobId: "j1", loaded: true, status: "ready", check: "done"};
+        return [
+          m.canReuseSteps(ready, "j1", "ready", true),
+          m.canReuseSteps(ready, "j1", "ready", false),
+          m.canReuseSteps({...ready, check: "running"}, "j1", "ready", true),
+          m.canReuseSteps({...ready, status: "reading"}, "j1", "ready", true),
+          m.canReuseSteps(ready, "j2", "ready", true),
+        ];
+    """, prelude=NO_PAGE)
+    assert out == [True, False, False, False, False]
+
+
 # ---------------------------------------------------------------- edit/model.js (QA #20)
 
 
