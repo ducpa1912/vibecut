@@ -384,3 +384,23 @@ def test_settings_migration_falls_back_when_every_text_route_is_removed(
         "opencode-go", "openrouter",
     ]
     assert "ollama" not in path.read_text(encoding="utf-8")
+
+
+def test_settings_migration_keeps_whisper_fallback_from_auto_route(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    path = data / "settings.json"
+    path.write_text(json.dumps({"workflows": {"stt": {"routes": [
+        {"provider": "apple", "model": "on-device-3b"},
+        {"provider": "auto", "model": "mlx-community/whisper-small-mlx"},
+    ]}}}), encoding="utf-8")
+    monkeypatch.setattr(settings_store, "DATA", data)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", path)
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", data / "secrets.json")
+
+    routes = settings_store.load_settings()["workflows"]["stt"]["routes"]
+
+    assert routes == [
+        {"provider": "apple", "model": "on-device-3b"},
+        {"provider": "whisper", "model": "mlx-community/whisper-large-v3-turbo"},
+    ]

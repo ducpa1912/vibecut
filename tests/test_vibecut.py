@@ -1383,7 +1383,7 @@ def test_settings_api_locks_model_and_masks_keys(tmp_path, monkeypatch):
     body = saved.json()
     assert body["settings"]["stt"]["provider"] == "auto"
     assert body["settings"]["stt"]["language"] == "vi"
-    assert body["settings"]["stt"]["model"] == "mlx-community/whisper-small-mlx"
+    assert body["settings"]["stt"]["model"] == "mlx-community/whisper-large-v3-turbo"
     assert body["secrets"]["minimax"] is True
     assert body["secrets"]["opencode"] is True
     assert body["sources"]["minimax"] == "file"

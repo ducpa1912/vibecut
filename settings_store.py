@@ -80,7 +80,7 @@ DEFAULTS = {
     "stt": {
         "provider": "auto",
         "language": "en",
-        "model": "mlx-community/whisper-small-mlx",
+        "model": "mlx-community/whisper-large-v3-turbo",
     },
     "tts": {"provider": "minimax"},
     "preflight": {
@@ -135,6 +135,13 @@ def _migrate_route(workflow: str, raw: object) -> tuple[dict | None, bool]:
             return None, True
     elif workflow == "stt":
         if provider == "auto":
+            # Old "auto" routes named a local Whisper model; keep that fallback
+            # as the Whisper pack instead of collapsing it into Apple.
+            if "whisper" in model.lower():
+                return {
+                    "provider": "whisper",
+                    "model": workflow_config.STT_MODEL_MIGRATIONS.get(model, model),
+                }, True
             return {"provider": "apple", "model": "on-device-3b"}, True
         if provider == "openai":
             return {"provider": "groq", "model": "whisper-large-v3-turbo"}, True
