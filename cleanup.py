@@ -17,6 +17,7 @@ import re
 from typing import Any, Iterable
 
 import detect
+import rights
 
 SCHEMA_VERSION = 1
 MAX_BOXES = 64
@@ -279,16 +280,18 @@ def _layer_ranges(tracklet: dict) -> list[dict]:
 def tracklet_clean_layers(
     tracklets: Iterable[dict] | None,
     *,
-    attested: bool,
+    attested: bool | None = None,
     selected: Iterable[str] | None = None,
     include_handles: bool = False,
+    job: dict | None = None,
+    settings: dict | None = None,
 ) -> dict:
     """Turn Check tracklets into Edit Clean layers, gated by detected kind.
 
-    ``detect.cleanup_block_reason`` is the single gate. Watermarks and
+    ``rights.clean_block_reason`` is the single gate. Watermarks and
     screen-recording UI text never produce a layer. Handles and logos need an
     own-footage attestation plus an explicit ``include_handles`` opt-in.
-    Every other kind also needs the rights attestation.
+    Every other kind follows the stored ``rights.lock`` setting.
 
     Boxes are source-normalized and ranges are absolute source times, matching
     the Edit Clean coordinate contract. The returned dict carries ``layers``,
@@ -313,7 +316,10 @@ def tracklet_clean_layers(
             "kind": str(item.get("kind") or "").strip().lower(),
         })
     wanted = None if selected is None else {str(value) for value in selected}
-    entries = detect.clean_prefill(items, attested=bool(attested))
+    effective = rights.job_attested(job) if job is not None else bool(attested)
+    entries = detect.clean_prefill(
+        items, attested=effective, job=job, settings=settings,
+    )
     layers: list[dict] = []
     refused: list[dict] = []
     warnings: list[str] = []
@@ -324,7 +330,9 @@ def tracklet_clean_layers(
         if wanted is not None and tracklet_id not in wanted:
             continue
         kind = entry["kind"]
-        blocked = detect.cleanup_block_reason(kind, attested=bool(attested))
+        blocked = detect.cleanup_block_reason(
+            kind, attested=effective, job=job, settings=settings,
+        )
         action = entry.get("action")
         if blocked or action not in CLEAN_LAYER_KINDS:
             if blocked:
@@ -417,7 +425,7 @@ def tracklet_clean_layers(
         "layers": layers,
         "refused": refused,
         "warnings": warnings,
-        "attested": bool(attested),
+        "attested": bool(effective),
         "tracklets": len(items),
     }
 
