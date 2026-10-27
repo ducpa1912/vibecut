@@ -376,6 +376,22 @@ def current_edit(
     }
 
 
+def _default_captions(job_id: str, set_id: str, story_id: str, value) -> dict | None:
+    """Captions are on by default: a new story Edit without a track gets the
+    story's track in the default style when the job has speech. An explicit
+    ``enabled: false`` or a malformed value is left for validation."""
+    if value is not None and not isinstance(value, dict):
+        return value
+    captions = dict(value or {})
+    if captions.get("track_id") or captions.get("enabled") is False:
+        return value
+    track = _app().default_story_caption_track(job_id, set_id, story_id)
+    if track is None:
+        return value
+    captions.update({"track_id": track.id, "style_id": track.style_id, "enabled": True})
+    return captions
+
+
 @router.post("/api/jobs/{job_id}/edits")
 def create_edit(job_id: str, body: EditCreateBody) -> dict:
     job = _app().load_job(job_id)
@@ -399,6 +415,9 @@ def create_edit(job_id: str, body: EditCreateBody) -> dict:
     else:
         layers = {key: values.get(key) for key in _LAYER_FIELDS}
         parent = None
+        layers["captions"] = _default_captions(
+            job_id, body.set_id, body.story_id, layers.get("captions"),
+        )
     try:
         edited = edits.build_edit(
             story_ref=story_ref,

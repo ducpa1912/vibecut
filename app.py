@@ -6091,6 +6091,8 @@ def _queue_story_render(
     caption_track = None
     captions_on = False
     edit_audio_plan = None
+    if edit is not None and body.captions:
+        edit = _edit_with_default_captions(job_id, job, story, set_id, edit)
     if edit is not None:
         captions_on, caption_track = _edit_caption_track(job_id, edit)
         # The Edit's audio layer (bed, voice-over, dub) is mixed like any
@@ -6820,7 +6822,7 @@ def _story_track_plan(job: dict, plan: dict) -> dict:
     return {**plan, "clips": prepared["clips"], "total": prepared["total"]}
 
 
-def _set_story_track(job_id: str, key: str, track_id: str) -> None:
+def _record_story_track(job_id: str, key: str, track_id: str) -> None:
     def mutate(job: dict) -> None:
         tracks = job.get("story_captions")
         if not isinstance(tracks, dict):
@@ -6829,7 +6831,85 @@ def _set_story_track(job_id: str, key: str, track_id: str) -> None:
         job["story_captions"] = tracks
 
     update_job(job_id, mutate)
+
+
+def _set_story_track(job_id: str, key: str, track_id: str) -> None:
+    _record_story_track(job_id, key, track_id)
     _sync_story_edit_captions(job_id, key, track_id)
+
+
+def default_story_caption_track(
+    job_id: str,
+    set_id: str,
+    story_id: str,
+) -> caption_engine.CaptionTrack | None:
+    """The story's caption track in the default style, built when needed.
+
+    Captions are on by default: a story Edit that never had a track gets the
+    story's current track, or a new one built from the job's speech in the
+    default style. Returns None when the job has no speech to caption or the
+    story can't be resolved; this never raises, so it can't block an Edit or
+    a render.
+    """
+    try:
+        job = load_job(job_id)
+        if job.get("status") != "ready" or not job.get("analysis"):
+            return None
+        job_dir = _job_dir(job_id)
+        key = _story_key(set_id, story_id)
+        existing = str((job.get("story_captions") or {}).get(key) or "")
+        if existing:
+            track = caption_engine.load_track(job_dir, existing)
+            if track is not None and track.cues:
+                return track
+        segments = caption_engine.read_transcript_segments(job_dir)
+        if not segments:
+            return None
+        record = _clip_set_in_job(job, set_id)
+        _clip_set_source_state(job, record)
+        story = _story_in_set(record, story_id)
+        plan = _story_track_plan(job, _story_plan(job, record, story, set_id))
+        track = caption_engine.build_track(
+            job, plan, _caption_style_for(None),
+            segments=segments, job_dir=job_dir,
+        )
+        if not track.cues:
+            return None
+        _record_story_track(job_id, key, track.id)
+        return track
+    except (HTTPException, caption_engine.CaptionError, OSError, ValueError) as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        LOGGER.warning("No default captions for %s %s:%s: %s", job_id, set_id, story_id, detail)
+        return None
+
+
+def _edit_with_default_captions(
+    job_id: str,
+    job: dict,
+    story: dict,
+    set_id: str,
+    edit: dict,
+) -> dict:
+    """Give an Edit that never had captions the story's default track.
+
+    Edits made before captions were on by default (or migrated captions-only
+    Edits) have ``enabled`` true but no track, which rendered no captions.
+    Turning captions off stores ``enabled: false`` and is respected here.
+    """
+    captions = dict(edit.get("captions") or {})
+    if captions.get("track_id") or captions.get("enabled") is False:
+        return edit
+    story_id = str(story.get("id") or "")
+    track = default_story_caption_track(job_id, set_id, story_id)
+    if track is None:
+        return edit
+    captions.update({"track_id": track.id, "style_id": track.style_id, "enabled": True})
+    try:
+        routes_edits.patch_edit(job_id, edit["id"], routes_edits.EditPatchBody(captions=captions))
+    except HTTPException as exc:
+        LOGGER.warning("Edit %s kept no captions: %s", edit["id"], exc.detail)
+        return edit
+    return _story_edit_for_render(load_job(job_id), story, set_id, edit["aspect"]) or edit
 
 
 def _sync_story_edit_captions(job_id: str, key: str, track_id: str) -> None:
