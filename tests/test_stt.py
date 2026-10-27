@@ -7,6 +7,10 @@ requires Apple Speech to be installed.
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -627,3 +631,22 @@ def test_legacy_transcript_still_uses_interpolation(tmp_path):
     assert source == "transcript"
     assert [cue["text"] for cue in cues] == ["First.", "Second."]
     assert cues[0]["start"] == 0.0 and cues[-1]["end"] == 4.0
+
+
+@pytest.mark.skipif(
+    os.environ.get("VIBECUT_LIVE_STT") != "1" or sys.platform != "darwin",
+    reason="live Apple Speech check; set VIBECUT_LIVE_STT=1 on macOS 26",
+)
+def test_live_apple_helper_emits_word_timings(tmp_path):
+    """Builds the real -O helper. Guards the optimized-async crash in run walking."""
+    say = shutil.which("say")
+    ffmpeg = shutil.which("ffmpeg")
+    if not say or not ffmpeg:
+        pytest.skip("say/ffmpeg unavailable")
+    aiff = tmp_path / "s.aiff"
+    wav = tmp_path / "s.wav"
+    subprocess.run([say, "-o", str(aiff), "VibeCut finds the stories."], check=True)
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(aiff), "-ar", "16000", "-ac", "1", str(wav)], check=True)
+    result = stt.transcribe_apple(wav, tmp_path / "job", "en")
+    assert result and len(result["words"]) >= 3
+    assert all(word["end"] >= word["start"] for word in result["words"])

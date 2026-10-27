@@ -33,6 +33,34 @@ struct TranscribeApple {
         return value.isFinite ? value : 0
     }
 
+    // Walk attributed runs outside the async results loop. With -O, doing this
+    // inline in `for try await` aborts with "freed pointer was not the last
+    // allocation" (task-allocator misuse in the optimized async frame).
+    @inline(never)
+    static func words(in text: AttributedString, start: Double, end: Double) -> [[String: Any]] {
+        var rows: [[String: Any]] = []
+        for run in text.runs {
+            let runText = String(text[run.range].characters)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if runText.isEmpty { continue }
+            var word: [String: Any] = ["w": runText]
+            if let range = run.audioTimeRange {
+                let wordStart = seconds(range.start)
+                let wordEnd = seconds(range.end)
+                word["start"] = wordStart
+                word["end"] = wordEnd > wordStart ? wordEnd : wordStart
+            } else {
+                word["start"] = start
+                word["end"] = end
+            }
+            if let confidence = run.transcriptionConfidence {
+                word["confidence"] = confidence
+            }
+            rows.append(word)
+        }
+        return rows
+    }
+
     static func main() async {
         let args = CommandLine.arguments
         var audio = ""
@@ -101,27 +129,8 @@ struct TranscribeApple {
                 if text.isEmpty { continue }
                 let start = seconds(result.range.start)
                 let end = seconds(result.range.end)
-                var segmentWords: [[String: Any]] = []
-                for run in result.text.runs {
-                    let runText = String(result.text[run.range].characters)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if runText.isEmpty { continue }
-                    var word: [String: Any] = ["w": runText]
-                    if let range = run.audioTimeRange {
-                        let wordStart = seconds(range.start)
-                        let wordEnd = seconds(range.end)
-                        word["start"] = wordStart
-                        word["end"] = wordEnd > wordStart ? wordEnd : wordStart
-                    } else {
-                        word["start"] = start
-                        word["end"] = end
-                    }
-                    if let confidence = run.transcriptionConfidence {
-                        word["confidence"] = confidence
-                    }
-                    segmentWords.append(word)
-                    allWords.append(word)
-                }
+                let segmentWords = words(in: result.text, start: start, end: end)
+                allWords.append(contentsOf: segmentWords)
                 segments.append([
                     "start": start,
                     "end": end > start ? end : start,
