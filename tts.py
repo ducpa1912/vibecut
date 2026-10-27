@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+import packs
+
 # Imported last: audio re-exports this module, so the facade must finish first.
 import audio  # noqa: E402
 
@@ -38,6 +40,11 @@ _SAY_VOICE_RE = re.compile(r"^(?P<name>.+?)\s{2,}(?P<lang>[a-zA-Z_-]+)\s*(?:#.*)
 #: Engines offered in the voice picker. OpenRouter is one engine with two
 #: model families (Fish and Gemini), represented by the synthesizer ids below.
 ENGINES = ("minimax", "elevenlabs", "openrouter", "kokoro", "say")
+
+#: Dub slot fitting: the accepted ``atempo`` band. Outside it the line is
+#: flagged for Shorten (AI rewrite) or an explicit overlap choice.
+SLOT_MIN_RATE = 0.90
+SLOT_MAX_RATE = 1.15
 SYNTHESIZERS = ("minimax", "elevenlabs", "fish", "gemini", "kokoro", "say")
 CLOUD_ENGINES = frozenset({"minimax", "elevenlabs", "fish", "gemini"})
 LOCAL_ENGINES = frozenset({"kokoro", "say"})
@@ -134,6 +141,162 @@ def line_cache_path(
     return (cache_dir / f"{key}{suffix}").resolve()
 
 
+def plan_slot_fit(
+    native_seconds: float,
+    slot_seconds: float,
+    *,
+    min_rate: float = SLOT_MIN_RATE,
+    max_rate: float = SLOT_MAX_RATE,
+) -> dict[str, Any]:
+    """Decide the ``atempo`` factor for one dubbed sentence.
+
+    ``atempo`` is the playback speed, so a line longer than its slot needs a
+    factor above 1. Inside 0.90–1.15× the line simply fits. A line beyond
+    1.15× is flagged "Too long by N s" and the caller can choose Shorten or an
+    explicit overlap; playback is still capped at the band edge.
+    """
+    native = max(0.0, float(native_seconds or 0.0))
+    slot = max(0.0, float(slot_seconds or 0.0))
+    min_rate = max(0.1, float(min_rate or SLOT_MIN_RATE))
+    max_rate = max(min_rate, float(max_rate or SLOT_MAX_RATE))
+    if slot <= 0.05 or native <= 0.0:
+        return {
+            "fits": False,
+            "tempo": 1.0,
+            "action": "none",
+            "overflow": 0.0,
+            "slot": round(slot, 3),
+            "native": round(native, 3),
+        }
+    ratio = native / slot
+    if ratio > max_rate:
+        tempo = max_rate
+        action = "shorten"
+        overflow = max(0.0, native - slot * max_rate)
+    elif ratio < min_rate:
+        tempo = min_rate
+        action = "pad"
+        overflow = 0.0
+    else:
+        tempo = ratio
+        action = "fit"
+        overflow = 0.0
+    return {
+        "fits": action == "fit",
+        "tempo": round(tempo, 4),
+        "action": action,
+        "overflow": round(overflow, 3),
+        "slot": round(slot, 3),
+        "native": round(native, 3),
+    }
+
+
+def fit_dub_lines(
+    lines: Sequence[Mapping[str, Any]],
+    *,
+    duration_of: Callable[[Path], float] | None = None,
+    shorten: Callable[[Mapping[str, Any], float], str | None] | None = None,
+) -> list[dict[str, Any]]:
+    """Attach slot-fit decisions to dubbed lines and optionally call Shorten.
+
+    ``shorten(line, overflow_seconds)`` may return rewritten text. The caller
+    re-synthesises that sentence; this helper only records the decision, so it
+    stays pure and testable without an engine.
+    """
+    from pathlib import Path as _Path
+
+    measured = duration_of or (lambda path: audio.media_duration(path))
+    out: list[dict[str, Any]] = []
+    for raw in lines:
+        line = dict(raw)
+        slot = float(line.get("slot") or 0.0)
+        path = line.get("path")
+        native = float(line.get("native") or 0.0)
+        if path and not native:
+            try:
+                native = float(measured(_Path(str(path))) or 0.0)
+            except (OSError, ValueError):
+                native = 0.0
+        if not native:
+            native = float(line.get("estimated") or 0.0)
+        fit = plan_slot_fit(native, slot)
+        if fit["action"] == "shorten" and shorten is not None:
+            replacement = shorten(line, float(fit["overflow"]))
+            if replacement and str(replacement).strip():
+                line["text"] = str(replacement).strip()
+                line["shortened"] = True
+                line["shortened_by"] = "ai"
+        line["fit"] = fit
+        line["too_long_by"] = round(float(fit["overflow"]), 3) if fit["action"] == "shorten" else 0.0
+        line["slot_fit"] = bool(fit["fits"])
+        out.append(line)
+    return out
+
+
+def slot_fit_summary(lines: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Percent of lines that fit the 0.90–1.15× band without a flag."""
+    total = len(lines)
+    fitted = sum(1 for line in lines if (line.get("fit") or {}).get("fits"))
+    return {
+        "total": total,
+        "fitted": fitted,
+        "percent": round(100.0 * fitted / total, 1) if total else 0.0,
+        "flagged": total - fitted,
+    }
+
+
+def shorten_text_for_slot(
+    text: str,
+    native_seconds: float,
+    slot_seconds: float,
+    *,
+    language: str = "",
+    max_rate: float = SLOT_MAX_RATE,
+    margin: float = 0.95,
+) -> str:
+    """Shorten a translation so a retake can fit the 0.90–1.15× band.
+
+    The estimate uses the measured length of the previous take, not a generic
+    characters-per-second guess, so one retake usually lands inside the band.
+    The cut respects sentence and clause punctuation; it never returns a
+    mid-word fragment.
+    """
+    value = str(text or "").strip()
+    native = max(0.0, float(native_seconds or 0.0))
+    slot = max(0.0, float(slot_seconds or 0.0))
+    if not value or native <= 0 or slot <= 0:
+        return value
+    budget = slot * max(0.1, float(max_rate)) * max(0.5, min(1.0, float(margin)))
+    if native <= budget:
+        return value
+    seconds_per_char = native / max(1, len(value))
+    keep = max(4, int(budget / max(1e-6, seconds_per_char)))
+    if keep >= len(value):
+        return value
+    head = value[:keep]
+    clause = max(head.rfind(mark) for mark in "，,。.!！?？;；、")
+    if clause >= max(3, keep // 2):
+        head = head[:clause]
+    else:
+        space = head.rfind(" ")
+        if space >= max(3, keep // 3):
+            head = head[:space]
+    head = head.strip(" ，,。.!！?？;；、~-")
+    if not head:
+        return value
+    cjk = bool(re.search(r"[\u3400-\u9fff]", head))
+    terminal = "。" if cjk else "."
+    return head + terminal
+
+
+def kokoro_model_dir() -> Path:
+    """Kokoro model directory: installed Voice Pack first, then data/models."""
+    packed = packs.find_dir("voice", "models/kokoro", "kokoro", "")
+    if packed is not None and any(packed.glob("*.onnx")):
+        return packed
+    return audio.VOICE_DIRS["kokoro"]
+
+
 def list_voices(engine: str) -> list[dict]:
     engine = str(engine or "").strip().lower()
     if engine == "say":
@@ -152,7 +315,7 @@ def list_voices(engine: str) -> list[dict]:
         return voices
 
     if engine == "kokoro":
-        directory = audio.VOICE_DIRS["kokoro"]
+        directory = kokoro_model_dir()
         names: list[str] = []
         meta = directory / "voices.json"
         if meta.is_file():
@@ -518,7 +681,8 @@ def _say_voice(text: str, voice: str, rate: float, output: Path) -> None:
 
 def _kokoro_files_for(voice: str) -> tuple[Path | None, Path | None]:
     """Prefer the model whose language matches the voice, then the smallest precision."""
-    files = sorted(audio.VOICE_DIRS["kokoro"].glob("*.onnx"))
+    directory = kokoro_model_dir()
+    files = sorted(directory.glob("*.onnx"))
     if not files:
         return None, None
     voice_name = (voice or "").lower()
@@ -548,9 +712,9 @@ def _kokoro_files_for(voice: str) -> tuple[Path | None, Path | None]:
 
     model = sorted(files, key=rank)[0]
     version = "1.1" if "1.1" in model.name else "1.0"
-    voices = sorted(audio.VOICE_DIRS["kokoro"].glob(f"voices*{version}*.bin"))
+    voices = sorted(directory.glob(f"voices*{version}*.bin"))
     if not voices:
-        voices = sorted(audio.VOICE_DIRS["kokoro"].glob("voices*.bin"))
+        voices = sorted(directory.glob("voices*.bin"))
     return model, (voices[0] if voices else None)
 
 
