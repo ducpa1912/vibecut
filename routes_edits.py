@@ -8,13 +8,17 @@ Storage and validation live in :mod:`edits`; preview compilation lives in
 
 from __future__ import annotations
 
+import math
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 import captions
 import compose_render
 import edits
 import history_store
+import render
 
 
 def _app():
@@ -488,3 +492,122 @@ def compile_edit(
     except compose_render.ComposeError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return compiled
+
+
+def _fresh_story(
+    job_id: str,
+    edit_id: str,
+) -> tuple[dict, dict, dict]:
+    """Load the job, Edit and story, refusing a stale story with 409."""
+    job = _app().load_job(job_id)
+    edit = _load(edit_id, _job_dir(job_id))
+    record, story = _resolve_story(
+        job, edit["story_ref"]["set_id"], edit["story_ref"]["story_id"],
+    )
+    _check_fresh(record, job)
+    if edits.clip_snapshot_hash(story.get("clips") or []) != edit["story_ref"]["clip_hash"]:
+        raise HTTPException(
+            409, "Story clips changed since this Edit was created; create a new Edit.",
+        )
+    return job, edit, story
+
+
+def _compiled_preview(
+    job_id: str,
+    job: dict,
+    edit: dict,
+    story: dict,
+    *,
+    size: tuple[int, int],
+) -> dict:
+    track = _caption_track(job_id, edit, missing=409)
+    caption_track = None
+    if track is not None:
+        caption_track = {
+            "track_id": track.id,
+            "style_id": track.style_id,
+            "style": track.style,
+            "cues": [cue.to_dict() for cue in track.cues],
+        }
+    try:
+        return compose_render.compile_edit(
+            edit,
+            clips=story.get("clips") or [],
+            source=job.get("source") or {},
+            scenes=(job.get("analysis") or {}).get("scenes") or [],
+            caption_track=caption_track,
+            size=size,
+            motion_engine=compose_render.EDIT_MOTION_ENGINE,
+        )
+    except compose_render.ComposeError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.get(
+    "/api/jobs/{job_id}/edits/{edit_id}/frame",
+    responses={200: {"content": {"image/jpeg": {}}}},
+)
+def edit_frame(
+    job_id: str,
+    edit_id: str,
+    t: float | None = None,
+    quality: str = "draft",
+) -> Response:
+    """One JPEG frame from the exact graph the final render uses."""
+    job, edit, story = _fresh_story(job_id, edit_id)
+    quality = str(quality or "draft").strip().lower()
+    if quality not in {"draft", "final"}:
+        raise HTTPException(422, "quality must be draft or final.")
+    if t is None or not math.isfinite(float(t)):
+        raise HTTPException(422, "t must be a finite time in seconds.")
+    quality = "draft" if quality == "draft" else "final"
+    out_w, out_h = render._dims(edit["aspect"], quality)
+    compiled = _compiled_preview(
+        job_id, job, edit, story, size=(out_w, out_h),
+    )
+    total = float(
+        (compiled.get("segments") or [{}])[-1].get("out_end") or 0.0
+    )
+    at = float(t)
+    if at < 0.0 or at >= total - 1e-9:
+        raise HTTPException(
+            422, f"t must be between 0 and the story duration ({total:.3f}s).",
+        )
+    try:
+        payload = render.render_story_frame(
+            str(job["source"]["path"]),
+            job["source"],
+            _job_dir(job_id),
+            compiled,
+            at,
+            quality=quality,
+            aspect=edit["aspect"],
+        )
+    except render.PipelineError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get(
+    "/api/jobs/{job_id}/edits/{edit_id}/proxy",
+    responses={200: {"content": {"video/mp4": {}}}},
+)
+def edit_proxy(job_id: str, edit_id: str) -> FileResponse:
+    """540-wide H.264 proxy of the story range, built once and reused."""
+    job, edit, story = _fresh_story(job_id, edit_id)
+    try:
+        path = render.build_story_proxy(
+            str(job["source"]["path"]),
+            job["source"],
+            _job_dir(job_id),
+            story.get("clips") or [],
+            scenes=(job.get("analysis") or {}).get("scenes") or [],
+            aspect=edit["aspect"],
+        )
+    except render.PipelineError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return FileResponse(path, media_type="video/mp4")
