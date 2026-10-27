@@ -183,6 +183,68 @@ def _require_clean_rights(job: dict, edit: dict) -> None:
     )
 
 
+_CLEAN_KIND_MESSAGES = {
+    "watermark": "Watermark removal is not supported. Use your original file.",
+    "screen_text": (
+        "Screen-recording text is never cleaned. Leave that Clean layer out."
+    ),
+    "attestation_required": (
+        "Own-footage attestation is required for a handle or logo Clean layer."
+    ),
+    "rights_not_attested": (
+        "Rights attestation is required before saving a Clean layer. "
+        "Attest at Import or Check."
+    ),
+}
+
+
+def _require_clean_kinds(job: dict, edit: dict, job_dir=None) -> None:
+    """Re-run the detected-kind policy for layers that name a Check tracklet.
+
+    This is the second line of defence behind the Clean rights gate: a layer
+    that names its Check kind cannot smuggle a watermark or screen text in,
+    and a handle/logo layer needs the server-side attestation even when the
+    rest of the Edit would be allowed. ``tracklet_kind`` is the explicit form;
+    a layer that only carries ``tracklet_id`` is resolved from the stored
+    Check report when one is available.
+    """
+    rights = job.get("rights")
+    attested = (
+        detect.normalize_attestation(rights.get("attested"))
+        if isinstance(rights, dict) else False
+    )
+    report_kinds: dict[str, str] | None = None
+    for layer in edit.get("clean") or []:
+        kind = str(layer.get("tracklet_kind") or "").strip()
+        if not kind:
+            tracklet_id = str(layer.get("tracklet_id") or "").strip()
+            if not tracklet_id or job_dir is None:
+                continue
+            if report_kinds is None:
+                report_kinds = {}
+                try:
+                    report = detect.load_report(job_dir)
+                except Exception:  # noqa: BLE001 - a bad report is not a save gate
+                    report = None
+                for tracklet in (report or {}).get("tracklets") or []:
+                    if isinstance(tracklet, dict) and tracklet.get("id"):
+                        report_kinds[str(tracklet["id"])] = str(
+                            tracklet.get("kind") or "",
+                        )
+            kind = report_kinds.get(tracklet_id, "")
+        if not kind:
+            continue
+        blocked = detect.cleanup_block_reason(kind, attested=attested)
+        if not blocked:
+            continue
+        raise HTTPException(
+            409,
+            _CLEAN_KIND_MESSAGES.get(
+                blocked, f"Clean layer {layer.get('id')} is not allowed.",
+            ),
+        )
+
+
 def _current(job: dict, edit: dict) -> str:
     key = edits.story_key(
         edit["story_ref"]["set_id"],
@@ -349,6 +411,7 @@ def create_edit(job_id: str, body: EditCreateBody) -> dict:
         raise _http(exc) from exc
     _validate_edit(job_id, edited)
     _require_clean_rights(job, edited)
+    _require_clean_kinds(job, edited, _job_dir(job_id))
     if base is not None and edited["hash"] == base["hash"]:
         return _payload(base, changed=False, job=job)
     _persist(job_id, edited)
@@ -383,6 +446,7 @@ def patch_edit(job_id: str, edit_id: str, body: EditPatchBody) -> dict:
     _validate_edit(job_id, edited)
     if "clean" in values:
         _require_clean_rights(job, edited)
+    _require_clean_kinds(job, edited, _job_dir(job_id))
     if edited["hash"] == edit["hash"]:
         return _payload(edit, changed=False, job=job)
     _persist(job_id, edited)
@@ -440,6 +504,7 @@ def undo_edit(job_id: str, edit_id: str) -> dict:
         raise _http(exc) from exc
     _validate_edit(job_id, restored)
     _require_clean_rights(job, restored)
+    _require_clean_kinds(job, restored, _job_dir(job_id))
     _persist(job_id, restored)
     return _payload(restored, changed=True, job=_app().load_job(job_id))
 
@@ -468,6 +533,7 @@ def restore_edit(job_id: str, edit_id: str, body: EditRestoreBody) -> dict:
         raise _http(exc) from exc
     _validate_edit(job_id, restored)
     _require_clean_rights(job, restored)
+    _require_clean_kinds(job, restored, _job_dir(job_id))
     _persist(job_id, restored)
     return _payload(restored, changed=True, job=_app().load_job(job_id))
 

@@ -8,13 +8,27 @@ also exposes check-level style, toggle, and severity metadata for the UI.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import shutil
 import subprocess
 import tempfile
+from itertools import combinations
 from pathlib import Path
 from typing import Callable
+
+from fastapi import APIRouter, HTTPException
+
+import captions as caption_engine
+import cleanup
+import compose_render
+import detect
+import edits
+import overlays
+import routes_cleanup
+
+LOGGER = logging.getLogger("vibecut.preflight")
 
 import exports
 import history_store
@@ -1238,3 +1252,1048 @@ def run_preflight(
         "severities": config["severities"],
         "styles": config["styles"],
     }
+
+
+# ------------------------------------------------------------ edit markers API
+
+#: Timeline marker kinds consumed by Studio. ``aspect_4_5`` is a 4:5-only
+#: platform-chrome result; the other kinds are shared by both aspects.
+MARKER_KINDS = (
+    "collision",
+    "face_overlap",
+    "safe_zone",
+    "residual_text",
+    "caption_density",
+    "loudness",
+    "voice_fit",
+    "missing_music_license",
+    "aspect_4_5",
+)
+PREFLIGHT_RESIDUAL_FPS = 0.5
+PREFLIGHT_RESIDUAL_FRAMES = 24
+PREFLIGHT_RESIDUAL_TIMEOUT = 90.0
+MARKER_LIMIT = 200
+VOICE_FIT_MIN = 0.90
+VOICE_FIT_MAX = 1.15
+_LOUDNESS_KEYS = ("integrated_lufs", "measured_lufs", "loudness_lufs")
+
+router = APIRouter()
+
+
+def _marker(
+    t: object,
+    end: object,
+    kind: str,
+    message: str,
+    *,
+    severity: str = "warn",
+    layer_id: str | None = None,
+) -> dict:
+    start = _number(t)
+    finish = _number(end)
+    if start is None:
+        start = 0.0
+    if finish is None or finish <= start:
+        finish = start + 0.001
+    item = {
+        "t": round(max(0.0, start), 3),
+        "end": round(max(0.0, finish), 3),
+        "kind": str(kind),
+        "severity": severity if severity in SEVERITIES else "warn",
+        "message": " ".join(str(message).split())[:400],
+    }
+    if layer_id:
+        item["layer_id"] = str(layer_id)
+    return item
+
+
+def _rect(layer: dict) -> dict | None:
+    rect = layer.get("rect")
+    if isinstance(rect, dict):
+        try:
+            return {
+                "x": float(rect["x"]),
+                "y": float(rect["y"]),
+                "w": float(rect["w"]),
+                "h": float(rect["h"]),
+            }
+        except (KeyError, TypeError, ValueError):
+            pass
+    anchor = str(layer.get("anchor") or "center")
+    box = layer.get("box")
+    if isinstance(box, dict):
+        try:
+            return overlays.normalize_rect(anchor, box)
+        except (KeyError, TypeError, ValueError):
+            return None
+    return None
+
+
+def _intersection(first: dict, second: dict) -> float:
+    left = max(float(first["x"]), float(second["x"]))
+    top = max(float(first["y"]), float(second["y"]))
+    right = min(
+        float(first["x"]) + float(first["w"]),
+        float(second["x"]) + float(second["w"]),
+    )
+    bottom = min(
+        float(first["y"]) + float(first["h"]),
+        float(second["y"]) + float(second["h"]),
+    )
+    return max(0.0, right - left) * max(0.0, bottom - top)
+
+
+def _area(box: dict) -> float:
+    return max(1e-9, float(box.get("w") or 0.0) * float(box.get("h") or 0.0))
+
+
+def _inside(box: dict, region: dict) -> bool:
+    cx = float(box["x"]) + float(box["w"]) / 2.0
+    cy = float(box["y"]) + float(box["h"]) / 2.0
+    return (
+        float(region["x"]) <= cx <= float(region["x"]) + float(region["w"])
+        and float(region["y"]) <= cy <= float(region["y"]) + float(region["h"])
+    )
+
+
+def _outside_area(box: dict, area: dict) -> float:
+    return max(0.0, _area(box) - _intersection(box, area))
+
+
+def _clamp_window(start: object, end: object, duration: float) -> tuple[float, float] | None:
+    low = _number(start)
+    high = _number(end)
+    if low is None or high is None:
+        return None
+    low = max(0.0, min(duration, low))
+    high = max(0.0, min(duration, high))
+    if high - low <= 0.001:
+        return None
+    return low, high
+
+
+def _duration(compiled: dict) -> float:
+    segments = [
+        item for item in compiled.get("segments") or [] if isinstance(item, dict)
+    ]
+    return max(0.0, float(segments[-1].get("out_end") or 0.0)) if segments else 0.0
+
+
+def _output_window(compiled: dict, source_start: float, source_end: float) -> tuple[float, float] | None:
+    segments = [
+        item for item in compiled.get("segments") or [] if isinstance(item, dict)
+    ]
+    starts: list[float] = []
+    ends: list[float] = []
+    for segment in segments:
+        low = max(float(segment.get("start") or 0.0), float(source_start))
+        high = min(float(segment.get("end") or 0.0), float(source_end))
+        if high - low <= 0.001:
+            continue
+        starts.append(
+            float(segment.get("out_start") or 0.0)
+            + (low - float(segment.get("start") or 0.0))
+        )
+        ends.append(
+            float(segment.get("out_start") or 0.0)
+            + (high - float(segment.get("start") or 0.0))
+        )
+    if not starts:
+        return None
+    return min(starts), max(ends)
+
+
+def _map_face(box: dict, segment: dict, source: dict) -> dict | None:
+    crop = segment.get("crop") or {}
+    try:
+        crop_x = float(crop["x"])
+        crop_y = float(crop["y"])
+        crop_w = float(crop["w"])
+        crop_h = float(crop["h"])
+        width = float(source["width"])
+        height = float(source["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if crop_w <= 0 or crop_h <= 0 or width <= 0 or height <= 0:
+        return None
+    try:
+        left = (float(box["x"]) * width - crop_x) / crop_w
+        top = (float(box["y"]) * height - crop_y) / crop_h
+        right = ((float(box["x"]) + float(box["w"])) * width - crop_x) / crop_w
+        bottom = ((float(box["y"]) + float(box["h"])) * height - crop_y) / crop_h
+    except (KeyError, TypeError, ValueError):
+        return None
+    left = max(0.0, min(1.0, left))
+    top = max(0.0, min(1.0, top))
+    right = max(0.0, min(1.0, right))
+    bottom = max(0.0, min(1.0, bottom))
+    if right - left <= 1e-4 or bottom - top <= 1e-4:
+        return None
+    return {
+        "x": left,
+        "y": top,
+        "w": right - left,
+        "h": bottom - top,
+    }
+
+
+def _scene_faces(scene: dict) -> list[dict]:
+    faces = [item for item in scene.get("faces") or [] if isinstance(item, dict)]
+    if not faces:
+        attention = scene.get("attention") or {}
+        face = attention.get("face") if isinstance(attention, dict) else None
+        if isinstance(face, dict):
+            faces = [face]
+    return faces
+
+
+def collision_markers(compiled: dict, duration: float) -> list[dict]:
+    """Text and graphic layers that occupy the same pixels at the same time."""
+    layers = [item for item in compiled.get("overlays") or [] if isinstance(item, dict)]
+    markers: list[dict] = []
+    for first, second in combinations(layers, 2):
+        if str(first.get("id")) == str(second.get("id")):
+            continue
+        try:
+            start = max(float(first.get("start") or 0.0), float(second.get("start") or 0.0))
+            end = min(float(first.get("end") or 0.0), float(second.get("end") or 0.0))
+        except (TypeError, ValueError):
+            continue
+        window = _clamp_window(start, end, duration)
+        if window is None:
+            continue
+        first_rect = _rect(first)
+        second_rect = _rect(second)
+        if first_rect is None or second_rect is None:
+            continue
+        ratio = _intersection(first_rect, second_rect) / min(
+            _area(first_rect), _area(second_rect),
+        )
+        if ratio < 0.12:
+            continue
+        markers.append(_marker(
+            window[0], window[1], "collision",
+            (
+                f"{str(first.get('kind') or 'layer').replace('_', ' ').title()} "
+                f"{first.get('id')} overlaps "
+                f"{str(second.get('kind') or 'layer').replace('_', ' ')} "
+                f"{second.get('id')} ({ratio * 100:.0f}% of the smaller layer)."
+            ),
+            layer_id=str(first.get("id") or "") or None,
+        ))
+    return markers
+
+
+def face_overlap_markers(
+    compiled: dict,
+    scenes: list[dict],
+    clean: list[dict],
+    duration: float,
+) -> list[dict]:
+    """Graphics, captions and Clean covers that sit on a detected face."""
+    source = compiled.get("source") or {}
+    markers: list[dict] = []
+    scene_map = {
+        str(scene.get("id")): scene
+        for scene in scenes
+        if isinstance(scene, dict) and scene.get("id") is not None
+    }
+    overlays_list = [
+        item for item in compiled.get("overlays") or [] if isinstance(item, dict)
+    ]
+    seen: set[tuple] = set()
+    for segment in compiled.get("segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        scene = scene_map.get(str(segment.get("scene")))
+        if scene is None:
+            continue
+        faces = _scene_faces(scene)
+        if not faces:
+            continue
+        out_start = float(segment.get("out_start") or 0.0)
+        out_end = float(segment.get("out_end") or out_start)
+        for face in faces:
+            mapped = _map_face(face, segment, source)
+            if mapped is None:
+                continue
+            for layer in overlays_list:
+                try:
+                    start = max(out_start, float(layer.get("start") or 0.0))
+                    end = min(out_end, float(layer.get("end") or 0.0))
+                except (TypeError, ValueError):
+                    continue
+                window = _clamp_window(start, end, duration)
+                if window is None:
+                    continue
+                rect = _rect(layer)
+                if rect is None:
+                    continue
+                if (
+                    _intersection(rect, mapped) / _area(mapped) < 0.10
+                    and not _inside(mapped, rect)
+                ):
+                    continue
+                key = ("overlay", layer.get("id"), scene.get("id"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                markers.append(_marker(
+                    window[0], window[1], "face_overlap",
+                    (
+                        f"{str(layer.get('kind') or 'Overlay').replace('_', ' ').title()} "
+                        f"{layer.get('id')} covers a face in scene {scene.get('id')}."
+                    ),
+                    layer_id=str(layer.get("id") or "") or None,
+                ))
+    for layer in clean or []:
+        if not isinstance(layer, dict):
+            continue
+        if str(layer.get("kind") or "") not in {"blur", "plate", "mask"}:
+            continue
+        box = layer.get("box")
+        if not isinstance(box, dict):
+            continue
+        ranges = [
+            item for item in layer.get("ranges") or [] if isinstance(item, dict)
+        ] or [{"start": 0.0, "end": duration}]
+        for scene in scene_map.values():
+            scene_start = _number(scene.get("start"))
+            scene_end = _number(scene.get("end"))
+            if scene_start is None or scene_end is None:
+                continue
+            for face in _scene_faces(scene):
+                if (
+                    _intersection(box, face) / _area(face) < 0.10
+                    and not _inside(face, box)
+                ):
+                    continue
+                key = ("clean", layer.get("id"), scene.get("id"))
+                if key in seen:
+                    continue
+                window = None
+                for item in ranges:
+                    low = max(scene_start, float(item.get("start") or 0.0))
+                    high = min(scene_end, float(item.get("end") or scene_end))
+                    if high - low <= 0.001:
+                        continue
+                    window = _output_window(compiled, low, high)
+                    if window is not None:
+                        break
+                if window is None:
+                    continue
+                seen.add(key)
+                markers.append(_marker(
+                    window[0], window[1], "face_overlap",
+                    (
+                        f"Clean layer {layer.get('id')} covers a detected face "
+                        f"in scene {scene.get('id')}."
+                    ),
+                    layer_id=str(layer.get("id") or "") or None,
+                ))
+    return markers
+
+
+def safe_zone_markers(compiled: dict, duration: float) -> list[dict]:
+    """Overlays outside the safe area or inside platform chrome.
+
+    For 4:5 the platform-chrome hits use the dedicated ``aspect_4_5`` kind so
+    Studio can tell a 4:5-only problem from a shared safe-zone warning.
+    """
+    aspect = str(compiled.get("aspect") or "9:16")
+    area = overlays.SAFE_AREAS.get(aspect, overlays.SAFE_AREAS["9:16"])
+    zones = overlays.RESERVED_ZONES.get(aspect, overlays.RESERVED_ZONES["9:16"])
+    markers: list[dict] = []
+    for layer in compiled.get("overlays") or []:
+        if not isinstance(layer, dict) or layer.get("safe_zone") is False:
+            continue
+        rect = _rect(layer)
+        if rect is None or _area(rect) <= 0:
+            continue
+        hits = [
+            zone["name"] for zone in zones
+            if _intersection(rect, zone) / _area(rect) > 0.005
+        ]
+        outside = _outside_area(rect, area) / _area(rect) > 0.005
+        if not hits and not outside:
+            continue
+        try:
+            start = float(layer.get("start") or 0.0)
+            end = float(layer.get("end") or duration)
+        except (TypeError, ValueError):
+            start, end = 0.0, duration
+        window = _clamp_window(start, end, duration) or (0.0, max(0.001, duration))
+        kind = "aspect_4_5" if aspect == "4:5" and hits else "safe_zone"
+        if hits:
+            where = ", ".join(hits)
+            message = (
+                f"{str(layer.get('kind') or 'Overlay').replace('_', ' ').title()} "
+                f"{layer.get('id')} intersects the {aspect} {where} zone."
+            )
+        else:
+            message = (
+                f"{str(layer.get('kind') or 'Overlay').replace('_', ' ').title()} "
+                f"{layer.get('id')} sits outside the {aspect} safe area."
+            )
+        markers.append(_marker(
+            window[0], window[1], kind, message,
+            layer_id=str(layer.get("id") or "") or None,
+        ))
+    return markers
+
+
+def caption_density_markers(
+    caption_track: dict | None,
+    duration: float,
+) -> list[dict]:
+    cues = [
+        item for item in (caption_track or {}).get("cues") or []
+        if isinstance(item, dict)
+    ]
+    markers: list[dict] = []
+    for index, cue in enumerate(cues, 1):
+        try:
+            start = float(cue.get("start"))
+            end = float(cue.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if end - start <= 0.05:
+            continue
+        chars = len(" ".join(str(cue.get("text") or "").split()))
+        cps = chars / (end - start)
+        if cps <= MAX_CAPTION_CPS:
+            continue
+        window = _clamp_window(start, end, duration)
+        if window is None:
+            continue
+        markers.append(_marker(
+            window[0], window[1], "caption_density",
+            (
+                f"Caption {index} runs at {cps:.1f} characters per second; "
+                f"limit is {MAX_CAPTION_CPS:.0f}."
+            ),
+            layer_id=f"cap{index:02d}",
+        ))
+    return markers
+
+
+def _find_loudness(value: object, depth: int = 0) -> float | None:
+    if depth > 5:
+        return None
+    if isinstance(value, dict):
+        for key in _LOUDNESS_KEYS:
+            number = _number(value.get(key))
+            if number is not None:
+                return number
+        for item in value.values():
+            found = _find_loudness(item, depth + 1)
+            if found is not None:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for item in value[:200]:
+            found = _find_loudness(item, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def _render_media(job: dict, job_dir: Path | None, edit: dict) -> Path | None:
+    if job_dir is None:
+        return None
+    records = job.get("renders") or {}
+    if isinstance(records, dict):
+        for record in records.values():
+            if not isinstance(record, dict):
+                continue
+            if (
+                str(record.get("edit_hash") or "") != str(edit.get("hash") or "")
+                and str(record.get("edit_id") or "") != str(edit.get("id") or "")
+            ):
+                continue
+            path = _job_path(
+                job_dir,
+                record.get("path") or record.get("media_path"),
+                ("renders", "artifacts", "media"),
+            )
+            if path is not None:
+                return path
+    artifacts_value = job.get("artifacts") or {}
+    if isinstance(artifacts_value, dict):
+        for record in artifacts_value.values():
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("edit_hash") or "") != str(edit.get("hash") or ""):
+                continue
+            path = _job_path(
+                job_dir,
+                record.get("path") or record.get("artifact_path"),
+                ("renders", "artifacts", "media"),
+            )
+            if path is not None:
+                return path
+    return None
+
+
+def loudness_markers(
+    edit: dict,
+    job: dict,
+    job_dir: Path | None,
+    duration: float,
+    *,
+    measure_media: bool = True,
+) -> list[dict]:
+    audio = edit.get("audio") if isinstance(edit.get("audio"), dict) else {}
+    measured = _find_loudness(audio.get("measured"))
+    if measured is None:
+        measured = _find_loudness(job.get("audio") or {})
+    if measured is None:
+        measured = _find_loudness(job.get("renders") or {})
+    if measured is None and measure_media:
+        media = _render_media(job, job_dir, edit)
+        if media is not None:
+            try:
+                measured = measure_loudness(media)
+            except Exception:  # noqa: BLE001 - advisory only
+                measured = None
+    if measured is not None:
+        if LOW_LUFS <= measured <= HIGH_LUFS:
+            return []
+        direction = "below" if measured < LOW_LUFS else "above"
+        return [_marker(
+            0.0, duration, "loudness",
+            (
+                f"Integrated loudness is {measured:.1f} LUFS, {direction} the "
+                f"{LOW_LUFS:.0f} to {HIGH_LUFS:.0f} LUFS window "
+                f"(target {TARGET_LUFS:.0f})."
+            ),
+        )]
+    target = _number((audio.get("loudness") or {}).get("lufs"))
+    if target is not None and not (LOW_LUFS <= target <= HIGH_LUFS):
+        return [_marker(
+            0.0, duration, "loudness",
+            (
+                f"Target loudness is {target:.1f} LUFS, outside the "
+                f"{LOW_LUFS:.0f} to {HIGH_LUFS:.0f} LUFS window "
+                f"(target {TARGET_LUFS:.0f})."
+            ),
+        )]
+    return []
+
+
+def _voice_lines(value: object, depth: int = 0, out: list[dict] | None = None) -> list[dict]:
+    if out is None:
+        out = []
+    if depth > 6:
+        return out
+    if isinstance(value, dict):
+        fit = value.get("fit")
+        action = str(
+            (fit.get("action") if isinstance(fit, dict) else "")
+            or value.get("action")
+            or ""
+        ).lower()
+        if (
+            isinstance(fit, dict)
+            or action in {"shorten", "pad"}
+            or (
+                ("native" in value or "slot" in value)
+                and ("overflow" in value or "slot_fit" in value)
+            )
+        ):
+            out.append(value)
+        for key in (
+            "voice", "lines", "line_fits", "_slot_lines", "dub", "segments",
+            "sentences", "voice_fit", "fit_summary",
+        ):
+            if key in value:
+                _voice_lines(value[key], depth + 1, out)
+    elif isinstance(value, (list, tuple)):
+        for item in value[:200]:
+            _voice_lines(item, depth + 1, out)
+    return out
+
+
+def voice_fit_markers(edit: dict, duration: float) -> list[dict]:
+    audio = edit.get("audio") if isinstance(edit.get("audio"), dict) else {}
+    voice = audio.get("voice") if isinstance(audio.get("voice"), dict) else {}
+    markers: list[dict] = []
+    seen: set[tuple] = set()
+    for line in _voice_lines(audio):
+        fit = line.get("fit") if isinstance(line.get("fit"), dict) else {}
+        action = str(fit.get("action") or line.get("action") or "").lower()
+        native = _number(fit.get("native") if fit else line.get("native"))
+        slot = _number(line.get("slot"))
+        if action not in {"shorten", "pad"} and native and slot and slot > 0.05:
+            ratio = native / slot
+            if ratio > VOICE_FIT_MAX:
+                action = "shorten"
+            elif ratio < VOICE_FIT_MIN:
+                action = "pad"
+        if action not in {"shorten", "pad"}:
+            continue
+        start = _number(line.get("start"))
+        if start is None:
+            start = _number(line.get("offset"))
+        if start is None:
+            start = 0.0
+        length = _number(line.get("slot")) or _number(line.get("native")) or 0.5
+        end = start + max(0.2, length)
+        overflow = _number(fit.get("overflow") if fit else line.get("overflow")) or 0.0
+        text = " ".join(str(line.get("text") or "").split())[:80]
+        if action == "shorten":
+            message = (
+                f"Voice line {text!r} is too long by {overflow:.1f} s for its "
+                f"{length:.1f} s slot. Shorten it or allow overlap."
+            )
+        else:
+            message = (
+                f"Voice line {text!r} is short for its {length:.1f} s slot. "
+                "The mix pads it; check the pause."
+            )
+        key = (round(start, 3), action, text)
+        if key in seen:
+            continue
+        seen.add(key)
+        markers.append(_marker(
+            start, end, "voice_fit", message,
+        ))
+    rate = _number(voice.get("rate"))
+    if rate is not None and not (VOICE_FIT_MIN <= rate <= VOICE_FIT_MAX):
+        markers.append(_marker(
+            0.0, duration, "voice_fit",
+            (
+                f"Voice rate is {rate:.2f}×, outside the "
+                f"{VOICE_FIT_MIN:.2f}–{VOICE_FIT_MAX:.2f}× slot-fit band."
+            ),
+        ))
+    if not markers:
+        summary = voice.get("slot_fit") or voice.get("fit_summary")
+        if isinstance(summary, dict):
+            flagged = _number(summary.get("flagged"))
+            if flagged is not None and flagged > 0:
+                total = _number(summary.get("total")) or flagged
+                markers.append(_marker(
+                    0.0, duration, "voice_fit",
+                    (
+                        f"{int(flagged)} of {int(total)} voice lines sit outside "
+                        f"the {VOICE_FIT_MIN:.2f}–{VOICE_FIT_MAX:.2f}× fit band."
+                    ),
+                ))
+    return markers
+
+
+def _licence_type(value: object) -> tuple[str, str, str]:
+    if isinstance(value, dict):
+        kind = str(
+            value.get("type") or value.get("license") or value.get("licence")
+            or value.get("kind") or ""
+        ).strip().lower()
+        attestation = str(value.get("attestation") or value.get("attested") or "").strip()
+        attribution = str(value.get("attribution") or "").strip()
+        if not kind and attestation:
+            kind = "licensed"
+        return kind, attestation, attribution
+    text = str(value or "").strip().lower()
+    return text, "", ""
+
+
+def music_licence_markers(edit: dict, duration: float) -> list[dict]:
+    audio = edit.get("audio") if isinstance(edit.get("audio"), dict) else {}
+    music = audio.get("music")
+    if not isinstance(music, dict) or not music:
+        return []
+    present = any(
+        music.get(key) not in (None, "", [], {})
+        for key in ("track", "path", "file", "file_hash", "name")
+    )
+    if not present and str(music.get("source") or "").strip().lower() in {"", "none"}:
+        return []
+    raw = music.get("licence", music.get("license"))
+    kind, attestation, attribution = _licence_type(raw)
+    if kind in {"", "unknown", "none", "null"} and not attestation:
+        reason = "has no licence note"
+    elif kind == "cc" and not attribution:
+        reason = "is CC but has no attribution text"
+    else:
+        return []
+    name = " ".join(str(music.get("name") or music.get("track") or "Music bed").split())[:80]
+    return [_marker(
+        0.0, duration, "missing_music_license",
+        f"Music bed {name!r} {reason}. Add own, licensed or CC details.",
+    )]
+
+
+def uncovered_text_markers(
+    job_dir: Path | str | None,
+    edit: dict,
+    compiled: dict,
+    duration: float,
+) -> list[dict]:
+    """Baked Check text that no active Clean layer covers.
+
+    This is the plan-level half of residual text. The rendered residual pass
+    catches glyphs that survive a layer; this catches an old caption block
+    that has no layer at all (for example after a layer is deleted). Screen
+    text and watermarks are excluded because the policy never cleans them.
+    """
+    if job_dir is None:
+        return []
+    try:
+        report = detect.load_report(Path(job_dir))
+    except Exception:  # noqa: BLE001 - a missing report is not a marker
+        return []
+    if not isinstance(report, dict):
+        return []
+    clean = [item for item in edit.get("clean") or [] if isinstance(item, dict)]
+    markers: list[dict] = []
+    for tracklet in report.get("tracklets") or []:
+        if not isinstance(tracklet, dict):
+            continue
+        kind = str(tracklet.get("kind") or "")
+        if kind not in {"subtitle", "title", "lower_third", "credit"}:
+            continue
+        box = tracklet.get("box")
+        if not isinstance(box, dict):
+            continue
+        ranges = [
+            item for item in tracklet.get("ranges") or [] if isinstance(item, dict)
+        ] or [{"start": 0.0, "end": duration}]
+        uncovered = None
+        for item in ranges:
+            low = float(item.get("start") or 0.0)
+            high = float(item.get("end") or duration)
+            if high - low <= 0.001:
+                continue
+            covered = False
+            for layer in clean:
+                layer_box = layer.get("box")
+                if not isinstance(layer_box, dict):
+                    continue
+                if _intersection(layer_box, box) / _area(box) < 0.5:
+                    continue
+                layer_ranges = [
+                    value for value in layer.get("ranges") or []
+                    if isinstance(value, dict)
+                ]
+                if not layer_ranges:
+                    covered = True
+                    break
+                if any(
+                    min(high, float(value.get("end") or high))
+                    - max(low, float(value.get("start") or low)) > 0.001
+                    for value in layer_ranges
+                ):
+                    covered = True
+                    break
+            if not covered:
+                uncovered = (low, high)
+                break
+        if uncovered is None:
+            continue
+        window = _output_window(compiled, uncovered[0], uncovered[1]) or (
+            0.0, duration,
+        )
+        sample = " ".join(str(tracklet.get("text_sample") or "").split())[:80]
+        markers.append(_marker(
+            window[0], window[1], "residual_text",
+            (
+                f"Check found baked {kind.replace('_', ' ')} text with no "
+                f"active Clean layer: {sample!r}."
+            ),
+        ))
+    return markers
+
+
+def residual_markers(
+    edit: dict,
+    compiled: dict,
+    report: dict | None,
+    duration: float,
+    *,
+    issue: str = "",
+) -> list[dict]:
+    if not edit.get("clean"):
+        return []
+    if issue:
+        return [_marker(
+            0.0, duration, "residual_text",
+            f"Residual text could not be checked: {issue}",
+            severity="info",
+        )]
+    if not isinstance(report, dict):
+        return []
+    if report.get("pass") is None:
+        return [_marker(
+            0.0, duration, "residual_text",
+            "Residual text is unknown because Vision OCR was unavailable.",
+            severity="info",
+        )]
+    if report.get("pass"):
+        return []
+    markers: list[dict] = []
+    layers = {
+        str(item.get("id")): item
+        for item in edit.get("clean") or []
+        if isinstance(item, dict)
+    }
+    for stats in report.get("layers") or []:
+        if not isinstance(stats, dict):
+            continue
+        frames = int(stats.get("residual_frames") or 0)
+        if frames <= 0:
+            continue
+        layer_id = str(stats.get("layer_id") or "")
+        layer = layers.get(layer_id) or {}
+        ranges = layer.get("ranges") or [{"start": 0.0, "end": duration}]
+        window = None
+        for item in ranges:
+            if not isinstance(item, dict):
+                continue
+            window = _output_window(
+                compiled,
+                float(item.get("start") or 0.0),
+                float(item.get("end") or duration),
+            )
+            if window is not None:
+                break
+        window = window or (0.0, duration)
+        pct = _number(stats.get("residual_pct")) or 0.0
+        markers.append(_marker(
+            window[0], window[1], "residual_text",
+            (
+                f"Residual old text was detected inside Clean layer {layer_id} "
+                f"({frames} frame{'s' if frames != 1 else ''}, {pct:.1f}%)."
+            ),
+            layer_id=layer_id or None,
+        ))
+    if not markers:
+        for sample in report.get("samples") or []:
+            if not isinstance(sample, dict) or not sample.get("residual"):
+                continue
+            start = _number(sample.get("t")) or 0.0
+            text = ", ".join(str(item) for item in sample.get("text") or [])[:120]
+            markers.append(_marker(
+                start, start + 0.5, "residual_text",
+                f"Residual old text was detected at {start:.1f} s: {text or 'OCR text'}.",
+            ))
+    if not markers:
+        markers.append(_marker(
+            0.0, duration, "residual_text",
+            (
+                f"Residual OCR is {float(report.get('residual_pct') or 0.0):.1f}%, "
+                f"above the {float(report.get('target_pct') or cleanup.RESIDUAL_TARGET_PCT):.1f}% target."
+            ),
+        ))
+    return markers
+
+
+def _story_for_edit(job: dict, edit: dict) -> dict:
+    set_id = edit["story_ref"]["set_id"]
+    story_id = edit["story_ref"]["story_id"]
+    sets = job.get("clip_sets") or []
+    rows = list(sets.values()) if isinstance(sets, dict) else list(sets)
+    record = next(
+        (item for item in rows if isinstance(item, dict) and str(item.get("id") or "") == set_id),
+        None,
+    )
+    if record is None:
+        raise PreflightError(
+            "story_not_found", "The Edit's clip set is missing from this job.",
+            suggestion="Reopen the story from Stories and save the Edit again.",
+            status=409,
+        )
+    story = next(
+        (
+            item for item in record.get("stories") or []
+            if isinstance(item, dict) and str(item.get("id") or "") == story_id
+        ),
+        None,
+    )
+    if story is None:
+        raise PreflightError(
+            "story_not_found", "The Edit's story is missing from its clip set.",
+            suggestion="Reopen the story from Stories and save the Edit again.",
+            status=409,
+        )
+    return story
+
+
+def _caption_track(job_dir: Path | None, edit: dict) -> dict | None:
+    if job_dir is None:
+        return None
+    captions_value = edit.get("captions") or {}
+    track_id = str(captions_value.get("track_id") or "")
+    if not track_id:
+        return None
+    try:
+        track = caption_engine.load_track(job_dir, track_id)
+    except Exception:  # noqa: BLE001 - missing track stays advisory
+        return None
+    return track.to_dict() if track is not None else None
+
+
+def _dedupe(markers: list[dict], duration: float) -> list[dict]:
+    output: list[dict] = []
+    seen: set[tuple] = set()
+    ceiling = max(0.001, float(duration))
+    for marker in markers:
+        start = max(0.0, min(ceiling - 0.001, float(marker.get("t") or 0.0)))
+        end = max(start + 0.001, min(ceiling, float(marker.get("end") or 0.0)))
+        item = {**marker, "t": round(start, 3), "end": round(end, 3)}
+        key = (
+            item["t"],
+            item["end"],
+            item.get("kind"),
+            item.get("severity"),
+            item.get("message"),
+            item.get("layer_id"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(item)
+    output.sort(key=lambda item: (
+        float(item.get("t") or 0.0),
+        float(item.get("end") or 0.0),
+        str(item.get("kind") or ""),
+        str(item.get("layer_id") or ""),
+        str(item.get("message") or ""),
+    ))
+    return output[:MARKER_LIMIT]
+
+
+def run_edit_preflight(
+    job: dict,
+    edit: dict,
+    job_dir: Path | str | None = None,
+    *,
+    measure_media: bool = True,
+    check_residual: bool = True,
+    residual_report: dict | None = None,
+    residual_error: str = "",
+) -> dict:
+    """Return timeline markers for one Edit.
+
+    The response contract is ``{"markers": [...], "pass": bool}``. Markers
+    carry ``t``, ``end``, ``kind``, ``severity`` and ``message``; ``layer_id``
+    is present when a layer owns the finding. ``pass`` is false for any
+    ``warn`` or ``block`` marker; an unavailable advisory check is ``info``.
+    """
+    directory = Path(job_dir) if job_dir is not None else None
+    story = _story_for_edit(job, edit)
+    track = _caption_track(directory, edit)
+    try:
+        compiled = compose_render.compile_edit(
+            edit,
+            clips=story.get("clips") or [],
+            source=job.get("source") or {},
+            scenes=(job.get("analysis") or {}).get("scenes") or [],
+            caption_track=track,
+            include_captions=True,
+            motion_engine=compose_render.EDIT_MOTION_ENGINE,
+        )
+    except compose_render.ComposeError as exc:
+        raise PreflightError(
+            "compose_failed", str(exc),
+            suggestion="Fix the Edit layer that the compiler rejected.",
+            status=int(getattr(exc, "status_code", 422)),
+        ) from exc
+    duration = _duration(compiled)
+    scenes = [
+        item for item in (job.get("analysis") or {}).get("scenes") or []
+        if isinstance(item, dict)
+    ]
+    markers: list[dict] = []
+    families: tuple[tuple[str, Callable[[], list[dict]]], ...] = (
+        ("collision", lambda: collision_markers(compiled, duration)),
+        (
+            "face_overlap",
+            lambda: face_overlap_markers(
+                compiled, scenes, edit.get("clean") or [], duration,
+            ),
+        ),
+        ("safe_zone", lambda: safe_zone_markers(compiled, duration)),
+        ("caption_density", lambda: caption_density_markers(track, duration)),
+        (
+            "loudness",
+            lambda: loudness_markers(
+                edit, job, directory, duration, measure_media=measure_media,
+            ),
+        ),
+        ("voice_fit", lambda: voice_fit_markers(edit, duration)),
+        ("missing_music_license", lambda: music_licence_markers(edit, duration)),
+    )
+    for name, run in families:
+        try:
+            markers.extend(run())
+        except Exception:  # noqa: BLE001 - one advisory check must not hide others
+            LOGGER.exception("preflight check %s failed", name)
+    try:
+        markers.extend(
+            uncovered_text_markers(directory, edit, compiled, duration),
+        )
+    except Exception:  # noqa: BLE001 - missing Check data stays advisory
+        LOGGER.exception("preflight uncovered-text check failed")
+    issue = residual_error
+    report = residual_report
+    if report is None and issue == "" and check_residual and edit.get("clean"):
+        try:
+            report = routes_cleanup.measure_residual(
+                job,
+                edit,
+                directory or Path("."),
+                max_frames=PREFLIGHT_RESIDUAL_FRAMES,
+                fps=PREFLIGHT_RESIDUAL_FPS,
+                quality="draft",
+                story=story,
+                timeout=PREFLIGHT_RESIDUAL_TIMEOUT,
+            )
+        except routes_cleanup.ResidualFailure as exc:
+            issue = exc.reason
+        except Exception as exc:  # noqa: BLE001 - residual is a marker, not a blocker
+            LOGGER.exception("preflight residual failed")
+            issue = f"{type(exc).__name__}: {exc}"
+    elif report is None and check_residual and not edit.get("clean"):
+        issue = ""
+    try:
+        markers.extend(residual_markers(
+            edit, compiled, report, duration, issue=issue,
+        ))
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("preflight residual marker failed")
+    markers = _dedupe(markers, duration)
+    return {
+        "markers": markers,
+        "pass": not any(
+            item.get("severity") in {"warn", "block"} for item in markers
+        ),
+    }
+
+
+@router.get("/api/jobs/{job_id}/edits/{edit_id}/preflight")
+def edit_preflight(job_id: str, edit_id: str) -> dict:
+    """Inline preflight markers for one Edit version."""
+    import app as app_module  # noqa: PLC0415 - avoid an import cycle
+
+    job = app_module.load_job(job_id)
+    if job.get("status") != "ready" or not job.get("analysis"):
+        raise HTTPException(409, "Analysis is not ready yet.")
+    try:
+        edit = edits.load_edit(app_module._job_dir(job_id), edit_id)
+    except edits.EditError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    if edit is None:
+        raise HTTPException(404, "Edit not found.")
+    try:
+        return run_edit_preflight(
+            job, edit, app_module._job_dir(job_id),
+        )
+    except PreflightError as exc:
+        raise HTTPException(exc.status, exc.as_detail()) from exc
+    except Exception as exc:  # noqa: BLE001 - keep the JSON error contract
+        LOGGER.exception(
+            "edit preflight crashed for job %s edit %s", job_id, edit_id,
+        )
+        raise HTTPException(
+            500, f"Preflight failed: {type(exc).__name__}: {exc}",
+        ) from exc

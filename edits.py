@@ -124,7 +124,15 @@ _STORY_REF_KEYS = frozenset({
 })
 _CLEAN_KEYS = frozenset({
     "id", "kind", "box", "ranges", "z", "color", "opacity", "radius", "label",
+    "tracklet_id", "tracklet_kind",
 })
+# Detected Check kinds an optional Clean layer may name. The layer's own
+# ``kind`` remains the cleanup method; ``tracklet_kind`` carries provenance
+# for the save-time policy gate in routes_edits.
+TRACKLET_KINDS = (
+    "subtitle", "title", "lower_third", "handle_or_logo", "watermark",
+    "credit", "screen_text",
+)
 _REFRAME_KEYS = frozenset({
     "mode", "cx", "cy", "zoom", "crop_path_ref", "overrides",
 })
@@ -494,7 +502,7 @@ def normalize_clean(value: Any) -> list[dict]:
             minimum=2, maximum=64,
         )
         z = _integer(raw.get("z", 0), f"clean[{index}].z", minimum=0, maximum=99)
-        layers.append({
+        layer = {
             "id": layer_id,
             "kind": kind,
             "box": normalize_source_box(raw.get("box"), f"clean[{index}].box"),
@@ -504,7 +512,22 @@ def normalize_clean(value: Any) -> list[dict]:
             "opacity": round(opacity, 3),
             "radius": radius,
             "label": label,
-        })
+        }
+        tracklet_id = raw.get("tracklet_id")
+        if tracklet_id is not None:
+            layer["tracklet_id"] = _safe_id(
+                tracklet_id, f"clean[{index}].tracklet_id",
+            )
+        tracklet_kind = str(raw.get("tracklet_kind") or "").strip().lower()
+        tracklet_kind = tracklet_kind.replace("-", "_")
+        if tracklet_kind:
+            if tracklet_kind not in TRACKLET_KINDS:
+                raise EditError(
+                    f"clean[{index}].tracklet_kind must be one of: "
+                    + ", ".join(TRACKLET_KINDS) + "."
+                )
+            layer["tracklet_kind"] = tracklet_kind
+        layers.append(layer)
     layers.sort(key=lambda item: (item["z"], item["id"]))
     return layers
 
