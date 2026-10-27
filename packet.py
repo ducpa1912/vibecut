@@ -41,10 +41,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
 import exports
 import history_store
+import audio
+import captions
+import compose_render
+import edits
+import fx
+import render
 
-SCHEMA = "vibecut.publish_packet/1"
+SCHEMA = "vibecut.publish_packet/2"
+SCHEMA_V1 = "vibecut.publish_packet/1"
+SCHEMAS = (SCHEMA_V1, SCHEMA)
+AUDIO_SCHEMA = "vibecut.packet_audio/1"
+MUSIC_SCHEMA = "vibecut.packet_music/1"
+IDENTITY_SCHEMA = "vibecut.packet_identity/1"
 PACKET_ROOT = "packets"
 DESCRIPTION_LIMIT = 125
 PIN_COMMENT_LIMIT = 500
@@ -133,6 +147,10 @@ class PacketSource:
     updated: float | None = None
     version: int | None = None
     supersedes: str | None = None
+    spec: dict = field(default_factory=dict)
+    edit: dict | None = None
+    audio_plan: dict | None = None
+    transcript_id: str = ""
 
 
 def _sha256_file(path: Path) -> str:
@@ -233,6 +251,10 @@ def _validate_mp4(path: Path, artifact_id: str) -> None:
             suggestion="Re-render the cut and package the final MP4.",
             status=422, details={"artifact_id": artifact_id},
         )
+
+
+def _is_valid_jpeg_bytes(payload: bytes) -> bool:
+    return len(payload) > 3 and payload[:2] == b"\xff\xd8" and payload[-2:] == b"\xff\xd9"
 
 
 def _is_valid_jpeg(path: Path) -> bool:
@@ -747,6 +769,12 @@ def resolve_trust_artifact(
         ),
         "plan": plan,
         "plan_strict": True,
+        "spec": spec,
+        "edit_id": (manifest or {}).get("edit_id"),
+        "edit_hash": spec.get("edit_hash") or "",
+        "transcript_id": spec.get("transcript_id") or "",
+        "audio_hash": spec.get("audio_hash") or "",
+        "music_hash": spec.get("music_hash") or "",
         "target": target,
         "quality": quality,
         "aspect": aspect,
@@ -1158,7 +1186,7 @@ class ReadyRenderAdapter:
             except (TypeError, ValueError):
                 return 0.0
 
-        return PacketSource(
+        source = PacketSource(
             artifact_id=artifact_id,
             render_key=render_key,
             video_path=video,
@@ -1184,6 +1212,15 @@ class ReadyRenderAdapter:
             captions_source=captions_source,
             updated=as_float(record.get("updated")) or None,
         )
+        spec = record.get("spec") if isinstance(record.get("spec"), dict) else {}
+        source.spec = spec
+        source.edit = _resolve_edit(job_dir, record, spec)
+        source.transcript_id = _transcript_for_source(job_dir, source, spec)
+        if source.edit is not None:
+            source.audio_plan = audio.plan_from_edit(source.edit.get("audio"))
+        elif isinstance(record.get("audio"), dict):
+            source.audio_plan = record["audio"]
+        return source
 
     def _from_render(
         self,
@@ -1300,7 +1337,9 @@ def _packet_id(
     sources: list[PacketSource],
     cover_times: list[float],
     source_name: str,
+    identities: dict[str, dict] | None = None,
 ) -> str:
+    identities = identities or {}
     fingerprints = []
     for source in sorted(sources, key=lambda item: item.artifact_id):
         fingerprints.append({
@@ -1317,6 +1356,9 @@ def _packet_id(
             "height": source.height,
             "aspect": source.aspect,
             "quality": source.quality,
+            "identity": (
+                identities.get(source.artifact_id, {}).get("identity", {}) or {}
+            ).get("hash", ""),
         })
     seed = {
         "schema": SCHEMA,
@@ -1433,30 +1475,36 @@ def _zip_packet(directory: Path, destination: Path) -> None:
 
 def _manifest_files(manifest: dict) -> list[dict]:
     files = []
+
+    def add(file: object, size: object, digest: object) -> None:
+        if not file:
+            return
+        row = {"file": file, "bytes": size, "sha256": digest}
+        if row not in files:
+            files.append(row)
+
     for item in manifest.get("media") or []:
-        files.append({
-            "file": item.get("file"),
-            "bytes": item.get("bytes"),
-            "sha256": item.get("sha256"),
-        })
-        files.append({
-            "file": item.get("captions_file"),
-            "bytes": item.get("captions_bytes"),
-            "sha256": item.get("captions_sha256"),
-        })
+        add(item.get("file"), item.get("bytes"), item.get("sha256"))
+        add(
+            item.get("captions_file"),
+            item.get("captions_bytes"),
+            item.get("captions_sha256"),
+        )
+        for key in ("edit", "audio", "music"):
+            ref = item.get(key)
+            if isinstance(ref, dict):
+                add(ref.get("file"), ref.get("bytes"), ref.get("sha256"))
+    for key in ("edit", "audio", "music"):
+        ref = manifest.get(key)
+        if isinstance(ref, dict):
+            add(ref.get("file"), ref.get("bytes"), ref.get("sha256"))
     for item in manifest.get("covers") or []:
-        files.append({
-            "file": item.get("file"),
-            "bytes": item.get("bytes"),
-            "sha256": item.get("sha256"),
-        })
+        add(item.get("file"), item.get("bytes"), item.get("sha256"))
+    for item in manifest.get("layer_assets") or []:
+        add(item.get("file"), item.get("bytes"), item.get("sha256"))
     if manifest.get("copy_file"):
-        files.append({
-            "file": manifest.get("copy_file"),
-            "bytes": manifest.get("copy_bytes"),
-            "sha256": manifest.get("copy_sha256"),
-        })
-    return [item for item in files if item.get("file")]
+        add(manifest.get("copy_file"), manifest.get("copy_bytes"), manifest.get("copy_sha256"))
+    return files
 
 
 def copy_blocks(request: PacketRequest) -> list[dict]:
@@ -1533,7 +1581,8 @@ def _zip_is_intact(path: Path, manifest: dict) -> bool:
         return False
     return (
         isinstance(zipped, dict)
-        and zipped.get("schema") == SCHEMA
+        and zipped.get("schema") == manifest.get("schema")
+        and zipped.get("schema") in SCHEMAS
         and zipped.get("packet_id") == manifest.get("packet_id")
         and zipped == manifest
     )
@@ -1549,7 +1598,11 @@ def _existing_manifest(directory: Path, packet_id: str) -> dict | None:
         return None
     if not isinstance(manifest, dict):
         return None
-    if manifest.get("schema") != SCHEMA or manifest.get("packet_id") != packet_id:
+    if manifest.get("schema") not in SCHEMAS or manifest.get("packet_id") != packet_id:
+        return None
+    if manifest.get("schema") == SCHEMA and not isinstance(
+        manifest.get("identity"), dict,
+    ):
         return None
     media = manifest.get("media")
     covers = manifest.get("covers")
@@ -1584,6 +1637,488 @@ def _existing_manifest(directory: Path, packet_id: str) -> dict | None:
     if zip_path is None or not _zip_is_intact(zip_path, manifest):
         return None
     return manifest
+
+
+def _canonical_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _public_value(value: object) -> object:
+    """Drop private runtime keys before a document enters a packet."""
+    if isinstance(value, dict):
+        return {
+            str(key): _public_value(item)
+            for key, item in value.items()
+            if not str(key).startswith("_")
+        }
+    if isinstance(value, (list, tuple)):
+        return [_public_value(item) for item in value]
+    if isinstance(value, Path):
+        return value.name
+    return value
+
+
+def _content_hash(path: Path, expected: str = "") -> str:
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    wanted = str(expected or "").strip().lower()
+    if wanted and not digest.startswith(wanted):
+        raise PacketError(
+            "layer_asset_hash_mismatch",
+            f"Layer asset {path.name!r} no longer matches the Edit.",
+            suggestion="Recreate the Edit with the bundled asset, then retry.",
+            status=422,
+            details={"file": path.name, "expected": wanted, "actual": digest},
+        )
+    return digest
+
+
+def _resolve_edit(
+    job_dir: Path,
+    record: dict,
+    spec: dict,
+) -> dict | None:
+    """Load the exact Edit an artifact rendered, by content hash."""
+    wanted = str(spec.get("edit_hash") or record.get("edit_hash") or "").strip().lower()
+    if not wanted:
+        return None
+    edit_id = str(record.get("edit_id") or "").strip()
+    if edit_id:
+        try:
+            edit = edits.load_edit(job_dir, edit_id)
+        except edits.EditError:
+            edit = None
+        if edit is not None and str(edit.get("hash") or "").lower() == wanted:
+            return edit
+    story_id = str(spec.get("story_id") or record.get("story_id") or "")
+    aspect = str(spec.get("aspect") or record.get("aspect") or "9:16")
+    try:
+        rows = edits.list_edits(job_dir)
+    except Exception:  # noqa: BLE001 - packet v2 must fail honest, not guess
+        rows = []
+    matching = [
+        row for row in rows
+        if str(row.get("hash") or "").lower() == wanted
+        and (not story_id or str((row.get("story_ref") or {}).get("story_id") or "") == story_id)
+        and str(row.get("aspect") or "") == aspect
+    ]
+    if not matching:
+        return None
+    chosen = max(
+        matching,
+        key=lambda row: (float(row.get("created") or 0), int(row.get("version") or 0)),
+    )
+    try:
+        return edits.load_edit(job_dir, str(chosen.get("id") or ""))
+    except edits.EditError:
+        return None
+
+
+def _transcript_for_source(
+    job_dir: Path,
+    source: PacketSource,
+    spec: dict,
+) -> str:
+    value = str(spec.get("transcript_id") or source.transcript_id or "")
+    if value or source.edit is None:
+        return value
+    captions_section = source.edit.get("captions") or {}
+    track_id = str(captions_section.get("track_id") or "")
+    if not track_id:
+        return ""
+    try:
+        track = captions.load_track(job_dir, track_id)
+    except Exception:  # noqa: BLE001
+        return ""
+    return str(getattr(track, "transcript_id", "") or "") if track is not None else ""
+
+
+def _audio_document(source: PacketSource) -> dict | None:
+    section = (source.edit or {}).get("audio")
+    if not isinstance(section, dict):
+        section = source.audio_plan
+    if not isinstance(section, dict) or not section:
+        return None
+    try:
+        plan = (
+            audio.plan_from_edit(section)
+            if source.edit is not None
+            else audio.normalize_audio_plan(section)
+        )
+    except audio.AudioError as exc:
+        raise PacketError(
+            "audio_invalid",
+            f"The Edit audio plan cannot be adapted: {exc}",
+            suggestion="Re-save the Edit audio settings, then rebuild the packet.",
+            status=422,
+        ) from exc
+    if not isinstance(plan, dict):
+        return None
+    visible = _public_value(plan)
+    if isinstance(visible.get("music"), dict):
+        music_section = visible["music"]
+        for key in ("track", "file"):
+            if music_section.get(key):
+                music_section[key] = _job_relative(music_section[key])
+    if isinstance(visible.get("voice"), dict) and visible["voice"].get("upload"):
+        visible["voice"]["upload"] = _job_relative(visible["voice"]["upload"])
+    voice = visible.get("voice") if isinstance(visible.get("voice"), dict) else {}
+    engine = str(voice.get("engine") or "")
+    provenance = {
+        "engine": engine,
+        "model": str(voice.get("model") or ""),
+        "voice_id": str(voice.get("voice") or voice.get("voice_id") or ""),
+        "ai_voice": bool(engine) and str(voice.get("source") or "") != "upload",
+    }
+    payload = {
+        "schema": AUDIO_SCHEMA,
+        "mode": str(visible.get("mode") or "original"),
+        "plan": visible,
+        "translate": (
+            dict(visible["translate"])
+            if isinstance(visible.get("translate"), dict) else None
+        ),
+        "voice": voice or None,
+        "provenance": provenance,
+        "transcript_id": str(source.transcript_id or ""),
+    }
+    payload["hash"] = _canonical_hash(payload)
+    return payload
+
+
+def _job_relative(value: object) -> str:
+    text = str(value or "").replace("\\", "/")
+    return Path(text).name if "/" in text or "\\" in text else text
+
+
+def _packet_edit(edit: dict, assets: list[dict]) -> dict:
+    """Copy an Edit for the packet without absolute machine paths.
+
+    The original ``id``/``hash`` stay intact so the packet still names the
+    exact Edit version. Path fields point at the packet's own ``assets/``
+    copies; the hash identifies the stored Edit before that path rewrite.
+    """
+    value = json.loads(json.dumps(edit, ensure_ascii=False))
+    by_hash = [item for item in assets if item.get("kind") == "lut"]
+    lut = (value.get("color") or {}).get("lut")
+    if isinstance(lut, dict):
+        wanted = str(lut.get("hash") or "").lower()
+        match = next(
+            (item for item in by_hash if item["sha256"].startswith(wanted)),
+            None,
+        )
+        if match is not None:
+            lut["path"] = f"assets/{match['kind']}/{match['file_name']}"
+    audio_section = value.get("audio")
+    if isinstance(audio_section, dict):
+        music_section = audio_section.get("music")
+        if isinstance(music_section, dict):
+            for key in ("track", "file"):
+                if music_section.get(key):
+                    music_section[key] = _job_relative(music_section[key])
+        voice_section = audio_section.get("voice")
+        if isinstance(voice_section, dict) and voice_section.get("upload"):
+            voice_section["upload"] = _job_relative(voice_section["upload"])
+    return value
+
+
+def _music_document(
+    job_dir: Path,
+    source: PacketSource,
+    audio_document: dict | None,
+) -> dict | None:
+    plan = (source.audio_plan or {}) if isinstance(source.audio_plan, dict) else {}
+    if source.edit is not None:
+        try:
+            adapted = audio.plan_from_edit(source.edit.get("audio"))
+        except audio.AudioError:
+            adapted = None
+        if isinstance(adapted, dict):
+            plan = adapted
+    music_plan = plan.get("music") if isinstance(plan.get("music"), dict) else {}
+    if not music_plan:
+        return None
+    wanted = str(
+        music_plan.get("locked_hash") or music_plan.get("file_hash") or "",
+    ).strip().lower()
+    source_kind = str(music_plan.get("source") or "").strip().lower()
+    if not (
+        wanted
+        or music_plan.get("track")
+        or music_plan.get("file")
+        or source_kind in {"library", "upload", "generated"}
+    ):
+        return None
+    candidate: dict = {}
+    job_music = job_dir / "audio" / "music.json"
+    if job_music.is_file():
+        try:
+            value = json.loads(job_music.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            value = None
+        if isinstance(value, dict) and (
+            not wanted or str(value.get("file_hash") or "").lower() == wanted
+        ):
+            candidate = dict(value)
+    if not candidate and wanted:
+        try:
+            history = audio.locked_history(job_dir)
+        except Exception:  # noqa: BLE001
+            history = []
+        match = next(
+            (
+                item for item in reversed(history)
+                if str(item.get("file_hash") or "").lower() == wanted
+            ),
+            None,
+        )
+        if isinstance(match, dict):
+            candidate = dict(match)
+    if not candidate:
+        candidate = {
+            "source": music_plan.get("source"),
+            "file": music_plan.get("track") or music_plan.get("file"),
+            "file_hash": wanted,
+            "licence": music_plan.get("licence"),
+            "provider": music_plan.get("provider"),
+            "brief": music_plan.get("brief"),
+            "bpm": music_plan.get("bpm"),
+            "in": music_plan.get("in"),
+            "out": music_plan.get("out"),
+            "locked": bool(music_plan.get("locked_hash")),
+        }
+    file_hash = str(candidate.get("file_hash") or wanted or "").strip().lower()
+    if not file_hash:
+        file_value = str(candidate.get("file") or "")
+        if file_value:
+            path = Path(file_value)
+            if not path.is_absolute():
+                path = job_dir / path
+            if path.is_file():
+                file_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    payload = {
+        "schema": MUSIC_SCHEMA,
+        "source_schema": candidate.get("schema"),
+        "source": str(candidate.get("source") or "library"),
+        "file": _job_relative(candidate.get("file")),
+        "file_hash": file_hash,
+        "licence": audio.normalize_licence(candidate.get("licence")),
+        "provider": (
+            dict(candidate["provider"])
+            if isinstance(candidate.get("provider"), dict) else {}
+        ),
+        "brief": (
+            dict(candidate["brief"])
+            if isinstance(candidate.get("brief"), dict) else None
+        ),
+        "bpm": (
+            round(float(candidate["bpm"]), 2)
+            if candidate.get("bpm") is not None else None
+        ),
+        "in": round(float(candidate.get("in") or 0.0), 3),
+        "out": round(float(candidate.get("out") or 0.0), 3),
+        "duration": round(float(candidate.get("duration") or 0.0), 3),
+        "locked": bool(candidate.get("locked") or music_plan.get("locked_hash")),
+    }
+    if audio_document is not None:
+        payload["mode"] = audio_document.get("mode")
+        payload["translate"] = audio_document.get("translate")
+    payload["hash"] = _canonical_hash(payload)
+    return payload
+
+
+def _layer_assets(
+    job_dir: Path,
+    edit: dict | None,
+) -> list[dict]:
+    """Resolve every LUT, sticker and caption font an Edit draws with."""
+    if not isinstance(edit, dict):
+        return []
+    found: dict[str, dict] = {}
+    root = Path(__file__).resolve().parent
+
+    def add(
+        kind: str,
+        asset_id: str,
+        path: Path | None,
+        expected: str = "",
+    ) -> None:
+        if path is None or not path.is_file():
+            raise PacketError(
+                "layer_asset_missing",
+                f"The Edit's {kind} asset {asset_id or '?'} is not available.",
+                suggestion="Re-save the Edit with a bundled asset, then retry.",
+                status=422,
+                details={"kind": kind, "asset_id": asset_id},
+            )
+        digest = _content_hash(path, expected)
+        key = f"{kind}:{digest}"
+        if key in found:
+            return
+        suffix = path.suffix.lower() or ".bin"
+        name = safe_filename(asset_id or path.stem, fallback="asset", limit=40)
+        found[key] = {
+            "kind": kind,
+            "id": asset_id or path.stem,
+            "name": path.name,
+            "file_name": f"{digest[:12]}-{name}{suffix}",
+            "sha256": digest,
+            "bytes": path.stat().st_size,
+            "path": path,
+        }
+
+    color = edit.get("color") or {}
+    lut = color.get("lut") if isinstance(color.get("lut"), dict) else None
+    if lut:
+        path = Path(str(lut.get("path") or ""))
+        if not path.is_file():
+            bundled = root / "assets" / "luts" / path.name
+            preset = str(color.get("preset") or "")
+            if not bundled.is_file() and preset and preset != "none":
+                bundled = root / "assets" / "luts" / f"{preset}.cube"
+            path = bundled
+        add("lut", str(color.get("preset") or path.stem), path, str(lut.get("hash") or ""))
+
+    for index, layer in enumerate(edit.get("graphics") or []):
+        if not isinstance(layer, dict):
+            continue
+        asset = layer.get("asset")
+        if not isinstance(asset, dict):
+            continue
+        asset_id = str(asset.get("id") or "")
+        try:
+            path = fx.sticker_path(asset_id) if asset_id else None
+        except fx.FxError:
+            path = None
+        add("sticker", asset_id or f"graphic-{index}", path, str(asset.get("hash") or ""))
+
+    track_id = str((edit.get("captions") or {}).get("track_id") or "")
+    if track_id:
+        try:
+            track = captions.load_track(job_dir, track_id)
+        except Exception:  # noqa: BLE001
+            track = None
+        font = str(((track.style if track is not None else {}) or {}).get("font") or "")
+        if font:
+            path = Path(font).expanduser()
+            if path.is_file():
+                add("font", path.stem, path)
+
+    return sorted(found.values(), key=lambda item: (item["kind"], item["file_name"]))
+
+
+def _edit_identity(
+    source: PacketSource,
+    audio_doc: dict | None,
+    music_doc: dict | None,
+    assets: list[dict],
+) -> dict:
+    edit = source.edit or {}
+    spec = source.spec or {}
+    expected_transcript = str(spec.get("transcript_id") or "")
+    if (
+        expected_transcript
+        and source.transcript_id
+        and expected_transcript != source.transcript_id
+    ):
+        raise PacketError(
+            "transcript_mismatch",
+            "The artifact transcript does not match the Edit's caption track.",
+            suggestion="Re-render the story, then build the packet again.",
+            status=422,
+            details={
+                "artifact_transcript": expected_transcript,
+                "edit_transcript": source.transcript_id,
+            },
+        )
+    expected_music = str(spec.get("music_hash") or "").lower()
+    actual_music = str((music_doc or {}).get("file_hash") or "").lower()
+    if expected_music and actual_music and expected_music != actual_music:
+        raise PacketError(
+            "music_mismatch",
+            "The artifact music bed does not match the Edit's locked track.",
+            suggestion="Re-render the story with the locked bed, then retry.",
+            status=422,
+            details={"artifact_music": expected_music, "edit_music": actual_music},
+        )
+    identity = {
+        "schema": IDENTITY_SCHEMA,
+        "edit": (
+            {
+                "id": str(edit.get("id") or ""),
+                "hash": str(edit.get("hash") or ""),
+                "version": int(edit.get("version") or 0),
+                "aspect": str(edit.get("aspect") or ""),
+            }
+            if edit else None
+        ),
+        "transcript_id": str(source.transcript_id or ""),
+        "audio_hash": str((audio_doc or {}).get("hash") or ""),
+        "music_hash": str((music_doc or {}).get("file_hash") or ""),
+        "layer_assets": [str(item["sha256"]) for item in assets],
+    }
+    identity["hash"] = _canonical_hash(identity)
+    return identity
+
+
+def _write_document(stage: Path, relative: str, payload: dict) -> dict:
+    path = stage / relative
+    _write_json(path, payload)
+    data = path.read_bytes()
+    return {
+        "file": relative,
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def _frame_cover(
+    job: dict,
+    job_dir: Path,
+    source: PacketSource,
+    seconds: float,
+) -> bytes | None:
+    """One cover frame from the same Edit graph as the frame endpoint."""
+    if source.edit is None:
+        return None
+    clips = (source.plan or {}).get("clips") or []
+    meta = job.get("source") or {}
+    if not clips or not meta.get("path"):
+        return None
+    caption_track = None
+    captions_section = source.edit.get("captions") or {}
+    track_id = str(captions_section.get("track_id") or "")
+    if captions_section.get("enabled", True) and track_id:
+        try:
+            caption_track = captions.load_track(job_dir, track_id)
+        except Exception:  # noqa: BLE001 - captions are optional on a cover
+            caption_track = None
+    aspect = str(source.edit.get("aspect") or source.aspect or "9:16")
+    try:
+        compiled = compose_render.compile_edit(
+            source.edit,
+            clips=clips,
+            source=meta,
+            scenes=(job.get("analysis") or {}).get("scenes") or [],
+            caption_track=caption_track,
+            size=render._dims(aspect, "final"),
+            motion_engine=compose_render.EDIT_MOTION_ENGINE,
+            beats=render.edit_beat_grid(job_dir, source.edit, source.audio_plan),
+        )
+        return render.render_story_frame(
+            str(meta["path"]),
+            meta,
+            job_dir,
+            compiled,
+            max(0.0, float(seconds)),
+            quality="final",
+            aspect=aspect,
+        )
+    except Exception:  # noqa: BLE001 - fall back to the rendered media frame
+        return None
 
 
 def _public(manifest: dict) -> dict:
@@ -1625,7 +2160,21 @@ def build_packet(
         )
         for value in cover_times
     ]
-    packet_id = _packet_id(job_id, normalized, sources, cover_times, source_name)
+    identities: dict[str, dict] = {}
+    for source in sources:
+        audio_doc = _audio_document(source)
+        music_doc = _music_document(job_dir, source, audio_doc)
+        assets = _layer_assets(job_dir, source.edit)
+        identities[source.artifact_id] = {
+            "edit": source.edit,
+            "audio": audio_doc,
+            "music": music_doc,
+            "assets": assets,
+            "identity": _edit_identity(source, audio_doc, music_doc, assets),
+        }
+    packet_id = _packet_id(
+        job_id, normalized, sources, cover_times, source_name, identities,
+    )
     directory = job_dir / PACKET_ROOT / packet_id
 
     with _BUILD_LOCK:
@@ -1638,11 +2187,31 @@ def build_packet(
             shutil.rmtree(stage, ignore_errors=True)
         stage.mkdir(parents=True)
         try:
+            asset_rows: dict[str, dict] = {}
+            for source in sources:
+                for asset in identities[source.artifact_id]["assets"]:
+                    relative = f"assets/{asset['kind']}/{asset['file_name']}"
+                    if relative in asset_rows:
+                        continue
+                    target = stage / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(asset["path"], target)
+                    digest = _content_hash(target, asset["sha256"])
+                    asset_rows[relative] = {
+                        "kind": asset["kind"],
+                        "id": asset["id"],
+                        "file": relative,
+                        "bytes": target.stat().st_size,
+                        "sha256": digest,
+                    }
             slug = safe_filename(normalized.story_id or source_name)
             short = packet_id[:8]
             used_names: set[str] = set()
             media_rows: list[dict] = []
             primary_media: Path | None = None
+            primary_documents: dict[str, dict | None] = {
+                "edit": None, "audio": None, "music": None,
+            }
             for index, source in enumerate(sources):
                 target = source.target or index + 1
                 stem = f"{slug}-{int(target)}s-{short}"
@@ -1665,6 +2234,51 @@ def build_packet(
                 captions_path.write_text(captions_text, encoding="utf-8")
                 captions_bytes = captions_path.stat().st_size
                 captions_sha = hashlib.sha256(captions_text.encode("utf-8")).hexdigest()
+                identity = identities[source.artifact_id]
+                prefix = "" if index == 0 else f"sidecars/{source.artifact_id}/"
+                edit_ref = None
+                if identity["edit"] is not None:
+                    edit_ref = _write_document(
+                        stage,
+                        prefix + "edit.json",
+                        _packet_edit(identity["edit"], identity["assets"]),
+                    )
+                    edit_ref.update({
+                        "id": str(identity["edit"].get("id") or ""),
+                        "hash": str(identity["edit"].get("hash") or ""),
+                        "version": int(identity["edit"].get("version") or 0),
+                        "aspect": str(identity["edit"].get("aspect") or ""),
+                        "paths": "packet-relative",
+                    })
+                audio_ref = None
+                if identity["audio"] is not None:
+                    audio_ref = _write_document(
+                        stage, prefix + "audio.json", identity["audio"],
+                    )
+                    audio_ref.update({
+                        "hash": str(identity["audio"].get("hash") or ""),
+                        "mode": str(identity["audio"].get("mode") or ""),
+                    })
+                music_ref = None
+                if identity["music"] is not None:
+                    music_ref = _write_document(
+                        stage, prefix + "music.json", identity["music"],
+                    )
+                    music_ref.update({
+                        "hash": str(identity["music"].get("hash") or ""),
+                        "file_hash": str(identity["music"].get("file_hash") or ""),
+                        "source": str(identity["music"].get("source") or ""),
+                    })
+                if index == 0:
+                    primary_documents = {
+                        "edit": edit_ref,
+                        "audio": audio_ref,
+                        "music": music_ref,
+                    }
+                layer_files = sorted({
+                    f"assets/{asset['kind']}/{asset['file_name']}"
+                    for asset in identity["assets"]
+                })
                 media_rows.append({
                     "artifact_id": source.artifact_id,
                     "version": source.version,
@@ -1683,6 +2297,11 @@ def build_packet(
                     "captions_bytes": captions_bytes,
                     "captions_sha256": captions_sha,
                     "captions_source": source.captions_source,
+                    "identity": identity["identity"],
+                    "edit": edit_ref,
+                    "audio": audio_ref,
+                    "music": music_ref,
+                    "layer_assets": layer_files,
                 })
 
             cover_rows: list[dict] = []
@@ -1690,10 +2309,15 @@ def build_packet(
                 cover_name = f"{slug}-cover-{index}-{short}.jpg"
                 cover_path = stage / "covers" / cover_name
                 cover_path.parent.mkdir(parents=True, exist_ok=True)
-                source_kind = "ffmpeg" if (
-                    primary_media is not None
-                    and _extract_cover(primary_media, seconds, cover_path)
-                ) else _cover_copy(primary.poster_path, cover_path)
+                frame_payload = _frame_cover(job, job_dir, primary, seconds)
+                if frame_payload and _is_valid_jpeg_bytes(frame_payload):
+                    cover_path.write_bytes(frame_payload)
+                    source_kind = "frame"
+                else:
+                    source_kind = "ffmpeg" if (
+                        primary_media is not None
+                        and _extract_cover(primary_media, seconds, cover_path)
+                    ) else _cover_copy(primary.poster_path, cover_path)
                 if source_kind == "missing":
                     raise PacketError(
                         "cover_unavailable",
@@ -1723,6 +2347,16 @@ def build_packet(
             copy_path = stage / COPY_FILE
             copy_path.write_text(_copy_text(blocks), encoding="utf-8")
             zip_name = f"{slug}-packet-{short}.zip"
+            primary_identity = identities[primary.artifact_id]["identity"]
+            asset_refs = sorted(asset_rows.values(), key=lambda row: row["file"])
+            document_refs: dict[str, dict] = {}
+            for ref in primary_documents.values():
+                if isinstance(ref, dict) and ref.get("file"):
+                    document_refs[str(ref["file"])] = ref
+            for item in media_rows:
+                for ref in (item.get("edit"), item.get("audio"), item.get("music")):
+                    if isinstance(ref, dict) and ref.get("file"):
+                        document_refs[str(ref["file"])] = ref
             manifest = {
                 "schema": SCHEMA,
                 "packet_id": packet_id,
@@ -1741,12 +2375,19 @@ def build_packet(
                 "copy_file": COPY_FILE,
                 "copy_bytes": copy_path.stat().st_size,
                 "copy_sha256": _sha256_file(copy_path),
+                "identity": primary_identity,
+                "edit": primary_documents["edit"],
+                "audio": primary_documents["audio"],
+                "music": primary_documents["music"],
+                "layer_assets": asset_refs,
                 "media": media_rows,
                 "covers": cover_rows,
                 "zip_file": zip_name,
                 "total_bytes": sum(row["bytes"] for row in media_rows)
                 + sum(row["captions_bytes"] for row in media_rows)
                 + sum(row["bytes"] for row in cover_rows)
+                + sum(row["bytes"] for row in asset_refs)
+                + sum(int(ref.get("bytes") or 0) for ref in document_refs.values())
                 + copy_path.stat().st_size,
             }
             _write_json(stage / "packet.json", manifest)
@@ -1806,6 +2447,17 @@ def list_packets(job_dir: Path | str) -> list[dict]:
             "title": (manifest.get("titles") or [""])[0],
             "aspects": sorted({str(item.get("aspect") or "") for item in media}),
             "versions": [item.get("version") for item in media],
+            "edits": [
+                {
+                    "artifact_id": item.get("artifact_id"),
+                    "edit_id": (item.get("edit") or {}).get("id"),
+                    "edit_hash": (item.get("edit") or {}).get("hash"),
+                    "edit_version": (item.get("edit") or {}).get("version"),
+                }
+                for item in media
+                if isinstance(item.get("edit"), dict)
+            ],
+            "identity": (manifest.get("identity") or {}).get("hash"),
             "zip_file": manifest.get("zip_file"),
             "zip_url": public["zip_url"],
             "packet_url": public["packet_url"],
@@ -1824,3 +2476,63 @@ def packet_zip_path(job_dir: Path | str, packet_id: str) -> Path:
     if root not in path.parents or not path.is_file():
         raise PacketError("packet_not_found", "Packet ZIP not found.", status=404)
     return path
+
+
+# ------------------------------------------------------------------ API
+
+
+def _app():
+    import app
+
+    return app
+
+
+class ArtifactPacketBody(BaseModel):
+    """Publish copy for one artifact. The artifact id is in the path."""
+
+    story_id: str = Field(default="", max_length=160)
+    artifact_ids: list[str] = Field(default_factory=list)
+    titles: list[str] = Field(default_factory=list)
+    description: str = ""
+    hashtags: list[str] = Field(default_factory=list)
+    cover_times: list[float] | None = None
+    pin_comment: str = ""
+
+
+router = APIRouter(tags=["packet"])
+
+
+@router.post("/api/jobs/{job_id}/artifacts/{artifact_id}/packet")
+def build_artifact_packet(
+    job_id: str,
+    artifact_id: str,
+    body: ArtifactPacketBody | None = None,
+) -> dict:
+    """Build a packet for one ready artifact. T4 Finish uses this route."""
+    body = body or ArtifactPacketBody()
+    if not ARTIFACT_ID_RE.fullmatch(str(artifact_id or "")):
+        raise HTTPException(404, "Artifact not found.")
+    if body.artifact_ids and artifact_id not in body.artifact_ids:
+        raise HTTPException(
+            400, "The body artifact ids must contain the path artifact id.",
+        )
+    application = _app()
+    job = application.load_job(job_id)
+    request = PacketRequest(
+        story_id=body.story_id,
+        titles=body.titles,
+        description=body.description,
+        hashtags=body.hashtags,
+        artifact_ids=[artifact_id],
+        cover_times=body.cover_times,
+        pin_comment=body.pin_comment,
+    )
+    try:
+        manifest = build_packet(job, application._job_dir(job_id), request)
+    except PacketError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.as_detail()) from exc
+    try:
+        application._record_packet_refs(job_id, manifest)
+    except Exception:  # noqa: BLE001 - the packet is already on disk
+        pass
+    return manifest
