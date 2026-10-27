@@ -166,6 +166,71 @@ function artifactLabel(artifact) {
   return [version, quality, when].filter(Boolean).join(" · ");
 }
 
+/**
+ * Count how the work that was running ended. Queue items are the source of
+ * truth; artifacts that were rendering outside a queue are counted too.
+ */
+export function finishOutcome(queues, queueIds, artifactRows, artifactIds) {
+  const watched = new Set(queueIds || []);
+  let done = 0;
+  let failed = 0;
+  const counted = new Set();
+  for (const queue of queues || []) {
+    if (!watched.has(queue?.id)) continue;
+    for (const item of queue.items || []) {
+      const state = String(item?.state || "");
+      if (item?.artifact_id) counted.add(String(item.artifact_id));
+      if (state === "done") done += 1;
+      else if (state === "failed") failed += 1;
+    }
+  }
+  for (const item of artifactRows || []) {
+    const id = String(item?.artifact_id || "");
+    if (!(artifactIds || []).includes(id) || counted.has(id)) continue;
+    if (item.status === "ready") done += 1;
+    else if (item.status === "failed" || item.status === "interrupted") failed += 1;
+  }
+  return { done, failed };
+}
+
+/** The banner after renders stop. Never green when something failed. */
+export function finishBanner({ done = 0, failed = 0 } = {}) {
+  if (failed && done) {
+    return {
+      text: `${done} of ${done + failed} renders finished; ${failed} failed. The reason and Retry are under Versions.`,
+      tone: "bad",
+    };
+  }
+  if (failed) {
+    return {
+      text: `${failed === 1 ? "The render" : `All ${failed} renders`} failed. The reason and Retry are under Versions.`,
+      tone: "bad",
+    };
+  }
+  if (done) return { text: `${done === 1 ? "Render" : `${done} renders`} finished. New versions are ready.`, tone: "ok" };
+  return { text: "Renders stopped.", tone: "" };
+}
+
+/** One readable line from a failed artifact or queue item. */
+export function failureReason(item) {
+  const raw = String(item?.error || "").trim();
+  if (!raw) {
+    const message = String(item?.message || "").trim();
+    return message && !/^render failed\.?$/i.test(message) ? message : "No reason was recorded.";
+  }
+  const line = raw.split("\n").map((part) => part.trim()).find(Boolean) || raw;
+  return line.length > 240 ? `${line.slice(0, 237)}…` : line;
+}
+
+/** A file name for a downloaded cut: story-01-9x16-v2.mp4. */
+export function downloadName(artifact, index = 0) {
+  const shape = artifactAspect(artifact).replace(":", "x");
+  const version = artifact?.versions?.version || artifact?.version || "";
+  const story = `story-${String(Math.max(0, index) + 1).padStart(2, "0")}`;
+  return [story, shape, version ? `v${version}` : "", artifact?.quality === "draft" ? "draft" : ""]
+    .filter(Boolean).join("-") + ".mp4";
+}
+
 function normalizePacket(result) {
   if (!result || typeof result !== "object") return null;
   if (result.packet && typeof result.packet === "object") return result.packet;
@@ -511,6 +576,12 @@ export function mount(root, ctx) {
   async function poll() {
     if (disposed || loading) return;
     const wasActive = hasActiveWork();
+    const queueIds = queues
+      .filter((queue) => ACTIVE_QUEUE.has(String(queue?.status || "")))
+      .map((queue) => queue.id);
+    const artifactIds = artifacts
+      .filter((item) => ["queued", "rendering"].includes(String(item?.status || "")))
+      .map((item) => String(item.artifact_id || ""));
     try {
       await Promise.all([loadQueues(), loadArtifacts()]);
       if (disposed) return;
@@ -521,7 +592,8 @@ export function mount(root, ctx) {
         renderVersionsCard();
         renderPacketCard();
         renderShareCard();
-        announce("Renders finished. New versions are ready.", "ok");
+        const banner = finishBanner(finishOutcome(queues, queueIds, artifacts, artifactIds));
+        announce(banner.text, banner.tone);
         return;
       }
       schedulePoll();
@@ -808,6 +880,7 @@ export function mount(root, ctx) {
           text: `${storyName(story, selectedIndex())} · ${aspect}. Old renders and old edits stay side by side.`,
         }),
       ]),
+      downloadAllButton(),
     ]));
 
     const rows = allArtifactsFor();
@@ -855,9 +928,35 @@ export function mount(root, ctx) {
             text: item.pinned ? "Unpin" : "Keep",
           });
           pin.addEventListener("click", () => { void togglePin(item, pin); });
-          actions.append(use, pin);
+          const download = el("a", {
+            class: "st-btn st-btn-ghost st-btn-small",
+            href: item.url,
+            download: downloadName(item, selectedIndex()),
+            text: "Download",
+          });
+          const reveal = el("button", {
+            class: "st-btn st-btn-quiet st-btn-small",
+            type: "button",
+            text: "Show in Finder",
+          });
+          reveal.addEventListener("click", () => { void revealArtifact(item, reveal); });
+          actions.append(use, download, reveal, pin);
+        } else if (["failed", "interrupted"].includes(String(item.status || ""))) {
+          const retry = el("button", {
+            class: "st-btn st-btn-primary st-btn-small",
+            type: "button",
+            text: "Retry",
+            disabled: busy,
+          });
+          retry.addEventListener("click", () => {
+            void queueStories([story], retry, artifactAspect(item));
+          });
+          actions.append(retry);
         }
         row.append(actions);
+        if (!ready && ["failed", "interrupted"].includes(String(item.status || ""))) {
+          row.append(el("p", { class: "st-error st-finish-version-error", text: failureReason(item) }));
+        }
         row.addEventListener("click", (event) => {
           if (event.target.closest("button")) return;
           if (!ready) return;
@@ -873,6 +972,20 @@ export function mount(root, ctx) {
       card.append(list);
 
       const readyRows = rows.filter(artifactReady);
+      if (readyRows.length === 1) {
+        // One finished cut still gets a player; compare needs two.
+        const item = readyRows[0];
+        const box = el("figure", { class: "st-finish-compare-video st-finish-single-video" });
+        box.append(el("figcaption", { class: "st-label", text: artifactLabel(item).replace(" · current", "") }));
+        box.append(el("video", {
+          src: item.url,
+          poster: item.poster_url || null,
+          controls: true,
+          preload: "metadata",
+          playsinline: true,
+        }));
+        card.append(box);
+      }
       if (readyRows.length > 1) {
         const compare = el("div", { class: "st-finish-compare" });
         const pick = (which) => {
@@ -1760,6 +1873,55 @@ export function mount(root, ctx) {
         button.disabled = false;
         button.textContent = previous;
       }
+    }
+  }
+
+  /** The newest ready cut of every story in the current shape. */
+  function latestReadyCuts(shape = aspect) {
+    const rows = [];
+    for (const [index, story] of stories().entries()) {
+      const newest = artifactsFor(story.id, shape)[0];
+      if (newest) rows.push({ artifact: newest, index });
+    }
+    return rows;
+  }
+
+  function downloadAllButton() {
+    const cuts = latestReadyCuts();
+    if (cuts.length < 2) return null;
+    const button = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: `Download all · ${cuts.length}`,
+    });
+    button.addEventListener("click", () => {
+      // One anchor click per file; browsers queue them as separate downloads.
+      latestReadyCuts().forEach(({ artifact, index }, order) => {
+        window.setTimeout(() => {
+          const link = el("a", { href: artifact.url, download: downloadName(artifact, index) });
+          document.body.append(link);
+          link.click();
+          link.remove();
+        }, order * 400);
+      });
+      announce(`Downloading ${formatCount(cuts.length, "cut")}.`, "ok");
+    });
+    return button;
+  }
+
+  async function revealArtifact(artifact, button) {
+    if (!job || !artifact?.artifact_id) return;
+    button.disabled = true;
+    try {
+      await request(
+        `${jobRoot(job.id)}/artifacts/${encodeURIComponent(artifact.artifact_id)}/reveal`,
+        { method: "POST", body: {} },
+      );
+      announce("Shown in Finder.", "ok");
+    } catch (error) {
+      announce(error?.message || "Could not open Finder.", "bad");
+    } finally {
+      if (button.isConnected) button.disabled = false;
     }
   }
 

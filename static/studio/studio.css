@@ -1011,7 +1011,11 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
 .st-finish-version-copy { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; }
 .st-finish-version-copy strong { font-size: 12px; font-weight: 560; }
 .st-finish-version-copy small { color: var(--st-dim); font-size: 10.5px; }
-.st-finish-version-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.st-finish-version-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; flex: 0 1 auto; }
+.st-finish-version:has(.st-finish-version-error) { flex-wrap: wrap; }
+.st-finish-version-error { flex: 1 0 100%; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.st-finish-single-video { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--st-line); }
+.st-finish-single-video video { max-width: 260px; }
 .st-finish-compare {
   display: grid;
   gap: 8px;

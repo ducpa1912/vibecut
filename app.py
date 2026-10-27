@@ -5118,6 +5118,28 @@ def get_artifact_media(job_id: str, artifact_id: str, filename: str) -> FileResp
     )
 
 
+@app.post("/api/jobs/{job_id}/artifacts/{artifact_id}/reveal")
+def reveal_artifact(job_id: str, artifact_id: str) -> dict:
+    """Show one finished cut in Finder. Local Mac only; nothing leaves the machine."""
+    load_job(job_id)
+    try:
+        path = artifacts.media_path(_job_dir(job_id), artifact_id, "reel.mp4")
+    except (artifacts.ArtifactError, OSError) as exc:
+        raise HTTPException(404, "Artifact media not found.") from exc
+    if not path.is_file():
+        raise HTTPException(404, "Artifact media not found.")
+    if sys.platform != "darwin":
+        raise HTTPException(501, "Reveal in Finder works on a Mac only.")
+    try:
+        subprocess.Popen(
+            ["open", "-R", str(path)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise HTTPException(500, "Could not open Finder.") from exc
+    return {"revealed": True, "path": str(path)}
+
+
 @app.get("/api/jobs/{job_id}/artifacts/{artifact_id}/captions")
 def get_artifact_captions(job_id: str, artifact_id: str) -> dict:
     """Caption-only preview of the exact cues saved for one artifact."""
