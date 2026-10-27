@@ -155,6 +155,16 @@ def test_story_rejects_removed_engine_before_synthesis(tmp_path):
         )
 
 
+def test_explicit_engine_without_route_uses_its_real_default_model(monkeypatch, tmp_path):
+    calls: list[dict] = []
+    monkeypatch.setattr(tts, "synthesize_line", fake_synth_factory(calls))
+    result = tts.synthesize_story(
+        ["one"], engine="elevenlabs", cache_dir=tmp_path, routes=[],
+    )
+    assert result.model == "eleven_multilingual_v2"
+    assert calls[0]["model"] == "eleven_multilingual_v2"
+
+
 def test_openrouter_alias_selects_fish_or_gemini(monkeypatch, tmp_path):
     captured: list[str] = []
 

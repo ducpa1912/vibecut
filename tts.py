@@ -54,6 +54,14 @@ DEFAULT_VOICES = {
     "kokoro": "af_heart",
     "say": "Samantha",
 }
+DEFAULT_MODELS = {
+    "minimax": "speech-2.8-turbo",
+    "elevenlabs": "eleven_multilingual_v2",
+    "fish": "fish-audio/s2.1-pro-free:free",
+    "gemini": "google/gemini-3.8-flash-lite-tts",
+    "kokoro": "kokoro",
+    "say": "say",
+}
 ENGINE_LABELS = {
     "minimax": "MiniMax Speech 2.8",
     "elevenlabs": "ElevenLabs",
@@ -220,12 +228,21 @@ def _candidate(provider: str, model: str) -> dict[str, str] | None:
     provider = str(provider or "").strip().lower()
     model = str(model or "").strip()
     if provider == "minimax":
-        return {"engine": "minimax", "provider": provider, "model": model}
+        return {
+            "engine": "minimax", "provider": provider,
+            "model": model or DEFAULT_MODELS["minimax"],
+        }
     if provider == "elevenlabs":
-        return {"engine": "elevenlabs", "provider": provider, "model": model}
+        return {
+            "engine": "elevenlabs", "provider": provider,
+            "model": model or DEFAULT_MODELS["elevenlabs"],
+        }
     if provider == "openrouter":
         engine = "fish" if "fish" in model.lower() else "gemini"
-        return {"engine": engine, "provider": provider, "model": model}
+        return {
+            "engine": engine, "provider": provider,
+            "model": model or DEFAULT_MODELS[engine],
+        }
     if provider == "local":
         if model == "piper":
             return None
@@ -358,7 +375,7 @@ def _candidate_order(
             "provider": "openrouter" if requested in OPENROUTER_ENGINES else (
                 "local" if requested in LOCAL_ENGINES else requested
             ),
-            "model": requested,
+            "model": DEFAULT_MODELS.get(requested, requested),
         })
     else:
         primary = {
@@ -366,7 +383,7 @@ def _candidate_order(
             "provider": "openrouter" if requested in OPENROUTER_ENGINES else (
                 "local" if requested in LOCAL_ENGINES else requested
             ),
-            "model": requested,
+            "model": DEFAULT_MODELS.get(requested, requested),
         }
     ordered = [primary]
     for item in configured:
