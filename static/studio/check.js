@@ -303,7 +303,10 @@ export function mount(root, ctx) {
     ]);
     if (actionLabel) {
       const button = el("button", { class: "st-btn st-btn-primary", type: "button", text: actionLabel });
-      button.addEventListener("click", () => ctx.go(action));
+      button.addEventListener("click", () => {
+        if (action === "run-check") void startCheck(false);
+        else ctx.go(action);
+      });
       card.append(button);
     }
     clear(dom.body);
@@ -536,9 +539,9 @@ export function mount(root, ctx) {
     if (!report) {
       renderEmpty(
         "Check has not run",
-        "Run Check to read old text, speech, music, faces and picture quality. It takes a few minutes on a long video.",
-        "Go to Import",
-        "import",
+        "Run Check to read old text, speech, music, faces and picture quality. It takes a few minutes on a long video. Check is optional: you can open Stories now.",
+        "Run Check",
+        "run-check",
       );
       dom.run.hidden = false;
       dom.run.disabled = loading || runPending;
@@ -627,6 +630,7 @@ export function mount(root, ctx) {
         } else throw error;
       }
       if (disposed) return;
+      const wasPending = runPending;
       report = payload;
       runPending = Boolean(pending || isPending(report));
       renderReport();
@@ -635,6 +639,7 @@ export function mount(root, ctx) {
         schedulePoll();
       } else {
         showStatus("");
+        if (wasPending) ctx.refreshSteps?.();
       }
     } catch (error) {
       if (disposed) return;
@@ -687,6 +692,7 @@ export function mount(root, ctx) {
         schedulePoll();
       } else {
         showStatus("Check finished.", "ok");
+        ctx.refreshSteps?.();
       }
     } catch (error) {
       if (disposed) return;

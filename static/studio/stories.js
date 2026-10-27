@@ -29,6 +29,7 @@ import {
 } from "./ui.js";
 
 const POLL_MS = 1600;
+const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
 
 export function mount(root, ctx) {
   let disposed = false;
@@ -135,6 +136,20 @@ export function mount(root, ctx) {
     dom.body.append(card);
   }
 
+  function openInEdit(story) {
+    // Edit reads this choice on open; the shape follows the picker here.
+    try {
+      const picked = root.querySelector(".st-render-bar select")?.value;
+      const aspect = picked === "4:5" ? "4:5" : "9:16";
+      localStorage.setItem(EDIT_CHOICE_KEY, JSON.stringify({
+        setId: activeSetId, storyId: story.id, aspect,
+      }));
+    } catch (_) {
+      /* Edit falls back to the first story. */
+    }
+    ctx.go("edit", { force: true });
+  }
+
   function storyCard(story, index) {
     const hook = story.hook?.text || story.title || `Story ${index + 1}`;
     const payoff = story.payoff?.text || "";
@@ -169,9 +184,15 @@ export function mount(root, ctx) {
       text: "Render this story",
     });
     button.addEventListener("click", () => queueOne(story, button, note));
+    const editButton = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: "Edit this story",
+    });
+    editButton.addEventListener("click", () => openInEdit(story));
     const foot = el("div", { class: "st-story-foot" }, [
       el("span", { class: "st-hint", text: formatCount(story.sentences?.length, "sentence") }),
-      button,
+      el("div", { class: "st-story-actions" }, [button, editButton]),
     ]);
     card.append(head, meta, quotes, foot, note);
     return card;
@@ -352,6 +373,7 @@ export function mount(root, ctx) {
     showStatus("Reading the transcript and choosing complete moments…");
     try {
       const result = await createClipSet(job.id, { count });
+      ctx.refreshSteps?.();
       if (disposed) return;
       const record = result?.clip_set;
       if (record?.id) {

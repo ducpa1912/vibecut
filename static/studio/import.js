@@ -136,7 +136,7 @@ export function mount(root, ctx) {
             <legend>What to read</legend>
             <div class="st-options-grid">
               <label class="st-check"><input id="st-opt-ocr" type="checkbox" checked><span><strong>Text and faces</strong><small>Apple Vision · on this Mac</small></span></label>
-              <label class="st-check"><input id="st-opt-transcribe" type="checkbox"><span><strong>Speech</strong><small>word timing for captions</small></span></label>
+              <label class="st-check"><input id="st-opt-transcribe" type="checkbox" checked><span><strong>Speech</strong><small>word timing for captions</small></span></label>
               <label class="st-check"><input id="st-opt-crop" type="checkbox" checked><span><strong>Smart crop</strong><small>follows the subject</small></span></label>
               <label class="st-check"><input id="st-opt-track" type="checkbox" checked><span><strong>Track crop</strong><small>smooths the move</small></span></label>
             </div>
@@ -347,9 +347,8 @@ export function mount(root, ctx) {
       if (!created || !created.id) throw new Error("The server did not return a video id.");
       rememberAttestation(created.id);
       if (disposed) return;
-      setStatus(dom.status, "Imported. Opening Stories…", "ok");
-      ctx.openJob(created.id, { name: selectedDisplayName() });
-      ctx.go("stories");
+      setStatus(dom.status, "Imported. Reading the video now — Check opens by itself when it is ready.", "ok");
+      ctx.openJob(created.id, { name: selectedDisplayName(), status: "queued" });
     } catch (error) {
       if (!disposed) showError(error.message || "Could not import this video.");
     } finally {
@@ -377,8 +376,8 @@ export function mount(root, ctx) {
         el("span", { class: `st-chip st-chip-${statusTone(job.status)}`, text: statusText(job.status) }),
       ]);
       button.addEventListener("click", () => {
-        ctx.openJob(job.id, { name: job.name || "" });
-        ctx.go("stories");
+        // Reopen where the work stopped: reading, Check, Stories or Edit.
+        ctx.openJobAndContinue(job.id, { name: job.name || "", status: job.status || "" });
       });
       dom.recentList.append(button);
     }

@@ -14,7 +14,8 @@ import { mount as mountStories } from "./stories.js";
 import { mount as mountEdit } from "./edit.js";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountSetup } from "./setup.js";
-import { el, statusText } from "./ui.js";
+import { getJobStatus, listClipSets, listJobs, request } from "./api.js";
+import { el, formatDuration, shortDate, statusText, statusTone } from "./ui.js";
 
 const JOB_KEY = "vibecut.studio.job";
 const EDITOR_KEY = "vibecut.editor";
@@ -28,6 +29,23 @@ const STEPS = [
 ];
 
 const STEP_IDS = new Set(STEPS.map((step) => step.id));
+const WATCH_BUSY_MS = 2000;
+const WATCH_IDLE_MS = 15000;
+const EMPTY_STATE = {
+  jobId: "", loaded: false, status: "", progress: 0, message: "",
+  check: "none", stories: 0, missing: false,
+};
+
+function isReading(status) {
+  return Boolean(status) && status !== "ready" && status !== "failed" && status !== "error";
+}
+
+function checkState(payload) {
+  const state = String(payload?.status || "").toLowerCase();
+  if (state === "queued" || state === "running" || payload?.complete === false) return "running";
+  if (state === "failed") return "failed";
+  return "done";
+}
 
 function readJob() {
   try {
@@ -95,6 +113,7 @@ export function startStudio() {
             `).join("")}
           </ol>
         </nav>
+        <p id="st-rail-notice" class="st-rail-notice" role="status" aria-live="polite" hidden></p>
         <div class="st-rail-foot">
           <span class="st-local"><i aria-hidden="true"></i>On this Mac</span>
           <button id="st-setup-open" class="st-rail-settings" type="button" aria-haspopup="dialog">Setup</button>
@@ -108,6 +127,10 @@ export function startStudio() {
             <span class="st-top-label">Current video</span>
             <strong id="st-current-name">No video open</strong>
             <span id="st-current-status" class="st-top-status" hidden></span>
+            <div id="st-top-progress" class="st-top-progress" role="status" aria-live="polite" hidden>
+              <div class="st-progress-bar"><i id="st-top-progress-fill"></i></div>
+              <span id="st-top-progress-text"></span>
+            </div>
           </div>
           <div class="st-top-actions">
             <button id="st-change-video" class="st-btn st-btn-quiet" type="button">Change video</button>
@@ -142,6 +165,20 @@ export function startStudio() {
         <button class="st-btn st-btn-primary" type="button" data-dialog-close>Close</button>
       </div>
     </dialog>
+    <dialog id="st-library-dialog" class="st-dialog st-library-dialog" aria-labelledby="st-library-title">
+      <div class="st-dialog-head">
+        <h2 id="st-library-title">Your videos</h2>
+        <button class="st-icon-btn" type="button" data-library-close aria-label="Close video list">×</button>
+      </div>
+      <div class="st-dialog-body">
+        <input id="st-library-search" class="st-input" type="search" placeholder="Search by name" aria-label="Search videos">
+        <div id="st-library-list" class="st-library-list"></div>
+      </div>
+      <div class="st-dialog-foot">
+        <button id="st-library-import" class="st-btn st-btn-ghost" type="button">Import a new video</button>
+        <button class="st-btn st-btn-primary" type="button" data-library-close>Close</button>
+      </div>
+    </dialog>
     <dialog id="st-setup-dialog" class="st-dialog st-setup-dialog" aria-labelledby="st-setup-title">
       <div class="st-dialog-head">
         <h2 id="st-setup-title">Setup</h2>
@@ -168,7 +205,20 @@ export function startStudio() {
     forget: root.querySelector("#st-forget-video"),
     change: root.querySelector("#st-change-video"),
     steps: Array.from(root.querySelectorAll(".st-step")),
+    notice: root.querySelector("#st-rail-notice"),
+    progress: root.querySelector("#st-top-progress"),
+    progressFill: root.querySelector("#st-top-progress-fill"),
+    progressText: root.querySelector("#st-top-progress-text"),
+    library: root.querySelector("#st-library-dialog"),
+    librarySearch: root.querySelector("#st-library-search"),
+    libraryList: root.querySelector("#st-library-list"),
+    libraryImport: root.querySelector("#st-library-import"),
   };
+  let jobState = { ...EMPTY_STATE };
+  let watchTimer = 0;
+  let watchSeq = 0;
+  let noticeTimer = 0;
+  let libraryTicket = 0;
 
   function renderJob() {
     const name = currentJob?.name || (currentJob?.id ? `Video ${currentJob.id}` : "");
@@ -183,6 +233,212 @@ export function startStudio() {
       ? `${name || currentJob.id}${status ? ` · ${status}` : ""}`
       : "No video open.";
     dom.forget.disabled = !currentJob;
+    const reading = Boolean(currentJob) && jobState.jobId === currentJob.id && isReading(jobState.status);
+    dom.progress.hidden = !reading;
+    if (reading) {
+      const percent = Math.max(0, Math.min(100, Math.round(Number(jobState.progress || 0) * 100)));
+      dom.progressFill.style.width = `${percent}%`;
+      dom.progressText.textContent = `Reading the video · ${percent}%${jobState.message ? ` · ${jobState.message}` : ""}`;
+    }
+  }
+
+  // ------------------------------------------------------------ step state
+
+  function stepGate(stepId) {
+    if (stepId === "import") return "";
+    if (!currentJob) return "Open or import a video first.";
+    if (jobState.jobId !== currentJob.id || !jobState.loaded) return "";
+    if (jobState.missing) return "This video is no longer on file. Choose another one.";
+    if (jobState.status === "failed" || jobState.status === "error") {
+      return "Reading this video failed. Import it again.";
+    }
+    if (isReading(jobState.status)) {
+      const percent = Math.round(Number(jobState.progress || 0) * 100);
+      return `Wait for the video to finish reading (${percent}%).`;
+    }
+    if ((stepId === "edit" || stepId === "finish") && jobState.stories === 0) {
+      return "Pick stories first. Open Stories and press Find stories.";
+    }
+    return "";
+  }
+
+  function stepStatus(stepId) {
+    const known = currentJob && jobState.jobId === currentJob.id && jobState.loaded;
+    if (stepGate(stepId)) {
+      if (!currentJob) return { state: "locked", text: "Needs a video" };
+      if (isReading(jobState.status)) return { state: "locked", text: "Waits for reading" };
+      if (stepId === "edit" || stepId === "finish") return { state: "locked", text: "Needs stories" };
+      return { state: "locked", text: "Not available" };
+    }
+    if (!known) return { state: "open", text: STEPS.find((step) => step.id === stepId)?.note || "" };
+    if (stepId === "import") {
+      if (isReading(jobState.status)) {
+        return { state: "working", text: `Reading ${Math.round(Number(jobState.progress || 0) * 100)}%` };
+      }
+      return { state: "done", text: "Video ready" };
+    }
+    if (stepId === "check") {
+      if (jobState.check === "running") return { state: "working", text: "Checking…" };
+      if (jobState.check === "done") return { state: "done", text: "Checked" };
+      if (jobState.check === "failed") return { state: "open", text: "Check failed · run again" };
+      return { state: "open", text: "Optional · not run" };
+    }
+    if (stepId === "stories") {
+      return jobState.stories
+        ? { state: "done", text: `${jobState.stories} ${jobState.stories === 1 ? "story" : "stories"}` }
+        : { state: "open", text: "Not picked yet" };
+    }
+    return { state: "open", text: STEPS.find((step) => step.id === stepId)?.note || "" };
+  }
+
+  function renderRail() {
+    for (const button of dom.steps) {
+      const status = stepStatus(button.dataset.step);
+      button.dataset.state = status.state;
+      const small = button.querySelector(".st-step-copy small");
+      if (small) small.textContent = status.text;
+      const gate = stepGate(button.dataset.step);
+      button.setAttribute("aria-disabled", gate ? "true" : "false");
+      button.title = gate || "";
+    }
+  }
+
+  function showNotice(message) {
+    if (noticeTimer) window.clearTimeout(noticeTimer);
+    dom.notice.textContent = message;
+    dom.notice.hidden = !message;
+    if (message) noticeTimer = window.setTimeout(() => { dom.notice.hidden = true; }, 6000);
+  }
+
+  function bestStep() {
+    if (!currentJob) return "import";
+    if (isReading(jobState.status) || jobState.missing) return "import";
+    if (jobState.stories) return "edit";
+    if (jobState.check === "done") return "stories";
+    return "check";
+  }
+
+  function scheduleWatch(delay) {
+    if (watchTimer) window.clearTimeout(watchTimer);
+    watchTimer = window.setTimeout(() => { void refreshState(); }, delay);
+  }
+
+  async function refreshState() {
+    if (watchTimer) window.clearTimeout(watchTimer);
+    watchTimer = 0;
+    const jobId = currentJob?.id || "";
+    const seq = ++watchSeq;
+    if (!jobId) {
+      jobState = { ...EMPTY_STATE };
+      renderJob();
+      renderRail();
+      return jobState;
+    }
+    const next = { ...EMPTY_STATE, jobId, loaded: true };
+    try {
+      const status = await getJobStatus(jobId);
+      next.status = String(status?.status || "");
+      next.progress = Number(status?.progress || 0);
+      next.message = String(status?.message || "");
+    } catch (error) {
+      if (error?.status === 404) next.missing = true;
+      else next.loaded = false;
+    }
+    if (next.status === "ready") {
+      const [check, sets] = await Promise.allSettled([
+        request(`/api/jobs/${encodeURIComponent(jobId)}/check`),
+        listClipSets(jobId),
+      ]);
+      if (check.status === "fulfilled") next.check = checkState(check.value);
+      else if (check.reason?.status === 202) next.check = "running";
+      else next.check = "none";
+      if (sets.status === "fulfilled") {
+        const records = Array.isArray(sets.value?.clip_sets) ? sets.value.clip_sets : [];
+        next.stories = Number(records[0]?.stories?.length || 0);
+      }
+    }
+    if (seq !== watchSeq || jobId !== (currentJob?.id || "")) return jobState;
+    const previous = jobState;
+    jobState = next;
+    if (next.status && next.status !== currentJob.status) updateJob({ status: next.status });
+    renderJob();
+    renderRail();
+    // A screen opened while the video was still reading never sits on a
+    // stale "still being read": reopen it once reading finishes.
+    if (previous.jobId === jobId && isReading(previous.status) && !isReading(next.status)) {
+      if (activeStep === "import" && next.status === "ready") go("check");
+      else activate(activeStep, { focus: false, force: true });
+    }
+    const busy = isReading(next.status) || next.check === "running" || !next.loaded;
+    scheduleWatch(busy ? WATCH_BUSY_MS : WATCH_IDLE_MS);
+    return jobState;
+  }
+
+  // --------------------------------------------------------- video library
+
+  function openLibrary() {
+    if (typeof dom.library.showModal === "function") dom.library.showModal();
+    else dom.library.setAttribute("open", "");
+    dom.librarySearch.value = "";
+    void loadLibrary("");
+    requestAnimationFrame(() => dom.librarySearch.focus());
+  }
+
+  async function loadLibrary(query) {
+    const ticket = ++libraryTicket;
+    dom.libraryList.replaceChildren(el("p", { class: "st-hint", text: "Loading your videos…" }));
+    try {
+      const data = await listJobs({ query, limit: 30 });
+      if (ticket !== libraryTicket) return;
+      const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
+      dom.libraryList.replaceChildren();
+      if (!jobs.length) {
+        dom.libraryList.append(el("p", { class: "st-hint", text: query ? "No video matches that name." : "No videos yet. Import one to begin." }));
+        return;
+      }
+      for (const job of jobs) dom.libraryList.append(libraryRow(job));
+    } catch (error) {
+      if (ticket !== libraryTicket) return;
+      dom.libraryList.replaceChildren(el("p", { class: "st-error", text: error?.message || "Could not load your videos." }));
+    }
+  }
+
+  function libraryRow(job) {
+    const current = currentJob?.id === job.id;
+    const stories = Array.isArray(job.story_titles) ? job.story_titles.length : 0;
+    const meta = [
+      formatDuration(job.duration),
+      shortDate(job.created),
+      stories ? `${stories} ${stories === 1 ? "story" : "stories"}` : "",
+    ].filter(Boolean).join(" · ");
+    const thumb = job.hook_thumb && !job.source_deleted
+      ? el("img", { class: "st-library-thumb", src: job.hook_thumb, alt: "", loading: "lazy" })
+      : el("span", { class: "st-library-thumb st-library-thumb-empty", "aria-hidden": "true" });
+    const row = el("button", {
+      class: `st-library-item${current ? " is-current" : ""}`,
+      type: "button",
+      "aria-current": current ? "true" : null,
+    }, [
+      thumb,
+      el("span", { class: "st-library-copy" }, [
+        el("strong", { text: job.name || job.id }),
+        el("span", { text: meta }),
+      ]),
+      el("span", { class: `st-chip st-chip-${statusTone(job.status)}`, text: current ? "Open now" : statusText(job.status) }),
+    ]);
+    row.addEventListener("click", () => {
+      dom.library.close();
+      void openJobAndContinue(job.id, { name: job.name || "", status: job.status || "" });
+    });
+    return row;
+  }
+
+  async function openJobAndContinue(id, meta = {}) {
+    setJob({ ...meta, id });
+    jobState = { ...EMPTY_STATE };
+    renderRail();
+    await refreshState();
+    go(bestStep(), { force: true });
   }
 
   function setJob(value) {
@@ -213,9 +469,9 @@ export function startStudio() {
     document.title = `${step?.label || "Studio"} · VibeCut Studio`;
   }
 
-  function activate(stepId, { focus = true } = {}) {
+  function activate(stepId, { focus = true, force = false } = {}) {
     const step = STEPS.find((item) => item.id === stepId);
-    if (!step || step.id === activeStep) {
+    if (!step || (step.id === activeStep && !force)) {
       if (step && !focus) setActive(step.id);
       return;
     }
@@ -245,6 +501,12 @@ export function startStudio() {
 
   function go(stepId, options = {}) {
     if (!STEP_IDS.has(stepId)) return;
+    const gate = stepGate(stepId);
+    if (gate && !options.force) {
+      showNotice(gate);
+      return;
+    }
+    showNotice("");
     const hash = `#/${stepId}`;
     if (location.hash !== hash) history.pushState(null, "", hash);
     activate(stepId, options);
@@ -254,8 +516,15 @@ export function startStudio() {
     getJobId: () => currentJob?.id || "",
     getJob: () => (currentJob ? { ...currentJob } : null),
     openJob: (id, meta = {}) => {
+      const changed = currentJob?.id !== id;
       setJob({ ...meta, id });
+      if (changed) jobState = { ...EMPTY_STATE };
+      void refreshState();
     },
+    // Open a video and move to the step where its work continues.
+    openJobAndContinue: (id, meta = {}) => openJobAndContinue(id, meta),
+    refreshSteps: () => refreshState(),
+    getStepState: () => ({ ...jobState }),
     updateJob,
     clearJob: () => {
       setJob(null);
@@ -267,7 +536,22 @@ export function startStudio() {
   for (const button of dom.steps) {
     button.addEventListener("click", () => go(button.dataset.step));
   }
-  dom.change.addEventListener("click", () => go("import"));
+  dom.change.addEventListener("click", openLibrary);
+  for (const button of root.querySelectorAll("[data-library-close]")) {
+    button.addEventListener("click", () => dom.library.close());
+  }
+  dom.library.addEventListener("click", (event) => {
+    if (event.target === dom.library) dom.library.close();
+  });
+  dom.libraryImport.addEventListener("click", () => {
+    dom.library.close();
+    go("import", { force: true });
+  });
+  let searchTimer = 0;
+  dom.librarySearch.addEventListener("input", () => {
+    if (searchTimer) window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => loadLibrary(dom.librarySearch.value.trim()), 250);
+  });
   root.querySelector(".st-skip")?.addEventListener("click", (event) => {
     event.preventDefault();
     dom.main.focus();
@@ -333,6 +617,7 @@ export function startStudio() {
   window.addEventListener("hashchange", () => {
     const step = routeFromHash();
     if (step) activate(step);
+    void refreshState();
   });
   window.addEventListener("popstate", () => {
     const step = routeFromHash();
@@ -340,6 +625,8 @@ export function startStudio() {
   });
 
   renderJob();
+  renderRail();
+  void refreshState();
   const initial = routeFromHash() || "import";
   if (location.hash !== `#/${initial}`) history.replaceState(null, "", `#/${initial}`);
   activate(initial, { focus: false });

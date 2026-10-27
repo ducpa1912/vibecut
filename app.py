@@ -3054,8 +3054,22 @@ async def lifespan(_: FastAPI):
     yield
 
 
+class _RevalidatedStatic(StaticFiles):
+    """Static files that the browser must revalidate on every load.
+
+    Studio is unversioned native ES modules. Without this header browsers
+    cache them heuristically, so after an update one page can mix old and new
+    modules. ETag revalidation keeps unchanged files at a cheap 304.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 app = FastAPI(title="VibeCut", lifespan=lifespan, docs_url=None, redoc_url=None)
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.mount("/static", _RevalidatedStatic(directory=STATIC), name="static")
 app.include_router(admin_routes.router)
 app.include_router(routes_batches.router)
 app.include_router(routes_check.router)

@@ -19,6 +19,8 @@ import {
 } from "./model.js";
 import { fetchFrame, framePath, proxyPath, syncMediaCookie } from "./api.js";
 
+const FADE_IN_SKIP = 0.15;
+
 export function mountPreview(root, options = {}) {
   const callbacks = {
     onTime: options.onTime || (() => {}),
@@ -50,6 +52,8 @@ export function mountPreview(root, options = {}) {
   let proxyRequested = false;
   let playing = false;
   let videoPlaying = false;
+  // Play was pressed before the proxy finished building; start it on ready.
+  let pendingPlay = false;
   let raf = 0;
   let lastTick = 0;
   let lastFrameAt = 0;
@@ -106,6 +110,7 @@ export function mountPreview(root, options = {}) {
     if (frameState === "bad-time") return "No frame at this time";
     if (frameState === "locked") return "Preview needs sign-in";
     if (frameState === "error") return "Preview failed";
+    if (pendingPlay && !proxyReady) return "Preparing playback…";
     if (videoPlaying && proxyReady) return "Fast preview";
     if (frameReady) return "Exact frame";
     if (proxyReady) return "Fast preview";
@@ -119,7 +124,11 @@ export function mountPreview(root, options = {}) {
       : frameState === "error" || frameState === "locked" ? "bad"
         : proxyReady ? "ok" : "quiet";
 
-    if (frameReady) {
+    if (pendingPlay && !proxyReady) {
+      setNote("Building the playback copy with sound. This takes a few seconds the first time.");
+    } else if (videoPlaying) {
+      setNote("Playing a 540p copy with sound. Pause to see the exact frame.");
+    } else if (frameReady) {
       setNote("Exact frame from the current edit. Pause or scrub to refresh it.");
     } else if (proxyReady) {
       setNote("Fast 540p preview. Pause to load the exact frame.");
@@ -173,46 +182,45 @@ export function mountPreview(root, options = {}) {
   function drawSafeZones(width, height) {
     if (!state.showSafeZones) return;
     const zones = safeZoneRects(state.aspect);
+    const px = (zone) => ({
+      x: zone.x * width, y: zone.y * height, w: zone.w * width, h: zone.h * height,
+    });
+    const safe = px(zones.safe);
     ctx.save();
-    ctx.lineWidth = 5;
-    ctx.setLineDash([22, 15]);
-    ctx.strokeStyle = "rgba(241, 239, 233, 0.42)";
-    ctx.strokeRect(
-      zones.safe.x * width,
-      zones.safe.y * height,
-      zones.safe.w * width,
-      zones.safe.h * height,
-    );
-
-    ctx.setLineDash([9, 9]);
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(226, 138, 124, 0.42)";
-    ctx.fillStyle = "rgba(226, 138, 124, 0.06)";
+    // One rule on screen: shaded means the app covers it, keep text off it.
+    ctx.fillStyle = "rgba(5, 5, 6, 0.46)";
+    ctx.beginPath();
+    ctx.rect(0, 0, width, height);
+    ctx.rect(safe.x, safe.y, safe.w, safe.h);
+    ctx.fill("evenodd");
     for (const zone of zones.reserved) {
-      const x = zone.x * width;
-      const y = zone.y * height;
-      const w = zone.w * width;
-      const h = zone.h * height;
-      ctx.fillRect(x, y, w, h);
-      ctx.strokeRect(x, y, w, h);
+      const area = px(zone);
+      const x = Math.max(area.x, safe.x);
+      const y = Math.max(area.y, safe.y);
+      const right = Math.min(area.x + area.w, safe.x + safe.w);
+      const bottom = Math.min(area.y + area.h, safe.y + safe.h);
+      if (right > x && bottom > y) ctx.fillRect(x, y, right - x, bottom - y);
     }
 
+    ctx.setLineDash([18, 12]);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(241, 239, 233, 0.55)";
+    ctx.strokeRect(safe.x, safe.y, safe.w, safe.h);
     ctx.setLineDash([]);
-    ctx.fillStyle = "rgba(241, 239, 233, 0.72)";
-    ctx.font = "600 34px ui-sans-serif, -apple-system, sans-serif";
+
+    ctx.font = "600 42px ui-sans-serif, -apple-system, sans-serif";
+    ctx.textBaseline = "top";
     ctx.textAlign = "left";
-    ctx.fillText("Safe area", zones.safe.x * width + 18, zones.safe.y * height + 44);
-    ctx.fillStyle = "rgba(226, 138, 124, 0.78)";
-    ctx.font = "500 26px ui-sans-serif, -apple-system, sans-serif";
-    for (const zone of zones.reserved) {
-      if (zone.name === "Buttons") {
-        ctx.save();
-        ctx.translate((zone.x + zone.w / 2) * width, (zone.y + zone.h / 2) * height);
-        ctx.rotate(-Math.PI / 2);
-        ctx.textAlign = "center";
-        ctx.fillText("Buttons", 0, 0);
-        ctx.restore();
-      }
+    ctx.fillStyle = "rgba(241, 239, 233, 0.78)";
+    ctx.fillText("Text safe area", safe.x + 16, safe.y + 14);
+    const buttons = zones.reserved.find((zone) => zone.name === "Buttons");
+    if (buttons) {
+      const area = px(buttons);
+      ctx.textAlign = "right";
+      ctx.fillStyle = "rgba(241, 239, 233, 0.6)";
+      ctx.font = "600 30px ui-sans-serif, -apple-system, sans-serif";
+      ctx.fillText("App", width - 12, area.y + 14);
+      ctx.fillText("buttons", width - 12, area.y + 50);
     }
     ctx.restore();
   }
@@ -348,15 +356,21 @@ export function mountPreview(root, options = {}) {
     if (disposed || !state.edit || !state.jobId || proxyRequested) return;
     proxyRequested = true;
     const video = document.createElement("video");
-    video.muted = true;
+    // Sound on: the creator judges music, voice and ducking here.
+    video.muted = false;
+    video.volume = 1;
     video.playsInline = true;
-    video.preload = "metadata";
+    video.preload = "auto";
     video.src = proxyPath(state.jobId, state.edit.id);
     video.addEventListener("loadedmetadata", () => {
       if (disposed) return;
       proxyReady = true;
       proxyFailed = false;
       video.currentTime = Math.min(state.time, Math.max(0, (video.duration || state.duration) - 0.05));
+      if (pendingPlay && playing) {
+        pendingPlay = false;
+        startVideo();
+      }
       updateSource();
       draw();
     });
@@ -382,6 +396,11 @@ export function mountPreview(root, options = {}) {
       if (disposed) return;
       proxyFailed = true;
       proxyReady = false;
+      if (pendingPlay && playing) {
+        // No playable copy: fall back to stepping exact frames, silently.
+        pendingPlay = false;
+        startClock();
+      }
       updateSource();
       draw();
     });
@@ -397,6 +416,13 @@ export function mountPreview(root, options = {}) {
     }, delay);
   }
 
+  // Renders open with a 0.12 s fade from black, so the true first frame is
+  // black. The still preview shows the first visible frame instead.
+  function frameTime(time) {
+    const lead = Math.min(FADE_IN_SKIP, Math.max(0, numberOr(state.duration, 0) / 2));
+    return Math.max(numberOr(time, 0), lead);
+  }
+
   async function loadFrame(time) {
     if (disposed || !state.edit || !state.jobId || !frameAvailable) return;
     if (frameController) frameController.abort();
@@ -407,7 +433,7 @@ export function mountPreview(root, options = {}) {
     updateSource();
     try {
       const response = await fetchFrame(
-        framePath(state.jobId, state.edit.id, time, "draft"),
+        framePath(state.jobId, state.edit.id, frameTime(time), "draft"),
         { signal: controller.signal },
       );
       if (disposed || seq !== frameSeq) return;
@@ -511,22 +537,33 @@ export function mountPreview(root, options = {}) {
       return;
     }
     playing = true;
+    if (proxyReady && proxyVideo) {
+      startVideo();
+    } else if (proxyFailed) {
+      startClock();
+    } else {
+      pendingPlay = true;
+    }
     updateTransport();
     updateSource();
-    if (proxyReady && proxyVideo) {
-      proxyVideo.currentTime = state.time;
-      videoPlaying = true;
-      proxyVideo.play().catch(() => {
-        videoPlaying = false;
-        startClock();
-      });
-    } else {
+  }
+
+  function startVideo() {
+    if (!proxyVideo) return;
+    if (state.time >= state.duration - 0.05) setTime(0);
+    proxyVideo.currentTime = state.time;
+    videoPlaying = true;
+    updateSource();
+    proxyVideo.play().catch(() => {
+      videoPlaying = false;
+      updateSource();
       startClock();
-    }
+    });
   }
 
   function pause() {
     playing = false;
+    pendingPlay = false;
     if (raf) window.cancelAnimationFrame(raf);
     raf = 0;
     if (videoPlaying && proxyVideo) proxyVideo.pause();
@@ -550,6 +587,8 @@ export function mountPreview(root, options = {}) {
       frameReady = false;
       if (state.edit) {
         void loadFrame(state.time);
+        // Build the playable copy now so Play starts with sound right away.
+        ensureProxy();
       }
     } else {
       scheduleFrame(80);
