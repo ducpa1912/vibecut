@@ -586,13 +586,12 @@ def test_provider_order_prefers_ready_engine(monkeypatch):
     monkeypatch.setattr(audio, "opencode_available", lambda: False)
     monkeypatch.setattr(audio, "openrouter_available", lambda: False)
     monkeypatch.setattr(audio, "apple_pair_status", lambda source, target: "installed")
-    monkeypatch.setattr(audio, "argos_pair_ready", lambda source, target: False)
     order = audio._provider_order("zh", "en", "auto")
     assert order == ["apple_fm"]
 
 
 def test_provider_order_explicit_wins():
-    assert audio._provider_order("zh", "en", "marian") == ["marian"]
+    assert audio._provider_order("zh", "en", "opencode") == ["opencode"]
 
 
 def test_scene_emotion_labels():

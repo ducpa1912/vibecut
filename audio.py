@@ -451,20 +451,6 @@ def translate_providers() -> list[dict]:
         "install": "Set VIBECUT_LLM_URL to an Ollama /api/generate endpoint.",
         "size_mb": 3000,
     })
-    providers.append({
-        "id": "marian",
-        "name": "Marian / opus-mt (on device, ~300 MB per pair)",
-        "available": _module("transformers") and _module("torch"),
-        "install": "pip install transformers torch. Downloads the opus-mt pair on first use.",
-        "size_mb": 300,
-    })
-    providers.append({
-        "id": "argos",
-        "name": "Argos Translate (offline)",
-        "available": _module("argostranslate"),
-        "install": "pip install argostranslate && install the language pair.",
-        "size_mb": 250,
-    })
     return [item for item in providers if item["id"] in {"opencode", "openrouter", "apple_fm"}]
 
 
@@ -746,62 +732,10 @@ def _translate_openrouter(
     return [str(value) for value in values]
 
 
-def argos_pair_ready(source: str, target: str) -> bool:
-    try:
-        from argostranslate import translate as argos_translate  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
-        return False
-    source_code = (source or "en").split("-")[0]
-    target_code = (target or "en").split("-")[0]
-    if source_code == target_code:
-        return True
-    try:
-        return argos_translate.get_translation_from_codes(source_code, target_code) is not None
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _translate_argos(lines: list[str], source: str, target: str) -> list[str] | None:
-    try:
-        from argostranslate import translate as argos_translate  # noqa: PLC0415
-        translation = argos_translate.get_translation_from_codes(
-            (source or "en").split("-")[0], (target or "en").split("-")[0],
-        )
-        if translation is None:
-            return None
-        return [str(translation.translate(line)) for line in lines]
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _translate_marian(lines: list[str], source: str, target: str) -> list[str] | None:
-    """Small on-device seq2seq model, ~300 MB per language pair."""
-    if not (_module("transformers") and _module("torch")):
-        return None
-    source_code = (source or "en").split("-")[0]
-    target_code = (target or "en").split("-")[0]
-    model_id = f"Helsinki-NLP/opus-mt-{source_code}-{target_code}"
-    try:
-        import torch  # noqa: PLC0415
-        from transformers import pipeline  # noqa: PLC0415
-
-        device = "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu"
-        translator = pipeline("translation", model=model_id, device=device)
-        results = translator(lines, max_length=400)
-        texts = [str(item.get("translation_text") or "").strip() for item in results]
-        return texts if len(texts) == len(lines) else None
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def _ready_providers(source: str, target: str) -> list[str]:
     ready: list[str] = []
-    if argos_pair_ready(source, target):
-        ready.append("argos")
     if apple_pair_status(source, target) == "installed":
         ready.append("apple_fm")
-    if _module("transformers") and _module("torch"):
-        ready.append("marian")
     if os.environ.get("VIBECUT_LLM_URL"):
         ready.append("ollama")
     return ready
@@ -879,11 +813,8 @@ def _provider_order(source: str, target: str, provider: str) -> list[str]:
         openrouter_settings = settings_store.load_settings().get("openrouter") or {}
         if openrouter_settings.get("use_translate", True) and openrouter_available():
             online.append("openrouter")
-    # Local mode uses Apple first, then Argos only when the pair is already
-    # installed. Marian/Ollama stay advanced/explicit: they may download models.
+    # Local mode uses Apple. Ollama stays explicit: it needs a local server.
     local: list[str] = ["apple_fm"]
-    if argos_pair_ready(source, target):
-        local.append("argos")
     mode = translation_mode()
     if mode == "local_only":
         return local
@@ -958,10 +889,6 @@ def translate_lines(
                 result = _translate_apple(missing, source_code, target_code, target_name)
             elif candidate == "ollama":
                 result = _translate_ollama(missing, source_code, target_name)
-            elif candidate == "marian":
-                result = _translate_marian(missing, source_code, target_code)
-            elif candidate == "argos":
-                result = _translate_argos(missing, source_code, target_code)
             else:
                 result = None
             _pipeline_event(
@@ -1311,7 +1238,7 @@ def _llm_text(prompt: str, provider: str = "auto", model: str | None = None) -> 
     """One model call: OpenCode Go first, then MLX, then Ollama."""
     settings = settings_store.load_settings().get("opencode") or {}
     cloud_ok = (
-        provider in {"opencode", "auto", "argos", "marian", "apple_fm", ""}
+        provider in {"opencode", "auto", "apple_fm", ""}
         and settings.get("use_brief", True)
         and opencode_available()
     )
