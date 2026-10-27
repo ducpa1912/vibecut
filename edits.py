@@ -63,7 +63,7 @@ _EDIT_ID_RE = re.compile(r"^ed_[a-f0-9]{32}$")
 _HASH_RE = re.compile(r"^[a-f0-9]{16,64}$")
 _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9_./-]{1,240}$")
 _FORBIDDEN_RE = re.compile(
-    r"inpaint|generative|delogo|watermark[\s_-]*remov|"
+    r"inpaint|generative|delogo|watermark|"
     r"voice[\s_-]*clon|avatar|stock[\s_-]*b-?roll",
     re.IGNORECASE,
 )

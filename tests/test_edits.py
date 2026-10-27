@@ -267,6 +267,11 @@ def test_clean_ranges_merge_and_sort():
             "box": {"x": 0, "y": 0, "w": 0.1, "h": 0.1},
             "label": "watermark removal",
         }]},
+        {"clean": [{
+            "kind": "plate",
+            "box": {"x": 0, "y": 0, "w": 0.1, "h": 0.1},
+            "label": "platform watermark",
+        }]},
         {"clean": [{"kind": "blur", "box": {"x": 0.9, "y": 0.9, "w": 0.2, "h": 0.2}}]},
         {"motion": [{"kind": "spin", "start": 0, "end": 1}]},
         {"motion": [{"kind": "shake", "start": 0, "end": 1, "amount": 0.5}]},
