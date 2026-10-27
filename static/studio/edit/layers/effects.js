@@ -122,6 +122,15 @@ function stripPrivate(layer) {
   return next;
 }
 
+function currentJobId() {
+  try {
+    const value = JSON.parse(localStorage.getItem("vibecut.studio.job") || "null");
+    return value && typeof value === "object" && value.id ? String(value.id) : "";
+  } catch (_) {
+    return "";
+  }
+}
+
 function currentJobMusic(edit) {
   const music = edit?.audio?.music;
   if (music && typeof music === "object" && typeof music.track === "string" && music.track) {
@@ -268,15 +277,12 @@ export function mountEffectsPanel(host, ctx) {
           track: "",
           message: "Choose a music track in Audio, then return here to snap effects to its tempo.",
         };
-      } else if (!/^(\/|[A-Za-z]:[\\/])/.test(track)) {
-        beatState = {
-          status: "unsupported",
-          bpm: 0,
-          track,
-          message: "This build's beat reader only accepts library tracks with a full path. Uploaded beds can still be used; tempo snapping arrives with the music build.",
-        };
       } else {
         const params = new URLSearchParams({ source: "library", track });
+        // Uploaded beds are stored job-relative; the server resolves them
+        // inside the job folder only.
+        const jobId = currentJobId();
+        if (!/^(\/|[A-Za-z]:[\\/])/.test(track) && jobId) params.set("job_id", jobId);
         const result = await request(`/api/audio/beats?${params.toString()}`);
         const bpm = Number(result?.bpm);
         beatState = Number.isFinite(bpm) && bpm > 0

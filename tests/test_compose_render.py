@@ -61,12 +61,12 @@ def test_blur_filter_golden():
     segment = _compile(edit)["segments"][0]
     assert segment["pre_filter"] == (
         "split=2[cl0a][cl0b];"
-        "[cl0b]crop=384:216:384:216,boxblur=24:2[cl0c];"
+        "[cl0b]crop=384:216:384:216,boxblur=luma_radius=24:luma_power=2:chroma_radius=24:chroma_power=2[cl0c];"
         "[cl0a][cl0c]overlay=384:216"
     )
     assert segment["filter"] == (
         "split=2[cl0a][cl0b];"
-        "[cl0b]crop=384:216:384:216,boxblur=24:2[cl0c];"
+        "[cl0b]crop=384:216:384:216,boxblur=luma_radius=24:luma_power=2:chroma_radius=24:chroma_power=2[cl0c];"
         "[cl0a][cl0c]overlay=384:216,"
         "crop=608:1080:656:0,scale=1080:1920:flags=lanczos,"
         "setsar=1,fps=30,format=yuv420p"
@@ -97,7 +97,7 @@ def test_clean_motion_and_color_filter_golden():
     assert segment["filter"] == (
         "drawbox=x=192:y=756:w=960:h=108:color=0x000000@1.000:t=fill,"
         "split=2[cl1a][cl1b];"
-        "[cl1b]crop=384:216:384:216,boxblur=24:2[cl1c];"
+        "[cl1b]crop=384:216:384:216,boxblur=luma_radius=24:luma_power=2:chroma_radius=24:chroma_power=2[cl1c];"
         "[cl1a][cl1c]overlay=384:216,"
         "crop=608:1080:656:0,scale=1080:1920:flags=lanczos,"
         "setsar=1,fps=30,format=yuv420p,"
@@ -410,7 +410,7 @@ def test_emphasis_sticker_and_underline_layers_golden():
     }
     assert sticker["asset_path"] == str(fx.sticker_path("star"))
     assert sticker["rect"] == {"x": 0.38, "y": 0.38, "w": 0.24, "h": 0.24}
-    assert sticker["raster"]["hash"] == "lyh_e7a338d6c85db0e72119f3ff"
+    assert sticker["raster"]["hash"] == "lyh_e1ad289239b9413ae8624ec4"
     underline = layers[2]
     assert underline["rect"] == {"x": 0.3, "y": 0.47, "w": 0.4, "h": 0.06}
     assert underline["raster"]["hash"] == "lyh_0fab73d4cacdc8d8ac123da9"
@@ -434,4 +434,16 @@ def test_beat_snap_perspective_motion_filter_golden():
         "x3='(W-((W-W/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
         "y3='(H-((H-H/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
         "interpolation=cubic:eval=frame"
+    )
+
+
+def test_blur_radius_is_capped_for_small_boxes():
+    # A 1-line caption box is ~60x40 px; ffmpeg refuses boxblur=24 on it.
+    edit = _edit(clean=[{
+        "kind": "blur", "box": {"x": 0.4, "y": 0.4, "w": 0.04, "h": 0.04},
+        "radius": 24,
+    }])
+    segment = _compile(edit)["segments"][0]
+    assert "boxblur=luma_radius=20:luma_power=2:chroma_radius=9:chroma_power=2" in (
+        segment["pre_filter"]
     )

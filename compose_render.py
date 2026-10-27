@@ -303,11 +303,16 @@ def _clean_filters(
             applied.append(layer["id"])
         elif kind == "blur":
             label = f"cl{index}"
-            radius = int(layer.get("radius") or 24)
+            # boxblur refuses a radius above half the plane's short side, and
+            # 4:2:0 chroma planes are half size, so cap both per box.
+            short = min(rect["w"], rect["h"])
+            radius = max(0, min(int(layer.get("radius") or 24), short // 2 - 1))
+            chroma = max(0, min(radius, short // 4 - 1))
             filters.append(
                 f"split=2[{label}a][{label}b];"
                 f"[{label}b]crop={rect['w']}:{rect['h']}:{rect['x']}:{rect['y']},"
-                f"boxblur={radius}:2[{label}c];"
+                f"boxblur=luma_radius={radius}:luma_power=2:"
+                f"chroma_radius={chroma}:chroma_power=2[{label}c];"
                 f"[{label}a][{label}c]overlay={rect['x']}:{rect['y']}"
                 f"{_enable_suffix(expression)}"
             )
@@ -726,11 +731,10 @@ def _layer_raster(layer: dict, out_w: int, out_h: int) -> dict:
         "frames": frames,
     }
     # Asset keys stay conditional so existing text and progress-bar rasters
-    # keep their exact hashes.
+    # keep their exact hashes. The asset id + content hash identify a sticker;
+    # its absolute path does not, so a moved install keeps the same hash.
     if layer.get("asset"):
         payload["asset"] = layer["asset"]
-    if layer.get("asset_path"):
-        payload["asset_path"] = layer["asset_path"]
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
     ).hexdigest()[:24]

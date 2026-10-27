@@ -322,3 +322,27 @@ def test_no_installed_pack_falls_back_to_today_locations(tmp_path, monkeypatch):
     assert stt._whisper_binary() is None
     assert stt._whisper_command() is None
     assert tts.kokoro_model_dir() == audio.VOICE_DIRS["kokoro"]
+
+
+def test_beats_route_reads_job_relative_upload_and_returns_times(tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "JOBS", tmp_path)
+    upload = _wav(tmp_path / "job1" / "audio" / "uploaded_music.wav")
+    seen = []
+    monkeypatch.setattr(
+        audio, "beat_grid",
+        lambda path: seen.append(path) or {"bpm": 120.0, "beats": [0.5, 1.0]},
+    )
+    result = app.audio_beats(track="audio/uploaded_music.wav", job_id="job1")
+    assert seen == [upload.resolve()]
+    assert result == {
+        "track": "uploaded_music.wav", "bpm": 120.0, "beats": 2, "times": [0.5, 1.0],
+    }
+
+
+def test_beats_route_refuses_paths_outside_the_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "JOBS", tmp_path / "jobs")
+    _wav(tmp_path / "secret.wav")
+    (tmp_path / "jobs" / "job1").mkdir(parents=True)
+    with pytest.raises(HTTPException) as exc:
+        app.audio_beats(track="../../secret.wav", job_id="job1")
+    assert exc.value.status_code == 404

@@ -6532,14 +6532,27 @@ def voice_sample(job_id: str, body: VoiceBody) -> FileResponse:
 
 
 @app.get("/api/audio/beats")
-def audio_beats(source: str = "library", track: str = "") -> dict:
-    path = audio.resolve_music_track([], [], {"source": source, "track": track})
+def audio_beats(source: str = "library", track: str = "", job_id: str = "") -> dict:
+    """BPM and beat times for a library track or a job-relative upload."""
+    path = None
+    if job_id and track and not Path(track).is_absolute():
+        job_root = _job_dir(job_id).resolve()
+        candidate = (job_root / track).resolve()
+        if candidate.is_relative_to(job_root) and candidate.is_file():
+            path = candidate
+    else:
+        path = audio.resolve_music_track([], [], {"source": source, "track": track})
     if not path:
         raise HTTPException(404, "No track found for beat detection.")
     grid = audio.beat_grid(path)
     if not grid:
         raise HTTPException(400, "Beat detection unavailable (librosa missing or unreadable audio).")
-    return {"track": path.name, "bpm": grid["bpm"], "beats": len(grid["beats"])}
+    return {
+        "track": path.name,
+        "bpm": grid["bpm"],
+        "beats": len(grid["beats"]),
+        "times": grid["beats"],
+    }
 
 
 @app.get("/api/audio/licenses")
