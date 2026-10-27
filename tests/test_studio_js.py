@@ -120,6 +120,31 @@ def test_idle_watcher_polls_status_only():
     assert out == [True, False, False, False, False]
 
 
+@needs_node
+def test_reload_resumes_at_the_best_step():
+    """QA #24: a reload with a video open no longer always lands on Import."""
+    out = run_module("shell.js", """
+        return [
+          m.bestStepFor(false, {}),
+          m.bestStepFor(true, {status: "reading"}),
+          m.bestStepFor(true, {status: "cancelled"}),
+          m.bestStepFor(true, {status: "ready", sourceMissing: "gone"}),
+          m.bestStepFor(true, {status: "ready", check: "none", stories: 0}),
+          m.bestStepFor(true, {status: "ready", check: "done", stories: 0}),
+          m.bestStepFor(true, {status: "ready", check: "done", stories: 3}),
+        ];
+    """, prelude=NO_PAGE)
+    assert out == ["import", "import", "import", "import", "check", "stories", "edit"]
+
+
+@needs_node
+def test_import_knows_when_a_video_is_still_reading():
+    out = run_module("import.js", """
+        return ["queued", "downloading", "reading", "ready", "failed", "cancelled"].map(m.isReadingStatus);
+    """)
+    assert out == [True, True, True, False, False, False]
+
+
 # ---------------------------------------------------------------- edit/model.js (QA #20)
 
 

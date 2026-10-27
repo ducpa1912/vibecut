@@ -52,6 +52,17 @@ export function canReuseSteps(previous, jobId, status, light) {
     && previous?.status === "ready" && status === "ready" && previous?.check !== "running";
 }
 
+/** The step where a video's work continues (boot and the video library). */
+export function bestStepFor(hasJob, state) {
+  if (!hasJob) return "import";
+  const status = state?.status;
+  if (isReading(status) || state?.missing || STOPPED.has(status)
+    || status === "failed" || status === "error" || state?.sourceMissing) return "import";
+  if (state?.stories) return "edit";
+  if (state?.check === "done") return "stories";
+  return "check";
+}
+
 /** The top strip's one action: stop a read, or start a stopped one again. */
 export function readingAction(status) {
   if (isReading(status)) return { kind: "cancel", label: "Cancel reading" };
@@ -381,11 +392,7 @@ export function startStudio() {
   }
 
   function bestStep() {
-    if (!currentJob) return "import";
-    if (isReading(jobState.status) || jobState.missing) return "import";
-    if (jobState.stories) return "edit";
-    if (jobState.check === "done") return "stories";
-    return "check";
+    return bestStepFor(Boolean(currentJob), jobState);
   }
 
   function scheduleWatch(delay) {
@@ -707,10 +714,24 @@ export function startStudio() {
 
   renderJob();
   renderRail();
-  void refreshState();
-  const initial = routeFromHash() || "import";
-  if (location.hash !== `#/${initial}`) history.replaceState(null, "", `#/${initial}`);
-  activate(initial, { focus: false });
+  // `?studio=1` only opts in; once Studio runs it should not stay in the URL.
+  const params = new URLSearchParams(location.search);
+  if (params.has("studio")) {
+    params.delete("studio");
+    const query = params.toString();
+    history.replaceState(null, "", `${location.pathname}${query ? `?${query}` : ""}${location.hash}`);
+  }
+  const hashed = routeFromHash();
+  if (hashed || !currentJob) {
+    void refreshState();
+    const initial = hashed || "import";
+    if (location.hash !== `#/${initial}`) history.replaceState(null, "", `#/${initial}`);
+    activate(initial, { focus: false });
+  } else {
+    // A reload with a video open resumes where its work continues, the same
+    // rule the video library uses, instead of always landing on Import.
+    void openJobAndContinue(currentJob.id, currentJob);
+  }
 }
 
 if (document.readyState === "loading") {

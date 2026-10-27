@@ -85,6 +85,7 @@ export function mount(root, ctx) {
   let busy = false;
   let disposed = false;
   let recentRequest = 0;
+  let recentTimer = 0;
 
   root.innerHTML = `
     <section class="st-panel" aria-labelledby="st-import-title">
@@ -237,9 +238,12 @@ export function mount(root, ctx) {
 
   function syncSubmit() {
     const ready = selectionReady();
-    dom.submit.disabled = busy || !ready || !dom.attest.checked;
+    const reading = currentlyReading();
+    dom.submit.disabled = busy || reading || !ready || !dom.attest.checked;
     if (busy) return;
-    if (!dom.attest.checked) {
+    if (reading) {
+      dom.note.textContent = "A video is reading now. Import the next one when it finishes, or press Cancel reading at the top.";
+    } else if (!dom.attest.checked) {
       dom.note.textContent = "Confirm the rights note to start.";
     } else if (!ready) {
       dom.note.textContent = source === "file"
@@ -383,14 +387,34 @@ export function mount(root, ctx) {
     }
   }
 
-  async function loadRecent() {
+  /** True while the open video is still being read (one import at a time). */
+  function currentlyReading() {
+    const state = ctx.getStepState?.() || {};
+    return Boolean(state.jobId) && state.jobId === ctx.getJobId?.() && isReadingStatus(state.status);
+  }
+
+  // Recent videos refresh on their own: every few seconds while one is
+  // reading, slower otherwise. Imports from another tab or the API appear.
+  function scheduleRecent(jobs) {
+    if (recentTimer) window.clearTimeout(recentTimer);
+    if (disposed) return;
+    const active = (jobs || []).some((job) => isReadingStatus(job?.status));
+    recentTimer = window.setTimeout(() => { void loadRecent({ quiet: true }); }, active ? 4000 : 20000);
+  }
+
+  async function loadRecent({ quiet = false } = {}) {
     const ticket = ++recentRequest;
-    setStatus(dom.recentError, "");
-    dom.recentList.replaceChildren(el("p", { class: "st-hint", text: "Loading recent videos…" }));
+    if (!quiet) {
+      setStatus(dom.recentError, "");
+      dom.recentList.replaceChildren(el("p", { class: "st-hint", text: "Loading recent videos…" }));
+    }
     try {
       const data = await listJobs({ limit: 8 });
       if (disposed || ticket !== recentRequest) return;
-      renderRecent(Array.isArray(data?.jobs) ? data.jobs : []);
+      const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
+      renderRecent(jobs);
+      syncSubmit();
+      scheduleRecent(jobs);
     } catch (error) {
       if (disposed || ticket !== recentRequest) return;
       dom.recentList.replaceChildren(el("p", { class: "st-hint", text: "Recent videos are unavailable." }));
@@ -454,12 +478,18 @@ export function mount(root, ctx) {
   });
   dom.attest.addEventListener("change", syncSubmit);
   dom.submit.addEventListener("click", startImport);
-  dom.recentRefresh.addEventListener("click", loadRecent);
+  dom.recentRefresh.addEventListener("click", () => { void loadRecent(); });
 
   syncSubmit();
   loadRecent();
 
   return () => {
     disposed = true;
+    if (recentTimer) window.clearTimeout(recentTimer);
   };
+}
+
+/** Statuses that mean the video is still being read. */
+export function isReadingStatus(status) {
+  return ["queued", "downloading", "scanning", "reading", "scoring"].includes(String(status || ""));
 }
