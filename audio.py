@@ -32,7 +32,6 @@ ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 MUSIC_DIRS = {
     "library": ASSETS / "music" / "library",
-    "cc0": ASSETS / "music" / "cc0",
     "generated": ASSETS / "music" / "generated",
 }
 VOICE_DIRS = {
@@ -351,33 +350,6 @@ def rewrite_models() -> list[dict]:
     ]
 
 
-def _hf_token_present() -> bool:
-    if any(os.environ.get(name) for name in (
-        "HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN",
-    )):
-        return True
-    return (Path.home() / ".cache" / "huggingface" / "token").is_file()
-
-
-def stable_audio_available() -> bool:
-    # stable-audio-tools imports pkg_resources via k_diffusion; setuptools >= 80
-    # removed it, so a bare module check gives a false positive. The weights are
-    # also gated, so a Hugging Face token must be present.
-    return (
-        _module("stable_audio_tools")
-        and _module("pkg_resources")
-        and _hf_token_present()
-    )
-
-
-def musicgen_available() -> bool:
-    return (
-        _module("transformers")
-        and _module("torch")
-        and _module("soundfile")
-    )
-
-
 def translate_providers() -> list[dict]:
     providers = []
     providers.append({
@@ -436,14 +408,6 @@ def engine_status() -> dict:
     music = {
         "library": {"available": True, "size_mb": 0,
                     "install": "Drop your own tracks in assets/music/library."},
-        "cc0": {"available": True, "size_mb": 0,
-                "install": "Drop CC0 tracks in assets/music/cc0. Check each track license."},
-        "stable-small": {"available": stable_audio_available(), "size_mb": 2048,
-                         "install": "Accept the gated model license and run hf auth login. pip install 'setuptools<80' stable-audio-tools."},
-        "stable-1.0": {"available": stable_audio_available(), "size_mb": 6192,
-                       "install": "Accept the gated model license and run hf auth login. pip install 'setuptools<80' stable-audio-tools. CC-BY-NC weights."},
-        "musicgen-small": {"available": musicgen_available(), "size_mb": 2200,
-                           "install": "pip install transformers torch soundfile. Ungated MusicGen Small; slow on M1, but no HF license gate."},
         "minimax-music": {"available": bool(minimax_key()), "size_mb": 0,
                           "install": "Set MINIMAX_API_KEY. MiniMax Music, instrumental."},
         "lyria-clip": {"available": openrouter_available(), "size_mb": 0,
@@ -462,7 +426,6 @@ def engine_status() -> dict:
         "kokoro_model": str(kokoro_model) if kokoro_model else None,
         "assets": {
             "library": len(list(MUSIC_DIRS["library"].glob("*"))) if MUSIC_DIRS["library"].is_dir() else 0,
-            "cc0": len(list(MUSIC_DIRS["cc0"].glob("*"))) if MUSIC_DIRS["cc0"].is_dir() else 0,
         },
     }
 
@@ -2688,40 +2651,6 @@ def build_bed(
                 break
             if chosen is None:
                 raise last_error or AudioError("All music providers failed.")
-        elif chosen is None and music_plan.get("source") in {"stable-small", "stable-1.0", "musicgen-small"}:
-            if music_plan["source"] == "musicgen-small":
-                model = "facebook/musicgen-small"
-                progress(0.90, "Generating AI music · MusicGen can take minutes")
-            else:
-                model = (
-                    "stabilityai/stable-audio-open-small"
-                    if music_plan["source"] == "stable-small"
-                    else "stabilityai/stable-audio-open-1.0"
-                )
-                progress(0.90, "Generating AI music · Stable Audio")
-            music_seconds = min(47.0, max(8.0, total))
-            if music_plan["source"] == "musicgen-small":
-                # MusicGen is autoregressive and much slower beyond a few
-                # seconds; generate a short ungated bed and loop it.
-                music_seconds = 4.0
-            prompt = str(music_plan.get("prompt") or "").strip()
-            if not prompt or prompt == "auto":
-                prompt = music_prompt(
-                    music_plan.get("moods") or scene_moods(scenes, clips), music_seconds,
-                )
-            started = time.time()
-            try:
-                chosen = generate_music(model, prompt, music_seconds, cancel_event)
-            except AudioError as exc:
-                _pipeline_event(
-                    "music", 0, "local", model, "", started, False,
-                    str(exc)[:300], job_id=job_dir.name,
-                )
-                raise
-            _pipeline_event(
-                "music", 0, "local", model, "", started, True, "",
-                job_id=job_dir.name,
-            )
         if chosen and chosen.is_file():
             base_music_gain = float(music_plan.get("gain_db") or -18.0)
             beat_offset = 0.0

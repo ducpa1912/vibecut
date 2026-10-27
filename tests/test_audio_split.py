@@ -34,3 +34,49 @@ def test_stt_module_has_no_local_engine():
     assert "mlx_whisper" not in body
     assert "whisper" not in body
     assert "argostranslate" not in body
+
+
+REMOVED_ENGINES = (
+    "mlx_lm_available",
+    "stable_audio_available",
+    "musicgen_available",
+    "argos_pair_ready",
+    "_translate_argos",
+    "_translate_marian",
+    "_ollama_workflow_text",
+    "_mlx_text",
+    "_rewrite_mlx",
+    "_rewrite_ollama",
+)
+
+
+def test_removed_engines_are_absent():
+    for name in REMOVED_ENGINES:
+        assert not hasattr(audio, name), name
+
+
+def test_removed_music_sources_are_absent():
+    assert "cc0" not in audio.MUSIC_DIRS
+    status = audio.engine_status()
+    for key in ("cc0", "stable-small", "stable-1.0", "musicgen-small"):
+        assert key not in status["music"]
+        assert key not in status["assets"]
+    assert "mlx_lm" not in status
+    rewrite_ids = {item["id"] for item in status["rewrite_models"]}
+    assert "mlx" not in rewrite_ids and "ollama" not in rewrite_ids
+    assert {item["id"] for item in status["translation"]} == {
+        "opencode", "openrouter", "apple_fm",
+    }
+
+
+def test_removed_tool_files_are_gone():
+    from pathlib import Path
+
+    root = Path(audio.__file__).resolve().parent
+    for relative in (
+        "tools/musicgen_generate.py",
+        "tools/music_generate.py",
+        "tools/rewrite_mlx.py",
+        "requirements-music.txt",
+    ):
+        assert not (root / relative).exists(), relative

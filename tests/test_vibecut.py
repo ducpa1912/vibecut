@@ -57,7 +57,7 @@ def test_audio_signature_stable_and_sensitive():
         "mode": "full",
         "translate": {"target": "vi", "provider": "auto"},
         "voice": {"engine": "say", "voice": "Samantha", "rate": 1, "gain_db": 0},
-        "music": {"source": "cc0", "prompt": "auto", "gain_db": -18, "duck": True},
+        "music": {"source": "library", "prompt": "auto", "gain_db": -18, "duck": True},
     }
     first = app._audio_signature(plan)
     assert first and first == app._audio_signature(dict(plan))
@@ -94,12 +94,12 @@ def test_scene_moods_and_music_pick():
 
 
 def test_music_listing_reads_assets(tmp_path, monkeypatch):
-    directory = tmp_path / "cc0"
+    directory = tmp_path / "library"
     directory.mkdir()
     (directory / "morning-calm-loop.mp3").write_bytes(b"x" * 64)
     (directory / "notes.txt").write_text("skip me")
-    monkeypatch.setitem(audio.MUSIC_DIRS, "cc0", directory)
-    tracks = audio.list_music("cc0")
+    monkeypatch.setitem(audio.MUSIC_DIRS, "library", directory)
+    tracks = audio.list_music("library")
     assert len(tracks) == 1
     assert tracks[0]["name"] == "morning-calm-loop"
     assert "calm" in tracks[0]["moods"]
@@ -132,7 +132,7 @@ def test_engine_status_shape():
         "say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram",
         "cartesia", "minimax", "fish", "gemini",
     }
-    assert "stable-small" in status["music"]
+    assert {"library", "minimax-music", "lyria-clip"} == set(status["music"])
     assert "demucs" in status["separation"]
     for entry in status["voices"].values():
         assert "available" in entry and "install" in entry
@@ -1559,29 +1559,26 @@ def test_clear_translation_memo_by_provider(tmp_path, monkeypatch):
     assert audio._memo_get("zh", "en", "你好", "opencode") is None
 
 
-def test_generate_music_selects_worker(tmp_path, monkeypatch):
+def test_generate_music_rejects_removed_local_models(tmp_path, monkeypatch):
     monkeypatch.setattr(audio, "CACHE", tmp_path / "cache")
-    monkeypatch.setattr(audio, "stable_audio_available", lambda: True)
-    monkeypatch.setattr(audio, "musicgen_available", lambda: True)
-    monkeypatch.setattr(audio, "save_generated_asset", lambda *args: None)
     calls = []
 
     def fake_run(cmd, timeout=None, cancel_event=None):
         calls.append(cmd)
-        target = __import__("pathlib").Path(cmd[cmd.index("--out") + 1])
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(b"RIFF" + b"0" * 2048)
 
     monkeypatch.setattr(audio, "_run", fake_run)
-    audio.generate_music("facebook/musicgen-small", "calm bed", 8.0)
-    assert "musicgen_generate.py" in calls[-1][1]
-    audio.generate_music("stabilityai/stable-audio-open-small", "calm bed", 8.0)
-    assert "music_generate.py" in calls[-1][1]
+    with pytest.raises(audio.AudioError, match="Unsupported music source"):
+        audio.generate_music("facebook/musicgen-small", "calm bed", 8.0)
+    with pytest.raises(audio.AudioError, match="Unsupported music source"):
+        audio.generate_music("stabilityai/stable-audio-open-small", "calm bed", 8.0)
+    assert calls == []
 
 
-def test_music_engine_lists_musicgen():
+def test_music_engine_lists_cloud_only():
     status = audio.engine_status()
-    assert "musicgen-small" in status["music"]
+    assert "musicgen-small" not in status["music"]
+    assert "stable-small" not in status["music"]
+    assert "cc0" not in status["music"]
 
 
 def test_openrouter_text_payload_and_fallback_order(monkeypatch):

@@ -260,7 +260,6 @@ def generate_music(
     target = audio.CACHE / "music" / f"{key}.wav"
     if target.is_file() and target.stat().st_size > 1024:
         return target
-    is_musicgen = model_name.startswith("facebook/musicgen")
     is_minimax = provider == "minimax" or (
         not provider and (
             model_name.startswith("minimax") or model_name.startswith("music-")
@@ -268,7 +267,7 @@ def generate_music(
     )
     is_lyria = (
         (provider == "openrouter" and bool(model_name))
-        or model_name.startswith("google/lyria")
+        or model_name.startswith(("google/lyria", "lyria"))
     )
     if is_lyria:
         if not audio.openrouter_key():
@@ -281,14 +280,11 @@ def generate_music(
     elif is_minimax:
         if not audio.minimax_key():
             raise audio.AudioError("Set MINIMAX_API_KEY to use MiniMax music.")
-    elif not is_musicgen and not audio.stable_audio_available():
+    else:
         raise audio.AudioError(
-            "Stable Audio is not usable. Install setuptools<80 and stable-audio-tools, "
-            "accept the model license on Hugging Face, then run hf auth login. "
-            "Or choose MusicGen Small, which is ungated."
+            f"Unsupported music source: {descriptor}. "
+            "Use MiniMax or OpenRouter Lyria, the library, or an upload."
         )
-    if is_musicgen and not audio.musicgen_available():
-        raise audio.AudioError("MusicGen needs transformers, torch and soundfile.")
     target.parent.mkdir(parents=True, exist_ok=True)
     if is_lyria:
         audio._lyria_music(
@@ -300,20 +296,6 @@ def generate_music(
             prompt, seconds, target,
             model=model_name if provider == "minimax" else "", timeout=timeout,
         )
-    elif is_musicgen:
-        worker = audio.ROOT / "tools" / "musicgen_generate.py"
-        audio._run([
-            sys.executable, str(worker),
-            "--model", model_name, "--prompt", prompt,
-            "--seconds", f"{seconds:.1f}", "--out", str(target),
-        ], timeout=3600, cancel_event=cancel_event)
-    else:
-        worker = audio.ROOT / "tools" / "music_generate.py"
-        audio._run([
-            sys.executable, str(worker),
-            "--model", model_name, "--prompt", prompt,
-            "--seconds", f"{seconds:.1f}", "--out", str(target),
-        ], timeout=3600, cancel_event=cancel_event)
     if not target.is_file() or target.stat().st_size <= 1024:
         raise audio.AudioError("Music generation produced no file.")
     audio.save_generated_asset(target, descriptor, prompt, seconds)
