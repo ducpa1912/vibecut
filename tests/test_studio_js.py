@@ -212,6 +212,17 @@ def test_apply_summary_reports_what_changed_and_what_was_skipped():
 
 
 @needs_node
+def test_edit_history_lists_only_the_current_chain():
+    """QA #19: folded autosaves leave sidecars that are not history."""
+    out = run_module("finish.js", """
+        const rows = [{id: "a", version: 1, parent: null}, {id: "b", version: 2, parent: "a"},
+          {id: "c", version: 2, parent: "a"}, {id: "d", version: 3, parent: "c"}];
+        return [m.editChain(rows, "d").map((row) => row.id), m.editChain(rows, "zz").length];
+    """)
+    assert out == [["d", "c", "a"], 4]
+
+
+@needs_node
 def test_queue_item_progress_text():
     """QA #18: a running item shows its % and time left."""
     out = run_module("finish.js", """

@@ -88,6 +88,8 @@ export async function request(path, options = {}) {
     headers,
     credentials: "same-origin",
     signal: options.signal,
+    // Lets a save started while the page unloads finish after it is gone.
+    keepalive: Boolean(options.keepalive),
   };
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";

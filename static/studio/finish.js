@@ -245,6 +245,27 @@ export function checksFailedNote(error) {
   return reason ? `Checks could not run for this story: ${reason}` : "Checks could not run for this story. Try Check again.";
 }
 
+/**
+ * The current Edit's history, newest first: the head and its parents.
+ * Autosaves folded into one version leave their old sidecars on disk; they
+ * are not in the chain, so they are not listed.
+ */
+export function editChain(rows, headId) {
+  const byId = new Map((rows || []).map((row) => [row.id, row]));
+  if (!headId || !byId.has(headId)) {
+    return [...(rows || [])].sort((left, right) => Number(right.version || 0) - Number(left.version || 0));
+  }
+  const chain = [];
+  const seen = new Set();
+  let cursor = byId.get(headId);
+  while (cursor && !seen.has(cursor.id)) {
+    seen.add(cursor.id);
+    chain.push(cursor);
+    cursor = cursor.parent ? byId.get(cursor.parent) : null;
+  }
+  return chain;
+}
+
 /** "1 min 20 s" style remaining time. */
 export function etaText(seconds) {
   const value = Math.max(0, Math.round(Number(seconds) || 0));
@@ -487,9 +508,8 @@ export function mount(root, ctx) {
 
   function editRowsFor(storyId = selectedStory()?.id, shape = aspect) {
     const key = storyKey(activeSetId, String(storyId || ""), shape);
-    return edits
-      .filter((item) => item.key === key)
-      .sort((left, right) => Number(right.version || 0) - Number(left.version || 0));
+    const rows = edits.filter((item) => item.key === key);
+    return editChain(rows, editPointers[key]);
   }
 
   function editHead(storyId = selectedStory()?.id, shape = aspect) {

@@ -70,8 +70,8 @@ export function createEdit(jobId, payload) {
 }
 
 /** `PATCH /api/jobs/{id}/edits/{edit_id}`. A stale head returns 409. */
-export function patchEdit(jobId, editId, layers) {
-  return request(editRoot(jobId, editId), { method: "PATCH", body: layers });
+export function patchEdit(jobId, editId, layers, { keepalive = false } = {}) {
+  return request(editRoot(jobId, editId), { method: "PATCH", body: layers, keepalive });
 }
 
 /** `POST /api/jobs/{id}/edits/{edit_id}/undo`. Creates a new head. */

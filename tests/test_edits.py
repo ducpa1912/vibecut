@@ -464,6 +464,42 @@ def test_patch_creates_a_new_version_and_keeps_old_bytes(env):
     assert body["current"] == patched["id"]
 
 
+def test_autosaves_close_together_fold_into_one_version(env):
+    """QA #19: every keystroke used to add a version."""
+    client = env["client"]
+    root = f"/api/jobs/{env['job_id']}/edits"
+    created = _create(client, env["job_id"])
+    first = client.patch(f"{root}/{created['id']}", json={"color": {"preset": "warm_film"}}).json()
+    assert first["version"] == 2
+    folded = client.patch(
+        f"{root}/{first['id']}", json={"color": {"preset": "cool_fade"}, "coalesce": True},
+    )
+    assert folded.status_code == 200, folded.text
+    body = folded.json()
+    assert body["version"] == 2
+    assert body["edit"]["parent"] == created["id"]
+    assert app.load_job(env["job_id"])["story_edits"]["cs_1:s1:9:16"] == body["id"]
+    chain = client.get(f"{root}/{body['id']}/versions").json()["versions"]
+    assert [row["version"] for row in chain] == [1, 2]
+    # The folded version's bytes are kept; only the history skips them.
+    assert edits.edit_path(env["dir"], first["id"]).is_file()
+
+
+def test_coalescing_never_folds_the_first_version_or_an_old_head(env, monkeypatch):
+    client = env["client"]
+    root = f"/api/jobs/{env['job_id']}/edits"
+    created = _create(client, env["job_id"])
+    response = client.patch(
+        f"{root}/{created['id']}", json={"color": {"preset": "warm_film"}, "coalesce": True},
+    ).json()
+    assert response["version"] == 2 and response["edit"]["parent"] == created["id"]
+    monkeypatch.setattr(app.routes_edits.time, "time", lambda: 10 ** 10)
+    later = client.patch(
+        f"{root}/{response['id']}", json={"color": {"preset": "cool_fade"}, "coalesce": True},
+    ).json()
+    assert later["version"] == 3
+
+
 def test_patch_without_changes_is_a_no_op(env):
     client = env["client"]
     created = _create(client, env["job_id"])
