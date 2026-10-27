@@ -21,6 +21,11 @@ from pipeline import hook_text_score
 
 MIN_STORY_S = 20.0
 MAX_STORY_S = 75.0
+# A closing sentence ends with terminal punctuation and falls to a real pause.
+CLOSING_PAUSE_S = 0.35
+# Picks closer than this share of the source are pushed apart when the pool
+# still has a spread option.
+SPREAD_FRACTION = 0.15
 # Bounds a caller may ask for; the default window above stays 20-75 s.
 LENGTH_FLOOR_S = 15.0
 LENGTH_CEIL_S = 90.0
@@ -168,6 +173,32 @@ def _terminal_text(text: str) -> bool:
     if words and words[-1].lower() in _DANGLING:
         return False
     return True
+
+
+_TERMINAL_PUNCT = re.compile(r"""[.!?。！？]["'”’)\]】》]*$""")
+
+
+def _terminal_punctuation(text: str) -> bool:
+    """True when the text closes with sentence punctuation."""
+    return bool(_TERMINAL_PUNCT.search(_clean(text)))
+
+
+def _closing_sentence(sentences: list[dict], index: int) -> bool:
+    """True when sentence ``index`` closes and falls to a pause of 350 ms+.
+
+    The last sentence in the list has no measured follower, so terminal
+    punctuation alone closes it.
+    """
+    if index < 0 or index >= len(sentences):
+        return False
+    sentence = sentences[index]
+    if not _terminal_punctuation(sentence.get("text")):
+        return False
+    if index + 1 >= len(sentences):
+        return True
+    end = _safe_float(sentence.get("end"))
+    next_start = _safe_float(sentences[index + 1].get("start"))
+    return next_start - end >= CLOSING_PAUSE_S - 0.001
 
 
 class _SceneIndex:
@@ -565,7 +596,7 @@ def _keyword_set(text: str) -> set[str]:
 
 def _sentence_stats(sentences: list[dict]) -> dict[int, dict]:
     stats: dict[int, dict] = {}
-    for sentence in sentences:
+    for index, sentence in enumerate(sentences):
         try:
             sentence_id = int(sentence.get("id"))
         except (TypeError, ValueError):
@@ -575,6 +606,7 @@ def _sentence_stats(sentences: list[dict]) -> dict[int, dict]:
         stats[sentence_id] = {
             "dur": max(0.0, _safe_float(sentence.get("dur"))),
             "terminal": _terminal_text(text),
+            "closing": _closing_sentence(sentences, index),
             "hook": _clamp(hook_text_score(text)),
             "keywords": _keyword_set(text),
             "word_count": len(words),
@@ -663,6 +695,42 @@ def _proximity_penalty(
     return 0.06 * max(0.0, 1.0 - min(gap, 8.0) / 8.0)
 
 
+def _story_centre(story: dict) -> float:
+    return (_safe_float(story.get("start")) + _safe_float(story.get("end"))) / 2.0
+
+
+def _spread_penalty(
+    story: dict,
+    selected: list[dict],
+    source_duration: float,
+    selected_spans: list[tuple[float, float]] | None = None,
+) -> float:
+    """Penalise a pick whose centre sits within 15% of an earlier pick.
+
+    The source is treated as a line: two stories with centres closer than
+    15% of its length are near-duplicates of place, even when their spans do
+    not touch. Selection drops this penalty when no spread option remains.
+    """
+    if not selected or source_duration <= 0:
+        return 0.0
+    if selected_spans is None:
+        selected_spans = [
+            (_safe_float(other.get("start")), _safe_float(other.get("end")))
+            for other in selected
+        ]
+    band = SPREAD_FRACTION * source_duration
+    if band <= 0:
+        return 0.0
+    centre = _story_centre(story)
+    nearest = min(
+        abs(centre - (other_start + other_end) / 2.0)
+        for other_start, other_end in selected_spans
+    )
+    if nearest >= band:
+        return 0.0
+    return round(0.06 * (1.0 - nearest / band), 9)
+
+
 def _speech_coherence(
     sentences: list[dict],
     stats: dict[int, dict] | None = None,
@@ -746,14 +814,18 @@ def _payoff_signal(
     except (TypeError, ValueError):
         sentence_id = -1
     item = (stats or {}).get(sentence_id)
-    terminal = (
-        (1.0 if item["terminal"] else 0.35)
-        if item
-        else (1.0 if _terminal_text(sentences[-1].get("text")) else 0.35)
-    )
+    if item:
+        terminal = 1.0 if item["terminal"] else 0.35
+        # A closing sentence (punctuation plus a real pause) is the preferred
+        # ending; terminal punctuation alone is slightly weaker.
+        quality = 1.0 if item.get("closing") else (0.92 if terminal >= 1.0 else 0.35)
+    else:
+        text = sentences[-1].get("text")
+        terminal = 1.0 if _terminal_text(text) else 0.35
+        quality = 1.0 if _terminal_punctuation(text) else (0.92 if terminal >= 1.0 else 0.35)
     source_duration = max(_safe_float(source_duration), end, 1.0)
     late = _clamp((end / source_duration) / 0.68)
-    return round(_clamp(0.70 * terminal + 0.30 * late), 4)
+    return round(_clamp(0.70 * quality + 0.30 * late), 4)
 
 
 def _score_story(
@@ -996,6 +1068,16 @@ def _story_from_sentences(
         return None
     hook = dict(ordered[0])
     payoff = dict(ordered[-1])
+    try:
+        payoff_id = int(payoff.get("id"))
+    except (TypeError, ValueError):
+        payoff_id = -1
+    payoff_item = (sentence_stats or {}).get(payoff_id)
+    payoff_closing = (
+        bool(payoff_item.get("closing"))
+        if payoff_item
+        else _terminal_punctuation(payoff.get("text"))
+    )
     story = {
         "id": story_id,
         "title": title or _clip_text(hook.get("text"), 64) or f"Story at {start:.1f}s",
@@ -1006,6 +1088,7 @@ def _story_from_sentences(
         "sentences": ordered,
         "hook": hook,
         "payoff": payoff,
+        "payoff_closing": payoff_closing,
         "evidence": [],
         "score_breakdown": {},
         "score": 0.0,
@@ -1048,6 +1131,7 @@ def _candidate_end_indices(
 ) -> list[int]:
     first = _safe_float(sentences[start_index].get("start"))
     ends: list[int] = []
+    closing_ends: list[int] = []
     for index in range(start_index, len(sentences)):
         span = _safe_float(sentences[index].get("end")) - first
         if span < min_s:
@@ -1062,17 +1146,25 @@ def _candidate_end_indices(
                 sentence_id = -1
             item = sentence_stats.get(sentence_id)
             terminal = item["terminal"] if item else _terminal_text(sentence.get("text"))
+            closing = bool(item.get("closing")) if item else _closing_sentence(sentences, index)
         else:
             terminal = _terminal_text(sentence.get("text"))
+            closing = _closing_sentence(sentences, index)
         if terminal:
             ends.append(index)
-    if len(ends) > 6:
+            if closing:
+                closing_ends.append(index)
+    # Prefer endings that close on punctuation and fall to a real pause. A
+    # start with no closing option keeps its terminal endings, so the pool
+    # never shrinks to filler.
+    preferred = closing_ends or ends
+    if len(preferred) > 6:
         picks = sorted({
-            ends[round(quantile * (len(ends) - 1))]
+            preferred[round(quantile * (len(preferred) - 1))]
             for quantile in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
         })
         return picks
-    return ends
+    return preferred
 
 
 def candidate_stories(
@@ -1221,9 +1313,18 @@ def _pick_best(
         (_safe_float(other.get("start")), _safe_float(other.get("end")))
         for other in selected
     ]
-    for candidate in candidates:
-        if _overlaps(candidate, selected, selected_spans):
-            continue
+    usable = [
+        candidate for candidate in candidates
+        if not _overlaps(candidate, selected, selected_spans)
+    ]
+    # Spread picks across the source. The penalty is dropped when the pool
+    # cannot fill the request without sitting inside an earlier pick's band.
+    spread_option = any(
+        _spread_penalty(candidate, selected, source_duration, selected_spans) <= 0
+        for candidate in usable
+    )
+    apply_spread = spread_option and len(usable) > required
+    for candidate in usable:
         novelty = _novelty(candidate, selected, selected_spans)
         base = candidate.get("_base_total")
         if base is None:
@@ -1231,11 +1332,16 @@ def _pick_best(
         else:
             base = float(base) + STORY_WEIGHTS["novelty"] * novelty
         penalty = _proximity_penalty(candidate, selected, selected_spans)
+        spread = (
+            _spread_penalty(candidate, selected, source_duration, selected_spans)
+            if apply_spread
+            else 0.0
+        )
         capacity = _capacity_after(
             candidate, selected, source_duration, min_s, selected_spans,
         )
         shortfall = max(0, required - capacity)
-        adjusted = base - penalty + (0.03 if locked else 0.0) - 0.08 * shortfall
+        adjusted = base - penalty - spread + (0.03 if locked else 0.0) - 0.08 * shortfall
         key = (
             round(adjusted, 9),
             round(base, 9),
