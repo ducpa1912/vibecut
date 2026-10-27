@@ -202,6 +202,19 @@ def test_fit_dub_lines_calls_shorten_and_summarises():
     }
 
 
+def test_shorten_dub_line_prefers_ai_and_falls_back_to_a_clause(monkeypatch):
+    text = "每天清晨，面包店在太阳升起之前就开门了。"
+    monkeypatch.setattr(
+        audio, "_opencode_json_attempts",
+        lambda *args, **kwargs: '["面包店每天天亮前开门。"]',
+    )
+    assert audio._shorten_dub_line(text, 4.73, 2.58, "zh") == "面包店每天天亮前开门。"
+    monkeypatch.setattr(audio, "_opencode_json_attempts", lambda *args, **kwargs: None)
+    fallback = audio._shorten_dub_line(text, 4.73, 2.58, "zh")
+    assert fallback != text
+    assert fallback.endswith("。")
+
+
 # ---------------------------------------------------------------- SNR
 
 
