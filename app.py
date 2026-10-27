@@ -6376,10 +6376,64 @@ def create_story_queue(body: StoryQueueBody) -> dict:
         raise _queue_http(exc) from exc
 
 
+def _live_queue(queue: dict) -> dict:
+    """Add each running item's render progress, message and ETA.
+
+    Queue progress used to count only finished items, so one long render sat
+    at 50% with no sign of life. Running items now carry the render record's
+    own progress and ETA, and the queue's progress and ETA include them.
+    """
+    jobs: dict[str, dict] = {}
+    items = queue.get("items") or []
+    partial = 0.0
+    eta_total = 0.0
+    eta_known = False
+    for item in items:
+        if item.get("state") != "running" or not item.get("artifact_id"):
+            continue
+        job_id = str(item.get("job_id") or "")
+        try:
+            job = jobs.get(job_id) or load_job(job_id)
+        except HTTPException:
+            continue
+        jobs[job_id] = job
+        record = next(
+            (
+                value for value in (job.get("renders") or {}).values()
+                if isinstance(value, dict) and value.get("artifact_id") == item["artifact_id"]
+            ),
+            None,
+        )
+        if record is None:
+            continue
+        fraction = max(0.0, min(1.0, float(record.get("progress") or 0.0)))
+        item["progress"] = round(fraction, 4)
+        item["message"] = record.get("message") or item.get("message")
+        if record.get("eta") is not None:
+            item["eta"] = round(float(record["eta"]), 1)
+            eta_total += float(record["eta"])
+            eta_known = True
+        partial += fraction
+    if items:
+        done = sum(1 for item in items if item.get("state") in story_queue.TERMINAL_ITEMS)
+        queue["progress"] = round((done + partial) / len(items), 4)
+    waiting = sum(1 for item in items if item.get("state") == "queued")
+    if eta_known:
+        # Items still waiting are estimated at the running item's full length.
+        running = [item for item in items if item.get("eta") is not None and item.get("state") == "running"]
+        per_item = 0.0
+        if running:
+            item = running[0]
+            spent = float(item.get("progress") or 0.0)
+            per_item = float(item["eta"]) / max(0.05, 1.0 - spent) if spent < 1 else 0.0
+        queue["eta"] = round(eta_total + waiting * per_item, 1)
+    return queue
+
+
 @app.get("/api/story-queues")
 def list_story_queues() -> dict:
     manager = story_queues()
-    rows = manager.list()
+    rows = [_live_queue(row) for row in manager.list()]
     return {
         "queues": rows,
         "interrupted": [row for row in rows if row["needs_resume"]],
@@ -6389,7 +6443,7 @@ def list_story_queues() -> dict:
 @app.get("/api/story-queues/{queue_id}")
 def get_story_queue(queue_id: str) -> dict:
     try:
-        return {"queue": story_queues().get(queue_id)}
+        return {"queue": _live_queue(story_queues().get(queue_id))}
     except story_queue.QueueError as exc:
         raise _queue_http(exc) from exc
 

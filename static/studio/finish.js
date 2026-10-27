@@ -245,6 +245,22 @@ export function checksFailedNote(error) {
   return reason ? `Checks could not run for this story: ${reason}` : "Checks could not run for this story. Try Check again.";
 }
 
+/** "1 min 20 s" style remaining time. */
+export function etaText(seconds) {
+  const value = Math.max(0, Math.round(Number(seconds) || 0));
+  if (value < 60) return `${value} s`;
+  const minutes = Math.floor(value / 60);
+  const rest = value % 60;
+  return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
+}
+
+/** A running queue item's live progress: "42% · about 1 min left". */
+export function itemProgressText(item) {
+  const fraction = Math.max(0, Math.min(1, Number(item?.progress) || 0));
+  const eta = Number(item?.eta);
+  return `${Math.round(fraction * 100)}%${Number.isFinite(eta) && item?.eta !== null ? ` · about ${etaText(eta)} left` : ""}`;
+}
+
 /** One readable line from a failed artifact or queue item. */
 export function failureReason(item) {
   const raw = String(item?.error || "").trim();
@@ -863,7 +879,7 @@ export function mount(root, ctx) {
       const head = el("div", { class: "st-finish-queue-head" }, [
         el("strong", { text: queue.message || statusText(status) }),
         el("span", { class: `st-chip st-chip-${statusTone(status)}`, text: statusText(status) }),
-        el("span", { class: "st-mono st-hint", text: `${Math.round(progress * 100)}%` }),
+        el("span", { class: "st-mono st-hint", text: `${Math.round(progress * 100)}%${active && Number.isFinite(Number(queue.eta)) ? ` · ${etaText(queue.eta)} left` : ""}` }),
         queue.created ? el("span", { class: "st-hint", text: shortDate(queue.created) }) : null,
       ]);
       const track = el("div", {
@@ -885,6 +901,7 @@ export function mount(root, ctx) {
           }),
           el("span", { class: "st-finish-queue-name", text: name }),
           el("span", { class: "st-mono st-hint", text: item.aspect || "9:16" }),
+          itemState === "running" ? el("span", { class: "st-mono st-hint", text: itemProgressText(item) }) : null,
         ]));
         if (item.error) items.append(el("p", { class: "st-error", text: String(item.error).slice(0, 300) }));
       }

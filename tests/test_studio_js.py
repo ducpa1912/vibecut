@@ -212,6 +212,16 @@ def test_apply_summary_reports_what_changed_and_what_was_skipped():
 
 
 @needs_node
+def test_queue_item_progress_text():
+    """QA #18: a running item shows its % and time left."""
+    out = run_module("finish.js", """
+        return [m.itemProgressText({progress: 0.42, eta: 80}), m.itemProgressText({progress: 0.1}),
+                m.etaText(45), m.etaText(120)];
+    """)
+    assert out == ["42% · about 1 min 20 s left", "10%", "45 s", "2 min"]
+
+
+@needs_node
 def test_preflight_failures_say_why():
     """QA #17: a 404 means "render first", other errors keep their reason."""
     out = run_module("finish.js", """
