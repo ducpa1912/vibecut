@@ -171,6 +171,72 @@ class _SceneIndex:
         )
 
 
+# A sentence cut starts this far before its first measured word (never
+# before the previous sentence's last word), so the attack is not clipped.
+WORD_LEAD_S = 0.08
+
+
+def _word_boundaries(
+    parts: list[str],
+    words: list[dict] | None,
+    start: float,
+    end: float,
+) -> list[float] | None:
+    """Inner sentence edges placed on measured word edges, or None.
+
+    Character-share timing guesses where each sentence of a multi-sentence
+    segment starts. The guess lands mid-word, which cut the first word of a
+    story and repeated a word across adjacent clips. With word timings each
+    word is assigned to one sentence by its position in the text, and the
+    edge sits just before that sentence's first word.
+    """
+    rows = sorted(
+        (
+            row for row in words or []
+            if isinstance(row, dict) and str(row.get("w") or "").strip()
+            and _safe_float(row.get("end")) > _safe_float(row.get("start"))
+        ),
+        key=lambda row: (_safe_float(row.get("start")), _safe_float(row.get("end"))),
+    )
+    if len(parts) < 2 or len(rows) < len(parts):
+        return None
+    spaced = any(" " in part for part in parts)
+
+    def weight(value: str) -> int:
+        return max(1, len(value.split()) if spaced else len(value.replace(" ", "")))
+
+    part_weights = [weight(part) for part in parts]
+    word_weights = [1 if spaced else weight(str(row["w"])) for row in rows]
+    part_total = float(sum(part_weights))
+    word_total = float(sum(word_weights))
+    edges: list[float] = []
+    cumulative = 0.0
+    for value in part_weights[:-1]:
+        cumulative += value
+        edges.append(cumulative / part_total)
+    owner: list[int] = []
+    seen = 0.0
+    for value in word_weights:
+        middle = (seen + value / 2.0) / word_total
+        seen += value
+        owner.append(sum(1 for edge in edges if middle >= edge))
+    groups: list[list[dict]] = [[] for _ in parts]
+    for index, row in zip(owner, rows):
+        groups[index].append(row)
+    if any(not group for group in groups):
+        return None
+    bounds: list[float] = []
+    for index in range(1, len(groups)):
+        first = _safe_float(groups[index][0].get("start"))
+        last = _safe_float(groups[index - 1][-1].get("end"))
+        edge = max(last, first - WORD_LEAD_S)
+        edge = min(max(edge, start), end)
+        if bounds and edge <= bounds[-1]:
+            return None
+        bounds.append(edge)
+    return bounds
+
+
 def _timed_parts(
     text: str,
     start: float,
@@ -178,6 +244,7 @@ def _timed_parts(
     scene: int | None,
     source: str,
     scene_index: _SceneIndex,
+    words: list[dict] | None = None,
 ) -> list[dict]:
     parts = _split_text(text)
     if not parts or end <= start:
@@ -185,10 +252,13 @@ def _timed_parts(
     total_chars = sum(max(1, len(part)) for part in parts)
     span = end - start
     cursor = start
+    bounds = _word_boundaries(parts, words, start, end)
     out: list[dict] = []
     for index, part in enumerate(parts):
         if index == len(parts) - 1:
             stop = end
+        elif bounds is not None:
+            stop = bounds[index]
         else:
             stop = cursor + span * len(part) / total_chars
         mid = (cursor + stop) / 2
@@ -254,7 +324,10 @@ def source_sentences(
             scene = None
         transcript_raw.extend(_timed_parts(
             text, start, end, scene, "transcript", scene_index,
+            words=segment.get("words"),
         ))
+        if segment.get("words") and stats is not None:
+            stats["word_timed"] = True
         for scene_id in scene_index.ids_for(start, end):
             scene = scene_index.by_id.get(scene_id)
             if scene is None:
@@ -1383,6 +1456,9 @@ def build_clipset(
         "candidate_scored": candidate_stats.get("candidate_scored", len(candidates)),
         "sentence_count": len(sentences),
         "source_fingerprint": source_fingerprint(sentences),
+        # "words": sentence edges sit on measured word edges. Older sets used
+        # character-share timing and keep it, so their fingerprints still match.
+        "sentence_timing": "words" if source_stats.get("word_timed") else "text",
         "source": {
             "transcript": used_transcript,
             "scene_text": used_scene,

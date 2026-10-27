@@ -117,7 +117,35 @@ def _audio_signature(audio_plan: dict | None) -> str:
 
 
 def _reel_cues(job: dict, plan: dict, clips: list[dict] | None = None) -> list[dict]:
+    """Sidecar cues for a cut: the words spoken inside its clips.
+
+    With a transcript the cues come from the same timed engine as caption
+    tracks, so the SRT matches the cut's speech and timing. Without one the
+    scene-level text contract is kept.
+    """
     analysis = (job or {}).get("analysis") or {}
+    job_id = str((job or {}).get("id") or "")
+    segments: list[dict] = []
+    if job_id and "/" not in job_id and ".." not in job_id:
+        segments = caption_engine.read_transcript_segments(_job_dir(job_id))
+    if segments:
+        cues, _source, _warnings = caption_engine.build_cues(
+            {
+                **(plan or {}),
+                "clips": clips if clips is not None else (plan or {}).get("clips") or [],
+                "_scenes": analysis.get("scenes") or [],
+            },
+            segments=segments,
+            source_duration=float(((job or {}).get("source") or {}).get("duration") or 0.0),
+        )
+        if cues:
+            return [
+                {
+                    "start": cue["start"], "end": cue["end"],
+                    "text": cue["text"], "scene": cue.get("scene"),
+                }
+                for cue in cues
+            ]
     return caption_engine.reel_cues(
         plan or {},
         clips if clips is not None else (plan or {}).get("clips") or [],
@@ -5796,10 +5824,19 @@ def _clipset_job(job_id: str) -> dict:
     return job
 
 
-def _clipset_sentences(job: dict) -> tuple[list[dict], list[dict], list[dict] | None]:
+def _clipset_sentences(
+    job: dict,
+    record: dict | None = None,
+) -> tuple[list[dict], list[dict], list[dict] | None]:
+    """Source sentences the way ``record`` was built (new sets: word-timed).
+
+    Clip sets made before word timing kept character-share sentence edges;
+    they are re-read the same way so their fingerprint still matches.
+    """
     scenes = list((job.get("analysis") or {}).get("scenes") or [])
+    words = record is None or record.get("sentence_timing") == "words"
     try:
-        transcript = pipeline.read_transcript(_job_dir(job["id"]))
+        transcript = pipeline.read_transcript(_job_dir(job["id"]), words=words)
     except Exception:  # noqa: BLE001
         transcript = None
     return clipset.source_sentences(scenes, transcript), scenes, transcript
@@ -5810,7 +5847,7 @@ def _clipset_pool(
     record: dict | None = None,
 ) -> tuple[list[dict], list[dict], list[dict] | None]:
     """Keep stored sentence ids usable after a transcript cleanup."""
-    sentences, scenes, transcript = _clipset_sentences(job)
+    sentences, scenes, transcript = _clipset_sentences(job, record)
     if record:
         pool = {
             int(sentence["id"]): sentence
@@ -5835,7 +5872,7 @@ def _clip_set_source_state(
     require_fingerprint: bool = False,
 ) -> tuple[list[dict], str | None]:
     """Reject stale sets and warn about legacy sets without a fingerprint."""
-    current, _, _ = _clipset_sentences(job)
+    current, _, _ = _clipset_sentences(job, record)
     stored = str(record.get("source_fingerprint") or "")
     if not stored:
         message = (

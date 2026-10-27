@@ -1723,26 +1723,50 @@ def transcribe_routes(
 # ---------------------------------------------------------------- readers
 
 
-def read_transcript(job_dir: Path) -> list[dict] | None:
+def read_transcript(job_dir: Path, *, words: bool = False) -> list[dict] | None:
     """Load transcript segments for speech/script callers.
 
     Transcript v2 wins; legacy ``transcript.json`` / ``transcript_apple.json``
-    remain readable for old jobs.
+    remain readable for old jobs. With ``words=True`` each v2 segment also
+    carries its measured ``words`` (``{"w", "start", "end"}``), so callers
+    that cut on sentence edges can place them on real word boundaries.
     """
     latest = load_latest_transcript(job_dir)
     if latest:
+        by_segment: dict[int, list[dict]] = {}
+        if words:
+            for raw in latest.get("words") or []:
+                if not isinstance(raw, Mapping):
+                    continue
+                text = _clean_text(raw.get("w") or raw.get("word")).strip()
+                start = _float(raw.get("start"))
+                end = _float(raw.get("end"), start)
+                if not text or end <= start:
+                    continue
+                try:
+                    index = int(raw.get("segment") or 0)
+                except (TypeError, ValueError):
+                    index = 0
+                by_segment.setdefault(index, []).append(
+                    {"w": text, "start": start, "end": end},
+                )
         segments = []
-        for item in latest.get("segments") or []:
+        for position, item in enumerate(latest.get("segments") or []):
             if not isinstance(item, Mapping):
                 continue
             value = " ".join(_clean_text(item.get("text")).split())
             if not value:
                 continue
-            segments.append({
+            segment = {
                 "start": _float(item.get("start")),
                 "end": _float(item.get("end")),
                 "text": value,
-            })
+            }
+            if by_segment.get(position):
+                segment["words"] = sorted(
+                    by_segment[position], key=lambda row: (row["start"], row["end"]),
+                )
+            segments.append(segment)
         if segments:
             return segments
     directory = Path(job_dir) / "transcript"
