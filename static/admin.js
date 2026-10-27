@@ -10,6 +10,7 @@
     providerMeta: {},
     catalogs: {},
     keys: [],
+    staleSecrets: [],
     auditEntries: [],
     auditTotal: 0,
     pipelineEntries: [],
@@ -623,11 +624,53 @@
   async function loadKeys() {
     const data = await api("/keys");
     state.keys = data.keys || [];
+    state.staleSecrets = data.stale_secrets || [];
     const path = $("#keys-path");
     if (path && data.paths?.secrets) path.textContent = data.paths.secrets;
     const target = $("#key-cards");
     target.replaceChildren();
+    if (state.staleSecrets.length) target.append(renderStaleSecrets(state.staleSecrets));
     state.keys.forEach((key) => target.append(renderKeyCard(key)));
+  }
+
+  function renderStaleSecrets(items) {
+    const card = document.createElement("section");
+    card.className = "key-card";
+    const head = document.createElement("div");
+    head.className = "key-head";
+    const title = document.createElement("h2");
+    title.textContent = "Removed engine keys";
+    const source = document.createElement("span");
+    source.textContent = `${items.length} pending`;
+    head.append(title, source);
+    const copy = document.createElement("p");
+    copy.className = "key-source";
+    copy.textContent = "These keys belonged to engines that were removed. They are no longer used. Delete the stored copies after confirming.";
+    card.append(head, copy);
+    const actions = document.createElement("div");
+    actions.className = "key-actions";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost small";
+    button.textContent = "Delete stored keys";
+    actions.append(button);
+    const message = document.createElement("p");
+    message.className = "key-error";
+    button.addEventListener("click", async () => {
+      if (!confirm("Delete keys for removed engines? Environment-managed keys are left alone.")) return;
+      try {
+        const result = await api("/keys/confirm-removals", {
+          method: "POST",
+          body: { confirm: true },
+        });
+        toast(result.removed?.length
+          ? `Deleted ${result.removed.length} removed-engine key(s).`
+          : "No stored keys to delete.");
+        await loadKeys();
+      } catch (error) { message.textContent = errorText(error); }
+    });
+    card.append(actions, message);
+    return card;
   }
 
   function renderPipeline() {

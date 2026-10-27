@@ -12,13 +12,34 @@ from typing import Any, Mapping
 
 MAX_ROUTES = 6
 REASONING_VALUES = ("none", "low", "medium", "high", "max")
-TEXT_PROVIDERS = ("opencode-go", "openrouter", "local-mlx", "ollama")
-TTS_PROVIDERS = (
-    "minimax", "openrouter", "local", "elevenlabs", "openai", "groq",
-    "deepgram", "cartesia",
-)
+# Text: OpenRouter and OpenCode Go. local-mlx and ollama were removed.
+TEXT_PROVIDERS = ("opencode-go", "openrouter")
+# Voice: MiniMax, ElevenLabs, OpenRouter and the two on-device engines.
+TTS_PROVIDERS = ("minimax", "openrouter", "local", "elevenlabs")
 MUSIC_PROVIDERS = ("minimax", "openrouter")
-STT_PROVIDERS = ("auto", "apple", "whisper", "groq", "openai", "deepgram")
+# STT: Apple SpeechAnalyzer, Whisper turbo, Deepgram and Groq. The silent
+# "auto" cloud ladder and OpenAI whisper-1 were removed.
+STT_PROVIDERS = ("apple", "whisper", "groq", "deepgram")
+
+#: Engines removed from the product, mapped to the nearest kept engine.
+TTS_ENGINE_MIGRATIONS = {
+    "piper": "kokoro",
+    "openai": "minimax",
+    "groq": "minimax",
+    "deepgram": "minimax",
+    "cartesia": "minimax",
+}
+#: Providers that no longer exist in a workflow.
+REMOVED_TEXT_PROVIDERS = ("local-mlx", "ollama")
+REMOVED_TTS_PROVIDERS = ("openai", "groq", "deepgram", "cartesia")
+REMOVED_STT_PROVIDERS = ("auto", "openai")
+#: Local TTS model ids that are no longer offered.
+REMOVED_TTS_MODELS = ("piper",)
+#: STT model ids replaced by the Speech Pack.
+STT_MODEL_MIGRATIONS = {
+    "mlx-community/whisper-small-mlx": "mlx-community/whisper-large-v3-turbo",
+    "whisper-1": "whisper-large-v3-turbo",
+}
 
 WORKFLOW_LABELS = {
     "story_brief": "Story brief",
@@ -43,8 +64,8 @@ WORKFLOW_KIND = {
 WORKFLOW_PROVIDERS = {
     "story_brief": TEXT_PROVIDERS,
     "rewrite": TEXT_PROVIDERS,
-    "translate": ("opencode-go", "openrouter", "ollama"),
-    "hook_rank": ("opencode-go", "openrouter", "ollama"),
+    "translate": TEXT_PROVIDERS,
+    "hook_rank": TEXT_PROVIDERS,
     "tts": TTS_PROVIDERS,
     "music": MUSIC_PROVIDERS,
     "stt": STT_PROVIDERS,
@@ -53,7 +74,6 @@ WORKFLOW_PROVIDERS = {
 _TEXT_ROUTES = [
     {"provider": "opencode-go", "model": "deepseek-v4.1-flash"},
     {"provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash"},
-    {"provider": "local-mlx", "model": "mlx-community/Qwen2.5-3B-Instruct-4bit"},
 ]
 
 DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
@@ -88,7 +108,6 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
             {"provider": "openrouter", "model": "google/gemini-3.8-flash-lite-tts"},
             {"provider": "local", "model": "kokoro"},
             {"provider": "local", "model": "say"},
-            {"provider": "local", "model": "piper"},
         ],
         "reasoning": "",
         "max_output_tokens": 0,
@@ -103,7 +122,7 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
     "stt": {
         "routes": [
             {"provider": "apple", "model": "on-device-3b"},
-            {"provider": "auto", "model": "mlx-community/whisper-small-mlx"},
+            {"provider": "whisper", "model": "mlx-community/whisper-large-v3-turbo"},
         ],
         "reasoning": "",
         "max_output_tokens": 0,
@@ -149,15 +168,16 @@ def normalize_workflow(workflow: str, raw: Any) -> dict[str, Any]:
     else:
         reasoning = ""
     routes_raw = value.get("routes")
-    supplied_routes = isinstance(routes_raw, list)
-    if not supplied_routes:
+    if not isinstance(routes_raw, list):
         routes_raw = default.get("routes") or []
     routes = []
     for item in routes_raw[:MAX_ROUTES]:
         route = _normalize_route(workflow, item)
         if route:
             routes.append(route)
-    if not supplied_routes and not routes and default.get("routes"):
+    # A workflow always keeps a working ladder. Removed providers and stale
+    # model ids must never leave a workflow with zero routes.
+    if not routes and default.get("routes"):
         routes = copy.deepcopy(default["routes"])
     return {
         "routes": routes,

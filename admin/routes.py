@@ -33,6 +33,25 @@ MAX_KEY_LENGTH = 8192
 MAX_ROUTE_MODEL_LENGTH = 240
 
 
+def _active_ai_secrets() -> tuple[str, ...]:
+    """AI keys that still belong to a shipped engine.
+
+    OpenAI TTS/STT and Cartesia TTS are gone; their old keys stay readable for
+    legacy jobs but are hidden from the masked-key list until the creator
+    confirms deletion.
+    """
+    stale = set(settings_store.STALE_SECRETS)
+    return tuple(name for name in catalog.AI_SECRETS if name not in stale)
+
+
+def _admin_providers() -> set[str]:
+    return {
+        str(provider)
+        for providers in workflow_config.WORKFLOW_PROVIDERS.values()
+        for provider in providers
+    }
+
+
 class BootstrapBody(BaseModel):
     password: str = Field(min_length=12, max_length=MAX_PASSWORD_LENGTH)
 
@@ -56,6 +75,10 @@ class WorkflowBody(BaseModel):
     reasoning: str = Field(default="", max_length=32)
     max_output_tokens: int = 3200
     timeout_s: int = 300
+
+
+class ConfirmRemovalsBody(BaseModel):
+    confirm: bool = False
 
 
 def _client_ip(request: Request) -> str:
@@ -219,19 +242,22 @@ def _mirror_legacy_workflow(name: str, normalized: dict[str, Any]) -> None:
         if provider == "openrouter":
             tts_provider = "fish" if "fish" in model.lower() else "gemini"
         elif provider == "local":
-            tts_provider = model if model in {"kokoro", "piper", "say"} else "local"
+            tts_provider = model if model in {"kokoro", "say"} else "kokoro"
         settings_store.save_settings({
             "tts": {"provider": tts_provider if tts_provider in {
-                "minimax", "fish", "gemini", "kokoro", "piper", "say", "local", "auto",
-                "openai", "elevenlabs", "groq", "deepgram", "cartesia",
+                "minimax", "fish", "gemini", "kokoro", "say", "local", "auto",
+                "elevenlabs",
             } else "auto"},
             **({"minimax": {"tts_model": model}} if provider == "minimax" else {}),
         })
     elif name == "music" and provider == "minimax":
         settings_store.save_settings({"minimax": {"music_model": model}})
     elif name == "stt":
-        provider_map = {"auto": "auto", "apple": "apple", "whisper": "whisper", "groq": "groq", "openai": "openai", "deepgram": "deepgram"}
-        legacy = {"provider": provider_map.get(provider, "auto")}
+        provider_map = {
+            "apple": "apple", "whisper": "whisper",
+            "groq": "groq", "deepgram": "deepgram",
+        }
+        legacy = {"provider": provider_map.get(provider, "apple")}
         # The legacy Setup field only lists Whisper model IDs. Apple is a
         # route provider, not a Whisper model, so leave the old model intact.
         if provider != "apple":
@@ -263,6 +289,12 @@ def _safe_workflow_payload(name: str, body: WorkflowBody) -> dict[str, Any]:
             raise HTTPException(400, f"Provider {provider!r} is not valid for {name}.")
         if not model_id or len(model_id) > MAX_ROUTE_MODEL_LENGTH:
             raise HTTPException(400, "Every model route needs a valid model id.")
+        if (
+            name == "tts"
+            and provider == "local"
+            and model_id in workflow_config.REMOVED_TTS_MODELS
+        ):
+            raise HTTPException(400, "Piper was removed. Use Kokoro or Apple say.")
         catalog_entry = catalog.catalog(provider)
         models = catalog_entry.get("models") if isinstance(catalog_entry, dict) else []
         allowed = {
@@ -364,7 +396,8 @@ def overview(request: Request) -> dict:
     pipeline = store.list_pipeline_events(limit=8)
     return {
         "account": session["email"],
-        "keys": [_secret_info(name) for name in catalog.AI_SECRETS],
+        "keys": [_secret_info(name) for name in _active_ai_secrets()],
+        "stale_secrets": settings_store.stale_secret_status(),
         "workflows": settings_store.load_settings().get("workflows") or {},
         "audit": audit["entries"],
         "pipeline": pipeline["entries"],
@@ -375,7 +408,8 @@ def overview(request: Request) -> dict:
 def keys(request: Request) -> dict:
     _session(request)
     return {
-        "keys": [_secret_info(name) for name in catalog.AI_SECRETS],
+        "keys": [_secret_info(name) for name in _active_ai_secrets()],
+        "stale_secrets": settings_store.stale_secret_status(),
         "paths": {
             "settings": str(settings_store.SETTINGS_PATH),
             "secrets": str(settings_store.SECRETS_PATH),
@@ -383,14 +417,29 @@ def keys(request: Request) -> dict:
     }
 
 
+@router.post("/keys/confirm-removals")
+def confirm_key_removals(body: ConfirmRemovalsBody, request: Request) -> dict:
+    session = _session(request)
+    _csrf(request, session)
+    if not body.confirm:
+        raise HTTPException(400, "Confirm deletion of removed-engine keys.")
+    before = settings_store.stale_secret_status()
+    result = settings_store.confirm_stale_secrets()
+    _audit(
+        request, session["email"], "keys.remove_removed_engines",
+        resource_type="secret", before=before, after=result,
+    )
+    return {"ok": True, **result}
+
+
 def _clear_key_runtime(name: str) -> None:
     """Clear quarantine, breakers, and catalog/cache state after key rotation."""
     try:
         import audio  # noqa: PLC0415
         provider = {
-            "opencode": "opencode-go", "openrouter": "openrouter", "openai": "openai",
+            "opencode": "opencode-go", "openrouter": "openrouter",
             "groq": "groq", "elevenlabs": "elevenlabs", "minimax": "minimax",
-            "deepgram": "deepgram", "cartesia": "cartesia",
+            "deepgram": "deepgram",
         }.get(name, name)
         audio.clear_openrouter_quarantine()
         audio.reset_provider_breaker(provider)
@@ -401,7 +450,7 @@ def _clear_key_runtime(name: str) -> None:
         pass
     try:
         catalog.clear_cache({
-            "opencode": "opencode-go", "openrouter": "openrouter", "openai": "openai",
+            "opencode": "opencode-go", "openrouter": "openrouter",
             "groq": "groq", "elevenlabs": "elevenlabs",
         }.get(name, name))
     except Exception:  # noqa: BLE001
@@ -413,7 +462,7 @@ def save_key(name: str, body: KeyBody, request: Request) -> dict:
     session = _session(request)
     _csrf(request, session)
     name = str(name or "").strip()
-    if name not in catalog.AI_SECRETS:
+    if name not in _active_ai_secrets():
         raise HTTPException(404, "Unknown AI key.")
     before = _secret_info(name)
     if settings_store.secret_source(name) == "env":
@@ -443,7 +492,7 @@ def test_key(name: str, request: Request) -> dict:
     session = _session(request)
     _csrf(request, session)
     name = str(name or "").strip()
-    if name not in catalog.AI_SECRETS:
+    if name not in _active_ai_secrets():
         raise HTTPException(404, "Unknown AI key.")
     if not settings_store.get_secret(name):
         result = {"ok": False, "tested": False, "detail": "Key is not configured."}
@@ -485,6 +534,8 @@ def get_catalog(
     provider = str(provider or "").strip()
     if provider not in catalog.PROVIDER_META:
         raise HTTPException(400, "Unknown model provider.")
+    if provider not in _admin_providers():
+        raise HTTPException(400, "Provider was removed from this workflow.")
     result = catalog.catalog(provider, refresh=bool(refresh))
     kind = workflow_config.WORKFLOW_KIND.get(workflow)
     if kind in {"text", "tts", "music", "stt"}:
@@ -492,6 +543,11 @@ def get_catalog(
             item for item in result.get("models", [])
             if _model_kind(provider, item) == kind
         ]
+        if kind == "tts" and provider == "local":
+            filtered = [
+                item for item in filtered
+                if str(item.get("id") or "") not in workflow_config.REMOVED_TTS_MODELS
+            ]
         result = {**result, "models": filtered}
     return result
 
@@ -501,12 +557,16 @@ def get_catalog(
 def get_workflows(request: Request) -> dict:
     _session(request)
     workflows = settings_store.load_settings().get("workflows") or {}
+    providers = _admin_providers()
     return {
         "workflows": workflow_config.normalize_workflows(workflows),
         "labels": workflow_config.WORKFLOW_LABELS,
         "kinds": workflow_config.WORKFLOW_KIND,
         "providers": workflow_config.WORKFLOW_PROVIDERS,
-        "provider_meta": catalog.provider_options(),
+        "provider_meta": [
+            item for item in catalog.provider_options()
+            if item.get("id") in providers
+        ],
         "reasoning_values": list(workflow_config.REASONING_VALUES),
     }
 

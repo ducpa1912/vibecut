@@ -3727,7 +3727,7 @@
     const source = musicSourceMode();
     const full = state.audioMusicOptions || [["none", "No music"]];
     const allowed = source === "own"
-      ? new Set(["library", "cc0"])
+      ? new Set(["library"])
       : source === "generate"
         ? new Set(["minimax-music", "lyria-clip"])
         : new Set(["none"]);
@@ -4034,7 +4034,7 @@
       return;
     }
     const engines = state.audioEngines;
-    const allowedVoices = new Set(["say", "piper", "kokoro", "minimax", "fish", "gemini"]);
+    const allowedVoices = new Set(["say", "kokoro", "minimax", "fish", "gemini", "elevenlabs"]);
     const voiceOptions = Object.entries(engines.voices || {})
       .filter(([id]) => allowedVoices.has(id))
       .map(([id, info]) => [
@@ -4045,7 +4045,7 @@
     const available = Object.values(engines.voices || {})
       .filter((info) => info.available).length;
     const musicOptions = [["none", "No music"]];
-    const allowedMusic = new Set(["library", "cc0", "minimax-music", "lyria-clip"]);
+    const allowedMusic = new Set(["library", "minimax-music", "lyria-clip"]);
     Object.entries(engines.music || {}).forEach(([id, info]) => {
       if (!allowedMusic.has(id)) return;
       musicOptions.push([
@@ -4056,7 +4056,7 @@
     state.audioMusicOptions = musicOptions;
     fillSelect(dom.audioMusic, musicOptions);
     fillSelect(dom.audioLang, AUDIO_LANGUAGES);
-    const rewriteOptions = [["auto", "Auto · OpenCode → OpenRouter → local"]];
+    const rewriteOptions = [["auto", "Auto · OpenCode → OpenRouter"]];
     (engines.rewrite_models || []).forEach((item) => {
       rewriteOptions.push([
         item.id,
@@ -4096,9 +4096,6 @@
   function translateLabel(id) {
     return {
       apple_fm: "Apple Translation",
-      argos: "Argos (offline)",
-      marian: "Marian opus-mt",
-      ollama: "Ollama",
       opencode: "OpenCode Go · DeepSeek",
       openrouter: "OpenRouter · DeepSeek",
     }[id] || id;
@@ -4107,27 +4104,18 @@
   function engineLabel(id) {
     return {
       say: "Apple say",
-      piper: "Piper medium",
       kokoro: "Kokoro int8",
       elevenlabs: "ElevenLabs (API key)",
-      openai: "OpenAI gpt-4o-mini-tts",
-      groq: "Groq Orpheus",
-      deepgram: "Deepgram Aura",
-      cartesia: "Cartesia Sonic",
       minimax: "MiniMax Speech 2.8",
       fish: "OpenRouter Fish S2.1 Free",
       gemini: "OpenRouter Gemini Flash-Lite TTS",
-      openrouter: "OpenRouter DeepSeek",
+      openrouter: "OpenRouter",
     }[id] || id;
   }
 
   function musicLabel(id) {
     return {
       library: "My own track",
-      cc0: "CC0 library",
-      "stable-small": "Stable Audio Open Small",
-      "stable-1.0": "Stable Audio Open 1.0",
-      "musicgen-small": "MusicGen Small · ungated",
       "minimax-music": "MiniMax Music",
       "lyria-clip": "OpenRouter Lyria 3",
     }[id] || id;
@@ -4140,7 +4128,7 @@
       const result = await api(`/api/audio/voices?engine=${encodeURIComponent(engine)}`);
       const voices = result.voices || [];
       if (!voices.length) {
-        const needsKey = ["elevenlabs", "openai", "groq", "deepgram", "minimax", "fish", "gemini"].includes(engine);
+        const needsKey = ["elevenlabs", "minimax", "fish", "gemini"].includes(engine);
         fillSelect(dom.audioVoice, [["", needsKey ? "Add the key in Setup" : "No voices found"]]);
         return;
       }
