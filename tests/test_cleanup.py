@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import app
 import artifacts
+import routes_cleanup
 
 JOB_ID = "cleanup-job"
 STORY_ID = "st_cleanup"
@@ -154,7 +155,7 @@ def _plan(env, **overrides):
 
 
 def test_feature_flag_off_returns_404_and_leaves_paid_job_untouched(env, monkeypatch):
-    monkeypatch.delenv("VIBECUT_ENABLE_CLEANUP", raising=False)
+    monkeypatch.setenv("VIBECUT_ENABLE_CLEANUP", "0")
     response = _plan(env)
     assert response.status_code == 404
     no_body = env.client.post(f"/api/jobs/{JOB_ID}/cleanup/plan")
@@ -167,7 +168,7 @@ def test_feature_flag_off_returns_404_and_leaves_paid_job_untouched(env, monkeyp
     ({"content-type": "text/plain"}, b"{"),
 ])
 def test_feature_gate_precedes_body_parsing(env, monkeypatch, headers, content):
-    monkeypatch.delenv("VIBECUT_ENABLE_CLEANUP", raising=False)
+    monkeypatch.setenv("VIBECUT_ENABLE_CLEANUP", "0")
     url = f"/api/jobs/{JOB_ID}/cleanup/plan"
     off = env.client.post(url, content=content, headers=headers)
     assert off.status_code == 404
@@ -176,6 +177,33 @@ def test_feature_gate_precedes_body_parsing(env, monkeypatch, headers, content):
     monkeypatch.setenv("VIBECUT_ENABLE_CLEANUP", "1")
     on = env.client.post(url, content=content, headers=headers)
     assert on.status_code in (400, 422)
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (None, True),
+    ("", True),
+    ("1", True),
+    ("true", True),
+    ("0", False),
+    ("false", False),
+    ("no", False),
+    ("off", False),
+    ("OFF", False),
+])
+def test_cleanup_is_on_by_default_with_an_explicit_off_switch(
+    monkeypatch, value, expected,
+):
+    if value is None:
+        monkeypatch.delenv("VIBECUT_ENABLE_CLEANUP", raising=False)
+    else:
+        monkeypatch.setenv("VIBECUT_ENABLE_CLEANUP", value)
+    assert routes_cleanup.cleanup_enabled() is expected
+
+
+def test_cleanup_routes_work_without_the_flag(env, monkeypatch):
+    monkeypatch.delenv("VIBECUT_ENABLE_CLEANUP", raising=False)
+    response = _plan(env)
+    assert response.status_code == 200, response.text
 
 
 def test_valid_crop_plan_is_deterministic_and_does_not_mutate_job(env):
@@ -625,7 +653,7 @@ def test_rights_are_stored_server_side_not_in_the_cleanup_body(env):
 
 
 def test_rights_route_works_when_the_cleanup_flag_is_off(env, monkeypatch):
-    monkeypatch.delenv("VIBECUT_ENABLE_CLEANUP", raising=False)
+    monkeypatch.setenv("VIBECUT_ENABLE_CLEANUP", "off")
     response = env.client.post(
         f"/api/jobs/{JOB_ID}/rights",
         json={"attested": False, "source": "import"},

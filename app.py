@@ -46,6 +46,7 @@ import exports as cuts
 import history_store
 import job_queue
 import matrix
+import migrations
 import music
 import overlays
 import packet
@@ -3044,6 +3045,7 @@ def _retention_loop() -> None:
 async def lifespan(_: FastAPI):
     JOBS.mkdir(parents=True, exist_ok=True)
     recover_jobs()
+    migrations.migrate_all(JOBS)
     cleanup_storage()
     threading.Thread(target=_retention_loop, daemon=True).start()
     threading.Thread(target=vision.available, daemon=True).start()
