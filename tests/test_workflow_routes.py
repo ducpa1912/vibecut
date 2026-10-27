@@ -12,7 +12,7 @@ import workflow_config
 def test_default_routes_use_only_final_engines():
     defaults = workflow_config.default_workflows()
     assert [route["provider"] for route in defaults["tts"]["routes"]] == [
-        "minimax", "openrouter", "openrouter", "local", "local",
+        "openrouter", "minimax", "openrouter", "openrouter", "local", "local",
     ]
     assert "piper" not in {
         route["model"] for route in defaults["tts"]["routes"]

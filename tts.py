@@ -1,6 +1,6 @@
 """Text-to-speech voices, engine adapters and story synthesis.
 
-Final engine set: MiniMax, ElevenLabs, OpenRouter (Fish + Gemini), Kokoro and
+Final engine set: MiniMax, ElevenLabs, OpenRouter (HeyGen + Fish + Gemini), Kokoro and
 Apple ``say``. Piper, OpenAI, Groq Orpheus, Deepgram Aura and Cartesia are
 removed from the registry, voice picker and synthesis paths.
 
@@ -25,6 +25,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -37,18 +38,25 @@ import audio  # noqa: E402
 
 _SAY_VOICE_RE = re.compile(r"^(?P<name>.+?)\s{2,}(?P<lang>[a-zA-Z_-]+)\s*(?:#.*)?$")
 
-#: Engines offered in the voice picker. OpenRouter is one engine with two
-#: model families (Fish and Gemini), represented by the synthesizer ids below.
+#: Engines offered in the voice picker. OpenRouter is one engine with three
+#: model families (HeyGen, Fish and Gemini), represented by the synthesizer
+#: ids below.
 ENGINES = ("minimax", "elevenlabs", "openrouter", "kokoro", "say")
 
 #: Dub slot fitting: the accepted ``atempo`` band. Outside it the line is
 #: flagged for Shorten (AI rewrite) or an explicit overlap choice.
 SLOT_MIN_RATE = 0.90
 SLOT_MAX_RATE = 1.15
-SYNTHESIZERS = ("minimax", "elevenlabs", "fish", "gemini", "kokoro", "say")
-CLOUD_ENGINES = frozenset({"minimax", "elevenlabs", "fish", "gemini"})
+SYNTHESIZERS = ("minimax", "elevenlabs", "heygen", "fish", "gemini", "kokoro", "say")
+CLOUD_ENGINES = frozenset({"minimax", "elevenlabs", "heygen", "fish", "gemini"})
 LOCAL_ENGINES = frozenset({"kokoro", "say"})
-OPENROUTER_ENGINES = frozenset({"fish", "gemini"})
+OPENROUTER_ENGINES = frozenset({"heygen", "fish", "gemini"})
+#: HeyGen Voice on OpenRouter: ten stock voices, raw 44.1 kHz mono s16le PCM.
+HEYGEN_VOICES = (
+    "nadine", "tabitha", "bram", "gareth", "noelle",
+    "meredith", "sabrina", "lucian", "weston", "vincent",
+)
+HEYGEN_PCM_RATE = 44100
 REMOVED_ENGINES = frozenset(
     {"piper", "openai", "groq", "deepgram", "cartesia"}
 )
@@ -56,6 +64,7 @@ DEFAULT_VOICES = {
     "minimax": "female-shaonv",
     "elevenlabs": "21m00Tcm4TlvDq8ikWAM",  # Rachel
     "openrouter": "Kore",
+    "heygen": "nadine",
     "fish": "",
     "gemini": "Kore",
     "kokoro": "af_heart",
@@ -64,6 +73,7 @@ DEFAULT_VOICES = {
 DEFAULT_MODELS = {
     "minimax": "speech-2.8-turbo",
     "elevenlabs": "eleven_multilingual_v2",
+    "heygen": "heygen/heygen-voice-1-turbo:free",
     "fish": "fish-audio/s2.1-pro-free:free",
     "gemini": "google/gemini-3.8-flash-lite-tts",
     "kokoro": "kokoro",
@@ -73,11 +83,20 @@ ENGINE_LABELS = {
     "minimax": "MiniMax Speech 2.8",
     "elevenlabs": "ElevenLabs",
     "openrouter": "OpenRouter",
+    "heygen": "OpenRouter · HeyGen Voice Turbo",
     "fish": "OpenRouter · Fish S2.1",
     "gemini": "OpenRouter · Gemini Flash-Lite",
     "kokoro": "Kokoro (on-device)",
     "say": "Apple say",
 }
+
+
+def openrouter_engine(model: str) -> str:
+    """Synthesizer id for an OpenRouter speech model slug."""
+    lowered = str(model or "").lower()
+    if "heygen" in lowered:
+        return "heygen"
+    return "fish" if "fish" in lowered else "gemini"
 
 
 def is_removed_engine(engine: str) -> bool:
@@ -341,6 +360,11 @@ def list_voices(engine: str) -> list[dict]:
         ]
         return [{"id": name, "name": name, "lang": "multi"} for name in names]
 
+    if engine == "heygen":
+        if not audio.openrouter_available():
+            return []
+        return [{"id": name, "name": name.title(), "lang": "multi"} for name in HEYGEN_VOICES]
+
     if engine == "fish":
         if not audio.openrouter_available():
             return []
@@ -401,7 +425,7 @@ def _candidate(provider: str, model: str) -> dict[str, str] | None:
             "model": model or DEFAULT_MODELS["elevenlabs"],
         }
     if provider == "openrouter":
-        engine = "fish" if "fish" in model.lower() else "gemini"
+        engine = openrouter_engine(model)
         return {
             "engine": engine, "provider": provider,
             "model": model or DEFAULT_MODELS[engine],
@@ -831,18 +855,27 @@ def _openrouter_voice(
             "OpenRouter is quarantined after an auth error; retry in "
             f"{audio.openrouter_blocked_seconds()}s."
         )
-    model = model or audio._workflow_route_model(
-        "tts", "openrouter",
-        "fish-audio/s2.1-pro-free:free" if engine == "fish" else "google/gemini-3.8-flash-lite-tts",
-    )
-    default_voice = "" if engine == "fish" else "Kore"
-    voice_value = default_voice if voice in {"", "default"} else voice
+    if engine not in OPENROUTER_ENGINES:
+        engine = "gemini"
+    if not model:
+        # Several OpenRouter routes share one provider; take the configured
+        # model of this engine only, never the first OpenRouter route.
+        model = next((
+            str(route.get("model") or "")
+            for route in audio._workflow_routes("tts")
+            if str(route.get("provider") or "") == "openrouter"
+            and openrouter_engine(str(route.get("model") or "")) == engine
+        ), "") or DEFAULT_MODELS[engine]
+    voice_value = DEFAULT_VOICES[engine] if voice in {"", "default"} else voice
+    if engine == "heygen" and voice_value not in HEYGEN_VOICES:
+        voice_value = DEFAULT_VOICES["heygen"]
     body = {
         "model": model,
         "input": text,
         "voice": voice_value,
-        # OpenRouter speech returns MP3 or PCM, not WAV. Convert afterwards.
-        "response_format": "mp3",
+        # OpenRouter speech returns MP3 or PCM, not WAV. HeyGen only serves
+        # PCM. Convert afterwards.
+        "response_format": "pcm" if engine == "heygen" else "mp3",
     }
     request = urllib.request.Request(
         "https://openrouter.ai/api/v1/audio/speech",
@@ -861,8 +894,16 @@ def _openrouter_voice(
         raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
         raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
-    raw = output.with_name(f"{output.stem}.{engine}.tmp.mp3")
-    raw.write_bytes(content)
+    if engine == "heygen":
+        raw = output.with_name(f"{output.stem}.{engine}.tmp.wav")
+        with wave.open(str(raw), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(HEYGEN_PCM_RATE)
+            handle.writeframes(content[: len(content) - len(content) % 2])
+    else:
+        raw = output.with_name(f"{output.stem}.{engine}.tmp.mp3")
+        raw.write_bytes(content)
     extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
     audio._convert(raw, output, extra)
     try:
@@ -887,7 +928,7 @@ def synthesize_line(
     if is_removed_engine(engine):
         raise _removed_error(engine)
     if engine == "openrouter":
-        engine = "fish" if "fish" in str(model or "").lower() else "gemini"
+        engine = openrouter_engine(model)
     output.parent.mkdir(parents=True, exist_ok=True)
     flac = output.suffix.lower() == ".flac"
     target = output.with_suffix(".wav") if flac else output
@@ -948,6 +989,10 @@ def voice_engine_status() -> dict[str, dict]:
         "minimax": {
             "available": bool(audio.minimax_key()), "size_mb": 0,
             "install": "Add a MiniMax key in Setup. Speech 2.8 Turbo.",
+        },
+        "heygen": {
+            "available": audio.openrouter_available(), "size_mb": 0,
+            "install": "Add an OpenRouter key. HeyGen Voice Turbo (free).",
         },
         "fish": {
             "available": audio.openrouter_available(), "size_mb": 0,

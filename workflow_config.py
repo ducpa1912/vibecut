@@ -103,6 +103,7 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
     },
     "tts": {
         "routes": [
+            {"provider": "openrouter", "model": "heygen/heygen-voice-1-turbo:free"},
             {"provider": "minimax", "model": "speech-2.8-turbo"},
             {"provider": "openrouter", "model": "fish-audio/s2.1-pro-free:free"},
             {"provider": "openrouter", "model": "google/gemini-3.8-flash-lite-tts"},

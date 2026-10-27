@@ -129,7 +129,7 @@ def test_voice_sample_engine_registry(monkeypatch, tmp_path):
 def test_engine_status_shape():
     status = audio.engine_status()
     assert set(status["voices"]) == {
-        "say", "kokoro", "elevenlabs", "minimax", "fish", "gemini",
+        "say", "kokoro", "elevenlabs", "minimax", "heygen", "fish", "gemini",
     }
     assert {"library", "minimax-music", "lyria-clip"} == set(status["music"])
     assert "demucs" in status["separation"]

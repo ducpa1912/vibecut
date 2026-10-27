@@ -240,12 +240,15 @@ def _mirror_legacy_workflow(name: str, normalized: dict[str, Any]) -> None:
     if name == "tts":
         tts_provider = provider
         if provider == "openrouter":
-            tts_provider = "fish" if "fish" in model.lower() else "gemini"
+            tts_provider = (
+                "heygen" if "heygen" in model.lower()
+                else "fish" if "fish" in model.lower() else "gemini"
+            )
         elif provider == "local":
             tts_provider = model if model in {"kokoro", "say"} else "kokoro"
         settings_store.save_settings({
             "tts": {"provider": tts_provider if tts_provider in {
-                "minimax", "fish", "gemini", "kokoro", "say", "local", "auto",
+                "minimax", "heygen", "fish", "gemini", "kokoro", "say", "local", "auto",
                 "elevenlabs",
             } else "auto"},
             **({"minimax": {"tts_model": model}} if provider == "minimax" else {}),

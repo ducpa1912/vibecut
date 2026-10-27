@@ -27,6 +27,7 @@ TTS_PER_CHAR = {
     "elevenlabs": 40e-6,
     "cartesia": 49e-6,
     "minimax": 60e-6,
+    "heygen": 0.0,
     "fish": 0.0,
     "gemini": 10e-6,
 }

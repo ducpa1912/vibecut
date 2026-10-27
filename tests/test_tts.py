@@ -7,7 +7,7 @@ import pytest
 import tts
 
 FINAL_ENGINES = {"minimax", "elevenlabs", "openrouter", "kokoro", "say"}
-SYNTHESIS_ENGINES = {"minimax", "elevenlabs", "fish", "gemini", "kokoro", "say"}
+SYNTHESIS_ENGINES = {"minimax", "elevenlabs", "heygen", "fish", "gemini", "kokoro", "say"}
 REMOVED = ("piper", "openai", "groq", "deepgram", "cartesia")
 
 
@@ -200,3 +200,87 @@ def test_voice_sample_cache_includes_model_and_language(monkeypatch, tmp_path):
     assert first.is_file() and second.is_file()
     assert first != second
     assert len(calls) == 2
+
+
+def test_heygen_free_is_the_first_default_voice_route():
+    import workflow_config
+
+    first = workflow_config.DEFAULT_WORKFLOWS["tts"]["routes"][0]
+    assert first == {"provider": "openrouter", "model": "heygen/heygen-voice-1-turbo:free"}
+    assert tts._candidate(first["provider"], first["model"])["engine"] == "heygen"
+    assert tts.openrouter_engine("fish-audio/s2.1-pro-free:free") == "fish"
+    assert tts.openrouter_engine("google/gemini-3.8-flash-lite-tts") == "gemini"
+
+
+def test_heygen_requests_pcm_and_wraps_it_as_wav(monkeypatch, tmp_path):
+    import json
+    import wave
+
+    sent = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"\x01\x00" * 4410 + b"\x07"  # 0.1 s plus a stray odd byte
+
+    def fake_urlopen(request, timeout=0):
+        sent.update(json.loads(request.data.decode("utf-8")))
+        return Response()
+
+    converted = {}
+
+    def fake_convert(source, output, extra=None):
+        with wave.open(str(source), "rb") as handle:
+            converted.update(rate=handle.getframerate(), frames=handle.getnframes())
+        output.write_bytes(b"RIFF" + b"0" * 64)
+        return output
+
+    monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-test")
+    monkeypatch.setattr(audio, "openrouter_blocked", lambda: False)
+    monkeypatch.setattr(tts.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(audio, "_convert", fake_convert)
+    out = tts.synthesize_line(
+        "openrouter", "default", "Hello", tmp_path / "line.wav",
+        model="heygen/heygen-voice-1-turbo:free",
+    )
+    assert out.is_file()
+    assert sent["response_format"] == "pcm"
+    assert sent["voice"] == "nadine"
+    assert converted == {"rate": 44100, "frames": 4410}
+
+
+def test_openrouter_model_comes_from_the_matching_engine_route(monkeypatch, tmp_path):
+    monkeypatch.setattr(audio, "_workflow_routes", lambda name: [
+        {"provider": "openrouter", "model": "heygen/heygen-voice-1-turbo:free"},
+        {"provider": "openrouter", "model": "fish-audio/s2.1-pro-free:free"},
+    ])
+    sent = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"ID3"
+
+    def fake_urlopen(request, timeout=0):
+        import json
+
+        sent.append(json.loads(request.data.decode("utf-8"))["model"])
+        return Response()
+
+    monkeypatch.setattr(audio, "openrouter_key", lambda: "sk-test")
+    monkeypatch.setattr(audio, "openrouter_blocked", lambda: False)
+    monkeypatch.setattr(tts.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(audio, "_convert", lambda source, output, extra=None: output)
+    for engine in ("fish", "gemini"):
+        tts._openrouter_voice("hi", "", tmp_path / f"{engine}.wav", 1.0, engine)
+    assert sent == ["fish-audio/s2.1-pro-free:free", "google/gemini-3.8-flash-lite-tts"]

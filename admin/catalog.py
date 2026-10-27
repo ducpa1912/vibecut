@@ -62,6 +62,7 @@ _STATIC: dict[str, list[dict[str, Any]]] = {
     "openrouter": [
         {"id": "deepseek/deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash", "reasoning": True},
         {"id": "google/gemini-3.1-flash-lite", "name": "Gemini 3.1 Flash Lite", "reasoning": True},
+        {"id": "heygen/heygen-voice-1-turbo:free", "name": "HeyGen Voice Turbo Free", "reasoning": False, "kind": "tts"},
         {"id": "fish-audio/s2.1-pro-free:free", "name": "Fish S2.1 Pro Free", "reasoning": False, "kind": "tts"},
         {"id": "google/gemini-3.8-flash-lite-tts", "name": "Gemini 3.8 Flash-Lite TTS", "reasoning": False, "kind": "tts"},
         {"id": "google/lyria-3-pro-preview", "name": "Lyria 3 Pro", "reasoning": False, "kind": "music"},

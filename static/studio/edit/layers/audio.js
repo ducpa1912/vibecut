@@ -32,6 +32,7 @@ const ENGINE_LABELS = {
   kokoro: "Kokoro · Voice Pack",
   minimax: "MiniMax · cloud",
   elevenlabs: "ElevenLabs · cloud",
+  heygen: "HeyGen Voice Turbo · cloud, free",
   fish: "Fish Audio · cloud",
   gemini: "Gemini TTS · cloud",
 };

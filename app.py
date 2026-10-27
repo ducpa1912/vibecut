@@ -3326,7 +3326,7 @@ def health() -> dict:
 OPENCODE_MODEL = "deepseek-v4.1-flash"
 OPENCODE_VARIANT = "low"
 STT_PROVIDERS = {"auto", "apple", "whisper"}
-TTS_PROVIDERS = {"auto", "local", "say", "kokoro", "elevenlabs", "minimax", "fish", "gemini"}
+TTS_PROVIDERS = {"auto", "local", "say", "kokoro", "elevenlabs", "minimax", "heygen", "fish", "gemini"}
 
 
 class SettingsTestBody(BaseModel):
@@ -3721,7 +3721,7 @@ def test_settings(body: SettingsTestBody) -> dict:
     if kind == "tts":
         engines = audio.engine_status().get("voices") or {}
         ready = [
-            name for name in ("minimax", "elevenlabs", "fish", "gemini", "kokoro", "say")
+            name for name in ("heygen", "minimax", "elevenlabs", "fish", "gemini", "kokoro", "say")
             if (engines.get(name) or {}).get("available")
         ]
         return {
@@ -3773,7 +3773,7 @@ def test_settings(body: SettingsTestBody) -> dict:
         requested = (body.engine or "").lower()
         engines = audio.engine_status().get("voices", {})
         candidates = [requested] if requested and requested not in {"auto", "local"} else [
-            "minimax", "elevenlabs", "fish", "gemini", "kokoro", "say",
+            "heygen", "minimax", "elevenlabs", "fish", "gemini", "kokoro", "say",
         ]
         engine = next((name for name in candidates if (engines.get(name) or {}).get("available")), "")
         if not engine:

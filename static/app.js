@@ -4034,7 +4034,7 @@
       return;
     }
     const engines = state.audioEngines;
-    const allowedVoices = new Set(["say", "kokoro", "minimax", "fish", "gemini", "elevenlabs"]);
+    const allowedVoices = new Set(["say", "kokoro", "minimax", "heygen", "fish", "gemini", "elevenlabs"]);
     const voiceOptions = Object.entries(engines.voices || {})
       .filter(([id]) => allowedVoices.has(id))
       .map(([id, info]) => [
@@ -4108,6 +4108,7 @@
       elevenlabs: "ElevenLabs (API key)",
       minimax: "MiniMax Speech 2.8",
       fish: "OpenRouter Fish S2.1 Free",
+      heygen: "OpenRouter HeyGen Voice Turbo (free)",
       gemini: "OpenRouter Gemini Flash-Lite TTS",
       openrouter: "OpenRouter",
     }[id] || id;
@@ -4128,7 +4129,7 @@
       const result = await api(`/api/audio/voices?engine=${encodeURIComponent(engine)}`);
       const voices = result.voices || [];
       if (!voices.length) {
-        const needsKey = ["elevenlabs", "minimax", "fish", "gemini"].includes(engine);
+        const needsKey = ["elevenlabs", "minimax", "heygen", "fish", "gemini"].includes(engine);
         fillSelect(dom.audioVoice, [["", needsKey ? "Add the key in Setup" : "No voices found"]]);
         return;
       }
