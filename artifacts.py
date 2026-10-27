@@ -774,6 +774,11 @@ def version_info(job_dir: str | Path, manifest: dict) -> dict:
     )
     label = f"v{version}" if version else "v?"
     edit_version = int(manifest.get("edit_version") or 0)
+    if not edit_version and str(
+        (manifest.get("spec") or {}).get("edit_hash") or ""
+    ):
+        resolved = _edit_metadata(job_dir, manifest)
+        edit_version = int(resolved.get("edit_version") or 0)
     if edit_version:
         label += f" · Edit v{edit_version}"
     is_current = bool(current and current.get("artifact_id") == artifact)
