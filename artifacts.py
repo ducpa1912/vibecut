@@ -38,6 +38,7 @@ from typing import Any, Iterable
 
 import render
 import captions
+import edits
 
 SCHEMA_VERSION = 1
 RENDER_VERSION = "v0.14-artifact-1"
@@ -67,6 +68,43 @@ def canonical_json(value: Any) -> str:
 
 def _sha(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _identity_audio(value: Any, key: str = "") -> Any:
+    if isinstance(value, dict):
+        return {
+            str(name): _identity_audio(item, str(name))
+            for name, item in value.items()
+            if not str(name).startswith("_")
+        }
+    if isinstance(value, (list, tuple)):
+        return [_identity_audio(item, key) for item in value]
+    if isinstance(value, str) and key in {
+        "track", "file", "upload", "path", "source_path",
+    }:
+        return value.replace("\\", "/").rsplit("/", 1)[-1]
+    return value
+
+
+def audio_hashes(audio_plan: dict | None) -> tuple[str, str]:
+    """Return ``(audio_hash, music_hash)`` for one AudioPlan.
+
+    ``audio_hash`` covers the complete normalized plan; ``music_hash`` is the
+    locked bed's content hash when the plan names one. Runtime ``_`` keys and
+    absolute path prefixes are removed so the same mix hashes the same in every
+    checkout. Both are plain SHA-256 hex, empty when the plan has no audio work
+    or no bed.
+    """
+    if not isinstance(audio_plan, dict) or not audio_plan:
+        return "", ""
+    audio_hash = _sha(_identity_audio(audio_plan))
+    music = audio_plan.get("music")
+    if not isinstance(music, dict):
+        return audio_hash, ""
+    music_hash = str(
+        music.get("file_hash") or music.get("locked_hash") or "",
+    ).strip().lower()
+    return audio_hash, music_hash
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -208,6 +246,9 @@ class ArtifactSpec:
     source_fingerprint: str = ""
     generation: int = 0
     edit_hash: str = ""
+    transcript_id: str = ""
+    audio_hash: str = ""
+    music_hash: str = ""
     schema_version: int = SCHEMA_VERSION
     render_version: str = RENDER_VERSION
 
@@ -241,6 +282,12 @@ class ArtifactSpec:
         # Edit, so legacy artifact ids and pinned links stay byte-stable.
         if self.edit_hash:
             payload["edit_hash"] = str(self.edit_hash)
+        if self.transcript_id:
+            payload["transcript_id"] = str(self.transcript_id)
+        if self.audio_hash:
+            payload["audio_hash"] = str(self.audio_hash)
+        if self.music_hash:
+            payload["music_hash"] = str(self.music_hash)
         return payload
 
     @classmethod
@@ -263,6 +310,9 @@ class ArtifactSpec:
             source_fingerprint=str(data.get("source_fingerprint") or ""),
             generation=_optional_int(data.get("generation")) or 0,
             edit_hash=str(data.get("edit_hash") or ""),
+            transcript_id=str(data.get("transcript_id") or ""),
+            audio_hash=str(data.get("audio_hash") or ""),
+            music_hash=str(data.get("music_hash") or ""),
             schema_version=int(data.get("schema_version") or SCHEMA_VERSION),
             render_version=str(data.get("render_version") or RENDER_VERSION),
         )
@@ -297,6 +347,10 @@ def build_spec(
     generation: int = 0,
     clips: Iterable[dict] | None = None,
     edit_hash: str = "",
+    transcript_id: str = "",
+    audio_plan: dict | None = None,
+    audio_hash: str = "",
+    music_hash: str = "",
 ) -> ArtifactSpec:
     plan = plan or {}
     if cues is None:
@@ -304,6 +358,13 @@ def build_spec(
     cue_list = list(cues or [])
     cue_hash, text_hash = cue_hashes(cue_list)
     source = (job or {}).get("source") or {}
+    track = plan.get("_caption_track")
+    if not transcript_id and isinstance(track, dict):
+        transcript_id = str(track.get("transcript_id") or "")
+    if audio_plan is not None:
+        derived_audio, derived_music = audio_hashes(audio_plan)
+        audio_hash = audio_hash or derived_audio
+        music_hash = music_hash or derived_music
     return ArtifactSpec(
         clips=normalize_clips(
             clips if clips is not None else plan.get("clips")
@@ -328,6 +389,9 @@ def build_spec(
         source_fingerprint=source_fingerprint(job) or str(source.get("fingerprint") or ""),
         generation=max(0, int(generation or 0)),
         edit_hash=str(edit_hash or ""),
+        transcript_id=str(transcript_id or ""),
+        audio_hash=str(audio_hash or ""),
+        music_hash=str(music_hash or ""),
         schema_version=SCHEMA_VERSION,
         render_version=RENDER_VERSION,
     )
@@ -498,6 +562,12 @@ def make_manifest(
         "audio_sig": payload.get("audio_sig") or "",
         "story_id": payload.get("story_id") or "",
         "source_fingerprint": payload.get("source_fingerprint") or "",
+        "edit_hash": payload.get("edit_hash") or "",
+        "edit_id": None,
+        "edit_version": None,
+        "transcript_id": payload.get("transcript_id") or "",
+        "audio_hash": payload.get("audio_hash") or "",
+        "music_hash": payload.get("music_hash") or "",
         "resolved_encoder": payload.get("resolved_encoder"),
         "generation": payload.get("generation") or 0,
         "render": None,
@@ -529,7 +599,65 @@ def manifest_summary(manifest: dict) -> dict:
         "audio_sig": spec.get("audio_sig") or "",
         "resolved_encoder": spec.get("resolved_encoder"),
         "generation": int(spec.get("generation") or 0),
+        "edit_id": manifest.get("edit_id"),
+        "edit_hash": spec.get("edit_hash") or "",
+        "edit_version": manifest.get("edit_version"),
+        "transcript_id": spec.get("transcript_id") or "",
+        "audio_hash": spec.get("audio_hash") or "",
+        "music_hash": spec.get("music_hash") or "",
         "reel": (manifest.get("media") or {}).get("reel"),
+    }
+
+
+def _edit_metadata(job_dir: str | Path, manifest: dict) -> dict:
+    """Resolve the Edit sidecar this artifact rendered, for review labels.
+
+    The artifact id already covers ``edit.hash``. This only adds display
+    metadata (id and version) after the fact, so old manifests stay valid and
+    the hash never changes. A missing job, edit folder or stale sidecar returns
+    an empty mapping.
+    """
+    spec = manifest.get("spec") if isinstance(manifest.get("spec"), dict) else {}
+    wanted = str(spec.get("edit_hash") or "").strip().lower()
+    if not wanted:
+        return {}
+    job_dir = Path(job_dir)
+    job_path = job_dir / "job.json"
+    try:
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        job = {}
+    if not isinstance(job, dict):
+        job = {}
+    story_id = str(manifest.get("story_id") or spec.get("story_id") or "")
+    aspect = str(manifest.get("aspect") or spec.get("aspect") or "9:16")
+    try:
+        rows = edits.list_edits(job_dir)
+    except Exception:  # noqa: BLE001 - display metadata must not block a save
+        return {}
+    matching = [
+        row for row in rows
+        if str(row.get("hash") or "").lower() == wanted
+        and (not story_id or str((row.get("story_ref") or {}).get("story_id") or "") == story_id)
+        and str(row.get("aspect") or "") == aspect
+    ]
+    if not matching:
+        return {}
+    chosen = None
+    set_id = str(manifest.get("set_id") or "")
+    if set_id and story_id:
+        pointer = edits.pointer_edit_id(
+            job, edits.story_key(set_id, story_id, aspect),
+        )
+        chosen = next((row for row in matching if row.get("id") == pointer), None)
+    if chosen is None:
+        chosen = max(
+            matching,
+            key=lambda row: (float(row.get("created") or 0), int(row.get("version") or 0)),
+        )
+    return {
+        "edit_id": str(chosen.get("id") or ""),
+        "edit_version": int(chosen.get("version") or 0) or None,
     }
 
 
@@ -540,6 +668,7 @@ def save_manifest(job_dir: str | Path, manifest: dict) -> dict:
     if expected != artifact:
         raise ArtifactError("Manifest id does not match its canonical payload.")
     manifest = dict(manifest)
+    manifest.update(_edit_metadata(job_dir, manifest))
     manifest["updated"] = round(time.time(), 3)
     manifest.setdefault("schema_version", SCHEMA_VERSION)
     with LOCK:
@@ -644,17 +773,39 @@ def version_info(job_dir: str | Path, manifest: dict) -> dict:
         min(newer, key=lambda item: float(item.get("created") or 0)) if newer else None
     )
     label = f"v{version}" if version else "v?"
+    edit_version = int(manifest.get("edit_version") or 0)
+    if not edit_version and str(
+        (manifest.get("spec") or {}).get("edit_hash") or ""
+    ):
+        resolved = _edit_metadata(job_dir, manifest)
+        edit_version = int(resolved.get("edit_version") or 0)
+    if edit_version:
+        label += f" · Edit v{edit_version}"
     is_current = bool(current and current.get("artifact_id") == artifact)
     if is_current:
         label += " · current"
     elif superseded_by is not None:
         when = time.strftime("%-d %b", time.localtime(float(superseded_by.get("created") or 0)))
         label += f" · superseded by v{int(superseded_by.get('version') or 0) or '?'} on {when}"
+    edit_hash = str(
+        manifest.get("edit_hash")
+        or (manifest.get("spec") or {}).get("edit_hash")
+        or ""
+    )
     return {
         "version": version or None,
         "label": label,
         "current": is_current,
         "supersedes": manifest.get("supersedes"),
+        "edit": (
+            {
+                "id": manifest.get("edit_id"),
+                "hash": edit_hash,
+                "version": edit_version or None,
+                "label": f"Edit v{edit_version}" if edit_version else "Edit",
+            }
+            if edit_hash else None
+        ),
         "superseded_by": (
             {
                 "artifact_id": superseded_by.get("artifact_id"),
@@ -882,6 +1033,12 @@ def public_manifest(manifest: dict, job_id: str | None = None) -> dict:
         "audio_sig": spec.get("audio_sig") or "",
         "story_id": spec.get("story_id") or "",
         "source_fingerprint": spec.get("source_fingerprint") or "",
+        "edit_id": manifest.get("edit_id"),
+        "edit_hash": spec.get("edit_hash") or "",
+        "edit_version": manifest.get("edit_version"),
+        "transcript_id": spec.get("transcript_id") or "",
+        "audio_hash": spec.get("audio_hash") or "",
+        "music_hash": spec.get("music_hash") or "",
         "resolved_encoder": spec.get("resolved_encoder"),
         "generation": int(spec.get("generation") or 0),
         "spec": spec,
@@ -922,6 +1079,12 @@ def render_record(manifest: dict) -> dict:
         "audio_sig": spec.get("audio_sig") or "",
         "record_key": manifest.get("record_key"),
         "artifact_id": artifact,
+        "edit_id": manifest.get("edit_id"),
+        "edit_hash": spec.get("edit_hash") or "",
+        "edit_version": manifest.get("edit_version"),
+        "transcript_id": spec.get("transcript_id") or "",
+        "audio_hash": spec.get("audio_hash") or "",
+        "music_hash": spec.get("music_hash") or "",
         "pinned": bool(manifest.get("pinned")),
         "created": manifest.get("created"),
         "updated": manifest.get("updated"),
