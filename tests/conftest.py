@@ -22,6 +22,22 @@ def reset_cloud_circuits():
 
 
 @pytest.fixture(autouse=True)
+def rights_lock_default_off(monkeypatch):
+    """Keep older tests independent of the Setup rights lock.
+
+    Most baseline tests predate the lock and assert unrelated import, queue or
+    error behaviour. The default is off for them; rights tests save their own
+    setting and read it back through ``rights.py``.
+    """
+    import rights
+    import settings_store
+
+    monkeypatch.setattr(rights, "DEFAULT_LOCK", False)
+    monkeypatch.setitem(settings_store.DEFAULTS, "rights", {"lock": False})
+    yield
+
+
+@pytest.fixture(autouse=True)
 def generous_test_volume(monkeypatch):
     """Keep tests independent of the workstation's real free space.
 

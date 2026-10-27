@@ -565,6 +565,7 @@ def report_for(job: dict, rows: list[tuple[float, list[dict]]] | None = None, **
     if rows:
         observations_ += observations(rows)
     sampled = kwargs.pop("sampled", {"ran": True, "frames": 10, "vision": True})
+    kwargs.setdefault("settings", {"rights": {"lock": True}})
     return detect.build_report(job, observations_, sampled=sampled, **kwargs)
 
 
@@ -661,18 +662,59 @@ def test_attestation_from_the_job_is_read():
 
 
 def test_cleanup_block_reason_keys_on_the_detected_kind():
-    assert detect.cleanup_block_reason("watermark", attested=True) == "watermark"
-    assert detect.cleanup_block_reason("watermark", attested=False) == "watermark"
+    locked = {"rights": {"lock": True}}
+    assert detect.cleanup_block_reason(
+        "watermark", attested=True, settings=locked,
+    ) == "watermark"
+    assert detect.cleanup_block_reason(
+        "watermark", attested=False, settings=locked,
+    ) == "watermark"
     assert (
-        detect.cleanup_block_reason("handle_or_logo", attested=False)
+        detect.cleanup_block_reason(
+            "handle_or_logo", attested=False, settings=locked,
+        )
         == "attestation_required"
     )
-    assert detect.cleanup_block_reason("handle_or_logo", attested=True) is None
+    assert detect.cleanup_block_reason(
+        "handle_or_logo", attested=True, settings=locked,
+    ) is None
     assert (
-        detect.cleanup_block_reason("subtitle", attested=False)
+        detect.cleanup_block_reason("subtitle", attested=False, settings=locked)
         == "rights_not_attested"
     )
-    assert detect.cleanup_block_reason("subtitle", attested=True) is None
+    assert detect.cleanup_block_reason(
+        "subtitle", attested=True, settings=locked,
+    ) is None
+
+
+def test_prefill_opens_with_the_lock_off_but_keeps_the_hard_rules():
+    tracklets = [
+        {
+            "id": "trk_sub", "kind": "subtitle",
+            "box": {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09},
+            "ranges": [{"start": 0.0, "end": 4.0}], "confidence": 0.9,
+        },
+        {
+            "id": "trk_water", "kind": "watermark",
+            "box": {"x": 0.84, "y": 0.05, "w": 0.13, "h": 0.05},
+            "ranges": [{"start": 0.0, "end": 4.0}], "confidence": 0.9,
+        },
+        {
+            "id": "trk_handle", "kind": "handle_or_logo",
+            "box": {"x": 0.02, "y": 0.03, "w": 0.15, "h": 0.05},
+            "ranges": [{"start": 0.0, "end": 4.0}], "confidence": 0.9,
+        },
+    ]
+    entries = detect.clean_prefill(
+        tracklets, attested=False, settings={"rights": {"lock": False}},
+    )
+    by_id = {item["tracklet_id"]: item for item in entries}
+    assert by_id["trk_sub"]["enabled"] is True
+    assert by_id["trk_sub"]["blocked"] is None
+    assert by_id["trk_water"]["action"] == "refused"
+    assert by_id["trk_water"]["enabled"] is False
+    assert by_id["trk_handle"]["blocked"] == "attestation_required"
+    assert by_id["trk_handle"]["enabled"] is False
 
 
 def test_subtitle_prefill_uses_a_plate_in_the_caption_zone():

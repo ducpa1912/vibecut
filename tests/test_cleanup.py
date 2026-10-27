@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 import app
 import artifacts
 import routes_cleanup
+import settings_store
 
 JOB_ID = "cleanup-job"
 STORY_ID = "st_cleanup"
@@ -117,6 +118,10 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "SOURCES", sources)
     monkeypatch.setattr(app, "SHARES", tmp_path / "shares.json")
     monkeypatch.setattr(app, "HOST", "127.0.0.1")
+    monkeypatch.setattr(settings_store, "DATA", data)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", data / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", data / "secrets.json")
+    settings_store.save_settings({"rights": {"lock": True}})
     monkeypatch.delenv("VIBECUT_TOKEN", raising=False)
     monkeypatch.setenv("VIBECUT_ENABLE_CLEANUP", "1")
     directory = jobs / JOB_ID
@@ -670,6 +675,9 @@ def test_cleanup_layers_route_builds_gated_layers(env):
         _tracklet("trk_handle", "handle_or_logo", {"x": 0.02, "y": 0.03, "w": 0.15, "h": 0.05}, text="@me"),
     ]
     detect.write_report(env.directory, _report(tracklets))
+    job = json.loads(env.job_path.read_text(encoding="utf-8"))
+    job["rights"] = {"attested": False, "at": 1.0, "source": "import"}
+    env.job_path.write_text(json.dumps(job), encoding="utf-8")
 
     locked = env.client.post(f"/api/jobs/{JOB_ID}/cleanup/layers", json={})
     assert locked.status_code == 409
@@ -699,6 +707,37 @@ def test_cleanup_layers_route_builds_gated_layers(env):
         json={"tracklet_ids": ["trk_missing"]},
     )
     assert unknown.status_code == 422
+
+
+def test_cleanup_layers_open_without_a_tick_when_the_lock_is_off(env):
+    tracklets = [
+        _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
+        _tracklet("trk_ui", "screen_text", {"x": 0.05, "y": 0.03, "w": 0.2, "h": 0.05}, text="Search"),
+        _tracklet("trk_water", "watermark", {"x": 0.84, "y": 0.05, "w": 0.13, "h": 0.05}, text="TikTok"),
+        _tracklet("trk_handle", "handle_or_logo", {"x": 0.02, "y": 0.03, "w": 0.15, "h": 0.05}, text="@me"),
+    ]
+    detect.write_report(env.directory, _report(tracklets))
+    job = json.loads(env.job_path.read_text(encoding="utf-8"))
+    job["rights"] = {"attested": False, "at": 1.0, "source": "import"}
+    env.job_path.write_text(json.dumps(job), encoding="utf-8")
+    settings_store.save_settings({"rights": {"lock": False}})
+
+    built = env.client.post(f"/api/jobs/{JOB_ID}/cleanup/layers", json={})
+    assert built.status_code == 200, built.text
+    body = built.json()
+    assert [layer["id"] for layer in body["layers"]] == ["cl_trk_sub"]
+    blocked = {item["tracklet_id"]: item["blocked"] for item in body["refused"]}
+    assert blocked["trk_water"] == "watermark"
+    assert blocked["trk_ui"] == "screen_text"
+    assert blocked["trk_handle"] == "attestation_required"
+
+    handle = env.client.post(
+        f"/api/jobs/{JOB_ID}/cleanup/layers",
+        json={"tracklet_ids": ["trk_handle"], "include_handles": True},
+    )
+    assert handle.status_code == 200, handle.text
+    assert handle.json()["layers"] == []
+    assert handle.json()["refused"][0]["blocked"] == "attestation_required"
 
 
 def test_edit_save_requires_server_side_rights_for_clean_layers(env):
@@ -1021,6 +1060,10 @@ def _live_job(tmp_path, monkeypatch, path: str) -> SimpleNamespace:
     monkeypatch.setattr(app, "SOURCES", sources)
     monkeypatch.setattr(app, "SHARES", tmp_path / "shares.json")
     monkeypatch.setattr(app, "HOST", "127.0.0.1")
+    monkeypatch.setattr(settings_store, "DATA", data)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", data / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", data / "secrets.json")
+    settings_store.save_settings({"rights": {"lock": True}})
     monkeypatch.delenv("VIBECUT_TOKEN", raising=False)
     monkeypatch.setenv("VIBECUT_ENABLE_CLEANUP", "1")
     meta = pipeline.probe(path)
