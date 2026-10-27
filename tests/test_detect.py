@@ -302,7 +302,7 @@ def test_read_text_samples_treats_an_empty_probe_as_unavailable(
         }],
     )
     monkeypatch.setattr(pipeline.vision, "available", lambda: True)
-    monkeypatch.setattr(pipeline.vision, "probe_images", lambda directory: {})
+    monkeypatch.setattr(pipeline.vision, "probe_images", lambda directory, files=None: {})
     result = pipeline.read_text_samples("/tmp/source.mp4", tmp_path, 10.0)
     assert result["vision"] is False
 
@@ -318,7 +318,7 @@ def test_read_text_samples_maps_records_to_frames(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline.vision, "available", lambda: True)
     monkeypatch.setattr(
         pipeline.vision, "probe_images",
-        lambda directory: {"000001.jpg": {"text": [line("hello")], "width": 960, "height": 540}},
+        lambda directory, files=None: {"000001.jpg": {"text": [line("hello")], "width": 960, "height": 540}},
     )
     result = pipeline.read_text_samples("/tmp/source.mp4", tmp_path, 10.0)
     assert result["vision"] is True

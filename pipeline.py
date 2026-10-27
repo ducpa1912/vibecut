@@ -527,6 +527,7 @@ def extract_tracking_frames(
 
 CHECK_SAMPLE_FPS = 0.5
 CHECK_SAMPLE_MAX_FRAMES = 3600
+CHECK_OCR_BATCH = 24
 CHECK_FRAME_WIDTH = 960
 
 
@@ -586,6 +587,7 @@ def read_text_samples(
     fps: float = CHECK_SAMPLE_FPS,
     max_frames: int = CHECK_SAMPLE_MAX_FRAMES,
     keep: bool | None = None,
+    progress: Callable[[float, str], None] | None = None,
 ) -> dict:
     """Run the 0.5 fps text pass and return OCR lines with geometry.
 
@@ -599,13 +601,27 @@ def read_text_samples(
         else bool(keep)
     )
     directory = job_dir / "check" / "frames"
+    if progress is not None:
+        progress(0.0, "Pulling frames to read text")
     frames = extract_text_frames(
         path, job_dir, duration, fps=fps, max_frames=max_frames, out_dir=directory,
     )
     if not frames:
         return {"frames": [], "vision": False, "fps": fps, "duration": duration}
     available = vision.available()
-    records = vision.probe_images(directory) if available else {}
+    records: dict = {}
+    if available:
+        # Read in batches so Check reports frame N / M instead of sitting
+        # at one number for minutes while the helper reads every frame.
+        files = [directory / str(frame["file"]) for frame in frames]
+        total = len(files)
+        for offset in range(0, total, CHECK_OCR_BATCH):
+            records.update(vision.probe_images(
+                directory, files=files[offset:offset + CHECK_OCR_BATCH],
+            ))
+            if progress is not None:
+                done = min(total, offset + CHECK_OCR_BATCH)
+                progress(0.1 + 0.9 * done / total, f"Reading text · frame {done} / {total}")
     samples = []
     for frame in frames:
         record = records.get(frame["file"]) or {}

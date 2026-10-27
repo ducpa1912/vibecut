@@ -23,6 +23,7 @@ frame reader and audio extractor are injected by ``routes_check``.
 
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import os
@@ -1586,6 +1587,16 @@ def _sampler_payload(value: Any) -> tuple[list[dict], bool, int, float | None]:
     return frames, bool(frames), len(frames), None
 
 
+def _accepts_progress(function) -> bool:
+    try:
+        parameters = inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return False
+    return "progress" in parameters or any(
+        item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+    )
+
+
 def run_check(
     job_id: str,
     job: dict,
@@ -1619,11 +1630,15 @@ def run_check(
     sampled_error: str | None = None
     if sample_text and sampler is not None and path:
         if progress:
-            progress(0.05, "Sampling text every two seconds")
-        try:
-            payload = sampler(
-                path, Path(job_dir), duration, fps=fps, max_frames=max_frames,
+            progress(0.05, f"Sampling text at {fps:g} frames a second")
+        kwargs = {"fps": fps, "max_frames": max_frames}
+        if progress and _accepts_progress(sampler):
+            # Frame-level progress maps into Check's 5-65% sampling band.
+            kwargs["progress"] = lambda fraction, message: progress(
+                0.05 + 0.60 * max(0.0, min(1.0, float(fraction))), message,
             )
+        try:
+            payload = sampler(path, Path(job_dir), duration, **kwargs)
         except Exception as exc:  # noqa: BLE001
             sampled_error = str(exc)[:300]
             payload = None
