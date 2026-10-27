@@ -618,6 +618,7 @@ def _fresh_story(
 ) -> tuple[dict, dict, dict]:
     """Load the job, Edit and story, refusing a stale story with 409."""
     job = _app().load_job(job_id)
+    _app().require_source(job)
     edit = _load(edit_id, _job_dir(job_id))
     record, story = _resolve_story(
         job, edit["story_ref"]["set_id"], edit["story_ref"]["story_id"],

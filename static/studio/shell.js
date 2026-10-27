@@ -33,7 +33,7 @@ const WATCH_BUSY_MS = 2000;
 const WATCH_IDLE_MS = 15000;
 const EMPTY_STATE = {
   jobId: "", loaded: false, status: "", progress: 0, message: "",
-  check: "none", stories: 0, missing: false,
+  check: "none", stories: 0, missing: false, sourceMissing: "",
 };
 
 const STOPPED = new Set(["cancelled", "interrupted"]);
@@ -243,6 +243,14 @@ export function startStudio() {
     dom.currentStatus.textContent = status;
     dom.currentStatus.dataset.tone = currentJob?.status === "ready" ? "ok"
       : currentJob?.status === "failed" ? "bad" : "quiet";
+    dom.currentStatus.title = "";
+    if (currentJob && jobState.jobId === currentJob.id && jobState.sourceMissing) {
+      // Said where the creator looks first, not only on a locked step.
+      dom.currentStatus.hidden = false;
+      dom.currentStatus.textContent = "Original file missing";
+      dom.currentStatus.dataset.tone = "bad";
+      dom.currentStatus.title = jobState.sourceMissing;
+    }
     dom.dialogJob.textContent = currentJob
       ? `${name || currentJob.id}${status ? ` · ${status}` : ""}`
       : "No video open.";
@@ -293,6 +301,7 @@ export function startStudio() {
     if (!currentJob) return "Open or import a video first.";
     if (jobState.jobId !== currentJob.id || !jobState.loaded) return "";
     if (jobState.missing) return "This video is no longer on file. Choose another one.";
+    if (jobState.sourceMissing) return jobState.sourceMissing;
     if (jobState.status === "failed" || jobState.status === "error") {
       return "Reading this video failed. Press Read again at the top, or import it again.";
     }
@@ -315,6 +324,7 @@ export function startStudio() {
       if (!currentJob) return { state: "locked", text: "Needs a video" };
       if (isReading(jobState.status)) return { state: "locked", text: "Waits for reading" };
       if (STOPPED.has(jobState.status)) return { state: "locked", text: "Reading stopped" };
+      if (jobState.sourceMissing) return { state: "locked", text: "Original file missing" };
       if (stepId === "edit" || stepId === "finish") return { state: "locked", text: "Needs stories" };
       return { state: "locked", text: "Not available" };
     }
@@ -325,6 +335,7 @@ export function startStudio() {
       }
       if (STOPPED.has(jobState.status)) return { state: "open", text: "Reading stopped" };
       if (jobState.status === "failed" || jobState.status === "error") return { state: "open", text: "Reading failed" };
+      if (jobState.sourceMissing) return { state: "open", text: "Original file missing" };
       return { state: "done", text: "Video ready" };
     }
     if (stepId === "check") {
@@ -390,6 +401,7 @@ export function startStudio() {
       next.status = String(status?.status || "");
       next.progress = Number(status?.progress || 0);
       next.message = String(status?.message || "");
+      next.sourceMissing = status?.source_missing ? String(status.source_missing_message || "") : "";
     } catch (error) {
       if (error?.status === 404) next.missing = true;
       else next.loaded = false;

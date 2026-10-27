@@ -371,6 +371,48 @@ def _public_render(job_id: str, record: dict | None) -> dict | None:
     return value
 
 
+def _source_exists(path: str) -> bool:
+    try:
+        return Path(path).is_file()
+    except OSError:
+        return False
+
+
+def source_missing(job: dict) -> str | None:
+    """The source path when the original file is gone, else None.
+
+    Jobs keep a path, not a copy, so a moved or deleted file must be named
+    plainly instead of Check reporting "Checked" over an ffmpeg error and
+    Stories finding nothing. A URL download still in flight has no file yet.
+    """
+    if str(job.get("status") or "") in {"downloading", "failed"} and not job.get("analysis"):
+        return None
+    path = str((job.get("source") or {}).get("path") or "")
+    if not path:
+        return None
+    return None if _source_exists(path) else path
+
+
+def source_missing_message(path: str) -> str:
+    return f"The original file was moved or deleted: {path}. Put it back or import it again."
+
+
+def require_source(job: dict) -> None:
+    """Refuse work that reads the source when the file is gone (409)."""
+    missing = source_missing(job)
+    if missing:
+        raise HTTPException(409, source_missing_message(missing))
+
+
+def _source_state(job: dict) -> dict:
+    missing = source_missing(job)
+    return {
+        "source_missing": bool(missing),
+        "source_missing_path": missing,
+        "source_missing_message": source_missing_message(missing) if missing else None,
+    }
+
+
 def public_job(job: dict) -> dict:
     artifacts.ensure_job_schema(job)
     value = dict(job)
@@ -394,6 +436,7 @@ def public_job(job: dict) -> dict:
         for key in ("name", "duration", "width", "height", "fps", "has_audio", "size")
     }
     value["usage"] = _usage_summary(job)
+    value.update(_source_state(job))
     analysis = value.get("analysis")
     if analysis:
         for scene in analysis.get("scenes", []):
@@ -414,6 +457,7 @@ def public_status(job: dict) -> dict:
             key: _public_render(job["id"], record)
             for key, record in (job.get("renders") or {}).items()
         },
+        **_source_state(job),
     }
 
 
@@ -4805,6 +4849,7 @@ def _job_index_row(job: dict) -> dict:
         ),
         "story_titles": stories[:24],
         "source_deleted": bool(source.get("deleted_at")),
+        "source_missing": bool(source_missing(job)),
         "_search": " ".join([
             str(job.get("id") or ""),
             str(source.get("name") or ""),
@@ -5878,6 +5923,7 @@ def _clipset_job(job_id: str) -> dict:
     job = load_job(job_id)
     if job.get("status") != "ready" or not job.get("analysis"):
         raise HTTPException(409, "Analysis is not ready yet.")
+    require_source(job)
     return job
 
 
@@ -7560,6 +7606,7 @@ def _queue_render(
     edit: dict | None = None,
 ) -> dict:
     """Serialize check/write/submit so one record key cannot queue twice."""
+    require_source(job)
     with RENDER_SUBMIT_LOCK:
         return _queue_render_locked(
             job_id, job, plan, quality, aspect, encoder, captions, audio_plan,

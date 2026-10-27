@@ -34,3 +34,15 @@ def generous_test_volume(monkeypatch):
         disk, "usage", lambda path: (100 * gib, 10 * gib, 90 * gib)
     )
     yield
+
+
+@pytest.fixture(autouse=True)
+def sources_present(monkeypatch):
+    """Most tests use placeholder source paths; treat them as present.
+
+    Missing-source tests restore ``app._source_exists`` to the real check.
+    """
+    import app
+
+    monkeypatch.setattr(app, "_source_exists", lambda path: True)
+    yield
