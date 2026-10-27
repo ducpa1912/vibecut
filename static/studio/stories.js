@@ -28,6 +28,7 @@ import {
   statusText,
   statusTone,
 } from "./ui.js";
+import { sentenceSegments } from "./edit/model.js";
 
 const POLL_MS = 1600;
 const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
@@ -67,6 +68,91 @@ export function lengthPreset(set) {
     ([, preset]) => preset.min === min && preset.max === max,
   );
   return match ? match[0] : "auto";
+}
+
+/**
+ * Group the story's output-time sentence segments by sentence id.
+ *
+ * A sentence split across scenes has one clip per scene; the trim handles sit
+ * on the sentence edges, not the clip edges. The rows stay in output order, so
+ * a manually reordered story keeps its order.
+ */
+export function sentenceSpans(story) {
+  const spans = [];
+  for (const segment of sentenceSegments(story)) {
+    const id = segment.sentenceId ?? null;
+    const last = spans[spans.length - 1];
+    if (last && last.id === id) {
+      last.end = segment.end;
+      continue;
+    }
+    spans.push({
+      id,
+      index: spans.length,
+      start: Number(segment.start) || 0,
+      end: Number(segment.end) || 0,
+      text: segment.text || "",
+    });
+  }
+  return spans;
+}
+
+/** Nearest sentence bound to `time` for one edge of the trim range. */
+export function nearestSentenceBoundary(spans, edge, time, low = 0, high = spans.length - 1) {
+  if (!Array.isArray(spans) || !spans.length) return null;
+  const first = Math.max(0, Math.min(spans.length - 1, Number(low) || 0));
+  const last = Math.max(first, Math.min(spans.length - 1, Number(high) || 0));
+  const value = Number(time) || 0;
+  let best = first;
+  let distance = Infinity;
+  for (let index = first; index <= last; index += 1) {
+    const bound = edge === "start" ? spans[index].start : spans[index].end;
+    const gap = Math.abs(bound - value);
+    if (gap < distance) {
+      best = index;
+      distance = gap;
+    }
+  }
+  return best;
+}
+
+/**
+ * Trim the story to whole sentences between two span indices.
+ * Returns null when the range is empty or a clip has no sentence id.
+ */
+export function trimStoryRange(story, startIndex, endIndex) {
+  const spans = sentenceSpans(story);
+  if (!spans.length) return null;
+  const start = Math.max(0, Math.min(spans.length - 1, Number(startIndex) || 0));
+  const end = Math.max(start, Math.min(spans.length - 1, Number(endIndex) || 0));
+  const rows = spans.slice(start, end + 1);
+  const sentences = rows.map((row) => row.id);
+  if (sentences.some((id) => id === null || id === undefined)) return null;
+  const ids = [...new Set(sentences)];
+  if (ids.length !== sentences.length) return null;
+  const spanStart = rows[0].start;
+  const spanEnd = rows[rows.length - 1].end;
+  return {
+    sentences: ids,
+    startIndex: start,
+    endIndex: end,
+    start: spanStart,
+    end: spanEnd,
+    duration: Math.max(0.05, spanEnd - spanStart),
+  };
+}
+
+/** Layer row ids that cross or sit outside the trimmed story window. */
+export function outsideLayerIds(rows, start, end) {
+  const low = Number(start) || 0;
+  const high = Number(end) || 0;
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => {
+      const rowStart = Number(row?.start) || 0;
+      const rowEnd = Number(row?.end) || rowStart;
+      return rowStart < low - 0.001 || rowEnd > high + 0.001;
+    })
+    .map((row) => String(row.layerId ?? row.id ?? ""));
 }
 
 export function mount(root, ctx) {
