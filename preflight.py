@@ -1944,6 +1944,10 @@ def uncovered_text_markers(
         return []
     if not isinstance(report, dict):
         return []
+    if str(report.get("status") or "ready") not in {"ready", "complete"}:
+        return []
+    if report.get("complete") is False:
+        return []
     clean = [item for item in edit.get("clean") or [] if isinstance(item, dict)]
     markers: list[dict] = []
     for tracklet in report.get("tracklets") or []:
