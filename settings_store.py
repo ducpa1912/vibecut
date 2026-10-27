@@ -118,8 +118,10 @@ def _migrate_route(workflow: str, raw: object) -> tuple[dict | None, bool]:
     if not isinstance(raw, dict):
         return None, True
     route = dict(raw)
-    provider = str(route.get("provider") or "").strip().lower()
+    raw_provider = str(route.get("provider") or "")
+    provider = raw_provider.strip().lower()
     model = str(route.get("model") or "").strip()
+    route_changed = provider != raw_provider
     if workflow == "tts":
         if provider in workflow_config.REMOVED_TTS_PROVIDERS:
             return {
@@ -141,9 +143,9 @@ def _migrate_route(workflow: str, raw: object) -> tuple[dict | None, bool]:
                 "provider": provider,
                 "model": workflow_config.STT_MODEL_MIGRATIONS[model],
             }, True
-    if provider != str(route.get("provider") or ""):
+    if route_changed:
         route["provider"] = provider
-    return route, False
+    return route, route_changed
 
 
 def _migrate_workflows(stored: dict) -> bool:
