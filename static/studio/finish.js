@@ -1129,7 +1129,7 @@ export function mount(root, ctx) {
               text: [
                 row.created ? shortDate(row.created) : "",
                 row.layer_counts?.clean ? `${row.layer_counts.clean} clean` : "",
-                row.layer_counts?.graphics ? `${row.layer_counts.graphics} graphics` : "",
+                row.layer_counts?.graphics ? formatCount(row.layer_counts.graphics, "graphic") : "",
               ].filter(Boolean).join(" · ") || "Saved",
             }),
           ]),

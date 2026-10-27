@@ -68,7 +68,7 @@ export function mountCaptionsPanel(host, ctx) {
       el("h3", { text: "No captions yet" }),
       el("p", { text: "Captions follow the spoken words in this story. Build them once, then adjust the style or text." }),
       el("div", { class: "st-layer-add" }, [preset, build]),
-      el("p", { class: "st-hint", text: "If the video has no transcript yet, build captions after Check finishes." }),
+      el("p", { class: "st-hint", text: "Captions need the speech read during import. If none was found, import the video again with Speech on." }),
     ]));
     return;
   }

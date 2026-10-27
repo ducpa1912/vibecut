@@ -1268,13 +1268,27 @@ def _report_warnings(
                 "message": "No speech found. A music bed is recommended.",
                 "tracklet_ids": [],
             })
+    elif not audio.get("has_audio", True):
+        warnings.append({
+            "code": "no_audio",
+            "severity": "info",
+            "message": "This video has no sound track. Add music or a voice-over in Edit.",
+            "tracklet_ids": [],
+        })
+    elif audio.get("no_speech"):
+        warnings.append({
+            "code": "no_speech",
+            "severity": "info",
+            "message": "No speech found. A music bed is recommended.",
+            "tracklet_ids": [],
+        })
     else:
         warnings.append({
             "code": "speech_unknown",
             "severity": "warning",
             "message": (
-                "Speech coverage is unknown because transcription did not run. "
-                "Captions and music decisions need it."
+                "Speech wasn't read for this video, so captions can't be built. "
+                "Import it again with Speech on."
             ),
             "tracklet_ids": [],
         })
@@ -1385,6 +1399,8 @@ def build_report(
         "speech_ratio": speech["speech_ratio"],
         "speech_ranges": speech["ranges"],
         "transcript": bool(transcript_available),
+        # The read ran and its loudness gate found no speech (QA #23).
+        "no_speech": bool((analysis.get("transcript") or {}).get("no_speech")),
         "music": music,
     }
     faces = faces_signal(scenes, duration)

@@ -527,7 +527,8 @@ def run_analysis(job_id: str) -> None:
         job["analysis"] = analysis
         job["status"] = "ready"
         job["progress"] = 1.0
-        job["message"] = f"{analysis['scene_count']} moments · hook found"
+        count = int(analysis["scene_count"])
+        job["message"] = f"{count} {'moment' if count == 1 else 'moments'} · hook found"
         job["error"] = None
         save_job(job)
         LOGGER.info("job %s ready in %.1fs", job_id, analysis["elapsed"])
@@ -4362,15 +4363,37 @@ class VariantBody(BaseModel):
     clips: list[dict]
 
 
-@app.post("/api/inspect")
-def inspect(body: InspectBody) -> dict:
-    path = Path(body.path).expanduser()
+UNREADABLE_VIDEO = (
+    "This file isn't a readable video. Try exporting it again as MP4 (H.264)."
+)
+
+
+def _local_video_path(raw: str) -> Path:
+    """A local path that names a file, with plain errors for the rest."""
+    path = Path(raw).expanduser()
+    if path.is_dir():
+        raise HTTPException(400, "That path is a folder; choose a video file.")
     if not path.is_file():
         raise HTTPException(404, "File not found on this machine.")
+    return path
+
+
+def _probe_video(path: Path) -> dict:
+    """ffprobe a source; its raw stderr goes to the log, not the creator."""
     try:
-        meta = pipeline.probe(path)
+        return pipeline.probe(path)
     except pipeline.PipelineError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        LOGGER.warning("probe failed for %s: %s", path, str(exc)[:600])
+        message = str(exc)
+        # pipeline's own short sentences are already plain; tool output isn't.
+        plain = "\n" not in message and "ffprobe" not in message and len(message) <= 120
+        raise HTTPException(400, message if plain else UNREADABLE_VIDEO) from exc
+
+
+@app.post("/api/inspect")
+def inspect(body: InspectBody) -> dict:
+    path = _local_video_path(body.path)
+    meta = _probe_video(path)
     meta.pop("path", None)
     return meta
 
@@ -4630,7 +4653,7 @@ async def upload_job(
         disk.preflight(disk.estimate_upload(total), DATA)
         stored = store_source(temp, suffix, original)
         destination = link_source(stored, directory, suffix)
-        meta = pipeline.probe(destination)
+        meta = _probe_video(destination)
         job = _new_job(destination, original, meta, parsed_options, job_id=job_id)
         return {"id": job["id"], "status": job["status"]}
     except HTTPException:
@@ -4662,14 +4685,9 @@ async def upload_job(
 
 @app.post("/api/jobs/path")
 def job_from_path(body: PathBody) -> dict:
-    path = Path(body.path).expanduser()
-    if not path.is_file():
-        raise HTTPException(404, "File not found on this machine.")
+    path = _local_video_path(body.path)
     disk.preflight(disk.estimate_path(path), DATA)
-    try:
-        meta = pipeline.probe(path)
-    except pipeline.PipelineError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    meta = _probe_video(path)
     job_id = _requested_job_id(body.job_id)
     try:
         (JOBS / job_id).mkdir(parents=True, exist_ok=False)
