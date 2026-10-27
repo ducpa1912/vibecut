@@ -268,6 +268,7 @@ export function mountCleanPanel(host, ctx) {
   let loadError = "";
   let timer = 0;
   let loading = true;
+  let prefillBusy = false;
 
   host.replaceChildren(el("p", { class: "st-hint", text: "Reading Check findings…" }));
 
@@ -296,9 +297,9 @@ export function mountCleanPanel(host, ctx) {
     return map;
   }
 
-  function autoFill() {
+  async function autoFill() {
     const layers = ctx.getEdit()?.clean || [];
-    if (loading || layers.length) return;
+    if (loading || prefillBusy || layers.length) return;
     if (!report?.complete || report?.status !== "ready") return;
     if (!report?.text?.present || !canClean()) return;
     if (!jobId || readFlag(prefillKey(jobId, edit.story_ref, edit.aspect))) return;
@@ -310,22 +311,63 @@ export function mountCleanPanel(host, ctx) {
       && tracklets.has(String(entry.tracklet_id))
     ));
     if (!entries.length) return;
-    const next = [];
-    for (const [index, entry] of entries.slice(0, MAX_CLEAN).entries()) {
-      const group = layersFromEntry(
-        entry, tracklets.get(String(entry.tracklet_id)), index, report.source,
+    prefillBusy = true;
+    try {
+      // The server owns the one policy gate. It knows each tracklet's kind
+      // and refuses watermarks, screen text and un-attested handles. The
+      // browser sends the selected ids; it never builds the saved layers.
+      const selected = entries
+        .map((entry) => String(entry.tracklet_id))
+        .filter(Boolean);
+      if (!selected.length) return;
+      const result = await request(
+        `/api/jobs/${encodeURIComponent(jobId)}/cleanup/layers`,
+        {
+          method: "POST",
+          body: {
+            tracklet_ids: selected,
+            include_handles: false,
+          },
+        },
       );
-      if (next.length + group.length > MAX_CLEAN) break;
-      next.push(...group);
+      if (disposed) return;
+      const built = Array.isArray(result?.layers) ? result.layers : [];
+      const next = built.slice(0, MAX_CLEAN).map((layer) => clone(layer));
+      writeFlag(prefillKey(jobId, edit.story_ref, edit.aspect));
+      if (!next.length) {
+        ctx.notify(
+          `Check found ${formatCount(entries.length, "region")}, but the server policy allowed none. Review them in Check or place a box by hand.`,
+          "bad",
+        );
+        return;
+      }
+      ctx.setClean(next);
+      syncCleanTab(next.length);
+      const refused = Array.isArray(result?.refused) ? result.refused.length : 0;
+      const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
+      const cap = next.length >= MAX_CLEAN
+        ? ` All ${MAX_CLEAN} cover slots are used. Remove one to add another.`
+        : "";
+      const more = entries.length > next.length
+        ? ` ${entries.length - next.length} more stay in Check.`
+        : "";
+      const held = refused ? ` ${formatCount(refused, "region")} stayed refused by the server policy.` : "";
+      const note = warnings.length ? ` ${warnings[0]}` : "";
+      ctx.notify(
+        `Filled ${formatCount(next.length, "cover")} from Check.${cap}${more}${held}${note}`,
+        next.length >= MAX_CLEAN ? "bad" : refused ? "" : "ok",
+      );
+    } catch (error) {
+      if (disposed) return;
+      ctx.notify(
+        error?.status === 404
+          ? (error?.message || "Clean auto-fill is off in this build. Add boxes by hand.")
+          : (error?.message || "The server could not build Clean covers for this story."),
+        "bad",
+      );
+    } finally {
+      prefillBusy = false;
     }
-    writeFlag(prefillKey(jobId, edit.story_ref, edit.aspect));
-    ctx.setClean(next);
-    syncCleanTab(next.length);
-    ctx.notify(
-      `Filled ${formatCount(next.length, "cover")} from Check. Remove any you do not want.`
-      + (entries.length > next.length ? ` ${entries.length - next.length} more stay in Check.` : ""),
-      "ok",
-    );
   }
 
   function syncCleanTab(count) {
@@ -792,7 +834,7 @@ export function mountCleanPanel(host, ctx) {
       report = result.report;
       pending = Boolean(result.pending);
       loading = false;
-      autoFill();
+      void autoFill();
       if (disposed) return;
       render();
       if (pending) {

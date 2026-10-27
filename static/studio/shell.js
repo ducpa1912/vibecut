@@ -13,6 +13,7 @@ import { mount as mountCheck } from "./check.js";
 import { mount as mountStories } from "./stories.js";
 import { mount as mountEdit } from "./edit.js";
 import { mount as mountFinish } from "./finish.js";
+import { mount as mountSetup } from "./setup.js";
 import { el, statusText } from "./ui.js";
 
 const JOB_KEY = "vibecut.studio.job";
@@ -71,6 +72,7 @@ export function startStudio() {
   let currentJob = readJob();
   let activeStep = "";
   let cleanup = null;
+  let setupCleanup = null;
 
   root.innerHTML = `
     <div class="st-shell">
@@ -95,6 +97,7 @@ export function startStudio() {
         </nav>
         <div class="st-rail-foot">
           <span class="st-local"><i aria-hidden="true"></i>On this Mac</span>
+          <button id="st-setup-open" class="st-rail-settings" type="button" aria-haspopup="dialog">Setup</button>
           <button id="st-settings-open" class="st-rail-settings" type="button" aria-haspopup="dialog">Settings</button>
         </div>
       </aside>
@@ -139,6 +142,16 @@ export function startStudio() {
         <button class="st-btn st-btn-primary" type="button" data-dialog-close>Close</button>
       </div>
     </dialog>
+    <dialog id="st-setup-dialog" class="st-dialog st-setup-dialog" aria-labelledby="st-setup-title">
+      <div class="st-dialog-head">
+        <h2 id="st-setup-title">Setup</h2>
+        <button class="st-icon-btn" type="button" data-setup-close aria-label="Close setup">×</button>
+      </div>
+      <div id="st-setup-host" class="st-dialog-body st-setup-host"></div>
+      <div class="st-dialog-foot">
+        <button class="st-btn st-btn-primary" type="button" data-setup-close>Close</button>
+      </div>
+    </dialog>
   `;
 
   const dom = {
@@ -146,6 +159,9 @@ export function startStudio() {
     settings: root.querySelector("#st-settings-dialog"),
     settingsOpen: root.querySelector("#st-settings-open"),
     settingsTop: root.querySelector("#st-settings"),
+    setup: root.querySelector("#st-setup-dialog"),
+    setupOpen: root.querySelector("#st-setup-open"),
+    setupHost: root.querySelector("#st-setup-host"),
     currentName: root.querySelector("#st-current-name"),
     currentStatus: root.querySelector("#st-current-status"),
     dialogJob: root.querySelector("#st-dialog-job"),
@@ -263,8 +279,33 @@ export function startStudio() {
     else dom.settings.setAttribute("open", "");
   }
 
+  function openSetup() {
+    if (!dom.setup || !dom.setupHost) return;
+    if (typeof setupCleanup === "function") {
+      try {
+        setupCleanup();
+      } catch (_) {
+        /* A refresh replaces the old setup tree anyway. */
+      }
+    }
+    setupCleanup = mountSetup(dom.setupHost, ctx) || null;
+    if (typeof dom.setup.showModal === "function") dom.setup.showModal();
+    else dom.setup.setAttribute("open", "");
+  }
+
   dom.settingsOpen.addEventListener("click", openSettings);
   dom.settingsTop.addEventListener("click", openSettings);
+  dom.setupOpen?.addEventListener("click", openSetup);
+  for (const button of root.querySelectorAll("[data-setup-close]")) {
+    button.addEventListener("click", () => dom.setup.close());
+  }
+  dom.setup?.addEventListener("close", () => {
+    if (typeof setupCleanup === "function") setupCleanup();
+    setupCleanup = null;
+  });
+  dom.setup?.addEventListener("click", (event) => {
+    if (event.target === dom.setup) dom.setup.close();
+  });
   for (const button of root.querySelectorAll("[data-dialog-close]")) {
     button.addEventListener("click", () => dom.settings.close());
   }
