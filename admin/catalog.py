@@ -87,7 +87,6 @@ _STATIC: dict[str, list[dict[str, Any]]] = {
     ],
     "local": [
         {"id": "kokoro", "name": "Kokoro (local)", "reasoning": False, "kind": "tts"},
-        {"id": "piper", "name": "Piper (local)", "reasoning": False, "kind": "tts"},
         {"id": "say", "name": "Apple say (local)", "reasoning": False, "kind": "tts"},
     ],
     "local-mlx": [

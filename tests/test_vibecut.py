@@ -129,8 +129,7 @@ def test_voice_sample_engine_registry(monkeypatch, tmp_path):
 def test_engine_status_shape():
     status = audio.engine_status()
     assert set(status["voices"]) == {
-        "say", "piper", "kokoro", "elevenlabs", "openai", "groq", "deepgram",
-        "cartesia", "minimax", "fish", "gemini",
+        "say", "kokoro", "elevenlabs", "minimax", "fish", "gemini",
     }
     assert {"library", "minimax-music", "lyria-clip"} == set(status["music"])
     assert "demucs" in status["separation"]
@@ -1289,48 +1288,6 @@ def test_cloud_stt_deepgram_parses_utterances(tmp_path, monkeypatch):
     assert captured["content_type"] == "audio/mpeg"
 
 
-def test_cloud_tts_payloads(monkeypatch, tmp_path):
-    captured = {}
-
-    def fake_convert(source, output, extra=None):
-        output.write_bytes(b"RIFF-fake")
-        return output
-
-    def fake_urlopen(request, timeout=0):
-        captured["url"] = request.full_url
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        captured["auth"] = request.get_header("Authorization")
-        return FakeResponse(b"fake-audio")
-
-    monkeypatch.setattr(audio, "_convert", fake_convert)
-    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(audio, "openai_key", lambda: "sk-openai")
-    monkeypatch.setattr(audio, "groq_key", lambda: "gsk-groq")
-    monkeypatch.setattr(audio, "deepgram_key", lambda: "dg-key")
-
-    openai_out = tmp_path / "openai.wav"
-    audio._openai_voice("hello", "alloy", openai_out, 1.0)
-    assert captured["url"].endswith("/v1/audio/speech")
-    assert captured["body"]["model"] == "gpt-4o-mini-tts"
-    assert captured["body"]["voice"] == "alloy"
-    assert captured["body"]["input"] == "hello"
-    assert captured["auth"] == "Bearer sk-openai"
-    assert openai_out.is_file()
-
-    groq_out = tmp_path / "groq.wav"
-    audio._groq_voice("hello", "troy", groq_out, 1.0)
-    assert captured["body"]["model"] == "canopylabs/orpheus-v1-english"
-    assert captured["body"]["voice"] == "troy"
-    assert groq_out.is_file()
-
-    deepgram_out = tmp_path / "deepgram.wav"
-    audio._deepgram_voice("hello", "aura-2-thalia-en", deepgram_out, 1.0)
-    assert "model=aura-2-thalia-en" in captured["url"]
-    assert captured["body"] == {"text": "hello"}
-    assert captured["auth"] == "Token dg-key"
-    assert deepgram_out.is_file()
-
-
 def test_kokoro_exposes_chinese_voices():
     voices = {item["id"]: item for item in audio.list_voices("kokoro")}
     for voice in ("zf_xiaobei", "zm_yunjian", "zf_001", "zm_009"):
@@ -1481,31 +1438,6 @@ def test_crop_filter_dynamic_path_expression():
     assert "cos(PI" in vf
     assert "y='" in vf
     assert "crop=1080:608" in vf
-
-
-def test_cartesia_payload(monkeypatch, tmp_path):
-    captured = {}
-
-    def fake_convert(source, output, extra=None):
-        output.write_bytes(b"RIFF")
-        return output
-
-    def fake_urlopen(request, timeout=0):
-        captured["url"] = request.full_url
-        captured["headers"] = dict(request.header_items())
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse(b"fake-wav")
-
-    monkeypatch.setattr(audio, "_convert", fake_convert)
-    monkeypatch.setattr(audio, "cartesia_key", lambda: "sk_car_test")
-    monkeypatch.setattr(audio.urllib.request, "urlopen", fake_urlopen)
-    output = tmp_path / "cartesia.wav"
-    audio._cartesia_voice("hello", "voice-id", output, 1.0)
-    assert captured["url"] == "https://api.cartesia.ai/tts/bytes"
-    assert captured["headers"].get("X-api-key") == "sk_car_test"
-    assert captured["body"]["model_id"] == "sonic-3.6"
-    assert captured["body"]["voice"] == "voice-id"
-    assert output.is_file()
 
 
 def test_whisper_models_shape():

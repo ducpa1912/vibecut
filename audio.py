@@ -35,7 +35,6 @@ MUSIC_DIRS = {
     "generated": ASSETS / "music" / "generated",
 }
 VOICE_DIRS = {
-    "piper": ROOT / "data" / "voices" / "piper",
     "kokoro": ROOT / "data" / "models" / "kokoro",
 }
 KOKORO_EN_VOICES = (
@@ -301,12 +300,6 @@ def say_available() -> bool:
     return sys.platform == "darwin" and bool(shutil.which("say"))
 
 
-def piper_available() -> bool:
-    if shutil.which("piper"):
-        return True
-    return _module("piper")
-
-
 def kokoro_available() -> bool:
     if not _module("kokoro_onnx"):
         return False
@@ -316,10 +309,6 @@ def kokoro_available() -> bool:
 def elevenlabs_key() -> str:
     return settings_store.get_secret("elevenlabs")
 
-
-
-def cartesia_key() -> str:
-    return settings_store.get_secret("cartesia")
 
 
 def minimax_key() -> str:
@@ -379,32 +368,9 @@ def translate_providers() -> list[dict]:
 
 
 def engine_status() -> dict:
-    piper_bin = shutil.which("piper") or ("module" if _module("piper") else None)
     kokoro_model = next(VOICE_DIRS["kokoro"].glob("*.onnx"), None)
-    voices = {
-        "say": {"available": say_available(), "size_mb": 184,
-                "install": "Built-in. Download a Premium voice in System Settings → Spoken Content."},
-        "piper": {"available": piper_available(), "size_mb": 170,
-                  "install": "pip install piper-tts piper-phonemize-cross, then download a voice."},
-        "kokoro": {"available": kokoro_available(), "size_mb": 700,
-                   "install": "pip install kokoro-onnx soundfile espeak-ng, put kokoro*.onnx + voices*.bin in data/models/kokoro. Chinese: kokoro-v1.1-zh.onnx + voices-v1.1-zh.bin, plus named zh voices in v1.0."},
-        "elevenlabs": {"available": bool(elevenlabs_key()), "size_mb": 0,
-                       "install": "Set ELEVENLABS_API_KEY or add it in Setup. Cloud, paid."},
-        "openai": {"available": bool(openai_key()), "size_mb": 0,
-                   "install": "Set OPENAI_API_KEY or add it in Setup. gpt-4o-mini-tts, cloud."},
-        "groq": {"available": bool(groq_key()), "size_mb": 0,
-                 "install": "Set GROQ_API_KEY or add it in Setup. Orpheus English, cloud."},
-        "deepgram": {"available": bool(deepgram_key()), "size_mb": 0,
-                     "install": "Set DEEPGRAM_API_KEY or add it in Setup. Aura, cloud."},
-        "cartesia": {"available": bool(cartesia_key()), "size_mb": 0,
-                     "install": "Set CARTESIA_API_KEY or add it in Setup. Sonic 3.6, cloud."},
-        "minimax": {"available": bool(minimax_key()), "size_mb": 0,
-                    "install": "Set MINIMAX_API_KEY or add it in Setup. Speech 2.8 Turbo, cloud."},
-        "fish": {"available": openrouter_available(), "size_mb": 0,
-                 "install": "Add an OpenRouter key. Fish Audio S2.1 Pro Free."},
-        "gemini": {"available": openrouter_available(), "size_mb": 0,
-                   "install": "Add an OpenRouter key. Gemini 3.8 Flash-Lite TTS."},
-    }
+    import tts  # noqa: PLC0415 - tts imports audio at load time
+    voices = tts.voice_engine_status()
     music = {
         "library": {"available": True, "size_mb": 0,
                     "install": "Drop your own tracks in assets/music/library."},
@@ -422,7 +388,6 @@ def engine_status() -> dict:
             "demucs": {"available": demucs_available(), "size_mb": 700,
                        "install": "pip install demucs. torch is already present."},
         },
-        "piper_bin": piper_bin,
         "kokoro_model": str(kokoro_model) if kokoro_model else None,
         "assets": {
             "library": len(list(MUSIC_DIRS["library"].glob("*"))) if MUSIC_DIRS["library"].is_dir() else 0,
@@ -3360,16 +3325,11 @@ def clear_workflow_caches() -> None:
 from stt import CLOUD_STT_PROVIDERS, cloud_stt_key, deepgram_key, groq_key, openai_key  # noqa: E402,F401
 from tts import (  # noqa: E402,F401
     _SAY_VOICE_RE,
-    _cartesia_voice,
-    _deepgram_voice,
     _elevenlabs_voice,
-    _groq_voice,
     _kokoro_files_for,
     _kokoro_voice,
     _minimax_voice,
-    _openai_voice,
     _openrouter_voice,
-    _piper_voice,
     _say_voice,
     _to_flac,
     _tts_candidates,
