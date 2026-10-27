@@ -1215,6 +1215,7 @@ def _report_warnings(
     attested: bool,
     sampled_error: str | None,
     truncated: bool,
+    lock: bool = True,
 ) -> list[dict]:
     warnings: list[dict] = []
     watermarks = [item["id"] for item in tracklets if item["kind"] == "watermark"]
@@ -1236,7 +1237,7 @@ def _report_warnings(
             ),
             "tracklet_ids": handles,
         })
-    if not attested:
+    if not attested and lock:
         warnings.append({
             "code": "rights_not_attested",
             "severity": "warning",
@@ -1493,6 +1494,7 @@ def build_report(
         attested=attested,
         sampled_error=sampled_error,
         truncated=truncated,
+        lock=rights.lock_enabled(settings),
     )
     created = time.time() if created is None else float(created)
     return {

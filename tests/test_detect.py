@@ -717,6 +717,19 @@ def test_prefill_opens_with_the_lock_off_but_keeps_the_hard_rules():
     assert by_id["trk_handle"]["enabled"] is False
 
 
+def test_lock_off_report_does_not_nag_for_the_rights_note():
+    job = job_record()
+    report = report_for(
+        job,
+        subtitle_rows(4, start=0.0),
+        settings={"rights": {"lock": False}},
+    )
+    assert "rights_not_attested" not in [item["code"] for item in report["warnings"]]
+    assert report["policy"]["clean_allowed"] is True
+    entry = next(item for item in report["clean_prefill"] if item["kind"] == "subtitle")
+    assert entry["enabled"] is True
+
+
 def test_subtitle_prefill_uses_a_plate_in_the_caption_zone():
     job = job_record()
     report = report_for(job, subtitle_rows(4, start=0.0))
