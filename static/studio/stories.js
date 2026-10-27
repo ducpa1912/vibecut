@@ -31,6 +31,24 @@ import {
 const POLL_MS = 1600;
 const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
 
+/** Mirrors `clipset.LENGTH_PRESETS`; "auto" is the server default window. */
+export const LENGTH_PRESETS = {
+  auto: { label: "Auto · 20–75 s", min: 20, max: 75 },
+  short: { label: "Short · 15–30 s", min: 15, max: 30 },
+  medium: { label: "Medium · 30–60 s", min: 30, max: 60 },
+  long: { label: "Long · 45–90 s", min: 45, max: 90 },
+};
+
+/** Which preset a stored set was built with, or "auto". */
+export function lengthPreset(set) {
+  const min = Number(set?.min_s);
+  const max = Number(set?.max_s);
+  const match = Object.entries(LENGTH_PRESETS).find(
+    ([, preset]) => preset.min === min && preset.max === max,
+  );
+  return match ? match[0] : "auto";
+}
+
 export function mount(root, ctx) {
   let disposed = false;
   let timer = 0;
@@ -221,17 +239,26 @@ export function mount(root, ctx) {
       el("span", { text: "How many" }),
     ]);
     const count = el("select", { "aria-label": "How many stories" });
-    for (const value of [3, 4, 5, 6]) {
+    for (let value = 3; value <= 12; value += 1) {
       count.append(el("option", { value: String(value), text: String(value), selected: value === requested }));
     }
     countLabel.append(count);
+    const lengthLabel = el("label", { class: "st-field st-field-inline" }, [
+      el("span", { text: "Length" }),
+    ]);
+    const length = el("select", { "aria-label": "Story length" });
+    const current = lengthPreset(set);
+    for (const [value, preset] of Object.entries(LENGTH_PRESETS)) {
+      length.append(el("option", { value, text: preset.label, selected: value === current }));
+    }
+    lengthLabel.append(length);
     const build = el("button", {
       class: "st-btn st-btn-primary",
       type: "button",
       text: set ? "Find stories again" : "Find stories",
     });
-    build.addEventListener("click", () => buildStories(Number(count.value), build));
-    actions.append(countLabel, build);
+    build.addEventListener("click", () => buildStories(Number(count.value), build, length.value));
+    actions.append(countLabel, lengthLabel, build);
     card.append(actions);
 
     if (set?.note) card.append(el("p", { class: "st-hint", text: set.note }));
@@ -364,7 +391,7 @@ export function mount(root, ctx) {
     }
   }
 
-  async function buildStories(count, button) {
+  async function buildStories(count, button, length = "auto") {
     if (!job || loading) return;
     loading = true;
     button.disabled = true;
@@ -372,7 +399,8 @@ export function mount(root, ctx) {
     clearError();
     showStatus("Reading the transcript and choosing complete moments…");
     try {
-      const result = await createClipSet(job.id, { count });
+      const preset = LENGTH_PRESETS[length] || LENGTH_PRESETS.auto;
+      const result = await createClipSet(job.id, { count, minS: preset.min, maxS: preset.max });
       ctx.refreshSteps?.();
       if (disposed) return;
       const record = result?.clip_set;

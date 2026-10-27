@@ -6411,7 +6411,7 @@ def act_on_story_queue(queue_id: str, action: str) -> dict:
 def selection_v2(job_id: str, body: SelectionV2Body) -> dict:
     job = _clipset_job(job_id)
     if body.count is not None and (body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES):
-        raise HTTPException(400, "count must be an integer from 3 to 6.")
+        raise HTTPException(400, clipset.COUNT_MESSAGE)
     scenes = list((job.get("analysis") or {}).get("scenes") or [])
     stale_warning = None
     if body.set_id:
@@ -6420,7 +6420,8 @@ def selection_v2(job_id: str, body: SelectionV2Body) -> dict:
         stories = record.get("stories") or []
         source = "clip_set"
     else:
-        _, scenes, _, document = _clip_set_context(job, count=body.count or clipset.MAX_STORIES)
+        # Ranking defaults to six candidates; MAX_STORIES grew to 12 for Stories.
+        _, scenes, _, document = _clip_set_context(job, count=body.count or 6)
         stories = document.get("stories") or []
         source = "generated"
     result = selection.rank_stories(
@@ -6456,7 +6457,7 @@ def hook_matrix(job_id: str, body: HookMatrixBody) -> dict:
         raise HTTPException(404, "The hook matrix is not part of this release.")
     job = _clipset_job(job_id)
     if body.count < clipset.MIN_STORIES or body.count > clipset.MAX_STORIES:
-        raise HTTPException(400, "count must be an integer from 3 to 6.")
+        raise HTTPException(400, clipset.COUNT_MESSAGE)
     scenes = list((job.get("analysis") or {}).get("scenes") or [])
     stale_warning = None
     if body.set_id:

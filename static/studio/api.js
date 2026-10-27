@@ -206,10 +206,12 @@ export function listClipSets(jobId) {
 }
 
 /** Build a new story set. `POST /api/jobs/{id}/clip-sets`. */
-export function createClipSet(jobId, { count = 3, order = "source" } = {}) {
+export function createClipSet(jobId, { count = 3, order = "source", minS = null, maxS = null } = {}) {
+  const body = { count, order };
+  if (Number.isFinite(minS) && Number.isFinite(maxS)) Object.assign(body, { min_s: minS, max_s: maxS });
   return request(jobPath(jobId, "/clip-sets"), {
     method: "POST",
-    body: { count, order },
+    body,
   });
 }
 

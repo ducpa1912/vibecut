@@ -66,6 +66,25 @@ def test_error_detail_reads_structured_detail_message():
     ]
 
 
+# ---------------------------------------------------------------- stories.js (QA #13)
+
+
+@needs_node
+def test_story_length_presets_match_the_server():
+    import clipset
+
+    out = run_module("stories.js", """
+        return {presets: m.LENGTH_PRESETS,
+          picked: [m.lengthPreset({min_s: 15, max_s: 30}), m.lengthPreset({min_s: 20, max_s: 75}),
+                   m.lengthPreset(null)]};
+    """)
+    for name, (low, high) in clipset.LENGTH_PRESETS.items():
+        assert (out["presets"][name]["min"], out["presets"][name]["max"]) == (low, high)
+    auto = out["presets"]["auto"]
+    assert (auto["min"], auto["max"]) == (clipset.MIN_STORY_S, clipset.MAX_STORY_S)
+    assert out["picked"] == ["short", "auto", "auto"]
+
+
 # ---------------------------------------------------------------- shell.js (QA #10)
 
 

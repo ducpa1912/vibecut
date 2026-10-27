@@ -197,7 +197,7 @@ def test_clipset_edits_persist_exclude_reorder_lock_and_ban():
 
 def test_clipset_rejects_bad_parameters():
     scenes = make_scenes(30)
-    for count in (2, 7):
+    for count in (2, 13):
         with pytest.raises(clipset.ClipSetError):
             clipset.build_clipset(scenes, None, 120.0, count=count)
     with pytest.raises(clipset.ClipSetError):
