@@ -431,6 +431,15 @@ import pipeline
 import routes_cleanup
 
 
+def _padded_inside(box: dict) -> bool:
+    return (
+        box["x"] >= 0.0 and box["y"] >= 0.0
+        and box["x"] + box["w"] <= 1.0
+        and box["y"] + box["h"] <= 1.0
+        and box["w"] > 0 and box["h"] > 0
+    )
+
+
 def _tracklet(
     tracklet_id: str,
     kind: str,
@@ -552,8 +561,11 @@ def test_tracklet_clean_layers_map_kinds_to_edit_clean_layers():
     normalized = edits.normalize_clean(built["layers"])
     assert normalized == built["layers"]
     first = built["layers"][0]
-    assert first["box"] == {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}
+    assert first["box"]["x"] <= 0.1 and first["box"]["y"] <= 0.76
+    assert first["box"]["x"] + first["box"]["w"] >= 0.9
+    assert first["box"]["y"] + first["box"]["h"] >= 0.85
     assert first["ranges"] == [{"start": 0.0, "end": 8.0}]
+    assert _padded_inside(first["box"])
 
 
 def test_watermark_and_screen_text_never_produce_clean_layers():

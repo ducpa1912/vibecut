@@ -82,6 +82,20 @@ _CALL_TO_ACTION_RE = re.compile(
     r"\b(?:follow|subscribe|link\s+in\s+bio|dm\s+me|watch\s+full|full\s+video)\b",
     re.IGNORECASE,
 )
+_UI_WORD_RE = re.compile(
+    r"\b(?:build\w*|deploy|dashboard|accounts?|analytics|payments?|pricing|"
+    r"support|settings|workspace|components?|security|performance|memory|"
+    r"application|lighthouse|recorder|preview|projects?|tools?|integrations?|"
+    r"generating|implementing|optimizing|analyzing|creators?|linkspace|"
+    r"linktree|linktr)\b",
+    re.IGNORECASE,
+)
+_CODE_RE = re.compile(
+    r"https?://|www\.|\.(?:json|tsx?|jsx?|css|html?|py|md)\b|"
+    r"className|import\s+[\w{*]|const\s+\w+|function\s*\w*\(|"
+    r"[{}<>]",
+    re.IGNORECASE,
+)
 _WATERMARK_LITERAL_RE = re.compile(r"water\s*mark|©|\(c\)\s*\d{4}", re.IGNORECASE)
 
 # Screen-recording chrome: status bars, tab bars and app navigation labels.
@@ -326,9 +340,11 @@ def observations_from_scenes(scenes: Iterable[dict]) -> list[dict]:
                     "confidence": item.get("confidence"),
                 })
         if lines:
-            observations.extend(merge_lines(
+            blocks = merge_lines(
                 lines, start=start, end=end, source="scene",
-            ))
+            )
+            _mark_screen_frame(blocks, len(lines))
+            observations.extend(blocks)
             continue
         text = " ".join(str(scene.get("ocr") or "").split())
         if text:
@@ -338,6 +354,14 @@ def observations_from_scenes(scenes: Iterable[dict]) -> list[dict]:
                 confidence=0.5, source="scene", approximate=True,
             ))
     return observations
+
+
+def _mark_screen_frame(blocks: list[dict], line_count: int) -> None:
+    """Mark blocks from a text-heavy frame as screen-recording UI evidence."""
+    if line_count < 6:
+        return
+    for block in blocks:
+        block["screen_frame"] = True
 
 
 def observations_from_samples(samples: Iterable[dict]) -> list[dict]:
@@ -350,9 +374,12 @@ def observations_from_samples(samples: Iterable[dict]) -> list[dict]:
         end = _number(sample.get("end"), start)
         if end <= start:
             end = start + 1e-3
-        observations.extend(merge_lines(
-            sample.get("text") or [], start=start, end=end, source="sample",
-        ))
+        lines = sample.get("text") or []
+        blocks = merge_lines(
+            lines, start=start, end=end, source="sample",
+        )
+        _mark_screen_frame(blocks, len(lines))
+        observations.extend(blocks)
     return observations
 
 
@@ -522,9 +549,41 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
     if handle_like and corner and area <= 0.10:
         return "handle_or_logo", 0.8
 
+    if tracklet.get("screen_frame"):
+        return "screen_text", 0.75
+
     if _screen_text_mark(text, box):
         rule = 0.8 if (_is_corner(box) or samples >= 2) else 0.65
         return "screen_text", rule
+
+    # Screen-recording body text, menus and code are small and wide. Captions
+    # and word-pop titles use a larger face. Height separates the two on real
+    # screen-recorded sources better than position alone.
+    if height <= 0.024 and area <= 0.03:
+        return "screen_text", 0.7
+    letters = [char for char in text if char.isalpha()]
+    upper_ratio = (
+        sum(1 for char in letters if char.isupper()) / len(letters)
+        if letters else 0.0
+    )
+    if (
+        len(text) <= 20 and width <= 0.20 and height <= 0.06
+        and upper_ratio >= 0.8 and not corner
+    ):
+        return "screen_text", 0.55
+    if height <= 0.25 and area <= 0.20 and (
+        len(text) >= 40 or _UI_WORD_RE.search(text)
+    ):
+        return "screen_text", 0.6
+    if len(text) >= 80 and area <= 0.5:
+        return "screen_text", 0.6
+    if _CODE_RE.search(text) and area <= 0.30:
+        return "screen_text", 0.6
+    if (
+        y + height <= 0.20 and height <= 0.05 and width >= 0.10
+        and not text.isupper()
+    ):
+        return "screen_text", 0.55
 
     if corner and area <= 0.03 and samples >= 2 and observed >= 2.0:
         return "handle_or_logo", 0.65
@@ -545,6 +604,14 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
             and bottom >= 0.72 and len(text) >= 20
         ):
             return "subtitle", 0.65
+
+    # Mid-frame word-pop captions sit above the caption band but are larger
+    # than UI text and change every few seconds.
+    if (
+        y >= 0.45 and height >= 0.028 and width >= 0.25 and area <= 0.08
+        and (changes >= 1 or samples <= 3)
+    ):
+        return "subtitle", 0.65
 
     if area <= 0.014 and height <= 0.055 and bottom >= 0.74 and samples >= 1:
         return "credit", 0.6
@@ -603,6 +670,10 @@ def build_tracklets(
             "samples": len(values),
             "duration": round(observed, 3),
             "approximate": any(value.get("approximate") for value in values),
+            "screen_frame": (
+                sum(1 for value in values if value.get("screen_frame"))
+                >= max(1, len(values) / 2.0)
+            ),
             "_texts": texts,
             "_observed": observed,
             "_sources": sorted({value.get("source") for value in values}),
@@ -820,7 +891,11 @@ def faces_signal(scenes: Iterable[dict], duration: float) -> dict:
     seen: set[tuple] = set()
     count = 0
     for scene in scenes:
-        faces = scene.get("faces") or []
+        faces = scene.get("faces")
+        if not faces:
+            attention = scene.get("attention") or {}
+            face = attention.get("face")
+            faces = [face] if isinstance(face, dict) else []
         if not isinstance(faces, list) or not faces:
             continue
         start = _number(scene.get("start"), 0.0)

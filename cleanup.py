@@ -209,6 +209,27 @@ _LAYER_LABELS = {
 }
 
 
+def _padded_box(box: dict) -> dict:
+    """Grow an OCR box to cover antialiasing and clipped glyph edges.
+
+    OCR line boxes often stop at the glyph baseline or miss a descender. A
+    small, bounded pad keeps the Clean layer over the whole visible word
+    without covering much of the frame.
+    """
+    pad_x = min(0.02, max(0.005, float(box["w"]) * 0.05))
+    pad_y = min(0.04, max(0.008, float(box["h"]) * 0.35))
+    x = max(0.0, float(box["x"]) - pad_x)
+    y = max(0.0, float(box["y"]) - pad_y)
+    right = min(1.0, float(box["x"]) + float(box["w"]) + pad_x)
+    bottom = min(1.0, float(box["y"]) + float(box["h"]) + pad_y)
+    return {
+        "x": round(x, 6),
+        "y": round(y, 6),
+        "w": round(right - x, 6),
+        "h": round(bottom - y, 6),
+    }
+
+
 def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
     raw = str(tracklet.get("tracklet_id") or tracklet.get("id") or "trk").strip()
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")[:56]
@@ -349,9 +370,7 @@ def tracklet_clean_layers(
         base_layer = {
             "id": _tracklet_layer_id(entry, used),
             "kind": action,
-            "box": {
-                key: entry["box"][key] for key in ("x", "y", "w", "h")
-            },
+            "box": _padded_box(entry["box"]),
             "ranges": ranges,
             "z": z_cursor,
             "color": "#000000",
@@ -1245,7 +1264,12 @@ def face_overlap_report(
         )
         if scene is None:
             continue
-        faces = [item for item in scene.get("faces") or [] if isinstance(item, dict)]
+        faces = scene.get("faces")
+        if not faces:
+            attention = scene.get("attention") or {}
+            face = attention.get("face")
+            faces = [face] if isinstance(face, dict) else []
+        faces = [item for item in faces or [] if isinstance(item, dict)]
         faces_checked += len(faces)
         for layer in layers or []:
             if not isinstance(layer, dict) or layer.get("kind") not in {"blur", "plate", "mask"}:
