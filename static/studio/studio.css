@@ -1099,6 +1099,68 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
 .st-setup-section { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--st-line); }
 .st-setup-section-head h3 { margin: 0 0 4px; font-size: 13px; font-weight: 620; }
 .st-setup-section-head p { margin: 0; }
+.st-setup-rights {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px;
+  border: 1px solid var(--st-line);
+  border-radius: 10px;
+  background: rgba(9, 9, 11, 0.35);
+}
+.st-setup-rights-copy { display: grid; gap: 4px; min-width: 0; }
+.st-setup-rights-copy strong { font-size: 12.5px; font-weight: 600; }
+.st-setup-rights-copy p { max-width: 62ch; }
+.st-switch {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+.st-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+.st-switch-track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: #2c2c32;
+  border: 1px solid var(--st-line-2);
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.st-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--st-muted);
+  transition: transform 140ms ease, background 140ms ease;
+}
+.st-switch input:checked + .st-switch-track {
+  background: rgba(232, 162, 102, 0.28);
+  border-color: rgba(232, 162, 102, 0.62);
+}
+.st-switch input:checked + .st-switch-track::after {
+  transform: translateX(18px);
+  background: var(--st-accent);
+}
+.st-switch input:focus-visible + .st-switch-track {
+  outline: 2px solid var(--st-accent);
+  outline-offset: 2px;
+}
+.st-switch input:disabled + .st-switch-track { opacity: 0.55; }
+.st-switch-label { color: var(--st-muted); font-size: 11.5px; font-weight: 560; }
 .st-setup-group { display: grid; gap: 7px; }
 .st-setup-group-head h4 {
   margin: 0 0 2px;
