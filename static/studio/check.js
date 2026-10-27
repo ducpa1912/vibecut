@@ -435,8 +435,22 @@ export function mount(root, ctx) {
     card.append(el("p", { class: "st-hint", text: `${formatCount(tracklets.length, "region")} found. Edit keeps every one available in the Clean layer.` }));
     if (tracklets.length) {
       const list = el("div", { style: "margin-top:10px" });
-      for (const tracklet of tracklets) list.append(trackletCard(tracklet));
+      for (const tracklet of tracklets.slice(0, 40)) list.append(trackletCard(tracklet));
       card.append(list);
+      if (tracklets.length > 40) {
+        const rest = tracklets.slice(40);
+        const more = el("button", {
+          class: "st-btn st-btn-quiet st-btn-small",
+          type: "button",
+          text: `Show all ${tracklets.length} regions`,
+          style: "margin-top:8px",
+        });
+        more.addEventListener("click", () => {
+          for (const tracklet of rest) list.append(trackletCard(tracklet));
+          more.remove();
+        });
+        card.append(more);
+      }
     }
     return card;
   }

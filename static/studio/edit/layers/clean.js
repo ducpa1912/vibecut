@@ -423,7 +423,7 @@ export function mountCleanPanel(host, ctx) {
     }
 
     card.append(el("p", { class: "st-hint", text: full
-      ? `This edit already has ${MAX_CLEAN} clean layers, the most one story can hold.`
+      ? `This edit already has ${MAX_CLEAN} clean layers, the most one story can hold. Remove one to add another.`
       : "Each region can become one Clean layer. The box and times stay in source coordinates." }));
     const list = el("div", { class: "st-layer-list", style: "margin-top:9px" });
     let shown = 0;
@@ -441,6 +441,7 @@ export function mountCleanPanel(host, ctx) {
         || entry?.action === "none"
         || entry?.blocked === "screen_text";
       if (added && !blocked && !skipped) continue;
+      if (full && !blocked && !skipped) continue;
       shown += 1;
       const reason = blocked
         ? "Use your original file — it has no watermark."
@@ -491,7 +492,12 @@ export function mountCleanPanel(host, ctx) {
       list.append(row);
     }
     if (!shown) {
-      card.append(el("p", { class: "st-hint", text: `All ${tracklets.length} Check ${tracklets.length === 1 ? "region is" : "regions are"} covered. Review them in the layer list above.` }));
+      card.append(el("p", {
+        class: "st-hint",
+        text: full
+          ? `The ${MAX_CLEAN} cover slots are used. Remove a layer above to add another region.`
+          : `All ${tracklets.length} Check ${tracklets.length === 1 ? "region is" : "regions are"} covered. Review them in the layer list above.`,
+      }));
       return card;
     }
     card.append(list);
