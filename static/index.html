@@ -13,12 +13,17 @@
        stays reachable from Settings → "Use Classic editor" (saved here). */
     (function () {
       var mode = "studio";
+      var requested = "";
       try {
         var params = new URLSearchParams(window.location.search);
-        if (params.get("classic") === "1") localStorage.setItem("vibecut.editor", "classic");
-        else if (params.get("studio") === "1") localStorage.setItem("vibecut.editor", "studio");
+        if (params.get("classic") === "1") requested = "classic";
+        else if (params.get("studio") === "1") requested = "studio";
+      } catch (_) { /* URL parsing is unavailable; fall through */ }
+      try {
+        if (requested) localStorage.setItem("vibecut.editor", requested);
         if (localStorage.getItem("vibecut.editor") === "classic") mode = "classic";
       } catch (_) { /* storage may be unavailable; Studio still opens */ }
+      if (requested) mode = requested;
       document.documentElement.dataset.editor = mode;
     })();
   </script>
