@@ -16,7 +16,10 @@ window, so the same compiled string drives preview and export.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+import re
 from typing import Any, Iterable
 
 import edits
@@ -26,6 +29,11 @@ SCHEMA_VERSION = 1
 OUT_FPS = 30
 CANVAS = dict(overlays.CANVAS)
 MOTION_SHAKE_HZ = 7.0
+# Edit renders sample a subpixel perspective crop window. The legacy plan
+# path keeps the original zoompan chain so old golden strings stay valid.
+EDIT_MOTION_ENGINE = "perspective"
+MOTION_ENGINES = ("zoompan", "perspective")
+LAYER_SKIN = "layers-v1"
 
 
 class ComposeError(ValueError):
@@ -62,9 +70,55 @@ def _target_size(aspect: str) -> tuple[int, int]:
     return int(canvas["w"]), int(canvas["h"])
 
 
+def path_value(points: list[tuple[float, float]], at: float) -> float:
+    """Linearly sample a keyframe path; the render crop path uses this too."""
+    if at <= points[0][0]:
+        return points[0][1]
+    for index in range(len(points) - 1):
+        t0, v0 = points[index]
+        t1, v1 = points[index + 1]
+        if at <= t1:
+            span = max(1e-6, t1 - t0)
+            return v0 + (v1 - v0) * max(0.0, min(1.0, (at - t0) / span))
+    return points[-1][1]
+
+
+def path_expression(points: list[tuple[float, float]]) -> str:
+    """Compile keyframes to one ffmpeg ``t`` expression with cosine easing."""
+    expression = f"{points[-1][1]:.3f}"
+    for index in range(len(points) - 2, -1, -1):
+        t0, v0 = points[index]
+        t1, v1 = points[index + 1]
+        span = max(1e-6, t1 - t0)
+        segment = (
+            f"{v0:.3f}+({v1 - v0:.3f})*"
+            f"(1-cos(PI*(t-{t0:.3f})/{span:.6f}))/2"
+        )
+        expression = f"if(lt(t,{t1:.3f}),{segment},{expression})"
+    return f"if(lt(t,{points[0][0]:.3f}),{points[0][1]:.3f},{expression})"
+
+
+def _canvas_size(
+    aspect: str,
+    size: tuple[int, int] | None,
+) -> tuple[int, int]:
+    if size is None:
+        return _target_size(aspect)
+    try:
+        width = int(size[0])
+        height = int(size[1])
+    except (TypeError, ValueError, IndexError) as exc:
+        raise ComposeInputError("size must be a (width, height) pair.") from exc
+    if width < 2 or height < 2 or width % 2 or height % 2:
+        raise ComposeInputError("size must contain positive even integers.")
+    return width, height
+
+
 def _source_dimensions(
     aspect: str,
     source: dict | None,
+    out_w: int,
+    out_h: int,
 ) -> tuple[int, int, str]:
     try:
         width = int((source or {}).get("width") or 0)
@@ -73,7 +127,6 @@ def _source_dimensions(
         width = height = 0
     if width > 1 and height > 1:
         return width, height, "source"
-    out_w, out_h = _target_size(aspect)
     return out_w, out_h, "nominal"
 
 
@@ -84,8 +137,9 @@ def _base_crop(
     cx: float,
     cy: float,
     zoom: float,
+    out_w: int,
+    out_h: int,
 ) -> dict:
-    out_w, out_h = _target_size(aspect)
     target_ar = out_w / out_h
     source_ar = width / max(1, height)
     if source_ar > target_ar:
@@ -327,6 +381,89 @@ def _motion_filter(
     )
 
 
+def _frame_path_expression(points: list[tuple[float, float]]) -> str:
+    """Compile a seconds keyframe path for filters that expose ``on`` only."""
+    expression = path_expression(points)
+    return re.sub(r"\bt\b", "(on/30)", expression)
+
+
+def _motion_perspective_filter(
+    motion: dict,
+    *,
+    out_start: float,
+    out_end: float,
+    segment_frames: int,
+    out_w: int,
+    out_h: int,
+) -> str | None:
+    """Compile motion as a subpixel perspective crop window.
+
+    ``zoompan`` rounds its crop origin to a whole output pixel, which makes a
+    slow push step by about a pixel per frame. ``perspective`` evaluates its
+    corners per frame with cubic interpolation, so the same motion is smooth.
+    """
+    motion_start = float(motion["start"])
+    motion_end = float(motion["end"])
+    if motion_end <= out_start + 1e-6 or motion_start >= out_end - 1e-6:
+        return None
+    local_start = max(0.0, motion_start - out_start)
+    local_end = min(out_end - out_start, motion_end - out_start)
+    if local_end <= local_start + 1e-6:
+        return None
+    duration = segment_frames / OUT_FPS
+    first = _clamp_int(int(round(local_start * OUT_FPS)), 0, segment_frames - 1)
+    active = max(1, int(round(local_end * OUT_FPS)) - first)
+    kind = motion["kind"]
+    amount = float(motion["amount"])
+    ramp = max(1, int(round(float(motion.get("ramp") or 0.0) * OUT_FPS)))
+    if kind == "shake":
+        seed = int(motion.get("seed") or 0)
+        phase = (seed % 360) * math.pi / 180.0
+        dx = max(1.0, amount * out_w)
+        dy = max(1.0, amount * out_h)
+        zoom = 1.0 + 2.2 * max(dx, dy) / max(1, min(out_w, out_h))
+        gate = f"between(on,{first},{first + active})"
+        z_expr = f"if({gate},{zoom:.4f},1.000)"
+        dx_expr = (
+            f"{dx:.3f}*sin(2*PI*{MOTION_SHAKE_HZ:.3f}*on/{OUT_FPS}+"
+            f"{phase:.3f})*{gate}"
+        )
+        dy_expr = (
+            f"{dy:.3f}*cos(2*PI*{MOTION_SHAKE_HZ:.3f}*on/{OUT_FPS}+"
+            f"{phase:.3f})*{gate}"
+        )
+    else:
+        if kind == "snap_zoom":
+            z_expr = f"if(lt(on,{first}),1.000,{1.0 + amount:.4f})"
+        else:
+            start_seconds = first / OUT_FPS
+            points: list[tuple[float, float]] = [
+                (0.0 if start_seconds <= 0.0005 else round(start_seconds, 3), 1.0),
+            ]
+            end_frame = first + active
+            if kind == "punch_in":
+                end_frame = min(first + ramp, first + active)
+            end_seconds = end_frame / OUT_FPS
+            if end_seconds > points[-1][0] + 0.0005:
+                points.append((round(end_seconds, 3), 1.0 + amount))
+            if duration > end_seconds + 0.0005:
+                points.append((round(duration, 3), 1.0 + amount))
+            z_expr = _frame_path_expression(points)
+        dx_expr = "0"
+        dy_expr = "0"
+    center_x = f"((W-W/({z_expr}))/2)"
+    center_y = f"((H-H/({z_expr}))/2)"
+    left = f"({center_x}+{dx_expr})"
+    right = f"(W-{center_x}+{dx_expr})"
+    top = f"({center_y}+{dy_expr})"
+    bottom = f"(H-{center_y}+{dy_expr})"
+    return (
+        f"perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':"
+        f"x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':"
+        f"interpolation=cubic:eval=frame"
+    )
+
+
 # ---------------------------------------------------------------- colour
 
 
@@ -529,6 +666,43 @@ def _graphic_layers(edit: dict) -> list[dict]:
     return layers
 
 
+# ---------------------------------------------------------------- layers
+
+
+def _layer_raster(layer: dict, out_w: int, out_h: int) -> dict:
+    """Describe how the renderer caches this layer's pixels."""
+    animated = layer["type"] == "fx" and layer["kind"] == "progress_bar"
+    duration = max(0.0, float(layer["end"]) - float(layer["start"]))
+    frames = (
+        max(1, int(math.ceil(duration * OUT_FPS - 1e-6)))
+        if animated else 1
+    )
+    payload = {
+        "skin": LAYER_SKIN,
+        "type": layer["type"],
+        "kind": layer["kind"],
+        "text": layer.get("text") or "",
+        "rect": layer.get("rect"),
+        "style": layer.get("style") or {},
+        "color": layer.get("color"),
+        "thickness": layer.get("thickness"),
+        "opacity": layer.get("opacity", 1.0),
+        "out": [int(out_w), int(out_h)],
+        "fps": OUT_FPS,
+        "mode": "sequence" if animated else "static",
+        "frames": frames,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    ).hexdigest()[:24]
+    return {
+        "mode": "sequence" if animated else "static",
+        "frames": frames,
+        "fps": OUT_FPS,
+        "hash": "lyh_" + digest,
+    }
+
+
 # ---------------------------------------------------------------- clips
 
 
@@ -542,7 +716,10 @@ def _clips(clips: Any) -> list[dict]:
         try:
             start = float(raw.get("start") or 0.0)
             end = raw.get("end")
-            end = float(end if end is not None else start + float(raw.get("dur") or 0.0))
+            end = float(
+                end if end is not None
+                else start + float(raw.get("dur") or raw.get("duration") or 0.0)
+            )
         except (TypeError, ValueError) as exc:
             raise ComposeInputError(f"Clip {index + 1} has invalid times.") from exc
         if not math.isfinite(start) or not math.isfinite(end) or end <= start:
@@ -550,6 +727,7 @@ def _clips(clips: Any) -> list[dict]:
         result.append({
             "index": index,
             "scene": raw.get("scene"),
+            "role": str(raw.get("role") or "beat"),
             "start": round(start, 3),
             "end": round(end, 3),
             "duration": round(end - start, 3),
@@ -587,16 +765,29 @@ def compile_edit(
     scenes: Any = None,
     caption_track: dict | None = None,
     include_captions: bool = True,
+    size: tuple[int, int] | None = None,
+    motion_engine: str = "zoompan",
 ) -> dict:
-    """Compile one Edit. Pure: no media access and no ffmpeg call."""
+    """Compile one Edit. Pure: no media access and no ffmpeg call.
+
+    ``size`` compiles for a draft or proxy canvas. ``motion_engine`` selects
+    ``zoompan`` (legacy plans) or ``perspective`` (subpixel Edit renders).
+    """
     try:
         normalized = edits.normalize_edit(edit)
     except edits.EditError as exc:
         raise ComposeError(str(exc)) from exc
+    motion_engine = str(motion_engine or "zoompan").strip().lower()
+    if motion_engine not in MOTION_ENGINES:
+        raise ComposeInputError(
+            "motion_engine must be one of: " + ", ".join(MOTION_ENGINES) + "."
+        )
     story_clips = _clips(clips)
     aspect = normalized["aspect"]
-    out_w, out_h = _target_size(aspect)
-    width, height, dimensions_source = _source_dimensions(aspect, source)
+    out_w, out_h = _canvas_size(aspect, size)
+    width, height, dimensions_source = _source_dimensions(
+        aspect, source, out_w, out_h,
+    )
     scene_map: dict[str, dict] = {}
     if isinstance(scenes, dict):
         scene_map = {str(key): value for key, value in scenes.items() if isinstance(value, dict)}
@@ -620,7 +811,8 @@ def compile_edit(
     segments: list[dict] = []
     out_cursor = 0.0
     for clip in story_clips:
-        duration = float(clip["duration"])
+        frames = max(1, int(round(float(clip["duration"]) * OUT_FPS)))
+        duration = frames / OUT_FPS
         segment_out_start = out_cursor
         segment_out_end = out_cursor + duration
         out_cursor = segment_out_end
@@ -635,7 +827,7 @@ def compile_edit(
         cx = float(overrides.get("cx", cx))
         cy = float(overrides.get("cy", cy))
         zoom = float(overrides.get("zoom", reframe["zoom"]))
-        crop = _base_crop(width, height, aspect, cx, cy, zoom)
+        crop = _base_crop(width, height, aspect, cx, cy, zoom, out_w, out_h)
         clean_warnings: list[dict] = []
         for layer in normalized["clean"]:
             if layer["kind"] != "crop_guard":
@@ -668,14 +860,17 @@ def compile_edit(
             "segment": clip["index"],
         } for item in skipped)
 
-        frames = max(1, int(round(duration * OUT_FPS)))
         pre_filter = ",".join(clean_filter_list)
         crop_filter = f"crop={crop['w']}:{crop['h']}:{crop['x']}:{crop['y']}"
-        scale_filter = f"scale={out_w}:{out_h}:flags=lanczos"
         motion_filters: list[str] = []
         motion_ids: list[str] = []
         for motion in normalized["motion"]:
-            compiled = _motion_filter(
+            compile_motion = (
+                _motion_perspective_filter
+                if motion_engine == "perspective"
+                else _motion_filter
+            )
+            compiled = compile_motion(
                 motion,
                 out_start=segment_out_start,
                 out_end=segment_out_end,
@@ -687,6 +882,7 @@ def compile_edit(
                 motion_filters.append(compiled)
                 motion_ids.append(motion["id"])
         color_filters = _color_filters(normalized["color"])
+        scale_filter = f"scale={out_w}:{out_h}:flags=lanczos"
         post_filter = ",".join(motion_filters + color_filters)
         chain = []
         if pre_filter:
@@ -697,9 +893,10 @@ def compile_edit(
         segments.append({
             "index": clip["index"],
             "scene": clip["scene"],
+            "role": clip.get("role") or "beat",
             "start": clip["start"],
-            "end": clip["end"],
-            "duration": clip["duration"],
+            "end": clip["start"] + duration,
+            "duration": round(duration, 6),
             "frames": frames,
             "out_start": round(segment_out_start, 3),
             "out_end": round(segment_out_end, 3),
@@ -707,6 +904,7 @@ def compile_edit(
             "crop_path_ref": reframe.get("crop_path_ref"),
             "clean_ids": clean_ids,
             "motion_ids": motion_ids,
+            "motion_engine": motion_engine if motion_filters else "none",
             "pre_filters": clean_filter_list,
             "pre_filter": pre_filter,
             "crop_filter": crop_filter,
@@ -740,6 +938,7 @@ def compile_edit(
     ))
     for layer in overlay_layers:
         layer["duration"] = round(float(layer["end"]) - float(layer["start"]), 3)
+        layer["raster"] = _layer_raster(layer, out_w, out_h)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -750,6 +949,7 @@ def compile_edit(
         "aspect": aspect,
         "canvas": {"w": out_w, "h": out_h},
         "fps": OUT_FPS,
+        "motion_engine": motion_engine,
         "source": {
             "width": width,
             "height": height,
