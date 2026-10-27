@@ -30,8 +30,15 @@ CLEAN_LAYER_KINDS = ("crop_guard", "blur", "plate", "mask")
 MAX_CLEAN_LAYERS = 32
 MAX_LAYER_RANGES = 64
 RESIDUAL_TARGET_PCT = 0.5
-RESIDUAL_MAX_FRAMES = 120
+# Hard server cap. The route rejects larger requests and the sampling helper
+# clamps to the same number, so one call can never render an unbounded set.
+RESIDUAL_MAX_FRAMES = 60
+RESIDUAL_DEFAULT_FRAMES = 30
 RESIDUAL_DEFAULT_FPS = 1.0
+# One request owns at most this many seconds of render + OCR work. Each frame
+# render is already bounded by render._run; this deadline stops a long source
+# from holding the route open across many frames.
+RESIDUAL_TIMEOUT_SECONDS = 240.0
 
 # Keep these dimensions in sync with render.ASPECTS. Importing render would
 # pull the ffmpeg renderer into a module that is meant to stay pure.
@@ -379,6 +386,11 @@ def tracklet_clean_layers(
             "label": _LAYER_LABELS.get(
                 (kind, action), f"Burned-in {kind.replace('_', ' ')}"
             )[:80],
+            # Optional provenance. The layer's own ``kind`` is the cleanup
+            # method, so the detected Check kind travels as ``tracklet_kind``.
+            # Edit save re-checks it against the rights policy.
+            "tracklet_id": tracklet_id,
+            "tracklet_kind": kind,
         }
         layers.append(base_layer)
         z_cursor += 1

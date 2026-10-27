@@ -3061,6 +3061,7 @@ app.include_router(routes_edits.router)
 app.include_router(routes_overlays.router)
 app.include_router(music.router)
 app.include_router(packet.router)
+app.include_router(preflight.router)
 
 
 @app.exception_handler(disk.InsufficientSpace)

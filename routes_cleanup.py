@@ -16,6 +16,7 @@ The original plan endpoint stays a pure planner. The Wave 3 routes add:
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import shutil
@@ -34,6 +35,8 @@ import edits
 import pipeline
 import render
 import vision
+
+LOGGER = logging.getLogger("vibecut.cleanup")
 
 
 class CleanupPlanBody(BaseModel):
@@ -59,11 +62,13 @@ class ResidualBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     edit_id: str = Field(min_length=1, max_length=64)
-    times: list[float] | None = Field(default=None, max_length=600)
+    times: list[float] | None = Field(
+        default=None, max_length=cleanup.RESIDUAL_MAX_FRAMES,
+    )
     start: float | None = None
     end: float | None = None
     fps: float = Field(default=cleanup.RESIDUAL_DEFAULT_FPS, gt=0.0, le=30.0)
-    max_frames: int = Field(default=cleanup.RESIDUAL_MAX_FRAMES, ge=1, le=600)
+    max_frames: int = Field(default=cleanup.RESIDUAL_DEFAULT_FRAMES, ge=1)
     quality: str = "final"
 
 
@@ -315,6 +320,26 @@ def cleanup_layers(job_id: str, body: CleanLayersBody) -> dict:
 # ---------------------------------------------------------------- residual OCR
 
 
+class ResidualFailure(Exception):
+    """A residual request failed with a clear reason for the API caller."""
+
+    def __init__(self, reason: str, status: int = 500) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status = int(status)
+
+
+class ResidualTimeout(ResidualFailure):
+    """The per-request residual deadline expired."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(
+            f"Residual check exceeded its {seconds:.0f} s budget. "
+            "Reduce max_frames or measure a shorter range.",
+            504,
+        )
+
+
 def _render_frame(job: dict, compiled: dict, t: float, quality: str, aspect: str) -> bytes:
     return render.render_story_frame(
         str(job["source"]["path"]),
@@ -352,25 +377,51 @@ def _story_for_edit(job: dict, edit: dict) -> tuple[dict, dict]:
     return record, story
 
 
-@router.post("/api/jobs/{job_id}/cleanup/residual")
-def cleanup_residual(job_id: str, body: ResidualBody) -> dict:
-    """Render Clean-only frames and measure OCR text left inside Clean regions."""
-    app = _job_app()
-    job = app.load_job(job_id)
-    if job.get("status") != "ready" or not job.get("analysis"):
-        raise HTTPException(409, "Analysis is not ready yet.")
-    quality = str(body.quality or "").strip().lower()
+def measure_residual(
+    job: dict,
+    edit: dict,
+    job_dir: Path | str,
+    *,
+    times: list[float] | None = None,
+    start: float | None = None,
+    end: float | None = None,
+    fps: float = cleanup.RESIDUAL_DEFAULT_FPS,
+    max_frames: int = cleanup.RESIDUAL_DEFAULT_FRAMES,
+    quality: str = "final",
+    story: dict | None = None,
+    timeout: float = cleanup.RESIDUAL_TIMEOUT_SECONDS,
+) -> dict:
+    """Render Clean-only frames and return the residual report.
+
+    The route and the inline preflight share this function so both get the
+    same hard frame cap, deadline and error shape. Expected failures raise
+    :class:`ResidualFailure`; the HTTP layer turns them into JSON.
+    """
+    quality = str(quality or "").strip().lower()
     if quality not in {"draft", "final"}:
-        raise HTTPException(422, "quality must be draft or final.")
-    try:
-        edit = edits.load_edit(app._job_dir(job_id), body.edit_id)
-    except edits.EditError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
-    if edit is None:
-        raise HTTPException(404, "Edit not found.")
+        raise ResidualFailure("quality must be draft or final.", 422)
     if not edit.get("clean"):
-        raise HTTPException(422, "This Edit has no Clean layers to measure.")
-    _record, story = _story_for_edit(job, edit)
+        raise ResidualFailure("This Edit has no Clean layers to measure.", 422)
+    limit = int(cleanup.RESIDUAL_MAX_FRAMES)
+    try:
+        frame_limit = int(max_frames)
+    except (TypeError, ValueError) as exc:
+        raise ResidualFailure("max_frames must be an integer.", 422) from exc
+    if frame_limit < 1:
+        raise ResidualFailure("max_frames must be at least 1.", 422)
+    if frame_limit > limit:
+        raise ResidualFailure(
+            f"max_frames is capped at {limit} frames per request.", 422,
+        )
+    if times is not None and len(times) > limit:
+        raise ResidualFailure(
+            f"times is capped at {limit} values per request.", 422,
+        )
+    if story is None:
+        try:
+            _record, story = _story_for_edit(job, edit)
+        except HTTPException as exc:
+            raise ResidualFailure(str(exc.detail), exc.status_code) from exc
 
     measure = edits.build_edit(
         story_ref=edit["story_ref"],
@@ -397,40 +448,52 @@ def cleanup_residual(job_id: str, body: ResidualBody) -> dict:
             motion_engine=compose_render.EDIT_MOTION_ENGINE,
         )
     except compose_render.ComposeError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        raise ResidualFailure(
+            str(exc), int(getattr(exc, "status_code", 422)),
+        ) from exc
 
     total = float((compiled.get("segments") or [{}])[-1].get("out_end") or 0.0)
-    if body.times:
-        times = []
-        for value in body.times:
-            moment = float(value)
+    if times is not None:
+        moments: list[float] = []
+        for value in times:
+            try:
+                moment = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ResidualFailure("times must be numbers.", 422) from exc
             if not math.isfinite(moment):
-                raise HTTPException(422, "times must be finite numbers.")
+                raise ResidualFailure("times must be finite numbers.", 422)
             if moment < 0.0 or moment >= total - 1e-9:
-                raise HTTPException(
-                    422,
+                raise ResidualFailure(
                     f"times must be between 0 and the story duration ({total:.3f}s).",
+                    422,
                 )
-            times.append(round(moment, 3))
-        if not times:
-            raise HTTPException(422, "times must contain at least one value.")
+            moments.append(round(moment, 3))
+        if not moments:
+            raise ResidualFailure("times must contain at least one value.", 422)
+        sample_times = moments
     else:
         try:
-            times = cleanup.residual_times(
+            sample_times = cleanup.residual_times(
                 compiled,
-                start=body.start,
-                end=body.end,
-                fps=body.fps,
-                max_frames=body.max_frames,
+                start=start,
+                end=end,
+                fps=fps,
+                max_frames=frame_limit,
             )
         except cleanup.CleanupError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise ResidualFailure(str(exc), 422) from exc
 
-    directory = app._job_dir(job_id) / "cleanup" / f"residual-{uuid.uuid4().hex}"
-    directory.mkdir(parents=True, exist_ok=True)
-    samples = []
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    directory = (
+        Path(job_dir) / "cleanup" / f"residual-{uuid.uuid4().hex}"
+    )
+    samples: list[dict] = []
+    records: dict = {}
     try:
-        for index, moment in enumerate(times):
+        directory.mkdir(parents=True, exist_ok=True)
+        for index, moment in enumerate(sample_times):
+            if time.monotonic() >= deadline:
+                raise ResidualTimeout(float(timeout))
             payload = _render_frame(job, compiled, moment, quality, edit["aspect"])
             name = f"{index:04d}.jpg"
             (directory / name).write_bytes(payload)
@@ -439,6 +502,16 @@ def cleanup_residual(job_id: str, body: ResidualBody) -> dict:
         for sample in samples:
             record = records.get(sample["file"]) or {}
             sample["text"] = pipeline.ocr_lines(record)
+    except ResidualFailure:
+        raise
+    except Exception as exc:  # noqa: BLE001 - route must return JSON, not 500 HTML
+        LOGGER.exception(
+            "residual render failed for job %s edit %s",
+            job.get("id"), edit.get("id"),
+        )
+        raise ResidualFailure(
+            f"Residual render failed: {type(exc).__name__}: {exc}", 500,
+        ) from exc
     finally:
         shutil.rmtree(directory, ignore_errors=True)
 
@@ -464,6 +537,58 @@ def cleanup_residual(job_id: str, body: ResidualBody) -> dict:
     else:
         report["warnings"] = []
     return report
+
+
+@router.post("/api/jobs/{job_id}/cleanup/residual")
+def cleanup_residual(job_id: str, body: ResidualBody) -> dict:
+    """Render Clean-only frames and measure OCR text left inside Clean regions.
+
+    Body failures are 4xx JSON with a reason. A render or OCR failure is a
+    500 JSON reason with the traceback in the server log; a long request gets
+    a 504 after the shared deadline. No failure falls through as an HTML 500.
+    """
+    app = _job_app()
+    job = app.load_job(job_id)
+    if job.get("status") != "ready" or not job.get("analysis"):
+        raise HTTPException(409, "Analysis is not ready yet.")
+    try:
+        edit = edits.load_edit(app._job_dir(job_id), body.edit_id)
+    except edits.EditError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    if edit is None:
+        raise HTTPException(404, "Edit not found.")
+    try:
+        return measure_residual(
+            job,
+            edit,
+            app._job_dir(job_id),
+            times=body.times,
+            start=body.start,
+            end=body.end,
+            fps=body.fps,
+            max_frames=body.max_frames,
+            quality=body.quality,
+        )
+    except ResidualFailure as exc:
+        if exc.status >= 500:
+            LOGGER.error(
+                "residual failed for job %s edit %s: %s",
+                job_id, body.edit_id, exc.reason, exc_info=exc,
+            )
+        else:
+            LOGGER.warning(
+                "residual rejected for job %s edit %s: %s",
+                job_id, body.edit_id, exc.reason, exc_info=exc,
+            )
+        raise HTTPException(exc.status, exc.reason) from exc
+    except Exception as exc:  # noqa: BLE001 - keep the JSON error contract
+        LOGGER.exception(
+            "residual crashed for job %s edit %s", job_id, body.edit_id,
+        )
+        raise HTTPException(
+            500,
+            f"Residual check failed: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 # ---------------------------------------------------------------- rights
