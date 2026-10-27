@@ -629,9 +629,12 @@ def music_from_scenes(scenes: Iterable[dict]) -> dict:
         }
     total = 0.0
     loud = 0.0
+    signal = False
     speech_aware = any(str(scene.get("speech") or "").strip() for scene in scenes)
     for scene in scenes:
         span = max(0.0, _number(scene.get("end"), 0.0) - _number(scene.get("start"), 0.0))
+        if _db(scene.get("audio_mean")) > -59.0:
+            signal = True
         if span <= 0:
             continue
         if speech_aware and str(scene.get("speech") or "").strip():
@@ -640,9 +643,10 @@ def music_from_scenes(scenes: Iterable[dict]) -> dict:
         if _db(scene.get("audio_mean")) > -38.0 and _number(scene.get("silence"), 1.0) < 0.5:
             loud += span
     score = loud / total if total > 0 else 0.0
+    available = bool(total > 0)
     return {
-        "available": total > 0,
-        "present": bool(score >= 0.35) if total > 0 else None,
+        "available": available,
+        "present": bool(score >= 0.35) if signal else False,
         "score": round(score, 3),
         "method": "scene_levels",
         "speech_aware": speech_aware,
@@ -1164,6 +1168,11 @@ def build_report(
             "transcript": False,
         })
     music = music or music_from_scenes(scenes)
+    if not source.get("has_audio"):
+        music = {
+            "available": False, "present": False, "score": 0.0,
+            "method": "none", "speech_aware": False,
+        }
     audio_features = analysis.get("audio") or {}
     audio = {
         "available": bool(speech["available"] or audio_features.get("available")),
