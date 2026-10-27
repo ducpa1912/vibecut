@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -38,6 +39,7 @@ import wave
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+import packs
 import settings_store
 import usage_store
 import vision
@@ -232,7 +234,25 @@ def _stt_workflow_model(provider: str, default: str) -> str:
 
 
 def _whisper_binary() -> str | None:
+    """Whisper CLI: installed Speech Pack first, then today's PATH lookup."""
+    packed = packs.find_command("speech", "mlx_whisper", root=os.environ.get(packs.ROOT_ENV) or None)
+    if packed is not None:
+        return str(packed)
     return _which("mlx_whisper")
+
+
+def _whisper_command() -> list[str] | None:
+    """Command prefix for Whisper: pack binary, PATH binary, then module."""
+    binary = _whisper_binary()
+    if binary:
+        return [binary]
+    try:
+        available = importlib.util.find_spec("mlx_whisper") is not None
+    except (ImportError, ValueError):
+        available = False
+    if available:
+        return [sys.executable, "-m", "mlx_whisper"]
+    return None
 
 
 def _apple_transcribe_helper() -> Path | None:
@@ -995,8 +1015,8 @@ def transcribe(
     source = Path(wav_path) if wav_path else None
     if not source or not source.exists():
         return None
-    binary = _whisper_binary()
-    if not binary:
+    command = _whisper_command()
+    if not command:
         return None
     out_dir = Path(job_dir) / "transcript"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1008,7 +1028,7 @@ def transcribe(
     except OSError:
         pass
     cmd = [
-        binary, str(source),
+        *command, str(source),
         "--model", chosen_model,
         "--output-format", "json",
         "--output-name", "transcript",
@@ -1284,7 +1304,7 @@ def _engine_ready(provider: str, model: str) -> bool:
     if provider == "apple":
         return _apple_transcribe_helper() is not None
     if provider == "whisper":
-        return _whisper_binary() is not None
+        return _whisper_command() is not None
     if provider in CLOUD_STT_PROVIDERS:
         return bool(settings_store.get_secret(provider))
     return False

@@ -22,8 +22,11 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import wave
 from pathlib import Path
+from typing import Sequence
 
+import packs
 import settings_store
 import usage_store
 import workflow_config
@@ -37,6 +40,19 @@ MUSIC_DIRS = {
 VOICE_DIRS = {
     "kokoro": ROOT / "data" / "models" / "kokoro",
 }
+# AudioPlan modes from REVAMP_PLAN §8.4. The mixer also still accepts the
+# legacy ``keep``/``bed``/``voice``/``full`` names used by Classic jobs.
+AUDIO_MODES = ("original", "original_bed", "voice_over", "dub", "music_only")
+LEGACY_AUDIO_MODES = ("keep", "bed", "voice", "full")
+DUCK_DB = -12.0
+DUCK_ATTACK_MS = 150
+DUCK_RELEASE_MS = 400
+LOUDNESS_LUFS = -14.0
+LOUDNESS_TRUE_PEAK = -1.5
+LOUDNESS_LRA = 11.0
+SPEECH_BAND_HZ = (300.0, 3400.0)
+SPEECH_SNR_TARGET_DB = 12.0
+MUSIC_BASE_GAIN_DB = -18.0
 KOKORO_EN_VOICES = (
     "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky",
     "am_adam", "am_michael", "bf_emma", "bf_isabella",
@@ -291,9 +307,107 @@ def canonical_json(value) -> str:
 
 def signature(audio_plan: dict | None) -> str:
     """Short stable id for an audio plan; matches the browser's FNV-1a."""
-    if not audio_plan or str(audio_plan.get("mode") or "keep") == "keep":
+    if not audio_plan or mixer_mode(str(audio_plan.get("mode") or "keep")) == "keep":
         return ""
     return fnv1a(canonical_json(audio_plan))
+
+
+def audio_mode(audio_plan: dict | None) -> str:
+    """Return the declared AudioPlan mode, defaulting to ``original``."""
+    mode = str((audio_plan or {}).get("mode") or "original").strip().lower().replace("-", "_")
+    return mode if mode in AUDIO_MODES or mode in LEGACY_AUDIO_MODES else "original"
+
+
+def mixer_mode(mode: str) -> str:
+    """Map an AudioPlan §8.4 mode onto the mixer's internal branch name."""
+    value = str(mode or "original").strip().lower().replace("-", "_")
+    return {
+        "original": "keep",
+        "keep": "keep",
+        "original_bed": "original_bed",
+        "voice_over": "full",
+        "dub": "full",
+        "music_only": "music_only",
+        # Legacy Classic modes keep their old branches.
+        "bed": "bed",
+        "voice": "voice",
+        "full": "full",
+    }.get(value, "keep")
+
+
+def loudness_settings(audio_plan: dict | None) -> dict[str, float]:
+    """Final loudness target: −14 LUFS integrated, −1.5 dBTP by default."""
+    raw = (audio_plan or {}).get("loudness") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    def _number(value, fallback):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    return {
+        "lufs": max(-30.0, min(-5.0, _number(raw.get("lufs"), LOUDNESS_LUFS))),
+        "true_peak": max(-9.0, min(0.0, _number(raw.get("true_peak"), LOUDNESS_TRUE_PEAK))),
+        "lra": max(1.0, min(20.0, _number(raw.get("lra"), LOUDNESS_LRA))),
+    }
+
+
+def normalize_audio_plan(audio_plan: dict | None) -> dict:
+    """Fill ducking and loudness defaults without changing the declared mode."""
+    plan = dict(audio_plan or {})
+    plan["mode"] = audio_mode(plan)
+    try:
+        duck_db = float(plan.get("duck_db", DUCK_DB))
+    except (TypeError, ValueError):
+        duck_db = DUCK_DB
+    plan["duck_db"] = max(-60.0, min(0.0, duck_db))
+    plan["duck"] = bool(plan.get("duck", True))
+    plan["loudness"] = loudness_settings(plan)
+    for key in ("music", "voice", "translate"):
+        if plan.get(key) is None:
+            plan[key] = {}
+        elif not isinstance(plan[key], dict):
+            plan[key] = {}
+    music = dict(plan["music"])
+    music.setdefault("gain_db", MUSIC_BASE_GAIN_DB)
+    music.setdefault("duck", plan["duck"])
+    plan["music"] = music
+    return plan
+
+
+def plan_from_edit(audio_section: dict | None) -> dict | None:
+    """Convert an Edit's ``audio`` object into a mixer AudioPlan.
+
+    The Edit schema validates modes and loudness already (``edits.py``). This
+    adapter adds the mixing defaults and maps a locked music ``file_hash`` to
+    the resolver's field name.
+    """
+    if not isinstance(audio_section, dict):
+        return None
+    source = dict(audio_section)
+    mode = str(source.get("mode") or "original").strip().lower().replace("-", "_")
+    if mode not in AUDIO_MODES:
+        mode = "original"
+    plan: dict = {
+        "mode": mode,
+        "duck": bool(source.get("duck", True)),
+        "duck_db": source.get("duck_db", DUCK_DB),
+        "loudness": source.get("loudness") or {},
+    }
+    music = source.get("music")
+    if isinstance(music, dict):
+        copied = dict(music)
+        if copied.get("file_hash") and not copied.get("locked_hash"):
+            copied["locked_hash"] = copied["file_hash"]
+        plan["music"] = copied
+    voice = source.get("voice")
+    if isinstance(voice, dict):
+        plan["voice"] = dict(voice)
+    if isinstance(source.get("translate"), dict):
+        plan["translate"] = dict(source["translate"])
+    return normalize_audio_plan(plan)
 
 
 def say_available() -> bool:
@@ -303,6 +417,9 @@ def say_available() -> bool:
 def kokoro_available() -> bool:
     if not _module("kokoro_onnx"):
         return False
+    packed = packs.find_dir("voice", "models/kokoro", "kokoro", "")
+    if packed is not None and any(packed.glob("*.onnx")):
+        return True
     return any(VOICE_DIRS["kokoro"].glob("*.onnx"))
 
 
@@ -316,6 +433,8 @@ def minimax_key() -> str:
 
 
 def demucs_available() -> bool:
+    if packs.find_command("separation", "demucs") is not None:
+        return True
     if shutil.which("demucs"):
         return True
     return _module("demucs")
@@ -819,7 +938,13 @@ def separate_vocals(
         "-n", "htdemucs", "--shifts", "0", "-j", "4",
         "-o", str(output_dir), source,
     ]
-    if not _module("demucs") and shutil.which("demucs"):
+    packed = packs.find_command("separation", "demucs")
+    if packed is not None:
+        base = [
+            str(packed), "--two-stems=vocals", "-n", "htdemucs",
+            "--shifts", "0", "-j", "4", "-o", str(output_dir), source,
+        ]
+    elif not _module("demucs") and shutil.which("demucs"):
         base = [
             "demucs", "--two-stems=vocals", "-n", "htdemucs",
             "--shifts", "0", "-j", "4", "-o", str(output_dir), source,
@@ -860,12 +985,21 @@ def _music_loop(
     offset: float = 0.0,
 ) -> Path:
     output = tmp / "music_trim.wav"
-    seek = ["-ss", f"{offset:.3f}"] if offset > 0.01 else []
-    audio_filter = expr or f"volume={gain_db}dB"
+    total = max(0.1, float(total or 0.1))
+    plan = fit_plan(media_duration(path), total)
+    start = float(offset) if offset > 0.01 else float(plan["in"])
+    seek = ["-ss", f"{start:.3f}"] if start > 0.01 else []
+    filters = [expr or f"volume={gain_db}dB", "aresample=48000"]
+    if plan["fade_in"]:
+        filters.append(f"afade=t=in:st=0:d={plan['fade_in']:.3f}")
+    if plan["fade_out"]:
+        filters.append(
+            f"afade=t=out:st={plan['fade_out_start']:.3f}:d={plan['fade_out']:.3f}"
+        )
     _run([
         _ffmpeg(), "-y", "-v", "error", *seek, "-stream_loop", "-1", "-i", str(path),
         "-t", f"{total:.6f}", "-ar", "48000", "-ac", "2",
-        "-af", audio_filter,
+        "-af", ",".join(filters),
         "-c:a", "pcm_s16le", str(output),
     ])
     return output
@@ -2188,6 +2322,74 @@ def media_duration(path: Path) -> float:
         return 0.0
 
 
+def _shorten_dub_line(
+    text: str,
+    native: float,
+    slot: float,
+    target: str,
+    *,
+    timeout: float = 90,
+) -> str:
+    """Shorten one overlong dub line, AI first and a safe trim second."""
+    value = str(text or "").strip()
+    if not value or slot <= 0:
+        return value
+    language = _language_name(target or "en")
+    native = max(0.05, float(native or 0.0))
+    ideal = max(4, int(round(len(value) * float(slot) / native * 0.96)))
+    low = max(3, int(ideal * 0.88))
+    high = max(low + 2, int(ideal * 1.08))
+    best: str = ""
+    best_score = -1.0
+    for attempt in range(2):
+        feedback = ""
+        if best:
+            measured = estimate_seconds(best, 1.0)
+            if measured < float(slot) * 0.92:
+                feedback = (
+                    f" The previous attempt was too short ({len(best)} characters); "
+                    f"write at least {low} characters."
+                )
+            else:
+                feedback = (
+                    f" The previous attempt was too long ({len(best)} characters); "
+                    f"keep it at most {high} characters."
+                )
+        prompt = (
+            f"Rewrite this {language} subtitle line as one short, complete, "
+            f"grammatical spoken sentence between {low} and {high} characters "
+            f"(target {ideal}). Keep the same meaning and speaker. "
+            "Do not truncate and do not explain." + feedback
+            + " Return a JSON array with exactly one string:\n"
+            + json.dumps([value], ensure_ascii=False)
+        )
+        candidate = ""
+        try:
+            raw = _opencode_json_attempts(
+                prompt, max_tokens=300, timeout=timeout,
+            )
+            if raw:
+                match = re.search(r"\[.*\]", raw, re.S)
+                values = json.loads(match.group(0)) if match else None
+                if isinstance(values, list) and values and str(values[0]).strip():
+                    candidate = str(values[0]).strip()
+        except Exception:  # noqa: BLE001
+            candidate = ""
+        if candidate and candidate != value:
+            if not candidate.endswith(("。", "！", "？", ".", "!", "?")):
+                candidate = ensure_terminal(candidate, bool(CJK_RE.search(candidate)))
+            measured = estimate_seconds(candidate, 1.0)
+            ratio = measured / max(0.1, float(slot))
+            score = 1.0 - min(1.0, abs(ratio - 1.0))
+            if score > best_score:
+                best, best_score = candidate, score
+            if 0.92 <= ratio <= 1.10:
+                return candidate
+    if best and best_score > 0.55:
+        return best
+    return shorten_text_for_slot(value, native, slot, language=target)
+
+
 def _voice_track(
     clips: list[dict],
     lines: list[dict],
@@ -2216,11 +2418,14 @@ def _voice_track(
         parts = ["aresample=48000"]
         if slot > 0.2:
             usable = max(0.4, slot - 0.06)
-            if native > usable * 1.02:
-                tempo = max(1.0, min(1.35, native / usable))
-                if tempo > 1.005:
-                    parts.append(f"atempo={tempo:.4f}")
-                    line["tempo"] = round(tempo, 3)
+            fit = line.get("fit") if isinstance(line.get("fit"), dict) else None
+            if fit is None:
+                fit = plan_slot_fit(native, slot)
+                line["fit"] = fit
+            tempo = float(fit.get("tempo") or 1.0)
+            if abs(tempo - 1.0) > 0.005:
+                parts.append(f"atempo={tempo:.4f}")
+                line["tempo"] = round(tempo, 3)
             parts.append(f"atrim=0:{usable:.3f}")
             fade = min(0.09, max(0.03, usable / 6))
             parts.append("afade=t=in:st=0:d=0.02")
@@ -2232,7 +2437,7 @@ def _voice_track(
     tail = (
         "".join(f"[v{index}]" for index in range(len(placed)))
         + f"amix=inputs={len(placed)}:normalize=0:dropout_transition=0,"
-        f"atrim=0:{total:.6f}"
+        f"apad,atrim=0:{total:.6f}"
     )
     if expr:
         tail += f",{expr}"
@@ -2247,6 +2452,27 @@ def _voice_track(
     return output
 
 
+def duck_filter(
+    duck_db: float = DUCK_DB,
+    attack_ms: float = DUCK_ATTACK_MS,
+    release_ms: float = DUCK_RELEASE_MS,
+) -> str:
+    """Sidechain compressor string for the requested duck depth.
+
+    The threshold is fixed at −40 dBFS and the ratio is solved so a voice at
+    roughly −19 dBFS RMS (≈−16 LUFS) loses about ``duck_db`` under the bed.
+    """
+    depth = abs(min(0.0, float(duck_db or 0.0)))
+    over = 21.0
+    ratio = 1.0 if depth < 0.05 else max(1.0, min(20.0, over / max(0.1, over - depth)))
+    attack = max(1.0, min(2000.0, float(attack_ms or DUCK_ATTACK_MS)))
+    release = max(1.0, min(9000.0, float(release_ms or DUCK_RELEASE_MS)))
+    return (
+        f"sidechaincompress=threshold=0.01:ratio={ratio:.3f}:"
+        f"attack={attack:.0f}:release={release:.0f}:makeup=1"
+    )
+
+
 def _duck_and_mix(
     voice: Path | None,
     music: Path | None,
@@ -2256,16 +2482,47 @@ def _duck_and_mix(
     music_gain_db: float,
     voice_gain_db: float,
     cancel_event: threading.Event | None = None,
+    *,
+    duck_db: float = DUCK_DB,
+    attack_ms: float = DUCK_ATTACK_MS,
+    release_ms: float = DUCK_RELEASE_MS,
+    original: Path | None = None,
+    original_gain_db: float = 0.0,
 ) -> Path:
     output = tmp / "mix.wav"
+    if voice and music and original:
+        if duck:
+            graph = (
+                f"[0:a]aresample=48000,volume={voice_gain_db}dB,apad[vfull];"
+                f"[1:a]aresample=48000,volume={music_gain_db}dB[m];"
+                f"[2:a]aresample=48000,volume={original_gain_db}dB[o];"
+                "[vfull]asplit=3[v][sc1][sc2];"
+                f"[m][sc1]{duck_filter(duck_db, attack_ms, release_ms)}[ducked];"
+                f"[o][sc2]{duck_filter(duck_db, attack_ms, release_ms)}[oducked];"
+                "[ducked][oducked][v]amix=inputs=3:normalize=0:dropout_transition=0[out]"
+            )
+        else:
+            graph = (
+                f"[0:a]aresample=48000,volume={voice_gain_db}dB[v];"
+                f"[1:a]aresample=48000,volume={music_gain_db}dB[m];"
+                f"[2:a]aresample=48000,volume={original_gain_db}dB[o];"
+                "[v][m][o]amix=inputs=3:normalize=0:dropout_transition=0[out]"
+            )
+        _run([
+            _ffmpeg(), "-y", "-v", "error", "-i", str(voice), "-i", str(music),
+            "-i", str(original),
+            "-filter_complex", graph, "-map", "[out]",
+            "-t", f"{total:.6f}", "-ar", "48000", "-ac", "2",
+            "-c:a", "pcm_s16le", str(output),
+        ], timeout=1800, cancel_event=cancel_event)
+        return output
     if voice and music:
         if duck:
             graph = (
-                f"[0:a]aresample=48000,volume={voice_gain_db}dB[vfull];"
+                f"[0:a]aresample=48000,volume={voice_gain_db}dB,apad[vfull];"
                 f"[1:a]aresample=48000,volume={music_gain_db}dB[m];"
                 "[vfull]asplit=2[v][sc];"
-                "[m][sc]sidechaincompress=threshold=0.03:ratio=8:"
-                "attack=20:release=350:makeup=1[ducked];"
+                f"[m][sc]{duck_filter(duck_db, attack_ms, release_ms)}[ducked];"
                 "[ducked][v]amix=inputs=2:normalize=0:dropout_transition=0[out]"
             )
         else:
@@ -2290,6 +2547,171 @@ def _duck_and_mix(
         "-c:a", "pcm_s16le", str(output),
     ], timeout=900, cancel_event=cancel_event)
     return output
+
+
+def _wav_mono(path: Path) -> tuple["list[float]", int] | None:
+    """Read a PCM WAV into mono float samples for measurement helpers."""
+    try:
+        with wave.open(str(path), "rb") as handle:
+            channels = max(1, handle.getnchannels())
+            width = handle.getsampwidth()
+            rate = handle.getframerate()
+            raw = handle.readframes(handle.getnframes())
+    except (OSError, EOFError, wave.Error):
+        return None
+    if width == 1:
+        values = [(value - 128) / 128.0 for value in raw]
+    elif width == 2:
+        import array
+
+        samples = array.array("h")
+        samples.frombytes(raw)
+        values = [value / 32768.0 for value in samples]
+    elif width == 4:
+        import array
+
+        samples = array.array("i")
+        samples.frombytes(raw)
+        values = [value / 2147483648.0 for value in samples]
+    else:
+        return None
+    if channels > 1:
+        values = [
+            sum(values[index:index + channels]) / channels
+            for index in range(0, len(values) - channels + 1, channels)
+        ]
+    return values, rate
+
+
+def speech_spans(
+    path: Path,
+    *,
+    threshold_db: float = -35.0,
+    min_speech: float = 0.15,
+    min_silence: float = 0.15,
+) -> list[tuple[float, float]]:
+    """Find speech spans by short-frame RMS. Used for the SNR acceptance gate."""
+    loaded = _wav_mono(Path(path))
+    if not loaded:
+        return []
+    samples, rate = loaded
+    frame = max(1, int(rate * 0.02))
+    spans: list[tuple[float, float]] = []
+    active_start: float | None = None
+    last_active = 0.0
+    for start in range(0, len(samples), frame):
+        block = samples[start:start + frame]
+        if not block:
+            continue
+        rms = (sum(value * value for value in block) / len(block)) ** 0.5
+        db = 20.0 * math.log10(max(rms, 1e-9))
+        at = start / rate
+        if db >= threshold_db:
+            if active_start is None:
+                active_start = at
+            last_active = at + len(block) / rate
+        elif active_start is not None and at - last_active >= min_silence:
+            if last_active - active_start >= min_speech:
+                spans.append((round(active_start, 3), round(last_active, 3)))
+            active_start = None
+    if active_start is not None and last_active - active_start >= min_speech:
+        spans.append((round(active_start, 3), round(last_active, 3)))
+    merged: list[tuple[float, float]] = []
+    for start, end in spans:
+        if merged and start - merged[-1][1] < min_silence:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _band_energy(samples: Sequence[float], rate: int, low: float, high: float) -> float:
+    try:
+        import numpy as np  # noqa: PLC0415
+    except ImportError:
+        return 0.0
+    if not samples:
+        return 0.0
+    values = np.asarray(samples, dtype=np.float64)
+    spectrum = np.fft.rfft(values)
+    freqs = np.fft.rfftfreq(values.size, 1.0 / max(1, rate))
+    mask = (freqs >= low) & (freqs <= high)
+    return float(np.sum(np.abs(spectrum[mask]) ** 2))
+
+
+def speech_band_snr(
+    voice: Path,
+    music: Path,
+    spans: Sequence[tuple[float, float]] | None = None,
+    *,
+    duck_db: float = 0.0,
+    music_gain_db: float = 0.0,
+    low: float = SPEECH_BAND_HZ[0],
+    high: float = SPEECH_BAND_HZ[1],
+) -> float | None:
+    """Speech-band SNR of the voice stem over the music stem, in dB.
+
+    Both stems are measured in 300–3400 Hz over the voice's speech spans.
+    ``music_gain_db`` and ``duck_db`` are applied to the music result, so the
+    number reflects the planned mix without rendering it.
+    """
+    voice_loaded = _wav_mono(Path(voice))
+    music_loaded = _wav_mono(Path(music))
+    if not voice_loaded or not music_loaded:
+        return None
+    voice_samples, voice_rate = voice_loaded
+    music_samples, music_rate = music_loaded
+    if spans is None:
+        spans = speech_spans(Path(voice))
+    if not spans:
+        return None
+    music_attenuation = 10.0 ** ((float(music_gain_db) + float(duck_db)) / 20.0)
+    voice_energy = 0.0
+    music_energy = 0.0
+    for start, end in spans:
+        left = max(0, int(float(start) * voice_rate))
+        right = min(len(voice_samples), int(float(end) * voice_rate))
+        if right <= left:
+            continue
+        voice_energy += _band_energy(voice_samples[left:right], voice_rate, low, high)
+        m_left = max(0, int(float(start) * music_rate))
+        m_right = min(len(music_samples), int(float(end) * music_rate))
+        if m_right > m_left:
+            music_energy += _band_energy(
+                music_samples[m_left:m_right], music_rate, low, high,
+            )
+    music_energy *= music_attenuation * music_attenuation
+    if music_energy <= 1e-18:
+        return 120.0 if voice_energy > 0 else None
+    if voice_energy <= 1e-18:
+        return -120.0
+    return 10.0 * math.log10(voice_energy / music_energy)
+
+
+def measure_loudness(path: Path) -> dict[str, float] | None:
+    """Integrated LUFS and true peak of a rendered file, for acceptance runs."""
+    try:
+        result = subprocess.run(
+            [
+                _ffmpeg(), "-hide_banner", "-nostats", "-i", str(path),
+                "-af", "loudnorm=I=-14:TP=-1.5:print_format=json",
+                "-f", "null", "-",
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", result.stderr or "", re.S)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+        return {
+            "integrated_lufs": round(float(data["input_i"]), 2),
+            "true_peak_dbtp": round(float(data["input_tp"]), 2),
+        }
+    except (ValueError, TypeError, KeyError):
+        return None
 
 
 def store_uploaded_music(source: Path, job_dir: Path) -> Path:
@@ -2365,18 +2787,26 @@ def build_bed(
     cancel_event: threading.Event | None = None,
 ) -> Path | None:
     """Return a finished audio bed, or None to keep the original audio."""
-    mode = str(audio_plan.get("mode") or "keep")
+    declared_mode = audio_mode(audio_plan)
+    mode = mixer_mode(declared_mode)
     if mode == "keep":
         return None
+    normalized = normalize_audio_plan(audio_plan)
+    audio_plan.clear()
+    audio_plan.update(normalized)
     tmp.mkdir(parents=True, exist_ok=True)
 
     voice_plan = audio_plan.get("voice") or {}
     music_plan = audio_plan.get("music") or {}
     translate_plan = audio_plan.get("translate") or {}
+    if declared_mode == "dub" and not str(translate_plan.get("target") or "").strip():
+        raise AudioError("Dub needs a target language.")
     lines: list[dict] = []
     voice_path: Path | None = None
+    needs_voice = mode in {"voice", "full", "bed"}
+    music_is_original = False
 
-    if mode in {"voice", "full", "bed"} and voice_plan.get("source") == "upload":
+    if needs_voice and voice_plan.get("source") == "upload":
         upload = str(voice_plan.get("upload") or "")
         upload_path = (job_dir / upload).resolve() if upload else None
         if not upload_path or not upload_path.is_file() or job_dir.resolve() not in upload_path.parents:
@@ -2389,7 +2819,7 @@ def build_bed(
             automation_expression(automation.get("voice"), total),
             cancel_event,
         )
-    elif mode in {"voice", "full", "bed"} and voice_plan.get("engine"):
+    elif needs_voice and voice_plan.get("engine"):
         progress(0.86, "Writing the voice script")
         base_rate = float(voice_plan.get("rate") or 1.0)
         source_lang = str(source_lang or "en").split("-")[0]
@@ -2413,10 +2843,10 @@ def build_bed(
                     line["overridden"] = True
 
         apply_overrides(script)
-        mode = str(translate_plan.get("mode") or "literal")
+        translate_mode = str(translate_plan.get("mode") or "literal")
         provider = str(translate_plan.get("provider") or "auto")
         rewrite_provider = str(translate_plan.get("rewrite_provider") or "auto")
-        progress(0.87, f"Adapting {len(script)} lines → {target or source_lang} ({mode})")
+        progress(0.87, f"Adapting {len(script)} lines → {target or source_lang} ({translate_mode})")
         context = (
             transcript_context(
                 segments, clips, scenes, source_lang,
@@ -2426,7 +2856,7 @@ def build_bed(
             if segments else None
         )
         script = adapt_script(
-            script, source_lang, target, mode, provider, context, rewrite_provider,
+            script, source_lang, target, translate_mode, provider, context, rewrite_provider,
         )
         apply_overrides(script)
         script = refit_script(script, base_rate)
@@ -2540,6 +2970,79 @@ def build_bed(
             line["offset"] = round(offset, 3)
             line["slot"] = round(min(slot, float(line["duration"])), 3)
 
+        prepared = fit_dub_lines(prepared, duration_of=media_duration)
+        if declared_mode in {"dub", "voice_over"}:
+            for index, item in enumerate(prepared):
+                literal = str(item.get("literal") or "").strip()
+                if (
+                    (item.get("fit") or {}).get("action") != "pad"
+                    or not literal
+                    or literal == item.get("text")
+                ):
+                    continue
+                expanded = {**item, "text": literal}
+                expanded.pop("fit", None)
+                _index, path = synth_one(index, expanded)
+                native = media_duration(path)
+                fit = plan_slot_fit(native, float(expanded.get("slot") or 0.0))
+                if fit["action"] != "pad":
+                    prepared[index] = {
+                        **expanded,
+                        "path": path,
+                        "gain_db": item.get("gain_db") or 0.0,
+                        "fit": fit,
+                    }
+            for _attempt in range(3):
+                flagged = [
+                    index for index, item in enumerate(prepared)
+                    if (item.get("fit") or {}).get("action") == "shorten"
+                ]
+                if not flagged:
+                    break
+                for index in flagged:
+                    line = prepared[index]
+                    previous = dict(line)
+                    previous_fit = previous.get("fit") or {}
+                    new_text = _shorten_dub_line(
+                        str(line.get("text") or ""),
+                        float(previous_fit.get("native") or 0.0),
+                        float(line.get("slot") or 0.0),
+                        target,
+                    )
+                    if not new_text or new_text == line.get("text"):
+                        continue
+                    line["text"] = new_text
+                    line["shortened"] = True
+                    line.pop("fit", None)
+                    _index, path = synth_one(index, line)
+                    native = media_duration(path)
+                    fit = plan_slot_fit(native, float(line.get("slot") or 0.0))
+                    if fit["action"] == "pad" and previous_fit.get("action") == "shorten":
+                        # The rewrite overshot. Keep the longer take; atempo can
+                        # compress a little, but it cannot invent missing words.
+                        prepared[index] = previous
+                        continue
+                    prepared[index] = {
+                        **line,
+                        "path": path,
+                        "gain_db": line.get("gain_db") or 0.0,
+                        "fit": fit,
+                    }
+                prepared = fit_dub_lines(prepared, duration_of=media_duration)
+        audio_plan["_slot_fit"] = slot_fit_summary(prepared)
+        audio_plan["_slot_lines"] = [
+            {
+                "text": item.get("text"),
+                "slot": item.get("slot"),
+                "native": (item.get("fit") or {}).get("native"),
+                "tempo": (item.get("fit") or {}).get("tempo"),
+                "action": (item.get("fit") or {}).get("action"),
+                "overflow": (item.get("fit") or {}).get("overflow"),
+                "shortened": bool(item.get("shortened")),
+            }
+            for item in prepared
+        ]
+
         automation = audio_plan.get("automation") or {}
         voice_expr = automation_expression(automation.get("voice"), total)
         voice_path = _voice_track(
@@ -2550,6 +3053,23 @@ def build_bed(
         )
 
     music_path: Path | None = None
+    chosen: Path | None = None
+    grid: dict | None = None
+    original_overlay: Path | None = None
+    music_source_type = ""
+    music_is_original = mode in {"bed", "voice"}
+    music_brief = music_plan.get("brief") if isinstance(music_plan.get("brief"), dict) else None
+    music_provider = music_plan.get("provider") if isinstance(music_plan.get("provider"), dict) else None
+    music_bpm = music_plan.get("bpm")
+    music_source = str(music_plan.get("source") or "none")
+    music_licence = music_plan.get("licence")
+    try:
+        base_music_gain = float(
+            music_plan.get("gain_db")
+            if music_plan.get("gain_db") is not None else MUSIC_BASE_GAIN_DB
+        )
+    except (TypeError, ValueError):
+        base_music_gain = MUSIC_BASE_GAIN_DB
     if mode == "bed":
         progress(0.90, "Keeping the original audio under the voice")
         music_path = _source_audio_bed(source, tmp, cancel_event)
@@ -2559,27 +3079,51 @@ def build_bed(
             source, str(meta.get("fingerprint") or meta.get("size") or "source"),
             cancel_event,
         )
-    elif music_plan.get("source") == "upload":
-        progress(0.90, "Fitting your music")
-        upload = str(music_plan.get("upload") or "")
-        chosen = (job_dir / upload).resolve() if upload else None
-        if not chosen or not chosen.is_file() or job_dir.resolve() not in chosen.parents:
-            raise AudioError("Uploaded music is missing. Upload it again.")
-        base_music_gain = float(music_plan.get("gain_db") or -18.0)
-        automation = audio_plan.get("automation") or {}
-        expr = automation_expression(automation.get("music"), total)
-        if expr is None:
-            expr = music_mix_expression(
-                clips, audio_plan.get("clip_mix"), base_music_gain,
+    elif declared_mode in {"voice_over", "dub"} and music_source in {"none", "original"}:
+        if declared_mode == "dub" and music_plan.get("remove_original") and demucs_available():
+            progress(0.90, "Separating the original voice from the dub")
+            music_path = separate_vocals(
+                source, str(meta.get("fingerprint") or meta.get("size") or "source"),
+                cancel_event,
             )
-        audio_plan["_used_assets"] = ensure_licensed([chosen])
-        music_path = _music_loop(
-            chosen, total, base_music_gain, tmp, expr, 0.0,
-        )
-    elif music_plan.get("source") and music_plan.get("source") != "none":
+        else:
+            progress(0.90, "Ducking the original under the voice")
+            music_path = _source_audio_bed(source, tmp, cancel_event)
+        music_is_original = True
+    elif mode in {"original_bed", "music_only", "full"} or music_source not in {"none", ""}:
+        if mode == "original_bed":
+            progress(0.90, "Keeping the original speech under the bed")
+            voice_path = _source_audio_bed(source, tmp, cancel_event)
         progress(0.90, "Preparing music bed")
-        chosen: Path | None = resolve_music_track(scenes, clips, music_plan)
-        if chosen is None and music_plan.get("source") in {"minimax-music", "lyria-clip"}:
+        locked_hash = str(music_plan.get("locked_hash") or music_plan.get("file_hash") or "")
+        if locked_hash:
+            chosen = resolve_locked_track(job_dir, locked_hash)
+            entry = next(
+                (item for item in locked_history(job_dir)
+                 if str(item.get("file_hash") or "") == locked_hash),
+                {},
+            )
+            if chosen is None:
+                raise AudioError(
+                    "The locked music track is missing from this job. Pick or generate a new bed."
+                )
+            music_source_type = str(entry.get("source") or "library")
+            music_brief = music_brief or entry.get("brief")
+            music_provider = music_provider or entry.get("provider")
+            music_licence = music_licence or entry.get("licence")
+            if entry.get("bpm") and music_bpm is None:
+                music_bpm = entry.get("bpm")
+        elif music_source == "upload":
+            upload = str(music_plan.get("upload") or "")
+            candidate = (job_dir / upload).resolve() if upload else None
+            if not candidate or not candidate.is_file() or job_dir.resolve() not in candidate.parents:
+                raise AudioError("Uploaded music is missing. Upload it again.")
+            chosen = candidate
+            music_source_type = "upload"
+        elif music_source in MUSIC_DIRS:
+            chosen = resolve_music_track(scenes, clips, music_plan)
+            music_source_type = "generated" if music_source == "generated" else "library"
+        if chosen is None and music_source in {"minimax-music", "lyria-clip"}:
             prompt = str(music_plan.get("prompt") or "").strip()
             if not prompt or prompt == "auto":
                 prompt = music_prompt(
@@ -2616,12 +3160,19 @@ def build_bed(
                 break
             if chosen is None:
                 raise last_error or AudioError("All music providers failed.")
+            music_source_type = "generated"
+            if music_licence is None:
+                music_licence = {"type": "generated"}
         if chosen and chosen.is_file():
-            base_music_gain = float(music_plan.get("gain_db") or -18.0)
+            if declared_mode in {"voice_over", "dub"}:
+                progress(0.90, "Ducking the original under the voice")
+                original_overlay = _source_audio_bed(source, tmp, cancel_event)
             beat_offset = 0.0
-            if audio_plan.get("beat_sync"):
-                grid = beat_grid(chosen)
-                if grid and grid.get("beats"):
+            grid = beat_grid(chosen)
+            if grid:
+                if music_bpm is None:
+                    music_bpm = grid.get("bpm")
+                if audio_plan.get("beat_sync") and grid.get("beats"):
                     beat_offset = float(grid["beats"][0])
                     audio_plan["_beat_bpm"] = grid.get("bpm")
             automation = audio_plan.get("automation") or {}
@@ -2630,33 +3181,116 @@ def build_bed(
                 expr = music_mix_expression(
                     clips, audio_plan.get("clip_mix"), base_music_gain,
                 )
-            audio_plan["_used_assets"] = ensure_licensed([chosen])
+            audio_plan["_used_assets"] = (
+                [{
+                    "path": chosen.name,
+                    "license": normalize_licence(music_licence),
+                }]
+                if music_licence is not None
+                else ensure_licensed([chosen])
+            )
             music_path = _music_loop(
                 chosen, total, base_music_gain, tmp, expr, beat_offset,
             )
-        elif music_plan.get("source") in MUSIC_DIRS:
-            folder = MUSIC_DIRS[str(music_plan["source"])]
+        elif declared_mode in {"voice_over", "dub"}:
+            progress(0.90, "Ducking the original under the voice")
+            music_path = _source_audio_bed(source, tmp, cancel_event)
+            music_is_original = True
+        elif music_source in MUSIC_DIRS:
+            folder = MUSIC_DIRS[music_source]
             raise AudioError(
                 f"No tracks in {folder}. Drop an audio file there or pick another music source."
             )
-        else:
+        elif mode in {"original_bed", "music_only"}:
+            raise AudioError(
+                "This audio mode needs a music track. Pick a library track or upload one."
+            )
+        elif music_source not in {"none", ""}:
             raise AudioError("Music generation produced no file.")
+
+    ducked = bool(music_plan.get("duck", audio_plan.get("duck", True))) and mode != "music_only"
+    if not needs_voice and mode != "original_bed":
+        ducked = False
+
+    if chosen and chosen.is_file() and not music_is_original:
+        if music_brief is None:
+            music_brief = build_brief(
+                "",
+                total,
+                moods=music_plan.get("moods") or scene_moods(scenes, clips),
+            )
+        source_seconds = media_duration(chosen)
+        plan = fit_plan(source_seconds, total, grid)
+        payload = music_json(
+            chosen,
+            source_type=music_source_type or "library",
+            brief=music_brief,
+            provider=music_provider,
+            licence=music_licence,
+            bpm=float(music_bpm) if music_bpm else None,
+            in_point=float(plan["in"]),
+            out_point=min(source_seconds, float(plan["in"]) + float(total)),
+            job_dir=job_dir,
+        )
+        payload.update({
+            "bpm_source": "beat_grid" if grid and grid.get("bpm") else (
+                "metadata" if music_bpm else "unavailable"
+            ),
+            "loop": bool(plan["loop"]),
+            "loop_seconds": plan["loop_seconds"],
+            "bar": plan["bar"],
+            "fade_out": plan["fade_out"],
+            "duck": {
+                "enabled": ducked,
+                "db": float(audio_plan.get("duck_db") or DUCK_DB),
+                "attack_ms": DUCK_ATTACK_MS,
+                "release_ms": DUCK_RELEASE_MS,
+            },
+        })
+        audio_plan["_music_meta"] = payload
+        try:
+            music_file = job_dir / "audio" / "music.json"
+            music_file.parent.mkdir(parents=True, exist_ok=True)
+            music_file.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     if voice_path is None and music_path is None:
         raise AudioError("No voice or music was produced for this audio plan.")
 
+    if voice_path and music_path and not music_is_original:
+        try:
+            snr = speech_band_snr(
+                voice_path, music_path,
+                duck_db=float(audio_plan.get("duck_db") or DUCK_DB) if ducked else 0.0,
+                music_gain_db=base_music_gain,
+            )
+            if snr is not None:
+                audio_plan["_speech_snr_db"] = round(snr, 2)
+        except (OSError, ValueError, wave.Error):
+            pass
+
     progress(0.94, "Mixing audio")
     mixed = _duck_and_mix(
         voice_path, music_path, tmp, total,
-        bool(music_plan.get("duck", True)),
-        float(music_plan.get("gain_db") or -18.0),
+        ducked,
+        base_music_gain,
         float(voice_plan.get("gain_db") or 0.0),
         cancel_event,
+        duck_db=float(audio_plan.get("duck_db") or DUCK_DB),
+        original=original_overlay,
     )
     final = tmp / "final_audio.wav"
+    loudness = loudness_settings(audio_plan)
+    audio_plan["_loudness"] = loudness
     _run([
         _ffmpeg(), "-y", "-v", "error", "-i", str(mixed),
-        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+        "-af", (
+            f"loudnorm=I={loudness['lufs']:.2f}:TP={loudness['true_peak']:.2f}:"
+            f"LRA={loudness['lra']:.2f}"
+        ),
         "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(final),
     ], timeout=900, cancel_event=cancel_event)
     return final
@@ -3336,7 +3970,12 @@ from tts import (  # noqa: E402,F401
     _tts_route_candidates,
     _tts_voice_for,
     _voice_cache,
+    fit_dub_lines,
+    kokoro_model_dir,
     list_voices,
+    plan_slot_fit,
+    shorten_text_for_slot,
+    slot_fit_summary,
     synthesize_line,
     voice_sample,
 )
@@ -3348,13 +3987,25 @@ from music import (  # noqa: E402,F401
     _slug,
     asset_license,
     beat_grid,
+    brief_hash,
+    build_brief,
     ensure_licensed,
+    fit_plan,
+    generate_candidates,
     generate_music,
+    generation_cache_key,
     list_music,
+    lock_track,
+    locked_history,
+    music_json,
     music_prompt,
+    normalize_licence,
     pick_music,
+    preview_candidate,
+    resolve_locked_track,
     resolve_music_track,
     save_generated_asset,
     scene_moods,
+    sha256_file,
     snap_clips,
 )

@@ -46,6 +46,7 @@ import exports as cuts
 import history_store
 import job_queue
 import matrix
+import music
 import overlays
 import packet
 import pipeline
@@ -3058,6 +3059,7 @@ app.include_router(routes_cleanup.router)
 app.include_router(routes_cleanup.rights_router)
 app.include_router(routes_edits.router)
 app.include_router(routes_overlays.router)
+app.include_router(music.router)
 
 
 @app.exception_handler(disk.InsufficientSpace)
