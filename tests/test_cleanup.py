@@ -1021,13 +1021,12 @@ def _live_job(tmp_path, monkeypatch, path: str) -> SimpleNamespace:
     )
 
 
-@pytest.mark.skipif(
-    not (FIXTURE_A and FIXTURE_B), reason="VIBECUT_FIXTURE_A/B are not both set",
-)
 @pytest.mark.parametrize(("label", "path"), FIXTURES)
 def test_live_fixture_apply_clean_and_measure_residual(
     label, path, tmp_path, monkeypatch,
 ):
+    if not path:
+        pytest.skip(f"VIBECUT_FIXTURE_{label} is not set")
     path = str(Path(path).expanduser())
     assert Path(path).is_file(), path
     report = _live_check(path, tmp_path, attestation=True)
