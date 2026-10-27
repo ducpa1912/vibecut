@@ -2799,6 +2799,8 @@ def build_bed(
     voice_plan = audio_plan.get("voice") or {}
     music_plan = audio_plan.get("music") or {}
     translate_plan = audio_plan.get("translate") or {}
+    if declared_mode == "dub" and not str(translate_plan.get("target") or "").strip():
+        raise AudioError("Dub needs a target language.")
     lines: list[dict] = []
     voice_path: Path | None = None
     needs_voice = mode in {"voice", "full", "bed"}
@@ -3101,6 +3103,10 @@ def build_bed(
                  if str(item.get("file_hash") or "") == locked_hash),
                 {},
             )
+            if chosen is None:
+                raise AudioError(
+                    "The locked music track is missing from this job. Pick or generate a new bed."
+                )
             music_source_type = str(entry.get("source") or "library")
             music_brief = music_brief or entry.get("brief")
             music_provider = music_provider or entry.get("provider")
