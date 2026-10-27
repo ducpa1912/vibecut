@@ -129,6 +129,28 @@ def test_finish_banner_counts_failures():
 
 
 @needs_node
+def test_apply_summary_reports_what_changed_and_what_was_skipped():
+    """Apply to all must not claim success for stories it left alone (QA #7)."""
+    out = run_module("finish.js", """
+        return [
+          m.applySummary([
+            {name: "02", changed: ["captions", "colour"], skipped: [], error: ""},
+            {name: "03", changed: ["colour"], skipped: [{field: "captions", reason: "no speech to caption"}], error: ""},
+            {name: "04", changed: [], skipped: [], error: "Conflict"},
+          ]),
+          m.applySummary([{name: "02", changed: [], skipped: [], error: ""}]),
+        ];
+    """)
+    assert out[0]["text"] == (
+        "Updated 2 stories (captions on 1, colour on 2). "
+        "Skipped 03: captions, no speech to caption. "
+        "1 could not be updated: 04: Conflict"
+    )
+    assert out[0]["tone"] == "bad"
+    assert out[1] == {"text": "No story changed.", "tone": ""}
+
+
+@needs_node
 def test_failure_reason_and_download_name():
     out = run_module("finish.js", """
         return [

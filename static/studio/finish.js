@@ -211,6 +211,31 @@ export function finishBanner({ done = 0, failed = 0 } = {}) {
   return { text: "Renders stopped.", tone: "" };
 }
 
+/**
+ * Say what Apply to all really did. `results` holds one row per target:
+ * `{name, changed: [field], skipped: [{field, reason}], error}`.
+ */
+export function applySummary(results) {
+  const rows = Array.isArray(results) ? results : [];
+  const changed = rows.filter((row) => !row.error && row.changed.length);
+  const failed = rows.filter((row) => row.error);
+  const counts = new Map();
+  for (const row of changed) {
+    for (const field of new Set(row.changed)) counts.set(field, (counts.get(field) || 0) + 1);
+  }
+  const parts = [];
+  if (changed.length) {
+    const what = [...counts.entries()].map(([field, count]) => `${field} on ${count}`).join(", ");
+    parts.push(`Updated ${changed.length} ${changed.length === 1 ? "story" : "stories"} (${what}).`);
+  } else {
+    parts.push("No story changed.");
+  }
+  const skipped = rows.flatMap((row) => row.skipped.map((item) => `${row.name}: ${item.field}, ${item.reason}`));
+  if (skipped.length) parts.push(`Skipped ${skipped.slice(0, 3).join("; ")}${skipped.length > 3 ? ` and ${skipped.length - 3} more` : ""}.`);
+  if (failed.length) parts.push(`${failed.length} could not be updated: ${failed[0].name}: ${failed[0].error}`);
+  return { text: parts.join(" "), tone: failed.length ? "bad" : changed.length ? "ok" : "" };
+}
+
 /** One readable line from a failed artifact or queue item. */
 export function failureReason(item) {
   const raw = String(item?.error || "").trim();
@@ -296,6 +321,9 @@ export function mount(root, ctx) {
   let shareBusy = false;
   let applyBusy = false;
   let applyNotice = "";
+  let applyTone = "";
+  // Set by copyCaptionStyle: false when the target track already had the style.
+  let captionChanged = true;
   let applySourceId = "";
   let applyFields = {
     captions: true,
@@ -1600,7 +1628,7 @@ export function mount(root, ctx) {
 
     const fields = el("div", { class: "st-finish-apply-fields" });
     for (const [key, title, copy] of [
-      ["captions", "Caption style", "Same font, colour and size on every story with captions."],
+      ["captions", "Caption style", "Same font, colour and size everywhere. Stories without captions get them built."],
       ["text", "Text style", "Same look for hook, title and call-to-action text."],
       ["color", "Colour preset", "Same colour look and sliders."],
       ["music", "Music brief", "Same mood, energy, genre and tempo for generated beds."],
@@ -1632,7 +1660,7 @@ export function mount(root, ctx) {
     if (applyNotice) {
       card.append(el("p", {
         class: "st-status",
-        dataset: { tone: applyNotice.startsWith("Could not") ? "bad" : "ok" },
+        dataset: { tone: applyTone },
         text: applyNotice,
       }));
     }
@@ -1651,6 +1679,7 @@ export function mount(root, ctx) {
     const selected = Object.entries(applyFields).filter(([, value]) => value).map(([key]) => key);
     if (!selected.length) {
       applyNotice = "Pick at least one thing to copy.";
+      applyTone = "bad";
       renderApplyCard();
       return;
     }
@@ -1676,11 +1705,33 @@ export function mount(root, ctx) {
       const sourceVoice = sourceEdit.audio?.voice || null;
 
       const targets = stories().filter((story) => story.id !== sourceStory.id);
-      let changed = 0;
-      let skipped = 0;
-      const problems = [];
+      const results = [];
       for (const story of targets) {
+        const result = { name: storyName(story, stories().indexOf(story)), changed: [], skipped: [], error: "" };
+        results.push(result);
         try {
+          // Captions go first: building or restyling a track re-points the
+          // story's 9:16 Edit on the server, so the Edit is read after it.
+          let captionValue = null;
+          captionChanged = true;
+          const before = await currentEditFor(story.id, aspect);
+          if (applyFields.captions) {
+            if (!sourceCaptions?.style) {
+              result.skipped.push({ field: "captions", reason: "the source story has no captions" });
+            } else if (before?.edit?.captions?.enabled === false) {
+              result.skipped.push({ field: "captions", reason: "captions are turned off" });
+            } else if (before?.edit?.captions?.track_id) {
+              captionValue = await copyCaptionStyle(before.edit, sourceCaptions, sourceEdit);
+              if (captionValue && !captionChanged) {
+                result.skipped.push({ field: "captions", reason: "already in this style" });
+              }
+            } else {
+              captionValue = await buildCaptionsLike(story, sourceCaptions, sourceEdit);
+              if (!captionValue) {
+                result.skipped.push({ field: "captions", reason: "no speech to caption" });
+              }
+            }
+          }
           const current = await currentEditFor(story.id, aspect);
           if (!current?.edit) {
             const created = await createAppliedEdit(story, {
@@ -1688,9 +1739,9 @@ export function mount(root, ctx) {
               textStyle: applyFields.text ? sourceStyle : null,
               brief: applyFields.music ? sourceBrief : null,
               voice: applyFields.voice ? sourceVoice : null,
+              captions: captionValue,
             });
-            if (created) changed += 1;
-            else skipped += 1;
+            result.changed.push(...created);
             continue;
           }
           const target = current.edit;
@@ -1701,6 +1752,7 @@ export function mount(root, ctx) {
               item?.type === "text" ? { ...item, style: sourceStyle } : item
             )) : [];
             if (graphics.some((item) => item?.type === "text")) patch.graphics = graphics;
+            else result.skipped.push({ field: "text", reason: "no text layer" });
           }
           if (applyFields.music || applyFields.voice) {
             const audio = JSON.parse(JSON.stringify(target.audio || {}));
@@ -1712,37 +1764,40 @@ export function mount(root, ctx) {
             }
             if (Object.keys(audio).length) patch.audio = audio;
           }
-          if (applyFields.captions && sourceCaptions && target.captions?.track_id) {
-            const caption = await copyCaptionStyle(target, sourceCaptions, sourceEdit);
-            if (caption) patch.captions = caption;
+          if (captionValue) {
+            if (target.captions?.track_id !== captionValue.track_id
+              || target.captions?.style_id !== captionValue.style_id) {
+              patch.captions = { ...(target.captions || {}), ...captionValue };
+            }
+            // The track itself changed even when the server already re-pointed the Edit.
+            if (captionChanged) result.changed.push("captions");
           }
-          if (!Object.keys(patch).length) {
-            skipped += 1;
-            continue;
+          for (const field of ["color", "graphics", "audio"]) {
+            if (!(field in patch)) continue;
+            if (JSON.stringify(patch[field]) === JSON.stringify(target[field])) delete patch[field];
+            else result.changed.push(field === "graphics" ? "text" : field === "audio" ? "sound" : "colour");
           }
+          if (!Object.keys(patch).length) continue;
           await request(`${jobRoot(job.id)}/edits/${encodeURIComponent(target.id)}`, {
             method: "PATCH",
             body: patch,
           });
-          changed += 1;
         } catch (error) {
-          problems.push(`${storyName(story, stories().indexOf(story))}: ${error?.message || "could not apply"}`);
+          result.error = error?.message || "could not apply";
         }
       }
       await loadEdits();
       if (disposed) return;
-      applyNotice = changed
-        ? `Applied to ${formatCount(changed, "story", "stories")}.${skipped ? ` ${skipped} had nothing to change.` : ""}`
-        : "No story needed a change.";
-      if (problems.length) {
-        applyNotice = `Applied to ${formatCount(changed, "story", "stories")}. ${problems.length} could not be updated: ${problems[0]}`;
-      }
+      const summary = applySummary(results);
+      applyNotice = summary.text;
+      applyTone = summary.tone;
       renderApplyCard();
       renderVersionsCard();
-      announce(applyNotice, problems.length ? "bad" : "ok");
+      announce(applyNotice, summary.tone);
     } catch (error) {
       if (disposed) return;
       applyNotice = error?.message || "Could not apply the style.";
+      applyTone = "bad";
       renderApplyCard();
       announce(applyNotice, "bad");
     } finally {
@@ -1780,9 +1835,42 @@ export function mount(root, ctx) {
     if (values.voice) audio.voice = { ...values.voice };
     if (values.brief) audio.music = { brief: { ...values.brief } };
     if (Object.keys(audio).length) body.audio = audio;
-    if (!values.color && !values.textStyle && !Object.keys(audio).length) return false;
+    if (values.captions) body.captions = values.captions;
+    const changed = [
+      values.captions ? "captions" : "",
+      values.color ? "colour" : "",
+      values.textStyle ? "text" : "",
+      Object.keys(audio).length ? "sound" : "",
+    ].filter(Boolean);
+    if (!changed.length) return [];
     await request(`${jobRoot(job.id)}/edits`, { method: "POST", body });
-    return true;
+    return changed;
+  }
+
+  /** Build a caption track for a story that has none, in the source's style. */
+  async function buildCaptionsLike(story, sourceTrack, sourceEdit) {
+    const styleId = sourceTrack.style_id || sourceEdit.captions?.style_id || "clean";
+    let built;
+    try {
+      built = await request(`${jobRoot(job.id)}/captions`, {
+        method: "POST",
+        body: { target: 30, set_id: activeSetId, story_id: story.id, style_id: styleId },
+      });
+    } catch (error) {
+      if (Number(error?.status) === 400) return null;
+      throw error;
+    }
+    const track = built?.track || built;
+    if (!track?.id || !(track.cues || []).length) return null;
+    const styled = await request(`${jobRoot(job.id)}/captions/${encodeURIComponent(track.id)}`, {
+      method: "PATCH",
+      body: { style: sourceTrack.style, style_id: styleId },
+    });
+    return {
+      track_id: String(styled?.track_id || styled?.id || track.id),
+      style_id: styleId,
+      enabled: true,
+    };
   }
 
   async function copyCaptionStyle(targetEdit, sourceTrack, sourceEdit) {
@@ -1798,6 +1886,7 @@ export function mount(root, ctx) {
       { method: "PATCH", body },
     );
     const nextTrack = String(result?.track_id || result?.id || trackId);
+    captionChanged = result?.changed !== false;
     return {
       ...(targetEdit.captions || {}),
       track_id: nextTrack,
