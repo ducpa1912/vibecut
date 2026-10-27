@@ -1002,6 +1002,11 @@ def transcribe(
     out_dir.mkdir(parents=True, exist_ok=True)
     chosen_model = normalize_whisper_model(model)
     log_path = out_dir / "whisper.log"
+    json_path = out_dir / "transcript.json"
+    try:
+        json_path.unlink()
+    except OSError:
+        pass
     cmd = [
         binary, str(source),
         "--model", chosen_model,
@@ -1029,7 +1034,6 @@ def transcribe(
             return None
     if result.returncode != 0:
         return None
-    json_path = out_dir / "transcript.json"
     if not json_path.exists():
         return None
     progress(0.82, "Reading transcript")
