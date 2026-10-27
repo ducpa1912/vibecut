@@ -375,3 +375,63 @@ def test_invalid_stored_edit_is_a_compose_error():
     edit["hash"] = "edh_" + "0" * 32
     with pytest.raises(compose_render.ComposeError):
         _compile(edit)
+
+
+def test_emphasis_sticker_and_underline_layers_golden():
+    import fx
+
+    edit = _edit(graphics=[
+        {"type": "text", "kind": "emphasis", "text": "Now",
+         "start": 0.0, "end": 2.0, "z": 10},
+        fx.sticker("star", 0.0, 2.0, z=20),
+        fx.underline(0.0, 2.0, z=21),
+    ])
+    layers = _compile(edit)["overlays"]
+    assert [layer["id"] for layer in layers] == ["tx01", "fx02", "fx03"]
+    assert layers[0] == {
+        "id": "tx01", "type": "text", "kind": "emphasis", "text": "Now",
+        "start": 0.0, "end": 2.0, "box": {"w": 0.6, "h": 0.12},
+        "rect": {"x": 0.2, "y": 0.44, "w": 0.6, "h": 0.12},
+        "z": 10,
+        "style": {
+            "font": "sans", "size": 44, "weight": 800, "color": "#ffffff",
+            "background": "none", "stroke": "#000000", "align": "center",
+            "uppercase": False, "shadow": True,
+        },
+        "opacity": 1.0, "safe_zone": True, "duration": 2.0,
+        "raster": {
+            "mode": "static", "frames": 1, "fps": 30,
+            "hash": "lyh_8750944062edab20c318cbcd",
+        },
+    }
+    sticker = layers[1]
+    assert sticker["asset"] == {
+        "id": "star", "hash": "214e99de162b327c3efa8083fcdcac2e",
+    }
+    assert sticker["asset_path"] == str(fx.sticker_path("star"))
+    assert sticker["rect"] == {"x": 0.38, "y": 0.38, "w": 0.24, "h": 0.24}
+    assert sticker["raster"]["hash"] == "lyh_e7a338d6c85db0e72119f3ff"
+    underline = layers[2]
+    assert underline["rect"] == {"x": 0.3, "y": 0.47, "w": 0.4, "h": 0.06}
+    assert underline["raster"]["hash"] == "lyh_0fab73d4cacdc8d8ac123da9"
+
+
+def test_beat_snap_perspective_motion_filter_golden():
+    edit = _edit(
+        motion=[{"kind": "snap_zoom", "start": 0.98, "end": 2.0, "amount": 0.12}],
+    )
+    result = _compile(
+        edit, beats=[1.0], motion_engine="perspective", clips=CLIPS[:1],
+    )
+    assert result["segments"][0]["post_filter"] == (
+        "perspective="
+        "x0='(((W-W/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
+        "y0='(((H-H/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
+        "x1='(W-((W-W/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
+        "y1='(((H-H/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
+        "x2='(((W-W/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
+        "y2='(H-((H-H/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
+        "x3='(W-((W-W/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
+        "y3='(H-((H-H/(if(lt(on,30),1.000,1.1200)))/2)+0)':"
+        "interpolation=cubic:eval=frame"
+    )
