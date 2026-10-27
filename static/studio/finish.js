@@ -236,6 +236,15 @@ export function applySummary(results) {
   return { text: parts.join(" "), tone: failed.length ? "bad" : changed.length ? "ok" : "" };
 }
 
+export const RENDER_FIRST_NOTE = "Render this story first; checks run on the render.";
+
+/** Why preflight could not run, in one line. Never a bare "could not run". */
+export function checksFailedNote(error) {
+  if (Number(error?.status) === 404) return RENDER_FIRST_NOTE;
+  const reason = String(error?.message || "").trim();
+  return reason ? `Checks could not run for this story: ${reason}` : "Checks could not run for this story. Try Check again.";
+}
+
 /** One readable line from a failed artifact or queue item. */
 export function failureReason(item) {
   const raw = String(item?.error || "").trim();
@@ -553,7 +562,15 @@ export function mount(root, ctx) {
     }
     if (!payload) {
       const params = new URLSearchParams({ story_id: story.id });
-      payload = await request(`${jobRoot(job.id)}/preflight?${params.toString()}`);
+      try {
+        payload = await request(`${jobRoot(job.id)}/preflight?${params.toString()}`);
+      } catch (error) {
+        if (Number(error?.status) !== 404) throw error;
+        // No Edit and no render yet: say what to do, not "could not run".
+        if (disposed || seq !== checkSeq) return;
+        checks = { markers: [], blocked: false, note: RENDER_FIRST_NOTE, fallback: true };
+        return;
+      }
       fallback = true;
     }
     if (disposed || seq !== checkSeq) return;
@@ -575,11 +592,11 @@ export function mount(root, ctx) {
       await loadSets();
       await Promise.all([loadArtifacts(), loadQueues(), loadEdits(), loadPackets(), loadShares()]);
       if (stories().length) {
-        await loadChecks().catch(() => {
+        await loadChecks().catch((error) => {
           checks = {
             markers: [],
             blocked: false,
-            note: "Checks could not run for this story.",
+            note: checksFailedNote(error),
             fallback: true,
           };
         });

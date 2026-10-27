@@ -212,6 +212,18 @@ def test_apply_summary_reports_what_changed_and_what_was_skipped():
 
 
 @needs_node
+def test_preflight_failures_say_why():
+    """QA #17: a 404 means "render first", other errors keep their reason."""
+    out = run_module("finish.js", """
+        return [m.checksFailedNote({status: 404}), m.checksFailedNote({status: 500, message: "Boom"}),
+                m.checksFailedNote(null)];
+    """)
+    assert out[0] == "Render this story first; checks run on the render."
+    assert out[1] == "Checks could not run for this story: Boom"
+    assert out[2].endswith("Try Check again.")
+
+
+@needs_node
 def test_failure_reason_and_download_name():
     out = run_module("finish.js", """
         return [
