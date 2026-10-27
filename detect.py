@@ -241,6 +241,40 @@ def _observation(
     }
 
 
+# OCR lines below this confidence are dropped; up to the noisy floor they
+# must also read like words. Low-confidence reads of B-roll were mostly
+# junk ("^9UM.", "OII8C", "4HIH}") that inflated "regions need cleaning".
+OCR_MIN_CONFIDENCE = 0.4
+OCR_NOISY_CONFIDENCE = 0.7
+_OCR_CLEAN_TOKEN = re.compile(r"^[\"'(\[]?[^\W\d_]+(?:['’-][^\W\d_]+)*[.,!?:;)\]\"'…]*$|^\d+(?:[.,:]\d+)*[%.,!?]?$")
+
+
+def _noisy_token(token: str) -> bool:
+    if not _OCR_CLEAN_TOKEN.match(token):
+        return True
+    letters = [char for char in token if char.isalpha()]
+    # An upper-case letter after a lower-case one inside a word ("biO").
+    return any(
+        left.islower() and right.isupper() for left, right in zip(letters, letters[1:])
+    )
+
+
+def ocr_line_is_junk(text: str, confidence: float) -> bool:
+    """True for OCR reads too unsure or too garbled to show or clean."""
+    if confidence < OCR_MIN_CONFIDENCE:
+        return True
+    if confidence >= OCR_NOISY_CONFIDENCE:
+        return False
+    tokens = text.split()
+    if not tokens:
+        return True
+    # Unspaced scripts (CJK) can't be judged by token shape.
+    if len(tokens) == 1 and not re.search(r"[A-Za-z0-9]", tokens[0]):
+        return False
+    noisy = sum(1 for token in tokens if _noisy_token(token))
+    return noisy * 2 >= len(tokens)
+
+
 def merge_lines(
     lines: Iterable[dict],
     *,
@@ -258,10 +292,13 @@ def merge_lines(
         box = normalize_box(line.get("box"))
         if not text or box is None:
             continue
+        confidence = _clamp(_number(line.get("confidence"), 0.5))
+        if ocr_line_is_junk(text, confidence):
+            continue
         items.append({
             "text": text,
             "box": box,
-            "confidence": _clamp(_number(line.get("confidence"), 0.5)),
+            "confidence": confidence,
         })
     items.sort(key=lambda item: (item["box"]["y"], item["box"]["x"]))
     merged: list[dict] = []
@@ -521,6 +558,29 @@ def _screen_text_mark(text: str, box: dict) -> bool:
 
 
 
+def _word_pop(text: str, box: dict, corner: bool) -> bool:
+    """Word-pop captions: 1-4 words, large type, centred, mid-frame.
+
+    They sit above the caption band and change every 0.3-1.5 s, so each word
+    becomes its own short tracklet. Without this rule they read as screen
+    text (even over a screen recording) and could never be cleaned.
+    """
+    words = re.findall(r"\w+", str(text or ""))
+    if not 1 <= len(words) <= 4 or corner:
+        return False
+    if not any(char.isalpha() for char in text):
+        return False
+    height = float(box["h"])
+    centre = float(box["x"]) + float(box["w"]) / 2.0
+    top = float(box["y"])
+    return (
+        height >= 0.035
+        and abs(centre - 0.5) <= 0.18
+        and 0.30 <= top <= 0.85
+        and _area(box) <= 0.08
+    )
+
+
 def classify(tracklet: dict, duration: float) -> tuple[str, float]:
     """Return ``(kind, rule_confidence)`` for one tracklet."""
     box = tracklet["box"]
@@ -548,6 +608,9 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
 
     if handle_like and corner and area <= 0.10:
         return "handle_or_logo", 0.8
+
+    if _word_pop(text, box, corner):
+        return "subtitle", 0.75
 
     if tracklet.get("screen_frame"):
         return "screen_text", 0.75

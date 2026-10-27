@@ -97,6 +97,13 @@ def test_adjust_sentences_moves_one_edge_by_one_sentence():
     assert out == [[4, 5, 6, 7], [6, 7], [5, 6, 7, 8], [5, 6], None, None]
 
 
+@needs_node
+def test_check_samples_short_sources_at_one_fps():
+    """QA #15: 0.5 fps missed short word-pop captions."""
+    out = run_module("check.js", "return [m.checkFps(53), m.checkFps(600), m.checkFps(1442), m.checkFps(0)];")
+    assert out == [1, 1, 0.5, 0.5]
+
+
 # ---------------------------------------------------------------- shell.js (QA #10)
 
 

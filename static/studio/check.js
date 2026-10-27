@@ -49,6 +49,16 @@ const RECOMMENDATIONS = {
 
 const SEVERITY_ORDER = { blocker: 0, warning: 1, info: 2 };
 
+/**
+ * Text sampling rate for Check. Word-pop captions change every 0.3–1.5 s,
+ * so 0.5 fps missed short words; sources up to 10 min sample at 1 fps.
+ * Longer sources stay at 0.5 fps so Check time doesn't double.
+ */
+export function checkFps(duration) {
+  const seconds = Number(duration);
+  return Number.isFinite(seconds) && seconds > 0 && seconds <= 600 ? 1 : 0.5;
+}
+
 export function ensureCheckStyles() {
   if (document.getElementById(CSS_ID)) return;
   const style = document.createElement("style");
@@ -674,7 +684,7 @@ export function mount(root, ctx) {
             force: Boolean(force),
             attestation: withRights ? true : null,
             sample_text: true,
-            fps: 0.5,
+            fps: checkFps(job?.source?.duration),
           },
         });
       } catch (error) {
