@@ -745,7 +745,8 @@ export function mount(root, ctx) {
           (set) => Array.isArray(set?.stories) && set.stories.length,
         ),
       );
-      attested = hasAttestation(jobId);
+      // The note given at Import is stored on the job; this browser's copy is a fallback.
+      attested = hasAttestation(jobId) || Boolean(loadedJob?.rights?.attested);
       if (job.status !== "ready") {
         clear(dom.body);
         dom.run.hidden = true;

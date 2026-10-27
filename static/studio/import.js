@@ -7,9 +7,9 @@
  *   POST /api/jobs/from-url
  *   GET  /api/jobs
  *
- * Rights attestation is a required gate before any import starts. The server
- * has no import attestation field yet, so the accepted value is kept per job
- * in this browser until the Clean layer can store it server-side.
+ * Rights attestation is a required gate before any import starts. The note is
+ * sent with the import and stored on the job (`job.rights`, source "import"),
+ * where Check and Clean read it; the browser copy is only a convenience.
  */
 
 import {
@@ -341,11 +341,11 @@ export function mount(root, ctx) {
           dom.progressFill.style.width = `${percent}%`;
           dom.submit.textContent = `Importing… ${percent}%`;
           dom.progressText.textContent = `${percent}%`;
-        });
+        }, { rights: dom.attest.checked });
       } else if (source === "path") {
-        created = await createJobFromPath(dom.pathInput.value.trim(), options);
+        created = await createJobFromPath(dom.pathInput.value.trim(), options, { rights: dom.attest.checked });
       } else {
-        created = await createJobFromUrl(dom.urlInput.value.trim(), options);
+        created = await createJobFromUrl(dom.urlInput.value.trim(), options, null, { rights: dom.attest.checked });
       }
 
       if (!created || !created.id) throw new Error("The server did not return a video id.");

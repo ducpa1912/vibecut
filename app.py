@@ -4299,6 +4299,8 @@ class PathBody(BaseModel):
     path: str
     options: dict = {}
     job_id: str | None = None
+    # The own-footage note from Import. Stored on the job; policy is unchanged.
+    rights: bool | None = None
 
 
 class InspectBody(BaseModel):
@@ -4317,6 +4319,7 @@ class FromUrlBody(BaseModel):
     options: dict | None = None
     ingest_options: dict | None = None
     job_id: str | None = None
+    rights: bool | None = None
 
 
 class PlanBody(BaseModel):
@@ -4559,12 +4562,25 @@ def _requested_job_id(value: str | None) -> str:
     return job_id
 
 
+def import_rights(attested: bool | None) -> dict | None:
+    """The rights record an import stores, or None when Import sent none.
+
+    Studio's Import asks for the own-footage note; it used to live only in
+    browser storage. The record has the same shape POST /rights writes, with
+    ``source: "import"``, so Check prefills from it and Clean's gate reads it.
+    """
+    if attested is None:
+        return None
+    return {"attested": bool(attested), "at": round(time.time(), 3), "source": "import"}
+
+
 def _new_job(
     source_path: Path,
     name: str,
     meta: dict,
     options: dict,
     job_id: str | None = None,
+    rights: dict | None = None,
 ) -> dict:
     job_id = job_id or uuid.uuid4().hex[:12]
     directory = JOBS / job_id
@@ -4592,6 +4608,8 @@ def _new_job(
         "story_id": job_id,
         "attempts": {"analysis": 0},
     }
+    if rights is not None:
+        job["rights"] = dict(rights)
     save_job(job)
     analysis_pool.submit(run_analysis, job_id)
     return job
@@ -4602,6 +4620,7 @@ async def upload_job(
     request: Request,
     file: UploadFile = File(...),
     options: str = Form("{}"),
+    rights: str = Form(""),
 ) -> dict:
     try:
         parsed_options = clean_options(json.loads(options))
@@ -4654,7 +4673,11 @@ async def upload_job(
         stored = store_source(temp, suffix, original)
         destination = link_source(stored, directory, suffix)
         meta = _probe_video(destination)
-        job = _new_job(destination, original, meta, parsed_options, job_id=job_id)
+        attested = {"true": True, "1": True, "false": False, "0": False}.get(rights.strip().lower())
+        job = _new_job(
+            destination, original, meta, parsed_options, job_id=job_id,
+            rights=import_rights(attested),
+        )
         return {"id": job["id"], "status": job["status"]}
     except HTTPException:
         temp.unlink(missing_ok=True)
@@ -4695,7 +4718,7 @@ def job_from_path(body: PathBody) -> dict:
         raise HTTPException(409, "That job_id already exists.") from None
     job = _new_job(
         path.resolve(), path.name, meta, clean_options(body.options),
-        job_id=job_id,
+        job_id=job_id, rights=import_rights(body.rights),
     )
     return {"id": job["id"], "status": job["status"]}
 
@@ -4787,6 +4810,9 @@ def job_from_url(body: FromUrlBody) -> dict:
         "story_id": job_id,
         "attempts": {"analysis": 0},
     }
+    rights = import_rights(body.rights)
+    if rights is not None:
+        job["rights"] = rights
     save_job(job)
 
     cancel_event = threading.Event()

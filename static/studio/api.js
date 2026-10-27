@@ -147,7 +147,7 @@ export function getJobStatus(jobId) {
  * Upload a local video. `POST /api/jobs/upload`.
  * Upload uses XHR so the creator sees byte progress on long files.
  */
-export function uploadVideo(file, options, onProgress) {
+export function uploadVideo(file, options, onProgress, { rights = null } = {}) {
   syncTokenCookie();
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -182,23 +182,24 @@ export function uploadVideo(file, options, onProgress) {
     const form = new FormData();
     form.append("file", file);
     form.append("options", JSON.stringify(options || {}));
+    if (rights !== null) form.append("rights", rights ? "true" : "false");
     xhr.send(form);
   });
 }
 
 /** Use a video already on this Mac. `POST /api/jobs/path`. */
-export function createJobFromPath(path, options) {
+export function createJobFromPath(path, options, { rights = null } = {}) {
   return request("/api/jobs/path", {
     method: "POST",
-    body: { path, options: options || {} },
+    body: { path, options: options || {}, rights },
   });
 }
 
 /** Bring in a link. `POST /api/jobs/from-url`. */
-export function createJobFromUrl(url, options, provider = null) {
+export function createJobFromUrl(url, options, provider = null, { rights = null } = {}) {
   return request("/api/jobs/from-url", {
     method: "POST",
-    body: { url, options: options || {}, provider: provider || null },
+    body: { url, options: options || {}, provider: provider || null, rights },
   });
 }
 
