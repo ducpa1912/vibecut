@@ -1,6 +1,8 @@
 // On-device transcription helper for VibeCut (macOS 26, Apple Speech framework).
 // usage: transcribe_apple --audio file.wav --locale zh-CN --out transcript.json
-// Output matches the Whisper shape: {language, text, segments:[{start,end,text}]}
+//        [--vocabulary '["Name","Brand"]']
+// Output: {language, text, segments:[{start,end,text,words:[{w,start,end,confidence}]}], words:[...]}
+// Word timings come from each attributed run's .audioTimeRange (SpeechTranscriber).
 
 import AVFoundation
 import Foundation
@@ -13,17 +15,65 @@ struct TranscribeApple {
         exit(3)
     }
 
+    static func vocabulary(from raw: String) -> [String] {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return [] }
+        if value.hasPrefix("["),
+           let data = value.data(using: .utf8),
+           let rows = try? JSONSerialization.jsonObject(with: data) as? [String] {
+            return rows.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
+        return value.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+    }
+
+    static func seconds(_ time: CMTime) -> Double {
+        let value = CMTimeGetSeconds(time)
+        return value.isFinite ? value : 0
+    }
+
+    // Walk attributed runs outside the async results loop. With -O, doing this
+    // inline in `for try await` aborts with "freed pointer was not the last
+    // allocation" (task-allocator misuse in the optimized async frame).
+    @inline(never)
+    static func words(in text: AttributedString, start: Double, end: Double) -> [[String: Any]] {
+        var rows: [[String: Any]] = []
+        for run in text.runs {
+            let runText = String(text[run.range].characters)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if runText.isEmpty { continue }
+            var word: [String: Any] = ["w": runText]
+            if let range = run.audioTimeRange {
+                let wordStart = seconds(range.start)
+                let wordEnd = seconds(range.end)
+                word["start"] = wordStart
+                word["end"] = wordEnd > wordStart ? wordEnd : wordStart
+            } else {
+                word["start"] = start
+                word["end"] = end
+            }
+            if let confidence = run.transcriptionConfidence {
+                word["confidence"] = confidence
+            }
+            rows.append(word)
+        }
+        return rows
+    }
+
     static func main() async {
         let args = CommandLine.arguments
         var audio = ""
         var localeID = "en-US"
         var out = ""
+        var vocabularyRaw = ""
         var index = 1
         while index < args.count {
             switch args[index] {
             case "--audio": audio = index + 1 < args.count ? args[index + 1] : ""; index += 2
             case "--locale": localeID = index + 1 < args.count ? args[index + 1] : localeID; index += 2
             case "--out": out = index + 1 < args.count ? args[index + 1] : ""; index += 2
+            case "--vocabulary": vocabularyRaw = index + 1 < args.count ? args[index + 1] : ""; index += 2
             default: index += 1
             }
         }
@@ -38,7 +88,7 @@ struct TranscribeApple {
             locale: Locale(identifier: localeID),
             transcriptionOptions: [],
             reportingOptions: [],
-            attributeOptions: [.audioTimeRange],
+            attributeOptions: [.audioTimeRange, .transcriptionConfidence],
         )
         if let request = try? await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
             do {
@@ -48,6 +98,16 @@ struct TranscribeApple {
             }
         }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
+        let terms = vocabulary(from: vocabularyRaw)
+        if !terms.isEmpty {
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = terms
+            do {
+                try await analyzer.setContext(context)
+            } catch {
+                // Contextual biasing is an accuracy hint; transcription still works.
+            }
+        }
         let file: AVAudioFile
         do {
             file = try AVAudioFile(forReading: url)
@@ -60,28 +120,34 @@ struct TranscribeApple {
             fail("analysis start failed: \(error)")
         }
 
-        var cues: [[String: Any]] = []
+        var segments: [[String: Any]] = []
+        var allWords: [[String: Any]] = []
         do {
             for try await result in transcriber.results {
-                let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+                let text = String(result.text.characters)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty { continue }
-                let start = CMTimeGetSeconds(result.range.start)
-                let end = CMTimeGetSeconds(result.range.end)
-                cues.append([
-                    "start": start.isFinite ? start : 0,
-                    "end": end.isFinite && end > start ? end : start,
+                let start = seconds(result.range.start)
+                let end = seconds(result.range.end)
+                let segmentWords = words(in: result.text, start: start, end: end)
+                allWords.append(contentsOf: segmentWords)
+                segments.append([
+                    "start": start,
+                    "end": end > start ? end : start,
                     "text": text,
+                    "words": segmentWords,
                 ])
             }
         } catch {
             fail("transcription stream failed: \(error)")
         }
-        if cues.isEmpty { fail("no speech recognized") }
+        if segments.isEmpty { fail("no speech recognized") }
 
         let payload: [String: Any] = [
             "language": localeID,
-            "text": cues.compactMap { $0["text"] as? String }.joined(separator: " "),
-            "segments": cues,
+            "text": segments.compactMap { $0["text"] as? String }.joined(separator: " "),
+            "segments": segments,
+            "words": allWords,
         ]
         do {
             let data = try JSONSerialization.data(withJSONObject: payload, options: [])
