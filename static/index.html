@@ -27,8 +27,30 @@
       document.documentElement.dataset.editor = mode;
     })();
   </script>
-  <script defer src="/static/app.js?v=0.12.0"></script>
-  <script defer src="/static/creator.js?v=0.14.0"></script>
+  <script>
+    /* Classic scripts load only when Classic is selected, so Studio never
+       starts the old app underneath its overlay. */
+    (function () {
+      if (document.documentElement.dataset.editor !== "classic") return;
+      function loadClassic() {
+        var sources = [
+          "/static/app.js?v=0.12.0",
+          "/static/creator.js?v=0.14.0"
+        ];
+        for (var i = 0; i < sources.length; i += 1) {
+          var script = document.createElement("script");
+          script.src = sources[i];
+          script.async = false;
+          document.head.appendChild(script);
+        }
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", loadClassic, { once: true });
+      } else {
+        loadClassic();
+      }
+    })();
+  </script>
   <script type="module" src="/static/studio/shell.js?v=0.1.0"></script>
 </head>
 <body>
