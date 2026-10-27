@@ -1,12 +1,22 @@
-"""Text-to-speech voices, engine adapters and per-line synthesis.
+"""Text-to-speech voices, engine adapters and story synthesis.
 
-Split out of `audio.py` without behaviour change. Shared process helpers,
-caches and the audio plan stay in `audio.py`; every call back goes through the
-facade so existing tests and callers can keep patching `audio.*`.
+Final engine set: MiniMax, ElevenLabs, OpenRouter (Fish + Gemini), Kokoro and
+Apple ``say``. Piper, OpenAI, Groq Orpheus, Deepgram Aura and Cartesia are
+removed from the registry, voice picker and synthesis paths.
+
+A story is voiced by exactly one engine and one voice. The per-sentence cache
+is keyed by engine, model, voice, text, rate and language. If any sentence
+fails on the chosen engine, the whole story moves to the next configured
+engine; a story never mixes voices.
+
+Split out of `audio.py`. Shared process helpers, caches and the audio plan stay
+in `audio.py`; every call back goes through the facade so existing tests and
+callers can keep patching `audio.*`.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -15,7 +25,9 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
 
 # Imported last: audio re-exports this module, so the facade must finish first.
 import audio  # noqa: E402
@@ -23,8 +35,99 @@ import audio  # noqa: E402
 
 _SAY_VOICE_RE = re.compile(r"^(?P<name>.+?)\s{2,}(?P<lang>[a-zA-Z_-]+)\s*(?:#.*)?$")
 
+#: Engines offered in the voice picker. OpenRouter is one engine with two
+#: model families (Fish and Gemini), represented by the synthesizer ids below.
+ENGINES = ("minimax", "elevenlabs", "openrouter", "kokoro", "say")
+SYNTHESIZERS = ("minimax", "elevenlabs", "fish", "gemini", "kokoro", "say")
+CLOUD_ENGINES = frozenset({"minimax", "elevenlabs", "fish", "gemini"})
+LOCAL_ENGINES = frozenset({"kokoro", "say"})
+OPENROUTER_ENGINES = frozenset({"fish", "gemini"})
+REMOVED_ENGINES = frozenset(
+    {"piper", "openai", "groq", "deepgram", "cartesia"}
+)
+DEFAULT_VOICES = {
+    "minimax": "female-shaonv",
+    "elevenlabs": "21m00Tcm4TlvDq8ikWAM",  # Rachel
+    "openrouter": "Kore",
+    "fish": "",
+    "gemini": "Kore",
+    "kokoro": "af_heart",
+    "say": "Samantha",
+}
+ENGINE_LABELS = {
+    "minimax": "MiniMax Speech 2.8",
+    "elevenlabs": "ElevenLabs",
+    "openrouter": "OpenRouter",
+    "fish": "OpenRouter · Fish S2.1",
+    "gemini": "OpenRouter · Gemini Flash-Lite",
+    "kokoro": "Kokoro (on-device)",
+    "say": "Apple say",
+}
+
+
+def is_removed_engine(engine: str) -> bool:
+    return str(engine or "").strip().lower() in REMOVED_ENGINES
+
+
+def engine_label(engine: str) -> str:
+    return ENGINE_LABELS.get(str(engine or "").strip().lower(), str(engine or ""))
+
+
+def default_voice(engine: str) -> str:
+    return DEFAULT_VOICES.get(str(engine or "").strip().lower(), "")
+
+
+def _removed_error(engine: str) -> "audio.AudioError":
+    return audio.AudioError(
+        f"Voice engine {engine!r} was removed. Use MiniMax, ElevenLabs, "
+        "OpenRouter, Kokoro or Apple say."
+    )
+
+
+def line_cache_key(
+    engine: str,
+    model: str,
+    voice: str,
+    text: str,
+    rate: float = 1.0,
+    language: str = "",
+) -> str:
+    """SHA-256 cache key for one sentence.
+
+    Every field that changes the audio is part of the key. The text is kept
+    verbatim so two sentences that only differ by punctuation never collide.
+    """
+    payload = {
+        "engine": str(engine or "").strip().lower(),
+        "model": str(model or ""),
+        "voice": str(voice or ""),
+        "text": str(text or ""),
+        "rate": f"{float(rate or 1.0):.3f}",
+        "language": str(language or "").strip().lower(),
+        "schema": 1,
+    }
+    blob = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+
+
+def line_cache_path(
+    cache_dir: Path,
+    engine: str,
+    model: str,
+    voice: str,
+    text: str,
+    rate: float = 1.0,
+    language: str = "",
+    suffix: str = ".flac",
+) -> Path:
+    key = line_cache_key(engine, model, voice, text, rate, language)
+    return (cache_dir / f"{key}{suffix}").resolve()
+
 
 def list_voices(engine: str) -> list[dict]:
+    engine = str(engine or "").strip().lower()
     if engine == "say":
         if not audio.say_available():
             return []
@@ -38,19 +141,6 @@ def list_voices(engine: str) -> list[dict]:
             lang = match.group("lang").strip()
             voices.append({"id": name, "name": name, "lang": lang})
         voices.sort(key=lambda item: (item["lang"], item["name"]))
-        return voices
-
-    if engine == "piper":
-        voices = []
-        for directory in (audio.VOICE_DIRS["piper"], Path.home() / ".local/share/piper"):
-            if not directory.is_dir():
-                continue
-            for model in sorted(directory.glob("**/*.onnx")):
-                voices.append({
-                    "id": str(model),
-                    "name": model.stem,
-                    "lang": model.stem.split("-")[0] if "-" in model.stem else "",
-                })
         return voices
 
     if engine == "kokoro":
@@ -91,69 +181,14 @@ def list_voices(engine: str) -> list[dict]:
         names = ["Kore", "Zephyr", "Puck", "Charon", "Leda", "Aoede", "Fenrir"]
         return [{"id": name, "name": name, "lang": "multi"} for name in names]
 
-    if engine == "openai":
-        if not audio.openai_key():
+    if engine == "openrouter":
+        if not audio.openrouter_available():
             return []
-        names = ["alloy", "ash", "ballad", "coral", "echo", "fable",
-                 "nova", "onyx", "sage", "shimmer", "verse"]
-        return [{"id": name, "name": name, "lang": "multi"} for name in names]
-
-    if engine == "groq":
-        if not audio.groq_key():
-            return []
-        names = ["autumn", "diana", "hannah", "austin", "daniel", "troy"]
-        return [{"id": name, "name": name, "lang": "en"} for name in names]
-
-    if engine == "deepgram":
-        if not audio.deepgram_key():
-            return []
-        names = [
-            "aura-2-thalia-en", "aura-2-andromeda-en", "aura-2-helena-en",
-            "aura-2-apollo-en", "aura-2-arcas-en", "aura-2-aries-en",
-            "aura-2-amalthea-en", "aura-2-atlas-en", "aura-2-aurora-en",
-            "aura-2-callista-en", "aura-2-cora-en", "aura-2-cordelia-en",
-            "aura-2-delia-en", "aura-2-draco-en", "aura-2-electra-en",
-            "aura-2-harmonia-en", "aura-2-hera-en", "aura-2-hyperion-en",
-            "aura-2-iris-en", "aura-2-janus-en",
-            "aura-2-juno-en", "aura-2-jupiter-en", "aura-2-luna-en",
-            "aura-2-mars-en", "aura-2-minerva-en", "aura-2-neptune-en",
-            "aura-2-odysseus-en", "aura-2-ophelia-en", "aura-2-orion-en",
-            "aura-2-perseus-en", "aura-2-phoebe-en", "aura-2-pluto-en",
-            "aura-2-saturn-en", "aura-2-selene-en", "aura-2-theia-en",
-            "aura-2-vesta-en", "aura-2-zeus-en",
-        ]
-        return [{"id": name, "name": name, "lang": "en"} for name in names]
-
-    if engine == "cartesia":
-        key = audio.cartesia_key()
-        if not key:
-            return []
-        request = urllib.request.Request(
-            "https://api.cartesia.ai/voices?limit=100",
-            headers={
-                "X-API-Key": key,
-                "Cartesia-Version": "2026-08-14",
-            },
+        names = ["Kore", "Zephyr", "Puck", "Charon", "Leda", "Aoede", "Fenrir"]
+        return (
+            [{"id": "default", "name": "Fish default", "lang": "multi"}]
+            + [{"id": name, "name": name, "lang": "multi"} for name in names]
         )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise audio.AudioError(f"Cartesia voices failed: {exc}") from exc
-        items = data.get("data") if isinstance(data, dict) else data
-        voices = []
-        for item in items or []:
-            if not isinstance(item, dict):
-                continue
-            voice_id = item.get("id")
-            if not voice_id:
-                continue
-            voices.append({
-                "id": voice_id,
-                "name": item.get("name") or voice_id,
-                "lang": str(item.get("language") or "multi"),
-            })
-        return voices
 
     if engine == "elevenlabs":
         key = audio.elevenlabs_key()
@@ -177,7 +212,27 @@ def list_voices(engine: str) -> list[dict]:
             })
         return voices
 
+    # Removed engines (piper/openai/groq/deepgram/cartesia) have no voices.
     return []
+
+
+def _candidate(provider: str, model: str) -> dict[str, str] | None:
+    provider = str(provider or "").strip().lower()
+    model = str(model or "").strip()
+    if provider == "minimax":
+        return {"engine": "minimax", "provider": provider, "model": model}
+    if provider == "elevenlabs":
+        return {"engine": "elevenlabs", "provider": provider, "model": model}
+    if provider == "openrouter":
+        engine = "fish" if "fish" in model.lower() else "gemini"
+        return {"engine": engine, "provider": provider, "model": model}
+    if provider == "local":
+        if model == "piper":
+            return None
+        engine = model if model in LOCAL_ENGINES else "kokoro"
+        return {"engine": engine, "provider": provider, "model": model or engine}
+    # Removed providers (openai/groq/deepgram/cartesia) are skipped.
+    return None
 
 
 def _tts_route_candidates() -> list[dict[str, str]]:
@@ -185,62 +240,232 @@ def _tts_route_candidates() -> list[dict[str, str]]:
     cfg = audio._workflow("tts")
     candidates: list[dict[str, str]] = []
     for route in cfg.get("routes") or []:
-        provider = str(route.get("provider") or "").lower()
-        model = str(route.get("model") or "").strip()
-        if provider == "minimax":
-            candidates.append({
-                "engine": "minimax", "provider": provider, "model": model,
-            })
-        elif provider == "openrouter":
-            engine = "fish" if "fish" in model.lower() else "gemini"
-            candidates.append({
-                "engine": engine, "provider": provider, "model": model,
-            })
-        elif provider == "local":
-            engine = model if model in {"kokoro", "piper", "say"} else "kokoro"
-            candidates.append({
-                "engine": engine, "provider": provider, "model": model or engine,
-            })
-        elif provider in {"elevenlabs", "openai", "groq", "deepgram", "cartesia"}:
-            candidates.append({
-                "engine": provider, "provider": provider, "model": model,
-            })
+        if not isinstance(route, Mapping):
+            continue
+        item = _candidate(
+            str(route.get("provider") or ""), str(route.get("model") or ""),
+        )
+        if item:
+            candidates.append(item)
     return candidates
 
 
 def _tts_candidates(engine_name: str = "auto") -> list[str]:
     """Compatibility helper: ordered engine names from configured routes."""
-    return [item["engine"] for item in audio._tts_route_candidates()]
+    return [item["engine"] for item in _tts_route_candidates()]
 
 
 def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
-    preferred = str(preferred or "")
-    if candidate == "fish":
-        if candidate == primary and preferred not in {"", "default"}:
-            return preferred
-        return ""
-    if candidate in {"elevenlabs", "cartesia"}:
-        return preferred if candidate == primary and preferred not in {"", "default"} else ""
+    candidate = str(candidate or "").strip().lower()
+    candidate = "gemini" if candidate == "openrouter" else candidate
+    preferred = str(preferred or "").strip()
     if candidate == primary and preferred not in {"", "default"}:
         return preferred
-    if candidate == "gemini":
-        return "Kore"
-    if candidate == "kokoro":
-        return "af_heart"
-    if candidate == "say":
-        return "Samantha"
-    if candidate == "piper":
-        voices = audio.list_voices("piper")
-        return voices[0]["id"] if voices else ""
-    if candidate == "minimax":
-        return "female-shaonv"
-    if candidate == "openai":
-        return "alloy"
-    if candidate == "groq":
-        return "troy"
-    if candidate == "deepgram":
-        return "aura-2-thalia-en"
-    return preferred
+    if candidate == "fish":
+        return ""
+    if candidate in {"elevenlabs"}:
+        return DEFAULT_VOICES["elevenlabs"]
+    return DEFAULT_VOICES.get(candidate, preferred)
+
+
+@dataclass(frozen=True)
+class StoryVoice:
+    """One voice for a whole story."""
+
+    engine: str
+    model: str
+    voice: str
+    language: str
+    paths: tuple[Path, ...]
+    cache_hits: int = 0
+    attempts: tuple[str, ...] = field(default_factory=tuple)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "engine": self.engine,
+            "model": self.model,
+            "voice": self.voice,
+            "language": self.language,
+            "paths": [str(path) for path in self.paths],
+            "cache_hits": self.cache_hits,
+            "attempts": list(self.attempts),
+        }
+
+
+def _story_lines(
+    lines: Sequence[Any], rate: float, language: str,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, raw in enumerate(lines):
+        if isinstance(raw, str):
+            text = raw
+            line_rate = rate
+            line_language = language
+        elif isinstance(raw, Mapping):
+            text = str(raw.get("text") or "")
+            line_rate = float(raw.get("rate") or rate or 1.0)
+            line_language = str(raw.get("language") or language or "")
+        else:
+            raise ValueError(f"Voice line {index} must be text or a mapping.")
+        if not text.strip():
+            raise ValueError(f"Voice line {index} has no text.")
+        normalized.append({
+            "text": text,
+            "rate": line_rate,
+            "language": line_language,
+        })
+    if not normalized:
+        raise ValueError("A story needs at least one line to voice.")
+    return normalized
+
+
+def _candidate_order(
+    engine: str, model: str, routes: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, str]]:
+    configured: list[dict[str, str]] = []
+    for route in routes if routes is not None else _tts_route_candidates():
+        if not isinstance(route, Mapping):
+            continue
+        item = _candidate(
+            str(route.get("provider") or ""), str(route.get("model") or ""),
+        )
+        if item:
+            configured.append(item)
+
+    requested = str(engine or "auto").strip().lower()
+    if requested in {"", "auto"}:
+        if not configured:
+            raise audio.AudioError("No voice routes are configured in the admin console.")
+        return configured
+    if requested == "openrouter":
+        requested = "fish" if "fish" in str(model or "").lower() else "gemini"
+    if requested not in SYNTHESIZERS:
+        raise _removed_error(requested) if is_removed_engine(requested) else audio.AudioError(
+            f"Unknown voice engine {engine!r}."
+        )
+    if model:
+        primary = {
+            "engine": requested,
+            "provider": "openrouter" if requested in OPENROUTER_ENGINES else (
+                "local" if requested in LOCAL_ENGINES else requested
+            ),
+            "model": model,
+        }
+    elif configured:
+        match = next((item for item in configured if item["engine"] == requested), None)
+        primary = dict(match or {
+            "engine": requested,
+            "provider": "openrouter" if requested in OPENROUTER_ENGINES else (
+                "local" if requested in LOCAL_ENGINES else requested
+            ),
+            "model": requested,
+        })
+    else:
+        primary = {
+            "engine": requested,
+            "provider": "openrouter" if requested in OPENROUTER_ENGINES else (
+                "local" if requested in LOCAL_ENGINES else requested
+            ),
+            "model": requested,
+        }
+    ordered = [primary]
+    for item in configured:
+        if not any(
+            item["engine"] == existing["engine"]
+            and item["model"] == existing["model"]
+            for existing in ordered
+        ):
+            ordered.append(item)
+    return ordered
+
+
+def synthesize_story(
+    lines: Sequence[Any],
+    *,
+    engine: str = "auto",
+    voice: str = "",
+    model: str = "",
+    language: str = "en",
+    rate: float = 1.0,
+    cache_dir: Path | None = None,
+    routes: Sequence[Mapping[str, Any]] | None = None,
+    cancel_event: threading.Event | None = None,
+    timeout: float = 300,
+    progress: Callable[[int, int], None] | None = None,
+) -> StoryVoice:
+    """Voice a whole story with one engine and one voice.
+
+    Each sentence is a cache unit. If any sentence fails on the current engine,
+    that engine is abandoned and the whole story restarts on the next route.
+    Already-written cache files are reused, but no clip from a failed attempt
+    reaches the returned story.
+    """
+    normalized = _story_lines(lines, rate, language)
+    candidates = _candidate_order(engine, model, routes)
+    requested_voice = str(voice or "").strip()
+    primary_engine = candidates[0]["engine"]
+    cache = Path(cache_dir) if cache_dir is not None else audio.CACHE / "voice"
+    cache.mkdir(parents=True, exist_ok=True)
+    failures: list[str] = []
+
+    for candidate in candidates:
+        candidate_engine = candidate["engine"]
+        candidate_model = candidate.get("model") or candidate_engine
+        candidate_voice = _tts_voice_for(
+            candidate_engine, requested_voice, primary_engine,
+        )
+        if not candidate_voice and candidate_engine != "fish":
+            candidate_voice = default_voice(candidate_engine)
+        attempts: list[str] = []
+        paths: list[Path] = []
+        hits = 0
+        try:
+            for index, line in enumerate(normalized):
+                path = line_cache_path(
+                    cache, candidate_engine, candidate_model, candidate_voice,
+                    line["text"], line["rate"], line["language"],
+                )
+                if path.is_file() and path.stat().st_size > 512:
+                    hits += 1
+                else:
+                    synthesize_line(
+                        candidate_engine,
+                        candidate_voice,
+                        line["text"],
+                        path,
+                        rate=line["rate"],
+                        cancel_event=cancel_event,
+                        model=candidate_model,
+                        timeout=timeout,
+                        language=line["language"],
+                    )
+                    if not path.is_file() or path.stat().st_size == 0:
+                        raise audio.AudioError(
+                            f"{engine_label(candidate_engine)} produced no audio."
+                        )
+                paths.append(path)
+                attempts.append(candidate_engine)
+                if progress:
+                    progress(index + 1, len(normalized))
+        except Exception as exc:  # noqa: BLE001
+            if cancel_event is not None and cancel_event.is_set():
+                raise audio.AudioError("Voice synthesis cancelled.") from exc
+            failures.append(
+                f"{engine_label(candidate_engine)}: {str(exc)[:200]}"
+            )
+            continue
+        return StoryVoice(
+            engine=candidate_engine,
+            model=candidate_model,
+            voice=candidate_voice,
+            language=str(language or ""),
+            paths=tuple(paths),
+            cache_hits=hits,
+            attempts=tuple(attempts),
+        )
+
+    detail = "; ".join(failures) if failures else "no configured route"
+    raise audio.AudioError(f"All voice engines failed for this story: {detail}")
 
 
 # ---------------------------------------------------------------- speech
@@ -634,7 +859,13 @@ def synthesize_line(
     *,
     model: str = "",
     timeout: float = 300,
+    language: str = "",
 ) -> Path:
+    engine = str(engine or "").strip().lower()
+    if is_removed_engine(engine):
+        raise _removed_error(engine)
+    if engine == "openrouter":
+        engine = "fish" if "fish" in str(model or "").lower() else "gemini"
     output.parent.mkdir(parents=True, exist_ok=True)
     flac = output.suffix.lower() == ".flac"
     target = output.with_suffix(".wav") if flac else output
@@ -642,27 +873,15 @@ def synthesize_line(
         if not audio.say_available():
             raise audio.AudioError("Apple say is not available.")
         audio._say_voice(text, voice, rate, target)
-    elif engine == "piper":
-        if not audio.piper_available():
-            raise audio.AudioError("Piper is not installed. pip install piper-tts")
-        audio._piper_voice(text, voice, target, rate, cancel_event)
     elif engine == "kokoro":
         if not audio.kokoro_available():
             raise audio.AudioError("Kokoro is not installed or has no model files.")
         audio._kokoro_voice(text, voice, target, rate, cancel_event)
     elif engine == "elevenlabs":
         audio._elevenlabs_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "openai":
-        audio._openai_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "groq":
-        audio._groq_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "deepgram":
-        audio._deepgram_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine == "cartesia":
-        audio._cartesia_voice(text, voice, target, rate, model=model, timeout=timeout)
     elif engine == "minimax":
         audio._minimax_voice(text, voice, target, rate, model=model, timeout=timeout)
-    elif engine in {"fish", "gemini"}:
+    elif engine in OPENROUTER_ENGINES:
         audio._openrouter_voice(
             text, voice, target, rate, engine, model=model, timeout=timeout,
         )
@@ -684,15 +903,61 @@ def synthesize_line(
     return target
 
 
+def voice_engine_status() -> dict[str, dict]:
+    """Readiness for the final voice engines only.
+
+    `audio.engine_status` is the legacy facade and is cleaned up by its owner;
+    new code should use this mapping so removed engines cannot reappear in a
+    picker or setup screen.
+    """
+    return {
+        "say": {
+            "available": audio.say_available(), "size_mb": 184,
+            "install": "Built in. Download a Premium voice in System Settings → Spoken Content.",
+        },
+        "kokoro": {
+            "available": audio.kokoro_available(), "size_mb": 700,
+            "install": "Install the Voice Pack (Kokoro v1.0/v1.1-zh).",
+        },
+        "elevenlabs": {
+            "available": bool(audio.elevenlabs_key()), "size_mb": 0,
+            "install": "Add an ElevenLabs key in Setup.",
+        },
+        "minimax": {
+            "available": bool(audio.minimax_key()), "size_mb": 0,
+            "install": "Add a MiniMax key in Setup. Speech 2.8 Turbo.",
+        },
+        "fish": {
+            "available": audio.openrouter_available(), "size_mb": 0,
+            "install": "Add an OpenRouter key. Fish Audio S2.1.",
+        },
+        "gemini": {
+            "available": audio.openrouter_available(), "size_mb": 0,
+            "install": "Add an OpenRouter key. Gemini Flash-Lite TTS.",
+        },
+    }
+
+
 def voice_sample(
     engine: str,
     voice: str,
     text: str,
     cache_dir: Path,
     rate: float = 1.0,
+    *,
+    model: str = "",
+    language: str = "",
 ) -> Path:
-    key = audio._text_hash(engine, voice, f"{rate:.2f}", text)
-    target = audio._voice_cache(cache_dir, key, ".wav")
+    target = line_cache_path(
+        cache_dir, engine, model, voice, text, rate, language, suffix=".wav",
+    )
     if target.is_file() and target.stat().st_size > 512:
         return target
-    return audio.synthesize_line(engine, voice, text, target, rate=rate)
+    extra: dict[str, Any] = {}
+    if model:
+        extra["model"] = model
+    if language:
+        extra["language"] = language
+    return audio.synthesize_line(
+        engine, voice, text, target, rate=rate, **extra,
+    )
