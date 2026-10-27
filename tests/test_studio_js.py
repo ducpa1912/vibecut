@@ -113,6 +113,7 @@ def test_overlay_draws_active_text_fx_and_caption_cue():
     caption = out["caption"]
     assert caption["style"]["size"] == 72 and caption["style"]["color"] == "#ffd400"
     assert caption["style"]["stroke"] == "#111111"
+    assert caption["style"]["stroke_width"] == 4 and caption["style"]["weight"] == 700
     # Bottom-center caption box above the 8% bottom margin, like the server.
     assert caption["rect"] == {"x": 0.12, "y": 0.8, "w": 0.76, "h": 0.12}
     assert out["off"] == ["hook", "progress_bar"]

@@ -37,6 +37,8 @@ export function captionOverlayStyle(trackStyle = {}) {
   style.stroke = numberOr(trackStyle.stroke_width, 0) > 0
     ? String(trackStyle.stroke_color || "#000000")
     : "none";
+  style.stroke_width = clamp(numberOr(trackStyle.stroke_width, 0), 0, 20);
+  style.weight = 700;
   const opacity = numberOr(trackStyle.background_opacity, 0);
   style.background = opacity > 0 ? hexAlpha(String(trackStyle.background || "#000000"), opacity) : "none";
   style.uppercase = Boolean(trackStyle.uppercase);
@@ -176,7 +178,11 @@ function drawText(ctx, layer, width, height) {
     }
     if (stroke && stroke !== "none") {
       ctx.lineJoin = "round";
-      ctx.lineWidth = Math.max(1, Math.round(size * 0.055)) * 2;
+      // Same width as render._stroke_px; canvas strokes are centred, so double it.
+      const width = Number.isFinite(Number(style.stroke_width))
+        ? Math.round(Number(style.stroke_width) * height / 1920)
+        : Math.max(1, Math.round(size * 0.08));
+      ctx.lineWidth = width * 2;
       ctx.strokeStyle = stroke;
       ctx.strokeText(line, px, ly);
     }

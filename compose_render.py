@@ -546,6 +546,13 @@ def _caption_overlay_style(caption_track: dict) -> tuple[dict, str]:
             )
         except ValueError:
             overlay_style["stroke"] = "#000000"
+    # The track's own outline width (1920-tall units; 0 means none), font and
+    # a bold default weight reach the renderer; they used to be dropped.
+    overlay_style["stroke_width"] = max(0.0, min(20.0, stroke_width))
+    overlay_style["weight"] = 700
+    font = str(style.get("font") or "").strip()
+    if font:
+        overlay_style["font"] = font[:200]
     try:
         background_opacity = float(style.get("background_opacity") or 0.0)
     except (TypeError, ValueError):
