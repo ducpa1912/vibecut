@@ -1,18 +1,39 @@
-"""HTTP surface for the gated Flow 1 Cleanup Kit prototype.
+"""HTTP surface for Flow 1 Clean.
 
-The router is always registered, but every route returns 404 unless
-``VIBECUT_ENABLE_CLEANUP`` is explicitly enabled. It is a planning API only:
-no render is queued and no job is mutated.
+The Cleanup Kit router is always registered, but its planning and Clean
+routes return 404 unless ``VIBECUT_ENABLE_CLEANUP`` is enabled. The rights
+router is not gated: T4 records the server-side attestation at Import/Check.
+
+The original plan endpoint stays a pure planner. The Wave 3 routes add:
+
+* ``POST /api/jobs/{id}/cleanup/layers`` — turn Check tracklets into Edit
+  Clean layers, gated by detected kind and the stored rights record;
+* ``POST /api/jobs/{id}/cleanup/residual`` — render Clean-only frames and
+  report OCR text left inside the cleaned regions;
+* ``GET/POST /api/jobs/{id}/rights`` — store the own-footage attestation on
+  the job. No browser storage is authoritative.
 """
 
 from __future__ import annotations
 
+import math
 import os
+import shutil
+import time
+import uuid
+from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 import cleanup
+import compose_render
+import detect
+import edits
+import pipeline
+import render
+import vision
 
 
 class CleanupPlanBody(BaseModel):
@@ -27,6 +48,32 @@ class CleanupPlanBody(BaseModel):
     range: dict | list | None = None
 
 
+class CleanLayersBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tracklet_ids: list[str] | None = None
+    include_handles: bool = False
+
+
+class ResidualBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    edit_id: str = Field(min_length=1, max_length=64)
+    times: list[float] | None = Field(default=None, max_length=600)
+    start: float | None = None
+    end: float | None = None
+    fps: float = Field(default=cleanup.RESIDUAL_DEFAULT_FPS, gt=0.0, le=30.0)
+    max_frames: int = Field(default=cleanup.RESIDUAL_MAX_FRAMES, ge=1, le=600)
+    quality: str = "final"
+
+
+class RightsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attested: bool
+    source: Literal["import", "check"]
+
+
 def cleanup_enabled() -> bool:
     return os.environ.get("VIBECUT_ENABLE_CLEANUP", "0").strip().lower() in {
         "1", "true", "yes", "on",
@@ -39,6 +86,7 @@ def _require_enabled() -> None:
 
 
 router = APIRouter(dependencies=[Depends(_require_enabled)])
+rights_router = APIRouter()
 
 
 def _job_app():
@@ -212,3 +260,248 @@ def cleanup_plan(job_id: str, body: CleanupPlanBody) -> dict:
         "quality_report": plan["quality_report"],
         "warnings": plan["warnings"],
     }
+
+
+# ---------------------------------------------------------------- clean layers
+
+
+def _job_rights(job: dict) -> dict:
+    rights = job.get("rights")
+    return dict(rights) if isinstance(rights, dict) else {}
+
+
+def _attested(job: dict) -> bool:
+    return detect.normalize_attestation(_job_rights(job).get("attested"))
+
+
+@router.post("/api/jobs/{job_id}/cleanup/layers")
+def cleanup_layers(job_id: str, body: CleanLayersBody) -> dict:
+    """Build Edit Clean layers from the stored Check report.
+
+    The rights attestation is read from the job, never from this request.
+    Watermarks and screen-recording UI text are returned as refusals; handles
+    and logos are only returned with an explicit ``include_handles`` opt-in.
+    """
+    app = _job_app()
+    job = app.load_job(job_id)
+    report = detect.load_report(app._job_dir(job_id))
+    if report is None:
+        raise HTTPException(409, "Check has not run for this job.")
+    tracklets = [item for item in report.get("tracklets") or [] if isinstance(item, dict)]
+    if not tracklets:
+        raise HTTPException(409, "Check found no text tracklets to clean.")
+    known = {str(item.get("id")) for item in tracklets}
+    if body.tracklet_ids is not None:
+        unknown = sorted(set(body.tracklet_ids) - known)
+        if unknown:
+            raise HTTPException(422, f"Unknown tracklet ids: {', '.join(unknown)}.")
+    attested = _attested(job)
+    if not attested:
+        raise HTTPException(409, detect.RIGHTS_MESSAGE)
+    built = cleanup.tracklet_clean_layers(
+        tracklets,
+        attested=attested,
+        selected=body.tracklet_ids,
+        include_handles=bool(body.include_handles),
+    )
+    return {
+        **built,
+        "rights": _job_rights(job),
+        "report_created": report.get("created"),
+        "policy": report.get("policy") or {},
+    }
+
+
+# ---------------------------------------------------------------- residual OCR
+
+
+def _render_frame(job: dict, compiled: dict, t: float, quality: str, aspect: str) -> bytes:
+    return render.render_story_frame(
+        str(job["source"]["path"]),
+        job["source"],
+        _job_app()._job_dir(job["id"]),
+        compiled,
+        t,
+        quality=quality,
+        aspect=aspect,
+    )
+
+
+def _probe_images(directory: Path) -> dict:
+    return vision.probe_images(directory)
+
+
+def _story_for_edit(job: dict, edit: dict) -> tuple[dict, dict]:
+    set_id = edit["story_ref"]["set_id"]
+    story_id = edit["story_ref"]["story_id"]
+    record = next(
+        (item for item in _clip_sets(job) if str(item.get("id") or "") == set_id),
+        None,
+    )
+    if record is None:
+        raise HTTPException(409, "The Edit's clip set is missing from this job.")
+    story = next(
+        (
+            item for item in record.get("stories") or []
+            if isinstance(item, dict) and str(item.get("id") or "") == story_id
+        ),
+        None,
+    )
+    if story is None:
+        raise HTTPException(409, "The Edit's story is missing from its clip set.")
+    return record, story
+
+
+@router.post("/api/jobs/{job_id}/cleanup/residual")
+def cleanup_residual(job_id: str, body: ResidualBody) -> dict:
+    """Render Clean-only frames and measure OCR text left inside Clean regions."""
+    app = _job_app()
+    job = app.load_job(job_id)
+    if job.get("status") != "ready" or not job.get("analysis"):
+        raise HTTPException(409, "Analysis is not ready yet.")
+    quality = str(body.quality or "").strip().lower()
+    if quality not in {"draft", "final"}:
+        raise HTTPException(422, "quality must be draft or final.")
+    try:
+        edit = edits.load_edit(app._job_dir(job_id), body.edit_id)
+    except edits.EditError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    if edit is None:
+        raise HTTPException(404, "Edit not found.")
+    if not edit.get("clean"):
+        raise HTTPException(422, "This Edit has no Clean layers to measure.")
+    _record, story = _story_for_edit(job, edit)
+
+    measure = edits.build_edit(
+        story_ref=edit["story_ref"],
+        aspect=edit["aspect"],
+        clean=edit["clean"],
+        reframe=edit["reframe"],
+        motion=[],
+        color={"preset": "none"},
+        graphics=[],
+        captions={"enabled": False},
+        audio=edit.get("audio"),
+        created=edit.get("created"),
+        renderer_version=edit.get("renderer_version"),
+    )
+    out_w, out_h = render._dims(edit["aspect"], quality)
+    try:
+        compiled = compose_render.compile_edit(
+            measure,
+            clips=story.get("clips") or [],
+            source=job.get("source") or {},
+            scenes=(job.get("analysis") or {}).get("scenes") or [],
+            include_captions=False,
+            size=(out_w, out_h),
+            motion_engine=compose_render.EDIT_MOTION_ENGINE,
+        )
+    except compose_render.ComposeError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+    total = float((compiled.get("segments") or [{}])[-1].get("out_end") or 0.0)
+    if body.times:
+        times = []
+        for value in body.times:
+            moment = float(value)
+            if not math.isfinite(moment):
+                raise HTTPException(422, "times must be finite numbers.")
+            if moment < 0.0 or moment >= total - 1e-9:
+                raise HTTPException(
+                    422,
+                    f"times must be between 0 and the story duration ({total:.3f}s).",
+                )
+            times.append(round(moment, 3))
+        if not times:
+            raise HTTPException(422, "times must contain at least one value.")
+    else:
+        try:
+            times = cleanup.residual_times(
+                compiled,
+                start=body.start,
+                end=body.end,
+                fps=body.fps,
+                max_frames=body.max_frames,
+            )
+        except cleanup.CleanupError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    directory = app._job_dir(job_id) / "cleanup" / f"residual-{uuid.uuid4().hex}"
+    directory.mkdir(parents=True, exist_ok=True)
+    samples = []
+    try:
+        for index, moment in enumerate(times):
+            payload = _render_frame(job, compiled, moment, quality, edit["aspect"])
+            name = f"{index:04d}.jpg"
+            (directory / name).write_bytes(payload)
+            samples.append({"t": moment, "file": name})
+        records = _probe_images(directory) or {}
+        for sample in samples:
+            record = records.get(sample["file"]) or {}
+            sample["text"] = pipeline.ocr_lines(record)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+    report = cleanup.residual_report(
+        samples,
+        layers=edit["clean"],
+        compiled=compiled,
+        target_pct=cleanup.RESIDUAL_TARGET_PCT,
+    )
+    report["ocr_available"] = bool(records)
+    report["faces"] = cleanup.face_overlap_report(
+        samples,
+        layers=edit["clean"],
+        compiled=compiled,
+        scenes=(job.get("analysis") or {}).get("scenes") or [],
+    )
+    report["edit_id"] = edit["id"]
+    report["edit_hash"] = edit["hash"]
+    report["quality"] = quality
+    if not records:
+        report["pass"] = None
+        report["warnings"] = ["Vision OCR was unavailable; residual text is unknown."]
+    else:
+        report["warnings"] = []
+    return report
+
+
+# ---------------------------------------------------------------- rights
+
+
+def _rights_payload(job: dict) -> dict:
+    rights = _job_rights(job)
+    return {
+        "attested": detect.normalize_attestation(rights.get("attested")),
+        "at": rights.get("at"),
+        "source": rights.get("source"),
+    }
+
+
+@rights_router.get("/api/jobs/{job_id}/rights")
+def get_rights(job_id: str) -> dict:
+    app = _job_app()
+    job = app.load_job(job_id)
+    return {"rights": _rights_payload(job)}
+
+
+@rights_router.post("/api/jobs/{job_id}/rights")
+def set_rights(job_id: str, body: RightsBody) -> dict:
+    """Store the own-footage attestation server-side.
+
+    The timestamp is server time. ``source`` records where the attestation was
+    captured: Import or Check. This file is the only source of truth for the
+    Clean rights gate; the browser keeps no authoritative copy.
+    """
+    app = _job_app()
+    record = {
+        "attested": bool(body.attested),
+        "at": round(time.time(), 3),
+        "source": body.source,
+    }
+
+    def mutate(job: dict) -> None:
+        job["rights"] = dict(record)
+
+    job = app.update_job(job_id, mutate)
+    return {"rights": _rights_payload(job)}

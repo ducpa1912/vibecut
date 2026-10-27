@@ -16,6 +16,8 @@ import math
 import re
 from typing import Any, Iterable
 
+import detect
+
 SCHEMA_VERSION = 1
 MAX_BOXES = 64
 CROP_EDGE = 0.08
@@ -24,6 +26,12 @@ EXPLICIT_CONFIDENCE = 1.0
 
 SUPPORTED_METHODS = ("blur", "cover", "crop")
 SUPPORTED_ASPECTS = ("9:16", "4:5", "1:1", "16:9")
+CLEAN_LAYER_KINDS = ("crop_guard", "blur", "plate", "mask")
+MAX_CLEAN_LAYERS = 32
+MAX_LAYER_RANGES = 64
+RESIDUAL_TARGET_PCT = 0.5
+RESIDUAL_MAX_FRAMES = 120
+RESIDUAL_DEFAULT_FPS = 1.0
 
 # Keep these dimensions in sync with render.ASPECTS. Importing render would
 # pull the ffmpeg renderer into a module that is meant to stay pure.
@@ -185,6 +193,221 @@ def normalize_boxes(values: Any) -> list[dict]:
     if len(values) > MAX_BOXES:
         raise CleanupValidationError(f"At most {MAX_BOXES} boxes are allowed.")
     return [normalize_box(value) for value in values]
+
+
+# ---------------------------------------------------------------- clean layers
+
+
+_LAYER_LABELS = {
+    ("subtitle", "plate"): "Burned-in subtitle in the caption zone",
+    ("subtitle", "blur"): "Mid-frame burned-in caption",
+    ("title", "mask"): "Burned-in title",
+    ("lower_third", "blur"): "Burned-in lower third",
+    ("credit", "blur"): "Burned-in credit",
+    ("handle_or_logo", "crop_guard"): "Own handle or logo, kept out of the crop",
+    ("handle_or_logo", "blur"): "Own handle or logo",
+}
+
+
+def _padded_box(box: dict) -> dict:
+    """Grow an OCR box to cover antialiasing and clipped glyph edges.
+
+    OCR line boxes often stop at the glyph baseline or miss a descender. A
+    small, bounded pad keeps the Clean layer over the whole visible word
+    without covering much of the frame.
+    """
+    pad_x = min(0.02, max(0.005, float(box["w"]) * 0.05))
+    pad_y = min(0.04, max(0.008, float(box["h"]) * 0.35))
+    x = max(0.0, float(box["x"]) - pad_x)
+    y = max(0.0, float(box["y"]) - pad_y)
+    right = min(1.0, float(box["x"]) + float(box["w"]) + pad_x)
+    bottom = min(1.0, float(box["y"]) + float(box["h"]) + pad_y)
+    return {
+        "x": round(x, 6),
+        "y": round(y, 6),
+        "w": round(right - x, 6),
+        "h": round(bottom - y, 6),
+    }
+
+
+def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
+    raw = str(tracklet.get("tracklet_id") or tracklet.get("id") or "trk").strip()
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")[:56]
+    if not safe or not safe[0].isalpha():
+        safe = f"trk_{safe}" if safe else "trk"
+    base = f"cl_{safe}"
+    candidate = base[:64]
+    index = 2
+    while candidate in used:
+        suffix = f"_{index}"
+        candidate = base[: 64 - len(suffix)] + suffix
+        index += 1
+    used.add(candidate)
+    return candidate
+
+
+def _layer_ranges(tracklet: dict) -> list[dict]:
+    ranges = []
+    for item in tracklet.get("ranges") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            start = float(item.get("start"))
+            end = float(item.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+            continue
+        ranges.append({"start": round(max(0.0, start), 3), "end": round(end, 3)})
+    ranges.sort(key=lambda value: (value["start"], value["end"]))
+    merged: list[dict] = []
+    for item in ranges:
+        if merged and item["start"] <= merged[-1]["end"] + 1e-6:
+            merged[-1]["end"] = max(merged[-1]["end"], item["end"])
+        else:
+            merged.append(dict(item))
+    return merged[:MAX_LAYER_RANGES]
+
+
+def tracklet_clean_layers(
+    tracklets: Iterable[dict] | None,
+    *,
+    attested: bool,
+    selected: Iterable[str] | None = None,
+    include_handles: bool = False,
+) -> dict:
+    """Turn Check tracklets into Edit Clean layers, gated by detected kind.
+
+    ``detect.cleanup_block_reason`` is the single gate. Watermarks and
+    screen-recording UI text never produce a layer. Handles and logos need an
+    own-footage attestation plus an explicit ``include_handles`` opt-in.
+    Every other kind also needs the rights attestation.
+
+    Boxes are source-normalized and ranges are absolute source times, matching
+    the Edit Clean coordinate contract. The returned dict carries ``layers``,
+    ``refused`` and ``warnings`` for the UI.
+    """
+    items = []
+    for item in tracklets or []:
+        if not isinstance(item, dict):
+            continue
+        box = item.get("box")
+        if not isinstance(box, dict):
+            continue
+        try:
+            normalized = normalize_box(box)
+        except CleanupValidationError:
+            continue
+        items.append({
+            **item,
+            "box": {key: normalized[key] for key in ("x", "y", "w", "h")},
+            "ranges": _layer_ranges(item),
+            "confidence": _confidence(item.get("confidence"), 0.0),
+            "kind": str(item.get("kind") or "").strip().lower(),
+        })
+    wanted = None if selected is None else {str(value) for value in selected}
+    entries = detect.clean_prefill(items, attested=bool(attested))
+    layers: list[dict] = []
+    refused: list[dict] = []
+    warnings: list[str] = []
+    used: set[str] = set()
+    z_cursor = 0
+    for entry in entries:
+        tracklet_id = entry["tracklet_id"]
+        if wanted is not None and tracklet_id not in wanted:
+            continue
+        kind = entry["kind"]
+        blocked = detect.cleanup_block_reason(kind, attested=bool(attested))
+        action = entry.get("action")
+        if blocked or action not in CLEAN_LAYER_KINDS:
+            if blocked:
+                reason = entry.get("reason") or detect.RIGHTS_MESSAGE
+            elif kind == "screen_text":
+                reason = detect.SCREEN_TEXT_MESSAGE
+            elif kind == "watermark":
+                reason = detect.WATERMARK_MESSAGE
+            else:
+                reason = "This tracklet has no supported Clean action."
+            refused.append({
+                "tracklet_id": tracklet_id,
+                "kind": kind,
+                "action": action,
+                "blocked": blocked or (
+                    "screen_text" if kind == "screen_text" else "unsupported"
+                ),
+                "reason": reason,
+            })
+            continue
+        if kind == "handle_or_logo" and not include_handles:
+            refused.append({
+                "tracklet_id": tracklet_id,
+                "kind": kind,
+                "action": action,
+                "blocked": "opt_in_required",
+                "reason": (
+                    "Own handle or logo. Off by default; enable it explicitly "
+                    "for your own footage."
+                ),
+            })
+            continue
+        if len(layers) >= MAX_CLEAN_LAYERS:
+            warnings.append(
+                f"Only the first {MAX_CLEAN_LAYERS} Clean layers were built."
+            )
+            break
+        ranges = _layer_ranges(entry)
+        if not ranges:
+            warnings.append(
+                f"Tracklet {tracklet_id} has no usable time range and was skipped."
+            )
+            continue
+        if entry.get("quality_warning"):
+            warnings.append(
+                f"Tracklet {tracklet_id} crosses the middle of the frame. "
+                "A cover plate is added under the blur; review at 1×."
+            )
+        radius = 12
+        base_layer = {
+            "id": _tracklet_layer_id(entry, used),
+            "kind": action,
+            "box": _padded_box(entry["box"]),
+            "ranges": ranges,
+            "z": z_cursor,
+            "color": "#000000",
+            "opacity": 1.0,
+            "radius": radius,
+            "label": _LAYER_LABELS.get(
+                (kind, action), f"Burned-in {kind.replace('_', ' ')}"
+            )[:80],
+        }
+        layers.append(base_layer)
+        z_cursor += 1
+        if kind == "subtitle" and action == "blur":
+            # Mid-frame text has no clean plate already in the frame. Add an
+            # opaque cover under the blur so no old glyph can survive.
+            if len(layers) >= MAX_CLEAN_LAYERS:
+                warnings.append(
+                    f"Only the first {MAX_CLEAN_LAYERS} Clean layers were built."
+                )
+                continue
+            companion = {
+                **base_layer,
+                "id": _tracklet_layer_id(
+                    {"tracklet_id": f"{tracklet_id}_plate"}, used,
+                ),
+                "kind": "plate",
+                "z": z_cursor,
+                "label": "Mid-frame caption cover",
+            }
+            layers.append(companion)
+            z_cursor += 1
+    return {
+        "layers": layers,
+        "refused": refused,
+        "warnings": warnings,
+        "attested": bool(attested),
+        "tracklets": len(items),
+    }
 
 
 def normalize_range(value: Any, span: dict | None) -> dict:
@@ -750,4 +973,326 @@ def build_plan(
         "warnings": warnings,
         "limitations": list(LIMITATIONS),
         "attestation": attestation,
+    }
+
+
+# ---------------------------------------------------------------- residual OCR
+
+
+def segment_at(compiled: dict, t: float) -> dict | None:
+    """Return the compiled segment containing one output time."""
+    segments = [item for item in compiled.get("segments") or [] if isinstance(item, dict)]
+    if not segments:
+        return None
+    for segment in segments:
+        start = float(segment.get("out_start") or 0.0)
+        end = float(segment.get("out_end") or start)
+        if start <= t < end:
+            return segment
+    return segments[-1] if t >= float(segments[-1].get("out_start") or 0.0) else segments[0]
+
+
+def source_time_at(compiled: dict, t: float) -> float | None:
+    segment = segment_at(compiled, t)
+    if segment is None:
+        return None
+    return float(segment.get("start") or 0.0) + (
+        float(t) - float(segment.get("out_start") or 0.0)
+    )
+
+
+def residual_times(
+    compiled: dict,
+    *,
+    start: float | None = None,
+    end: float | None = None,
+    fps: float = RESIDUAL_DEFAULT_FPS,
+    max_frames: int = RESIDUAL_MAX_FRAMES,
+) -> list[float]:
+    """Sample output times across a compiled story for the residual pass."""
+    segments = [item for item in compiled.get("segments") or [] if isinstance(item, dict)]
+    total = float(segments[-1].get("out_end") or 0.0) if segments else 0.0
+    if total <= 0:
+        raise CleanupStateError("The story has no renderable duration.")
+    low = 0.0 if start is None else float(start)
+    high = total if end is None else float(end)
+    if not math.isfinite(low) or not math.isfinite(high):
+        raise CleanupValidationError("start and end must be finite numbers.")
+    low = max(0.0, min(total, low))
+    high = max(0.0, min(total, high))
+    if high <= low:
+        raise CleanupValidationError("end must be later than start.")
+    rate = float(fps)
+    if not math.isfinite(rate) or rate <= 0:
+        raise CleanupValidationError("fps must be a positive number.")
+    limit = max(1, min(1000, int(max_frames)))
+    count = max(1, min(limit, int(math.floor((high - low) * rate))))
+    step = (high - low) / count
+    return [round(low + index * step, 3) for index in range(count)]
+
+
+def _map_region(
+    box: dict,
+    crop: dict,
+    *,
+    source_width: int,
+    source_height: int,
+    out_width: int,
+    out_height: int,
+) -> dict | None:
+    """Map a source-normalized Clean box into output-normalized coordinates."""
+    try:
+        crop_x = float(crop["x"])
+        crop_y = float(crop["y"])
+        crop_w = float(crop["w"])
+        crop_h = float(crop["h"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if crop_w <= 0 or crop_h <= 0 or source_width <= 0 or source_height <= 0:
+        return None
+    left = (float(box["x"]) * source_width - crop_x) / crop_w
+    top = (float(box["y"]) * source_height - crop_y) / crop_h
+    right = ((float(box["x"]) + float(box["w"])) * source_width - crop_x) / crop_w
+    bottom = ((float(box["y"]) + float(box["h"])) * source_height - crop_y) / crop_h
+    left = max(0.0, min(1.0, left))
+    top = max(0.0, min(1.0, top))
+    right = max(0.0, min(1.0, right))
+    bottom = max(0.0, min(1.0, bottom))
+    if right - left <= 1e-4 or bottom - top <= 1e-4:
+        return None
+    return {
+        "x": round(left, 6),
+        "y": round(top, 6),
+        "w": round(right - left, 6),
+        "h": round(bottom - top, 6),
+    }
+
+
+def _rect_overlap(first: dict, second: dict) -> float:
+    left = max(float(first["x"]), float(second["x"]))
+    top = max(float(first["y"]), float(second["y"]))
+    right = min(float(first["x"]) + float(first["w"]), float(second["x"]) + float(second["w"]))
+    bottom = min(float(first["y"]) + float(first["h"]), float(second["y"]) + float(second["h"]))
+    return max(0.0, right - left) * max(0.0, bottom - top)
+
+
+def _center_inside(box: dict, region: dict) -> bool:
+    cx = float(box["x"]) + float(box["w"]) / 2.0
+    cy = float(box["y"]) + float(box["h"]) / 2.0
+    return (
+        float(region["x"]) <= cx <= float(region["x"]) + float(region["w"])
+        and float(region["y"]) <= cy <= float(region["y"]) + float(region["h"])
+    )
+
+
+def _layer_active(layer: dict, source_t: float) -> bool:
+    ranges = layer.get("ranges") or []
+    if not ranges:
+        return True
+    return any(
+        float(item["start"]) <= source_t < float(item["end"])
+        for item in ranges
+        if isinstance(item, dict)
+    )
+
+
+def _clean_regions(
+    layers: Iterable[dict],
+    sample: dict,
+    compiled: dict,
+) -> list[dict]:
+    segment = segment_at(compiled, float(sample["t"]))
+    if segment is None:
+        return []
+    source_t = float(segment.get("start") or 0.0) + (
+        float(sample["t"]) - float(segment.get("out_start") or 0.0)
+    )
+    source = compiled.get("source") or {}
+    canvas = compiled.get("canvas") or {}
+    regions = []
+    for layer in layers or []:
+        if not isinstance(layer, dict):
+            continue
+        if layer.get("kind") not in {"blur", "plate", "mask"}:
+            # crop_guard removes the region from the output; it cannot leave text.
+            continue
+        if not _layer_active(layer, source_t):
+            continue
+        region = _map_region(
+            layer.get("box") or {},
+            segment.get("crop") or {},
+            source_width=int(source.get("width") or 0),
+            source_height=int(source.get("height") or 0),
+            out_width=int(canvas.get("w") or 0),
+            out_height=int(canvas.get("h") or 0),
+        )
+        if region is not None:
+            regions.append({"layer": layer, "region": region, "source_t": source_t})
+    return regions
+
+
+def residual_report(
+    samples: Iterable[dict],
+    *,
+    layers: Iterable[dict],
+    compiled: dict,
+    target_pct: float = RESIDUAL_TARGET_PCT,
+) -> dict:
+    """Measure OCR text left inside Clean regions on rendered output frames.
+
+    ``samples`` are rendered output frames: ``{"t": output_time, "text":
+    [{"text", "box"}]}``. OCR boxes are output-normalized. The Clean layer box
+    is mapped from source coordinates through the segment crop, so the check
+    measures the same pixels the renderer cleaned.
+    """
+    layer_list = [item for item in layers or [] if isinstance(item, dict)]
+    rows = []
+    per_layer: dict[str, dict] = {}
+    frames_with_ocr = 0
+    unlocated = 0
+    for sample in samples or []:
+        if not isinstance(sample, dict):
+            continue
+        t = float(sample.get("t") or 0.0)
+        lines = [
+            line for line in sample.get("text") or []
+            if isinstance(line, dict) and str(line.get("text") or "").strip()
+        ]
+        if lines:
+            frames_with_ocr += 1
+        regions = _clean_regions(layer_list, {"t": t}, compiled)
+        hits = []
+        for line in lines:
+            box = line.get("box")
+            if not isinstance(box, dict):
+                unlocated += 1
+                continue
+            for item in regions:
+                region = item["region"]
+                overlap = _rect_overlap(box, region)
+                area = max(1e-9, float(box.get("w") or 0) * float(box.get("h") or 0))
+                if overlap / area >= 0.10 or _center_inside(box, region):
+                    hits.append({
+                        "layer_id": item["layer"].get("id"),
+                        "kind": item["layer"].get("kind"),
+                        "text": str(line.get("text") or "")[:160],
+                    })
+                    stats = per_layer.setdefault(str(item["layer"].get("id")), {
+                        "layer_id": item["layer"].get("id"),
+                        "kind": item["layer"].get("kind"),
+                        "frames": 0,
+                        "residual_frames": 0,
+                        "hits": 0,
+                    })
+                    stats["hits"] += 1
+                    break
+        if regions:
+            for item in regions:
+                stats = per_layer.setdefault(str(item["layer"].get("id")), {
+                    "layer_id": item["layer"].get("id"),
+                    "kind": item["layer"].get("kind"),
+                    "frames": 0,
+                    "residual_frames": 0,
+                    "hits": 0,
+                })
+                stats["frames"] += 1
+        if hits:
+            for layer_id in {hit["layer_id"] for hit in hits if hit["layer_id"]}:
+                per_layer[layer_id]["residual_frames"] += 1
+        rows.append({
+            "t": round(t, 3),
+            "residual": bool(hits),
+            "text": [hit["text"] for hit in hits],
+            "regions": len(regions),
+        })
+    sampled = len(rows)
+    residual_frames = sum(1 for row in rows if row["residual"])
+    pct = round(100.0 * residual_frames / sampled, 3) if sampled else 0.0
+    return {
+        "schema": SCHEMA_VERSION,
+        "kind": "residual_ocr",
+        "frames_sampled": sampled,
+        "frames_with_ocr": frames_with_ocr,
+        "residual_frames": residual_frames,
+        "residual_pct": pct,
+        "target_pct": float(target_pct),
+        "pass": bool(sampled) and pct <= float(target_pct),
+        "unlocated_text": unlocated,
+        "layers": [
+            {
+                **per_layer[key],
+                "residual_pct": round(
+                    100.0 * per_layer[key]["residual_frames"]
+                    / max(1, per_layer[key]["frames"]),
+                    3,
+                ),
+            }
+            for key in sorted(per_layer)
+        ],
+        "samples": rows,
+        "note": (
+            "Rendered with Clean and reframe only; motion, colour, graphics "
+            "and captions are excluded so new text cannot be counted."
+        ),
+    }
+
+
+def face_overlap_report(
+    samples: Iterable[dict],
+    *,
+    layers: Iterable[dict],
+    compiled: dict,
+    scenes: Iterable[dict] | None,
+) -> dict:
+    """Report Clean regions that overlap a face detected by Check."""
+    scene_rows = [item for item in scenes or [] if isinstance(item, dict)]
+    hits = []
+    faces_checked = 0
+    for sample in samples or []:
+        if not isinstance(sample, dict):
+            continue
+        t = float(sample.get("t") or 0.0)
+        source_t = source_time_at(compiled, t)
+        if source_t is None:
+            continue
+        scene = next(
+            (
+                item for item in scene_rows
+                if float(item.get("start") or 0.0) <= source_t < float(item.get("end") or 0.0)
+            ),
+            None,
+        )
+        if scene is None:
+            continue
+        faces = scene.get("faces")
+        if not faces:
+            attention = scene.get("attention") or {}
+            face = attention.get("face")
+            faces = [face] if isinstance(face, dict) else []
+        faces = [item for item in faces or [] if isinstance(item, dict)]
+        faces_checked += len(faces)
+        for layer in layers or []:
+            if not isinstance(layer, dict) or layer.get("kind") not in {"blur", "plate", "mask"}:
+                continue
+            if not _layer_active(layer, source_t):
+                continue
+            box = layer.get("box") or {}
+            for face in faces:
+                overlap = _rect_overlap(box, face)
+                area = max(1e-9, float(face.get("w") or 0) * float(face.get("h") or 0))
+                if overlap / area >= 0.10 or _center_inside(face, box):
+                    hits.append({
+                        "t": round(t, 3),
+                        "source_t": round(source_t, 3),
+                        "scene": scene.get("id"),
+                        "layer_id": layer.get("id"),
+                        "face": {
+                            key: face.get(key) for key in ("x", "y", "w", "h")
+                        },
+                    })
+    return {
+        "overlap": bool(hits),
+        "count": len(hits),
+        "faces_checked": faces_checked,
+        "hits": hits,
     }

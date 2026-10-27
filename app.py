@@ -3055,6 +3055,7 @@ app.include_router(admin_routes.router)
 app.include_router(routes_batches.router)
 app.include_router(routes_check.router)
 app.include_router(routes_cleanup.router)
+app.include_router(routes_cleanup.rights_router)
 app.include_router(routes_edits.router)
 app.include_router(routes_overlays.router)
 

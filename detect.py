@@ -47,6 +47,7 @@ MAX_RANGES = 200
 
 KINDS = (
     "subtitle", "title", "lower_third", "handle_or_logo", "watermark", "credit",
+    "screen_text",
 )
 RECOMMENDATIONS = ("clean_then_compose", "compose", "music_first")
 
@@ -81,7 +82,40 @@ _CALL_TO_ACTION_RE = re.compile(
     r"\b(?:follow|subscribe|link\s+in\s+bio|dm\s+me|watch\s+full|full\s+video)\b",
     re.IGNORECASE,
 )
+_UI_WORD_RE = re.compile(
+    r"\b(?:build\w*|deploy|dashboard|accounts?|analytics|payments?|pricing|"
+    r"support|settings|workspace|components?|security|performance|memory|"
+    r"application|lighthouse|recorder|preview|projects?|tools?|integrations?|"
+    r"generating|implementing|optimizing|analyzing|creators?|linkspace|"
+    r"linktree|linktr)\b",
+    re.IGNORECASE,
+)
+_CODE_RE = re.compile(
+    r"https?://|www\.|\.(?:json|tsx?|jsx?|css|html?|py|md)\b|"
+    r"className|import\s+[\w{*]|const\s+\w+|function\s*\w*\(|"
+    r"[{}<>]",
+    re.IGNORECASE,
+)
 _WATERMARK_LITERAL_RE = re.compile(r"water\s*mark|©|\(c\)\s*\d{4}", re.IGNORECASE)
+
+# Screen-recording chrome: status bars, tab bars and app navigation labels.
+# These are UI text, not baked-in captions, so they are never pre-filled for
+# cleaning and never count towards "baked captions need cleaning".
+_UI_TEXT_RE = re.compile(
+    r"^(?:"
+    r"\d{1,2}:\d{2}(?:\s*[ap]m)?"
+    r"|\d{1,3}\s*%"
+    r"|(?:wi-?fi|lte|5g|4g|3g)"
+    r"|(?:settings|home|search|profile|share|back|cancel|done|next|send|"
+    r"reply|menu|inbox|activity|notifications|following|for you|explore|"
+    r"library|discover|messages|sign in|log in|subscribe|edit)"
+    r")$",
+    re.IGNORECASE,
+)
+SCREEN_TEXT_MESSAGE = (
+    "Screen-recording UI text. It is not a baked-in caption and is not "
+    "pre-filled for cleaning."
+)
 
 
 class CheckError(RuntimeError):
@@ -306,9 +340,11 @@ def observations_from_scenes(scenes: Iterable[dict]) -> list[dict]:
                     "confidence": item.get("confidence"),
                 })
         if lines:
-            observations.extend(merge_lines(
+            blocks = merge_lines(
                 lines, start=start, end=end, source="scene",
-            ))
+            )
+            _mark_screen_frame(blocks, len(lines))
+            observations.extend(blocks)
             continue
         text = " ".join(str(scene.get("ocr") or "").split())
         if text:
@@ -318,6 +354,14 @@ def observations_from_scenes(scenes: Iterable[dict]) -> list[dict]:
                 confidence=0.5, source="scene", approximate=True,
             ))
     return observations
+
+
+def _mark_screen_frame(blocks: list[dict], line_count: int) -> None:
+    """Mark blocks from a text-heavy frame as screen-recording UI evidence."""
+    if line_count < 6:
+        return
+    for block in blocks:
+        block["screen_frame"] = True
 
 
 def observations_from_samples(samples: Iterable[dict]) -> list[dict]:
@@ -330,9 +374,12 @@ def observations_from_samples(samples: Iterable[dict]) -> list[dict]:
         end = _number(sample.get("end"), start)
         if end <= start:
             end = start + 1e-3
-        observations.extend(merge_lines(
-            sample.get("text") or [], start=start, end=end, source="sample",
-        ))
+        lines = sample.get("text") or []
+        blocks = merge_lines(
+            lines, start=start, end=end, source="sample",
+        )
+        _mark_screen_frame(blocks, len(lines))
+        observations.extend(blocks)
     return observations
 
 
@@ -446,6 +493,34 @@ def _handle_mark(text: str) -> bool:
     )
 
 
+def _screen_text_mark(text: str, box: dict) -> bool:
+    """Return True for UI chrome in a screen recording.
+
+    Known UI labels are accepted in a small block. An unknown top-status or
+    bottom-tab label is accepted only when it is short, mixed case and small;
+    an all-caps corner mark stays a logo target, not screen text.
+    """
+    value = " ".join(str(text or "").split())
+    if not value:
+        return False
+    area = _area(box)
+    height = float(box["h"])
+    y = float(box["y"])
+    if height > 0.08 or area > 0.06:
+        return False
+    edge_band = y + height <= 0.20 or y >= 0.85
+    if _UI_TEXT_RE.match(value):
+        return bool(edge_band)
+    if len(value) > 30:
+        return False
+    top_band = y + height <= 0.14 and height <= 0.07 and area <= 0.05
+    bottom_band = y >= 0.90 and height <= 0.06 and area <= 0.03
+    if not (top_band or bottom_band):
+        return False
+    return not value.isupper()
+
+
+
 def classify(tracklet: dict, duration: float) -> tuple[str, float]:
     """Return ``(kind, rule_confidence)`` for one tracklet."""
     box = tracklet["box"]
@@ -473,6 +548,43 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
 
     if handle_like and corner and area <= 0.10:
         return "handle_or_logo", 0.8
+
+    if tracklet.get("screen_frame"):
+        return "screen_text", 0.75
+
+    if _screen_text_mark(text, box):
+        rule = 0.8 if (_is_corner(box) or samples >= 2) else 0.65
+        return "screen_text", rule
+
+    # Screen-recording body text, menus and code are small and wide. Captions
+    # and word-pop titles use a larger face. Height separates the two on real
+    # screen-recorded sources better than position alone.
+    if height <= 0.024 and area <= 0.03:
+        return "screen_text", 0.7
+    letters = [char for char in text if char.isalpha()]
+    upper_ratio = (
+        sum(1 for char in letters if char.isupper()) / len(letters)
+        if letters else 0.0
+    )
+    if (
+        len(text) <= 20 and width <= 0.20 and height <= 0.06
+        and upper_ratio >= 0.8 and not corner
+    ):
+        return "screen_text", 0.55
+    if height <= 0.25 and area <= 0.20 and (
+        len(text) >= 40 or _UI_WORD_RE.search(text)
+    ):
+        return "screen_text", 0.6
+    if len(text) >= 80 and area <= 0.5:
+        return "screen_text", 0.6
+    if _CODE_RE.search(text) and area <= 0.30:
+        return "screen_text", 0.6
+    if (
+        y + height <= 0.20 and height <= 0.05 and width >= 0.10
+        and not text.isupper()
+    ):
+        return "screen_text", 0.55
+
     if corner and area <= 0.03 and samples >= 2 and observed >= 2.0:
         return "handle_or_logo", 0.65
 
@@ -492,6 +604,14 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
             and bottom >= 0.72 and len(text) >= 20
         ):
             return "subtitle", 0.65
+
+    # Mid-frame word-pop captions sit above the caption band but are larger
+    # than UI text and change every few seconds.
+    if (
+        y >= 0.45 and height >= 0.028 and width >= 0.25 and area <= 0.08
+        and (changes >= 1 or samples <= 3)
+    ):
+        return "subtitle", 0.65
 
     if area <= 0.014 and height <= 0.055 and bottom >= 0.74 and samples >= 1:
         return "credit", 0.6
@@ -550,6 +670,10 @@ def build_tracklets(
             "samples": len(values),
             "duration": round(observed, 3),
             "approximate": any(value.get("approximate") for value in values),
+            "screen_frame": (
+                sum(1 for value in values if value.get("screen_frame"))
+                >= max(1, len(values) / 2.0)
+            ),
             "_texts": texts,
             "_observed": observed,
             "_sources": sorted({value.get("source") for value in values}),
@@ -767,7 +891,11 @@ def faces_signal(scenes: Iterable[dict], duration: float) -> dict:
     seen: set[tuple] = set()
     count = 0
     for scene in scenes:
-        faces = scene.get("faces") or []
+        faces = scene.get("faces")
+        if not faces:
+            attention = scene.get("attention") or {}
+            face = attention.get("face")
+            faces = [face] if isinstance(face, dict) else []
         if not isinstance(faces, list) or not faces:
             continue
         start = _number(scene.get("start"), 0.0)
@@ -910,11 +1038,14 @@ def cleanup_block_reason(kind: str, *, attested: bool) -> str | None:
     """Return why a Clean layer may not target this kind, or ``None``.
 
     Cleanup code should call this with the *detected* kind. Watermarks are
-    refused unconditionally; handles and logos need the own-footage
-    attestation; every target stays locked while rights are unattested.
+    refused unconditionally; screen-recording UI text is never cleaned;
+    handles and logos need the own-footage attestation; every target stays
+    locked while rights are unattested.
     """
     if kind == "watermark":
         return "watermark"
+    if kind == "screen_text":
+        return "screen_text"
     if kind == "handle_or_logo" and not attested:
         return "attestation_required"
     if not attested:
@@ -942,6 +1073,15 @@ def clean_prefill(tracklets: Iterable[dict], *, attested: bool) -> list[dict]:
                 "enabled": False,
                 "blocked": "watermark",
                 "reason": WATERMARK_MESSAGE,
+            })
+            entries.append(entry)
+            continue
+        if kind == "screen_text":
+            entry.update({
+                "action": "none",
+                "enabled": False,
+                "blocked": "screen_text",
+                "reason": SCREEN_TEXT_MESSAGE,
             })
             entries.append(entry)
             continue
@@ -1196,6 +1336,9 @@ def build_report(
     watermark_tracklets = [
         item for item in tracklets if item["kind"] == "watermark"
     ]
+    screen_text_tracklets = [
+        item for item in tracklets if item["kind"] == "screen_text"
+    ]
     recommendation = "compose"
     reasons: list[str] = []
     if cleanable or (handle_tracklets and attested):
@@ -1215,6 +1358,10 @@ def build_report(
         reasons.append("The source has little or no speech.")
     else:
         reasons.append("No baked-in text was found on the sampled frames.")
+    if screen_text_tracklets:
+        reasons.append(
+            "Screen-recording UI text was found; it is not a baked-in caption."
+        )
     if not text["confirmed"]:
         reasons.append("Text presence is unconfirmed.")
     if watermark_tracklets:
@@ -1227,6 +1374,7 @@ def build_report(
         "attestation_source": attestation_source,
         "watermark_refused": [item["id"] for item in watermark_tracklets],
         "handle_or_logo_ids": [item["id"] for item in handle_tracklets],
+        "screen_text_ids": [item["id"] for item in screen_text_tracklets],
         "requires_attestation": [
             item["id"] for item in handle_tracklets
         ] if not attested else [],
@@ -1346,6 +1494,7 @@ def state_report(job: dict, state: str, *, error: str | None = None) -> dict:
             "rights_attested": False,
             "watermark_refused": [],
             "handle_or_logo_ids": [],
+            "screen_text_ids": [],
             "requires_attestation": [],
             "refusals": [],
         },
