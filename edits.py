@@ -143,7 +143,11 @@ _GRAPHIC_FX_KEYS = frozenset({
     "thickness", "opacity", "asset",
 })
 _CAPTIONS_KEYS = frozenset({"track_id", "style_id", "enabled"})
-_AUDIO_KEYS = frozenset({"mode", "duck_db", "loudness", "music", "voice"})
+_AUDIO_KEYS = frozenset({
+    "mode", "duck_db", "loudness", "music", "voice", "translate",
+})
+TRANSLATE_MODES = ("literal", "smooth", "viral", "fun", "creative", "sad", "chill")
+_LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
 _TOP_KEYS = frozenset({
     "schema_version", "renderer_version", "id", "version", "parent", "hash",
     "created", "story_ref", "aspect", "clean", "reframe", "motion", "color",
@@ -920,6 +924,26 @@ def normalize_audio(value: Any) -> dict:
             if "file_hash" in raw:
                 _check_hash(raw.get("file_hash"), f"audio.{key}.file_hash")
             result[key] = _json_copy(raw, f"audio.{key}")
+    if value.get("translate") is not None:
+        raw = value["translate"]
+        if not isinstance(raw, dict):
+            raise EditError("audio.translate must be an object.")
+        _unknown(raw, frozenset({"target", "mode"}), "audio.translate")
+        target = str(raw.get("target") or "").strip()
+        if not _LANGUAGE_RE.match(target):
+            raise EditError(
+                "audio.translate.target must be a language code such as zh or pt-BR."
+            )
+        mode = str(raw.get("mode") or "literal").strip().lower().replace("-", "_")
+        if mode not in TRANSLATE_MODES:
+            raise EditError(
+                "audio.translate.mode must be one of: "
+                + ", ".join(TRANSLATE_MODES) + "."
+            )
+        result["translate"] = {
+            "target": target[:16],
+            "mode": mode,
+        }
     return result
 
 

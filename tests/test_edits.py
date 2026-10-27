@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app
+import audio
 import captions
 import edits
 import history_store
@@ -713,3 +714,64 @@ def test_compile_rejects_a_missing_caption_track(env):
         f"/api/jobs/{env['job_id']}/edits/{created['id']}/compile",
     )
     assert response.status_code == 409
+
+
+# ---------------------------------------------------------------- audio.translate
+
+
+def test_audio_translate_is_optional_and_hash_neutral_when_absent():
+    base = edits.build_edit(
+        story_ref=STORY_REF,
+        aspect="9:16",
+        audio={"mode": "original"},
+    )
+    absent = edits.build_edit(
+        story_ref=STORY_REF,
+        aspect="9:16",
+        audio={"mode": "original", "translate": None},
+    )
+    assert base["hash"] == absent["hash"]
+    assert base["id"] == absent["id"]
+    assert "translate" not in base["audio"]
+
+
+def test_audio_translate_reaches_plan_from_edit():
+    edit = edits.build_edit(
+        story_ref=STORY_REF,
+        aspect="9:16",
+        audio={
+            "mode": "dub",
+            "duck_db": -18,
+            "music": {"source": "library", "file_hash": "a" * 64},
+            "voice": {"engine": "say", "voice": "Tingting"},
+            "translate": {"target": "zh", "mode": "smooth"},
+        },
+    )
+    assert edit["audio"]["translate"] == {"target": "zh", "mode": "smooth"}
+    plan = audio.plan_from_edit(edit["audio"])
+    assert plan["mode"] == "dub"
+    assert plan["translate"] == {"target": "zh", "mode": "smooth"}
+    assert plan["music"]["locked_hash"] == "a" * 64
+    normalized = edits.normalize_edit(edit)
+    assert normalized["audio"]["translate"]["target"] == "zh"
+
+
+def test_audio_translate_rejects_bad_target_and_mode():
+    with pytest.raises(edits.EditError):
+        edits.build_edit(
+            story_ref=STORY_REF,
+            aspect="9:16",
+            audio={"mode": "dub", "translate": {"target": "not a language"}},
+        )
+    with pytest.raises(edits.EditError):
+        edits.build_edit(
+            story_ref=STORY_REF,
+            aspect="9:16",
+            audio={"mode": "dub", "translate": {"target": "zh", "mode": "pirate"}},
+        )
+    with pytest.raises(edits.EditError):
+        edits.build_edit(
+            story_ref=STORY_REF,
+            aspect="9:16",
+            audio={"mode": "dub", "translate": {"target": "zh", "provider": "x"}},
+        )
