@@ -2,19 +2,52 @@
 
 from __future__ import annotations
 
+import json
+
 import audio
+import settings_store
 import workflow_config
 
 
-def test_default_routes_preserve_local_fallbacks():
+def test_default_routes_use_only_final_engines():
     defaults = workflow_config.default_workflows()
     assert [route["provider"] for route in defaults["tts"]["routes"]] == [
-        "minimax", "openrouter", "openrouter", "local", "local", "local",
+        "minimax", "openrouter", "openrouter", "local", "local",
     ]
+    assert "piper" not in {
+        route["model"] for route in defaults["tts"]["routes"]
+    }
     assert [route["provider"] for route in defaults["stt"]["routes"]] == [
-        "apple", "auto",
+        "apple", "whisper",
     ]
-    assert defaults["stt"]["routes"][-1]["model"] == "mlx-community/whisper-small-mlx"
+    assert defaults["stt"]["routes"][-1]["model"] == (
+        "mlx-community/whisper-large-v3-turbo"
+    )
+    for name in ("story_brief", "rewrite", "translate", "hook_rank"):
+        providers = [route["provider"] for route in defaults[name]["routes"]]
+        assert providers == ["opencode-go", "openrouter"]
+        assert "local-mlx" not in providers and "ollama" not in providers
+    assert workflow_config.TTS_PROVIDERS == (
+        "minimax", "openrouter", "local", "elevenlabs",
+    )
+    assert workflow_config.STT_PROVIDERS == (
+        "apple", "whisper", "groq", "deepgram",
+    )
+
+
+def test_removed_providers_never_leave_a_workflow_empty():
+    normalized = workflow_config.normalize_workflow("story_brief", {
+        "routes": [
+            {"provider": "local-mlx", "model": "mlx-community/Qwen2.5-3B-Instruct-4bit"},
+            {"provider": "ollama", "model": "qwen2.5:3b"},
+        ],
+        "reasoning": "low",
+        "max_output_tokens": 3200,
+        "timeout_s": 300,
+    })
+    assert [route["provider"] for route in normalized["routes"]] == [
+        "opencode-go", "openrouter",
+    ]
 
 
 def _settings(routes, reasoning="medium"):
@@ -140,7 +173,7 @@ def test_stt_apple_route_falls_back_to_local_whisper(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "_pipeline_log", lambda *args, **kwargs: None)
     routes = [
         {"provider": "apple", "model": "on-device-3b"},
-        {"provider": "auto", "model": "mlx-community/whisper-small-mlx"},
+        {"provider": "whisper", "model": "mlx-community/whisper-large-v3-turbo"},
     ]
     wav = tmp_path / "audio.wav"
     wav.write_bytes(b"wave")
@@ -151,7 +184,7 @@ def test_stt_apple_route_falls_back_to_local_whisper(monkeypatch, tmp_path):
     assert result == transcript
     assert calls == [
         ("apple", "en", 45.0),
-        ("whisper", "mlx-community/whisper-small-mlx", 45.0),
+        ("whisper", "mlx-community/whisper-large-v3-turbo", 45.0),
     ]
 
 
@@ -196,24 +229,35 @@ def test_generate_music_passes_admin_model_and_timeout(monkeypatch, tmp_path):
     assert captured == {"model": "google/lyria-3-pro-preview", "timeout": 77}
 
 
-def test_tts_synthesize_passes_model_and_timeout_to_cartesia(monkeypatch, tmp_path):
+def test_tts_synthesize_passes_model_and_timeout_to_minimax(monkeypatch, tmp_path):
     captured = {}
-    monkeypatch.setattr(audio, "cartesia_key", lambda: "cartesia-key")
-    monkeypatch.setattr(audio, "_convert", lambda source, output, extra=None: output.write_bytes(b"RIFF"))
-    monkeypatch.setattr(audio, "usage_store", type("U", (), {"TTS_PER_CHAR": {}, "record": staticmethod(lambda *a, **k: None)}))
+    monkeypatch.setattr(
+        audio, "usage_store",
+        type("U", (), {
+            "TTS_PER_CHAR": {}, "record": staticmethod(lambda *a, **k: None),
+        }),
+    )
 
-    def fake_cartesia(text, voice, output, rate=1.0, model="", timeout=300):
+    def fake_minimax(text, voice, output, rate=1.0, model="", timeout=300):
         captured.update({"model": model, "timeout": timeout})
         output.write_bytes(b"RIFF" * 100)
 
-    monkeypatch.setattr(audio, "_cartesia_voice", fake_cartesia)
+    monkeypatch.setattr(audio, "_minimax_voice", fake_minimax)
     output = tmp_path / "line.wav"
     audio.synthesize_line(
-        "cartesia", "voice-id", "hello", output,
-        model="sonic-3.7", timeout=33,
+        "minimax", "female-shaonv", "hello", output,
+        model="speech-2.8-turbo", timeout=33,
     )
     assert output.is_file()
-    assert captured == {"model": "sonic-3.7", "timeout": 33}
+    assert captured == {"model": "speech-2.8-turbo", "timeout": 33}
+
+
+def test_removed_tts_engine_cannot_be_synthesized(tmp_path):
+    import pytest
+
+    with pytest.raises(audio.AudioError, match="removed"):
+        audio.synthesize_line("cartesia", "voice-id", "hello", tmp_path / "line.wav")
+    assert not (tmp_path / "line.wav").exists()
 
 
 def test_deepgram_query_parameters_are_urlencoded(monkeypatch, tmp_path):
@@ -256,3 +300,87 @@ def test_deepgram_query_parameters_are_urlencoded(monkeypatch, tmp_path):
     assert result is not None
     assert "model=nova-3%26evil%3D1%23fragment" in captured["url"]
     assert "evil=1#fragment" not in captured["url"]
+
+
+FOUNDER_SETTINGS = {
+    "tts": {"provider": "piper"},
+    "stt": {"provider": "auto", "model": "mlx-community/whisper-small-mlx"},
+    "workflows": {
+        "story_brief": {
+            "routes": [
+                {"provider": "local-mlx", "model": "mlx-community/Qwen2.5-3B-Instruct-4bit"},
+                {"provider": "opencode-go", "model": "deepseek-v4.1-flash"},
+                {"provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash"},
+            ],
+            "reasoning": "low",
+            "max_output_tokens": 3200,
+            "timeout_s": 300,
+        },
+        "tts": {
+            "routes": [
+                {"provider": "openai", "model": "gpt-4o-mini-tts"},
+                {"provider": "local", "model": "piper"},
+                {"provider": "local", "model": "say"},
+            ],
+            "reasoning": "",
+            "max_output_tokens": 0,
+            "timeout_s": 120,
+        },
+    },
+}
+
+
+def test_settings_migration_removes_text_routes_and_maps_tts(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    path = data / "settings.json"
+    path.write_text(json.dumps(FOUNDER_SETTINGS), encoding="utf-8")
+    monkeypatch.setattr(settings_store, "DATA", data)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", path)
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", data / "secrets.json")
+
+    settings = settings_store.load_settings()
+
+    brief = settings["workflows"]["story_brief"]["routes"]
+    assert [route["provider"] for route in brief] == ["opencode-go", "openrouter"]
+    assert settings["tts"]["provider"] == "kokoro"
+    tts_routes = settings["workflows"]["tts"]["routes"]
+    assert [route["provider"] for route in tts_routes] == [
+        "minimax", "local", "local",
+    ]
+    assert [route["model"] for route in tts_routes] == [
+        "speech-2.8-turbo", "kokoro", "say",
+    ]
+    assert all("piper" not in route["model"] for route in tts_routes)
+
+    written = path.read_text(encoding="utf-8")
+    assert "local-mlx" not in written
+    assert "gpt-4o-mini-tts" not in written
+    # A second load does not rewrite the file again.
+    settings_store.load_settings()
+    assert path.read_text(encoding="utf-8") == written
+
+
+def test_settings_migration_falls_back_when_every_text_route_is_removed(
+    tmp_path, monkeypatch,
+):
+    data = tmp_path / "data"
+    data.mkdir()
+    path = data / "settings.json"
+    path.write_text(json.dumps({
+        "workflows": {
+            "rewrite": {
+                "routes": [{"provider": "ollama", "model": "qwen2.5:3b"}],
+            },
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(settings_store, "DATA", data)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", path)
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", data / "secrets.json")
+
+    settings = settings_store.load_settings()
+
+    assert [route["provider"] for route in settings["workflows"]["rewrite"]["routes"]] == [
+        "opencode-go", "openrouter",
+    ]
+    assert "ollama" not in path.read_text(encoding="utf-8")

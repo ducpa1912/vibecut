@@ -23,6 +23,12 @@ DATA = Path(os.environ.get("VIBECUT_DATA", ROOT / "data")).expanduser().resolve(
 SETTINGS_PATH = DATA / "settings.json"
 SECRETS_PATH = DATA / "secrets.json"
 LOCK = threading.Lock()
+_MIGRATION_LOCK = threading.Lock()
+
+# These keys belonged to engines removed in the revamp. They stay readable for
+# legacy jobs, but the admin console hides them until the creator confirms
+# deletion in Setup.
+STALE_SECRETS = ("cartesia", "openai")
 
 SECRET_NAMES = (
     "opencode", "openrouter", "minimax", "groq", "openai", "deepgram",
@@ -108,7 +114,71 @@ def _merge(base: dict, patch: dict) -> dict:
     return result
 
 
-def _migrate(stored: dict) -> dict:
+def _migrate_route(workflow: str, raw: object) -> tuple[dict | None, bool]:
+    if not isinstance(raw, dict):
+        return None, True
+    route = dict(raw)
+    provider = str(route.get("provider") or "").strip().lower()
+    model = str(route.get("model") or "").strip()
+    if workflow == "tts":
+        if provider in workflow_config.REMOVED_TTS_PROVIDERS:
+            return {
+                "provider": "minimax",
+                "model": "speech-2.8-turbo",
+            }, True
+        if provider == "local" and model in workflow_config.REMOVED_TTS_MODELS:
+            return {"provider": "local", "model": "kokoro"}, True
+    elif workflow in {"story_brief", "rewrite", "translate", "hook_rank"}:
+        if provider in workflow_config.REMOVED_TEXT_PROVIDERS:
+            return None, True
+    elif workflow == "stt":
+        if provider == "auto":
+            return {"provider": "apple", "model": "on-device-3b"}, True
+        if provider == "openai":
+            return {"provider": "groq", "model": "whisper-large-v3-turbo"}, True
+        if model in workflow_config.STT_MODEL_MIGRATIONS:
+            return {
+                "provider": provider,
+                "model": workflow_config.STT_MODEL_MIGRATIONS[model],
+            }, True
+    if provider != str(route.get("provider") or ""):
+        route["provider"] = provider
+    return route, False
+
+
+def _migrate_workflows(stored: dict) -> bool:
+    workflows = stored.get("workflows")
+    if not isinstance(workflows, dict):
+        return False
+    defaults = workflow_config.default_workflows()
+    changed = False
+    for name, config in list(workflows.items()):
+        if name not in workflow_config.WORKFLOW_PROVIDERS:
+            continue
+        if not isinstance(config, dict):
+            continue
+        routes = config.get("routes")
+        if not isinstance(routes, list):
+            continue
+        migrated: list[dict] = []
+        for raw in routes:
+            route, route_changed = _migrate_route(name, raw)
+            changed = changed or route_changed
+            if route is None:
+                continue
+            if route not in migrated:
+                migrated.append(route)
+            else:
+                changed = True
+        if not migrated and defaults.get(name, {}).get("routes"):
+            migrated = [dict(item) for item in defaults[name]["routes"]]
+            changed = True
+        config["routes"] = migrated
+    return changed
+
+
+def _migrate(stored: dict) -> tuple[dict, bool]:
+    original = json.loads(json.dumps(stored))
     # Old v0.7 stored an OpenRouter config before OpenCode existed. Copy it to
     # OpenCode for migration, but keep the modern OpenRouter config intact.
     legacy = stored.get("openrouter")
@@ -121,16 +191,18 @@ def _migrate(stored: dict) -> dict:
             "use_brief": bool(legacy.get("use_brief", True)),
             "use_translate": True,
         }
-    return stored
+    tts = stored.get("tts")
+    if isinstance(tts, dict):
+        provider = str(tts.get("provider") or "").strip().lower()
+        mapped = workflow_config.TTS_ENGINE_MIGRATIONS.get(provider)
+        if mapped:
+            tts["provider"] = mapped
+    _migrate_workflows(stored)
+    return stored, stored != original
 
 
-def load_settings() -> dict:
-    merged = _merge(DEFAULTS, _migrate(_read(SETTINGS_PATH)))
-    translation = merged.get("translation") or {}
-    if translation.get("mode") not in {"auto", "local_first", "local_only", "online_only"}:
-        translation["mode"] = "auto"
-        merged["translation"] = translation
-    ingest = dict(merged.get("ingest") or {})
+def _clean_ingest(settings: dict) -> None:
+    ingest = dict(settings.get("ingest") or {})
     # Secrets belong in secrets.json, never in the public settings document.
     for key in (
         "cobalt_api_key",
@@ -141,7 +213,40 @@ def load_settings() -> dict:
         "xhs_get_token",
     ):
         ingest.pop(key, None)
-    merged["ingest"] = ingest
+    settings["ingest"] = ingest
+
+
+def _atomic_write(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    temporary = path.with_name(
+        f"{path.name}.{os.getpid()}.{threading.get_ident()}.migrate.tmp"
+    )
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, indent=1), encoding="utf-8",
+    )
+    try:
+        temporary.chmod(0o600)
+    except OSError:
+        pass
+    os.replace(temporary, path)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def load_settings() -> dict:
+    stored, migrated = _migrate(_read(SETTINGS_PATH))
+    merged = _merge(DEFAULTS, stored)
+    translation = merged.get("translation") or {}
+    if translation.get("mode") not in {"auto", "local_first", "local_only", "online_only"}:
+        translation["mode"] = "auto"
+        merged["translation"] = translation
+    _clean_ingest(merged)
     try:
         merged["caption_styles"] = captions.normalize_style_settings(
             merged.get("caption_styles"),
@@ -149,6 +254,15 @@ def load_settings() -> dict:
     except captions.CaptionStyleError:
         merged["caption_styles"] = captions.default_style_settings()
     merged["workflows"] = workflow_config.normalize_workflows(merged.get("workflows"))
+    if migrated:
+        # Removed engines and text routes are rewritten once, on first load,
+        # so the founder's old settings.json does not keep feeding dead routes
+        # back into the app.
+        with _MIGRATION_LOCK:
+            current = _read(SETTINGS_PATH)
+            current_migrated, current_changed = _migrate(current)
+            if current_changed:
+                _atomic_write(SETTINGS_PATH, merged)
     return merged
 
 
@@ -245,12 +359,53 @@ def save_secrets(updates: dict) -> None:
             pass
 
 
+def stale_secret_status() -> list[dict]:
+    """Keys that belonged to removed engines, pending creator confirmation."""
+    secrets = _load_secrets()
+    result = []
+    for name in STALE_SECRETS:
+        file_value = str(secrets.get(name) or "").strip()
+        env_value = _env_secret(name)
+        if not file_value and not env_value:
+            continue
+        result.append({
+            "name": name,
+            "source": "file" if file_value else "env",
+            "removable": bool(file_value),
+        })
+    return result
+
+
+def confirm_stale_secrets() -> dict:
+    """Delete removed-engine keys after explicit confirmation.
+
+    Environment-managed keys cannot be deleted by the app and stay listed so
+    Setup can tell the creator to unset the variable.
+    """
+    with LOCK:
+        secrets = _load_secrets()
+        removed = [name for name in STALE_SECRETS if name in secrets]
+        if removed:
+            for name in removed:
+                secrets.pop(name, None)
+            DATA.mkdir(parents=True, exist_ok=True)
+            SECRETS_PATH.write_text(
+                json.dumps(secrets, indent=1), encoding="utf-8",
+            )
+            try:
+                SECRETS_PATH.chmod(0o600)
+            except OSError:
+                pass
+    return {"removed": removed, "stale": stale_secret_status()}
+
+
 def public_state() -> dict:
     settings = load_settings()
     return {
         "settings": settings,
         "secrets": secret_status(),
         "sources": {name: secret_source(name) for name in SECRET_NAMES},
+        "stale_secrets": stale_secret_status(),
         "paths": {
             "settings": str(SETTINGS_PATH),
             "secrets": str(SECRETS_PATH),
