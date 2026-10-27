@@ -37,11 +37,19 @@ function syncTokenCookie() {
   document.cookie = `vibecut_token=${value}; Path=/; SameSite=Strict${expiry}`;
 }
 
-function errorDetail(payload) {
+export function errorDetail(payload) {
   if (!payload) return "";
   if (typeof payload === "string") return payload;
   const detail = payload.detail;
   if (typeof detail === "string") return detail;
+  // Structured errors ({detail: {code, message, suggestion}}) carry the
+  // human sentence in message; fall back to the code so it is never generic.
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const message = typeof detail.message === "string" ? detail.message.trim() : "";
+    const suggestion = typeof detail.suggestion === "string" ? detail.suggestion.trim() : "";
+    if (message) return suggestion ? `${message} ${suggestion}` : message;
+    if (typeof detail.code === "string" && detail.code) return detail.code.replace(/_/g, " ");
+  }
   if (Array.isArray(detail)) {
     const parts = detail
       .map((item) => {

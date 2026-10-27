@@ -1063,6 +1063,8 @@ export function mount(root, ctx) {
     }
     const artifact = packetArtifact() || ready[0];
     if (!artifact) return card;
+    // Build uses the cut this card shows, including the first-ready fallback.
+    packetArtifactId = artifact.artifact_id;
 
     const select = el("select", { "aria-label": "Cut for the publish kit" });
     for (const item of ready) {
@@ -1242,6 +1244,7 @@ export function mount(root, ctx) {
     announce("Building the publish kit. This writes the video, captions and covers…");
     clearError();
     const body = {
+      story_id: artifactStoryId(artifact),
       titles,
       description: String(packetDraft.description).trim(),
       hashtags: tags,
@@ -1261,7 +1264,6 @@ export function mount(root, ctx) {
           method: "POST",
           body: {
             ...body,
-            story_id: artifactStoryId(artifact),
             artifact_ids: [artifact.artifact_id],
           },
         });
