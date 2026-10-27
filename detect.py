@@ -47,6 +47,7 @@ MAX_RANGES = 200
 
 KINDS = (
     "subtitle", "title", "lower_third", "handle_or_logo", "watermark", "credit",
+    "screen_text",
 )
 RECOMMENDATIONS = ("clean_then_compose", "compose", "music_first")
 
@@ -82,6 +83,25 @@ _CALL_TO_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 _WATERMARK_LITERAL_RE = re.compile(r"water\s*mark|©|\(c\)\s*\d{4}", re.IGNORECASE)
+
+# Screen-recording chrome: status bars, tab bars and app navigation labels.
+# These are UI text, not baked-in captions, so they are never pre-filled for
+# cleaning and never count towards "baked captions need cleaning".
+_UI_TEXT_RE = re.compile(
+    r"^(?:"
+    r"\d{1,2}:\d{2}(?:\s*[ap]m)?"
+    r"|\d{1,3}\s*%"
+    r"|(?:wi-?fi|lte|5g|4g|3g)"
+    r"|(?:settings|home|search|profile|share|back|cancel|done|next|send|"
+    r"reply|menu|inbox|activity|notifications|following|for you|explore|"
+    r"library|discover|messages|sign in|log in|subscribe|edit)"
+    r")$",
+    re.IGNORECASE,
+)
+SCREEN_TEXT_MESSAGE = (
+    "Screen-recording UI text. It is not a baked-in caption and is not "
+    "pre-filled for cleaning."
+)
 
 
 class CheckError(RuntimeError):
@@ -446,6 +466,34 @@ def _handle_mark(text: str) -> bool:
     )
 
 
+def _screen_text_mark(text: str, box: dict) -> bool:
+    """Return True for UI chrome in a screen recording.
+
+    Known UI labels are accepted in a small block. An unknown top-status or
+    bottom-tab label is accepted only when it is short, mixed case and small;
+    an all-caps corner mark stays a logo target, not screen text.
+    """
+    value = " ".join(str(text or "").split())
+    if not value:
+        return False
+    area = _area(box)
+    height = float(box["h"])
+    y = float(box["y"])
+    if height > 0.08 or area > 0.06:
+        return False
+    edge_band = y + height <= 0.20 or y >= 0.85
+    if _UI_TEXT_RE.match(value):
+        return bool(edge_band)
+    if len(value) > 30:
+        return False
+    top_band = y + height <= 0.14 and height <= 0.07 and area <= 0.05
+    bottom_band = y >= 0.90 and height <= 0.06 and area <= 0.03
+    if not (top_band or bottom_band):
+        return False
+    return not value.isupper()
+
+
+
 def classify(tracklet: dict, duration: float) -> tuple[str, float]:
     """Return ``(kind, rule_confidence)`` for one tracklet."""
     box = tracklet["box"]
@@ -473,6 +521,11 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
 
     if handle_like and corner and area <= 0.10:
         return "handle_or_logo", 0.8
+
+    if _screen_text_mark(text, box):
+        rule = 0.8 if (_is_corner(box) or samples >= 2) else 0.65
+        return "screen_text", rule
+
     if corner and area <= 0.03 and samples >= 2 and observed >= 2.0:
         return "handle_or_logo", 0.65
 
@@ -910,11 +963,14 @@ def cleanup_block_reason(kind: str, *, attested: bool) -> str | None:
     """Return why a Clean layer may not target this kind, or ``None``.
 
     Cleanup code should call this with the *detected* kind. Watermarks are
-    refused unconditionally; handles and logos need the own-footage
-    attestation; every target stays locked while rights are unattested.
+    refused unconditionally; screen-recording UI text is never cleaned;
+    handles and logos need the own-footage attestation; every target stays
+    locked while rights are unattested.
     """
     if kind == "watermark":
         return "watermark"
+    if kind == "screen_text":
+        return "screen_text"
     if kind == "handle_or_logo" and not attested:
         return "attestation_required"
     if not attested:
@@ -942,6 +998,15 @@ def clean_prefill(tracklets: Iterable[dict], *, attested: bool) -> list[dict]:
                 "enabled": False,
                 "blocked": "watermark",
                 "reason": WATERMARK_MESSAGE,
+            })
+            entries.append(entry)
+            continue
+        if kind == "screen_text":
+            entry.update({
+                "action": "none",
+                "enabled": False,
+                "blocked": "screen_text",
+                "reason": SCREEN_TEXT_MESSAGE,
             })
             entries.append(entry)
             continue
@@ -1196,6 +1261,9 @@ def build_report(
     watermark_tracklets = [
         item for item in tracklets if item["kind"] == "watermark"
     ]
+    screen_text_tracklets = [
+        item for item in tracklets if item["kind"] == "screen_text"
+    ]
     recommendation = "compose"
     reasons: list[str] = []
     if cleanable or (handle_tracklets and attested):
@@ -1215,6 +1283,10 @@ def build_report(
         reasons.append("The source has little or no speech.")
     else:
         reasons.append("No baked-in text was found on the sampled frames.")
+    if screen_text_tracklets:
+        reasons.append(
+            "Screen-recording UI text was found; it is not a baked-in caption."
+        )
     if not text["confirmed"]:
         reasons.append("Text presence is unconfirmed.")
     if watermark_tracklets:
@@ -1227,6 +1299,7 @@ def build_report(
         "attestation_source": attestation_source,
         "watermark_refused": [item["id"] for item in watermark_tracklets],
         "handle_or_logo_ids": [item["id"] for item in handle_tracklets],
+        "screen_text_ids": [item["id"] for item in screen_text_tracklets],
         "requires_attestation": [
             item["id"] for item in handle_tracklets
         ] if not attested else [],
@@ -1346,6 +1419,7 @@ def state_report(job: dict, state: str, *, error: str | None = None) -> dict:
             "rights_attested": False,
             "watermark_refused": [],
             "handle_or_logo_ids": [],
+            "screen_text_ids": [],
             "requires_attestation": [],
             "refusals": [],
         },
