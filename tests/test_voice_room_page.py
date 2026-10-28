@@ -70,6 +70,46 @@ def test_voices_page_loads_its_own_modules():
     assert "../studio/" not in room
 
 
+def _tokens(css: str) -> dict[str, str]:
+    import re
+
+    block = css.split(":root {", 1)[1].split("}", 1)[0]
+    return {name: value.strip() for name, value in re.findall(r"(--[\w-]+):\s*([^;]+);", block)}
+
+
+def test_voices_page_has_the_classic_look_without_studio_css():
+    page = (ROOT / "static" / "voices.html").read_text(encoding="utf-8")
+    assert "studio.css" not in page and "/static/studio/" not in page
+    assert '<body class="vr-root">' in page
+    voice = (VOICE / "voice.css").read_text(encoding="utf-8")
+    assert "--st-" not in voice
+    classic = _tokens((ROOT / "static" / "style.css").read_text(encoding="utf-8"))
+    mine = _tokens(voice)
+    assert classic, "Classic's :root tokens moved"
+    for name, value in classic.items():
+        assert mine.get(name) == value, f"{name}: Classic {value}, Voice Room {mine.get(name)}"
+    # Classic's components the page uses, and the record panel's st-* names.
+    for rule in (".vr-root .primary", ".vr-root .ghost", ".vr-root .topbar", ".vr-root .brand-mark",
+                 ".vr-root .hint", ".vr-root .error", ".vr-root .st-btn", ".vr-root .st-status"):
+        assert rule in voice, rule
+
+
+def test_classic_top_bar_links_the_voice_room_only_when_it_is_on(monkeypatch):
+    import app
+
+    index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    assert '<a id="classic-voice-room" href="/voices">Voice Room</a>' in index
+    assert 'html:not([data-features~="voice_room"]) #classic-voice-room' in index
+    api = TestClient(app.app)
+    monkeypatch.setenv("VIBECUT_EDITION", "classic")
+    monkeypatch.setenv("VIBECUT_FEATURES", "")
+    assert '"features":[]' in api.get("/").text
+    assert api.get("/voices").status_code == 404
+    monkeypatch.setenv("VIBECUT_FEATURES", "voice_room")
+    assert '"features":["voice_room"]' in api.get("/").text
+    assert api.get("/voices").status_code == 200
+
+
 def test_clip_finder_uses_the_candidate_routes():
     finder = (VOICE / "clipfinder.js").read_text(encoding="utf-8")
     for name in ("findVoiceCandidates", "voiceCandidateState", "voiceCandidateAudioUrl", "cloneFromVideo"):
@@ -254,5 +294,7 @@ def run_spec(tmp_path: Path, spec: str, extra_env: dict | None = None) -> dict:
 
 def test_voice_room_page_in_chromium(tmp_path):
     report = run_spec(tmp_path, "voice_room.spec.mjs")
+    assert report["classic_link"] is True
+    assert report["stylesheets"] and not any("studio" in href for href in report["stylesheets"])
     assert report["clips"] == 3
     assert report["left"] == 1
