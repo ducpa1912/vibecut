@@ -169,6 +169,14 @@ def graphic(edit: dict, layer_id: str) -> dict:
     return next(item for item in edit["graphics"] if item["id"] == layer_id)
 
 
+def stored_edit(edit: dict) -> dict:
+    """Drop API-only derived fields before passing an Edit to the compiler."""
+    return {
+        key: value for key, value in edit.items()
+        if key not in {"key", "layer_counts"}
+    }
+
+
 def snapshot() -> dict:
     job_dir = app._job_dir("j1")
     job = app.load_job("j1")
@@ -473,7 +481,7 @@ def test_burn_and_srt_read_the_one_trimmed_track(client, quiet_submit):
     edit = public_edit(result)
 
     compiled = compose_render.compile_edit(
-        edit,
+        stored_edit(edit),
         clips=prepared["clips"],
         source=job["source"],
         scenes=job["analysis"]["scenes"],
