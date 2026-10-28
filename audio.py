@@ -407,6 +407,8 @@ def plan_from_edit(audio_section: dict | None) -> dict | None:
         plan["voice"] = dict(voice)
     if isinstance(source.get("translate"), dict):
         plan["translate"] = dict(source["translate"])
+    if isinstance(source.get("script_overrides"), dict):
+        plan["script_overrides"] = dict(source["script_overrides"])
     return normalize_audio_plan(plan)
 
 
@@ -2809,7 +2811,13 @@ def build_bed(
     music_plan = audio_plan.get("music") or {}
     translate_plan = audio_plan.get("translate") or {}
     if declared_mode == "dub" and not str(translate_plan.get("target") or "").strip():
-        raise AudioError("Dub needs a target language.")
+        raise AudioError(
+            "Dub needs a target language. Open Edit > Audio > Dub, choose a target, "
+            "then save before queueing."
+        )
+    confirmed = str(translate_plan.get("source") or "").strip()
+    if confirmed:
+        source_lang = confirmed
     lines: list[dict] = []
     voice_path: Path | None = None
     needs_voice = mode in {"voice", "full", "bed"}
