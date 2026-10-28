@@ -339,6 +339,8 @@ def _motion_filter(
     out_h: int,
 ) -> str | None:
     """Compile one motion layer for one segment, or ``None``."""
+    if motion.get("hidden"):
+        return None
     motion_start = float(motion["start"])
     motion_end = float(motion["end"])
     if motion_end <= out_start + 1e-6 or motion_start >= out_end - 1e-6:

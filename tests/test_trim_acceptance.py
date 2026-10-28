@@ -382,7 +382,10 @@ def test_caption_track_is_rebuilt_for_the_new_clips(client):
     assert result["captions"]["clip_hash"] == result["clip_hash"]
     assert track.clip_hash == result["clip_hash"]
     assert track.id != old_track.id
-    assert result["receipt"]["captions"]["kept"] >= 1
+    # "kept" = same output time, "moved" = shifted by the trim. A later
+    # start shifts every surviving cue, so they count as moved.
+    survived = result["receipt"]["captions"]
+    assert survived["kept"] + survived["moved"] >= 1
     assert result["receipt"]["captions"]["dropped"] >= 1
 
     expected = shifted(new["clips"], old["clips"], old_cue.start)
@@ -1007,3 +1010,46 @@ def test_undo_after_a_later_trim_is_409(client):
     assert late.status_code == 409, late.text
     assert detail_code(late) in {"revision_mismatch", "undo_stale"}
     assert snapshot() == before
+
+
+def test_start_trim_ripples_motion_layers_too(client):
+    ids = setup_job(client)
+    for aspect in ("9:16", "4:5"):
+        response = client.post("/api/jobs/j1/edits", json={
+            "set_id": ids["set_id"],
+            "story_id": ids["story_id"],
+            "aspect": aspect,
+            "motion": [
+                {"id": "zoom_prefix", "kind": "punch_in", "start": 0.5, "end": 2.0, "amount": 0.1},
+                {"id": "zoom_moved", "kind": "punch_in", "start": 9.0, "end": 11.0, "amount": 0.1},
+            ],
+        })
+        assert response.status_code == 200, response.text
+    old = current_story(ids)
+    revision = get_trim(client, ids)["revision"]
+
+    response = post_trim(
+        client, ids,
+        expected_revision=revision,
+        start_sentence=16,
+        end_sentence=19,
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    new = current_story(ids)
+    motion = {item["id"]: item for item in public_edit(result)["motion"]}
+
+    assert motion["zoom_prefix"]["hidden"] is True
+    assert not motion["zoom_moved"].get("hidden")
+    assert motion["zoom_moved"]["start"] == pytest.approx(
+        shifted(new["clips"], old["clips"], 9.0), abs=0.05,
+    )
+    assert "zoom_prefix" in result["receipt"]["layers"]["outside"]
+    assert "zoom_moved" in result["receipt"]["layers"]["moved"]
+
+
+def test_motion_without_hidden_hashes_as_before():
+    plain = edits.normalize_motion([
+        {"id": "z1", "kind": "punch_in", "start": 1.0, "end": 2.0, "amount": 0.1},
+    ])
+    assert "hidden" not in plain[0]

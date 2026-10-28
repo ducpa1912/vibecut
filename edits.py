@@ -137,7 +137,7 @@ _REFRAME_KEYS = frozenset({
     "mode", "cx", "cy", "zoom", "crop_path_ref", "overrides",
 })
 _MOTION_KEYS = frozenset({
-    "id", "kind", "start", "end", "amount", "ramp", "seed",
+    "id", "kind", "start", "end", "amount", "ramp", "seed", "hidden",
 })
 _COLOR_KEYS = frozenset({
     "preset", "lut", *_PRESET_RANGES,
@@ -652,7 +652,7 @@ def normalize_motion(value: Any) -> list[dict]:
             raw.get("seed", 0), f"motion[{index}].seed",
             minimum=0, maximum=2_147_483_647,
         )
-        layers.append({
+        layer = {
             "id": layer_id,
             "kind": kind,
             "start": round(start, 3),
@@ -660,7 +660,14 @@ def normalize_motion(value: Any) -> list[dict]:
             "amount": round(amount, 4),
             "ramp": round(ramp, 3),
             "seed": seed,
-        })
+        }
+        # A trim hides a motion layer that falls outside the new range. The
+        # key is only stored when set, so older Edits hash exactly as before.
+        if raw.get("hidden"):
+            layer["hidden"] = _strict_bool(
+                raw.get("hidden"), False, f"motion[{index}].hidden",
+            )
+        layers.append(layer)
     layers.sort(key=lambda item: (item["start"], item["end"], item["id"]))
     return layers
 

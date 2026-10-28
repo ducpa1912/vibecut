@@ -255,6 +255,7 @@ def _new_edit(
     story_ref: dict,
     *,
     graphics: list[dict] | None = None,
+    motion: list[dict] | None = None,
     captions: dict | None = None,
     current: dict | None = None,
 ) -> dict:
@@ -266,7 +267,7 @@ def _new_edit(
             parent=str(old["id"]),
             clean=old["clean"],
             reframe=old["reframe"],
-            motion=old["motion"],
+            motion=old["motion"] if motion is None else motion,
             color=old["color"],
             graphics=old["graphics"] if graphics is None else graphics,
             captions=old["captions"] if captions is None else captions,
@@ -350,6 +351,7 @@ def _rebuild_captions(
     try:
         result = caption_reflow.rebuild_for_story(
             job_id, job, set_id, old_story, new_story, old_track_id,
+            job_dir=_job_dir(job_id),
         )
     except error_type as exc:
         raise _http(
@@ -640,6 +642,7 @@ def trim_story(
         story_ref = _story_ref(updated, new_story)
 
         graphics: dict[str, list[dict]] = {}
+        motion: dict[str, list[dict]] = {}
         layer_receipt = trim.empty_layer_receipt()
         for aspect, old_edit in live.items():
             values, counts = trim.ripple_graphics(
@@ -648,6 +651,18 @@ def trim_story(
                 new_story.get("clips") or [],
             )
             graphics[aspect] = values
+            trim.merge_layer_receipt(layer_receipt, counts)
+            # Motion (punch-ins, zooms) is timed in output time too, so it
+            # follows the same ripple rule. It has no story pin.
+            values, counts = trim.ripple_graphics(
+                [
+                    {key: value for key, value in item.items() if key != "pin"}
+                    for item in old_edit.get("motion") or []
+                ],
+                story.get("clips") or [],
+                new_story.get("clips") or [],
+            )
+            motion[aspect] = values
             trim.merge_layer_receipt(layer_receipt, counts)
 
         old_track = _old_track_id(job, set_id, story_id, live)
@@ -680,6 +695,7 @@ def trim_story(
                 old_edit,
                 story_ref,
                 graphics=graphics[aspect],
+                motion=motion[aspect],
                 captions=captions_layer,
                 current=current,
             )

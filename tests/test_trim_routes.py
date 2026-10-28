@@ -42,7 +42,7 @@ class FakeReflow:
                 captions.save_track(job_dir, self.track)
                 return self.track.id
 
-        def rebuild(job_id, job, set_id, old_story, new_story, old_track_id):
+        def rebuild(job_id, job, set_id, old_story, new_story, old_track_id, **_kwargs):
             owner.calls.append({
                 "old": old_story["start"],
                 "new": new_story["start"],

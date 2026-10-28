@@ -1855,9 +1855,8 @@ def run_render(
             elif current_track.clip_hash == prepared_hash:
                 caption_track = current_track
             elif current_track.clip_hash == raw_clip_hash:
-                caption_track = caption_engine.build_track(
-                    job, track_plan, current_track.style,
-                    job_dir=job_dir,
+                caption_track = _caption_track_for_cut(
+                    job, job_dir, current_track, plan.get("clips"), track_plan,
                 )
             else:
                 raise HTTPException(
@@ -6373,6 +6372,58 @@ def _edit_stale_error() -> HTTPException:
     )
 
 
+def _caption_track_for_cut(
+    job: dict,
+    job_dir: Path,
+    track: caption_engine.CaptionTrack,
+    raw_clips: list[dict] | None,
+    track_plan: dict,
+) -> caption_engine.CaptionTrack:
+    """Carry a story's own track onto the frame-rounded render cut.
+
+    ``prepare_render`` can move clip ends by under a frame, which changes the
+    clip hash. Re-reading the transcript here would drop hand-fixed caption
+    text, so the track's own cues are retimed through the clips instead. Only
+    when that fails does the track get rebuilt from the transcript.
+    """
+    import trim
+
+    prepared = track_plan.get("clips") or []
+    total = float(track_plan.get("total") or 0.0)
+    try:
+        cues = []
+        for cue in track.cues:
+            start = max(0.0, trim.map_time(float(cue.start), raw_clips, prepared))
+            end = min(total, trim.map_time(float(cue.end), raw_clips, prepared))
+            if end - start <= 1e-3:
+                continue
+            cues.append(replace(cue, start=round(start, 3), end=round(end, 3)))
+        if not cues and track.cues:
+            raise ValueError("no cue survived the retime")
+        clip_key = caption_engine.clip_hash(prepared)
+        cue_key = caption_engine.cue_hash(cues)
+        return replace(
+            track,
+            id=caption_engine.track_id(
+                job_id=track.job_id,
+                target=track.target,
+                clip_key=clip_key,
+                cue_key=cue_key,
+                style_key=f"{track.style_hash}:{track.style_id}",
+                version=track.version,
+            ),
+            cues=cues,
+            cue_hash=cue_key,
+            clip_hash=clip_key,
+            parent_id=track.id,
+        )
+    except (TypeError, ValueError, KeyError) as exc:
+        LOGGER.warning("caption track %s could not be retimed (%s); rebuilding", track.id, exc)
+        return caption_engine.build_track(
+            job, track_plan, track.style, job_dir=job_dir,
+        )
+
+
 def _story_edit_for_render(
     job: dict,
     story: dict,
@@ -7996,9 +8047,8 @@ def _queue_render_locked_impl(
         elif caption_track.clip_hash == prepared_hash:
             pass
         elif caption_track.clip_hash == raw_clip_hash:
-            caption_track = caption_engine.build_track(
-                job, track_plan, caption_track.style,
-                job_dir=job_dir,
+            caption_track = _caption_track_for_cut(
+                job, job_dir, caption_track, plan.get("clips"), track_plan,
             )
         else:
             raise HTTPException(
