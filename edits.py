@@ -144,12 +144,16 @@ _COLOR_KEYS = frozenset({
 })
 _GRAPHIC_TEXT_KEYS = frozenset({
     "id", "type", "kind", "text", "start", "end", "anchor", "box", "z",
-    "style", "safe_zone", "opacity",
+    "style", "safe_zone", "opacity", "pin", "hidden",
 })
 _GRAPHIC_FX_KEYS = frozenset({
     "id", "type", "kind", "start", "end", "anchor", "box", "z", "color",
-    "thickness", "opacity", "asset",
+    "thickness", "opacity", "asset", "pin", "hidden",
 })
+# Optional story pins for text/graphic layers. ``anchor`` keeps its existing
+# positional meaning (bottom-center); a pin value may also arrive under the
+# plan's ``anchor`` spelling and is normalized to ``pin`` before storage.
+STORY_PINS = ("source", "story_start", "story_end")
 _CAPTIONS_KEYS = frozenset({"track_id", "style_id", "enabled"})
 _AUDIO_KEYS = frozenset({
     "mode", "duck_db", "loudness", "music", "voice", "translate",
@@ -716,6 +720,27 @@ def _graphic_id(raw: dict, index: int, prefix: str, used: set[str]) -> str:
     return layer_id
 
 
+def _graphic_pin(raw: dict, index: int) -> str | None:
+    """Validate an optional story pin; ``anchor`` is accepted as an alias."""
+    for key in ("pin", "anchor"):
+        if key not in raw:
+            continue
+        value = str(raw.get(key) or "").strip().lower().replace("-", "_")
+        if not value and key == "pin":
+            continue
+        if key == "anchor" and value not in STORY_PINS:
+            # A positional anchor ("bottom-center") is not a story pin.
+            continue
+        if value not in STORY_PINS:
+            raise EditError(
+                f"graphics[{index}].{key} must be one of: "
+                + ", ".join(STORY_PINS)
+                + "."
+            )
+        return value
+    return None
+
+
 def _graphic_times(raw: dict, index: int) -> tuple[float, float]:
     start = _number(
         raw.get("start"), f"graphics[{index}].start",
@@ -765,6 +790,7 @@ def normalize_graphics(value: Any) -> list[dict]:
                 + ")."
             )
         start, end = _graphic_times(raw, index)
+        pin = _graphic_pin(raw, index)
         if is_text:
             _unknown(raw, _GRAPHIC_TEXT_KEYS, f"graphics[{index}]")
             layer_id = _graphic_id(raw, index, "tx", used)
@@ -785,9 +811,14 @@ def normalize_graphics(value: Any) -> list[dict]:
             else:
                 default_box = overlays.DEFAULT_BOX[kind]
                 default_anchor = overlays.DEFAULT_ANCHOR[kind]
+            anchor_raw = raw.get("anchor")
+            if pin is not None and str(anchor_raw or "").strip().lower().replace(
+                "-", "_",
+            ) in STORY_PINS:
+                anchor_raw = None
             try:
                 anchor = overlays.normalize_anchor(
-                    raw.get("anchor") or default_anchor,
+                    anchor_raw or default_anchor,
                 )
                 style = overlays.normalize_style(raw.get("style"))
             except ValueError as exc:
@@ -796,7 +827,7 @@ def normalize_graphics(value: Any) -> list[dict]:
                 raw.get("z", 10 + text_index), f"graphics[{index}].z",
                 minimum=0, maximum=99,
             )
-            layers.append({
+            layer = {
                 "id": layer_id,
                 "type": "text",
                 "kind": kind,
@@ -817,7 +848,14 @@ def normalize_graphics(value: Any) -> list[dict]:
                     raw.get("opacity", 1.0), f"graphics[{index}].opacity",
                     minimum=0.0, maximum=1.0,
                 ), 3),
-            })
+            }
+            if pin is not None:
+                layer["pin"] = pin
+            if "hidden" in raw:
+                layer["hidden"] = _strict_bool(
+                    raw.get("hidden"), False, f"graphics[{index}].hidden",
+                )
+            layers.append(layer)
             text_index += 1
         else:
             _unknown(raw, _GRAPHIC_FX_KEYS, f"graphics[{index}]")
@@ -857,14 +895,19 @@ def normalize_graphics(value: Any) -> list[dict]:
                 "progress_bar": (0.70, 0.02),
                 "sticker": (0.24, 0.24),
             }[kind]
-            layers.append({
+            anchor_raw = raw.get("anchor")
+            if pin is not None and str(anchor_raw or "").strip().lower().replace(
+                "-", "_",
+            ) in STORY_PINS:
+                anchor_raw = None
+            layer = {
                 "id": layer_id,
                 "type": "fx",
                 "kind": kind,
                 "start": start,
                 "end": end,
                 "anchor": overlays.normalize_anchor(
-                    raw.get("anchor") or "center",
+                    anchor_raw or "center",
                 ),
                 "box": _normalize_box(
                     raw.get("box"), default_box[0], default_box[1],
@@ -878,7 +921,14 @@ def normalize_graphics(value: Any) -> list[dict]:
                     minimum=0.0, maximum=1.0,
                 ), 3),
                 "asset": asset_out,
-            })
+            }
+            if pin is not None:
+                layer["pin"] = pin
+            if "hidden" in raw:
+                layer["hidden"] = _strict_bool(
+                    raw.get("hidden"), False, f"graphics[{index}].hidden",
+                )
+            layers.append(layer)
             fx_index += 1
     layers.sort(key=lambda item: (item["z"], item["start"], item["end"], item["id"]))
     return layers

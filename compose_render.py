@@ -642,6 +642,8 @@ def _caption_layers(
 def _graphic_layers(edit: dict, warnings: list[dict]) -> list[dict]:
     layers: list[dict] = []
     for item in edit.get("graphics") or []:
+        if item.get("hidden"):
+            continue
         rect = _overlay_rect(item["anchor"], item["box"])
         if item["type"] == "text":
             layers.append({
