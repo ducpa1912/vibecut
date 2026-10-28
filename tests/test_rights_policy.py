@@ -470,3 +470,31 @@ def test_turning_the_lock_on_does_not_rewrite_saved_edits(env):
         json={"color": {"preset": "warm_film"}},
     )
     assert colour.status_code == 200, colour.text
+
+
+def test_batch_import_follows_the_lock(env):
+    settings_store.save_settings({"rights": {"lock": True}})
+    body = {"items": [{"path": str(env.source)}]}
+    refused = env.client.post("/api/batches", json=body)
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == rights.IMPORT_CONFIRMATION
+
+    import routes_batches
+
+    created = {}
+
+    def fake_from_path(path_body):
+        created["rights"] = path_body.rights
+        return {"id": "batchjob0001"}
+
+    backend = routes_batches._AppBackend()
+    original = app.job_from_path
+    app.job_from_path = fake_from_path
+    try:
+        try:
+            backend.create_job({"path": str(env.source), "rights": True})
+        except Exception:
+            pass
+    finally:
+        app.job_from_path = original
+    assert created["rights"] is True

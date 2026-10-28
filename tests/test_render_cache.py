@@ -192,12 +192,10 @@ def test_burn_layers_keeps_chain_when_captions_overlap(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- decode/scale
 
 
-def test_decoder_args_use_libdav1d_for_av1(monkeypatch):
+def test_decoder_args_leave_the_av1_decoder_to_ffmpeg(monkeypatch):
     monkeypatch.delenv("VIBECUT_DECODER", raising=False)
-    assert render._decoder_args({"codec": "av1"}) == ["-c:v", "libdav1d"]
-    assert render._decoder_args({"codec": "av01"}, 2) == [
-        "-c:v", "libdav1d", "-threads", "2",
-    ]
+    assert render._decoder_args({"codec": "av1"}) == []
+    assert render._decoder_args({"codec": "av01"}, 2) == ["-threads", "2"]
     assert render._decoder_args({"codec": "h264"}) == []
 
 
@@ -239,8 +237,7 @@ def test_segment_puts_decoder_and_seek_before_input(tmp_path, monkeypatch):
     cmd = captured["cmd"]
     input_at = cmd.index("-i")
     assert cmd.index("-ss") < input_at
-    assert cmd.index("-c:v") < input_at
-    assert cmd[cmd.index("-c:v") + 1] == "libdav1d"
+    assert cmd.index("-threads") < input_at
     assert cmd[cmd.index("-threads") + 1] == "2"
 
 

@@ -408,7 +408,7 @@ export function mountCleanPanel(host, ctx) {
     if (!jobId || readFlag(prefillKey(jobId, edit.story_ref, edit.aspect))) return;
     const tracklets = trackletById();
     const entries = (report.clean_prefill || []).filter((entry) => (
-      entry
+      entry?.enabled
       && entry.action !== "refused"
       && !entry.blocked
       && tracklets.has(String(entry.tracklet_id))

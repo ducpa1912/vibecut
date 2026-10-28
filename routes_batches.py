@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 import batch
 import disk
+import rights
 
 LOGGER = logging.getLogger("vibecut.routes.batches")
 router = APIRouter()
@@ -28,6 +29,8 @@ class BatchBody(BaseModel):
     name: str = ""
     items: list[BatchItemBody] = []
     max: int = batch.MAX_ITEMS
+    # The own-footage tick for every item. Required while the rights lock is on.
+    rights: bool | None = None
 
 
 def _backend():
@@ -78,6 +81,8 @@ def create_batch(body: BatchBody) -> dict:
     import app
 
     _validate_body(body)
+    if not rights.may_import(body.rights):
+        raise HTTPException(409, rights.IMPORT_CONFIRMATION)
     items = [
         {
             "path": item.path,
@@ -86,6 +91,7 @@ def create_batch(body: BatchBody) -> dict:
             "targets": item.targets,
             "size_bytes": item.size_bytes,
             "source_bytes": item.source_bytes,
+            "rights": body.rights,
         }
         for item in body.items
     ]
@@ -648,12 +654,14 @@ class _AppBackend:
                 url=str(item["url"]),
                 options=options,
                 job_id=str(requested_id) if requested_id else None,
+                rights=item.get("rights"),
             ))
         else:
             result = app.job_from_path(app.PathBody(
                 path=str(item["path"]),
                 options=options,
                 job_id=str(requested_id) if requested_id else None,
+                rights=item.get("rights"),
             ))
         return app.load_job(str(result["id"]))
 

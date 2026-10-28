@@ -145,7 +145,9 @@ def _decoder_args(meta: dict, threads: int | None = None) -> list[str]:
         return ["-hwaccel", "videotoolbox"]
     if codec not in SOFTWARE_AV1:
         return []
-    args = ["-c:v", "libdav1d"]
+    # ffmpeg already picks libdav1d for AV1. Naming it would break a build
+    # that ships a different AV1 decoder, so only the thread budget is set.
+    args: list[str] = []
     if threads:
         # The beat pool runs several ffmpeg processes. Handing each one a
         # slice of the cores avoids every decoder spawning a full thread set.

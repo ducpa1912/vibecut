@@ -430,6 +430,7 @@ class BatchManager:
                 "url": url or None,
                 "options": options,
                 "targets": targets,
+                "rights": raw.get("rights") if isinstance(raw.get("rights"), bool) else None,
                 "state": "queued",
                 "attempts": 0,
                 "job_id": None,

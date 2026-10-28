@@ -945,7 +945,21 @@
     return url;
   }
 
-  function uploadFile(file, options, onProgress) {
+  // The rights lock is a Setup setting. While it is on, the server refuses an
+  // import without the own-footage tick, so Classic asks for it first.
+  async function importRights() {
+    let policy = null;
+    try {
+      policy = await api("/api/rights/policy");
+    } catch (_) {
+      return null;
+    }
+    if (!policy || !policy.needs_import_tick) return null;
+    if (window.confirm("The rights lock is on.\n\nI own this footage or have the rights to it.")) return true;
+    throw new Error("Import cancelled. Confirm you own this footage or have the rights to it.");
+  }
+
+  function uploadFile(file, options, onProgress, rights = null) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/jobs/upload");
@@ -969,6 +983,7 @@
       const form = new FormData();
       form.append("file", file);
       form.append("options", JSON.stringify(options));
+      if (rights !== null) form.append("rights", rights ? "true" : "false");
       xhr.send(form);
     });
   }
@@ -1863,9 +1878,10 @@
     state.urlInspectUrl = url;
     setUrlBusy(true, "Starting…");
     try {
+      const rights = await importRights();
       const job = await api("/api/jobs/from-url", {
         method: "POST",
-        body: JSON.stringify({ url, options: readOptions() }),
+        body: JSON.stringify({ url, options: readOptions(), rights }),
       });
       startUrlJob(job, { ...inspected, title: choice.title || inspected.title }, url);
     } catch (error) {
@@ -2001,9 +2017,10 @@
 
     setUrlBusy(true, "Starting…");
     try {
+      const rights = await importRights();
       const job = await api("/api/jobs/from-url", {
         method: "POST",
-        body: JSON.stringify({ url, options: readOptions() }),
+        body: JSON.stringify({ url, options: readOptions(), rights }),
       });
       startUrlJob(job, inspected, url);
     } catch (error) {
@@ -2058,7 +2075,8 @@
       dom.progressTitle.textContent = "Sending the file";
       updateUploadProgress(0, 0, state.file.size);
       try {
-        const result = await uploadFile(state.file, options, updateUploadProgress);
+        const rights = await importRights();
+        const result = await uploadFile(state.file, options, updateUploadProgress, rights);
         state.pollStart = Date.now();
         setProgressFile(state.file.name);
         updateProgress({ status: "queued", progress: 0.01, message: "Queued for dissection" });
@@ -2074,9 +2092,10 @@
       setProgressFile(state.fileName);
       updateProgress({ status: "queued", progress: 0.01, message: "Queued for dissection" });
       try {
+        const rights = await importRights();
         const result = await api("/api/jobs/path", {
           method: "POST",
-          body: JSON.stringify({ path: state.localPath, options }),
+          body: JSON.stringify({ path: state.localPath, options, rights }),
         });
         state.pollStart = Date.now();
         startAnalysisPoll(result.id);
