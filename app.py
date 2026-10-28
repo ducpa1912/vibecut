@@ -67,6 +67,7 @@ import story_queue
 import tighten
 import usage_store
 import vision
+import workflow_config
 from url_ingest import fallback as ingest_fallback
 from url_ingest import registry
 from url_ingest.base import IngestError, IngestOptions
@@ -5906,6 +5907,97 @@ def delete_variant(job_id: str, variant_id: str) -> dict:
     if not removed:
         raise HTTPException(404, "Variant not found.")
     return {"variants": result.get("variants", [])}
+
+
+class TranscribeBody(BaseModel):
+    language: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
+@app.post("/api/jobs/{job_id}/transcribe")
+def retranscribe_job(job_id: str, body: TranscribeBody | None = None) -> dict:
+    """Read the speech of an analysed video again, without re-importing it.
+
+    Stories are built from speech; a video read before a transcription route
+    was ready has none. This runs the configured STT routes on the source and
+    attaches the result, so the next Find stories uses it.
+    """
+    job = load_job(job_id)
+    source = job.get("source") or {}
+    if job.get("status") != "ready" or not (job.get("analysis") or {}).get("scenes"):
+        raise HTTPException(409, "Wait for the video to finish reading first.")
+    if not source.get("has_audio"):
+        raise HTTPException(
+            400,
+            "This video has no sound track, so there is no speech to read. "
+            "Download or export it again with audio.",
+        )
+    path = Path(str(source.get("path") or ""))
+    if not path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    job_dir = _job_dir(job_id)
+    options = dict(job.get("options") or {})
+    language = str((body.language if body else "") or "").strip().lower()
+    if language:
+        options["speech_language_explicit"] = language
+    settings = settings_store.load_settings()
+    stt_cfg = workflow_config.effective(settings.get("workflows"), "stt")
+    routes = list(stt_cfg.get("routes") or [])
+    if not any(
+        pipeline.stt._engine_ready(route["provider"], route["model"])
+        for route in pipeline.stt.resolve_routes(routes)
+    ):
+        raise HTTPException(
+            400,
+            "No transcription engine is ready on this machine. Add an OpenRouter "
+            "key in Setup (or a Groq or Deepgram key).",
+        )
+    speech_language = pipeline.stt.speech_language_for(options, source)
+    wav = pipeline.extract_audio(str(path), True, job_dir)
+    try:
+        transcript = pipeline.stt.transcribe_source(
+            wav, job_dir, float(source.get("duration") or 0.0), None,
+            routes=routes,
+            language=speech_language,
+            vocabulary=pipeline.stt.vocabulary_terms(job_dir=job_dir, settings=settings),
+            timeout=float(stt_cfg.get("timeout_s") or 300),
+            job_id=job_id,
+            request_id=job_id,
+            logger=pipeline._pipeline_log,
+        )
+    finally:
+        if wav:
+            try:
+                wav.unlink()
+            except OSError:
+                pass
+    if not transcript:
+        raise HTTPException(502, "Transcription failed on every route. Check the key in Setup and try again.")
+    segments = len(transcript.get("segments") or [])
+
+    def apply(record: dict) -> None:
+        analysis = record.setdefault("analysis", {})
+        pipeline.attach_speech(analysis.get("scenes") or [], transcript)
+        analysis["transcript"] = {
+            "language": transcript.get("language"),
+            "text": str(transcript.get("text") or "")[:1000],
+            "segments": segments,
+            "no_speech": bool(transcript.get("no_speech")),
+        }
+        engine = analysis.setdefault("engine", {})
+        engine["whisper"] = bool(segments)
+        engine["transcript_provider"] = transcript.get("provider") or ""
+        engine["transcript_language"] = transcript.get("language")
+        record.setdefault("options", {})["transcribe"] = True
+
+    update_job(job_id, apply)
+    return {
+        "segments": segments,
+        "language": transcript.get("language"),
+        "provider": transcript.get("provider"),
+        "no_speech": bool(transcript.get("no_speech")),
+    }
 
 
 @app.get("/api/jobs/{job_id}/transcript")

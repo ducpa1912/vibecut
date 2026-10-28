@@ -19,7 +19,7 @@ TTS_PROVIDERS = ("minimax", "openrouter", "local", "elevenlabs")
 MUSIC_PROVIDERS = ("minimax", "openrouter")
 # STT: Apple SpeechAnalyzer, Whisper turbo, Deepgram and Groq. The silent
 # "auto" cloud ladder and OpenAI whisper-1 were removed.
-STT_PROVIDERS = ("apple", "whisper", "groq", "deepgram")
+STT_PROVIDERS = ("apple", "whisper", "groq", "deepgram", "openrouter")
 
 #: Engines removed from the product, mapped to the nearest kept engine.
 TTS_ENGINE_MIGRATIONS = {
@@ -124,6 +124,8 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
         "routes": [
             {"provider": "apple", "model": "on-device-3b"},
             {"provider": "whisper", "model": "mlx-community/whisper-large-v3-turbo"},
+            # Cloud fallback for machines without a local engine.
+            {"provider": "openrouter", "model": "openai/whisper-large-v3-turbo"},
         ],
         "reasoning": "",
         "max_output_tokens": 0,

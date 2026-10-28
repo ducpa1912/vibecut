@@ -1530,3 +1530,7 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
 }
 #classic-voice-room:hover { border-color: #5a5a62; background: #17171a; }
 #classic-voice-room::before { content: "◉"; font-size: 10px; color: #e8a266; }
+
+/* Stories: a video read without its speech. */
+.st-speech-missing { display: grid; gap: 8px; justify-items: start; margin-top: 12px; }
+.st-speech-missing .st-warning { margin: 0; }

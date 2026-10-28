@@ -22,6 +22,7 @@ import {
   invalidateReadCache,
   listClipSets,
   renderStory,
+  transcribeJob,
   trimErrorCode,
   trimStory,
 } from "./api.js";
@@ -196,6 +197,7 @@ export function mount(root, ctx) {
   let sets = [];
   let activeSetId = "";
   let loading = false;
+  let transcribing = false;
 
   root.innerHTML = `
     <section class="st-panel" aria-labelledby="st-stories-title">
@@ -461,11 +463,81 @@ export function mount(root, ctx) {
     actions.append(countLabel, lengthLabel, build);
     card.append(actions);
 
+    const speech = speechCard();
+    if (speech) card.append(speech);
     if (set?.note) card.append(el("p", { class: "st-hint", text: set.note }));
     for (const warning of set?.warnings || []) {
       card.append(el("p", { class: "st-warning", text: warning }));
     }
     return card;
+  }
+
+  /** Stories are cut on speech. Say so when this video has none to read. */
+  function speechState() {
+    if (!job?.analysis) return "";
+    if (job.source?.has_audio === false) return "no_audio";
+    const transcript = job.analysis.transcript;
+    if (!transcript || (!transcript.segments && !transcript.no_speech)) return "no_transcript";
+    if (transcript.no_speech) return "no_speech";
+    return "";
+  }
+
+  function speechCard() {
+    const state = speechState();
+    if (state === "no_audio") {
+      return el("p", {
+        class: "st-warning",
+        text: "This video has no sound track, so there is no speech to build stories from. Download or export it again with audio, then import that file.",
+      });
+    }
+    if (state === "no_speech") {
+      return el("p", {
+        class: "st-hint",
+        text: "No speech was heard in this video, so stories can only use on-screen text.",
+      });
+    }
+    if (state !== "no_transcript") return null;
+    const read = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: transcribing ? "Reading speech…" : "Read speech",
+      disabled: transcribing || loading,
+    });
+    read.addEventListener("click", () => { void readSpeech(read); });
+    return el("div", { class: "st-speech-missing" }, [
+      el("p", {
+        class: "st-warning",
+        text: "This video was read without its speech, so stories cannot be cut on what people say. Read the speech now (OpenRouter, about 30 s for a 15 min video), then find stories.",
+      }),
+      read,
+    ]);
+  }
+
+  async function readSpeech(button) {
+    if (!job || transcribing) return;
+    transcribing = true;
+    button.disabled = true;
+    button.textContent = "Reading speech…";
+    clearError();
+    showStatus("Reading the speech in this video…");
+    try {
+      const result = await transcribeJob(job.id);
+      invalidateReadCache(job.id);
+      job = await getJob(job.id, { fresh: true });
+      if (disposed) return;
+      showStatus(
+        result?.segments
+          ? `Read ${formatCount(result.segments, "line", "lines")} of speech (${result.language || "auto"}). Find stories now.`
+          : "No speech was heard in this video.",
+        result?.segments ? "ok" : "",
+      );
+    } catch (error) {
+      if (disposed) return;
+      showError(error.message || "Could not read the speech in this video.");
+    } finally {
+      transcribing = false;
+      if (!disposed) renderStories();
+    }
   }
 
   function setPicker() {
@@ -509,9 +581,16 @@ export function mount(root, ctx) {
 
     const stories = Array.isArray(set.stories) ? set.stories : [];
     if (!stories.length) {
+      const state = speechState();
       dom.body.append(el("div", { class: "st-empty" }, [
         el("h2", { text: "No complete story found" }),
-        el("p", { text: "Try fewer stories or a source with more speech." }),
+        el("p", {
+          text: state === "no_audio"
+            ? "This video has no sound track. Stories need speech."
+            : state === "no_transcript"
+              ? "Read the speech first (button above), then find stories again."
+              : "Try another length, fewer stories, or a source with more speech.",
+        }),
       ]));
       return;
     }
