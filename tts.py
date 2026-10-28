@@ -490,7 +490,22 @@ def _tts_candidates(engine_name: str = "auto") -> list[str]:
     return [item["engine"] for item in _tts_route_candidates()]
 
 
+DELETED_CLONE_ERROR = "This cloned voice was deleted. Pick another voice for this story."
+
+
+def require_live_clone(voice: str) -> None:
+    """Fail when ``voice`` names a deleted clone.
+
+    Without this a deleted clone falls back to a stock voice, and lines cached
+    while it existed keep playing it.
+    """
+    voice = str(voice or "").strip()
+    if voice_clone.is_voice_id(voice) and not voice_clone.is_clone(voice):
+        raise audio.AudioError(DELETED_CLONE_ERROR)
+
+
 def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
+    require_live_clone(preferred)
     candidate = str(candidate or "").strip().lower()
     candidate = "gemini" if candidate == "openrouter" else candidate
     preferred = str(preferred or "").strip()
@@ -686,6 +701,7 @@ def synthesize_story(
         else _candidate_order(engine, model, routes)
     )
     requested_voice = str(voice or "").strip()
+    require_live_clone(requested_voice)
     primary_engine = candidates[0]["engine"]
     cache = Path(cache_dir) if cache_dir is not None else audio.CACHE / "voice"
     cache.mkdir(parents=True, exist_ok=True)
@@ -926,6 +942,7 @@ def _openrouter_voice(
     text: str, voice: str, output: Path, rate: float = 1.0, engine: str = "fish",
     model: str = "", timeout: float = 300,
 ) -> None:
+    require_live_clone(voice)
     cloned = engine == "heygen" and voice_clone.is_clone(voice)
     key = audio.openrouter_key()
     if not key:

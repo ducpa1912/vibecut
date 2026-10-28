@@ -559,6 +559,12 @@ export function mountAudioPanel(host, ctx) {
       const result = await request(`/api/audio/voices?engine=${encodeURIComponent(engine)}`);
       voiceList = Array.isArray(result?.voices) ? result.voices : [];
       if (selectedVoice && !voiceList.some((voice) => String(voice.id) === selectedVoice)) {
+        if (/^clone_[a-f0-9]{24}$/.test(selectedVoice)) {
+          // Keep the deleted clone in the plan so the render fails with a clear
+          // reason instead of quietly speaking in a stock voice.
+          setNotice("This story's cloned voice was deleted. Pick another voice.", "bad");
+          return;
+        }
         selectedVoice = "";
       }
       if (!selectedVoice && voiceList.length) {

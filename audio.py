@@ -22,6 +22,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 import wave
 from pathlib import Path
 from typing import Sequence
@@ -983,9 +984,24 @@ def _separate_stem(
         return cached
     if not demucs_available():
         raise AudioError("Demucs is not installed. pip install demucs")
-    output_dir = CACHE / "stems" / "run"
-    shutil.rmtree(output_dir, ignore_errors=True)
+    # One scratch folder per run: a render, a clip search and a clone upload
+    # can separate at the same time without deleting each other's stems.
+    output_dir = CACHE / "stems" / f"run-{uuid.uuid4().hex[:12]}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        return _demucs_into(source, cached, output_dir, stem, model, cancel_event)
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def _demucs_into(
+    source: str,
+    cached: Path,
+    output_dir: Path,
+    stem: str,
+    model: str,
+    cancel_event: threading.Event | None,
+) -> Path:
     base = [
         sys.executable, "-m", "demucs", "--two-stems=vocals",
         "-n", model, "--shifts", "0", "-j", "4",
@@ -1023,7 +1039,6 @@ def _separate_stem(
             legacy.unlink()
         except OSError:
             pass
-    shutil.rmtree(output_dir, ignore_errors=True)
     return cached
 
 
@@ -3421,7 +3436,10 @@ def build_bed(
 # ---------------------------------------------------------------- cache hygiene
 
 
-CACHE_DIRS = ("segments", "voice", "stems", "music", "masters", "translate")
+CACHE_DIRS = (
+    "segments", "voice", "stems", "music", "masters", "translate",
+    "voice_refs", "voice-clone",
+)
 
 
 def cache_usage() -> dict:
@@ -3456,6 +3474,8 @@ def prune_cache(max_gb: float = 2.0, days: float = 14.0) -> dict:
         for path in base.rglob("*"):
             if not path.is_file():
                 continue
+            if name == "stems" and path.relative_to(base).parts[0].startswith("run"):
+                continue  # Demucs scratch: handled below
             try:
                 stat = path.stat()
             except OSError:
@@ -3469,7 +3489,15 @@ def prune_cache(max_gb: float = 2.0, days: float = 14.0) -> dict:
                     pass
             else:
                 keep.append((stat.st_mtime, stat.st_size, path))
-    shutil.rmtree(CACHE / "stems" / "run", ignore_errors=True)
+    # A live Demucs run is capped at an hour; older run folders are leftovers
+    # from a crash. The CLI can prune while the app runs, so keep fresh ones.
+    for scratch in (CACHE / "stems").glob("run*"):
+        try:
+            stale = now - scratch.stat().st_mtime > 2 * 3600
+        except OSError:
+            continue
+        if scratch.is_dir() and stale:
+            shutil.rmtree(scratch, ignore_errors=True)
     if max_gb > 0:
         budget = max_gb * 1024 ** 3
         total = sum(size for _, size, _ in keep)
