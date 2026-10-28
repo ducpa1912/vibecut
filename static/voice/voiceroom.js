@@ -1,26 +1,32 @@
 /**
  * Voice Room — every voice this machine can speak, and voice cloning.
  *
- * A page of its own (`/voices`), opened from the Voice Room button beside
- * Open Studio. It lists each voice engine with the voices it has here (Apple
- * voices, Kokoro, cloud engines with a saved key, HeyGen Voice Turbo and the
- * creator's clones), plays any voice with a test line, and clones a voice from
- * a recording, a file, or a video already in the library.
+ * A page of its own (`/voices`), opened from the Voice Room link in Classic's
+ * top bar when the `voice_room` feature is on. One page holds:
+ *
+ *   * Your voices: the creator's clones, with Play, Rename and Delete.
+ *   * Clone a voice: from a recording or a file (voiceclone.js), or from a
+ *     video through the clean-clip finder (clipfinder.js).
+ *   * Stock voices: each engine with the voices it has here (Apple voices,
+ *     Kokoro, cloud engines with a saved key, HeyGen Voice Turbo), played
+ *     with a test line.
  *
  * Routes:
  *   GET  /api/voices/catalog
  *   POST /api/voices/sample
  *   GET  /api/settings, GET /api/jobs
- *   /api/voices/clones and /api/jobs/{id}/voices/clone (voiceclone.js)
+ *   /api/voices/clones and /api/jobs/{id}/voices/* (voiceclone.js)
  */
 
 import { listJobs, request } from "./api.js";
-import { el, formatDuration } from "./ui.js";
+import { el } from "./ui.js";
+import { createClipFinder } from "./clipfinder.js";
 import {
-  CONSENT_COPY,
-  cloneFromVideo,
   createMyVoicePanel,
+  deleteClone,
+  playClone,
   playVoice,
+  renameClone,
   stopPlayback,
 } from "./voiceclone.js";
 
@@ -36,7 +42,7 @@ const ENGINE_NOTES = {
   elevenlabs: "ElevenLabs key",
 };
 
-const root = document.getElementById("studio-root");
+const root = document.getElementById("voice-root");
 
 let catalog = null;
 let settings = null;
@@ -50,25 +56,31 @@ let query = "";
 let language = "";
 let playing = "";
 let jobs = [];
-let videoJob = "";
-let videoName = "";
-let videoStart = "";
-let videoEnd = "";
-let videoConsent = false;
-let videoBusy = false;
+let renaming = "";
+let renameValue = "";
+let renameFresh = false;
+let cloneBusy = "";
 const collapsed = new Set(["say"]);
-
-const myVoice = createMyVoicePanel({
-  hasKey: () => Boolean(settings?.secrets?.openrouter),
-  onChange: () => { void loadCatalog(); },
-  sampleText: () => testLine,
-  title: "Clone my voice",
-});
 
 function setNotice(message, tone = "") {
   notice = message || "";
   noticeTone = tone;
 }
+
+const myVoice = createMyVoicePanel({
+  hasKey: () => Boolean(catalog?.clone_available),
+  onChange: () => { void loadCatalog(); },
+  sampleText: () => testLine,
+  title: "From a recording or a file",
+  list: false,
+});
+
+const finder = createClipFinder({
+  jobs: () => jobs,
+  available: () => Boolean(catalog?.clone_available),
+  onCloned: () => { void loadCatalog(); },
+  onNotice: (message, tone) => { setNotice(message, tone); render(); },
+});
 
 function langOf(voice) {
   return String(voice?.lang || "").toLowerCase().replace("_", "-").split("-")[0] || "multi";
@@ -83,7 +95,7 @@ function matches(voice) {
 
 async function loadCatalog() {
   try {
-    catalog = await request("/api/voices/catalog", { fresh: true });
+    catalog = await request("/api/voices/catalog");
   } catch (cause) {
     error = cause?.message || "Could not read the voices on this machine.";
   }
@@ -97,7 +109,7 @@ async function load() {
   try {
     const [state, voices, recent] = await Promise.all([
       request("/api/settings"),
-      request("/api/voices/catalog", { fresh: true }),
+      request("/api/voices/catalog"),
       listJobs({ limit: 30 }).catch(() => ({ jobs: [] })),
     ]);
     settings = state;
@@ -128,44 +140,61 @@ async function play(engine, voice, label) {
   }
 }
 
-/** The server's cleaning warning for a new clone, or "" when it was cleaned. */
-function cleaningNote(record) {
-  const notes = [];
-  for (const text of [record?.warning, ...(Array.isArray(record?.warnings) ? record.warnings : [])]) {
-    const line = String(text || "").trim();
-    if (line && !notes.includes(line)) notes.push(line);
-  }
-  if (!notes.length && record?.cleaned === false) {
-    notes.push("It uses the raw recording, which was not cleaned.");
-  }
-  return notes.slice(0, 2).join(" ");
-}
-
-async function cloneVideo() {
-  if (!videoJob || !videoConsent || videoBusy) return;
-  const body = { name: videoName.trim(), consent: true };
-  const start = Number.parseFloat(videoStart);
-  const end = Number.parseFloat(videoEnd);
-  if (Number.isFinite(start) && start >= 0) body.start = start;
-  if (Number.isFinite(end) && end > 0) body.end = end;
-  videoBusy = true;
-  setNotice("Cutting the speech out of the video…");
+async function playMine(item) {
+  if (cloneBusy) return;
+  cloneBusy = `play:${item.voice_id}`;
+  setNotice(`Speaking the test line as ${item.name}…`);
   render();
   try {
-    const record = await cloneFromVideo(videoJob, body);
-    videoConsent = false;
-    videoName = "";
-    const note = cleaningNote(record);
-    setNotice(
-      `Cloned “${record.name}”${record.used_transcript ? " from the transcript's speech" : ""}.${note ? ` ${note}` : ""} It is listed under HeyGen Voice Turbo.`,
-      note ? "" : "ok",
-    );
-    await myVoice.refresh();
-    await loadCatalog();
+    await playClone(item.voice_id, testLine);
+    setNotice(`Playing ${item.name}.`, "ok");
   } catch (cause) {
-    setNotice(cause?.message || "Could not clone the video voice.", "bad");
+    setNotice(cause?.message || "Could not play this voice.", "bad");
   } finally {
-    videoBusy = false;
+    cloneBusy = "";
+    render();
+  }
+}
+
+async function saveName(item) {
+  const name = renameValue.trim();
+  if (!name || name === item.name) {
+    renaming = "";
+    render();
+    return;
+  }
+  cloneBusy = `rename:${item.voice_id}`;
+  render();
+  try {
+    const record = await renameClone(item.voice_id, name);
+    renaming = "";
+    setNotice(`Renamed to “${record?.name || name}”.`, "ok");
+    if (catalog?.clones) {
+      catalog.clones = catalog.clones.map((row) => (row.voice_id === item.voice_id ? { ...row, ...record } : row));
+    }
+    // The stock list shows clones under HeyGen too; refresh it behind the scenes.
+    void loadCatalog();
+  } catch (cause) {
+    setNotice(cause?.message || "Could not rename the voice.", "bad");
+  } finally {
+    cloneBusy = "";
+    render();
+  }
+}
+
+async function removeMine(item) {
+  if (!window.confirm(`Delete “${item.name}”? Its sample is removed from this Mac, and edits that use it fall back to another voice.`)) return;
+  cloneBusy = `delete:${item.voice_id}`;
+  render();
+  try {
+    await deleteClone(item.voice_id);
+    setNotice(`Deleted “${item.name}”.`, "ok");
+    if (catalog?.clones) catalog.clones = catalog.clones.filter((row) => row.voice_id !== item.voice_id);
+    void loadCatalog();
+  } catch (cause) {
+    setNotice(cause?.message || "Could not delete the voice.", "bad");
+  } finally {
+    cloneBusy = "";
     render();
   }
 }
@@ -173,13 +202,112 @@ async function cloneVideo() {
 // ------------------------------------------------------------------ views
 
 function header() {
-  const studio = el("a", { class: "st-btn st-btn-ghost st-btn-small", href: "/?studio=1", text: "Open Studio" });
-  const refresh = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Refresh" });
+  const refresh = el("button", { class: "ghost small", type: "button", text: "Refresh" });
   refresh.addEventListener("click", () => { void load(); });
-  return el("header", { class: "vr-top" }, [
-    el("a", { class: "vr-brand", href: "/", text: "VibeCut" }),
-    el("span", { class: "vr-room", text: "Voice Room" }),
-    el("div", { class: "vr-top-actions" }, [refresh, studio]),
+  const views = settings?.edition?.views || [];
+  return el("header", { class: "shell topbar vr-top" }, [
+    el("a", { class: "brand", href: "/" }, ["VibeCut", el("span", { class: "brand-mark" })]),
+    el("div", { class: "topbar-right" }, [
+      el("span", { class: "vr-room", text: "Voice Room" }),
+      el("a", { href: "/", text: "Back to VibeCut" }),
+      views.includes("studio") ? el("a", { href: "/?studio=1", text: "Open Studio" }) : null,
+      refresh,
+    ]),
+  ]);
+}
+
+function cloneRow(item) {
+  const id = item.voice_id;
+  const busy = Boolean(cloneBusy);
+  const row = el("li", { class: "vr-mine", "data-voice": id });
+  if (renaming === id) {
+    const input = el("input", { type: "text", maxLength: 64, value: renameValue, "aria-label": `New name for ${item.name}` });
+    input.addEventListener("input", () => { renameValue = input.value; });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") void saveName(item);
+      if (event.key === "Escape") { renaming = ""; render(); }
+    });
+    const save = el("button", { class: "primary small", type: "button", text: cloneBusy === `rename:${id}` ? "Saving…" : "Save", disabled: busy });
+    save.addEventListener("click", () => { void saveName(item); });
+    const cancel = el("button", { class: "ghost small", type: "button", text: "Cancel", disabled: busy });
+    cancel.addEventListener("click", () => { renaming = ""; render(); });
+    row.append(el("div", { class: "vr-mine-copy" }, [input]), el("div", { class: "vr-actions" }, [save, cancel]));
+    const fresh = renameFresh;
+    renameFresh = false;
+    window.setTimeout(() => {
+      input.focus();
+      if (fresh) input.select();
+      else input.setSelectionRange(input.value.length, input.value.length);
+    }, 0);
+    return row;
+  }
+  const playButton = el("button", {
+    class: "ghost small", type: "button",
+    text: cloneBusy === `play:${id}` ? "Speaking…" : "Play",
+    disabled: busy, "aria-label": `Play ${item.name}`,
+  });
+  playButton.addEventListener("click", () => { void playMine(item); });
+  const renameButton = el("button", { class: "ghost small", type: "button", text: "Rename", disabled: busy, "aria-label": `Rename ${item.name}` });
+  renameButton.addEventListener("click", () => {
+    renaming = id;
+    renameValue = item.name || "";
+    renameFresh = true;
+    render();
+  });
+  const deleteButton = el("button", {
+    class: "ghost small danger", type: "button",
+    text: cloneBusy === `delete:${id}` ? "Deleting…" : "Delete",
+    disabled: busy, "aria-label": `Delete ${item.name}`,
+  });
+  deleteButton.addEventListener("click", () => { void removeMine(item); });
+  const facts = [
+    item.source === "video" ? "From a video" : "My voice",
+    item.sample_seconds ? `${Math.round(item.sample_seconds)} s sample` : "",
+    item.language || "",
+  ].filter(Boolean).join(" · ");
+  row.append(
+    el("div", { class: "vr-mine-copy" }, [
+      el("strong", { text: item.name || "Cloned voice" }),
+      el("span", { class: "hint mono", text: facts }),
+    ]),
+    el("div", { class: "vr-actions" }, [playButton, renameButton, deleteButton]),
+  );
+  return row;
+}
+
+function mineSection() {
+  const clones = catalog?.clones || [];
+  const section = el("section", { class: "vr-section", "data-panel": "your-voices" }, [
+    el("div", { class: "vr-section-head" }, [
+      el("div", {}, [
+        el("p", { class: "eyebrow" }, [el("span", { text: "01" }), "your voices"]),
+        el("h2", { text: "Cloned voices" }),
+        el("p", { class: "hint", text: "Each clone is a short sample kept on this Mac. HeyGen Voice Turbo on OpenRouter speaks in it, and it shows up under HeyGen Voice Turbo in every voice picker." }),
+      ]),
+    ]),
+  ]);
+  if (clones.length) {
+    section.append(el("ul", { class: "vr-mine-list" }, clones.map(cloneRow)));
+  } else {
+    section.append(el("p", { class: "hint vr-empty", text: "No cloned voices yet. Clone one below." }));
+  }
+  return section;
+}
+
+function cloneSection() {
+  myVoice.render();
+  return el("section", { class: "vr-section", "data-panel": "clone" }, [
+    el("div", { class: "vr-section-head" }, [
+      el("div", {}, [
+        el("p", { class: "eyebrow" }, [el("span", { text: "02" }), "clone a voice"]),
+        el("h2", { text: "Clone a voice" }),
+        el("p", { class: "hint", text: "Give 30 s to 3 min of clear speech. Only clone your own voice, or a speaker who gave you permission." }),
+      ]),
+    ]),
+    el("div", { class: "vr-clone-grid" }, [
+      el("section", { class: "vr-card", "data-panel": "my-voice" }, [myVoice.node]),
+      finder.node,
+    ]),
   ]);
 }
 
@@ -187,72 +315,17 @@ function testCard() {
   const line = el("textarea", { rows: 2, maxLength: 300, value: testLine, "aria-label": "Test line" });
   line.addEventListener("input", () => { testLine = line.value.trim() || DEFAULT_LINE; });
   const speed = el("input", { type: "range", min: "0.7", max: "1.4", step: "0.05", value: String(rate), "aria-label": "Rate" });
-  const speedValue = el("span", { class: "st-mono st-hint", text: `${rate.toFixed(2)}×` });
+  const speedValue = el("span", { class: "mono hint", text: `${rate.toFixed(2)}×` });
   speed.addEventListener("input", () => {
     rate = Number(speed.value) || 1;
     speedValue.textContent = `${rate.toFixed(2)}×`;
   });
-  const stop = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Stop" });
+  const stop = el("button", { class: "ghost small", type: "button", text: "Stop" });
   stop.addEventListener("click", () => stopPlayback());
-  return el("section", { class: "st-card vr-card" }, [
-    el("div", { class: "st-card-head" }, [
-      el("h2", { text: "Test line" }),
-      el("p", { class: "st-hint", text: "Every Play button speaks this line." }),
-    ]),
-    line,
-    el("div", { class: "vr-rate" }, [el("span", { class: "st-hint", text: "Rate" }), speed, speedValue, stop]),
+  return el("div", { class: "vr-card vr-test" }, [
+    el("label", { class: "vr-field" }, [el("span", { text: "Test line · every Play button speaks it" }), line]),
+    el("div", { class: "vr-rate" }, [el("span", { class: "hint", text: "Rate" }), speed, speedValue, stop]),
   ]);
-}
-
-function videoCard() {
-  const card = el("section", { class: "st-card vr-card" }, [
-    el("div", { class: "st-card-head" }, [
-      el("h2", { text: "Clone a voice from a video" }),
-      el("p", { class: "st-hint", text: "Pick a video already in VibeCut. Up to 3 minutes of its speech becomes the voice sample; the transcript picks the speech when there is one. To use a video file instead, upload it under Clone my voice." }),
-    ]),
-  ]);
-  if (!catalog?.clone_available) {
-    card.append(el("p", { class: "st-hint", text: "Add an OpenRouter key in Setup to clone a voice." }));
-    return card;
-  }
-  if (!jobs.length) {
-    card.append(el("p", { class: "st-hint", text: "No finished videos yet. Import one in Studio first." }));
-    return card;
-  }
-  const select = el("select", { "aria-label": "Video" }, [
-    el("option", { value: "", text: "Choose a video", selected: !videoJob }),
-    ...jobs.map((job) => el("option", {
-      value: job.id,
-      text: `${job.name || job.id} · ${formatDuration(job.duration)}`,
-      selected: job.id === videoJob,
-    })),
-  ]);
-  select.addEventListener("change", () => { videoJob = select.value; render(); });
-  const name = el("input", { type: "text", maxLength: 64, value: videoName, placeholder: "Video voice", "aria-label": "Voice name" });
-  name.addEventListener("input", () => { videoName = name.value; });
-  const start = el("input", { type: "number", min: "0", step: "1", value: videoStart, placeholder: "auto", "aria-label": "From (seconds)" });
-  start.addEventListener("input", () => { videoStart = start.value; });
-  const end = el("input", { type: "number", min: "0", step: "1", value: videoEnd, placeholder: "auto", "aria-label": "To (seconds)" });
-  end.addEventListener("input", () => { videoEnd = end.value; });
-  const tick = el("input", { type: "checkbox", checked: videoConsent, id: "vr-consent-video" });
-  tick.addEventListener("change", () => { videoConsent = Boolean(tick.checked); render(); });
-  const go = el("button", {
-    class: "st-btn st-btn-primary st-btn-small", type: "button",
-    text: videoBusy ? "Cloning…" : "Clone this voice",
-    disabled: videoBusy || !videoJob || !videoConsent,
-  });
-  go.addEventListener("click", () => { void cloneVideo(); });
-  card.append(
-    el("label", { class: "st-field" }, [el("span", { text: "Video" }), select]),
-    el("div", { class: "vr-row" }, [
-      el("label", { class: "st-field" }, [el("span", { text: "Name" }), name]),
-      el("label", { class: "st-field" }, [el("span", { text: "From (s)" }), start]),
-      el("label", { class: "st-field" }, [el("span", { text: "To (s)" }), end]),
-    ]),
-    el("label", { class: "st-voice-clone-consent", for: "vr-consent-video" }, [tick, el("span", { text: CONSENT_COPY.video })]),
-    el("div", { class: "st-setup-key-actions" }, [go]),
-  );
-  return card;
 }
 
 function voiceRow(engine, voice) {
@@ -260,7 +333,7 @@ function voiceRow(engine, voice) {
   const label = voice.name || id || "Default";
   const key = `${engine.id}:${id}`;
   const button = el("button", {
-    class: "st-btn st-btn-ghost st-btn-small", type: "button",
+    class: "ghost small", type: "button",
     text: playing === key ? "…" : "Play",
     disabled: Boolean(playing),
     "aria-label": `Play ${label}`,
@@ -269,7 +342,7 @@ function voiceRow(engine, voice) {
   return el("li", { class: `vr-voice${voice.clone ? " is-clone" : ""}` }, [
     el("div", { class: "vr-voice-name" }, [
       el("strong", { text: `${voice.clone ? "★ " : ""}${label}` }),
-      el("span", { class: "st-mono st-hint", text: voice.lang || "" }),
+      el("span", { class: "mono hint", text: voice.lang || "" }),
     ]),
     button,
   ]);
@@ -282,8 +355,8 @@ function engineCard(engine) {
     class: "vr-engine-head", type: "button", "aria-expanded": open ? "true" : "false",
   }, [
     el("strong", { text: engine.label }),
-    el("span", { class: `st-chip ${engine.local ? "" : "st-chip-busy"}`, text: ENGINE_NOTES[engine.id] || (engine.local ? "On this Mac" : "Cloud") }),
-    el("span", { class: "st-mono st-hint", text: `${shown.length}${shown.length !== engine.voices.length ? ` / ${engine.voices.length}` : ""} voices` }),
+    el("span", { class: `vr-chip${engine.local ? "" : " is-cloud"}`, text: ENGINE_NOTES[engine.id] || (engine.local ? "On this Mac" : "Cloud") }),
+    el("span", { class: "mono hint", text: `${shown.length}${shown.length !== engine.voices.length ? ` / ${engine.voices.length}` : ""} voices` }),
     el("span", { class: "vr-caret", "aria-hidden": "true", text: open ? "▾" : "▸" }),
   ]);
   toggle.addEventListener("click", () => {
@@ -291,19 +364,19 @@ function engineCard(engine) {
     else collapsed.add(engine.id);
     render();
   });
-  const card = el("section", { class: "st-card vr-engine" }, [toggle]);
-  if (engine.error) card.append(el("p", { class: "st-error", text: engine.error }));
+  const card = el("section", { class: "vr-card vr-engine", "data-engine": engine.id }, [toggle]);
+  if (engine.error) card.append(el("p", { class: "error", text: engine.error }));
   if (open) {
     if (shown.length) {
       card.append(el("ul", { class: "vr-voices" }, shown.map((voice) => voiceRow(engine, voice))));
     } else {
-      card.append(el("p", { class: "st-hint", text: "No voice matches the filter." }));
+      card.append(el("p", { class: "hint", text: "No voice matches the filter." }));
     }
   }
   return card;
 }
 
-function voicesSection() {
+function stockSection() {
   const engines = catalog?.engines || [];
   const ready = engines.filter((engine) => engine.available);
   const missing = engines.filter((engine) => !engine.available);
@@ -329,27 +402,29 @@ function voicesSection() {
   ]);
   lang.addEventListener("change", () => { language = lang.value; render(); });
 
-  const section = el("section", { class: "vr-voices-section" }, [
+  const section = el("section", { class: "vr-section", "data-panel": "stock-voices" }, [
     el("div", { class: "vr-section-head" }, [
       el("div", {}, [
+        el("p", { class: "eyebrow" }, [el("span", { text: "03" }), "stock voices"]),
         el("h2", { text: "Voices on this machine" }),
-        el("p", { class: "st-hint", text: `${total} voices across ${ready.length} engines. Cloud voices use your own keys; Apple voices work offline.` }),
+        el("p", { class: "hint", text: `${total} voices across ${ready.length} engines. Cloud voices use your own keys; Apple voices work offline.` }),
       ]),
       el("div", { class: "vr-filters" }, [search, lang]),
     ]),
+    testCard(),
   ]);
   const filtering = Boolean(query || language);
   const visible = ready.filter((engine) => !filtering || engine.voices.some(matches));
   for (const engine of visible) section.append(engineCard(engine));
   if (filtering && !visible.length) {
-    section.append(el("p", { class: "st-hint", text: "No voice on this machine matches the filter." }));
+    section.append(el("p", { class: "hint", text: "No voice on this machine matches the filter." }));
   }
   if (missing.length) {
-    section.append(el("details", { class: "st-card vr-missing" }, [
+    section.append(el("details", { class: "vr-card vr-missing" }, [
       el("summary", { text: `Not set up on this machine (${missing.length})` }),
       el("ul", { class: "vr-missing-list" }, missing.map((engine) => el("li", {}, [
         el("strong", { text: engine.label }),
-        el("span", { class: "st-hint", text: engine.install || "Not available." }),
+        el("span", { class: "hint", text: engine.install || "Not available." }),
       ]))),
     ]));
   }
@@ -360,36 +435,32 @@ function render() {
   if (!root) return;
   const page = el("div", { class: "vr-page" });
   page.append(header());
-  const body = el("main", { class: "vr-body" });
-  body.append(el("div", { class: "vr-hero" }, [
-    el("p", { class: "st-eyebrow", text: "Voice Room" }),
-    el("h1", { text: "Every voice on this machine, and your own." }),
-    el("p", { class: "st-hint", text: "Listen to any voice, clone yours from a recording, or clone a speaker from one of your videos. Cloned voices show up under HeyGen Voice Turbo in Studio's voice picker." }),
+  const body = el("main", { class: "shell vr-body" });
+  body.append(el("div", { class: "hero vr-hero" }, [
+    el("p", { class: "eyebrow" }, [el("span", { text: "voice" }), "room"]),
+    el("h1", {}, ["Every voice here,", el("br"), el("em", { text: "and your own." })]),
+    el("p", { class: "lede", text: "Listen to any voice, clone yours from a recording, or clone a speaker from the cleanest clips of one of your videos." }),
   ]));
-  if (error) body.append(el("p", { class: "st-error", role: "alert", text: error }));
+  if (error) body.append(el("p", { class: "error", role: "alert", text: error }));
   if (notice) {
-    const line = el("p", { class: "st-status vr-notice", role: "status", text: notice });
+    const line = el("p", { class: "vr-status vr-notice", role: "status", text: notice });
     line.dataset.tone = noticeTone;
     body.append(line);
   }
   if (loading && !catalog) {
-    body.append(el("p", { class: "st-hint", text: "Reading the voices on this machine…" }));
+    body.append(el("p", { class: "hint", text: "Reading the voices on this machine…" }));
   } else {
-    myVoice.render();
-    body.append(el("div", { class: "vr-grid" }, [
-      el("div", { class: "vr-side" }, [
-        testCard(),
-        el("section", { class: "st-card vr-card" }, [myVoice.node]),
-        videoCard(),
-      ]),
-      voicesSection(),
-    ]));
+    finder.render();
+    body.append(mineSection(), cloneSection(), stockSection());
   }
   page.append(body);
-  const scroll = root.querySelector(".vr-page")?.scrollTop || 0;
+  const scroll = window.scrollY || 0;
   root.replaceChildren(page);
-  page.scrollTop = scroll;
+  window.scrollTo(0, scroll);
 }
 
-window.addEventListener("pagehide", () => myVoice.dispose());
+window.addEventListener("pagehide", () => {
+  myVoice.dispose();
+  finder.dispose();
+});
 void load();
