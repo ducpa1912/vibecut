@@ -11,6 +11,7 @@ import { getJob, listClipSets, request } from "./api.js";
 import {
   cleanBlockReason,
   cleanReasonText,
+  isReadingStatus,
   needsRightsTick,
 } from "./import.js";
 import {
@@ -61,6 +62,79 @@ const SEVERITY_ORDER = { blocker: 0, warning: 1, info: 2 };
 export function checkFps(duration) {
   const seconds = Number(duration);
   return Number.isFinite(seconds) && seconds > 0 && seconds <= 600 ? 1 : 0.5;
+}
+
+/**
+ * Pre-run copy. The old line promised "a few minutes on a long video" even
+ * for a 53 s clip; use the measured source length and the real cadence.
+ */
+export function checkIntroCopy(duration) {
+  const seconds = Number(duration);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    const cadence = checkFps(seconds);
+    const every = cadence === 1 ? "second" : "two seconds";
+    return `Check reads a ${formatDuration(seconds)} source at one frame every ${every}. `
+      + "It reads text, speech, music, faces and picture quality. Check is optional: "
+      + "you can open Stories now.";
+  }
+  return "Check reads the source for text, speech, music, faces and picture quality. "
+    + "Reading the source takes longer for a longer video; Check is optional and you can open Stories now.";
+}
+
+/** Estimate remaining seconds from progress samples: `[{t, p}]`, both finite. */
+export function estimateRemaining(samples) {
+  const rows = (Array.isArray(samples) ? samples : [])
+    .map((row) => ({ t: Number(row?.t), p: Number(row?.p) }))
+    .filter((row) => Number.isFinite(row.t) && Number.isFinite(row.p))
+    .sort((left, right) => left.t - right.t);
+  if (rows.length < 3) return null;
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  const span = last.t - first.t;
+  if (!(span >= 2.0)) return null;
+  const gain = last.p - first.p;
+  if (!(gain >= 0.004)) return null;
+  const rate = gain / span;
+  const raw = (1 - last.p) / rate;
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.max(1, Math.round(Math.min(3600, raw)));
+}
+
+/** Keep an ETA from jumping by more than 50% up or 45% down per poll. */
+export function smoothEta(raw, previous) {
+  if (!Number.isFinite(Number(raw))) return null;
+  const value = Math.max(1, Number(raw));
+  if (!Number.isFinite(Number(previous)) || Number(previous) <= 0) {
+    return Math.max(1, Math.round(value));
+  }
+  const clamped = Math.min(Number(previous) * 1.5, Math.max(Number(previous) * 0.55, value));
+  return Math.max(1, Math.round(Number(previous) * 0.55 + clamped * 0.45));
+}
+
+/** One honest ETA line: estimating, measured, or elapsed + stage. */
+export function etaText(progress, seconds, elapsed, stage) {
+  const fraction = Number(progress);
+  if (Number.isFinite(fraction) && fraction < 0.10) return "Estimating time left";
+  if (Number.isFinite(Number(seconds)) && Number(seconds) > 0) {
+    return `About ${formatDuration(Number(seconds))} left`;
+  }
+  const name = String(stage || "Reading the source");
+  return `${formatDuration(elapsed)} elapsed · ${name}`;
+}
+
+/** Plain speech status for the media card, without claiming a wrong fix. */
+export function speechStatus(audio) {
+  const value = audio || {};
+  if (value.transcript) {
+    const language = value.language ? ` · ${value.language}` : "";
+    return `Read${language}`;
+  }
+  const state = String(value.speech_state || "unknown");
+  if (state === "off") return "Off at import";
+  if (state === "engine_empty") return "Engine returned nothing";
+  if (state === "no_speech") return "No speech found";
+  if (state === "no_audio") return "No sound track";
+  return "Not measured";
 }
 
 export function ensureCheckStyles() {
@@ -223,6 +297,10 @@ export function mount(root, ctx) {
   let policy = null;
   let ticks = false;
   let rightsSaving = false;
+  let etaSeconds = null;
+  let etaSamples = [];
+  let etaStartedAt = 0;
+  let progressFloor = 0;
 
   root.innerHTML = `
     <section class="st-panel" aria-labelledby="st-check-title">
@@ -261,6 +339,13 @@ export function mount(root, ctx) {
   function stopPoll() {
     if (timer) window.clearTimeout(timer);
     timer = 0;
+  }
+
+  function resetEta() {
+    etaSeconds = null;
+    etaSamples = [];
+    etaStartedAt = 0;
+    progressFloor = 0;
   }
 
   function setBusy(value) {
@@ -526,10 +611,12 @@ export function mount(root, ctx) {
     const faces = reportValue?.faces || {};
     const quality = reportValue?.quality || {};
     const rows = [];
-    if (audio.available === false || !audio.transcript) {
-      rows.push(["Speech", "Not measured"]);
+    if (!audio.transcript) {
+      rows.push(["Speech", speechStatus(audio)]);
     } else if (Number.isFinite(Number(audio.speech_ratio))) {
-      rows.push(["Speech", percent(audio.speech_ratio)]);
+      rows.push(["Speech", `${percent(audio.speech_ratio)}${audio.language ? ` · ${audio.language}` : ""}`]);
+    } else {
+      rows.push(["Speech", speechStatus(audio)]);
     }
     if (audio.music && typeof audio.music === "object") {
       rows.push(["Music", audio.music.present ? `Found${Number.isFinite(Number(audio.music.score)) ? ` · score ${Number(audio.music.score).toFixed(2)}` : ""}` : "Not found"]);
@@ -548,16 +635,27 @@ export function mount(root, ctx) {
   }
 
   function runningCard(reportValue) {
-    const progress = Math.max(0, Math.min(1, Number(reportValue?.progress) || 0));
+    const reported = Math.max(0, Math.min(1, Number(reportValue?.progress) || 0));
+    const progress = Math.max(progressFloor, reported);
+    progressFloor = progress;
+    if (!etaStartedAt) etaStartedAt = Date.now() / 1000;
+    const now = Date.now() / 1000;
+    etaSamples.push({ t: now - etaStartedAt, p: progress });
+    etaSamples = etaSamples.slice(-16);
+    etaSeconds = smoothEta(estimateRemaining(etaSamples), etaSeconds);
+    const stage = reportValue?.message || "Reading the source";
     const card = el("div", { class: "st-card st-check-card" }, [
       el("h2", { text: "Checking the source" }),
-      el("p", { class: "st-hint", text: reportValue?.message || "Reading text, sound and picture." }),
+      el("p", { class: "st-hint", text: stage }),
     ]);
+    if (job?.source?.duration) {
+      card.append(el("p", { class: "st-hint", text: `Source length ${formatDuration(job.source.duration)} · one pass, no re-import needed.` }));
+    }
     const track = el("div", { class: "st-progress-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(progress * 100)) });
     track.append(el("i", { style: `width:${Math.round(progress * 100)}%` }));
     card.append(el("div", { class: "st-check-progress" }, [
       track,
-      el("p", { class: "st-mono", text: `${Math.round(progress * 100)}%` }),
+      el("p", { class: "st-mono", text: `${Math.round(progress * 100)}% · ${etaText(progress, etaSeconds, now - etaStartedAt, stage)}` }),
     ]));
     return card;
   }
@@ -575,7 +673,7 @@ export function mount(root, ctx) {
     if (!report) {
       renderEmpty(
         "Check has not run",
-        "Run Check to read old text, speech, music, faces and picture quality. It takes a few minutes on a long video. Check is optional: you can open Stories now.",
+        checkIntroCopy(job?.source?.duration),
         "Run Check",
         "run-check",
       );
@@ -670,6 +768,7 @@ export function mount(root, ctx) {
       const wasPending = runPending;
       report = payload;
       runPending = Boolean(pending || isPending(report));
+      if (runPending && !wasPending) resetEta();
       renderReport();
       if (isPending(report)) {
         showStatus(report.message || "Check is running…", "busy");
@@ -689,6 +788,7 @@ export function mount(root, ctx) {
   async function startCheck(force) {
     if (!job?.id || loading) return;
     clearError();
+    resetEta();
     loading = true;
     runPending = true;
     setBusy(true);
@@ -788,6 +888,27 @@ export function mount(root, ctx) {
             text: statusText(job.status),
           }),
         ]);
+        if (isReadingStatus(job.status)) {
+          const cancel = el("button", {
+            class: "st-btn st-btn-ghost",
+            type: "button",
+            text: "Cancel reading",
+            style: "margin-top:10px",
+          });
+          cancel.addEventListener("click", () => {
+            cancel.disabled = true;
+            showStatus("Stopping the read…", "busy");
+            void request(`/api/jobs/${encodeURIComponent(job.id)}/reading/cancel`, {
+              method: "POST",
+            }).then(() => {
+              if (!disposed) showStatus("Stopping… the running ffmpeg will close.", "busy");
+            }).catch((error) => {
+              cancel.disabled = false;
+              showError(error?.message || "Could not stop the read.");
+            });
+          });
+          card.append(cancel);
+        }
         dom.body.append(card);
         return;
       }

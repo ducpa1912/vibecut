@@ -84,7 +84,42 @@ def _ffprobe() -> str:
 
 
 def _run(cmd: list[str], timeout: int | None = None) -> subprocess.CompletedProcess:
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    # Without a bound Cancel event this stays the plain call that the rest of
+    # the app and its tests expect.  During a read the event is bound, so every
+    # ffmpeg child runs in its own process group and can be stopped mid-file.
+    if not stt.has_cancel_event():
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    else:
+        _check_cancel()
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True,
+        )
+        deadline = None if timeout is None else time.monotonic() + float(timeout)
+        try:
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=0.25)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel_requested():
+                        _stop_process(process)
+                        try:
+                            process.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                        raise stt.SttCancelled("Analysis cancelled.") from None
+                    if deadline is not None and time.monotonic() >= deadline:
+                        _stop_process(process)
+                        try:
+                            process.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                        raise subprocess.TimeoutExpired(cmd, timeout) from None
+        finally:
+            if process.poll() is None:
+                _stop_process(process)
+        result = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
     if result.returncode != 0:
         tail = (result.stderr or result.stdout or "")[-1600:]
         raise PipelineError(f"command failed: {Path(cmd[0]).name}\n{tail}")
@@ -118,6 +153,187 @@ def _rank(values: list[float]) -> np.ndarray:
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
+
+
+def _short_span(seconds: float) -> str:
+    """A compact, non-zero duration for a progress line."""
+    value = max(1, int(round(float(seconds or 0.0))))
+    if value < 60:
+        return f"{value} s"
+    minutes, rest = divmod(value, 60)
+    if minutes < 60:
+        return f"{minutes} min {rest} s" if rest else f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+
+
+class ProgressTracker:
+    """Stage-weighted, monotonic progress with a measured ETA.
+
+    ``analyze_source`` used to expose each stage's own 0..1 fraction.  Crop
+    then owned only two percent while it ran for half the read.  This tracker
+    maps every stage into a fixed band, never moves backwards, and adds a
+    time-based heartbeat inside a stage so a stalled sub-process still shows
+    that work continues.
+    """
+
+    STAGES = (
+        ("scanning", 0.01, 0.20),
+        ("audio", 0.20, 0.28),
+        ("thumbs", 0.28, 0.46),
+        ("vision", 0.46, 0.58),
+        ("crop", 0.58, 0.82),
+        ("speech", 0.82, 0.95),
+        ("scoring", 0.95, 0.995),
+    )
+    # Rough time constants for the heartbeat inside a stage.  They are not an
+    # ETA; they only make the bar move while a child process reports nothing.
+    STAGE_TAU = {
+        "scanning": 8.0,
+        "audio": 3.0,
+        "thumbs": 6.0,
+        "vision": 5.0,
+        "crop": 10.0,
+        "speech": 8.0,
+        "scoring": 2.0,
+    }
+
+    def __init__(
+        self,
+        progress: Callable[[str, float, str], None] | None = None,
+        clock: Callable[[], float] | None = None,
+    ):
+        self._progress = progress
+        self._clock = clock or time.monotonic
+        self._bands = {name: (start, end) for name, start, end in self.STAGES}
+        self._stage = ""
+        self._stage_started = self._clock()
+        self._value = 0.0
+        self._started = self._clock()
+        self._samples: list[tuple[float, float]] = []
+        self._last_sub = 0.0
+        self._last_sub_at = self._clock()
+        self._eta: float | None = None
+
+    def _now(self) -> float:
+        return self._clock()
+
+    @property
+    def value(self) -> float:
+        return self._value
+
+    def elapsed(self) -> float:
+        return max(0.0, self._now() - self._started)
+
+    def emit(self, stage: str, fraction: float, message: str) -> None:
+        if stage != self._stage:
+            self._stage = stage
+            self._stage_started = self._now()
+            self._last_sub = 0.0
+            self._last_sub_at = self._now()
+        band = self._bands.get(stage)
+        if band is None:
+            return
+        sub = _clamp(float(fraction or 0.0))
+        if sub > self._last_sub + 0.001:
+            self._last_sub = sub
+            self._last_sub_at = self._now()
+        else:
+            # A sub-process can sit on one frame for a long time.  Only then
+            # let elapsed time move the band; real frame progress wins.
+            elapsed = max(0.0, self._now() - self._last_sub_at)
+            tau = max(0.5, self.STAGE_TAU.get(stage, 6.0))
+            heartbeat = 0.94 * (1.0 - math.exp(-elapsed / tau))
+            sub = max(sub, heartbeat)
+        if sub < 1.0:
+            sub = min(sub, 0.985)
+        value = band[0] + (band[1] - band[0]) * _clamp(sub, 0.0, 0.999)
+        if fraction and float(fraction) >= 1.0:
+            value = band[1]
+        self._value = max(self._value, _clamp(value, 0.01, 0.995))
+        self._samples.append((self._now(), self._value))
+        self._samples = self._samples[-160:]
+        self._emit(stage, message)
+
+    def stage_floor(self, stage: str) -> float:
+        band = self._bands.get(stage)
+        return self._value if band is None else max(self._value, band[0])
+
+    def eta_seconds(self) -> int | None:
+        """A positive estimate after 10%, or ``None`` while estimating."""
+        if self._value < 0.10:
+            return None
+        now = self._now()
+        recent = [
+            (stamp, value) for stamp, value in self._samples
+            if now - stamp <= 10.0
+        ]
+        if len(recent) < 3 or recent[-1][0] - recent[0][0] < 2.0:
+            return None
+        first_t, first_p = recent[0]
+        last_t, last_p = recent[-1]
+        span = max(0.001, last_t - first_t)
+        gain = last_p - first_p
+        if gain < 0.004:
+            return None
+        rate = gain / span
+        raw = (1.0 - last_p) / max(rate, 1e-6)
+        if not math.isfinite(raw) or raw <= 0:
+            return None
+        raw = min(3600.0, max(1.0, raw))
+        if self._eta is None:
+            self._eta = raw
+        else:
+            # Clamp sudden jumps and smooth the rest.  The estimate may fall
+            # as the read speeds up, but never swings by more than 40% in one
+            # update and never reaches zero while work is still running.
+            raw = min(self._eta * 1.5, max(self._eta * 0.55, raw))
+            self._eta = self._eta * 0.55 + raw * 0.45
+        return max(1, int(round(self._eta)))
+
+    def decorate(self, message: str) -> str:
+        if self._value < 0.10:
+            return f"{message} · estimating"
+        eta = self.eta_seconds()
+        if eta is None:
+            return f"{message} · {_short_span(self.elapsed())} so far"
+        return f"{message} · about {_short_span(eta)} left"
+
+    def _emit(self, stage: str, message: str) -> None:
+        if self._progress is None:
+            return
+        status = "scanning" if stage == "scanning" else (
+            "scoring" if stage == "scoring" else "reading"
+        )
+        self._progress(status, round(self._value, 4), self.decorate(message))
+
+
+def cancel_requested() -> bool:
+    """True when the existing Cancel reading event is set for this thread."""
+    return stt.cancel_requested()
+
+
+def _stop_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(os.getpgid(process.pid), 15)
+        else:  # pragma: no cover - Windows fallback
+            process.terminate()
+    except (OSError, ProcessLookupError):
+        try:
+            process.terminate()
+        except OSError:
+            pass
+
+
+def _check_cancel(process: subprocess.Popen | None = None) -> None:
+    if not cancel_requested():
+        return
+    if process is not None:
+        _stop_process(process)
+    raise stt.SttCancelled("Analysis cancelled.")
 
 
 def _fingerprint(path: Path, size: int) -> str:
@@ -226,8 +442,9 @@ def scan_scenes(
 
     process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, bufsize=1,
+        text=True, bufsize=1, start_new_session=True,
     )
+    _check_cancel()
 
     import threading
 
@@ -258,6 +475,7 @@ def scan_scenes(
 
     assert process.stdout is not None
     for raw in process.stdout:
+        _check_cancel(process)
         line = raw.strip()
         if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
             try:
@@ -459,8 +677,11 @@ def extract_thumbs(
     thumb_dir.mkdir(parents=True, exist_ok=True)
     total = max(1, len(scenes))
     done = 0
+    cancel = stt.cancel_event()
 
     def one(scene: dict) -> None:
+        if cancel is not None:
+            stt.set_cancel_event(cancel)
         out = thumb_dir / f"{scene['id']:05d}.jpg"
         moment = min(max(scene["mid"], scene["start"] + 0.04), scene["end"] - 0.04)
         cmd = [
@@ -469,6 +690,8 @@ def extract_thumbs(
         ]
         try:
             _run(cmd, timeout=90)
+        except stt.SttCancelled:
+            raise
         except Exception:
             Image.new("RGB", (360, 640), (24, 24, 26)).save(out, quality=80)
 
@@ -477,9 +700,31 @@ def extract_thumbs(
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [pool.submit(one, scene) for scene in scenes]
         for _ in as_completed(futures):
+            _check_cancel()
             done += 1
             if done == total or done % max(1, total // 24) == 0:
                 progress(done / total, f"Pulling stills · {done} / {total}")
+
+
+def _probe_images_progress(
+    directory: Path,
+    files: list[Path],
+    *,
+    progress: Callable[[float, str], None] | None = None,
+    label: str = "Reading frames",
+    batch_size: int = 8,
+) -> dict[str, dict]:
+    """Read images in small batches so Cancel can stop between them."""
+    records: dict[str, dict] = {}
+    total = max(1, len(files))
+    for offset in range(0, len(files), max(1, batch_size)):
+        _check_cancel()
+        chunk = files[offset:offset + max(1, batch_size)]
+        records.update(vision.probe_images(directory, files=chunk))
+        if progress is not None:
+            done = min(total, offset + len(chunk))
+            progress(done / total, f"{label} · {done} / {total}")
+    return records
 
 
 def extract_tracking_frames(
@@ -502,8 +747,11 @@ def extract_tracking_frames(
     total = max(1, len(targets))
     done = 0
     files: dict[str, Path] = {}
+    cancel = stt.cancel_event()
 
     def one(scene: dict, index: int, moment: float) -> None:
+        if cancel is not None:
+            stt.set_cancel_event(cancel)
         out = tracking_dir / f"s{scene['id']:05d}_{index}.jpg"
         try:
             _run([
@@ -511,6 +759,8 @@ def extract_tracking_frames(
                 "-frames:v", "1", "-vf", "scale=360:-2:flags=lanczos", "-q:v", "5", str(out),
             ], timeout=90)
             files[out.name] = out
+        except stt.SttCancelled:
+            raise
         except Exception:
             return
 
@@ -519,8 +769,12 @@ def extract_tracking_frames(
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [pool.submit(one, scene, index, moment) for scene, index, moment in targets]
         for _future in as_completed(futures):
+            _check_cancel()
             done += 1
-            if done == total or done % max(1, total // 20) == 0:
+            # Never print "N / N" here: the crop read is not done until the
+            # tracking frames have been analysed too (that probe used to sit
+            # at a finished-looking 68% for 40 s).
+            if done < total and done % max(1, total // 20) == 0:
                 progress(done / total, f"Tracking crop · {done} / {total}")
     return files
 
@@ -531,6 +785,53 @@ CHECK_OCR_BATCH = 24
 CHECK_FRAME_WIDTH = 960
 
 
+def _run_progress(
+    cmd: list[str],
+    *,
+    duration: float,
+    timeout: int,
+    progress: Callable[[float, str], None],
+    label: str,
+) -> None:
+    """Run ffmpeg and report its out_time as a fraction of the whole source."""
+    import threading
+
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1, start_new_session=True,
+    )
+    stderr_tail: list[str] = []
+
+    def read_stderr() -> None:
+        assert process.stderr is not None
+        for line in process.stderr:
+            stderr_tail.append(line.rstrip())
+            if len(stderr_tail) > 40:
+                stderr_tail.pop(0)
+
+    thread = threading.Thread(target=read_stderr, daemon=True)
+    thread.start()
+    _check_cancel(process)
+    assert process.stdout is not None
+    for raw in process.stdout:
+        _check_cancel(process)
+        line = raw.strip()
+        if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
+            try:
+                micros = int(line.split("=", 1)[1])
+            except ValueError:
+                continue
+            fraction = min(0.999, (micros / 1_000_000) / max(duration, 0.01))
+            progress(fraction, f"{label} · {_clock(micros / 1_000_000)} / {_clock(duration)}")
+        elif line.startswith("progress=") and line.endswith("end"):
+            break
+    code = process.wait()
+    thread.join(timeout=2)
+    if code != 0:
+        tail = "\n".join(stderr_tail[-12:])[-1200:]
+        raise PipelineError(f"ffmpeg frame read failed.\n{tail}")
+
+
 def extract_text_frames(
     path: str,
     job_dir: Path,
@@ -539,6 +840,7 @@ def extract_text_frames(
     fps: float = CHECK_SAMPLE_FPS,
     max_frames: int = CHECK_SAMPLE_MAX_FRAMES,
     out_dir: Path | None = None,
+    progress: Callable[[float, str], None] | None = None,
 ) -> list[dict]:
     """Extract evenly spaced stills for the Check text pass.
 
@@ -557,14 +859,28 @@ def extract_text_frames(
         shutil.rmtree(directory, ignore_errors=True)
     directory.mkdir(parents=True, exist_ok=True)
     cmd = [
-        _ffmpeg(), "-y", "-v", "error", "-i", path,
+        _ffmpeg(), "-y", "-v", "error", *(
+            ["-progress", "pipe:1", "-nostats"] if progress is not None else []
+        ),
+        "-i", path,
         "-vf", f"fps={cadence:.4f},scale={CHECK_FRAME_WIDTH}:-2",
         "-q:v", "4", str(directory / "%06d.jpg"),
     ]
-    _run(cmd, timeout=max(300, int(duration * 1.5)))
+    if progress is None:
+        _run(cmd, timeout=max(300, int(duration * 1.5)))
+    else:
+        _run_progress(
+            cmd,
+            duration=duration,
+            timeout=max(300, int(duration * 1.5)),
+            progress=progress,
+            label="Reading the source",
+        )
     files = sorted(directory.glob("*.jpg"))
     if not files:
         return []
+    if progress is not None:
+        progress(1.0, f"Reading the source · {len(files)} frames · checking the reader")
     window = 1.0 / cadence
     return [
         {
@@ -605,6 +921,10 @@ def read_text_samples(
         progress(0.0, "Pulling frames to read text")
     frames = extract_text_frames(
         path, job_dir, duration, fps=fps, max_frames=max_frames, out_dir=directory,
+        progress=(
+            (lambda fraction, message: progress(0.08 * fraction, message))
+            if progress is not None else None
+        ),
     )
     if not frames:
         return {"frames": [], "vision": False, "fps": fps, "duration": duration}
@@ -616,12 +936,13 @@ def read_text_samples(
         files = [directory / str(frame["file"]) for frame in frames]
         total = len(files)
         for offset in range(0, total, CHECK_OCR_BATCH):
+            _check_cancel()
             records.update(vision.probe_images(
                 directory, files=files[offset:offset + CHECK_OCR_BATCH],
             ))
             if progress is not None:
                 done = min(total, offset + CHECK_OCR_BATCH)
-                progress(0.1 + 0.9 * done / total, f"Reading text · frame {done} / {total}")
+                progress(0.08 + 0.92 * done / total, f"Reading text · frame {done} / {total}")
     samples = []
     for frame in frames:
         record = records.get(frame["file"]) or {}
@@ -2320,6 +2641,47 @@ def read_scene(
     return scene
 
 
+def _speech_language(options: dict) -> str:
+    """The language to force, or ``""`` to let the engine detect it.
+
+    ``app.clean_options`` and the stored settings both default the field to
+    ``"en"`` even when the user never chose a language.  Treat that default as
+    unknown so Whisper auto-detects; explicit non-English selections survive.
+    """
+    raw = str((options or {}).get("speech_language") or "").strip().lower()
+    if raw in {"", "auto", "none", "und"}:
+        return ""
+    if (options or {}).get("speech_language_explicit"):
+        return raw
+    if raw == "en":
+        stt_settings = settings_store.load_settings().get("stt") or {}
+        configured = str(stt_settings.get("language") or "").strip().lower()
+        if configured in {"", "auto", "en"}:
+            return ""
+    return raw
+
+
+def _speech_engine_summary(
+    transcript: dict | None,
+    *,
+    enabled: bool,
+    attempted: bool,
+    language: str,
+    errors: list[dict] | None,
+) -> dict:
+    failures = [dict(item) for item in (errors or []) if isinstance(item, dict)]
+    return {
+        "whisper": bool(transcript and transcript.get("segments")),
+        "transcript_provider": (transcript or {}).get("provider") or "local",
+        "transcript_language": (transcript or {}).get("language"),
+        "stt_enabled": bool(enabled),
+        "stt_attempted": bool(attempted),
+        "stt_language": language or "auto",
+        "stt_error": failures[-1].get("error") if failures else None,
+        "stt_errors": failures[-4:],
+    }
+
+
 def analyze_source(
     path: str,
     meta: dict,
@@ -2333,20 +2695,24 @@ def analyze_source(
     smart_crop = bool(options.get("smart_crop", True))
     crop_tracking = bool(options.get("crop_tracking", True)) and smart_crop
     vision_enabled = read_text or smart_crop
-    use_vision = vision_enabled and vision.available()
+    tracker = ProgressTracker(progress)
+    speech_errors: list[dict] = []
 
     stage = time.time()
-    progress("scanning", 0.02, "Slicing the timeline")
+    tracker.emit("scanning", 0.0, "Slicing the timeline")
     scenes, scan_info = scan_scenes(
         path, meta["duration"],
-        lambda fraction, message: progress("scanning", 0.02 + 0.34 * fraction, message),
+        lambda fraction, message: tracker.emit("scanning", fraction, message),
     )
+    tracker.emit("scanning", 1.0, "Timeline sliced")
     timings["scan"] = round(time.time() - stage, 2)
 
     stage = time.time()
-    progress("reading", 0.37, "Listening to the audio")
+    tracker.emit("audio", 0.05, "Listening to the audio")
     wav = extract_audio(path, meta["has_audio"], job_dir)
+    tracker.emit("audio", 0.75, f"Measuring sound across {_clock(meta['duration'])}")
     audio_info = audio_features(wav, scenes)
+    tracker.emit("audio", 1.0, "Sound measured")
     timings["audio"] = round(time.time() - stage, 2)
 
     stage = time.time()
@@ -2355,23 +2721,37 @@ def analyze_source(
     timings["shortlist"] = round(time.time() - stage, 2)
 
     stage = time.time()
-    progress(
-        "reading", 0.44,
+    tracker.emit(
+        "thumbs", 0.0,
         f"{len(scenes)} moments · deep-reading {len(deep_scenes)}",
     )
     extract_thumbs(
         path, deep_scenes, job_dir,
-        lambda fraction, message: progress("reading", 0.44 + 0.18 * fraction, message),
+        lambda fraction, message: tracker.emit("thumbs", fraction, message),
     )
+    tracker.emit("thumbs", 1.0, "Stills ready")
     timings["thumbs"] = round(time.time() - stage, 2)
 
     stage = time.time()
     vision_data = {}
+    tracker.emit("vision", 0.0, "Checking the frame reader")
+    use_vision = vision_enabled and vision.available()
     if use_vision:
-        progress("reading", 0.63, "Reading frames · text + subject")
-        vision_data = probe_images(job_dir / "thumbs")
+        tracker.emit("vision", 0.0, "Reading frames · text + subject")
+        deep_files = [
+            job_dir / "thumbs" / f"{scene['id']:05d}.jpg" for scene in deep_scenes
+        ]
+        deep_files = [item for item in deep_files if item.is_file()]
+        vision_data = _probe_images_progress(
+            job_dir / "thumbs", deep_files,
+            progress=lambda fraction, message: tracker.emit("vision", fraction, message),
+            label="Reading frames · text + subject",
+        )
+        tracker.emit("vision", 1.0, "Frames read")
     elif vision_enabled:
-        progress("reading", 0.63, "Vision reader unavailable · using center crops")
+        tracker.emit("vision", 1.0, "Vision reader unavailable · using center crops")
+    else:
+        tracker.emit("vision", 1.0, "Frame reading is off")
     timings["vision"] = round(time.time() - stage, 2)
 
     stage = time.time()
@@ -2389,33 +2769,43 @@ def analyze_source(
     tracking_records = {}
     if crop_tracking and use_vision:
         stage = time.time()
-        progress("reading", 0.66, "Tracking crop across each beat")
+        tracker.emit("crop", 0.0, "Tracking crop across each beat")
         tracking_dir = job_dir / "tracking"
         tracking_files = extract_tracking_frames(
             path, deep_scenes, job_dir,
-            lambda fraction, message: progress("reading", 0.66 + 0.02 * fraction, message),
+            # The frame pass owns the first 55% of the crop band; smoothing
+            # the probe owns the rest, so 50 / 50 never looks like completion.
+            lambda fraction, message: tracker.emit("crop", 0.55 * fraction, message),
         )
         if tracking_files:
-            tracking_records = vision.probe_images(tracking_dir, files=list(tracking_files.values()))
+            ordered = sorted(tracking_files.values(), key=lambda item: item.name)
+            total_tracking = max(1, len(ordered))
+            tracker.emit("crop", 0.55, f"Smoothing crop paths · 0 / {total_tracking}")
+            tracking_records = _probe_images_progress(
+                tracking_dir, ordered,
+                progress=lambda fraction, message: tracker.emit(
+                    "crop", 0.55 + 0.45 * fraction, message,
+                ),
+                label="Smoothing crop paths",
+            )
+        tracker.emit("crop", 1.0, "Crop paths ready")
         timings["crop_tracking"] = round(time.time() - stage, 2)
+    else:
+        tracker.emit("crop", 1.0, "Center crop")
 
     transcript = None
-    if options.get("transcribe") and wav:
+    speech_language = _speech_language(options)
+    speech_enabled = bool(options.get("transcribe"))
+    if speech_enabled and wav:
         stage = time.time()
         job_id = str(options.get("job_id") or "")
         request_id = str(options.get("request_id") or job_id)
-        speech_language = str(
-            options.get("speech_language")
-            or (settings_store.load_settings().get("stt") or {}).get("language")
-            or "en"
-        )
+        tracker.emit("speech", 0.0, "Preparing the speech read")
         settings = settings_store.load_settings()
         stt_cfg = workflow_config.effective(settings.get("workflows"), "stt")
         transcript = stt.transcribe_source(
             wav, job_dir, meta["duration"],
-            lambda fraction, message: progress(
-                "reading", 0.70 + 0.16 * fraction, message,
-            ),
+            lambda fraction, message: tracker.emit("speech", fraction, message),
             engine=str(options.get("transcribe_engine") or ""),
             routes=list(stt_cfg.get("routes") or []),
             language=speech_language,
@@ -2424,13 +2814,21 @@ def analyze_source(
             job_id=job_id,
             request_id=request_id,
             logger=_pipeline_log,
+            errors=speech_errors,
         )
         if transcript:
             timings["stt"] = round(time.time() - stage, 2)
+    tracker.emit(
+        "speech", 1.0,
+        (
+            f"Speech read · {transcript.get('language') or 'auto'}"
+            if transcript else ("Speech is off" if not speech_enabled else "No transcript returned")
+        ),
+    )
     attach_speech(scenes, transcript)
 
     stage = time.time()
-    progress("scoring", 0.90, "Finding the hook")
+    tracker.emit("scoring", 0.0, "Finding the hook")
     score_scenes(scenes, meta["width"], meta["height"])
     if tracking_records:
         attach_crop_paths(scenes, tracking_records, meta["width"], meta["height"])
@@ -2450,7 +2848,7 @@ def analyze_source(
         except OSError:
             pass
 
-    progress("scoring", 0.985, "Building three cut plans")
+    tracker.emit("scoring", 1.0, "Building three cut plans")
     return {
         "elapsed": round(time.time() - started, 2),
         "timings": timings,
@@ -2462,9 +2860,13 @@ def analyze_source(
         "audio": audio_info,
         "engine": {
             "vision": bool(vision_data),
-            "whisper": bool(transcript and transcript.get("segments")),
-            "transcript_provider": (transcript or {}).get("provider") or "local",
-            "transcript_language": (transcript or {}).get("language"),
+            **_speech_engine_summary(
+                transcript,
+                enabled=speech_enabled,
+                attempted=bool(speech_enabled and wav),
+                language=speech_language,
+                errors=speech_errors,
+            ),
         },
         "hook_scene": hook["id"],
         "transcript": None if not transcript else {
@@ -2475,4 +2877,100 @@ def analyze_source(
         },
         "scenes": scenes,
         "plans": plans,
+    }
+
+
+def retry_speech(
+    job: dict,
+    job_dir: Path,
+    options: dict | None = None,
+    progress: Callable[[str, float, str], None] | None = None,
+) -> dict:
+    """Re-run only the speech read for an existing job.
+
+    Frames, thumbnails, crop paths and the plan are left untouched.  The caller
+    commits the returned fields with its existing ``update_job`` writer; this
+    helper never writes ``job.json``.
+    """
+    merged = dict(job.get("options") or {})
+    merged.update(options or {})
+    source = dict(job.get("source") or {})
+    path = str(source.get("path") or "")
+    duration = float(source.get("duration") or 0.0)
+    analysis = job.get("analysis") or {}
+    scenes = list(analysis.get("scenes") or [])
+    errors: list[dict] = []
+
+    def emit(stage: str, fraction: float, message: str) -> None:
+        if progress is not None:
+            progress(stage, fraction, message)
+
+    if not path or not Path(path).is_file():
+        return {
+            "ok": False,
+            "reason": "The source file is missing. Reconnect it before retrying speech.",
+            "engine": _speech_engine_summary(
+                None, enabled=True, attempted=False,
+                language=_speech_language(merged), errors=errors,
+            ),
+        }
+    emit("reading", 0.02, "Preparing speech retry")
+    wav = extract_audio(path, bool(source.get("has_audio", True)), Path(job_dir))
+    if not wav:
+        return {
+            "ok": False,
+            "reason": "This video has no sound track, so there is nothing to transcribe.",
+            "engine": _speech_engine_summary(
+                None, enabled=True, attempted=False,
+                language=_speech_language(merged), errors=errors,
+            ),
+        }
+    speech_language = _speech_language(merged)
+    settings = settings_store.load_settings()
+    stt_cfg = workflow_config.effective(settings.get("workflows"), "stt")
+    try:
+        transcript = stt.transcribe_source(
+            wav, Path(job_dir), duration,
+            lambda fraction, message: emit(
+                "reading", 0.10 + 0.85 * max(0.0, min(1.0, fraction)), message,
+            ),
+            engine=str(merged.get("transcribe_engine") or ""),
+            routes=list(stt_cfg.get("routes") or []),
+            language=speech_language,
+            vocabulary=stt.vocabulary_terms(job_dir=Path(job_dir), settings=settings),
+            timeout=float(stt_cfg.get("timeout_s") or 300),
+            job_id=str(job.get("id") or ""),
+            request_id=str(job.get("id") or ""),
+            logger=_pipeline_log,
+            errors=errors,
+        )
+    finally:
+        try:
+            Path(wav).unlink()
+        except OSError:
+            pass
+    if transcript:
+        attach_speech(scenes, transcript)
+    return {
+        "ok": bool(transcript and transcript.get("segments")),
+        "transcript": None if not transcript else {
+            "language": transcript.get("language"),
+            "text": transcript.get("text", "")[:1000],
+            "segments": len(transcript.get("segments", [])),
+            "no_speech": bool(transcript.get("no_speech")),
+        },
+        "scenes": scenes,
+        "engine": _speech_engine_summary(
+            transcript,
+            enabled=True,
+            attempted=True,
+            language=speech_language,
+            errors=errors,
+        ),
+        "reason": (
+            ""
+            if transcript and transcript.get("segments")
+            else "Speech was on, but no engine returned a transcript. "
+                 "Try again with Whisper auto language."
+        ),
     }

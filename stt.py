@@ -23,6 +23,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import importlib.util
+import inspect
 import json
 import math
 import os
@@ -251,13 +252,39 @@ def set_cancel_event(event: threading.Event | None) -> None:
     _CANCEL.event = event
 
 
-def _child_run(cmd: list[str], *, stdout, stderr, timeout: float, env=None):
-    """``subprocess.run`` that also stops when the thread's cancel event fires."""
+def cancel_event() -> threading.Event | None:
+    return getattr(_CANCEL, "event", None)
+
+
+def has_cancel_event() -> bool:
+    return cancel_event() is not None
+
+
+def cancel_requested() -> bool:
+    event = cancel_event()
+    return bool(event is not None and event.is_set())
+
+
+def _child_run(
+    cmd: list[str], *, stdout, stderr, timeout: float, env=None,
+    tick: Callable[[float], None] | None = None,
+    tick_interval: float = 2.5,
+):
+    """``subprocess.run`` that also stops when the thread's cancel event fires.
+
+    ``tick`` runs at most every ``tick_interval`` seconds with the elapsed
+    child time, so a long Whisper or Apple read can show a heartbeat instead of
+    one frozen line.
+    """
     event = getattr(_CANCEL, "event", None)
     if event is None:
         return subprocess.run(cmd, stdout=stdout, stderr=stderr, timeout=timeout, env=env)
-    process = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, env=env)
+    process = subprocess.Popen(
+        cmd, stdout=stdout, stderr=stderr, env=env, start_new_session=True,
+    )
     deadline = time.monotonic() + float(timeout)
+    started = time.monotonic()
+    next_tick = started + max(0.1, float(tick_interval))
     try:
         while True:
             try:
@@ -267,15 +294,31 @@ def _child_run(cmd: list[str], *, stdout, stderr, timeout: float, env=None):
                 pass
             if event.is_set():
                 raise SttCancelled("Speech-to-text cancelled.")
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if tick is not None and now >= next_tick:
+                next_tick = now + max(0.1, float(tick_interval))
+                try:
+                    tick(now - started)
+                except Exception:  # noqa: BLE001 - a display tick never fails a read
+                    pass
+            if now >= deadline:
                 raise subprocess.TimeoutExpired(cmd, timeout)
     finally:
         if process.poll() is None:
-            process.kill()
+            try:
+                os.killpg(os.getpgid(process.pid), 15)
+            except (OSError, ProcessLookupError):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                pass
+                try:
+                    process.kill()
+                except OSError:
+                    pass
 
 
 def _hf_hub_dir() -> Path:
@@ -1084,6 +1127,7 @@ def transcribe_apple(
     *,
     helper: Any = _UNSET,
     vocabulary: Iterable[str] | None = None,
+    progress: Callable[[float, str], None] | None = None,
 ) -> dict | None:
     """Transcribe one file with Apple SpeechAnalyzer (single file, no chunking)."""
     source = Path(wav_path) if wav_path else None
@@ -1110,11 +1154,26 @@ def transcribe_apple(
     terms = [str(term) for term in (vocabulary or []) if str(term).strip()]
     if terms:
         cmd.extend(["--vocabulary", json.dumps(terms, ensure_ascii=False)])
+
+    def heartbeat(elapsed: float) -> None:
+        if progress is not None:
+            progress(
+                0.5,
+                f"Transcribing speech · Apple speech · {max(1, int(elapsed))} s",
+            )
+
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=max(10.0, float(timeout or 3600)),
-        )
+        if has_cancel_event():
+            result = _child_run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=max(10.0, float(timeout or 3600)),
+                tick=heartbeat,
+            )
+        else:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=max(10.0, float(timeout or 3600)),
+            )
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0 or not out_path.is_file():
@@ -1178,12 +1237,24 @@ def transcribe(
     if terms:
         cmd.extend(["--initial-prompt", ", ".join(terms)[:800]])
     progress(0.08, "Transcribing speech · local Whisper")
+    budget = whisper_timeout(duration, timeout)
+
+    def heartbeat(elapsed: float) -> None:
+        # Time-based only: Whisper gives no per-token progress, so the line
+        # must move on elapsed time and stay short of the stage end.
+        share = min(0.72, 0.70 * (float(elapsed) / max(1.0, budget)))
+        progress(
+            min(0.78, 0.08 + share),
+            f"Transcribing speech · local Whisper · {max(1, int(elapsed))} s",
+        )
+
     with log_path.open("w") as log:
         try:
             result = _child_run(
                 cmd, stdout=log, stderr=log,
-                timeout=whisper_timeout(duration, timeout),
+                timeout=budget,
                 env=_whisper_env(chosen_model),
+                tick=heartbeat,
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -1453,6 +1524,7 @@ def _run_engine_chunk_keyed(
     engine: str, model: str, language: str,
     vocabulary: Iterable[str] | None, timeout: float | None,
     helper: Any = _UNSET,
+    progress: Callable[[float, str], None] | None = None,
 ) -> dict | None:
     work = Path(job_dir) / "transcript" / "chunks" / "work" / key
     work.mkdir(parents=True, exist_ok=True)
@@ -1464,11 +1536,15 @@ def _run_engine_chunk_keyed(
             chunk_wav, work, language, timeout=timeout,
             helper=_apple_transcribe_helper() if helper is _UNSET else helper,
             vocabulary=vocabulary,
+            progress=progress,
         )
     elif engine == "whisper":
         raw = transcribe(
             chunk_wav, work, float(chunk["end"]) - float(chunk["start"]),
-            lambda _fraction, _message: None,
+            (
+                (lambda fraction, message: progress(fraction, message))
+                if progress is not None else (lambda _fraction, _message: None)
+            ),
             model=model, timeout=timeout, language=language,
             vocabulary=vocabulary,
         )
@@ -1588,6 +1664,17 @@ def _merge_chunks(chunks: list[dict], duration: float) -> dict:
     }
 
 
+def _accepts_progress_kw(function: Callable[..., Any]) -> bool:
+    try:
+        parameters = inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return True
+    return "progress" in parameters or any(
+        item.kind is inspect.Parameter.VAR_KEYWORD
+        for item in parameters.values()
+    )
+
+
 def _chunked_run(
     prepared: Path,
     job_dir: Path,
@@ -1616,10 +1703,19 @@ def _chunked_run(
             except (OSError, json.JSONDecodeError):
                 record = None
         if not isinstance(record, dict) or record.get("key") != key:
+            chunk_kwargs = {
+                "key": key,
+                "engine": engine,
+                "model": model,
+                "language": language,
+                "vocabulary": vocabulary,
+                "timeout": timeout,
+                "helper": helper,
+            }
+            if _accepts_progress_kw(_run_engine_chunk_keyed):
+                chunk_kwargs["progress"] = progress
             record = _run_engine_chunk_keyed(
-                prepared, job_dir, chunk, key=key,
-                engine=engine, model=model, language=language,
-                vocabulary=vocabulary, timeout=timeout, helper=helper,
+                prepared, job_dir, chunk, **chunk_kwargs,
             )
             if record is None:
                 return None
@@ -1678,7 +1774,7 @@ ENGINE_LABELS = {
 }
 
 
-def no_speech_transcript(language: str = "en") -> dict:
+def no_speech_transcript(language: str = "") -> dict:
     """What a read returns when the loudness gate finds no speech.
 
     Not persisted: there is nothing to cache, and a later read with speech
@@ -1686,7 +1782,7 @@ def no_speech_transcript(language: str = "en") -> dict:
     instead of "transcription did not run".
     """
     return {
-        "language": _base_language(language, "en"),
+        "language": _base_language(language, ""),
         "text": "",
         "segments": [],
         "words": [],
@@ -1704,7 +1800,7 @@ def transcribe_source(
     engine: str = "",
     model: str = "",
     routes: Iterable[Mapping[str, Any]] | None = None,
-    language: str = "en",
+    language: str = "",
     vocabulary: Iterable[str] | None = None,
     source_hash: str = "",
     timeout: float | None = None,
@@ -1714,16 +1810,38 @@ def transcribe_source(
     helper: Any = _UNSET,
     prepared: Path | None = None,
     audio_hash: str = "",
+    errors: list[dict] | None = None,
 ) -> dict | None:
-    """Chunk, transcribe, merge and persist one Transcript v2 for a job."""
+    """Chunk, transcribe, merge and persist one Transcript v2 for a job.
+
+    An empty ``language`` means auto: Whisper and the cloud engines omit their
+    language field and report what they detected.  Apple Speech cannot detect a
+    language, so it is skipped unless the caller selected it explicitly or
+    supplied a language; otherwise a Chinese source would be forced through an
+    English locale and return nothing.
+    """
+    requested_language = str(language or "").strip().lower()
+    if requested_language in {"auto", "none", "und"}:
+        requested_language = ""
+    if errors is None:
+        errors = []
+
+    def fail(provider: str, model_name: str, message: str) -> None:
+        errors.append({
+            "provider": provider,
+            "model": model_name,
+            "error": str(message)[:300],
+        })
+
     source = Path(wav_path) if wav_path else None
     if not source or not source.exists():
+        fail("stt", "", "No extracted audio to transcribe.")
         return None
     # Gate on the raw audio: loudness normalisation would lift room noise.
     if has_speech_energy(source) is False:
         if progress is not None:
             progress(1.0, "No speech found")
-        return no_speech_transcript(language)
+        return no_speech_transcript(requested_language)
     if prepared is None:
         prepared_path, prepared_hash = prepare_audio(
             source, job_dir, source_hash=source_hash,
@@ -1734,12 +1852,30 @@ def transcribe_source(
     model = str(model or "")
     plan = resolve_routes(routes, engine=engine, model=model)
     if not plan:
+        fail("stt", "", "No speech engine is configured.")
         return None
     terms = list(vocabulary or [])
+    auto_capable = any(
+        str(route.get("provider") or "").lower() in {"whisper", "groq", "deepgram"}
+        for route in plan
+        if isinstance(route, Mapping)
+    )
     for route_index, route in enumerate(plan):
         provider = str(route["provider"])
         route_model = str(route["model"])
+        if (
+            provider == "apple"
+            and not requested_language
+            and auto_capable
+            and str(engine).lower() != "apple"
+        ):
+            # Apple needs a concrete locale.  Do not silently run a Chinese
+            # clip through en-US when an auto-detecting engine is available;
+            # let that next route report the real language instead.
+            fail("apple", route_model, "Apple speech needs a known language.")
+            continue
         if not _engine_ready(provider, route_model):
+            fail(provider, route_model, "Speech engine is not available.")
             continue
         started = time.time()
         if progress is not None:
@@ -1750,13 +1886,14 @@ def transcribe_source(
                 prepared_path, Path(job_dir), float(duration),
                 audio_hash=prepared_hash,
                 engine=provider, model=route_model,
-                language=language, vocabulary=terms,
+                language=requested_language, vocabulary=terms,
                 timeout=timeout, progress=progress, helper=helper,
             )
         except SttCancelled:
             raise
         except Exception as exc:  # noqa: BLE001 - route falls through
             merged = None
+            fail(provider, route_model, str(exc))
             _log_route(
                 logger, route_index, provider, route_model, started, False,
                 str(exc)[:300], job_id=job_id, request_id=request_id,
@@ -1767,6 +1904,7 @@ def transcribe_source(
                     logger, route_index, provider, route_model, started, False,
                     "No transcript returned.", job_id=job_id, request_id=request_id,
                 )
+            fail(provider, route_model, "No transcript returned.")
             continue
         words, segments = apply_vocabulary(
             list(merged.get("words") or []),
@@ -1776,7 +1914,7 @@ def transcribe_source(
         transcript = build_transcript(
             engine=provider,
             model=route_model,
-            language=merged.get("language") or language,
+            language=merged.get("language") or requested_language,
             segments=segments,
             words=words,
             audio_duration=float(duration),
@@ -1784,6 +1922,7 @@ def transcribe_source(
             drift_ms_p95=float(merged.get("drift_ms_p95") or 0.0),
         )
         if not transcript["segments"]:
+            fail(provider, route_model, "The engine returned an empty transcript.")
             continue
         path = save_transcript(Path(job_dir), transcript)
         if provider in CLOUD_STT_PROVIDERS:

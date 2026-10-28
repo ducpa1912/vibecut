@@ -18,6 +18,24 @@ MIN_RESERVE_BYTES = 2 * GIB
 MAX_RESERVE_BYTES = 5 * GIB
 RESERVE_FRACTION = 0.05
 VALID_TARGETS = (15, 30, 60)
+# A path smaller than this is not a usable video; keep the conservative guard
+# so an unreadable stub never looks like a measured in-place source.
+MIN_PATH_SOURCE_BYTES = 1024
+
+
+def _gb(value: int | float) -> str:
+    return f"{max(0.0, float(value or 0)) / GIB:.1f} GB"
+
+
+class InPlaceEstimate(int):
+    """A working-set estimate for a path read that copies no source bytes."""
+
+    copy_source = False
+
+    def __new__(cls, value: int, *, source_size: int = 0):
+        instance = int.__new__(cls, max(0, int(value)))
+        instance.source_size = max(0, int(source_size or 0))
+        return instance
 
 
 class InvalidSize(ValueError):
@@ -79,9 +97,22 @@ class InsufficientSpace(RuntimeError):
         )
         self.path = str(path) if path is not None else None
         super().__init__(
-            f"Need {self.required_bytes} bytes but only {self.available_bytes} "
-            f"bytes are available above the {self.reserve_bytes}-byte reserve."
+            "Not enough disk space. "
+            f"Free {_gb(self.free_bytes)}, VibeCut keeps {_gb(self.reserve_bytes)} "
+            f"free, short by {_gb(self.shortfall_bytes)}."
         )
+
+    @property
+    def free_gb(self) -> float:
+        return round(self.free_bytes / GIB, 2)
+
+    @property
+    def reserve_gb(self) -> float:
+        return round(self.reserve_bytes / GIB, 2)
+
+    @property
+    def shortfall_gb(self) -> float:
+        return round(self.shortfall_bytes / GIB, 2)
 
     def as_dict(self) -> dict:
         return {
@@ -92,6 +123,9 @@ class InsufficientSpace(RuntimeError):
             "available_bytes": self.available_bytes,
             "shortfall_bytes": self.shortfall_bytes,
             "volume_total_bytes": self.volume_total_bytes,
+            "free_gb": self.free_gb,
+            "reserve_gb": self.reserve_gb,
+            "shortfall_gb": self.shortfall_gb,
             "path": self.path,
             "message": str(self),
         }
@@ -142,9 +176,17 @@ def report(
     path: str | Path | int | float = ".",
 ) -> dict:
     """Describe whether ``required_bytes`` fits above the reserve."""
+    in_place = isinstance(required_bytes, InPlaceEstimate)
+    source_size = int(getattr(required_bytes, "source_size", 0) or 0)
     required, target = _required_and_path(required_bytes, path)
     total, _used, free = usage(target)
     reserve = reserve_bytes(total)
+    # A real path read copies no source bytes, so the copy/render reserve does
+    # not apply.  A path whose size we could not measure keeps the conservative
+    # guard; a volume already below the reserve no longer deadlocks a small
+    # working set that still fits.
+    if in_place and (source_size >= MIN_PATH_SOURCE_BYTES or free < reserve):
+        reserve = 0
     available = max(0, free - reserve)
     ok = free >= reserve and required <= available
     return {
@@ -156,6 +198,7 @@ def report(
         "available_bytes": int(available),
         "shortfall_bytes": max(0, required + reserve - free),
         "volume_total_bytes": int(total),
+        "in_place": in_place,
         "path": str(target),
     }
 
@@ -228,8 +271,16 @@ def estimate_upload(size_bytes: int) -> int:
 
 
 def estimate_path(path: str | Path) -> int:
-    """A local path is analyzed in place; keep working-file headroom."""
-    return estimate_analysis(_size_of(path), copy_source=False)
+    """A local path is analyzed in place; keep working-file headroom.
+
+    The return value is marked as in-place so the preflight does not demand the
+    full copy/render reserve for bytes that are never copied.
+    """
+    size = _size_of(path)
+    return InPlaceEstimate(
+        estimate_analysis(size, copy_source=False),
+        source_size=size,
+    )
 
 
 def estimate_render(

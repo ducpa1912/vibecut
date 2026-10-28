@@ -1298,15 +1298,42 @@ def _report_warnings(
             "tracklet_ids": [],
         })
     else:
-        warnings.append({
-            "code": "speech_unknown",
-            "severity": "warning",
-            "message": (
-                "Speech wasn't read for this video, so captions can't be built. "
-                "Import it again with Speech on."
-            ),
-            "tracklet_ids": [],
-        })
+        state = str(audio.get("speech_state") or "unknown")
+        if state == "off":
+            warnings.append({
+                "code": "speech_off",
+                "severity": "warning",
+                "message": (
+                    "Speech was off at import, so captions cannot be built. "
+                    "Turn Speech on and import this video again."
+                ),
+                "tracklet_ids": [],
+            })
+        elif state == "engine_empty":
+            detail = str(audio.get("speech_error") or "").strip()
+            language = str(audio.get("speech_language") or "auto")
+            suffix = f" Engine: {detail[:180]}" if detail else ""
+            warnings.append({
+                "code": "speech_engine_empty",
+                "severity": "warning",
+                "message": (
+                    f"Speech was on, but no engine returned a transcript "
+                    f"(language: {language}).{suffix} Retry speech on this "
+                    "video; re-importing is not needed. If it still fails, "
+                    "check Setup → Engines."
+                ),
+                "tracklet_ids": [],
+            })
+        else:
+            warnings.append({
+                "code": "speech_unknown",
+                "severity": "warning",
+                "message": (
+                    "Speech was not read for this video, so captions can't be "
+                    "built. Run the read again with Speech on."
+                ),
+                "tracklet_ids": [],
+            })
     for issue in quality.get("issues") or []:
         warnings.append({
             "code": issue["code"],
@@ -1407,16 +1434,44 @@ def build_report(
             "available": False, "present": False, "score": 0.0,
             "method": "none", "speech_aware": False,
         }
-    audio_features = analysis.get("audio") or {}
+    audio_features_data = analysis.get("audio") or {}
+    analysis_engine = analysis.get("engine") or {}
+    no_speech = bool((analysis.get("transcript") or {}).get("no_speech"))
+    options = job.get("options") or {}
+    stt_enabled = analysis_engine.get("stt_enabled")
+    if stt_enabled is None and "transcribe" in options:
+        stt_enabled = bool(options.get("transcribe"))
+    if transcript_available:
+        speech_state = "read"
+    elif not source.get("has_audio"):
+        speech_state = "no_audio"
+    elif no_speech:
+        speech_state = "no_speech"
+    elif stt_enabled is False:
+        speech_state = "off"
+    elif stt_enabled is True:
+        speech_state = "engine_empty"
+    else:
+        speech_state = "unknown"
+    speech_error = str(analysis_engine.get("stt_error") or "").strip()
+    speech_language = (
+        analysis_engine.get("transcript_language")
+        or (analysis.get("transcript") or {}).get("language")
+        or None
+    )
     audio = {
-        "available": bool(speech["available"] or audio_features.get("available")),
+        "available": bool(speech["available"] or audio_features_data.get("available")),
         "has_audio": bool(source.get("has_audio")),
         "speech_seconds": speech["speech_seconds"],
         "speech_ratio": speech["speech_ratio"],
         "speech_ranges": speech["ranges"],
         "transcript": bool(transcript_available),
         # The read ran and its loudness gate found no speech (QA #23).
-        "no_speech": bool((analysis.get("transcript") or {}).get("no_speech")),
+        "no_speech": no_speech,
+        "speech_state": speech_state,
+        "language": speech_language,
+        "speech_language": analysis_engine.get("stt_language") or "auto",
+        "speech_error": speech_error or None,
         "music": music,
     }
     faces = faces_signal(scenes, duration)
@@ -1660,6 +1715,15 @@ def run_check(
     duration = _number(source.get("duration"), 0.0)
     path = str(source.get("path") or "")
 
+    if progress is not None:
+        original_progress = progress
+        last_value = [0.0]
+
+        def progress(fraction: float, message: str) -> None:  # noqa: F811
+            value = max(last_value[0], min(1.0, float(fraction)))
+            last_value[0] = value
+            original_progress(value, message)
+
     observations = observations_from_scenes(scenes)
     sampled: dict = {"ran": False, "frames": 0, "vision": False}
     sampled_error: str | None = None
@@ -1730,6 +1794,7 @@ def run_check(
         sampled_error=sampled_error,
     )
     report["timings"] = {"total": round(time.time() - started, 3)}
+    report["progress"] = 1.0
     write_report(job_dir, report)
     if progress:
         progress(1.0, "Check complete")
