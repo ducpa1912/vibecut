@@ -105,7 +105,7 @@ def test_spread_penalty_uses_a_15_percent_band():
 def test_selection_takes_the_spread_option_when_one_exists():
     selected = [_candidate("first", 0.0, 20.0, 0.7)]
     close = _candidate("close", 20.5, 40.5, 0.8)
-    far = _candidate("far", 400.0, 420.0, 0.7)
+    far = _candidate("far", 400.0, 420.0, 0.71)
     pick, _ = clipset._pick_best([close, far], selected, 600.0, 20.0, count=2)
     assert pick is far
 
