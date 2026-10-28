@@ -157,6 +157,7 @@ STORY_PINS = ("source", "story_start", "story_end")
 _CAPTIONS_KEYS = frozenset({"track_id", "style_id", "enabled"})
 _AUDIO_KEYS = frozenset({
     "mode", "duck_db", "loudness", "music", "voice", "translate",
+    "script_overrides",
 })
 TRANSLATE_MODES = ("literal", "smooth", "viral", "fun", "creative", "sad", "chill")
 _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
@@ -1008,7 +1009,12 @@ def normalize_audio(value: Any) -> dict:
         raw = value["translate"]
         if not isinstance(raw, dict):
             raise EditError("audio.translate must be an object.")
-        _unknown(raw, frozenset({"target", "mode"}), "audio.translate")
+        _unknown(raw, frozenset({"source", "target", "mode"}), "audio.translate")
+        source = str(raw.get("source") or "").strip()
+        if source and not _LANGUAGE_RE.match(source):
+            raise EditError(
+                "audio.translate.source must be a language code such as en or zh."
+            )
         target = str(raw.get("target") or "").strip()
         if not _LANGUAGE_RE.match(target):
             raise EditError(
@@ -1020,10 +1026,36 @@ def normalize_audio(value: Any) -> dict:
                 "audio.translate.mode must be one of: "
                 + ", ".join(TRANSLATE_MODES) + "."
             )
-        result["translate"] = {
-            "target": target[:16],
-            "mode": mode,
-        }
+        result["translate"] = {}
+        if source:
+            result["translate"]["source"] = source[:16]
+        result["translate"]["target"] = target[:16]
+        result["translate"]["mode"] = mode
+    if value.get("script_overrides") is not None:
+        raw = value["script_overrides"]
+        if not isinstance(raw, dict):
+            raise EditError("audio.script_overrides must be an object.")
+        overrides: dict[str, str] = {}
+        for key, text in raw.items():
+            scene = str(key or "").strip()
+            if not scene or len(scene) > 64:
+                raise EditError(
+                    "audio.script_overrides keys must be scene ids of 64 characters or fewer."
+                )
+            if not isinstance(text, str):
+                raise EditError("audio.script_overrides values must be text.")
+            line = text.strip()
+            if not line:
+                continue
+            if len(line) > 600:
+                raise EditError(
+                    "audio.script_overrides lines must be 600 characters or fewer."
+                )
+            overrides[scene] = line
+        if len(overrides) > 200:
+            raise EditError("audio.script_overrides holds at most 200 lines.")
+        if overrides:
+            result["script_overrides"] = overrides
     return result
 
 

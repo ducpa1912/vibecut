@@ -41,10 +41,157 @@ const ENGINE_LABELS = {
 const MODE_HELP = {
   original: "Keep the source sound exactly as it is.",
   original_bed: "Keep the source sound and add a music bed under the speech.",
-  voice_over: "Speak a new voice line over the source. Music stays ducked.",
-  dub: "Replace the spoken lines with a translated voice. The original is ducked.",
+  voice_over: "Speak a new script in the story's own language, with the chosen voice.",
+  dub: "Translate each line into your target language, then speak it with the chosen voice.",
   music_only: "Turn the original sound off and use the music bed alone.",
 };
+
+// A small local list keeps Dub useful without another network call. The
+// backend accepts any two- or three-letter code, so a future picker can grow.
+export const DUB_LANGUAGES = [
+  ["en", "English"],
+  ["es", "Spanish"],
+  ["fr", "French"],
+  ["de", "German"],
+  ["pt", "Portuguese"],
+  ["it", "Italian"],
+  ["ja", "Japanese"],
+  ["ko", "Korean"],
+  ["zh", "Chinese"],
+  ["hi", "Hindi"],
+  ["ar", "Arabic"],
+];
+
+const LANGUAGE_LABELS = Object.fromEntries(DUB_LANGUAGES);
+
+export function languageLabel(code) {
+  const value = String(code || "").trim();
+  if (!value) return "Choose a language";
+  return LANGUAGE_LABELS[value.split("-")[0].toLowerCase()] || value;
+}
+
+/** Why a Dub edit cannot save or queue, or "" when the edit is usable. */
+export function dubBlockReason(mode, target) {
+  if (String(mode || "") !== "dub") return "";
+  if (String(target || "").trim()) return "";
+  return "Dub needs a target language. Choose one, then save or queue again.";
+}
+
+/**
+ * One editable script row per scene.
+ *
+ * Clips are the output order. Each clip names its source sentence in `why`,
+ * so the text comes from the story transcript even when the clip has no scene
+ * id. Rows are keyed the way ``audio.build_script`` keys a line: the scene id
+ * as a string, or "None" when Python's ``str(scene)`` would be None.
+ */
+export function storyScriptLines(story) {
+  const sentences = Array.isArray(story?.sentences) ? story.sentences : [];
+  const byId = new Map(sentences.map((row) => [String(row?.id ?? ""), row]));
+  const clips = Array.isArray(story?.clips) ? story.clips : [];
+  const rows = new Map();
+
+  function add(rawScene, text, role) {
+    const value = String(text || "").replace(/\s+/g, " ").trim();
+    if (!value) return;
+    const hasScene = rawScene !== null && rawScene !== undefined
+      && String(rawScene).trim() !== "";
+    const key = hasScene ? String(rawScene).trim() : "None";
+    const existing = rows.get(key);
+    if (!existing) {
+      rows.set(key, {
+        key,
+        scene: hasScene ? rawScene : null,
+        text: value,
+        role: role || "beat",
+      });
+      return;
+    }
+    if (!existing.text.includes(value)) existing.text = `${existing.text} ${value}`;
+  }
+
+  clips.forEach((clip, index) => {
+    const sentence = sentenceForClip(clip, byId);
+    const scene = clip?.scene
+      ?? sentence?.scene
+      ?? (Array.isArray(sentence?.scenes) ? sentence.scenes[0] : null);
+    const role = clip?.role || (index === 0 ? "hook" : index === clips.length - 1 ? "payoff" : "beat");
+    add(scene, sentence?.text || clip?.why || "", role);
+  });
+
+  if (!rows.size) {
+    sentences.forEach((sentence, index) => {
+      const scene = sentence?.scene
+        ?? (Array.isArray(sentence?.scenes) ? sentence.scenes[0] : null);
+      const role = index === 0 ? "hook" : index === sentences.length - 1 ? "payoff" : "beat";
+      add(scene, sentence?.text || "", role);
+    });
+  }
+  return [...rows.values()];
+}
+
+function sentenceForClip(clip, byId) {
+  const match = /Sentence\s+([A-Za-z0-9_-]+)/.exec(String(clip?.why || ""));
+  return match ? byId.get(match[1]) || null : null;
+}
+
+/**
+ * Merge Dub settings into an existing translate object.
+ *
+ * Only Dub writes translate. Unrelated stored fields (for example a saved
+ * style) stay as they were; source and target are the two the picker owns.
+ */
+export function mergeTranslatePlan(mode, existing, source, target, style = "smooth") {
+  if (String(mode || "") !== "dub") return null;
+  const base = existing && typeof existing === "object" ? clone(existing) : {};
+  return {
+    ...base,
+    source: String(source || "").trim(),
+    target: String(target || "").trim(),
+    mode: String(style || base.mode || "smooth"),
+  };
+}
+
+/** Trim, drop blank lines and cap one override per scene; blank = machine text. */
+export function cleanScriptOverrides(values) {
+  const out = {};
+  for (const [key, text] of Object.entries(values || {})) {
+    const scene = String(key ?? "").trim();
+    const line = String(text ?? "").replace(/\s+/g, " ").trim();
+    if (!scene || !line) continue;
+    out[scene] = line.slice(0, 600);
+  }
+  return out;
+}
+
+/**
+ * The Edit audio object. Optional keys are omitted when empty so an Edit
+ * without translate or a script hashes exactly as before.
+ */
+export function buildAudioPlan({
+  mode = "original",
+  duck_db,
+  loudness,
+  voice = null,
+  music = null,
+  translate = null,
+  scriptOverrides = null,
+} = {}) {
+  const next = {
+    mode: AUDIO_LABELS[mode] ? mode : "original",
+    duck_db: round(clamp(numberOr(duck_db, -12), -60, 0), 3),
+    loudness: {
+      lufs: round(clamp(numberOr(loudness?.lufs, -14), -30, -5), 3),
+      true_peak: round(clamp(numberOr(loudness?.true_peak, -1.5), -9, 0), 3),
+    },
+  };
+  if (voice) next.voice = voice;
+  if (music) next.music = music;
+  if (translate) next.translate = translate;
+  const overrides = cleanScriptOverrides(scriptOverrides);
+  if (Object.keys(overrides).length) next.script_overrides = overrides;
+  return next;
+}
 
 function currentJobId() {
   try {
@@ -80,8 +227,7 @@ function field(label, control, hint = "") {
   return wrapper;
 }
 
-function storyLanguage(ctx) {
-  const story = ctx.getStory();
+export function detectStoryLanguage(story) {
   const text = [
     ...(Array.isArray(story?.sentences) ? story.sentences.map((line) => line.text || "") : []),
     story?.title || "",
@@ -95,6 +241,10 @@ function storyLanguage(ctx) {
   if (hangul >= 2) return "ko";
   if (cjk >= 4 && cjk > latin * 0.5) return "zh";
   return "en";
+}
+
+function storyLanguage(ctx) {
+  return detectStoryLanguage(ctx.getStory());
 }
 
 function storySeconds(ctx) {
@@ -186,6 +336,15 @@ export function mountAudioPanel(host, ctx) {
   let lockedTracks = [];
   let lockedLoading = false;
   let lockedError = "";
+  let initialOverrides = plan.script_overrides && typeof plan.script_overrides === "object"
+    ? clone(plan.script_overrides)
+    : {};
+  let scriptSaved = new Set(Object.keys(initialOverrides));
+  let scriptValues = clone(initialOverrides);
+  let scriptTouched = new Set();
+  let sourceLang = String(plan.translate?.source || storyLanguage(ctx) || "en");
+  let targetLang = String(plan.translate?.target || "");
+  let translateStyle = String(plan.translate?.mode || "smooth");
   let notice = "";
   let noticeTone = "";
   let dirty = false;
@@ -270,20 +429,44 @@ export function mountAudioPanel(host, ctx) {
     }
   }
 
+  function translatePlan() {
+    return mergeTranslatePlan(plan.mode, plan.translate, sourceLang, targetLang, translateStyle);
+  }
+
+  function scriptPlan() {
+    if (plan.mode !== "voice_over" && plan.mode !== "dub") return null;
+    const values = clone(initialOverrides);
+    for (const row of storyScriptLines(ctx.getStory())) {
+      const touched = scriptTouched.has(row.key);
+      const saved = scriptSaved.has(row.key);
+      const own = scriptValues[row.key];
+      if (plan.mode === "dub") {
+        const line = touched || saved ? own : "";
+        if (String(line || "").trim()) values[row.key] = String(line);
+        else if (touched) delete values[row.key];
+        continue;
+      }
+      // Voice-over starts from the transcript. Only a changed line is saved;
+      // a line the creator cleared stays blank, which tells the render to use
+      // the transcript again.
+      if (!touched && !saved) continue;
+      const line = touched || saved ? own : "";
+      if (String(line || "").trim()) values[row.key] = String(line);
+      else if (touched) delete values[row.key];
+    }
+    return cleanScriptOverrides(values);
+  }
+
   function buildPlan() {
-    const next = {
-      mode: AUDIO_LABELS[plan.mode] ? plan.mode : "original",
-      duck_db: round(clamp(numberOr(plan.duck_db, -12), -60, 0), 3),
-      loudness: {
-        lufs: round(clamp(numberOr(plan.loudness?.lufs, -14), -30, -5), 3),
-        true_peak: round(clamp(numberOr(plan.loudness?.true_peak, -1.5), -9, 0), 3),
-      },
-    };
-    const voice = voicePlan();
-    if (voice) next.voice = voice;
-    const music = musicPlan();
-    if (music) next.music = music;
-    return next;
+    return buildAudioPlan({
+      mode: plan.mode,
+      duck_db: plan.duck_db,
+      loudness: plan.loudness,
+      voice: voicePlan(),
+      music: musicPlan(),
+      translate: translatePlan(),
+      scriptOverrides: scriptPlan(),
+    });
   }
 
   async function save() {
@@ -299,6 +482,12 @@ export function mountAudioPanel(host, ctx) {
       setSaveStatus("Not saved", "bad");
       setNotice("This panel could not find the open video. Reopen the story from Stories.", "bad");
       render();
+      return;
+    }
+    const blocked = dubBlockReason(plan.mode, targetLang);
+    if (blocked) {
+      setSaveStatus("Not saved — choose a target", "bad");
+      if (!disposed) render();
       return;
     }
     saving = true;
@@ -1141,7 +1330,16 @@ export function mountAudioPanel(host, ctx) {
       select.append(el("option", { value, text: label, selected: value === (plan.mode || "original") }));
     }
     select.addEventListener("change", () => {
+      const previous = plan.mode;
       plan.mode = select.value;
+      // A script written for one mode is the wrong language for the other:
+      // Voice-over lines are source-language, Dub lines are translated.
+      if ((previous === "dub") !== (plan.mode === "dub")) {
+        initialOverrides = {};
+        scriptSaved = new Set();
+        scriptValues = {};
+        scriptTouched = new Set();
+      }
       scheduleSave();
       render();
     });
@@ -1488,6 +1686,149 @@ export function mountAudioPanel(host, ctx) {
     return card;
   }
 
+  function languageOptions(select, selected, emptyLabel = "") {
+    if (emptyLabel) {
+      select.append(el("option", {
+        value: "", text: emptyLabel, selected: !selected,
+      }));
+    }
+    const known = new Set(DUB_LANGUAGES.map(([code]) => code));
+    for (const [code, label] of DUB_LANGUAGES) {
+      select.append(el("option", {
+        value: code,
+        text: label,
+        selected: code === String(selected || "").split("-")[0].toLowerCase(),
+      }));
+    }
+    const current = String(selected || "").split("-")[0].toLowerCase();
+    if (current && !known.has(current)) {
+      select.append(el("option", {
+        value: String(selected), text: languageLabel(selected), selected: true,
+      }));
+    }
+  }
+
+  function dubCard() {
+    const card = el("div", { class: "st-card st-check-card" });
+    card.append(el("h3", { text: "Dub" }));
+    card.append(el("p", {
+      class: "st-hint",
+      text: "Dub translates the script into another language. Voice-over keeps the story's own language and only changes the voice.",
+    }));
+    const blocked = dubBlockReason(plan.mode, targetLang);
+    if (blocked) {
+      card.append(el("p", { class: "st-warning", text: blocked }));
+      card.append(el("p", {
+        class: "st-field-hint",
+        text: "This edit was saved without a target, so a render will fail. Pick a target here to fix it.",
+      }));
+    }
+
+    const source = el("select", { "aria-label": "Dub source language" });
+    languageOptions(source, sourceLang);
+    source.addEventListener("change", () => {
+      sourceLang = source.value;
+      scheduleSave();
+    });
+
+    const target = el("select", { "aria-label": "Dub target language" });
+    languageOptions(target, targetLang, "Choose a target language");
+    target.addEventListener("change", () => {
+      targetLang = target.value;
+      scheduleSave();
+      render();
+    });
+
+    card.append(el("div", { class: "st-control-grid" }, [
+      field("Spoken language", source, "Detected from the story. Confirm it before Dub."),
+      field("Target language", target, "Required. Dub cannot save or queue without it."),
+    ]));
+    if (targetLang && sourceLang && targetLang.split("-")[0] === sourceLang.split("-")[0]) {
+      card.append(el("p", {
+        class: "st-warning",
+        text: "The target matches the source, so Dub will re-speak the same language instead of translating.",
+      }));
+    }
+    card.append(el("p", {
+      class: "st-field-hint",
+      text: "Translated captions are deferred. Captions stay in the source language until Dub renders end to end.",
+    }));
+    return card;
+  }
+
+  function scriptCard() {
+    const card = el("div", { class: "st-card st-check-card" });
+    const dub = plan.mode === "dub";
+    card.append(el("h3", { text: dub ? "Dub script" : "Voice-over script" }));
+    card.append(el("p", {
+      class: "st-hint",
+      text: dub
+        ? "This is the translated script. A line you write here wins over machine translation; a blank line uses the machine translation."
+        : "Edit the words the voice speaks. A blank line uses the transcript.",
+    }));
+    if (dub) {
+      card.append(el("p", {
+        class: "st-field-hint",
+        text: "Write each line in the target language. The source line stays visible for reference.",
+      }));
+    }
+
+    const rows = storyScriptLines(ctx.getStory());
+    if (!rows.length) {
+      card.append(el("p", {
+        class: "st-hint",
+        text: "No transcript lines are available for this story. Turn on Speech during Import to write a script here.",
+      }));
+      return card;
+    }
+
+    const list = el("div", { class: "st-layer-list", style: "margin-top:9px" });
+    rows.forEach((row, index) => {
+      const saved = scriptSaved.has(row.key);
+      const touched = scriptTouched.has(row.key);
+      const value = touched || saved
+        ? String(scriptValues[row.key] ?? "")
+        : dub ? "" : row.text;
+      const role = row.role && row.role !== "beat" ? ` · ${row.role}` : "";
+      const wrap = el("div", { class: "st-field", style: "margin-bottom:10px" }, [
+        el("span", {
+          class: "st-field-label",
+          text: `Line ${index + 1}${role}`,
+        }),
+      ]);
+      if (dub) {
+        wrap.append(el("small", {
+          class: "st-field-hint",
+          style: "display:block;margin:2px 0 4px",
+          text: `Source: ${row.text}`,
+        }));
+      }
+      const area = el("textarea", {
+        rows: "2",
+        maxlength: "600",
+        "aria-label": `${dub ? "Dub" : "Voice-over"} line ${index + 1}`,
+        placeholder: dub ? "Leave blank to use the machine translation." : "Leave blank to use the transcript.",
+        style: "width:100%;min-height:58px;resize:vertical",
+      });
+      area.value = value;
+      area.addEventListener("input", () => {
+        scriptTouched.add(row.key);
+        scriptValues[row.key] = area.value;
+        scheduleSave();
+      });
+      wrap.append(area);
+      list.append(wrap);
+    });
+    card.append(list);
+    card.append(el("p", {
+      class: "st-field-hint",
+      text: dub
+        ? "Clear a line to return it to machine translation."
+        : "Clear a line to return to the transcript.",
+    }));
+    return card;
+  }
+
   function mixCard() {
     const card = el("div", { class: "st-card st-check-card" });
     card.append(el("h3", { text: "Mix" }));
@@ -1541,18 +1882,24 @@ export function mountAudioPanel(host, ctx) {
 
   function render() {
     host.replaceChildren();
+    const blocked = dubBlockReason(plan.mode, targetLang);
     const head = el("div", { class: "st-card st-check-card" }, [
       el("h3", { text: "Audio" }),
-      el("p", { class: "st-hint", text: "One sound setup per story: the source sound, a voice, one music bed, ducking and a loudness target." }),
+      el("p", { class: "st-hint", text: "Voice first, then one music bed. The source sound, ducking and loudness stay in the same edit." }),
     ]);
     saveNode = el("span", {
       class: "st-edit-save",
       role: "status",
       "aria-live": "polite",
-      text: saving ? "Saving…" : dirty ? "Unsaved changes" : "Saved",
-      dataset: { tone: saving ? "busy" : dirty ? "dirty" : "ok" },
+      text: saving
+        ? "Saving…"
+        : blocked
+          ? (dirty ? "Not saved — choose a target" : "Saved edit needs a target")
+          : dirty ? "Unsaved changes" : "Saved",
+      dataset: { tone: saving ? "busy" : blocked ? "bad" : dirty ? "dirty" : "ok" },
     });
     head.append(el("div", { style: "margin-top:8px" }, [saveNode]));
+    if (blocked) head.append(el("p", { class: "st-warning", text: blocked }));
     if (notice) {
       head.append(el("p", {
         class: noticeTone === "bad" ? "st-error" : "st-status",
@@ -1561,8 +1908,10 @@ export function mountAudioPanel(host, ctx) {
     }
     host.append(head);
     host.append(modeCard());
-    host.append(musicCard());
     host.append(voiceCard());
+    if (plan.mode === "dub") host.append(dubCard());
+    if (plan.mode === "dub" || plan.mode === "voice_over") host.append(scriptCard());
+    host.append(musicCard());
     host.append(mixCard());
     host.append(el("p", { class: "st-hint", text: "The mix is stored in this edit. Voice and music are rendered by the audio build; nothing is sent to a cloud service unless you press Preview on a cloud voice." }));
   }
@@ -1576,7 +1925,7 @@ export function mountAudioPanel(host, ctx) {
     stopCandidatePreview();
     stopClonePlayer();
     stopClonePoll();
-    if (dirty && !saving) {
+    if (dirty && !saving && !dubBlockReason(plan.mode, targetLang)) {
       const jobId = currentJobId();
       const current = ctx.getEdit();
       if (jobId && current) {

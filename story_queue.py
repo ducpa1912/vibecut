@@ -57,6 +57,9 @@ class QueueConflict(QueueError):
 
 
 class StoryBackend(Protocol):
+    # Optional: ``error(item, artifact_id) -> str``. When a backend provides it,
+    # the queue shows the artifact manifest's reason instead of "Render failed."
+    # Old backends without the method keep the fallback.
     def start(self, item: dict) -> str:
         """Queue the story render and return its artifact id (idempotent)."""
 
@@ -79,6 +82,21 @@ def _error_text(exc: BaseException) -> str:
     if isinstance(detail, dict):
         detail = detail.get("message") or detail.get("detail") or json.dumps(detail)
     return str(detail if detail not in (None, "") else exc)[:1200]
+
+
+def _failure_text(backend: StoryBackend, item: dict, artifact_id: str, status: str) -> str:
+    """The backend's reason for a failed artifact, else a plain fallback."""
+    hook = getattr(backend, "error", None)
+    if callable(hook):
+        try:
+            text = hook(item, artifact_id)
+        except Exception:  # noqa: BLE001 - a broken hook never hides the row
+            LOGGER.exception("backend could not explain failed artifact %s", artifact_id)
+        else:
+            text = str(text or "").strip()
+            if text:
+                return text[:1200]
+    return f"Render {status}."
 
 
 def normalize_items(raw: object) -> list[dict]:
@@ -398,7 +416,7 @@ class StoryQueueManager:
             if status in FAILED_RENDERS:
                 self._set_item(
                     queue_id, item["id"], state="failed", finished=_now(),
-                    error=f"Render {status}.",
+                    error=_failure_text(backend, item, artifact_id, status),
                 )
                 return
             if time.time() - started > limit:
