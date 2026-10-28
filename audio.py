@@ -2734,8 +2734,33 @@ def store_uploaded_voice(source: Path, job_dir: Path) -> Path:
     return output
 
 
+def _has_audio_stream(source: str) -> bool:
+    """False only when ffprobe positively finds no audio stream."""
+    probe = shutil.which("ffprobe")
+    if not probe:
+        return True
+    try:
+        result = subprocess.run(
+            [probe, "-v", "error", "-select_streams", "a", "-show_entries",
+             "stream=index", "-of", "csv=p=0", str(source)],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return result.returncode != 0 or bool(result.stdout.strip())
+
+
 def _source_audio_bed(source: str, tmp: Path, cancel_event=None) -> Path:
     output = tmp / "original_audio.wav"
+    if not _has_audio_stream(source):
+        # A silent source (a written voice script) mixes over silence.
+        seconds = max(1.0, media_duration(Path(source)) or 1.0)
+        _run([
+            _ffmpeg(), "-y", "-v", "error", "-f", "lavfi",
+            "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(output),
+        ], timeout=900, cancel_event=cancel_event)
+        return output
     _run([
         _ffmpeg(), "-y", "-v", "error", "-i", source, "-vn",
         "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(output),
