@@ -405,6 +405,25 @@ export function queueProgressText(queue) {
   return measured ? `${percent} · ${etaText(eta)} left` : percent;
 }
 
+/**
+ * What the render had to skip, trimmed and de-duplicated, at most three lines.
+ * Old rows carry the list at the top; the manifest keeps it under render.
+ */
+export function renderWarnings(item) {
+  const direct = Array.isArray(item?.warnings) ? item.warnings : [];
+  const nested = Array.isArray(item?.render?.warnings) ? item.render.warnings : [];
+  const seen = new Set();
+  const rows = [];
+  for (const value of direct.length ? direct : nested) {
+    const text = String(value ?? "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    rows.push(text);
+    if (rows.length === 3) break;
+  }
+  return rows;
+}
+
 /** One readable line from a failed artifact or queue item. */
 export function failureReason(item) {
   const raw = String(item?.error || "").trim();
@@ -1295,6 +1314,14 @@ export function mount(root, ctx) {
     ]));
 
     const rows = allArtifactsFor();
+    const readyRows = rows.filter(artifactReady);
+    const selectedRow = rows.find((item) => item.artifact_id === selectedArtifactId)
+      || readyRows[0] || null;
+    const selectedWarnings = selectedRow ? renderWarnings(selectedRow) : [];
+    if (selectedWarnings.length) {
+      card.append(el("div", { class: "st-finish-current-warnings" },
+        selectedWarnings.map((warning) => el("p", { class: "st-warning", text: warning }))));
+    }
     if (!rows.length) {
       card.append(el("p", { class: "st-hint", text: "No render for this story and shape yet. Queue it above." }));
     } else {
@@ -1365,7 +1392,14 @@ export function mount(root, ctx) {
           actions.append(retry);
         }
         row.append(actions);
-        if (!ready && ["failed", "interrupted"].includes(String(item.status || ""))) {
+        if (ready) {
+          for (const warning of renderWarnings(item)) {
+            row.append(el("p", {
+              class: "st-warning st-finish-version-warning",
+              text: warning,
+            }));
+          }
+        } else if (["failed", "interrupted"].includes(String(item.status || ""))) {
           row.append(el("p", { class: "st-error st-finish-version-error", text: failureReason(item) }));
         }
         row.addEventListener("click", (event) => {
@@ -1382,7 +1416,6 @@ export function mount(root, ctx) {
       }
       card.append(list);
 
-      const readyRows = rows.filter(artifactReady);
       if (readyRows.length === 1) {
         // One finished cut still gets a player; compare needs two.
         const item = readyRows[0];

@@ -1044,6 +1044,11 @@ def public_manifest(manifest: dict, job_id: str | None = None) -> dict:
         "spec": spec,
         "media": dict(manifest.get("media") or MEDIA_FILES),
         "error": manifest.get("error"),
+        "warnings": [
+            str(item).strip()
+            for item in ((manifest.get("render") or {}).get("warnings") or [])
+            if str(item).strip()
+        ],
     }
     if job_id and is_safe_artifact_id(artifact):
         base = f"/api/jobs/{job_id}/artifacts/{artifact}/media"
