@@ -138,7 +138,7 @@ def test_voice_room_hides_cloning_when_openrouter_is_disabled_or_quarantined(mon
 
 @pytest.mark.parametrize("name", ["voiceclone.js", "voiceroom.js"])
 def test_clone_panels_show_the_server_cleaning_warning(name):
-    text = (ROOT / "static" / "studio" / name).read_text(encoding="utf-8")
+    text = (ROOT / "static" / "voice" / name).read_text(encoding="utf-8")
     assert "function cleaningNote(record)" in text
     assert "record?.warning" in text and "record?.cleaned === false" in text
     assert text.count("cleaningNote(record)") >= 2

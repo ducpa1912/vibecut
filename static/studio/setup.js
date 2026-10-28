@@ -18,7 +18,7 @@
 
 import { request } from "./api.js";
 import { el, formatBytes } from "./ui.js";
-import { createMyVoicePanel } from "./voiceclone.js";
+import { createMyVoicePanel } from "../voice/voiceclone.js";
 
 const KEY_ROWS = [
   {

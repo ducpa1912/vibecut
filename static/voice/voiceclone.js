@@ -15,7 +15,7 @@
  *   POST   /api/voices/clones/{voice_id}/sample
  */
 
-import { invalidateReadCache, request } from "./api.js";
+import { announceChange, request } from "./api.js";
 import { el } from "./ui.js";
 
 /** The server's cleaning warning for a new clone, or "" when it was cleaned. */
@@ -104,7 +104,7 @@ export async function cloneFromFile(file, { name = "", language = "", consent = 
   const response = await fetch("/api/voices/clones", {
     method: "POST", headers, credentials: "same-origin", body: form,
   });
-  invalidateReadCache();
+  announceChange();
   if (!response.ok) throw new Error(await detailOf(response));
   return response.json();
 }

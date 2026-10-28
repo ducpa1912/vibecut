@@ -37,8 +37,8 @@ only. Ship them soon, so the other lanes pick them up on their next ship.
 | Area | Owner lane | Files |
 |---|---|---|
 | Classic view | `classic` | `static/app.js`, `static/creator.js`, `static/style.css`, `static/creator.css`, the Classic half of `static/index.html` |
-| Studio view | `studio` | `static/studio/**` except the voice files; `edits.py`, `routes_edits.py`, `compose_render.py`, `story_queue.py`, `routes_check.py`, `routes_library.py` |
-| Voice features | `voice-room` | `voice_clone.py`, `voice_extract.py`, `routes_voice_clone.py`, `static/voices.html`, `static/studio/voiceroom.js`, `static/studio/voiceclone.js` |
+| Studio view | `studio` | `static/studio/**`; `edits.py`, `routes_edits.py`, `compose_render.py`, `story_queue.py`, `routes_check.py`, `routes_library.py` |
+| Voice features | `voice-room` | `static/voice/**` (own `api.js`, `ui.js`, `voice.css`), `static/voices.html`, `voice_clone.py`, `voice_extract.py`, `routes_voice_clone.py` |
 | Shared core | any lane, additive | `app.py`, `pipeline.py`, `audio.py`, `tts.py`, `stt.py`, `music.py`, `render.py`, `settings_store.py`, `workflow_config.py`, `admin/`, tests of shared code |
 
 ## Hiding features: switches, not branches

@@ -71,6 +71,12 @@ export function invalidateReadCache(jobId = "", options = {}) {
   dropJob(jobId ? String(jobId) : "", options);
 }
 
+// Voice Room panels (static/voice/) use their own client; their writes
+// announce themselves so this cache drops reads they may have changed.
+if (typeof window !== "undefined") {
+  window.addEventListener("vibecut:data-changed", () => invalidateReadCache());
+}
+
 /** Cache counters for the network-count check. */
 export function readCacheStats() {
   return { ...readCounts, size: readCache.size };
