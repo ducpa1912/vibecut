@@ -37,6 +37,28 @@ const ACTIVE_QUEUE = new Set(["queued", "running"]);
 const ACTIVE_ITEM = new Set(["queued", "running"]);
 const ASPECTS = ["9:16", "4:5"];
 
+/**
+ * Where Finish opens after Open in Finish: the cut's set, story, shape and
+ * cut, each kept only when it still exists. A story found in another set
+ * moves the set with it. Empty strings keep Finish's own defaults.
+ */
+export function finishFocusPick(focus, sets) {
+  if (!focus) return null;
+  const list = Array.isArray(sets) ? sets : [];
+  const storyId = String(focus.storyId || "");
+  const has = (set) => Array.isArray(set?.stories)
+    && set.stories.some((story) => String(story?.id) === storyId);
+  let set = list.find((item) => item?.id === focus.setId) || null;
+  if (storyId && !has(set)) set = list.find(has) || set;
+  const aspect = String(focus.aspect || "");
+  return {
+    setId: set?.id || "",
+    storyId: set && has(set) ? storyId : "",
+    aspect: ASPECTS.includes(aspect) ? aspect : "",
+    artifactId: String(focus.artifactId || ""),
+  };
+}
+
 function jobRoot(jobId) {
   return `/api/jobs/${encodeURIComponent(jobId)}`;
 }
@@ -468,6 +490,8 @@ export function mount(root, ctx) {
   let compareA = "";
   let compareB = "";
   let packetDraft = null;
+  // Open in Finish (library): the cut to land on, used by the first load.
+  let focus = ctx.takeFinishFocus?.(ctx.getJobId()) || null;
   let packetBusy = false;
   let shareBusy = false;
   let applyBusy = false;
@@ -772,6 +796,18 @@ export function mount(root, ctx) {
     const data = await request(`${jobRoot(jobId)}/clip-sets`).catch(() => ({ clip_sets: [] }));
     sets = Array.isArray(data?.clip_sets) ? data.clip_sets : [];
     if (!sets.some((item) => item.id === activeSetId)) activeSetId = sets[0]?.id || "";
+    const pick = finishFocusPick(focus, sets);
+    focus = null;
+    if (pick) {
+      if (pick.setId) activeSetId = pick.setId;
+      if (pick.storyId) selectedStoryId = pick.storyId;
+      if (pick.aspect) aspect = pick.aspect;
+      if (pick.artifactId) {
+        selectedArtifactId = pick.artifactId;
+        packetArtifactId = pick.artifactId;
+        shareArtifactId = pick.artifactId;
+      }
+    }
     if (!stories().some((item) => item.id === selectedStoryId)) {
       selectedStoryId = stories()[0]?.id || "";
     }
