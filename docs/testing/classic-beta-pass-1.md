@@ -181,7 +181,6 @@ Open findings at the time of this script. Do not report these twice.
 
 | # | Area | Issue | Status |
 |---|---|---|---|
-| F5 | Render note | Voice-over, Dub and Full Replace still say **original audio**. | Open |
 | F6 | Hook lab | The badge rounds a half score up while the text rounds it down (for example 33 vs 32). | Open |
 | F7 | Export | SRT/VTT with no transcript downloads an empty 200 file. | Open |
 | F8 | Captions | Some cues split into one-word lines such as **It** or **dump.** | Open |

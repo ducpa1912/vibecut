@@ -4764,7 +4764,8 @@
     if (finalMatches && finalRecord.status === "ready") {
       show(finalRecord, "final");
       dom.renderNote.textContent = blocked
-        || state.plan.note || `${finalRecord.clip_count} beats · original audio · no watermark`;
+        || state.plan.note
+        || `${finalRecord.clip_count} beats · ${renderAudioNote()} · no watermark`;
       renderButton(`Render ${target}s again`);
       return;
     }
@@ -4780,7 +4781,17 @@
     const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080" };
     dom.renderNote.textContent = blocked
       || state.plan.note
-      || `${state.aspect} ${dims[state.aspect] || ""} · original audio${state.captions ? " · captions" : ""} · no watermark`;
+      || `${state.aspect} ${dims[state.aspect] || ""} · ${renderAudioNote()}${state.captions ? " · captions" : ""} · no watermark`;
+  }
+
+  function renderAudioNote() {
+    switch (state.audio.mode) {
+      case "bed": return "voice-over · original audio bed";
+      case "voice": return "dubbed voice";
+      case "music": return "music bed";
+      case "full": return "new voice + music";
+      default: return "original audio";
+    }
   }
 
   function renderButton(label) {
