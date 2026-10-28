@@ -1,308 +1,217 @@
 # VibeCut Roadmap
 
-> **Superseded for product scope.** Paid v1 scope, red lines and gates live in
-> [PRD.md](PRD.md) and [ROADMAP_V1.md](ROADMAP_V1.md). This file is the
-> engineering version history. Items below that conflict with the PRD (cloud
-> or open-core packaging, quotas/metering, SFX, voice cloning) are not planned.
+**Status:** R2 atomic trim merged. Tag `refactor-2-done`.
+**Main:** `0f68275`
+**Suite:** 1491 passed, 7 skipped.
+**Release status:** internal alpha; paid release gates remain open.
+**Source of truth:** this file replaces all earlier plan and roadmap files. Discussion records and handoffs remain historical.
 
-Version history, shipped checklist, current plan and future proposal.
-`[x]` shipped, `[~]` in progress, `[ ]` planned, `[!]` parked on purpose.
+---
 
-Full compressed plan: `~/.opencode/plan/vibecut-plan.md`.
+## 1. Where we are now
 
-Paid v1 product docs: [PRD.md](PRD.md) · [PLAN.md](PLAN.md) · [ROADMAP_V1.md](ROADMAP_V1.md) · [ROADMAP_V2.md](ROADMAP_V2.md) · [FOUNDER_BRIEF.md](FOUNDER_BRIEF.md) · [round_4.md](round_4.md) · [BUILD_PLAN.md](BUILD_PLAN.md).
+### Current product
 
-## Version control
+One local Mac workstation for turning long video or a finished cut into short posts:
 
-| Version | Date | Theme | Key changes |
-|---|---|---|---|
-| 0.13.0 | 2026-10-25 | Admin console | `/_ductator/` password-only admin; first-admin bootstrap; masked AI keys; searchable provider model catalogs; ordered model routes per workflow; reasoning/tokens/timeouts; pipeline log; hash-chained admin audit; Setup model summary |
-| 0.12.0 | 2026-10-25 | Video links | URL bar under ingest; native yt-dlp first (quality/audio/cookies/playlist/cancel); Cobalt + xhs_get optional sidecars; XHS token/cookie/login; background URL ingest + history |
-| 0.11.0 | 2026-10-24 | Rewrite/History/UI | OpenRouter project-key override + quarantine, OpenCode reasoning fix, rewrite last-good cache, script/render/upload history with restore, Moments/Smart Cut UI, audio Rewrite→Voice→Music steps, local-first STT, translation modes |
-| 0.10.0 | 2026-10-24 | Speech/Music/Upload | OpenCode→OpenRouter→Apple translation, AI rewrite fallback, MiniMax TTS/music, OpenRouter TTS/Lyria fallbacks, uploaded voice fit for Voice-over/Dub/Full Replace, audio tabs |
-| 0.9.2 | 2026-10-24 | AI music fix | Stable Audio preflight + gated-weight guidance; ungated MusicGen Small fallback with worker |
-| 0.9.1 | 2026-10-24 | Script prompt v2 | full target voice script + aesthetic + char/word budgets, complete-sentence rules, condense repair pass |
-| 0.9.0 | 2026-10-24 | P1/P2 | usage/cost readout, live STT/TTS tests, Cartesia, smoothed crop paths, review links, keyboard editor, Whisper model manager |
-| 0.8.0 | 2026-10-24 | Bilateral crop | per-aspect attention crops for 9:16/4:5/1:1/16:9, true aspect reframe, direct OpenCode Go project key mode |
-| 0.7.2 | 2026-10-24 | OpenCode translation | OpenCode Go becomes a translation provider, on by default; provider-scoped translation memo; line-end facts preserved through fit |
-| 0.7.1 | 2026-10-24 | OpenCode Go | Intelligence switched from OpenRouter to local OpenCode Go / DeepSeek V4.1 Flash, `low` variant, session-per-call, no key copy |
-| 0.7.0 | 2026-10-24 | Cloud config | Setup drawer, cloud STT (Groq/OpenAI/Deepgram), cloud TTS (OpenAI/Groq/Deepgram), secret store 0600 |
-| 0.6.3 | 2026-10-23 | Mixer v2 | click-to-add nodes, drag anywhere, cosine ramps, 100% scale, Flatten |
-| 0.6.2 | 2026-10-23 | Mixer & small models | ruler automation mixer with draggable envelopes, original/music stem waveforms, MLX + Ollama small-model rewrite with story brief and retrieval |
-| 0.6.1 | 2026-10-23 | Context rewrite | rewrite reads the full transcript, one complete sentence per beat, word-boundary fitting, memo keyed by context |
-| 0.6.0 | 2026-10-23 | Script & delivery | rewrite styles, per-clip mixer, beat sync, line editor, SpeechAnalyzer, CAS source store, SRT/VTT/EDL/XML, presets, A/B, license registry, story arc, music library |
-| 0.5.0 | 2026-10-23 | Storage & speed | video masters + audio mux, FLAC caches, 360px thumbs, cache caps, render retention, job clean, install audit |
-| 0.4.0 | 2026-10-23 | Audio replacement | voice engines (say/piper/kokoro/elevenlabs), music (own/CC0/Stable Audio), modes keep/full/bed/voice/music, translation, script builder |
-| 0.3.0 | 2026-10-23 | Render speed | parallel segments, segment cache, draft/final, VideoToolbox, cancel, ETA, render-all, aspects, captions, timeline edit |
-| 0.2.0 | 2026-10-23 | Deep read | lazy scene read, why notes, hook lab, variants, transcript CC |
-| 0.1.0 | 2026-10-23 | Core cut | probe, scene scan, stills, scoring, plans, 9:16 render |
+```text
+IMPORT → CHECK → STORIES → EDIT → FINISH
+```
 
-Versioning: SemVer-ish per feature batch. Every batch bumps the minor, updates
-this table, and gets one commit. Patch bumps for fixes only.
+- **Check** detects baked text, speech, music, faces, quality and rights, then recommends clean-first or compose-first.
+- **Stories** finds sentence-bound stories with hook, payoff and evidence.
+- **Edit** is one document per story/aspect: Clean, Reframe, Motion, Color, Text, Captions, Audio.
+- **Finish** renders 9:16/4:5, builds packet v2, preflight markers, versions, review links.
 
-## Current state
+Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music/voice/transcription/text routes with the creator's key.
 
-- Local-first FastAPI + vanilla UI, no build step.
-- Analysis: scan, shortlist, deep read, bilateral crops, smoothed crop paths.
-- Smart cut plans 15/30/60, hook lab, variants, A/B, review links, keyboard editor.
-- Audio: Voice-over/Dub/Music/Full Replace tabs; uploaded voice fit; mixer.
-- Translation: OpenCode Go DeepSeek V4.1 Flash → OpenRouter DeepSeek V4.1 Flash → Apple Translation.
-- Rewrite: OpenCode → OpenRouter → MLX/Ollama → rules.
-- TTS: MiniMax Speech 2.8 Turbo → OpenRouter Fish S2.1 Pro Free → Gemini 3.8 Flash-Lite TTS → local.
-- Music: MiniMax Music → OpenRouter Lyria 3 → library/CC0.
-- STT: cloud → Apple SpeechAnalyzer → mlx-whisper.
-- Setup: keys in `data/secrets.json` 0600, env overrides, masked API.
-- 540 tests pass. v0.13.0 working tree.
+### Shipped by wave and round
 
-## Shipped checklist
-
-### Audio script and language
-
-- [x] Clean, de-duplicate and time-fit voice lines
-- [x] Fixed translation ladder: OpenCode → OpenRouter → Apple
-- [x] One local translation fallback in normal UI: Apple; batches split and retried
-- [x] Translation memo keyed by provider; global translation cache
-- [x] Rewrite styles: faithful, smooth, viral; full-transcript context
-- [x] AI rewrite ladder: OpenCode → OpenRouter → MLX/Ollama → rules
-- [x] Complete-sentence per-beat lines; fact/budget validation; no invented numbers
-- [x] Target-language transcript context + story brief + BM25-lite retrieval
-- [x] Brief/rewrite caches keyed by model and context
-- [x] Per-line script editor with instant re-TTS; rewrite variant compare
-- [x] Uploaded voice fit for Voice-over/Dub/Full Replace
-
-### Cloud setup (optional)
-
-- [x] Local secret store (`data/secrets.json`, 0600) with env override
-- [x] Setup drawer: keys, provider selects, masked values, test buttons
-- [x] OpenCode Go rewrite + story brief; model `deepseek-v4.1-flash`, variant `low`
-- [x] Direct OpenCode Go project API key mode (project-local secret, no shared login)
-- [x] OpenRouter DeepSeek translation/rewrite fallback
-- [x] OpenRouter project key override, 401 quarantine, model error reporting
-- [x] URL bar with native yt-dlp first: Python API, no Node/Docker/Cobalt, highest quality/audio, H.264/MP4 preference, cookies, playlist picker, progress + cancel
-- [x] URL bar for optional Cobalt and xhs_get single-note ingest
-- [x] Cobalt Setup options and local-processing merge/remux
-- [x] XHS Setup token, one-shot cookie, sign-in/invite, session check
-- [x] Background URL ingest with cancel + history
-- [x] Rewrite reasoning/empty-reply retry, last-good script, no silent rules cache
-- [x] Persistent translation/rewrite/render/upload history with restore
-- [x] Moments rail + Smart Cut drag/drop/trim/remove UI
-- [x] Recent cuts: selected card, per-card delete, failed-ingest diagnostics
-- [x] Smart Cut evidence-backed reasoning: hook alternatives, source-order structure, payoff rationale, selection budget
-- [x] OCR candidate correction: low-confidence upscale retry, custom overlay words, safe LINKTREE/UNAREE selection
-- [x] Password-only local admin console at `/_ductator/` with one bootstrap account
-- [x] Masked AI key management; provider model catalogs; ordered workflow model routes with reasoning/tokens/timeouts
-- [x] Pipeline log and hash-chained admin action log
-- [x] Setup Intelligence model-route summary
-- [x] Audio Rewrite→Voice→Music steps; local-first STT; translation modes
-- [x] MiniMax Speech 2.8 Turbo + OpenRouter Fish/Gemini TTS fallback
-- [x] MiniMax Music + OpenRouter Lyria 3 fallback
-- [x] Audio mode tabs and upload-only-in-supported-modes UI
-- [x] Cloud STT: Groq Whisper turbo, OpenAI Whisper, Deepgram Nova-3
-- [x] Cloud TTS: OpenAI gpt-4o-mini-tts, Groq Orpheus, Deepgram Aura
-- [x] Cloud STT/TTS fall back to local on any error
-- [x] Cost table + recommendations in [docs/cloud-speech.md](docs/cloud-speech.md)
-- [x] Per-job cloud usage/cost readout
-- [x] Cartesia TTS adapter
-
-### Audio mixing
-
-- [x] Ruler automation mixer: draggable dB envelopes, ramps between points, clip sections
-- [x] Original audio and music-stem waveforms for loud/mute/dip monitoring
-- [x] Per-clip voice and music gain, mute
-- [x] Beat sync: BPM detection, cut snapping, beat-aligned music start
-- [x] Music asset library (generated beds saved as reusable tracks)
-- [x] License registry + strict mode for music and voice assets
-- [x] Legacy AI music: Stable Audio preflight, MusicGen Small fallback (hidden from normal UI)
-
-### Analysis
-
-- [x] SpeechAnalyzer transcription engine (macOS 26, 0 MB) with whisper fallback
-- [x] Smart crop bilateral: vertical source to horizontal 16:9 / 4:5 / 1:1 and the opposite, attention stored per aspect
-- [x] Per-frame crop path: 3 attention samples per beat, smoothed, rendered with dynamic crop expressions
-- [x] Story-arc reorder (setup → proof → payoff) for the beat order
-- [ ] Local-LLM scene notes feeding hook and payoff explanations
-
-### Delivery
-
-- [x] SRT and VTT caption export
-- [x] EDL (CMX3600) and FCP7 XML export for Resolve / Premiere
-- [x] Platform presets (TikTok, Reels, Shorts, Square, Landscape)
-- [x] Safe-zone caption margin per preset
-- [x] A/B package: top 3 hooks rendered in one batch
-- [x] Read-only review links with token, MP4 and SRT
-- [x] Keyboard-first editor: select, reorder, trim, remove, save, draft, play
-
-### Storage and speed
-
-- [x] Content-addressed source store with hardlinks and GC
-- [x] Cache caps, age prune, master reuse, FLAC caches
-- [x] Job clean (work files / renders / all but source)
-- [x] Install audit CLI
-- [x] Whisper q4/model manager in Setup: cached marker and model picker
-
-## Outstanding now
-
-1. **Verify cloud keys.** MiniMax TTS/music and OpenRouter Lyria/TTS are
-   mock-tested only. `OPENROUTER_API_KEY` returns 401; unset or replace it.
-   Add a MiniMax key, then live-test TTS and music.
-2. **MiniMax music access.** Hosted music API is only for existing paying
-   accounts. Confirm account access; otherwise use MiniMax Audio web or open
-   Music 3 weights locally.
-3. **Music latency.** First generation still blocks render. Cache exists, but
-   there is no async prefetch/background job. This is the main remaining speed
-   problem.
-4. **UI revamp not shipped.** Moments rail above Smart Cut, compact horizontal
-   strip, expandable collage, drag/drop cut editing, auto-hook orange, payoff
-   neon green, and Smart Cut rename are absent from the current UI.
-5. **Uploaded audio is whole-file fit.** It time-stretches/pads the recording to
-   cut length. Per-line sentence alignment and manual line mapping are future.
-6. **Apple Translation reliability.** Batches of 20 with one retry now; still
-   needs a live stress test on large transcripts and missing language packs.
-7. **Legacy cleanup.** Stable Audio, MusicGen, Argos/Marian/Ollama are hidden
-   from normal UI but remain in code/docs. Decide keep as Advanced or remove.
-8. **Translation glossary.** Brand/product names are not yet extracted or
-   editable. Add glossary per job, cache keyed by glossary version.
-
-## Future proposal
-
-### Audio and voice
-
-- **Async music:** generate in background on Smart Cut change, debounce, cache
-  by prompt+mood+duration, use library placeholder, swap when ready, timeout +
-  fallback.
-- **Music candidates:** generate 2 short beds, score speech masking, beat
-  alignment, energy match, spectral balance; keep best, A/B other.
-- **Stem buses:** voice, original SFX, original music, generated
-  drums/bass/harmony/melody, SFX. Dynamic EQ carve and sidechain duck.
-- **Mastering:** platform LUFS targets, true peak limiting, dialogue leveling,
-  de-ess, room match.
-- **Uploaded voice v2:** forced alignment per line, sentence split, manual
-  mapping, high-quality time-stretch. Optional voice-reference cloning later
-  with consent.
-- **SFX:** riser/whoosh/impact/ambience from MiniMax/Stable/ACE-Step or CC0;
-  auto-place at cuts/beats. Parked until music library is stable.
-- **Voice cloning:** parked; consent, provenance, license registry required.
-
-### Smart Cut UI
-
-- Move Moments directly below intro + video rating, above Smart Cut.
-- Compact horizontal filmstrip + scrub slider; expand to full collage.
-- Auto hook orange border; payoff neon green; selected clips check badge.
-- Drag moment into Smart Cut; drag clip to reorder; drag edge to trim; drag out
-  to remove.
-- Rename Build to Smart Cut.
-- One primary Render + Draft; Advanced collapses aspect, captions, arc, A/B,
-  variants, render-all.
-- Audio tabs below Smart Cut; only mode-relevant controls visible.
-
-### Translation
-
-- Keep fixed ladder: OpenCode → OpenRouter → Apple.
-- One local option only. Apple recommended for macOS; Marian only if
-  Linux/Docker becomes a target.
-- Full-script translation prompt with line IDs, target language, aesthetic/tone,
-  glossary, complete sentences, JSON array, one repair pass.
-- Cache per provider + glossary version.
-- Add glossary extractor and editor; do-not-translate list.
-
-### Music provider strategy
-
-- Normal path: MiniMax Music → OpenRouter Lyria 3 (Clip for ≤32 s, Pro for
-  longer).
-- Keep library/CC0 as instant fallback.
-- Hide Stable Audio/MusicGen from normal UI; keep legacy code only if needed.
-- OpenRouter Lyria image-to-music: pass hook/hero frame for visual vibe; test.
-- Local ACE-Step 1.5 optional future Advanced path: MIT, fast on Mac,
-  reference/repaint/cover. Do not make it required setup.
-- Music Director: transcript + aesthetic + clip energy → structured brief
-  (genre, BPM, key, instruments, sections, reference, negative prompt).
-- Cost controls: per-job usage, provider caps, cache reuse across variants.
-
-### Cloud and publishing
-
-- Open-core: AGPL/Apache core + proprietary cloud control plane.
-- Cloud needs cross-platform models: faster-whisper, PaddleOCR/Florence,
-  Demucs, Kokoro/Piper, MiniMax/OpenRouter APIs.
-- Per-tenant buckets, signed URLs, queue workers, quota/metering,
-  retention, moderation, voice-clone consent.
-- Portable job bundle between local and cloud.
-- Cost model: ~$0.01–0.03 compute per 10-min job before margin; storage/CDN on
-  top; price 3–5×.
-
-### Provider/cost notes
-
-- MiniMax Speech 2.8 Turbo: ~$60/M chars; 10-min VO ~$0.54.
-- Gemini 3.8 Flash-Lite TTS: ~$0.009/min; ~$0.09 per 10 min.
-- MiniMax Music: $0.15 per up-to-5-min track (existing accounts).
-- Lyria 3 Clip: $0.04 per 30 s; Pro: $0.08 per song.
-- OpenCode Go/OpenRouter DeepSeek: negligible per script; OpenRouter invalid
-  key must be fixed.
-- Apple Translation: free, on-device, macOS-only.
-- MusicGen: slow, non-commercial weights; do not ship in cloud.
-- Stable Audio Open: gated; optional legacy.
-
-## Priorities
-
-1. Fix OpenRouter env key; add MiniMax key; live-test TTS/music.
-2. Async music prefetch/cache so render does not block.
-3. Smart Cut + Moments rail UI revamp.
-4. Per-line uploaded voice alignment.
-5. Translation glossary + Apple stress test.
-6. Music Director + candidates + stem buses/mastering.
-7. SFX and cloning remain parked.
-
-## Build order
-
-| Phase | Content | Status |
+| Wave / round | Tag | Shipped |
 |---|---|---|
-| 9 | Rewrite styles, script editor, variant compare | shipped 0.6.0 |
-| 10 | Per-clip mixer, beat sync, music library, license registry | shipped 0.6.0 |
-| 11 | SpeechAnalyzer, SRT/VTT, EDL/XML, presets, A/B | shipped 0.6.0 |
-| 12 | CAS source store, story arc | shipped 0.6.0 |
-| 12.5 | Cloud setup: OpenCode Go + cloud STT/TTS | shipped 0.7.1 |
-| 13 | Smart crop bilateral, crop tracking, review links, keyboard editor | shipped 0.9.0 |
-| 14 | SFX, cloning (consent gated), whisper q4 manager | parked |
-| 15 | OpenRouter fallback, MiniMax TTS/music, upload fit, audio tabs | shipped 0.10.0 |
-| 16 | OpenRouter override/quarantine, rewrite reliability, history, Moments/Smart Cut UI, audio steps | shipped 0.11.0 |
-| 17 | Async music, per-line upload, glossary | next |
-| 18 | Music Director, candidates, stem buses, mastering | future |
-| 19 | Cloud/open-core packaging | future |
+| Pre-wave 0.1–0.13 | — | Core cut, deep read, render speed, audio replacement, CAS sources, Smart Cut, captions, translation, URL ingest, admin console |
+| Wave 1 Foundation | `wave-1-done` | Edit model/versions/compiler, audio split (`stt`/`tts`/`music`), Check backend with OCR boxes and tracklets, Studio shell |
+| Wave 2 Engine | `wave-2-done` | Render hooks (`pre/post` filters, motion, layer burn), Transcript v2/word timings, TTS + packs, Studio Edit base |
+| Wave 3 Flows | `wave-3-done` | Compose text/FX/LUT/stickers, Clean Flow 1, music/mix/dub, Studio Check/Edit/Clean/Effects/Audio |
+| Wave 4 Finish | `wave-4-done` | Packet v2, preflight markers, migration + Classic fallback, Studio Finish/Setup, server Clean auto-fill, music candidates |
+| QA round 1 | merged `2564ac8` | 25 QA fixes: captions, scroll, error copy, source-missing, cancel reading, story cards, queue progress, autosave, rights record |
+| R1 | `refactor-1-done` | Rights policy module + Studio Rights, story picks/trim handles, render performance + Studio read cache |
+| R2 | `refactor-2-done` | Atomic trim transaction, layer/caption ripple, fail-closed stale Edit, both-direction Studio trim, undo/rebind, Playwright drag acceptance |
 
-## Acceptance checks
+### Current state
 
-- Translation: OpenCode→OpenRouter→Apple works; Apple large batch does not
-  crash; one local provider in UI; glossary and provider cache stay separate.
-- Rewrite: smooth/viral uses AI; complete sentences; no fragments; fallback does
-  not cache literal; entity/number drift is zero.
-- TTS: uploaded recording fits cut; no translation/voice-engine prompts;
-  MiniMax → Fish → Gemini fallback order works.
-- Audio tabs: Original/Voice-over/Dub/Music/Full Replace behave as defined;
-  Voice-over keeps original audio under the voice; Dub keeps music/SFX.
-- Music: MiniMax→Lyria fallback; first generation async/cached; render never
-  stalls at 90% without status.
-- UI: Moments rail + Smart Cut drag/drop works; hook orange, payoff neon green.
-- Mixer: muting one clip removes voice only in that window; preview under 2 s
-  warm.
-- Beat sync: synthetic 120 BPM click track detected within ±2 BPM; cuts land
-  within 250 ms of a beat; drift guard skips when snapping would move > 0.4 s.
-- SpeechAnalyzer: zh sample transcript comparable to whisper-small, no HF
-  download.
-- Cloud: direct OpenCode Go payload uses `deepseek-v4.1-flash`, variant `low`,
-  and the project key; a missing key/service falls back without failing the job;
-  Groq/Deepgram segments parse; TTS payloads match provider contracts.
-- Crop: portrait→16:9 follows the subject vertically; landscape→9:16 follows it
-  horizontally; 4:5 and 1:1 use their own crop; segment cache keys change by
-  crop. Tracked paths use three samples per beat, smoothed, and per-frame crop
-  expressions; a trimmed clip offsets the path correctly.
-- Usage: one OpenCode rewrite records tokens and estimated cost on the job;
-  MiniMax/Lyria music records a call/cost.
-- Review: token page serves the MP4 and SRT without exposing the editor.
-- CAS: ingesting the same file twice yields one store entry; GC keeps referenced
-  copies.
-- Exports: EDL imports in Resolve with correct in/out frames at 30 fps.
+- 1491 tests pass; 7 opt-in skips.
+- Studio is the default UI; Classic remains behind `?classic=1` / Settings.
+- Rights lock is on by default; watermarks always refused; screen text never cleaned; handles/logos need a per-video tick.
+- Clean is on by default; `VIBECUT_ENABLE_CLEANUP=0` disables it.
+- Packet v2 and Edit/trim identity are wired.
+- R2 trim is browser-tested on synthetic fixtures.
+- Wave 5 hardening is not done: no `wave-5-done` tag, no signed/notarized app proof, no 90-minute performance proof, no founder acceptance run.
 
-## Parked on purpose
+### Pre-wave version history (compressed)
 
-- [!] SFX auto-placement: wait until music assets exist for most users.
-- [!] Voice cloning: legal risk, needs consent UX and license registry first.
-- [!] Beat-sync for AI-generated beds: generation is one-shot, no stable grid yet.
+`0.1` core cut · `0.2` deep read · `0.3` render speed · `0.4` audio replacement · `0.5` storage/speed · `0.6` script/delivery · `0.7` cloud config · `0.8` bilateral crop · `0.9` review/keyboard/translation · `0.10` voice/music/upload · `0.11` rewrite/history/UI · `0.12` URL ingest · `0.13` admin console.
+
+---
+
+## 2. Open items and next steps
+
+### Paid-release gates
+
+- **G1:** signed/notarized Mac app, launchd, offline license, clean-Mac install.
+- **G2:** 20-source story benchmark, keeper rate, lineage.
+- **G3:** crash/timeout/resume proof.
+- **G4:** auth/admin; rights lock is now server-side.
+- **G5:** disk reserve behavior.
+- Founder acceptance: 10 creators, videos A and B, all manual tables.
+
+### Wave 5 hardening (not done)
+
+| Item | Owner / note |
+|---|---|
+| Founder checklists `docs/testing/w3-live-checklist.md`, `w4-founder-checklist.md`, R1/R2 tables | Founder → Claude records |
+| Pack install/remove HTTP route; real SHA-256 pins/URLs | Wave 5 packaging |
+| 90-minute performance: frame endpoint, proxy, residual sampling | Wave 5 performance |
+| Frame/vs/final 60 fps path; overlapping caption fallback | Wave 5 |
+| Animation: arrow/underline/sticker draw-on still static | Wave 5 polish |
+| Beat snap only within ±120 ms; A/B music preview plays raw bed | Wave 5 |
+| Voice-fit not persisted; loudness only when a render exists | Wave 5 preflight |
+| Packet cover silently falls back to ffmpeg/poster | Wave 5 bug bash |
+| `MAX_CLEAN=32`; Vision sampler once failed | Wave 5 |
+| Cloud music unverified: no MiniMax key; Lyria 401 | Founder key |
+| HeyGen free tier ends 2026-11-30; fallback to MiniMax | Check after date |
+
+### R2 trim carry-overs
+
+- Classic still changes ranges via `PATCH /clip-sets`; render fails closed with Repair, but Classic has no trim UI.
+- Packet stale check is per story, not per aspect: a stale 4:5 blocks a 9:16-only packet.
+- Timeline shows the whole ±90 s pool, so a short story can look small.
+- `localStorage` job-id reads remain in `shell.js`, `effects.js`, `clean.js`, `audio.js`.
+- `story_start` pins keep their output offset when the story becomes shorter.
+- Founder R2 manual tables are unrun.
+- Deferred: A/B compare, approved-version lock, transcript-range trim, word-boundary trim.
+- Rejected: split/merge, multi-range, frame-level freeform trim, silence/beat trim, auto-filler removal, auto-deleting outside layers, cloud/multi-user.
+
+### QA round 1 partials that still matter
+
+- Stickers are not drawn in live playback; browser fonts are approximate; exact frame is truth.
+- CJK runs use Arial Unicode/Hiragino regular; ZWJ emoji and flags render as components.
+- Loudness gate skips only near-silence; music-only audio still runs STT.
+- Older clip sets keep character-share timing until stories are found again.
+- First render after upgrade re-encodes once (`layers-v2`/`text_skin` cache keys).
+- Founder retest of the 25 QA items remains a manual checklist.
+
+### Next order
+
+1. Run founder manual checks for Waves 3/4, R1 and R2.
+2. Wave 5 packaging/performance/bug-bash.
+3. Paid-release gates G1–G5 and the 20-source benchmark.
+4. Deferred trim features only after paid trim is proven.
+
+---
+
+## 3. Product contracts still in force
+
+### Edit contract
+
+- One `Edit` per story/aspect, schema 1; immutable versions in `jobs/<id>/edits/<edit_id>.json`.
+- Pointer: `job["story_edits"]["{set_id}:{story_id}:{aspect}"]`.
+- Fields: `id`, `version`, `parent`, `hash`, `renderer_version`, `story_ref`, `aspect`, `clean[]`, `reframe`, `motion[]`, `color`, `graphics[]`, `captions`, `audio`.
+- `story_ref.clip_hash` must equal `edits.clip_snapshot_hash(story.clips)`.
+- Optional `pin` (`story_start`/`story_end`) and `hidden`; absent fields hash exactly as before. `anchor` is accepted as a trim-input alias; `pin` is canonical.
+- Coordinate rule: Clean in source coords; Graphics/Captions in output coords; Motion changes the crop window.
+- Hash: sha256 over canonical JSON, includes layer assets and renderer version.
+- Stale Edit must never render. Story render/Finish/packet return 409 `edit_stale` when a pointer exists but the Edit is stale/unreadable. Legacy plan path only when no pointer exists.
+
+### Transcript v2
+
+`jobs/<id>/transcript/transcript_v2*.json`; immutable. Fields: `id`, `source_hash`, `engine`, `model`, `language`, `created`, `hash`, `segments[]`, `words[]`, `quality`. Caption tracks record `transcript_id`. Word timings are measured; interpolation only for legacy.
+
+### SourceReport / Check
+
+`POST/GET /api/jobs/{id}/check`. Tracklet:
+
+```text
+{id, kind, box{x,y,w,h} source-normalized 0–1, ranges[{start,end}], text_sample, confidence}
+```
+
+Kinds: `subtitle`, `title`, `lower_third`, `handle_or_logo`, `watermark`, `credit`, `screen_text`.
+`screen_text` is dense UI/document text; never pre-filled for Clean, never counted as baked captions.
+Watermark always refused; handle/logo needs the per-video tick; rights not attested locks Clean.
+
+### Rights policy
+
+- `rights.py` is the only policy source; `GET /api/rights/policy`, `job.rights_policy`, `POST /api/settings` `rights.lock`.
+- Lock on: import needs the ownership tick; lock off: import open, but handle/logo cleaning still needs the per-video tick.
+- Watermark always refused; screen_text never cleaned, with lock on or off.
+- No request body or localStorage decides policy. Turning the lock on does not rewrite saved Edits.
+
+### Atomic trim
+
+```text
+POST /api/jobs/{job_id}/clip-sets/{set_id}/stories/{story_id}/trim
+  expected_revision
+  start_sentence
+  end_sentence
+  dry_run?
+```
+
+- One `update_job` commit; story range + Edit versions + caption track + pointers commit together or not at all.
+- Revision bump on every range change; mismatch is 409 `revision_mismatch`.
+- Pool is the contiguous source range between neighbouring stories, ±90 s; both directions.
+- Time mapping through old/new clips: inside moved, partly clipped, fully outside kept as `hidden` with old times, never deleted.
+- Captions rebuild/reflow in the same transaction; manual text kept; cached track rejected on clip-hash mismatch.
+- Receipt: old/new range, moved/clipped/outside/pinned layers, caption counts.
+- Undo restores range/Edit/captions as a new version with a new undo token. Artifacts and review links never change.
+- Finish fails closed; no plan fallback while an Edit pointer exists.
+- `GET trim`, `POST trim/undo`, `POST trim/rebind`; `dry_run` writes nothing.
+
+### Packet v2 / identity
+
+- Packet includes `edit.json`, `audio.json`, `music.json`, layer assets, frame-endpoint covers.
+- Artifact identity covers `edit.hash`, `transcript_id`, audio/music hashes.
+- Review links show `Edit vN`.
+- Packet route: `POST /api/jobs/{job_id}/artifacts/{artifact_id}/packet`.
+
+### Never-list
+
+- No accounts, cloud sync, team seats, subscription, credits, per-clip meter.
+- No publishing, scheduling, OAuth, platform APIs, analytics, virality scores.
+- No watermark removal.
+- No generative face/logo repair, avatars, voice cloning, stock B-roll.
+- No full-source 4K cleanup, auto-resume, auto-posting, telemetry.
+- No silent retargeting, overwriting approved artifacts, or plan fallback when an Edit exists.
+- Do not delete layers or artifacts during trim.
+
+### Local/offline rule
+
+Import, Check, Stories, Edit, render and packet work with the network off. Cloud is explicit: music generation, cloud voices, optional STT and AI text. Cloud uses the creator's own key.
+
+---
+
+## 4. Superseded history
+
+| Old file | What it planned | What replaced it |
+|---|---|---|
+| `PLAN.md` | Paid-v1 execution: stabilize, package beta, paid gates, pilot, benchmark | Wave/Studio work; paid gates remain in §2. Contracts and gates absorbed here. |
+| `BUILD_PLAN.md` | Detect → Dissect → Compose, Flow 1/2, SFX, filters, music, sub-agent waves | Superseded by studio revamp; the workflow is now Check → Stories → Edit with Clean/Text/Captions/Effects/Color/Audio. |
+| `REVAMP_PLAN.md` | Studio product plan: Edit document, Check, STT/TTS/music, packs, UI, milestones | Executed through Waves 1–4, R1/R2; lasting contracts are in §3. |
+| `WORKPLAN.md` | Wave roles, ownership, review rules, handoffs | Waves complete; no ongoing planning authority. Handoffs remain historical. |
+| `ROADMAP.md` (old) | Engineering version history, shipped checklist, provider notes, future cloud proposals | This file. Old cloud/open-core proposals are dropped. |
+| `ROADMAP_V1.md` | Paid-v1 product roadmap | Superseded by Studio work; paid gates remain. |
+| `ROADMAP_V2.md` | Paid-v1 + conditional cleanup/overlay roadmap | Superseded by revamp and R1/R2. |
+| `docs/REFACTOR_PLAN.md` | R1 rights lock, Studio rights, story picks/trim, performance | Executed in R1; rights/trim/perf contracts remain. |
+| `docs/R2_TRIM_PLAN.md` | Atomic trim transaction, caption reflow, fail-closed render, Studio trim, acceptance | Executed in R2; atomic trim contract remains in §3. |
+| `docs/cloud-plan.md` | Open-source + cloud control plane, queues, multi-tenant, billing | Design exploration, never implemented. Product remains local-first; no cloud accounts or hosted control plane. |
+
+---
+
+## 5. Pointers
+
+- Discussion records: `round_*.md`.
+- Wave/round handoffs: `docs/handoff/**`.
+- QA evidence/checklists: `docs/testing/**`.
+- Product brief: `FOUNDER_BRIEF.md`; paid-v1 PRD: `PRD.md`; setup and feature docs: `README.md`, `docs/*.md`.
+- Tags: `wave-1-done`, `wave-2-done`, `wave-3-done`, `wave-4-done`, `refactor-1-done`, `refactor-2-done`.
+
+**Rule:** this roadmap is the only active plan/roadmap. If a proposal is not in §2 or a contract in §3, it is historical.

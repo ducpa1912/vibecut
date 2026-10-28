@@ -9,7 +9,7 @@ routes in :mod:`routes_trim` own the transaction; this module owns the maths:
 * graphic layer ripple (moved, clipped, outside, pinned);
 * the receipt shape and the undo token.
 
-Time mapping rule (R2_TRIM_PLAN 2.2): output time maps to source time through
+Time mapping rule (ROADMAP.md, Product contracts still in force — atomic trim): output time maps to source time through
 the **old** clips, then source time maps back to output time through the
 **new** clips. Times outside a clip edge extrapolate from that edge, so a fully
 outside layer is detected instead of silently clamped.

@@ -5,7 +5,7 @@ strings and a flat overlay layer list. It never starts ffmpeg, probes media,
 reads a render, or writes a file. Wave 2 wires the strings into
 ``render._segment``; this module is the contract they are tested against.
 
-Stage order per segment (matches REVAMP_PLAN §4)::
+Stage order per segment (matches ROADMAP.md, Product contracts still in force)::
 
     source -> [clean] -> crop/reframe -> scale -> [motion] -> [colour]
 

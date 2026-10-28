@@ -4,7 +4,7 @@ One job lock, one ``app.update_job`` commit point. Immutable Edit sidecars, the
 rebuilt caption track and the trim receipt are written before the commit; a
 failed commit leaves unreferenced orphans and never mutates the story.
 
-Contract: ``docs/R2_TRIM_PLAN.md`` sections 2.1-2.5.
+Contract: ``ROADMAP.md``, Product contracts still in force — atomic trim.
 """
 
 from __future__ import annotations

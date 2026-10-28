@@ -1090,7 +1090,7 @@ warnings are expected: `setuptools` lacks usable license metadata.
 - [History API](docs/history-api.md)
 - [Rewrite prompt](docs/rewrite-prompt.md)
 - [Licensing and distribution](docs/licensing.md)
-- [Cloud plan](docs/cloud-plan.md)
+- [Architecture and contracts](ROADMAP.md#3-product-contracts-still-in-force)
 - [Roadmap](ROADMAP.md)
 
 ## License
