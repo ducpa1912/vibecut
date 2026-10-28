@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Tag the shipped classic lane as a beta release and push the tag.
+# Beta testers get tags, never a branch tip (docs/branching.md, Phase C).
+#
+#   scripts/release.sh --founder-passed            # tag and push beta-YYYYMMDD-N
+#   scripts/release.sh --founder-passed --dry-run  # say what it would tag
+#
+# Run it from the classic worktree after the founder test pass is clean.
+set -euo pipefail
+
+passed=0
+dry_run=0
+for arg in "$@"; do
+  case "$arg" in
+    --founder-passed) passed=1 ;;
+    --dry-run) dry_run=1 ;;
+    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+if [[ "$passed" -ne 1 ]]; then
+  echo "A beta tag needs a clean founder test pass. Re-run with --founder-passed once it has one." >&2
+  exit 1
+fi
+
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$branch" != "classic" ]]; then
+  echo "Beta releases come from the classic lane; this checkout is on '$branch'." >&2
+  exit 1
+fi
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "Commit and ship your changes first." >&2
+  exit 1
+fi
+
+origin=$(git remote get-url origin)
+case "$origin" in
+  git@github.com:*) url="https://github.com/${origin#git@github.com:}" ;;
+  *) url="$origin" ;;
+esac
+net() {
+  if command -v gh >/dev/null 2>&1; then
+    git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+  else
+    git "$@"
+  fi
+}
+
+net fetch -q "$url" '+refs/heads/classic:refs/remotes/origin/classic' '+refs/tags/*:refs/tags/*'
+if [[ "$(git rev-parse HEAD)" != "$(git rev-parse refs/remotes/origin/classic)" ]]; then
+  echo "This classic is not what GitHub has. Run scripts/ship.sh first, so the tag is a shipped commit." >&2
+  exit 1
+fi
+
+day=$(date +%Y%m%d)
+n=1
+while git rev-parse -q --verify "refs/tags/beta-$day-$n" >/dev/null; do
+  n=$((n + 1))
+done
+tag="beta-$day-$n"
+commit=$(git rev-parse --short HEAD)
+
+if [[ "$dry_run" -eq 1 ]]; then
+  echo "Would tag $commit as $tag and push it."
+  exit 0
+fi
+
+git tag -a "$tag" -m "Beta $tag: classic at $commit. Build with VIBECUT_EDITION=classic and no VIBECUT_FEATURES."
+net push "$url" "refs/tags/$tag"
+echo "Released $tag ($commit). Testers build from this tag, not from the branch."

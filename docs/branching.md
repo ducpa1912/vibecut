@@ -55,6 +55,24 @@ Planned switches (see the plan below):
 - `VIBECUT_FEATURES=voice_room,...`: turns on hidden features. If `voice_room` is
   off, `/voices` and the voice clone routes answer 404 and no link to them shows.
 
+## Beta releases
+
+When the founder test pass on `classic` is clean, run this from the classic worktree:
+
+```bash
+scripts/release.sh --founder-passed
+```
+
+It tags the shipped `classic` as `beta-YYYYMMDD-N` and pushes the tag. It refuses
+when:
+
+- you are on another lane,
+- there are uncommitted changes,
+- the lane does not match GitHub.
+
+Testers build from the tag, with `VIBECUT_EDITION=classic` and no
+`VIBECUT_FEATURES`.
+
 ## Working with OpenCode or another session
 
 Give each session one lane worktree. Tell it to commit on that lane and finish
