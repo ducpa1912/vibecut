@@ -247,9 +247,10 @@ async function performRequest(path, options = {}) {
  * GETs of the job, its clip-sets, its Check report and its edits list are
  * served from the shared read cache. Every write clears the cache. Pass
  * `fresh: true` to force the job read that the shell watcher uses to detect
- * an external `updated` change.
+ * an external `updated` change. Pass `invalidate: false` for a POST that
+ * writes nothing (a trim dry run) so dragging never empties the cache.
  * @param {string} path
- * @param {{method?: string, body?: unknown, signal?: AbortSignal, fresh?: boolean}} options
+ * @param {{method?: string, body?: unknown, signal?: AbortSignal, fresh?: boolean, invalidate?: boolean}} options
  * @returns {Promise<any>}
  */
 export async function request(path, options = {}) {
@@ -260,7 +261,7 @@ export async function request(path, options = {}) {
     try {
       return await performRequest(path, options);
     } finally {
-      invalidateReadCache();
+      if (options.invalidate !== false) invalidateReadCache();
     }
   }
   if (!options.signal && cacheablePath(path)) {
@@ -372,12 +373,88 @@ export function listClipSets(jobId) {
   return request(jobPath(jobId, "/clip-sets"));
 }
 
-/** Change stories' sentence ranges. `PATCH /api/jobs/{id}/clip-sets/{set}`. */
-export function patchClipSetStories(jobId, setId, stories) {
-  return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}`), {
-    method: "PATCH",
-    body: { stories },
+// ------------------------------------------------------------- story trim
+//
+// R2 atomic trim. The range, every live aspect's Edit, the caption track and
+// the pointers commit together on the server. Studio never PATCHes a story
+// range on its own, so these helpers are the only range writes.
+
+/** One story's trim route prefix. */
+export function trimPath(jobId, setId, storyId) {
+  return jobPath(
+    jobId,
+    `/clip-sets/${encodeURIComponent(setId)}/stories/${encodeURIComponent(storyId)}/trim`,
+  );
+}
+
+/**
+ * Current range, sentence pool, neighbours, aspect health and limits.
+ * `GET …/stories/{story}/trim`.
+ */
+export function getTrimState(jobId, setId, storyId, { fresh = false } = {}) {
+  return request(trimPath(jobId, setId, storyId), fresh ? { fresh: true } : {});
+}
+
+/**
+ * Trim a story at sentence bounds. `dry_run` returns the same shape and
+ * writes nothing, so it can run on every drag step.
+ */
+export function trimStory(jobId, setId, storyId, {
+  expectedRevision = 0,
+  startSentence,
+  endSentence,
+  dryRun = false,
+} = {}) {
+  const body = {
+    expected_revision: Number(expectedRevision) || 0,
+    start_sentence: startSentence,
+    end_sentence: endSentence,
+  };
+  if (dryRun) body.dry_run = true;
+  return request(trimPath(jobId, setId, storyId), {
+    method: "POST",
+    body,
+    invalidate: dryRun ? false : true,
   });
+}
+
+/** Undo the trim that produced `undoToken`. `POST …/trim/undo`. */
+export function undoTrim(jobId, setId, storyId, { undoToken, expectedRevision = 0 } = {}) {
+  return request(`${trimPath(jobId, setId, storyId)}/undo`, {
+    method: "POST",
+    body: {
+      undo_token: String(undoToken || ""),
+      expected_revision: Number(expectedRevision) || 0,
+    },
+  });
+}
+
+/** Rebind every stale aspect Edit to the current range. `POST <story>/rebind`. */
+export function rebindStory(jobId, setId, storyId, { expectedRevision = 0 } = {}) {
+  const path = jobPath(
+    jobId,
+    `/clip-sets/${encodeURIComponent(setId)}/stories/${encodeURIComponent(storyId)}/rebind`,
+  );
+  return request(path, {
+    method: "POST",
+    body: { expected_revision: Number(expectedRevision) || 0 },
+  });
+}
+
+/** Structured code from a trim 409/422 (`revision_mismatch`, `edit_stale`, …). */
+export function trimErrorCode(error) {
+  const payload = error?.detail;
+  const detail = payload?.detail ?? payload;
+  if (!detail || typeof detail !== "object") return "";
+  return typeof detail.code === "string" ? detail.code : "";
+}
+
+/** The current GET payload a trim 409 carries, or null. */
+export function trimErrorCurrent(error) {
+  const payload = error?.detail;
+  const detail = payload?.detail ?? payload;
+  const current = detail && typeof detail === "object" ? detail.current : null;
+  return current && typeof current === "object" ? current : null;
 }
 
 /** Build a new story set. `POST /api/jobs/{id}/clip-sets`. */

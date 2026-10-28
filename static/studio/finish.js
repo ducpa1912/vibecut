@@ -15,7 +15,12 @@
  * Nothing outside this Mac is contacted.
  */
 
-import { request } from "./api.js";
+import {
+  getTrimState,
+  rebindStory,
+  request,
+  trimErrorCode,
+} from "./api.js";
 import {
   clear,
   el,
@@ -357,6 +362,10 @@ export function mount(root, ctx) {
   let selectedStoryId = "";
   let aspect = "9:16";
   let quality = "final";
+  // R2 trim health: per story, the current story revision and whether the
+  // chosen shape's Edit still matches the range. A stale Edit is never queued.
+  const trimHealth = new Map();
+  let trimSeq = 0;
   let selectedArtifactId = "";
   let packetArtifactId = "";
   let shareArtifactId = "";
@@ -391,6 +400,7 @@ export function mount(root, ctx) {
       </header>
       <p id="st-finish-status" class="st-status" role="status" aria-live="polite" hidden></p>
       <p id="st-finish-error" class="st-error" role="alert" hidden></p>
+      <div id="st-finish-repair" class="st-trim-stale" role="alert" hidden></div>
       <div id="st-finish-body" class="st-finish-body"></div>
     </section>
   `;
@@ -398,6 +408,7 @@ export function mount(root, ctx) {
   const dom = {
     status: root.querySelector("#st-finish-status"),
     error: root.querySelector("#st-finish-error"),
+    repair: root.querySelector("#st-finish-repair"),
     body: root.querySelector("#st-finish-body"),
   };
 
@@ -453,6 +464,126 @@ export function mount(root, ctx) {
     const rows = stories();
     const index = rows.findIndex((item) => item.id === selectedStory()?.id);
     return index < 0 ? 0 : index;
+  }
+
+  function trimKey(storyId, shape = aspect) {
+    return `${activeSetId}:${storyId}:${shape}`;
+  }
+
+  function trimHealthFor(storyId, shape = aspect) {
+    return trimHealth.get(trimKey(storyId, shape)) || null;
+  }
+
+  function staleStoryIds(shape = aspect) {
+    return stories()
+      .filter((story) => trimHealthFor(story.id, shape)?.stale)
+      .map((story) => String(story.id));
+  }
+
+  function storyById(storyId) {
+    return stories().find((item) => String(item.id) === String(storyId)) || null;
+  }
+
+  /**
+   * Ask the trim route which shapes still match. A story with a stale Edit
+   * cannot queue: the render would fail closed, so Finish explains first.
+   */
+  async function loadTrimHealth({ shape = aspect, force = false, storyIds = null } = {}) {
+    if (!job?.id || !activeSetId) return;
+    const setId = activeSetId;
+    const wantedIds = storyIds ? new Set(storyIds.map(String)) : null;
+    const rows = stories();
+    const wanted = rows.filter((story) => {
+      if (wantedIds && !wantedIds.has(String(story.id))) return false;
+      if (force) return true;
+      return !trimHealth.has(`${setId}:${story.id}:${shape}`);
+    });
+    if (!wanted.length) return;
+    const seq = ++trimSeq;
+    await Promise.all(wanted.map(async (story) => {
+      const key = `${setId}:${story.id}:${shape}`;
+      try {
+        const trim = await getTrimState(job.id, setId, story.id, { fresh: force });
+        if (disposed || seq !== trimSeq) return;
+        trimHealth.set(key, {
+          stale: Boolean(trim?.aspects?.[shape]?.stale),
+          revision: Number(trim?.revision) || 0,
+          editId: String(trim?.aspects?.[shape]?.edit_id || ""),
+          aspects: trim?.aspects || {},
+          duration: Number(trim?.story?.dur) || 0,
+        });
+      } catch (error) {
+        if (disposed || seq !== trimSeq) return;
+        // No trim route (older server) or no current Edit: keep the old
+        // behaviour and let the queue's own 409 explain.
+        trimHealth.set(key, null);
+      }
+    }));
+  }
+
+  function clearRepair() {
+    if (!dom.repair) return;
+    dom.repair.hidden = true;
+    dom.repair.replaceChildren();
+  }
+
+  function showRepair(message, storyId, shape = aspect) {
+    if (!dom.repair) return;
+    const button = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: "Repair this shape",
+    });
+    button.addEventListener("click", () => { void repairStory(storyId, shape, button); });
+    dom.repair.hidden = false;
+    dom.repair.replaceChildren(
+      el("span", { text: message || "This story changed after its Edit was made." }),
+      button,
+    );
+  }
+
+  async function repairStory(storyId, shape = aspect, button = null) {
+    const story = storyById(storyId);
+    if (!job?.id || !activeSetId || !story) return;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Repairing…";
+    }
+    announce("Rebinding the Edit to the current story range…");
+    try {
+      let health = trimHealthFor(storyId, shape);
+      if (!health) {
+        await loadTrimHealth({ shape, force: true });
+        health = trimHealthFor(storyId, shape);
+      }
+      const result = await rebindStory(job.id, activeSetId, storyId, {
+        expectedRevision: Number(health?.revision) || 0,
+      });
+      if (disposed) return;
+      trimHealth.delete(trimKey(storyId, shape));
+      await Promise.all([loadSets(), loadEdits()]);
+      await loadTrimHealth({ shape });
+      if (disposed) return;
+      clearRepair();
+      announce(
+        `Repaired. ${formatDuration(Number(result?.duration) || storyDuration(story))} is ready to queue.`,
+        "ok",
+      );
+      renderAll();
+    } catch (error) {
+      if (disposed) return;
+      announce(error?.message || "Could not repair this shape.", "bad");
+      const code = trimErrorCode(error);
+      if (code === "revision_mismatch" || code === "edit_changed") {
+        trimHealth.delete(trimKey(storyId, shape));
+        await loadTrimHealth({ shape, force: true, storyIds: [storyId] });
+        if (!disposed) renderAll();
+      }
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.textContent = "Repair this shape";
+      }
+    }
   }
 
   function readyArtifacts() {
@@ -628,14 +759,17 @@ export function mount(root, ctx) {
       await loadSets();
       await Promise.all([loadArtifacts(), loadQueues(), loadEdits(), loadPackets(), loadShares()]);
       if (stories().length) {
-        await loadChecks().catch((error) => {
-          checks = {
-            markers: [],
-            blocked: false,
-            note: checksFailedNote(error),
-            fallback: true,
-          };
-        });
+        await Promise.all([
+          loadChecks().catch((error) => {
+            checks = {
+              markers: [],
+              blocked: false,
+              note: checksFailedNote(error),
+              fallback: true,
+            };
+          }),
+          loadTrimHealth(),
+        ]);
       }
       renderAll();
       if (!notice) announce("");
@@ -745,9 +879,12 @@ export function mount(root, ctx) {
       shareArtifactId = "";
       compareA = "";
       compareB = "";
+      trimHealth.clear();
+      clearRepair();
       keepArtifactSelection();
       void refreshChecks();
       renderAll();
+      void loadTrimHealth({ force: true }).then(() => { if (!disposed) renderAll(); });
     });
     label.append(select);
     return label;
@@ -785,9 +922,11 @@ export function mount(root, ctx) {
       shareArtifactId = "";
       compareA = "";
       compareB = "";
+      clearRepair();
       keepArtifactSelection();
       void refreshChecks();
       renderAll();
+      void loadTrimHealth({ shape: aspect }).then(() => { if (!disposed) renderAll(); });
     });
     shapeLabel.append(shape);
 
@@ -798,13 +937,24 @@ export function mount(root, ctx) {
     qualitySelect.addEventListener("change", () => { quality = qualitySelect.value; });
     qualityLabel.append(qualitySelect);
 
+    const staleIds = new Set(staleStoryIds(aspect));
     const queueAll = el("button", {
       class: "st-btn st-btn-primary",
       type: "button",
       text: `Queue all stories · ${aspect}`,
+      disabled: busy || staleIds.size > 0,
+      title: staleIds.size
+        ? "Repair every stale shape before queueing. A stale Edit never renders."
+        : "",
     });
     queueAll.addEventListener("click", () => { void queueStories(stories(), queueAll); });
     bar.append(shapeLabel, qualityLabel, queueAll);
+    if (staleIds.size) {
+      bar.append(el("p", {
+        class: "st-trim-stale-inline",
+        text: `${formatCount(staleIds.size, "story", "stories")} changed after its Edit. Repair before queueing; a stale Edit never renders.`,
+      }));
+    }
     if (set?.note) bar.append(el("p", { class: "st-hint", text: set.note }));
     card.append(bar);
 
@@ -815,7 +965,8 @@ export function mount(root, ctx) {
       const all = allArtifactsFor(storyId, aspect);
       const latest = ready[0] || all[0] || null;
       const current = selectedStory()?.id === storyId;
-      const row = el("article", { class: `st-finish-story${current ? " is-active" : ""}` });
+      const stale = staleIds.has(storyId);
+      const row = el("article", { class: `st-finish-story${current ? " is-active" : ""}${stale ? " is-stale" : ""}` });
       const title = el("button", {
         class: "st-finish-story-title",
         type: "button",
@@ -846,6 +997,7 @@ export function mount(root, ctx) {
           })
           : el("span", { class: "st-chip", text: "Not rendered" }),
         all.length > 1 ? el("span", { class: "st-chip", text: formatCount(all.length, "version") }) : null,
+        stale ? el("span", { class: "st-chip st-chip-bad", text: "Edit stale" }) : null,
       ]);
       const actions = el("div", { class: "st-finish-story-actions" });
       for (const shapeValue of ASPECTS) {
@@ -853,10 +1005,21 @@ export function mount(root, ctx) {
           class: "st-btn st-btn-ghost st-btn-small",
           type: "button",
           text: `Queue ${shapeValue}`,
-          disabled: busy,
+          disabled: busy || stale,
+          title: stale ? "Repair this shape first; a stale Edit never renders." : "",
         });
         button.addEventListener("click", () => { void queueStories([story], button, shapeValue); });
         actions.append(button);
+      }
+      if (stale) {
+        const repair = el("button", {
+          class: "st-btn st-btn-primary st-btn-small",
+          type: "button",
+          text: "Repair",
+          title: "Rebind this shape's Edit to the current story range.",
+        });
+        repair.addEventListener("click", () => { void repairStory(storyId, aspect, repair); });
+        actions.append(repair);
       }
       row.append(title, meta, actions);
       list.append(row);
@@ -1958,9 +2121,30 @@ export function mount(root, ctx) {
       button.disabled = true;
       button.textContent = "Queueing…";
     }
-    announce(`Queueing ${formatCount(list.length, "story", "stories")} in ${shape}…`);
+    announce(`Checking the Edit for ${formatCount(list.length, "story", "stories")}…`);
     clearError();
+    clearRepair();
     try {
+      // The preview and the Edit must agree before a render starts. Ask the
+      // trim route rather than trusting the last screen that opened.
+      await loadTrimHealth({
+        shape,
+        force: true,
+        storyIds: list.map((story) => story.id),
+      });
+      if (disposed) return;
+      const stale = list.filter((story) => trimHealthFor(story.id, shape)?.stale);
+      if (stale.length) {
+        showRepair(
+          `${formatCount(stale.length, "story", "stories")} changed after its Edit. Repair before queueing.`,
+          stale[0].id,
+          shape,
+        );
+        announce("This story changed after its Edit was made. Press Repair, then queue again.", "bad");
+        renderAll();
+        return;
+      }
+      announce(`Queueing ${formatCount(list.length, "story", "stories")} in ${shape}…`);
       const items = list.map((story) => ({
         job_id: job.id,
         set_id: activeSetId,
@@ -1974,20 +2158,32 @@ export function mount(root, ctx) {
       if (disposed) return;
       busy = false;
       renderQueueCard();
-      renderStoryCard();
       announce(`${formatCount(items.length, "story", "stories")} queued in ${shape}. They render one at a time.`, "ok");
       schedulePoll();
     } catch (error) {
       if (disposed) return;
+      const code = trimErrorCode(error);
+      if (code === "edit_stale") {
+        await loadTrimHealth({
+          shape,
+          force: true,
+          storyIds: list.map((story) => story.id),
+        });
+        const target = list.find((story) => trimHealthFor(story.id, shape)?.stale)?.id
+          || list[0]?.id
+          || selectedStory()?.id
+          || "";
+        showRepair(error?.message || "This story changed after its Edit was made. Open it in Edit and press Repair.", target, shape);
+        announce("This story changed after its Edit was made. Press Repair, then queue again.", "bad");
+        if (!disposed) renderAll();
+        return;
+      }
       announce(error?.message || "Could not queue these stories.", "bad");
     } finally {
       busy = false;
-      if (button?.isConnected) {
-        button.disabled = false;
-        button.textContent = button.classList.contains("st-btn-primary")
-          ? `Queue all stories · ${shape}`
-          : `Queue ${shape}`;
-      }
+      // Rebuild the card so every queue button (not only the one clicked)
+      // reflects the new busy/stale state, including after a 409 repair banner.
+      if (!disposed) renderStoryCard();
     }
   }
 

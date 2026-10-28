@@ -6,8 +6,12 @@
  *   GET  /api/jobs/{id}/status
  *   GET  /api/jobs/{id}/clip-sets
  *   POST /api/jobs/{id}/clip-sets
+ *   POST /api/jobs/{id}/clip-sets/{set}/stories/{story}/trim
  *   POST /api/jobs/{id}/clip-sets/{set}/stories/{story}/render
  *   POST /api/story-queues
+ *
+ * Stories ± moves the range through the same atomic trim route as the Edit
+ * timeline. Nothing here PATCHes a range on its own.
  */
 
 import {
@@ -15,9 +19,11 @@ import {
   createStoryQueue,
   getJob,
   getJobStatus,
+  invalidateReadCache,
   listClipSets,
-  patchClipSetStories,
   renderStory,
+  trimErrorCode,
+  trimStory,
 } from "./api.js";
 import {
   clear,
@@ -153,6 +159,34 @@ export function outsideLayerIds(rows, start, end) {
       return rowStart < low - 0.001 || rowEnd > high + 0.001;
     })
     .map((row) => String(row.layerId ?? row.id ?? ""));
+}
+
+/**
+ * One plain sentence for the trim receipt, for example
+ * "Moved 3 layers · 1 hidden outside · captions: 12 kept, 2 added".
+ * Never claims a layer was deleted: outside layers are hidden, not removed.
+ */
+export function receiptSummary(receipt) {
+  if (!receipt || typeof receipt !== "object") return "";
+  const layers = receipt.layers || {};
+  const count = (value) => (Array.isArray(value) ? value.length : 0);
+  const parts = [];
+  const moved = count(layers.moved);
+  const clipped = count(layers.clipped);
+  const outside = count(layers.outside);
+  const pinned = count(layers.pinned);
+  if (moved) parts.push(`Moved ${formatCount(moved, "layer")}`);
+  if (clipped) parts.push(`${clipped} clipped`);
+  if (outside) parts.push(`${outside} hidden outside`);
+  if (pinned) parts.push(`${pinned} pinned`);
+  const captions = receipt.captions;
+  if (captions && typeof captions === "object") {
+    const caption = `${Number(captions.kept) || 0} kept, ${Number(captions.added) || 0} added`;
+    const dropped = Number(captions.dropped) || 0;
+    parts.push(`captions: ${caption}${dropped ? `, ${dropped} dropped` : ""}`);
+  }
+  if (!parts.length) return "The story range changed.";
+  return parts.join(" · ");
 }
 
 export function mount(root, ctx) {
@@ -342,27 +376,43 @@ export function mount(root, ctx) {
   }
 
   async function adjustStory(story, sentences, note, group) {
-    if (!job || !activeSetId || !sentences) return;
+    if (!job || !activeSetId || !sentences?.length) return;
     for (const control of group.querySelectorAll("button")) control.disabled = true;
     note.hidden = false;
-    setStatus(note, "Updating the story range…");
+    setStatus(note, "Trimming the story…");
     try {
-      const result = await patchClipSetStories(job.id, activeSetId, [{ id: story.id, sentences }]);
+      // The trim route owns the range, the Edits and the captions. It also
+      // rebinds every live aspect, so Stories ± cannot strand an Edit.
+      const result = await trimStory(job.id, activeSetId, story.id, {
+        expectedRevision: Number(story.revision) || 0,
+        startSentence: sentences[0],
+        endSentence: sentences[sentences.length - 1],
+      });
       if (disposed) return;
-      const record = result?.clip_set;
-      if (record?.id) sets = sets.map((item) => (item.id === record.id ? record : item));
-      const updated = (record?.stories || []).find((item) => item.id === story.id);
-      renderStories();
+      const receipt = receiptSummary(result?.receipt);
+      const duration = Number(result?.duration ?? result?.story?.dur);
+      await loadSets();
+      if (disposed) return;
       showStatus(
-        updated
-          ? `Story is now ${formatDuration(updated.start)} → ${formatDuration(updated.end)} (${formatDuration(updated.dur)}). Its edit starts fresh.`
-          : "Story range updated.",
+        `${receipt || "Story range updated."}${Number.isFinite(duration) ? ` New length ${formatDuration(duration)}.` : ""}`,
         "ok",
       );
     } catch (error) {
       if (disposed) return;
-      setStatus(note, error?.message || "Could not change this story's range.", "bad");
+      const code = trimErrorCode(error);
+      const stale = code === "revision_mismatch" || code === "edit_changed";
+      setStatus(
+        note,
+        stale
+          ? `${error?.message || "This story changed."} The latest range is open; try again.`
+          : (error?.message || "Could not change this story's range."),
+        "bad",
+      );
       for (const control of group.querySelectorAll("button")) control.disabled = false;
+      if (stale) {
+        invalidateReadCache(job.id);
+        await loadSets();
+      }
     }
   }
 

@@ -1,72 +1,20 @@
 /**
  * Studio editor timeline.
  *
- * One sentence lane plus the fixed layer lanes. Bars are buttons, the ruler
- * and empty space seek, and the playhead is a percentage so the timeline never
- * needs horizontal scrolling.
+ * The sentence lane is drawn over the server's sentence `pool`, not only over
+ * the current story. That is what lets either handle move outward as well as
+ * inward. Dragging asks the trim route for a `dry_run` so the length and the
+ * layer/caption receipt update before the drop; the drop commits through the
+ * same atomic trim route as Stories ±.
+ *
+ * One duration source: the parent passes the story duration and receives the
+ * committed `TrimResult`. The timeline never keeps a private override.
  */
 
 import { el } from "../ui.js";
-import {
-  formatSpan,
-  formatTime,
-  layerSpans,
-  numberOr,
-  sentenceSegments,
-} from "./model.js";
-import { patchClipSetStories } from "../api.js";
-import { createEdit } from "./api.js";
-import {
-  nearestSentenceBoundary,
-  outsideLayerIds,
-  sentenceSpans,
-  trimStoryRange,
-} from "../stories.js";
-
-const JOB_KEY = "vibecut.studio.job";
-const TRIM_CSS_ID = "vibecut-studio-timeline-trim";
-
-const TRIM_CSS = `
-.st-tl-trim {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 12px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 3px;
-  background: rgba(232, 162, 102, 0.16);
-  cursor: ew-resize;
-  touch-action: none;
-  z-index: 4;
-}
-.st-tl-trim::before {
-  content: "";
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: 5px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--st-accent, #e8a266);
-}
-.st-tl-trim:hover,
-.st-tl-trim.is-dragging {
-  background: rgba(232, 162, 102, 0.4);
-}
-.st-tl-trim:focus-visible {
-  outline: 2px solid var(--st-accent, #e8a266);
-  outline-offset: -3px;
-}
-.st-tl-trim-end { transform: translateX(-100%); }
-.st-tl-trim[aria-disabled="true"] { display: none; }
-.st-tl-bar.is-outside {
-  border-style: dashed;
-  border-color: rgba(226, 138, 124, 0.85);
-  box-shadow: 0 0 0 1px rgba(226, 138, 124, 0.25);
-}
-`;
+import { formatSpan, formatTime, layerSpans, numberOr } from "./model.js";
+import { trimStory } from "../api.js";
+import { receiptSummary } from "../stories.js";
 
 const LANE_LABELS = {
   clean: "Clean",
@@ -86,53 +34,113 @@ const EMPTY_COPY = {
   audio: "Original sound",
 };
 
+const DRY_RUN_MS = 90;
+
 function niceStep(duration) {
   const target = Math.max(0.5, duration / 6);
   const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
   return steps.find((step) => step >= target) || 600;
 }
 
-function ensureTrimStyles() {
-  if (typeof document === "undefined" || document.getElementById(TRIM_CSS_ID)) return;
-  const style = document.createElement("style");
-  style.id = TRIM_CSS_ID;
-  style.textContent = TRIM_CSS;
-  document.head.append(style);
+/** One sentence in the server pool, in source order. */
+function poolRows(trim) {
+  const list = Array.isArray(trim?.pool) ? trim.pool : [];
+  return list
+    .filter((row) => row && row.id !== undefined && row.id !== null)
+    .map((row) => {
+      const start = numberOr(row.start);
+      const end = Math.max(start + 0.05, numberOr(row.end, start + 0.05));
+      return {
+        id: row.id,
+        text: String(row.text || "").replace(/\s+/g, " ").trim(),
+        start,
+        end,
+        duration: Math.max(0.05, end - start),
+      };
+    });
 }
 
-/** The job Studio has open. The edit document does not carry a job id. */
-function currentJobId() {
-  try {
-    const value = JSON.parse(localStorage.getItem(JOB_KEY) || "null");
-    return value && typeof value === "object" ? String(value.id || "") : "";
-  } catch (_) {
-    return "";
+function sentenceIds(trim, story) {
+  const fromTrim = Array.isArray(trim?.story?.sentence_ids) ? trim.story.sentence_ids : [];
+  if (fromTrim.length) return fromTrim.map(String);
+  return (Array.isArray(story?.sentences) ? story.sentences : []).map((row) => String(row?.id));
+}
+
+/** Committed range as indexes into the pool. Falls back to the whole pool. */
+function rangeInPool(pool, trim, story) {
+  if (!pool.length) return { startIndex: 0, endIndex: 0 };
+  const ids = new Set(sentenceIds(trim, story));
+  let startIndex = pool.findIndex((row) => ids.has(String(row.id)));
+  if (startIndex < 0) startIndex = 0;
+  let endIndex = startIndex;
+  for (let index = pool.length - 1; index >= startIndex; index -= 1) {
+    if (ids.has(String(pool[index].id))) {
+      endIndex = index;
+      break;
+    }
   }
+  if (endIndex < startIndex) endIndex = pool.length - 1;
+  return { startIndex, endIndex };
+}
+
+function sumDurations(rows) {
+  return rows.reduce((total, row) => total + Math.max(0, numberOr(row.duration)), 0);
+}
+
+function clampIndex(value, low, high) {
+  return Math.max(low, Math.min(high, Math.round(numberOr(value, low))));
+}
+
+/** A readable message for a refused dry run or commit. */
+function trimMessage(error) {
+  if (!error) return "";
+  if (error.status === 404 || error.status === 405) {
+    return "Trimming needs the latest server. Restart VibeCut and open this story again.";
+  }
+  return error.message || "The new range could not be checked.";
 }
 
 export function mountTimeline(root, options = {}) {
-  ensureTrimStyles();
   const handlers = {
     onSeek: options.onSeek || (() => {}),
     onSelect: options.onSelect || (() => {}),
+    onTrim: options.onTrim || (() => {}),
+    onConflict: options.onConflict || (() => {}),
+    beforeTrim: options.beforeTrim || (() => Promise.resolve(true)),
   };
   let disposed = false;
+  let jobId = String(options.jobId || "");
+  let setId = "";
   let duration = 10;
   let selected = null;
   let seeking = false;
   let busy = false;
   let drag = null;
-  // A trim changes the story and its Edit. The screen around the timeline
-  // keeps the old story until the next open, so remember the newer bounds.
-  let trimOverride = null;
-  let state = { edit: null, captions: null, story: null, aspect: "9:16" };
+  let dry = null;
+  let dryError = null;
+  let dryTimer = 0;
+  let drySeq = 0;
+  let renderRaf = 0;
+  let dragCleanup = null;
+  let pendingFocus = "";
+  // Keeps "Saving the trim…" and the committed receipt visible across the
+  // re-render that follows a drop.
+  let statusHold = null;
+  let state = {
+    edit: null,
+    captions: null,
+    story: null,
+    aspect: "9:16",
+    trim: null,
+    time: 0,
+  };
 
   root.innerHTML = `
     <section class="st-timeline" aria-labelledby="st-timeline-title">
       <header class="st-timeline-head">
         <div>
           <h2 id="st-timeline-title">Timeline</h2>
-          <p class="st-hint">Click a sentence or a layer to jump to it. Drag the story handles to trim.</p>
+          <p class="st-hint">Click a sentence or a layer to jump to it. Drag the story handles to trim at sentence bounds.</p>
         </div>
         <div class="st-timeline-meta">
           <span id="st-timeline-outside" class="st-chip st-chip-quiet" hidden></span>
@@ -157,20 +165,80 @@ export function mountTimeline(root, options = {}) {
     scroll: $(".st-timeline-scroll"),
   };
 
-  function setTimelineStatus(message, tone = "") {
+  function setStatus(message, tone = "") {
     dom.status.textContent = message || "";
     dom.status.dataset.tone = tone;
     dom.status.hidden = !message;
   }
 
-  function position(item) {
-    const total = Math.max(0.1, duration);
-    const start = Math.max(0, Math.min(total, numberOr(item.start)));
-    const end = Math.max(start + 0.05, Math.min(total, numberOr(item.end, start + 0.1)));
+  function pool() {
+    return poolRows(state.trim);
+  }
+
+  function committedRange(rows = pool()) {
+    return rangeInPool(rows, state.trim, state.story);
+  }
+
+  function workingRange(rows) {
+    if (!drag) return committedRange(rows);
     return {
-      left: (start / total) * 100,
-      width: Math.max(0.35, ((end - start) / total) * 100),
+      startIndex: clampIndex(drag.startIndex, 0, rows.length - 1),
+      endIndex: clampIndex(drag.endIndex, 0, rows.length - 1),
     };
+  }
+
+  /**
+   * The axis runs from the first pool sentence to the last one. The story is
+   * a window inside it. `leading` is the pool seconds before the window; every
+   * layer bar is offset by it so the bars stay over the same words.
+   */
+  function model() {
+    const rows = pool();
+    const working = workingRange(rows);
+    if (!rows.length) {
+      return {
+        rows,
+        working,
+        leading: 0,
+        storyDuration: Math.max(0.1, duration),
+        trailing: 0,
+        axis: Math.max(0.1, duration),
+        hasPool: false,
+      };
+    }
+    const leading = sumDurations(rows.slice(0, working.startIndex));
+    const estimate = sumDurations(rows.slice(working.startIndex, working.endIndex + 1));
+    const storyDuration = Math.max(
+      0.1,
+      drag ? numberOr(dry?.duration, estimate || duration) : duration,
+    );
+    const trailing = sumDurations(rows.slice(working.endIndex + 1));
+    return {
+      rows,
+      working,
+      leading,
+      storyDuration,
+      trailing,
+      axis: Math.max(0.1, leading + storyDuration + trailing),
+      hasPool: true,
+    };
+  }
+
+  function axisPosition(value, view) {
+    return (numberOr(value) / Math.max(0.1, view.axis)) * 100;
+  }
+
+  function position(item, view) {
+    const start = Math.max(0, Math.min(view.axis, numberOr(item.start)));
+    const end = Math.max(start + 0.02, Math.min(view.axis, numberOr(item.end, start + 0.1)));
+    return {
+      left: axisPosition(start, view),
+      width: Math.max(0.3, axisPosition(end - start, view)),
+    };
+  }
+
+  function storyTimeFromAxis(value, view) {
+    return Math.max(0, Math.min(duration, numberOr(value) - view.leading));
   }
 
   function timeFromEvent(event) {
@@ -178,158 +246,464 @@ export function mountTimeline(root, options = {}) {
     const box = track.getBoundingClientRect();
     if (!box.width) return 0;
     const ratio = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
-    return ratio * duration;
+    return ratio * model().axis;
   }
 
   function makePlayhead() {
     return el("i", { class: "st-tl-playhead", "aria-hidden": "true" });
   }
 
-  function setPlayhead(track) {
-    const line = track.querySelector(".st-tl-playhead");
-    if (!line) return;
-    line.style.left = `${(Math.max(0, Math.min(duration, numberOr(state.time))) / Math.max(0.1, duration)) * 100}%`;
+  function paintPlayheads(view) {
+    const time = view.leading + Math.max(0, Math.min(duration, numberOr(state.time)));
+    const left = `${axisPosition(time, view)}%`;
+    for (const track of dom.grid.querySelectorAll(".st-tl-track")) {
+      const line = track.querySelector(".st-tl-playhead");
+      if (line) line.style.left = left;
+    }
   }
 
-  function paintPlayheads() {
-    for (const track of dom.grid.querySelectorAll(".st-tl-track")) setPlayhead(track);
+  function outsideIds(view) {
+    if (drag && dry?.receipt?.layers) {
+      return new Set((dry.receipt.layers.outside || []).map(String));
+    }
+    return null;
   }
 
-  function makeBar(item, kind) {
-    const geometry = position(item);
+  function pinnedIds() {
+    if (!drag || !dry?.receipt?.layers) return new Set();
+    return new Set((dry.receipt.layers.pinned || []).map(String));
+  }
+
+  function makeBar(item, kind, view) {
+    const geometry = position(item, view);
     const label = String(item.label || "").trim();
+    const outside = Boolean(item.outside);
+    const selectedNow = selected?.kind === kind && selected?.id === item.layerId;
+    const storyStart = item.storyStart === null || item.storyStart === undefined
+      ? null
+      : numberOr(item.storyStart);
+    const storyEnd = item.storyEnd === null || item.storyEnd === undefined
+      ? null
+      : numberOr(item.storyEnd);
+    const span = storyStart === null
+      ? "Outside the story range"
+      : formatSpan(storyStart, storyEnd ?? storyStart);
+    const title = `${label || LANE_LABELS[kind] || "Layer"} · ${span}${outside ? " · outside the trimmed story" : ""}${item.hidden ? " · hidden outside, kept in the Edit" : ""}${item.pinned ? " · pinned to the story start" : ""}`;
     const button = el("button", {
-      class: `st-tl-bar st-tl-bar-${kind}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${item.outside ? " is-outside" : ""}${selected?.kind === kind && selected?.id === item.layerId ? " is-selected" : ""}`,
+      class: `st-tl-bar st-tl-bar-${kind}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
       type: "button",
-      title: `${label || LANE_LABELS[kind] || "Layer"} · ${formatSpan(item.start, item.end)}${item.outside ? " · outside the trimmed story" : ""}`,
-      "aria-label": `${label || LANE_LABELS[kind] || "Layer"}, ${formatSpan(item.start, item.end)}${item.outside ? ", outside the trimmed story" : ""}`,
+      title,
+      "aria-label": title,
       style: `left:${geometry.left}%;width:${geometry.width}%`,
       dataset: {
         kind,
         layer: item.layerId || item.id,
-        start: String(numberOr(item.start)),
-        outside: item.outside ? "1" : "0",
+        start: String(storyStart === null ? 0 : storyStart),
+        outside: outside ? "1" : "0",
       },
     }, [
-      geometry.width > 5 ? el("span", { text: label }) : null,
+      label ? el("span", { text: label }) : null,
     ]);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       handlers.onSelect(kind, item.layerId || item.id);
-      handlers.onSeek(numberOr(item.start));
+      const seekTo = storyStart ?? (numberOr(item.start) < view.leading ? 0 : duration);
+      handlers.onSeek(Math.max(0, Math.min(duration, seekTo)));
     });
     return button;
   }
 
-  function trimRange() {
-    if (drag) return { start: drag.startIndex, end: drag.endIndex };
-    const spans = sentenceSpans(state.story);
-    return { start: 0, end: Math.max(0, spans.length - 1) };
-  }
-
-  function paintTrim() {
-    if (!drag) return;
-    const spans = drag.spans;
-    for (const handle of dom.grid.querySelectorAll(".st-tl-trim")) {
-      const edge = handle.dataset.edge;
-      const range = trimRange();
-      const index = edge === "start" ? range.start : range.end;
-      const bound = edge === "start" ? spans[index].start : spans[index].end;
-      handle.style.left = `${Math.max(0, Math.min(1, bound / Math.max(0.1, duration))) * 100}%`;
-      handle.setAttribute("aria-valuenow", String(index));
-      handle.setAttribute("aria-valuetext", `${edge === "start" ? "Start" : "End"} at ${formatTime(bound)}`);
-      handle.classList.toggle("is-dragging", drag.edge === edge);
+  function sentenceRows(view) {
+    if (!view.hasPool) {
+      // Before the trim route answers, draw the current story as it is.
+      const rows = [];
+      let offset = 0;
+      for (const sentence of state.story?.sentences || []) {
+        const span = Math.max(0.05, numberOr(sentence.end) - numberOr(sentence.start));
+        rows.push({
+          id: sentence.id,
+          label: sentence.text || "Sentence",
+          start: offset,
+          end: offset + span,
+          storyStart: offset,
+          storyEnd: offset + span,
+          sentence: true,
+        });
+        offset += span;
+      }
+      return rows;
     }
-    const range = trimRange();
-    setTimelineStatus(
-      `Start ${formatTime(spans[range.start].start)} · End ${formatTime(spans[range.end].end)}. Snaps to sentence bounds.`,
-    );
+    const rows = [];
+    const { rows: all, working, leading, storyDuration } = view;
+    let cursor = 0;
+    for (let index = 0; index < working.startIndex; index += 1) {
+      const row = all[index];
+      rows.push({
+        id: row.id,
+        label: row.text || `Sentence ${index + 1}`,
+        start: cursor,
+        end: cursor + row.duration,
+        storyStart: null,
+        storyEnd: null,
+        sentence: true,
+      });
+      cursor += row.duration;
+    }
+    const selectedRows = all.slice(working.startIndex, working.endIndex + 1);
+    const weight = sumDurations(selectedRows) || selectedRows.length || 1;
+    let at = leading;
+    for (const row of selectedRows) {
+      const span = storyDuration * ((row.duration || 1) / weight);
+      rows.push({
+        id: row.id,
+        label: row.text || "Sentence",
+        start: at,
+        end: at + span,
+        storyStart: at - leading,
+        storyEnd: at + span - leading,
+        sentence: true,
+      });
+      at += span;
+    }
+    cursor = leading + storyDuration;
+    for (let index = working.endIndex + 1; index < all.length; index += 1) {
+      const row = all[index];
+      rows.push({
+        id: row.id,
+        label: row.text || `Sentence ${index + 1}`,
+        start: cursor,
+        end: cursor + row.duration,
+        storyStart: null,
+        storyEnd: null,
+        sentence: true,
+      });
+      cursor += row.duration;
+    }
+    return rows;
   }
 
-  function makeTrimHandle(edge, spans) {
-    const range = trimRange();
-    const index = edge === "start" ? range.start : range.end;
-    const bound = edge === "start" ? spans[index].start : spans[index].end;
+  function layerRows(view) {
+    const rows = layerSpans(state.edit, state.captions, duration);
+    const hiddenIds = new Set((state.edit?.graphics || [])
+      .filter((layer) => layer?.hidden)
+      .map((layer) => String(layer.id)));
+    const pinnedEdit = new Set((state.edit?.graphics || [])
+      .filter((layer) => layer?.pin && layer.pin !== "source")
+      .map((layer) => String(layer.id)));
+    const receiptOutside = outsideIds(view);
+    const pinned = pinnedIds();
+    let outsideCount = 0;
+    for (const row of rows) {
+      row.items = row.items.map((item) => {
+        const storyStart = numberOr(item.start);
+        const storyEnd = numberOr(item.end, storyStart);
+        const hidden = hiddenIds.has(String(item.layerId));
+        const outside = hidden || (receiptOutside
+          ? receiptOutside.has(String(item.layerId))
+          : storyStart < -0.001 || storyEnd > duration + 0.001);
+        if (outside) outsideCount += 1;
+        return {
+          ...item,
+          start: view.leading + storyStart,
+          end: view.leading + storyEnd,
+          storyStart,
+          storyEnd,
+          outside,
+          hidden,
+          pinned: pinned.has(String(item.layerId)) || pinnedEdit.has(String(item.layerId)),
+        };
+      });
+    }
+    return { rows, outsideCount };
+  }
+
+  function makeTrack(row, view, extra = {}) {
+    const track = el("div", {
+      class: `st-tl-track st-tl-track-${row.kind}`,
+      dataset: { kind: row.kind },
+      role: "group",
+      "aria-label": `${LANE_LABELS[row.kind] || row.label} track`,
+    });
+    track.append(makePlayhead());
+    const left = view.hasPool ? axisPosition(view.leading, view) : 0;
+    const right = view.hasPool ? axisPosition(view.leading + view.storyDuration, view) : 100;
+    if (left > 0.2) {
+      track.append(el("i", {
+        class: "st-tl-dim",
+        "aria-hidden": "true",
+        style: `left:0;width:${left}%`,
+      }));
+    }
+    if (right < 99.8) {
+      track.append(el("i", {
+        class: "st-tl-dim",
+        "aria-hidden": "true",
+        style: `left:${right}%;right:0`,
+      }));
+    }
+    if (view.hasPool) {
+      track.append(el("i", {
+        class: "st-tl-window",
+        "aria-hidden": "true",
+        style: `left:${left}%;width:${Math.max(0.3, right - left)}%`,
+      }));
+    }
+    for (const item of row.items) track.append(makeBar(item, row.kind, view));
+    if (row.kind === "sentences") {
+      track.append(
+        makeTrimHandle("start", view),
+        makeTrimHandle("end", view),
+      );
+    }
+    if (!row.items.length && row.kind !== "sentences") {
+      track.append(el("span", { class: "st-tl-empty", text: EMPTY_COPY[row.kind] || "Empty" }));
+    }
+    track.addEventListener("pointerdown", (event) => {
+      if (event.target.closest(".st-tl-bar, .st-tl-trim")) return;
+      seeking = true;
+      track.setPointerCapture?.(event.pointerId);
+      handlers.onSeek(storyTimeFromAxis(timeFromEvent(event), view));
+    });
+    track.addEventListener("pointermove", (event) => {
+      if (!seeking) return;
+      handlers.onSeek(storyTimeFromAxis(timeFromEvent(event), view));
+    });
+    track.addEventListener("pointerup", () => { seeking = false; });
+    track.addEventListener("pointercancel", () => { seeking = false; });
+    if (extra.bounds) track.dataset.bounds = extra.bounds;
+    return track;
+  }
+
+  function cumulativeBoundary(rows, index) {
+    return sumDurations(rows.slice(0, index));
+  }
+
+  function nearestPoolIndex(view, edge, axisTime) {
+    const rows = view.rows;
+    if (!rows.length) return null;
+    const low = edge === "start" ? 0 : view.working.startIndex;
+    const high = edge === "start" ? view.working.endIndex : rows.length - 1;
+    let best = low;
+    let distance = Infinity;
+    for (let index = low; index <= high; index += 1) {
+      const boundary = edge === "start"
+        ? cumulativeBoundary(rows, index)
+        : cumulativeBoundary(rows, index + 1);
+      const gap = Math.abs(boundary - axisTime);
+      if (gap < distance) {
+        best = index;
+        distance = gap;
+      }
+    }
+    return best;
+  }
+
+  function scheduleRender() {
+    if (disposed || renderRaf) return;
+    renderRaf = window.requestAnimationFrame(() => {
+      renderRaf = 0;
+      render();
+    });
+  }
+
+  function requestDryRun() {
+    const view = model();
+    if (!drag || !view.hasPool || !state.trim) return;
+    if (dryTimer) window.clearTimeout(dryTimer);
+    dryTimer = window.setTimeout(() => {
+      dryTimer = 0;
+      const seq = ++drySeq;
+      const working = { startIndex: drag?.startIndex, endIndex: drag?.endIndex };
+      if (working.startIndex === undefined) return;
+      const start = view.rows[working.startIndex];
+      const end = view.rows[working.endIndex];
+      if (!start || !end) return;
+      const wanted = { ...working };
+      const stillCurrent = () => !disposed
+        && seq === drySeq
+        && drag
+        && drag.startIndex === wanted.startIndex
+        && drag.endIndex === wanted.endIndex;
+      setStatus("Checking the new length and layers…", "busy");
+      void trimStory(jobId, setId, state.story.id, {
+        expectedRevision: numberOr(state.trim?.revision),
+        startSentence: start.id,
+        endSentence: end.id,
+        dryRun: true,
+      }).then((result) => {
+        if (!stillCurrent()) return;
+        dry = result;
+        dryError = null;
+        scheduleRender();
+        paintTrimStatus();
+      }).catch((error) => {
+        if (!stillCurrent()) return;
+        dry = null;
+        dryError = error;
+        scheduleRender();
+        paintTrimStatus();
+      });
+    }, DRY_RUN_MS);
+  }
+
+  function holdStatus(message, tone = "") {
+    statusHold = message ? { message, tone } : null;
+    setStatus(message, tone);
+  }
+
+  function paintTrimStatus() {
+    if (statusHold) {
+      setStatus(statusHold.message, statusHold.tone);
+      return;
+    }
+    const view = model();
+    if (!drag) {
+      if (!state.trim) {
+        setStatus(
+          view.hasPool
+            ? ""
+            : "Trim needs the story range from the server. Reload the latest build to drag the handles.",
+        );
+        return;
+      }
+      setStatus(
+        `Story ${formatTime(0)} → ${formatTime(duration)}. Drag either handle at a sentence bound.`,
+      );
+      return;
+    }
+    if (dryError) {
+      setStatus(trimMessage(dryError), "bad");
+      return;
+    }
+    const estimate = view.storyDuration;
+    if (dry) {
+      const summary = receiptSummary(dry.receipt);
+      setStatus(
+        `${formatTime(estimate)} new length${summary ? ` · ${summary}` : ""}`,
+        "ok",
+      );
+      return;
+    }
+    setStatus(`${formatTime(estimate)} new length · checking layers and captions…`, "busy");
+  }
+
+  function makeTrimHandle(edge, view) {
     const name = edge === "start" ? "Trim the story start" : "Trim the story end";
+    const working = view.working;
+    const index = edge === "start" ? working.startIndex : working.endIndex;
+    const boundary = edge === "start"
+      ? cumulativeBoundary(view.rows, working.startIndex)
+      : cumulativeBoundary(view.rows, working.endIndex + 1);
+    const left = view.hasPool ? axisPosition(boundary, view) : 0;
+    const disabled = !state.trim || !view.hasPool || view.rows.length < 2 || busy;
     const handle = el("button", {
       class: `st-tl-trim st-tl-trim-${edge}${drag?.edge === edge ? " is-dragging" : ""}`,
       type: "button",
-      title: `${name}. Snaps to sentence bounds.`,
+      title: disabled
+        ? "Trim is not available yet."
+        : `${name}. Snaps to sentence bounds.`,
       "aria-label": `${name}. Snaps to sentence bounds.`,
       role: "slider",
       "aria-valuemin": "0",
-      "aria-valuemax": String(spans.length - 1),
+      "aria-valuemax": String(Math.max(0, view.rows.length - 1)),
       "aria-valuenow": String(index),
-      "aria-valuetext": `${edge === "start" ? "Start" : "End"} at ${formatTime(bound)}`,
-      "aria-disabled": spans.length < 2 ? "true" : "false",
+      "aria-valuetext": `${edge === "start" ? "Start" : "End"} at ${formatTime(
+        edge === "start" ? storyTimeFromAxis(boundary, view) : duration,
+      )}`,
+      "aria-disabled": disabled ? "true" : "false",
       dataset: { edge },
-      style: `left:${Math.max(0, Math.min(1, bound / Math.max(0.1, duration))) * 100}%`,
+      style: `left:${left}%`,
     });
 
-    function begin(event) {
-      if (busy || spans.length < 2) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const current = trimRange();
-      drag = {
-        edge,
-        index: edge === "start" ? current.start : current.end,
-        startIndex: current.start,
-        endIndex: current.end,
-        originalStart: current.start,
-        originalEnd: current.end,
-        spans,
-      };
-      handle.setPointerCapture?.(event.pointerId);
-      paintTrim();
-    }
-
-    function move(event) {
+    function onMove(event) {
       if (!drag || drag.edge !== edge) return;
       event.preventDefault();
-      const track = handle.parentElement;
-      const box = track?.getBoundingClientRect();
+      const box = dom.grid.querySelector(".st-tl-track-sentences")?.getBoundingClientRect();
       if (!box?.width) return;
       const ratio = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
-      const low = edge === "start" ? 0 : drag.startIndex;
-      const high = edge === "start" ? drag.endIndex : drag.spans.length - 1;
-      const index = nearestSentenceBoundary(drag.spans, edge, ratio * duration, low, high);
-      if (index === null) return;
-      drag.index = index;
-      if (edge === "start") drag.startIndex = index;
-      else drag.endIndex = index;
-      paintTrim();
+      const viewNow = model();
+      const indexNow = nearestPoolIndex(viewNow, edge, ratio * viewNow.axis);
+      if (indexNow === null) return;
+      if (edge === "start") drag.startIndex = indexNow;
+      else drag.endIndex = indexNow;
+      dry = null;
+      dryError = null;
+      requestDryRun();
+      scheduleRender();
     }
 
-    function finish() {
+    function onUp() {
       if (!drag || drag.edge !== edge) return;
-      const done = drag;
+      cleanup();
+      if (dryTimer) {
+        window.clearTimeout(dryTimer);
+        dryTimer = 0;
+      }
+      const done = { startIndex: drag.startIndex, endIndex: drag.endIndex };
+      const committed = committedRange();
+      const changed = done.startIndex !== committed.startIndex
+        || done.endIndex !== committed.endIndex;
       drag = null;
-      const changed = done.startIndex !== done.originalStart || done.endIndex !== done.originalEnd;
+      dry = null;
+      dryError = null;
       if (!changed) {
-        setTimelineStatus("Story range unchanged.");
+        holdStatus("Story range unchanged.");
         render();
         return;
       }
-      void commitTrim(done.startIndex, done.endIndex);
+      void commitRange(done);
+    }
+
+    function onCancel() {
+      if (!drag || drag.edge !== edge) return;
+      cleanup();
+      if (dryTimer) {
+        window.clearTimeout(dryTimer);
+        dryTimer = 0;
+      }
+      drag = null;
+      dry = null;
+      dryError = null;
+      render();
+    }
+
+    function cleanup() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      if (dragCleanup === cleanup) dragCleanup = null;
+    }
+
+    function begin(event) {
+      if (disabled) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const viewNow = model();
+      drag = {
+        edge,
+        startIndex: viewNow.working.startIndex,
+        endIndex: viewNow.working.endIndex,
+      };
+      pendingFocus = edge;
+      statusHold = null;
+      dry = null;
+      dryError = null;
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+      dragCleanup = cleanup;
+      paintTrimStatus();
+      render();
     }
 
     handle.addEventListener("pointerdown", begin);
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", () => {
-      if (!drag || drag.edge !== edge) return;
-      drag = null;
-      render();
-      updateSelected(selected);
-    });
     handle.addEventListener("keydown", (event) => {
-      if (busy || spans.length < 2) return;
-      const current = trimRange();
-      const edgeIndex = edge === "start" ? current.start : current.end;
-      const low = edge === "start" ? 0 : current.start;
-      const high = edge === "start" ? current.end : spans.length - 1;
-      let next = edgeIndex;
+      if (disabled) return;
+      const viewNow = model();
+      const current = viewNow.working;
+      const low = edge === "start" ? 0 : current.startIndex;
+      const high = edge === "start" ? current.endIndex : viewNow.rows.length - 1;
+      let next = edge === "start" ? current.startIndex : current.endIndex;
       if (event.key === "ArrowLeft") next -= 1;
       else if (event.key === "ArrowRight") next += 1;
       else if (event.key === "Home") next = low;
@@ -338,157 +712,85 @@ export function mountTimeline(root, options = {}) {
       event.preventDefault();
       event.stopPropagation();
       next = Math.max(low, Math.min(high, next));
-      if (next === edgeIndex) return;
-      drag = {
-        edge,
-        index: next,
-        startIndex: edge === "start" ? next : current.start,
-        endIndex: edge === "start" ? current.end : next,
-        spans,
-      };
-      paintTrim();
-      drag = null;
-      void commitTrim(
-        edge === "start" ? next : current.start,
-        edge === "start" ? current.end : next,
-      );
+      if (next === (edge === "start" ? current.startIndex : current.endIndex)) return;
+      pendingFocus = edge;
+      void commitRange({
+        startIndex: edge === "start" ? next : current.startIndex,
+        endIndex: edge === "start" ? current.endIndex : next,
+      });
     });
     return handle;
   }
 
-  async function commitTrim(startIndex, endIndex) {
-    const story = state.story;
-    const ref = state.edit?.story_ref || {};
-    const spans = sentenceSpans(story);
-    const range = trimStoryRange(story, startIndex, endIndex);
-    if (!story || !ref.set_id || !ref.story_id || !range) {
-      setTimelineStatus("This story has no sentence bounds to trim.", "bad");
-      return;
-    }
-    if (range.sentences.length >= spans.length) {
-      setTimelineStatus("The whole story is already selected.");
-      return;
-    }
-    const jobId = currentJobId();
-    if (!jobId) {
-      setTimelineStatus("Open this story from Stories before trimming.", "bad");
+  async function commitRange(range) {
+    const view = model();
+    const rows = view.rows;
+    const start = rows[range.startIndex];
+    const end = rows[range.endIndex];
+    if (!state.trim || !start || !end || !state.story?.id || !setId || !jobId) {
+      setStatus(trimMessage({ status: 404 }), "bad");
+      render();
       return;
     }
     busy = true;
-    setTimelineStatus("Saving the trim…", "busy");
-    const oldDuration = duration;
-    const oldEnd = numberOr(story.end);
+    holdStatus("Saving the trim…", "busy");
+    render();
     try {
-      const result = await patchClipSetStories(jobId, ref.set_id, [
-        { id: ref.story_id, sentences: range.sentences },
-      ]);
-      const record = result?.clip_set;
-      const updated = (record?.stories || []).find((item) => item.id === ref.story_id);
-      if (!updated) throw new Error("The server did not return the trimmed story.");
-      let rebound = null;
-      let rebindError = null;
-      try {
-        rebound = await createEdit(jobId, {
-          set_id: ref.set_id,
-          story_id: ref.story_id,
-          aspect: state.aspect,
-        });
-      } catch (error) {
-        rebindError = error;
-      }
-      if (disposed) return;
-      const nextDuration = Math.max(0.1, numberOr(updated.dur, range.duration));
-      state.story = updated;
-      if (rebound?.edit) state.edit = rebound.edit;
-      const stale = trimOverride && trimOverride.storyId === updated.id ? trimOverride : null;
-      trimOverride = {
-        storyId: updated.id,
-        story: updated,
-        duration: nextDuration,
-        // Keep the values the surrounding screen still passes until it
-        // reloads the set, so a second trim does not restore the first bounds.
-        staleEnd: stale ? stale.staleEnd : oldEnd,
-        staleDuration: stale ? stale.staleDuration : oldDuration,
-      };
-      duration = nextDuration;
-      const outside = render();
-      updateSelected(selected);
-      handlers.onSeek(0);
-      if (rebindError) {
-        setTimelineStatus(
-          `Trim saved, but the edit could not follow: ${rebindError.message || "open the story again."}`,
-          "bad",
-        );
+      const saved = await handlers.beforeTrim();
+      if (saved === false) {
+        holdStatus("The layer changes could not be saved, so the trim was not sent.", "bad");
         return;
       }
-      setTimelineStatus(
-        `Story trimmed to ${formatTime(0)} → ${formatTime(nextDuration)}. The edit follows the new bounds. `
-        + (outside
-          ? `${outside} layer${outside === 1 ? "" : "s"} outside them ${outside === 1 ? "was" : "were"} kept and flagged.`
-          : "Every layer is inside the new bounds."),
-        outside ? "" : "ok",
+      // Keep the revision the creator saw. If another window moved the story,
+      // the server returns 409 with the current range instead of letting this
+      // drop overwrite it. The transaction rebinds the live Edit heads itself.
+      const result = await trimStory(jobId, setId, state.story.id, {
+        expectedRevision: numberOr(state.trim?.revision),
+        startSentence: start.id,
+        endSentence: end.id,
+      });
+      if (disposed) return;
+      const summary = receiptSummary(result?.receipt);
+      holdStatus(
+        `${summary || "Trim saved."} New length ${formatTime(numberOr(result?.duration, duration))}.`,
+        "ok",
       );
+      handlers.onTrim(result);
     } catch (error) {
       if (disposed) return;
-      setTimelineStatus(error?.message || "Could not trim this story.", "bad");
-      render();
-      updateSelected(selected);
+      if (error?.status === 409) {
+        holdStatus(
+          `${error.message || "This story changed."} The latest cut is open; drag again.`,
+          "bad",
+        );
+        handlers.onConflict(error);
+        return;
+      }
+      holdStatus(trimMessage(error), "bad");
     } finally {
       busy = false;
+      if (!disposed) render();
     }
   }
 
-  function makeTrack(row) {
-    const track = el("div", {
-      class: `st-tl-track st-tl-track-${row.kind}`,
-      dataset: { kind: row.kind },
-      role: "group",
-      "aria-label": `${LANE_LABELS[row.kind] || row.label} track`,
-    });
-    track.append(makePlayhead());
-    for (const item of row.items) track.append(makeBar(item, row.kind));
-    if (row.kind === "sentences") {
-      const spans = sentenceSpans(state.story);
-      if (spans.length) {
-        track.append(makeTrimHandle("start", spans), makeTrimHandle("end", spans));
-      }
-    }
-    if (!row.items.length) {
-      track.append(el("span", { class: "st-tl-empty", text: EMPTY_COPY[row.kind] || "Empty" }));
-    }
-    track.addEventListener("pointerdown", (event) => {
-      if (event.target.closest(".st-tl-bar, .st-tl-trim")) return;
-      seeking = true;
-      track.setPointerCapture?.(event.pointerId);
-      handlers.onSeek(timeFromEvent(event));
-    });
-    track.addEventListener("pointermove", (event) => {
-      if (!seeking) return;
-      handlers.onSeek(timeFromEvent(event));
-    });
-    track.addEventListener("pointerup", () => { seeking = false; });
-    track.addEventListener("pointercancel", () => { seeking = false; });
-    return track;
-  }
-
-  function makeRuler() {
+  function makeRuler(view) {
     const ruler = el("div", { class: "st-tl-ruler", role: "group", "aria-label": "Timeline ruler" });
-    const step = niceStep(duration);
-    const count = Math.floor(duration / step) + 1;
+    const step = niceStep(view.axis);
+    const count = Math.floor(view.axis / step) + 1;
     for (let index = 0; index < count; index += 1) {
       const time = index * step;
-      const ratio = Math.min(1, time / Math.max(0.1, duration));
+      const ratio = Math.min(1, time / Math.max(0.1, view.axis));
       const tick = el("button", {
         class: "st-tl-tick",
         type: "button",
         style: `left:${ratio * 100}%`,
-        title: `Jump to ${formatTime(time)}`,
-        "aria-label": `Jump to ${formatTime(time)}`,
+        title: `Jump to ${formatSpan(view.leading, view.leading + view.storyDuration)} story time`,
+        "aria-label": `Jump to ${formatTime(time)} on the pool`,
         dataset: { time: String(time) },
       }, [el("span", { text: formatTime(time) })]);
       tick.addEventListener("click", (event) => {
         event.stopPropagation();
-        handlers.onSeek(time);
+        handlers.onSeek(storyTimeFromAxis(time, view));
       });
       ruler.append(tick);
     }
@@ -497,46 +799,30 @@ export function mountTimeline(root, options = {}) {
       const box = ruler.getBoundingClientRect();
       if (!box.width) return;
       const ratio = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
-      handlers.onSeek(ratio * duration);
+      handlers.onSeek(storyTimeFromAxis(ratio * view.axis, view));
     });
     return ruler;
   }
 
   function render() {
     if (disposed) return;
-    const rows = [];
-    const sentences = sentenceSegments(state.story);
-    rows.push({
+    const view = model();
+    const focused = document.activeElement?.dataset?.edge || pendingFocus || "";
+    pendingFocus = "";
+    const sentenceRow = {
       id: "sentences",
       label: "Sentences",
       kind: "sentences",
-      items: sentences.map((sentence) => ({
-        id: sentence.id,
-        label: sentence.text,
-        start: sentence.start,
-        end: sentence.end,
-        sentence: true,
-      })),
-    });
-    const layers = layerSpans(state.edit, state.captions, duration);
-    let outsideCount = 0;
-    for (const row of layers) {
-      for (const item of row.items) {
-        item.outside = outsideLayerIds([item], 0, duration).length > 0;
-        if (item.outside) outsideCount += 1;
-      }
-    }
-    for (const row of layers) rows.push(row);
+      items: sentenceRows(view),
+    };
+    const { rows: layers, outsideCount } = layerRows(view);
 
     dom.grid.replaceChildren();
-    dom.grid.append(el("div", { class: "st-tl-corner", text: "Track" }), makeRuler());
-
-    for (const row of rows) {
+    dom.grid.append(el("div", { class: "st-tl-corner", text: "Track" }), makeRuler(view));
+    for (const row of [sentenceRow, ...layers]) {
       const label = el("div", { class: `st-tl-label st-tl-label-${row.kind}` }, [
         el("span", { text: row.label || LANE_LABELS[row.kind] || "Layer" }),
-        row.kind !== "sentences" ? el("small", {
-          text: String(row.items.length),
-        }) : null,
+        row.kind !== "sentences" ? el("small", { text: String(row.items.length) }) : null,
       ]);
       if (row.kind !== "sentences") {
         label.setAttribute("role", "button");
@@ -549,24 +835,31 @@ export function mountTimeline(root, options = {}) {
           }
         });
       }
-      dom.grid.append(label, makeTrack(row));
+      dom.grid.append(label, makeTrack(row, view));
     }
 
-    const layerCount = rows.reduce((total, row) => total + (row.kind === "sentences" ? 0 : row.items.length), 0);
+    const layerCount = layers.reduce((total, row) => total + row.items.length, 0);
     dom.count.textContent = `${layerCount} ${layerCount === 1 ? "layer" : "layers"}`;
     dom.span.textContent = `${formatTime(0)} – ${formatTime(duration)}`;
-    dom.outside.hidden = outsideCount === 0;
-    dom.outside.textContent = `${outsideCount} outside`;
-    dom.outside.title = outsideCount
-      ? `${outsideCount} layer${outsideCount === 1 ? "" : "s"} outside the trimmed story; kept, not deleted.`
+    dom.span.title = view.hasPool ? `Sentence pool ${formatTime(view.axis)}` : "";
+    const totalOutside = outsideCount;
+    dom.outside.hidden = totalOutside === 0;
+    dom.outside.textContent = `${totalOutside} outside`;
+    dom.outside.title = totalOutside
+      ? `${totalOutside} layer${totalOutside === 1 ? "" : "s"} outside the trimmed story; kept, not deleted.`
       : "";
-    paintPlayheads();
-    return outsideCount;
+    paintPlayheads(view);
+    updateSelected(selected);
+    if (focused) {
+      const handle = dom.grid.querySelector(`.st-tl-trim[data-edge="${focused}"]`);
+      handle?.focus?.({ preventScroll: true });
+    }
+    paintTrimStatus();
   }
 
   function updateTime(time) {
     state.time = Math.max(0, Math.min(duration, numberOr(time)));
-    paintPlayheads();
+    paintPlayheads(model());
   }
 
   function updateSelected(value) {
@@ -595,43 +888,32 @@ export function mountTimeline(root, options = {}) {
   });
 
   return {
-    setData({ edit, captions, story, duration: nextDuration, aspect } = {}) {
-      if (story !== undefined) {
-        if (
-          trimOverride
-          && story?.id === trimOverride.storyId
-          && Math.abs(numberOr(story?.end) - trimOverride.staleEnd) < 0.001
-        ) {
-          // The screen still holds the pre-trim story; keep the newer bounds.
-          story = trimOverride.story;
-          if (
-            typeof nextDuration === "number"
-            && Math.abs(nextDuration - trimOverride.staleDuration) < 0.001
-          ) {
-            nextDuration = trimOverride.duration;
-          }
-        } else if (trimOverride) {
-          trimOverride = null;
-        }
-      } else if (
-        trimOverride
-        && typeof nextDuration === "number"
-        && Math.abs(nextDuration - trimOverride.staleDuration) < 0.001
-      ) {
-        nextDuration = trimOverride.duration;
+    setData({ edit, captions, story, duration: nextDuration, aspect, trim, setId: nextSetId, jobId: nextJobId } = {}) {
+      if (nextJobId) jobId = String(nextJobId);
+      if (nextSetId) setId = String(nextSetId);
+      const storyId = String(story?.id ?? state.story?.id ?? "");
+      const previousStoryId = String(state.story?.id ?? "");
+      if (storyId && storyId !== previousStoryId) {
+        dragCleanup?.();
+        drag = null;
+        dry = null;
+        dryError = null;
+        statusHold = null;
+        pendingFocus = "";
       }
       state = {
         edit: edit === undefined ? state.edit : edit,
         captions: captions === undefined ? state.captions : captions,
         story: story === undefined ? state.story : story,
         aspect: aspect || state.aspect,
+        trim: trim === undefined ? state.trim : trim,
         time: state.time,
       };
       if (typeof nextDuration === "number" && Number.isFinite(nextDuration)) {
         duration = Math.max(0.1, nextDuration);
+        state.time = Math.max(0, Math.min(duration, state.time));
       }
       render();
-      updateSelected(selected);
     },
     setTime(time) {
       updateTime(time);
@@ -642,10 +924,16 @@ export function mountTimeline(root, options = {}) {
     setCaptionData(captions) {
       state.captions = captions;
       render();
-      updateSelected(selected);
+    },
+    refresh() {
+      render();
     },
     destroy() {
       disposed = true;
+      drag = null;
+      dragCleanup?.();
+      if (dryTimer) window.clearTimeout(dryTimer);
+      if (renderRaf) window.cancelAnimationFrame(renderRaf);
       root.replaceChildren();
     },
   };
