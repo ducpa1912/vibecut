@@ -256,10 +256,34 @@ def generation_cache_key(
     ).hexdigest()[:32]
 
 
+#: Last-resort music routes, tried after the admin routes when their provider
+#: is not configured there. A single MiniMax route must not make music depend
+#: on a MiniMax key when an OpenRouter key could make the bed instead.
+FALLBACK_MUSIC_ROUTES = (
+    {"provider": "openrouter", "model": "google/lyria-3-pro-preview"},
+    {"provider": "minimax", "model": "music-3.0"},
+)
+
+
+def music_routes_with_fallback() -> list[dict[str, str]]:
+    """Admin music routes, then a default route per unconfigured provider."""
+    routes = [dict(route) for route in audio._music_route_candidates()]
+    configured = {route["provider"] for route in routes}
+    for fallback in FALLBACK_MUSIC_ROUTES:
+        if fallback["provider"] in configured:
+            continue
+        routes.append({
+            **fallback,
+            "descriptor": f"{fallback['provider']}:{fallback['model']}",
+            "fallback": "1",
+        })
+    return routes
+
+
 def generation_available() -> list[dict[str, str]]:
-    """Configured cloud music routes that have a usable key right now."""
+    """Music routes, fallbacks included, that have a usable key right now."""
     routes: list[dict[str, str]] = []
-    for route in audio._music_route_candidates():
+    for route in music_routes_with_fallback():
         provider = str(route.get("provider") or "").lower()
         if provider == "minimax" and not audio.minimax_key():
             continue

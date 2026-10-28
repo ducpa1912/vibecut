@@ -389,7 +389,7 @@ def list_voices(engine: str) -> list[dict]:
         return [{"id": name, "name": name, "lang": "multi"} for name in names]
 
     if engine == "heygen":
-        if not audio.openrouter_available():
+        if not audio.openrouter_media_available():
             return []
         # Cloned voices first: they are the creator's own.
         return voice_clone.voice_options() + [
@@ -397,18 +397,18 @@ def list_voices(engine: str) -> list[dict]:
         ]
 
     if engine == "fish":
-        if not audio.openrouter_available():
+        if not audio.openrouter_media_available():
             return []
         return [{"id": "default", "name": "Fish default", "lang": "multi"}]
 
     if engine == "gemini":
-        if not audio.openrouter_available():
+        if not audio.openrouter_media_available():
             return []
         names = ["Kore", "Zephyr", "Puck", "Charon", "Leda", "Aoede", "Fenrir"]
         return [{"id": name, "name": name, "lang": "multi"} for name in names]
 
     if engine == "openrouter":
-        if not audio.openrouter_available():
+        if not audio.openrouter_media_available():
             return []
         names = ["Kore", "Zephyr", "Puck", "Charon", "Leda", "Aoede", "Fenrir"]
         return (
@@ -573,7 +573,7 @@ def _candidate_order(
             raise audio.AudioError("No voice routes are configured in the admin console.")
         return configured
     if requested == "openrouter":
-        requested = "fish" if "fish" in str(model or "").lower() else "gemini"
+        requested = openrouter_engine(model)
     if requested not in SYNTHESIZERS:
         raise _removed_error(requested) if is_removed_engine(requested) else audio.AudioError(
             f"Unknown voice engine {engine!r}."
@@ -614,6 +614,51 @@ def _candidate_order(
     return ordered
 
 
+#: Engines tried after the selected engine and the admin routes, best first.
+#: Only engines that are ready right now are added.
+FALLBACK_ENGINES = ("heygen", "minimax", "elevenlabs", "gemini", "fish", "kokoro", "say")
+
+
+def voice_candidates(engine: str = "auto", model: str = "") -> list[dict[str, str]]:
+    """Selected engine first, then admin routes, then every other ready engine.
+
+    Routes whose engine is not ready (no key, no model files) are skipped so a
+    missing MiniMax key never blocks HeyGen or a local voice. The selected
+    engine is kept even when it is not ready, so its own error is reported.
+    """
+    try:
+        ordered = _candidate_order(engine, model, None)
+    except audio.AudioError:
+        if str(engine or "auto").strip().lower() not in {"", "auto"}:
+            raise
+        ordered = []  # no admin routes: the fallbacks below still apply
+    status = voice_engine_status()
+
+    def ready(name: str) -> bool:
+        return bool((status.get(name) or {}).get("available"))
+
+    explicit = str(engine or "auto").strip().lower() not in {"", "auto"}
+    candidates = [
+        item for index, item in enumerate(ordered)
+        if ready(item["engine"]) or (explicit and index == 0)
+    ]
+    for name in FALLBACK_ENGINES:
+        if ready(name) and not any(item["engine"] == name for item in candidates):
+            candidates.append({
+                "engine": name,
+                "provider": "openrouter" if name in OPENROUTER_ENGINES else (
+                    "local" if name in LOCAL_ENGINES else name
+                ),
+                "model": DEFAULT_MODELS.get(name, name),
+            })
+    if not candidates:
+        raise audio.AudioError(
+            "No voice engine is ready. Add an OpenRouter, MiniMax or ElevenLabs "
+            "key in Setup, or install the Voice Pack."
+        )
+    return candidates
+
+
 def synthesize_story(
     lines: Sequence[Any],
     *,
@@ -636,7 +681,10 @@ def synthesize_story(
     reaches the returned story.
     """
     normalized = _story_lines(lines, rate, language)
-    candidates = _candidate_order(engine, model, routes)
+    candidates = (
+        voice_candidates(engine, model) if routes is None
+        else _candidate_order(engine, model, routes)
+    )
     requested_voice = str(voice or "").strip()
     primary_engine = candidates[0]["engine"]
     cache = Path(cache_dir) if cache_dir is not None else audio.CACHE / "voice"
@@ -1031,16 +1079,16 @@ def voice_engine_status() -> dict[str, dict]:
             "install": "Add a MiniMax key in Setup. Speech 2.8 Turbo.",
         },
         "heygen": {
-            "available": audio.openrouter_available(), "size_mb": 0,
+            "available": audio.openrouter_media_available(), "size_mb": 0,
             "install": "Add an OpenRouter key. HeyGen Voice Turbo (free), with voice cloning.",
-            "clone": audio.openrouter_available(),
+            "clone": audio.openrouter_media_available(),
         },
         "fish": {
-            "available": audio.openrouter_available(), "size_mb": 0,
+            "available": audio.openrouter_media_available(), "size_mb": 0,
             "install": "Add an OpenRouter key. Fish Audio S2.1.",
         },
         "gemini": {
-            "available": audio.openrouter_available(), "size_mb": 0,
+            "available": audio.openrouter_media_available(), "size_mb": 0,
             "install": "Add an OpenRouter key. Gemini Flash-Lite TTS.",
         },
     }

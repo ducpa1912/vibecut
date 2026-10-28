@@ -1990,6 +1990,7 @@ def run_render(
             script_id=script_id,
             latency_ms=round((time.time() - started) * 1000),
             entry_id=history_id,
+            warning="; ".join(result.get("warnings") or []) or None,
         )
         try:
             artifacts.complete_artifact(

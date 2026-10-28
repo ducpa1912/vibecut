@@ -106,6 +106,17 @@ function observeJob(path, value) {
   }
 }
 
+/**
+ * A running or queued payload (Check reports answer 202 while they work) is
+ * a snapshot of progress, not a result. Caching it froze polls on the first
+ * snapshot until the job stamp changed, so it is never stored.
+ */
+function inProgress(value) {
+  if (!value || typeof value !== "object") return false;
+  const state = String(value.status || "").toLowerCase();
+  return state === "queued" || state === "running" || value.complete === false;
+}
+
 function readThrough(path, load, { fresh = false } = {}) {
   if (!fresh && readCache.has(path)) {
     readCounts.hits += 1;
@@ -120,7 +131,8 @@ function readThrough(path, load, { fresh = false } = {}) {
   const task = load().then((value) => {
     if (epoch === readEpoch) {
       observeJob(path, value);
-      readCache.set(path, cloneValue(value));
+      if (inProgress(value)) readCache.delete(path);
+      else readCache.set(path, cloneValue(value));
     }
     return cloneValue(value);
   });

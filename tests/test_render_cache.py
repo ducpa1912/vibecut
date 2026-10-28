@@ -399,3 +399,23 @@ def test_shell_job_stamp_and_change_helpers():
         "legacy": "12.5", "modern": "abc", "missing": "",
         "changed": True, "same": False,
     }
+
+
+@needs_node
+def test_api_cache_never_freezes_a_running_check_poll():
+    out = run_api("""
+        const states = ["running", "running", "ready"];
+        globalThis.fetch = async (path) => {
+          calls.push(String(path));
+          const status = states.shift() || "ready";
+          const payload = {status, progress: status === "ready" ? 1 : 0.4};
+          return {ok: true, status: status === "ready" ? 200 : 202,
+                  text: async () => JSON.stringify(payload)};
+        };
+        const seen = [];
+        for (let i = 0; i < 4; i += 1) seen.push((await m.getCheckReport("j1")).status);
+        return {calls, seen};
+    """)
+    # Each running poll reaches the server; only the finished report is cached.
+    assert out["seen"] == ["running", "running", "ready", "ready"]
+    assert len(out["calls"]) == 3
