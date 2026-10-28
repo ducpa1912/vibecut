@@ -14,7 +14,7 @@ import { mount as mountStories } from "./stories.js";
 import { mount as mountEdit } from "./edit.js";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountSetup } from "./setup.js";
-import { getJobStatus, listClipSets, listJobs, request } from "./api.js";
+import { cachedJobStamp, getJob, getJobStatus, invalidateReadCache, listClipSets, listJobs, request } from "./api.js";
 import { el, formatDuration, shortDate, statusText, statusTone } from "./ui.js";
 
 const JOB_KEY = "vibecut.studio.job";
@@ -31,12 +31,28 @@ const STEPS = [
 const STEP_IDS = new Set(STEPS.map((step) => step.id));
 const WATCH_BUSY_MS = 2000;
 const WATCH_IDLE_MS = 15000;
+// The shell re-reads the full job every 150 s to see `updated` change.
+// Status keeps its 15 s cadence; this adds two reads per five minutes.
+const JOB_RECHECK_MS = 150000;
 const EMPTY_STATE = {
   jobId: "", loaded: false, status: "", progress: 0, message: "",
-  check: "none", stories: 0, missing: false, sourceMissing: "",
+  check: "none", stories: 0, missing: false, sourceMissing: "", updatedAt: "",
 };
 
 const STOPPED = new Set(["cancelled", "interrupted"]);
+
+/** A job's change stamp. Newer data uses `updated_at`; job.json uses `updated`. */
+export function jobUpdatedAt(job) {
+  const value = job?.updated_at ?? job?.updated;
+  return value === undefined || value === null ? "" : String(value);
+}
+
+/** Whether two job payloads carry different change stamps. */
+export function jobChanged(previous, next) {
+  const before = jobUpdatedAt(previous);
+  const after = jobUpdatedAt(next);
+  return Boolean(before && after && before !== after);
+}
 
 function isReading(status) {
   return Boolean(status) && status !== "ready" && status !== "failed" && status !== "error"
@@ -253,6 +269,8 @@ export function startStudio() {
   let watchSeq = 0;
   let noticeTimer = 0;
   let libraryTicket = 0;
+  let lastJobCheck = 0;
+  let lastJobUpdated = "";
 
   function renderJob() {
     const name = currentJob?.name || (currentJob?.id ? `Video ${currentJob.id}` : "");
@@ -397,16 +415,40 @@ export function startStudio() {
 
   function scheduleWatch(delay) {
     if (watchTimer) window.clearTimeout(watchTimer);
-    watchTimer = window.setTimeout(() => { void refreshState({ light: true }); }, delay);
+    watchTimer = window.setTimeout(() => {
+      void refreshState({ light: true, watch: true });
+    }, delay);
+  }
+
+  /**
+   * On the watcher's slow beat, read the full job with `fresh: true` and
+   * compare its `updated` stamp. A changed stamp means another writer (a
+   * render, Check or a second tab) changed the job; api.js drops its derived
+   * reads and the read-only screens reopen on the new data.
+   */
+  async function checkJobUpdated(jobId) {
+    const now = Date.now();
+    if (now - lastJobCheck < JOB_RECHECK_MS) return { changed: false, stamp: "" };
+    lastJobCheck = now;
+    try {
+      const fresh = await getJob(jobId, { fresh: true });
+      const stamp = jobUpdatedAt(fresh);
+      const changed = Boolean(lastJobUpdated && stamp && stamp !== lastJobUpdated);
+      lastJobUpdated = stamp;
+      return { changed, stamp };
+    } catch (_) {
+      return { changed: false, stamp: "" };
+    }
   }
 
   /**
    * Re-read the job's step state. `light` (the idle watcher, step changes)
    * reads only the status once the video is ready and nothing runs, reusing
    * the last Check and Stories answers; panels call ctx.refreshSteps() after
-   * they change those. Each poll used to fetch status, check and clip-sets.
+   * they change those. The watcher adds one full job read every 150 s so an
+   * external `updated` change invalidates the shared read cache.
    */
-  async function refreshState({ light = false } = {}) {
+  async function refreshState({ light = false, watch = false } = {}) {
     if (watchTimer) window.clearTimeout(watchTimer);
     watchTimer = 0;
     const jobId = currentJob?.id || "";
@@ -417,17 +459,24 @@ export function startStudio() {
       renderRail();
       return jobState;
     }
-    const next = { ...EMPTY_STATE, jobId, loaded: true };
+    const next = {
+      ...EMPTY_STATE, jobId, loaded: true,
+      updatedAt: jobState.jobId === jobId ? jobState.updatedAt : "",
+    };
     try {
       const status = await getJobStatus(jobId);
       next.status = String(status?.status || "");
       next.progress = Number(status?.progress || 0);
       next.message = String(status?.message || "");
       next.sourceMissing = status?.source_missing ? String(status.source_missing_message || "") : "";
+      const statusStamp = jobUpdatedAt(status);
+      if (statusStamp) next.updatedAt = statusStamp;
     } catch (error) {
       if (error?.status === 404) next.missing = true;
       else next.loaded = false;
     }
+    const cachedStamp = cachedJobStamp(jobId);
+    if (cachedStamp) lastJobUpdated = cachedStamp;
     if (canReuseSteps(jobState, jobId, next.status, light)) {
       next.check = jobState.check;
       next.stories = jobState.stories;
@@ -455,6 +504,17 @@ export function startStudio() {
     if (previous.jobId === jobId && isReading(previous.status) && !isReading(next.status)) {
       if (activeStep === "import" && next.status === "ready") go("check");
       else activate(activeStep, { focus: false, force: true });
+    }
+    if (watch && next.loaded && next.status === "ready" && jobId === (currentJob?.id || "")) {
+      const { changed, stamp } = await checkJobUpdated(jobId);
+      if (stamp) jobState.updatedAt = stamp;
+      if (changed && jobId === (currentJob?.id || "")) {
+        // The fresh job is already cached; drop only derived reads.
+        invalidateReadCache(jobId, { keepJob: true });
+        if (activeStep === "check" || activeStep === "stories") {
+          activate(activeStep, { focus: false, force: true });
+        }
+      }
     }
     const busy = isReading(next.status) || next.check === "running" || !next.loaded;
     scheduleWatch(busy ? WATCH_BUSY_MS : WATCH_IDLE_MS);
@@ -529,11 +589,16 @@ export function startStudio() {
   }
 
   function setJob(value) {
+    const previousId = currentJob?.id || "";
     if (value && value.id) {
       const same = currentJob && currentJob.id === value.id;
       currentJob = same ? { ...currentJob, ...value } : { ...value };
     } else {
       currentJob = null;
+    }
+    if ((currentJob?.id || "") !== previousId) {
+      lastJobCheck = 0;
+      lastJobUpdated = "";
     }
     writeJob(currentJob);
     renderJob();
