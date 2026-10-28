@@ -157,7 +157,7 @@ STORY_PINS = ("source", "story_start", "story_end")
 _CAPTIONS_KEYS = frozenset({"track_id", "style_id", "enabled"})
 _AUDIO_KEYS = frozenset({
     "mode", "duck_db", "loudness", "music", "voice", "translate",
-    "script_overrides",
+    "script_overrides", "mode_chosen",
 })
 TRANSLATE_MODES = ("literal", "smooth", "viral", "fun", "creative", "sad", "chill")
 _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
@@ -1056,6 +1056,13 @@ def normalize_audio(value: Any) -> dict:
             raise EditError("audio.script_overrides holds at most 200 lines.")
         if overrides:
             result["script_overrides"] = overrides
+    # Stored only when set, so older Edits keep their hash. It tells a picked
+    # "original" (keep the sound) from the default every Edit starts with.
+    if value.get("mode_chosen") is not None:
+        if not isinstance(value["mode_chosen"], bool):
+            raise EditError("audio.mode_chosen must be true or false.")
+        if value["mode_chosen"]:
+            result["mode_chosen"] = True
     return result
 
 

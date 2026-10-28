@@ -186,3 +186,14 @@ The R3 branches were merged into `main` by another session while this review ran
   - F5: `prepare_sample` forces the MP3 container. Old WAV-wrapped samples are sent as `audio/wav`.
   - F12: the candidate cache-hit names files by each candidate's index.
   - Not covered: the Edit panel change has no JS test.
+- **Fixed on `fix/review-mediums`:**
+  - F4: `clean_options` marks a language as explicit when it differs from Setup or is flagged. The Setup default that Classic sends is not explicit.
+  - F6: a clone always starts on HeyGen. Other engines get their own default voice, never the clone id. A warning is recorded when a fallback engine read lines.
+  - F7: a new `audio.mode_chosen` flag, stored only when true, marks an "original" the creator picked. Only that opts a scripted story out of voice-over. The report's suggested fix would not work: every Edit stores `mode: "original"` by default.
+  - F8: the clip search and the video clone refuse a source with `has_audio: false`.
+  - F9: re-transcribe, script writing and the clip search run on a new one-worker `voice_pool`, separate from analysis.
+    - The request answers within 20 s, or returns 202 and the page polls `GET /api/jobs/{id}/voice-tasks/{kind}`.
+    - `DELETE` on the same path cancels and drops the result.
+    - My voice cleaning reads at most the first 6 minutes of the upload.
+    - `/transcribe` now has the origin guard (part of F10).
+  - Not covered: there is no cancel button in the UI yet (the API exists), and the Stories polling is not checked in the browser.

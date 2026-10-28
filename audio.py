@@ -25,7 +25,7 @@ import urllib.request
 import uuid
 import wave
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import packs
 import settings_store
@@ -2828,6 +2828,26 @@ def _has_audio_stream(source: str) -> bool:
     return result.returncode != 0 or bool(result.stdout.strip())
 
 
+def _voice_route(engine: str, model: str, voice: str) -> tuple[str, str]:
+    """Only HeyGen speaks a clone, so a clone starts on HeyGen whatever the plan says."""
+    if is_clone_voice(voice) and engine != "heygen":
+        return "heygen", ""
+    return engine, model
+
+
+def _clone_stand_in_warning(voice: str, lines: Sequence[Mapping]) -> str:
+    """Say when a fallback engine read lines that should be in the clone."""
+    if not is_clone_voice(voice):
+        return ""
+    stand_ins = sorted({str(line.get("engine_used") or "") for line in lines} - {"heygen", ""})
+    if not stand_ins:
+        return ""
+    return (
+        "Cloned voice skipped: HeyGen failed, so some lines use the "
+        f"{', '.join(stand_ins)} default voice."
+    )
+
+
 def _source_audio_bed(
     source: str,
     tmp: Path,
@@ -2991,9 +3011,11 @@ def build_bed(
         voice_name = str(voice_plan.get("voice") or "")
         tts_cfg = _workflow("tts")
         selected_engine = str(voice_plan.get("engine") or "auto").lower()
-        candidates = voice_candidates(
-            selected_engine, str(voice_plan.get("model") or ""),
+        cloned_voice = is_clone_voice(voice_name)
+        selected_engine, voice_model = _voice_route(
+            selected_engine, str(voice_plan.get("model") or ""), voice_name,
         )
+        candidates = voice_candidates(selected_engine, voice_model)
         primary_engine = candidates[0]["engine"]
         tts_timeout = float(tts_cfg.get("timeout_s") or 300)
         workers = max(1, min(4, len(script)))
@@ -3076,6 +3098,9 @@ def build_bed(
                 for pending in futures:
                     pending.cancel()
                 raise
+        stand_in = _clone_stand_in_warning(voice_name, script) if cloned_voice else ""
+        if stand_in:
+            audio_plan.setdefault("_warnings", []).append(stand_in)
 
         clip_offsets: list[float] = []
         running = 0.0
@@ -4119,6 +4144,7 @@ from tts import (  # noqa: E402,F401
     _tts_candidates,
     _tts_route_candidates,
     _tts_voice_for,
+    is_clone_voice,
     _voice_cache,
     fit_dub_lines,
     kokoro_model_dir,

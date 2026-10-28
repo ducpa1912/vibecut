@@ -524,3 +524,39 @@ def test_legacy_4_5_render_stays_on_the_classic_path(tmp_path, monkeypatch):
     assert body["caption_track_id"] == TRACK_ID
     assert calls
     assert calls[-1][1]["edit"] is None
+
+
+@pytest.mark.parametrize("chosen, expected_mode", [(True, None), (False, "voice_over")])
+def test_scripted_story_keeps_the_original_only_when_the_creator_picked_it(
+    tmp_path, monkeypatch, chosen, expected_mode,
+):
+    data = tmp_path / "data"
+    jobs = data / "jobs"
+    sources = data / "sources"
+    jobs.mkdir(parents=True)
+    sources.mkdir(parents=True)
+    monkeypatch.setattr(app, "DATA", data)
+    monkeypatch.setattr(app, "JOBS", jobs)
+    monkeypatch.setattr(app, "SOURCES", sources)
+    directory = _write_job(jobs, _job(story_captions={f"{SET_ID}:{STORY_ID}": TRACK_ID}))
+    captions.save_track(directory, _track())
+    migrations.migrate_job(directory)
+    audio_layer = {"mode": "original"}
+    if chosen:
+        audio_layer["mode_chosen"] = True
+    edit = {"id": "e1", "hash": "h1", "audio": audio_layer}
+    monkeypatch.setattr(app, "_story_edit_for_render", lambda *args: edit)
+    monkeypatch.setattr(app, "_edit_caption_track", lambda job_id, value: (False, None))
+    monkeypatch.setattr(app, "_scripted", lambda job: True)
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        app, "_queue_render",
+        lambda *args, **kwargs: calls.append(args) or {"key": "k", "status": "queued", "artifact_id": ""},
+    )
+    response = TestClient(app.app).post(
+        f"/api/jobs/{JOB_ID}/clip-sets/{SET_ID}/stories/{STORY_ID}/render",
+        json={"quality": "final", "aspect": "9:16"},
+    )
+    assert response.status_code == 200, response.text
+    plan = calls[-1][7]
+    assert (plan or {}).get("mode") == expected_mode

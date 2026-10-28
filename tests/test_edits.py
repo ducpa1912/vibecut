@@ -811,3 +811,14 @@ def test_audio_translate_rejects_bad_target_and_mode():
             aspect="9:16",
             audio={"mode": "dub", "translate": {"target": "zh", "provider": "x"}},
         )
+
+
+def test_audio_mode_chosen_is_kept_only_when_true():
+    import edits
+
+    assert edits.normalize_audio({"mode": "original", "mode_chosen": True})["mode_chosen"] is True
+    assert "mode_chosen" not in edits.normalize_audio({"mode": "original", "mode_chosen": False})
+    # Older Edits never had the flag, so their normalised audio is unchanged.
+    assert edits.normalize_audio({"mode": "original"}) == edits.normalize_audio({"mode": "original", "mode_chosen": False})
+    with pytest.raises(edits.EditError, match="mode_chosen"):
+        edits.normalize_audio({"mode": "original", "mode_chosen": "yes"})
