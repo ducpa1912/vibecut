@@ -26,12 +26,7 @@ import {
   patchEdit,
   syncMediaCookie,
 } from "../api.js";
-import {
-  CONSENT_COPY,
-  cloneFromVideo,
-  failureCopy,
-  pollClone,
-} from "../../voiceclone.js";
+import { CONSENT_COPY, cloneFromVideo } from "../../voiceclone.js";
 
 const ENGINE_LABELS = {
   say: "Apple voices · on this Mac",
@@ -720,31 +715,14 @@ export function mountAudioPanel(host, ctx) {
     if (Number.isFinite(start) && start >= 0) body.start = start;
     if (Number.isFinite(end) && end > 0) body.end = end;
     cloneBusy = true;
-    setNotice("Cutting the speech out of the video and sending it to HeyGen…", "");
+    setNotice("Cutting the speech out of the video…", "");
     render();
     try {
       const record = await cloneFromVideo(jobId, body);
       cloneConsent = false;
-      if (record.status === "FAILED") {
-        setNotice(failureCopy(record.failure_reason) || "HeyGen could not clone this voice.", "bad");
-      } else if (record.status === "ACTIVE") {
-        cloneOpen = false;
-        await useClonedVoice(record.voice_id);
-        setNotice(`Cloned “${record.name}” and picked it for this story${record.used_transcript ? " (from the transcript's speech)" : ""}.`, "ok");
-      } else {
-        setNotice("HeyGen is still making the voice. It is picked here as soon as it is ready.", "");
-        void pollClone(record.voice_id, () => {}).then(async (done) => {
-          if (disposed) return;
-          if (done?.status === "ACTIVE") {
-            cloneOpen = false;
-            await useClonedVoice(record.voice_id);
-            setNotice(`Cloned “${record.name}” and picked it for this story.`, "ok");
-          } else {
-            setNotice(failureCopy(done?.failure_reason) || "The cloned voice is not ready yet. Check Setup → My voice.", "bad");
-          }
-          if (!disposed) render();
-        });
-      }
+      cloneOpen = false;
+      await useClonedVoice(record.voice_id);
+      setNotice(`Cloned “${record.name}” and picked it for this story${record.used_transcript ? " (from the transcript's speech)" : ""}. Press Preview voice to hear it.`, "ok");
     } catch (error) {
       setNotice(error?.message || "Could not clone the video voice.", "bad");
     } finally {
@@ -766,7 +744,7 @@ export function mountAudioPanel(host, ctx) {
     block.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [toggle]));
     if (!cloneOpen) return block;
     if (!ready) {
-      block.append(el("p", { class: "st-field-hint", text: "Add a HeyGen API key in Setup to clone the speaker of this video. Your own voice lives in Setup → My voice." }));
+      block.append(el("p", { class: "st-field-hint", text: "Add an OpenRouter key in Setup to clone the speaker of this video. Your own voice lives in Setup → My voice." }));
       return block;
     }
     const name = el("input", { type: "text", maxLength: 64, value: cloneName, placeholder: "Video voice", "aria-label": "Cloned voice name" });

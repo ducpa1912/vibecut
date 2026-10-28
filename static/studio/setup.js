@@ -24,7 +24,7 @@ const KEY_ROWS = [
   {
     id: "openrouter",
     title: "OpenRouter",
-    copy: "One key for HeyGen, Fish Audio and Gemini voices, cloud music and AI text.",
+    copy: "One key for HeyGen (with voice cloning), Fish Audio and Gemini voices, cloud music and AI text.",
     place: "sk-or-…",
   },
   {
@@ -38,12 +38,6 @@ const KEY_ROWS = [
     title: "ElevenLabs",
     copy: "Premium multilingual voice-over and dub.",
     place: "ElevenLabs API key",
-  },
-  {
-    id: "heygen",
-    title: "HeyGen",
-    copy: "Clones your voice, or a video's voice, for HeyGen Voice Turbo. Add the same key to OpenRouter (Integrations, BYOK) so OpenRouter can speak the clone.",
-    place: "HeyGen API key",
   },
 ];
 
@@ -136,9 +130,9 @@ export function mount(host, ctx = {}) {
   let noticeTone = "";
   let saving = "";
   let savingRights = false;
-  let keyDraft = { openrouter: "", minimax: "", elevenlabs: "", heygen: "" };
+  let keyDraft = { openrouter: "", minimax: "", elevenlabs: "" };
   const myVoice = createMyVoicePanel({
-    hasKey: () => Boolean(settings?.secrets?.heygen),
+    hasKey: () => Boolean(settings?.secrets?.openrouter),
     onChange: () => {
       void request("/api/audio/engines").then((result) => {
         engines = result;

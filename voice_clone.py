@@ -1,21 +1,19 @@
-"""Instant voice clones on HeyGen Voice, spoken through OpenRouter.
+"""Cloned voices for HeyGen Voice Turbo on OpenRouter.
 
 Two ways in, one store:
 
 * **My voice** (Setup): the creator records or uploads their own voice.
-* **Video voice** (Edit): the speech of the open video's source is cut out and
-  cloned, so Voice-over and Dub can keep the original speaker.
+* **Video voice** (Edit): the speech of the open video's source is cut out, so
+  Voice-over and Dub can keep the original speaker.
 
-HeyGen makes the clone (``POST /v3/models/audio/voices``, ``mode: instant``)
-with the creator's own HeyGen key. The clone's ``voice_id`` is then spoken by
-the existing OpenRouter route ``heygen/heygen-voice-1-turbo:free``; OpenRouter
-reaches a workspace clone when the same HeyGen key is added to OpenRouter as a
-BYOK integration. When that call fails, the line is spoken straight on HeyGen
-with the free Turbo model, so a clone keeps working without the integration.
+OpenRouter clones statelessly: every ``/audio/speech`` request to
+``heygen/heygen-voice-1-turbo:free`` carries the reference recording in
+``input_references`` and leaves ``voice`` out. There is no HeyGen account, key
+or voice id. A "clone" here is a short reference sample kept on this Mac with
+a name; it only needs the OpenRouter key.
 
 Nothing is cloned without an explicit consent flag from the creator. The
-store keeps ids, names and status only; recordings are never kept after the
-clone request.
+sample is stored under ``data/voices/`` and deleted with the voice.
 """
 
 from __future__ import annotations
@@ -24,35 +22,33 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
-import urllib.error
-import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Sequence
 
 import settings_store
 
-HEYGEN_API = "https://api.heygen.com/v3/models/audio"
-#: Model used when a clone is spoken straight on HeyGen.
-HEYGEN_DIRECT_MODEL = "heygen-voice-1-turbo-free"
-#: HeyGen uses only the first three minutes of a recording.
+#: HeyGen uses only the first three minutes of a reference recording.
 MAX_SAMPLE_SECONDS = 180.0
 MIN_SAMPLE_SECONDS = 8.0
-#: Inline base64 is capped at 16 MB decoded. 180 s of 24 kHz mono s16 is 8.6 MB.
-SAMPLE_RATE = 24000
+#: The sample travels with every speech request, so keep it small: 64 kbps
+#: mono MP3 is ~1.4 MB for three minutes. OpenRouter caps a reference at 15 MiB.
+SAMPLE_BITRATE = "64k"
+SAMPLE_RATE = 44100
+MAX_REFERENCE_BYTES = 15 * 1024 * 1024
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 SOURCES = ("me", "video")
-STATUSES = ("PENDING", "ACTIVE", "FAILED")
 LANGUAGES = frozenset({
     "ar", "be", "bg", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi",
     "fr", "he", "hi", "hr", "hu", "id", "it", "ja", "ko", "mk", "ms", "nl",
     "pl", "pt", "ro", "ru", "sk", "sl", "sr", "sv", "ta", "th", "tl", "tr",
     "uk", "vi", "zh",
 })
-_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
+_VOICE_ID_RE = re.compile(r"^clone_[a-f0-9]{24}$")
 LOCK = threading.Lock()
 
 
@@ -67,30 +63,34 @@ class CloneError(Exception):
 # ---------------------------------------------------------------- store
 
 
+def voices_dir() -> Path:
+    return settings_store.DATA / "voices"
+
+
 def store_path() -> Path:
-    return settings_store.DATA / "voices" / "clones.json"
-
-
-def heygen_key() -> str:
-    return settings_store.get_secret("heygen")
+    return voices_dir() / "clones.json"
 
 
 def available() -> bool:
-    return bool(heygen_key())
+    """Cloning only needs the OpenRouter key HeyGen Voice Turbo already uses."""
+    return bool(settings_store.get_secret("openrouter"))
 
 
 def is_voice_id(value: str) -> bool:
     return bool(_VOICE_ID_RE.match(str(value or "")))
 
 
+def sample_path(voice_id: str) -> Path:
+    return voices_dir() / f"{voice_id}.mp3"
+
+
 def _read() -> list[dict]:
-    path = store_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(store_path().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     rows = data.get("voices") if isinstance(data, dict) else None
-    return [row for row in rows or [] if isinstance(row, dict) and row.get("voice_id")]
+    return [row for row in rows or [] if isinstance(row, dict) and is_voice_id(row.get("voice_id"))]
 
 
 def _write(rows: list[dict]) -> None:
@@ -101,19 +101,20 @@ def _write(rows: list[dict]) -> None:
     os.replace(tmp, path)
 
 
-def list_clones(*, active_only: bool = False) -> list[dict]:
-    rows = sorted(_read(), key=lambda row: float(row.get("created") or 0), reverse=True)
-    if active_only:
-        rows = [row for row in rows if row.get("status") == "ACTIVE"]
-    return rows
+def list_clones() -> list[dict]:
+    rows = [row for row in _read() if sample_path(row["voice_id"]).is_file()]
+    return sorted(rows, key=lambda row: float(row.get("created") or 0), reverse=True)
 
 
 def get_clone(voice_id: str) -> dict | None:
-    return next((row for row in _read() if row.get("voice_id") == voice_id), None)
+    if not is_voice_id(voice_id):
+        return None
+    row = next((row for row in _read() if row.get("voice_id") == voice_id), None)
+    return row if row and sample_path(voice_id).is_file() else None
 
 
 def is_clone(voice_id: str) -> bool:
-    return bool(voice_id) and get_clone(str(voice_id)) is not None
+    return get_clone(str(voice_id or "")) is not None
 
 
 def _upsert(record: dict) -> dict:
@@ -124,18 +125,8 @@ def _upsert(record: dict) -> dict:
     return record
 
 
-def _remove(voice_id: str) -> bool:
-    with LOCK:
-        rows = _read()
-        kept = [row for row in rows if row.get("voice_id") != voice_id]
-        if len(kept) == len(rows):
-            return False
-        _write(kept)
-    return True
-
-
 def voice_options() -> list[dict]:
-    """Active clones in the shape of ``tts.list_voices`` rows."""
+    """Clones in the shape of ``tts.list_voices`` rows."""
     return [
         {
             "id": row["voice_id"],
@@ -144,65 +135,8 @@ def voice_options() -> list[dict]:
             "clone": True,
             "source": row.get("source") or "me",
         }
-        for row in list_clones(active_only=True)
+        for row in list_clones()
     ]
-
-
-# ---------------------------------------------------------------- HeyGen
-
-
-def _heygen(method: str, path: str, body: dict | None = None, *,
-            timeout: float = 60, idempotency: str = "") -> dict:
-    key = heygen_key()
-    if not key:
-        raise CloneError("Add a HeyGen API key in Setup to clone a voice.")
-    headers = {"X-Api-Key": key, "Accept": "application/json"}
-    data = None
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    if idempotency:
-        headers["Idempotency-Key"] = idempotency
-    request = urllib.request.Request(
-        f"{HEYGEN_API}{path}", data=data, headers=headers, method=method,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-    except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            payload = json.loads(exc.read().decode("utf-8", "replace"))
-            error = payload.get("error") if isinstance(payload, dict) else None
-            if isinstance(error, dict):
-                detail = str(error.get("message") or error.get("code") or "")
-            elif error:
-                detail = str(error)
-        except Exception:  # noqa: BLE001
-            detail = ""
-        if exc.code in {401, 403}:
-            raise CloneError(
-                "HeyGen refused the key. Check the HeyGen API key in Setup"
-                + (f" ({detail})." if detail else "."),
-                exc.code,
-            ) from exc
-        if exc.code == 404:
-            raise CloneError("HeyGen has no such voice.", 404) from exc
-        if exc.code == 429:
-            raise CloneError("HeyGen is busy (rate limit). Try again in a minute.", 429) from exc
-        raise CloneError(
-            f"HeyGen request failed ({exc.code})" + (f": {detail}" if detail else "."),
-            502,
-        ) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise CloneError(f"Could not reach HeyGen: {exc}", 502) from exc
-    if not raw:
-        return {}
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise CloneError("HeyGen returned an unreadable reply.", 502) from exc
-    return payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else {}
 
 
 # ---------------------------------------------------------------- samples
@@ -215,8 +149,6 @@ def _ffmpeg() -> str:
 
 
 def _probe_seconds(path: Path) -> float:
-    import shutil
-
     probe = shutil.which("ffprobe")
     if not probe:
         return 0.0
@@ -270,7 +202,7 @@ def prepare_sample(
     windows: Sequence[tuple[float, float]] = (),
     start: float = 0.0, duration: float = MAX_SAMPLE_SECONDS,
 ) -> float:
-    """Cut a mono 24 kHz WAV for cloning and return its length in seconds."""
+    """Cut a mono MP3 reference sample and return its length in seconds."""
     if not source.is_file():
         raise CloneError("The recording or video file is missing.", 404)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -283,14 +215,16 @@ def prepare_sample(
                 f"{min(MAX_SAMPLE_SECONDS, max(1.0, duration)):.3f}",
                 "-i", str(source), "-vn"]
     cmd += ["-t", f"{MAX_SAMPLE_SECONDS:.0f}", "-ac", "1", "-ar", str(SAMPLE_RATE),
-            "-c:a", "pcm_s16le", str(output)]
+            "-c:a", "libmp3lame", "-b:a", SAMPLE_BITRATE, str(output)]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise CloneError(f"Could not read the audio: {exc}") from exc
-    if result.returncode != 0 or not output.is_file() or output.stat().st_size < 4096:
+    if result.returncode != 0 or not output.is_file() or output.stat().st_size < 2048:
         raise CloneError("Could not cut a voice sample from that file. Is there any sound in it?")
-    seconds = _probe_seconds(output) or (output.stat().st_size - 44) / (SAMPLE_RATE * 2)
+    if output.stat().st_size > MAX_REFERENCE_BYTES:
+        raise CloneError("The voice sample is over 15 MB. Use a shorter recording.")
+    seconds = _probe_seconds(output) or output.stat().st_size / 8000
     if seconds < MIN_SAMPLE_SECONDS:
         raise CloneError(
             f"The voice sample is only {seconds:.0f}s. Give at least "
@@ -305,8 +239,8 @@ def prepare_sample(
 def create_clone(
     sample: Path, *, name: str, source: str, consent: bool,
     language: str = "", job_id: str = "", seconds: float = 0.0,
-    remove_noise: bool = True,
 ) -> dict:
+    """Keep a prepared sample as a named voice. No network call."""
     if not consent:
         raise CloneError(
             "Confirm this is your voice, or that you have the speaker's "
@@ -314,73 +248,30 @@ def create_clone(
         )
     if source not in SOURCES:
         raise CloneError("Unknown clone source.")
+    if not sample.is_file():
+        raise CloneError("The voice sample is missing.", 404)
     clean_name = " ".join(str(name or "").split())[:64] or (
         "My voice" if source == "me" else "Video voice"
     )
     language = str(language or "").strip().lower().split("-")[0]
-    if language and language not in LANGUAGES:
+    if language not in LANGUAGES:
         language = ""
-    data = sample.read_bytes()
-    if len(data) > 16 * 1024 * 1024:
-        raise CloneError("The voice sample is over 16 MB. Use a shorter recording.")
-    body: dict[str, Any] = {
-        "mode": "instant",
-        "name": clean_name,
-        "similarity": "max",
-        "remove_background_noise": bool(remove_noise),
-        "audio": [{
-            "type": "base64",
-            "media_type": "audio/wav",
-            "data": base64.b64encode(data).decode("ascii"),
-        }],
-    }
-    if language:
-        body["language"] = language
-    reply = _heygen("POST", "/voices", body, timeout=180, idempotency=uuid.uuid4().hex)
-    voice_id = str(reply.get("voice_id") or "")
-    if not is_voice_id(voice_id):
-        raise CloneError("HeyGen did not return a voice id.", 502)
-    record = {
+    voice_id = f"clone_{uuid.uuid4().hex[:24]}"
+    target = sample_path(voice_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(sample, target)
+    now = round(time.time(), 3)
+    return _upsert({
         "voice_id": voice_id,
         "name": clean_name,
         "source": source,
         "language": language,
-        "status": "PENDING",
-        "failure_reason": "",
+        "status": "ACTIVE",
         "job_id": str(job_id or ""),
         "sample_seconds": round(float(seconds or 0.0), 2),
-        "created": round(time.time(), 3),
-        "consent": {"confirmed": True, "at": round(time.time(), 3)},
-    }
-    return _upsert(record)
-
-
-def refresh(voice_id: str) -> dict:
-    record = get_clone(voice_id)
-    if record is None:
-        raise CloneError("No such cloned voice.", 404)
-    reply = _heygen("GET", f"/voices/{voice_id}", timeout=30)
-    status = str(reply.get("status") or record.get("status") or "PENDING").upper()
-    if status not in STATUSES:
-        status = "PENDING"
-    record = {
-        **record,
-        "status": status,
-        "failure_reason": str(reply.get("failure_reason") or ""),
-        "language": str(reply.get("language") or record.get("language") or ""),
-    }
-    _upsert(record)
-    # The preview URL expires; hand it out, never store it.
-    return {**record, "preview_url": str(reply.get("preview_audio_url") or "")}
-
-
-def wait_active(voice_id: str, *, timeout: float = 45.0, interval: float = 1.5) -> dict:
-    deadline = time.monotonic() + timeout
-    record = refresh(voice_id)
-    while record.get("status") == "PENDING" and time.monotonic() < deadline:
-        time.sleep(interval)
-        record = refresh(voice_id)
-    return record
+        "created": now,
+        "consent": {"confirmed": True, "at": now},
+    })
 
 
 def rename(voice_id: str, name: str) -> dict:
@@ -394,42 +285,43 @@ def rename(voice_id: str, name: str) -> dict:
 
 
 def delete_clone(voice_id: str) -> bool:
-    if get_clone(voice_id) is None:
+    if not is_voice_id(voice_id):
         raise CloneError("No such cloned voice.", 404)
+    with LOCK:
+        rows = _read()
+        kept = [row for row in rows if row.get("voice_id") != voice_id]
+        found = len(kept) != len(rows)
+        if found:
+            _write(kept)
     try:
-        _heygen("DELETE", f"/voices/{voice_id}", timeout=30)
-    except CloneError as exc:
-        # Already gone on HeyGen is fine; anything else keeps the local row.
-        if exc.status_code != 404:
-            raise
-    return _remove(voice_id)
+        sample_path(voice_id).unlink()
+        found = True
+    except FileNotFoundError:
+        pass
+    if not found:
+        raise CloneError("No such cloned voice.", 404)
+    return True
 
 
 # ---------------------------------------------------------------- speech
 
 
-def speak_direct(text: str, voice_id: str, output: Path, *,
-                 language: str = "", timeout: float = 300) -> Path:
-    """Speak a clone straight on HeyGen Turbo Free; write a WAV to ``output``."""
-    body: dict[str, Any] = {
-        "model": HEYGEN_DIRECT_MODEL,
-        "voice_id": voice_id,
-        "text": text,
+def speech_fields(voice_id: str) -> dict[str, Any]:
+    """Body fields that make an OpenRouter HeyGen request speak in a clone.
+
+    The caller drops ``voice``: the recording is the voice.
+    """
+    record = get_clone(voice_id)
+    if record is None:
+        raise CloneError("No such cloned voice.", 404)
+    data = base64.b64encode(sample_path(voice_id).read_bytes()).decode("ascii")
+    fields: dict[str, Any] = {
+        "input_references": [{
+            "type": "input_audio",
+            "input_audio": {"data": f"data:audio/mpeg;base64,{data}"},
+        }],
     }
-    language = str(language or "").strip().lower().split("-")[0]
+    language = str(record.get("language") or "")
     if language in LANGUAGES:
-        body["language"] = language
-    reply = _heygen("POST", "/tts", body, timeout=max(30, timeout))
-    url = str(reply.get("audio_url") or "")
-    if not url.startswith("https://"):
-        raise CloneError("HeyGen returned no audio.", 502)
-    try:
-        with urllib.request.urlopen(url, timeout=max(30, timeout)) as response:
-            content = response.read()
-    except Exception as exc:  # noqa: BLE001
-        raise CloneError(f"Could not download the HeyGen audio: {exc}", 502) from exc
-    if len(content) < 64:
-        raise CloneError("HeyGen returned empty audio.", 502)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(content)
-    return output
+        fields["provider"] = {"options": {"heygen": {"language": language}}}
+    return fields

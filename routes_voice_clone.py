@@ -3,9 +3,11 @@
 * Setup, **My voice**: record or upload the creator's own voice.
 * Edit, **Clone the video voice**: clone the speaker of the open video.
 
-Both end in the same store (`voice_clone`), and an active clone shows up as a
-HeyGen Voice Turbo voice in every voice picker. Writes need the same-origin
-check Setup uses, and every clone needs an explicit consent flag.
+Both end in the same store (`voice_clone`): a reference sample kept on this
+Mac that OpenRouter's HeyGen Voice Turbo clones on every speech request. A
+clone shows up as a HeyGen Voice Turbo voice in every voice picker. Writes need
+the same-origin check Setup uses, and every clone needs an explicit consent
+flag.
 """
 
 from __future__ import annotations
@@ -70,14 +72,6 @@ def _work_dir() -> Path:
     return path
 
 
-def _finish(record: dict) -> dict:
-    """Give HeyGen a short moment so most clones come back ACTIVE."""
-    try:
-        return voice_clone.wait_active(record["voice_id"], timeout=30)
-    except voice_clone.CloneError:
-        return record
-
-
 @router.get("/api/voices/clones")
 def list_clones() -> dict:
     return {
@@ -101,7 +95,7 @@ def clone_my_voice(
     """Clone the creator's own voice from a recording or an uploaded file."""
     _guard(request)
     if not voice_clone.available():
-        raise HTTPException(400, "Add a HeyGen API key in Setup to clone a voice.")
+        raise HTTPException(400, "Add an OpenRouter key in Setup to clone a voice.")
     if not consent:
         raise HTTPException(400, "Confirm this is your own voice before cloning it.")
     suffix = Path(file.filename or "voice.webm").suffix.lower() or ".webm"
@@ -126,7 +120,7 @@ def clone_my_voice(
             )
         except voice_clone.CloneError as exc:
             raise _fail(exc) from exc
-        return _finish(record)
+        return record
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -138,7 +132,7 @@ def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> di
     app = _app()
     job = app.load_job(job_id)
     if not voice_clone.available():
-        raise HTTPException(400, "Add a HeyGen API key in Setup to clone a voice.")
+        raise HTTPException(400, "Add an OpenRouter key in Setup to clone a voice.")
     if not body.consent:
         raise HTTPException(
             400, "Confirm you own this voice or have the speaker's permission to clone it.",
@@ -180,21 +174,17 @@ def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> di
             )
         except voice_clone.CloneError as exc:
             raise _fail(exc) from exc
-        result = _finish(record)
-        result["used_transcript"] = bool(windows)
-        return result
+        return {**record, "used_transcript": bool(windows)}
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
 @router.get("/api/voices/clones/{voice_id}")
 def clone_status(voice_id: str) -> dict:
-    if not voice_clone.is_voice_id(voice_id):
+    record = voice_clone.get_clone(voice_id)
+    if record is None:
         raise HTTPException(404, "No such cloned voice.")
-    try:
-        return voice_clone.refresh(voice_id)
-    except voice_clone.CloneError as exc:
-        raise _fail(exc) from exc
+    return record
 
 
 @router.patch("/api/voices/clones/{voice_id}")
@@ -218,14 +208,12 @@ def delete_clone(voice_id: str, request: Request) -> dict:
 
 @router.post("/api/voices/clones/{voice_id}/sample")
 def clone_sample(voice_id: str, body: SampleBody) -> FileResponse:
-    """Speak a short line in a cloned voice through the normal HeyGen route."""
+    """Speak a short line in a cloned voice through OpenRouter HeyGen Turbo."""
     import audio
 
     record = voice_clone.get_clone(voice_id)
     if record is None:
         raise HTTPException(404, "No such cloned voice.")
-    if record.get("status") != "ACTIVE":
-        raise HTTPException(409, "This voice is not ready yet.")
     text = " ".join((body.text or "").split())[:300] or "Hi, this is my cloned voice in VibeCut."
     cache = voice_clone.settings_store.DATA / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)

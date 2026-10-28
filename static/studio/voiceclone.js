@@ -2,15 +2,15 @@
  * Studio — cloned voices.
  *
  * Shared by Setup (My voice: record or upload the creator's own voice) and the
- * Edit audio layer (clone the open video's speaker). A clone is made on
- * HeyGen with the creator's HeyGen key and is then spoken by HeyGen Voice
- * Turbo on OpenRouter like any other HeyGen voice.
+ * Edit audio layer (clone the open video's speaker). A clone is a reference
+ * sample kept on this Mac; HeyGen Voice Turbo on OpenRouter clones it on every
+ * speech request, with the OpenRouter key only.
  *
  * Routes:
  *   GET    /api/voices/clones
  *   POST   /api/voices/clones                 (multipart: file, name, language, consent)
  *   POST   /api/jobs/{id}/voices/clone        (JSON: name, language, consent, start, end)
- *   GET    /api/voices/clones/{voice_id}      (status, preview URL)
+ *   GET    /api/voices/clones/{voice_id}
  *   DELETE /api/voices/clones/{voice_id}
  *   POST   /api/voices/clones/{voice_id}/sample
  */
@@ -19,7 +19,7 @@ import { invalidateReadCache, request } from "./api.js";
 import { el } from "./ui.js";
 
 export const CONSENT_COPY = {
-  me: "This is my own voice, and I agree to send this recording to HeyGen to make a clone.",
+  me: "This is my own voice, and I agree to send this recording to OpenRouter and HeyGen with each voice line.",
   video: "I am the speaker in this video, or I have their written permission to clone their voice.",
 };
 
@@ -51,10 +51,6 @@ async function detailOf(response) {
 
 export function listClones() {
   return request("/api/voices/clones", { fresh: true });
-}
-
-export function cloneStatus(voiceId) {
-  return request(`/api/voices/clones/${encodeURIComponent(voiceId)}`);
 }
 
 export function deleteClone(voiceId) {
@@ -101,40 +97,6 @@ export async function playClone(voiceId, text = "") {
   return player;
 }
 
-export function statusChip(status) {
-  const value = String(status || "PENDING").toUpperCase();
-  if (value === "ACTIVE") return el("span", { class: "st-chip st-chip-ok", text: "Ready" });
-  if (value === "FAILED") return el("span", { class: "st-chip st-chip-bad", text: "Failed" });
-  return el("span", { class: "st-chip st-chip-busy", text: "Making…" });
-}
-
-const FAILURES = {
-  INVALID_AUDIO: "HeyGen could not read the recording.",
-  PREPROCESSING_FAILED: "The recording did not pass HeyGen's checks. Try a cleaner recording, or set the language.",
-  DESIGN_FAILED: "HeyGen could not build a voice from this recording. Try a different one.",
-  INTERNAL_ERROR: "HeyGen had an internal error. Try again.",
-};
-
-export function failureCopy(reason) {
-  return FAILURES[String(reason || "")] || (reason ? String(reason) : "");
-}
-
-/** Poll a PENDING clone until it settles; calls `onUpdate` with each record. */
-export async function pollClone(voiceId, onUpdate, { tries = 20, every = 3000 } = {}) {
-  for (let index = 0; index < tries; index += 1) {
-    await new Promise((resolve) => window.setTimeout(resolve, every));
-    let record;
-    try {
-      record = await cloneStatus(voiceId);
-    } catch (_) {
-      continue;
-    }
-    onUpdate(record);
-    if (record?.status && record.status !== "PENDING") return record;
-  }
-  return null;
-}
-
 /**
  * The Setup "My voice" panel. Owns its own node and state so a recording in
  * progress survives the Setup screen re-rendering around it.
@@ -173,17 +135,6 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
     }
     loaded = true;
     render();
-    for (const item of clones) {
-      if (item.status === "PENDING") void watch(item.voice_id);
-    }
-  }
-
-  async function watch(voiceId) {
-    await pollClone(voiceId, (record) => {
-      clones = clones.map((item) => (item.voice_id === voiceId ? { ...item, ...record } : item));
-      if (!disposed) render();
-    });
-    onChange();
   }
 
   function stopTracks() {
@@ -261,7 +212,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
       return;
     }
     busy = "clone";
-    setNotice("Sending your recording to HeyGen…", "");
+    setNotice("Preparing your voice sample…", "");
     render();
     try {
       const record = await cloneFromFile(recording, { name, language, consent });
@@ -270,14 +221,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
       if (recordingUrl) URL.revokeObjectURL(recordingUrl);
       recordingUrl = "";
       consent = false;
-      if (record.status === "ACTIVE") {
-        setNotice("Your voice is ready. Pick it under HeyGen Voice Turbo in any voice picker.", "ok");
-      } else if (record.status === "FAILED") {
-        setNotice(failureCopy(record.failure_reason) || "HeyGen could not clone this recording.", "bad");
-      } else {
-        setNotice("HeyGen is still making your voice. This list updates when it is ready.", "");
-        void watch(record.voice_id);
-      }
+      setNotice("Your voice is ready. Press Play to hear it, or pick it under HeyGen Voice Turbo in any voice picker.", "ok");
       onChange();
     } catch (error) {
       setNotice(error?.message || "Could not clone the voice.", "bad");
@@ -302,7 +246,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
   }
 
   async function remove(item) {
-    if (!window.confirm(`Delete “${item.name}”? It is removed from HeyGen too, and edits that use it fall back to another voice.`)) return;
+    if (!window.confirm(`Delete “${item.name}”? Its sample is removed from this Mac, and edits that use it fall back to another voice.`)) return;
     busy = `delete:${item.voice_id}`;
     render();
     try {
@@ -322,7 +266,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
     const playButton = el("button", {
       class: "st-btn st-btn-ghost st-btn-small", type: "button",
       text: busy === `play:${item.voice_id}` ? "Speaking…" : "Play",
-      disabled: Boolean(busy) || item.status !== "ACTIVE",
+      disabled: Boolean(busy),
     });
     playButton.addEventListener("click", () => { void play(item); });
     const deleteButton = el("button", {
@@ -331,15 +275,13 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
       disabled: Boolean(busy),
     });
     deleteButton.addEventListener("click", () => { void remove(item); });
-    const failure = item.status === "FAILED" ? failureCopy(item.failure_reason) : "";
     return el("div", { class: "st-voice-clone-row" }, [
       el("div", { class: "st-setup-engine-head" }, [
         el("strong", { text: item.name || "Cloned voice" }),
-        statusChip(item.status),
+        item.sample_seconds ? el("span", { class: "st-mono st-hint", text: `${Math.round(item.sample_seconds)}s sample` }) : null,
         el("span", { class: "st-chip", text: item.source === "video" ? "From a video" : "My voice" }),
         item.language ? el("span", { class: "st-mono st-hint", text: item.language }) : null,
       ]),
-      failure ? el("p", { class: "st-error", text: failure }) : null,
       el("div", { class: "st-setup-key-actions" }, [playButton, deleteButton]),
     ]);
   }
@@ -417,11 +359,11 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
       el("h3", { text: "My voice" }),
       el("p", {
         class: "st-hint",
-        text: "Clone your own voice once, then use it for Voice-over and Dub. HeyGen makes the clone from 30 s to 3 min of clear speech; it is spoken by HeyGen Voice Turbo on OpenRouter.",
+        text: "Clone your own voice once, then use it for Voice-over and Dub. Give 30 s to 3 min of clear speech; HeyGen Voice Turbo on OpenRouter speaks in it. The sample stays on this Mac and is sent with each voice line.",
       }),
     ]));
     if (!hasKey()) {
-      node.append(el("p", { class: "st-hint", text: "Add a HeyGen API key under Keys to clone a voice. For OpenRouter to speak your clone, add the same HeyGen key to OpenRouter under Integrations (BYOK); otherwise VibeCut speaks it straight on HeyGen." }));
+      node.append(el("p", { class: "st-hint", text: "Add an OpenRouter key under Keys to clone a voice." }));
     } else {
       node.append(recorderBlock(), formBlock());
     }
