@@ -8,6 +8,128 @@
 
 const TOKEN_KEY = "vibecut_token";
 
+// ---------------------------------------------------------------- read cache
+//
+// One shared per-job cache for the reads every step repeats: the job, its
+// clip-sets, the Check report and the edits list, plus the other job-scoped
+// JSON reads (packets, preflight, current Edit). Any write clears it. A
+// fresh job with a different `updated` stamp drops that job's derived
+// reads, so an external render or Check cannot leave a panel on old data.
+// Status, the artifact list (Finish polls it every 2.4 s) and media URLs
+// are never cached.
+
+const NEVER_CACHE = /^\/(status|artifacts|frame|proxy|thumb|poster|reel|download|media|source)(\/|$)/;
+
+const readCache = new Map();
+const readPending = new Map();
+let readEpoch = 0;
+let readCounts = { hits: 0, misses: 0, coalesced: 0, writes: 0 };
+
+function cacheablePath(path) {
+  const value = String(path || "").split("?")[0];
+  const match = /^\/api\/jobs\/[^/]+(\/.*)?$/.exec(value);
+  if (!match) return false;
+  return !NEVER_CACHE.test(match[1] || "/");
+}
+
+function jobFromPath(path) {
+  const match = /^\/api\/jobs\/([^/]+)/.exec(String(path || ""));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function cloneValue(value) {
+  if (value === null || typeof value !== "object") return value;
+  if (typeof structuredClone === "function") return structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
+}
+
+function jobStamp(job) {
+  const value = job?.updated_at ?? job?.updated;
+  return value === undefined || value === null ? "" : String(value);
+}
+
+function dropJob(jobId, { keepJob = false } = {}) {
+  readEpoch += 1;
+  if (!jobId) {
+    readCache.clear();
+    readPending.clear();
+    return;
+  }
+  const prefix = `/api/jobs/${encodeURIComponent(jobId)}`;
+  for (const key of [...readCache.keys()]) {
+    if (key !== prefix) {
+      if (key.startsWith(`${prefix}/`)) readCache.delete(key);
+    } else if (!keepJob) {
+      readCache.delete(key);
+    }
+  }
+}
+
+/** Drop cached reads. No id clears everything; with an id, keep the job row
+ *  when `keepJob` is true and drop only its derived reads. */
+export function invalidateReadCache(jobId = "", options = {}) {
+  dropJob(jobId ? String(jobId) : "", options);
+}
+
+/** Cache counters for the network-count check. */
+export function readCacheStats() {
+  return { ...readCounts, size: readCache.size };
+}
+
+/** Clear the cache and counters. Test hook; safe in the browser. */
+export function resetReadCache() {
+  readCache.clear();
+  readPending.clear();
+  readEpoch += 1;
+  readCounts = { hits: 0, misses: 0, coalesced: 0, writes: 0 };
+}
+
+/** Cached job payload without a network call, or null. */
+export function peekCachedJob(jobId) {
+  const value = readCache.get(`/api/jobs/${encodeURIComponent(jobId)}`);
+  return value ? cloneValue(value) : null;
+}
+
+/** Cached job's change stamp without cloning the payload; "" when absent. */
+export function cachedJobStamp(jobId) {
+  return jobStamp(readCache.get(`/api/jobs/${encodeURIComponent(jobId)}`));
+}
+
+function observeJob(path, value) {
+  if (!/^\/api\/jobs\/[^/]+$/.test(path)) return;
+  const previous = readCache.get(path);
+  if (!previous) return;
+  const before = jobStamp(previous);
+  const after = jobStamp(value);
+  if (before && after && before !== after) {
+    dropJob(jobFromPath(path), { keepJob: true });
+  }
+}
+
+function readThrough(path, load, { fresh = false } = {}) {
+  if (!fresh && readCache.has(path)) {
+    readCounts.hits += 1;
+    return Promise.resolve(cloneValue(readCache.get(path)));
+  }
+  if (readPending.has(path)) {
+    readCounts.coalesced += 1;
+    return readPending.get(path).then(cloneValue);
+  }
+  readCounts.misses += 1;
+  const epoch = readEpoch;
+  const task = load().then((value) => {
+    if (epoch === readEpoch) {
+      observeJob(path, value);
+      readCache.set(path, cloneValue(value));
+    }
+    return cloneValue(value);
+  });
+  readPending.set(path, task);
+  return task.finally(() => {
+    if (readPending.get(path) === task) readPending.delete(path);
+  });
+}
+
 export class ApiError extends Error {
   constructor(message, status = 0, detail = null) {
     super(message);
@@ -78,8 +200,7 @@ function offlineMessage(error) {
  * @param {{method?: string, body?: unknown, signal?: AbortSignal}} options
  * @returns {Promise<any>}
  */
-export async function request(path, options = {}) {
-  syncTokenCookie();
+async function performRequest(path, options = {}) {
   const headers = { Accept: "application/json" };
   const token = tokenValue();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -120,6 +241,38 @@ export async function request(path, options = {}) {
   return payload;
 }
 
+/**
+ * Perform a JSON request against the local server.
+ *
+ * GETs of the job, its clip-sets, its Check report and its edits list are
+ * served from the shared read cache. Every write clears the cache. Pass
+ * `fresh: true` to force the job read that the shell watcher uses to detect
+ * an external `updated` change.
+ * @param {string} path
+ * @param {{method?: string, body?: unknown, signal?: AbortSignal, fresh?: boolean}} options
+ * @returns {Promise<any>}
+ */
+export async function request(path, options = {}) {
+  syncTokenCookie();
+  const method = String(options.method || "GET").toUpperCase();
+  if (method !== "GET") {
+    readCounts.writes += 1;
+    try {
+      return await performRequest(path, options);
+    } finally {
+      invalidateReadCache();
+    }
+  }
+  if (!options.signal && cacheablePath(path)) {
+    return readThrough(
+      path,
+      () => performRequest(path, options),
+      { fresh: Boolean(options.fresh) },
+    );
+  }
+  return performRequest(path, options);
+}
+
 function jobPath(jobId, suffix = "") {
   return `/api/jobs/${encodeURIComponent(jobId)}${suffix}`;
 }
@@ -134,8 +287,18 @@ export function listJobs({ query = "", limit = 8, offset = 0 } = {}) {
 }
 
 /** One job, including source details and analysis. `GET /api/jobs/{id}`. */
-export function getJob(jobId) {
-  return request(jobPath(jobId));
+export function getJob(jobId, { fresh = false } = {}) {
+  return request(jobPath(jobId), fresh ? { fresh: true } : {});
+}
+
+/** The latest Check report. `GET /api/jobs/{id}/check`. */
+export function getCheckReport(jobId) {
+  return request(jobPath(jobId, "/check"));
+}
+
+/** Every Edit for a job. `GET /api/jobs/{id}/edits`. */
+export function listEdits(jobId) {
+  return request(jobPath(jobId, "/edits"));
 }
 
 /** Small polling payload. `GET /api/jobs/{id}/status`. */
@@ -170,6 +333,7 @@ export function uploadVideo(file, options, onProgress, { rights = null } = {}) {
         payload = xhr.responseText;
       }
       if (xhr.status >= 200 && xhr.status < 300) {
+        invalidateReadCache();
         resolve(payload);
         return;
       }

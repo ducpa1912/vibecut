@@ -50,6 +50,14 @@ PRESETS = {
     "landscape": {"aspect": "16:9", "captions": False, "caption_margin": 0.07},
 }
 
+# AV1 has no VideoToolbox decoder on M1/M2, so the software dav1d decoder is
+# the correct default. A build with AV1 hardware decode can opt in with
+# VIBECUT_DECODER=videotoolbox.
+SOFTWARE_AV1 = {"av1", "av01"}
+# From this many caption cues on, one timed overlay replaces one overlay per
+# cue. The per-cue chain is quadratic in practice: 60 overlays cost minutes.
+CAPTION_TRACK_MIN = 8
+
 ASPECTS = {
     "9:16": ((1080, 1920), (540, 960)),
     "4:5": ((1080, 1350), (540, 676)),
@@ -121,6 +129,28 @@ def _choose_encoder(requested: str | None = None) -> str:
     if value == "auto":
         return "videotoolbox" if sys.platform == "darwin" else "libx264"
     return "libx264"
+
+
+def _decoder_args(meta: dict, threads: int | None = None) -> list[str]:
+    """Input decoder options. Input seek stays before ``-i`` in ``_segment``.
+
+    ``auto`` uses libdav1d for AV1: that is the only AV1 decoder in the
+    Homebrew ffmpeg build, and VideoToolbox AV1 decode is absent on M1/M2.
+    ``VIBECUT_DECODER=videotoolbox`` forces the hardware path for machines
+    whose ffmpeg supports it; ``software`` forces dav1d.
+    """
+    mode = (os.environ.get("VIBECUT_DECODER") or "auto").strip().lower()
+    codec = str(meta.get("codec") or "").strip().lower()
+    if mode in ("vt", "videotoolbox"):
+        return ["-hwaccel", "videotoolbox"]
+    if codec not in SOFTWARE_AV1:
+        return []
+    args = ["-c:v", "libdav1d"]
+    if threads:
+        # The beat pool runs several ffmpeg processes. Handing each one a
+        # slice of the cores avoids every decoder spawning a full thread set.
+        args += ["-threads", str(max(1, int(threads)))]
+    return args
 
 
 def _encoder_args(encoder: str, quality: str) -> list[str]:
@@ -215,12 +245,20 @@ def _crop_filter(
                 else:
                     filters.append(f"crop={crop_w}:{crop_h}:{x}:{y}")
 
-    filters.extend([
-        f"scale={out_w}:{out_h}:flags=lanczos",
-        "setsar=1",
-        f"fps={OUT_FPS}",
-        "format=yuv420p",
-    ])
+    # Drop frames before scaling when the source is faster than the output.
+    # Scaling 60 fps AV1 frames only to discard half of them doubles the
+    # cost; the selected frames are identical either way.
+    try:
+        source_fps = float(meta.get("fps") or 0)
+    except (TypeError, ValueError):
+        source_fps = 0.0
+    if source_fps > OUT_FPS + 0.01:
+        filters.append(f"fps={OUT_FPS}")
+        filters.append(f"scale={out_w}:{out_h}:flags=lanczos")
+    else:
+        filters.append(f"scale={out_w}:{out_h}:flags=lanczos")
+        filters.append(f"fps={OUT_FPS}")
+    filters.extend(["setsar=1", "format=yuv420p"])
     return ",".join(filters)
 
 
@@ -385,6 +423,7 @@ def _segment(
     cancel_event: threading.Event | None = None,
     pre_filters: list[str] | None = None,
     post_filters: list[str] | None = None,
+    decode_threads: int | None = None,
 ) -> bool:
     """Render one beat. Return True when the segment came from cache."""
     key = _segment_cache_key(
@@ -418,6 +457,7 @@ def _segment(
         part.unlink()
     cmd = [
         ffmpeg, "-y", "-v", "error",
+        *_decoder_args(meta, decode_threads),
         "-ss", f"{start:.3f}", "-t", f"{duration:.6f}", "-i", source,
         "-frames:v", str(frames),
         "-vf", vf,
@@ -1351,6 +1391,35 @@ def _layer_sequence(
     return directory / "%05d.png", frames
 
 
+def _caption_runs(layers: list[dict]) -> dict[int, int]:
+    """Contiguous runs of static caption layers that share a rectangle.
+
+    Collapsing a run into a single timed overlay keeps its z position and
+    only works while nothing else is stacked inside it. A graphic layer
+    between cue groups splits the run; each piece still collapses.
+    """
+    runs: dict[int, int] = {}
+    start: int | None = None
+    rect = ""
+    for index, layer in enumerate(layers):
+        caption = (
+            layer.get("type") == "caption" and not _layer_is_sequence(layer)
+        )
+        if caption:
+            value = json.dumps(layer.get("rect") or {}, sort_keys=True)
+            if start is None or value != rect:
+                if start is not None and index - start >= CAPTION_TRACK_MIN:
+                    runs[start] = index - 1
+                start, rect = index, value
+            continue
+        if start is not None and index - start >= CAPTION_TRACK_MIN:
+            runs[start] = index - 1
+        start, rect = None, ""
+    if start is not None and len(layers) - start >= CAPTION_TRACK_MIN:
+        runs[start] = len(layers) - 1
+    return runs
+
+
 def _burn_layers(
     video: Path,
     layers: list[dict],
@@ -1366,50 +1435,104 @@ def _burn_layers(
     fps: int = OUT_FPS,
 ) -> int:
     """Burn compiled overlay layers in one encode. Return layers burned."""
-    prepared: list[tuple[dict, Path]] = []
+    active = [
+        layer for layer in layers
+        if float(layer.get("end") or 0.0) > float(layer.get("start") or 0.0) + 1e-6
+        and float(layer.get("start") or 0.0) < total - 1e-6
+    ]
+    if not active:
+        return 0
     layer_cache = cache_dir or (tmp / "layers")
-    for layer in layers:
-        start = float(layer.get("start") or 0.0)
-        end = float(layer.get("end") or 0.0)
-        if end <= start + 1e-6:
+    runs = _caption_runs(active)
+    prepared: list[dict] = []
+    index = 0
+    while index < len(active):
+        if index in runs:
+            last_index = runs[index]
+            group = active[index:last_index + 1]
+            items: list[tuple[float, float, Path]] = []
+            for layer in group:
+                png = _layer_png(layer, out_w, out_h, layer_cache, fps=fps)
+                if png is None:
+                    items = []
+                    break
+                items.append((
+                    float(layer.get("start") or 0.0),
+                    float(layer.get("end") or 0.0),
+                    png,
+                ))
+            x, y, w, h = _layer_rect(group[0], out_w, out_h)
+            track = (
+                _still_overlay_track(items, total, tmp, (w, h))
+                if items else None
+            )
+            if track is not None:
+                prepared.append({
+                    "layer": group[0], "path": track, "track": True,
+                    "sequence": False, "x": x, "y": y, "count": len(group),
+                })
+            else:
+                for layer in group:
+                    png = _layer_png(layer, out_w, out_h, layer_cache, fps=fps)
+                    if png is None:
+                        continue
+                    prepared.append({
+                        "layer": layer, "path": png, "track": False,
+                        "sequence": False, "count": 1,
+                    })
+            index = last_index + 1
             continue
-        if start >= total - 1e-6:
-            continue
+        layer = active[index]
         if _layer_is_sequence(layer):
             prepared_sequence = _layer_sequence(layer, out_w, out_h, layer_cache, fps)
-            if prepared_sequence is None:
-                continue
-            prepared.append((layer, prepared_sequence[0]))
+            if prepared_sequence is not None:
+                prepared.append({
+                    "layer": layer, "path": prepared_sequence[0],
+                    "track": False, "sequence": True, "count": 1,
+                })
         else:
             png = _layer_png(layer, out_w, out_h, layer_cache, fps=fps)
-            if png is None:
-                continue
-            prepared.append((layer, png))
+            if png is not None:
+                prepared.append({
+                    "layer": layer, "path": png, "track": False,
+                    "sequence": False, "count": 1,
+                })
+        index += 1
     if not prepared:
         return 0
 
     cmd = [_ffmpeg(), "-y", "-v", "error", "-i", str(video)]
-    for layer, path in prepared:
-        if _layer_is_sequence(layer):
+    for entry in prepared:
+        if entry["track"]:
+            cmd += ["-f", "concat", "-safe", "0", "-i", str(entry["path"])]
+        elif entry["sequence"]:
             cmd += [
                 "-framerate", str(fps), "-start_number", "1",
-                "-i", str(path),
+                "-i", str(entry["path"]),
             ]
         else:
-            cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(path)]
+            cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(entry["path"])]
     graph: list[str] = []
     last = "0:v"
-    for index, (layer, _path) in enumerate(prepared, 1):
+    for index, entry in enumerate(prepared, 1):
+        layer = entry["layer"]
+        out = f"v{index}"
+        if entry["track"]:
+            graph.append(
+                f"[{last}][{index}:v]overlay=x={entry['x']}:y={entry['y']}:"
+                f"eof_action=pass[{out}]"
+            )
+            last = out
+            continue
         start = max(0.0, min(total, float(layer.get("start") or 0.0)))
         end = max(start + 0.01, min(total, float(layer.get("end") or 0.0)))
         x, y, _w, _h = _layer_rect(layer, out_w, out_h)
         source = f"{index}:v"
-        if _layer_is_sequence(layer):
+        if entry["sequence"]:
             graph.append(
                 f"[{index}:v]setpts=PTS-STARTPTS+{start:.3f}/TB[l{index}]"
             )
             source = f"l{index}"
-        out = f"v{index}"
         graph.append(
             f"[{last}][{source}]overlay=x={x}:y={y}:"
             f"enable='between(t,{start:.3f},{end:.3f})':eof_action=pass[{out}]"
@@ -1425,7 +1548,7 @@ def _burn_layers(
         str(output),
     ]
     _run(cmd, timeout=900, cancel_event=cancel_event)
-    return len(prepared)
+    return sum(int(entry["count"]) for entry in prepared)
 
 
 def _burn_frame(
@@ -1477,6 +1600,64 @@ def _burn_frame(
     _run(cmd, timeout=120, cancel_event=cancel_event)
 
 
+def _concat_file(path: Path) -> str:
+    """One ``file`` line for the ffmpeg concat demuxer."""
+    return str(path.resolve()).replace("'", "'\\''")
+
+
+def _still_overlay_track(
+    items: list[tuple[float, float, Path]],
+    total: float,
+    tmp: Path,
+    size: tuple[int, int],
+) -> Path | None:
+    """One timed transparent PNG track for many static overlays.
+
+    Every cue used to become its own looped input and its own ``overlay``
+    filter. That chain composites every input into every frame, so 60 cues
+    cost minutes for a 26 s story. A concat-demuxer track has one input and
+    one overlay: each PNG lasts for its cue, and a transparent PNG fills the
+    gaps. Returns ``None`` for overlapping cues, where one track cannot
+    reproduce the stack; callers then keep the per-layer chain.
+    """
+    if len(items) < 2 or total <= 0:
+        return None
+    ordered = sorted(
+        (max(0.0, float(start)), min(float(total), float(end)), path)
+        for start, end, path in items
+    )
+    if any(end <= start + 1e-6 for start, end, _path in ordered):
+        return None
+    for previous, current in zip(ordered, ordered[1:]):
+        if current[0] < previous[1] - 1e-6:
+            return None
+
+    blank = tmp / "overlay-blank.png"
+    if not blank.is_file():
+        Image.new("RGBA", size, (0, 0, 0, 0)).save(blank)
+    lines: list[str] = []
+
+    def add(path: Path, duration: float) -> None:
+        if duration <= 0.0005:
+            return
+        lines.append(f"file '{_concat_file(path)}'")
+        lines.append(f"duration {duration:.6f}")
+
+    cursor = 0.0
+    for start, end, path in ordered:
+        if start > cursor + 0.0005:
+            add(blank, start - cursor)
+        add(path, end - start)
+        cursor = max(cursor, end)
+    if cursor < total - 0.0005:
+        add(blank, total - cursor)
+    if not lines:
+        return None
+    track = tmp / "overlay-track.txt"
+    track.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return track
+
+
 def _burn_captions(
     video: Path,
     cues: list[tuple[float, float, str]],
@@ -1492,18 +1673,35 @@ def _burn_captions(
     style: dict | None = None,
 ) -> None:
     pngs = _caption_pngs(tmp, cues, out_w, out_h, margin_fraction, style=style)
+    if not pngs:
+        return
     cmd = [_ffmpeg(), "-y", "-v", "error", "-i", str(video)]
-    for png in pngs:
-        cmd += ["-loop", "1", "-i", str(png)]
     graph: list[str] = []
-    last = "0:v"
-    for index, (start, end, _text) in enumerate(cues, 1):
-        out = f"v{index}"
-        graph.append(
-            f"[{last}][{index}:v]overlay=0:0:"
-            f"enable='between(t,{start:.3f},{max(start + 0.2, end):.3f})'[{out}]"
+    if len(cues) >= 2:
+        track = _still_overlay_track(
+            [
+                (float(start), float(end), png)
+                for (start, end, _text), png in zip(cues, pngs)
+            ],
+            total, tmp, (out_w, out_h),
         )
-        last = out
+        if track is not None:
+            cmd += ["-f", "concat", "-safe", "0", "-i", str(track)]
+            graph.append("[0:v][1:v]overlay=0:0:eof_action=pass[v1]")
+            last = "v1"
+        else:
+            last = "0:v"
+    else:
+        last = "0:v"
+    if not graph:
+        for index, (start, end, _text) in enumerate(cues, 1):
+            cmd += ["-loop", "1", "-i", str(pngs[index - 1])]
+            out = f"v{index}"
+            graph.append(
+                f"[{last}][{index}:v]overlay=0:0:"
+                f"enable='between(t,{start:.3f},{max(start + 0.2, end):.3f})'[{out}]"
+            )
+            last = out
     cmd += [
         "-filter_complex", ";".join(graph),
         "-map", f"[{last}]", "-an",
@@ -2057,6 +2255,16 @@ def render_reel(
                 os.cpu_count() or 2,
                 len(clips),
             ))
+            # Software AV1 decode is frame-threaded. Give each beat worker a
+            # slice of the cores; otherwise four workers spawn four full
+            # thread sets and thrash.
+            decode_threads = None
+            if str(meta.get("codec") or "").lower() in SOFTWARE_AV1:
+                mode = (os.environ.get("VIBECUT_DECODER") or "auto").lower()
+                if mode not in ("vt", "videotoolbox"):
+                    decode_threads = max(
+                        1, (os.cpu_count() or workers) // max(1, workers),
+                    )
             progress(0.01, f"Preparing {len(clips)} beats · {quality} · {encoder}")
             done = 0
             segments: list[Path] = []
@@ -2087,7 +2295,7 @@ def render_reel(
                         clip["start"], clip["duration"], clip["frames"],
                         segment, index == 0, index == len(clips) - 1,
                         out_w, out_h, quality, encoder, cache_dir, crop, crop_path, cancel_event,
-                        pre_filters, post_filters,
+                        pre_filters, post_filters, decode_threads,
                     )] = index
                 for future in as_completed(futures):
                     if cancel_event is not None and cancel_event.is_set():
