@@ -101,12 +101,54 @@ Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music
 - First render after upgrade re-encodes once (`layers-v2`/`text_skin` cache keys).
 - Founder retest of the 25 QA items remains a manual checklist.
 
+### Post-launch scalability (watch)
+
+- Round 6 panel ran five app servers with Check, proxy and render on one Mac. Check stalled at 63% and a 4:5 render took about 6 min, versus 5–40 s alone.
+- This is likely a local-machine limit, not an app bug. After launch, measure concurrent jobs: one ffmpeg/vision worker pool per machine, a queue cap, and an honest ETA that counts the queue ahead.
+
+### R3 founder-session fixes (planned, from round_6.md)
+
+Source: founder session 1 (`docs/testing/founder-session-1/`) and the round 6 panel. Four tracks with disjoint files, so they can be built in parallel and merged T1 → T4.
+
+**T1 Dub and voice workflow** (`static/studio/edit/layers/audio.js`, `audio.py` messages, `story_queue.py` failure reason)
+- Dub gets a source-language confirm and a target-language picker; Studio writes `audio.translate`.
+- Voice-over and Dub get an editable script box (prefilled from the transcript or translation).
+- Queue refuses a Dub with no target, with the reason in place; a failed queue row shows the server's message, never only "Render failed".
+- Audio tab order: Voice first, Music second. Dub and Voice-over copy explains the real difference.
+- Translated captions stay deferred until Dub renders end to end.
+
+**T2 Finished-video library** (new `routes_library.py`, new `static/studio/library.js`, the `shell.js` video picker)
+- `GET /api/artifacts`: every finished render across jobs, with job, story, shape, quality, version, date, and file size.
+- Studio "Your videos" splits into Finished and Sources tabs. Finished shows thumbnail, story, shape, version, date, play, download and open in Finish.
+- Sources show the job title, not `source.mp4`.
+- Read-only over existing render records; no new storage.
+
+**T3 Edit navigation and Finish honesty** (`static/studio/edit/index.js`, `static/studio/finish.js`, `preflight.py`, `app.py` queue route, frame route)
+- Sticky Back to Stories and Next: Finish in Edit, with save state beside them.
+- Preflight resolves clip-set story ids; never a masked 404.
+- Queue is idempotent: Queue all twice attaches to the active item, no failed duplicate row, no extra version.
+- Finish summary counts every shape and story queued.
+- Render-queue ETA: hidden until there is a measured rate, never 0.0 while running, never jumps back up within one stage.
+- Frame request at `t = duration` is clamped to the last frame instead of 422.
+
+**T4 Import/Check progress and speech** (`pipeline.py`, `stt.py`, `detect.py`, `static/studio/check.js`, `disk.py`)
+- Stage-weighted, monotonic progress; a heartbeat line during crop and speech; an ETA after 10%; a Cancel that stops ffmpeg.
+- No 68% "Tracking crop" plateau; copy matches the real length of the source.
+- Speech auto-detects language instead of defaulting to `en`; retry speech in place; the warning tells "off" apart from "engine returned nothing".
+- Disk refusal shows free, reserve and shortfall in GB; a path import that copies nothing doesn't demand the full reserve.
+
+**Deferred:** client approval and delivery log, the per-source rights record, single shared read between Import and Check, per-workflow Translate/Voice/Music routing in Studio, batch templates.
+**Rejected (round 6):** more voice engines, auto-Dub with a cloud default, auto-publish, auto-queueing every shape on import.
+
+**Founder manual test after merge:** rerun the session 1 flow on A, C and B with codegen recording; check Dub with a target, the library after four renders, Back/Next, and Check progress without plateaus.
+
 ### Next order
 
-1. Run founder manual checks for Waves 3/4, R1 and R2.
-2. Wave 5 packaging/performance/bug-bash.
-3. Paid-release gates G1–G5 and the 20-source benchmark.
-4. Deferred trim features only after paid trim is proven.
+1. R3 founder-session fixes (Dub, library, Back/Next, honest progress, speech).
+2. Run founder manual checks for Waves 3/4, R1, R2 and R3.
+3. Wave 5 packaging/performance/bug-bash.
+4. Paid-release gates G1–G5 and the 20-source benchmark.
+5. Deferred trim features only after paid trim is proven.
 
 ---
 
