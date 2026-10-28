@@ -30,7 +30,34 @@ def classic_packs() -> dict:
     """Optional pack status for Classic Setup: on disk or not, no install."""
     import packs
 
-    return {"packs": packs.list_packs()}
+    return {"packs": [{**pack, **_pack_usable(pack.get("id"))} for pack in packs.list_packs()]}
+
+
+def _pack_usable(pack_id: str | None) -> dict:
+    """Whether the engines a pack would add already work without the pack.
+
+    A Mac with Whisper or Demucs installed some other way (pip, Homebrew) can
+    transcribe or separate today; Setup must not tell a tester otherwise.
+    """
+    import audio
+    import pipeline
+
+    try:
+        if pack_id == "speech":
+            ready = any(item.get("cached") for item in pipeline.whisper_models())
+            detail = "Whisper is already on this Mac."
+        elif pack_id == "voice":
+            ready = bool(((audio.engine_status().get("voices") or {}).get("kokoro") or {}).get("available"))
+            detail = "Kokoro voices are already on this Mac."
+        elif pack_id == "separation":
+            engines = (audio.engine_status().get("separation") or {}).values()
+            ready = any(bool((item or {}).get("available")) for item in engines)
+            detail = "Voice separation is already on this Mac."
+        else:
+            return {"usable": False}
+    except Exception:  # noqa: BLE001 - status only; never fail Setup over it
+        return {"usable": False}
+    return {"usable": ready, "usable_detail": detail if ready else ""}
 
 
 @router.post("/api/classic/jobs/{job_id}/export/{kind}")

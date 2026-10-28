@@ -547,14 +547,19 @@
       }
       dom.setupPacks.innerHTML = list.map((pack) => {
         const installed = pack.installed === true;
+        // Engines installed outside the pack (pip, Homebrew) already work.
+        const usable = !installed && pack.usable === true;
         const size = Number(pack.installed_size || pack.size_bytes || 0);
         const detail = installed
           ? `${pack.installed_version || pack.version || ""} on disk${size ? ` · ${formatSize(size)}` : ""}.`
-          : `Not on disk${size ? ` · ${formatSize(size)} download` : ""}. No install starts from Classic.`;
+          : usable
+            ? pack.usable_detail || "Already works on this Mac."
+            : `Not on disk${size ? ` · ${formatSize(size)} download` : ""}. No install starts from Classic.`;
+        const chip = installed ? "Installed" : usable ? "Ready" : "Not installed";
         return `
           <div class="setup-engine-row">
             <div><strong>${esc(pack.name || pack.id)}</strong><p class="setup-hint">${esc(detail)}</p></div>
-            <span class="setup-chip ${installed ? "ok" : "warn"}">${installed ? "Installed" : "Not installed"}</span>
+            <span class="setup-chip ${installed || usable ? "ok" : "warn"}">${chip}</span>
           </div>`;
       }).join("");
     } catch (error) {

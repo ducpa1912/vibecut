@@ -74,3 +74,19 @@ def test_setup_scripts_use_the_existing_routes():
     assert "Optional: add keys and voices in Setup" in (
         ROOT / "static" / "index.html"
     ).read_text(encoding="utf-8")
+
+
+def test_classic_packs_count_engines_already_on_this_mac(monkeypatch):
+    import audio
+    import pipeline
+
+    monkeypatch.setattr(pipeline, "whisper_models", lambda: [{"id": "w", "cached": True}])
+    monkeypatch.setattr(audio, "engine_status", lambda: {
+        "voices": {"kokoro": {"available": False}},
+        "separation": {"demucs": {"available": True}},
+    })
+    packs = TestClient(app.app).get("/api/classic/packs").json()["packs"]
+    usable = {item["id"]: item["usable"] for item in packs}
+    assert usable == {"speech": True, "voice": False, "separation": True}
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "pack.usable === true" in script
