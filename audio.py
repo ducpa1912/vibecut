@@ -2812,20 +2812,49 @@ def store_uploaded_voice(source: Path, job_dir: Path) -> Path:
     return output
 
 
-def _has_audio_stream(source: str) -> bool:
-    """False only when ffprobe positively finds no audio stream."""
+def _audio_streams(source: str) -> list[tuple[int, int]] | None:
+    """``(stream index, channels)`` for each audio stream, or None if unknown.
+
+    None means ffprobe is missing or could not read the file, so the caller
+    cannot tell a silent source from one with sound.
+    """
     probe = shutil.which("ffprobe")
     if not probe:
-        return True
+        return None
     try:
         result = subprocess.run(
             [probe, "-v", "error", "-select_streams", "a", "-show_entries",
-             "stream=index", "-of", "csv=p=0", str(source)],
+             "stream=index,channels", "-of", "csv=p=0", str(source)],
             capture_output=True, text=True, timeout=60, check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return True
-    return result.returncode != 0 or bool(result.stdout.strip())
+        return None
+    if result.returncode != 0:
+        return None
+    streams: list[tuple[int, int]] = []
+    for line in result.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        try:
+            index = int(parts[0])
+        except (ValueError, IndexError):
+            continue
+        try:
+            channels = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+        except ValueError:
+            channels = 0
+        streams.append((index, channels))
+    return streams
+
+
+def _has_audio_stream(source: str) -> bool:
+    """False only when ffprobe positively finds no audio stream."""
+    streams = _audio_streams(source)
+    return streams is None or bool(streams)
+
+
+def _main_audio_stream(streams: Sequence[tuple[int, int]]) -> int:
+    """The stream ffmpeg would pick by default: most channels, first on a tie."""
+    return max(streams, key=lambda item: (item[1], -item[0]))[0]
 
 
 def _voice_route(engine: str, model: str, voice: str) -> tuple[str, str]:
@@ -2857,13 +2886,14 @@ def _source_audio_bed(
     rate: int = 48000,
     name: str = "original_audio.wav",
 ) -> Path:
-    """Decode the source's first audio stream to PCM.
+    """Decode the source's main audio stream to PCM.
 
     The mixer wants the stereo 48 kHz bed; voice extraction asks for a mono
     file under its own name.
     """
     output = tmp / name
-    if not _has_audio_stream(source):
+
+    def silence() -> Path:
         # A silent source (a written voice script) mixes over silence.
         seconds = max(1.0, media_duration(Path(source)) or 1.0)
         layout = "mono" if channels == 1 else "stereo"
@@ -2873,10 +2903,23 @@ def _source_audio_bed(
             "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(output),
         ], timeout=900, cancel_event=cancel_event)
         return output
-    _run([
-        _ffmpeg(), "-y", "-v", "error", "-i", source, "-vn", "-map", "0:a:0",
-        "-ar", str(rate), "-ac", str(channels), "-c:a", "pcm_s16le", str(output),
-    ], timeout=900, cancel_event=cancel_event)
+
+    streams = _audio_streams(source)
+    if streams is not None and not streams:
+        return silence()
+    # With several tracks, take the one ffmpeg itself would pick (most
+    # channels), not a scratch or commentary track that happens to be first.
+    mapping = ["-map", f"0:{_main_audio_stream(streams)}"] if streams else []
+    try:
+        _run([
+            _ffmpeg(), "-y", "-v", "error", "-i", source, "-vn", *mapping,
+            "-ar", str(rate), "-ac", str(channels), "-c:a", "pcm_s16le", str(output),
+        ], timeout=900, cancel_event=cancel_event)
+    except AudioError:
+        if streams is not None or (cancel_event is not None and cancel_event.is_set()):
+            raise
+        # No ffprobe: the decode is the only test for a silent source.
+        return silence()
     return output
 
 

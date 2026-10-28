@@ -18,6 +18,19 @@
 import { invalidateReadCache, request } from "./api.js";
 import { el } from "./ui.js";
 
+/** The server's cleaning warning for a new clone, or "" when it was cleaned. */
+function cleaningNote(record) {
+  const notes = [];
+  for (const text of [record?.warning, ...(Array.isArray(record?.warnings) ? record.warnings : [])]) {
+    const line = String(text || "").trim();
+    if (line && !notes.includes(line)) notes.push(line);
+  }
+  if (!notes.length && record?.cleaned === false) {
+    notes.push("It uses the raw recording, which was not cleaned.");
+  }
+  return notes.slice(0, 2).join(" ");
+}
+
 export const CONSENT_COPY = {
   me: "This is my own voice, and I agree to send this recording to OpenRouter and HeyGen with each voice line.",
   video: "I am the speaker in this video, or I have their written permission to clone their voice.",
@@ -257,7 +270,11 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       if (recordingUrl) URL.revokeObjectURL(recordingUrl);
       recordingUrl = "";
       consent = false;
-      setNotice("Your voice is ready. Press Play to hear it, or pick it under HeyGen Voice Turbo in any voice picker.", "ok");
+      const note = cleaningNote(record);
+      setNotice(
+        `Your voice is ready.${note ? ` ${note}` : ""} Press Play to hear it, or pick it under HeyGen Voice Turbo in any voice picker.`,
+        note ? "" : "ok",
+      );
       onChange();
     } catch (error) {
       setNotice(error?.message || "Could not clone the voice.", "bad");

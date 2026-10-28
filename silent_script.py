@@ -27,7 +27,24 @@ from typing import Any, Callable, Mapping, Sequence
 import settings_store
 
 #: Sees images and writes well in Vietnamese and English; cheap per call.
+#: Fallback only; the admin "script" workflow route is used when it is set.
 MODEL = "google/gemini-3.5-flash-lite"
+
+
+def configured_model() -> str:
+    """The first OpenRouter model on the admin "script" workflow, else MODEL."""
+    try:
+        import workflow_config
+
+        routes = workflow_config.routes(
+            settings_store.load_settings().get("workflows"), "script",
+        )
+    except Exception:  # noqa: BLE001 - a bad settings file keeps the default
+        return MODEL
+    for route in routes:
+        if route.get("provider") == "openrouter" and route.get("model"):
+            return str(route["model"])
+    return MODEL
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 ENGINE = "script"
 MAX_BRIEF_CHARS = 6000
@@ -422,13 +439,14 @@ def write_script(
     brief_text: str,
     *,
     language: str = "",
-    model: str = MODEL,
+    model: str | None = None,
     timeout: float = 240,
     call: Callable[..., str] | None = None,
 ) -> dict:
     """Write, time and save a voice script for a job; return a summary."""
     import stt
 
+    model = model or configured_model()
     brief_text = str(brief_text or "").strip()
     if not brief_text:
         raise ScriptError("Describe the video first: the topic, tone and mood, or what to say.")

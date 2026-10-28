@@ -46,6 +46,7 @@ WORKFLOW_LABELS = {
     "rewrite": "Script rewrite",
     "translate": "Translation",
     "hook_rank": "Hook ranking",
+    "script": "Silent-video script",
     "tts": "Voice-over",
     "music": "Music generation",
     "stt": "Transcription",
@@ -56,6 +57,7 @@ WORKFLOW_KIND = {
     "rewrite": "text",
     "translate": "text",
     "hook_rank": "text",
+    "script": "text",
     "tts": "tts",
     "music": "music",
     "stt": "stt",
@@ -66,6 +68,8 @@ WORKFLOW_PROVIDERS = {
     "rewrite": TEXT_PROVIDERS,
     "translate": TEXT_PROVIDERS,
     "hook_rank": TEXT_PROVIDERS,
+    # Reads frames, so it needs an OpenRouter vision model.
+    "script": ("openrouter",),
     "tts": TTS_PROVIDERS,
     "music": MUSIC_PROVIDERS,
     "stt": STT_PROVIDERS,
@@ -100,6 +104,12 @@ DEFAULT_WORKFLOWS: dict[str, dict[str, Any]] = {
         "reasoning": "low",
         "max_output_tokens": 1600,
         "timeout_s": 180,
+    },
+    "script": {
+        "routes": [{"provider": "openrouter", "model": "google/gemini-3.5-flash-lite"}],
+        "reasoning": "low",
+        "max_output_tokens": 3200,
+        "timeout_s": 240,
     },
     "tts": {
         "routes": [

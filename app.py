@@ -8816,6 +8816,7 @@ def delete_job(job_id: str) -> dict:
         if protected:
             raise HTTPException(409, "Unpin artifacts and revoke review links before deleting this job.")
         shutil.rmtree(_job_dir(job_id), ignore_errors=True)
+    routes_voice_clone.forget_job(job_id)
     return {"deleted": job_id}
 
 

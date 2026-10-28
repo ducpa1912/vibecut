@@ -128,6 +128,19 @@ async function play(engine, voice, label) {
   }
 }
 
+/** The server's cleaning warning for a new clone, or "" when it was cleaned. */
+function cleaningNote(record) {
+  const notes = [];
+  for (const text of [record?.warning, ...(Array.isArray(record?.warnings) ? record.warnings : [])]) {
+    const line = String(text || "").trim();
+    if (line && !notes.includes(line)) notes.push(line);
+  }
+  if (!notes.length && record?.cleaned === false) {
+    notes.push("It uses the raw recording, which was not cleaned.");
+  }
+  return notes.slice(0, 2).join(" ");
+}
+
 async function cloneVideo() {
   if (!videoJob || !videoConsent || videoBusy) return;
   const body = { name: videoName.trim(), consent: true };
@@ -142,7 +155,11 @@ async function cloneVideo() {
     const record = await cloneFromVideo(videoJob, body);
     videoConsent = false;
     videoName = "";
-    setNotice(`Cloned “${record.name}”${record.used_transcript ? " from the transcript's speech" : ""}. It is listed under HeyGen Voice Turbo.`, "ok");
+    const note = cleaningNote(record);
+    setNotice(
+      `Cloned “${record.name}”${record.used_transcript ? " from the transcript's speech" : ""}.${note ? ` ${note}` : ""} It is listed under HeyGen Voice Turbo.`,
+      note ? "" : "ok",
+    );
     await myVoice.refresh();
     await loadCatalog();
   } catch (cause) {

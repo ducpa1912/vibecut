@@ -72,8 +72,16 @@ def store_path() -> Path:
 
 
 def available() -> bool:
-    """Cloning only needs the OpenRouter key HeyGen Voice Turbo already uses."""
-    return bool(settings_store.get_secret("openrouter"))
+    """Cloning needs the OpenRouter speech HeyGen Voice Turbo already uses.
+
+    The same test as speech itself: a stored key, OpenRouter enabled and no
+    auth quarantine. Offering a clone that cannot speak only fails later.
+    """
+    if not settings_store.get_secret("openrouter"):
+        return False
+    import audio
+
+    return audio.openrouter_media_available()
 
 
 def is_voice_id(value: str) -> bool:

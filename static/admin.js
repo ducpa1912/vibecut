@@ -318,6 +318,7 @@
       rewrite: "Script rewrite for the cut and target language.",
       translate: "Online translation before rewrite.",
       hook_rank: "Optional LLM rerank for opening hooks.",
+      script: "Voice script for a video with no speech (reads frames; needs a vision model).",
       tts: "Voice-over provider and model.",
       music: "Music generation provider and model.",
       stt: "Transcription provider and model.",

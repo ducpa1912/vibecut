@@ -805,8 +805,8 @@ def _apple_payload(data: Mapping[str, Any]) -> dict:
 # repeat in the same response, since a single one may be real speech.
 _HALLUCINATED_LINES = frozenset({
     "thanks for watching", "thank you for watching", "please subscribe",
-    "subscribe to my channel", "like and subscribe", "bye", "bye bye",
-    "subtitles by the amaraorg community", "ta-da",
+    "subscribe to my channel", "like and subscribe",
+    "subtitles by the amaraorg community",
     "cảm ơn các bạn đã theo dõi", "cảm ơn các bạn đã xem video",
     "hẹn gặp lại các bạn trong những video tiếp theo",
     "hãy subscribe cho kênh để ủng hộ kênh của mình nhé",
@@ -814,7 +814,13 @@ _HALLUCINATED_LINES = frozenset({
     "ghiền mì gõ", "la la school",
     "字幕由amaraorg社区提供", "请不吝点赞 订阅 转发 打赏支持明镜与点点栏目",
 })
-_REPEATED_ONLY_LINES = frozenset({"thank you", "thanks", "cảm ơn", "okay", "you"})
+#: Short lines that are real speech once but Whisper's filler when repeated
+#: over silence. Dropped only from the third time on, and never when the
+#: segment's own scores say it is confident speech.
+_REPEATED_ONLY_LINES = frozenset({
+    "thank you", "thanks", "cảm ơn", "okay", "you", "bye", "bye bye", "ta-da",
+})
+_REPEATED_ONLY_MIN = 3
 
 
 def _line_key(text: str) -> str:
@@ -822,11 +828,24 @@ def _line_key(text: str) -> str:
     return " ".join(stripped.split())
 
 
-def _hallucinated(text: str, counts: Mapping[str, int]) -> bool:
+def _confident_speech(segment: Mapping[str, Any] | None) -> bool:
+    """True when Whisper's own scores say this segment is real speech."""
+    if not segment or segment.get("no_speech_prob") is None or segment.get("avg_logprob") is None:
+        return False
+    return _float(segment.get("no_speech_prob")) < 0.3 and _float(segment.get("avg_logprob")) > -0.6
+
+
+def _hallucinated(
+    text: str,
+    counts: Mapping[str, int],
+    segment: Mapping[str, Any] | None = None,
+) -> bool:
     key = _line_key(text)
     if key in _HALLUCINATED_LINES:
         return True
-    return key in _REPEATED_ONLY_LINES and counts.get(key, 0) >= 2
+    if key not in _REPEATED_ONLY_LINES or _confident_speech(segment):
+        return False
+    return counts.get(key, 0) >= _REPEATED_ONLY_MIN
 
 
 def _whisper_payload(data: Mapping[str, Any]) -> dict:
@@ -841,7 +860,7 @@ def _whisper_payload(data: Mapping[str, Any]) -> dict:
         text = " ".join(_clean_text(raw_segment.get("text")).split())
         if not text:
             continue
-        if _hallucinated(text, line_counts):
+        if _hallucinated(text, line_counts, raw_segment):
             continue
         compression = _float(raw_segment.get("compression_ratio"))
         no_speech = _float(raw_segment.get("no_speech_prob"))
