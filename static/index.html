@@ -8,23 +8,44 @@
   <link rel="stylesheet" href="/static/style.css?v=0.12.0">
   <link rel="stylesheet" href="/static/creator.css?v=0.14.0">
   <link rel="stylesheet" href="/static/studio/studio.css?v=0.5.0">
+  <!-- vibecut:edition -->
+  <style>
+    /* Edition switches (editions.py): hide links to views and features this
+       build does not ship. The code stays; only the way in is hidden. */
+    html:not([data-views~="studio"]) #classic-studio-return,
+    html:not([data-views~="classic"]) #st-use-classic,
+    html:not([data-features~="voice_room"]) #classic-voice-room,
+    html:not([data-features~="voice_room"]) #st-voice-room { display: none !important; }
+  </style>
   <script>
-    /* Choose the workspace before first paint. Studio is the default; Classic
-       stays reachable from Settings → "Use Classic editor" (saved here). */
+    /* Choose the workspace before first paint. The server writes the build's
+       edition above (window.VIBECUT_EDITION); without it both views show and
+       Studio opens first. A saved or ?classic=1 / ?studio=1 choice is honoured
+       only when this build ships that view. */
     (function () {
-      var mode = "studio";
+      var edition = window.VIBECUT_EDITION || {
+        views: ["studio", "classic"], default_view: "studio", features: ["voice_room"]
+      };
+      var views = edition.views || ["studio", "classic"];
+      function allowed(name) { return views.indexOf(name) !== -1; }
+      var mode = edition.default_view || views[0];
       var requested = "";
       try {
         var params = new URLSearchParams(window.location.search);
         if (params.get("classic") === "1") requested = "classic";
         else if (params.get("studio") === "1") requested = "studio";
       } catch (_) { /* URL parsing is unavailable; fall through */ }
+      if (requested && !allowed(requested)) requested = "";
       try {
         if (requested) localStorage.setItem("vibecut.editor", requested);
-        if (localStorage.getItem("vibecut.editor") === "classic") mode = "classic";
-      } catch (_) { /* storage may be unavailable; Studio still opens */ }
+        var stored = localStorage.getItem("vibecut.editor");
+        if (stored && allowed(stored)) mode = stored;
+      } catch (_) { /* storage may be unavailable; the default still opens */ }
       if (requested) mode = requested;
-      document.documentElement.dataset.editor = mode;
+      var root = document.documentElement;
+      root.dataset.editor = mode;
+      root.dataset.views = views.join(" ");
+      root.dataset.features = (edition.features || []).join(" ");
     })();
   </script>
   <script>

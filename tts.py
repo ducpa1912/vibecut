@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import packs
+import editions
 import voice_clone
 
 # Imported last: audio re-exports this module, so the facade must finish first.
@@ -958,7 +959,7 @@ def voice_engine_status() -> dict[str, dict]:
         "heygen": {
             "available": audio.openrouter_media_available(), "size_mb": 0,
             "install": "Add an OpenRouter key. HeyGen Voice Turbo (free), with voice cloning.",
-            "clone": audio.openrouter_media_available(),
+            "clone": audio.openrouter_media_available() and editions.feature_on("voice_room"),
         },
         "fish": {
             "available": audio.openrouter_media_available(), "size_mb": 0,

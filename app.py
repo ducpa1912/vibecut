@@ -41,6 +41,7 @@ import admin.store as admin_store
 import batch as batch_store
 import clipset
 import disk
+import editions
 import edits
 import exports as cuts
 import history_store
@@ -3395,12 +3396,17 @@ def ffmpeg_version() -> str:
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+def index() -> Response:
+    # The boot block reads the build's edition before first paint.
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    page = page.replace("<!-- vibecut:edition -->", editions.boot_script(), 1)
+    return Response(page, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/voices")
 def voice_room() -> FileResponse:
+    if not editions.feature_on("voice_room"):
+        raise HTTPException(404, "Not found")
     return FileResponse(STATIC / "voices.html")
 
 
@@ -3570,6 +3576,7 @@ def _setup_origin_ok(request: Request) -> bool:
 
 def _settings_state() -> dict:
     state = settings_store.public_state()
+    state["edition"] = editions.public()
     state["runtime"] = {
         "opencode": audio.opencode_available(),
         "opencode_binary": audio.opencode_bin() or "",

@@ -18,14 +18,22 @@ import threading
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import editions
 import job_queue
 import voice_clone
 
-router = APIRouter()
+
+def _voice_room_on() -> None:
+    """Every voice clone route is part of the hidden Voice Room feature."""
+    if not editions.feature_on("voice_room"):
+        raise HTTPException(404, "Not found")
+
+
+router = APIRouter(dependencies=[Depends(_voice_room_on)])
 
 UPLOAD_SUFFIXES = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".webm", ".flac", ".mp4", ".mov"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".avi"}
