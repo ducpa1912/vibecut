@@ -13,9 +13,10 @@ import { mount as mountCheck } from "./check.js";
 import { mount as mountStories } from "./stories.js";
 import { mount as mountEdit } from "./edit.js";
 import { mount as mountFinish } from "./finish.js";
+import { mount as mountLibrary } from "./library.js";
 import { mount as mountSetup } from "./setup.js";
-import { cachedJobStamp, getJob, getJobStatus, invalidateReadCache, listClipSets, listJobs, request } from "./api.js";
-import { el, formatDuration, shortDate, statusText, statusTone } from "./ui.js";
+import { cachedJobStamp, getJob, getJobStatus, invalidateReadCache, listClipSets, request } from "./api.js";
+import { el, statusText } from "./ui.js";
 
 const JOB_KEY = "vibecut.studio.job";
 const EDITOR_KEY = "vibecut.editor";
@@ -221,8 +222,7 @@ export function startStudio() {
         <button class="st-icon-btn" type="button" data-library-close aria-label="Close video list">×</button>
       </div>
       <div class="st-dialog-body">
-        <input id="st-library-search" class="st-input" type="search" placeholder="Search by name" aria-label="Search videos">
-        <div id="st-library-list" class="st-library-list"></div>
+        <div id="st-library-host" class="st-library-host" style="display:grid;gap:12px"></div>
       </div>
       <div class="st-dialog-foot">
         <button id="st-library-import" class="st-btn st-btn-ghost" type="button">Import a new video</button>
@@ -261,15 +261,14 @@ export function startStudio() {
     progressText: root.querySelector("#st-top-progress-text"),
     readingAction: root.querySelector("#st-top-reading-action"),
     library: root.querySelector("#st-library-dialog"),
-    librarySearch: root.querySelector("#st-library-search"),
-    libraryList: root.querySelector("#st-library-list"),
+    libraryHost: root.querySelector("#st-library-host"),
     libraryImport: root.querySelector("#st-library-import"),
   };
   let jobState = { ...EMPTY_STATE };
   let watchTimer = 0;
   let watchSeq = 0;
   let noticeTimer = 0;
-  let libraryTicket = 0;
+  let libraryUi = null;
   let lastJobCheck = 0;
   let lastJobUpdated = "";
 
@@ -523,62 +522,24 @@ export function startStudio() {
   }
 
   // --------------------------------------------------------- video library
+  //
+  // The dialog body is the finished/sources library component. It keeps one
+  // list, one search box and one set of tabs; the shell only opens it and
+  // forwards the current job.
+
+  function ensureLibrary() {
+    if (!libraryUi) libraryUi = mountLibrary(dom.libraryHost, ctx) || null;
+    return libraryUi;
+  }
 
   function openLibrary() {
+    ensureLibrary();
     if (typeof dom.library.showModal === "function") dom.library.showModal();
     else dom.library.setAttribute("open", "");
-    dom.librarySearch.value = "";
-    void loadLibrary("");
-    requestAnimationFrame(() => dom.librarySearch.focus());
-  }
-
-  async function loadLibrary(query) {
-    const ticket = ++libraryTicket;
-    dom.libraryList.replaceChildren(el("p", { class: "st-hint", text: "Loading your videos…" }));
-    try {
-      const data = await listJobs({ query, limit: 30 });
-      if (ticket !== libraryTicket) return;
-      const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
-      dom.libraryList.replaceChildren();
-      if (!jobs.length) {
-        dom.libraryList.append(el("p", { class: "st-hint", text: query ? "No video matches that name." : "No videos yet. Import one to begin." }));
-        return;
-      }
-      for (const job of jobs) dom.libraryList.append(libraryRow(job));
-    } catch (error) {
-      if (ticket !== libraryTicket) return;
-      dom.libraryList.replaceChildren(el("p", { class: "st-error", text: error?.message || "Could not load your videos." }));
-    }
-  }
-
-  function libraryRow(job) {
-    const current = currentJob?.id === job.id;
-    const stories = Array.isArray(job.story_titles) ? job.story_titles.length : 0;
-    const meta = [
-      formatDuration(job.duration),
-      shortDate(job.created),
-      stories ? `${stories} ${stories === 1 ? "story" : "stories"}` : "",
-    ].filter(Boolean).join(" · ");
-    const thumb = job.hook_thumb && !job.source_deleted
-      ? el("img", { class: "st-library-thumb", src: job.hook_thumb, alt: "", loading: "lazy" })
-      : el("span", { class: "st-library-thumb st-library-thumb-empty", "aria-hidden": "true" });
-    const row = el("button", {
-      class: `st-library-item${current ? " is-current" : ""}`,
-      type: "button",
-      "aria-current": current ? "true" : null,
-    }, [
-      thumb,
-      el("span", { class: "st-library-copy" }, [
-        el("strong", { text: job.name || job.id }),
-        el("span", { text: meta }),
-      ]),
-      el("span", { class: `st-chip st-chip-${statusTone(job.status)}`, text: current ? "Open now" : statusText(job.status) }),
-    ]);
-    row.addEventListener("click", () => {
-      dom.library.close();
-      void openJobAndContinue(job.id, { name: job.name || "", status: job.status || "" });
+    void libraryUi?.refresh();
+    requestAnimationFrame(() => {
+      dom.libraryHost.querySelector("#st-library-search")?.focus();
     });
-    return row;
   }
 
   async function openJobAndContinue(id, meta = {}) {
@@ -676,6 +637,21 @@ export function startStudio() {
     },
     // Open a video and move to the step where its work continues.
     openJobAndContinue: (id, meta = {}) => openJobAndContinue(id, meta),
+    // Open a finished cut's job on Finish. The hash contract is only
+    // `#/<step>` today, so story/shape cannot travel with it; Finish opens on
+    // its first story and default shape.
+    openFinished: (artifact = {}) => {
+      const id = String(artifact.job_id || "");
+      if (!id) return;
+      setJob({
+        id,
+        name: artifact.job_title || artifact.source_label || "",
+      });
+      jobState = { ...EMPTY_STATE };
+      renderRail();
+      void refreshState();
+      go("finish", { force: true });
+    },
     refreshSteps: () => refreshState(),
     getStepState: () => ({ ...jobState }),
     updateJob,
@@ -700,11 +676,6 @@ export function startStudio() {
   dom.libraryImport.addEventListener("click", () => {
     dom.library.close();
     go("import", { force: true });
-  });
-  let searchTimer = 0;
-  dom.librarySearch.addEventListener("input", () => {
-    if (searchTimer) window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(() => loadLibrary(dom.librarySearch.value.trim()), 250);
   });
   root.querySelector(".st-skip")?.addEventListener("click", (event) => {
     event.preventDefault();
