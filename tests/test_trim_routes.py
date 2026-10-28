@@ -157,10 +157,7 @@ def test_trim_earlier_moves_layers_and_keeps_pins(api, reflow):
         "expected_revision": 0,
         "start_sentence": start,
         "end_sentence": story["sentences"][-1]["id"],
-        "aspects": {
-            aspect: value["edit_id"]
-            for aspect, value in payload["aspects"].items()
-        },
+        "aspects": payload["aspects"],
     })
     assert response.status_code == 200, response.text
     result = response.json()

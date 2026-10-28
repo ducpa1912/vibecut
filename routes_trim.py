@@ -39,9 +39,10 @@ class TrimBody(BaseModel):
     start_sentence: int
     end_sentence: int
     dry_run: bool = False
-    # Optional caller snapshot of GET trim's ``aspects`` map. When present it
-    # is the edit_changed compare-and-swap guard.
-    aspects: dict[str, str] | None = None
+    # Optional caller snapshot of GET trim's ``aspects`` map. Accepts either
+    # ``{aspect: edit_id}`` or the GET shape ``{aspect: {edit_id, stale}}``.
+    # When present it is the edit_changed compare-and-swap guard.
+    aspects: dict[str, str | dict] | None = None
 
 
 class TrimUndoBody(BaseModel):
@@ -55,7 +56,7 @@ class TrimRebindBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int
-    aspects: dict[str, str] | None = None
+    aspects: dict[str, str | dict] | None = None
 
 
 class _Conflict(Exception):
@@ -161,11 +162,18 @@ def _get_payload(job: dict, record: dict, story: dict) -> dict:
     }
 
 
-def _check_expected(expectation: dict[str, str] | None, job: dict, story: dict, set_id: str, current: dict) -> None:
+def _check_expected(
+    expectation: dict[str, str | dict] | None,
+    job: dict,
+    story: dict,
+    set_id: str,
+    current: dict,
+) -> None:
     if expectation is None:
         return
     actual = _aspects(job, story, set_id)
-    for aspect, edit_id in expectation.items():
+    for aspect, wanted in expectation.items():
+        edit_id = wanted.get("edit_id") if isinstance(wanted, dict) else wanted
         live = actual.get(aspect) or {}
         if live.get("edit_id") != edit_id:
             raise _http(
