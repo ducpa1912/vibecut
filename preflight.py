@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 
 import captions as caption_engine
 import cleanup
+import clipset
 import compose_render
 import detect
 import edits
@@ -594,6 +595,30 @@ def _artifact_entry(
     return entry
 
 
+def _clip_set_story(
+    job: dict,
+    story_id: str,
+) -> tuple[dict, dict] | None:
+    """Find a clip-set story by id; the newest set wins when ids repeat."""
+    raw = job.get("clip_sets")
+    if isinstance(raw, dict):
+        records = list(raw.values())
+    elif isinstance(raw, (list, tuple)):
+        records = list(raw)
+    else:
+        return None
+    ordered = sorted(
+        (record for record in records if isinstance(record, dict)),
+        key=lambda record: float(record.get("created") or 0.0),
+        reverse=True,
+    )
+    for record in ordered:
+        for story in record.get("stories") or []:
+            if isinstance(story, dict) and str(story.get("id") or "") == story_id:
+                return record, story
+    return None
+
+
 def _select_story(
     job: dict,
     story_id: str | None,
@@ -608,6 +633,26 @@ def _select_story(
         for row in rows:
             if str(row.get("id") or "") == sid:
                 return row
+        found = _clip_set_story(job, sid)
+        if found is not None:
+            record, story = found
+            set_id = str(record.get("id") or "")
+            try:
+                plan = clipset.story_to_plan(
+                    story,
+                    list((job.get("analysis") or {}).get("scenes") or []),
+                    target=None,
+                    set_id=set_id,
+                )
+            except clipset.ClipSetError:
+                plan = None
+            return {
+                "id": sid,
+                "set_id": set_id,
+                "story": story,
+                "plan": plan,
+                "title": story.get("title"),
+            }
         if sid in records:
             return {"id": sid, "render_key": sid, "record": records[sid]}
         for key, record in records.items():

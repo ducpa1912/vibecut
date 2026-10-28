@@ -751,10 +751,19 @@ def edit_frame(
         (compiled.get("segments") or [{}])[-1].get("out_end") or 0.0
     )
     at = float(t)
-    if at < 0.0 or at >= total - 1e-9:
+    if not math.isfinite(at):
+        raise HTTPException(422, "t must be a finite time in seconds.")
+    if at < 0.0:
         raise HTTPException(
             422, f"t must be between 0 and the story duration ({total:.3f}s).",
         )
+    # A scrubber sends the story end exactly. render_story_frame already
+    # clamps to the last frame; accept that one request instead of 422.
+    if at > total + (1.0 / 30.0):
+        raise HTTPException(
+            422, f"t must be between 0 and the story duration ({total:.3f}s).",
+        )
+    at = min(at, total)
     try:
         payload = render.render_story_frame(
             str(job["source"]["path"]),

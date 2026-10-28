@@ -6796,6 +6796,20 @@ class StoryRenderBackend:
                     status="cancelling", message="Stopping…", error=None,
                 )
 
+    def error(self, item: dict, artifact_id: str) -> str:
+        """The artifact's own failure reason, never a generic "Render failed"."""
+        try:
+            manifest = artifacts.load_manifest(_job_dir(item["job_id"]), artifact_id)
+        except (HTTPException, OSError):
+            return ""
+        if not isinstance(manifest, dict):
+            return ""
+        for key in ("error", "message"):
+            text = str(manifest.get(key) or "").strip()
+            if text and not re.fullmatch(r"render failed\.?", text, re.IGNORECASE):
+                return text[:1200]
+        return ""
+
     def timeout_for(self, item: dict) -> float:
         try:
             fixed = float(os.environ.get("VIBECUT_STORY_TIMEOUT", "0") or 0)
@@ -6807,6 +6821,37 @@ class StoryRenderBackend:
 
 
 _STORY_QUEUES: dict[str, story_queue.StoryQueueManager] = {}
+# One create/attach decision at a time, so two quick Queue-all clicks cannot
+# both see an empty active set and each start a queue for the same identity.
+_STORY_QUEUE_SUBMIT_LOCK = threading.Lock()
+# Per-queue ETA memory: a running item's estimate never rises inside one
+# stage, and a queue header never rises while the same items are in flight.
+_QUEUE_ETA_STATE: dict[str, dict] = {}
+
+
+def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str]:
+    return (
+        str(item.get("job_id") or ""),
+        str(item.get("set_id") or ""),
+        str(item.get("story_id") or ""),
+        str(item.get("aspect") or "9:16"),
+        str(item.get("quality") or "final"),
+    )
+
+
+def _active_queue_for(
+    queues: list[dict],
+    identity: tuple[str, str, str, str, str],
+) -> dict | None:
+    for queue in queues:
+        if str(queue.get("status") or "") not in story_queue.ACTIVE_QUEUES:
+            continue
+        for item in queue.get("items") or []:
+            if str(item.get("state") or "") not in {"queued", "running"}:
+                continue
+            if _story_queue_identity(item) == identity:
+                return queue
+    return None
 
 
 def story_queues() -> story_queue.StoryQueueManager:
@@ -6828,7 +6873,12 @@ class StoryQueueBody(BaseModel):
 
 @app.post("/api/story-queues")
 def create_story_queue(body: StoryQueueBody) -> dict:
-    """Up to ten story items render one after another; nothing auto-resumes."""
+    """Up to ten story items render one after another; nothing auto-resumes.
+
+    Queueing is idempotent by identity: a story/shape/quality already waiting
+    or rendering is attached to its active queue instead of creating a second
+    item or a failed "already rendering" row.
+    """
     for item in body.items:
         if isinstance(item, dict) and item.get("job_id"):
             job = _clipset_job(str(item["job_id"]))
@@ -6840,10 +6890,50 @@ def create_story_queue(body: StoryQueueBody) -> dict:
             _story_edit_for_render(
                 job, story, set_id, str(item.get("aspect") or "9:16"),
             )
+    with _STORY_QUEUE_SUBMIT_LOCK:
+        manager = story_queues()
+        active = manager.list()
+        pending: list[dict] = []
+        attached: dict | None = None
+        for item in body.items:
+            queue = _active_queue_for(active, _story_queue_identity(item))
+            if queue is not None:
+                attached = attached or queue
+            else:
+                pending.append(item)
+        if not pending and attached is not None:
+            return {
+                "queue": _live_queue(manager.get(str(attached["id"]))),
+                "attached": True,
+            }
+        try:
+            queue = manager.create(pending or body.items)
+        except story_queue.QueueError as exc:
+            raise _queue_http(exc) from exc
+        return {"queue": _live_queue(queue), "attached": False}
+
+
+def _smooth_item_eta(
+    state: dict | None,
+    item: dict,
+    stage: str,
+    raw: object,
+) -> float | None:
+    """Hide unknown and zero estimates; never rise inside one stage."""
     try:
-        return {"queue": story_queues().create(body.items)}
-    except story_queue.QueueError as exc:
-        raise _queue_http(exc) from exc
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    if state is None:
+        return round(value, 1)
+    key = str(item.get("id") or item.get("artifact_id") or "")
+    previous = state["items"].get(key)
+    if isinstance(previous, dict) and previous.get("stage") == stage:
+        value = min(value, float(previous.get("eta") or value))
+    state["items"][key] = {"stage": stage, "eta": value}
+    return round(value, 1)
 
 
 def _live_queue(queue: dict) -> dict:
@@ -6852,12 +6942,23 @@ def _live_queue(queue: dict) -> dict:
     Queue progress used to count only finished items, so one long render sat
     at 50% with no sign of life. Running items now carry the render record's
     own progress and ETA, and the queue's progress and ETA include them.
+
+    An ETA appears only after the renderer has a measured rate. It is never
+    shown as 0.0 while running and never rises inside one render stage. The
+    queue header and its running item are fed from the same estimate.
     """
     jobs: dict[str, dict] = {}
     items = queue.get("items") or []
+    queue_id = str(queue.get("id") or "")
+    state = None
+    if queue_id and str(queue.get("status") or "") in story_queue.ACTIVE_QUEUES:
+        state = _QUEUE_ETA_STATE.setdefault(queue_id, {"items": {}, "queue": None})
+    elif queue_id:
+        _QUEUE_ETA_STATE.pop(queue_id, None)
     partial = 0.0
     eta_total = 0.0
     eta_known = False
+    running_ids: list[str] = []
     for item in items:
         if item.get("state") != "running" or not item.get("artifact_id"):
             continue
@@ -6879,15 +6980,21 @@ def _live_queue(queue: dict) -> dict:
         fraction = max(0.0, min(1.0, float(record.get("progress") or 0.0)))
         item["progress"] = round(fraction, 4)
         item["message"] = record.get("message") or item.get("message")
-        if record.get("eta") is not None:
-            item["eta"] = round(float(record["eta"]), 1)
-            eta_total += float(record["eta"])
+        stage = str(record.get("message") or "Rendering")
+        eta = _smooth_item_eta(state, item, stage, record.get("eta"))
+        if eta is None:
+            item.pop("eta", None)
+        else:
+            item["eta"] = eta
+            eta_total += eta
             eta_known = True
+        running_ids.append(str(item.get("id") or item["artifact_id"]))
         partial += fraction
     if items:
         done = sum(1 for item in items if item.get("state") in story_queue.TERMINAL_ITEMS)
         queue["progress"] = round((done + partial) / len(items), 4)
     waiting = sum(1 for item in items if item.get("state") == "queued")
+    queue.pop("eta", None)
     if eta_known:
         # Items still waiting are estimated at the running item's full length.
         running = [item for item in items if item.get("eta") is not None and item.get("state") == "running"]
@@ -6896,7 +7003,18 @@ def _live_queue(queue: dict) -> dict:
             item = running[0]
             spent = float(item.get("progress") or 0.0)
             per_item = float(item["eta"]) / max(0.05, 1.0 - spent) if spent < 1 else 0.0
-        queue["eta"] = round(eta_total + waiting * per_item, 1)
+        total = round(eta_total + waiting * per_item, 1)
+        if total > 0:
+            if state is not None:
+                signature = (
+                    f"{queue.get('status')}:{len(items)}:"
+                    f"{','.join(running_ids)}"
+                )
+                previous = state.get("queue")
+                if isinstance(previous, dict) and previous.get("signature") == signature:
+                    total = min(total, float(previous.get("eta") or total))
+                state["queue"] = {"signature": signature, "eta": total}
+            queue["eta"] = total
     return queue
 
 
@@ -8277,6 +8395,11 @@ def _queue_render_locked_impl(
         if reject_active:
             raise HTTPException(409, "That story is already rendering.")
         if existing.get("artifact_id") == artifact and not force:
+            return existing
+        # A queue duplicate attaches to the item already running for this
+        # identity. Waiting on the same artifact is what story_queue.py
+        # promises; a second queued version would only race the first.
+        if existing.get("artifact_id") and not force:
             return existing
         raise HTTPException(409, "That reel is already rendering.")
 
