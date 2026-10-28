@@ -161,7 +161,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 
 | # | Action: where to click | Intent | Expected | Result |
 |---|---|---|---|---|
-| 8.1 | Click **Setup** at the top right | The Setup dialog opens | It shows **Cloud, optional** with Intelligence, Video links, Transcription, Voice over and **Save setup**. | |
+| 8.1 | Click **Setup** at the top right | The Setup dialog opens | It shows **Cloud, optional** with Intelligence, Video links, RedNote, Transcription, Voice over, Optional packs, Rights lock and **Save setup**. | |
 | 8.2 | Intelligence → **Test OpenCode** | OpenCode login check | It says **OpenCode Go replied.** with a model name and seconds. | |
 | 8.3 | Paste an OpenRouter key, click **Test OpenRouter**, then **Save setup** | OpenRouter key | The test says **OpenRouter replied.** After saving it says **Saved on this Mac.** The key is not shown again. | |
 | 8.4 | Clear the OpenRouter key and click **Test OpenRouter** | An honest missing-key message | It says **OpenRouter model check failed. No OpenRouter key.** | |
@@ -174,6 +174,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 8.11 | Optional packs | Honest pack status | Speech, Voice and Separation show **Installed** or **Not installed** with their size. Nothing downloads unless a real install is offered. | |
 | 8.12 | Rights lock | The import gate | The toggle shows the current state. Turning it off removes the import dialog; turning it on restores it. | |
 | 8.13 | Paste an ElevenLabs key, click **Save setup**, reopen Setup | A saved key round-trip | The key field is blank and a status says the key is saved. The key is never returned by the API or shown in the page. | |
+| 8.14 | Fill the other key fields: **API key · optional** (OpenCode), **Service URL** and **API key · optional** (Cobalt), **Service URL**, **Access token · friends mode** and **Cookie · one-shot handoff** (XHS), then **Save setup** | Every key field is real and saved | Each field accepts text, reopens with a configured/blank state, and no saved secret is echoed back into the page. | |
 
 ## 9. Known issues
 
