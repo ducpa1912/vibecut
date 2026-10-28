@@ -3296,7 +3296,7 @@
         <button class="lab-card" data-lab-hook="${hook.scene}">
           <img src="${esc(withToken(hook.thumb_url))}" alt="" loading="lazy">
           <span class="lab-copy">
-            <b>${Math.round(hook.hook)} hook</b>
+            <b>${roundScoreHalfEven(hook.hook)} hook</b>
             <small>${esc(fmtTime(hook.start, 1))} · ${hook.dur.toFixed(1)}s · ${hook.clip_count} beats · ${hook.plan_total.toFixed(0)}s cut</small>
             <small>${esc((hook.why || hook.ocr || hook.speech || "no text").slice(0, 120))}</small>
           </span>
@@ -5209,7 +5209,7 @@
       </div>
       <div class="drawer-kicker">Scene ${scene.id + 1} · ${esc(role || "outside cut")}</div>
       <h3 class="drawer-title">${esc(fmtTime(scene.start, 1))} – ${esc(fmtTime(scene.end, 1))}</h3>
-      <p class="drawer-meta">${scene.dur.toFixed(2)}s · hook ${Math.round(scene.hook)} · interest ${Math.round(scene.score)}</p>
+      <p class="drawer-meta">${scene.dur.toFixed(2)}s · hook ${roundScoreHalfEven(scene.hook)} · interest ${roundScoreHalfEven(scene.score)}</p>
       ${ocr}
       ${speech}
       <div class="drawer-section"><span class="label">Why ${esc(role || "this beat")}</span><p class="drawer-why">${esc(why)}</p></div>
@@ -5488,11 +5488,22 @@
     return text.length <= limit ? text : `${text.slice(0, limit - 1).trim()}…`;
   }
 
+  function roundScoreHalfEven(value) {
+    const number = Number(value) || 0;
+    const floor = Math.floor(number);
+    // Python's format(score, ".0f") rounds halves to even; match it so the
+    // hook-lab badge and the "Hook score" sentence never differ by one.
+    if (Math.abs(number - floor - 0.5) < 1e-9) {
+      return floor % 2 === 0 ? floor : floor + 1;
+    }
+    return Math.round(number);
+  }
+
   function scoreItem(label, value) {
     const safe = clamp(Number(value) || 0, 0, 100);
     return `
       <div class="score-item">
-        <div class="label"><span>${esc(label)}</span><b>${Math.round(safe)}</b></div>
+        <div class="label"><span>${esc(label)}</span><b>${roundScoreHalfEven(safe)}</b></div>
         <div class="mini-bar"><i style="width:${safe}%"></i></div>
       </div>`;
   }
