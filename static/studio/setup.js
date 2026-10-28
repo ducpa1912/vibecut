@@ -310,7 +310,36 @@ export function mount(host, ctx = {}) {
       ]));
     }
     card.append(music);
+    const extraction = extractionGroup();
+    if (extraction) card.append(extraction);
     return card;
+  }
+
+  function extractionGroup() {
+    const info = engines?.extraction;
+    if (!info || typeof info !== "object") return null;
+    const rows = [
+      ["Voice separation", info.separation, "Mel-Band RoFormer or Demucs. Install the Separation Pack, or pip install demucs."],
+      ["Denoise", info.denoise, "DeepFilterNet 3 from the Voice Pack; ffmpeg afftdn always works as the fallback."],
+      ["Speech detection", info.vad, "Silero VAD when installed; the built-in energy gate always works."],
+      ["Speaker filter", info.diarization, "Optional pyannote.audio with a Hugging Face token. Without it, clips may mix speakers."],
+    ];
+    const group = el("div", { class: "st-setup-group" });
+    group.append(el("div", { class: "st-setup-group-head" }, [
+      el("h4", { text: "Voice extraction" }),
+      el("p", { class: "st-hint", text: "Cleans a clone reference from a video or recording. Every engine is optional; ffmpeg alone still works." }),
+    ]));
+    for (const [label, value, install] of rows) {
+      const ready = Boolean(value);
+      group.append(el("div", { class: "st-setup-engine" }, [
+        el("div", { class: "st-setup-engine-head" }, [
+          el("strong", { text: label }),
+          el("span", { class: `st-chip ${ready ? "st-chip-ok" : ""}`, text: ready ? String(value) : "Not installed" }),
+        ]),
+        el("p", { class: "st-hint", text: install }),
+      ]));
+    }
+    return group;
   }
 
   function packsCard() {

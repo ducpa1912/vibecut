@@ -59,6 +59,7 @@ BUILTIN_MANIFEST: dict[str, Any] = {
             "url": "",
             "contents": [
                 "onnxruntime", "kokoro-onnx", "Kokoro v1.0", "Kokoro v1.1-zh",
+                "DeepFilterNet 3 (deep-filter)",
             ],
         },
         {
@@ -68,7 +69,10 @@ BUILTIN_MANIFEST: dict[str, Any] = {
             "size_bytes": 800_000_000,
             "sha256": "",
             "url": "",
-            "contents": ["torch (CPU/MPS)", "demucs", "HTDemucs"],
+            "contents": [
+                "torch (CPU/MPS)", "demucs", "HTDemucs", "HTDemucs FT",
+                "audio-separator", "Mel-Band RoFormer",
+            ],
         },
     ],
 }

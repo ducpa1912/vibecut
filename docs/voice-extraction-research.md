@@ -190,13 +190,23 @@ installed, so installing DeepFilterNet later does not reuse an older result.
 
 ## What is still open
 
-- **UI.** No route or panel in this checkout. Build it separately from the
-  existing voice-room in main: a candidate picker with waveform, play buttons,
-  score badges and a "use this voice" confirm. Reuse the job queue and cancel
-  event. Do not change the current voice-room flow.
-- **Pack.** `deep-filter` is looked up through `packs.find_command("voice",
-  "deep-filter")`. The pack already exists on main, so no manifest change was
-  made here.
+- **UI.** Bundled. Edit → audio layer has "Find the best voice clips": a tracked
+  background search, a progress line, 3–5 candidate cards with play, time
+  range, score badge and warnings, then consent and "Clone this voice". Manual
+  start/end sits behind "Choose the time range yourself". Setup still owns
+  My voice; the Voice Room flow is untouched.
+- **Routes.** Bundled. `POST/GET/DELETE
+  /api/jobs/{id}/voices/candidates` start, poll and cancel the search under
+  `data/jobs/<id>/voice-candidates/`; `GET .../candidates/{n}/audio` serves a
+  cleaned WAV. `POST .../voices/clone` accepts `candidate` and cleans a manual
+  range before cutting, falling back to the raw cut with a warning.
+- **My voice.** Bundled. An upload or recording is denoised and VAD-trimmed
+  before `prepare_sample()`. Separation is skipped for an audio recording
+  unless the denoise report still shows music; a video upload may separate.
+  Cleaning failure falls back to the raw sample with a warning.
+- **Pack.** Bundled. The Voice Pack lists DeepFilterNet 3 (`deep-filter`); the
+  Separation Pack lists `audio-separator`, Mel-Band RoFormer and HTDemucs FT.
+  Weights are still downloaded on first use, not bundled.
 - **Demucs weight licence.** Use the best engine when installed, but decide
   before a commercial build whether the installer ships Demucs weights or
   downloads them. Mel-Band RoFormer is the MIT-weight alternative.
@@ -210,6 +220,9 @@ installed, so installing DeepFilterNet later does not reuse an older result.
 - **Clone-quality scoring.** The score is acoustic (speech coverage, noise
   floor). It does not yet measure speaker consistency; that needs embeddings
   from the diarizer or a small verification model.
+- **Search scheduling.** The candidate search shares `analysis_pool`'s single
+  worker, so a long search delays the next video read. A dedicated pool would
+  keep imports responsive on a busy machine.
 
 ## Sources
 

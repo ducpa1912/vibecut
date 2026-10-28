@@ -147,6 +147,16 @@ def _check(cancel_event: threading.Event | None) -> None:
         raise audio.AudioError("Voice extraction cancelled.")
 
 
+def _stage(on_stage, name: str) -> None:
+    """Best-effort progress callback; a broken listener never fails a job."""
+    if on_stage is None:
+        return
+    try:
+        on_stage(str(name))
+    except Exception:  # noqa: BLE001 - progress is advisory
+        pass
+
+
 def cache_dir(fingerprint: str) -> Path:
     safe = re.sub(r"[^a-zA-Z0-9_.-]", "_", fingerprint or "source")[:80]
     return audio.CACHE / "voice_refs" / safe
@@ -1171,6 +1181,7 @@ def find_voice_candidates(
     target_lufs: float = TARGET_LUFS,
     sample_rate: int = REFERENCE_RATE,
     use_cache: bool = True,
+    on_stage=None,
 ) -> dict:
     """Find 3-5 clean speech batches and let the user choose one.
 
@@ -1179,7 +1190,11 @@ def find_voice_candidates(
     keeps the main diarised speaker when pyannote is installed. Without it the
     candidates may contain more than one voice; the report warns about that
     and about overlapping speech when pyannote runs.
+
+    ``on_stage`` receives short status names (``preparing``, ``scoring``,
+    ``exporting``) for a progress line. It is optional and never required.
     """
+    _stage(on_stage, "starting")
     source_path = Path(source).expanduser()
     if not source_path.is_file():
         raise audio.AudioError("Source file not found.")
@@ -1229,6 +1244,7 @@ def find_voice_candidates(
         "separation": None, "denoise": None, "vad": None, "diarization": None,
     }
     try:
+        _stage(on_stage, "preparing")
         prepared = _prepare(
             source_path, work,
             fingerprint=fingerprint,
@@ -1245,10 +1261,12 @@ def find_voice_candidates(
             )
         if not spans:
             raise audio.AudioError("No speech was found in this file.")
+        _stage(on_stage, "scoring")
         times, levels = _frame_table(clip)
         windows = _candidate_windows(spans, clip_seconds, int(count), times, levels)
         if not windows:
             raise audio.AudioError("No speech windows were found in this file.")
+        _stage(on_stage, "exporting")
         candidates: list[dict] = []
         for index, window in enumerate(windows, start=1):
             selected = _select_spans(

@@ -61,6 +61,23 @@ export function cloneFromVideo(jobId, body) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/clone`, { method: "POST", body });
 }
 
+/** Start the clean candidate search; a second call returns the running task. */
+export function findVoiceCandidates(jobId) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/candidates`, { method: "POST", body: {} });
+}
+
+export function voiceCandidateState(jobId) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/candidates`, { fresh: true });
+}
+
+export function cancelVoiceCandidates(jobId) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/candidates`, { method: "DELETE" });
+}
+
+export function voiceCandidateAudioUrl(jobId, index) {
+  return `/api/jobs/${encodeURIComponent(jobId)}/voices/candidates/${Number(index)}/audio`;
+}
+
 /** Multipart upload; `request` only speaks JSON. */
 export async function cloneFromFile(file, { name = "", language = "", consent = false } = {}) {
   const form = new FormData();
