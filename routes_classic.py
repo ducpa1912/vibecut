@@ -25,6 +25,14 @@ class ExportCutBody(BaseModel):
     caption_track_id: str | None = None
 
 
+@router.get("/api/classic/packs")
+def classic_packs() -> dict:
+    """Optional pack status for Classic Setup: on disk or not, no install."""
+    import packs
+
+    return {"packs": packs.list_packs()}
+
+
 @router.post("/api/classic/jobs/{job_id}/export/{kind}")
 def export_edited_cut(job_id: str, kind: str, body: ExportCutBody):
     """Export SRT, VTT, EDL or XML from the edited clips the browser sends.

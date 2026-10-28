@@ -27,6 +27,13 @@
     setupTranslationMode: $("#setup-translation-mode"),
     setupSttLanguage: $("#setup-stt-language"),
     setupMinimaxKey: $("#setup-minimax-key"),
+    setupElevenlabsKey: $("#setup-elevenlabs-key"),
+    setupVoiceEngines: $("#setup-voice-engines"),
+    setupPacks: $("#setup-packs"),
+    setupPacksRefresh: $("#setup-packs-refresh"),
+    setupRightsLock: $("#setup-rights-lock"),
+    firstRunNudge: $("#first-run-nudge"),
+    firstRunSetup: $("#first-run-setup"),
     setupTestOpencode: $("#setup-test-opencode"),
     setupTestOpenrouter: $("#setup-test-openrouter"),
     setupTestStt: $("#setup-test-stt"),
@@ -398,6 +405,7 @@
     }
     dom.setupOpencodeStatus.classList.toggle("warn", !runtime.opencode);
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
+    if (dom.setupRightsLock) dom.setupRightsLock.checked = (settings.rights || {}).lock !== false;
     const ingest = settings.ingest || {};
     dom.setupIngestProvider.value = ["auto", "ytdlp", "cobalt", "xhs"].includes(ingest.provider)
       ? ingest.provider : "auto";
@@ -435,12 +443,14 @@
     setSecretHint(dom.setupOpencodeKey, !!secrets.opencode, sources.opencode);
     setSecretHint(dom.setupOpenrouterKey, !!secrets.openrouter, sources.openrouter, true);
     setSecretHint(dom.setupMinimaxKey, !!secrets.minimax, sources.minimax);
+    setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
     setSecretHint(dom.setupCobaltKey, !!secrets.cobalt, sources.cobalt);
     setSecretHint(dom.setupXhsToken, !!secrets.xhs, sources.xhs);
     [
       dom.setupOpencodeKey,
       dom.setupOpenrouterKey,
       dom.setupMinimaxKey,
+      dom.setupElevenlabsKey,
       dom.setupCobaltKey,
       dom.setupXhsToken,
       dom.setupXhsCookie,
@@ -449,6 +459,8 @@
     });
     state.setup = settings;
     state.setupSecrets = secrets;
+    renderSetupEngines();
+    renderFirstRunNudge();
     if (dom.speechNote && !dom.speechNote.textContent.includes("unavailable")) {
       dom.speechNote.textContent = "Apple / local Whisper";
     }
@@ -474,7 +486,9 @@
   async function openSetup() {
     dom.setup.hidden = false;
     dom.setupStatus.textContent = "Loading…";
-    await Promise.all([loadSetup(), loadIngestStatus()]);
+    await Promise.all([
+      loadSetup(), loadIngestStatus(), loadAudioEngines(), loadPackStatus(),
+    ]);
   }
 
   function closeSetup() {
@@ -486,10 +500,76 @@
       opencode: dom.setupOpencodeKey.value.trim(),
       openrouter: dom.setupOpenrouterKey.value.trim(),
       minimax: dom.setupMinimaxKey.value.trim(),
+      elevenlabs: dom.setupElevenlabsKey?.value.trim() || "",
       cobalt: dom.setupCobaltKey.value.trim(),
       xhs: dom.setupXhsToken.value.trim(),
     };
     return Object.fromEntries(Object.entries(values).filter(([, value]) => value));
+  }
+
+  const SETUP_VOICE_ORDER = [
+    ["say", "Apple voices"],
+    ["kokoro", "Kokoro"],
+    ["heygen", "HeyGen Voice Turbo"],
+    ["fish", "Fish Audio"],
+    ["gemini", "Gemini TTS"],
+    ["minimax", "MiniMax Speech"],
+    ["elevenlabs", "ElevenLabs"],
+  ];
+
+  function renderSetupEngines() {
+    if (!dom.setupVoiceEngines) return;
+    const voices = state.audioEngines?.voices;
+    if (!voices) {
+      dom.setupVoiceEngines.innerHTML = '<p class="setup-hint">Voice engine status unavailable. Reopen Setup to check again.</p>';
+      return;
+    }
+    dom.setupVoiceEngines.innerHTML = SETUP_VOICE_ORDER.map(([id, label]) => {
+      const info = voices[id] || {};
+      const ready = info.available === true;
+      const detail = info.install || (ready ? "Ready." : "Needs setup.");
+      return `
+        <div class="setup-engine-row">
+          <div><strong>${esc(label)}</strong><p class="setup-hint">${esc(detail)}</p></div>
+          <span class="setup-chip ${ready ? "ok" : "warn"}">${ready ? "Ready" : "Needs setup"}</span>
+        </div>`;
+    }).join("");
+  }
+
+  async function loadPackStatus() {
+    if (!dom.setupPacks) return;
+    try {
+      const data = await api("/api/classic/packs");
+      const list = data.packs || [];
+      if (!list.length) {
+        dom.setupPacks.innerHTML = '<p class="setup-hint">No optional packs are listed in this build.</p>';
+        return;
+      }
+      dom.setupPacks.innerHTML = list.map((pack) => {
+        const installed = pack.installed === true;
+        const size = Number(pack.installed_size || pack.size_bytes || 0);
+        const detail = installed
+          ? `${pack.installed_version || pack.version || ""} on disk${size ? ` · ${formatSize(size)}` : ""}.`
+          : `Not on disk${size ? ` · ${formatSize(size)} download` : ""}. No install starts from Classic.`;
+        return `
+          <div class="setup-engine-row">
+            <div><strong>${esc(pack.name || pack.id)}</strong><p class="setup-hint">${esc(detail)}</p></div>
+            <span class="setup-chip ${installed ? "ok" : "warn"}">${installed ? "Installed" : "Not installed"}</span>
+          </div>`;
+      }).join("");
+    } catch (error) {
+      dom.setupPacks.innerHTML = `<p class="setup-hint">${esc(error.message)}</p>`;
+    }
+  }
+
+  function renderFirstRunNudge() {
+    if (!dom.firstRunNudge) return;
+    let saved = false;
+    try { saved = localStorage.getItem("vibecut.setupSaved") === "1"; } catch (_) { saved = true; }
+    const secrets = state.setupSecrets || {};
+    const hasCloudKey = ["opencode", "openrouter", "minimax", "elevenlabs"]
+      .some((name) => secrets[name] === true);
+    dom.firstRunNudge.hidden = saved || hasCloudKey;
   }
 
   async function saveSetup() {
@@ -512,6 +592,9 @@
           },
           stt: {
             language: dom.setupSttLanguage.value,
+          },
+          rights: {
+            lock: dom.setupRightsLock ? dom.setupRightsLock.checked : true,
           },
           ingest: {
             provider: dom.setupIngestProvider.value || "auto",
@@ -545,10 +628,13 @@
         });
       }
       applySetup(data);
+      try { localStorage.setItem("vibecut.setupSaved", "1"); } catch (_) { /* ignore */ }
       dom.setupStatus.textContent = "Saved. Local fallback still active.";
       toast("Setup saved.");
       await loadIngestStatus(true);
       await loadAudioEngines();
+      await loadPackStatus();
+      renderFirstRunNudge();
       refreshAudioStatus();
     } catch (error) {
       dom.setupStatus.textContent = error.message;
@@ -885,6 +971,8 @@
     dom.setupXhsOpen.addEventListener("click", openXhsSignIn);
     dom.setupXhsCopy.addEventListener("click", copyXhsServiceUrl);
     dom.setupXhsInvite.addEventListener("click", copyXhsInvite);
+    dom.setupPacksRefresh?.addEventListener("click", loadPackStatus);
+    dom.firstRunSetup?.addEventListener("click", openSetup);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !dom.setup.hidden) closeSetup();
     });
@@ -4248,6 +4336,7 @@
     loadAudioTracks();
     refreshAudioStatus();
     loadAudioScript();
+    renderSetupEngines();
   }
 
   function translateLabel(id) {
