@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("routes_trim")
+pytest.importorskip("caption_reflow")
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "trim_job"
