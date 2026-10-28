@@ -191,3 +191,78 @@ def test_transcribe_route_explains_when_no_engine_is_ready(tmp_path, monkeypatch
     monkeypatch.setattr(app.pipeline.stt, "_engine_ready", lambda provider, model: False)
     response = TestClient(app.app).post("/api/jobs/nokeyjob0001/transcribe", json={})
     assert response.status_code == 400 and "OpenRouter" in response.json()["detail"]
+
+
+def test_import_language_that_differs_from_setup_beats_a_title_guess(monkeypatch):
+    import app
+
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {"stt": {"language": "en"}})
+    picked = app.clean_options({"speech_language": "vi"})
+    assert picked["speech_language_explicit"] == "vi"
+    assert stt.speech_language_for(picked, {"name": "東京の夜"}) == "vi"
+    # Classic sends the Setup language on every import: that is no pick.
+    default = app.clean_options({"speech_language": "en"})
+    assert "speech_language_explicit" not in default
+    assert stt.speech_language_for(default, {"name": "東京の夜"}) == "ja"
+    flagged = app.clean_options({"speech_language": "en", "speech_language_explicit": True})
+    assert flagged["speech_language_explicit"] == "en"
+    assert "speech_language_explicit" not in app.clean_options({"speech_language": "auto"})
+
+
+def _slow_transcribe(app, monkeypatch, tmp_path, release):
+    monkeypatch.setattr(app.pipeline, "extract_audio", lambda path, has_audio, job_dir: _wav(tmp_path / "a.wav"))
+    monkeypatch.setattr(app.pipeline.stt, "_engine_ready", lambda provider, model: provider == "openrouter")
+
+    def fake_transcribe(wav, job_dir, duration, progress, **kwargs):
+        release.wait(5)
+        return {
+            "language": "vi", "provider": "openrouter", "text": "Xin chào.",
+            "segments": [{"start": 1.0, "end": 2.0, "text": "Xin chào."}], "words": [],
+        }
+
+    monkeypatch.setattr(app.pipeline.stt, "transcribe_source", fake_transcribe)
+    monkeypatch.setattr(app, "VOICE_TASK_WAIT_S", 0.05)
+
+
+def test_slow_transcribe_answers_running_then_the_poll_returns_the_result(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    import app
+
+    _ready_job(app, "slowread0001", tmp_path)
+    release = threading.Event()
+    _slow_transcribe(app, monkeypatch, tmp_path, release)
+    api = TestClient(app.app)
+    first = api.post("/api/jobs/slowread0001/transcribe", json={})
+    assert first.status_code == 202
+    assert first.json()["state"] in ("queued", "running")
+    again = api.post("/api/jobs/slowread0001/transcribe", json={})
+    assert again.status_code == 202 and again.json()["task_id"] == first.json()["task_id"]
+    release.set()
+    for _ in range(100):
+        polled = api.get("/api/jobs/slowread0001/voice-tasks/transcribe")
+        if polled.status_code != 202:
+            break
+        time.sleep(0.05)
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["segments"] == 1
+    assert app.load_job("slowread0001")["analysis"]["transcript"]["segments"] == 1
+
+
+def test_cancelled_transcribe_never_updates_the_job(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    import app
+
+    _ready_job(app, "cancelread01", tmp_path)
+    release = threading.Event()
+    _slow_transcribe(app, monkeypatch, tmp_path, release)
+    api = TestClient(app.app)
+    assert api.post("/api/jobs/cancelread01/transcribe", json={}).status_code == 202
+    assert api.delete("/api/jobs/cancelread01/voice-tasks/transcribe").json()["state"] == "cancelled"
+    release.set()
+    time.sleep(0.3)
+    assert api.get("/api/jobs/cancelread01/voice-tasks/transcribe").status_code == 409
+    assert app.load_job("cancelread01")["analysis"]["transcript"] is None

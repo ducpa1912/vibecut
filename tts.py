@@ -504,11 +504,18 @@ def require_live_clone(voice: str) -> None:
         raise audio.AudioError(DELETED_CLONE_ERROR)
 
 
+def is_clone_voice(voice: str) -> bool:
+    return voice_clone.is_voice_id(str(voice or "").strip())
+
+
 def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
     require_live_clone(preferred)
     candidate = str(candidate or "").strip().lower()
     candidate = "gemini" if candidate == "openrouter" else candidate
     preferred = str(preferred or "").strip()
+    if is_clone_voice(preferred) and candidate != "heygen":
+        # A clone id means nothing to another engine; use its default voice.
+        preferred = ""
     if candidate == primary and preferred not in {"", "default"}:
         return preferred
     if candidate == "fish":

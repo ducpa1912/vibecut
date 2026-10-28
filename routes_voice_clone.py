@@ -34,6 +34,10 @@ CANDIDATE_DIR = "voice-candidates"
 CANDIDATE_COUNT = 5
 #: Quiet-gap band energy this close to the speech band means music is present.
 MUSIC_RESIDUAL_DB = -24.0
+#: My voice cleaning runs inside the upload request; it reads at most this
+#: much of the file, which is twice what a clone sample keeps.
+UPLOAD_CLEAN_SECONDS = 2 * voice_clone.MAX_SAMPLE_SECONDS
+NO_SOUND = "This video has no sound track, so there is no voice to clone."
 CANDIDATE_CANCELS: dict[str, threading.Event] = {}
 CANDIDATE_STAGES: dict[str, str] = {}
 CANDIDATE_RESULTS: dict[str, dict] = {}
@@ -116,6 +120,19 @@ def _read_candidate_report(job_id: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _upload_head(raw: Path, work: Path) -> Path:
+    """The first ``UPLOAD_CLEAN_SECONDS`` as mono PCM, so cleaning time is bounded."""
+    import audio  # noqa: PLC0415 - audio imports voice_clone
+
+    head = work / "head.wav"
+    audio._run([
+        audio._ffmpeg(), "-y", "-v", "error", "-i", str(raw), "-vn",
+        "-t", f"{UPLOAD_CLEAN_SECONDS:.0f}", "-ac", "1", "-ar", "48000",
+        "-c:a", "pcm_s16le", str(head),
+    ], timeout=300)
+    return head
+
+
 def _set_stage(job_id: str, stage: str) -> None:
     CANDIDATE_STAGES[job_id] = str(stage or "")
 
@@ -187,7 +204,7 @@ def _public_candidate(job_id: str, item: dict, models: dict) -> dict:
 
 def _candidate_state(job_id: str) -> dict:
     app = _app()
-    task = app.analysis_pool.find_key(CANDIDATE_KIND, job_id)
+    task = app.voice_pool.find_key(CANDIDATE_KIND, job_id)
     report = CANDIDATE_RESULTS.get(job_id) or _read_candidate_report(job_id)
     if task is not None:
         state = task.status
@@ -275,8 +292,9 @@ def clone_my_voice(
             # or when the denoise report still shows music in the gaps.
             separate = suffix in VIDEO_SUFFIXES
             clean_dir = work / "clean"
+            head = _upload_head(raw, work)
             report = voice_extract.extract_clean_voice(
-                raw, clean_dir,
+                head, clean_dir,
                 separate="best" if separate else False,
                 denoise="auto",
                 target_seconds=voice_clone.MAX_SAMPLE_SECONDS,
@@ -284,7 +302,7 @@ def clone_my_voice(
             residual = (report.get("quality") or {}).get("music_noise_residual_db")
             if not separate and residual is not None and float(residual) > MUSIC_RESIDUAL_DB:
                 report = voice_extract.extract_clean_voice(
-                    raw, work / "clean-music",
+                    head, work / "clean-music",
                     separate="best", denoise="auto",
                     target_seconds=voice_clone.MAX_SAMPLE_SECONDS,
                     use_cache=False,
@@ -326,7 +344,10 @@ def start_candidate_search(job_id: str, request: Request) -> dict:
     source = Path(str((job.get("source") or {}).get("path") or ""))
     if not source.is_file():
         raise HTTPException(404, "The source video for this job is missing.")
-    existing = app.analysis_pool.find_key(CANDIDATE_KIND, job_id)
+    if (job.get("source") or {}).get("has_audio") is False:
+        # A silent source would decode to silence and run every model on it.
+        raise HTTPException(400, NO_SOUND)
+    existing = app.voice_pool.find_key(CANDIDATE_KIND, job_id)
     if existing is not None and existing.state in {
         job_queue.QueueState.QUEUED, job_queue.QueueState.RUNNING,
     }:
@@ -347,7 +368,7 @@ def start_candidate_search(job_id: str, request: Request) -> dict:
     cancel_event = threading.Event()
     CANDIDATE_CANCELS[job_id] = cancel_event
     _set_stage(job_id, "queued")
-    app.analysis_pool.submit_tracked(
+    app.voice_pool.submit_tracked(
         _run_candidate_search, job_id, cancel_event, out_dir,
         kind=CANDIDATE_KIND, key=job_id,
     )
@@ -370,7 +391,7 @@ def cancel_candidate_search(job_id: str, request: Request) -> dict:
     cancel_event = CANDIDATE_CANCELS.get(job_id)
     if cancel_event is not None:
         cancel_event.set()
-    app.analysis_pool.cancel_key(CANDIDATE_KIND, job_id)
+    app.voice_pool.cancel_key(CANDIDATE_KIND, job_id)
     _set_stage(job_id, "cancelled")
     return _candidate_state(job_id)
 
@@ -413,6 +434,8 @@ def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> di
     source = Path(str((job.get("source") or {}).get("path") or ""))
     if not source.is_file():
         raise HTTPException(404, "The source video for this job is missing.")
+    if (job.get("source") or {}).get("has_audio") is False:
+        raise HTTPException(400, NO_SOUND)
     title = Path(str((job.get("source") or {}).get("name") or "video")).stem
     language = body.language or _transcript_language(job_id)
 

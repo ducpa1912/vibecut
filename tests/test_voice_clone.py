@@ -450,6 +450,15 @@ def test_my_voice_upload_is_cleaned_before_the_sample(tmp_path, monkeypatch):
         output.write_bytes(b"ID3" + b"\x00" * 4000)
         return 30.0
 
+    import routes_voice_clone as routes
+
+    heads = []
+
+    def fake_head(raw, work):
+        heads.append(raw)
+        return raw
+
+    monkeypatch.setattr(routes, "_upload_head", fake_head)
     monkeypatch.setattr(voice_extract, "extract_clean_voice", fake_extract)
     monkeypatch.setattr(voice_clone, "prepare_sample", fake_prepare)
     api = TestClient(app.app)
@@ -458,6 +467,7 @@ def test_my_voice_upload_is_cleaned_before_the_sample(tmp_path, monkeypatch):
         files={"file": ("me.wav", b"RIFF" + b"\x00" * 128, "audio/wav")},
         data={"consent": "true", "name": "Me"},
     )
+    assert len(heads) == 1  # cleaning reads a bounded head, never the whole file
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["cleaned"] is True
@@ -552,3 +562,55 @@ def test_speech_fields_mime_matches_an_old_wav_wrapped_sample(tmp_path):
     path.write_bytes(b"RIFF" + b"\0" * 4000)
     data = voice_clone.speech_fields(record["voice_id"])["input_references"][0]["input_audio"]["data"]
     assert data.startswith("data:audio/wav;base64,")
+
+
+# ---------------------------------------------------------------- medium review fixes
+
+
+def test_candidate_search_refuses_a_video_with_no_sound(tmp_path, monkeypatch):
+    import app
+    import routes_voice_clone as routes
+
+    job, _source, directory = _job(tmp_path, monkeypatch)
+    job["source"]["has_audio"] = False
+    (directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+    started = []
+    monkeypatch.setattr(app.voice_pool, "submit_tracked", lambda *a, **k: started.append(a))
+    api = TestClient(app.app)
+    response = api.post("/api/jobs/job-test/voices/candidates")
+    assert response.status_code == 400
+    assert "no sound track" in response.json()["detail"]
+    assert started == []
+    clone = api.post("/api/jobs/job-test/voices/clone", json={"consent": True})
+    assert clone.status_code in (400,)
+
+
+def test_candidate_search_runs_on_the_voice_pool_not_analysis(tmp_path, monkeypatch):
+    import app
+
+    _job(tmp_path, monkeypatch)
+    pools = []
+    monkeypatch.setattr(app.analysis_pool, "submit_tracked", lambda *a, **k: pools.append("analysis"))
+    monkeypatch.setattr(app.voice_pool, "submit_tracked", lambda *a, **k: pools.append("voice"))
+    TestClient(app.app).post("/api/jobs/job-test/voices/candidates")
+    assert pools == ["voice"]
+
+
+def test_clone_voice_is_never_passed_to_a_non_heygen_engine(tmp_path):
+    record = _clone(tmp_path)
+    voice_id = record["voice_id"]
+    assert tts._tts_voice_for("heygen", voice_id, "heygen") == voice_id
+    assert tts._tts_voice_for("minimax", voice_id, "minimax") == tts.DEFAULT_VOICES["minimax"]
+    assert tts._tts_voice_for("say", voice_id, "say") == tts.DEFAULT_VOICES["say"]
+    assert voice_id not in {tts._tts_voice_for(name, voice_id, name) for name in ("kokoro", "gemini", "elevenlabs")}
+
+
+def test_auto_plan_with_a_clone_starts_on_heygen_and_warns_on_stand_ins(tmp_path):
+    record = _clone(tmp_path)
+    voice_id = record["voice_id"]
+    assert audio._voice_route("auto", "speech-2.8-turbo", voice_id) == ("heygen", "")
+    assert audio._voice_route("minimax", "speech-2.8-turbo", "female-shaonv") == ("minimax", "speech-2.8-turbo")
+    assert audio._clone_stand_in_warning(voice_id, [{"engine_used": "heygen"}]) == ""
+    warning = audio._clone_stand_in_warning(voice_id, [{"engine_used": "heygen"}, {"engine_used": "kokoro"}])
+    assert "Cloned voice skipped" in warning and "kokoro" in warning
+    assert audio._clone_stand_in_warning("nadine", [{"engine_used": "kokoro"}]) == ""

@@ -176,6 +176,7 @@ export function buildAudioPlan({
   music = null,
   translate = null,
   scriptOverrides = null,
+  modeChosen = false,
 } = {}) {
   const next = {
     mode: AUDIO_LABELS[mode] ? mode : "original",
@@ -190,6 +191,9 @@ export function buildAudioPlan({
   if (translate) next.translate = translate;
   const overrides = cleanScriptOverrides(scriptOverrides);
   if (Object.keys(overrides).length) next.script_overrides = overrides;
+  // Marks a mode the creator picked, so a picked "original" on a scripted
+  // story keeps the sound instead of the default voice-over.
+  if (modeChosen) next.mode_chosen = true;
   return next;
 }
 
@@ -466,6 +470,7 @@ export function mountAudioPanel(host, ctx) {
       music: musicPlan(),
       translate: translatePlan(),
       scriptOverrides: scriptPlan(),
+      modeChosen: Boolean(plan.mode_chosen),
     });
   }
 
@@ -1338,6 +1343,7 @@ export function mountAudioPanel(host, ctx) {
     select.addEventListener("change", () => {
       const previous = plan.mode;
       plan.mode = select.value;
+      plan.mode_chosen = true;
       // A script written for one mode is the wrong language for the other:
       // Voice-over lines are source-language, Dub lines are translated.
       if ((previous === "dub") !== (plan.mode === "dub")) {

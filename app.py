@@ -101,6 +101,11 @@ ingest_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vibecut-inge
 render_pool = job_queue.Scheduler(
     "render", max_workers=1, thread_name_prefix="vibecut-render",
 )
+#: Speech re-reads, written scripts and voice clip searches. Kept apart from
+#: analysis so a long import never queues them, and the reverse.
+voice_pool = job_queue.Scheduler(
+    "voice", max_workers=1, thread_name_prefix="vibecut-voice",
+)
 INGEST_CANCELS: dict[str, threading.Event] = {}
 ANALYSIS_CANCELS: dict[str, threading.Event] = {}
 RENDER_CANCELS: dict[tuple[str, str], threading.Event] = {}
@@ -314,18 +319,28 @@ def update_job(job_id: str, mutator) -> dict:
 
 def clean_options(raw: dict | None) -> dict:
     raw = raw or {}
-    return {
+    configured = str(
+        (settings_store.load_settings().get("stt") or {}).get("language") or "en"
+    ).strip().lower()
+    requested = str(raw.get("speech_language") or "").strip().lower()
+    options = {
         "ocr": bool(raw.get("ocr", True)),
         "transcribe": bool(raw.get("transcribe", False)),
         "smart_crop": bool(raw.get("smart_crop", True)),
         "crop_tracking": bool(raw.get("crop_tracking", True)),
         "transcribe_engine": str(raw.get("transcribe_engine") or "auto"),
-        "speech_language": str(
-            raw.get("speech_language")
-            or (settings_store.load_settings().get("stt") or {}).get("language")
-            or "en"
-        ),
+        "speech_language": requested or configured,
     }
+    # Classic sends the Setup language on every import, so only a language
+    # that differs from Setup (or one flagged explicit) is the creator's pick.
+    # A pick beats the title-script guess; the Setup default does not.
+    flagged = raw.get("speech_language_explicit")
+    explicit = str(flagged).strip().lower() if isinstance(flagged, str) else ""
+    if not explicit and requested and (flagged is True or requested != configured):
+        explicit = requested
+    if explicit and explicit not in {"auto", "none", "und"}:
+        options["speech_language_explicit"] = explicit
+    return options
 
 
 def _legacy_media_name(value) -> str:
@@ -5913,6 +5928,86 @@ def delete_variant(job_id: str, variant_id: str) -> dict:
     return {"variants": result.get("variants", [])}
 
 
+#: A voice task's request waits this long before it answers "running" and
+#: the page polls. Most speech re-reads and scripts finish inside it.
+VOICE_TASK_WAIT_S = 20.0
+VOICE_TASK_KINDS = ("transcribe", "script")
+VOICE_TASKS: dict[tuple[str, str], str] = {}
+VOICE_CANCELS: dict[tuple[str, str], threading.Event] = {}
+
+
+def _voice_task_run(work, cancel: threading.Event) -> dict:
+    """Keep an HTTPException's status and message across the queue."""
+    try:
+        return {"ok": True, "result": work(cancel)}
+    except HTTPException as exc:
+        return {"ok": False, "status": exc.status_code, "detail": str(exc.detail)}
+
+
+def _voice_task_reply(kind: str, job_id: str, task):
+    if task is None:
+        return {"kind": kind, "state": "idle"}
+    if not task.terminal:
+        return JSONResponse(status_code=202, content={
+            "kind": kind, "state": task.status, "task_id": task.id,
+        })
+    if task.state in (job_queue.QueueState.CANCELLED, job_queue.QueueState.INTERRUPTED):
+        raise HTTPException(409, "Cancelled. The video was not updated.")
+    outcome = task.result if isinstance(task.result, dict) else None
+    if task.state is job_queue.QueueState.FAILED or outcome is None:
+        raise HTTPException(500, task.error or "The task failed.")
+    if not outcome.get("ok"):
+        raise HTTPException(int(outcome.get("status") or 500), outcome.get("detail") or "The task failed.")
+    return outcome["result"]
+
+
+def _voice_task(kind: str, job_id: str, work, *, reuse: bool):
+    """Run ``work(cancel)`` on the voice pool; answer now if it is quick.
+
+    ``reuse`` returns a running task of the same kind instead of starting a
+    second one; otherwise a running task is a 409.
+    """
+    active = voice_pool.find_key(kind, job_id)
+    if active is not None and not active.terminal:
+        if not reuse:
+            raise HTTPException(409, "This is already running for this video. Wait for it, or cancel it.")
+        task = active
+    else:
+        cancel = threading.Event()
+        VOICE_CANCELS[(kind, job_id)] = cancel
+        task = voice_pool.submit_tracked(
+            _voice_task_run, work, cancel, kind=kind, key=job_id,
+        )
+        VOICE_TASKS[(kind, job_id)] = task.id
+    task.wait(VOICE_TASK_WAIT_S)
+    return _voice_task_reply(kind, job_id, task)
+
+
+@app.get("/api/jobs/{job_id}/voice-tasks/{kind}")
+def voice_task_state(job_id: str, kind: str):
+    """Poll a speech re-read or script task: 202 while it runs, then its result."""
+    if kind not in VOICE_TASK_KINDS:
+        raise HTTPException(404, "Unknown task.")
+    load_job(job_id)
+    task_id = VOICE_TASKS.get((kind, job_id))
+    return _voice_task_reply(kind, job_id, voice_pool.get(task_id) if task_id else None)
+
+
+@app.delete("/api/jobs/{job_id}/voice-tasks/{kind}")
+def cancel_voice_task(job_id: str, kind: str, request: Request) -> dict:
+    """Cancel it. A cloud call already in flight finishes, but its result is dropped."""
+    if not _setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    if kind not in VOICE_TASK_KINDS:
+        raise HTTPException(404, "Unknown task.")
+    load_job(job_id)
+    cancel = VOICE_CANCELS.get((kind, job_id))
+    if cancel is not None:
+        cancel.set()
+    voice_pool.cancel_key(kind, job_id)
+    return {"kind": kind, "state": "cancelled"}
+
+
 class TranscribeBody(BaseModel):
     language: str = ""
 
@@ -5920,13 +6015,15 @@ class TranscribeBody(BaseModel):
 
 
 @app.post("/api/jobs/{job_id}/transcribe")
-def retranscribe_job(job_id: str, body: TranscribeBody | None = None) -> dict:
+def retranscribe_job(job_id: str, request: Request, body: TranscribeBody | None = None):
     """Read the speech of an analysed video again, without re-importing it.
 
     Stories are built from speech; a video read before a transcription route
     was ready has none. This runs the configured STT routes on the source and
     attaches the result, so the next Find stories uses it.
     """
+    if not _setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
     job = load_job(job_id)
     source = job.get("source") or {}
     if job.get("status") != "ready" or not (job.get("analysis") or {}).get("scenes"):
@@ -5957,51 +6054,57 @@ def retranscribe_job(job_id: str, body: TranscribeBody | None = None) -> dict:
             "No transcription engine is ready on this machine. Add an OpenRouter "
             "key in Setup (or a Groq or Deepgram key).",
         )
-    speech_language = pipeline.stt.speech_language_for(options, source)
-    wav = pipeline.extract_audio(str(path), True, job_dir)
-    try:
-        transcript = pipeline.stt.transcribe_source(
-            wav, job_dir, float(source.get("duration") or 0.0), None,
-            routes=routes,
-            language=speech_language,
-            vocabulary=pipeline.stt.vocabulary_terms(job_dir=job_dir, settings=settings),
-            timeout=float(stt_cfg.get("timeout_s") or 300),
-            job_id=job_id,
-            request_id=job_id,
-            logger=pipeline._pipeline_log,
-        )
-    finally:
-        if wav:
-            try:
-                wav.unlink()
-            except OSError:
-                pass
-    if not transcript:
-        raise HTTPException(502, "Transcription failed on every route. Check the key in Setup and try again.")
-    segments = len(transcript.get("segments") or [])
 
-    def apply(record: dict) -> None:
-        analysis = record.setdefault("analysis", {})
-        pipeline.attach_speech(analysis.get("scenes") or [], transcript)
-        analysis["transcript"] = {
-            "language": transcript.get("language"),
-            "text": str(transcript.get("text") or "")[:1000],
+    def work(cancel: threading.Event) -> dict:
+        speech_language = pipeline.stt.speech_language_for(options, source)
+        wav = pipeline.extract_audio(str(path), True, job_dir)
+        try:
+            transcript = pipeline.stt.transcribe_source(
+                wav, job_dir, float(source.get("duration") or 0.0), None,
+                routes=routes,
+                language=speech_language,
+                vocabulary=pipeline.stt.vocabulary_terms(job_dir=job_dir, settings=settings),
+                timeout=float(stt_cfg.get("timeout_s") or 300),
+                job_id=job_id,
+                request_id=job_id,
+                logger=pipeline._pipeline_log,
+            )
+        finally:
+            if wav:
+                try:
+                    wav.unlink()
+                except OSError:
+                    pass
+        if not transcript:
+            raise HTTPException(502, "Transcription failed on every route. Check the key in Setup and try again.")
+        segments = len(transcript.get("segments") or [])
+
+        def apply(record: dict) -> None:
+            analysis = record.setdefault("analysis", {})
+            pipeline.attach_speech(analysis.get("scenes") or [], transcript)
+            analysis["transcript"] = {
+                "language": transcript.get("language"),
+                "text": str(transcript.get("text") or "")[:1000],
+                "segments": segments,
+                "no_speech": bool(transcript.get("no_speech")),
+            }
+            engine = analysis.setdefault("engine", {})
+            engine["whisper"] = bool(segments)
+            engine["transcript_provider"] = transcript.get("provider") or ""
+            engine["transcript_language"] = transcript.get("language")
+            record.setdefault("options", {})["transcribe"] = True
+
+        if cancel.is_set():
+            raise HTTPException(409, "Cancelled. The video was not updated.")
+        update_job(job_id, apply)
+        return {
             "segments": segments,
+            "language": transcript.get("language"),
+            "provider": transcript.get("provider"),
             "no_speech": bool(transcript.get("no_speech")),
         }
-        engine = analysis.setdefault("engine", {})
-        engine["whisper"] = bool(segments)
-        engine["transcript_provider"] = transcript.get("provider") or ""
-        engine["transcript_language"] = transcript.get("language")
-        record.setdefault("options", {})["transcribe"] = True
 
-    update_job(job_id, apply)
-    return {
-        "segments": segments,
-        "language": transcript.get("language"),
-        "provider": transcript.get("provider"),
-        "no_speech": bool(transcript.get("no_speech")),
-    }
+    return _voice_task("transcribe", job_id, work, reuse=True)
 
 
 class ScriptBriefBody(BaseModel):
@@ -6012,7 +6115,7 @@ class ScriptBriefBody(BaseModel):
 
 
 @app.post("/api/jobs/{job_id}/script-brief")
-def write_script_brief(job_id: str, body: ScriptBriefBody, request: Request) -> dict:
+def write_script_brief(job_id: str, body: ScriptBriefBody, request: Request):
     """Write a voice script for a video with no speech, from a brief.
 
     The brief gives the topic, tone and mood or what to say, with exact lines
@@ -6031,37 +6134,43 @@ def write_script_brief(job_id: str, body: ScriptBriefBody, request: Request) -> 
             409,
             "This video already has spoken words to cut stories on. A written script is for videos with no speech.",
         )
-    try:
-        result = silent_script.write_script(
-            job, _job_dir(job_id), body.brief, language=body.language,
-        )
-    except silent_script.ScriptError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
-    transcript = result["transcript"]
 
-    def apply(record: dict) -> None:
-        analysis = record.setdefault("analysis", {})
-        pipeline.attach_speech(analysis.get("scenes") or [], transcript)
-        analysis["transcript"] = {
-            "language": result["language"],
-            "text": str(transcript.get("text") or "")[:1000],
-            "segments": result["lines"],
-            "no_speech": False,
-        }
-        engine_info = analysis.setdefault("engine", {})
-        engine_info["transcript_provider"] = silent_script.ENGINE
-        engine_info["transcript_language"] = result["language"]
-        record["script_brief"] = {
-            "brief": result["brief"],
-            "language": result["language"],
-            "model": result["model"],
-            "lines": result["lines"],
-            "transcript_id": transcript.get("id"),
-            "created": round(time.time(), 3),
-        }
+    def work(cancel: threading.Event) -> dict:
+        try:
+            result = silent_script.write_script(
+                job, _job_dir(job_id), body.brief, language=body.language,
+            )
+        except silent_script.ScriptError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        transcript = result["transcript"]
 
-    update_job(job_id, apply)
-    return {key: value for key, value in result.items() if key != "transcript"}
+        def apply(record: dict) -> None:
+            analysis = record.setdefault("analysis", {})
+            pipeline.attach_speech(analysis.get("scenes") or [], transcript)
+            analysis["transcript"] = {
+                "language": result["language"],
+                "text": str(transcript.get("text") or "")[:1000],
+                "segments": result["lines"],
+                "no_speech": False,
+            }
+            engine_info = analysis.setdefault("engine", {})
+            engine_info["transcript_provider"] = silent_script.ENGINE
+            engine_info["transcript_language"] = result["language"]
+            record["script_brief"] = {
+                "brief": result["brief"],
+                "language": result["language"],
+                "model": result["model"],
+                "lines": result["lines"],
+                "transcript_id": transcript.get("id"),
+                "created": round(time.time(), 3),
+            }
+
+        if cancel.is_set():
+            raise HTTPException(409, "Cancelled. The video was not updated.")
+        update_job(job_id, apply)
+        return {key: value for key, value in result.items() if key != "transcript"}
+
+    return _voice_task("script", job_id, work, reuse=False)
 
 
 @app.get("/api/jobs/{job_id}/transcript")
@@ -6713,6 +6822,7 @@ def _queue_story_render(
     caption_track = None
     captions_on = False
     edit_audio_plan = None
+    keep_chosen = False
     if edit is not None and body.captions:
         edit = _edit_with_default_captions(job_id, job, story, set_id, edit)
     if edit is not None:
@@ -6722,8 +6832,11 @@ def _queue_story_render(
         # legacy audio signature.
         edit_audio_plan = audio.plan_from_edit(edit.get("audio"))
         if edit_audio_plan and audio.mixer_mode(edit_audio_plan.get("mode")) == "keep":
+            # Every Edit stores mode "original" by default; only a mode the
+            # creator picked in the panel opts a scripted story out of its voice.
+            keep_chosen = bool((edit.get("audio") or {}).get("mode_chosen"))
             edit_audio_plan = None
-    if edit_audio_plan is None and _scripted(job):
+    if edit_audio_plan is None and not keep_chosen and _scripted(job):
         # A written script has no recorded voice: speak it over the picture.
         edit_audio_plan = audio.normalize_audio_plan({
             "mode": "voice_over",

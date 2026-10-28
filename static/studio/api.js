@@ -479,14 +479,35 @@ export function createClipSet(jobId, { count = 3, order = "source", minS = null,
   });
 }
 
+/**
+ * Wait for a voice task. The server answers 202 `{state: "running"}` when the
+ * work outlasts the request; poll `GET /api/jobs/{id}/voice-tasks/{kind}`
+ * until it returns the result (or throws its error).
+ */
+async function untilVoiceTask(jobId, kind, first, { interval = 2000 } = {}) {
+  let result = first;
+  while (result && result.kind === kind && (result.state === "queued" || result.state === "running")) {
+    await new Promise((resolve) => setTimeout(resolve, interval));
+    result = await request(jobPath(jobId, `/voice-tasks/${kind}`), { fresh: true });
+  }
+  return result;
+}
+
 /** Write a voice script for a video with no speech. `POST /api/jobs/{id}/script-brief`. */
-export function writeScriptBrief(jobId, brief, { language = "" } = {}) {
-  return request(jobPath(jobId, "/script-brief"), { method: "POST", body: { brief, language } });
+export async function writeScriptBrief(jobId, brief, { language = "" } = {}) {
+  const first = await request(jobPath(jobId, "/script-brief"), { method: "POST", body: { brief, language } });
+  return untilVoiceTask(jobId, "script", first);
 }
 
 /** Read a finished video's speech again. `POST /api/jobs/{id}/transcribe`. */
-export function transcribeJob(jobId, { language = "" } = {}) {
-  return request(jobPath(jobId, "/transcribe"), { method: "POST", body: { language } });
+export async function transcribeJob(jobId, { language = "" } = {}) {
+  const first = await request(jobPath(jobId, "/transcribe"), { method: "POST", body: { language } });
+  return untilVoiceTask(jobId, "transcribe", first);
+}
+
+/** Cancel a speech re-read or script. `DELETE /api/jobs/{id}/voice-tasks/{kind}`. */
+export function cancelVoiceTask(jobId, kind) {
+  return request(jobPath(jobId, `/voice-tasks/${kind}`), { method: "DELETE" });
 }
 
 /** Queue one story for render. `POST /api/jobs/{id}/clip-sets/{set}/stories/{story}/render`. */
