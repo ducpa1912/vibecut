@@ -46,8 +46,14 @@ def make_scene(index: int, start: float, dur: float, **extra) -> dict:
     return scene
 
 
-def make_scenes(count: int = 150, dur: float = 4.0) -> list[dict]:
-    return [make_scene(index, index * dur, dur) for index in range(count)]
+def make_scenes(count: int = 150, dur: float = 4.0, rich: bool = False) -> list[dict]:
+    scenes = [make_scene(index, index * dur, dur) for index in range(count)]
+    if rich:
+        # Three distinct sentences give every story three hook variants even
+        # when spread selection lands on a late scene.
+        for scene in scenes:
+            scene["speech"] += f" Step {scene['id']} closes the loop."
+    return scenes
 
 
 def transcript_for(scenes: list[dict]) -> list[dict]:
@@ -955,7 +961,7 @@ def test_story_render_rejects_missing_clips(api):
 
 
 def test_hook_matrix_api_returns_partial_errors_not_422(api):
-    write_job(api.jobs_dir, "j1")
+    write_job(api.jobs_dir, "j1", scenes=make_scenes(150, rich=True))
     created = api.post(
         "/api/jobs/j1/clip-sets", json={"count": 3},
     ).json()["clip_set"]
@@ -977,7 +983,7 @@ def test_hook_matrix_api_returns_partial_errors_not_422(api):
 
 
 def test_generated_paths_for_selection_v2_and_hook_matrix(api):
-    write_job(api.jobs_dir, "j1")
+    write_job(api.jobs_dir, "j1", scenes=make_scenes(150, rich=True))
     ranked = api.post("/api/jobs/j1/selection-v2", json={})
     assert ranked.status_code == 200
     assert ranked.json()["source"] == "generated"
@@ -994,7 +1000,7 @@ def test_generated_paths_for_selection_v2_and_hook_matrix(api):
 
 
 def test_selection_v2_api_is_explicit_and_keeps_v1_default(api):
-    write_job(api.jobs_dir, "j1")
+    write_job(api.jobs_dir, "j1", scenes=make_scenes(150, rich=True))
     created = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
     set_id = created["id"]
     before = (api.jobs_dir / "j1" / "job.json").read_text()
@@ -1038,7 +1044,7 @@ def test_selection_v2_api_prompt_exclusion(api):
 
 
 def test_hook_matrix_api_shape_and_determinism(api):
-    write_job(api.jobs_dir, "j1")
+    write_job(api.jobs_dir, "j1", scenes=make_scenes(150, rich=True))
     created = api.post("/api/jobs/j1/clip-sets", json={"count": 3}).json()["clip_set"]
     set_id = created["id"]
     first = api.post("/api/jobs/j1/hook-matrix", json={"set_id": set_id})
