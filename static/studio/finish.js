@@ -488,16 +488,18 @@ export function mount(root, ctx) {
    * Ask the trim route which shapes still match. A story with a stale Edit
    * cannot queue: the render would fail closed, so Finish explains first.
    */
-  async function loadTrimHealth({ shape = aspect, force = false } = {}) {
+  async function loadTrimHealth({ shape = aspect, force = false, storyIds = null } = {}) {
     if (!job?.id || !activeSetId) return;
-    const seq = ++trimSeq;
     const setId = activeSetId;
+    const wantedIds = storyIds ? new Set(storyIds.map(String)) : null;
     const rows = stories();
     const wanted = rows.filter((story) => {
+      if (wantedIds && !wantedIds.has(String(story.id))) return false;
       if (force) return true;
       return !trimHealth.has(`${setId}:${story.id}:${shape}`);
     });
     if (!wanted.length) return;
+    const seq = ++trimSeq;
     await Promise.all(wanted.map(async (story) => {
       const key = `${setId}:${story.id}:${shape}`;
       try {
@@ -571,9 +573,11 @@ export function mount(root, ctx) {
     } catch (error) {
       if (disposed) return;
       announce(error?.message || "Could not repair this shape.", "bad");
-      if (trimErrorCode(error) === "revision_mismatch") {
+      const code = trimErrorCode(error);
+      if (code === "revision_mismatch" || code === "edit_changed") {
         trimHealth.delete(trimKey(storyId, shape));
-        await loadTrimHealth({ shape, force: true });
+        await loadTrimHealth({ shape, force: true, storyIds: [storyId] });
+        if (!disposed) renderAll();
       }
       if (button?.isConnected) {
         button.disabled = false;
@@ -2123,7 +2127,11 @@ export function mount(root, ctx) {
     try {
       // The preview and the Edit must agree before a render starts. Ask the
       // trim route rather than trusting the last screen that opened.
-      await loadTrimHealth({ shape, force: true });
+      await loadTrimHealth({
+        shape,
+        force: true,
+        storyIds: list.map((story) => story.id),
+      });
       if (disposed) return;
       const stale = list.filter((story) => trimHealthFor(story.id, shape)?.stale);
       if (stale.length) {
@@ -2156,7 +2164,11 @@ export function mount(root, ctx) {
       if (disposed) return;
       const code = trimErrorCode(error);
       if (code === "edit_stale") {
-        await loadTrimHealth({ shape, force: true });
+        await loadTrimHealth({
+          shape,
+          force: true,
+          storyIds: list.map((story) => story.id),
+        });
         const target = list.find((story) => trimHealthFor(story.id, shape)?.stale)?.id
           || list[0]?.id
           || selectedStory()?.id

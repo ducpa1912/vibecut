@@ -399,7 +399,8 @@ export function mount(root, ctx) {
       );
     } catch (error) {
       if (disposed) return;
-      const stale = trimErrorCode(error) === "revision_mismatch";
+      const code = trimErrorCode(error);
+      const stale = code === "revision_mismatch" || code === "edit_changed";
       setStatus(
         note,
         stale
