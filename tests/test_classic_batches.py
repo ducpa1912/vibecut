@@ -28,7 +28,13 @@ def test_classic_batch_form_has_the_rights_tick_and_creator_sends_it():
     assert "rights: Boolean(dom.batchRights?.checked)" in creator
 
 
-def test_batch_api_accepts_rights_true_while_the_lock_is_on(monkeypatch):
+def test_batch_api_accepts_rights_true_while_the_lock_is_on(monkeypatch, tmp_path):
+    # Isolate the settings file: a shared test data folder would leave the
+    # lock off for later rights tests that rely on the shipped default.
+    data = tmp_path / "settings"
+    monkeypatch.setattr(settings_store, "DATA", data)
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", data / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", data / "secrets.json")
     seen: dict = {}
 
     class FakeManager:
@@ -43,32 +49,27 @@ def test_batch_api_accepts_rights_true_while_the_lock_is_on(monkeypatch):
             return {"id": batch_id, "status": "running", "items": seen["items"]}
 
     monkeypatch.setattr(routes_batches, "_manager", lambda: FakeManager())
-    previous = settings_store.load_settings().get("rights")
     settings_store.save_settings({"rights": {"lock": True}})
-    try:
-        client = TestClient(app.app)
-        refused = client.post(
-            "/api/batches",
-            json={"name": "no tick", "items": [{"path": "/tmp/classic-source.mp4"}]},
-        )
-        assert refused.status_code == 409
-        assert refused.json()["detail"] == (
-            "Confirm you own this footage or have the rights to it."
-        )
 
-        accepted = client.post(
-            "/api/batches",
-            json={
-                "name": "tick",
-                "items": [{"path": "/tmp/classic-source.mp4"}],
-                "max": 1,
-                "rights": True,
-            },
-        )
-        assert accepted.status_code == 200, accepted.text
-        assert accepted.json()["id"] == "classicbatch1"
-        assert seen["items"][0]["rights"] is True
-    finally:
-        settings_store.save_settings(
-            {"rights": previous if isinstance(previous, dict) else {"lock": False}}
-        )
+    client = TestClient(app.app)
+    refused = client.post(
+        "/api/batches",
+        json={"name": "no tick", "items": [{"path": "/tmp/classic-source.mp4"}]},
+    )
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == (
+        "Confirm you own this footage or have the rights to it."
+    )
+
+    accepted = client.post(
+        "/api/batches",
+        json={
+            "name": "tick",
+            "items": [{"path": "/tmp/classic-source.mp4"}],
+            "max": 1,
+            "rights": True,
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["id"] == "classicbatch1"
+    assert seen["items"][0]["rights"] is True
