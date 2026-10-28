@@ -36,6 +36,8 @@ from typing import Any, Callable, Iterable
 
 import numpy as np
 
+import rights
+
 SCHEMA_VERSION = 1
 REPORT_DIR = "check"
 REPORT_FILE = "source_report.json"
@@ -46,10 +48,7 @@ TRACKLET_MAX_GAP = 4.5
 MAX_TRACKLETS = 160
 MAX_RANGES = 200
 
-KINDS = (
-    "subtitle", "title", "lower_third", "handle_or_logo", "watermark", "credit",
-    "screen_text",
-)
+KINDS = rights.KINDS
 RECOMMENDATIONS = ("clean_then_compose", "compose", "music_first")
 
 WATERMARK_MESSAGE = "Use your original file — it has no watermark."
@@ -1058,20 +1057,9 @@ def _speech_available(analysis: dict) -> bool:
 # ---------------------------------------------------------------- attestation
 
 
-_TRUE_ATTESTATION = {
-    "1", "true", "yes", "on", "own", "owned", "attested",
-    "i own this footage", "own footage", "i have permission",
-}
-
-
 def normalize_attestation(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().casefold() in _TRUE_ATTESTATION
-    if isinstance(value, dict):
-        return normalize_attestation(value.get("attested"))
-    return False
+    """Compatibility alias for :func:`rights.normalize_attestation`."""
+    return rights.normalize_attestation(value)
 
 
 def _job_attestation(job: dict) -> tuple[bool, str | None]:
@@ -1098,27 +1086,48 @@ def _tracklet_ref(tracklet: dict) -> dict:
     }
 
 
-def cleanup_block_reason(kind: str, *, attested: bool) -> str | None:
-    """Return why a Clean layer may not target this kind, or ``None``.
+def _policy_job(job: dict | None, attested: bool | None) -> dict | None:
+    """Let an explicit ``attested`` override the job's stored record.
 
-    Cleanup code should call this with the *detected* kind. Watermarks are
-    refused unconditionally; screen-recording UI text is never cleaned;
-    handles and logos need the own-footage attestation; every target stays
-    locked while rights are unattested.
+    Check's report builder may hold a request-level attestation that has not
+    been written to the job yet. Server gates pass the job only, so their
+    evidence always comes from the stored record.
     """
-    if kind == "watermark":
-        return "watermark"
-    if kind == "screen_text":
-        return "screen_text"
-    if kind == "handle_or_logo" and not attested:
-        return "attestation_required"
-    if not attested:
-        return "rights_not_attested"
-    return None
+    if attested is None:
+        return job
+    if job is None:
+        return {"rights": {"attested": bool(attested)}}
+    merged = dict(job)
+    merged["rights"] = {"attested": bool(attested)}
+    return merged
 
 
-def clean_prefill(tracklets: Iterable[dict], *, attested: bool) -> list[dict]:
+def cleanup_block_reason(
+    kind: str,
+    *,
+    attested: bool | None = None,
+    job: dict | None = None,
+    settings: dict | None = None,
+) -> str | None:
+    """Thin wrapper over :func:`rights.clean_block_reason`.
+
+    Older callers pass ``attested`` only. New callers pass the job and let
+    ``rights`` decide with the stored setting.
+    """
+    return rights.clean_block_reason(
+        kind, job=_policy_job(job, attested), settings=settings,
+    )
+
+
+def clean_prefill(
+    tracklets: Iterable[dict],
+    *,
+    attested: bool | None = None,
+    job: dict | None = None,
+    settings: dict | None = None,
+) -> list[dict]:
     """Advisory Clean layer entries. Never enables a refused watermark."""
+    policy_job = _policy_job(job, attested)
     entries: list[dict] = []
     for tracklet in tracklets:
         kind = tracklet["kind"]
@@ -1126,11 +1135,14 @@ def clean_prefill(tracklets: Iterable[dict], *, attested: bool) -> list[dict]:
         entry = {
             **_tracklet_ref(tracklet),
             "action": "blur",
-            "enabled": bool(attested),
+            "enabled": False,
             "confidence": tracklet["confidence"],
             "reason": "",
-            "blocked": cleanup_block_reason(kind, attested=attested),
+            "blocked": cleanup_block_reason(
+                kind, job=policy_job, settings=settings,
+            ),
         }
+        entry["enabled"] = entry["blocked"] is None
         if kind == "watermark":
             entry.update({
                 "action": "refused",
@@ -1158,7 +1170,9 @@ def clean_prefill(tracklets: Iterable[dict], *, attested: bool) -> list[dict]:
             )
             entry["action"] = "crop_guard" if edge else "blur"
             entry["enabled"] = False
-            entry["blocked"] = cleanup_block_reason(kind, attested=attested)
+            entry["blocked"] = cleanup_block_reason(
+                kind, job=policy_job, settings=settings,
+            )
             entry["reason"] = (
                 "Own handle or logo. Off by default; enable it for your own footage."
             )
@@ -1201,6 +1215,7 @@ def _report_warnings(
     attested: bool,
     sampled_error: str | None,
     truncated: bool,
+    lock: bool = True,
 ) -> list[dict]:
     warnings: list[dict] = []
     watermarks = [item["id"] for item in tracklets if item["kind"] == "watermark"]
@@ -1222,7 +1237,7 @@ def _report_warnings(
             ),
             "tracklet_ids": handles,
         })
-    if not attested:
+    if not attested and lock:
         warnings.append({
             "code": "rights_not_attested",
             "severity": "warning",
@@ -1323,6 +1338,7 @@ def build_report(
     engine: dict | None = None,
     created: float | None = None,
     sampled_error: str | None = None,
+    settings: dict | None = None,
 ) -> dict:
     """Assemble the SourceReport from job evidence and text observations."""
     job = job or {}
@@ -1447,9 +1463,11 @@ def build_report(
     if watermark_tracklets:
         reasons.append("A platform mark was found; it cannot be cleaned.")
 
-    prefill = clean_prefill(tracklets, attested=attested)
+    prefill = clean_prefill(
+        tracklets, attested=attested, job=job, settings=settings,
+    )
     policy = {
-        "clean_allowed": bool(attested),
+        "clean_allowed": bool(attested or not rights.lock_enabled(settings)),
         "rights_attested": bool(attested),
         "attestation_source": attestation_source,
         "watermark_refused": [item["id"] for item in watermark_tracklets],
@@ -1476,6 +1494,7 @@ def build_report(
         attested=attested,
         sampled_error=sampled_error,
         truncated=truncated,
+        lock=rights.lock_enabled(settings),
     )
     created = time.time() if created is None else float(created)
     return {

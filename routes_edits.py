@@ -21,6 +21,7 @@ import detect
 import edits
 import history_store
 import render
+import rights
 
 
 def _app():
@@ -165,22 +166,22 @@ def _validate_edit(job_id: str, edit: dict) -> None:
 
 
 def _clean_rights_attested(job: dict) -> bool:
-    rights = job.get("rights")
-    if not isinstance(rights, dict):
-        # Jobs created before the rights field existed keep working. A job
-        # that has a rights record (all new imports/checks) is always gated.
-        return True
-    return detect.normalize_attestation(rights.get("attested"))
+    """Whether the job carries the tick, keeping the legacy-job rule."""
+    return rights.job_attested(job)
 
 
 def _require_clean_rights(job: dict, edit: dict) -> None:
     """Enforce the server-side rights gate on every save of Clean layers.
 
-    The gate reads ``job["rights"]`` only. It never trusts a request body or
-    browser storage. Missing rights on a legacy job is allowed for migration;
-    an explicit unattested record is refused.
+    The gate reads ``rights.py`` only. It never trusts a request body or
+    browser storage. With the lock off, Clean saves are open except for the
+    hard kind rules enforced by :func:`_require_clean_kinds`. Missing rights
+    on a legacy job is allowed for migration; an explicit unattested record is
+    refused while the lock is on.
     """
     if not edit.get("clean"):
+        return
+    if not rights.lock_enabled():
         return
     if _clean_rights_attested(job):
         return
@@ -216,10 +217,10 @@ def _require_clean_kinds(job: dict, edit: dict, job_dir=None) -> None:
     a layer that only carries ``tracklet_id`` is resolved from the stored
     Check report when one is available.
     """
-    rights = job.get("rights")
+    record = job.get("rights")
     attested = (
-        detect.normalize_attestation(rights.get("attested"))
-        if isinstance(rights, dict) else False
+        rights.normalize_attestation(record.get("attested"))
+        if isinstance(record, dict) else False
     )
     report_kinds: dict[str, str] | None = None
     for layer in edit.get("clean") or []:
@@ -242,8 +243,13 @@ def _require_clean_kinds(job: dict, edit: dict, job_dir=None) -> None:
             kind = report_kinds.get(tracklet_id, "")
         if not kind:
             continue
-        blocked = detect.cleanup_block_reason(kind, attested=attested)
-        if not blocked:
+        blocked = detect.cleanup_block_reason(
+            kind, attested=attested, job=job,
+        )
+        # The lock itself is enforced on Clean saves by _require_clean_rights.
+        # This pass only enforces the hard kind rules on every save, so a
+        # colour or text edit never rewrites what an old Clean layer can do.
+        if blocked not in {"watermark", "screen_text", "attestation_required"}:
             continue
         raise HTTPException(
             409,

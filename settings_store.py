@@ -88,6 +88,9 @@ DEFAULTS = {
         "severity": {},
         "styles": {},
     },
+    "rights": {
+        "lock": True,
+    },
     "caption_styles": captions.default_style_settings(),
     "workflows": workflow_config.default_workflows(),
     "ingest": dict(ingest_registry.DEFAULT_INGEST_SETTINGS),
@@ -210,6 +213,23 @@ def _migrate(stored: dict) -> tuple[dict, bool]:
     return stored, stored != original
 
 
+def _normalize_rights(value: object) -> dict:
+    """Keep ``rights.lock`` a bool; the lock defaults to on."""
+    section = dict(value) if isinstance(value, dict) else {}
+    lock = section.get("lock", True)
+    if isinstance(lock, str):
+        folded = lock.strip().casefold()
+        if folded in {"1", "true", "yes", "on"}:
+            lock = True
+        elif folded in {"0", "false", "no", "off", ""}:
+            lock = False
+        else:
+            lock = True
+    elif not isinstance(lock, bool):
+        lock = True
+    return {"lock": lock}
+
+
 def _clean_ingest(settings: dict) -> None:
     ingest = dict(settings.get("ingest") or {})
     # Secrets belong in secrets.json, never in the public settings document.
@@ -256,6 +276,7 @@ def load_settings() -> dict:
         translation["mode"] = "auto"
         merged["translation"] = translation
     _clean_ingest(merged)
+    merged["rights"] = _normalize_rights(merged.get("rights"))
     try:
         merged["caption_styles"] = captions.normalize_style_settings(
             merged.get("caption_styles"),
@@ -279,6 +300,7 @@ def save_settings(patch: dict) -> dict:
     with LOCK:
         current = load_settings()
         merged = _merge(current, patch)
+        merged["rights"] = _normalize_rights(merged.get("rights"))
         DATA.mkdir(parents=True, exist_ok=True)
         try:
             DATA.chmod(0o700)

@@ -37,6 +37,8 @@ class CheckBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     force: bool = False
+    # Accepted for older clients only. Check's rights policy comes from the
+    # job record written by POST /rights and from rights.py, never this body.
     attestation: bool | str | None = None
     sample_text: bool = True
     fps: float = Field(default=detect.DEFAULT_SAMPLE_FPS, ge=0.1, le=2.0)
@@ -112,7 +114,6 @@ def run_check_job(job_id: str, options: dict) -> dict:
                 if options.get("sample_text", True) else None
             ),
             audio_extractor=pipeline.extract_audio,
-            attestation=options.get("attestation"),
             sample_text=bool(options.get("sample_text", True)),
             fps=float(options.get("fps") or detect.DEFAULT_SAMPLE_FPS),
             progress=progress,
@@ -167,13 +168,12 @@ def start_check(job_id: str, body: CheckBody | None = None):
         return ready
 
     options = {
-        "attestation": body.attestation,
         "sample_text": body.sample_text,
         "fps": body.fps,
     }
     _set_check(
         job_id, app, status="queued", progress=0.0,
-        message="Queued for Check", error=None, attestation=body.attestation,
+        message="Queued for Check", error=None,
     )
     task = CHECK_POOL.submit(
         run_check_job, job_id, options,

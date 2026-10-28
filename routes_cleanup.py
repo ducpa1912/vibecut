@@ -34,6 +34,7 @@ import detect
 import edits
 import pipeline
 import render
+import rights
 import vision
 
 LOGGER = logging.getLogger("vibecut.cleanup")
@@ -282,7 +283,7 @@ def _job_rights(job: dict) -> dict:
 
 
 def _attested(job: dict) -> bool:
-    return detect.normalize_attestation(_job_rights(job).get("attested"))
+    return rights.job_attested(job)
 
 
 @router.post("/api/jobs/{job_id}/cleanup/layers")
@@ -307,13 +308,14 @@ def cleanup_layers(job_id: str, body: CleanLayersBody) -> dict:
         if unknown:
             raise HTTPException(422, f"Unknown tracklet ids: {', '.join(unknown)}.")
     attested = _attested(job)
-    if not attested:
+    if rights.lock_enabled() and not attested:
         raise HTTPException(409, detect.RIGHTS_MESSAGE)
     built = cleanup.tracklet_clean_layers(
         tracklets,
         attested=attested,
         selected=body.tracklet_ids,
         include_handles=bool(body.include_handles),
+        job=job,
     )
     return {
         **built,
@@ -601,11 +603,11 @@ def cleanup_residual(job_id: str, body: ResidualBody) -> dict:
 
 
 def _rights_payload(job: dict) -> dict:
-    rights = _job_rights(job)
+    record = _job_rights(job)
     return {
-        "attested": detect.normalize_attestation(rights.get("attested")),
-        "at": rights.get("at"),
-        "source": rights.get("source"),
+        "attested": rights.normalize_attestation(record.get("attested")),
+        "at": record.get("at"),
+        "source": record.get("source"),
     }
 
 
