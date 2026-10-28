@@ -54,7 +54,13 @@ try {
   page.on("pageerror", (error) => pageErrors.push(String(error?.message || error)));
   page.on("dialog", (dialog) => { void dialog.accept(); });
 
-  await page.goto(`${base}/voices`, { waitUntil: "domcontentloaded" });
+  // Classic's top bar shows the Voice Room link when the feature is on.
+  await page.goto(`${base}/?classic=1`, { waitUntil: "domcontentloaded" });
+  const link = page.locator("#classic-voice-room");
+  await link.waitFor({ state: "visible", timeout: 30000 });
+  report.classic_link = true;
+  await link.click();
+  await page.waitForURL(`${base}/voices`, { timeout: 30000 });
   const finder = page.locator('[data-panel="clip-finder"]');
   const mine = page.locator('[data-panel="your-voices"]');
   await finder.locator('select[aria-label="Video"]').waitFor({ state: "visible", timeout: 30000 });
