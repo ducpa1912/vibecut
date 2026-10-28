@@ -57,10 +57,12 @@ import render
 import rights
 import routes_batches
 import routes_check
+import routes_classic
 import routes_cleanup
 import routes_edits
 import routes_library
 import routes_overlays
+import routes_studio
 import routes_voice_clone
 import selection
 import settings_store
@@ -3177,6 +3179,9 @@ app.include_router(routes_edits.router)
 app.include_router(__import__("routes_trim", fromlist=["router"]).router)
 app.include_router(routes_overlays.router)
 app.include_router(routes_voice_clone.router)
+# Lane modules: new routes go here, not into app.py (docs/branching.md).
+app.include_router(routes_classic.router)
+app.include_router(routes_studio.router)
 app.include_router(music.router)
 routes_library.install(app, JOBS)
 app.include_router(packet.router)
