@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import packs
+import voice_clone
 
 # Imported last: audio re-exports this module, so the facade must finish first.
 import audio  # noqa: E402
@@ -388,9 +389,16 @@ def list_voices(engine: str) -> list[dict]:
         return [{"id": name, "name": name, "lang": "multi"} for name in names]
 
     if engine == "heygen":
-        if not audio.openrouter_available():
-            return []
-        return [{"id": name, "name": name.title(), "lang": "multi"} for name in HEYGEN_VOICES]
+        # Cloned voices first: they are the creator's own. Stock voices need
+        # OpenRouter; a clone can also be spoken straight on HeyGen.
+        voices: list[dict] = []
+        if audio.openrouter_available() or voice_clone.available():
+            voices.extend(voice_clone.voice_options())
+        if audio.openrouter_available():
+            voices.extend(
+                {"id": name, "name": name.title(), "lang": "multi"} for name in HEYGEN_VOICES
+            )
+        return voices
 
     if engine == "fish":
         if not audio.openrouter_available():
@@ -870,10 +878,39 @@ def _minimax_voice(
         pass
 
 
+def _clone_direct(
+    text: str, voice: str, output: Path, rate: float, timeout: float, reason: str,
+) -> None:
+    """Speak a cloned voice straight on HeyGen when OpenRouter cannot."""
+    if not voice_clone.available():
+        raise audio.AudioError(
+            f"{reason} Add your HeyGen key to OpenRouter (Integrations, BYOK) "
+            "or to Setup so cloned voices can speak."
+        )
+    clone = voice_clone.get_clone(voice) or {}
+    raw = output.with_name(f"{output.stem}.heygen-direct.tmp.wav")
+    try:
+        voice_clone.speak_direct(
+            text, voice, raw, language=str(clone.get("language") or ""), timeout=timeout,
+        )
+    except voice_clone.CloneError as exc:
+        raise audio.AudioError(f"HeyGen cloned voice failed: {exc}") from exc
+    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
+    audio._convert(raw, output, extra)
+    try:
+        raw.unlink()
+    except OSError:
+        pass
+
+
 def _openrouter_voice(
     text: str, voice: str, output: Path, rate: float = 1.0, engine: str = "fish",
     model: str = "", timeout: float = 300,
 ) -> None:
+    cloned = engine == "heygen" and voice_clone.is_clone(voice)
+    if cloned and not audio.openrouter_available():
+        _clone_direct(text, voice, output, rate, timeout, "OpenRouter is not set up.")
+        return
     key = audio.openrouter_key()
     if not key:
         raise audio.AudioError("Set an OpenRouter key to use this voice.")
@@ -894,7 +931,7 @@ def _openrouter_voice(
             and openrouter_engine(str(route.get("model") or "")) == engine
         ), "") or DEFAULT_MODELS[engine]
     voice_value = DEFAULT_VOICES[engine] if voice in {"", "default"} else voice
-    if engine == "heygen" and voice_value not in HEYGEN_VOICES:
+    if engine == "heygen" and voice_value not in HEYGEN_VOICES and not cloned:
         voice_value = DEFAULT_VOICES["heygen"]
     body = {
         "model": model,
@@ -914,12 +951,20 @@ def _openrouter_voice(
         with urllib.request.urlopen(request, timeout=max(10, timeout)) as response:
             content = response.read()
     except urllib.error.HTTPError as exc:
-        if exc.code in {401, 403}:
+        if exc.code in {401, 403} and not cloned:
             audio._openrouter_auth_failure(
                 int(exc.code), audio._openrouter_http_error_text(exc, key),
             )
+        if cloned:
+            # OpenRouter reaches a clone only through a HeyGen BYOK
+            # integration; without it, speak the clone on HeyGen itself.
+            _clone_direct(text, voice, output, rate, timeout, f"OpenRouter refused the cloned voice ({exc.code}).")
+            return
         raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
+        if cloned:
+            _clone_direct(text, voice, output, rate, timeout, f"OpenRouter cloned voice failed: {exc}.")
+            return
         raise audio.AudioError(f"OpenRouter {engine} voice failed: {exc}") from exc
     if engine == "heygen":
         raw = output.with_name(f"{output.stem}.{engine}.tmp.wav")
@@ -1018,8 +1063,12 @@ def voice_engine_status() -> dict[str, dict]:
             "install": "Add a MiniMax key in Setup. Speech 2.8 Turbo.",
         },
         "heygen": {
-            "available": audio.openrouter_available(), "size_mb": 0,
-            "install": "Add an OpenRouter key. HeyGen Voice Turbo (free).",
+            "available": audio.openrouter_available() or (
+                voice_clone.available() and bool(voice_clone.list_clones(active_only=True))
+            ),
+            "size_mb": 0,
+            "install": "Add an OpenRouter key. HeyGen Voice Turbo (free). Add a HeyGen key to clone voices.",
+            "clone": voice_clone.available(),
         },
         "fish": {
             "available": audio.openrouter_available(), "size_mb": 0,

@@ -26,6 +26,12 @@ import {
   patchEdit,
   syncMediaCookie,
 } from "../api.js";
+import {
+  CONSENT_COPY,
+  cloneFromVideo,
+  failureCopy,
+  pollClone,
+} from "../../voiceclone.js";
 
 const ENGINE_LABELS = {
   say: "Apple voices · on this Mac",
@@ -153,6 +159,12 @@ export function mountAudioPanel(host, ctx) {
   let selectedEngine = plan.voice?.engine || "";
   let selectedVoice = plan.voice?.voice || "";
   let selectedRate = numberOr(plan.voice?.rate, 1);
+  let cloneOpen = false;
+  let cloneBusy = false;
+  let cloneConsent = false;
+  let cloneName = "";
+  let cloneStart = "";
+  let cloneEnd = "";
   let library = [];
   let libraryError = "";
   let libraryLoading = true;
@@ -359,11 +371,14 @@ export function mountAudioPanel(host, ctx) {
         selectedVoice = "";
       }
       if (!selectedVoice && voiceList.length) {
+        // A cloned voice is never picked silently; the creator chooses it.
+        const stock = voiceList.filter((voice) => !voice.clone);
+        const pool = stock.length ? stock : voiceList;
         const language = storyLanguage(ctx);
-        const preferred = voiceList.find(
+        const preferred = pool.find(
           (voice) => String(voice.lang || "").toLowerCase().startsWith(language),
         );
-        selectedVoice = String((preferred || voiceList[0]).id);
+        selectedVoice = String((preferred || pool[0]).id);
       }
     } catch (error) {
       voiceList = [];
@@ -673,6 +688,115 @@ export function mountAudioPanel(host, ctx) {
       setNotice(error?.message || "Could not use that locked bed.", "bad");
       render();
     }
+  }
+
+  async function useClonedVoice(voiceId) {
+    selectedEngine = "heygen";
+    selectedVoice = voiceId;
+    await loadEngines();
+    selectedEngine = "heygen";
+    await loadVoices("heygen");
+    selectedVoice = voiceId;
+    scheduleSave();
+    if (!disposed) render();
+  }
+
+  async function cloneVideoVoice() {
+    if (cloneBusy) return;
+    const jobId = currentJobId();
+    if (!jobId) {
+      setNotice("This panel could not find the open video.", "bad");
+      render();
+      return;
+    }
+    if (!cloneConsent) {
+      setNotice("Confirm you are the speaker, or have their permission, before cloning.", "bad");
+      render();
+      return;
+    }
+    const body = { name: cloneName.trim(), consent: true, language: storyLanguage(ctx) };
+    const start = Number.parseFloat(cloneStart);
+    const end = Number.parseFloat(cloneEnd);
+    if (Number.isFinite(start) && start >= 0) body.start = start;
+    if (Number.isFinite(end) && end > 0) body.end = end;
+    cloneBusy = true;
+    setNotice("Cutting the speech out of the video and sending it to HeyGen…", "");
+    render();
+    try {
+      const record = await cloneFromVideo(jobId, body);
+      cloneConsent = false;
+      if (record.status === "FAILED") {
+        setNotice(failureCopy(record.failure_reason) || "HeyGen could not clone this voice.", "bad");
+      } else if (record.status === "ACTIVE") {
+        cloneOpen = false;
+        await useClonedVoice(record.voice_id);
+        setNotice(`Cloned “${record.name}” and picked it for this story${record.used_transcript ? " (from the transcript's speech)" : ""}.`, "ok");
+      } else {
+        setNotice("HeyGen is still making the voice. It is picked here as soon as it is ready.", "");
+        void pollClone(record.voice_id, () => {}).then(async (done) => {
+          if (disposed) return;
+          if (done?.status === "ACTIVE") {
+            cloneOpen = false;
+            await useClonedVoice(record.voice_id);
+            setNotice(`Cloned “${record.name}” and picked it for this story.`, "ok");
+          } else {
+            setNotice(failureCopy(done?.failure_reason) || "The cloned voice is not ready yet. Check Setup → My voice.", "bad");
+          }
+          if (!disposed) render();
+        });
+      }
+    } catch (error) {
+      setNotice(error?.message || "Could not clone the video voice.", "bad");
+    } finally {
+      cloneBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function cloneBlock() {
+    const ready = Boolean(engines?.heygen?.clone);
+    const block = el("div", { class: "st-voice-clone-edit" });
+    const toggle = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: cloneOpen ? "Hide voice cloning" : "Clone the video's voice",
+      disabled: cloneBusy,
+    });
+    toggle.addEventListener("click", () => { cloneOpen = !cloneOpen; render(); });
+    block.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [toggle]));
+    if (!cloneOpen) return block;
+    if (!ready) {
+      block.append(el("p", { class: "st-field-hint", text: "Add a HeyGen API key in Setup to clone the speaker of this video. Your own voice lives in Setup → My voice." }));
+      return block;
+    }
+    const name = el("input", { type: "text", maxLength: 64, value: cloneName, placeholder: "Video voice", "aria-label": "Cloned voice name" });
+    name.addEventListener("input", () => { cloneName = name.value; });
+    const start = el("input", { type: "number", min: "0", step: "1", value: cloneStart, placeholder: "auto", "aria-label": "Clone from (seconds)" });
+    start.addEventListener("input", () => { cloneStart = start.value; });
+    const end = el("input", { type: "number", min: "0", step: "1", value: cloneEnd, placeholder: "auto", "aria-label": "Clone to (seconds)" });
+    end.addEventListener("input", () => { cloneEnd = end.value; });
+    const tick = el("input", { type: "checkbox", checked: cloneConsent, id: "st-voice-consent-video" });
+    tick.addEventListener("change", () => { cloneConsent = Boolean(tick.checked); render(); });
+    const go = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: cloneBusy ? "Cloning…" : "Clone and use this voice",
+      disabled: cloneBusy || !cloneConsent,
+    });
+    go.addEventListener("click", () => { void cloneVideoVoice(); });
+    block.append(
+      el("div", { class: "st-control-grid" }, [
+        field("Name", name),
+        field("From (s)", start, "Source time. Empty uses all speech."),
+        field("To (s)", end, "Pick a stretch where only one person talks."),
+      ]),
+      el("p", { class: "st-field-hint", text: "Uses up to 3 minutes of the source's speech (from the transcript when there is one). The clone speaks through HeyGen Voice Turbo." }),
+      el("label", { class: "st-voice-clone-consent", for: "st-voice-consent-video" }, [
+        tick, el("span", { text: CONSENT_COPY.video }),
+      ]),
+      el("div", { class: "st-layer-add" }, [go]),
+    );
+    return block;
   }
 
   async function previewVoice() {
@@ -1105,7 +1229,7 @@ export function mountAudioPanel(host, ctx) {
           const id = String(item.id || "");
           voice.append(el("option", {
             value: id,
-            text: `${item.name || id}${item.lang ? ` · ${item.lang}` : ""}`,
+            text: `${item.clone ? "★ " : ""}${item.name || id}${item.lang ? ` · ${item.lang}` : ""}`,
             selected: id === selectedVoice,
           }));
         }
@@ -1142,6 +1266,7 @@ export function mountAudioPanel(host, ctx) {
       card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [preview]));
       card.append(el("p", { class: "st-field-hint", text: "The sample speaks the story hook, or a short test line when the hook is empty." }));
     }
+    if (engines) card.append(cloneBlock());
     return card;
   }
 

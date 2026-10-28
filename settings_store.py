@@ -32,7 +32,7 @@ STALE_SECRETS = ("cartesia", "openai")
 
 SECRET_NAMES = (
     "opencode", "openrouter", "minimax", "groq", "openai", "deepgram",
-    "elevenlabs", "cartesia", "cobalt", "xhs",
+    "elevenlabs", "cartesia", "cobalt", "xhs", "heygen",
 )
 
 # A saved project key beats the environment for these providers.
@@ -49,6 +49,7 @@ ENV_KEYS = {
     "cartesia": ("VIBECUT_CARTESIA_API_KEY", "CARTESIA_API_KEY"),
     "cobalt": ("VIBECUT_COBALT_API_KEY", "COBALT_API_KEY"),
     "xhs": ("VIBECUT_XHS_GET_TOKEN", "XHS_GET_TOKEN"),
+    "heygen": ("VIBECUT_HEYGEN_API_KEY", "HEYGEN_API_KEY"),
 }
 
 DEFAULTS = {

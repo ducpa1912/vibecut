@@ -10,6 +10,7 @@
  *   POST /api/settings          (secrets and rights.lock)
  *   GET  /api/rights/policy
  *   GET  /api/audio/engines
+ *   /api/voices/clones (My voice, see voiceclone.js)
  *
  * Optional packs have no install route on this build, so the screen reports
  * what is already on disk. It never pretends a download happened.
@@ -17,6 +18,7 @@
 
 import { request } from "./api.js";
 import { el, formatBytes } from "./ui.js";
+import { createMyVoicePanel } from "./voiceclone.js";
 
 const KEY_ROWS = [
   {
@@ -37,7 +39,15 @@ const KEY_ROWS = [
     copy: "Premium multilingual voice-over and dub.",
     place: "ElevenLabs API key",
   },
+  {
+    id: "heygen",
+    title: "HeyGen",
+    copy: "Clones your voice, or a video's voice, for HeyGen Voice Turbo. Add the same key to OpenRouter (Integrations, BYOK) so OpenRouter can speak the clone.",
+    place: "HeyGen API key",
+  },
 ];
+
+const KEY_TITLES = Object.fromEntries(KEY_ROWS.map((row) => [row.id, row.title]));
 
 const VOICE_LABELS = {
   say: "Apple voices",
@@ -126,7 +136,16 @@ export function mount(host, ctx = {}) {
   let noticeTone = "";
   let saving = "";
   let savingRights = false;
-  let keyDraft = { openrouter: "", minimax: "", elevenlabs: "" };
+  let keyDraft = { openrouter: "", minimax: "", elevenlabs: "", heygen: "" };
+  const myVoice = createMyVoicePanel({
+    hasKey: () => Boolean(settings?.secrets?.heygen),
+    onChange: () => {
+      void request("/api/audio/engines").then((result) => {
+        engines = result;
+        if (!disposed) render();
+      }).catch(() => {});
+    },
+  });
 
   host.replaceChildren(el("p", { class: "st-hint", text: "Reading this Mac…" }));
 
@@ -355,7 +374,8 @@ export function mount(host, ctx = {}) {
       line.dataset.tone = noticeTone;
       wrap.append(line);
     }
-    wrap.append(rightsCard(), enginesCard(), keysCard(), packsCard());
+    myVoice.render();
+    wrap.append(rightsCard(), enginesCard(), keysCard(), myVoice.node, packsCard());
     host.append(wrap);
   }
 
@@ -434,7 +454,7 @@ export function mount(host, ctx = {}) {
       keyDraft[id] = "";
       settings = await request("/api/settings");
       engines = await request("/api/audio/engines");
-      notice = `${id === "openrouter" ? "OpenRouter" : id === "minimax" ? "MiniMax" : "ElevenLabs"} key saved. Cloud features are ready.`;
+      notice = `${KEY_TITLES[id] || id} key saved. Cloud features are ready.`;
       noticeTone = "ok";
     } catch (cause) {
       if (disposed) return;
@@ -475,5 +495,6 @@ export function mount(host, ctx = {}) {
 
   return () => {
     disposed = true;
+    myVoice.dispose();
   };
 }
