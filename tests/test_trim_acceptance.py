@@ -789,6 +789,36 @@ def test_stories_patch_then_edit_save_is_409_and_render_fails_closed(
     assert quiet_submit == []
 
 
+def test_rebind_repairs_every_stale_aspect(client):
+    ids = setup_job(client)
+    created = make_edits(client, ids)
+    raw = json.loads((app._job_dir("j1") / "job.json").read_text())
+    record = next(
+        item for item in clip_sets(raw) if item["id"] == ids["set_id"]
+    )
+    story = next(item for item in record["stories"] if item["id"] == ids["story_id"])
+    story["clips"][0]["start"] += 0.5
+    story["clips"][0]["dur"] -= 0.5
+    (app._job_dir("j1") / "job.json").write_text(json.dumps(raw))
+    current = get_trim(client, ids)
+    assert current["aspects"]["9:16"]["stale"] is True
+    assert current["aspects"]["4:5"]["stale"] is True
+
+    repaired = client.post(f"{trim_url(ids)}/rebind", json={
+        "expected_revision": current["revision"],
+    })
+    assert repaired.status_code == 200, repaired.text
+    result = repaired.json()
+    assert result["story"]["id"] == ids["story_id"]
+    for aspect in ("9:16", "4:5"):
+        fresh = public_edit(result, aspect)
+        assert fresh["id"] != created[aspect]["id"]
+        assert fresh["story_ref"]["clip_hash"] == result["clip_hash"]
+    after = get_trim(client, ids)
+    assert after["aspects"]["9:16"]["stale"] is False
+    assert after["aspects"]["4:5"]["stale"] is False
+
+
 def test_finish_fails_closed_on_an_unreadable_edit(client, quiet_submit):
     ids = setup_job(client)
     created = make_edits(client, ids)
