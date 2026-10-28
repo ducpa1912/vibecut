@@ -56,3 +56,38 @@ Planned switches (see the plan below):
 Give each session one lane worktree. Tell it to commit on that lane and finish
 with `scripts/ship.sh`. Two sessions on the same lane at once will conflict; use
 one session per lane.
+
+## Upcoming work plan
+
+### Step 0: switches (on `classic` first, because the beta needs them)
+
+- Read `VIBECUT_EDITION` and `VIBECUT_FEATURES` in `settings_store.py`, and expose them in `/api/settings`.
+- `static/index.html` boot script: default to the edition's view, and hide the "Open Studio" and "Voice Room" links when they are off.
+- `app.py` and `routes_voice_clone.py`: the voice routes and `/voices` answer 404 when `voice_room` is off.
+- Tests for both switches. After this ships, every lane builds the same code and only the configuration differs.
+
+### `classic` (beta)
+
+1. Step 0 above.
+2. A founder test pass on every Classic flow, with a click-by-click script: import, plan, render, render-all, variants, hooks, mixer, history, export, batches, and the Creator workspace (clip set, captions, preflight, packet, artifacts, queue).
+3. Fix the Classic findings from that pass and from `round_6.md`.
+4. Beta setup: first-run keys and voice engines reachable from Classic, plus a beta build with `VIBECUT_EDITION=classic`.
+
+### `studio` (work in progress)
+
+1. R3 open items (`docs/handoff/r3-review.md`):
+   - a speech-only retry route
+   - Check cancel, and Import cancel and ETA
+   - Library "load more"
+   - Open in Finish carries the story and shape
+2. Show render warnings in Finish (for example "Music bed skipped"). Classic History shows them already.
+3. Keep the Edit clone picker, but show it only when `voice_room` is on.
+
+### `voice-room` (hidden, independent)
+
+1. Make the Voice Room page self-contained:
+   - one place for the voice library (stock and cloned voices, preview, rename, delete), cloning, and the clean-clip finder
+   - its own small API module, so Studio changes cannot break it
+2. Reach it from Classic and match the Classic look. Today it borrows `studio.css` and `studio/api.js`.
+3. Put it behind `VIBECUT_FEATURES=voice_room`.
+4. Still open from the review: a live OpenRouter check of a cloned voice, a Cancel button for voice tasks, and a browser test of the clip picker.
