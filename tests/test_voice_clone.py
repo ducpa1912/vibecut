@@ -190,3 +190,41 @@ def test_routes_list_consent_and_origin(tmp_path, monkeypatch):
     cross = api.delete(f"/api/voices/clones/{record['voice_id']}", headers={"sec-fetch-site": "cross-site"})
     assert cross.status_code == 403
     assert api.delete(f"/api/voices/clones/{record['voice_id']}").json() == {"deleted": record["voice_id"]}
+
+
+def test_voice_room_catalog_lists_engines_and_clones(tmp_path, monkeypatch, openrouter):
+    import app
+
+    record = _clone(tmp_path)
+    monkeypatch.setattr(voice_clone, "available", lambda: True)
+    monkeypatch.setattr(audio, "say_available", lambda: False)
+    monkeypatch.setattr(audio, "kokoro_available", lambda: False)
+    api = TestClient(app.app)
+    data = api.get("/api/voices/catalog").json()
+    engines = {engine["id"]: engine for engine in data["engines"]}
+    assert set(engines) == set(tts.SYNTHESIZERS)
+    heygen = engines["heygen"]
+    assert heygen["available"] and heygen["clone"]
+    assert heygen["voices"][0]["id"] == record["voice_id"]
+    assert not engines["say"]["available"] and engines["say"]["voices"] == []
+    assert data["clones"][0]["voice_id"] == record["voice_id"]
+    assert api.get("/voices").status_code == 200
+
+
+def test_voice_room_sample_any_engine(tmp_path, monkeypatch):
+    import app
+
+    calls = {}
+
+    def fake_sample(engine, voice, text, cache, rate=1.0, **extra):
+        calls.update(engine=engine, voice=voice, text=text, rate=rate)
+        out = tmp_path / "s.wav"
+        out.write_bytes(b"RIFF" + b"0" * 64)
+        return out
+
+    monkeypatch.setattr(audio, "voice_sample", fake_sample)
+    api = TestClient(app.app)
+    ok = api.post("/api/voices/sample", json={"engine": "say", "voice": "Samantha", "text": "  hi  there ", "rate": 9})
+    assert ok.status_code == 200 and ok.headers["content-type"] == "audio/wav"
+    assert calls == {"engine": "say", "voice": "Samantha", "text": "hi there", "rate": 2.0}
+    assert api.post("/api/voices/sample", json={"engine": "piper"}).status_code == 400

@@ -3170,7 +3170,7 @@ async def insufficient_space(_: Request, exc: disk.InsufficientSpace) -> JSONRes
 # ---------------------------------------------------------------- auth
 
 
-PUBLIC_PATHS = {"/", "/index.html", "/favicon.ico", "/api/health", "/docs/url-ingest.md"}
+PUBLIC_PATHS = {"/", "/index.html", "/voices", "/favicon.ico", "/api/health", "/docs/url-ingest.md"}
 SHARES = DATA / "shares.json"
 
 
@@ -3377,6 +3377,11 @@ def ffmpeg_version() -> str:
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/voices")
+def voice_room() -> FileResponse:
+    return FileResponse(STATIC / "voices.html")
 
 
 @app.get("/_ductator/")
