@@ -2364,6 +2364,8 @@ def render_reel(
                 "music": (audio_plan.get("music") or {}).get("source"),
                 "translate": (audio_plan.get("translate") or {}).get("target"),
             }
+            if audio_plan.get("_warnings"):
+                audio_info["warnings"] = list(audio_plan["_warnings"])
         if bed is None:
             progress(0.90, "Building the original audio bed")
             _audio_track(source, meta, clips, audio_path, total, cancel_event)

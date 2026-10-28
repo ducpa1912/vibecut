@@ -303,3 +303,60 @@ def test_say_voices_hide_novelty_and_list_natural_first(monkeypatch):
     )
     names = [voice["name"] for voice in tts.list_voices("say")]
     assert names == ["Ava (Premium)", "Daniel", "Samantha", "Eddy (English (UK))", "Fred"]
+
+
+def _ready(*names):
+    return lambda: {name: {"available": name in names} for name in tts.FALLBACK_ENGINES}
+
+
+def test_voice_candidates_skip_minimax_without_a_key(monkeypatch):
+    monkeypatch.setattr(tts, "_tts_route_candidates", lambda: [
+        {"engine": "minimax", "provider": "minimax", "model": "speech-2.8-turbo"},
+        {"engine": "heygen", "provider": "openrouter",
+         "model": "heygen/heygen-voice-1-turbo:free"},
+    ])
+    monkeypatch.setattr(tts, "voice_engine_status", _ready("heygen", "kokoro", "say"))
+    engines = [item["engine"] for item in tts.voice_candidates("auto")]
+    assert engines == ["heygen", "kokoro", "say"]
+
+
+def test_voice_candidates_put_the_selected_engine_first_and_add_fallbacks(monkeypatch):
+    monkeypatch.setattr(tts, "_tts_route_candidates", lambda: [
+        {"engine": "minimax", "provider": "minimax", "model": "speech-2.8-turbo"},
+    ])
+    monkeypatch.setattr(tts, "voice_engine_status", _ready("heygen", "say"))
+    candidates = tts.voice_candidates("heygen")
+    assert [item["engine"] for item in candidates] == ["heygen", "say"]
+    assert candidates[0]["model"] == "heygen/heygen-voice-1-turbo:free"
+
+
+def test_voice_candidates_keep_an_unready_selected_engine_for_its_error(monkeypatch):
+    monkeypatch.setattr(tts, "_tts_route_candidates", lambda: [])
+    monkeypatch.setattr(tts, "voice_engine_status", _ready("say"))
+    engines = [item["engine"] for item in tts.voice_candidates("minimax")]
+    assert engines == ["minimax", "say"]
+
+
+def test_voice_candidates_work_without_admin_routes(monkeypatch):
+    monkeypatch.setattr(tts, "_tts_route_candidates", lambda: [])
+    monkeypatch.setattr(tts, "voice_engine_status", _ready("kokoro"))
+    assert [item["engine"] for item in tts.voice_candidates("auto")] == ["kokoro"]
+    monkeypatch.setattr(tts, "voice_engine_status", _ready())
+    with pytest.raises(audio.AudioError, match="No voice engine is ready"):
+        tts.voice_candidates("auto")
+
+
+def test_openrouter_alias_with_heygen_model_orders_heygen(monkeypatch):
+    ordered = tts._candidate_order(
+        "openrouter", "heygen/heygen-voice-1-turbo:free", [],
+    )
+    assert ordered[0]["engine"] == "heygen"
+
+
+def test_openrouter_voices_ignore_the_chat_breaker(monkeypatch):
+    monkeypatch.setattr(audio, "_openrouter_configured", lambda: True)
+    monkeypatch.setattr(audio, "openrouter_blocked", lambda: False)
+    monkeypatch.setattr(audio, "_provider_breaker_open", lambda provider: True)
+    assert audio.openrouter_available() is False
+    assert tts.voice_engine_status()["heygen"]["available"] is True
+    assert len(tts.list_voices("heygen")) == len(tts.HEYGEN_VOICES)
