@@ -89,6 +89,17 @@ export function readingAction(status) {
   return null;
 }
 
+/** What Open in Finish hands to Finish: the cut's job, set, story and shape. */
+export function finishFocusFrom(artifact = {}) {
+  return {
+    jobId: String(artifact.job_id || ""),
+    setId: String(artifact.set_id || ""),
+    storyId: String(artifact.story_id || ""),
+    aspect: String(artifact.aspect || artifact.shape || ""),
+    artifactId: String(artifact.artifact_id || ""),
+  };
+}
+
 export function checkState(payload) {
   const state = String(payload?.status || "").toLowerCase();
   if (state === "cancelled") return "none";
@@ -270,6 +281,7 @@ export function startStudio() {
   let watchSeq = 0;
   let noticeTimer = 0;
   let libraryUi = null;
+  let finishFocus = null;
   let lastJobCheck = 0;
   let lastJobUpdated = "";
 
@@ -638,12 +650,13 @@ export function startStudio() {
     },
     // Open a video and move to the step where its work continues.
     openJobAndContinue: (id, meta = {}) => openJobAndContinue(id, meta),
-    // Open a finished cut's job on Finish. The hash contract is only
-    // `#/<step>` today, so story/shape cannot travel with it; Finish opens on
-    // its first story and default shape.
+    // Open a finished cut's job on Finish, on that cut's story and shape.
+    // The hash stays `#/<step>`; the story, shape and cut travel as a
+    // one-time focus that Finish takes when it mounts.
     openFinished: (artifact = {}) => {
       const id = String(artifact.job_id || "");
       if (!id) return;
+      finishFocus = finishFocusFrom(artifact);
       setJob({
         id,
         name: artifact.job_title || artifact.source_label || "",
@@ -652,6 +665,12 @@ export function startStudio() {
       renderRail();
       void refreshState();
       go("finish", { force: true });
+    },
+    // Finish calls this once on mount; the focus applies to that job only.
+    takeFinishFocus: (jobId) => {
+      const focus = finishFocus;
+      finishFocus = null;
+      return focus && focus.jobId === String(jobId || "") ? focus : null;
     },
     refreshSteps: () => refreshState(),
     getStepState: () => ({ ...jobState }),
