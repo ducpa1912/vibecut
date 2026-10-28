@@ -18,9 +18,9 @@ def test_default_routes_use_only_final_engines():
         route["model"] for route in defaults["tts"]["routes"]
     }
     assert [route["provider"] for route in defaults["stt"]["routes"]] == [
-        "apple", "whisper",
+        "apple", "whisper", "openrouter",
     ]
-    assert defaults["stt"]["routes"][-1]["model"] == (
+    assert defaults["stt"]["routes"][1]["model"] == (
         "mlx-community/whisper-large-v3-turbo"
     )
     for name in ("story_brief", "rewrite", "translate", "hook_rank"):
@@ -31,7 +31,7 @@ def test_default_routes_use_only_final_engines():
         "minimax", "openrouter", "local", "elevenlabs",
     )
     assert workflow_config.STT_PROVIDERS == (
-        "apple", "whisper", "groq", "deepgram",
+        "apple", "whisper", "groq", "deepgram", "openrouter",
     )
 
 

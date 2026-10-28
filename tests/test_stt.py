@@ -614,7 +614,7 @@ def test_pipeline_keeps_compatibility_exports():
     assert pipeline.transcribe_apple is not stt.transcribe_apple  # helper override wrapper
     assert pipeline.transcribe is stt.transcribe
     assert pipeline.read_transcript is stt.read_transcript
-    assert pipeline.CLOUD_STT_PROVIDERS == ("groq", "deepgram")
+    assert pipeline.CLOUD_STT_PROVIDERS == ("groq", "deepgram", "openrouter")
 
 
 # ---------------------------------------------------------------- vocabulary

@@ -20,6 +20,7 @@ Nothing here runs at import time.  Tests fake every engine.
 
 from __future__ import annotations
 
+import base64
 import difflib
 import hashlib
 import importlib.util
@@ -53,7 +54,10 @@ CHUNK_SECONDS = 600.0
 OVERLAP_SECONDS = 5.0
 LOW_CONFIDENCE = 0.5
 DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
-CLOUD_STT_PROVIDERS = ("groq", "deepgram")
+# OpenRouter reuses the key HeyGen voices and AI text already use; on an Intel
+# Mac (no MLX, no macOS 26 Apple Speech) it is the only transcription route.
+CLOUD_STT_PROVIDERS = ("groq", "deepgram", "openrouter")
+OPENROUTER_STT_MODEL = "openai/whisper-large-v3-turbo"
 LOCAL_STT_ENGINES = ("apple", "whisper")
 STT_ENGINES = LOCAL_STT_ENGINES + CLOUD_STT_PROVIDERS
 WHISPER_MODELS = (
@@ -753,14 +757,48 @@ def _apple_payload(data: Mapping[str, Any]) -> dict:
     }
 
 
+# Whole-segment lines Whisper writes over music or silence. A segment is
+# dropped only when its entire text is one of these; "thank you" also has to
+# repeat in the same response, since a single one may be real speech.
+_HALLUCINATED_LINES = frozenset({
+    "thanks for watching", "thank you for watching", "please subscribe",
+    "subscribe to my channel", "like and subscribe", "bye", "bye bye",
+    "subtitles by the amaraorg community", "ta-da",
+    "cảm ơn các bạn đã theo dõi", "cảm ơn các bạn đã xem video",
+    "hẹn gặp lại các bạn trong những video tiếp theo",
+    "hãy subscribe cho kênh để ủng hộ kênh của mình nhé",
+    "hãy đăng ký kênh để ủng hộ kênh của mình nhé",
+    "ghiền mì gõ", "la la school",
+    "字幕由amaraorg社区提供", "请不吝点赞 订阅 转发 打赏支持明镜与点点栏目",
+})
+_REPEATED_ONLY_LINES = frozenset({"thank you", "thanks", "cảm ơn", "okay", "you"})
+
+
+def _line_key(text: str) -> str:
+    stripped = re.sub(r"[.,!?。！？…'\"“”‘’]", "", str(text or "").casefold())
+    return " ".join(stripped.split())
+
+
+def _hallucinated(text: str, counts: Mapping[str, int]) -> bool:
+    key = _line_key(text)
+    if key in _HALLUCINATED_LINES:
+        return True
+    return key in _REPEATED_ONLY_LINES and counts.get(key, 0) >= 2
+
+
 def _whisper_payload(data: Mapping[str, Any]) -> dict:
     segments: list[dict] = []
     words: list[dict] = []
-    for raw_segment in data.get("segments") or []:
-        if not isinstance(raw_segment, Mapping):
-            continue
+    raw_segments = [item for item in data.get("segments") or [] if isinstance(item, Mapping)]
+    line_counts: dict[str, int] = {}
+    for item in raw_segments:
+        key = _line_key(_clean_text(item.get("text")))
+        line_counts[key] = line_counts.get(key, 0) + 1
+    for raw_segment in raw_segments:
         text = " ".join(_clean_text(raw_segment.get("text")).split())
         if not text:
+            continue
+        if _hallucinated(text, line_counts):
             continue
         compression = _float(raw_segment.get("compression_ratio"))
         no_speech = _float(raw_segment.get("no_speech_prob"))
@@ -1266,6 +1304,46 @@ def _cloud_speech(
     except (OSError, EOFError, wave.Error):
         pass
 
+    if name == "openrouter":
+        chosen_model = model or _stt_workflow_model("openrouter", OPENROUTER_STT_MODEL)
+        body = {
+            "model": chosen_model,
+            "input_audio": {
+                "data": base64.b64encode(audio_bytes).decode("ascii"),
+                "format": "mp3",
+            },
+            "response_format": "verbose_json",
+            "timestamp_granularities": ["segment", "word"],
+        }
+        if language and str(language).lower() != "auto":
+            body["language"] = _base_language(language)
+        request = urllib.request.Request(
+            "https://openrouter.ai/api/v1/audio/transcriptions",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with opener(request, timeout=max(10, timeout)) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001 - a cloud failure returns no transcript
+            return None
+        payload = _whisper_payload(data)
+        if not payload["segments"]:
+            return None
+        return {
+            "language": payload["language"],
+            "text": payload["text"][:4000],
+            "segments": [
+                {"start": item["start"], "end": item["end"], "text": item["text"]}
+                for item in payload["segments"]
+            ],
+            "words": payload["words"],
+            "provider": "openrouter",
+            "model": chosen_model,
+            "seconds": round(duration, 3),
+        }
+
     if name == "groq":
         endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
         chosen_model = model or os.environ.get(
@@ -1382,6 +1460,11 @@ def normalize_engine(provider: str, model: str = "") -> dict | None:
     if name == "apple":
         return {"provider": "apple", "model": raw_model or "on-device-3b"}
     if name in CLOUD_STT_PROVIDERS:
+        if name == "openrouter":
+            return {
+                "provider": "openrouter",
+                "model": raw_model or _stt_workflow_model("openrouter", OPENROUTER_STT_MODEL),
+            }
         if name == "groq":
             return {
                 "provider": "groq",
@@ -1675,7 +1758,59 @@ ENGINE_LABELS = {
     "whisper": "local Whisper",
     "groq": "Groq",
     "deepgram": "Deepgram",
+    "openrouter": "OpenRouter",
 }
+
+
+_VI_LETTERS = re.compile(
+    r"[ăắằẳẵặâấầẩẫậđêếềểễệôốồổỗộơớờởỡợưứừửữựạảãẹẻẽịỉĩọỏõụủũỵỷỹ]",
+    re.IGNORECASE,
+)
+
+
+def guess_language(*texts: str) -> str:
+    """A base language code from a title's script, or "" when unclear.
+
+    Used before transcription so a Vietnamese or Japanese video is not read
+    as English just because the Setup default is "en". Latin titles without
+    Vietnamese letters stay "" (the configured language applies).
+    """
+    text = " ".join(str(item or "") for item in texts)
+    if not text.strip():
+        return ""
+    if re.search(r"[\u3040-\u30ff]", text):
+        return "ja"
+    if len(re.findall(r"[\uac00-\ud7af]", text)) >= 2:
+        return "ko"
+    if len(re.findall(r"[\u3400-\u9fff]", text)) >= 2:
+        return "zh"
+    if len(re.findall(r"[\u0e00-\u0e7f]", text)) >= 2:
+        return "th"
+    if len(re.findall(r"[\u0400-\u04ff]", text)) >= 3:
+        return "ru"
+    if len(_VI_LETTERS.findall(text)) >= 2:
+        return "vi"
+    return ""
+
+
+def speech_language_for(options: Mapping[str, Any], meta: Mapping[str, Any]) -> str:
+    """The language to transcribe a job in.
+
+    An explicit per-job choice wins. Otherwise a title written in another
+    script beats the Setup default, and "auto" lets the engine detect it.
+    """
+    explicit = str(options.get("speech_language_explicit") or "").strip()
+    if explicit:
+        return explicit
+    configured = str(
+        options.get("speech_language")
+        or (settings_store.load_settings().get("stt") or {}).get("language")
+        or "en"
+    )
+    guessed = guess_language(
+        str(meta.get("name") or ""), str(meta.get("title") or ""),
+    )
+    return guessed or configured
 
 
 def no_speech_transcript(language: str = "en") -> dict:

@@ -67,6 +67,8 @@ _STATIC: dict[str, list[dict[str, Any]]] = {
         {"id": "google/gemini-3.8-flash-lite-tts", "name": "Gemini 3.8 Flash-Lite TTS", "reasoning": False, "kind": "tts"},
         {"id": "google/lyria-3-pro-preview", "name": "Lyria 3 Pro", "reasoning": False, "kind": "music"},
         {"id": "google/lyria-3-clip-preview", "name": "Lyria 3 Clip", "reasoning": False, "kind": "music"},
+        {"id": "openai/whisper-large-v3-turbo", "name": "Whisper Large v3 Turbo (OpenRouter)", "reasoning": False, "kind": "stt"},
+        {"id": "openai/whisper-large-v3", "name": "Whisper Large v3 (OpenRouter)", "reasoning": False, "kind": "stt"},
     ],
     "elevenlabs": [
         {"id": "eleven_multilingual_v2", "name": "Eleven Multilingual v2", "reasoning": False, "kind": "tts"},

@@ -952,7 +952,7 @@ def test_admin_workflow_providers_match_final_engines(admin_api):
     payload = admin_api.get("/_ductator/api/workflows").json()
     providers = payload["providers"]
     assert providers["tts"] == ["minimax", "openrouter", "local", "elevenlabs"]
-    assert providers["stt"] == ["apple", "whisper", "groq", "deepgram"]
+    assert providers["stt"] == ["apple", "whisper", "groq", "deepgram", "openrouter"]
     for name in ("story_brief", "rewrite", "translate", "hook_rank"):
         assert providers[name] == ["opencode-go", "openrouter"]
     meta_ids = {item["id"] for item in payload["provider_meta"]}
