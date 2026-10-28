@@ -8,7 +8,11 @@
  */
 
 import { getJob, listClipSets, request } from "./api.js";
-import { hasAttestation, rememberAttestation } from "./import.js";
+import {
+  cleanBlockReason,
+  cleanReasonText,
+  needsRightsTick,
+} from "./import.js";
 import {
   clear,
   el,
@@ -216,7 +220,9 @@ export function mount(root, ctx) {
   let hasStories = false;
   let loading = false;
   let runPending = false;
-  let attested = false;
+  let policy = null;
+  let ticks = false;
+  let rightsSaving = false;
 
   root.innerHTML = `
     <section class="st-panel" aria-labelledby="st-check-title">
@@ -275,6 +281,19 @@ export function mount(root, ctx) {
     setStatus(dom.status, message, tone);
   }
 
+  async function refreshPolicy() {
+    if (!job?.id) return;
+    try {
+      const loaded = await getJob(job.id);
+      if (disposed) return;
+      if (loaded?.rights_policy && typeof loaded.rights_policy === "object") {
+        policy = loaded.rights_policy;
+      }
+    } catch (_) {
+      /* Keep the last server policy; the save itself already failed or won. */
+    }
+  }
+
   async function recordRights(jobId) {
     if (!jobId) return false;
     try {
@@ -282,10 +301,10 @@ export function mount(root, ctx) {
         method: "POST",
         body: { attested: true, source: "check" },
       });
-      return Boolean(result?.rights?.attested ?? result?.attested ?? true);
+      const recorded = Boolean(result?.rights?.attested ?? result?.attested);
+      if (recorded) await refreshPolicy();
+      return recorded;
     } catch (_) {
-      // The rights route arrives with the Clean backend in this wave. On a
-      // base without it, Check's own attestation field remains the fallback.
       return false;
     }
   }
@@ -332,55 +351,59 @@ export function mount(root, ctx) {
   }
 
   function rightsCard() {
-    const recorded = Boolean(report?.rights?.attested || report?.policy?.rights_attested);
-    const cleanAllowed = Boolean(report?.policy?.clean_allowed);
+    if (!policy) {
+      return el("div", { class: "st-card st-check-card" }, [
+        el("h2", { text: "Rights" }),
+        el("p", { class: "st-hint", text: "Reading the rights policy…" }),
+      ]);
+    }
+    // The tick appears only while the server says the lock is on and this
+    // video has no rights note. With the lock off there is nothing to tick.
+    if (!needsRightsTick(policy)) return null;
+
     const input = el("input", {
       type: "checkbox",
-      checked: recorded || attested,
-      disabled: recorded,
+      checked: ticks,
+      disabled: rightsSaving,
     });
     input.addEventListener("change", () => {
-      attested = input.checked;
-      if (attested && job?.id) {
-        rememberAttestation(job.id);
-        showStatus("Saving the rights note…", "busy");
-        void recordRights(job.id).then((recorded) => {
-          if (disposed) return;
-          showStatus(
-            recorded
-              ? "Rights note recorded for this video."
-              : "Rights note saved in this browser. Run Check to record it for this video.",
-            "ok",
-          );
-        });
-      } else {
+      ticks = Boolean(input.checked);
+      if (!ticks || !job?.id) {
         showStatus("");
+        renderReport();
+        return;
       }
+      rightsSaving = true;
+      showStatus("Recording the rights note…", "busy");
+      void recordRights(job.id).then((recorded) => {
+        if (disposed) return;
+        rightsSaving = false;
+        if (recorded) {
+          ticks = false;
+          showStatus("Rights note recorded for this video. Clean is open.", "ok");
+        } else {
+          showStatus("The server could not record the rights note. Try again.", "bad");
+        }
+        renderReport();
+        ctx.refreshSteps?.();
+      });
     });
 
     const card = el("div", { class: "st-card st-check-card" }, [
       el("h2", { text: "Rights" }),
-      el("p", { class: "st-hint", text: "Cleaning old text is limited to footage you own or have permission to edit." }),
+      el("p", { class: "st-hint", text: "The rights lock is on. Cleaning old text needs a rights note for this video." }),
       el("label", { class: "st-check st-attest" }, [
         input,
         el("span", {}, [
-          el("strong", { text: "I own this footage or have permission to edit it." }),
-          el("small", { text: recorded
-            ? "Recorded by Check for this video."
-            : "Sent with the next Check run." }),
+          el("strong", { text: "I own this footage or have the rights to it." }),
+          el("small", { text: "Stored on the server for this video. Watermarks are still never removed." }),
         ]),
       ]),
-    ]);
-
-    if (report && !recorded) {
-      const note = el("div", { class: "st-check-lock" }, [
+      el("div", { class: "st-check-lock" }, [
         el("strong", { text: "Clean is locked" }),
-        el("p", { text: "The current report has no rights note. Confirm the box, then run Check again to unlock Clean." }),
-      ]);
-      card.append(note);
-    } else if (report && recorded && !cleanAllowed) {
-      card.append(el("p", { class: "st-hint", text: "Rights are recorded, but this report still blocks cleaning." }));
-    }
+        el("p", { text: "Confirm the box to unlock Clean for this video. You can still open Stories and Edit and add your own text." }),
+      ]),
+    ]);
     return card;
   }
 
@@ -426,9 +449,12 @@ export function mount(root, ctx) {
       )),
     ]);
     if (blocked) {
-      card.append(el("p", { class: "st-check-sample", text: "Use your original file — it has no watermark. This region is never cleaned." }));
-    } else if (kind === "handle_or_logo" && !report?.policy?.rights_attested) {
-      card.append(el("p", { class: "st-check-sample", text: "Own handle or logo. Confirm the rights note before cleaning it." }));
+      card.append(el("p", { class: "st-check-sample", text: cleanReasonText(cleanBlockReason(policy, kind), policy) }));
+    } else if (kind === "handle_or_logo") {
+      const reason = cleanBlockReason(policy, kind);
+      if (reason) {
+        card.append(el("p", { class: "st-check-sample", text: cleanReasonText(reason, policy) }));
+      }
     }
     return card;
   }
@@ -580,7 +606,8 @@ export function mount(root, ctx) {
     main.append(findingsCard(report));
     main.append(warningsCard(report));
     main.append(mediaCard(report));
-    side.append(rightsCard());
+    const rights = rightsCard();
+    if (rights) side.append(rights);
 
     const facts = el("div", { class: "st-card st-check-card" }, [
       el("h2", { text: "Source" }),
@@ -662,19 +689,10 @@ export function mount(root, ctx) {
   async function startCheck(force) {
     if (!job?.id || loading) return;
     clearError();
-    const withRights = attested || hasAttestation(job.id) || Boolean(report?.rights?.attested);
-    if (withRights) {
-      attested = true;
-      rememberAttestation(job.id);
-    }
     loading = true;
     runPending = true;
     setBusy(true);
-    showStatus(withRights ? "Running Check with the rights note…" : "Running Check…", "busy");
-    if (withRights) {
-      await recordRights(job.id);
-      if (disposed) return;
-    }
+    showStatus("Running Check…", "busy");
     try {
       let payload = null;
       try {
@@ -682,7 +700,6 @@ export function mount(root, ctx) {
           method: "POST",
           body: {
             force: Boolean(force),
-            attestation: withRights ? true : null,
             sample_text: true,
             fps: checkFps(job?.source?.duration),
           },
@@ -745,8 +762,20 @@ export function mount(root, ctx) {
           (set) => Array.isArray(set?.stories) && set.stories.length,
         ),
       );
-      // The note given at Import is stored on the job; this browser's copy is a fallback.
-      attested = hasAttestation(jobId) || Boolean(loadedJob?.rights?.attested);
+      // The job's server policy carries this video's attestation. The global
+      // policy is only a fallback when an older server omits the field.
+      policy = loadedJob?.rights_policy && typeof loadedJob.rights_policy === "object"
+        ? loadedJob.rights_policy
+        : null;
+      if (!policy) {
+        try {
+          const fallback = await request("/api/rights/policy");
+          if (fallback && typeof fallback === "object") policy = fallback;
+        } catch (_) {
+          /* The report still renders; Clean stays locked until policy loads. */
+        }
+        if (disposed) return;
+      }
       if (job.status !== "ready") {
         clear(dom.body);
         dom.run.hidden = true;

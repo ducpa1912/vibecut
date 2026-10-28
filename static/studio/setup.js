@@ -7,7 +7,8 @@
  *
  * Existing routes only:
  *   GET  /api/settings
- *   POST /api/settings          (secrets only)
+ *   POST /api/settings          (secrets and rights.lock)
+ *   GET  /api/rights/policy
  *   GET  /api/audio/engines
  *
  * Optional packs have no install route on this build, so the screen reports
@@ -51,6 +52,13 @@ const VOICE_LABELS = {
 const OPENROUTER_VOICES = ["heygen", "fish", "gemini"];
 const LOCAL_VOICES = ["say", "kokoro"];
 const CLOUD_VOICES = ["minimax", "elevenlabs"];
+
+export const RIGHTS_LOCK_HELP = "On: people must confirm they own the footage before importing or cleaning. Off: anyone can import, caption, voice and clean old captions. Watermarks are never removed, and handles or logos always need a ‘this is mine’ tick.";
+
+export function rightsLockValue(policy, settings) {
+  if (policy && typeof policy.lock === "boolean") return policy.lock;
+  return settings?.rights?.lock !== false;
+}
 
 function sourceCopy(value) {
   if (value === "env") return "From an environment variable";
@@ -111,11 +119,13 @@ export function mount(host, ctx = {}) {
   let disposed = false;
   let settings = null;
   let engines = null;
+  let policy = null;
   let loading = true;
   let error = "";
   let notice = "";
   let noticeTone = "";
   let saving = "";
+  let savingRights = false;
   let keyDraft = { openrouter: "", minimax: "", elevenlabs: "" };
 
   host.replaceChildren(el("p", { class: "st-hint", text: "Reading this Mac…" }));
@@ -152,6 +162,37 @@ export function mount(host, ctx = {}) {
     for (const id of ids) {
       if (engines?.voices?.[id]) card.append(engineCard(id));
     }
+    return card;
+  }
+
+  function rightsCard() {
+    const locked = rightsLockValue(policy, settings);
+    const input = el("input", {
+      id: "st-rights-lock",
+      type: "checkbox",
+      checked: locked,
+      disabled: savingRights,
+      "aria-describedby": "st-rights-lock-help",
+    });
+    input.addEventListener("change", () => { void saveRightsLock(Boolean(input.checked)); });
+    const toggle = el("label", { class: "st-switch", for: "st-rights-lock" }, [
+      input,
+      el("span", { class: "st-switch-track", "aria-hidden": "true" }),
+      el("span", { class: "st-switch-label", text: locked ? "On" : "Off" }),
+    ]);
+
+    const card = el("div", { class: "st-setup-section" });
+    card.append(el("div", { class: "st-setup-section-head" }, [
+      el("h3", { text: "Rights" }),
+      el("p", { class: "st-hint", text: "One setting decides when VibeCut asks people to confirm they own the footage." }),
+    ]));
+    card.append(el("div", { class: "st-setup-rights" }, [
+      el("div", { class: "st-setup-rights-copy" }, [
+        el("strong", { text: "Rights lock" }),
+        el("p", { id: "st-rights-lock-help", class: "st-hint", text: RIGHTS_LOCK_HELP }),
+      ]),
+      toggle,
+    ]));
     return card;
   }
 
@@ -314,7 +355,7 @@ export function mount(host, ctx = {}) {
       line.dataset.tone = noticeTone;
       wrap.append(line);
     }
-    wrap.append(enginesCard(), keysCard(), packsCard());
+    wrap.append(rightsCard(), enginesCard(), keysCard(), packsCard());
     host.append(wrap);
   }
 
@@ -327,18 +368,46 @@ export function mount(host, ctx = {}) {
     }
     render();
     try {
-      const [state, engineState] = await Promise.all([
+      const [state, engineState, rightsPolicy] = await Promise.all([
         request("/api/settings"),
         request("/api/audio/engines"),
+        request("/api/rights/policy").catch(() => null),
       ]);
       if (disposed) return;
       settings = state;
       engines = engineState;
+      policy = rightsPolicy;
     } catch (cause) {
       if (disposed) return;
       error = cause?.message || "Could not read setup.";
     } finally {
       loading = false;
+      if (!disposed) render();
+    }
+  }
+
+  async function saveRightsLock(locked) {
+    if (savingRights) return;
+    savingRights = true;
+    notice = locked ? "Turning the rights lock on…" : "Turning the rights lock off…";
+    noticeTone = "";
+    render();
+    try {
+      settings = await request("/api/settings", {
+        method: "POST",
+        body: { rights: { lock: Boolean(locked) } },
+      });
+      // Read the policy back from the server so the switch never guesses.
+      policy = await request("/api/rights/policy").catch(() => null);
+      notice = locked
+        ? "Rights lock is on. Import and cleaning need the own-footage tick."
+        : "Rights lock is off. Import and old-caption cleaning are open; watermarks stay refused and a handle or logo still needs its own tick.";
+      noticeTone = "ok";
+    } catch (cause) {
+      notice = cause?.message || "Could not save the rights lock.";
+      noticeTone = "bad";
+    } finally {
+      savingRights = false;
       if (!disposed) render();
     }
   }

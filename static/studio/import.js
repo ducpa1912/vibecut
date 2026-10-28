@@ -7,15 +7,17 @@
  *   POST /api/jobs/from-url
  *   GET  /api/jobs
  *
- * Rights attestation is a required gate before any import starts. The note is
- * sent with the import and stored on the job (`job.rights`, source "import"),
- * where Check and Clean read it; the browser copy is only a convenience.
+ * The rights lock is a server setting. Import reads `GET /api/rights/policy`
+ * and asks for the own-footage tick only while the lock is on. The note is
+ * stored on the job (`job.rights`, source "import"); browser storage is never
+ * a policy source.
  */
 
 import {
   createJobFromPath,
   createJobFromUrl,
   listJobs,
+  request,
   uploadVideo,
 } from "./api.js";
 import {
@@ -28,22 +30,53 @@ import {
   statusTone,
 } from "./ui.js";
 
-const ATTEST_PREFIX = "vibecut.studio.attested.";
-
-export function rememberAttestation(jobId) {
-  try {
-    localStorage.setItem(ATTEST_PREFIX + jobId, String(Date.now()));
-  } catch (_) {
-    /* A private window may refuse storage; the import still proceeds. */
-  }
+/**
+ * The server policy is the only authority. These helpers only read the
+ * payload from `GET /api/rights/policy` and `job.rights_policy`.
+ *
+ * When the policy is still loading (null), the UI keeps the conservative gate
+ * and shows the tick. That is a loading fallback, never a policy decision.
+ */
+export function policyLocked(policy) {
+  return policy && typeof policy.lock === "boolean" ? policy.lock : true;
 }
 
-export function hasAttestation(jobId) {
-  try {
-    return Boolean(localStorage.getItem(ATTEST_PREFIX + jobId));
-  } catch (_) {
-    return false;
+export function importNeedsTick(policy) {
+  if (!policy) return true;
+  if (typeof policy.needs_import_tick === "boolean") return policy.needs_import_tick;
+  return policyLocked(policy) && !policy.attested;
+}
+
+export function needsRightsTick(policy) {
+  return policyLocked(policy) && !policy?.attested;
+}
+
+/** The server reason code for one detected kind, or null when it may be cleaned. */
+export function cleanBlockReason(policy, kind) {
+  if (!policy) return "rights_not_attested";
+  const map = policy.clean;
+  const key = String(kind || "");
+  if (map && typeof map === "object" && Object.prototype.hasOwnProperty.call(map, key)) {
+    return map[key] || null;
   }
+  return policyLocked(policy) && !policy.attested ? "rights_not_attested" : null;
+}
+
+export const CLEAN_REASON_TEXT = {
+  watermark: "This platform watermark is never removed. Use the original file.",
+  screen_text: "Screen interface text is left alone; it is never cleaned.",
+  attestation_required: "This handle or logo needs the per-video 'this is mine' tick.",
+  rights_not_attested: "Confirm you own this footage or have the rights to it before cleaning.",
+};
+
+export function cleanReasonText(reason, policy = null) {
+  const code = String(reason || "");
+  if (code === "attestation_required" && policyLocked(policy)) {
+    // Under the lock on, the one own-footage tick unlocks handles too. The
+    // per-video tick is only the lock-off rule.
+    return "Confirm you own this footage or have the rights to it before cleaning.";
+  }
+  return CLEAN_REASON_TEXT[code] || code.replace(/_/g, " ");
 }
 
 const VIDEO_EXTENSIONS = [".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".mpg", ".mpeg"];
@@ -86,6 +119,9 @@ export function mount(root, ctx) {
   let disposed = false;
   let recentRequest = 0;
   let recentTimer = 0;
+  let policy = null;
+  let policyLoading = true;
+  let policyError = "";
 
   root.innerHTML = `
     <section class="st-panel" aria-labelledby="st-import-title">
@@ -143,9 +179,9 @@ export function mount(root, ctx) {
             </div>
           </fieldset>
 
-          <label class="st-attest">
+          <label id="st-attest-row" class="st-attest" hidden>
             <input id="st-attest" type="checkbox">
-            <span><strong>I own this footage or have permission to edit it.</strong><small>Required. VibeCut will not remove platform watermarks.</small></span>
+            <span><strong>I own this footage or have the rights to it.</strong><small>Required while the rights lock is on. VibeCut never removes platform watermarks.</small></span>
           </label>
 
           <div class="st-actions">
@@ -195,6 +231,7 @@ export function mount(root, ctx) {
     crop: $("#st-opt-crop"),
     track: $("#st-opt-track"),
     attest: $("#st-attest"),
+    attestRow: $("#st-attest-row"),
     submit: $("#st-import"),
     note: $("#st-import-note"),
     progress: $("#st-progress"),
@@ -239,11 +276,18 @@ export function mount(root, ctx) {
   function syncSubmit() {
     const ready = selectionReady();
     const reading = currentlyReading();
-    dom.submit.disabled = busy || reading || !ready || !dom.attest.checked;
+    const needsTick = importNeedsTick(policy);
+    dom.attestRow.hidden = !needsTick;
+    const ticked = !needsTick || dom.attest.checked;
+    dom.submit.disabled = busy || reading || !ready || policyLoading || Boolean(policyError) || !ticked;
     if (busy) return;
     if (reading) {
       dom.note.textContent = "A video is reading now. Import the next one when it finishes, or press Cancel reading at the top.";
-    } else if (!dom.attest.checked) {
+    } else if (policyLoading) {
+      dom.note.textContent = "Reading the rights policy…";
+    } else if (policyError) {
+      dom.note.textContent = "The rights policy could not be read. Reload this page before importing.";
+    } else if (!ticked) {
       dom.note.textContent = "Confirm the rights note to start.";
     } else if (!ready) {
       dom.note.textContent = source === "file"
@@ -252,7 +296,9 @@ export function mount(root, ctx) {
           ? "Enter a full path."
           : "Enter a full link starting with http:// or https://.";
     } else {
-      dom.note.textContent = "Import starts reading the video. Stories unlock when it finishes.";
+      dom.note.textContent = needsTick
+        ? "Import starts reading the video. Stories unlock when it finishes."
+        : "The rights lock is off, so import starts straight away. Watermarks are never removed.";
     }
   }
 
@@ -317,8 +363,13 @@ export function mount(root, ctx) {
   async function startImport() {
     if (busy) return;
     clearError();
-    if (!dom.attest.checked) {
-      showError("Confirm that you own this footage or have permission to edit it.");
+    if (policyLoading || policyError) {
+      showError("The rights policy is not available. Reload this page before importing.");
+      return;
+    }
+    const needsTick = importNeedsTick(policy);
+    if (needsTick && !dom.attest.checked) {
+      showError("Confirm that you own this footage or have the rights to it.");
       dom.attest.focus();
       return;
     }
@@ -333,6 +384,7 @@ export function mount(root, ctx) {
     setStatus(dom.status, "Starting import…");
     try {
       const options = currentOptions();
+      const rights = needsTick ? true : null;
       let created;
       if (source === "file") {
         dom.progress.hidden = false;
@@ -341,15 +393,14 @@ export function mount(root, ctx) {
           dom.progressFill.style.width = `${percent}%`;
           dom.submit.textContent = `Importing… ${percent}%`;
           dom.progressText.textContent = `${percent}%`;
-        }, { rights: dom.attest.checked });
+        }, { rights });
       } else if (source === "path") {
-        created = await createJobFromPath(dom.pathInput.value.trim(), options, { rights: dom.attest.checked });
+        created = await createJobFromPath(dom.pathInput.value.trim(), options, { rights });
       } else {
-        created = await createJobFromUrl(dom.urlInput.value.trim(), options, null, { rights: dom.attest.checked });
+        created = await createJobFromUrl(dom.urlInput.value.trim(), options, null, { rights });
       }
 
       if (!created || !created.id) throw new Error("The server did not return a video id.");
-      rememberAttestation(created.id);
       if (disposed) return;
       setStatus(dom.status, "Imported. Reading the video now — Check opens by itself when it is ready.", "ok");
       ctx.openJob(created.id, { name: selectedDisplayName(), status: "queued" });
@@ -400,6 +451,29 @@ export function mount(root, ctx) {
     if (disposed) return;
     const active = (jobs || []).some((job) => isReadingStatus(job?.status));
     recentTimer = window.setTimeout(() => { void loadRecent({ quiet: true }); }, active ? 4000 : 20000);
+  }
+
+  async function loadPolicy() {
+    policyLoading = true;
+    policyError = "";
+    syncSubmit();
+    try {
+      const result = await request("/api/rights/policy");
+      if (disposed) return;
+      if (!result || typeof result !== "object" || typeof result.lock !== "boolean") {
+        policy = null;
+        policyError = "The server did not return a rights policy.";
+      } else {
+        policy = result;
+      }
+    } catch (error) {
+      if (disposed) return;
+      policy = null;
+      policyError = error?.message || "Could not read the rights policy.";
+    } finally {
+      policyLoading = false;
+      if (!disposed) syncSubmit();
+    }
   }
 
   async function loadRecent({ quiet = false } = {}) {
@@ -478,9 +552,13 @@ export function mount(root, ctx) {
   });
   dom.attest.addEventListener("change", syncSubmit);
   dom.submit.addEventListener("click", startImport);
-  dom.recentRefresh.addEventListener("click", () => { void loadRecent(); });
+  dom.recentRefresh.addEventListener("click", () => {
+    void loadRecent();
+    void loadPolicy();
+  });
 
   syncSubmit();
+  loadPolicy();
   loadRecent();
 
   return () => {

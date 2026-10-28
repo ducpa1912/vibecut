@@ -5,12 +5,18 @@
  * ranges use source coordinates and source time, exactly as the renderer
  * expects; the panel never converts them to output space.
  *
- * Adding is gated by the report's rights policy. A watermark tracklet is never
- * offered, and a handle or logo stays off unless the own-footage attestation
- * was recorded by Check.
+ * Adding is gated by the server policy on the job (`job.rights_policy`).
+ * A watermark tracklet is never offered, screen text is never cleaned, and a
+ * handle or logo under a lock-off policy needs its own "this is mine" tick.
+ * The browser never decides policy; it only renders the server's reasons.
  */
 
-import { request } from "../../api.js";
+import { getJob, request } from "../../api.js";
+import {
+  cleanBlockReason,
+  cleanReasonText,
+  policyLocked,
+} from "../../import.js";
 import { ensureCheckStyles } from "../../check.js";
 import { el, formatCount } from "../../ui.js";
 import {
@@ -269,6 +275,10 @@ export function mountCleanPanel(host, ctx) {
   let timer = 0;
   let loading = true;
   let prefillBusy = false;
+  let policy = null;
+  let policyError = "";
+  let rightsBusy = false;
+  let handleTicked = false;
 
   host.replaceChildren(el("p", { class: "st-hint", text: "Reading Check findings…" }));
 
@@ -277,8 +287,101 @@ export function mountCleanPanel(host, ctx) {
     timer = 0;
   }
 
+  function policyReady() {
+    return Boolean(policy && typeof policy.lock === "boolean");
+  }
+
+  /** General old-caption cleaning. Watermarks and screen text are per-kind. */
   function canClean() {
-    return Boolean(report?.policy?.clean_allowed);
+    if (!policyReady()) return false;
+    if (!policyLocked(policy)) return true;
+    return Boolean(policy.attested);
+  }
+
+  function canCleanKind(kind) {
+    return policyReady() && !cleanBlockReason(policy, kind);
+  }
+
+  function kindReason(kind) {
+    return cleanBlockReason(policy, kind);
+  }
+
+  function hasHandles() {
+    return (report?.tracklets || []).some(
+      (tracklet) => String(tracklet?.kind || "") === "handle_or_logo",
+    );
+  }
+
+  function handleNeedsTick() {
+    return kindReason("handle_or_logo") === "attestation_required";
+  }
+
+  async function refreshPolicy() {
+    if (!jobId) return;
+    try {
+      const loaded = await getJob(jobId);
+      if (disposed) return;
+      if (loaded?.rights_policy && typeof loaded.rights_policy === "object") {
+        policy = loaded.rights_policy;
+        policyError = "";
+      }
+    } catch (error) {
+      if (!disposed) policyError = error?.message || "Could not read the rights policy.";
+    }
+  }
+
+  async function recordRights() {
+    if (!jobId || rightsBusy) return false;
+    rightsBusy = true;
+    render();
+    try {
+      await request(`/api/jobs/${encodeURIComponent(jobId)}/rights`, {
+        method: "POST",
+        // Existing rights route accepts "check"; the tick itself is per video.
+        body: { attested: true, source: "check" },
+      });
+      await refreshPolicy();
+      ctx.notify("Rights note recorded for this video.", "ok");
+      return true;
+    } catch (error) {
+      ctx.notify(error?.message || "Could not record the rights note.", "bad");
+      return false;
+    } finally {
+      rightsBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function reasonText(kind, entry) {
+    const code = kindReason(kind);
+    if (code === "watermark" || code === "screen_text") {
+      return entry?.reason || cleanReasonText(code);
+    }
+    if (code) return cleanReasonText(code, policy);
+    return entry?.reason || "";
+  }
+
+  function rightsTick(label, copy, onTick) {
+    const input = el("input", {
+      type: "checkbox",
+      checked: handleTicked,
+      disabled: rightsBusy,
+    });
+    input.addEventListener("change", () => {
+      handleTicked = Boolean(input.checked);
+      if (!handleTicked) {
+        render();
+        return;
+      }
+      void onTick();
+    });
+    return el("label", { class: "st-check st-attest" }, [
+      input,
+      el("span", {}, [
+        el("strong", { text: label }),
+        el("small", { text: copy }),
+      ]),
+    ]);
   }
 
   function trackletById() {
@@ -305,7 +408,7 @@ export function mountCleanPanel(host, ctx) {
     if (!jobId || readFlag(prefillKey(jobId, edit.story_ref, edit.aspect))) return;
     const tracklets = trackletById();
     const entries = (report.clean_prefill || []).filter((entry) => (
-      entry?.enabled
+      entry
       && entry.action !== "refused"
       && !entry.blocked
       && tracklets.has(String(entry.tracklet_id))
@@ -389,16 +492,44 @@ export function mountCleanPanel(host, ctx) {
   function renderRights() {
     const card = el("div", { class: "st-card st-check-card" });
     card.append(el("h3", { text: "Rights" }));
-    const recorded = Boolean(report?.rights?.attested || report?.policy?.rights_attested);
-    if (!report) {
-      card.append(el("p", { class: "st-hint", text: "Check has not run for this video. Clean stays locked until the rights note is recorded." }));
-      card.append(el("a", { class: "st-btn st-btn-ghost st-btn-small", href: "#/check", text: "Open Check" }));
-    } else if (recorded) {
-      card.append(el("p", { class: "st-hint", text: "Own-footage rights note is recorded. Cleaning is available for this source." }));
-    } else {
-      card.append(el("p", { class: "st-hint", text: "Check found no rights note. Clean is locked for this source; you can still add your own text and captions." }));
-      card.append(el("a", { class: "st-btn st-btn-ghost st-btn-small", href: "#/check", text: "Record rights in Check" }));
+    if (!policy) {
+      card.append(el("p", {
+        class: "st-hint",
+        text: policyError || "Reading the rights policy…",
+      }));
+      return card;
     }
+    if (!policyLocked(policy)) {
+      card.append(el("p", {
+        class: "st-hint",
+        text: "Rights lock is off. Cleaning old captions is open. Watermarks are never removed.",
+      }));
+      if (hasHandles() && handleNeedsTick()) {
+        card.append(rightsTick(
+          "This handle or logo is mine.",
+          "A handle or logo always needs this per-video tick, even with the lock off.",
+          recordRights,
+        ));
+      }
+      return card;
+    }
+    if (policy.attested) {
+      card.append(el("p", {
+        class: "st-hint",
+        text: "Own-footage rights note is recorded for this video. Cleaning is available.",
+      }));
+      return card;
+    }
+    card.append(el("p", {
+      class: "st-hint",
+      text: "The rights lock is on. Confirm the box to clean old text; you can still add your own text and captions.",
+    }));
+    card.append(rightsTick(
+      "I own this footage or have the rights to it.",
+      "Stored on the server for this video. Watermarks are never removed.",
+      recordRights,
+    ));
+    card.append(el("a", { class: "st-btn st-btn-ghost st-btn-small", href: "#/check", text: "Record rights in Check" }));
     return card;
   }
 
@@ -471,7 +602,8 @@ export function mountCleanPanel(host, ctx) {
     let shown = 0;
     for (const tracklet of tracklets.slice(0, 40)) {
       const kind = String(tracklet?.kind || "");
-      const blocked = kind === "watermark";
+      const reasonCode = kindReason(kind);
+      const blocked = kind === "watermark" || reasonCode === "watermark";
       const entry = prefill.get(String(tracklet.id)) || null;
       const candidates = layersFromEntry(
         entry || {}, tracklet, current.length, report?.source,
@@ -480,18 +612,16 @@ export function mountCleanPanel(host, ctx) {
       const added = missing.length === 0;
       const wouldOverflow = current.length + missing.length > MAX_CLEAN;
       const skipped = kind === "screen_text"
+        || reasonCode === "screen_text"
         || entry?.action === "none"
         || entry?.blocked === "screen_text";
+      const locked = !blocked && !skipped && Boolean(reasonCode);
       if (added && !blocked && !skipped) continue;
       if (full && !blocked && !skipped) continue;
       shown += 1;
-      const reason = blocked
-        ? "Use your original file — it has no watermark."
-        : skipped
-          ? (entry?.reason || "Screen interface text is left alone; it is never cleaned.")
-          : kind === "handle_or_logo" && !canClean()
-            ? "Own handle or logo. Confirm rights in Check first."
-            : entry?.reason || "";
+      // The policy reason is the server's. The prefill sentence is used where
+      // the server supplied one; the code is humanised otherwise.
+      const reason = reasonText(kind, entry);
       const actionLabel = blocked
         ? "Never cleaned"
         : skipped
@@ -501,10 +631,11 @@ export function mountCleanPanel(host, ctx) {
         class: "st-btn st-btn-ghost st-btn-small",
         type: "button",
         text: added ? "Added" : blocked || skipped ? "Never" : "Add",
-        disabled: blocked || skipped || added || !canClean() || full || wouldOverflow,
+        disabled: blocked || skipped || added || locked || !canCleanKind(kind) || full || wouldOverflow,
         title: reason || `Add a ${actionLabel.toLowerCase()} for this region.`,
         style: "flex:0 0 auto;white-space:nowrap",
       });
+      button.dataset.reason = reasonCode || "";
       button.addEventListener("click", () => {
         const layers = (ctx.getEdit()?.clean || []).slice();
         const next = candidates.filter((layer) => !layers.some((item) => item.id === layer.id));
@@ -522,8 +653,10 @@ export function mountCleanPanel(host, ctx) {
 
       const row = el("div", { class: "st-layer-row st-layer-row-static", style: "align-items:flex-start" }, [
         el("span", {
-          class: `st-chip${blocked ? " st-chip-bad" : kind === "handle_or_logo" ? " st-chip-busy" : ""}`,
+          class: `st-chip${blocked ? " st-chip-bad" : kind === "handle_or_logo" || locked ? " st-chip-busy" : ""}`,
           text: TRACKLET_LABELS[kind] || "Text",
+          title: reason || "",
+          dataset: { reason: reasonCode || "" },
         }),
         el("span", { class: "st-layer-name" }, [
           el("strong", { text: tracklet?.text_sample || "No words read", style: "display:block;color:var(--st-text);font-weight:500" }),
@@ -597,7 +730,12 @@ export function mountCleanPanel(host, ctx) {
     addRow.append(kind, add);
     card.append(addRow);
     if (!canClean()) {
-      card.append(el("p", { class: "st-hint", text: "Adding is locked until Check records the rights note." }));
+      card.append(el("p", {
+        class: "st-hint",
+        text: policy
+          ? "Adding is locked by the server rights policy. Record the rights note above, or in Check, to unlock it."
+          : (policyError || "Reading the rights policy…"),
+      }));
     }
     return card;
   }
@@ -817,7 +955,30 @@ export function mountCleanPanel(host, ctx) {
     host.append(suggestionsCard());
 
     if (!canClean() && report) {
-      host.append(el("p", { class: "st-hint", text: "Clean is locked by the rights policy. You can still open Stories and Edit to compose new text over the source." }));
+      host.append(el("p", {
+        class: "st-hint",
+        text: policy
+          ? "Clean is locked by the server rights policy. You can still open Stories and Edit to compose new text over the source."
+          : (policyError || "Reading the rights policy…"),
+      }));
+    }
+  }
+
+  async function loadPolicy() {
+    if (!jobId) return;
+    try {
+      const loaded = await getJob(jobId);
+      if (disposed) return;
+      policy = loaded?.rights_policy && typeof loaded.rights_policy === "object"
+        ? loaded.rights_policy
+        : null;
+      if (!policy) {
+        const fallback = await request("/api/rights/policy").catch(() => null);
+        if (fallback && typeof fallback === "object") policy = fallback;
+      }
+      policyError = "";
+    } catch (error) {
+      if (!disposed) policyError = error?.message || "Could not read the rights policy.";
     }
   }
 
@@ -829,6 +990,7 @@ export function mountCleanPanel(host, ctx) {
       return;
     }
     try {
+      if (!policy && !policyError) await loadPolicy();
       const result = await fetchCheck(jobId);
       if (disposed) return;
       report = result.report;
