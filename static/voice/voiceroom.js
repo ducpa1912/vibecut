@@ -24,6 +24,7 @@ import { createClipFinder } from "./clipfinder.js";
 import {
   createMyVoicePanel,
   deleteClone,
+  isStopped,
   playClone,
   playVoice,
   renameClone,
@@ -125,6 +126,11 @@ async function load() {
 
 async function play(engine, voice, label) {
   const key = `${engine}:${voice}`;
+  if (playing === key) {
+    // A sample still being made: Stop cancels it.
+    stopPlayback();
+    return;
+  }
   if (playing) return;
   playing = key;
   setNotice(`Making a sample of ${label}…`);
@@ -133,7 +139,8 @@ async function play(engine, voice, label) {
     await playVoice(engine, voice, testLine, rate);
     setNotice(`Playing ${label}.`, "ok");
   } catch (cause) {
-    setNotice(cause?.message || `Could not play ${label}.`, "bad");
+    if (isStopped(cause)) setNotice("Stopped.");
+    else setNotice(cause?.message || `Could not play ${label}.`, "bad");
   } finally {
     playing = "";
     render();
@@ -141,6 +148,10 @@ async function play(engine, voice, label) {
 }
 
 async function playMine(item) {
+  if (cloneBusy === `play:${item.voice_id}`) {
+    stopPlayback();
+    return;
+  }
   if (cloneBusy) return;
   cloneBusy = `play:${item.voice_id}`;
   setNotice(`Speaking the test line as ${item.name}…`);
@@ -149,7 +160,8 @@ async function playMine(item) {
     await playClone(item.voice_id, testLine);
     setNotice(`Playing ${item.name}.`, "ok");
   } catch (cause) {
-    setNotice(cause?.message || "Could not play this voice.", "bad");
+    if (isStopped(cause)) setNotice("Stopped.");
+    else setNotice(cause?.message || "Could not play this voice.", "bad");
   } finally {
     cloneBusy = "";
     render();
@@ -241,10 +253,11 @@ function cloneRow(item) {
     }, 0);
     return row;
   }
+  const speaking = cloneBusy === `play:${id}`;
   const playButton = el("button", {
     class: "ghost small", type: "button",
-    text: cloneBusy === `play:${id}` ? "Speaking…" : "Play",
-    disabled: busy, "aria-label": `Play ${item.name}`,
+    text: speaking ? "Stop" : "Play",
+    disabled: busy && !speaking, "aria-label": `${speaking ? "Stop" : "Play"} ${item.name}`,
   });
   playButton.addEventListener("click", () => { void playMine(item); });
   const renameButton = el("button", { class: "ghost small", type: "button", text: "Rename", disabled: busy, "aria-label": `Rename ${item.name}` });
@@ -332,11 +345,12 @@ function voiceRow(engine, voice) {
   const id = String(voice.id ?? "");
   const label = voice.name || id || "Default";
   const key = `${engine.id}:${id}`;
+  const making = playing === key;
   const button = el("button", {
     class: "ghost small", type: "button",
-    text: playing === key ? "…" : "Play",
-    disabled: Boolean(playing),
-    "aria-label": `Play ${label}`,
+    text: making ? "Stop" : "Play",
+    disabled: Boolean(playing) && !making,
+    "aria-label": `${making ? "Stop" : "Play"} ${label}`,
   });
   button.addEventListener("click", () => { void play(engine.id, id, label); });
   return el("li", { class: `vr-voice${voice.clone ? " is-clone" : ""}` }, [

@@ -293,7 +293,11 @@ def run_spec(tmp_path: Path, spec: str, extra_env: dict | None = None) -> dict:
 
 
 def test_voice_room_page_in_chromium(tmp_path):
-    report = run_spec(tmp_path, "voice_room.spec.mjs")
+    report = run_spec(tmp_path, "voice_room.spec.mjs", {
+        "VR_FAKE_SEARCH_SECONDS": "3", "VR_FAKE_CLEAN_SECONDS": "2",
+    })
+    assert report["search_cancelled"] is True
+    assert report["clone_cancelled"] is True
     assert report["classic_link"] is True
     assert report["stylesheets"] and not any("studio" in href for href in report["stylesheets"])
     assert report["clips"] == 3

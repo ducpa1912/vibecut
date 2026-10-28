@@ -13,6 +13,7 @@ flag.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import threading
 import uuid
@@ -55,6 +56,39 @@ CANDIDATE_ERRORS: dict[str, str] = {}
 CANDIDATE_MEMORY = 64
 _CANDIDATE_LOCK = threading.RLock()
 _CANDIDATE_TABLES = (CANDIDATE_CANCELS, CANDIDATE_STAGES, CANDIDATE_RESULTS, CANDIDATE_ERRORS)
+#: Cancel switches for long clone requests, keyed by the client's task id.
+#: The page sends a fresh id with each clone and `DELETE /api/voices/tasks/{id}`
+#: to cancel it; the request then stops cleaning and never saves a clone.
+VOICE_TASK_CANCELS: dict[str, threading.Event] = {}
+VOICE_TASK_MEMORY = 64
+VOICE_TASK_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+CANCELLED = "Cancelled. No voice was cloned."
+_TASK_LOCK = threading.Lock()
+
+
+def _task_event(task_id: str) -> threading.Event | None:
+    """The cancel switch for one clone request, made on first use."""
+    if not task_id:
+        return None
+    if not VOICE_TASK_ID.match(task_id):
+        raise HTTPException(400, "Bad voice task id.")
+    with _TASK_LOCK:
+        event = VOICE_TASK_CANCELS.get(task_id)
+        if event is None:
+            event = VOICE_TASK_CANCELS[task_id] = threading.Event()
+            while len(VOICE_TASK_CANCELS) > VOICE_TASK_MEMORY:
+                VOICE_TASK_CANCELS.pop(next(iter(VOICE_TASK_CANCELS)), None)
+        return event
+
+
+def _task_done(task_id: str) -> None:
+    with _TASK_LOCK:
+        VOICE_TASK_CANCELS.pop(task_id, None)
+
+
+def _stop_if_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise HTTPException(409, CANCELLED)
 
 
 def _remember(table: dict, job_id: str, value) -> None:
@@ -88,6 +122,8 @@ class VideoCloneBody(BaseModel):
     start: float | None = None
     end: float | None = None
     candidate: int | None = None
+    #: Client task id; `DELETE /api/voices/tasks/{task}` cancels this clone.
+    task: str = ""
 
     model_config = {"extra": "forbid"}
 
@@ -157,7 +193,7 @@ def _read_candidate_report(job_id: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _upload_head(raw: Path, work: Path) -> Path:
+def _upload_head(raw: Path, work: Path, cancel_event: threading.Event | None = None) -> Path:
     """The first ``UPLOAD_CLEAN_SECONDS`` as mono PCM, so cleaning time is bounded."""
     import audio  # noqa: PLC0415 - audio imports voice_clone
 
@@ -166,7 +202,7 @@ def _upload_head(raw: Path, work: Path) -> Path:
         audio._ffmpeg(), "-y", "-v", "error", "-i", str(raw), "-vn",
         "-t", f"{UPLOAD_CLEAN_SECONDS:.0f}", "-ac", "1", "-ar", "48000",
         "-c:a", "pcm_s16le", str(head),
-    ], timeout=300)
+    ], timeout=300, cancel_event=cancel_event)
     return head
 
 
@@ -303,9 +339,21 @@ def clone_my_voice(
     name: str = Form(""),
     language: str = Form(""),
     consent: bool = Form(False),
+    task: str = Form(""),
 ) -> dict:
     """Clone the creator's own voice from a recording or an uploaded file."""
     _guard(request)
+    cancel_event = _task_event(task)
+    try:
+        return _clone_my_voice(file, name, language, consent, cancel_event)
+    finally:
+        _task_done(task)
+
+
+def _clone_my_voice(
+    file: UploadFile, name: str, language: str, consent: bool,
+    cancel_event: threading.Event | None,
+) -> dict:
     if not voice_clone.available():
         raise HTTPException(400, "Add an OpenRouter key in Setup to clone a voice.")
     if not consent:
@@ -336,12 +384,14 @@ def clone_my_voice(
             # or when the denoise report still shows music in the gaps.
             separate = suffix in VIDEO_SUFFIXES
             clean_dir = work / "clean"
-            head = _upload_head(raw, work)
+            _stop_if_cancelled(cancel_event)
+            head = _upload_head(raw, work, cancel_event=cancel_event)
             report = voice_extract.extract_clean_voice(
                 head, clean_dir,
                 separate="best" if separate else False,
                 denoise="auto",
                 target_seconds=voice_clone.MAX_SAMPLE_SECONDS,
+                cancel_event=cancel_event,
             )
             residual = (report.get("quality") or {}).get("music_noise_residual_db")
             if not separate and residual is not None and float(residual) > MUSIC_RESIDUAL_DB:
@@ -350,13 +400,18 @@ def clone_my_voice(
                     separate="best", denoise="auto",
                     target_seconds=voice_clone.MAX_SAMPLE_SECONDS,
                     use_cache=False,
+                    cancel_event=cancel_event,
                 )
             source = Path(str(report.get("path") or raw))
             warnings = list(report.get("warnings") or [])
             cleaned = True
+        except HTTPException:
+            raise
         except Exception as exc:  # noqa: BLE001 - cleaning must never block a clone
+            _stop_if_cancelled(cancel_event)
             warning = f"Used the raw recording: cleaning failed ({_short_error(exc)})."
             source = raw
+        _stop_if_cancelled(cancel_event)
         try:
             try:
                 seconds = voice_clone.prepare_sample(source, sample)
@@ -368,6 +423,7 @@ def clone_my_voice(
                 cleaned = False
                 warning = "Used the raw recording: the cleaned clip was too short."
                 seconds = voice_clone.prepare_sample(raw, sample)
+            _stop_if_cancelled(cancel_event)
             record = voice_clone.create_clone(
                 sample, name=name or "My voice", source="me", consent=consent,
                 language=language, seconds=seconds,
@@ -468,6 +524,16 @@ def _transcript_language(job_id: str) -> str:
 def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> dict:
     """Clone the speaker of the job's source, from a candidate or a range."""
     _guard(request)
+    cancel_event = _task_event(body.task)
+    try:
+        return _clone_video_voice(job_id, body, cancel_event)
+    finally:
+        _task_done(body.task)
+
+
+def _clone_video_voice(
+    job_id: str, body: VideoCloneBody, cancel_event: threading.Event | None,
+) -> dict:
     app = _app()
     job = app.load_job(job_id)
     if not voice_clone.available():
@@ -495,6 +561,7 @@ def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> di
             sample = work / "sample.mp3"
             try:
                 seconds = voice_clone.prepare_sample(candidate, sample)
+                _stop_if_cancelled(cancel_event)
                 record = voice_clone.create_clone(
                     sample, name=body.name or f"{title} voice"[:64], source="video",
                     consent=body.consent, language=language, job_id=job_id,
@@ -546,17 +613,23 @@ def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> di
         try:
             import voice_extract
 
+            _stop_if_cancelled(cancel_event)
             report = voice_extract.extract_clean_voice(
                 raw, work / "clean",
                 target_seconds=voice_clone.MAX_SAMPLE_SECONDS,
+                cancel_event=cancel_event,
             )
             seconds = voice_clone.prepare_sample(Path(str(report["path"])), sample)
             cleaned = True
+        except HTTPException:
+            raise
         except Exception as exc:  # noqa: BLE001 - optional engines must never fail a clone
+            _stop_if_cancelled(cancel_event)
             warning = (
                 f"Used the raw cut: clean voice extraction failed ({_short_error(exc)})."
             )
             sample = raw
+        _stop_if_cancelled(cancel_event)
         try:
             record = voice_clone.create_clone(
                 sample, name=body.name or f"{title} voice"[:64], source="video",
@@ -573,6 +646,20 @@ def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> di
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+@router.delete("/api/voices/tasks/{task_id}")
+def cancel_voice_task(task_id: str, request: Request) -> dict:
+    """Cancel a running clone request. It stops at its next check and saves nothing.
+
+    A cancel that arrives before its request starts still counts: the switch
+    is made here and the request finds it set.
+    """
+    _guard(request)
+    event = _task_event(task_id)
+    if event is not None:
+        event.set()
+    return {"cancelled": task_id}
 
 
 @router.get("/api/voices/clones/{voice_id}")

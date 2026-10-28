@@ -2,9 +2,10 @@
  * The Voice Room page (`/voices`) in Chromium.
  *
  * Starts from one ready video in a scratch data folder, served by
- * `voice_room_server.py` with the clip search and upload cleaning faked.
- * Finds clean clips, plays one, clones from a picked clip, renames and
- * deletes the clone, and clones an uploaded recording.
+ * `voice_room_server.py` with the clip search and the cleaning faked (each
+ * waits a few seconds). Cancels a clip search, finds clean clips, plays one,
+ * clones from a picked clip, cancels a range clone, renames and deletes the
+ * clone, and clones an uploaded recording.
  *
  * Exit 0 passes, exit 2 means the host cannot run Playwright (skip), any
  * other exit fails. The Python wrapper owns the server and its cleanup.
@@ -70,7 +71,14 @@ try {
 
   // Find the clean clips for the video.
   await finder.locator('select[aria-label="Video"]').selectOption(jobId);
+
+  // Cancel a running search.
   await finder.getByRole("button", { name: "Find clean clips" }).click();
+  await finder.getByRole("button", { name: "Cancel the clip search" }).click();
+  await finder.getByText("Search cancelled.").waitFor({ timeout: 15000 });
+  report.search_cancelled = true;
+
+  await finder.getByRole("button", { name: /Find clean clips|Search again/ }).click();
   await finder.locator("[data-clip]").first().waitFor({ state: "visible", timeout: 30000 });
   report.clips = await finder.locator("[data-clip]").count();
   assert(report.clips === 3, `expected 3 clips, saw ${report.clips}`);
@@ -93,6 +101,17 @@ try {
   assert(/voice/i.test(report.cloned), `unexpected clone name ${report.cloned}`);
   report.notice = (await page.locator(".vr-notice").textContent()) || "";
   assert(report.notice.includes("clip 2"), `notice does not name the clip: ${report.notice}`);
+
+  // Start a range clone, then cancel it: no second voice appears.
+  await finder.getByRole("button", { name: "Use a time range instead" }).click();
+  await finder.locator('input[aria-label="From (seconds)"]').fill("0");
+  await finder.locator('input[aria-label="To (seconds)"]').fill("10");
+  await finder.locator("#vr-consent-video").check();
+  await finder.getByRole("button", { name: "Clone this range" }).click();
+  await finder.getByRole("button", { name: "Cancel the clone" }).click();
+  await page.locator(".vr-notice", { hasText: "Cancelled. No voice was cloned." }).waitFor({ timeout: 15000 });
+  report.clone_cancelled = await mine.locator("[data-voice]").count() === 1;
+  assert(report.clone_cancelled, "a cancelled clone was saved");
 
   // Rename it.
   await row.getByRole("button", { name: /^Rename / }).click();

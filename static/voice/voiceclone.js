@@ -14,6 +14,7 @@
  *   PATCH  /api/voices/clones/{voice_id}       (JSON: name)
  *   DELETE /api/voices/clones/{voice_id}
  *   POST   /api/voices/clones/{voice_id}/sample
+ *   DELETE /api/voices/tasks/{task}            (cancel a clone in progress)
  */
 
 import { announceChange, request } from "./api.js";
@@ -79,6 +80,25 @@ export function cloneFromVideo(jobId, body) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/clone`, { method: "POST", body });
 }
 
+/** A fresh id for one clone request, so it can be cancelled while it runs. */
+export function newVoiceTask() {
+  const random = Math.random().toString(36).slice(2, 12);
+  return `vt_${Date.now().toString(36)}_${random}`;
+}
+
+/**
+ * Cancel a clone in progress. The request stops at its next check, answers
+ * 409 and saves no voice; a cancel sent before the upload lands still counts.
+ */
+export function cancelVoiceTask(taskId) {
+  return request(`/api/voices/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+}
+
+/** True for the server's answer to a cancelled clone. */
+export function wasCancelled(error) {
+  return Number(error?.status) === 409 || /cancelled/i.test(String(error?.message || ""));
+}
+
 /** Start the clean candidate search; a second call returns the running task. */
 export function findVoiceCandidates(jobId) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/candidates`, { method: "POST", body: {} });
@@ -97,12 +117,13 @@ export function voiceCandidateAudioUrl(jobId, index) {
 }
 
 /** Multipart upload; `request` only speaks JSON. */
-export async function cloneFromFile(file, { name = "", language = "", consent = false } = {}) {
+export async function cloneFromFile(file, { name = "", language = "", consent = false, task = "" } = {}) {
   const form = new FormData();
   form.append("file", file, file.name || "my-voice.webm");
   form.append("name", name);
   form.append("language", language);
   form.append("consent", consent ? "true" : "false");
+  if (task) form.append("task", task);
   const headers = { Accept: "application/json" };
   const token = tokenValue();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -110,21 +131,49 @@ export async function cloneFromFile(file, { name = "", language = "", consent = 
     method: "POST", headers, credentials: "same-origin", body: form,
   });
   announceChange();
-  if (!response.ok) throw new Error(await detailOf(response));
+  if (!response.ok) {
+    const error = new Error(await detailOf(response));
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
 }
 
 let currentPlayer = null;
+let pendingSample = null;
+
+/** The error a sample throws when Stop cancels it before it plays. */
+export function isStopped(error) {
+  return error?.name === "AbortError";
+}
 
 async function playSample(path, body) {
   const headers = { "Content-Type": "application/json", Accept: "audio/wav" };
   const token = tokenValue();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(path, {
-    method: "POST", headers, credentials: "same-origin", body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(await detailOf(response));
-  const url = URL.createObjectURL(await response.blob());
+  // One sample at a time: a new one, or Stop, cancels the one still being made.
+  if (pendingSample) pendingSample.abort();
+  const controller = new AbortController();
+  pendingSample = controller;
+  let blob;
+  try {
+    const response = await fetch(path, {
+      method: "POST", headers, credentials: "same-origin", body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(await detailOf(response));
+    blob = await response.blob();
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const stopped = new Error("Stopped.");
+      stopped.name = "AbortError";
+      throw stopped;
+    }
+    throw error;
+  } finally {
+    if (pendingSample === controller) pendingSample = null;
+  }
+  const url = URL.createObjectURL(blob);
   // One voice at a time: a new sample stops the one already playing.
   if (currentPlayer) currentPlayer.pause();
   const player = new Audio(url);
@@ -146,7 +195,10 @@ export function playVoice(engine, voice, text = "", rate = 1) {
   return playSample("/api/voices/sample", { engine, voice, text, rate });
 }
 
+/** Stop the voice playing now, and cancel a sample still being made. */
 export function stopPlayback() {
+  if (pendingSample) pendingSample.abort();
+  pendingSample = null;
   if (currentPlayer) currentPlayer.pause();
   currentPlayer = null;
 }
@@ -174,6 +226,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
   let name = "My voice";
   let language = "";
   let consent = false;
+  let task = "";
   let disposed = false;
 
   function setNotice(message, tone = "") {
@@ -267,10 +320,11 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       return;
     }
     busy = "clone";
+    task = newVoiceTask();
     setNotice("Preparing your voice sample…", "");
     render();
     try {
-      const record = await cloneFromFile(recording, { name, language, consent });
+      const record = await cloneFromFile(recording, { name, language, consent, task });
       clones = [record, ...clones.filter((item) => item.voice_id !== record.voice_id)];
       recording = null;
       if (recordingUrl) URL.revokeObjectURL(recordingUrl);
@@ -283,10 +337,26 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       );
       onChange();
     } catch (error) {
-      setNotice(error?.message || "Could not clone the voice.", "bad");
+      if (wasCancelled(error)) setNotice("Cancelled. No voice was cloned.", "");
+      else setNotice(error?.message || "Could not clone the voice.", "bad");
     } finally {
       busy = "";
+      task = "";
       if (!disposed) render();
+    }
+  }
+
+  async function cancelClone() {
+    if (busy !== "clone" || !task) return;
+    busy = "cancel";
+    setNotice("Cancelling…", "");
+    render();
+    try {
+      await cancelVoiceTask(task);
+    } catch (error) {
+      setNotice(error?.message || "Could not cancel the clone.", "bad");
+      busy = "clone";
+      render();
     }
   }
 
@@ -394,12 +464,19 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     lang.addEventListener("change", () => { language = lang.value; });
     const tick = el("input", { type: "checkbox", checked: consent, id: "st-voice-consent-me" });
     tick.addEventListener("change", () => { consent = Boolean(tick.checked); render(); });
+    const cloning = busy === "clone" || busy === "cancel";
     const go = el("button", {
       class: "st-btn st-btn-primary st-btn-small", type: "button",
-      text: busy === "clone" ? "Cloning…" : "Clone my voice",
+      text: cloning ? "Cloning…" : "Clone my voice",
       disabled: Boolean(busy) || !recording || !consent || recorder?.state === "recording",
     });
     go.addEventListener("click", () => { void submit(); });
+    const stop = cloning ? el("button", {
+      class: "st-btn st-btn-quiet st-btn-small", type: "button",
+      text: busy === "cancel" ? "Cancelling…" : "Cancel",
+      disabled: busy === "cancel",
+    }) : null;
+    stop?.addEventListener("click", () => { void cancelClone(); });
     return el("div", { class: "st-voice-clone-form" }, [
       el("div", { class: "st-setup-key-form" }, [
         el("label", { class: "st-field" }, [el("span", { text: "Name" }), nameInput]),
@@ -408,7 +485,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       el("label", { class: "st-voice-clone-consent", for: "st-voice-consent-me" }, [
         tick, el("span", { text: CONSENT_COPY.me }),
       ]),
-      el("div", { class: "st-setup-key-actions" }, [go]),
+      el("div", { class: "st-setup-key-actions" }, [go, stop]),
     ]);
   }
 
