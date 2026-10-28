@@ -1433,3 +1433,15 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
   opacity: 0.45;
   background: rgba(58, 58, 64, 0.3);
 }
+
+/* Cloned voices: Setup → My voice and Edit → Audio → Voice. */
+.st-voice-clone-recorder,
+.st-voice-clone-form,
+.st-voice-clone-list { display: grid; gap: 10px; }
+.st-voice-clone-script { margin: 0; padding: 10px 12px 10px 28px; border: 1px solid var(--st-line); border-radius: 8px; display: grid; gap: 6px; font-size: 13px; line-height: 1.45; }
+.st-voice-clone-audio { width: 100%; max-width: 420px; }
+.st-voice-clone-consent { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.4; cursor: pointer; }
+.st-voice-clone-consent input { margin-top: 2px; flex: none; }
+.st-voice-clone-row { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--st-line); border-radius: 8px; }
+.st-voice-clone-row p { margin: 0; }
+.st-voice-clone-edit { display: grid; gap: 8px; }

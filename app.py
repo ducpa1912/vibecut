@@ -59,6 +59,7 @@ import routes_check
 import routes_cleanup
 import routes_edits
 import routes_overlays
+import routes_voice_clone
 import selection
 import settings_store
 import shares
@@ -3155,6 +3156,7 @@ app.include_router(routes_cleanup.rights_router)
 app.include_router(routes_edits.router)
 app.include_router(__import__("routes_trim", fromlist=["router"]).router)
 app.include_router(routes_overlays.router)
+app.include_router(routes_voice_clone.router)
 app.include_router(music.router)
 app.include_router(packet.router)
 app.include_router(preflight.router)
