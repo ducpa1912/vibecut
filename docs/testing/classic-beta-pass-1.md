@@ -183,7 +183,7 @@ Open findings at the time of this script. Do not report these twice.
 |---|---|---|---|
 | F6 | Hook lab | The badge rounds a half score up while the text rounds it down (for example 33 vs 32). | Open |
 | F8 | Captions | Some cues split into one-word lines such as **It** or **dump.** | Open |
-| F9 | Packet | No-key copy truncates a title mid-word and uses stop words as hashtags. | Open |
+
 
 
 ## 10. What was walked by automation
