@@ -3857,8 +3857,26 @@
   }
 
   function audioBlockReason() {
-    if (state.audio.mode === "music" && musicSourceMode() === "none") {
+    const mode = state.audio.mode;
+    if (mode === "music" && musicSourceMode() === "none") {
       return "Music mode needs a source. Choose Use my sound or Generate before rendering.";
+    }
+    const music = state.audioEngines?.music;
+    if (["music", "full"].includes(mode) && musicSourceMode() === "generate" && music) {
+      const ready = ["minimax-music", "lyria-clip"].filter((id) => music[id]?.available);
+      if (!ready.length) {
+        return "Music generation needs a MiniMax or OpenRouter key. Add one in Setup, or choose Use my sound.";
+      }
+      const selected = state.audio.music;
+      if (selected && music[selected] && music[selected].available === false) {
+        return `${musicLabel(selected)} is unavailable. Add a key in Setup, or choose the other music engine.`;
+      }
+    }
+    const voices = state.audioEngines?.voices;
+    if (["bed", "voice", "full"].includes(mode) && state.audio.source !== "upload"
+        && voices && state.audio.engine && voices[state.audio.engine]
+        && voices[state.audio.engine].available === false) {
+      return `${engineLabel(state.audio.engine)} is unavailable. Add a key in Setup, or choose Use my recording.`;
     }
     return "";
   }

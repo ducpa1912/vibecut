@@ -181,7 +181,6 @@ Open findings at the time of this script. Do not report these twice.
 
 | # | Area | Issue | Status |
 |---|---|---|---|
-| F2 | Music | **Generate** with no music key leaves Render enabled and finishes silently without music. | Open |
 | F3 | History | **Download reel** can serve the newest cut for that length instead of the history row's cut. | Open |
 | F4 | Export | SRT/VTT/EDL/XML exports ignore a manual edit or loaded variant. | Open |
 | F5 | Render note | Voice-over, Dub and Full Replace still say **original audio**. | Open |
