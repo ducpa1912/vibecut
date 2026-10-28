@@ -52,8 +52,15 @@ for ref in "origin/$branch" origin/main main; do
   fi
 done
 
+echo "-> Checking JavaScript syntax"
+if command -v node >/dev/null 2>&1; then
+  find static -name '*.js' -print0 | xargs -0 -n1 node --check
+else
+  echo "   node is not installed; skipped."
+fi
+
 if [[ "$skip_tests" -eq 0 ]]; then
-  echo "-> Running the test suite"
+  echo "-> Running the test suite (includes tests/test_classic_guard.py)"
   python3 -m pytest -q -p no:cacheprovider
 fi
 
