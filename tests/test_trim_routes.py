@@ -1,4 +1,4 @@
-"""Atomic trim, undo and rebind routes (R2_TRIM_PLAN 2.1-2.5)."""
+"""Atomic trim, undo and rebind routes (ROADMAP.md, atomic trim contract)."""
 
 from __future__ import annotations
 

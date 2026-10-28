@@ -1,11 +1,11 @@
 # VibeCut PRD — Paid v1
 
-**Status:** Draft for founder approval. Release verdict: **ALPHA ONLY** until the five gates pass.  
-**Owner:** Founder/CEO. **Author:** Senior Product Lead.  
-**Version:** 1.1 · **Date:** 2026-10-26  
+**Status:** Draft for founder approval. Release verdict: **ALPHA ONLY** until the five gates pass.
+**Owner:** Founder/CEO. **Author:** Senior Product Lead.
+**Version:** 1.1 · **Date:** 2026-10-26
 **Sources:** [Founder brief](FOUNDER_BRIEF.md), [round_1.md](round_1.md), [round_2.md](round_2.md), [round_3.md](round_3.md), current code at `2228066`.
 
-> **Scope correction 2026-10-26:** Flow 1 and Flow 2 are not a cleanup add-on and a retention sidecar. They are one Detect → Dissect → Compose workflow. Flow 2 is the full Compose UI/UX; Flow 1 is the cleanup pre-pass. See [BUILD_PLAN.md](BUILD_PLAN.md). Paid 1.0 scope below is unchanged.
+> **Scope correction 2026-10-26:** Flow 1 and Flow 2 are not a cleanup add-on and a retention sidecar. They are one Check → Stories → Edit workflow. Flow 2 is the full Compose UI/UX; Flow 1 is the cleanup pre-pass. See [ROADMAP.md](ROADMAP.md#1-where-we-are-now). Paid 1.0 scope below is unchanged.
 
 ---
 

@@ -40,7 +40,7 @@ MUSIC_DIRS = {
 VOICE_DIRS = {
     "kokoro": ROOT / "data" / "models" / "kokoro",
 }
-# AudioPlan modes from REVAMP_PLAN §8.4. The mixer also still accepts the
+# AudioPlan modes from ROADMAP.md "Product contracts still in force". The mixer also still accepts the
 # legacy ``keep``/``bed``/``voice``/``full`` names used by Classic jobs.
 AUDIO_MODES = ("original", "original_bed", "voice_over", "dub", "music_only")
 LEGACY_AUDIO_MODES = ("keep", "bed", "voice", "full")

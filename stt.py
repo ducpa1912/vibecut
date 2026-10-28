@@ -2,7 +2,7 @@
 
 Wave 2 track T2 owns this module.  It replaces the transcription block that
 used to live in ``pipeline.py`` and adds the Transcript v2 contract from
-``REVAMP_PLAN.md`` §6.3:
+``ROADMAP.md`` "Product contracts still in force" — Transcript v2:
 
 * Apple SpeechAnalyzer is the default local engine and emits word timings from
   each attributed run's ``audioTimeRange``.
@@ -957,7 +957,7 @@ def build_transcript(
     drift_ms_p95: float = 0.0,
     created: float | None = None,
 ) -> dict:
-    """Build one immutable Transcript v2 document (REVAMP_PLAN §6.3)."""
+    """Build one immutable Transcript v2 document (ROADMAP.md, Transcript v2)."""
     clean_segments: list[dict] = []
     for index, item in enumerate(segments):
         segment = _normalize_segment(item, index)

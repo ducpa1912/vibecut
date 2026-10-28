@@ -1,8 +1,8 @@
 # VibeCut — Founder Brief
 
-**Status:** Source document for PRD 1.1.  
-**Date:** 2026-10-26.  
-**Author:** Founder, solo content creator.  
+**Status:** Source document for PRD 1.1.
+**Date:** 2026-10-26.
+**Author:** Founder, solo content creator.
 **Use:** Raw product input, not market research. This is the buyer’s dogfood report and the basis for the paid-v1 promise, refund triggers, and scope cuts.
 
 > **Raw input note:** two founder asks were deliberately revised after product review. The raw brief asks for a paid alpha; the PRD ships a free alpha until the five gates pass. The raw brief asks for “four of six” as a feeling; the PRD uses a per-source floor of three (two for 20–29 minutes), with mean 4/6 as a portfolio target. Final decisions are in [PRD.md](PRD.md), not in this raw brief.
@@ -128,4 +128,4 @@ Also not: Windows, mobile, cloud.
 
 ---
 
-*Founder brief source for PRD 1.1. Product decisions are in [PRD.md](PRD.md); execution is in [PLAN.md](PLAN.md); phases are in [ROADMAP_V1.md](ROADMAP_V1.md).*
+*Founder brief source for PRD 1.1. Product decisions are in [PRD.md](PRD.md); current state, open items, and contracts are in [ROADMAP.md](ROADMAP.md).*
