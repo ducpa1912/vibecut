@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import packs
+import voice_clone
 
 # Imported last: audio re-exports this module, so the facade must finish first.
 import audio  # noqa: E402
@@ -390,7 +391,10 @@ def list_voices(engine: str) -> list[dict]:
     if engine == "heygen":
         if not audio.openrouter_media_available():
             return []
-        return [{"id": name, "name": name.title(), "lang": "multi"} for name in HEYGEN_VOICES]
+        # Cloned voices first: they are the creator's own.
+        return voice_clone.voice_options() + [
+            {"id": name, "name": name.title(), "lang": "multi"} for name in HEYGEN_VOICES
+        ]
 
     if engine == "fish":
         if not audio.openrouter_media_available():
@@ -922,6 +926,7 @@ def _openrouter_voice(
     text: str, voice: str, output: Path, rate: float = 1.0, engine: str = "fish",
     model: str = "", timeout: float = 300,
 ) -> None:
+    cloned = engine == "heygen" and voice_clone.is_clone(voice)
     key = audio.openrouter_key()
     if not key:
         raise audio.AudioError("Set an OpenRouter key to use this voice.")
@@ -942,7 +947,7 @@ def _openrouter_voice(
             and openrouter_engine(str(route.get("model") or "")) == engine
         ), "") or DEFAULT_MODELS[engine]
     voice_value = DEFAULT_VOICES[engine] if voice in {"", "default"} else voice
-    if engine == "heygen" and voice_value not in HEYGEN_VOICES:
+    if engine == "heygen" and voice_value not in HEYGEN_VOICES and not cloned:
         voice_value = DEFAULT_VOICES["heygen"]
     body = {
         "model": model,
@@ -952,6 +957,14 @@ def _openrouter_voice(
         # PCM. Convert afterwards.
         "response_format": "pcm" if engine == "heygen" else "mp3",
     }
+    if cloned:
+        # OpenRouter clones per request: the reference recording replaces
+        # the stock voice.
+        body.pop("voice")
+        try:
+            body.update(voice_clone.speech_fields(voice))
+        except voice_clone.CloneError as exc:
+            raise audio.AudioError(f"Cloned voice failed: {exc}") from exc
     request = urllib.request.Request(
         "https://openrouter.ai/api/v1/audio/speech",
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -1067,7 +1080,8 @@ def voice_engine_status() -> dict[str, dict]:
         },
         "heygen": {
             "available": audio.openrouter_media_available(), "size_mb": 0,
-            "install": "Add an OpenRouter key. HeyGen Voice Turbo (free).",
+            "install": "Add an OpenRouter key. HeyGen Voice Turbo (free), with voice cloning.",
+            "clone": audio.openrouter_media_available(),
         },
         "fish": {
             "available": audio.openrouter_media_available(), "size_mb": 0,

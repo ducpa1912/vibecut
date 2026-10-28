@@ -22,7 +22,9 @@ import {
   invalidateReadCache,
   listClipSets,
   renderStory,
+  transcribeJob,
   trimErrorCode,
+  writeScriptBrief,
   trimStory,
 } from "./api.js";
 import {
@@ -196,6 +198,9 @@ export function mount(root, ctx) {
   let sets = [];
   let activeSetId = "";
   let loading = false;
+  let transcribing = false;
+  let scripting = false;
+  let briefDraft = null;
 
   root.innerHTML = `
     <section class="st-panel" aria-labelledby="st-stories-title">
@@ -461,11 +466,136 @@ export function mount(root, ctx) {
     actions.append(countLabel, lengthLabel, build);
     card.append(actions);
 
+    const speech = speechCard();
+    if (speech) card.append(speech);
     if (set?.note) card.append(el("p", { class: "st-hint", text: set.note }));
     for (const warning of set?.warnings || []) {
       card.append(el("p", { class: "st-warning", text: warning }));
     }
     return card;
+  }
+
+  /** Stories are cut on speech. Say so when this video has none to read. */
+  function speechState() {
+    if (!job?.analysis) return "";
+    if (job.analysis.engine?.transcript_provider === "script") return "scripted";
+    if (job.source?.has_audio === false) return "no_audio";
+    const transcript = job.analysis.transcript;
+    if (!transcript || (!transcript.segments && !transcript.no_speech)) return "no_transcript";
+    if (transcript.no_speech) return "no_speech";
+    return "";
+  }
+
+  function briefCard(state) {
+    const scripted = state === "scripted";
+    if (briefDraft === null) briefDraft = job?.script_brief?.brief || "";
+    const intro = scripted
+      ? `Stories are cut on a written voice script (${formatCount(job.script_brief?.lines || job.analysis?.transcript?.segments || 0, "line", "lines")}). Change the description to write it again.`
+      : state === "no_audio"
+        ? "This video has no sound, so there is nothing to cut stories on. Describe it and VibeCut writes a voice-over that fits each scene."
+        : "No speech was heard in this video. Describe it and VibeCut writes a voice-over that fits each scene.";
+    const box = el("textarea", {
+      rows: 4,
+      maxLength: 6000,
+      value: briefDraft,
+      placeholder: 'What it is about, the tone and mood, what the voice should say. Exact lines go in [script:"..."].\nExample: Cozy Sunday at home, warm and slow. [script:"Some days you just stay in."] [script:"And that is enough."]',
+      "aria-label": "Video description for the voice script",
+    });
+    box.addEventListener("input", () => { briefDraft = box.value; });
+    const write = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: scripting ? "Writing the script…" : scripted ? "Write the script again" : "Write voice script",
+      disabled: scripting,
+    });
+    write.addEventListener("click", () => { void writeScript(write); });
+    return el("div", { class: "st-script-brief" }, [
+      el("p", { class: scripted ? "st-hint" : "st-warning", text: intro }),
+      el("label", { class: "st-field" }, [el("span", { text: "Describe the video" }), box]),
+      el("div", { class: "st-script-actions" }, [
+        write,
+        el("span", { class: "st-hint", text: "Stories render with this script as a voice-over and captions." }),
+      ]),
+    ]);
+  }
+
+  async function writeScript(button) {
+    if (!job || scripting) return;
+    const brief = String(briefDraft || "").trim();
+    if (!brief) {
+      showError('Describe the video first: the topic, tone and mood, or exact lines in [script:"..."].');
+      return;
+    }
+    scripting = true;
+    button.disabled = true;
+    button.textContent = "Writing the script…";
+    clearError();
+    showStatus("Looking at the scenes and writing a voice-over that fits them…");
+    try {
+      const result = await writeScriptBrief(job.id, brief);
+      invalidateReadCache(job.id);
+      job = await getJob(job.id, { fresh: true });
+      if (disposed) return;
+      showStatus(
+        `Wrote ${formatCount(result?.lines || 0, "line", "lines")} (${result?.language || "auto"}${result?.exact_lines ? `, ${result.exact_lines} kept word for word` : ""}). Find stories now.`,
+        "ok",
+      );
+    } catch (error) {
+      if (disposed) return;
+      showError(error.message || "Could not write a voice script for this video.");
+    } finally {
+      scripting = false;
+      if (!disposed) renderStories();
+    }
+  }
+
+  function speechCard() {
+    const state = speechState();
+    if (state === "no_audio" || state === "no_speech" || state === "scripted") {
+      return briefCard(state);
+    }
+    if (state !== "no_transcript") return null;
+    const read = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: transcribing ? "Reading speech…" : "Read speech",
+      disabled: transcribing,
+    });
+    read.addEventListener("click", () => { void readSpeech(read); });
+    return el("div", { class: "st-speech-missing" }, [
+      el("p", {
+        class: "st-warning",
+        text: "This video was read without its speech, so stories cannot be cut on what people say. Read the speech now (OpenRouter, about 30 s for a 15 min video), then find stories.",
+      }),
+      read,
+    ]);
+  }
+
+  async function readSpeech(button) {
+    if (!job || transcribing) return;
+    transcribing = true;
+    button.disabled = true;
+    button.textContent = "Reading speech…";
+    clearError();
+    showStatus("Reading the speech in this video…");
+    try {
+      const result = await transcribeJob(job.id);
+      invalidateReadCache(job.id);
+      job = await getJob(job.id, { fresh: true });
+      if (disposed) return;
+      showStatus(
+        result?.segments
+          ? `Read ${formatCount(result.segments, "line", "lines")} of speech (${result.language || "auto"}). Find stories now.`
+          : "No speech was heard in this video.",
+        result?.segments ? "ok" : "",
+      );
+    } catch (error) {
+      if (disposed) return;
+      showError(error.message || "Could not read the speech in this video.");
+    } finally {
+      transcribing = false;
+      if (!disposed) renderStories();
+    }
   }
 
   function setPicker() {
@@ -509,9 +639,16 @@ export function mount(root, ctx) {
 
     const stories = Array.isArray(set.stories) ? set.stories : [];
     if (!stories.length) {
+      const state = speechState();
       dom.body.append(el("div", { class: "st-empty" }, [
         el("h2", { text: "No complete story found" }),
-        el("p", { text: "Try fewer stories or a source with more speech." }),
+        el("p", {
+          text: state === "no_audio" || state === "no_speech"
+            ? "Describe the video above and write a voice script, then find stories again."
+            : state === "no_transcript"
+              ? "Read the speech first (button above), then find stories again."
+              : "Try another length, fewer stories, or a source with more speech.",
+        }),
       ]));
       return;
     }

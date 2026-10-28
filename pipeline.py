@@ -2404,11 +2404,7 @@ def analyze_source(
         stage = time.time()
         job_id = str(options.get("job_id") or "")
         request_id = str(options.get("request_id") or job_id)
-        speech_language = str(
-            options.get("speech_language")
-            or (settings_store.load_settings().get("stt") or {}).get("language")
-            or "en"
-        )
+        speech_language = stt.speech_language_for(options, meta)
         settings = settings_store.load_settings()
         stt_cfg = workflow_config.effective(settings.get("workflows"), "stt")
         transcript = stt.transcribe_source(

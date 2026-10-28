@@ -479,6 +479,16 @@ export function createClipSet(jobId, { count = 3, order = "source", minS = null,
   });
 }
 
+/** Write a voice script for a video with no speech. `POST /api/jobs/{id}/script-brief`. */
+export function writeScriptBrief(jobId, brief, { language = "" } = {}) {
+  return request(jobPath(jobId, "/script-brief"), { method: "POST", body: { brief, language } });
+}
+
+/** Read a finished video's speech again. `POST /api/jobs/{id}/transcribe`. */
+export function transcribeJob(jobId, { language = "" } = {}) {
+  return request(jobPath(jobId, "/transcribe"), { method: "POST", body: { language } });
+}
+
 /** Queue one story for render. `POST /api/jobs/{id}/clip-sets/{set}/stories/{story}/render`. */
 export function renderStory(jobId, setId, storyId, { aspect = "9:16", quality = "final", captions = true } = {}) {
   return request(

@@ -10,6 +10,7 @@
  *   POST /api/settings          (secrets and rights.lock)
  *   GET  /api/rights/policy
  *   GET  /api/audio/engines
+ *   /api/voices/clones (My voice, see voiceclone.js)
  *
  * Optional packs have no install route on this build, so the screen reports
  * what is already on disk. It never pretends a download happened.
@@ -17,12 +18,13 @@
 
 import { request } from "./api.js";
 import { el, formatBytes } from "./ui.js";
+import { createMyVoicePanel } from "./voiceclone.js";
 
 const KEY_ROWS = [
   {
     id: "openrouter",
     title: "OpenRouter",
-    copy: "One key for HeyGen, Fish Audio and Gemini voices, cloud music and AI text.",
+    copy: "One key for HeyGen (with voice cloning), Fish Audio and Gemini voices, cloud music and AI text.",
     place: "sk-or-…",
   },
   {
@@ -38,6 +40,8 @@ const KEY_ROWS = [
     place: "ElevenLabs API key",
   },
 ];
+
+const KEY_TITLES = Object.fromEntries(KEY_ROWS.map((row) => [row.id, row.title]));
 
 const VOICE_LABELS = {
   say: "Apple voices",
@@ -127,6 +131,15 @@ export function mount(host, ctx = {}) {
   let saving = "";
   let savingRights = false;
   let keyDraft = { openrouter: "", minimax: "", elevenlabs: "" };
+  const myVoice = createMyVoicePanel({
+    hasKey: () => Boolean(settings?.secrets?.openrouter),
+    onChange: () => {
+      void request("/api/audio/engines").then((result) => {
+        engines = result;
+        if (!disposed) render();
+      }).catch(() => {});
+    },
+  });
 
   host.replaceChildren(el("p", { class: "st-hint", text: "Reading this Mac…" }));
 
@@ -297,7 +310,36 @@ export function mount(host, ctx = {}) {
       ]));
     }
     card.append(music);
+    const extraction = extractionGroup();
+    if (extraction) card.append(extraction);
     return card;
+  }
+
+  function extractionGroup() {
+    const info = engines?.extraction;
+    if (!info || typeof info !== "object") return null;
+    const rows = [
+      ["Voice separation", info.separation, "Mel-Band RoFormer or Demucs. Install the Separation Pack, or pip install demucs."],
+      ["Denoise", info.denoise, "DeepFilterNet 3 from the Voice Pack; ffmpeg afftdn always works as the fallback."],
+      ["Speech detection", info.vad, "Silero VAD when installed; the built-in energy gate always works."],
+      ["Speaker filter", info.diarization, "Optional pyannote.audio with a Hugging Face token. Without it, clips may mix speakers."],
+    ];
+    const group = el("div", { class: "st-setup-group" });
+    group.append(el("div", { class: "st-setup-group-head" }, [
+      el("h4", { text: "Voice extraction" }),
+      el("p", { class: "st-hint", text: "Cleans a clone reference from a video or recording. Every engine is optional; ffmpeg alone still works." }),
+    ]));
+    for (const [label, value, install] of rows) {
+      const ready = Boolean(value);
+      group.append(el("div", { class: "st-setup-engine" }, [
+        el("div", { class: "st-setup-engine-head" }, [
+          el("strong", { text: label }),
+          el("span", { class: `st-chip ${ready ? "st-chip-ok" : ""}`, text: ready ? String(value) : "Not installed" }),
+        ]),
+        el("p", { class: "st-hint", text: install }),
+      ]));
+    }
+    return group;
   }
 
   function packsCard() {
@@ -355,7 +397,8 @@ export function mount(host, ctx = {}) {
       line.dataset.tone = noticeTone;
       wrap.append(line);
     }
-    wrap.append(rightsCard(), enginesCard(), keysCard(), packsCard());
+    myVoice.render();
+    wrap.append(rightsCard(), enginesCard(), keysCard(), myVoice.node, packsCard());
     host.append(wrap);
   }
 
@@ -434,7 +477,7 @@ export function mount(host, ctx = {}) {
       keyDraft[id] = "";
       settings = await request("/api/settings");
       engines = await request("/api/audio/engines");
-      notice = `${id === "openrouter" ? "OpenRouter" : id === "minimax" ? "MiniMax" : "ElevenLabs"} key saved. Cloud features are ready.`;
+      notice = `${KEY_TITLES[id] || id} key saved. Cloud features are ready.`;
       noticeTone = "ok";
     } catch (cause) {
       if (disposed) return;
@@ -475,5 +518,6 @@ export function mount(host, ctx = {}) {
 
   return () => {
     disposed = true;
+    myVoice.dispose();
   };
 }

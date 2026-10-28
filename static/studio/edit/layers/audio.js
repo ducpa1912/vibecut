@@ -26,6 +26,7 @@ import {
   patchEdit,
   syncMediaCookie,
 } from "../api.js";
+import { CONSENT_COPY, cloneFromVideo, cancelVoiceCandidates, findVoiceCandidates, voiceCandidateAudioUrl, voiceCandidateState } from "../../voiceclone.js";
 
 const ENGINE_LABELS = {
   say: "Apple voices · on this Mac",
@@ -153,6 +154,19 @@ export function mountAudioPanel(host, ctx) {
   let selectedEngine = plan.voice?.engine || "";
   let selectedVoice = plan.voice?.voice || "";
   let selectedRate = numberOr(plan.voice?.rate, 1);
+  let cloneOpen = false;
+  let cloneBusy = false;
+  let cloneConsent = false;
+  let cloneName = "";
+  let cloneStart = "";
+  let cloneEnd = "";
+  let cloneManual = false;
+  let cloneCandidate = 0;
+  let cloneTask = null;
+  let cloneError = "";
+  let clonePollTimer = 0;
+  let clonePlayer = null;
+  let clonePlaying = 0;
   let library = [];
   let libraryError = "";
   let libraryLoading = true;
@@ -359,11 +373,14 @@ export function mountAudioPanel(host, ctx) {
         selectedVoice = "";
       }
       if (!selectedVoice && voiceList.length) {
+        // A cloned voice is never picked silently; the creator chooses it.
+        const stock = voiceList.filter((voice) => !voice.clone);
+        const pool = stock.length ? stock : voiceList;
         const language = storyLanguage(ctx);
-        const preferred = voiceList.find(
+        const preferred = pool.find(
           (voice) => String(voice.lang || "").toLowerCase().startsWith(language),
         );
-        selectedVoice = String((preferred || voiceList[0]).id);
+        selectedVoice = String((preferred || pool[0]).id);
       }
     } catch (error) {
       voiceList = [];
@@ -673,6 +690,331 @@ export function mountAudioPanel(host, ctx) {
       setNotice(error?.message || "Could not use that locked bed.", "bad");
       render();
     }
+  }
+
+  async function useClonedVoice(voiceId) {
+    selectedEngine = "heygen";
+    selectedVoice = voiceId;
+    await loadEngines();
+    selectedEngine = "heygen";
+    await loadVoices("heygen");
+    selectedVoice = voiceId;
+    scheduleSave();
+    if (!disposed) render();
+  }
+
+  function stopClonePlayer() {
+    if (clonePlayer) clonePlayer.pause();
+    clonePlayer = null;
+    clonePlaying = 0;
+  }
+
+  function stopClonePoll() {
+    if (clonePollTimer) window.clearTimeout(clonePollTimer);
+    clonePollTimer = 0;
+  }
+
+  function cloneStageCopy(task) {
+    if (!task) return "";
+    if (task.state === "failed") return task.error || "The voice search failed.";
+    if (task.state === "cancelled") return "Search cancelled.";
+    if (task.state === "done") return "";
+    const stage = String(task.stage || task.state || "");
+    if (stage === "queued") return "Queued behind other work…";
+    if (stage === "preparing" || stage === "starting") return "Finding the speech and removing music…";
+    if (stage === "scoring") return "Scoring speech windows…";
+    if (stage === "exporting") return "Cutting the best clips…";
+    return "Working…";
+  }
+
+  async function pollCandidates(jobId) {
+    try {
+      const state = await voiceCandidateState(jobId);
+      if (disposed) return;
+      cloneTask = state;
+      if (state.state === "queued" || state.state === "running") {
+        clonePollTimer = window.setTimeout(() => { void pollCandidates(jobId); }, 1500);
+      } else {
+        cloneBusy = false;
+        clonePollTimer = 0;
+        cloneError = state.state === "failed"
+          ? (state.error || "The voice search failed.")
+          : state.state === "cancelled" ? "Search cancelled." : "";
+      }
+      render();
+    } catch (error) {
+      if (disposed) return;
+      cloneBusy = false;
+      clonePollTimer = 0;
+      cloneError = error?.message || "Could not read the voice search.";
+      render();
+    }
+  }
+
+  async function findClips() {
+    if (cloneBusy) return;
+    const jobId = currentJobId();
+    if (!jobId) {
+      setNotice("This panel could not find the open video.", "bad");
+      render();
+      return;
+    }
+    stopClonePlayer();
+    stopClonePoll();
+    cloneBusy = true;
+    cloneError = "";
+    cloneTask = null;
+    cloneCandidate = 0;
+    cloneConsent = false;
+    render();
+    try {
+      const state = await findVoiceCandidates(jobId);
+      if (disposed) return;
+      cloneTask = state;
+      if (state.state === "queued" || state.state === "running") {
+        clonePollTimer = window.setTimeout(() => { void pollCandidates(jobId); }, 1200);
+      } else {
+        cloneBusy = false;
+      }
+    } catch (error) {
+      if (disposed) return;
+      cloneBusy = false;
+      cloneError = error?.message || "Could not start the voice search.";
+    }
+    if (!disposed) render();
+  }
+
+  async function cancelClips() {
+    const jobId = currentJobId();
+    if (!jobId) return;
+    stopClonePoll();
+    try {
+      const state = await cancelVoiceCandidates(jobId);
+      if (disposed) return;
+      cloneTask = state;
+      cloneError = "Search cancelled.";
+    } catch (error) {
+      if (!disposed) cloneError = error?.message || "Could not cancel the search.";
+    } finally {
+      cloneBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function selectCandidate(index) {
+    cloneCandidate = Number(index) || 0;
+    cloneManual = false;
+    render();
+  }
+
+  async function playCandidate(item) {
+    const jobId = currentJobId();
+    if (!jobId || !item?.index) return;
+    if (clonePlaying === item.index && clonePlayer) {
+      stopClonePlayer();
+      render();
+      return;
+    }
+    stopClonePlayer();
+    syncMediaCookie();
+    const player = new Audio(voiceCandidateAudioUrl(jobId, item.index));
+    clonePlayer = player;
+    clonePlaying = item.index;
+    const done = () => {
+      if (clonePlayer === player) {
+        clonePlayer = null;
+        clonePlaying = 0;
+        if (!disposed) render();
+      }
+    };
+    player.addEventListener("ended", done, { once: true });
+    player.addEventListener("error", done, { once: true });
+    render();
+    try {
+      await player.play();
+    } catch (error) {
+      done();
+      setNotice(error?.message || "Could not play that clip.", "bad");
+      render();
+    }
+  }
+
+  async function cloneVideoVoice() {
+    if (cloneBusy) return;
+    const jobId = currentJobId();
+    if (!jobId) {
+      setNotice("This panel could not find the open video.", "bad");
+      render();
+      return;
+    }
+    if (!cloneConsent) {
+      setNotice("Confirm you are the speaker, or have their permission, before cloning.", "bad");
+      render();
+      return;
+    }
+    const body = { name: cloneName.trim(), consent: true, language: storyLanguage(ctx) };
+    let picked = null;
+    if (cloneManual) {
+      const start = Number.parseFloat(cloneStart);
+      const end = Number.parseFloat(cloneEnd);
+      if (Number.isFinite(start) && start >= 0) body.start = start;
+      if (Number.isFinite(end) && end > 0) body.end = end;
+    } else {
+      if (!cloneCandidate) {
+        setNotice("Pick one of the voice clips first.", "bad");
+        render();
+        return;
+      }
+      body.candidate = cloneCandidate;
+      picked = (cloneTask?.candidates || []).find((item) => item.index === cloneCandidate);
+    }
+    cloneBusy = true;
+    setNotice(
+      cloneManual
+        ? "Cleaning that stretch of the video…"
+        : "Cloning the voice clip you picked…",
+      "",
+    );
+    render();
+    try {
+      const record = await cloneFromVideo(jobId, body);
+      cloneConsent = false;
+      cloneOpen = false;
+      stopClonePlayer();
+      await useClonedVoice(record.voice_id);
+      const which = picked ? `clip ${picked.index} (${formatDuration(picked.start)}–${formatDuration(picked.end)})` : "the time range you chose";
+      const warning = record.warning ? ` ${record.warning}` : "";
+      setNotice(`Cloned “${record.name}” from ${which} and picked it for this story.${warning} Press Preview voice to hear it.`, "ok");
+    } catch (error) {
+      setNotice(error?.message || "Could not clone the video voice.", "bad");
+    } finally {
+      cloneBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function candidateCard(item) {
+    const selected = cloneCandidate === item.index;
+    const play = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: clonePlaying === item.index ? "Stop" : "Play",
+      disabled: false,
+    });
+    play.addEventListener("click", () => { void playCandidate(item); });
+    const pick = el("button", {
+      class: `st-btn ${selected ? "st-btn-primary" : "st-btn-ghost"} st-btn-small`,
+      type: "button",
+      text: selected ? "Selected" : "Use this clip",
+      disabled: cloneBusy,
+    });
+    pick.addEventListener("click", () => selectCandidate(item.index));
+    const score = Number(item.score);
+    const card = el("div", { class: "st-voice-clone-row" }, [
+      el("div", { class: "st-setup-engine-head" }, [
+        el("strong", { text: `Clip ${item.index}` }),
+        el("span", { class: `st-chip ${selected ? "st-chip-ok" : ""}`, text: Number.isFinite(score) ? `Score ${Math.round(score)}` : "Scored clip" }),
+        el("span", { class: "st-mono st-hint", text: `${formatDuration(item.start)}–${formatDuration(item.end)} · ${Math.round(Number(item.duration) || 0)}s` }),
+      ]),
+      el("p", { class: "st-field-hint", text: `${formatDuration(item.start)}–${formatDuration(item.end)} in the video.` }),
+    ]);
+    const warnings = Array.isArray(item.warnings) ? item.warnings : [];
+    for (const warning of warnings.slice(0, 2)) {
+      card.append(el("p", { class: "st-field-hint", text: warning }));
+    }
+    card.append(el("div", { class: "st-setup-key-actions" }, [play, pick]));
+    return card;
+  }
+
+  function cloneBlock() {
+    const ready = Boolean(engines?.heygen?.clone);
+    const block = el("div", { class: "st-voice-clone-edit" });
+    const toggle = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: cloneOpen ? "Hide voice cloning" : "Clone the video's voice",
+      disabled: cloneBusy,
+    });
+    toggle.addEventListener("click", () => { cloneOpen = !cloneOpen; render(); });
+    block.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [toggle]));
+    if (!cloneOpen) return block;
+    if (!ready) {
+      block.append(el("p", { class: "st-field-hint", text: "Add an OpenRouter key in Setup to clone the speaker of this video. Your own voice lives in Setup → My voice." }));
+      return block;
+    }
+    const name = el("input", { type: "text", maxLength: 64, value: cloneName, placeholder: "Video voice", "aria-label": "Cloned voice name" });
+    name.addEventListener("input", () => { cloneName = name.value; });
+    block.append(el("label", { class: "st-field" }, [el("span", { text: "Name" }), name]));
+
+    const find = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: cloneBusy ? "Finding clips…" : (cloneTask?.candidates?.length ? "Find the best voice clips again" : "Find the best voice clips"),
+      disabled: cloneBusy,
+    });
+    find.addEventListener("click", () => { void findClips(); });
+    block.append(el("div", { class: "st-layer-add" }, [find]));
+
+    const stageCopy = cloneStageCopy(cloneTask);
+    if (stageCopy) {
+      block.append(el("p", { class: "st-field-hint", role: "status", text: stageCopy }));
+    }
+    if (cloneError) {
+      block.append(el("p", { class: "st-error", role: "alert", text: cloneError }));
+    }
+    const candidates = Array.isArray(cloneTask?.candidates) ? cloneTask.candidates : [];
+    if (candidates.length) {
+      block.append(el("p", { class: "st-field-hint", text: "Listen, then pick the clip with the clearest single voice and the least music. The cleaned clip becomes the clone reference." }));
+      block.append(el("div", { class: "st-voice-clone-list" }, candidates.map(candidateCard)));
+    } else if (cloneTask?.state === "done") {
+      block.append(el("p", { class: "st-field-hint", text: "No clean speech clips were found. Try a range with one speaker, or pick the time range yourself." }));
+    }
+    if (cloneBusy && cloneTask && (cloneTask.state === "queued" || cloneTask.state === "running")) {
+      const cancel = el("button", {
+        class: "st-btn st-btn-quiet st-btn-small",
+        type: "button",
+        text: "Cancel search",
+      });
+      cancel.addEventListener("click", () => { void cancelClips(); });
+      block.append(el("div", { class: "st-layer-add" }, [cancel]));
+    }
+
+    const manualToggle = el("button", {
+      class: "st-btn st-btn-quiet st-btn-small",
+      type: "button",
+      text: cloneManual ? "Hide the time range" : "Choose the time range yourself",
+    });
+    manualToggle.addEventListener("click", () => { cloneManual = !cloneManual; render(); });
+    block.append(el("div", { class: "st-layer-add", style: "margin-top:6px" }, [manualToggle]));
+
+    if (cloneManual) {
+      const start = el("input", { type: "number", min: "0", step: "1", value: cloneStart, placeholder: "auto", "aria-label": "Clone from (seconds)" });
+      start.addEventListener("input", () => { cloneStart = start.value; });
+      const end = el("input", { type: "number", min: "0", step: "1", value: cloneEnd, placeholder: "auto", "aria-label": "Clone to (seconds)" });
+      end.addEventListener("input", () => { cloneEnd = end.value; });
+      block.append(el("div", { class: "st-control-grid" }, [
+        field("From (s)", start, "Source time. Empty uses all speech."),
+        field("To (s)", end, "Pick a stretch where only one person talks."),
+      ]));
+      block.append(el("p", { class: "st-field-hint", text: "This range is cleaned first; if cleaning fails, the raw cut is used and the response says so." }));
+    }
+
+    const tick = el("input", { type: "checkbox", checked: cloneConsent, id: "st-voice-consent-video" });
+    tick.addEventListener("change", () => { cloneConsent = Boolean(tick.checked); render(); });
+    const go = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: cloneBusy ? "Cloning…" : (cloneManual ? "Clone that range" : "Clone this voice"),
+      disabled: cloneBusy || !cloneConsent || (!cloneManual && !cloneCandidate),
+    });
+    go.addEventListener("click", () => { void cloneVideoVoice(); });
+    block.append(
+      el("label", { class: "st-voice-clone-consent", for: "st-voice-consent-video" }, [
+        tick, el("span", { text: CONSENT_COPY.video }),
+      ]),
+      el("div", { class: "st-layer-add" }, [go]),
+    );
+    return block;
   }
 
   async function previewVoice() {
@@ -1105,7 +1447,7 @@ export function mountAudioPanel(host, ctx) {
           const id = String(item.id || "");
           voice.append(el("option", {
             value: id,
-            text: `${item.name || id}${item.lang ? ` · ${item.lang}` : ""}`,
+            text: `${item.clone ? "★ " : ""}${item.name || id}${item.lang ? ` · ${item.lang}` : ""}`,
             selected: id === selectedVoice,
           }));
         }
@@ -1142,6 +1484,7 @@ export function mountAudioPanel(host, ctx) {
       card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [preview]));
       card.append(el("p", { class: "st-field-hint", text: "The sample speaks the story hook, or a short test line when the hook is empty." }));
     }
+    if (engines) card.append(cloneBlock());
     return card;
   }
 
@@ -1231,6 +1574,8 @@ export function mountAudioPanel(host, ctx) {
   return () => {
     if (saveTimer) window.clearTimeout(saveTimer);
     stopCandidatePreview();
+    stopClonePlayer();
+    stopClonePoll();
     if (dirty && !saving) {
       const jobId = currentJobId();
       const current = ctx.getEdit();

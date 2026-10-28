@@ -183,6 +183,7 @@ export function startStudio() {
           </div>
           <div class="st-top-actions">
             <button id="st-change-video" class="st-btn st-btn-quiet" type="button">Change video</button>
+            <a id="st-voice-room" class="st-btn st-btn-quiet" href="/voices">Voice Room</a>
             <button id="st-settings" class="st-icon-btn st-settings-btn" type="button" aria-label="Settings" aria-haspopup="dialog">⚙</button>
           </div>
         </header>

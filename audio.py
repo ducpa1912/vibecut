@@ -486,6 +486,22 @@ def translate_providers() -> list[dict]:
     return [item for item in providers if item["id"] in {"opencode", "openrouter", "apple_fm"}]
 
 
+def _roformer_available() -> bool:
+    try:
+        import voice_extract  # noqa: PLC0415 - voice_extract imports audio
+        return bool(voice_extract.available_backends()["separations"].get("roformer"))
+    except Exception:
+        return False
+
+
+def _extraction_status() -> dict:
+    try:
+        import voice_extract  # noqa: PLC0415
+        return voice_extract.available_backends()
+    except Exception:
+        return {}
+
+
 def engine_status() -> dict:
     kokoro_model = next(VOICE_DIRS["kokoro"].glob("*.onnx"), None)
     import tts  # noqa: PLC0415 - tts imports audio at load time
@@ -506,7 +522,13 @@ def engine_status() -> dict:
         "separation": {
             "demucs": {"available": demucs_available(), "size_mb": 700,
                        "install": "pip install demucs. torch is already present."},
+            "demucs_ft": {"available": demucs_available(), "size_mb": 1300,
+                          "install": "pip install demucs. Better vocals, about four times slower."},
+            "roformer": {"available": _roformer_available(), "size_mb": 900,
+                         "install": "Install audio-separator and a Mel-Band RoFormer model, "
+                                    "or set VIBECUT_ROFORMER_MODEL."},
         },
+        "extraction": _extraction_status(),
         "kokoro_model": str(kokoro_model) if kokoro_model else None,
         "assets": {
             "library": len(list(MUSIC_DIRS["library"].glob("*"))) if MUSIC_DIRS["library"].is_dir() else 0,
@@ -925,7 +947,36 @@ def separate_vocals(
     Stored as FLAC (~half of PCM) and the Demucs scratch folder is removed so
     every separation does not leak the vocals stem.
     """
-    cached = stem_cache_path(fingerprint, "no_vocals")
+    return _separate_stem(source, fingerprint, "no_vocals", cancel_event)
+
+
+def separate_voice(
+    source: str,
+    fingerprint: str,
+    cancel_event: threading.Event | None = None,
+    *,
+    model: str = "htdemucs",
+) -> Path:
+    """Return the vocal stem as FLAC, for clean voice references.
+
+    Same cache as ``separate_vocals``; only the kept stem and the Demucs
+    checkpoint differ. ``model`` selects ``htdemucs`` or ``htdemucs_ft``.
+    """
+    return _separate_stem(source, fingerprint, "vocals", cancel_event, model=model)
+
+
+def _separate_stem(
+    source: str,
+    fingerprint: str,
+    stem: str,
+    cancel_event: threading.Event | None = None,
+    *,
+    model: str = "htdemucs",
+) -> Path:
+    if model not in ("htdemucs", "htdemucs_ft"):
+        raise AudioError(f"Unknown separation model: {model}")
+    cache_stem = stem if model == "htdemucs" else f"{stem}-{model}"
+    cached = stem_cache_path(fingerprint, cache_stem)
     if cached.is_file() and cached.stat().st_size > 1024:
         return cached
     if not demucs_available():
@@ -935,18 +986,18 @@ def separate_vocals(
     output_dir.mkdir(parents=True, exist_ok=True)
     base = [
         sys.executable, "-m", "demucs", "--two-stems=vocals",
-        "-n", "htdemucs", "--shifts", "0", "-j", "4",
+        "-n", model, "--shifts", "0", "-j", "4",
         "-o", str(output_dir), source,
     ]
     packed = packs.find_command("separation", "demucs")
     if packed is not None:
         base = [
-            str(packed), "--two-stems=vocals", "-n", "htdemucs",
+            str(packed), "--two-stems=vocals", "-n", model,
             "--shifts", "0", "-j", "4", "-o", str(output_dir), source,
         ]
     elif not _module("demucs") and shutil.which("demucs"):
         base = [
-            "demucs", "--two-stems=vocals", "-n", "htdemucs",
+            "demucs", "--two-stems=vocals", "-n", model,
             "--shifts", "0", "-j", "4", "-o", str(output_dir), source,
         ]
     try:
@@ -955,9 +1006,10 @@ def separate_vocals(
         if cancel_event is not None and cancel_event.is_set():
             raise
         _run(base, timeout=3600, cancel_event=cancel_event)
-    produced = sorted(output_dir.glob("htdemucs/*/no_vocals.wav"))
+    produced = sorted(output_dir.glob(f"{model}/*/{stem}.wav"))
     if not produced:
-        raise AudioError("Demucs finished but no instrumental stem was found.")
+        label = "instrumental" if stem == "no_vocals" else "vocal"
+        raise AudioError(f"Demucs finished but no {label} stem was found.")
     cached.parent.mkdir(parents=True, exist_ok=True)
     _run([
         _ffmpeg(), "-y", "-v", "error", "-i", str(produced[-1]),
@@ -2743,11 +2795,50 @@ def store_uploaded_voice(source: Path, job_dir: Path) -> Path:
     return output
 
 
-def _source_audio_bed(source: str, tmp: Path, cancel_event=None) -> Path:
-    output = tmp / "original_audio.wav"
+def _has_audio_stream(source: str) -> bool:
+    """False only when ffprobe positively finds no audio stream."""
+    probe = shutil.which("ffprobe")
+    if not probe:
+        return True
+    try:
+        result = subprocess.run(
+            [probe, "-v", "error", "-select_streams", "a", "-show_entries",
+             "stream=index", "-of", "csv=p=0", str(source)],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return result.returncode != 0 or bool(result.stdout.strip())
+
+
+def _source_audio_bed(
+    source: str,
+    tmp: Path,
+    cancel_event=None,
+    *,
+    channels: int = 2,
+    rate: int = 48000,
+    name: str = "original_audio.wav",
+) -> Path:
+    """Decode the source's first audio stream to PCM.
+
+    The mixer wants the stereo 48 kHz bed; voice extraction asks for a mono
+    file under its own name.
+    """
+    output = tmp / name
+    if not _has_audio_stream(source):
+        # A silent source (a written voice script) mixes over silence.
+        seconds = max(1.0, media_duration(Path(source)) or 1.0)
+        layout = "mono" if channels == 1 else "stereo"
+        _run([
+            _ffmpeg(), "-y", "-v", "error", "-f", "lavfi",
+            "-i", f"anullsrc=channel_layout={layout}:sample_rate={rate}",
+            "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(output),
+        ], timeout=900, cancel_event=cancel_event)
+        return output
     _run([
-        _ffmpeg(), "-y", "-v", "error", "-i", source, "-vn",
-        "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(output),
+        _ffmpeg(), "-y", "-v", "error", "-i", source, "-vn", "-map", "0:a:0",
+        "-ar", str(rate), "-ac", str(channels), "-c:a", "pcm_s16le", str(output),
     ], timeout=900, cancel_event=cancel_event)
     return output
 

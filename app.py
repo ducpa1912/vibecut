@@ -59,13 +59,16 @@ import routes_check
 import routes_cleanup
 import routes_edits
 import routes_overlays
+import routes_voice_clone
 import selection
 import settings_store
 import shares
+import silent_script
 import story_queue
 import tighten
 import usage_store
 import vision
+import workflow_config
 from url_ingest import fallback as ingest_fallback
 from url_ingest import registry
 from url_ingest.base import IngestError, IngestOptions
@@ -3156,6 +3159,7 @@ app.include_router(routes_cleanup.rights_router)
 app.include_router(routes_edits.router)
 app.include_router(__import__("routes_trim", fromlist=["router"]).router)
 app.include_router(routes_overlays.router)
+app.include_router(routes_voice_clone.router)
 app.include_router(music.router)
 app.include_router(packet.router)
 app.include_router(preflight.router)
@@ -3169,7 +3173,7 @@ async def insufficient_space(_: Request, exc: disk.InsufficientSpace) -> JSONRes
 # ---------------------------------------------------------------- auth
 
 
-PUBLIC_PATHS = {"/", "/index.html", "/favicon.ico", "/api/health", "/docs/url-ingest.md"}
+PUBLIC_PATHS = {"/", "/index.html", "/voices", "/favicon.ico", "/api/health", "/docs/url-ingest.md"}
 SHARES = DATA / "shares.json"
 
 
@@ -3376,6 +3380,11 @@ def ffmpeg_version() -> str:
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/voices")
+def voice_room() -> FileResponse:
+    return FileResponse(STATIC / "voices.html")
 
 
 @app.get("/_ductator/")
@@ -5902,6 +5911,157 @@ def delete_variant(job_id: str, variant_id: str) -> dict:
     return {"variants": result.get("variants", [])}
 
 
+class TranscribeBody(BaseModel):
+    language: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
+@app.post("/api/jobs/{job_id}/transcribe")
+def retranscribe_job(job_id: str, body: TranscribeBody | None = None) -> dict:
+    """Read the speech of an analysed video again, without re-importing it.
+
+    Stories are built from speech; a video read before a transcription route
+    was ready has none. This runs the configured STT routes on the source and
+    attaches the result, so the next Find stories uses it.
+    """
+    job = load_job(job_id)
+    source = job.get("source") or {}
+    if job.get("status") != "ready" or not (job.get("analysis") or {}).get("scenes"):
+        raise HTTPException(409, "Wait for the video to finish reading first.")
+    if not source.get("has_audio"):
+        raise HTTPException(
+            400,
+            "This video has no sound track, so there is no speech to read. "
+            "Download or export it again with audio.",
+        )
+    path = Path(str(source.get("path") or ""))
+    if not path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    job_dir = _job_dir(job_id)
+    options = dict(job.get("options") or {})
+    language = str((body.language if body else "") or "").strip().lower()
+    if language:
+        options["speech_language_explicit"] = language
+    settings = settings_store.load_settings()
+    stt_cfg = workflow_config.effective(settings.get("workflows"), "stt")
+    routes = list(stt_cfg.get("routes") or [])
+    if not any(
+        pipeline.stt._engine_ready(route["provider"], route["model"])
+        for route in pipeline.stt.resolve_routes(routes)
+    ):
+        raise HTTPException(
+            400,
+            "No transcription engine is ready on this machine. Add an OpenRouter "
+            "key in Setup (or a Groq or Deepgram key).",
+        )
+    speech_language = pipeline.stt.speech_language_for(options, source)
+    wav = pipeline.extract_audio(str(path), True, job_dir)
+    try:
+        transcript = pipeline.stt.transcribe_source(
+            wav, job_dir, float(source.get("duration") or 0.0), None,
+            routes=routes,
+            language=speech_language,
+            vocabulary=pipeline.stt.vocabulary_terms(job_dir=job_dir, settings=settings),
+            timeout=float(stt_cfg.get("timeout_s") or 300),
+            job_id=job_id,
+            request_id=job_id,
+            logger=pipeline._pipeline_log,
+        )
+    finally:
+        if wav:
+            try:
+                wav.unlink()
+            except OSError:
+                pass
+    if not transcript:
+        raise HTTPException(502, "Transcription failed on every route. Check the key in Setup and try again.")
+    segments = len(transcript.get("segments") or [])
+
+    def apply(record: dict) -> None:
+        analysis = record.setdefault("analysis", {})
+        pipeline.attach_speech(analysis.get("scenes") or [], transcript)
+        analysis["transcript"] = {
+            "language": transcript.get("language"),
+            "text": str(transcript.get("text") or "")[:1000],
+            "segments": segments,
+            "no_speech": bool(transcript.get("no_speech")),
+        }
+        engine = analysis.setdefault("engine", {})
+        engine["whisper"] = bool(segments)
+        engine["transcript_provider"] = transcript.get("provider") or ""
+        engine["transcript_language"] = transcript.get("language")
+        record.setdefault("options", {})["transcribe"] = True
+
+    update_job(job_id, apply)
+    return {
+        "segments": segments,
+        "language": transcript.get("language"),
+        "provider": transcript.get("provider"),
+        "no_speech": bool(transcript.get("no_speech")),
+    }
+
+
+class ScriptBriefBody(BaseModel):
+    brief: str
+    language: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
+@app.post("/api/jobs/{job_id}/script-brief")
+def write_script_brief(job_id: str, body: ScriptBriefBody, request: Request) -> dict:
+    """Write a voice script for a video with no speech, from a brief.
+
+    The brief gives the topic, tone and mood or what to say, with exact lines
+    in ``[script:"..."]``. The script is saved as the job's transcript, so
+    Find stories cuts on it and story renders voice it over.
+    """
+    if not _setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = load_job(job_id)
+    if job.get("status") != "ready":
+        raise HTTPException(409, "Wait for the video to finish reading first.")
+    transcript_info = (job.get("analysis") or {}).get("transcript") or {}
+    engine = ((job.get("analysis") or {}).get("engine") or {}).get("transcript_provider")
+    if transcript_info.get("segments") and engine not in (None, "", silent_script.ENGINE):
+        raise HTTPException(
+            409,
+            "This video already has spoken words to cut stories on. A written script is for videos with no speech.",
+        )
+    try:
+        result = silent_script.write_script(
+            job, _job_dir(job_id), body.brief, language=body.language,
+        )
+    except silent_script.ScriptError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    transcript = result["transcript"]
+
+    def apply(record: dict) -> None:
+        analysis = record.setdefault("analysis", {})
+        pipeline.attach_speech(analysis.get("scenes") or [], transcript)
+        analysis["transcript"] = {
+            "language": result["language"],
+            "text": str(transcript.get("text") or "")[:1000],
+            "segments": result["lines"],
+            "no_speech": False,
+        }
+        engine_info = analysis.setdefault("engine", {})
+        engine_info["transcript_provider"] = silent_script.ENGINE
+        engine_info["transcript_language"] = result["language"]
+        record["script_brief"] = {
+            "brief": result["brief"],
+            "language": result["language"],
+            "model": result["model"],
+            "lines": result["lines"],
+            "transcript_id": transcript.get("id"),
+            "created": round(time.time(), 3),
+        }
+
+    update_job(job_id, apply)
+    return {key: value for key, value in result.items() if key != "transcript"}
+
+
 @app.get("/api/jobs/{job_id}/transcript")
 def job_transcript(job_id: str) -> dict:
     job = load_job(job_id)
@@ -6519,6 +6679,12 @@ def _edit_caption_track(
     return True, track
 
 
+def _scripted(job: dict) -> bool:
+    """True when the job's speech is a written script, not a recording."""
+    engine = ((job.get("analysis") or {}).get("engine") or {}).get("transcript_provider")
+    return engine == silent_script.ENGINE
+
+
 def _queue_story_render(
     job_id: str,
     set_id: str,
@@ -6555,7 +6721,13 @@ def _queue_story_render(
         edit_audio_plan = audio.plan_from_edit(edit.get("audio"))
         if edit_audio_plan and audio.mixer_mode(edit_audio_plan.get("mode")) == "keep":
             edit_audio_plan = None
-    elif body.captions:
+    if edit_audio_plan is None and _scripted(job):
+        # A written script has no recorded voice: speak it over the picture.
+        edit_audio_plan = audio.normalize_audio_plan({
+            "mode": "voice_over",
+            "voice": {"engine": "auto", "voice": "", "rate": 1.0},
+        })
+    if edit is None and body.captions:
         track_id = body.caption_track_id or str(
             (job.get("story_captions") or {}).get(_story_key(set_id, story_id)) or ""
         )

@@ -47,3 +47,33 @@ separate artifacts and comply with their licenses:
 
 No Cobalt or xhs_get source, comments, tests, or assets are copied into the
 VibeCut URL-ingest modules. The integration is HTTP-only.
+
+## Voice extraction engines
+
+Clean voice extraction (`voice_extract.py`) runs only on this Mac. Its engines
+are optional, are never required for a clone, and weights with unresolved
+terms are downloaded on first use rather than bundled with VibeCut.
+
+| Component | License | Upstream |
+|---|---|---|
+| DeepFilterNet 3 (`deep-filter`) | Code MIT; model weights MIT / Apache-2.0 | https://github.com/rikorose/deepfilternet |
+| Silero VAD v5 | MIT (code and weights) | https://github.com/snakers4/silero-vad |
+| Mel-Band RoFormer (Kim vocal 2) weights | MIT since 2026-04-22 (previously GPL-3.0); MLX conversion MIT | https://huggingface.co/mlx-community/mel-roformer-kim-vocal-2-mlx |
+| `audio-separator` | MIT (wrapper only; model terms stay with each checkpoint) | https://github.com/streichgeorg/python-audio-separator |
+| Demucs `htdemucs` / `htdemucs_ft` | Code MIT. The weights are **not** covered by the MIT grant; the author calls them research-oriented because of the MUSDB terms. | https://github.com/facebookresearch/demucs |
+| pyannote.audio 3.1 / Community-1 | Code MIT; 3.1 pipeline MIT; Community-1 weights CC-BY-4.0. Gated Hugging Face download. | https://huggingface.co/pyannote/speaker-diarization-3.1 |
+| ffmpeg `afftdn` | Part of the ffmpeg build; the binary's LGPL/GPL configuration applies, not VibeCut's source | https://ffmpeg.org |
+
+pyannote attribution: speaker diarization uses pyannote.audio and the
+`pyannote/speaker-diarization-3.1` pipeline by Hervé Bredin and contributors,
+licensed MIT; the Community-1 weights are CC-BY-4.0. Keep this attribution in
+About or Setup wherever the speaker filter is offered.
+
+Demucs note: VibeCut calls the user's installed Demucs and caches the vocal
+stem locally. Do not redistribute Demucs weights in an installer until the
+weight terms are cleared; Mel-Band RoFormer is the permissive-weight
+alternative. MDX-Net/UVR and BS-RoFormer checkpoints are experiments only and
+must not ship until their model authors grant written permission.
+
+Mel-Band RoFormer and Demucs weights are downloaded on first use or supplied by
+an installed pack. No model weights are stored in the VibeCut repository.
