@@ -396,6 +396,7 @@ export function mount(root, ctx) {
 
   function isPending(value) {
     const state = String(value?.status || "").toLowerCase();
+    if (state === "failed" || state === "cancelled") return false;
     return state === "queued" || state === "running" || value?.complete === false;
   }
 
@@ -657,7 +658,35 @@ export function mount(root, ctx) {
       track,
       el("p", { class: "st-mono", text: `${Math.round(progress * 100)}% · ${etaText(progress, etaSeconds, now - etaStartedAt, stage)}` }),
     ]));
+    const stopping = /^Stopping/.test(stage);
+    const cancel = el("button", {
+      class: "st-btn st-btn-ghost",
+      type: "button",
+      text: stopping ? "Stopping…" : "Cancel Check",
+      style: "margin-top:10px",
+      disabled: stopping,
+    });
+    cancel.addEventListener("click", () => { void cancelCheck(cancel); });
+    card.append(cancel);
     return card;
+  }
+
+  async function cancelCheck(button) {
+    if (!job?.id) return;
+    button.disabled = true;
+    button.textContent = "Stopping…";
+    clearError();
+    try {
+      await request(`/api/jobs/${encodeURIComponent(job.id)}/check/cancel`, { method: "POST" });
+      if (disposed) return;
+      showStatus("Stopping Check… it ends at the next batch of frames.", "busy");
+      await refreshReport({ quiet: true });
+    } catch (error) {
+      if (disposed) return;
+      button.disabled = false;
+      button.textContent = "Cancel Check";
+      showError(error?.message || "Could not cancel Check.");
+    }
   }
 
   function syncRunButton() {
@@ -690,6 +719,15 @@ export function mount(root, ctx) {
       retry.addEventListener("click", () => { void startCheck(true); });
       card.append(retry);
       dom.body.append(card);
+      return;
+    }
+    if (String(report.status || "").toLowerCase() === "cancelled") {
+      renderEmpty(
+        "Check was cancelled",
+        "Nothing was saved from that pass. Run Check again when you are ready, or open Stories without it.",
+        "Run Check",
+        "run-check",
+      );
       return;
     }
     if (isPending(report)) {

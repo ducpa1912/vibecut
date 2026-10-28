@@ -8,15 +8,18 @@ The report is stored under ``jobs/<id>/check/source_report.json`` and its
 summary on ``job["check"]``. A report is trusted only when ``status`` is
 ``ready`` and ``text.confirmed`` is true; while a pass is queued or running the
 endpoint returns a ``SourceReport``-shaped envelope with ``complete: false``.
+``POST /api/jobs/{id}/check/cancel`` stops a queued or running pass; a
+running one stops at its next frame batch and keeps the last finished report.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,6 +34,14 @@ CHECK_POOL = job_queue.Scheduler(
 )
 
 ACTIVE_STATES = {"queued", "running"}
+
+#: One cancel event per job's current Check pass. ``start_check`` replaces it,
+#: the worker binds it to its thread so the frame reader stops mid-batch.
+CHECK_CANCELS: dict[str, threading.Event] = {}
+
+
+class CheckCancelled(RuntimeError):
+    """The founder pressed Cancel while Check was running."""
 
 
 class CheckBody(BaseModel):
@@ -85,12 +96,29 @@ def _ready_report(app, job: dict) -> dict | None:
     return report
 
 
+def _finish_cancelled(job_id: str, app) -> dict:
+    """Mark a cancelled pass. A report from an earlier pass stays in use."""
+    if detect.load_report(app._job_dir(job_id)) is not None:
+        return _set_check(
+            job_id, app, status="ready", progress=1.0,
+            message="Cancelled · showing the last Check", error=None,
+        )
+    return _set_check(
+        job_id, app, status="cancelled", progress=1.0,
+        message="Cancelled", error=None,
+    )
+
+
 def run_check_job(job_id: str, options: dict) -> dict:
     """Worker entry point. Always persists a terminal state on the job."""
     app = _job_app()
     started = time.time()
     job = {"id": job_id}
+    cancel = CHECK_CANCELS.setdefault(job_id, threading.Event())
+    pipeline.stt.set_cancel_event(cancel)
     try:
+        if cancel.is_set():
+            raise CheckCancelled("Check cancelled.")
         job = app.load_job(job_id)
         _set_check(
             job_id, app, status="running", progress=0.01,
@@ -98,6 +126,8 @@ def run_check_job(job_id: str, options: dict) -> dict:
         )
 
         def progress(fraction: float, message: str) -> None:
+            if cancel.is_set():
+                raise CheckCancelled("Check cancelled.")
             _set_check(
                 job_id, app, status="running", progress=round(
                     max(0.01, min(0.99, float(fraction))), 4,
@@ -134,13 +164,21 @@ def run_check_job(job_id: str, options: dict) -> dict:
             error=None,
         )
         return report
+    except (CheckCancelled, pipeline.stt.SttCancelled):
+        _finish_cancelled(job_id, app)
+        return detect.state_report(job, "cancelled")
     except Exception as exc:  # noqa: BLE001
+        if cancel.is_set():
+            _finish_cancelled(job_id, app)
+            return detect.state_report(job, "cancelled")
         LOGGER.exception("check failed for %s", job_id)
         _set_check(
             job_id, app, status="failed", progress=1.0,
             message="Check failed", error=str(exc)[:2400],
         )
         return detect.state_report(job, "failed", error=str(exc)[:2400])
+    finally:
+        pipeline.stt.set_cancel_event(None)
 
 
 @router.post("/api/jobs/{job_id}/check")
@@ -171,6 +209,7 @@ def start_check(job_id: str, body: CheckBody | None = None):
         "sample_text": body.sample_text,
         "fps": body.fps,
     }
+    CHECK_CANCELS[job_id] = threading.Event()
     _set_check(
         job_id, app, status="queued", progress=0.0,
         message="Queued for Check", error=None,
@@ -206,7 +245,31 @@ def get_check(job_id: str):
         return ready
     if record.get("status") == "failed":
         return _running_report(job, "failed", error=record.get("error"))
+    if record.get("status") == "cancelled":
+        return _running_report(job, "cancelled")
     report = detect.load_report(app._job_dir(job_id))
     if report is not None:
         return report
     raise HTTPException(404, "Check has not run yet.")
+
+
+@router.post("/api/jobs/{job_id}/check/cancel")
+def cancel_check(job_id: str, request: Request) -> dict:
+    """Stop Check. A queued pass is dropped at once; a running one stops at
+    its next frame batch, and the job keeps the last finished report."""
+    app = _job_app()
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = app.load_job(job_id)
+    record = _check_record(job)
+    if record.get("status") not in ACTIVE_STATES:
+        return {"ok": True, "cancelled": False, "status": record.get("status")}
+    CHECK_CANCELS.setdefault(job_id, threading.Event()).set()
+    task_id = record.get("task_id")
+    task = CHECK_POOL.get(task_id) if task_id else None
+    if task is None or task.terminal or task.state is job_queue.QueueState.QUEUED:
+        CHECK_POOL.cancel_key("check", job_id)
+        job = _finish_cancelled(job_id, app)
+    else:
+        job = _set_check(job_id, app, message="Stopping…")
+    return {"ok": True, "cancelled": True, "status": _check_record(job).get("status")}

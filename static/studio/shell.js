@@ -89,10 +89,11 @@ export function readingAction(status) {
   return null;
 }
 
-function checkState(payload) {
+export function checkState(payload) {
   const state = String(payload?.status || "").toLowerCase();
-  if (state === "queued" || state === "running" || payload?.complete === false) return "running";
+  if (state === "cancelled") return "none";
   if (state === "failed") return "failed";
+  if (state === "queued" || state === "running" || payload?.complete === false) return "running";
   return "done";
 }
 
