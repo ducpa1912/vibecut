@@ -1472,7 +1472,12 @@
         renderMatrix();
         populateCommonSelects();
         setAnalysisOpen(false);
-        toast("Clip Set built. Review the stories, then render one or open it in Smart Cut.");
+        const storyCount = state.clipset?.stories?.length || 0;
+        if (!storyCount) {
+          toast("Clip Set built, but no stories fit this source. Check the note above.");
+        } else {
+          toast("Clip Set built. Review the stories, then render one or open it in Smart Cut.");
+        }
       } catch (error) {
         setError(dom.clipsetError, error);
       }
