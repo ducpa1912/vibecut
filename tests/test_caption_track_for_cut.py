@@ -37,6 +37,11 @@ def test_manual_text_is_kept_and_retimed_onto_the_rounded_cut(monkeypatch):
         caption_engine, "build_track",
         lambda *args, **kwargs: rebuilt.append(True),
     )
+    saved = []
+    monkeypatch.setattr(
+        caption_engine, "save_track",
+        lambda job_dir, value: saved.append(value.id),
+    )
     track = _track(raw)
     result = app._caption_track_for_cut(
         {"id": "j1"}, Path("."), track, raw,
@@ -44,8 +49,20 @@ def test_manual_text_is_kept_and_retimed_onto_the_rounded_cut(monkeypatch):
     )
 
     assert rebuilt == []
+    assert saved == [result.id]
     assert [cue.text for cue in result.cues] == ["Meet Nguyễn Thảo", "Second clip line"]
     assert result.clip_hash == caption_engine.clip_hash(prepared)
     assert result.parent_id == track.id
     assert result.id != track.id
     assert abs(result.cues[1].start - (10.2 - 0.033)) < 0.01
+
+
+def test_a_beat_synced_cut_still_gets_a_track_built_for_it(monkeypatch):
+    raw = [{"start": 10.0, "end": 20.0, "duration": 10.0}]
+    synced = [{"start": 10.0, "end": 16.0, "duration": 6.0}]
+    marker = object()
+    monkeypatch.setattr(caption_engine, "build_track", lambda *args, **kwargs: marker)
+    result = app._caption_track_for_cut(
+        {"id": "j1"}, Path("."), _track(raw), raw, {"clips": synced, "total": 6.0},
+    )
+    assert result is marker

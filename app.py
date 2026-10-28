@@ -6390,6 +6390,17 @@ def _caption_track_for_cut(
 
     prepared = track_plan.get("clips") or []
     total = float(track_plan.get("total") or 0.0)
+    raw = list(raw_clips or [])
+    # Only frame rounding is carried over. A beat-synced or re-timed cut moves
+    # clip lengths by more than a frame; it gets a track built for that cut.
+    rounding_only = len(raw) == len(prepared) and all(
+        abs(float(old.get("duration") or 0.0) - float(new.get("duration") or 0.0)) < 0.05
+        for old, new in zip(raw, prepared)
+    )
+    if not rounding_only:
+        return caption_engine.build_track(
+            job, track_plan, track.style, job_dir=job_dir,
+        )
     try:
         cues = []
         for cue in track.cues:
@@ -6402,7 +6413,7 @@ def _caption_track_for_cut(
             raise ValueError("no cue survived the retime")
         clip_key = caption_engine.clip_hash(prepared)
         cue_key = caption_engine.cue_hash(cues)
-        return replace(
+        retimed = replace(
             track,
             id=caption_engine.track_id(
                 job_id=track.job_id,
@@ -6417,7 +6428,9 @@ def _caption_track_for_cut(
             clip_hash=clip_key,
             parent_id=track.id,
         )
-    except (TypeError, ValueError, KeyError) as exc:
+        caption_engine.save_track(job_dir, retimed)
+        return retimed
+    except (TypeError, ValueError, KeyError, OSError) as exc:
         LOGGER.warning("caption track %s could not be retimed (%s); rebuilding", track.id, exc)
         return caption_engine.build_track(
             job, track_plan, track.style, job_dir=job_dir,
