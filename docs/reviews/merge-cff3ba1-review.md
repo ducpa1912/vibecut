@@ -179,3 +179,10 @@ The R3 branches were merged into `main` by another session while this review ran
 - **Resolved in that merge:** T2 route registration (`routes_library.install(app, JOBS)`); the `audio.js` dispose conflict (both clone cleanup and the Dub guard are kept); the `pipeline.py`/`stt.py` conflict (one language order: explicit, then title script, then default `en` = auto).
 - **Re-verified in code on `main`, still open:** F1 (`delete_clone` removes only the record and sample), F2 (`CACHE_DIRS` has no `voice_refs`/`voice-clone`; the fingerprint uses the resolved temp path), F3 (fixed `CACHE/stems/run`), F5 (`sample.wav` output with the libmp3lame codec; this predates the merge and comes from the original clone route).
 - **Still open from the R3 notes:** two speech re-read paths (`POST /api/jobs/{id}/transcribe` and the route-less `pipeline.retry_speech`); F4 depends on whether import sets `speech_language_explicit`. Re-check it with the new resolver before fixing.
+- **Fixed on `fix/clone-findings`:**
+  - F1: a deleted clone raises "This cloned voice was deleted" before the line cache and before any request. The Edit panel keeps the missing clone and warns instead of auto-picking a stock voice.
+  - F2: `voice_refs` and `voice-clone` are now in `CACHE_DIRS`. Files up to 256 MB are keyed by a full content hash, not the temp path.
+  - F3: each Demucs run gets its own `stems/run-<id>` folder. Prune drops only run folders older than 2 h.
+  - F5: `prepare_sample` forces the MP3 container. Old WAV-wrapped samples are sent as `audio/wav`.
+  - F12: the candidate cache-hit names files by each candidate's index.
+  - Not covered: the Edit panel change has no JS test.

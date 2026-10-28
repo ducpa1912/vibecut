@@ -7,10 +7,13 @@ bottom needs a real ffmpeg.
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import shutil
 import sys
 import threading
+import time
 import types
 import wave
 from pathlib import Path
@@ -21,6 +24,12 @@ import pytest
 import audio
 import settings_store
 import voice_extract
+
+
+@pytest.fixture(autouse=True)
+def isolated_cache(monkeypatch, tmp_path):
+    """Cache keys are content hashes, so tests with equal bytes must not share."""
+    monkeypatch.setattr(audio, "CACHE", tmp_path / "cache")
 
 
 def _speech_wav(
@@ -621,3 +630,117 @@ def test_ffmpeg_denoise_and_export_smoke(tmp_path):
     with wave.open(str(exported), "rb") as handle:
         assert handle.getframerate() == 44100
         assert handle.getnchannels() == 1
+
+
+# ---------------------------------------------------------------- cache hygiene
+
+
+def test_same_recording_under_a_new_temp_path_hits_the_cache(tmp_path, monkeypatch):
+    calls = _stub_pipeline(monkeypatch)
+    first = tmp_path / "upload-1" / "raw.m4a"
+    second = tmp_path / "upload-2" / "raw.m4a"
+    for path in (first, second):
+        path.parent.mkdir()
+        path.write_bytes(b"the same recording")
+    voice_extract.extract_clean_voice(first, tmp_path / "out1")
+    report = voice_extract.extract_clean_voice(second, tmp_path / "out2")
+    assert report["cached"] is True
+    assert calls["decode"] == 1
+
+
+def test_candidate_cache_hit_after_a_skipped_window(tmp_path, monkeypatch):
+    speech = _long_speech(tmp_path / "long.wav")
+    calls = _stub_pipeline(monkeypatch, speech=speech)
+    source = tmp_path / "long.mp4"
+    source.write_bytes(b"x")
+    voice_extract.find_voice_candidates(source, tmp_path / "out1", count=3, clip_seconds=20.0)
+    [report_path] = (tmp_path / "cache" / "voice_refs").glob("*/report.json")
+    root = report_path.parent
+    data = json.loads(report_path.read_text())
+    # Simulate a first run that skipped window 2: files 01 and 03 only.
+    last = data["candidates"][-1]
+    (root / f"candidate-{last['index']:02d}.wav").rename(root / "candidate-09.wav")
+    last["index"] = 9
+    data["candidates"] = [data["candidates"][0], last]
+    (root / "candidate-02.wav").unlink(missing_ok=True)
+    report_path.write_text(json.dumps(data))
+    second = voice_extract.find_voice_candidates(
+        source, tmp_path / "out2", count=3, clip_seconds=20.0,
+    )
+    assert second["cached"] is True
+    assert calls["decode"] == 1
+    assert [Path(item["path"]).name for item in second["candidates"]] == [
+        "candidate-01.wav", "candidate-09.wav",
+    ]
+
+
+def test_prune_cache_covers_voice_refs_and_clone_scratch(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(audio, "CACHE", cache)
+    old = time.time() - 30 * 86400
+    files = [cache / "voice_refs" / "abc" / "clean.wav", cache / "voice-clone" / "x" / "raw.m4a"]
+    for path in files:
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"x" * 2048)
+        os.utime(path, (old, old))
+    usage = audio.cache_usage()
+    assert usage["voice_refs"]["files"] == 1
+    assert usage["voice-clone"]["files"] == 1
+    audio.prune_cache(max_gb=0, days=14)
+    assert not any(path.exists() for path in files)
+
+
+def test_prune_keeps_a_live_demucs_run_and_drops_a_stale_one(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(audio, "CACHE", cache)
+    live = cache / "stems" / "run-live" / "htdemucs" / "clip" / "vocals.wav"
+    stale = cache / "stems" / "run-stale"
+    live.parent.mkdir(parents=True)
+    live.write_bytes(b"x" * 4096)
+    stale.mkdir(parents=True)
+    old = time.time() - 3 * 3600
+    os.utime(stale, (old, old))
+    audio.prune_cache(max_gb=0.000001, days=14)
+    assert live.is_file()
+    assert not stale.exists()
+
+
+def test_two_concurrent_separations_do_not_share_scratch(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio, "demucs_available", lambda: True)
+    monkeypatch.setattr(audio.packs, "find_command", lambda *a: None)
+    monkeypatch.setattr(audio, "_ffmpeg", lambda: "ffmpeg")
+    both_running = threading.Barrier(2, timeout=5)
+    scratch: list[Path] = []
+
+    def fake_run(cmd, timeout=0, cancel_event=None):
+        if "--two-stems=vocals" in cmd:
+            if "-d" in cmd:
+                raise audio.AudioError("no mps")
+            output = Path(cmd[cmd.index("-o") + 1])
+            scratch.append(output)
+            stem = output / "htdemucs" / "clip"
+            stem.mkdir(parents=True, exist_ok=True)
+            (stem / "vocals.wav").write_bytes(b"RIFF" + b"\0" * 2048)
+            both_running.wait()  # the other run is mid-flight here
+        else:
+            Path(cmd[-1]).write_bytes(b"fLaC" + b"\0" * 2048)
+
+    monkeypatch.setattr(audio, "_run", fake_run)
+    results: list[Path] = []
+    errors: list[Exception] = []
+
+    def separate(fingerprint):
+        try:
+            results.append(audio.separate_voice("clip.wav", fingerprint))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=separate, args=(name,)) for name in ("aaa", "bbb")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert errors == []
+    assert len(results) == 2
+    assert len(set(scratch)) == 2
+    assert not any(path.exists() for path in scratch)

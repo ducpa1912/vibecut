@@ -492,3 +492,63 @@ def test_my_voice_upload_falls_back_when_cleaning_fails(tmp_path, monkeypatch):
     data = response.json()
     assert data["cleaned"] is False
     assert "raw recording" in data["warning"]
+
+
+# ---------------------------------------------------------------- merge review fixes
+
+
+def test_deleted_clone_never_speaks_as_a_stock_voice(monkeypatch, tmp_path, openrouter):
+    record = _clone(tmp_path)
+    voice_id = record["voice_id"]
+    voice_clone.delete_clone(voice_id)
+    sent = []
+    monkeypatch.setattr(tts.urllib.request, "urlopen", lambda request, timeout=0: sent.append(request) or Reply())
+    with pytest.raises(audio.AudioError, match="was deleted"):
+        tts.synthesize_line("heygen", voice_id, "Hi", tmp_path / "line.wav")
+    assert sent == []
+
+
+def test_deleted_clone_is_refused_before_the_line_cache(tmp_path):
+    record = _clone(tmp_path)
+    voice_clone.delete_clone(record["voice_id"])
+    # build_bed resolves every candidate's voice before it looks in the cache.
+    with pytest.raises(audio.AudioError, match="was deleted"):
+        tts._tts_voice_for("heygen", record["voice_id"], "heygen")
+    with pytest.raises(audio.AudioError, match="was deleted"):
+        tts.synthesize_story(["Hi."], engine="heygen", voice=record["voice_id"],
+                             cache_dir=tmp_path / "voice", routes=[{"provider": "openrouter", "model": "heygen/heygen-voice-1-turbo:free"}])
+
+
+def test_live_clone_and_stock_voices_pass_the_guard(tmp_path):
+    record = _clone(tmp_path)
+    tts.require_live_clone(record["voice_id"])
+    tts.require_live_clone("nadine")
+    tts.require_live_clone("")
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
+def test_clone_sample_is_a_real_mp3_whatever_the_name(tmp_path):
+    source = tmp_path / "tone.m4a"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=12",
+         "-c:a", "aac", str(source)],
+        check=True,
+    )
+    out = tmp_path / "sample.wav"
+    voice_clone.prepare_sample(source, out)
+    assert out.read_bytes()[:4] != b"RIFF"
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=format_name",
+         "-of", "csv=p=0", str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert probe.stdout.strip() == "mp3"
+
+
+def test_speech_fields_mime_matches_an_old_wav_wrapped_sample(tmp_path):
+    record = _clone(tmp_path)
+    path = voice_clone.sample_path(record["voice_id"])
+    assert voice_clone.speech_fields(record["voice_id"])["input_references"][0]["input_audio"]["data"].startswith("data:audio/mpeg;")
+    path.write_bytes(b"RIFF" + b"\0" * 4000)
+    data = voice_clone.speech_fields(record["voice_id"])["input_references"][0]["input_audio"]["data"]
+    assert data.startswith("data:audio/wav;base64,")

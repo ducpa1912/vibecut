@@ -215,7 +215,10 @@ def prepare_sample(
                 f"{min(MAX_SAMPLE_SECONDS, max(1.0, duration)):.3f}",
                 "-i", str(source), "-vn"]
     cmd += ["-t", f"{MAX_SAMPLE_SECONDS:.0f}", "-ac", "1", "-ar", str(SAMPLE_RATE),
-            "-c:a", "libmp3lame", "-b:a", SAMPLE_BITRATE, str(output)]
+            "-c:a", "libmp3lame", "-b:a", SAMPLE_BITRATE,
+            # Force the MP3 container: callers name the file .wav or .mp3, and
+            # ffmpeg would otherwise wrap MP3 frames in a WAV header.
+            "-f", "mp3", str(output)]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -314,11 +317,14 @@ def speech_fields(voice_id: str) -> dict[str, Any]:
     record = get_clone(voice_id)
     if record is None:
         raise CloneError("No such cloned voice.", 404)
-    data = base64.b64encode(sample_path(voice_id).read_bytes()).decode("ascii")
+    raw = sample_path(voice_id).read_bytes()
+    # Clones saved before the container fix hold MP3 frames in a WAV header.
+    mime = "audio/wav" if raw[:4] == b"RIFF" else "audio/mpeg"
+    data = base64.b64encode(raw).decode("ascii")
     fields: dict[str, Any] = {
         "input_references": [{
             "type": "input_audio",
-            "input_audio": {"data": f"data:audio/mpeg;base64,{data}"},
+            "input_audio": {"data": f"data:{mime};base64,{data}"},
         }],
     }
     language = str(record.get("language") or "")

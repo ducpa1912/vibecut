@@ -162,25 +162,34 @@ def cache_dir(fingerprint: str) -> Path:
     return audio.CACHE / "voice_refs" / safe
 
 
+#: Files up to this size are keyed by a full content hash, so the same
+#: recording uploaded twice (each time under a new temp path) hits the cache.
+FULL_HASH_BYTES = 256 * 1024 * 1024
+
+
 def _fingerprint(source: Path, params: dict) -> str:
-    """Path, size, mtime and both file ends keep cache hits cheap on long video."""
+    """Content-keyed cache id; long videos hash both ends plus path and mtime."""
     try:
         stat = source.stat()
         size, stamp = stat.st_size, stat.st_mtime_ns
     except OSError:
         size, stamp = 0, 0
     digest = hashlib.sha256()
+    identity: dict = {"size": size}
     try:
         with source.open("rb") as handle:
-            digest.update(handle.read(1024 * 1024))
-            if size > 1024 * 1024:
+            if size <= FULL_HASH_BYTES:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(block)
+            else:
+                digest.update(handle.read(1024 * 1024))
                 handle.seek(max(0, size - 1024 * 1024))
                 digest.update(handle.read(1024 * 1024))
+                identity.update(path=str(source.resolve()), mtime=stamp)
     except OSError:
-        pass
+        identity.update(path=str(source.resolve()), mtime=stamp)
     raw = json.dumps(
-        {"path": str(source.resolve()), "size": size, "mtime": stamp,
-         "params": params, "version": VERSION, "content": digest.hexdigest()},
+        {**identity, "params": params, "version": VERSION, "content": digest.hexdigest()},
         sort_keys=True, separators=(",", ":"), default=str,
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
@@ -1226,7 +1235,8 @@ def find_voice_candidates(
     if use_cache:
         cached = _cache_report(root, min_files=1)
         if cached and cached.get("candidates"):
-            names = [f"candidate-{index + 1:02d}.wav" for index in range(len(cached["candidates"]))]
+            # A skipped window leaves a gap (01, 03); name files by each index.
+            names = [f"candidate-{int(item['index']):02d}.wav" for item in cached["candidates"]]
             if all((root / name).is_file() for name in names):
                 copied = _copy_cached(root, out_dir, names)
                 data = dict(cached)

@@ -262,7 +262,7 @@ def clone_my_voice(
                 if size > voice_clone.MAX_UPLOAD_BYTES:
                     raise HTTPException(413, "That recording is over 100 MB.")
                 handle.write(chunk)
-        sample = work / "sample.wav"
+        sample = work / "sample.mp3"
         cleaned = False
         warning = ""
         warnings: list[str] = []
@@ -424,7 +424,7 @@ def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> di
             raise HTTPException(404, "Find the best voice clips before cloning one.")
         work = _work_dir()
         try:
-            sample = work / "sample.wav"
+            sample = work / "sample.mp3"
             try:
                 seconds = voice_clone.prepare_sample(candidate, sample)
                 record = voice_clone.create_clone(
@@ -465,7 +465,7 @@ def clone_video_voice(job_id: str, body: VideoCloneBody, request: Request) -> di
     work = _work_dir()
     try:
         raw = work / "range.mp3"
-        sample = work / "sample.wav"
+        sample = work / "sample.mp3"
         try:
             raw_seconds = voice_clone.prepare_sample(
                 source, raw, windows=windows, start=start, duration=duration,
