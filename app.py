@@ -3154,6 +3154,7 @@ app.include_router(routes_check.router)
 app.include_router(routes_cleanup.router)
 app.include_router(routes_cleanup.rights_router)
 app.include_router(routes_edits.router)
+app.include_router(__import__("routes_trim", fromlist=["router"]).router)
 app.include_router(routes_overlays.router)
 app.include_router(music.router)
 app.include_router(packet.router)
@@ -5961,6 +5962,7 @@ class ClipSetPatchBody(BaseModel):
     ban_scenes: list[int] | None = None
     bans: list[int] | None = None
     order: str | None = None
+    expected_revision: int | None = None
 
 
 class ClipSetPlansBody(BaseModel):
@@ -6174,6 +6176,64 @@ def patch_clip_set(job_id: str, set_id: str, body: ClipSetPatchBody) -> dict:
         raise HTTPException(409, "Analysis is not ready yet.")
     _clip_set_source_state(job, record, require_fingerprint=True)
     sentences, scenes, _ = _clipset_pool(job, record)
+
+    def _revision(story: dict | None) -> int:
+        try:
+            return max(0, int((story or {}).get("revision") or 0))
+        except (TypeError, ValueError, AttributeError):
+            return 0
+
+    def _range(story: dict | None) -> tuple:
+        story = story or {}
+        ids = []
+        for sentence in story.get("sentences") or []:
+            try:
+                ids.append(int(sentence.get("id")))
+            except (TypeError, ValueError):
+                continue
+        return (
+            round(float(story.get("start") or 0.0), 3),
+            round(float(story.get("end") or 0.0), 3),
+            round(float(story.get("dur") or 0.0), 3),
+            tuple(ids),
+        )
+
+    old_by_id = {
+        str(story.get("id")): story
+        for story in record.get("stories") or []
+        if isinstance(story, dict) and story.get("id") is not None
+    }
+    expected = body.expected_revision
+    targets = [
+        str(patch.get("id"))
+        for patch in body.stories or []
+        if isinstance(patch, dict) and patch.get("id") is not None
+    ]
+    if expected is not None:
+        if not targets:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "range_invalid",
+                    "message": "expected_revision needs a story patch.",
+                },
+            )
+        for story_id in targets:
+            prior = old_by_id.get(story_id)
+            if prior is None or _revision(prior) != int(expected):
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "revision_mismatch",
+                        "message": (
+                            "This story changed in another window. "
+                            "Reload and try again."
+                        ),
+                        "current": {
+                            "revision": _revision(prior) if prior else None,
+                        },
+                    },
+                )
     try:
         updated = clipset.apply_edits(
             record,
@@ -6192,7 +6252,54 @@ def patch_clip_set(job_id: str, set_id: str, body: ClipSetPatchBody) -> dict:
     updated["job_id"] = job["id"]
     updated["created"] = record.get("created")
     updated["updated"] = round(time.time(), 3)
-    _store_clip_set(job["id"], updated)
+    for story in updated.get("stories") or []:
+        if not isinstance(story, dict):
+            continue
+        prior = old_by_id.get(str(story.get("id")))
+        revision = _revision(prior)
+        if prior is None:
+            revision = 0
+        elif _range(prior) != _range(story):
+            revision += 1
+        story["revision"] = revision
+
+    class _RevisionMismatch(Exception):
+        pass
+
+    def mutate(current_job: dict) -> None:
+        current_record = _clip_set_in_job(current_job, set_id)
+        current_by_id = {
+            str(story.get("id")): story
+            for story in current_record.get("stories") or []
+            if isinstance(story, dict) and story.get("id") is not None
+        }
+        if expected is not None:
+            for story_id in targets:
+                if _revision(current_by_id.get(story_id)) != int(expected):
+                    raise _RevisionMismatch()
+        current_sets = current_job.get("clip_sets")
+        if isinstance(current_sets, list):
+            current_job["clip_sets"] = [
+                item for item in current_sets
+                if not (isinstance(item, dict) and item.get("id") == updated["id"])
+            ]
+            current_job["clip_sets"].append(updated)
+        else:
+            current_job["clip_sets"] = dict(current_sets or {})
+            current_job["clip_sets"][updated["id"]] = updated
+
+    try:
+        update_job(job["id"], mutate)
+    except _RevisionMismatch as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "revision_mismatch",
+                "message": (
+                    "This story changed in another window. Reload and try again."
+                ),
+            },
+        ) from exc
     return {"clip_set": updated}
 
 
