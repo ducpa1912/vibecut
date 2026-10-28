@@ -96,6 +96,11 @@ export function mountTextPanel(host, ctx) {
       index: (ctx.getEdit()?.graphics || []).length,
       hookText: ctx.getStory?.()?.hook?.text || "",
     });
+    // R2 trim pins: a hook opens the story, so it keeps its offset from time 0
+    // when the first sentence changes. The frozen contract spells the pin
+    // `anchor:"story_start"`; the Edit schema stores it as `pin` and keeps
+    // `anchor` for the layout position, so send the stored spelling.
+    if (next.kind === "hook" && ctx.trimReady?.()) next.pin = "story_start";
     const graphics = [...(ctx.getEdit()?.graphics || []), next];
     ctx.setGraphics(graphics);
     ctx.select("text", next.id);

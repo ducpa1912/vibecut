@@ -7,8 +7,18 @@
  * placeholder, so the editor stays usable while the render hooks land.
  */
 
-import { getJob, listClipSets } from "../api.js";
+import {
+  getJob,
+  getTrimState,
+  invalidateReadCache,
+  listClipSets,
+  rebindStory,
+  trimErrorCode,
+  trimErrorCurrent,
+  undoTrim,
+} from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
+import { receiptSummary } from "../stories.js";
 import { mountPreview } from "./preview.js";
 import { mountTimeline } from "./timeline.js";
 import { mountInspector } from "./inspector.js";
@@ -98,6 +108,14 @@ export function mount(root, ctx) {
     selected: null,
     dirty: new Set(),
     revisions: {},
+    // R2 atomic trim: the GET payload, the last receipt and its undo token.
+    trim: null,
+    trimRevision: 0,
+    undoToken: "",
+    receipt: null,
+    staleAspects: [],
+    invalidated: 0,
+    trimBusy: false,
   };
 
   const dom = {};
@@ -161,7 +179,9 @@ export function mount(root, ctx) {
               <button class="st-aspect" type="button" data-aspect="9:16" aria-pressed="true">9:16</button>
               <button class="st-aspect" type="button" data-aspect="4:5" aria-pressed="false">4:5</button>
             </div>
+            <button id="st-edit-repair" class="st-btn st-btn-small st-trim-repair" type="button" hidden>Repair shape</button>
             <button id="st-edit-all" class="st-btn st-btn-quiet st-btn-small" type="button">All stories</button>
+            <button id="st-edit-undo-trim" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo trim</button>
             <button id="st-edit-undo" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo</button>
           </div>
         </header>
@@ -169,6 +189,7 @@ export function mount(root, ctx) {
           <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
           <span id="st-edit-meta" class="st-hint"></span>
         </div>
+        <div id="st-edit-receipt" class="st-trim-receipt" role="status" aria-live="polite" hidden></div>
         <div id="st-edit-notice" class="st-edit-notice" role="alert" hidden></div>
         <div class="st-edit-workspace">
           <div id="st-edit-preview"></div>
@@ -180,6 +201,9 @@ export function mount(root, ctx) {
     dom.story = root.querySelector("#st-edit-story");
     dom.aspect = Array.from(root.querySelectorAll(".st-aspect"));
     dom.undo = root.querySelector("#st-edit-undo");
+    dom.undoTrim = root.querySelector("#st-edit-undo-trim");
+    dom.repair = root.querySelector("#st-edit-repair");
+    dom.receipt = root.querySelector("#st-edit-receipt");
     dom.save = root.querySelector("#st-edit-save");
     dom.meta = root.querySelector("#st-edit-meta");
     dom.notice = root.querySelector("#st-edit-notice");
@@ -195,6 +219,8 @@ export function mount(root, ctx) {
     }
     dom.all.addEventListener("click", () => ctx.go("stories"));
     dom.undo.addEventListener("click", () => { void undoLastChange(); });
+    dom.undoTrim.addEventListener("click", () => { void undoTrimChange(); });
+    dom.repair.addEventListener("click", () => { void repairAspects(); });
   }
 
   function setSaveStatus(message, tone = "") {
@@ -209,8 +235,25 @@ export function mount(root, ctx) {
   }
 
   function setUndoState() {
-    if (!dom.undo) return;
-    dom.undo.disabled = saving || !state.edit?.parent;
+    if (dom.undo) dom.undo.disabled = saving || !state.edit?.parent;
+    updateTrimChrome();
+  }
+
+  function updateTrimChrome() {
+    if (dom.undoTrim) {
+      dom.undoTrim.disabled = saving || state.trimBusy || !state.undoToken;
+    }
+    if (dom.repair) {
+      const stale = state.staleAspects || [];
+      dom.repair.hidden = stale.length === 0;
+      dom.repair.disabled = saving || state.trimBusy;
+      dom.repair.textContent = stale.length === 1
+        ? `Repair ${stale[0]}`
+        : `Repair ${stale.length} shapes`;
+      dom.repair.title = stale.length
+        ? `Rebind ${stale.join(" and ")} to the current story range.`
+        : "";
+    }
   }
 
   function setMeta() {
@@ -222,6 +265,316 @@ export function mount(root, ctx) {
     if (dom.sub && story) {
       dom.sub.textContent = String(story.title || "Shape the story");
     }
+  }
+
+  /** Merge a trim's compact story into the full story the screen already has. */
+  function mergeStory(partial) {
+    if (!partial) return state.story;
+    return {
+      ...(state.story || {}),
+      ...partial,
+      sentences: partial.sentences || state.story?.sentences || [],
+    };
+  }
+
+  function upsertStory(story) {
+    if (!story || !state.set) return;
+    const stories = (state.set.stories || []).map((item) => (
+      item.id === story.id ? { ...item, ...story, sentences: item.sentences || story.sentences } : item
+    ));
+    state.set = { ...state.set, stories };
+    state.sets = (state.sets || []).map((item) => (item.id === state.set.id ? state.set : item));
+  }
+
+  function renderReceipt() {
+    if (!dom.receipt) return;
+    if (!state.receipt) {
+      dom.receipt.hidden = true;
+      dom.receipt.replaceChildren();
+      return;
+    }
+    const receipt = state.receipt;
+    const summary = receiptSummary(receipt);
+    const oldDuration = numberOr(receipt.old?.dur);
+    const newDuration = numberOr(receipt.new?.dur, state.duration);
+    const note = state.invalidated
+      ? `${formatCount(state.invalidated, "older render")} keep${state.invalidated === 1 ? "s" : ""} the old cut.`
+      : "";
+    const undo = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: "Undo trim",
+      disabled: saving || state.trimBusy || !state.undoToken,
+    });
+    undo.addEventListener("click", () => { void undoTrimChange(); });
+    const dismiss = el("button", {
+      class: "st-btn st-btn-quiet st-btn-small",
+      type: "button",
+      text: "Dismiss",
+    });
+    dismiss.addEventListener("click", () => {
+      state.receipt = null;
+      renderReceipt();
+    });
+    dom.receipt.hidden = false;
+    dom.receipt.replaceChildren(
+      el("div", { class: "st-trim-receipt-copy" }, [
+        el("p", { class: "st-eyebrow", text: "Last trim" }),
+        el("p", { class: "st-trim-receipt-line", text: summary || "The story range changed." }),
+        el("p", {
+          class: "st-hint",
+          text: `${formatTime(oldDuration)} → ${formatTime(newDuration)}${note ? ` · ${note}` : ""}`,
+        }),
+      ]),
+      el("div", { class: "st-trim-receipt-actions" }, [undo, dismiss]),
+    );
+  }
+
+  async function refreshStoryFromSets() {
+    if (!state.job?.id) return;
+    try {
+      const data = await listClipSets(state.job.id);
+      if (disposed) return;
+      state.sets = Array.isArray(data?.clip_sets) ? data.clip_sets : state.sets;
+      const set = state.sets.find((item) => item.id === state.set?.id) || state.set;
+      const story = set?.stories?.find((item) => item.id === state.story?.id);
+      if (set) state.set = set;
+      if (story) state.story = story;
+    } catch (_) {
+      /* The trim result already carries enough to keep editing. */
+    }
+  }
+
+  async function refreshTrimState({ authoritative = false, fresh = false } = {}) {
+    if (!state.job?.id || !state.set?.id || !state.story?.id) return null;
+    try {
+      const trim = await getTrimState(state.job.id, state.set.id, state.story.id, { fresh });
+      if (disposed) return null;
+      state.trim = trim || null;
+      state.trimRevision = numberOr(trim?.revision, state.trimRevision);
+      state.staleAspects = Object.entries(trim?.aspects || {})
+        .filter(([, value]) => value?.stale)
+        .map(([aspect]) => aspect);
+      if (trim?.story) {
+        state.story = mergeStory(trim.story);
+        upsertStory(state.story);
+        if (authoritative) {
+          state.duration = Math.max(0.1, numberOr(trim.story.dur, state.duration));
+          state.playhead = clamp(state.playhead, 0, state.duration);
+        }
+      }
+      if (!disposed) {
+        renderStoryOptions();
+        updateAspectButtons();
+        updateTrimChrome();
+        setMeta();
+      }
+      return trim;
+    } catch (error) {
+      if (error?.status === 404 || error?.status === 405) {
+        // The trim route is not in this build; editing still works.
+        state.trim = null;
+        state.staleAspects = [];
+        if (!disposed) updateTrimChrome();
+        return null;
+      }
+      return null;
+    }
+  }
+
+  /** The one place a TrimResult lands. Header, preview, scrubber, player and timeline read from here. */
+  function applyTrimResult(result, label = "Trimmed") {
+    if (!result) return;
+    const story = mergeStory(result.story);
+    if (story) {
+      state.story = story;
+      upsertStory(story);
+    }
+    const nextEdit = result.edits?.[state.aspect];
+    if (nextEdit) state.edit = clone(nextEdit);
+    const captionInfo = result.captions;
+    const trackId = captionInfo?.track_id || null;
+    if (state.edit && captionInfo) {
+      state.edit = {
+        ...state.edit,
+        captions: { ...(state.edit.captions || {}), track_id: trackId },
+      };
+      // Never draw the old cues over the new cut while the track loads.
+      if (!trackId || (state.captions?.id && state.captions.id !== trackId)) {
+        state.captions = null;
+      }
+    }
+    state.duration = Math.max(
+      0.1,
+      numberOr(result.duration, numberOr(result.story?.dur, state.duration)),
+    );
+    state.playhead = clamp(state.playhead, 0, state.duration);
+    state.dirty.clear();
+    state.revisions = {};
+    state.receipt = result.receipt || null;
+    state.undoToken = result.undo_token || state.undoToken;
+    state.trimRevision = numberOr(result.revision, state.trimRevision);
+    state.staleAspects = Array.isArray(result.stale_aspects) ? result.stale_aspects : [];
+    state.invalidated = Array.isArray(result.invalidated_artifacts)
+      ? result.invalidated_artifacts.length
+      : 0;
+    // Keep the pool the timeline already has, but move its window now. The
+    // fresh GET below replaces the neighbours and aspect map.
+    if (state.trim && result.story) {
+      state.trim = {
+        ...state.trim,
+        revision: state.trimRevision,
+        story: result.story,
+      };
+    }
+
+    renderStoryOptions();
+    renderEditorParts();
+    populateHeader();
+    renderReceipt();
+    updateTrimChrome();
+    const summary = receiptSummary(state.receipt);
+    notify(
+      summary
+        ? `${label}: ${summary}. New length ${formatTime(state.duration)}.`
+        : `${label}: story is now ${formatTime(state.duration)}.`,
+      "ok",
+    );
+
+    void (async () => {
+      const track = trackId
+        ? await getCaptionTrack(state.job.id, trackId).catch(() => null)
+        : null;
+      await refreshStoryFromSets();
+      await refreshTrimState({ fresh: true });
+      if (disposed) return;
+      // One render after every read: a drag started from the new header must
+      // not have the handle replaced underneath it.
+      if (trackId) state.captions = track;
+      renderStoryOptions();
+      syncPreview();
+      scheduleTimeline();
+      setMeta();
+      updateAspectButtons();
+      updateTrimChrome();
+    })();
+  }
+
+  async function handleTrimConflict(error) {
+    if (disposed) return;
+    state.trimBusy = true;
+    updateTrimChrome();
+    try {
+      const current = trimErrorCurrent(error);
+      // A 409 writes nothing, so the shared read cache still holds the state
+      // the caller saw. Drop it before reading the latest head and range.
+      invalidateReadCache(state.job?.id || "");
+      if (current) {
+        state.trim = current;
+        state.trimRevision = numberOr(current.revision, state.trimRevision);
+        state.staleAspects = Object.entries(current.aspects || {})
+          .filter(([, value]) => value?.stale)
+          .map(([aspect]) => aspect);
+        if (current.story) {
+          state.story = mergeStory(current.story);
+          upsertStory(state.story);
+          state.duration = Math.max(0.1, numberOr(current.story.dur, state.duration));
+          state.playhead = clamp(state.playhead, 0, state.duration);
+        }
+      }
+      const reloaded = await reloadHead();
+      await refreshStoryFromSets();
+      await refreshTrimState({ authoritative: true, fresh: true });
+      if (disposed) return;
+      renderStoryOptions();
+      renderEditorParts();
+      populateHeader();
+      renderReceipt();
+      const code = trimErrorCode(error);
+      const why = code === "caption_rebuild_failed"
+        ? "The captions could not be rebuilt, so nothing changed."
+        : "This story changed in another window.";
+      if (reloaded) {
+        setSaveStatus("Latest cut open");
+        notify(`${why} The latest range is open; check it and drag again.`, "bad");
+      } else {
+        notify(`${why} Open the story again from Stories.`, "bad");
+      }
+    } catch (failure) {
+      if (!disposed) {
+        notify(failure?.message || "Could not reload the latest cut.", "bad");
+      }
+    } finally {
+      state.trimBusy = false;
+      if (!disposed) updateTrimChrome();
+    }
+  }
+
+  async function repairAspects() {
+    if (!state.job?.id || !state.set?.id || !state.story?.id || state.trimBusy) return;
+    const saved = await flushSave();
+    if (!saved) return;
+    state.trimBusy = true;
+    updateTrimChrome();
+    setSaveStatus("Repairing the shape…", "busy");
+    try {
+      const result = await rebindStory(state.job.id, state.set.id, state.story.id, {
+        expectedRevision: numberOr(state.trim?.revision, state.trimRevision),
+      });
+      if (disposed) return;
+      state.trimBusy = false;
+      applyTrimResult(result, "Shapes repaired");
+      setSaveStatus("Saved", "ok");
+    } catch (error) {
+      if (disposed) return;
+      state.trimBusy = false;
+      if (error?.status === 409) {
+        await handleTrimConflict(error);
+      } else {
+        notify(trimErrorMessage(error) || "Could not repair this shape.", "bad");
+        setSaveStatus("Not repaired", "bad");
+      }
+    } finally {
+      if (!disposed) updateTrimChrome();
+    }
+  }
+
+  async function undoTrimChange() {
+    if (!state.job?.id || !state.set?.id || !state.story?.id || !state.undoToken || state.trimBusy) return;
+    const saved = await flushSave();
+    if (!saved) return;
+    state.trimBusy = true;
+    updateTrimChrome();
+    setSaveStatus("Undoing the trim…", "busy");
+    try {
+      const result = await undoTrim(state.job.id, state.set.id, state.story.id, {
+        undoToken: state.undoToken,
+        expectedRevision: numberOr(state.trim?.revision, state.trimRevision),
+      });
+      if (disposed) return;
+      state.trimBusy = false;
+      applyTrimResult(result, "Trim undone");
+      setSaveStatus("Saved", "ok");
+    } catch (error) {
+      if (disposed) return;
+      state.trimBusy = false;
+      if (error?.status === 409) {
+        await handleTrimConflict(error);
+      } else {
+        notify(trimErrorMessage(error) || "Could not undo the trim.", "bad");
+        setSaveStatus("Not undone", "bad");
+      }
+    } finally {
+      if (!disposed) updateTrimChrome();
+    }
+  }
+
+  function trimErrorMessage(error) {
+    if (!error) return "";
+    if (error.status === 404 || error.status === 405) {
+      return "Trimming needs the latest server. Restart VibeCut and open this story again.";
+    }
+    return error.message || "";
   }
 
   function renderStoryOptions() {
@@ -238,10 +591,22 @@ export function mount(root, ctx) {
   }
 
   function updateAspectButtons() {
+    const stale = new Set(state.staleAspects || []);
     for (const button of dom.aspect || []) {
-      const active = button.dataset.aspect === state.aspect;
+      const aspect = button.dataset.aspect;
+      const active = aspect === state.aspect;
+      const needsRepair = stale.has(aspect);
       button.setAttribute("aria-pressed", active ? "true" : "false");
       button.classList.toggle("is-active", active);
+      button.classList.toggle("is-stale", needsRepair);
+      button.dataset.stale = needsRepair ? "true" : "false";
+      button.title = needsRepair
+        ? "This shape's Edit was made before the story changed. Press Repair."
+        : "";
+      button.setAttribute(
+        "aria-label",
+        `${aspect}${needsRepair ? ", needs repair" : ""}`,
+      );
     }
   }
 
@@ -313,6 +678,9 @@ export function mount(root, ctx) {
       story: state.story,
       duration: state.duration,
       aspect: state.aspect,
+      trim: state.trim,
+      setId: state.set?.id || "",
+      jobId: state.job?.id || "",
     });
     timeline.setTime(state.playhead);
     timeline.setSelected(state.selected);
@@ -335,6 +703,9 @@ export function mount(root, ctx) {
       getDuration: () => state.duration,
       getPlayhead: () => state.playhead,
       getSelectedId: (kind) => (state.selected?.kind === kind ? state.selected.id : ""),
+      // Hooks carry the R2 `story_start` pin only once the trim route exists,
+      // so an older server keeps accepting the layout anchor.
+      trimReady: () => Boolean(state.trim),
       select: (kind, id) => selectLayer(kind, id),
       setTab: (tab) => setActiveTab(tab),
       refresh: () => renderInspector(),
@@ -567,6 +938,11 @@ export function mount(root, ctx) {
                 failed = error;
                 break;
               }
+              await refreshTrimState({ authoritative: true, fresh: true });
+              if (!disposed) {
+                renderEditorParts();
+                populateHeader();
+              }
               continue;
             }
             for (const field of fields) state.dirty.add(field);
@@ -658,7 +1034,13 @@ export function mount(root, ctx) {
       }
 
       state.edit = edit;
-      state.duration = storyDuration(state.story, edit);
+      // The trim route's story `dur` is the same number the server will
+      // render. Use it as the one duration source when it is present.
+      const trim = await refreshTrimState({ authoritative: true, fresh: true });
+      state.duration = Math.max(
+        0.1,
+        numberOr(trim?.story?.dur, storyDuration(state.story, edit)),
+      );
       state.playhead = clamp(state.playhead, 0, state.duration);
       await resolveCaptionTrack(edit);
       if (!edit.captions?.track_id) {
@@ -707,6 +1089,8 @@ export function mount(root, ctx) {
     updateAspectButtons();
     setMeta();
     setUndoState();
+    renderReceipt();
+    updateTrimChrome();
   }
 
   function renderEditorParts() {
@@ -723,8 +1107,12 @@ export function mount(root, ctx) {
     }
     if (!timeline) {
       timeline = mountTimeline(dom.timeline, {
+        jobId: state.job.id,
         onSeek: (time) => seek(time),
         onSelect: (kind, id) => selectLayer(kind, id),
+        beforeTrim: () => flushSave(),
+        onTrim: (result) => applyTrimResult(result, "Trimmed"),
+        onConflict: (error) => { void handleTrimConflict(error); },
       });
     }
     preview.setData({
@@ -742,6 +1130,9 @@ export function mount(root, ctx) {
       story: state.story,
       duration: state.duration,
       aspect: state.aspect,
+      trim: state.trim,
+      setId: state.set?.id || "",
+      jobId: state.job.id,
     });
     timeline.setTime(state.playhead);
     timeline.setSelected(state.selected);
@@ -760,7 +1151,14 @@ export function mount(root, ctx) {
     try {
       if (state.dirty.size) await saveNow();
       else await reloadHead();
-      if (!disposed) notify("This story changed in another window. The latest save is open.", "bad");
+      await refreshTrimState({ authoritative: true, fresh: true });
+      if (!disposed) {
+        renderEditorParts();
+        populateHeader();
+        notify("This story changed in another window. The latest save is open.", "bad");
+      }
+    } catch (error) {
+      if (!disposed) notify(error?.message || "Could not reload the latest cut.", "bad");
     } finally {
       staleReload = false;
     }
@@ -777,6 +1175,12 @@ export function mount(root, ctx) {
     }
     state.story = next;
     state.playhead = 0;
+    state.trim = null;
+    state.trimRevision = 0;
+    state.undoToken = "";
+    state.receipt = null;
+    state.staleAspects = [];
+    state.invalidated = 0;
     await loadStory();
   }
 
@@ -810,6 +1214,7 @@ export function mount(root, ctx) {
       state.selected = null;
       state.dirty.clear();
       await resolveCaptionTrack(state.edit);
+      await refreshTrimState();
       if (disposed) return;
       renderEditorParts();
       populateHeader();

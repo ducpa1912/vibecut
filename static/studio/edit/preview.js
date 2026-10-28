@@ -10,6 +10,7 @@
 import { el } from "../ui.js";
 import {
   CANVAS,
+  TEXT_KINDS,
   clamp,
   colorFilter,
   formatTime,
@@ -51,6 +52,12 @@ export function mountPreview(root, options = {}) {
   let proxyReady = false;
   let proxyFailed = false;
   let proxyRequested = false;
+  // The Edit id changed (a trim or a rebind). The proxy and the exact frame
+  // still show the previous cut until the server answers, so say so.
+  let rebuilding = false;
+  // The parent's duration wins once it passes one; an Edit's story_ref is
+  // only the fallback for a direct caller.
+  let durationOwned = false;
   let playing = false;
   let videoPlaying = false;
   // Play was pressed before the proxy finished building; start it on ready.
@@ -106,6 +113,7 @@ export function mountPreview(root, options = {}) {
   }
 
   function sourceLabel() {
+    if (rebuilding) return "Rebuilding preview…";
     if (frameState === "loading") return "Loading frame…";
     if (frameState === "stale") return "Refreshing frame…";
     if (frameState === "bad-time") return "No frame at this time";
@@ -125,7 +133,9 @@ export function mountPreview(root, options = {}) {
       : frameState === "error" || frameState === "locked" ? "bad"
         : proxyReady ? "ok" : "quiet";
 
-    if (pendingPlay && !proxyReady) {
+    if (rebuilding) {
+      setNote("Rebuilding preview for the new cut. The old frame stays up until the new one is ready.");
+    } else if (pendingPlay && !proxyReady) {
       setNote("Building the playback copy with sound. This takes a few seconds the first time.");
     } else if (videoPlaying) {
       setNote("Playing a 540p copy with sound. Pause to see the exact frame.");
@@ -226,12 +236,41 @@ export function mountPreview(root, options = {}) {
     ctx.restore();
   }
 
+  /**
+   * A trim keeps layers that fell fully outside with `hidden: true` and their
+   * old times. The renderer skips them; the preview must too, or a removed
+   * hook would draw over the new first sentence.
+   */
+  function visibleEdit(edit) {
+    if (!edit) return edit;
+    const graphics = Array.isArray(edit.graphics) ? edit.graphics : [];
+    const pins = new Set(["source", "story_start", "story_end"]);
+    const visible = graphics
+      .filter((layer) => !layer?.hidden)
+      .map((layer) => {
+        // "story_start" is a pin (the R2 schema stores it under `pin`). If a
+        // freshly added hook still carries it in `anchor`, draw the kind's
+        // usual position rather than the fallback centre.
+        if (!pins.has(String(layer?.anchor || ""))) return layer;
+        return {
+          ...layer,
+          anchor: TEXT_KINDS[layer.kind]?.anchor || "center",
+        };
+      });
+    if (visible.length === graphics.length
+      && visible.every((layer, index) => layer === graphics[index])) {
+      return edit;
+    }
+    return { ...edit, graphics: visible };
+  }
+
   function drawSelection(width, height) {
     if (!state.selected || !state.edit) return;
     let rect = null;
     let label = "Selected";
     if (state.selected.kind === "text") {
-      const layer = (state.edit.graphics || []).find((item) => item.id === state.selected.id);
+      const layer = (state.edit.graphics || [])
+        .find((item) => item.id === state.selected.id && !item.hidden);
       if (!layer) return;
       rect = graphicRect(layer);
       label = layer.text || "Text";
@@ -296,7 +335,9 @@ export function mountPreview(root, options = {}) {
       ctx.restore();
       // The proxy is the raw story range; the exact frame already has every
       // layer burned in, so only the proxy gets the live overlay.
-      if (source === proxyVideo) drawOverlay(ctx, state.edit, state.captions, state.time, width, height);
+      if (source === proxyVideo) {
+        drawOverlay(ctx, visibleEdit(state.edit), state.captions, state.time, width, height);
+      }
     } else {
       drawPlaceholder(width, height);
     }
@@ -370,6 +411,7 @@ export function mountPreview(root, options = {}) {
       if (disposed) return;
       proxyReady = true;
       proxyFailed = false;
+      rebuilding = false;
       video.currentTime = Math.min(state.time, Math.max(0, (video.duration || state.duration) - 0.05));
       if (pendingPlay && playing) {
         pendingPlay = false;
@@ -400,6 +442,7 @@ export function mountPreview(root, options = {}) {
       if (disposed) return;
       proxyFailed = true;
       proxyReady = false;
+      rebuilding = false;
       if (pendingPlay && playing) {
         // No playable copy: fall back to stepping exact frames, silently.
         pendingPlay = false;
@@ -459,6 +502,7 @@ export function mountPreview(root, options = {}) {
           frameReady = true;
           frameAvailable = true;
           frameState = "ready";
+          rebuilding = false;
           updateSource();
           draw();
         };
@@ -466,6 +510,7 @@ export function mountPreview(root, options = {}) {
           URL.revokeObjectURL(url);
           if (disposed || seq !== frameSeq) return;
           frameState = "error";
+          rebuilding = false;
           updateSource();
         };
         image.src = url;
@@ -475,6 +520,7 @@ export function mountPreview(root, options = {}) {
       if (response.status === 409) {
         frameState = "stale";
         frameReady = false;
+        rebuilding = false;
         updateSource();
         callbacks.onStale();
         return;
@@ -483,6 +529,7 @@ export function mountPreview(root, options = {}) {
         frameAvailable = false;
         frameReady = false;
         frameState = "unavailable";
+        rebuilding = false;
         updateSource();
         ensureProxy();
         draw();
@@ -490,15 +537,18 @@ export function mountPreview(root, options = {}) {
       }
       if (response.status === 422) {
         frameState = "bad-time";
+        rebuilding = false;
         updateSource();
         return;
       }
       if (response.status === 401 || response.status === 403) {
         frameState = "locked";
+        rebuilding = false;
         updateSource();
         return;
       }
       frameState = "error";
+      rebuilding = false;
       updateSource();
     } catch (error) {
       if (error?.name === "AbortError" || disposed) return;
@@ -577,13 +627,19 @@ export function mountPreview(root, options = {}) {
     if (frameAvailable) scheduleFrame(0);
   }
 
+  // The parent owns the duration; an Edit's `story_ref.duration` is only a
+  // fallback for direct callers. A trim updates both together.
   function setEdit(edit, { keepTime = false } = {}) {
     const previousId = state.edit?.id || "";
     const nextId = edit?.id || "";
     state.edit = edit || null;
-    state.duration = Math.max(0.1, numberOr(edit?.story_ref?.duration, state.duration));
+    if (!durationOwned) {
+      const fallback = numberOr(edit?.story_ref?.duration);
+      if (fallback > 0) state.duration = Math.max(0.1, fallback);
+    }
     if (!keepTime) setTime(state.time);
     if (previousId !== nextId) {
+      rebuilding = Boolean(state.edit);
       clearFrame();
       resetProxy();
       frameAvailable = true;
@@ -598,6 +654,7 @@ export function mountPreview(root, options = {}) {
       scheduleFrame(80);
     }
     updateTransport();
+    updateSource();
     draw();
   }
 
@@ -613,17 +670,27 @@ export function mountPreview(root, options = {}) {
   function setData({ aspect, edit, captions, duration, selected, jobId } = {}) {
     if (jobId && jobId !== state.jobId) {
       state.jobId = jobId;
+      rebuilding = false;
       clearFrame();
       resetProxy();
     }
     if (aspect) applyAspect(aspect);
-    if (typeof duration === "number" && Number.isFinite(duration)) {
-      state.duration = Math.max(0.1, duration);
-    }
     if (captions !== undefined) state.captions = captions;
     if (selected !== undefined) state.selected = selected;
     if (edit !== undefined) setEdit(edit);
-    else draw();
+    // Apply the parent's duration after the Edit so the scrubber, the frame
+    // time and the playhead all read the same source.
+    if (typeof duration === "number" && Number.isFinite(duration)) {
+      durationOwned = true;
+      state.duration = Math.max(0.1, duration);
+      const clamped = clamp(state.time, 0, state.duration);
+      if (clamped !== state.time) {
+        state.time = clamped;
+        // The new cut is shorter than the old playhead: ask for its frame.
+        scheduleFrame(0);
+      }
+    }
+    if (edit === undefined) draw();
     updateSource();
     updateTransport();
   }
