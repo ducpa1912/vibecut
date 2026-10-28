@@ -59,9 +59,16 @@ class TrimRebindBody(BaseModel):
 
 
 class _Conflict(Exception):
-    def __init__(self, payload: dict | None = None):
+    def __init__(
+        self,
+        payload: dict | None = None,
+        code: str = "edit_changed",
+        message: str = "An Edit changed in another window. Reload before trimming.",
+    ):
         super().__init__("conflict")
         self.payload = payload
+        self.code = code
+        self.message = message
 
 
 # ---------------------------------------------------------------- app glue
@@ -723,7 +730,13 @@ def trim_story(
                 conflict["payload"] = _get_payload(
                     current_job, current_record, current_story,
                 )
-                raise _Conflict()
+                raise _Conflict(
+                    code="revision_mismatch",
+                    message=(
+                        "This story changed in another window. "
+                        "Reload and try again."
+                    ),
+                )
             try:
                 _check_expected(body.aspects, current_job, current_story, set_id, current)
             except HTTPException:
@@ -745,8 +758,8 @@ def trim_story(
         except _Conflict as exc:
             raise _http(
                 409,
-                "edit_changed",
-                "An Edit changed in another window. Reload before trimming.",
+                exc.code,
+                exc.message,
                 conflict["payload"] or current,
             ) from exc
         for edit in saved.values():
