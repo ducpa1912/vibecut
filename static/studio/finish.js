@@ -198,6 +198,85 @@ export function finishOutcome(queues, queueIds, artifactRows, artifactIds) {
   return { done, failed };
 }
 
+/**
+ * Count every story and shape once across all queues, not one queue's own
+ * totals. A re-queued identity is the same work, so it is not counted twice.
+ */
+export function queueSummary(queues, filter = {}) {
+  const jobId = String(filter?.jobId || "");
+  const setId = String(filter?.setId || "");
+  const stories = new Set();
+  const shapes = new Map();
+  const seen = new Set();
+  let total = 0;
+  let running = 0;
+  let waiting = 0;
+  let done = 0;
+  let failed = 0;
+  let stopped = 0;
+  for (const queue of queues || []) {
+    for (const item of queue?.items || []) {
+      if (jobId && String(item?.job_id || "") !== jobId) continue;
+      if (setId && item?.set_id && String(item.set_id) !== setId) continue;
+      const state = String(item?.state || "queued");
+      const shape = String(item?.aspect || "9:16");
+      const story = String(item?.story_id || item?.title || item?.id || "");
+      const identity = [
+        item?.job_id || jobId, item?.set_id || setId,
+        story, shape, item?.quality || "final",
+      ].join("|");
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      if (story) stories.add(`${item?.set_id || ""}:${story}`);
+      shapes.set(shape, (shapes.get(shape) || 0) + 1);
+      total += 1;
+      if (state === "running") running += 1;
+      else if (state === "queued") waiting += 1;
+      else if (state === "done") done += 1;
+      else if (state === "failed") failed += 1;
+      else if (state === "cancelled" || state === "interrupted") stopped += 1;
+    }
+  }
+  const shapeText = [...shapes.entries()]
+    .sort((left, right) => {
+      const order = (shape) => {
+        const index = ASPECTS.indexOf(shape);
+        return index < 0 ? ASPECTS.length : index;
+      };
+      return order(left[0]) - order(right[0]);
+    })
+    .map(([shape, count]) => `${count} in ${shape}`)
+    .join(", ");
+  const status = [
+    running ? `${running} running` : "",
+    waiting ? `${waiting} waiting` : "",
+    done ? `${done} done` : "",
+    failed ? `${failed} failed` : "",
+    stopped ? `${stopped} stopped` : "",
+  ].filter(Boolean).join(", ");
+  let text = "Nothing is queued yet.";
+  if (total) {
+    const storyWord = stories.size === 1 ? "story" : "stories";
+    const renderWord = total === 1 ? "render" : "renders";
+    text = [
+      `${stories.size} ${storyWord}`,
+      `${total} ${renderWord}${shapeText ? ` (${shapeText})` : ""}`,
+      status,
+    ].filter(Boolean).join(" · ") + ".";
+  }
+  return {
+    stories: stories.size,
+    total,
+    shapes: Object.fromEntries(shapes),
+    running,
+    waiting,
+    done,
+    failed,
+    stopped,
+    text,
+  };
+}
+
 /** The banner after renders stop. Never green when something failed. */
 export function finishBanner({ done = 0, failed = 0 } = {}) {
   if (failed && done) {
@@ -245,9 +324,12 @@ export const RENDER_FIRST_NOTE = "Render this story first; checks run on the ren
 
 /** Why preflight could not run, in one line. Never a bare "could not run". */
 export function checksFailedNote(error) {
-  if (Number(error?.status) === 404) return RENDER_FIRST_NOTE;
   const reason = String(error?.message || "").trim();
-  return reason ? `Checks could not run for this story: ${reason}` : "Checks could not run for this story. Try Check again.";
+  // A server 404 that names the story is a real answer. Only an old route
+  // with no detail falls back to "render first".
+  if (reason) return `Checks could not run for this story: ${reason}`;
+  if (Number(error?.status) === 404) return RENDER_FIRST_NOTE;
+  return "Checks could not run for this story. Try Check again.";
 }
 
 /**
@@ -283,8 +365,22 @@ export function etaText(seconds) {
 /** A running queue item's live progress: "42% · about 1 min left". */
 export function itemProgressText(item) {
   const fraction = Math.max(0, Math.min(1, Number(item?.progress) || 0));
+  const percent = `${Math.round(fraction * 100)}%`;
   const eta = Number(item?.eta);
-  return `${Math.round(fraction * 100)}%${Number.isFinite(eta) && item?.eta !== null ? ` · about ${etaText(eta)} left` : ""}`;
+  const measured = item?.eta !== null && item?.eta !== undefined
+    && Number.isFinite(eta) && eta > 0;
+  return measured ? `${percent} · about ${etaText(eta)} left` : percent;
+}
+
+/** Header progress uses its own measured ETA; never "0 s left" while running. */
+export function queueProgressText(queue) {
+  const fraction = Math.max(0, Math.min(1, Number(queue?.progress) || 0));
+  const percent = `${Math.round(fraction * 100)}%`;
+  const eta = Number(queue?.eta);
+  const measured = ACTIVE_QUEUE.has(String(queue?.status || ""))
+    && queue?.eta !== null && queue?.eta !== undefined
+    && Number.isFinite(eta) && eta > 0;
+  return measured ? `${percent} · ${etaText(eta)} left` : percent;
 }
 
 /** One readable line from a failed artifact or queue item. */
@@ -604,6 +700,20 @@ export function mount(root, ctx) {
       .sort((left, right) => Number(right.created || 0) - Number(left.created || 0));
   }
 
+  /** The live queue item for one story and shape, if it is still waiting/running. */
+  function liveQueueItem(storyId, shapeValue) {
+    for (const queue of queues) {
+      if (!ACTIVE_QUEUE.has(String(queue?.status || ""))) continue;
+      const item = (queue.items || []).find((row) => (
+        String(row?.story_id || "") === String(storyId || "")
+        && String(row?.aspect || "9:16") === String(shapeValue || "9:16")
+        && ACTIVE_ITEM.has(String(row?.state || ""))
+      ));
+      if (item) return item;
+    }
+    return null;
+  }
+
   function keepArtifactSelection() {
     const rows = allArtifactsFor();
     const ids = new Set(rows.map((item) => item.artifact_id));
@@ -728,14 +838,20 @@ export function mount(root, ctx) {
       fallback = true;
     }
     if (!payload) {
-      const params = new URLSearchParams({ story_id: story.id });
+      const params = new URLSearchParams({ story_id: story.id, set_id: activeSetId });
       try {
         payload = await request(`${jobRoot(job.id)}/preflight?${params.toString()}`);
       } catch (error) {
-        if (Number(error?.status) !== 404) throw error;
-        // No Edit and no render yet: say what to do, not "could not run".
+        if (![404, 405, 501].includes(Number(error?.status))) throw error;
+        // The server's own reason wins. A clip-set story id now resolves;
+        // a real 404 is never rewritten as "Render this story first".
         if (disposed || seq !== checkSeq) return;
-        checks = { markers: [], blocked: false, note: RENDER_FIRST_NOTE, fallback: true };
+        checks = {
+          markers: [],
+          blocked: false,
+          note: checksFailedNote(error),
+          fallback: true,
+        };
         return;
       }
       fallback = true;
@@ -961,9 +1077,7 @@ export function mount(root, ctx) {
     const list = el("div", { class: "st-finish-story-list" });
     stories().forEach((story, index) => {
       const storyId = String(story.id || "");
-      const ready = artifactsFor(storyId, aspect);
       const all = allArtifactsFor(storyId, aspect);
-      const latest = ready[0] || all[0] || null;
       const current = selectedStory()?.id === storyId;
       const stale = staleIds.has(storyId);
       const row = el("article", { class: `st-finish-story${current ? " is-active" : ""}${stale ? " is-stale" : ""}` });
@@ -986,16 +1100,31 @@ export function mount(root, ctx) {
         void refreshChecks();
         renderAll();
       });
+      const shapeChips = ASPECTS.map((shapeValue) => {
+        const rows = allArtifactsFor(storyId, shapeValue);
+        const ready = rows.find(artifactReady) || null;
+        const latestShape = ready || rows[0] || null;
+        const live = liveQueueItem(storyId, shapeValue);
+        let text;
+        if (live) {
+          text = `${shapeValue} · ${statusText(live.state)}`;
+        } else if (latestShape) {
+          text = `${shapeValue} · ${latestShape.status === "ready"
+            ? artifactLabel(latestShape).replace(" · current", "")
+            : statusText(latestShape.status)}`;
+        } else {
+          text = `${shapeValue} · Not rendered`;
+        }
+        const tone = live
+          ? (live.state === "running" ? "st-chip-busy" : "")
+          : latestShape?.status === "ready" ? "st-chip-ok"
+            : latestShape?.status === "failed" ? "st-chip-bad"
+              : latestShape?.status ? "st-chip-busy" : "";
+        return el("span", { class: `st-chip ${tone}`.trim(), text });
+      });
       const meta = el("div", { class: "st-finish-story-meta" }, [
         el("span", { class: "st-mono st-hint", text: formatDuration(storyDuration(story)) }),
-        latest
-          ? el("span", {
-            class: `st-chip ${latest.status === "ready" ? "st-chip-ok" : latest.status === "failed" ? "st-chip-bad" : "st-chip-busy"}`,
-            text: latest.status === "ready"
-              ? artifactLabel(latest).replace(" · current", "")
-              : `${statusText(latest.status)} · ${artifactLabel(latest).replace(" · current", "")}`,
-          })
-          : el("span", { class: "st-chip", text: "Not rendered" }),
+        ...shapeChips,
         all.length > 1 ? el("span", { class: "st-chip", text: formatCount(all.length, "version") }) : null,
         stale ? el("span", { class: "st-chip st-chip-bad", text: "Edit stale" }) : null,
       ]);
@@ -1036,11 +1165,13 @@ export function mount(root, ctx) {
   }
 
   function queueCard() {
+    const summary = queueSummary(queues, { jobId: job?.id || "", setId: activeSetId });
     return el("section", { class: "st-card st-finish-card", "aria-labelledby": "st-finish-queue-title" }, [
       el("div", { class: "st-card-head" }, [
         el("div", {}, [
           el("h2", { id: "st-finish-queue-title", text: "Queue" }),
           el("p", { class: "st-hint", text: "One story at a time. A finished queue stays in this list; a paused queue never restarts by itself." }),
+          el("p", { class: "st-hint st-finish-queue-summary", text: summary.text }),
         ]),
       ]),
       queueBody(),
@@ -1062,7 +1193,7 @@ export function mount(root, ctx) {
       const head = el("div", { class: "st-finish-queue-head" }, [
         el("strong", { text: queue.message || statusText(status) }),
         el("span", { class: `st-chip st-chip-${statusTone(status)}`, text: statusText(status) }),
-        el("span", { class: "st-mono st-hint", text: `${Math.round(progress * 100)}%${active && Number.isFinite(Number(queue.eta)) ? ` · ${etaText(queue.eta)} left` : ""}` }),
+        el("span", { class: "st-mono st-hint", text: queueProgressText(queue) }),
         queue.created ? el("span", { class: "st-hint", text: shortDate(queue.created) }) : null,
       ]);
       const track = el("div", {
@@ -1109,8 +1240,7 @@ export function mount(root, ctx) {
   function renderQueueCard() {
     const card = dom.body.querySelectorAll(".st-finish-card")[1];
     if (!card) return;
-    const body = card.querySelector(".st-finish-queue");
-    if (body) body.replaceWith(queueBody());
+    card.replaceWith(queueCard());
   }
 
   function versionsCard() {
@@ -2153,12 +2283,17 @@ export function mount(root, ctx) {
         quality,
         title: storyName(story, stories().indexOf(story)),
       }));
-      await request("/api/story-queues", { method: "POST", body: { items } });
+      const result = await request("/api/story-queues", { method: "POST", body: { items } });
+      const attached = result?.attached === true;
       await loadQueues();
       if (disposed) return;
       busy = false;
       renderQueueCard();
-      announce(`${formatCount(items.length, "story", "stories")} queued in ${shape}. They render one at a time.`, "ok");
+      const summary = queueSummary(queues, { jobId: job.id, setId: activeSetId });
+      const lead = attached
+        ? "Already queued; attached to the active queue."
+        : `Queued ${formatCount(items.length, "story", "stories")} in ${shape}.`;
+      announce(`${lead} ${summary.text}`, "ok");
       schedulePoll();
     } catch (error) {
       if (disposed) return;

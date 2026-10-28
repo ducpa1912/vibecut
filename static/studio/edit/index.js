@@ -43,16 +43,39 @@ import {
 } from "./api.js";
 
 const CSS_ID = "vibecut-studio-edit-css";
+const NAV_CSS_ID = "vibecut-studio-edit-nav-css";
 const CHOICE_KEY = "vibecut.studio.edit.choice";
 const LAYER_FIELDS = ["clean", "reframe", "motion", "color", "graphics", "captions", "audio"];
 
 function ensureStyles() {
-  if (document.getElementById(CSS_ID)) return;
-  const link = document.createElement("link");
-  link.id = CSS_ID;
-  link.rel = "stylesheet";
-  link.href = "/static/studio/edit/edit.css?v=0.1.0";
-  document.head.append(link);
+  if (!document.getElementById(CSS_ID)) {
+    const link = document.createElement("link");
+    link.id = CSS_ID;
+    link.rel = "stylesheet";
+    link.href = "/static/studio/edit/edit.css?v=0.1.0";
+    document.head.append(link);
+  }
+  // edit.css is owned elsewhere; the step bar's sticky behaviour lives here.
+  if (!document.getElementById(NAV_CSS_ID)) {
+    const style = document.createElement("style");
+    style.id = NAV_CSS_ID;
+    style.textContent = `
+      .st-edit-stepnav {
+        position: sticky; top: 0; z-index: 30;
+        display: flex; align-items: center; flex-wrap: wrap;
+        gap: 8px 12px; margin: 0 0 12px; padding: 10px 0;
+        border-bottom: 1px solid var(--st-line);
+        background: color-mix(in srgb, var(--st-bg) 92%, transparent);
+        backdrop-filter: blur(10px);
+      }
+      .st-edit-stepnav .st-edit-save { margin-left: 2px; }
+      .st-edit-stepnav #st-edit-next { margin-left: auto; }
+      @media (max-width: 700px) {
+        .st-edit-stepnav #st-edit-next { margin-left: 0; }
+      }
+    `;
+    document.head.append(style);
+  }
 }
 
 function readChoice() {
@@ -185,9 +208,11 @@ export function mount(root, ctx) {
             <button id="st-edit-undo" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo</button>
           </div>
         </header>
-        <div class="st-edit-statusline">
+        <div class="st-edit-stepnav" aria-label="Edit step navigation">
+          <button id="st-edit-back" class="st-btn st-btn-ghost st-btn-small" type="button">← Back to Stories</button>
           <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
           <span id="st-edit-meta" class="st-hint"></span>
+          <button id="st-edit-next" class="st-btn st-btn-primary st-btn-small" type="button" disabled>Next: Finish →</button>
         </div>
         <div id="st-edit-receipt" class="st-trim-receipt" role="status" aria-live="polite" hidden></div>
         <div id="st-edit-notice" class="st-edit-notice" role="alert" hidden></div>
@@ -206,6 +231,8 @@ export function mount(root, ctx) {
     dom.receipt = root.querySelector("#st-edit-receipt");
     dom.save = root.querySelector("#st-edit-save");
     dom.meta = root.querySelector("#st-edit-meta");
+    dom.back = root.querySelector("#st-edit-back");
+    dom.next = root.querySelector("#st-edit-next");
     dom.notice = root.querySelector("#st-edit-notice");
     dom.sub = root.querySelector("#st-edit-sub");
     dom.preview = root.querySelector("#st-edit-preview");
@@ -217,7 +244,9 @@ export function mount(root, ctx) {
     for (const button of dom.aspect) {
       button.addEventListener("click", () => { void switchAspect(button.dataset.aspect); });
     }
-    dom.all.addEventListener("click", () => ctx.go("stories"));
+    dom.all.addEventListener("click", () => { void leaveTo("stories", dom.all); });
+    dom.back.addEventListener("click", () => { void leaveTo("stories", dom.back); });
+    dom.next.addEventListener("click", () => { void leaveTo("finish", dom.next); });
     dom.undo.addEventListener("click", () => { void undoLastChange(); });
     dom.undoTrim.addEventListener("click", () => { void undoTrimChange(); });
     dom.repair.addEventListener("click", () => { void repairAspects(); });
@@ -993,6 +1022,33 @@ export function mount(root, ctx) {
     return true;
   }
 
+  /** Leave Edit only after the autosave lands; a failed save keeps the user here. */
+  async function leaveTo(step, button = null) {
+    if (disposed) return;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    try {
+      const saved = await flushSave();
+      if (!saved) {
+        setSaveStatus("Not saved — staying here", "bad");
+        notify(
+          "This change is not saved yet. Stay on this screen and try again; leaving would drop it.",
+          "bad",
+        );
+        return;
+      }
+      setSaveStatus("Saved", "ok");
+      ctx.go(step);
+    } finally {
+      if (button?.isConnected) {
+        button.disabled = step === "finish" && !state.edit;
+        button.removeAttribute("aria-busy");
+      }
+    }
+  }
+
   async function loadStory({ forkFrom = null } = {}) {
     const seq = ++loadSeq;
     if (!state.job || !state.set || !state.story) return;
@@ -1091,6 +1147,7 @@ export function mount(root, ctx) {
     setUndoState();
     renderReceipt();
     updateTrimChrome();
+    if (dom.next) dom.next.disabled = !state.edit;
   }
 
   function renderEditorParts() {
