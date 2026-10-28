@@ -11,6 +11,7 @@
  *   POST   /api/voices/clones                 (multipart: file, name, language, consent)
  *   POST   /api/jobs/{id}/voices/clone        (JSON: name, language, consent, start, end)
  *   GET    /api/voices/clones/{voice_id}
+ *   PATCH  /api/voices/clones/{voice_id}       (JSON: name)
  *   DELETE /api/voices/clones/{voice_id}
  *   POST   /api/voices/clones/{voice_id}/sample
  */
@@ -19,7 +20,7 @@ import { announceChange, request } from "./api.js";
 import { el } from "./ui.js";
 
 /** The server's cleaning warning for a new clone, or "" when it was cleaned. */
-function cleaningNote(record) {
+export function cleaningNote(record) {
   const notes = [];
   for (const text of [record?.warning, ...(Array.isArray(record?.warnings) ? record.warnings : [])]) {
     const line = String(text || "").trim();
@@ -64,6 +65,10 @@ async function detailOf(response) {
 
 export function listClones() {
   return request("/api/voices/clones", { fresh: true });
+}
+
+export function renameClone(voiceId, name) {
+  return request(`/api/voices/clones/${encodeURIComponent(voiceId)}`, { method: "PATCH", body: { name } });
 }
 
 export function deleteClone(voiceId) {
@@ -149,9 +154,10 @@ export function stopPlayback() {
 /**
  * The Setup "My voice" panel. Owns its own node and state so a recording in
  * progress survives the Setup screen re-rendering around it.
- * @param {{ hasKey: () => boolean, onChange?: () => void, sampleText?: () => string, title?: string }} options
+ * `list: false` leaves the cloned voices out, for a page that lists them itself.
+ * @param {{ hasKey: () => boolean, onChange?: () => void, sampleText?: () => string, title?: string, list?: boolean }} options
  */
-export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice" }) {
+export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice", list = true }) {
   const node = el("div", { class: "st-setup-section st-voice-clone" });
   let clones = [];
   let loaded = false;
@@ -425,6 +431,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       line.dataset.tone = noticeTone;
       node.append(line);
     }
+    if (!list) return;
     if (!loaded) {
       node.append(el("p", { class: "st-hint", text: "Reading cloned voices…" }));
     } else if (clones.length) {
@@ -435,7 +442,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
   }
 
   render();
-  void load();
+  if (list) void load();
 
   return {
     node,
