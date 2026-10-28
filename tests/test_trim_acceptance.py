@@ -922,6 +922,8 @@ def test_undo_restores_range_layers_captions_and_a_new_version(client):
     ]
     assert result["revision"] == trimmed_result["revision"] + 1
     assert result["captions"]["track_id"] == old_track_id
+    assert result["clip_hash"] == edits.clip_snapshot_hash(restored["clips"])
+    assert result["captions"]["clip_hash"] == result["clip_hash"]
     assert result["undo_token"] != trimmed_result["undo_token"]
     undo_receipt = app._job_dir("j1") / "trims" / f"{result['receipt']['id']}.json"
     assert undo_receipt.is_file()
