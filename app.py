@@ -58,6 +58,7 @@ import routes_batches
 import routes_check
 import routes_cleanup
 import routes_edits
+import routes_library
 import routes_overlays
 import routes_voice_clone
 import selection
@@ -3161,6 +3162,7 @@ app.include_router(__import__("routes_trim", fromlist=["router"]).router)
 app.include_router(routes_overlays.router)
 app.include_router(routes_voice_clone.router)
 app.include_router(music.router)
+routes_library.install(app, JOBS)
 app.include_router(packet.router)
 app.include_router(preflight.router)
 
@@ -8395,11 +8397,6 @@ def _queue_render_locked_impl(
         if reject_active:
             raise HTTPException(409, "That story is already rendering.")
         if existing.get("artifact_id") == artifact and not force:
-            return existing
-        # A queue duplicate attaches to the item already running for this
-        # identity. Waiting on the same artifact is what story_queue.py
-        # promises; a second queued version would only race the first.
-        if existing.get("artifact_id") and not force:
             return existing
         raise HTTPException(409, "That reel is already rendering.")
 
