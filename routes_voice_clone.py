@@ -51,6 +51,15 @@ class SampleBody(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class AnyVoiceSampleBody(BaseModel):
+    engine: str
+    voice: str = ""
+    text: str = ""
+    rate: float = 1.0
+
+    model_config = {"extra": "forbid"}
+
+
 def _app():
     import app
 
@@ -225,3 +234,67 @@ def clone_sample(voice_id: str, body: SampleBody) -> FileResponse:
     except audio.AudioError as exc:
         raise HTTPException(400, str(exc)) from exc
     return FileResponse(path, media_type="audio/wav", filename="cloned-voice.wav")
+
+
+# ---------------------------------------------------------------- Voice Room
+
+
+@router.get("/api/voices/catalog")
+def voice_catalog() -> dict:
+    """Every voice engine and the voices it can speak on this machine."""
+    import audio
+    import tts
+
+    status = tts.voice_engine_status()
+    engines = []
+    for engine in tts.SYNTHESIZERS:
+        info = status.get(engine) or {}
+        available = bool(info.get("available"))
+        voices: list[dict] = []
+        error = ""
+        if available:
+            try:
+                voices = [
+                    voice for voice in tts.list_voices(engine)
+                    if isinstance(voice, dict) and voice.get("id") is not None
+                ]
+            except audio.AudioError as exc:
+                error = str(exc)
+        engines.append({
+            "id": engine,
+            "label": tts.engine_label(engine),
+            "available": available,
+            "local": engine in tts.LOCAL_ENGINES,
+            "install": str(info.get("install") or ""),
+            "clone": bool(info.get("clone")),
+            "voices": voices,
+            "error": error,
+        })
+    return {
+        "engines": engines,
+        "clones": voice_clone.list_clones(),
+        "clone_available": voice_clone.available(),
+    }
+
+
+@router.post("/api/voices/sample")
+def any_voice_sample(body: AnyVoiceSampleBody) -> FileResponse:
+    """Speak a short line in any voice on this machine, no video needed."""
+    import audio
+    import tts
+
+    engine = body.engine.strip().lower()
+    if engine not in tts.SYNTHESIZERS:
+        raise HTTPException(400, "Unknown voice engine.")
+    text = " ".join((body.text or "").split())[:300] or "This is how this voice sounds in VibeCut."
+    record = voice_clone.get_clone(body.voice) if engine == "heygen" else None
+    cache = voice_clone.settings_store.DATA / "cache" / "voice"
+    cache.mkdir(parents=True, exist_ok=True)
+    try:
+        path = audio.voice_sample(
+            engine, body.voice, text, cache, rate=max(0.5, min(2.0, body.rate)),
+            language=str((record or {}).get("language") or ""),
+        )
+    except audio.AudioError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return FileResponse(path, media_type="audio/wav", filename="voice-sample.wav")

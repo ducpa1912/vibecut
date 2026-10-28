@@ -79,17 +79,21 @@ export async function cloneFromFile(file, { name = "", language = "", consent = 
   return response.json();
 }
 
-/** Speak a short line in a clone and play it. Resolves once playback starts. */
-export async function playClone(voiceId, text = "") {
+let currentPlayer = null;
+
+async function playSample(path, body) {
   const headers = { "Content-Type": "application/json", Accept: "audio/wav" };
   const token = tokenValue();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`/api/voices/clones/${encodeURIComponent(voiceId)}/sample`, {
-    method: "POST", headers, credentials: "same-origin", body: JSON.stringify({ text }),
+  const response = await fetch(path, {
+    method: "POST", headers, credentials: "same-origin", body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await detailOf(response));
   const url = URL.createObjectURL(await response.blob());
+  // One voice at a time: a new sample stops the one already playing.
+  if (currentPlayer) currentPlayer.pause();
   const player = new Audio(url);
+  currentPlayer = player;
   const done = () => URL.revokeObjectURL(url);
   player.addEventListener("ended", done, { once: true });
   player.addEventListener("error", done, { once: true });
@@ -97,12 +101,27 @@ export async function playClone(voiceId, text = "") {
   return player;
 }
 
+/** Speak a short line in a clone and play it. Resolves once playback starts. */
+export function playClone(voiceId, text = "") {
+  return playSample(`/api/voices/clones/${encodeURIComponent(voiceId)}/sample`, { text });
+}
+
+/** Speak a short line in any voice on this machine. */
+export function playVoice(engine, voice, text = "", rate = 1) {
+  return playSample("/api/voices/sample", { engine, voice, text, rate });
+}
+
+export function stopPlayback() {
+  if (currentPlayer) currentPlayer.pause();
+  currentPlayer = null;
+}
+
 /**
  * The Setup "My voice" panel. Owns its own node and state so a recording in
  * progress survives the Setup screen re-rendering around it.
- * @param {{ hasKey: () => boolean, onChange?: () => void }} options
+ * @param {{ hasKey: () => boolean, onChange?: () => void, sampleText?: () => string, title?: string }} options
  */
-export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
+export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice" }) {
   const node = el("div", { class: "st-setup-section st-voice-clone" });
   let clones = [];
   let loaded = false;
@@ -235,7 +254,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
     busy = `play:${item.voice_id}`;
     render();
     try {
-      await playClone(item.voice_id);
+      await playClone(item.voice_id, sampleText());
       setNotice(`Playing ${item.name}.`, "ok");
     } catch (error) {
       setNotice(error?.message || "Could not play this voice.", "bad");
@@ -356,7 +375,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {} }) {
   function render() {
     if (disposed) return;
     node.replaceChildren(el("div", { class: "st-setup-section-head" }, [
-      el("h3", { text: "My voice" }),
+      el("h3", { text: title }),
       el("p", {
         class: "st-hint",
         text: "Clone your own voice once, then use it for Voice-over and Dub. Give 30 s to 3 min of clear speech; HeyGen Voice Turbo on OpenRouter speaks in it. The sample stays on this Mac and is sent with each voice line.",
