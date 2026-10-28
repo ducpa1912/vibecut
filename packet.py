@@ -2130,6 +2130,89 @@ def _public(manifest: dict) -> dict:
     return value
 
 
+STALE_EDIT_MESSAGE = (
+    "This story changed after its Edit was made. "
+    "Open it in Edit and press Repair."
+)
+
+
+def _story_in_job(job: dict, set_id: str, story_id: str) -> dict | None:
+    raw = job.get("clip_sets")
+    records = raw.values() if isinstance(raw, dict) else raw or []
+    record = next(
+        (
+            item for item in records
+            if isinstance(item, dict) and str(item.get("id") or "") == set_id
+        ),
+        None,
+    )
+    if record is None:
+        return None
+    return next(
+        (
+            item for item in record.get("stories") or []
+            if isinstance(item, dict) and str(item.get("id") or "") == story_id
+        ),
+        None,
+    )
+
+
+def _require_current_story_edits(
+    job: dict,
+    job_dir: Path,
+    story_id: str,
+) -> None:
+    """Fail closed when a story's Edit pointer no longer matches the story.
+
+    A packet must never describe a film the Edit no longer is. The check runs
+    before any packet file is written.
+    """
+    if not story_id:
+        return
+    table = job.get("story_edits")
+    if not isinstance(table, dict):
+        return
+    for key, edit_id in table.items():
+        text = str(key)
+        aspect = next(
+            (value for value in ("9:16", "4:5") if text.endswith(":" + value)),
+            "",
+        )
+        if not aspect:
+            continue
+        rest = text[: -(len(aspect) + 1)]
+        set_id, _, row_story = rest.partition(":")
+        if not set_id or not row_story:
+            continue
+        if row_story != story_id or not edit_id:
+            continue
+        try:
+            edit = edits.load_edit(job_dir, str(edit_id))
+        except edits.EditError:
+            edit = None
+        stale = edit is None or str(edit.get("aspect") or "") != aspect
+        if not stale:
+            story = _story_in_job(job, set_id, row_story)
+            # A plan-only job has no clip set to compare against. Skip the
+            # hash check then; nothing claims the story moved.
+            stale = (
+                story is not None
+                and edits.clip_snapshot_hash(story.get("clips") or [])
+                != str((edit.get("story_ref") or {}).get("clip_hash") or "")
+            )
+        if stale:
+            raise PacketError(
+                "edit_stale",
+                STALE_EDIT_MESSAGE,
+                suggestion=(
+                    "Open the story in Edit and press Repair, then build the "
+                    "packet again."
+                ),
+                status=409,
+                details={"story_id": story_id, "aspect": aspect},
+            )
+
+
 def build_packet(
     job: dict,
     job_dir: Path | str,
@@ -2139,6 +2222,12 @@ def build_packet(
 ) -> dict:
     """Build or return an existing packet. Raises ``PacketError`` on block."""
     job_dir = Path(job_dir)
+    raw_story_id = (
+        str(request.get("story_id") or "")
+        if isinstance(request, dict) else str(getattr(request, "story_id", "") or "")
+    )
+    if raw_story_id:
+        _require_current_story_edits(job, job_dir, raw_story_id)
     normalized = normalize_request(request)
     job_id = str(job.get("id") or job_dir.name)
     if not job_id or "/" in job_id or ".." in job_id:
@@ -2147,6 +2236,14 @@ def build_packet(
         )
     resolver = adapter or ReadyRenderAdapter()
     sources = resolver.resolve(job, job_dir, normalized)
+    story_ids = {str(normalized.story_id or "")}
+    for source in sources:
+        spec = source.spec if isinstance(source.spec, dict) else {}
+        plan = source.plan if isinstance(source.plan, dict) else {}
+        story_ids.add(str(spec.get("story_id") or plan.get("story_id") or ""))
+    story_ids.discard("")
+    for story_id in sorted(story_ids):
+        _require_current_story_edits(job, job_dir, story_id)
     sources = sorted(sources, key=lambda item: (item.target or 0, item.artifact_id))
     source_name = str((job.get("source") or {}).get("name") or "")
     if source_name:

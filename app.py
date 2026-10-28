@@ -6360,6 +6360,19 @@ def render_clip_set_story(
     )
 
 
+EDIT_STALE_MESSAGE = (
+    "This story changed after its Edit was made. "
+    "Open it in Edit and press Repair."
+)
+
+
+def _edit_stale_error() -> HTTPException:
+    return HTTPException(
+        409,
+        detail={"code": "edit_stale", "message": EDIT_STALE_MESSAGE},
+    )
+
+
 def _story_edit_for_render(
     job: dict,
     story: dict,
@@ -6368,8 +6381,10 @@ def _story_edit_for_render(
 ) -> dict | None:
     """Return the story's current Edit for one aspect, or None.
 
-    A stale or unreadable Edit never blocks the render: the legacy plan path
-    is used instead, exactly as if no Edit existed.
+    A pointer is a promise: when it exists, the Edit must still describe this
+    story. A stale or unreadable Edit raises 409 instead of falling back to
+    the plan path, because that fallback would render a different film. The
+    legacy plan path runs only when no pointer exists at all.
     """
     key = edits.story_key(set_id, str(story.get("id") or ""), aspect)
     edit_id = edits.pointer_edit_id(job, key)
@@ -6379,15 +6394,40 @@ def _story_edit_for_render(
         edit = edits.load_edit(_job_dir(job["id"]), edit_id)
     except edits.EditError:
         LOGGER.warning("story %s has an unreadable Edit %s", key, edit_id)
-        return None
+        raise _edit_stale_error() from None
     if edit is None or edit.get("aspect") != aspect:
-        return None
+        LOGGER.warning("story %s has a missing or mismatched Edit %s", key, edit_id)
+        raise _edit_stale_error()
     if edits.clip_snapshot_hash(story.get("clips") or []) != (
         edit.get("story_ref") or {}
     ).get("clip_hash"):
-        LOGGER.warning("story %s changed since Edit %s; using the plan path", key, edit_id)
-        return None
+        LOGGER.warning("story %s changed since Edit %s", key, edit_id)
+        raise _edit_stale_error()
     return edit
+
+
+def _story_clip_hashes(job_id: str, edit: dict) -> set[str]:
+    """Hashes that describe the story this Edit belongs to.
+
+    The Edit records the story's clip hash. A track built for the render cut
+    carries the same hash with clips frame-rounded by ``prepare_render``, so
+    both forms count as current. Any other hash is an old cut.
+    """
+    reference = edit.get("story_ref") or {}
+    hashes = {str(reference.get("clip_hash") or "")}
+    try:
+        job = load_job(job_id)
+        set_id = str(reference.get("set_id") or "")
+        story_id = str(reference.get("story_id") or "")
+        record = _clip_set_in_job(job, set_id)
+        story = _story_in_set(record, story_id)
+        hashes.add(edits.clip_snapshot_hash(story.get("clips") or []))
+        plan = _story_track_plan(job, _story_plan(job, record, story, set_id))
+        hashes.add(caption_engine.clip_hash(plan.get("clips")))
+    except (HTTPException, clipset.ClipSetError, OSError, ValueError, KeyError):
+        pass
+    hashes.discard("")
+    return hashes
 
 
 def _edit_caption_track(
@@ -6400,12 +6440,18 @@ def _edit_caption_track(
     if not captions.get("enabled", True) or not track_id:
         return False, None
     try:
-        return True, _caption_track_by_id(job_id, str(track_id))
+        track = _caption_track_by_id(job_id, str(track_id))
     except HTTPException as exc:
         if exc.status_code != 404:
             raise
         LOGGER.warning("Edit %s references missing caption track %s", edit["id"], track_id)
         return False, None
+    if track.clip_hash and track.clip_hash not in _story_clip_hashes(job_id, edit):
+        raise HTTPException(
+            409,
+            "The caption track does not match this story. Rebuild the track.",
+        )
+    return True, track
 
 
 def _queue_story_render(
@@ -6549,8 +6595,14 @@ def create_story_queue(body: StoryQueueBody) -> dict:
     for item in body.items:
         if isinstance(item, dict) and item.get("job_id"):
             job = _clipset_job(str(item["job_id"]))
-            record = _clip_set_in_job(job, str(item.get("set_id") or ""))
-            _story_in_set(record, str(item.get("story_id") or ""))
+            set_id = str(item.get("set_id") or "")
+            record = _clip_set_in_job(job, set_id)
+            story = _story_in_set(record, str(item.get("story_id") or ""))
+            # A stale Edit fails the queue request closed, before any item
+            # starts; the worker would only report it after the 200.
+            _story_edit_for_render(
+                job, story, set_id, str(item.get("aspect") or "9:16"),
+            )
     try:
         return {"queue": story_queues().create(body.items)}
     except story_queue.QueueError as exc:
@@ -7255,18 +7307,27 @@ def default_story_caption_track(
             return None
         job_dir = _job_dir(job_id)
         key = _story_key(set_id, story_id)
-        existing = str((job.get("story_captions") or {}).get(key) or "")
-        if existing:
-            track = caption_engine.load_track(job_dir, existing)
-            if track is not None and track.cues:
-                return track
-        segments = caption_engine.read_transcript_segments(job_dir)
-        if not segments:
-            return None
         record = _clip_set_in_job(job, set_id)
         _clip_set_source_state(job, record)
         story = _story_in_set(record, story_id)
         plan = _story_track_plan(job, _story_plan(job, record, story, set_id))
+        current_hashes = {
+            edits.clip_snapshot_hash(story.get("clips") or []),
+            caption_engine.clip_hash(plan.get("clips")),
+        }
+        current_hashes.discard("")
+        existing = str((job.get("story_captions") or {}).get(key) or "")
+        if existing:
+            track = caption_engine.load_track(job_dir, existing)
+            if (
+                track is not None
+                and track.cues
+                and (not track.clip_hash or track.clip_hash in current_hashes)
+            ):
+                return track
+        segments = caption_engine.read_transcript_segments(job_dir)
+        if not segments:
+            return None
         track = caption_engine.build_track(
             job, plan, _caption_style_for(None),
             segments=segments, job_dir=job_dir,

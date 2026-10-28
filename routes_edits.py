@@ -312,6 +312,41 @@ def _persist(job_id: str, edit: dict, *, replaces: str | None = None) -> dict:
     return job
 
 
+def _story_for_edit(job: dict, edit: dict) -> dict | None:
+    reference = edit.get("story_ref") or {}
+    set_id = str(reference.get("set_id") or "")
+    story_id = str(reference.get("story_id") or "")
+    raw = job.get("clip_sets")
+    records = raw.values() if isinstance(raw, dict) else raw or []
+    record = next(
+        (
+            item for item in records
+            if isinstance(item, dict) and str(item.get("id") or "") == set_id
+        ),
+        None,
+    )
+    if record is None:
+        return None
+    return next(
+        (
+            item for item in record.get("stories") or []
+            if isinstance(item, dict) and str(item.get("id") or "") == story_id
+        ),
+        None,
+    )
+
+
+def _edit_is_stale(job: dict | None, edit: dict) -> bool:
+    """True when the Edit's story moved since the Edit was made."""
+    if job is None:
+        return False
+    story = _story_for_edit(job, edit)
+    if story is None:
+        return True
+    expected = str((edit.get("story_ref") or {}).get("clip_hash") or "")
+    return edits.clip_snapshot_hash(story.get("clips") or []) != expected
+
+
 def _payload(edit: dict, *, changed: bool = False, job: dict | None = None) -> dict:
     key = edits.story_key(
         edit["story_ref"]["set_id"],
@@ -319,10 +354,12 @@ def _payload(edit: dict, *, changed: bool = False, job: dict | None = None) -> d
         edit["aspect"],
     )
     current = edits.pointer_edit_id(job, key) if job is not None else edit["id"]
+    stale = _edit_is_stale(job, edit)
     value = edits.public_edit(edit)
     value.update({
         "changed": bool(changed),
         "is_current": current == edit["id"],
+        "stale": stale,
     })
     return {
         "edit": value,
@@ -331,6 +368,7 @@ def _payload(edit: dict, *, changed: bool = False, job: dict | None = None) -> d
         "hash": edit["hash"],
         "key": key,
         "changed": bool(changed),
+        "stale": stale,
     }
 
 

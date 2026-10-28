@@ -168,7 +168,7 @@ def test_story_render_without_an_edit_keeps_the_legacy_path(api, monkeypatch):
     assert "edit_hash" not in manifest["spec"]
 
 
-def test_story_render_falls_back_when_the_edit_is_stale(api, monkeypatch):
+def test_story_render_fails_closed_when_the_edit_is_stale(api, monkeypatch):
     write_job(api.jobs_dir)
     record, story_value = story(api)
     make_edit(api, record, story_value)
@@ -183,10 +183,9 @@ def test_story_render_falls_back_when_the_edit_is_stale(api, monkeypatch):
         f"/api/jobs/j1/clip-sets/{record['id']}/stories/{story_value['id']}/render",
         json={"quality": "final", "aspect": "9:16"},
     )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["edit_id"] is None
-    assert submitted and submitted[-1][1]["edit"] is None
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "edit_stale"
+    assert submitted == []
 
 
 def test_caption_state_comes_from_the_edit(api, monkeypatch):
@@ -275,7 +274,7 @@ def test_run_render_forwards_the_edit_to_render_reel(api, monkeypatch):
     assert captured["edit"] == edit
 
 
-def test_stale_edit_warning_is_logged(api, caplog):
+def test_stale_edit_raises_and_is_logged(api, caplog):
     write_job(api.jobs_dir)
     record, story_value = story(api)
     make_edit(api, record, story_value)
@@ -289,10 +288,12 @@ def test_stale_edit_warning_is_logged(api, caplog):
         if item["id"] == story_value["id"]
     )
     with caplog.at_level("WARNING", logger="vibecut"):
-        resolved = app._story_edit_for_render(
-            job, current, record["id"], "9:16",
-        )
-    assert resolved is None
+        with pytest.raises(app.HTTPException) as raised:
+            app._story_edit_for_render(
+                job, current, record["id"], "9:16",
+            )
+    assert raised.value.status_code == 409
+    assert raised.value.detail["code"] == "edit_stale"
     assert any("changed since Edit" in row.message for row in caplog.records)
 
 
