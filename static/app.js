@@ -2443,12 +2443,25 @@
     updateRenderPanel();
   }
 
+  const SPEECH_ENGINE_LABELS = {
+    apple: "Apple Speech",
+    whisper: "Local Whisper",
+    openrouter: "OpenRouter",
+    groq: "Groq",
+    deepgram: "Deepgram",
+  };
+
   function speechFailure(engine) {
     const failed = !!engine?.stt_enabled && !engine?.whisper;
     if (!failed || state.job?.analysis?.transcript) return "";
     const errors = Array.isArray(engine.stt_errors) ? engine.stt_errors : [];
-    const last = [...errors].reverse().find((item) => item && item.error);
-    return last?.error || engine.stt_error || "No speech engine returned a transcript.";
+    // An engine that ran and failed explains more than a route that was never
+    // set up (a cloud engine with no key says only "not available").
+    const ran = errors.filter((item) => item && item.error && item.error !== "Speech engine is not available.");
+    const pick = ran[ran.length - 1] || [...errors].reverse().find((item) => item && item.error);
+    if (!pick) return engine.stt_error || "No speech engine returned a transcript.";
+    const label = SPEECH_ENGINE_LABELS[pick.provider] || pick.provider || "";
+    return label ? `${label}: ${pick.error}` : pick.error;
   }
 
   function renderSpeechNotice() {
@@ -2473,16 +2486,23 @@
         body: JSON.stringify({}),
       });
       let ticks = 0;
-      while (result && result.state && ticks < 300) {
+      // Only a running task (202) carries task_id. A finished one returns its
+      // result, and a task the server no longer tracks answers "idle".
+      while (result && result.task_id && ticks < 300) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         result = await api(`/api/jobs/${jobId}/voice-tasks/transcribe`);
         ticks += 1;
         if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = `Reading speech… ${ticks * 2}s`;
         if (state.job?.id !== jobId) return;
       }
-      if (result?.segments) {
-        if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = `Transcript ready · ${result.segments} lines.`;
-        await openJob(jobId);
+      // The job is the truth: reload it and read its transcript.
+      await openJob(jobId);
+      if (state.job?.id !== jobId) return;
+      // The job API sends the transcript summary: segments is a count there.
+      const segments = state.job?.analysis?.transcript?.segments;
+      const lines = Array.isArray(segments) ? segments.length : Number(segments) || 0;
+      if (lines) {
+        if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = `Transcript ready · ${lines} lines.`;
         toast("Speech read again.");
       } else if (dom.speechRetryStatus) {
         dom.speechRetryStatus.textContent = "No transcript returned. Check Setup → Transcription.";
