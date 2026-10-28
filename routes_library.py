@@ -248,6 +248,7 @@ def _collect(jobs: Path) -> list[dict]:
                 "job_title": job_title,
                 "source_label": source_label,
                 "story_id": story_id,
+                "set_id": _text(manifest.get("set_id")) or _text(spec.get("set_id")),
                 "story_title": (
                     story_titles.get(story_id)
                     or _text(manifest.get("title"))
