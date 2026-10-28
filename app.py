@@ -7538,6 +7538,12 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
     return {"renders": renders, "errors": errors}
 
 
+_NO_TRANSCRIPT_EXPORT = (
+    "This cut has no transcript, so there are no captions to export. "
+    "Import the video with Transcribe speech on, or use Retry speech."
+)
+
+
 @app.get("/api/jobs/{job_id}/export/{kind}")
 def export_cut(
     job_id: str,
@@ -7565,6 +7571,8 @@ def export_cut(
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(404, "Artifact captions not found.") from exc
+        if not content.strip():
+            raise HTTPException(409, _NO_TRANSCRIPT_EXPORT)
         return Response(
             content=content,
             media_type="text/plain; charset=utf-8",
@@ -7622,6 +7630,8 @@ def _export_plan_response(
     else:
         content = cuts.fcp7_xml(plan, clips, job["source"]["path"])
         media = "application/xml"
+    if kind in {"srt", "vtt"} and not content.strip():
+        raise HTTPException(409, _NO_TRANSCRIPT_EXPORT)
     safe = "".join(
         ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "-"
         for ch in stem

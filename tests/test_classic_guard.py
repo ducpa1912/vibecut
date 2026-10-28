@@ -128,6 +128,20 @@ def test_classic_page_opens_with_its_scripts_and_controls(monkeypatch):
     assert '"views":["classic"]' in html
 
 
+def test_srt_export_without_a_transcript_says_so(classic):
+    directory = app.JOBS / "classic1"
+    job = json.loads((directory / "job.json").read_text(encoding="utf-8"))
+    for scene in job["analysis"]["scenes"]:
+        scene["speech"] = ""
+        scene["ocr"] = ""
+    job["analysis"]["engine"] = {"transcribe": False}
+    (directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+
+    exported = classic.get("/api/jobs/classic1/export/srt?target=15")
+    assert exported.status_code == 409
+    assert "no transcript" in exported.json()["detail"].lower()
+
+
 def test_edited_cut_export_route_uses_the_clips(classic):
     planned = classic.post("/api/jobs/classic1/plan", json={"target": 15})
     assert planned.status_code == 200, planned.text
