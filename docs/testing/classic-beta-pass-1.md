@@ -1,6 +1,6 @@
 # Classic beta pass 1 — founder test script
 
-**Build:** `classic` at `d1c9b79` (this pass walked `e1057fa`; every fix since is listed in **Known issues** and the notes you received).
+**Build:** the latest `classic` (the commit that ships this version of the script). Every fix from Claude's walk is already in; only **Known issues** below are still open.
 
 **Start the app:** open Terminal and run these two lines. Use port **8793**, never 8787.
 
@@ -28,7 +28,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 1.1 | Run the two commands above, then open `http://127.0.0.1:8793` | A clean Classic beta build | The Classic page opens with **Drop a video**, **Paste a video link**, **Creator** and **Setup**. No Studio view opens. | |
 | 1.2 | Look at the top-right status | Engine check | It says **local only** and a health line such as **vision · whisper**. It does not say **engine offline**. | |
 | 1.3 | If this is the first run, read the banner at the top | First-run nudge | A one-line banner says **Optional: add keys and voices in Setup** with a button that opens Setup. | |
-| 1.4 | Reload the page | The nudge is not repeated after Setup was saved | The banner is gone after **Save setup** was used once. | |
+| 1.4 | Click **Open Setup** in the banner → **Save setup** → close Setup with **×** → reload the page | The nudge is not repeated after Setup was saved | The banner is gone. | |
 
 ## 2. Import
 
@@ -63,24 +63,24 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 2.4.1 | On video **A**, tick **Transcribe speech** (it is on by default for speech videos under 15 minutes) | Speech analysis | The result meta line includes **whisper** or the local speech provider, and **CC · transcript** appears under the hook. | |
 | 2.4.2 | Click **CC · transcript** | Transcript view | Timed lines appear. Clicking it again hides them. | |
 | 2.4.3 | Import video **A** once more with **Transcribe speech** off | Speech off is distinct from speech failure | No transcript button appears, and no failure notice appears. | |
-| 2.4.4 | If a speech-on job returns no transcript, read the result view | A speech failure is not silent | A notice says **Speech was on, but no transcript came back.**, shows the last engine error, and offers **Retry speech** with a **Setup → Transcription** hint. | |
+| 2.4.4 | If a speech-on job returns no transcript, read the result view | A speech failure is not silent | A notice says **Speech was on, but no transcript came back.**, names the engine that failed (for example **Local Whisper: No transcript returned.**), and offers **Retry speech**. Click **Retry speech**: the transcript arrives and the notice goes away. | |
 
 ## 3. Smart Cut: plan, render, hooks, edit
 
 | # | Action: where to click | Intent | Expected | Result |
 |---|---|---|---|---|
-| 3.1 | Open video **A**, then click **15s**, **30s**, **60s** under **Reel length** | Plan lengths | Each tab rebuilds the timeline and the button text changes to **Render 15s reel**, **Render 30s reel** or **Render 60s reel**. The total time is close to the target. | |
+| 3.1 | Open video **A**, then click **15s**, **30s**, **60s** in the **Smart Cut** section | Plan lengths | Each tab rebuilds the timeline and the button text changes to **Render 15s reel**, **Render 30s reel** or **Render 60s reel**. The total time is close to the target. | |
 | 3.2 | Click **Render 30s reel** | A final render | A progress bar runs, then the player appears. The cut reaches **ready** with a poster. | |
 | 3.3 | Click **Draft** next to Render | A fast draft | A second, shorter render finishes and the player shows the draft cut. | |
 | 3.4 | Start another render, then click **Cancel** while it runs | Cancel is honest | The render stops, says **Cancelled**, and the earlier ready cut stays available. | |
 | 3.5 | Open **Advanced**, tick **Captions**, render again | Burned-in captions | Captions are visible in the player and the render note includes **captions**. | |
 | 3.6 | Open **Advanced** → **Platform preset** → choose **TikTok**, **Reels**, **Shorts**, **Square**, **Landscape** | Presets set shape | The **Aspect ratio** select changes to the matching shape (9:16, 9:16, 9:16, 1:1, 16:9). Render again and the player shape matches. | |
 | 3.7 | Open **Advanced** → **All 15/30/60** | Render all three lengths | Three renders queue in order. Each finishes ready. History gains three rows. | |
-| 3.8 | Open **Advanced** → **A/B hooks** | Two hook variants for the same length | Two renders are queued with different hooks. Both appear in the player/variant area. | |
+| 3.8 | Open **Advanced** → **A/B hooks** | Hook variants for the same length | Up to three renders queue, one per top hook. Each finishes ready and gets its own **History** row; **Download reel** on each row plays that hook's cut. | |
 | 3.9 | Click **Pick another hook →**, choose a different moment, then **Reset hook** | Hook override | The timeline and hook panel change to the chosen moment. **Reset hook** appears; clicking it restores the automatic hook. | |
 | 3.10 | Click **Hook lab →**, look at the cards | Hook candidates | Up to eight cards show a thumbnail, a hook score badge, time, length and beats. Click one card; it becomes the hook. | |
-| 3.11 | Click **Edit cut**, select a clip and use **← / →**, **Alt+← / →**, **− / +**, **Del** | Manual cut edit | The timeline changes immediately. The plan badge says **manual** or the note says **Manual edit**. | |
-| 3.12 | In edit mode, type a name in **Variant name**, click **Save variant**, then click **Done** | Saved variant | The variant chip appears under **Advanced**. Click the chip to load it: the timeline returns to that cut and a toast says **Loaded “…”**. | |
+| 3.11 | Click **Edit cut**. On a clip, click **−** (trim 0.25 s), **↑ / ↓** (move) or **✕** (remove). Keys also work: **← / →**, **Alt+← / →**, **− / +**, **Del** | Manual cut edit | The timeline and the clip lengths change immediately. | |
+| 3.12 | In edit mode, type a name in **Variant name**, click **Save variant**, then click **Done** | Saved variant | A toast says **Variant saved.** and a chip **name · length** appears next to **Save variant**. Click the chip to load it: the timeline returns to that cut and a toast says **Loaded “…”**. | |
 | 3.13 | Click **✕** on a saved variant | Delete a variant | The chip disappears. The render stays. | |
 | 3.14 | With an edited cut, click **Render 30s reel** | Render the cut on screen | The render uses the edited clips, not the automatic plan. | |
 
@@ -90,7 +90,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 |---|---|---|---|---|
 | 4.1 | Open **Audio · rewrite, voice, music**. Leave **Mode** on **Original**, render | Original audio | The render note says **original audio** and the source speech is heard. | |
 | 4.2 | Click **Voice-over**, then render | New voice over the original bed | The render note says **voice-over**, not **original audio**. The new voice is heard over the original audio. | |
-| 4.3 | Click **Dub**, then render | Replace only the voice | The render note says **dubbed voice**. The original music/effects remain under the new voice. | |
+| 4.3 | Click **Dub**, choose a **Language** in **Rewrite** (for example Vietnamese), click **▶ Rewrite**, then render | Replace only the voice | The render note says **dubbed voice**. The original music/effects remain under the new voice. | |
 | 4.4 | Click **Music**, choose **Generate** with no MiniMax or OpenRouter key | An unavailable engine blocks the render | A warning says **Music generation needs a MiniMax or OpenRouter key. Add one in Setup, or choose Use my sound.** Render, Draft, All and A/B are disabled. | |
 | 4.5 | Click **Music** → **Use my sound** → **Choose sound**, pick `music.m4a`, then render | Own music | The track name and length appear, the bed plays under the cut, and the render note says **music bed**. | |
 | 4.6 | Click **Music** → **Generate** with a MiniMax or OpenRouter key saved in Setup | Generated music | The generate options are selectable, a bed is generated, and the render finishes with music. | |
@@ -111,7 +111,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 5.4 | Click **Delete** on a history row | Delete one attempt | The row disappears. Other history rows stay. | |
 | 5.5 | With a ready cut, click **SRT**, then **VTT** | Caption export | Each button downloads a non-empty file with timed cues. | |
 | 5.6 | Click **EDL**, then **XML** | Edit export | Each downloads a non-empty file. With an edited cut loaded, the file lists the edited clips. | |
-| 5.7 | Open video **A** once with **Transcribe speech** off, then click **SRT** | No transcript is not an empty file | An error says there is no transcript for this video and suggests importing with **Transcribe speech** on. No empty download starts. | |
+| 5.7 | Open the video **A** job imported with **Transcribe speech** off (step 2.4.3), then click **SRT**, then **VTT** | No transcript is not an empty file | Each shows a toast: **This cut has no transcript, so there are no captions to export. …** No file downloads and no new tab opens. | |
 | 5.8 | Click **Review link** next to a ready cut | Share the cut on screen | A review link is copied. It opens the same cut, with the right length and shape. | |
 | 5.9 | Change the hook or render a newer cut, then make another **Review link** from the older cut | The link stays on the shown cut | The older link still plays the older cut, not the newest render for that length. | |
 | 5.10 | Click **Clean** once | Clean asks for confirmation | The button changes to **Click to confirm**. | |
@@ -171,7 +171,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 8.8 | Transcription → choose a spoken language, click **Check local STT**, then **Live STT** | Local speech check | **Check local STT** says local STT is ready. **Live STT** generates a test clip and transcribes it. | |
 | 8.9 | Voice over → paste a MiniMax key, click **Check TTS**, then **Live TTS** | Local/cloud voice check | **Check TTS** lists the ready engines. **Live TTS** plays a short sample. | |
 | 8.10 | Voice engines list | Every voice engine and what it needs | Apple voices, Kokoro, HeyGen, Fish, Gemini, MiniMax and ElevenLabs each show **Ready** or **Needs setup**, with the missing key or pack named. No fake install button appears. | |
-| 8.11 | Optional packs | Honest pack status | Speech, Voice and Separation show **Installed** or **Not installed** with their size. Nothing downloads unless a real install is offered. | |
+| 8.11 | Optional packs | Honest pack status | Speech, Voice and Separation each show **Installed**, **Ready** (the engine already works on this Mac, for example Whisper installed another way) or **Not installed** with its download size. Nothing downloads from Classic. | |
 | 8.12 | Rights lock | The import gate | The toggle shows the current state. Turning it off removes the import dialog; turning it on restores it. | |
 | 8.13 | Paste an ElevenLabs key, click **Save setup**, reopen Setup | A saved key round-trip | The key field is blank and a status says the key is saved. The key is never returned by the API or shown in the page. | |
 | 8.14 | Fill the other key fields: **API key · optional** (OpenCode), **Service URL** and **API key · optional** (Cobalt), **Service URL**, **Access token · friends mode** and **Cookie · one-shot handoff** (XHS), then **Save setup** | Every key field is real and saved | Each field accepts text, reopens with a configured/blank state, and no saved secret is echoed back into the page. | |
@@ -189,3 +189,5 @@ Open findings at the time of this script. Do not report these twice.
 These flows were exercised against a local beta build on port 8793 with scratch data and no cloud keys: URL import (Me at the zoo), path import, plan/render/history/export, batches with the rights tick, queue pause/resume/cancel, packet ZIP, Clean, Delete, Recent cuts, every Setup Test button, Creator Debug **Load job**, **Read Analysis**, **Run beta read**, and preflight on a clip-set story id. The new Setup keys, voice engine list, optional pack status and rights lock were checked after the last ship.
 
 File drop and the native file chooser cannot be driven by automation. Those steps are written for you above.
+
+**When you finish:** press **Ctrl+C** in the Terminal window to stop the app. Your test data stays in `~/vibecut-beta-test`; delete that folder when you no longer need it.
