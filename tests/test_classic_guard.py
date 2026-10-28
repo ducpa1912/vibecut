@@ -128,6 +128,13 @@ def test_classic_page_opens_with_its_scripts_and_controls(monkeypatch):
     assert '"views":["classic"]' in html
 
 
+def test_review_link_uses_the_artifact_on_screen():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "function shownRender()" in script
+    assert "shownRender()?.artifact_id" in script
+    assert "{ artifact_id: artifactId }" in script
+
+
 def test_history_reel_link_prefers_the_artifact_url():
     script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
     assert "entry.artifact_id || render.artifact_id" in script

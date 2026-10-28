@@ -187,7 +187,6 @@ Open findings at the time of this script. Do not report these twice.
 | F7 | Export | SRT/VTT with no transcript downloads an empty 200 file. | Open |
 | F8 | Captions | Some cues split into one-word lines such as **It** or **dump.** | Open |
 | F9 | Packet | No-key copy truncates a title mid-word and uses stop words as hashtags. | Open |
-| F10 | Review link | **Review link** shares the newest render for the length, not the cut on screen. | Open |
 | F11 | Clip Set | A Clip Set with 0 stories toasts **Clip Set built. Review the stories…**. | Open |
 
 ## 10. What was walked by automation

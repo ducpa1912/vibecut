@@ -3995,12 +3995,34 @@
     }
   }
 
+  function shownRender() {
+    const finalRecord = findRender("final");
+    const draftRecord = findRender("draft");
+    const hookId = currentHookId();
+    const finalMatches = finalRecord && finalRecord.hook === hookId;
+    const draftMatches = draftRecord && draftRecord.hook === hookId;
+    const draftNewer = draftMatches && draftRecord.status === "ready"
+      && (!finalMatches || finalRecord.status !== "ready"
+        || (draftRecord.updated || 0) > (finalRecord.updated || 0));
+    if (draftNewer) return draftRecord;
+    if (finalMatches && finalRecord.status === "ready") return finalRecord;
+    return null;
+  }
+
   async function createReviewLink() {
     if (!state.job) return;
+    // Share the artifact on screen, not whichever render wrote reel_<target>.mp4 last.
+    const artifactId = String(shownRender()?.artifact_id || "");
     try {
+      const query = artifactId
+        ? ""
+        : `?target=${state.target}&aspect=${encodeURIComponent(state.aspect)}`;
       const result = await api(
-        `/api/jobs/${state.job.id}/share?target=${state.target}&aspect=${encodeURIComponent(state.aspect)}`,
-        { method: "POST" },
+        `/api/jobs/${state.job.id}/share${query}`,
+        {
+          method: "POST",
+          body: JSON.stringify(artifactId ? { artifact_id: artifactId } : {}),
+        },
       );
       const url = `${location.origin}${result.url}`;
       try {
