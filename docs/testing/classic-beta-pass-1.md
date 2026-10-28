@@ -1,6 +1,6 @@
 # Classic beta pass 1 — founder test script
 
-**Build:** `classic` at `e1057fa` (the build this pass walked; later fixes are noted in §12).
+**Build:** `classic` at `d1c9b79` (this pass walked `e1057fa`; every fix since is listed in **Known issues** and the notes you received).
 
 **Start the app:** open Terminal and run these two lines. Use port **8793**, never 8787.
 
@@ -181,13 +181,10 @@ Open findings at the time of this script. Do not report these twice.
 
 | # | Area | Issue | Status |
 |---|---|---|---|
-
-| F8 | Captions | Some cues split into one-word lines such as **It** or **dump.** | Open |
-
-
+| F8 | Captions | Some cues split into one-word lines such as **It** or **dump.** This comes from a story clip that ends mid-sentence; it is not fixed in this pass. | Open |
 
 ## 10. What was walked by automation
 
-These flows were exercised against a local beta build on port 8793 with scratch data and no cloud keys: URL import (Me at the zoo), path import, plan/render/history/export, batches with the rights tick, queue pause/resume/cancel, packet ZIP, Clean, Delete, Recent cuts, every Setup Test button, Creator Debug **Load job**, **Read Analysis**, **Run beta read**, and preflight on a clip-set story id.
+These flows were exercised against a local beta build on port 8793 with scratch data and no cloud keys: URL import (Me at the zoo), path import, plan/render/history/export, batches with the rights tick, queue pause/resume/cancel, packet ZIP, Clean, Delete, Recent cuts, every Setup Test button, Creator Debug **Load job**, **Read Analysis**, **Run beta read**, and preflight on a clip-set story id. The new Setup keys, voice engine list, optional pack status and rights lock were checked after the last ship.
 
 File drop and the native file chooser cannot be driven by automation. Those steps are written for you above.
