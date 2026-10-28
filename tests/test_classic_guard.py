@@ -128,6 +128,27 @@ def test_classic_page_opens_with_its_scripts_and_controls(monkeypatch):
     assert '"views":["classic"]' in html
 
 
+def test_edited_cut_export_route_uses_the_clips(classic):
+    planned = classic.post("/api/jobs/classic1/plan", json={"target": 15})
+    assert planned.status_code == 200, planned.text
+    clips = planned.json()["plan"]["clips"]
+    assert len(clips) >= 2
+    auto = classic.get("/api/jobs/classic1/export/edl?target=15")
+    assert auto.status_code == 200, auto.text
+
+    edited = clips[:1]
+    exported = classic.post(
+        "/api/classic/jobs/classic1/export/edl",
+        json={"target": 15, "order": "source", "clips": edited},
+    )
+    assert exported.status_code == 200, exported.text
+    assert exported.text != auto.text, "the edited clips must reach the export"
+
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "/api/classic/jobs/${state.job.id}/export/${kind}" in script
+    assert "clips," in script
+
+
 def test_review_link_uses_the_artifact_on_screen():
     script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
     assert "function shownRender()" in script

@@ -7573,6 +7573,17 @@ def export_cut(
             },
         )
     plan = _apply_order(job, _plan_for(job, _valid_target(int(target)), hook_scene), order)
+    return _export_plan_response(job_id, job, plan, kind, int(target), caption_track_id)
+
+
+def _export_plan_response(
+    job_id: str,
+    job: dict,
+    plan: dict,
+    kind: str,
+    target: int,
+    caption_track_id: str | None = None,
+) -> Response:
     scenes = job["analysis"]["scenes"]
     clips = plan["clips"]
     stem = Path(job["source"]["name"]).stem
