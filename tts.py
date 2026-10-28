@@ -26,7 +26,6 @@ import threading
 import urllib.error
 import urllib.request
 import wave
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -525,57 +524,6 @@ def _tts_voice_for(candidate: str, preferred: str, primary: str) -> str:
     return DEFAULT_VOICES.get(candidate, preferred)
 
 
-@dataclass(frozen=True)
-class StoryVoice:
-    """One voice for a whole story."""
-
-    engine: str
-    model: str
-    voice: str
-    language: str
-    paths: tuple[Path, ...]
-    cache_hits: int = 0
-    attempts: tuple[str, ...] = field(default_factory=tuple)
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "engine": self.engine,
-            "model": self.model,
-            "voice": self.voice,
-            "language": self.language,
-            "paths": [str(path) for path in self.paths],
-            "cache_hits": self.cache_hits,
-            "attempts": list(self.attempts),
-        }
-
-
-def _story_lines(
-    lines: Sequence[Any], rate: float, language: str,
-) -> list[dict[str, Any]]:
-    normalized: list[dict[str, Any]] = []
-    for index, raw in enumerate(lines):
-        if isinstance(raw, str):
-            text = raw
-            line_rate = rate
-            line_language = language
-        elif isinstance(raw, Mapping):
-            text = str(raw.get("text") or "")
-            line_rate = float(raw.get("rate") or rate or 1.0)
-            line_language = str(raw.get("language") or language or "")
-        else:
-            raise ValueError(f"Voice line {index} must be text or a mapping.")
-        if not text.strip():
-            raise ValueError(f"Voice line {index} has no text.")
-        normalized.append({
-            "text": text,
-            "rate": line_rate,
-            "language": line_language,
-        })
-    if not normalized:
-        raise ValueError("A story needs at least one line to voice.")
-    return normalized
-
-
 def _candidate_order(
     engine: str, model: str, routes: Sequence[Mapping[str, Any]] | None,
 ) -> list[dict[str, str]]:
@@ -680,101 +628,6 @@ def voice_candidates(engine: str = "auto", model: str = "") -> list[dict[str, st
         )
     return candidates
 
-
-def synthesize_story(
-    lines: Sequence[Any],
-    *,
-    engine: str = "auto",
-    voice: str = "",
-    model: str = "",
-    language: str = "en",
-    rate: float = 1.0,
-    cache_dir: Path | None = None,
-    routes: Sequence[Mapping[str, Any]] | None = None,
-    cancel_event: threading.Event | None = None,
-    timeout: float = 300,
-    progress: Callable[[int, int], None] | None = None,
-) -> StoryVoice:
-    """Voice a whole story with one engine and one voice.
-
-    Each sentence is a cache unit. If any sentence fails on the current engine,
-    that engine is abandoned and the whole story restarts on the next route.
-    Already-written cache files are reused, but no clip from a failed attempt
-    reaches the returned story.
-    """
-    normalized = _story_lines(lines, rate, language)
-    candidates = (
-        voice_candidates(engine, model) if routes is None
-        else _candidate_order(engine, model, routes)
-    )
-    requested_voice = str(voice or "").strip()
-    require_live_clone(requested_voice)
-    primary_engine = candidates[0]["engine"]
-    cache = Path(cache_dir) if cache_dir is not None else audio.CACHE / "voice"
-    cache.mkdir(parents=True, exist_ok=True)
-    failures: list[str] = []
-
-    for candidate in candidates:
-        candidate_engine = candidate["engine"]
-        candidate_model = candidate.get("model") or candidate_engine
-        candidate_voice = _tts_voice_for(
-            candidate_engine, requested_voice, primary_engine,
-        )
-        if not candidate_voice and candidate_engine != "fish":
-            candidate_voice = default_voice(candidate_engine)
-        attempts: list[str] = []
-        paths: list[Path] = []
-        hits = 0
-        try:
-            for index, line in enumerate(normalized):
-                path = line_cache_path(
-                    cache, candidate_engine, candidate_model, candidate_voice,
-                    line["text"], line["rate"], line["language"],
-                )
-                if path.is_file() and path.stat().st_size > 512:
-                    hits += 1
-                else:
-                    synthesize_line(
-                        candidate_engine,
-                        candidate_voice,
-                        line["text"],
-                        path,
-                        rate=line["rate"],
-                        cancel_event=cancel_event,
-                        model=candidate_model,
-                        timeout=timeout,
-                        language=line["language"],
-                    )
-                    if not path.is_file() or path.stat().st_size == 0:
-                        raise audio.AudioError(
-                            f"{engine_label(candidate_engine)} produced no audio."
-                        )
-                paths.append(path)
-                attempts.append(candidate_engine)
-                if progress:
-                    progress(index + 1, len(normalized))
-        except Exception as exc:  # noqa: BLE001
-            if cancel_event is not None and cancel_event.is_set():
-                raise audio.AudioError("Voice synthesis cancelled.") from exc
-            failures.append(
-                f"{engine_label(candidate_engine)}: {str(exc)[:200]}"
-            )
-            continue
-        return StoryVoice(
-            engine=candidate_engine,
-            model=candidate_model,
-            voice=candidate_voice,
-            language=str(language or ""),
-            paths=tuple(paths),
-            cache_hits=hits,
-            attempts=tuple(attempts),
-        )
-
-    detail = "; ".join(failures) if failures else "no configured route"
-    raise audio.AudioError(f"All voice engines failed for this story: {detail}")
-
-
-# ---------------------------------------------------------------- speech
 
 def _voice_cache(cache_dir: Path, key: str, suffix: str = ".flac") -> Path:
     return cache_dir / f"{key}{suffix}"

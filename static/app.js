@@ -349,6 +349,7 @@
       rewrite: "Script rewrite",
       translate: "Translation",
       hook_rank: "Hook ranking",
+      script: "Silent-video script",
       tts: "Voice-over",
       music: "Music",
       stt: "Transcription",

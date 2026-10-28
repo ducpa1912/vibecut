@@ -42,6 +42,35 @@ CANDIDATE_CANCELS: dict[str, threading.Event] = {}
 CANDIDATE_STAGES: dict[str, str] = {}
 CANDIDATE_RESULTS: dict[str, dict] = {}
 CANDIDATE_ERRORS: dict[str, str] = {}
+#: Jobs whose candidate state stays in memory; older ones fall back to the
+#: report on disk. Guards against tables that grow for the life of the app.
+CANDIDATE_MEMORY = 64
+_CANDIDATE_LOCK = threading.RLock()
+_CANDIDATE_TABLES = (CANDIDATE_CANCELS, CANDIDATE_STAGES, CANDIDATE_RESULTS, CANDIDATE_ERRORS)
+
+
+def _remember(table: dict, job_id: str, value) -> None:
+    """Store one job's entry, dropping the oldest jobs past the cap.
+
+    Cancel switches are not capped: each one is removed when its search ends.
+    """
+    with _CANDIDATE_LOCK:
+        table.pop(job_id, None)
+        table[job_id] = value
+        if table is CANDIDATE_CANCELS:
+            return
+        while len(table) > CANDIDATE_MEMORY:
+            table.pop(next(iter(table)), None)
+
+
+def forget_job(job_id: str) -> None:
+    """Drop every in-memory candidate entry for a deleted job."""
+    with _CANDIDATE_LOCK:
+        cancel = CANDIDATE_CANCELS.get(job_id)
+        if cancel is not None:
+            cancel.set()
+        for table in _CANDIDATE_TABLES:
+            table.pop(job_id, None)
 
 
 class VideoCloneBody(BaseModel):
@@ -134,7 +163,7 @@ def _upload_head(raw: Path, work: Path) -> Path:
 
 
 def _set_stage(job_id: str, stage: str) -> None:
-    CANDIDATE_STAGES[job_id] = str(stage or "")
+    _remember(CANDIDATE_STAGES, job_id, str(stage or ""))
 
 
 def _run_candidate_search(job_id: str, cancel_event: threading.Event, out_dir: Path) -> dict:
@@ -156,8 +185,9 @@ def _run_candidate_search(job_id: str, cancel_event: threading.Event, out_dir: P
         report = dict(report)
         report["job_id"] = job_id
         report.setdefault("candidates", [])
-        CANDIDATE_RESULTS[job_id] = report
-        CANDIDATE_ERRORS.pop(job_id, None)
+        _remember(CANDIDATE_RESULTS, job_id, report)
+        with _CANDIDATE_LOCK:
+            CANDIDATE_ERRORS.pop(job_id, None)
         try:
             (out_dir / "report.json").write_text(
                 json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8",
@@ -170,9 +200,15 @@ def _run_candidate_search(job_id: str, cancel_event: threading.Event, out_dir: P
         if cancel_event.is_set():
             _set_stage(job_id, "cancelled")
         else:
-            CANDIDATE_ERRORS[job_id] = _short_error(exc)
+            _remember(CANDIDATE_ERRORS, job_id, _short_error(exc))
             _set_stage(job_id, "failed")
         raise
+    finally:
+        # The search is over; its cancel switch is no longer needed. A newer
+        # search for the same job keeps its own event.
+        with _CANDIDATE_LOCK:
+            if CANDIDATE_CANCELS.get(job_id) is cancel_event:
+                CANDIDATE_CANCELS.pop(job_id, None)
 
 
 def _public_candidate(job_id: str, item: dict, models: dict) -> dict:
@@ -363,10 +399,11 @@ def start_candidate_search(job_id: str, request: Request) -> dict:
         (out_dir / "report.json").unlink()
     except OSError:
         pass
-    CANDIDATE_RESULTS.pop(job_id, None)
-    CANDIDATE_ERRORS.pop(job_id, None)
+    with _CANDIDATE_LOCK:
+        CANDIDATE_RESULTS.pop(job_id, None)
+        CANDIDATE_ERRORS.pop(job_id, None)
     cancel_event = threading.Event()
-    CANDIDATE_CANCELS[job_id] = cancel_event
+    _remember(CANDIDATE_CANCELS, job_id, cancel_event)
     _set_stage(job_id, "queued")
     app.voice_pool.submit_tracked(
         _run_candidate_search, job_id, cancel_event, out_dir,
@@ -558,8 +595,9 @@ def delete_clone(voice_id: str, request: Request) -> dict:
 
 
 @router.post("/api/voices/clones/{voice_id}/sample")
-def clone_sample(voice_id: str, body: SampleBody) -> FileResponse:
+def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileResponse:
     """Speak a short line in a cloned voice through OpenRouter HeyGen Turbo."""
+    _guard(request)
     import audio
 
     record = voice_clone.get_clone(voice_id)
@@ -620,8 +658,9 @@ def voice_catalog() -> dict:
 
 
 @router.post("/api/voices/sample")
-def any_voice_sample(body: AnyVoiceSampleBody) -> FileResponse:
+def any_voice_sample(body: AnyVoiceSampleBody, request: Request) -> FileResponse:
     """Speak a short line in any voice on this machine, no video needed."""
+    _guard(request)
     import audio
     import tts
 

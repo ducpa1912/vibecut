@@ -197,3 +197,18 @@ The R3 branches were merged into `main` by another session while this review ran
     - My voice cleaning reads at most the first 6 minutes of the upload.
     - `/transcribe` now has the origin guard (part of F10).
   - Not covered: there is no cancel button in the UI yet (the API exists), and the Stories polling is not checked in the browser.
+
+## Low findings status (fix/review-lows)
+
+- F10: `/sample` routes now guarded; `/transcribe` was already guarded by the F9 fix.
+- F11: "bye", "bye bye" and "ta-da" join the repeat-only set; short filler is dropped from the third repeat, never when Whisper's scores say confident speech.
+- F12: already fixed on main (cache-hit names come from each candidate's `index`).
+- F13: one lock, a 64-job cap on stage/result/error tables, cancel switches released when a search ends, `forget_job` on job delete.
+- F14: `voice_clone.available()` also requires `audio.openrouter_media_available()`.
+- F15: Setup My voice and Voice Room show `warning`/`warnings`, or a raw-recording note when `cleaned` is false.
+- F16: with no ffprobe, a failed decode falls back to silence (a cancel still raises).
+- F17: the audio bed maps the stream with the most channels, first on a tie, which is ffmpeg's default pick.
+- F18: new `script` workflow (OpenRouter only, default `google/gemini-3.5-flash-lite`, now in the admin catalog); `silent_script` reads it, with `MODEL` as fallback.
+- F19: `synthesize_story` and `StoryVoice` removed with their story-only tests.
+
+Tests: `tests/test_review_lows.py`. Full suite 1662 passed, 10 skipped.

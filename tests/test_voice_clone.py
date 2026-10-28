@@ -524,9 +524,6 @@ def test_deleted_clone_is_refused_before_the_line_cache(tmp_path):
     # build_bed resolves every candidate's voice before it looks in the cache.
     with pytest.raises(audio.AudioError, match="was deleted"):
         tts._tts_voice_for("heygen", record["voice_id"], "heygen")
-    with pytest.raises(audio.AudioError, match="was deleted"):
-        tts.synthesize_story(["Hi."], engine="heygen", voice=record["voice_id"],
-                             cache_dir=tmp_path / "voice", routes=[{"provider": "openrouter", "model": "heygen/heygen-voice-1-turbo:free"}])
 
 
 def test_live_clone_and_stock_voices_pass_the_guard(tmp_path):
