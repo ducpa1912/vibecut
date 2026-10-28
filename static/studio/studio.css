@@ -1534,3 +1534,15 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
 /* Stories: a video read without its speech. */
 .st-speech-missing { display: grid; gap: 8px; justify-items: start; margin-top: 12px; }
 .st-speech-missing .st-warning { margin: 0; }
+
+/* Stories: the description that becomes a voice script for a silent video. */
+.st-script-brief { display: grid; gap: 10px; margin-top: 12px; }
+.st-script-brief .st-warning,
+.st-script-brief .st-hint { margin: 0; }
+.st-script-brief textarea {
+  width: 100%; min-height: 96px; resize: vertical; padding: 10px 12px;
+  border: 1px solid var(--st-line-2); border-radius: 9px;
+  background: #0d0d0f; color: var(--st-text); font-size: 13.5px; line-height: 1.45;
+}
+.st-script-brief textarea:focus { border-color: var(--st-accent); outline: none; box-shadow: 0 0 0 1px var(--st-accent); }
+.st-script-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

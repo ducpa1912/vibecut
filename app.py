@@ -63,6 +63,7 @@ import routes_voice_clone
 import selection
 import settings_store
 import shares
+import silent_script
 import story_queue
 import tighten
 import usage_store
@@ -6000,6 +6001,66 @@ def retranscribe_job(job_id: str, body: TranscribeBody | None = None) -> dict:
     }
 
 
+class ScriptBriefBody(BaseModel):
+    brief: str
+    language: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
+@app.post("/api/jobs/{job_id}/script-brief")
+def write_script_brief(job_id: str, body: ScriptBriefBody, request: Request) -> dict:
+    """Write a voice script for a video with no speech, from a brief.
+
+    The brief gives the topic, tone and mood or what to say, with exact lines
+    in ``[script:"..."]``. The script is saved as the job's transcript, so
+    Find stories cuts on it and story renders voice it over.
+    """
+    if not _setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = load_job(job_id)
+    if job.get("status") != "ready":
+        raise HTTPException(409, "Wait for the video to finish reading first.")
+    transcript_info = (job.get("analysis") or {}).get("transcript") or {}
+    engine = ((job.get("analysis") or {}).get("engine") or {}).get("transcript_provider")
+    if transcript_info.get("segments") and engine not in (None, "", silent_script.ENGINE):
+        raise HTTPException(
+            409,
+            "This video already has spoken words to cut stories on. A written script is for videos with no speech.",
+        )
+    try:
+        result = silent_script.write_script(
+            job, _job_dir(job_id), body.brief, language=body.language,
+        )
+    except silent_script.ScriptError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    transcript = result["transcript"]
+
+    def apply(record: dict) -> None:
+        analysis = record.setdefault("analysis", {})
+        pipeline.attach_speech(analysis.get("scenes") or [], transcript)
+        analysis["transcript"] = {
+            "language": result["language"],
+            "text": str(transcript.get("text") or "")[:1000],
+            "segments": result["lines"],
+            "no_speech": False,
+        }
+        engine_info = analysis.setdefault("engine", {})
+        engine_info["transcript_provider"] = silent_script.ENGINE
+        engine_info["transcript_language"] = result["language"]
+        record["script_brief"] = {
+            "brief": result["brief"],
+            "language": result["language"],
+            "model": result["model"],
+            "lines": result["lines"],
+            "transcript_id": transcript.get("id"),
+            "created": round(time.time(), 3),
+        }
+
+    update_job(job_id, apply)
+    return {key: value for key, value in result.items() if key != "transcript"}
+
+
 @app.get("/api/jobs/{job_id}/transcript")
 def job_transcript(job_id: str) -> dict:
     job = load_job(job_id)
@@ -6617,6 +6678,12 @@ def _edit_caption_track(
     return True, track
 
 
+def _scripted(job: dict) -> bool:
+    """True when the job's speech is a written script, not a recording."""
+    engine = ((job.get("analysis") or {}).get("engine") or {}).get("transcript_provider")
+    return engine == silent_script.ENGINE
+
+
 def _queue_story_render(
     job_id: str,
     set_id: str,
@@ -6653,7 +6720,13 @@ def _queue_story_render(
         edit_audio_plan = audio.plan_from_edit(edit.get("audio"))
         if edit_audio_plan and audio.mixer_mode(edit_audio_plan.get("mode")) == "keep":
             edit_audio_plan = None
-    elif body.captions:
+    if edit_audio_plan is None and _scripted(job):
+        # A written script has no recorded voice: speak it over the picture.
+        edit_audio_plan = audio.normalize_audio_plan({
+            "mode": "voice_over",
+            "voice": {"engine": "auto", "voice": "", "rate": 1.0},
+        })
+    if edit is None and body.captions:
         track_id = body.caption_track_id or str(
             (job.get("story_captions") or {}).get(_story_key(set_id, story_id)) or ""
         )
