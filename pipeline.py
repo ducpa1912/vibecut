@@ -2934,6 +2934,13 @@ def retry_speech(
             ),
         }
     speech_language = _speech_language(merged)
+    if not merged.get("speech_language_explicit"):
+        # Same rule as analyze_source: a title in another script beats the default.
+        guessed = stt.guess_language(
+            str(source.get("name") or ""), str(source.get("title") or ""),
+        )
+        if guessed:
+            speech_language = guessed
     settings = settings_store.load_settings()
     stt_cfg = workflow_config.effective(settings.get("workflows"), "stt")
     try:
