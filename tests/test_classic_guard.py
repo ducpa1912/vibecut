@@ -104,6 +104,14 @@ def test_classic_plan_render_history_and_export(classic):
     history = classic.get("/api/jobs/classic1/history?limit=50")
     assert history.status_code == 200, history.text
     assert history.json()["count"] >= 1, "a finished Classic render must land in History"
+    render_rows = [
+        entry for entry in history.json()["entries"] if entry.get("type") == "render"
+    ]
+    assert render_rows, "a finished Classic render must land in History"
+    assert all(entry.get("artifact_id") for entry in render_rows), (
+        "History rows must carry the immutable artifact id so an old row "
+        "downloads its own cut, not the newest reel for that length"
+    )
 
     for kind in ("srt", "edl"):
         exported = classic.get(f"/api/jobs/classic1/export/{kind}?target=15")
@@ -118,6 +126,12 @@ def test_classic_page_opens_with_its_scripts_and_controls(monkeypatch):
     for needed in ("/static/app.js", "/static/creator.js", 'id="creator-open"', 'id="setup-open"'):
         assert needed in html, needed
     assert '"views":["classic"]' in html
+
+
+def test_history_reel_link_prefers_the_artifact_url():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "entry.artifact_id || render.artifact_id" in script
+    assert "/artifacts/${encodeURIComponent(artifactId)}/media/reel.mp4" in script
 
 
 def test_every_static_file_the_classic_page_names_exists():

@@ -1383,6 +1383,7 @@ def _append_render_history(
         "warning": warning,
         "error": error,
         "path": record.get("path"),
+        "artifact_id": record.get("artifact_id"),
         "script_id": script_id,
         "clip_hash": _clip_hash(plan.get("clips")),
         "kind": "render",

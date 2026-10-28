@@ -181,7 +181,6 @@ Open findings at the time of this script. Do not report these twice.
 
 | # | Area | Issue | Status |
 |---|---|---|---|
-| F3 | History | **Download reel** can serve the newest cut for that length instead of the history row's cut. | Open |
 | F4 | Export | SRT/VTT/EDL/XML exports ignore a manual edit or loaded variant. | Open |
 | F5 | Render note | Voice-over, Dub and Full Replace still say **original audio**. | Open |
 | F6 | Hook lab | The badge rounds a half score up while the text rounds it down (for example 33 vs 32). | Open |

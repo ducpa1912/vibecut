@@ -4983,9 +4983,14 @@
       const plan = snapshot.plan || {};
       const path = String(render.path || entry.path || "");
       const file = path.split("/").pop();
-      const link = file
-        ? `<a class="ghost small" href="${esc(withToken(`/api/jobs/${state.job.id}/media/${encodeURIComponent(file)}`))}" download>Download reel</a>`
-        : "";
+      const artifactId = String(entry.artifact_id || render.artifact_id || "");
+      // The reel_<target>.mp4 name is shared by every render of that length.
+      // Prefer the immutable artifact so an old row downloads its own cut.
+      const link = artifactId
+        ? `<a class="ghost small" href="${esc(withToken(`/api/jobs/${state.job.id}/artifacts/${encodeURIComponent(artifactId)}/media/reel.mp4`))}" download>Download reel</a>`
+        : file
+          ? `<a class="ghost small" href="${esc(withToken(`/api/jobs/${state.job.id}/media/${encodeURIComponent(file)}`))}" download>Download reel</a>`
+          : "";
       body = `
         <div class="history-snapshot">
           <p class="hint">${esc(`${plan.clip_count || 0} beats · ${Number(plan.total || 0).toFixed(1)}s · hook ${plan.hook_scene ?? "auto"} · ${render.quality || entry.quality || ""} · ${render.aspect || entry.aspect || ""}`)}</p>
