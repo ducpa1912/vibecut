@@ -327,12 +327,20 @@ export function getJobStatus(jobId) {
 
 /**
  * Upload a local video. `POST /api/jobs/upload`.
- * Upload uses XHR so the creator sees byte progress on long files.
+ * Upload uses XHR so the creator sees byte progress on long files. Pass an
+ * AbortSignal as `signal` to let them cancel it.
  */
-export function uploadVideo(file, options, onProgress, { rights = null } = {}) {
+export function uploadVideo(file, options, onProgress, { rights = null, signal = null } = {}) {
   syncTokenCookie();
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    if (signal) {
+      if (signal.aborted) {
+        reject(new ApiError("Upload cancelled.", 0, null));
+        return;
+      }
+      signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
     xhr.open("POST", "/api/jobs/upload");
     xhr.responseType = "text";
     xhr.timeout = 0;

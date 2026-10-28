@@ -279,7 +279,7 @@ def test_corrupt_manifest_and_job_do_not_hide_the_rest(library):
 def test_empty_library_and_pagination_filters(library):
     empty = library.get("/api/artifacts").json()
     assert empty == {
-        "artifacts": [], "total": 0, "offset": 0, "limit": 60,
+        "artifacts": [], "total": 0, "offset": 0, "limit": 60, "has_more": False,
         "q": "", "job_id": "", "shape": "",
     }
 

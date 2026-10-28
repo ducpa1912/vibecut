@@ -27,7 +27,7 @@ export function tokenValue() {
 }
 
 /** Media elements cannot send a header; the server reads this cookie instead. */
-function syncTokenCookie() {
+export function syncTokenCookie() {
   const token = tokenValue();
   const value = token ? encodeURIComponent(token) : "";
   const expiry = token ? "" : "; Max-Age=0";

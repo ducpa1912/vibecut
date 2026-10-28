@@ -345,6 +345,7 @@ def list_artifacts(
         "total": len(matched),
         "offset": offset,
         "limit": limit,
+        "has_more": offset + len(page) < len(matched),
         "q": str(q or ""),
         "job_id": wanted_job,
         "shape": wanted_shape,

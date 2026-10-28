@@ -16,6 +16,9 @@ import { el, formatBytes, formatDuration, shortDate, statusText, statusTone } fr
 export const FINISHED_TAB = "finished";
 export const SOURCES_TAB = "sources";
 export const ARTIFACTS_PATH = "/api/artifacts";
+/** Rows per page: finished cuts (the server allows up to 200), then sources. */
+export const PAGE_SIZE = 60;
+export const SOURCES_PAGE_SIZE = 30;
 
 const GENERIC_SOURCE_NAMES = new Set([
   "source.mp4", "source.mov", "source.mkv", "source.webm",
@@ -29,6 +32,25 @@ export function artifactsPath({ query = "", limit = 60, offset = 0 } = {}) {
   params.set("limit", String(limit));
   params.set("offset", String(offset));
   return `${ARTIFACTS_PATH}?${params.toString()}`;
+}
+
+/**
+ * The offset of the next page, or null when every row is shown. Works for
+ * `GET /api/artifacts` and `GET /api/jobs`, which both answer
+ * `{total, offset}`; `shown` is how many rows the list holds now.
+ */
+export function nextOffset(data, shown) {
+  const total = Number(data?.total);
+  const count = Number(shown) || 0;
+  if (data?.has_more === false) return null;
+  if (!Number.isFinite(total)) return data?.has_more ? count : null;
+  return count < total ? count : null;
+}
+
+/** "Load more" label: how many are left. */
+export function moreLabel(total, shown) {
+  const left = Math.max(0, (Number(total) || 0) - (Number(shown) || 0));
+  return left ? `Load more (${left} more)` : "Load more";
 }
 
 function clean(value) {
@@ -316,30 +338,66 @@ export function mount(root, ctx = {}) {
     return row;
   }
 
-  async function loadFinished(current) {
-    loading("Loading finished videos…");
-    const data = await request(artifactsPath({ query }));
+  // "Load more" appends the next page under the rows already shown, so a
+  // long library never needs a bigger first request.
+  function moreButton(data, shown, loadPage) {
+    const offset = nextOffset(data, shown);
+    if (offset === null) return null;
+    const button = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small st-library-more",
+      type: "button",
+      text: moreLabel(data?.total, shown),
+      style: "justify-self:center;margin:8px auto 2px;display:block",
+    });
+    button.addEventListener("click", async () => {
+      const current = ticket;
+      button.disabled = true;
+      button.textContent = "Loading…";
+      try {
+        await loadPage(current, offset);
+      } catch (error) {
+        if (current !== ticket || disposed) return;
+        button.disabled = false;
+        button.textContent = moreLabel(data?.total, shown);
+        button.after(el("p", { class: "st-error", text: error?.message || "Could not load more." }));
+      }
+    });
+    return button;
+  }
+
+  async function loadFinished(current, offset = 0) {
+    if (!offset) loading("Loading finished videos…");
+    const data = await request(artifactsPath({ query, limit: PAGE_SIZE, offset }));
     if (current !== ticket || disposed) return;
     const artifacts = Array.isArray(data?.artifacts) ? data.artifacts : [];
-    if (!artifacts.length) {
+    if (!offset && !artifacts.length) {
       empty(query
         ? "No finished video matches that search."
         : "No finished videos yet. Render a story in Finish and it will appear here.");
       return;
     }
-    dom.list.replaceChildren(...artifacts.map((artifact, index) => finishedRow(artifact, index)));
+    dom.list.querySelector(".st-library-more")?.remove();
+    const rows = artifacts.map((artifact, index) => finishedRow(artifact, offset + index));
+    if (offset) dom.list.append(...rows);
+    else dom.list.replaceChildren(...rows);
+    const more = moreButton(data, offset + artifacts.length, loadFinished);
+    if (more) dom.list.append(more);
   }
 
-  async function loadSources(current) {
-    loading("Loading your sources…");
-    const data = await listJobs({ query, limit: 30 });
+  async function loadSources(current, offset = 0) {
+    if (!offset) loading("Loading your sources…");
+    const data = await listJobs({ query, limit: SOURCES_PAGE_SIZE, offset });
     if (current !== ticket || disposed) return;
     const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
-    if (!jobs.length) {
+    if (!offset && !jobs.length) {
       empty(query ? "No source matches that search." : "No sources yet. Import one to begin.");
       return;
     }
-    dom.list.replaceChildren(...jobs.map(sourceRow));
+    dom.list.querySelector(".st-library-more")?.remove();
+    if (offset) dom.list.append(...jobs.map(sourceRow));
+    else dom.list.replaceChildren(...jobs.map(sourceRow));
+    const more = moreButton(data, offset + jobs.length, loadSources);
+    if (more) dom.list.append(more);
   }
 
   async function load() {

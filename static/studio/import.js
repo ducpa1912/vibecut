@@ -119,6 +119,8 @@ export function mount(root, ctx) {
   let disposed = false;
   let recentRequest = 0;
   let recentTimer = 0;
+  let readingTimer = 0;
+  let upload = null;
   let policy = null;
   let policyLoading = true;
   let policyError = "";
@@ -191,6 +193,12 @@ export function mount(root, ctx) {
           <div class="st-progress" id="st-progress" hidden>
             <div class="st-progress-bar"><i id="st-progress-fill"></i></div>
             <span id="st-progress-text" class="st-mono"></span>
+            <button id="st-upload-cancel" class="st-btn st-btn-ghost" type="button" hidden>Cancel upload</button>
+          </div>
+          <div class="st-progress" id="st-reading" hidden>
+            <div class="st-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i id="st-reading-fill"></i></div>
+            <span id="st-reading-text" class="st-mono"></span>
+            <button id="st-reading-cancel" class="st-btn st-btn-ghost" type="button">Cancel reading</button>
           </div>
           <p id="st-import-status" class="st-status" role="status" aria-live="polite" hidden></p>
           <p id="st-import-error" class="st-error" role="alert" hidden></p>
@@ -237,6 +245,12 @@ export function mount(root, ctx) {
     progress: $("#st-progress"),
     progressFill: $("#st-progress-fill"),
     progressText: $("#st-progress-text"),
+    uploadCancel: $("#st-upload-cancel"),
+    reading: $("#st-reading"),
+    readingBar: root.querySelector("#st-reading .st-progress-bar"),
+    readingFill: $("#st-reading-fill"),
+    readingText: $("#st-reading-text"),
+    readingCancel: $("#st-reading-cancel"),
     status: $("#st-import-status"),
     error: $("#st-import-error"),
     recentList: $("#st-recent-list"),
@@ -282,7 +296,7 @@ export function mount(root, ctx) {
     dom.submit.disabled = busy || reading || !ready || policyLoading || Boolean(policyError) || !ticked;
     if (busy) return;
     if (reading) {
-      dom.note.textContent = "A video is reading now. Import the next one when it finishes, or press Cancel reading at the top.";
+      dom.note.textContent = "A video is reading now. Import the next one when it finishes, or press Cancel reading.";
     } else if (policyLoading) {
       dom.note.textContent = "Reading the rights policy…";
     } else if (policyError) {
@@ -315,8 +329,46 @@ export function mount(root, ctx) {
       dom.progress.hidden = true;
       dom.progressFill.style.width = "0%";
       dom.progressText.textContent = "";
+      dom.uploadCancel.hidden = true;
     }
     syncSubmit();
+  }
+
+  // The open video's read, shown here too: percent, the server's time-left
+  // estimate and Cancel reading. It follows the shell's job polling.
+  function syncReading() {
+    const state = ctx.getStepState?.() || {};
+    const line = currentlyReading() ? readingLine(state) : null;
+    dom.reading.hidden = !line;
+    if (line) {
+      dom.readingFill.style.width = `${line.percent}%`;
+      dom.readingBar.setAttribute("aria-valuenow", String(line.percent));
+      dom.readingText.textContent = line.text;
+      if (!dom.readingCancel.dataset.busy) {
+        dom.readingCancel.disabled = false;
+        dom.readingCancel.textContent = "Cancel reading";
+      }
+    }
+    syncSubmit();
+    if (readingTimer) window.clearTimeout(readingTimer);
+    if (!disposed) readingTimer = window.setTimeout(syncReading, line ? 1000 : 3000);
+  }
+
+  async function cancelReading() {
+    const jobId = ctx.getJobId?.();
+    if (!jobId || dom.readingCancel.dataset.busy) return;
+    dom.readingCancel.dataset.busy = "1";
+    dom.readingCancel.disabled = true;
+    dom.readingCancel.textContent = "Stopping…";
+    clearError();
+    try {
+      await request(`/api/jobs/${encodeURIComponent(jobId)}/reading/cancel`, { method: "POST", body: {} });
+      if (!disposed) setStatus(dom.status, "Stopping the read. Other videos can read now.", "ok");
+    } catch (error) {
+      if (!disposed) showError(error?.message || "Could not stop reading.");
+    } finally {
+      delete dom.readingCancel.dataset.busy;
+    }
   }
 
   function chooseSource(next) {
@@ -388,12 +440,16 @@ export function mount(root, ctx) {
       let created;
       if (source === "file") {
         dom.progress.hidden = false;
+        dom.uploadCancel.hidden = false;
+        dom.uploadCancel.disabled = false;
+        upload = new AbortController();
+        const started = Date.now();
         created = await uploadVideo(selectedFile, options, (ratio) => {
           const percent = Math.max(0, Math.min(100, Math.round(ratio * 100)));
           dom.progressFill.style.width = `${percent}%`;
           dom.submit.textContent = `Importing… ${percent}%`;
-          dom.progressText.textContent = `${percent}%`;
-        }, { rights });
+          dom.progressText.textContent = uploadLine(ratio, (Date.now() - started) / 1000);
+        }, { rights, signal: upload.signal });
       } else if (source === "path") {
         created = await createJobFromPath(dom.pathInput.value.trim(), options, { rights });
       } else {
@@ -405,8 +461,11 @@ export function mount(root, ctx) {
       setStatus(dom.status, "Imported. Reading the video now — Check opens by itself when it is ready.", "ok");
       ctx.openJob(created.id, { name: selectedDisplayName(), status: "queued" });
     } catch (error) {
-      if (!disposed) showError(error.message || "Could not import this video.");
+      if (disposed) return;
+      if (upload?.signal.aborted) setStatus(dom.status, "Upload cancelled. Nothing was imported.");
+      else showError(error.message || "Could not import this video.");
     } finally {
+      upload = null;
       if (!disposed) setBusy(false);
     }
   }
@@ -552,19 +611,44 @@ export function mount(root, ctx) {
   });
   dom.attest.addEventListener("change", syncSubmit);
   dom.submit.addEventListener("click", startImport);
+  dom.uploadCancel.addEventListener("click", () => {
+    dom.uploadCancel.disabled = true;
+    upload?.abort();
+  });
+  dom.readingCancel.addEventListener("click", () => { void cancelReading(); });
   dom.recentRefresh.addEventListener("click", () => {
     void loadRecent();
     void loadPolicy();
   });
 
   syncSubmit();
+  syncReading();
   loadPolicy();
   loadRecent();
 
   return () => {
     disposed = true;
     if (recentTimer) window.clearTimeout(recentTimer);
+    if (readingTimer) window.clearTimeout(readingTimer);
   };
+}
+
+/** The Import screen's read line: percent and the server's stage and ETA. */
+export function readingLine(state) {
+  const percent = Math.max(0, Math.min(100, Math.round(Number(state?.progress || 0) * 100)));
+  const message = String(state?.message || "").trim();
+  return { percent, text: `Reading the video · ${percent}%${message ? ` · ${message}` : ""}` };
+}
+
+/** Upload percent plus time left, once there is enough to measure. */
+export function uploadLine(ratio, elapsedSeconds) {
+  const fraction = Math.max(0, Math.min(1, Number(ratio) || 0));
+  const percent = Math.round(fraction * 100);
+  const elapsed = Number(elapsedSeconds) || 0;
+  if (fraction >= 1) return "100% · reading starts next";
+  if (fraction < 0.03 || elapsed < 2) return `${percent}% · estimating`;
+  const left = Math.max(1, Math.round(elapsed * (1 - fraction) / fraction));
+  return `${percent}% · about ${left < 60 ? `${left} s` : `${Math.round(left / 60)} min`} left`;
 }
 
 /** Statuses that mean the video is still being read. */

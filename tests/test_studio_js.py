@@ -328,3 +328,57 @@ def test_failure_reason_and_download_name():
         "story-01-4x5-v2.mp4",
         "story-12-9x16-draft.mp4",
     ]
+
+
+# ---------------------------------------------------------------- Phase B 1b
+
+
+@needs_node
+def test_import_reading_line_carries_the_server_eta():
+    out = run_module("import.js", """
+        return [
+          m.readingLine({progress: 0.462, message: "Reading frames · about 2 min left"}),
+          m.readingLine({progress: 0, message: ""}),
+        ];
+    """)
+    assert out == [
+        {"percent": 46, "text": "Reading the video · 46% · Reading frames · about 2 min left"},
+        {"percent": 0, "text": "Reading the video · 0%"},
+    ]
+
+
+@needs_node
+def test_import_upload_line_estimates_time_left():
+    out = run_module("import.js", """
+        return [m.uploadLine(0.01, 5), m.uploadLine(0.5, 1), m.uploadLine(0.25, 10),
+                m.uploadLine(0.1, 30), m.uploadLine(1, 40)];
+    """)
+    assert out == [
+        "1% · estimating",
+        "50% · estimating",
+        "25% · about 30 s left",
+        "10% · about 5 min left",
+        "100% · reading starts next",
+    ]
+
+
+@needs_node
+def test_cancelled_check_reads_as_not_run_in_the_rail():
+    out = run_module("shell.js", """
+        return [
+          m.checkState({status: "cancelled", complete: false}),
+          m.checkState({status: "running", complete: false}),
+          m.checkState({status: "failed", complete: false}),
+          m.checkState({status: "ready", complete: true}),
+        ];
+    """, prelude=NO_PAGE)
+    assert out == ["none", "running", "failed", "done"]
+
+
+def test_check_and_import_show_cancel_controls():
+    check = (STUDIO / "check.js").read_text(encoding="utf-8")
+    assert "/check/cancel" in check and "Cancel Check" in check
+    assert '"Check was cancelled"' in check
+    page = (STUDIO / "import.js").read_text(encoding="utf-8")
+    assert "/reading/cancel" in page and "st-reading-cancel" in page
+    assert "Cancel upload" in page and "signal: upload.signal" in page
