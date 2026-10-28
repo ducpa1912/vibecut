@@ -63,6 +63,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 2.4.1 | On video **A**, tick **Transcribe speech** (it is on by default for speech videos under 15 minutes) | Speech analysis | The result meta line includes **whisper** or the local speech provider, and **CC · transcript** appears under the hook. | |
 | 2.4.2 | Click **CC · transcript** | Transcript view | Timed lines appear. Clicking it again hides them. | |
 | 2.4.3 | Import video **A** once more with **Transcribe speech** off | Speech off is distinct from speech failure | No transcript button appears, and no failure notice appears. | |
+| 2.4.4 | If a speech-on job returns no transcript, read the result view | A speech failure is not silent | A notice says **Speech was on, but no transcript came back.**, shows the last engine error, and offers **Retry speech** with a **Setup → Transcription** hint. | |
 
 ## 3. Smart Cut: plan, render, hooks, edit
 
@@ -180,7 +181,6 @@ Open findings at the time of this script. Do not report these twice.
 
 | # | Area | Issue | Status |
 |---|---|---|---|
-| F1 | Speech | Speech-on jobs with no transcript show no notice and no retry. | Open |
 | F2 | Music | **Generate** with no music key leaves Render enabled and finishes silently without music. | Open |
 | F3 | History | **Download reel** can serve the newest cut for that length instead of the history row's cut. | Open |
 | F4 | Export | SRT/VTT/EDL/XML exports ignore a manual edit or loaded variant. | Open |

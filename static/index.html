@@ -244,6 +244,15 @@
         </div>
       </div>
 
+      <div id="speech-notice" class="speech-notice" role="status" hidden>
+        <p><strong>Speech was on, but no transcript came back.</strong> <span id="speech-notice-detail"></span></p>
+        <p class="hint">Add a transcription key in Setup → Transcription, then retry. The rest of the analysis is unchanged.</p>
+        <div class="speech-notice-actions">
+          <button id="speech-retry" class="ghost small" type="button">Retry speech</button>
+          <span id="speech-retry-status" class="hint" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+
       <div class="hook-panel">
         <div class="hook-frame">
           <img id="hook-img" alt="Hook still">

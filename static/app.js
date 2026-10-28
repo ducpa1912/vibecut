@@ -104,6 +104,10 @@
     progressCancelUrl: $("#progress-cancel-url"),
     resultTitle: $("#result-title"),
     resultMeta: $("#result-meta"),
+    speechNotice: $("#speech-notice"),
+    speechNoticeDetail: $("#speech-notice-detail"),
+    speechRetry: $("#speech-retry"),
+    speechRetryStatus: $("#speech-retry-status"),
     usageReadout: $("#usage-readout"),
     newVideo: $("#new-video"),
     deleteJob: $("#delete-job"),
@@ -1424,6 +1428,7 @@
       if (pick) useHook(Number(pick.dataset.labHook));
     });
     dom.transcriptToggle.addEventListener("click", toggleTranscript);
+    dom.speechRetry?.addEventListener("click", retrySpeech);
     dom.transcriptPanel.addEventListener("click", (event) => {
       const row = event.target.closest("[data-transcript-time]");
       if (!row) return;
@@ -2342,11 +2347,63 @@
     ].filter(Boolean).join(" + ");
     const deep = analysis.deep_count ?? analysis.scene_count;
     dom.resultMeta.textContent = `${fmtDuration(job.source.duration)} source · ${analysis.scene_count} scenes · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    renderSpeechNotice();
     renderUsage();
     renderHook();
     renderPlan();
     renderScenes();
     updateRenderPanel();
+  }
+
+  function speechFailure(engine) {
+    const failed = !!engine?.stt_enabled && !engine?.whisper;
+    if (!failed || state.job?.analysis?.transcript) return "";
+    const errors = Array.isArray(engine.stt_errors) ? engine.stt_errors : [];
+    const last = [...errors].reverse().find((item) => item && item.error);
+    return last?.error || engine.stt_error || "No speech engine returned a transcript.";
+  }
+
+  function renderSpeechNotice() {
+    if (!dom.speechNotice) return;
+    const reason = speechFailure(state.job?.analysis?.engine);
+    dom.speechNotice.hidden = !reason;
+    if (!reason) {
+      if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = "";
+      return;
+    }
+    if (dom.speechNoticeDetail) dom.speechNoticeDetail.textContent = `Last error: ${reason}`;
+  }
+
+  async function retrySpeech() {
+    if (!state.job) return;
+    const jobId = state.job.id;
+    dom.speechRetry.disabled = true;
+    if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = "Reading speech…";
+    try {
+      let result = await api(`/api/jobs/${jobId}/transcribe`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      let ticks = 0;
+      while (result && result.state && ticks < 300) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        result = await api(`/api/jobs/${jobId}/voice-tasks/transcribe`);
+        ticks += 1;
+        if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = `Reading speech… ${ticks * 2}s`;
+        if (state.job?.id !== jobId) return;
+      }
+      if (result?.segments) {
+        if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = `Transcript ready · ${result.segments} lines.`;
+        await openJob(jobId);
+        toast("Speech read again.");
+      } else if (dom.speechRetryStatus) {
+        dom.speechRetryStatus.textContent = "No transcript returned. Check Setup → Transcription.";
+      }
+    } catch (error) {
+      if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = error.message;
+    } finally {
+      dom.speechRetry.disabled = false;
+    }
   }
 
   function renderUsage() {
