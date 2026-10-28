@@ -90,6 +90,17 @@ def test_settings_report_the_edition_and_heygen_clone_follows_the_feature(switch
     assert tts.voice_engine_status()["heygen"]["clone"] is False
 
 
+def test_index_page_carries_voice_room_only_when_the_feature_is_on(switches):
+    import app
+
+    api = TestClient(app.app)
+    assert _boot(api.get("/").text)["features"] == ["voice_room"]
+    switches(features="")
+    assert _boot(api.get("/").text)["features"] == []
+    switches(edition="classic")
+    assert _boot(api.get("/").text)["features"] == []
+
+
 def test_boot_block_hides_links_for_views_and_features_the_build_lacks():
     from pathlib import Path
 

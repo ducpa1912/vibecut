@@ -78,6 +78,33 @@ export function dubBlockReason(mode, target) {
 }
 
 /**
+ * The voice_room switch: true only when the build lists the feature.
+ * Accepts the page's VIBECUT_EDITION object, a features list, or a string;
+ * with no argument it reads the page, then the <html data-features> string.
+ */
+export function voiceRoomOn(edition) {
+  const value = edition === undefined ? currentEdition() : edition;
+  const features = typeof value === "string"
+    ? value.split(/[\s,]+/)
+    : Array.isArray(value)
+      ? value
+      : typeof value?.features === "string"
+        ? value.features.split(/[\s,]+/)
+        : Array.isArray(value?.features)
+          ? value.features
+          : [];
+  return features.some((item) => String(item || "").trim() === "voice_room");
+}
+
+function currentEdition() {
+  const win = typeof globalThis !== "undefined" ? globalThis.window : undefined;
+  if (win?.VIBECUT_EDITION) return win.VIBECUT_EDITION;
+  const doc = typeof globalThis !== "undefined" ? globalThis.document : undefined;
+  const text = doc?.documentElement?.dataset?.features;
+  return typeof text === "string" ? text : undefined;
+}
+
+/**
  * One editable script row per scene.
  *
  * Clips are the output order. Each clip names its source sentence in `why`,
@@ -1694,7 +1721,7 @@ export function mountAudioPanel(host, ctx) {
       card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [preview]));
       card.append(el("p", { class: "st-field-hint", text: "The sample speaks the story hook, or a short test line when the hook is empty." }));
     }
-    if (engines) card.append(cloneBlock());
+    if (engines && voiceRoomOn()) card.append(cloneBlock());
     return card;
   }
 
