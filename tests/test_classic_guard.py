@@ -128,7 +128,7 @@ def test_classic_page_opens_with_its_scripts_and_controls(monkeypatch):
     assert '"views":["classic"]' in html
 
 
-def test_srt_export_without_a_transcript_says_so(classic):
+def test_caption_export_without_a_transcript_says_so(classic):
     directory = app.JOBS / "classic1"
     job = json.loads((directory / "job.json").read_text(encoding="utf-8"))
     for scene in job["analysis"]["scenes"]:
@@ -137,9 +137,10 @@ def test_srt_export_without_a_transcript_says_so(classic):
     job["analysis"]["engine"] = {"transcribe": False}
     (directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
 
-    exported = classic.get("/api/jobs/classic1/export/srt?target=15")
-    assert exported.status_code == 409
-    assert "no transcript" in exported.json()["detail"].lower()
+    for kind in ("srt", "vtt"):
+        exported = classic.get(f"/api/jobs/classic1/export/{kind}?target=15")
+        assert exported.status_code == 409, (kind, exported.text)
+        assert "no transcript" in exported.json()["detail"].lower()
 
 
 def test_edited_cut_export_route_uses_the_clips(classic):
@@ -180,3 +181,11 @@ def test_every_static_file_the_classic_page_names_exists():
     html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     for path in set(re.findall(r'"/static/([^"?]+)', html)):
         assert (ROOT / "static" / path).is_file(), path
+
+
+def test_classic_export_buttons_fetch_so_refusals_show_as_toasts():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    start = script.index("async function exportCut(kind)")
+    body = script[start:script.index("function clipsForHook(", start)]
+    assert "window.open" not in body
+    assert "toast(error.message)" in body

@@ -7544,6 +7544,14 @@ _NO_TRANSCRIPT_EXPORT = (
 )
 
 
+def _caption_export_empty(content: str) -> bool:
+    """True when an SRT or VTT holds no cues (a bare WEBVTT header counts)."""
+    body = content.strip()
+    if body.startswith("WEBVTT"):
+        body = body[len("WEBVTT"):].strip()
+    return not body
+
+
 @app.get("/api/jobs/{job_id}/export/{kind}")
 def export_cut(
     job_id: str,
@@ -7571,7 +7579,7 @@ def export_cut(
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(404, "Artifact captions not found.") from exc
-        if not content.strip():
+        if _caption_export_empty(content):
             raise HTTPException(409, _NO_TRANSCRIPT_EXPORT)
         return Response(
             content=content,
@@ -7630,7 +7638,7 @@ def _export_plan_response(
     else:
         content = cuts.fcp7_xml(plan, clips, job["source"]["path"])
         media = "application/xml"
-    if kind in {"srt", "vtt"} and not content.strip():
+    if kind in {"srt", "vtt"} and _caption_export_empty(content):
         raise HTTPException(409, _NO_TRANSCRIPT_EXPORT)
     safe = "".join(
         ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "-"

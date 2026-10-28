@@ -4147,30 +4147,27 @@
   async function exportCut(kind) {
     if (!state.job) return;
     const clips = state.edited && state.plan?.clips?.length ? state.plan.clips : null;
-    if (!clips) {
-      const url = `/api/jobs/${state.job.id}/export/${kind}?target=${state.target}`
+    const headers = {};
+    const token = tokenValue();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    // Fetch, not a new tab: a refusal (no transcript) shows as a toast
+    // instead of a raw JSON tab.
+    const request = clips
+      ? fetch(`/api/classic/jobs/${state.job.id}/export/${kind}`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: state.target,
+          order: state.order,
+          hook_scene: state.overrideHook,
+          clips,
+        }),
+      })
+      : fetch(`/api/jobs/${state.job.id}/export/${kind}?target=${state.target}`
         + `&order=${encodeURIComponent(state.order)}`
-        + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : "");
-      window.open(url, "_blank");
-      return;
-    }
+        + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : ""), { headers });
     try {
-      const headers = { "Content-Type": "application/json" };
-      const token = tokenValue();
-      if (token) headers.Authorization = `Bearer ${token}`;
-      const response = await fetch(
-        `/api/classic/jobs/${state.job.id}/export/${kind}`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            target: state.target,
-            order: state.order,
-            hook_scene: state.overrideHook,
-            clips,
-          }),
-        },
-      );
+      const response = await request;
       if (!response.ok) {
         let detail = response.statusText;
         try { detail = (await response.json()).detail || detail; } catch (_) { /* ignore */ }
@@ -4186,7 +4183,7 @@
       link.download = name;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast(`Exported the edited cut as ${kind.toUpperCase()}.`);
+      toast(clips ? `Exported the edited cut as ${kind.toUpperCase()}.` : `Exported ${kind.toUpperCase()}.`);
     } catch (error) {
       toast(error.message);
     }
