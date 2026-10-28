@@ -539,3 +539,80 @@ def test_live_fixture_a_dub_slot_fit(tmp_path, monkeypatch):
         f"({summary.get('fitted')}/{summary.get('total')}) "
         f"lufs={loudness['integrated_lufs']} tp={loudness['true_peak_dbtp']}",
     )
+
+
+# ---------------------------------------------------------------- music fallback
+
+
+def _no_music_keys(monkeypatch, *, openrouter=""):
+    monkeypatch.setattr(audio, "minimax_key", lambda: "")
+    monkeypatch.setattr(audio, "openrouter_key", lambda: openrouter)
+    monkeypatch.setattr(audio, "openrouter_blocked", lambda: False)
+    monkeypatch.setattr(audio, "_music_route_candidates", lambda: [
+        {"provider": "minimax", "model": "music-3.0", "descriptor": "minimax:music-3.0"},
+    ])
+
+
+def test_voice_over_keeps_the_voice_when_no_music_route_has_a_key(tmp_path, monkeypatch):
+    job_dir, voice, _bed, mix = _fake_bed_job(tmp_path)
+    original = _tone(tmp_path / "original.wav", 3.0, 300.0, 0.10)
+    uploaded = _tone(job_dir / "audio" / "uploaded_voice.wav", 3.0, 500.0, 0.10)
+    _no_music_keys(monkeypatch)
+    seen: dict = {}
+    monkeypatch.setattr(audio, "_source_audio_bed", lambda *args, **kwargs: original)
+    monkeypatch.setattr(audio, "_fit_uploaded_voice", lambda *args, **kwargs: voice)
+    monkeypatch.setattr(
+        audio, "_duck_and_mix",
+        lambda *args, **kwargs: (seen.update(args=args), mix)[1],
+    )
+    monkeypatch.setattr(audio, "_run", lambda args, **kwargs: Path(args[-1]).write_bytes(b"RIFF"))
+    plan = {
+        "mode": "voice_over",
+        "voice": {"source": "upload", "upload": str(uploaded.relative_to(job_dir))},
+        "music": {"source": "minimax-music"},
+    }
+    result = audio.build_bed(
+        "source.mp4", {}, {}, [], [], job_dir, plan, 3.0, tmp_path / "tmp",
+        lambda *args: None,
+    )
+    assert result.is_file()
+    assert seen["args"][0] == voice
+    assert seen["args"][1] == original
+    assert any("Music bed skipped" in item for item in plan["_warnings"])
+
+
+def test_music_only_still_fails_when_no_music_route_has_a_key(tmp_path, monkeypatch):
+    job_dir, _voice, _bed, _mix = _fake_bed_job(tmp_path)
+    _no_music_keys(monkeypatch)
+    plan = {"mode": "music_only", "music": {"source": "minimax-music"}}
+    with pytest.raises(audio.AudioError, match="No music route has a key"):
+        audio.build_bed(
+            "source.mp4", {}, {}, [], [], job_dir, plan, 3.0, tmp_path / "tmp",
+            lambda *args: None,
+        )
+
+
+def test_minimax_only_music_route_falls_back_to_openrouter_lyria(tmp_path, monkeypatch):
+    job_dir, _voice, bed, mix = _fake_bed_job(tmp_path)
+    _no_music_keys(monkeypatch, openrouter="sk-or")
+    tried: list[str] = []
+
+    def fake_generate(descriptor, prompt, seconds, cancel_event=None, *, timeout=600):
+        tried.append(descriptor)
+        return bed
+
+    monkeypatch.setattr(audio, "generate_music", fake_generate)
+    monkeypatch.setattr(audio, "beat_grid", lambda path: None)
+    monkeypatch.setattr(audio, "media_duration", lambda path: 8.0)
+    monkeypatch.setattr(
+        audio, "_music_loop", lambda path, total, gain, tmp, expr=None, offset=0: bed,
+    )
+    monkeypatch.setattr(audio, "_duck_and_mix", lambda *args, **kwargs: mix)
+    monkeypatch.setattr(audio, "_run", lambda args, **kwargs: Path(args[-1]).write_bytes(b"RIFF"))
+    plan = {"mode": "music_only", "music": {"source": "minimax-music", "prompt": "calm"}}
+    result = audio.build_bed(
+        "source.mp4", {}, {}, [], [], job_dir, plan, 3.0, tmp_path / "tmp",
+        lambda *args: None,
+    )
+    assert result.is_file()
+    assert tried == ["openrouter:google/lyria-3-pro-preview"]

@@ -495,7 +495,7 @@ def engine_status() -> dict:
                     "install": "Drop your own tracks in assets/music/library."},
         "minimax-music": {"available": bool(minimax_key()), "size_mb": 0,
                           "install": "Set MINIMAX_API_KEY. MiniMax Music, instrumental."},
-        "lyria-clip": {"available": openrouter_available(), "size_mb": 0,
+        "lyria-clip": {"available": openrouter_media_available(), "size_mb": 0,
                        "install": "Add an OpenRouter key. Lyria 3 Clip/Pro."},
     }
     return {
@@ -1367,6 +1367,15 @@ def openrouter_available() -> bool:
         and not openrouter_blocked()
         and not _provider_breaker_open("openrouter")
     )
+
+
+def openrouter_media_available() -> bool:
+    """OpenRouter key usable for speech or music.
+
+    Only an auth quarantine blocks media. The provider breaker counts failed
+    chat replies, which say nothing about the speech or music endpoints.
+    """
+    return _openrouter_configured() and not openrouter_blocked()
 
 
 def openrouter_model() -> str:
@@ -2867,21 +2876,23 @@ def build_bed(
         prepared: list[dict] = [None] * len(script)  # type: ignore[list-item]
         voice_name = str(voice_plan.get("voice") or "")
         tts_cfg = _workflow("tts")
-        candidates = _tts_route_candidates()
-        if not candidates:
-            raise AudioError("No voice routes are configured in the admin console.")
         selected_engine = str(voice_plan.get("engine") or "auto").lower()
-        primary_engine = (
-            candidates[0]["engine"]
-            if selected_engine in {"", "auto"}
-            else selected_engine
+        candidates = voice_candidates(
+            selected_engine, str(voice_plan.get("model") or ""),
         )
+        primary_engine = candidates[0]["engine"]
         tts_timeout = float(tts_cfg.get("timeout_s") or 300)
         workers = max(1, min(4, len(script)))
+
+        # A route that failed once is skipped for the other lines of this
+        # render, so a dead provider costs one attempt, not one per line.
+        failed_routes: set[int] = set()
 
         def synth_one(index: int, line: dict) -> tuple[int, Path]:
             last_error: Exception | None = None
             for route_index, candidate in enumerate(candidates):
+                if route_index in failed_routes and route_index < len(candidates) - 1:
+                    continue
                 engine = candidate["engine"]
                 candidate_voice = _tts_voice_for(engine, voice_name, primary_engine)
                 model = candidate.get("model") or ""
@@ -2916,6 +2927,8 @@ def build_bed(
                     return index, path
                 except AudioError as exc:
                     last_error = exc
+                    if not (cancel_event is not None and cancel_event.is_set()):
+                        failed_routes.add(route_index)
                     _pipeline_event(
                         "tts", route_index, candidate.get("provider") or engine,
                         model, "", started, False, str(exc)[:300],
@@ -3132,10 +3145,12 @@ def build_bed(
                 )
             music_cfg = _workflow("music")
             music_timeout = float(music_cfg.get("timeout_s") or 600)
-            candidates = _music_route_candidates()
-            if not candidates:
-                raise AudioError("No music routes are configured in the admin console.")
+            candidates = generation_available()
             last_error: Exception | None = None
+            if not candidates:
+                last_error = AudioError(
+                    "No music route has a key. Add a MiniMax or OpenRouter key in Setup."
+                )
             for route_index, candidate in enumerate(candidates):
                 started = time.time()
                 try:
@@ -3158,11 +3173,19 @@ def build_bed(
                     job_id=job_dir.name,
                 )
                 break
-            if chosen is None:
+            if chosen is not None:
+                music_source_type = "generated"
+                if music_licence is None:
+                    music_licence = {"type": "generated"}
+            elif voice_path is not None or declared_mode == "original_bed":
+                # The bed is optional here: keep the voice or the original
+                # sound and say why the music is missing.
+                detail = str(last_error or "All music providers failed.")
+                audio_plan.setdefault("_warnings", []).append(
+                    f"Music bed skipped: {detail[:200]}"
+                )
+            else:
                 raise last_error or AudioError("All music providers failed.")
-            music_source_type = "generated"
-            if music_licence is None:
-                music_licence = {"type": "generated"}
         if chosen and chosen.is_file():
             if declared_mode in {"voice_over", "dub"}:
                 progress(0.90, "Ducking the original under the voice")
@@ -3977,6 +4000,7 @@ from tts import (  # noqa: E402,F401
     shorten_text_for_slot,
     slot_fit_summary,
     synthesize_line,
+    voice_candidates,
     voice_sample,
 )
 from music import (  # noqa: E402,F401
@@ -3993,6 +4017,7 @@ from music import (  # noqa: E402,F401
     fit_plan,
     generate_candidates,
     generate_music,
+    generation_available,
     generation_cache_key,
     list_music,
     lock_track,
