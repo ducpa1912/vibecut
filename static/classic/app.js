@@ -344,14 +344,14 @@
     selectMenu.hidden = false;
     select.classList.add("menu-open");
     const rect = select.getBoundingClientRect();
-    const width = Math.max(rect.width, 240);
+    const width = Math.min(Math.max(rect.width, 240), window.innerWidth - 24);
     const spaceBelow = window.innerHeight - rect.bottom - 12;
     const spaceAbove = rect.top - 12;
     const openAbove = spaceBelow < 240 && spaceAbove > spaceBelow;
     const available = Math.max(160, openAbove ? spaceAbove : spaceBelow);
     selectMenu.style.maxHeight = `${Math.min(320, available)}px`;
     selectMenu.style.width = `${width}px`;
-    selectMenu.style.left = `${Math.min(rect.left, window.innerWidth - width - 12)}px`;
+    selectMenu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`;
     selectMenu.style.top = openAbove
       ? `${Math.max(8, rect.top - Math.min(320, available) - 4)}px`
       : `${rect.bottom + 4}px`;
