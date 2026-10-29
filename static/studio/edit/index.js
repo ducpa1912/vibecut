@@ -71,7 +71,14 @@ function ensureStyles() {
       .st-edit-stepnav .st-edit-save { margin-left: 2px; }
       .st-edit-stepnav #st-edit-next { margin-left: auto; }
       @media (max-width: 700px) {
-        .st-edit-stepnav #st-edit-next { margin-left: 0; }
+        .st-edit-stepnav { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+        .st-edit-stepnav .st-edit-save,
+        .st-edit-stepnav .st-hint { grid-column: 1 / -1; }
+        .st-edit-stepnav #st-edit-next { margin-left: 0; grid-column: 1 / -1; justify-self: stretch; }
+      }
+      @media (max-width: 460px) {
+        .st-edit-stepnav { grid-template-columns: minmax(0, 1fr); }
+        .st-edit-stepnav .st-btn { justify-self: stretch; }
       }
     `;
     document.head.append(style);
@@ -190,8 +197,8 @@ export function mount(root, ctx) {
         <header class="st-edit-head">
           <div class="st-edit-heading">
             <p class="st-eyebrow">Step 4 · Edit</p>
-            <h1 id="st-edit-title">Shape the story</h1>
-            <p id="st-edit-sub" class="st-edit-sub">One edit per story and shape. Changes save as you go.</p>
+            <h1 id="st-edit-title">Shape the moment</h1>
+            <p id="st-edit-sub" class="st-edit-sub">One edit per moment and shape. Changes save as you go.</p>
           </div>
           <div class="st-edit-controls">
             <label class="st-field st-field-inline">
@@ -206,13 +213,13 @@ export function mount(root, ctx) {
               <button class="st-aspect" type="button" data-aspect="16:10" aria-pressed="false">16:10</button>
             </div>
             <button id="st-edit-repair" class="st-btn st-btn-small st-trim-repair" type="button" hidden>Repair shape</button>
-            <button id="st-edit-all" class="st-btn st-btn-quiet st-btn-small" type="button">All stories</button>
+            <button id="st-edit-all" class="st-btn st-btn-quiet st-btn-small" type="button">All moments</button>
             <button id="st-edit-undo-trim" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo trim</button>
             <button id="st-edit-undo" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo</button>
           </div>
         </header>
         <div class="st-edit-stepnav" aria-label="Edit step navigation">
-          <button id="st-edit-back" class="st-btn st-btn-ghost st-btn-small" type="button">← Back to Stories</button>
+          <button id="st-edit-back" class="st-btn st-btn-ghost st-btn-small" type="button">← Back to Moments</button>
           <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
           <span id="st-edit-meta" class="st-hint"></span>
           <button id="st-edit-next" class="st-btn st-btn-primary st-btn-small" type="button" disabled>Next: Finish →</button>
@@ -247,8 +254,8 @@ export function mount(root, ctx) {
     for (const button of dom.aspect) {
       button.addEventListener("click", () => { void switchAspect(button.dataset.aspect); });
     }
-    dom.all.addEventListener("click", () => { void leaveTo("stories", dom.all); });
-    dom.back.addEventListener("click", () => { void leaveTo("stories", dom.back); });
+    dom.all.addEventListener("click", () => { void leaveTo("moments", dom.all); });
+    dom.back.addEventListener("click", () => { void leaveTo("moments", dom.back); });
     dom.next.addEventListener("click", () => { void leaveTo("finish", dom.next); });
     dom.undo.addEventListener("click", () => { void undoLastChange(); });
     dom.undoTrim.addEventListener("click", () => { void undoTrimChange(); });
@@ -295,7 +302,7 @@ export function mount(root, ctx) {
       ? `${formatTime(state.duration)} · ${aspectLabel(state.aspect)}`
       : "";
     if (dom.sub && story) {
-      dom.sub.textContent = String(story.title || "Shape the story");
+      dom.sub.textContent = String(story.title || "Shape the moment");
     }
   }
 
@@ -1318,18 +1325,18 @@ export function mount(root, ctx) {
         renderEmpty({
           title: job.status === "failed" ? "This video could not be read" : "This video is still being read",
           copy: job.error || "Wait for the read to finish, then open Edit.",
-          action: "Open Stories",
-          step: "stories",
+          action: "Open Moments",
+          step: "moments",
         });
         return;
       }
       const usable = state.sets.filter((set) => Array.isArray(set.stories) && set.stories.length);
       if (!usable.length) {
         renderEmpty({
-          title: "Pick stories first",
-          copy: "Edit needs a story cut. Open Stories, choose how many you want, then come back.",
-          action: "Open Stories",
-          step: "stories",
+          title: "Pick moments first",
+          copy: "Edit needs a story cut. Open Moments, choose or add one, then come back.",
+          action: "Open Moments",
+          step: "moments",
         });
         return;
       }

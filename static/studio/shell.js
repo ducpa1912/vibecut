@@ -774,7 +774,8 @@ export function startStudio() {
   const hashed = routeFromHash();
   if (hashed || !currentJob) {
     void refreshState();
-    const initial = hashed || "import";
+    // No video open: a stale #/finish from the last video must not win.
+    const initial = currentJob ? (hashed || "import") : "import";
     if (location.hash !== `#/${initial}`) history.replaceState(null, "", `#/${initial}`);
     activate(initial, { focus: false });
   } else {

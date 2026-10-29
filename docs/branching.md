@@ -54,8 +54,9 @@ Ownership still applies:
 
 - Only the founder tests the app. Claude and OpenCode never generate test videos, sounds or files to stand in for real media. If media is needed, ask the founder.
 - The founder records a run of a lane with Playwright, using real files:
-  1. In the lane's worktree, run `scripts/serve.sh`.
-  2. Then run `scripts/record.sh`. Press Ctrl-C in the terminal or close the browser tab when the flow is done. It saves `trace.zip`, `network.har` and `storage.json` to `~/vibecut-lanes/recordings/<lane>/<date-time>/`, which stays on the founder's Mac and out of the repo.
+  1. In the lane's worktree, run `scripts/serve.sh` if the lane is not already running.
+  2. In the founder's own Terminal, run `scripts/record.sh`. Close the app tab or press Ctrl-C there when the flow is done. It saves `trace.zip`, `network.har` and `storage.json` to `~/vibecut-lanes/recordings/<lane>/<date-time>/`, which stays on the founder's Mac and out of the repo.
+- Agents never open the recorded browser. Give the founder the command; the founder owns the terminal and the Ctrl-C.
 - The lane studies the recording to learn the founder's real flow, and replays it only when the founder asks. No generated media or stand-in files.
 - Automated tests stay code checks. They run on every ship and never replace the founder's test.
 

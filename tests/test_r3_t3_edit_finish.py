@@ -101,12 +101,12 @@ def env(tmp_path, monkeypatch):
 
 def test_edit_has_sticky_back_and_next_beside_save_state():
     source = (STUDIO / "edit" / "index.js").read_text(encoding="utf-8")
-    assert "Back to Stories" in source
+    assert "Back to Moments" in source
     assert "Next: Finish" in source
     assert "st-edit-stepnav" in source
     assert "position: sticky" in source
     # Both step buttons flush the autosave before leaving.
-    assert source.count("leaveTo(\"stories\"") >= 2
+    assert source.count("leaveTo(\"moments\"") >= 2
     assert "leaveTo(\"finish\"" in source
     assert "const saved = await flushSave();" in source
 

@@ -544,9 +544,9 @@ export function mount(root, ctx) {
   root.innerHTML = `
     <section class="st-panel st-finish-panel" aria-labelledby="st-finish-title">
       <header class="st-panel-head">
-        <p class="st-eyebrow">Step 5 · Finish</p>
+        <p class="st-eyebrow">Step 4 · Finish</p>
         <h1 id="st-finish-title">Render and share</h1>
-        <p class="st-lede">Render every story in 9:16 or 4:5. Keep every version. Hand off a publish kit, a review link and the same look across stories.</p>
+        <p class="st-lede">Render every moment in any of the five shapes. Keep every version. Review the cut, then hand off a publish kit and a review link.</p>
       </header>
       <p id="st-finish-status" class="st-status" role="status" aria-live="polite" hidden></p>
       <p id="st-finish-error" class="st-error" role="alert" hidden></p>
