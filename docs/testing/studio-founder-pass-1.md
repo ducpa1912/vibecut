@@ -6,7 +6,7 @@ Every step below comes from the founder's own recording in
 HAR has the requests, bodies and responses. Steps the recorder did not capture
 say so. Nothing here is invented.
 
-**Build:** `4734d35` (`studio`, and `main` at the same commit).
+**Build:** `78afd48` (`studio`; the app code for this pass).
 
 **Start the app** (Studio only, its own port and data):
 
@@ -34,7 +34,7 @@ captured; the HAR shows `POST /api/jobs/upload 200` and the job id.
 
 **How to read this:** Expected is what the recording shows, including waits
 and the exact errors. The recording was made before the current UI:
-- **Build your story** is now **Add story**.
+- **Build your story** is now **Add moment**.
 - **Render this story / Render again** is now **+ Add to queue**.
 - **Edit this story** is now **Start edit**.
 - **Back to Stories** is now **Back to Moments**, and **All stories** is now
@@ -62,9 +62,9 @@ Rows with a current control name carry
 | 1.9 | Set **Shape** to **4:5 feed**, click **Queue all 3** | Queue the same three moments in 4:5 | `POST /api/story-queues` with three 4:5 items for set `cs_8d6be62ea6bd`; the page says **3 stories queued. They render one at a time.** | |
 | 1.10 | Set **Length** to **Auto · 20–75 s**, click **Find moments again** | Try the automatic picks | `POST …/clip-sets` with `min_s: 20, max_s: 75` returns 2 stories: 31.875 s and 26.75 s. The note reads **Only 2 non-overlapping stories fit; requested 3.** | |
 | 1.11 | Keep **Shape** at **4:5 feed**, click **Queue all 2** | Queue the two automatic picks | `POST /api/story-queues` with two 4:5 items for set `cs_25ffd12d9f00`; the page says **2 stories queued.** | |
-| 1.12 | Click **Add story** (recording: **Build your story**) | Open the custom scene picker | The dialog opens on **Add a story** with the scene collage and **Build this moment**. The recording's dialog showed six scenes from 0:00 to 0:26, **Title (optional)**, **Cancel** and **Build this moment**, and **0 scenes · 0 s**. **UI changed since recording: Build your story is now Add story; checkboxes are now a click-to-pick collage.** | |
-| 1.13 | Select the scenes at 0:00, 0:05, 0:11, 0:39, 0:41 and 1:20, click **Build this moment** (the recording submits this selection three times) | Try a custom story from spread-out scenes | Each `POST …/clip-sets` has `locks: [0, 1, 2, 9, 10, 22]` and `ban_scenes` for the rest; each returns **No non-overlapping story of 15-180s was found.**, and each empty set is deleted (`DELETE …/clip-sets/<id> 200`). **UI changed since recording: Build your story is now Add story; the current dialog logs the failure and deletes the empty set.** | |
-| 1.14 | Select the scenes at 0:00, 0:05, 0:11 and 0:12, click **Build this moment** | Build one custom story from the opening | `POST …/clip-sets` with `locks: [0, 1, 2, 3]` returns one story, **谁懂啊终于把宫崎骏的动漫世界**, 0:00–0:16.25, 16.25 s. **UI changed since recording: Build your story is now Add story; the current builder adds the story to the open set.** | |
+| 1.12 | Click **Add moment** (recording: **Build your story**) | Open the custom scene picker | The dialog opens on **Add a moment** with the scene collage and **Build this moment**. The recording's dialog showed six scenes from 0:00 to 0:26, **Title (optional)**, **Cancel** and **Build this moment**, and **0 scenes · 0 s**. **UI changed since recording: Build your story is now Add moment; checkboxes are now a click-to-pick collage.** | |
+| 1.13 | Select the scenes at 0:00, 0:05, 0:11, 0:39, 0:41 and 1:20, click **Build this moment** (the recording submits this selection three times) | Try a custom story from spread-out scenes | Each `POST …/clip-sets` has `locks: [0, 1, 2, 9, 10, 22]` and `ban_scenes` for the rest; each returns **No non-overlapping story of 15-180s was found.**, and each empty set is deleted (`DELETE …/clip-sets/<id> 200`). **UI changed since recording: Build your story is now Add moment; the current dialog logs the failure and deletes the empty set.** | |
+| 1.14 | Select the scenes at 0:00, 0:05, 0:11 and 0:12, click **Build this moment** | Build one custom story from the opening | `POST …/clip-sets` with `locks: [0, 1, 2, 3]` returns one story, **谁懂啊终于把宫崎骏的动漫世界**, 0:00–0:16.25, 16.25 s. **UI changed since recording: Build your story is now Add moment; the current builder adds the moment to the open set.** | |
 | 1.15 | On the new 16.25 s story, click **+ start**, then **− end**, then **+ end** | Try the sentence-edge controls | Three trim requests fail: `start_sentence: 1, end_sentence: 3` and `0/2` return **422 `too_short` — The trimmed story is 11.6s; the minimum is 15s.**; `0/4` returns **422 `range_invalid` — The trimmed range produced no story.** The card keeps its 16.25 s range. | |
 | 1.16 | Set **Length** to **Custom range**, **From (s) 30**, **To (s) 90**, click **Find moments again** | Get longer moments | `POST …/clip-sets` with `min_s: 30, max_s: 90` returns 2 stories: **这个我心心念念的梦中庭院** 0:10.6–0:56.4 (45.75 s) and **它里面是科学配比好赤玉土** 0:56.4–1:28.8 (32.392 s). Moments says **2 moments ready**. | |
 | 1.17 | On story 01 (45.75 s), click **Start edit** (recording: **Edit this story**) | Open the first moment in Edit | Edit opens with **Shape the story** (now **Shape the moment**), **9:16**, `0:46.8`, and the timeline. **UI changed since recording: Edit this story is now Start edit.** | |
