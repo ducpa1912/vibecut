@@ -738,7 +738,14 @@
   function shortTitle(value, limit = 64) {
     const text = String(value || "").replace(/\s+/g, " ").trim();
     if (!text) return "";
-    return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text;
+    if (text.length <= limit) return text;
+    const cut = text.slice(0, limit - 1);
+    const space = cut.lastIndexOf(" ");
+    // Cut at the last word boundary; a hard slice left titles ending in "o…".
+    const base = space >= Math.max(8, Math.floor((limit - 1) * 0.55))
+      ? cut.slice(0, space)
+      : cut;
+    return `${base.trimEnd()}…`;
   }
 
   function titleCandidates(story) {
@@ -764,6 +771,14 @@
       "will", "just", "like", "more", "than", "then", "very", "can", "not", "but",
       "are", "was", "were", "our", "out", "get", "got", "has", "how", "why", "who",
       "all", "one", "two", "his", "her", "its", "it's", "i'm", "don't", "doesn't",
+      "today", "want", "show", "plan", "week", "short", "shorts", "video", "videos",
+      "gonna", "really", "know", "think", "make", "made", "take", "took", "come",
+      "came", "look", "looks", "going", "day", "days", "new", "first", "next",
+      "last", "back", "over", "after", "before", "because", "while", "too", "also",
+      "only", "even", "still", "being", "been", "does", "did", "doing", "done",
+      "use", "using", "used", "every", "much", "many", "some", "any", "own",
+      "same", "other", "now", "here", "thing", "things", "stuff", "way", "ways",
+      "lot", "lots", "people",
     ]);
     const source = [
       story?.title || "",
@@ -1472,7 +1487,12 @@
         renderMatrix();
         populateCommonSelects();
         setAnalysisOpen(false);
-        toast("Clip Set built. Review the stories, then render one or open it in Smart Cut.");
+        const storyCount = state.clipset?.stories?.length || 0;
+        if (!storyCount) {
+          toast("Clip Set built, but no stories fit this source. Check the note above.");
+        } else {
+          toast("Clip Set built. Review the stories, then render one or open it in Smart Cut.");
+        }
       } catch (error) {
         setError(dom.clipsetError, error);
       }

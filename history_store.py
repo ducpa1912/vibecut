@@ -46,6 +46,7 @@ SUMMARY_FIELDS = (
     "warning",
     "error",
     "path",
+    "artifact_id",
     "script_id",
     "clip_hash",
     # Render/upload extras are cheap and useful in the list view.

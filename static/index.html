@@ -89,6 +89,10 @@
   </header>
 
   <main class="shell">
+    <div id="first-run-nudge" class="first-run-nudge" role="status" hidden>
+      <span>Optional: add keys and voices in Setup</span>
+      <button id="first-run-setup" class="ghost small" type="button">Open Setup</button>
+    </div>
     <!-- 01 / ingest -->
     <section id="ingest-view">
       <div class="hero">
@@ -241,6 +245,15 @@
           </select>
           <button id="clean-job" class="ghost">Clean</button>
           <button id="delete-job" class="ghost danger">Delete</button>
+        </div>
+      </div>
+
+      <div id="speech-notice" class="speech-notice" role="status" hidden>
+        <p><strong>Speech was on, but no transcript came back.</strong> <span id="speech-notice-detail"></span></p>
+        <p class="hint">Try Retry speech first; a busy Mac can make local speech fail once. If it fails again, open Setup → Transcription and click Check local STT. The rest of the analysis is unchanged.</p>
+        <div class="speech-notice-actions">
+          <button id="speech-retry" class="ghost small" type="button">Retry speech</button>
+          <span id="speech-retry-status" class="hint" role="status" aria-live="polite"></span>
         </div>
       </div>
 
@@ -1196,12 +1209,40 @@
             <span>MiniMax key · TTS + music</span>
             <input id="setup-minimax-key" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ…">
           </label>
+          <label class="setup-field">
+            <span>ElevenLabs key · voice</span>
+            <input id="setup-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set">
+          </label>
           <p class="setup-hint">Provider order and voice models are controlled by the admin console model routes below. Local Kokoro/Piper/say remain available as explicit fallback routes; every line is cached.</p>
           <div class="setup-actions">
             <button id="setup-test-tts" class="ghost small" type="button">Check TTS</button>
             <button id="setup-test-tts-live" class="ghost small" type="button">Live TTS</button>
           </div>
           <audio id="setup-tts-audio" class="setup-audio" controls hidden></audio>
+          <div class="setup-engine-head"><span>Voice engines</span><span class="hint">Ready or needs setup, with what each needs</span></div>
+          <div id="setup-voice-engines" class="setup-engine-list" aria-live="polite">
+            <p class="setup-hint">Checking voice engines…</p>
+          </div>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Optional packs</h3>
+            <button id="setup-packs-refresh" class="ghost small" type="button">Refresh</button>
+          </div>
+          <p class="setup-hint">Speech, Voice and Separation are optional model packs. This list only reports what is on disk; it never starts a fake install.</p>
+          <div id="setup-packs" class="setup-engine-list" aria-live="polite">
+            <p class="setup-hint">Checking packs…</p>
+          </div>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Rights lock</h3>
+            <span class="setup-badge">own footage</span>
+          </div>
+          <label class="setup-check"><input id="setup-rights-lock" type="checkbox" checked> Require the own-footage tick before import and Clean</label>
+          <p class="setup-hint">When the lock is on, Classic asks <strong>I own this footage or have the rights to it</strong> before any import. Turning it off is for your own private test footage only.</p>
         </section>
       </div>
       <footer class="setup-foot">

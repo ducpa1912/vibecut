@@ -104,6 +104,14 @@ def test_classic_plan_render_history_and_export(classic):
     history = classic.get("/api/jobs/classic1/history?limit=50")
     assert history.status_code == 200, history.text
     assert history.json()["count"] >= 1, "a finished Classic render must land in History"
+    render_rows = [
+        entry for entry in history.json()["entries"] if entry.get("type") == "render"
+    ]
+    assert render_rows, "a finished Classic render must land in History"
+    assert all(entry.get("artifact_id") for entry in render_rows), (
+        "History rows must carry the immutable artifact id so an old row "
+        "downloads its own cut, not the newest reel for that length"
+    )
 
     for kind in ("srt", "edl"):
         exported = classic.get(f"/api/jobs/classic1/export/{kind}?target=15")
@@ -120,7 +128,64 @@ def test_classic_page_opens_with_its_scripts_and_controls(monkeypatch):
     assert '"views":["classic"]' in html
 
 
+def test_caption_export_without_a_transcript_says_so(classic):
+    directory = app.JOBS / "classic1"
+    job = json.loads((directory / "job.json").read_text(encoding="utf-8"))
+    for scene in job["analysis"]["scenes"]:
+        scene["speech"] = ""
+        scene["ocr"] = ""
+    job["analysis"]["engine"] = {"transcribe": False}
+    (directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+
+    for kind in ("srt", "vtt"):
+        exported = classic.get(f"/api/jobs/classic1/export/{kind}?target=15")
+        assert exported.status_code == 409, (kind, exported.text)
+        assert "no transcript" in exported.json()["detail"].lower()
+
+
+def test_edited_cut_export_route_uses_the_clips(classic):
+    planned = classic.post("/api/jobs/classic1/plan", json={"target": 15})
+    assert planned.status_code == 200, planned.text
+    clips = planned.json()["plan"]["clips"]
+    assert len(clips) >= 2
+    auto = classic.get("/api/jobs/classic1/export/edl?target=15")
+    assert auto.status_code == 200, auto.text
+
+    edited = clips[:1]
+    exported = classic.post(
+        "/api/classic/jobs/classic1/export/edl",
+        json={"target": 15, "order": "source", "clips": edited},
+    )
+    assert exported.status_code == 200, exported.text
+    assert exported.text != auto.text, "the edited clips must reach the export"
+
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "/api/classic/jobs/${state.job.id}/export/${kind}" in script
+    assert "clips," in script
+
+
+def test_review_link_uses_the_artifact_on_screen():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "function shownRender()" in script
+    assert "shownRender()?.artifact_id" in script
+    assert "{ artifact_id: artifactId }" in script
+
+
+def test_history_reel_link_prefers_the_artifact_url():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "entry.artifact_id || render.artifact_id" in script
+    assert "/artifacts/${encodeURIComponent(artifactId)}/media/reel.mp4" in script
+
+
 def test_every_static_file_the_classic_page_names_exists():
     html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     for path in set(re.findall(r'"/static/([^"?]+)', html)):
         assert (ROOT / "static" / path).is_file(), path
+
+
+def test_classic_export_buttons_fetch_so_refusals_show_as_toasts():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    start = script.index("async function exportCut(kind)")
+    body = script[start:script.index("function clipsForHook(", start)]
+    assert "window.open" not in body
+    assert "toast(error.message)" in body

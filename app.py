@@ -1383,6 +1383,7 @@ def _append_render_history(
         "warning": warning,
         "error": error,
         "path": record.get("path"),
+        "artifact_id": record.get("artifact_id"),
         "script_id": script_id,
         "clip_hash": _clip_hash(plan.get("clips")),
         "kind": "render",
@@ -7537,6 +7538,20 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
     return {"renders": renders, "errors": errors}
 
 
+_NO_TRANSCRIPT_EXPORT = (
+    "This cut has no transcript, so there are no captions to export. "
+    "Import the video with Transcribe speech on, or use Retry speech."
+)
+
+
+def _caption_export_empty(content: str) -> bool:
+    """True when an SRT or VTT holds no cues (a bare WEBVTT header counts)."""
+    body = content.strip()
+    if body.startswith("WEBVTT"):
+        body = body[len("WEBVTT"):].strip()
+    return not body
+
+
 @app.get("/api/jobs/{job_id}/export/{kind}")
 def export_cut(
     job_id: str,
@@ -7564,6 +7579,8 @@ def export_cut(
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(404, "Artifact captions not found.") from exc
+        if _caption_export_empty(content):
+            raise HTTPException(409, _NO_TRANSCRIPT_EXPORT)
         return Response(
             content=content,
             media_type="text/plain; charset=utf-8",
@@ -7572,6 +7589,17 @@ def export_cut(
             },
         )
     plan = _apply_order(job, _plan_for(job, _valid_target(int(target)), hook_scene), order)
+    return _export_plan_response(job_id, job, plan, kind, int(target), caption_track_id)
+
+
+def _export_plan_response(
+    job_id: str,
+    job: dict,
+    plan: dict,
+    kind: str,
+    target: int,
+    caption_track_id: str | None = None,
+) -> Response:
     scenes = job["analysis"]["scenes"]
     clips = plan["clips"]
     stem = Path(job["source"]["name"]).stem
@@ -7610,6 +7638,8 @@ def export_cut(
     else:
         content = cuts.fcp7_xml(plan, clips, job["source"]["path"])
         media = "application/xml"
+    if kind in {"srt", "vtt"} and _caption_export_empty(content):
+        raise HTTPException(409, _NO_TRANSCRIPT_EXPORT)
     safe = "".join(
         ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "-"
         for ch in stem

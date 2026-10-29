@@ -632,6 +632,19 @@ main { min-height: calc(100vh - 150px); }
 .result-meta { margin: 12px 0 0; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.01em; }
 .result-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 
+.speech-notice {
+  margin: 0 0 24px;
+  padding: 14px 16px;
+  border: 1px solid rgba(232, 162, 102, 0.36);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+.speech-notice p { margin: 0 0 6px; }
+.speech-notice p:last-child { margin-bottom: 0; }
+.speech-notice-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+
 .hook-panel {
   display: grid;
   grid-template-columns: 286px minmax(0, 1fr);
@@ -1640,6 +1653,49 @@ main { min-height: calc(100vh - 150px); }
 }
 .setup-chip.warn::before { background: var(--accent); }
 .setup-chip[hidden] { display: none; }
+
+.setup-engine-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.setup-engine-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
+.setup-engine-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.setup-engine-row strong { display: block; font-size: 12.5px; font-weight: 500; }
+.setup-engine-row .setup-hint { margin: 3px 0 0; }
+.setup-engine-row .setup-chip { flex: 0 0 auto; margin-top: 1px; }
+
+.first-run-nudge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 22px 0 0;
+  padding: 11px 15px;
+  border: 1px solid rgba(232, 162, 102, 0.32);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+.first-run-nudge[hidden] { display: none; }
 .setup-inline {
   display: flex;
   flex-wrap: wrap;
