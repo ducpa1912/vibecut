@@ -5,12 +5,10 @@
 #
 # Start scripts/voice-serve.sh first. The browser opens on
 # http://127.0.0.1:8797/voices. Click the real flow, then press the floating
-# "Finish recording" button. The trace is saved under
-# ~/vibecut-lanes/recordings/voiceroom/<date-time>/trace.zip.
+# "Finish recording" button, close the browser, or press Ctrl-C here. The trace
+# is saved under ~/vibecut-lanes/recordings/voiceroom/<date-time>/trace.zip.
 #
-# The trace stays on this Mac and out of the repo. Do not close the browser
-# window before pressing Finish recording; Playwright cannot save a trace after
-# the browser is gone.
+# The trace stays on this Mac and out of the repo.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 eval "$(scripts/lane-env.sh voice)"
@@ -36,7 +34,7 @@ fi
 out="${VIBECUT_RECORDINGS:-$HOME/vibecut-lanes/recordings/voiceroom}/$(date +%Y-%m-%d-%H%M%S)"
 mkdir -p "$out"
 echo "Recording Voice Room into $out"
-echo "Press the floating 'Finish recording' button when the flow is finished."
+echo "Press the floating 'Finish recording' button, or close the browser, when the flow is finished."
 
 VOICE_TRACE_DIR="$out" VOICE_URL="http://127.0.0.1:$VIBECUT_PORT/voices" \
 VOICE_PLAYWRIGHT_MODULE="file://$module" \
@@ -86,6 +84,9 @@ await page.evaluate(() => {
   document.body.append(button);
 });
 
+// A window close still lets Playwright stop tracing before the context dies.
+page.on("close", () => { void stop("browser window closed"); });
+browser.on("disconnected", () => stop("browser disconnected"));
 process.on("SIGINT", () => stop("SIGINT"));
 process.on("SIGTERM", () => stop("SIGTERM"));
 await new Promise(() => {});

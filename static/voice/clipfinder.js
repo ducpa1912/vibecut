@@ -391,12 +391,12 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
       disabled: running || Boolean(busy),
     });
     whole.addEventListener("change", () => { fullSearch = whole.checked; });
-    node.append(el("label", { class: "vr-consent" }, [
+    const wholeLabel = el("label", { class: "vr-consent" }, [
       whole,
       el("span", {
         text: "Search the whole video. Off: the first 2:00 only, which is much faster. For a quick clone, use a time range instead.",
       }),
-    ]));
+    ]);
 
     const fast = el("input", {
       type: "checkbox",
@@ -404,12 +404,13 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
       disabled: running || Boolean(busy),
     });
     fast.addEventListener("change", () => { fastSearch = fast.checked; });
-    node.append(el("label", { class: "vr-consent" }, [
+    const fastLabel = el("label", { class: "vr-consent" }, [
       fast,
       el("span", {
         text: "Fast search. Skips music separation, so it returns in seconds. Uncheck for a clean search with the separation model.",
       }),
-    ]));
+    ]);
+    node.append(el("div", { class: "vr-check-grid" }, [wholeLabel, fastLabel]));
 
     const progress = stageCopy(task);
     if (running && progress) node.append(el("p", { class: "vr-status", role: "status", "data-stage": task.stage || "", text: progress }));

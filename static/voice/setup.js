@@ -34,6 +34,10 @@ const EXTRACTION_LABELS = {
   diarization: "Speaker filter",
 };
 
+const LOCAL_VOICE_IDS = ["say", "kokoro"];
+const OPENROUTER_VOICE_IDS = ["heygen", "fish", "gemini"];
+const CLOUD_VOICE_IDS = ["minimax", "elevenlabs"];
+
 function sourceCopy(source) {
   if (source === "env") return "From environment";
   if (source === "file") return "Saved on this Mac";
@@ -264,7 +268,7 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
     const card = el("div", { class: "vr-card vr-setup-card" }, [
       el("div", { class: "vr-card-head vr-setup-head" }, [
         el("div", {}, [
-          el("h3", { text: "On this Mac" }),
+          el("h3", { text: "Engines" }),
           el("p", { class: "hint", text: "Local engines work offline. Cloud engines use the keys above." }),
         ]),
         el("button", {
@@ -277,17 +281,32 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
       card.append(el("p", { class: "hint", text: "Reading this Mac…" }));
       return card;
     }
-    const grid = el("div", { class: "vr-setup-engines" });
-    for (const [id, item] of Object.entries(engines.voices || {})) {
-      grid.append(el("div", { class: "vr-setup-engine" }, [
-        el("div", { class: "vr-setup-engine-head" }, [
-          el("strong", { text: ENGINE_LABELS[id] || id }),
-          el("span", { class: `vr-chip${item.available ? " is-cloud" : ""}`, text: item.available ? "Ready" : "Needs setup" }),
+    function engineGroup(title, ids, hint) {
+      const grid = el("div", { class: "vr-setup-engines" });
+      for (const id of ids) {
+        const item = engines.voices?.[id];
+        if (!item) continue;
+        grid.append(el("div", { class: "vr-setup-engine" }, [
+          el("div", { class: "vr-setup-engine-head" }, [
+            el("strong", { text: ENGINE_LABELS[id] || id }),
+            el("span", { class: `vr-chip${item.available ? " is-cloud" : ""}`, text: item.available ? "Ready" : "Needs setup" }),
+          ]),
+          el("p", { class: "hint", text: item.install || "" }),
+        ]));
+      }
+      return el("div", { class: "vr-setup-group" }, [
+        el("div", { class: "vr-setup-group-head" }, [
+          el("h4", { text: title }),
+          hint ? el("p", { class: "hint", text: hint }) : null,
         ]),
-        el("p", { class: "hint", text: item.install || "" }),
-      ]));
+        grid,
+      ]);
     }
-    card.append(grid);
+    card.append(
+      engineGroup("On this Mac", LOCAL_VOICE_IDS, "Built in or installed as a pack."),
+      engineGroup("OpenRouter voices", OPENROUTER_VOICE_IDS, "All three share the OpenRouter key. HeyGen does the cloning."),
+      engineGroup("Cloud voices", CLOUD_VOICE_IDS, "Use your own MiniMax or ElevenLabs key."),
+    );
     const extraction = engines.extraction || {};
     const rows = Object.entries(extraction).filter(([key]) => EXTRACTION_LABELS[key]);
     if (rows.length) {
@@ -301,7 +320,13 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
           ]),
         ]));
       }
-      card.append(el("p", { class: "hint", text: "Voice extraction for video clips" }), list);
+      card.append(el("div", { class: "vr-setup-group" }, [
+        el("div", { class: "vr-setup-group-head" }, [
+          el("h4", { text: "Voice extraction" }),
+          el("p", { class: "hint", text: "Cleans a clone reference from a video or recording." }),
+        ]),
+        list,
+      ]));
     }
     return card;
   }
