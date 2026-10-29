@@ -4641,15 +4641,16 @@
     }
   }
 
-  async function translationStatus(target) {
+  async function translationStatus(target, jobId = state.job?.id) {
     return api(
-      `/api/classic/jobs/${state.job.id}/translate/status?target=${encodeURIComponent(target)}`,
+      `/api/classic/jobs/${jobId}/translate/status?target=${encodeURIComponent(target)}`,
     );
   }
 
   async function ensureTranslation(controller) {
     const target = targetLanguage();
-    if (!state.job || !target || target === sourceLanguage()) {
+    const jobId = state.job?.id;
+    if (!jobId || !target || target === sourceLanguage()) {
       paintTranslateBadge(null);
       return true;
     }
@@ -4659,14 +4660,14 @@
     }
     let info;
     try {
-      info = await translationStatus(target);
+      info = await translationStatus(target, jobId);
     } catch (error) {
       dom.audioRewriteNote.textContent = `Translation check failed: ${error.message}`;
       return false;
     }
     if (info.status !== "ready" && info.status !== "running") {
       try {
-        info = await api(`/api/classic/jobs/${state.job.id}/translate`, {
+        info = await api(`/api/classic/jobs/${jobId}/translate`, {
           method: "POST",
           body: JSON.stringify({ target, provider: "auto" }),
         });
@@ -4680,10 +4681,10 @@
     paintTranslateBadge(info);
     while (info.status === "running") {
       if (controller && state.scriptAbort !== controller) return false;
-      if (targetLanguage() !== target) return false;
+      if (state.job?.id !== jobId || targetLanguage() !== target) return false;
       await new Promise((resolve) => setTimeout(resolve, 900));
       try {
-        info = await translationStatus(target);
+        info = await translationStatus(target, jobId);
       } catch (error) {
         info = { ...info, status: "failed", error: error.message };
       }

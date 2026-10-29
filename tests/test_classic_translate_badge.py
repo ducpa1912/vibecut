@@ -14,7 +14,7 @@ def test_the_rewrite_step_carries_a_translation_badge():
 
 def test_rewrite_waits_for_the_full_translation():
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
-    assert "/api/classic/jobs/${state.job.id}/translate" in script
+    assert "/api/classic/jobs/${jobId}/translate" in script
     assert "/translate/status?target=" in script
     assert "async function ensureTranslation(controller)" in script
     assert "const translatedReady = await ensureTranslation(controller);" in script
@@ -34,3 +34,10 @@ def test_opening_a_job_repaints_the_badge_from_the_flag():
     end = script.find("\n  function ", start + 10)
     body = script[start:end if end != -1 else len(script)]
     assert "warmTranslation();" in body
+
+
+def test_a_warm_translation_stops_when_the_job_changes():
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "const jobId = state.job?.id;" in script
+    assert "state.job?.id !== jobId" in script
+    assert "async function translationStatus(target, jobId" in script
