@@ -2327,3 +2327,62 @@ select option:disabled { color: #666; }
   font-family: var(--mono);
   font-size: 10px;
 }
+
+/* Edit: three cards (Copy + Texts left, Sound right), full-width script */
+.edit-grid {
+  grid-template-areas:
+    "copy sound"
+    "text sound";
+}
+.edit-copy { grid-area: copy; }
+.edit-sound { grid-area: sound; }
+.edit-text { grid-area: text; }
+.edit-script { padding: 0 16px 16px; }
+.edit-script .audio-script {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(15, 15, 18, 0.55);
+}
+.edit-script .audio-script .script-list { max-height: 260px; }
+.sound-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.sound-tabs button {
+  flex: 1;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.sound-tabs button.active { background: var(--panel-3); color: var(--text); }
+.sound-panel[hidden] { display: none; }
+.sound-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.sound-actions .primary { flex: 1 1 150px; }
+.play-btn {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 13px;
+}
+.rate-field input { width: 64px; }
+.edit-grid .audio-grid.compacts { gap: 8px 10px; }
+@media (max-width: 780px) {
+  .edit-grid {
+    grid-template-areas:
+      "copy"
+      "text"
+      "sound";
+  }
+}

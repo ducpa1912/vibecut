@@ -179,7 +179,6 @@
     audioMusicUploadButton: $("#audio-music-upload-button"),
     audioMusicUploadClear: $("#audio-music-upload-clear"),
     audioMusicUploadName: $("#audio-music-upload-name"),
-    audioMusicWarning: $("#audio-music-warning"),
     audioPromptField: $("#audio-prompt-field"),
     audioGainField: $("#audio-gain-field"),
     audioDuckField: $("#audio-duck-field"),
@@ -211,6 +210,11 @@
     audioGain: $("#audio-gain"),
     audioDuck: $("#audio-duck"),
     audioPreview: $("#audio-preview"),
+    audioGenerateVoice: $("#audio-generate-voice"),
+    audioUseRecording: $("#audio-use-recording"),
+    audioGenerateMusic: $("#audio-generate-music"),
+    audioPlayMusic: $("#audio-play-music"),
+    audioUseBgm: $("#audio-use-bgm"),
     audioStatus: $("#audio-status"),
     audioScript: $("#audio-script"),
     renderNote: $("#render-note"),
@@ -4097,7 +4101,24 @@
         loadAudioTracks();
       });
     });
-    dom.audioPreview.addEventListener("click", previewVoice);
+    dom.audioPreview.addEventListener("click", playVoiceSample);
+    [dom.audioEngine, dom.audioVoice, dom.audioRate].forEach((node) => {
+      node?.addEventListener("change", () => { state.voiceSampleUrl = ""; });
+    });
+    dom.audioGenerateVoice?.addEventListener("click", () => {
+      setVoiceSource("generate");
+      previewVoice();
+    });
+    dom.audioUseRecording?.addEventListener("click", openVoicePicker);
+    dom.audioGenerateMusic?.addEventListener("click", () => setMusicSource("generate"));
+    dom.audioUseBgm?.addEventListener("click", () => {
+      setMusicSource("own");
+      dom.audioMusicUploadButton?.click();
+    });
+    dom.audioPlayMusic?.addEventListener("click", playMusicSample);
+    document.querySelectorAll("[data-sound-tab]").forEach((button) => {
+      button.addEventListener("click", () => showSoundTab(button.dataset.soundTab));
+    });
     dom.audioSourceGenerate.addEventListener("change", () => {
       setVoiceSource("generate");
       loadAudioScript();
@@ -4140,6 +4161,42 @@
     updateRenderPanel();
   }
 
+  function showSoundTab(tab) {
+    state.soundTab = tab === "music" ? "music" : "voice";
+    document.querySelectorAll("[data-sound-tab]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.soundTab === state.soundTab);
+    });
+    [dom.audioVoiceStep, dom.audioMusicStep].forEach((panel) => {
+      if (!panel) return;
+      panel.hidden = panel.dataset.soundPanel !== state.soundTab;
+    });
+  }
+
+  function setMusicSource(source) {
+    const input = document.querySelector(`input[name="audio-music-source"][value="${source}"]`);
+    if (!input) return;
+    input.checked = true;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function playMusicSample() {
+    if (state.audio.musicUploadUrl) {
+      const audio = new Audio(state.audio.musicUploadUrl);
+      audio.play().catch(() => toast("Could not play the BGM."));
+      return;
+    }
+    toast("Generated music plays in the render.");
+  }
+
+  function playVoiceSample() {
+    if (!state.voiceSampleUrl) {
+      previewVoice();
+      return;
+    }
+    const audio = new Audio(state.voiceSampleUrl);
+    audio.play().catch(() => toast("Could not play the voice sample."));
+  }
+
   function openVoicePicker() {
     if (!state.job || !state.plan) return;
     voicePickerPrevious = state.audio.source === "upload" ? "upload" : "generate";
@@ -4164,6 +4221,7 @@
     state.audio.musicUpload = "";
     state.audio.musicUploadName = "";
     state.audio.musicUploadDuration = 0;
+    state.audio.musicUploadUrl = "";
     if (dom.audioMusicUpload) dom.audioMusicUpload.value = "";
     syncAudioVisibility();
     dom.audioMusic.dispatchEvent(new Event("change", { bubbles: true }));
@@ -4228,6 +4286,17 @@
       if (dom.audioMusicUploadButton) dom.audioMusicUploadButton.disabled = false;
     }
     if (dom.mixerOpen) dom.mixerOpen.disabled = !(voiceMode || musicMode);
+    if (state.lastAudioMode !== mode) {
+      state.lastAudioMode = mode;
+      if (mode === "music") showSoundTab("music");
+      else if (voiceMode) showSoundTab("voice");
+    }
+    if (dom.audioGenerateVoice) dom.audioGenerateVoice.hidden = upload;
+    if (dom.audioUseRecording) dom.audioUseRecording.disabled = !voiceMode;
+    if (dom.audioGenerateMusic) dom.audioGenerateMusic.disabled = !musicMode;
+    if (dom.audioPlayMusic) {
+      dom.audioPlayMusic.disabled = !(musicMode && musicSourceMode() === "own" && state.audio.musicUpload);
+    }
     dom.audioVoiceGenerate.hidden = upload;
     dom.audioVoiceUpload.hidden = !upload;
     dom.audioUploadButton.hidden = !upload;
@@ -4250,10 +4319,6 @@
     dom.audioDuckField.hidden = source === "none";
     dom.audioBeatSyncField.hidden = source === "none";
     const block = audioBlockReason();
-    if (dom.audioMusicWarning) {
-      dom.audioMusicWarning.hidden = !block;
-      dom.audioMusicWarning.textContent = block;
-    }
     if (state.job && state.plan) updateRenderPanel();
   }
 
@@ -4302,6 +4367,7 @@
       state.audio.musicUpload = result.path;
       state.audio.musicUploadName = result.name || file.name;
       state.audio.musicUploadDuration = Number(result.duration) || 0;
+      state.audio.musicUploadUrl = URL.createObjectURL(file);
       state.audio.musicSource = "own";
       document.querySelector('input[name="audio-music-source"][value="own"]').checked = true;
       dom.audioMusicUpload.value = "";
@@ -4843,7 +4909,7 @@
     ensureTranslation(null).catch(() => {});
   }
 
-  function resetAudioScript(message = "Choose a mode, then Copy cut. The full transcript is reused.") {
+  function resetAudioScript(message = "Choose a mode, then Story cut. The full transcript is reused.") {
     if (!dom.audioScript) return;
     cancelAudioScript();
     if (dom.audioRewriteNote) dom.audioRewriteNote.textContent = message;
@@ -4958,7 +5024,7 @@
       if (error?.name === "AbortError") {
         // A setting change already cleared the panel; keep that message.
         if (state.scriptAbort === controller) {
-          dom.audioRewriteNote.textContent = "Copy cancelled. Press Copy cut to run it again.";
+          dom.audioRewriteNote.textContent = "Copy cancelled. Press Story cut to run it again.";
         }
         return;
       }
@@ -5061,7 +5127,7 @@
         if (next.trim()) state.scriptOverrides[sceneId] = next.trim();
         else delete state.scriptOverrides[sceneId];
         state.scriptId = null;
-        resetAudioScript("Edit saved. Press Copy cut to regenerate the cut.");
+        resetAudioScript("Edit saved. Press Story cut to regenerate the cut.");
       });
     });
   }
@@ -5077,7 +5143,7 @@
       rewrite: snapshot.rewrite?.used || snapshot.rewrite || "",
       mode: snapshot.style || "",
     };
-    const note = "Restored from history. Overrides applied; press Copy cut to regenerate audio.";
+    const note = "Restored from history. Overrides applied; press Story cut to regenerate audio.";
     renderScriptBlock(lines, result, note, { snapshot: true });
   }
 
@@ -5160,7 +5226,8 @@
         throw new Error(detail);
       }
       const blob = await response.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
+      state.voiceSampleUrl = URL.createObjectURL(blob);
+      const audio = new Audio(state.voiceSampleUrl);
       audio.play();
       dom.audioStatus.textContent = "Voice sample ready.";
     } catch (error) {

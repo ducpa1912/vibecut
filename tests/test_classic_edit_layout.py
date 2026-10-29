@@ -7,15 +7,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_edit_is_a_two_by_two_panel():
+def test_edit_has_three_cards_and_a_full_width_script():
     page = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
     assert 'id="audio-panel" class="audio-panel edit-panel"' in page
     assert 'id="audio-rewrite-step" class="edit-card edit-copy"' in page
     assert 'class="edit-card edit-sound"' in page
     assert 'id="text-effects-step" class="edit-card edit-text"' in page
-    assert 'class="edit-card edit-script-card"' in page
-    assert ">Copy cut<" in page
+    assert 'class="edit-card edit-script-card"' not in page
+    assert '<section class="edit-script">' in page
+    assert ">Story cut<" in page
+    assert 'id="audio-script"' in page
     assert 'id="mixer-open"' in page
+    assert 'data-sound-tab="voice"' in page
+    assert 'data-sound-tab="music"' in page
+    assert 'id="audio-generate-voice"' in page
+    assert 'id="audio-generate-music"' in page
+    assert ">Use my recording<" in page
+    assert ">Use my BGM<" in page
+
+
+def test_texts_and_effects_sits_below_copy():
+    css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
+    assert '"copy sound"' in css and '"text sound"' in css
+    assert ".edit-copy { grid-area: copy; }" in css
+    assert ".edit-text { grid-area: text; }" in css
 
 
 def test_render_and_draft_sit_inside_edit_at_the_bottom():
@@ -39,6 +54,8 @@ def test_mode_tags_disable_the_edit_cards():
     assert "setDisabled(dom.audioRewriteStep, !rewriteMode)" in script
     assert "setDisabled(dom.audioVoiceStep, !voiceMode)" in script
     assert "setDisabled(dom.audioMusicStep, !musicMode)" in script
+    assert "function showSoundTab(tab)" in script
+    assert "function setMusicSource(source)" in script
 
 
 def test_translation_status_is_plain_words_only():

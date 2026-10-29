@@ -389,7 +389,7 @@
                 </label>
                 <div class="audio-field small audio-rewrite-action">
                   <span>&nbsp;</span>
-                  <button id="audio-rewrite-run" class="primary small" type="button">Copy cut</button>
+                  <button id="audio-rewrite-run" class="primary small" type="button">Story cut</button>
                 </div>
               </div>
               <p id="audio-rewrite-note" class="hint">Choose a mode, then copy the cut. The full transcript is reused.</p>
@@ -399,85 +399,93 @@
 
             <section class="edit-card edit-sound">
               <div class="edit-card-head">
-                <div><h4>Sound</h4><p>New voice and/or music.</p></div>
+                <div><h4>Sound</h4><p>Voice or music for this cut.</p></div>
                 <button id="mixer-open" class="ghost small" type="button">Mixer</button>
               </div>
-              <div class="sound-columns">
-                <div id="audio-voice-step" class="sound-col">
-                  <h5>Voice</h5>
-                  <div id="audio-voice-source" class="audio-source-row">
-                    <label class="check compact"><input id="audio-source-generate" type="radio" name="audio-source" value="generate" checked> Generate</label>
-                    <label class="check compact"><input id="audio-source-upload" type="radio" name="audio-source" value="upload"> Use my recording</label>
-                  </div>
-                  <div id="audio-voice-generate" class="audio-grid">
-                    <label class="audio-field">
-                      <span>Voice list</span>
-                      <select id="audio-engine"></select>
-                    </label>
-                    <label class="audio-field">
-                      <span>Voice</span>
-                      <select id="audio-voice"></select>
-                    </label>
-                    <label class="audio-field small">
-                      <span>Rate</span>
-                      <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
-                    </label>
-                  </div>
-                  <div id="audio-voice-upload" class="audio-upload-box" hidden>
-                    <input id="audio-upload" type="file" accept="audio/*" hidden>
-                    <button id="audio-upload-button" class="ghost small" type="button">Choose recording</button>
-                    <span id="audio-upload-name" class="hint">Fit your recording to the cut length.</span>
-                  </div>
-                  <div class="audio-actions">
-                    <button id="audio-preview" class="ghost small" type="button">Test voice</button>
-                  </div>
-                </div>
+              <div class="sound-tabs" role="tablist" aria-label="Sound tabs">
+                <button type="button" data-sound-tab="voice" class="active">Voice</button>
+                <button type="button" data-sound-tab="music">Music</button>
+              </div>
 
-                <div id="audio-music-step" class="sound-col">
-                  <h5>Sound</h5>
-                  <div id="audio-music-source" class="audio-source-row">
-                    <label class="check compact"><input type="radio" name="audio-music-source" value="none" checked> None</label>
-                    <label class="check compact"><input type="radio" name="audio-music-source" value="own"> Use my sound</label>
-                    <label class="check compact"><input type="radio" name="audio-music-source" value="generate"> Generate</label>
-                  </div>
-                  <p id="audio-music-warning" class="audio-warning" hidden></p>
-                  <div class="audio-grid">
-                    <label class="audio-field">
-                      <span>Music source</span>
-                      <select id="audio-music">
-                        <option value="none">No music</option>
-                        <option value="library">My own track</option>
-                        <option value="minimax-music">AI · MiniMax Music</option>
-                        <option value="lyria-clip">AI · OpenRouter Lyria 3</option>
-                      </select>
-                    </label>
-                    <label id="audio-track-field" class="audio-field">
-                      <span>Track</span>
-                      <select id="audio-track"></select>
-                    </label>
-                    <div id="audio-music-upload-box" class="audio-upload-box" hidden>
-                      <input id="audio-music-upload" type="file" accept="audio/*" hidden>
-                      <button id="audio-music-upload-button" class="ghost small" type="button">Choose sound</button>
-                      <button id="audio-music-upload-clear" class="ghost small" type="button" hidden>Clear</button>
-                      <span id="audio-music-upload-name" class="hint">Use your own music file.</span>
-                    </div>
-                    <label id="audio-prompt-field" class="audio-field">
-                      <span>Music prompt</span>
-                      <input id="audio-prompt" placeholder="auto mood">
-                    </label>
-                    <label id="audio-gain-field" class="audio-field small">
-                      <span>Music dB</span>
-                      <input id="audio-gain" type="number" min="-40" max="0" step="1" value="-18">
-                    </label>
-                    <label id="audio-duck-field" class="audio-field checkbox">
-                      <input id="audio-duck" type="checkbox" checked> Duck under voice
-                    </label>
-                    <label id="audio-beatsync-field" class="audio-field checkbox">
-                      <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
-                    </label>
-                  </div>
+              <div id="audio-voice-step" class="sound-panel" data-sound-panel="voice">
+                <div id="audio-voice-source" class="audio-source-row" hidden>
+                  <label class="check compact"><input id="audio-source-generate" type="radio" name="audio-source" value="generate" checked> Generate</label>
+                  <label class="check compact"><input id="audio-source-upload" type="radio" name="audio-source" value="upload"> Use my recording</label>
+                </div>
+                <div id="audio-voice-generate" class="audio-grid compacts">
+                  <label class="audio-field">
+                    <span>Voice list</span>
+                    <select id="audio-engine"></select>
+                  </label>
+                  <label class="audio-field">
+                    <span>Voice</span>
+                    <select id="audio-voice"></select>
+                  </label>
+                  <label class="audio-field small rate-field">
+                    <span>Rate</span>
+                    <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
+                  </label>
+                </div>
+                <div class="sound-actions">
+                  <button id="audio-generate-voice" class="primary small" type="button">Generate</button>
+                  <button id="audio-preview" class="ghost small play-btn" type="button" title="Play the generated voice" aria-label="Play the generated voice">▶</button>
+                  <button id="audio-use-recording" class="ghost small" type="button">Use my recording</button>
+                </div>
+                <div id="audio-voice-upload" class="audio-upload-box" hidden>
+                  <input id="audio-upload" type="file" accept="audio/*" hidden>
+                  <button id="audio-upload-button" class="ghost small" type="button">Choose recording</button>
+                  <span id="audio-upload-name" class="hint">Fit your recording to the cut length.</span>
                 </div>
               </div>
+
+              <div id="audio-music-step" class="sound-panel" data-sound-panel="music" hidden>
+                <div id="audio-music-source" class="audio-source-row" hidden>
+                  <label class="check compact"><input type="radio" name="audio-music-source" value="none" checked> None</label>
+                  <label class="check compact"><input type="radio" name="audio-music-source" value="own"> Use my BGM</label>
+                  <label class="check compact"><input type="radio" name="audio-music-source" value="generate"> Generate</label>
+                </div>
+                <div class="audio-grid compacts">
+                  <label class="audio-field">
+                    <span>Music source</span>
+                    <select id="audio-music">
+                      <option value="none">No music</option>
+                      <option value="library">My own track</option>
+                      <option value="minimax-music">AI · MiniMax Music</option>
+                      <option value="lyria-clip">AI · OpenRouter Lyria 3</option>
+                    </select>
+                  </label>
+                  <label id="audio-track-field" class="audio-field">
+                    <span>Track</span>
+                    <select id="audio-track"></select>
+                  </label>
+                  <div id="audio-music-upload-box" class="audio-upload-box" hidden>
+                    <input id="audio-music-upload" type="file" accept="audio/*" hidden>
+                    <button id="audio-music-upload-button" class="ghost small" type="button">Choose BGM</button>
+                    <button id="audio-music-upload-clear" class="ghost small" type="button" hidden>Clear</button>
+                    <span id="audio-music-upload-name" class="hint">Use your own music file.</span>
+                  </div>
+                  <label id="audio-prompt-field" class="audio-field">
+                    <span>Music prompt</span>
+                    <input id="audio-prompt" placeholder="auto mood">
+                  </label>
+                  <label id="audio-gain-field" class="audio-field small">
+                    <span>Music dB</span>
+                    <input id="audio-gain" type="number" min="-40" max="0" step="1" value="-18">
+                  </label>
+                  <label id="audio-duck-field" class="audio-field checkbox">
+                    <input id="audio-duck" type="checkbox" checked> Duck under voice
+                  </label>
+                  <label id="audio-beatsync-field" class="audio-field checkbox">
+                    <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
+                  </label>
+                </div>
+                <div class="sound-actions">
+                  <button id="audio-generate-music" class="primary small" type="button">Generate</button>
+                  <button id="audio-play-music" class="ghost small play-btn" type="button" title="Generated music plays in the render" aria-label="Play music" disabled>▶</button>
+                  <button id="audio-use-bgm" class="ghost small" type="button">Use my BGM</button>
+                </div>
+              </div>
+
               <p id="audio-status" class="hint audio-status" hidden></p>
             </section>
 
@@ -488,14 +496,14 @@
               <label class="caption-check edit-check"><input id="captions" type="checkbox"> Burn in subtitles</label>
               <p class="hint">Caption position, font and cue edits live in Creator → Captions.</p>
             </section>
-
-            <section class="edit-card edit-script-card">
-              <div class="edit-card-head">
-                <div><h4>Script</h4><p>The lines this cut will say.</p></div>
-              </div>
-              <div id="audio-script" class="audio-script"></div>
-            </section>
           </div>
+
+          <section class="edit-script">
+            <div class="edit-card-head">
+              <div><h4>Script</h4><p>The lines this cut will say.</p></div>
+            </div>
+            <div id="audio-script" class="audio-script"></div>
+          </section>
 
           <div class="edit-actions">
             <div id="render-block" class="render-block" role="alert" hidden>

@@ -98,10 +98,11 @@ scrolling, which a screenshot cannot fully judge.
 | U3 | Clicking a clip's **hook / beat / payoff** label, or right-clicking the clip, opens the role menu. Choosing a role moves the clip into Hook → Beat → Payoff order. |
 | U4 | The **Clean** profile dropdown is gone; Clean always removes work files. |
 | U5 | Shapes now include **1:1**, **16:9** and **16:10**. |
-| U6 | The audio panel is **Edit**: mode tags on top, then a 2×2 grid of **Copy**, **Sound**, **Texts & Effects**, **Script**. |
-| U7 | Copy replaces Rewrite. It shows **Translating…**, **✓ Translation ready**, **Rewriting…**. Unavailable models are disabled, dimmed and blurred. |
-| U8 | Sound has Voice and Sound columns. **Mixer** sits at the top right of the card. |
-| U9 | Render and Draft sit at the bottom right of Edit. |
+| U6 | The audio panel is **Edit**: mode tags on top, then three cards: **Copy**, **Sound**, **Texts & Effects**. The Script sits full width at the bottom. |
+| U7 | Copy replaces Rewrite. Its action is **Story cut**. It shows **Translating…**, **✓ Translation ready**, **Rewriting…**. Unavailable models are disabled, dimmed and blurred. |
+| U8 | Sound has **Voice** and **Music** tabs. **Generate** is the primary action, with a small play button and **Use my recording** / **Use my BGM**. **Mixer** sits at the top right. |
+| U9 | Render and Draft sit at the bottom right of Edit, below the full-width Script. |
+| U10 | Texts & Effects sits directly below Copy; Sound spans the right column. |
 | U10 | Quick-scan hooks and clips no longer request a missing thumbnail. |
 
 ### Still open
