@@ -29,15 +29,18 @@ def test_expand_opens_a_vertical_moment_list():
     assert "renderScenes();" not in body
 
 
-def test_each_expanded_moment_is_a_vertical_card():
+def test_expand_is_a_vertically_scrolling_collage():
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
-    assert "moment-card moment-card-wide" in script
-    assert "moment-wide-copy" in script
-    assert "moment-wide-still" in script
+    assert 'class="moment-card ' in script
+    assert "moment-wide-copy" not in script
+    assert "moment-card-wide" not in script
     assert "scene.ocr || scene.speech" in script
     css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
-    assert ".moment-card-wide {" in css
-    assert "aspect-ratio: 16 / 9" in css
+    block = css[css.index(".moments-list {"):]
+    block = block[:block.index(".moments-list .moment-card")]
+    assert "display: grid" in block
+    assert "repeat(auto-fill, minmax(96px, 1fr))" in block
+    assert "overflow-y: auto" in block
 
 
 def test_dropdown_text_is_not_eleven_pixels():
