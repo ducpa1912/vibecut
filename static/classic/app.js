@@ -318,9 +318,87 @@
 
   init();
 
+  // Native <select> popups on macOS ignore the page font size. The audio
+  // controls open this list instead, at a readable 15px.
+  const selectMenu = document.createElement("div");
+  selectMenu.className = "select-menu";
+  selectMenu.hidden = true;
+  selectMenu.setAttribute("role", "listbox");
+  document.body.appendChild(selectMenu);
+  let menuSelect = null;
+
+  function closeSelectMenu() {
+    selectMenu.hidden = true;
+    if (menuSelect) menuSelect.classList.remove("menu-open");
+    menuSelect = null;
+  }
+
+  function openSelectMenu(select) {
+    if (!select || select.disabled) return;
+    menuSelect = select;
+    selectMenu.innerHTML = [...select.options].map((option, index) => `
+      <button type="button" role="option" data-index="${index}"
+        class="${option.value === select.value ? "active" : ""}"
+        ${option.disabled ? "disabled" : ""}>${esc(option.textContent)}</button>`).join("");
+    selectMenu.hidden = false;
+    select.classList.add("menu-open");
+    const rect = select.getBoundingClientRect();
+    const width = Math.max(rect.width, 240);
+    selectMenu.style.width = `${width}px`;
+    selectMenu.style.left = `${Math.min(rect.left, window.innerWidth - width - 12)}px`;
+    selectMenu.style.top = `${rect.bottom + 4}px`;
+    requestAnimationFrame(() => {
+      const menuRect = selectMenu.getBoundingClientRect();
+      if (menuRect.bottom > window.innerHeight - 8) {
+        selectMenu.style.top = `${Math.max(8, rect.top - menuRect.height - 4)}px`;
+      }
+      selectMenu.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function enhanceSelect(select) {
+    if (!select || select.dataset.enhanced) return;
+    select.dataset.enhanced = "1";
+    select.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      openSelectMenu(select);
+    });
+    select.addEventListener("keydown", (event) => {
+      if (!["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) return;
+      event.preventDefault();
+      openSelectMenu(select);
+    });
+  }
+
+  function enhanceAudioSelects() {
+    [dom.audioLang, dom.audioStyle, dom.audioEngine, dom.audioVoice].forEach(enhanceSelect);
+  }
+
+  selectMenu.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-index]");
+    if (!button || !menuSelect) return;
+    const option = menuSelect.options[Number(button.dataset.index)];
+    if (!option) return;
+    menuSelect.value = option.value;
+    menuSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    const select = menuSelect;
+    closeSelectMenu();
+    select.focus();
+  });
+  document.addEventListener("mousedown", (event) => {
+    if (event.target.closest("select[data-enhanced]")) return;
+    if (!selectMenu.hidden && !event.target.closest(".select-menu")) closeSelectMenu();
+  });
+  window.addEventListener("scroll", closeSelectMenu, true);
+  window.addEventListener("resize", closeSelectMenu);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeSelectMenu();
+  });
+
   function init() {
     syncTokenCookie();
     bind();
+    enhanceAudioSelects();
     updateUrlState();
     loadHealth();
     loadRecent();
