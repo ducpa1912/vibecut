@@ -41,6 +41,10 @@ VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".avi"}
 CANDIDATE_KIND = "voice-candidates"
 CANDIDATE_DIR = "voice-candidates"
 CANDIDATE_COUNT = 5
+#: The default search window. A 17-minute video can take minutes to decode and
+#: separate; the first two minutes usually hold enough clean speech. The UI can
+#: ask for the whole video with ``full=1``.
+SEARCH_WINDOW_SECONDS = 120.0
 #: Quiet-gap band energy this close to the speech band means music is present.
 MUSIC_RESIDUAL_DB = -24.0
 #: My voice cleaning runs inside the upload request; it reads at most this
@@ -210,8 +214,20 @@ def _set_stage(job_id: str, stage: str) -> None:
     _remember(CANDIDATE_STAGES, job_id, str(stage or ""))
 
 
-def _run_candidate_search(job_id: str, cancel_event: threading.Event, out_dir: Path) -> dict:
-    """Background worker: clean the source and keep 3-5 candidate WAVs."""
+def _run_candidate_search(
+    job_id: str,
+    cancel_event: threading.Event,
+    out_dir: Path,
+    *,
+    start: float = 0.0,
+    seconds: float = 0.0,
+) -> dict:
+    """Background worker: clean the source and keep 3-5 candidate WAVs.
+
+    ``seconds`` above zero searches only that window of the source. The whole
+    video is still available when the caller asks for it.
+    """
+    import audio
     import voice_extract
 
     app = _app()
@@ -219,16 +235,33 @@ def _run_candidate_search(job_id: str, cancel_event: threading.Event, out_dir: P
     source = Path(str((job.get("source") or {}).get("path") or ""))
     if not source.is_file():
         raise voice_clone.CloneError("The source video for this job is missing.", 404)
+    window_path: Path | None = None
+    search_source = source
+    offset = 0.0
     _set_stage(job_id, "preparing")
     try:
+        if seconds > 0:
+            duration = float((job.get("source") or {}).get("duration") or 0.0)
+            start = max(0.0, min(float(start), max(0.0, duration - 1.0)))
+            seconds = max(1.0, min(float(seconds), max(1.0, duration - start)))
+            window_path = out_dir / "search-window.wav"
+            audio._run([
+                audio._ffmpeg(), "-y", "-v", "error",
+                "-ss", f"{start:.3f}", "-t", f"{seconds:.3f}", "-i", str(source),
+                "-vn", "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(window_path),
+            ], timeout=600, cancel_event=cancel_event)
+            search_source = window_path
+            offset = start
         report = voice_extract.find_voice_candidates(
-            source, out_dir,
+            search_source, out_dir,
             cancel_event=cancel_event,
             on_stage=lambda stage: _set_stage(job_id, stage),
         )
         report = dict(report)
         report["job_id"] = job_id
         report.setdefault("candidates", [])
+        report["window_offset"] = round(offset, 3)
+        report["window_seconds"] = round(seconds, 3) if seconds > 0 else 0.0
         _remember(CANDIDATE_RESULTS, job_id, report)
         with _CANDIDATE_LOCK:
             CANDIDATE_ERRORS.pop(job_id, None)
@@ -248,6 +281,11 @@ def _run_candidate_search(job_id: str, cancel_event: threading.Event, out_dir: P
             _set_stage(job_id, "failed")
         raise
     finally:
+        if window_path is not None:
+            try:
+                window_path.unlink()
+            except OSError:
+                pass
         # The search is over; its cancel switch is no longer needed. A newer
         # search for the same job keeps its own event.
         with _CANDIDATE_LOCK:
@@ -255,12 +293,14 @@ def _run_candidate_search(job_id: str, cancel_event: threading.Event, out_dir: P
                 CANDIDATE_CANCELS.pop(job_id, None)
 
 
-def _public_candidate(job_id: str, item: dict, models: dict) -> dict:
+def _public_candidate(job_id: str, item: dict, models: dict, offset: float = 0.0) -> dict:
     window = item.get("window") or [item.get("start") or 0.0, item.get("end") or 0.0]
     try:
         start, end = float(window[0]), float(window[1])
     except (TypeError, ValueError, IndexError):
         start, end = 0.0, 0.0
+    start += offset
+    end += offset
     quality = item.get("quality") or {}
     summary = {
         key: quality.get(key)
@@ -302,10 +342,11 @@ def _candidate_state(job_id: str) -> dict:
         state, error, result = "idle", None, {}
     report = result or report or {}
     models = report.get("models") or {}
+    offset = float(report.get("window_offset") or 0.0)
     candidates = []
     if state == "done":
         candidates = [
-            _public_candidate(job_id, item, models)
+            _public_candidate(job_id, item, models, offset)
             for item in report.get("candidates") or []
             if isinstance(item, dict)
         ]
@@ -317,6 +358,10 @@ def _candidate_state(job_id: str) -> dict:
         "candidates": candidates,
         "warnings": list(report.get("warnings") or []),
         "models": models,
+        "window": {
+            "start": round(offset, 3),
+            "seconds": round(float(report.get("window_seconds") or 0.0), 3),
+        },
     }
 
 
@@ -436,8 +481,14 @@ def _clone_my_voice(
 
 
 @router.post("/api/jobs/{job_id}/voices/candidates")
-def start_candidate_search(job_id: str, request: Request) -> dict:
-    """Start the clean voice candidate search for this job's source."""
+def start_candidate_search(
+    job_id: str, request: Request, full: bool = False, start: float = 0.0,
+) -> dict:
+    """Start the clean voice candidate search for this job's source.
+
+    By default it searches the first two minutes, which keeps a long video
+    quick. ``full=1`` searches the whole source; ``start`` moves the window.
+    """
     _guard(request)
     app = _app()
     job = app.load_job(job_id)
@@ -466,11 +517,17 @@ def start_candidate_search(job_id: str, request: Request) -> dict:
     with _CANDIDATE_LOCK:
         CANDIDATE_RESULTS.pop(job_id, None)
         CANDIDATE_ERRORS.pop(job_id, None)
+    duration = float((job.get("source") or {}).get("duration") or 0.0)
+    start = max(0.0, float(start or 0.0))
+    seconds = 0.0 if full else SEARCH_WINDOW_SECONDS
+    if seconds and duration and seconds >= duration:
+        seconds = 0.0
     cancel_event = threading.Event()
     _remember(CANDIDATE_CANCELS, job_id, cancel_event)
     _set_stage(job_id, "queued")
     app.voice_pool.submit_tracked(
         _run_candidate_search, job_id, cancel_event, out_dir,
+        start=start, seconds=seconds,
         kind=CANDIDATE_KIND, key=job_id,
     )
     return _candidate_state(job_id)

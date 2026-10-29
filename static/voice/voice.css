@@ -422,3 +422,30 @@ body.vr-root {
   .vr-finder-pick { grid-template-columns: 1fr; }
   .vr-root .st-voice-clone-form .st-setup-key-form { grid-template-columns: 1fr; }
 }
+
+/* ---------------------------------------------------------------- setup */
+
+.vr-setup { scroll-margin-top: 18px; }
+.vr-setup-card { gap: 14px; }
+.vr-setup-head { align-items: flex-start; gap: 12px; }
+.vr-setup-head > div { display: grid; gap: 4px; }
+.vr-setup-model { display: grid; gap: 10px; padding-top: 4px; border-top: 1px solid var(--line); }
+.vr-setup-engines { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.vr-setup-engine {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.vr-setup-engine-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.vr-setup-engine-head strong { font-size: 13px; font-weight: 560; }
+.vr-setup-paths { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.vr-setup-paths dt { color: var(--muted); font-size: 12px; }
+.vr-setup-paths dd { margin: 0; font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+
+@media (max-width: 860px) {
+  .vr-setup-engines { grid-template-columns: 1fr; }
+  .vr-setup-paths { grid-template-columns: 1fr; }
+}

@@ -83,6 +83,7 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
   let playing = 0;
   let player = null;
   let manual = false;
+  let fullSearch = false;
   let start = "";
   let end = "";
   let name = "";
@@ -153,7 +154,7 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     busy = "find";
     render();
     try {
-      task = await findVoiceCandidates(jobId);
+      task = await findVoiceCandidates(jobId, { full: fullSearch });
       if (isRunning(task)) schedule(1200);
     } catch (cause) {
       error = cause?.message || "Could not start the clip search.";
@@ -382,6 +383,19 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
       el("div", { class: "vr-actions" }, [search, stop]),
     ]));
     if (!jobId) return;
+
+    const whole = el("input", {
+      type: "checkbox",
+      checked: fullSearch,
+      disabled: running || Boolean(busy),
+    });
+    whole.addEventListener("change", () => { fullSearch = whole.checked; });
+    node.append(el("label", { class: "vr-consent" }, [
+      whole,
+      el("span", {
+        text: "Search the whole video. Off: the first 2:00 only, which is much faster. For a quick clone, use a time range instead.",
+      }),
+    ]));
 
     const progress = stageCopy(task);
     if (running && progress) node.append(el("p", { class: "vr-status", role: "status", "data-stage": task.stage || "", text: progress }));

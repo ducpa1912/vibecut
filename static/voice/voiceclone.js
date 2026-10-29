@@ -100,8 +100,13 @@ export function wasCancelled(error) {
 }
 
 /** Start the clean candidate search; a second call returns the running task. */
-export function findVoiceCandidates(jobId) {
-  return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/candidates`, { method: "POST", body: {} });
+export function findVoiceCandidates(jobId, { full = false, start = 0 } = {}) {
+  const params = new URLSearchParams();
+  if (full) params.set("full", "1");
+  const offset = Number(start) || 0;
+  if (offset > 0) params.set("start", String(offset));
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/candidates${query}`, { method: "POST", body: {} });
 }
 
 export function voiceCandidateState(jobId) {

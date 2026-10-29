@@ -21,10 +21,12 @@
 import { listJobs, request } from "./api.js";
 import { el } from "./ui.js";
 import { createClipFinder } from "./clipfinder.js";
+import { createVoiceSetup } from "./setup.js";
 import {
   createMyVoicePanel,
   deleteClone,
   isStopped,
+  listClones,
   playClone,
   playVoice,
   renameClone,
@@ -69,7 +71,7 @@ function setNotice(message, tone = "") {
 }
 
 const myVoice = createMyVoicePanel({
-  hasKey: () => Boolean(catalog?.clone_available),
+  hasKey: () => Boolean(settings?.secrets?.openrouter),
   onChange: () => { void loadCatalog(); },
   sampleText: () => testLine,
   title: "From a recording or a file",
@@ -78,9 +80,14 @@ const myVoice = createMyVoicePanel({
 
 const finder = createClipFinder({
   jobs: () => jobs,
-  available: () => Boolean(catalog?.clone_available),
+  available: () => Boolean(settings?.secrets?.openrouter),
   onCloned: () => { void loadCatalog(); },
   onNotice: (message, tone) => { setNotice(message, tone); render(); },
+});
+
+const setup = createVoiceSetup({
+  getSettings: () => settings,
+  onChanged: () => load(),
 });
 
 function langOf(voice) {
@@ -98,6 +105,8 @@ async function loadCatalog() {
   try {
     catalog = await request("/api/voices/catalog");
   } catch (cause) {
+    const clones = await listClones().catch(() => []);
+    catalog = { engines: [], clones, clone_available: false };
     error = cause?.message || "Could not read the voices on this machine.";
   }
   render();
@@ -107,21 +116,27 @@ async function load() {
   loading = true;
   error = "";
   render();
-  try {
-    const [state, voices, recent] = await Promise.all([
-      request("/api/settings"),
-      request("/api/voices/catalog"),
-      listJobs({ limit: 30 }).catch(() => ({ jobs: [] })),
-    ]);
-    settings = state;
-    catalog = voices;
-    jobs = (recent?.jobs || []).filter((job) => job.status === "ready" && !job.source_deleted && !job.source_missing);
-  } catch (cause) {
-    error = cause?.message || "Could not open the Voice Room.";
-  } finally {
-    loading = false;
-    render();
+  const [stateResult, voicesResult, recentResult] = await Promise.allSettled([
+    request("/api/settings"),
+    request("/api/voices/catalog"),
+    listJobs({ limit: 30 }),
+  ]);
+  if (stateResult.status === "fulfilled") {
+    settings = stateResult.value;
+  } else {
+    error = stateResult.reason?.message || "Could not read this app's setup.";
   }
+  if (voicesResult.status === "fulfilled") {
+    catalog = voicesResult.value;
+  } else {
+    const clones = await listClones().catch(() => []);
+    catalog = { engines: [], clones, clone_available: false };
+    error = error || voicesResult.reason?.message || "Could not read the voices on this machine.";
+  }
+  const recent = recentResult.status === "fulfilled" ? recentResult.value : { jobs: [] };
+  jobs = (recent?.jobs || []).filter((job) => job.status === "ready" && !job.source_deleted && !job.source_missing);
+  loading = false;
+  render();
 }
 
 async function play(engine, voice, label) {
@@ -140,7 +155,11 @@ async function play(engine, voice, label) {
     setNotice(`Playing ${label}.`, "ok");
   } catch (cause) {
     if (isStopped(cause)) setNotice("Stopped.");
-    else setNotice(cause?.message || `Could not play ${label}.`, "bad");
+    else {
+      const message = cause?.message || `Could not play ${label}.`;
+      setNotice(message, "bad");
+      if (/openrouter|quarantin|auth|key/i.test(message)) void load();
+    }
   } finally {
     playing = "";
     render();
@@ -161,7 +180,11 @@ async function playMine(item) {
     setNotice(`Playing ${item.name}.`, "ok");
   } catch (cause) {
     if (isStopped(cause)) setNotice("Stopped.");
-    else setNotice(cause?.message || "Could not play this voice.", "bad");
+    else {
+      const message = cause?.message || "Could not play this voice.";
+      setNotice(message, "bad");
+      if (/openrouter|quarantin|auth|key/i.test(message)) void load();
+    }
   } finally {
     cloneBusy = "";
     render();
@@ -216,6 +239,8 @@ async function removeMine(item) {
 function header() {
   const refresh = el("button", { class: "ghost small", type: "button", text: "Refresh" });
   refresh.addEventListener("click", () => { void load(); });
+  const setupButton = el("button", { class: "ghost small", type: "button", text: "Setup" });
+  setupButton.addEventListener("click", () => { setup.open(); });
   const views = settings?.edition?.views || [];
   return el("header", { class: "shell topbar vr-top" }, [
     el("a", { class: "brand", href: "/" }, ["VibeCut", el("span", { class: "brand-mark" })]),
@@ -223,6 +248,7 @@ function header() {
       el("span", { class: "vr-room", text: "Voice Room" }),
       el("a", { href: "/", text: "Back to VibeCut" }),
       views.includes("studio") ? el("a", { href: "/?studio=1", text: "Open Studio" }) : null,
+      setupButton,
       refresh,
     ]),
   ]);
@@ -301,6 +327,12 @@ function mineSection() {
   ]);
   if (clones.length) {
     section.append(el("ul", { class: "vr-mine-list" }, clones.map(cloneRow)));
+    if (!catalog?.clone_available) {
+      section.append(el("p", {
+        class: "hint",
+        text: "These clones are kept on this Mac. OpenRouter is not ready, so Play needs Setup fixed first.",
+      }));
+    }
   } else {
     section.append(el("p", { class: "hint vr-empty", text: "No cloned voices yet. Clone one below." }));
   }
@@ -461,6 +493,8 @@ function render() {
     line.dataset.tone = noticeTone;
     body.append(line);
   }
+  setup.render();
+  body.append(setup.node);
   if (loading && !catalog) {
     body.append(el("p", { class: "hint", text: "Reading the voices on this machine…" }));
   } else {
