@@ -39,7 +39,7 @@ def test_expand_is_a_vertically_scrolling_collage():
     block = css[css.index(".moments-list {"):]
     block = block[:block.index(".moments-list .moment-card")]
     assert "display: grid" in block
-    assert "repeat(auto-fill, minmax(96px, 1fr))" in block
+    assert "repeat(auto-fill, minmax(132px, 1fr))" in block
     assert "overflow-y: auto" in block
 
 

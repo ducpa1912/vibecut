@@ -254,26 +254,6 @@
         <div id="transcript-panel" class="transcript-panel" hidden></div>
       </div>
 
-      <section id="moments-section" class="moments-section">
-        <div class="section-head">
-          <div><p class="eyebrow">moments</p><h3>Moments</h3></div>
-          <div class="scene-tools">
-            <div class="sort-tabs" id="sort-tabs">
-              <button data-sort="best" class="active">Best</button>
-              <button data-sort="timeline">Timeline</button>
-            </div>
-            <span id="scene-count" class="muted"></span>
-            <button id="moments-expand" class="ghost small" type="button">Expand</button>
-          </div>
-        </div>
-        <div id="moments-rail" class="moments-rail" aria-label="Moments"></div>
-        <input id="moments-scrub" class="moments-scrub" type="range" min="0" max="0" value="0" aria-label="Scrub moments">
-        <div id="moments-full" class="moments-full" hidden>
-          <div id="moments-list" class="moments-list" role="list" aria-label="All moments"></div>
-          <div id="scene-grid" class="scene-grid" hidden></div>
-          <button id="load-more" class="ghost load-more" hidden>Show more</button>
-        </div>
-      </section>
 
       <section class="export-panel smart-cut-panel">
         <div class="export-head">
@@ -523,6 +503,27 @@
               <button id="share-link" class="ghost small" type="button">Review link</button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section id="moments-section" class="moments-section">
+        <div class="section-head">
+          <div><p class="eyebrow">moments</p><h3>Moments</h3></div>
+          <div class="scene-tools">
+            <div class="sort-tabs" id="sort-tabs">
+              <button data-sort="best" class="active">Best</button>
+              <button data-sort="timeline">Timeline</button>
+            </div>
+            <span id="scene-count" class="muted"></span>
+            <button id="moments-expand" class="ghost small" type="button">Expand</button>
+          </div>
+        </div>
+        <div id="moments-rail" class="moments-rail" aria-label="Moments"></div>
+        <input id="moments-scrub" class="moments-scrub" type="range" min="0" max="0" value="0" aria-label="Scrub moments">
+        <div id="moments-full" class="moments-full" hidden>
+          <div id="moments-list" class="moments-list" role="list" aria-label="All moments"></div>
+          <div id="scene-grid" class="scene-grid" hidden></div>
+          <button id="load-more" class="ghost load-more" hidden>Show more</button>
         </div>
       </section>
 

@@ -23,7 +23,7 @@ def test_narrow_breakpoints_exist_and_stack_the_actions():
         ".topbar {",
         "flex-wrap: wrap;",
         ".action-row,",
-        ".result-actions,",
+        ".result-actions {",
         ".creator-tabs { flex-wrap: nowrap;",
         ".setup-panel { width: calc(100vw - 16px)",
         ".audio-grid { grid-template-columns: 1fr; }",
@@ -44,3 +44,21 @@ def test_the_dropdown_never_wider_than_the_screen():
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "Math.min(Math.max(rect.width, 240), window.innerWidth - 24)" in script
     assert "Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))" in script
+
+
+def test_the_render_result_sits_before_the_moments_gallery():
+    page = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
+    assert page.index('class="export-panel smart-cut-panel"') < page.index('id="moments-section"')
+
+
+def test_a_finished_render_scrolls_the_player_into_view_once():
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "const revealPlayer = state.renderWasActive === true && !active;" in script
+    assert "dom.playerWrap.scrollIntoView({ behavior: \"smooth\", block: \"center\" })" in script
+
+
+def test_mobile_result_actions_use_two_columns():
+    css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
+    block = css[css.index("@media (max-width: 680px)"):]
+    block = block[:block.index("@media (max-width: 480px)")]
+    assert ".result-actions {\n    display: grid;\n    grid-template-columns: 1fr 1fr;" in block

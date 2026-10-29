@@ -5104,6 +5104,9 @@
     const active = activeRender();
     const blocked = audioBlockReason();
 
+    const revealPlayer = state.renderWasActive === true && !active;
+    state.renderWasActive = !!active;
+
     dom.renderError.hidden = true;
     dom.renderBlock.hidden = !blocked;
     dom.renderBlock.querySelector("span").textContent = blocked || "";
@@ -5158,6 +5161,11 @@
       dom.reelSize.textContent = `${formatSize(record.size)} · H.264 / AAC${audioTag}`;
       dom.download.href = withToken(record.url);
       dom.download.download = `${fileStem(state.job.source.name)}-${target}s${quality === "draft" ? "-draft" : ""}.mp4`;
+      if (revealPlayer) {
+        setTimeout(() => {
+          dom.playerWrap.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 60);
+      }
     };
 
     const draftNewer = draftMatches && draftRecord.status === "ready"
@@ -5398,7 +5406,7 @@
     const entries = state.history || [];
     const renders = entries.filter((entry) => entry.type === "render").length;
     dom.historyCount.textContent = entries.length
-      ? `${renders} render${renders === 1 ? "" : "s"} · ${entries.length} events`
+      ? `${renders} render${renders === 1 ? "" : "s"} · ${entries.length} event${entries.length === 1 ? "" : "s"}`
       : "empty";
     if (!entries.length) {
       dom.historyList.innerHTML = `<p class="hint history-empty">No script, upload or render attempts yet.</p>`;

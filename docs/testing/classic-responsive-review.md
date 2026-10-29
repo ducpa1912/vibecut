@@ -71,3 +71,20 @@ recording unless you accept it in the video.
 - The desktop top bar hides "Open Studio" in the Classic edition by design; the
   phone bar keeps the same rule.
 - Founder confirmation is still needed for R1–R10; this file is not evidence.
+
+
+## Second pass (tightening)
+
+| # | Finding | Fix |
+|---|---|---|
+| T1 | Smart Cut was below the full Moments rail, so a render result sat far down the page. | Smart Cut (plan, render, player) now comes before Moments. |
+| T2 | A finished render appeared off-screen; the founder had to scroll to find it. | When a render moves from running to ready, the player scrolls into view once. |
+| T3 | The expanded collage used 96 px cells, giving twelve tiny cards in one row. | 132 px cells on desktop, 104 px at 680 px, 88 px at 480 px. |
+| T4 | The plan explanation ran five or more lines. | Clamped to three lines; the full text stays in **Why this cut**. |
+| T5 | History said **1 events**. | Singular **event** when the count is one. |
+| T6 | The four result actions stacked into four full-width rows on a phone. | Two-column grid under 680 px. |
+| T7 | The audio summary could clip on narrow screens. | It wraps and breaks long words. |
+| T8 | The phone collage and history rows were tight. | Smaller cells/columns from the responsive pass remain. |
+
+Still needs the founder's hand: the second pass changed layout order and
+scrolling, which a screenshot cannot fully judge.
