@@ -57,7 +57,10 @@ let testLine = DEFAULT_LINE;
 let rate = 1;
 let query = "";
 let language = "";
-let playing = "";
+let playPhase = "idle";
+let playKey = "";
+let playPlayer = null;
+let playToken = 0;
 let jobs = [];
 let renaming = "";
 let renameValue = "";
@@ -140,56 +143,110 @@ async function load() {
   render();
 }
 
-async function play(engine, voice, label) {
-  const key = `${engine}:${voice}`;
-  if (playing === key) {
-    // A sample still being made: Stop cancels it.
-    stopPlayback();
-    return;
+function isPlaying(key) {
+  return playPhase !== "idle" && playKey === key;
+}
+
+/** Pause the player and forget the row that owned it, without re-rendering. */
+function haltPlayback() {
+  if (playPlayer) {
+    try { playPlayer.pause(); } catch (_) { /* already closed */ }
   }
-  if (playing) return;
-  playing = key;
-  setNotice(`Making a sample of ${label}…`);
+  stopPlayback();
+  playToken += 1;
+  playPhase = "idle";
+  playKey = "";
+  playPlayer = null;
+}
+
+/** Stop from a row button or the test card: same state, same player. */
+function stopVoice() {
+  const active = playPhase !== "idle";
+  haltPlayback();
+  if (active) setNotice("Stopped.");
+  render();
+}
+
+/**
+ * generating → playing → idle. The row keeps Stop while the sample is made and
+ * while the Audio object is speaking; ended/error clears it back to Play.
+ */
+async function startPlayback({ key, label, pending, start }) {
+  haltPlayback();
+  const token = playToken;
+  playPhase = "generating";
+  playKey = key;
+  setNotice(pending);
   render();
   try {
-    await playVoice(engine, voice, testLine, rate);
+    const player = await start();
+    if (token !== playToken) {
+      try { player?.pause(); } catch (_) { /* superseded */ }
+      return;
+    }
+    playPlayer = player;
+    playPhase = "playing";
+    const finish = (failed) => {
+      if (token !== playToken) return;
+      playToken += 1;
+      playPhase = "idle";
+      playKey = "";
+      playPlayer = null;
+      if (failed) setNotice(`Could not play ${label}.`, "bad");
+      else setNotice(`Finished ${label}.`, "ok");
+      render();
+    };
+    player.addEventListener("ended", () => finish(false), { once: true });
+    player.addEventListener("error", () => finish(true), { once: true });
+    if (player.ended || player.error) {
+      finish(Boolean(player.error));
+      return;
+    }
     setNotice(`Playing ${label}.`, "ok");
+    render();
   } catch (cause) {
-    if (isStopped(cause)) setNotice("Stopped.");
-    else {
+    if (token !== playToken) return;
+    playToken += 1;
+    playPhase = "idle";
+    playKey = "";
+    playPlayer = null;
+    if (isStopped(cause)) {
+      setNotice("Stopped.");
+    } else {
       const message = cause?.message || `Could not play ${label}.`;
       setNotice(message, "bad");
       if (/openrouter|quarantin|auth|key/i.test(message)) void load();
     }
-  } finally {
-    playing = "";
     render();
   }
 }
 
-async function playMine(item) {
-  if (cloneBusy === `play:${item.voice_id}`) {
-    stopPlayback();
+async function play(engine, voice, label) {
+  const key = `${engine}:${voice}`;
+  if (isPlaying(key)) {
+    stopVoice();
     return;
   }
-  if (cloneBusy) return;
-  cloneBusy = `play:${item.voice_id}`;
-  setNotice(`Speaking the test line as ${item.name}…`);
-  render();
-  try {
-    await playClone(item.voice_id, testLine);
-    setNotice(`Playing ${item.name}.`, "ok");
-  } catch (cause) {
-    if (isStopped(cause)) setNotice("Stopped.");
-    else {
-      const message = cause?.message || "Could not play this voice.";
-      setNotice(message, "bad");
-      if (/openrouter|quarantin|auth|key/i.test(message)) void load();
-    }
-  } finally {
-    cloneBusy = "";
-    render();
+  await startPlayback({
+    key,
+    label,
+    pending: `Making a sample of ${label}…`,
+    start: () => playVoice(engine, voice, testLine, rate),
+  });
+}
+
+function playMine(item) {
+  const key = `clone:${item.voice_id}`;
+  if (isPlaying(key)) {
+    stopVoice();
+    return;
   }
+  void startPlayback({
+    key,
+    label: item.name || "this voice",
+    pending: `Speaking the test line as ${item.name}…`,
+    start: () => playClone(item.voice_id, testLine),
+  });
 }
 
 async function saveName(item) {
@@ -280,13 +337,13 @@ function cloneRow(item) {
     }, 0);
     return row;
   }
-  const speaking = cloneBusy === `play:${id}`;
+  const speaking = isPlaying(`clone:${id}`);
   const playButton = el("button", {
     class: "ghost small", type: "button",
     text: speaking ? "Stop" : "Play",
     disabled: busy && !speaking, "aria-label": `${speaking ? "Stop" : "Play"} ${item.name}`,
   });
-  playButton.addEventListener("click", () => { void playMine(item); });
+  playButton.addEventListener("click", playMine.bind(null, item));
   const renameButton = el("button", { class: "ghost small", type: "button", text: "Rename", disabled: busy, "aria-label": `Rename ${item.name}` });
   renameButton.addEventListener("click", () => {
     renaming = id;
@@ -315,12 +372,12 @@ function cloneRow(item) {
   return row;
 }
 
-function mineSection() {
+function mineSection(number = "01") {
   const clones = catalog?.clones || [];
   const section = el("section", { class: "vr-section", "data-panel": "your-voices" }, [
     el("div", { class: "vr-section-head" }, [
       el("div", {}, [
-        el("p", { class: "eyebrow" }, [el("span", { text: "01" }), "your voices"]),
+        el("p", { class: "eyebrow" }, [el("span", { text: number }), "your voices"]),
         el("h2", { text: "Cloned voices" }),
         el("p", { class: "hint", text: "Stored on this Mac. Play sends the sample to HeyGen through OpenRouter." }),
       ]),
@@ -340,12 +397,12 @@ function mineSection() {
   return section;
 }
 
-function cloneSection() {
+function cloneSection(number = "02") {
   myVoice.render();
   return el("section", { class: "vr-section", "data-panel": "clone" }, [
     el("div", { class: "vr-section-head" }, [
       el("div", {}, [
-        el("p", { class: "eyebrow" }, [el("span", { text: "02" }), "clone a voice"]),
+        el("p", { class: "eyebrow" }, [el("span", { text: number }), "clone a voice"]),
         el("h2", { text: "Clone a voice" }),
         el("p", { class: "hint", text: "Use 30 seconds to 3 minutes of clear speech. Clone only your own voice or a speaker who gave permission." }),
       ]),
@@ -367,49 +424,54 @@ function testCard() {
     speedValue.textContent = `${rate.toFixed(2)}×`;
   });
   const stop = el("button", { class: "ghost small", type: "button", text: "Stop" });
-  stop.addEventListener("click", () => stopPlayback());
+  stop.addEventListener("click", () => stopVoice());
   return el("div", { class: "vr-card vr-test" }, [
     el("label", { class: "vr-field" }, [el("span", { text: "Test line · used by every Play" }), line]),
     el("div", { class: "vr-rate" }, [el("span", { class: "hint", text: "Rate" }), speed, speedValue, stop]),
   ]);
 }
 
+/** Stock voices only: clones live in "your voices", not under each engine. */
+function stockVoices(engine) {
+  return (engine?.voices || []).filter((voice) => !voice.clone);
+}
+
 function voiceRow(engine, voice) {
   const id = String(voice.id ?? "");
   const label = voice.name || id || "Default";
   const key = `${engine.id}:${id}`;
-  const making = playing === key;
+  const speaking = isPlaying(key);
   const button = el("button", {
     class: "ghost small", type: "button",
-    text: making ? "Stop" : "Play",
-    disabled: Boolean(playing) && !making,
-    "aria-label": `${making ? "Stop" : "Play"} ${label}`,
+    text: speaking ? "Stop" : "Play",
+    "aria-label": `${speaking ? "Stop" : "Play"} ${label}`,
   });
   button.addEventListener("click", () => { void play(engine.id, id, label); });
-  return el("li", { class: `vr-voice${voice.clone ? " is-clone" : ""}` }, [
+  return el("li", { class: "vr-voice" }, [
     el("div", { class: "vr-voice-name" }, [
-      el("strong", { text: `${voice.clone ? "★ " : ""}${label}` }),
+      el("strong", { text: label }),
       el("span", { class: "mono hint", text: voice.lang || "" }),
     ]),
     button,
   ]);
 }
 
-function engineCard(engine) {
-  const shown = engine.voices.filter(matches);
+function engineCard(engine, repaint) {
+  const voices = stockVoices(engine);
+  const shown = voices.filter(matches);
   const open = !collapsed.has(engine.id) || Boolean(query || language);
   const toggle = el("button", {
     class: "vr-engine-head", type: "button", "aria-expanded": open ? "true" : "false",
   }, [
     el("strong", { text: engine.label }),
     el("span", { class: `vr-chip${engine.local ? "" : " is-cloud"}`, text: ENGINE_NOTES[engine.id] || (engine.local ? "On this Mac" : "Cloud") }),
-    el("span", { class: "mono hint", text: `${shown.length}${shown.length !== engine.voices.length ? ` / ${engine.voices.length}` : ""} voices` }),
+    el("span", { class: "mono hint", text: `${shown.length}${shown.length !== voices.length ? ` / ${voices.length}` : ""} voices` }),
     el("span", { class: "vr-caret", "aria-hidden": "true", text: open ? "▾" : "▸" }),
   ]);
   toggle.addEventListener("click", () => {
     if (collapsed.has(engine.id)) collapsed.delete(engine.id);
     else collapsed.add(engine.id);
-    render();
+    repaint();
   });
   const card = el("section", { class: "vr-card vr-engine", "data-engine": engine.id }, [toggle]);
   if (engine.error) card.append(el("p", { class: "error", text: engine.error }));
@@ -423,58 +485,85 @@ function engineCard(engine) {
   return card;
 }
 
-function stockSection() {
+function stockSection(number = "03") {
   const engines = catalog?.engines || [];
   const ready = engines.filter((engine) => engine.available);
   const missing = engines.filter((engine) => !engine.available);
-  const total = ready.reduce((sum, engine) => sum + engine.voices.length, 0);
+  const total = ready.reduce((sum, engine) => sum + stockVoices(engine).length, 0);
 
   const languages = new Set();
-  for (const engine of ready) for (const voice of engine.voices) languages.add(langOf(voice));
+  for (const engine of ready) for (const voice of stockVoices(engine)) languages.add(langOf(voice));
   const search = el("input", { type: "search", value: query, placeholder: "Search voices", "aria-label": "Search voices" });
-  search.addEventListener("input", () => {
-    query = search.value.trim();
-    render();
-    const again = root.querySelector('input[type="search"]');
-    if (again) {
-      again.focus();
-      again.setSelectionRange(again.value.length, again.value.length);
-    }
-  });
   const lang = el("select", { "aria-label": "Language" }, [
     el("option", { value: "", text: "All languages", selected: !language }),
     ...[...languages].filter((code) => code !== "multi").sort().map(
       (code) => el("option", { value: code, text: code, selected: code === language }),
     ),
   ]);
-  lang.addEventListener("change", () => { language = lang.value; render(); });
+
+  const list = el("div", { class: "vr-stock-list" });
+  const paint = () => {
+    const filtering = Boolean(query || language);
+    const visible = ready.filter((engine) => !filtering || stockVoices(engine).some(matches));
+    const nodes = visible.map((engine) => engineCard(engine, paint));
+    if (filtering && !visible.length) {
+      nodes.push(el("p", { class: "hint", text: "No voice on this machine matches the filter." }));
+    }
+    if (missing.length) {
+      nodes.push(el("details", { class: "vr-card vr-missing" }, [
+        el("summary", { text: `Not set up on this machine (${missing.length})` }),
+        el("ul", { class: "vr-missing-list" }, missing.map((engine) => el("li", {}, [
+          el("strong", { text: engine.label }),
+          el("span", { class: "hint", text: engine.install || "Not available." }),
+        ]))),
+      ]));
+    }
+    list.replaceChildren(...nodes);
+  };
+
+  // Filter in place: the input keeps focus, caret and IME composition.
+  let composing = false;
+  let debounce = 0;
+  const applySearch = () => {
+    query = search.value.trim();
+    paint();
+  };
+  search.addEventListener("compositionstart", () => {
+    composing = true;
+    window.clearTimeout(debounce);
+  });
+  search.addEventListener("compositionend", () => {
+    composing = false;
+    window.clearTimeout(debounce);
+    applySearch();
+  });
+  search.addEventListener("input", () => {
+    // Keep the model in sync now; only the repaint waits for the debounce.
+    query = search.value.trim();
+    if (composing) return;
+    window.clearTimeout(debounce);
+    debounce = window.setTimeout(paint, 120);
+  });
+  lang.addEventListener("change", () => {
+    window.clearTimeout(debounce);
+    query = search.value.trim();
+    language = lang.value;
+    paint();
+  });
 
   const section = el("section", { class: "vr-section", "data-panel": "stock-voices" }, [
     el("div", { class: "vr-section-head" }, [
       el("div", {}, [
-        el("p", { class: "eyebrow" }, [el("span", { text: "03" }), "stock voices"]),
+        el("p", { class: "eyebrow" }, [el("span", { text: number }), "stock voices"]),
         el("h2", { text: "Voices on this machine" }),
         el("p", { class: "hint", text: `${total} voices across ${ready.length} engines. Local voices work offline; cloud voices use your keys.` }),
       ]),
       el("div", { class: "vr-filters" }, [search, lang]),
     ]),
     testCard(),
+    list,
   ]);
-  const filtering = Boolean(query || language);
-  const visible = ready.filter((engine) => !filtering || engine.voices.some(matches));
-  for (const engine of visible) section.append(engineCard(engine));
-  if (filtering && !visible.length) {
-    section.append(el("p", { class: "hint", text: "No voice on this machine matches the filter." }));
-  }
-  if (missing.length) {
-    section.append(el("details", { class: "vr-card vr-missing" }, [
-      el("summary", { text: `Not set up on this machine (${missing.length})` }),
-      el("ul", { class: "vr-missing-list" }, missing.map((engine) => el("li", {}, [
-        el("strong", { text: engine.label }),
-        el("span", { class: "hint", text: engine.install || "Not available." }),
-      ]))),
-    ]));
-  }
+  paint();
   return section;
 }
 
@@ -500,7 +589,12 @@ function render() {
     body.append(el("p", { class: "hint", text: "Reading the voices on this machine…" }));
   } else {
     finder.render();
-    body.append(mineSection(), cloneSection(), stockSection());
+    const clones = catalog?.clones || [];
+    if (clones.length) {
+      body.append(mineSection("01"), cloneSection("02"), stockSection("03"));
+    } else {
+      body.append(cloneSection("01"), stockSection("02"));
+    }
   }
   page.append(body);
   const scroll = window.scrollY || 0;

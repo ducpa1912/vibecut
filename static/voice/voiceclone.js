@@ -184,10 +184,18 @@ async function playSample(path, body) {
   if (currentPlayer) currentPlayer.pause();
   const player = new Audio(url);
   currentPlayer = player;
-  const done = () => URL.revokeObjectURL(url);
+  const done = () => {
+    URL.revokeObjectURL(url);
+    if (currentPlayer === player) currentPlayer = null;
+  };
   player.addEventListener("ended", done, { once: true });
   player.addEventListener("error", done, { once: true });
-  await player.play();
+  try {
+    await player.play();
+  } catch (error) {
+    done();
+    throw error;
+  }
   return player;
 }
 

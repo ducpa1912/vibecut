@@ -351,7 +351,6 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
     const state = settings();
     const runtime = state?.runtime || {};
     if (!userToggled) open = !state || !state.secrets?.openrouter
-      || state.sources?.openrouter === "env"
       || Boolean(runtime.openrouter?.error) || Boolean(runtime.openrouter?.blocked);
     const button = el("button", {
       class: "ghost small", type: "button",
