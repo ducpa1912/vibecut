@@ -1,37 +1,73 @@
-"""Lanes share no port or data folder (docs/branching.md)."""
+"""One set of lane scripts; lanes share no port or data folder (docs/branching.md)."""
 
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
 
 
-def _lane(name):
+def _env(*args, root="/lanes"):
     out = subprocess.run(
-        ["bash", "-c", f'source scripts/lane.sh && lane_env {name} && echo "$LANE_PORT|$LANE_EDITION|$LANE_FEATURES|$LANE_DATA"'],
+        ["bash", str(SCRIPTS / "lane-env.sh"), *args],
         cwd=ROOT, capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "VIBECUT_LANE_ROOT": root},
     )
-    return out.returncode, out.stdout.strip(), out.stderr
+    values = {}
+    for line in out.stdout.splitlines():
+        key, _, value = line.removeprefix("export ").partition("=")
+        values[key] = value
+    return out.returncode, values, out.stderr
 
 
-def test_each_lane_has_its_own_port_and_switches():
-    lanes = {name: _lane(name)[1].split("|") for name in ("studio", "classic", "voice-room")}
-    assert lanes["studio"][:3] == ["8795", "all", "voice_room"]
-    assert lanes["classic"][:3] == ["8796", "classic", ""]
-    assert lanes["voice-room"][:3] == ["8797", "classic", "voice_room"]
-    assert len({lane[0] for lane in lanes.values()}) == 3
-    assert all(lane[3].endswith("/data") for lane in lanes.values())
+def test_each_lane_has_its_own_port_data_and_switches():
+    lanes = {name: _env(name)[1] for name in ("studio", "classic", "voice")}
+    assert lanes["studio"]["VIBECUT_PORT"] == "8795"
+    assert (lanes["studio"]["VIBECUT_EDITION"], lanes["studio"]["VIBECUT_FEATURES"]) == ("all", "voice_room")
+    assert lanes["classic"]["VIBECUT_PORT"] == "8796"
+    assert (lanes["classic"]["VIBECUT_EDITION"], lanes["classic"]["VIBECUT_FEATURES"]) == ("classic", "")
+    assert lanes["voice"]["VIBECUT_PORT"] == "8797"
+    assert (lanes["voice"]["VIBECUT_EDITION"], lanes["voice"]["VIBECUT_FEATURES"]) == ("classic", "voice_room")
+    assert [lanes[name]["VIBECUT_DATA"] for name in ("studio", "classic", "voice")] == [
+        "/lanes/studio", "/lanes/classic", "/lanes/voice",
+    ]
+    assert lanes["voice"]["VIBECUT_LANE_MEDIA"] == "/lanes/media/voiceroom"
+    assert lanes["studio"]["VIBECUT_LANE_RECORDINGS"] == "/lanes/recordings/studio"
+    assert all("8787" not in "".join(values.values()) for values in lanes.values())
 
 
-def test_main_is_not_a_lane():
-    code, _out, err = _lane("main")
+def test_voice_room_alias_and_unknown_lanes():
+    assert _env("voice-room")[1]["VIBECUT_LANE"] == "voice"
+    code, _values, err = _env("main")
     assert code != 0 and "not a lane" in err
 
 
+def test_the_branch_names_the_lane_when_no_lane_is_given():
+    branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT, capture_output=True, text=True,
+    ).stdout.strip()
+    code, values, _err = _env()
+    if branch == "studio":
+        assert code == 0 and values["VIBECUT_LANE"] == "studio"
+
+
+def test_one_set_of_scripts():
+    assert not (SCRIPTS / "lane.sh").exists()
+    for name in ("serve.sh", "record.sh", "integrate.sh"):
+        text = (SCRIPTS / name).read_text()
+        assert "lane-env.sh" in text or name == "integrate.sh", name
+        assert "source scripts/lane.sh" not in text, name
+    serve = (SCRIPTS / "serve.sh").read_text()
+    assert 'legacy="$PWD/data"' in serve and 'mv "$legacy" "$VIBECUT_DATA"' in serve
+    assert "VIBECUT_LANE_RECORDINGS" in (SCRIPTS / "record.sh").read_text()
+
+
 def test_only_studio_moves_main_and_integrates():
-    ship = (ROOT / "scripts" / "ship.sh").read_text()
+    ship = (SCRIPTS / "ship.sh").read_text()
     assert 'if [[ "$branch" != "studio" ]]' in ship and "merge --ff-only studio" in ship
     assert "origin/main" not in ship
-    integrate = (ROOT / "scripts" / "integrate.sh").read_text()
+    lane = (SCRIPTS / "ship-lane.sh").read_text()
+    assert "refs/heads/main" not in lane and "merge --ff-only" not in lane
+    integrate = (SCRIPTS / "integrate.sh").read_text()
     assert "origin/classic" in integrate and "origin/voice-room" in integrate
-    assert 'Only the studio lane integrates' in integrate
+    assert "Only the studio lane integrates" in integrate

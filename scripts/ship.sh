@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
-# Ship this lane's own branch (docs/branching.md).
+# Ship studio, the integration lane, and move main (the archive) to it
+# (docs/branching.md). Classic and Voice Room ship with scripts/ship-lane.sh
+# and never move main.
 #
-# classic, voice-room: take in any newer copy of this lane from GitHub, check,
-#   test, push the lane. They never merge main or studio in; studio takes
-#   them in with scripts/integrate.sh.
-# studio: the same, then fast-forward main (the archive) to studio and push it.
-#
-#   scripts/ship.sh               # from the lane's worktree
+#   scripts/ship.sh               # from the studio worktree
 #   scripts/ship.sh --skip-tests  # only when the suite already ran on this commit
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-source scripts/lane.sh
 
 skip_tests=0
 if [[ "${1:-}" == "--skip-tests" ]]; then
@@ -18,34 +14,54 @@ if [[ "${1:-}" == "--skip-tests" ]]; then
 fi
 
 branch=$(git rev-parse --abbrev-ref HEAD)
-lane_env "$branch"
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-  echo "Commit your changes on '$branch' first." >&2
+if [[ "$branch" != "studio" ]]; then
+  echo "scripts/ship.sh ships studio and moves main; this checkout is on '$branch'." >&2
+  echo "Classic and Voice Room ship with scripts/ship-lane.sh." >&2
   exit 1
 fi
-url=$(lane_url)
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "Commit your changes on studio first." >&2
+  exit 1
+fi
+
+# The origin remote is SSH, and this Mac's SSH key is not on GitHub. Talk HTTPS
+# with the gh login instead, without changing the remote.
+origin=$(git remote get-url origin)
+case "$origin" in
+  git@github.com:*) url="https://github.com/${origin#git@github.com:}" ;;
+  *) url="$origin" ;;
+esac
+net() {
+  if command -v gh >/dev/null 2>&1; then
+    git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+  else
+    git "$@"
+  fi
+}
 
 echo "-> Fetching GitHub"
 net fetch -q "$url" '+refs/heads/*:refs/remotes/origin/*'
-if git rev-parse -q --verify "origin/$branch" >/dev/null; then
-  echo "-> Taking in any newer '$branch' from GitHub"
-  if ! git merge --no-edit "origin/$branch"; then
-    echo "Merge conflict with origin/$branch. Resolve it, commit, and run ship again." >&2
+if git rev-parse -q --verify origin/studio >/dev/null; then
+  echo "-> Taking in any newer studio from GitHub"
+  if ! git merge --no-edit origin/studio; then
+    echo "Merge conflict with origin/studio. Resolve it, commit, and run ship again." >&2
     exit 1
   fi
 fi
 
+echo "-> Checking JavaScript syntax"
+if command -v node >/dev/null 2>&1; then
+  find static -name '*.js' -print0 | xargs -0 -n1 node --check
+else
+  echo "   node is not installed; skipped."
+fi
 if [[ "$skip_tests" -eq 0 ]]; then
-  lane_checks
+  echo "-> Running the test suite (includes the Classic guard and Voice Room tests)"
+  python3 -m pytest -q -p no:cacheprovider
 fi
 
-echo "-> Pushing '$branch'"
-net push "$url" "HEAD:refs/heads/$branch"
-
-if [[ "$branch" != "studio" ]]; then
-  echo "Shipped '$branch' at $(git rev-parse --short HEAD). Studio takes it in with scripts/integrate.sh."
-  exit 0
-fi
+echo "-> Pushing studio"
+net push "$url" "HEAD:refs/heads/studio"
 
 echo "-> Moving main (the archive) to studio"
 main_tree=""

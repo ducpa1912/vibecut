@@ -7,19 +7,28 @@
 #   scripts/integrate.sh     # from the studio worktree
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-source scripts/lane.sh
 
 branch=$(git rev-parse --abbrev-ref HEAD)
 if [[ "$branch" != "studio" ]]; then
   echo "Only the studio lane integrates; this checkout is on '$branch'." >&2
   exit 1
 fi
-lane_env studio
 if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "Studio has uncommitted work. Finish and ship it first." >&2
   exit 1
 fi
-url=$(lane_url)
+origin=$(git remote get-url origin)
+case "$origin" in
+  git@github.com:*) url="https://github.com/${origin#git@github.com:}" ;;
+  *) url="$origin" ;;
+esac
+net() {
+  if command -v gh >/dev/null 2>&1; then
+    git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+  else
+    git "$@"
+  fi
+}
 
 echo "-> Fetching GitHub"
 net fetch -q "$url" '+refs/heads/*:refs/remotes/origin/*'
@@ -40,8 +49,9 @@ else
   echo "-> Came in:"
   git log --oneline --no-merges "$before"..HEAD | sed 's/^/   /'
   echo "-> Classic and Voice Room checks first"
-  python3 -m pytest -q -p no:cacheprovider tests/test_classic_guard.py tests/test_editions.py \
-    tests/test_voice_clone.py tests/test_voice_extract.py
+  guards=(tests/test_classic_guard.py tests/test_editions.py tests/test_voice_clone.py tests/test_voice_extract.py)
+  [[ -f tests/test_lane_isolation.py ]] && guards+=(tests/test_lane_isolation.py)
+  python3 -m pytest -q -p no:cacheprovider "${guards[@]}"
 fi
 
 exec scripts/ship.sh
