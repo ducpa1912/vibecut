@@ -2105,6 +2105,7 @@ def _rewrite_opencode(
     variant: str | None = None, timeout: float = 180,
     max_tokens: int = 3000,
 ) -> list[str] | None:
+    global OPENCODE_LAST_ERROR
     settings = settings_store.load_settings().get("opencode") or {}
     if mode == "literal" or not settings.get("use_rewrite", True) or not opencode_available():
         return None
