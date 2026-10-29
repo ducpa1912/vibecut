@@ -29,11 +29,15 @@ def test_expand_opens_a_vertical_moment_list():
     assert "renderScenes();" not in body
 
 
-def test_moment_rows_carry_the_speech_and_the_time():
+def test_each_expanded_moment_is_a_vertical_card():
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
-    assert "moment-row-copy" in script
+    assert "moment-card moment-card-wide" in script
+    assert "moment-wide-copy" in script
+    assert "moment-wide-still" in script
     assert "scene.ocr || scene.speech" in script
-    assert "moment-row-time" in script
+    css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
+    assert ".moment-card-wide {" in css
+    assert "aspect-ratio: 16 / 9" in css
 
 
 def test_dropdown_text_is_not_eleven_pixels():

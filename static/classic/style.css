@@ -1865,6 +1865,57 @@ main { min-height: calc(100vh - 150px); }
   overflow-y: auto;
   padding: 2px 2px 8px 0;
 }
+.moment-card-wide {
+  flex: 0 0 auto;
+  width: 100%;
+  aspect-ratio: auto;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  scroll-snap-align: none;
+}
+.moment-card-wide .moment-wide-still {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  opacity: 0.9;
+}
+.moment-card-wide .moment-wide-still.placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+  background: var(--panel-2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.moment-card-wide .moment-time {
+  position: absolute;
+  top: 7px;
+  left: 8px;
+  bottom: auto;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 10px;
+}
+.moment-card-wide .moment-score {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+.moment-wide-copy { display: grid; gap: 3px; padding: 9px 11px 10px; }
+.moment-wide-copy strong { font-size: 13px; font-weight: 520; line-height: 1.3; }
+.moment-wide-copy small { color: var(--dim); font-family: var(--mono); font-size: 9.5px; }
 .moment-row {
   display: grid;
   grid-template-columns: 56px 54px 1fr auto;

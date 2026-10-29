@@ -3645,19 +3645,22 @@
     }
     dom.momentsList.innerHTML = scenes.map((scene) => {
       const still = scene.deep === false
-        ? `<span class="moment-row-still placeholder">quick</span>`
-        : `<img class="moment-row-still" src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+        ? `<span class="moment-wide-still placeholder">quick</span>`
+        : `<img class="moment-wide-still" src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
       const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
       const tags = [...(scene.tags || []), scene.deep === false ? "quick" : ""].filter(Boolean).join(" · ");
       const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
       return `
-        <button class="moment-row ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
+        <button class="moment-card moment-card-wide ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
           data-moment-scene="${scene.id}" draggable="true" role="listitem"
           title="Drag into Smart Cut · ${esc(text)}">
           ${still}
-          <span class="moment-row-time">${esc(fmtTime(scene.start))}</span>
-          <span class="moment-row-copy"><strong>${esc(text)}</strong><small>${esc(tags || `scene ${scene.id + 1}`)}</small></span>
-          <span class="moment-row-meta"><b class="score">${Math.round(scene.hook)}</b>${role ? `<span class="moment-row-role">${esc(role)}</span>` : ""}</span>
+          <span class="moment-time">${esc(fmtTime(scene.start))}</span>
+          <span class="moment-score">${Math.round(scene.hook)}</span>
+          <span class="moment-wide-copy">
+            <strong>${esc(text)}</strong>
+            <small>${esc(tags || `scene ${scene.id + 1}`)}${role ? ` · ${esc(role)}` : ""}</small>
+          </span>
         </button>`;
     }).join("");
   }
