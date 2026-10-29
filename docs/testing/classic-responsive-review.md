@@ -88,3 +88,25 @@ recording unless you accept it in the video.
 
 Still needs the founder's hand: the second pass changed layout order and
 scrolling, which a screenshot cannot fully judge.
+
+## Third pass (founder's UI brief)
+
+| # | Change |
+|---|---|
+| U1 | Moments is above Smart Cut again. The scrub slider is gone. |
+| U2 | Every moment card has a round select control: click adds it to Smart Cut, click again removes it. The drawer has **Add to Smart Cut** / **Remove from Smart Cut**. |
+| U3 | Clicking a clip's **hook / beat / payoff** label, or right-clicking the clip, opens the role menu. Choosing a role moves the clip into Hook → Beat → Payoff order. |
+| U4 | The **Clean** profile dropdown is gone; Clean always removes work files. |
+| U5 | Shapes now include **1:1**, **16:9** and **16:10**. |
+| U6 | The audio panel is **Edit**: mode tags on top, then a 2×2 grid of **Copy**, **Sound**, **Texts & Effects**, **Script**. |
+| U7 | Copy replaces Rewrite. It shows **Translating…**, **✓ Translation ready**, **Rewriting…**. Unavailable models are disabled, dimmed and blurred. |
+| U8 | Sound has Voice and Sound columns. **Mixer** sits at the top right of the card. |
+| U9 | Render and Draft sit at the bottom right of Edit. |
+| U10 | Quick-scan hooks and clips no longer request a missing thumbnail. |
+
+### Still open
+
+- **Texts & Effects** currently carries subtitles only. Text overlays and SFX
+  need the Studio Edit layer backend; the classic render path does not consume
+  `graphics` yet. Do not add dead buttons for them.
+- The mixer still opens as a panel under Smart Cut; the button scrolls to it.

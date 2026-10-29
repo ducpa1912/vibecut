@@ -119,7 +119,6 @@
     newVideo: $("#new-video"),
     deleteJob: $("#delete-job"),
     cleanJob: $("#clean-job"),
-    cleanProfile: $("#clean-profile"),
     hookImg: $("#hook-img"),
     hookTime: $("#hook-time"),
     hookCopy: $("#hook-copy"),
@@ -149,11 +148,11 @@
     timelineDrop: $("#timeline-drop"),
     momentsSection: $("#moments-section"),
     momentsRail: $("#moments-rail"),
-    momentsScrub: $("#moments-scrub"),
     momentsFull: $("#moments-full"),
     momentsList: $("#moments-list"),
     momentsExpand: $("#moments-expand"),
     render: $("#render"),
+    clipMenu: $("#clip-menu"),
     renderDraft: $("#render-draft"),
     renderAll: $("#render-all"),
     renderAb: $("#render-ab"),
@@ -197,6 +196,7 @@
     audioBeatSync: $("#audio-beatsync"),
     audioBpm: $("#audio-bpm"),
     mixerPanel: $("#mixer-panel"),
+    mixerOpen: $("#mixer-open"),
     mixerCanvas: $("#mixer-canvas"),
     mixerReadout: $("#mixer-readout"),
     mixerReset: $("#mixer-reset"),
@@ -1071,6 +1071,12 @@
     dom.firstRunSetup?.addEventListener("click", openSetup);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !dom.setup.hidden) closeSetup();
+      if (event.key === "Escape") closeClipMenu();
+    });
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest("#clip-menu") && !event.target.closest("[data-role-index]")) {
+        closeClipMenu();
+      }
     });
   }
 
@@ -1464,8 +1470,22 @@
     bindAudio();
     bindSetup();
 
+    dom.timeline.addEventListener("contextmenu", (event) => {
+      const clip = event.target.closest(".clip[data-index]");
+      if (!clip) return;
+      event.preventDefault();
+      openClipMenu(Number(clip.dataset.index), event.clientX, event.clientY);
+    });
     dom.timeline.addEventListener("click", (event) => {
       if (event.target.closest(".trim-handle")) return;
+      const role = event.target.closest("[data-role-index]");
+      if (role) {
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = role.getBoundingClientRect();
+        openClipMenu(Number(role.dataset.roleIndex), rect.left, rect.bottom + 6);
+        return;
+      }
       const tool = event.target.closest("[data-edit]");
       if (tool) {
         event.stopPropagation();
@@ -1626,10 +1646,24 @@
       if (button) openDrawer(Number(button.dataset.scene));
     });
     dom.momentsRail.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-moment-toggle]");
+      if (toggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSceneInPlan(Number(toggle.dataset.momentToggle));
+        return;
+      }
       const card = event.target.closest("[data-moment-scene]");
       if (card) openDrawer(Number(card.dataset.momentScene));
     });
     dom.momentsList.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-moment-toggle]");
+      if (toggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSceneInPlan(Number(toggle.dataset.momentToggle));
+        return;
+      }
       const row = event.target.closest("[data-moment-scene]");
       if (row) openDrawer(Number(row.dataset.momentScene));
     });
@@ -1667,25 +1701,11 @@
       state.momentsExpanded = !state.momentsExpanded;
       dom.momentsFull.hidden = !state.momentsExpanded;
       dom.momentsRail.hidden = state.momentsExpanded;
-      dom.momentsScrub.hidden = state.momentsExpanded;
       dom.momentsExpand.textContent = state.momentsExpanded ? "Collapse" : "Expand";
       if (state.momentsExpanded) {
         renderMomentList();
         dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
-    });
-    dom.momentsScrub.addEventListener("input", () => {
-      const index = Number(dom.momentsScrub.value) || 0;
-      const card = dom.momentsRail.querySelector(`[data-rail-index="${index}"]`);
-      card?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
-    });
-    let railScrollFrame = null;
-    dom.momentsRail.addEventListener("scroll", () => {
-      if (railScrollFrame) return;
-      railScrollFrame = requestAnimationFrame(() => {
-        railScrollFrame = null;
-        syncRailScrub();
-      });
     });
     dom.recent.addEventListener("click", (event) => {
       const remove = event.target.closest("[data-delete-id]");
@@ -1742,6 +1762,8 @@
       if (use) useHook(Number(use.dataset.useHook));
       const add = event.target.closest("[data-add-scene]");
       if (add && addSceneToPlan(Number(add.dataset.addScene))) closeDrawer();
+      const remove = event.target.closest("[data-remove-scene]");
+      if (remove && removeSceneFromPlan(Number(remove.dataset.removeScene))) closeDrawer();
       const read = event.target.closest("[data-read-scene]");
       if (read) readScene(Number(read.dataset.readScene));
     });
@@ -2511,7 +2533,6 @@
     dom.transcriptPanel.innerHTML = "";
     dom.momentsFull.hidden = true;
     dom.momentsRail.hidden = false;
-    dom.momentsScrub.hidden = false;
     dom.momentsExpand.textContent = "Expand";
     state.plan = job.analysis.plans[String(state.target)];
     $$("#target-tabs button").forEach((button) => {
@@ -2667,7 +2688,13 @@
   function renderHook() {
     const scene = currentHookScene();
     if (!scene) return;
-    dom.hookImg.src = thumbUrl(scene);
+    if (scene.deep === false) {
+      dom.hookImg.removeAttribute("src");
+      dom.hookImg.classList.add("quick");
+    } else {
+      dom.hookImg.src = thumbUrl(scene);
+      dom.hookImg.classList.remove("quick");
+    }
     dom.hookImg.alt = `Hook at ${fmtTime(scene.start)}`;
     dom.hookImg.style.objectPosition = objectPosition(scene.crop);
     dom.hookTime.textContent = `${fmtTime(scene.start, 1)} – ${fmtTime(scene.end, 1)} · ${scene.dur.toFixed(1)}s`;
@@ -2768,8 +2795,10 @@
         <div class="clip ${clip.role === "hook" ? "hook" : ""} ${clip.role === "payoff" ? "payoff" : ""} ${state.editMode ? "editing" : ""} ${state.editIndex === index ? "selected" : ""}"
           data-scene="${scene.id}" data-index="${index}" draggable="true" style="flex:0 0 ${clipWidth(clip)}"
           title="${esc(`${clip.role}: ${why}`)}">
-          <img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">
-          <span class="clip-role">${esc(clip.role)}</span>
+          ${scene.deep === false
+            ? `<span class="clip-placeholder"><span>quick</span></span>`
+            : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`}
+          <span class="clip-role" data-role-index="${index}" title="Click or right-click to change hook / beat / payoff">${esc(clip.role)}</span>
           <span class="clip-time">${clip.dur.toFixed(1)}s</span>
           <span class="trim-handle start" data-trim="start" data-index="${index}" title="Drag to trim start"></span>
           <span class="trim-handle end" data-trim="end" data-index="${index}" title="Drag to trim end"></span>
@@ -2823,11 +2852,25 @@
     loadMixer();
   }
 
+  function toggleMixer() {
+    if (!state.mixer.ready) {
+      toast("Choose a voice or music mode first.");
+      return;
+    }
+    state.mixerOpen = !state.mixerOpen;
+    dom.mixerPanel.hidden = !state.mixerOpen;
+    if (state.mixerOpen) {
+      drawMixer();
+      dom.mixerPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
   async function loadMixer() {
     const plan = state.plan;
     if (!plan || state.audio.mode === "keep") {
       state.mixer.ready = false;
       dom.mixerPanel.hidden = true;
+      state.mixerOpen = false;
       return;
     }
     try {
@@ -2848,7 +2891,7 @@
         bed: keepBed || [],
         selected: null,
       };
-      dom.mixerPanel.hidden = false;
+      dom.mixerPanel.hidden = !state.mixerOpen;
       drawMixer();
     } catch (error) {
       dom.mixerPanel.hidden = true;
@@ -3334,6 +3377,52 @@
     updateRenderPanel();
   }
 
+  function openClipMenu(index, x, y) {
+    if (!state.plan?.clips[index] || !dom.clipMenu) return;
+    const current = state.plan.clips[index].role || "beat";
+    dom.clipMenu.innerHTML = ["hook", "beat", "payoff"].map((role) => `
+      <button type="button" role="menuitem" data-clip-role="${role}" class="${role === current ? "active" : ""}">
+        ${role[0].toUpperCase() + role.slice(1)}
+      </button>`).join("");
+    dom.clipMenu.hidden = false;
+    const width = dom.clipMenu.offsetWidth || 140;
+    const height = dom.clipMenu.offsetHeight || 120;
+    dom.clipMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - width - 8))}px`;
+    dom.clipMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - height - 8))}px`;
+    dom.clipMenu.querySelectorAll("[data-clip-role]").forEach((button) => {
+      button.addEventListener("click", () => {
+        setClipRole(index, button.dataset.clipRole);
+      });
+    });
+  }
+
+  function closeClipMenu() {
+    if (dom.clipMenu) dom.clipMenu.hidden = true;
+  }
+
+  function setClipRole(index, role) {
+    if (!state.plan || !state.plan.clips[index]) return;
+    if (!["hook", "beat", "payoff"].includes(role)) return;
+    const clips = state.plan.clips.map((clip) => ({ ...clip }));
+    const [clip] = clips.splice(index, 1);
+    if (role === "hook") clips.unshift(clip);
+    else if (role === "payoff") clips.push(clip);
+    else {
+      const at = Math.max(1, Math.min(index, clips.length - 1));
+      clips.splice(at, 0, clip);
+    }
+    normalizePlanRoles(clips);
+    state.plan = { ...state.plan, clips };
+    state.edited = true;
+    state.scriptId = null;
+    syncEditedPlan();
+    closeClipMenu();
+    renderPlan();
+    renderScenes();
+    updateRenderPanel();
+    toast(`Moved to ${role} position.`);
+  }
+
   function normalizePlanRoles(clips) {
     clips.forEach((clip, index) => {
       clip.role = index === 0 ? "hook" : index === clips.length - 1 ? "payoff" : "beat";
@@ -3378,6 +3467,34 @@
     updateRenderPanel();
     toast("Moment added to Smart Cut.");
     return true;
+  }
+
+  function removeSceneFromPlan(sceneId) {
+    if (!state.plan) return false;
+    const clips = state.plan.clips.map((clip) => ({ ...clip }));
+    const index = clips.findIndex((clip) => clip.scene === sceneId);
+    if (index === -1) return false;
+    if (clips.length <= 2) {
+      toast("Smart Cut needs at least two moments.");
+      return false;
+    }
+    clips.splice(index, 1);
+    normalizePlanRoles(clips);
+    state.plan = { ...state.plan, clips };
+    state.edited = true;
+    state.scriptId = null;
+    syncEditedPlan();
+    renderPlan();
+    renderScenes();
+    updateRenderPanel();
+    toast("Moment removed from Smart Cut.");
+    return true;
+  }
+
+  function toggleSceneInPlan(sceneId) {
+    const inPlan = (state.plan?.clips || []).some((clip) => clip.scene === sceneId);
+    if (inPlan) removeSceneFromPlan(sceneId);
+    else addSceneToPlan(sceneId);
   }
 
   function moveClip(from, to) {
@@ -3569,6 +3686,12 @@
     }
   }
 
+  function momentCheck(scene, checked) {
+    return `<span class="moment-check ${checked ? "checked" : ""}" data-moment-toggle="${scene.id}"
+      role="checkbox" aria-checked="${checked}" tabindex="0"
+      title="${checked ? "Remove from Smart Cut" : "Add to Smart Cut"}"></span>`;
+  }
+
   function renderScenes() {
     if (!state.job) return;
     const scenes = [...state.job.analysis.scenes];
@@ -3622,8 +3745,6 @@
     scenes.forEach((scene) => {
       if (!pinned.has(scene.id) && railScenes.length < 48) railScenes.push(scene);
     });
-    dom.momentsScrub.max = Math.max(0, railScenes.length - 1);
-    dom.momentsScrub.value = Math.min(Number(dom.momentsScrub.value) || 0, railScenes.length - 1);
     dom.momentsRail.innerHTML = railScenes.map((scene, index) => {
       const still = scene.deep === false
         ? `<span class="scene-placeholder"><span>quick</span></span>`
@@ -3631,8 +3752,9 @@
       return `
         <button class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
           data-moment-scene="${scene.id}" data-rail-index="${index}" draggable="true"
-          title="Drag into Smart Cut · ${esc(scene.ocr || scene.speech || `Scene ${scene.id + 1}`)}">
+          title="Click for details · ${esc(scene.ocr || scene.speech || `Scene ${scene.id + 1}`)}">
           ${still}
+          ${momentCheck(scene, used.has(scene.id))}
           <span class="moment-time">${esc(fmtTime(scene.start))}</span>
         </button>`;
     }).join("");
@@ -3662,25 +3784,13 @@
       return `
         <button class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
           data-moment-scene="${scene.id}" draggable="true" role="listitem"
-          title="${esc(text)}${role ? ` · ${esc(role)}` : ""} · drag into Smart Cut">
+          title="${esc(text)}${role ? ` · ${esc(role)}` : ""} · click for details">
           ${still}
+          ${momentCheck(scene, used.has(scene.id))}
           <span class="moment-time">${esc(fmtTime(scene.start))}</span>
           <span class="moment-score">${Math.round(scene.hook)}</span>
         </button>`;
     }).join("");
-  }
-
-  function syncRailScrub() {
-    if (!dom.momentsRail || !dom.momentsScrub) return;
-    const cards = dom.momentsRail.querySelectorAll(".moment-card");
-    if (!cards.length) return;
-    const first = cards[0];
-    const styles = getComputedStyle(dom.momentsRail);
-    const gap = parseFloat(styles.columnGap || styles.gap) || 8;
-    const width = first.getBoundingClientRect().width + gap;
-    if (!width) return;
-    const index = clamp(Math.round(dom.momentsRail.scrollLeft / width), 0, cards.length - 1);
-    dom.momentsScrub.value = String(index);
   }
 
   // ---------------------------------------------------------------- plans + targets
@@ -3972,6 +4082,7 @@
       dom.audioMode.value = button.dataset.audioMode;
       dom.audioMode.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    dom.mixerOpen?.addEventListener("click", toggleMixer);
     dom.audioRewriteRun.addEventListener("click", () => {
       // Reuse the on-disk translation memo. Only a language change or the
       // explicit Retry translation button asks for fresh translations.
@@ -4080,10 +4191,43 @@
     const upload = voiceMode && state.audio.source === "upload";
     const musicMode = ["music", "full"].includes(mode);
     const rewriteMode = voiceMode && !upload;
-    dom.audioRewriteStep.hidden = !rewriteMode;
-    dom.audioVoiceStep.hidden = !voiceMode;
-    dom.audioMusicStep.hidden = !musicMode;
-    dom.audioVoiceSource.hidden = !voiceMode;
+    const hasUpload = !!state.audio.musicUpload;
+
+    const setDisabled = (root, disabled) => {
+      if (!root) return;
+      root.querySelectorAll("input, select, textarea, button").forEach((node) => {
+        node.disabled = disabled;
+      });
+      root.classList.toggle("is-disabled", disabled);
+    };
+    setDisabled(dom.audioRewriteStep, !rewriteMode);
+    setDisabled(dom.audioVoiceStep, !voiceMode);
+    setDisabled(dom.audioMusicStep, !musicMode);
+    if (voiceMode) {
+      [dom.audioSourceGenerate, dom.audioSourceUpload].forEach((node) => {
+        if (node) node.disabled = false;
+      });
+      if (dom.audioUploadButton) dom.audioUploadButton.disabled = false;
+      if (dom.audioPreview) dom.audioPreview.disabled = false;
+      if (!upload) {
+        [dom.audioEngine, dom.audioVoice, dom.audioRate].forEach((node) => {
+          if (node) node.disabled = false;
+        });
+      }
+    }
+    if (musicMode) {
+      dom.audioMusicStep.querySelectorAll('input[name="audio-music-source"]').forEach((node) => {
+        node.disabled = false;
+      });
+      if (dom.audioMusic) dom.audioMusic.disabled = false;
+      if (dom.audioTrack) dom.audioTrack.disabled = hasUpload;
+      if (dom.audioPrompt) dom.audioPrompt.disabled = false;
+      if (dom.audioGain) dom.audioGain.disabled = false;
+      if (dom.audioDuck) dom.audioDuck.disabled = false;
+      if (dom.audioBeatSync) dom.audioBeatSync.disabled = false;
+      if (dom.audioMusicUploadButton) dom.audioMusicUploadButton.disabled = false;
+    }
+    if (dom.mixerOpen) dom.mixerOpen.disabled = !(voiceMode || musicMode);
     dom.audioVoiceGenerate.hidden = upload;
     dom.audioVoiceUpload.hidden = !upload;
     dom.audioUploadButton.hidden = !upload;
@@ -4094,7 +4238,6 @@
     if (dom.audioPreview) dom.audioPreview.hidden = upload;
     syncMusicOptions();
     const source = musicSourceMode();
-    const hasUpload = !!state.audio.musicUpload;
     dom.audioTrackField.hidden = source !== "own" || hasUpload;
     dom.audioTrack.disabled = hasUpload;
     dom.audioMusicUploadBox.hidden = source !== "own";
@@ -4205,8 +4348,8 @@
   }
 
   function fillSelect(select, options) {
-    select.innerHTML = options.map(([value, label]) => (
-      `<option value="${esc(value)}">${esc(label)}</option>`
+    select.innerHTML = options.map(([value, label, disabled]) => (
+      `<option value="${esc(value)}"${disabled ? " disabled" : ""}>${esc(label)}</option>`
     )).join("");
   }
 
@@ -4451,7 +4594,7 @@
       .filter(([id]) => allowedVoices.has(id))
       .map(([id, info]) => [
         id,
-        `${info.available ? "" : "unavailable · "}${engineLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`,
+        `${engineLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`, !info.available,
       ]);
     fillSelect(dom.audioEngine, voiceOptions);
     const available = Object.values(engines.voices || {})
@@ -4462,7 +4605,7 @@
       if (!allowedMusic.has(id)) return;
       musicOptions.push([
         id,
-        `${info.available ? "" : "unavailable · "}${musicLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`,
+        `${musicLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`, !info.available,
       ]);
     });
     state.audioMusicOptions = musicOptions;
@@ -4472,7 +4615,7 @@
     (engines.rewrite_models || []).forEach((item) => {
       rewriteOptions.push([
         item.id,
-        `${item.available ? "" : "unavailable · "}${item.name}${item.size_mb ? ` (~${item.size_mb} MB)` : ""}`,
+        `${item.name}${item.size_mb ? ` (~${item.size_mb} MB)` : ""}`, !item.available,
       ]);
     });
     fillSelect(dom.audioRewrite, rewriteOptions);
@@ -4481,7 +4624,7 @@
     (engines.translation || []).forEach((item) => {
       translateOptions.push([
         item.id,
-        `${item.available ? "" : "unavailable · "}${translateLabel(item.id)}`,
+        `${translateLabel(item.id)}`, !item.available,
       ]);
     });
     fillSelect(dom.audioProvider, translateOptions);
@@ -4630,14 +4773,11 @@
     dom.translateBadge.hidden = false;
     dom.translateBadge.dataset.status = status;
     if (status === "ready") {
-      dom.translateBadge.textContent = `Translation ready · ${target.toUpperCase()}`;
-    } else if (status === "running") {
-      dom.translateBadge.textContent =
-        `Translating batch ${Math.max(1, Number(info?.batch) || 1)}/${info?.batches || "?"}`;
+      dom.translateBadge.textContent = "✓ Translation ready";
     } else if (status === "failed") {
       dom.translateBadge.textContent = "Translation failed";
     } else {
-      dom.translateBadge.textContent = "Translation not started";
+      dom.translateBadge.textContent = "Translating…";
     }
   }
 
@@ -4703,7 +4843,7 @@
     ensureTranslation(null).catch(() => {});
   }
 
-  function resetAudioScript(message = "Click ▶ Rewrite to translate the full script and rewrite this cut.") {
+  function resetAudioScript(message = "Choose a mode, then Copy cut. The full transcript is reused.") {
     if (!dom.audioScript) return;
     cancelAudioScript();
     if (dom.audioRewriteNote) dom.audioRewriteNote.textContent = message;
@@ -4763,6 +4903,11 @@
     dom.audioRewriteRun.disabled = true;
     const translatedReady = await ensureTranslation(controller);
     if (!translatedReady) return;
+    if (dom.translateBadge) {
+      dom.translateBadge.hidden = false;
+      dom.translateBadge.dataset.status = "running";
+      dom.translateBadge.textContent = "Rewriting…";
+    }
     dom.audioScript.innerHTML =
       `<div class="script-head"><span class="label">Script</span><span class="hint">working…</span></div>`;
     try {
@@ -4795,13 +4940,13 @@
       }
       const fallbackText = result.warning
         || (result.rewrite_status?.fallback
-          ? (result.rewrite_status?.error || "Rewrite unavailable; kept the literal translation.")
+          ? (result.rewrite_status?.error || "Copy unavailable; kept the literal translation.")
           : "");
       const note = fallbackText
         ? `Fallback: ${fallbackText}`
         : result.translated
           ? `${result.translation_status?.provider === "cache" ? "Translation reused · " : ""}Translated to ${result.target} and rewritten for ${state.target}s.`
-          : `Rewritten for ${state.target}s.`;
+          : `Copied for ${state.target}s.`;
       renderScriptBlock(lines, result, note);
       state.translation = {
         target: targetLanguage(), status: "ready", done: 1, total: 1,
@@ -4813,11 +4958,11 @@
       if (error?.name === "AbortError") {
         // A setting change already cleared the panel; keep that message.
         if (state.scriptAbort === controller) {
-          dom.audioRewriteNote.textContent = "Rewrite cancelled. Click ▶ Rewrite to run it again.";
+          dom.audioRewriteNote.textContent = "Copy cancelled. Press Copy cut to run it again.";
         }
         return;
       }
-      const message = `Rewrite failed: ${error.message}`;
+      const message = `Copy failed: ${error.message}`;
       if (state.lastScript?.lines?.length) {
         renderScriptBlock(
           state.lastScript.lines,
@@ -4849,7 +4994,7 @@
       ? rewriteValue
       : rewriteValue?.used || result.rewrite_status?.used || "";
     if (warning || result.rewrite_status?.fallback) return "fallback";
-    if (rewrite) return rewrite === "literal" ? "literal" : `rewrite · ${rewrite}`;
+    if (rewrite) return rewrite === "literal" ? "literal" : `copy · ${rewrite}`;
     return result.mode || "literal";
   }
 
@@ -4859,7 +5004,7 @@
     const finalText = lines.map((line) => String(line.text || "")).join("\n");
     const warning = result.warning
       || (result.rewrite_status?.fallback
-        ? (result.rewrite_status?.error || "Rewrite unavailable; kept the literal translation.")
+        ? (result.rewrite_status?.error || "Copy unavailable; kept the literal translation.")
         : "");
     const head = `${lines.length} lines · ${result.source_lang || "?"}${
       result.translated ? ` → ${result.target || "?"}` : ""} · ${scriptHeadLabel(result)}`;
@@ -4873,13 +5018,13 @@
         <span class="hint">${esc(head)}</span>${warn}
         <span class="script-copy-actions">
           <button class="ghost small" data-copy-script="original" type="button">Copy original</button>
-          <button class="ghost small" data-copy-script="final" type="button">Copy ${result.translated ? "translation" : "rewrite"}</button>
+          <button class="ghost small" data-copy-script="final" type="button">Copy ${result.translated ? "translation" : "copy"}</button>
           ${result.translated && !options.snapshot ? '<button class="ghost small" data-script-retry type="button">Retry translation</button>' : ""}
         </span>
       </div>
       <div class="script-list script-grid">
         <div class="script-column-label">Original</div>
-        <div class="script-column-label">${result.translated ? "Translation · rewrite" : "Rewrite"}</div>
+        <div class="script-column-label">${result.translated ? "Translation · copy" : "Copy"}</div>
         ${lines.map((line) => {
           const original = line.original || line.literal || line.text || "";
           return `
@@ -4916,7 +5061,7 @@
         if (next.trim()) state.scriptOverrides[sceneId] = next.trim();
         else delete state.scriptOverrides[sceneId];
         state.scriptId = null;
-        resetAudioScript("Edit saved. Click ▶ Rewrite to regenerate the cut.");
+        resetAudioScript("Edit saved. Press Copy cut to regenerate the cut.");
       });
     });
   }
@@ -4932,7 +5077,7 @@
       rewrite: snapshot.rewrite?.used || snapshot.rewrite || "",
       mode: snapshot.style || "",
     };
-    const note = "Restored from history. Overrides applied; click ▶ Rewrite to regenerate audio.";
+    const note = "Restored from history. Overrides applied; press Copy cut to regenerate audio.";
     renderScriptBlock(lines, result, note, { snapshot: true });
   }
 
@@ -4957,11 +5102,6 @@
     const pieces = [];
     const mode = state.audio.mode;
     const preferredTts = state.setup?.tts?.provider;
-    if (preferredTts && !["auto", "local"].includes(preferredTts)
-        && engines.voices?.[preferredTts] && !engines.voices[preferredTts].available
-        && state.audio.engine !== preferredTts) {
-      pieces.push(`Preferred ${engineLabel(preferredTts)} unavailable · using ${engineLabel(state.audio.engine)}`);
-    }
     if (mode === "voice" && !engines.separation?.demucs?.available) {
       pieces.push(`Demucs missing · ${engines.separation?.demucs?.install || "pip install demucs"}`);
     }
@@ -4973,6 +5113,7 @@
       pieces.push(`auto mood: ${state.audioMoods.slice(0, 3).join(", ")}`);
     }
     dom.audioStatus.textContent = pieces.join(" · ");
+    dom.audioStatus.hidden = !pieces.length;
   }
 
   async function loadTranslateCheck() {
@@ -5196,7 +5337,7 @@
     }
 
     renderButton(`Render ${target}s reel`);
-    const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080" };
+    const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080", "16:10": "1920×1200" };
     dom.renderNote.textContent = blocked
       || state.plan.note
       || `${state.aspect} ${dims[state.aspect] || ""} · ${renderAudioNote()}${state.captions ? " · captions" : ""} · no watermark`;
@@ -5641,7 +5782,7 @@
         ${!isDeep
           ? `<button class="primary" data-read-scene="${scene.id}">Deep-read this scene <span class="arrow">↗</span></button>`
           : planClip
-            ? `<button class="ghost" disabled>In Smart Cut</button>`
+            ? `<button class="ghost danger" data-remove-scene="${scene.id}">Remove from Smart Cut</button>`
             : `<button class="primary" data-add-scene="${scene.id}">Add to Smart Cut <span class="arrow">↗</span></button>`}
         ${!isDeep || planClip || isHook ? "" : `<button class="ghost" data-use-hook="${scene.id}">Use as hook</button>`}
         <button class="ghost" data-close>Close</button>
@@ -5791,7 +5932,7 @@
     try {
       const result = await api(`/api/jobs/${state.job.id}/clean`, {
         method: "POST",
-        body: JSON.stringify({ profile: dom.cleanProfile.value || "workfiles" }),
+        body: JSON.stringify({ profile: "workfiles" }),
       });
       toast(`Cleaned: ${(result.cleaned || []).join(", ") || "nothing to remove"}.`);
       await openJob(state.job.id);

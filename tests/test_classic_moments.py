@@ -22,9 +22,8 @@ def test_expand_opens_a_vertical_moment_list():
     assert "function renderMomentList()" in script
     assert "dom.momentsList.innerHTML = scenes.map" in script
     start = script.index('dom.momentsExpand.addEventListener("click"')
-    body = script[start:script.index("dom.momentsScrub.addEventListener(\"input\"", start)]
+    body = script[start:script.index("dom.recent.addEventListener", start)]
     assert "dom.momentsRail.hidden = state.momentsExpanded" in body
-    assert "dom.momentsScrub.hidden = state.momentsExpanded" in body
     assert "renderMomentList();" in body
     assert "renderScenes();" not in body
 
@@ -55,3 +54,23 @@ def test_dropdown_text_is_not_eleven_pixels():
     row = row[:row.index("}")]
     size = re.search(r"font-size:\s*([0-9.]+)px", row)
     assert size and float(size.group(1)) >= 13, row
+
+
+def test_a_moment_has_a_quick_select_toggle():
+    page = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
+    assert 'id="moments-scrub"' not in page
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "function momentCheck(scene, checked)" in script
+    assert "data-moment-toggle" in script
+    assert "function toggleSceneInPlan(sceneId)" in script
+    assert "function removeSceneFromPlan(sceneId)" in script
+    assert "Remove from Smart Cut" in script
+
+
+def test_a_clip_role_opens_a_hook_beat_payoff_menu():
+    page = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
+    assert 'id="clip-menu"' in page
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "function setClipRole(index, role)" in script
+    assert 'data-clip-role="${role}"' in script
+    assert "contextmenu" in script

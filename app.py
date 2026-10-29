@@ -4956,6 +4956,12 @@ def _job_index_row(job: dict) -> dict:
     ingest = job.get("ingest") or {}
     source = job.get("source") or {}
     hook_id = analysis.get("hook_scene")
+    hook_scene = next(
+        (scene for scene in analysis.get("scenes") or []
+         if isinstance(scene, dict) and scene.get("id") == hook_id),
+        None,
+    )
+    hook_has_thumb = bool(hook_scene) and hook_scene.get("deep") is not False
     stories = [
         str(story.get("title") or "")
         for record in _clip_set_records(job)
@@ -4978,7 +4984,8 @@ def _job_index_row(job: dict) -> dict:
         "ingest_error": ingest.get("error"),
         "scene_count": analysis.get("scene_count"),
         "hook_thumb": (
-            f"/api/jobs/{job['id']}/thumb/{hook_id}" if hook_id is not None else None
+            f"/api/jobs/{job['id']}/thumb/{hook_id}"
+            if hook_id is not None and hook_has_thumb else None
         ),
         "story_titles": stories[:24],
         "source_deleted": bool(source.get("deleted_at")),

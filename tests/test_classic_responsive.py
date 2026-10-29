@@ -46,9 +46,9 @@ def test_the_dropdown_never_wider_than_the_screen():
     assert "Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))" in script
 
 
-def test_the_render_result_sits_before_the_moments_gallery():
+def test_the_moments_gallery_sits_before_the_smart_cut():
     page = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
-    assert page.index('class="export-panel smart-cut-panel"') < page.index('id="moments-section"')
+    assert page.index('id="moments-section"') < page.index('class="export-panel smart-cut-panel"')
 
 
 def test_a_finished_render_scrolls_the_player_into_view_once():
