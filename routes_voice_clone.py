@@ -221,11 +221,14 @@ def _run_candidate_search(
     *,
     start: float = 0.0,
     seconds: float = 0.0,
+    fast: bool = False,
 ) -> dict:
     """Background worker: clean the source and keep 3-5 candidate WAVs.
 
     ``seconds`` above zero searches only that window of the source. The whole
-    video is still available when the caller asks for it.
+    video is still available when the caller asks for it. ``fast`` skips the
+    separation model and uses the ffmpeg denoise gate, so the first result is
+    quick; a clean search can run afterwards.
     """
     import audio
     import voice_extract
@@ -255,6 +258,8 @@ def _run_candidate_search(
         report = voice_extract.find_voice_candidates(
             search_source, out_dir,
             cancel_event=cancel_event,
+            separate=False if fast else "best",
+            denoise="afftdn" if fast else "auto",
             on_stage=lambda stage: _set_stage(job_id, stage),
         )
         report = dict(report)
@@ -262,6 +267,7 @@ def _run_candidate_search(
         report.setdefault("candidates", [])
         report["window_offset"] = round(offset, 3)
         report["window_seconds"] = round(seconds, 3) if seconds > 0 else 0.0
+        report["fast"] = bool(fast)
         _remember(CANDIDATE_RESULTS, job_id, report)
         with _CANDIDATE_LOCK:
             CANDIDATE_ERRORS.pop(job_id, None)
@@ -362,6 +368,7 @@ def _candidate_state(job_id: str) -> dict:
             "start": round(offset, 3),
             "seconds": round(float(report.get("window_seconds") or 0.0), 3),
         },
+        "fast": bool(report.get("fast")),
     }
 
 
@@ -483,11 +490,13 @@ def _clone_my_voice(
 @router.post("/api/jobs/{job_id}/voices/candidates")
 def start_candidate_search(
     job_id: str, request: Request, full: bool = False, start: float = 0.0,
+    fast: bool = False,
 ) -> dict:
     """Start the clean voice candidate search for this job's source.
 
     By default it searches the first two minutes, which keeps a long video
     quick. ``full=1`` searches the whole source; ``start`` moves the window.
+    ``fast=1`` skips the separation model and uses the ffmpeg denoise gate.
     """
     _guard(request)
     app = _app()
@@ -527,7 +536,7 @@ def start_candidate_search(
     _set_stage(job_id, "queued")
     app.voice_pool.submit_tracked(
         _run_candidate_search, job_id, cancel_event, out_dir,
-        start=start, seconds=seconds,
+        start=start, seconds=seconds, fast=bool(fast),
         kind=CANDIDATE_KIND, key=job_id,
     )
     return _candidate_state(job_id)

@@ -84,6 +84,7 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
   let player = null;
   let manual = false;
   let fullSearch = false;
+  let fastSearch = true;
   let start = "";
   let end = "";
   let name = "";
@@ -154,7 +155,7 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     busy = "find";
     render();
     try {
-      task = await findVoiceCandidates(jobId, { full: fullSearch });
+      task = await findVoiceCandidates(jobId, { full: fullSearch, fast: fastSearch });
       if (isRunning(task)) schedule(1200);
     } catch (cause) {
       error = cause?.message || "Could not start the clip search.";
@@ -394,6 +395,19 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
       whole,
       el("span", {
         text: "Search the whole video. Off: the first 2:00 only, which is much faster. For a quick clone, use a time range instead.",
+      }),
+    ]));
+
+    const fast = el("input", {
+      type: "checkbox",
+      checked: fastSearch,
+      disabled: running || Boolean(busy),
+    });
+    fast.addEventListener("change", () => { fastSearch = fast.checked; });
+    node.append(el("label", { class: "vr-consent" }, [
+      fast,
+      el("span", {
+        text: "Fast search. Skips music separation, so it returns in seconds. Uncheck for a clean search with the separation model.",
       }),
     ]));
 
