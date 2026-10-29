@@ -9,8 +9,7 @@
  */
 
 import { mount as mountImport } from "./import.js";
-import { mount as mountCheck } from "./check.js";
-import { mount as mountStories } from "./stories.js";
+import { mount as mountMoments } from "./stories.js";
 import { mount as mountEdit } from "./edit.js";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountLibrary } from "./library.js";
@@ -23,10 +22,9 @@ const EDITOR_KEY = "vibecut.editor";
 
 const STEPS = [
   { id: "import", label: "Import", note: "Bring in a video", mount: mountImport },
-  { id: "check", label: "Check", note: "Find what it needs", mount: mountCheck },
-  { id: "stories", label: "Stories", note: "Pick the moments", mount: mountStories },
-  { id: "edit", label: "Edit", note: "Shape each story", mount: mountEdit },
-  { id: "finish", label: "Finish", note: "Render and share", mount: mountFinish },
+  { id: "moments", label: "Moments", note: "Find and build stories", mount: mountMoments },
+  { id: "edit", label: "Edit", note: "Shape each moment", mount: mountEdit },
+  { id: "finish", label: "Finish", note: "Review, render and share", mount: mountFinish },
 ];
 
 const STEP_IDS = new Set(STEPS.map((step) => step.id));
@@ -76,8 +74,7 @@ export function bestStepFor(hasJob, state) {
   if (isReading(status) || state?.missing || STOPPED.has(status)
     || status === "failed" || status === "error" || state?.sourceMissing) return "import";
   if (state?.stories) return "edit";
-  if (state?.check === "done") return "stories";
-  return "check";
+  return "moments";
 }
 
 /** The top strip's one action: stop a read, or start a stopped one again. */
@@ -131,7 +128,8 @@ function writeJob(value) {
 
 function routeFromHash() {
   const value = String(location.hash || "").replace(/^#\/?/, "").split("?")[0];
-  return STEP_IDS.has(value) ? value : "";
+  const step = value === "check" || value === "stories" ? "moments" : value;
+  return STEP_IDS.has(step) ? step : "";
 }
 
 function statusWord(status) {
@@ -389,16 +387,11 @@ export function startStudio() {
       if (jobState.sourceMissing) return { state: "open", text: "Original file missing" };
       return { state: "done", text: "Video ready" };
     }
-    if (stepId === "check") {
-      if (jobState.check === "running") return { state: "working", text: "Checking…" };
-      if (jobState.check === "done") return { state: "done", text: "Checked" };
-      if (jobState.check === "failed") return { state: "open", text: "Check failed · run again" };
-      return { state: "open", text: "Optional · not run" };
-    }
-    if (stepId === "stories") {
-      return jobState.stories
-        ? { state: "done", text: `${jobState.stories} ${jobState.stories === 1 ? "story" : "stories"}` }
-        : { state: "open", text: "Not picked yet" };
+    if (stepId === "moments") {
+      if (jobState.stories) {
+        return { state: "done", text: `${jobState.stories} ${jobState.stories === 1 ? "moment" : "moments"} ready` };
+      }
+      return { state: "open", text: "Find or build a moment" };
     }
     return { state: "open", text: STEPS.find((step) => step.id === stepId)?.note || "" };
   }
@@ -515,7 +508,7 @@ export function startStudio() {
     // A screen opened while the video was still reading never sits on a
     // stale "still being read": reopen it once reading finishes.
     if (previous.jobId === jobId && isReading(previous.status) && !isReading(next.status)) {
-      if (activeStep === "import" && next.status === "ready") go("check");
+      if (activeStep === "import" && next.status === "ready") go("moments");
       else activate(activeStep, { focus: false, force: true });
     }
     if (watch && next.loaded && next.status === "ready" && jobId === (currentJob?.id || "")) {
@@ -524,7 +517,7 @@ export function startStudio() {
       if (changed && jobId === (currentJob?.id || "")) {
         // The fresh job is already cached; drop only derived reads.
         invalidateReadCache(jobId, { keepJob: true });
-        if (activeStep === "check" || activeStep === "stories") {
+        if (activeStep === "moments") {
           activate(activeStep, { focus: false, force: true });
         }
       }

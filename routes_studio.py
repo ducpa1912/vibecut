@@ -23,6 +23,35 @@ class SpeechRetryBody(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+@router.delete("/api/jobs/{job_id}/clip-sets/{set_id}")
+def delete_clip_set(job_id: str, set_id: str, request: Request) -> dict:
+    """Remove one Studio moment set. Edits and renders keep their own files."""
+    import app
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = app.load_job(job_id)
+    records = app._clip_set_records(job)
+    if not any(str(record.get("id")) == set_id for record in records):
+        raise HTTPException(404, "Clip set not found.")
+
+    def mutate(current: dict) -> None:
+        value = current.get("clip_sets")
+        if isinstance(value, list):
+            current["clip_sets"] = [
+                record for record in value
+                if not (isinstance(record, dict) and str(record.get("id")) == set_id)
+            ]
+        else:
+            current["clip_sets"] = {
+                key: record for key, record in (value or {}).items()
+                if str(key) != set_id
+            }
+
+    app.update_job(job_id, mutate)
+    return {"ok": True, "id": set_id}
+
+
 @router.post("/api/jobs/{job_id}/transcribe")
 def retry_speech(job_id: str, request: Request, body: SpeechRetryBody | None = None):
     """Read the speech of an analysed video again, without re-importing it.

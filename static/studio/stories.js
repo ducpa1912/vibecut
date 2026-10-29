@@ -17,11 +17,15 @@
 import {
   createClipSet,
   createStoryQueue,
+  deleteClipSet,
+  getCheckReport,
   getJob,
   getJobStatus,
   invalidateReadCache,
   listClipSets,
+  patchClipSet,
   renderStory,
+  request,
   transcribeJob,
   trimErrorCode,
   writeScriptBrief,
@@ -47,6 +51,8 @@ export const LENGTH_PRESETS = {
   short: { label: "Short · 15–30 s", min: 15, max: 30 },
   medium: { label: "Medium · 30–60 s", min: 30, max: 60 },
   long: { label: "Long · 45–90 s", min: 45, max: 90 },
+  extended: { label: "Extended · 90–180 s", min: 90, max: 180 },
+  custom: { label: "Custom range", min: 15, max: 180 },
 };
 
 /**
@@ -201,13 +207,17 @@ export function mount(root, ctx) {
   let transcribing = false;
   let scripting = false;
   let briefDraft = null;
+  let checkReport = null;
+  let checkError = "";
+  let checkBusy = false;
+  let checkTimer = 0;
 
   root.innerHTML = `
     <section class="st-panel" aria-labelledby="st-stories-title">
       <header class="st-panel-head">
-        <p class="st-eyebrow">Step 3 · Stories</p>
-        <h1 id="st-stories-title">Pick the stories</h1>
-        <p class="st-lede">VibeCut reads the transcript and proposes complete moments, each with a hook and a payoff.</p>
+        <p class="st-eyebrow">Step 2 · Moments</p>
+        <h1 id="st-stories-title">Find the moments</h1>
+        <p class="st-lede">Every moment is a complete beat: a frame, its hook and payoff, the text already on screen, and the shape it will render in. Pick one, tune the range, or build your own from scenes.</p>
       </header>
       <div id="st-story-body" class="st-story-body"></div>
       <p id="st-story-status" class="st-status" role="status" aria-live="polite" hidden></p>
@@ -313,6 +323,159 @@ export function mount(root, ctx) {
     ctx.go("edit", { force: true });
   }
 
+  function sceneAt(time) {
+    const scenes = Array.isArray(job?.analysis?.scenes) ? job.analysis.scenes : [];
+    return scenes.find((scene) => Number(scene.start) <= time && time < Number(scene.end))
+      || scenes.find((scene) => Number(scene.end) > time)
+      || scenes[0]
+      || null;
+  }
+
+  function trackletsFor(story, limit = 4) {
+    const rows = Array.isArray(checkReport?.tracklets) ? checkReport.tracklets : [];
+    const start = Number(story?.start) || 0;
+    const end = Number(story?.end) || start;
+    return rows.filter((item) => {
+      const ranges = Array.isArray(item?.ranges) ? item.ranges : [];
+      if (!ranges.length) return true;
+      return ranges.some((range) => Number(range.end) > start && Number(range.start) < end);
+    }).slice(0, limit);
+  }
+
+  function momentFrame(story, index) {
+    const scene = sceneAt(Number(story?.start) || 0);
+    if (!scene?.thumb_url) return null;
+    const figure = el("figure", { class: "st-moment-frame" });
+    const source = job?.source || {};
+    if (Number(source.width) > 0 && Number(source.height) > 0) {
+      figure.style.aspectRatio = `${Number(source.width)} / ${Number(source.height)}`;
+    }
+    figure.append(el("img", {
+      src: scene.thumb_url,
+      alt: `Frame at the start of moment ${index + 1}`,
+      loading: "lazy",
+    }));
+    for (const tracklet of trackletsFor(story)) {
+      const box = tracklet?.box;
+      if (!box || typeof box !== "object") continue;
+      const mark = el("i", {
+        class: "st-moment-box",
+        title: tracklet.text_sample || "Text found here",
+      });
+      mark.style.left = `${Math.max(0, Math.min(100, Number(box.x) * 100 || 0))}%`;
+      mark.style.top = `${Math.max(0, Math.min(100, Number(box.y) * 100 || 0))}%`;
+      mark.style.width = `${Math.max(1, Math.min(100, Number(box.w) * 100 || 1))}%`;
+      mark.style.height = `${Math.max(1, Math.min(100, Number(box.h) * 100 || 1))}%`;
+      figure.append(mark);
+    }
+    if (checkReport?.audio?.music?.present) {
+      figure.append(el("span", { class: "st-moment-tag st-moment-sfx", text: "Music bed" }));
+    }
+    if (trackletsFor(story, 1).length) {
+      figure.append(el("span", { class: "st-moment-tag st-moment-text", text: "Text here" }));
+    }
+    return figure;
+  }
+
+  async function loadCheck() {
+    if (!job?.id) return;
+    try {
+      checkReport = await getCheckReport(job.id);
+      checkError = "";
+    } catch (error) {
+      checkReport = null;
+      checkError = Number(error?.status) === 404 ? "" : (error?.message || "");
+    }
+  }
+
+  function stopCheckPoll() {
+    if (checkTimer) window.clearTimeout(checkTimer);
+    checkTimer = 0;
+  }
+
+  async function refreshCheck(button) {
+    if (!job?.id || checkBusy) return;
+    checkBusy = true;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Scanning…";
+    }
+    checkError = "";
+    try {
+      await request(`/api/jobs/${encodeURIComponent(job.id)}/check`, {
+        method: "POST",
+        body: { sample_text: true },
+      });
+      const poll = async () => {
+        if (disposed) return;
+        try {
+          const report = await getCheckReport(job.id);
+          checkReport = report;
+          if (String(report?.status || "") === "queued" || String(report?.status || "") === "running") {
+            checkTimer = window.setTimeout(() => { void poll(); }, 1800);
+          } else {
+            checkBusy = false;
+            stopCheckPoll();
+            renderStories();
+          }
+        } catch (error) {
+          checkBusy = false;
+          checkError = error?.message || "Could not read the scan.";
+          renderStories();
+        }
+      };
+      checkTimer = window.setTimeout(() => { void poll(); }, 800);
+    } catch (error) {
+      checkBusy = false;
+      checkError = error?.message || "Could not start the scan.";
+    }
+    if (!disposed && !checkTimer) renderStories();
+  }
+
+  function checkCard() {
+    const card = el("div", { class: "st-card st-moment-check" });
+    const head = el("div", { class: "st-card-head" }, [
+      el("div", {}, [
+        el("h2", { text: checkReport ? "Footage notes" : "Scan the footage" }),
+        el("p", {
+          class: "st-hint",
+          text: checkReport
+            ? "Text and sound the moments already carry. Boxes show where old text sits on the frame."
+            : "Optional: find old text, music and picture issues before you pick a moment.",
+        }),
+      ]),
+    ]);
+    const scan = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: checkBusy ? "Scanning…" : checkReport ? "Scan again" : "Scan footage",
+      disabled: checkBusy,
+    });
+    scan.addEventListener("click", () => { void refreshCheck(scan); });
+    head.append(scan);
+    card.append(head);
+    if (checkError) card.append(el("p", { class: "st-error", text: checkError }));
+    if (!checkReport) {
+      if (!checkBusy) card.append(el("p", { class: "st-hint", text: "No scan yet. Moments still work from the read; the scan adds old-text boxes and sound notes." }));
+      return card;
+    }
+    const tracklets = Array.isArray(checkReport.tracklets) ? checkReport.tracklets : [];
+    const warnings = Array.isArray(checkReport.warnings) ? checkReport.warnings : [];
+    const music = checkReport?.audio?.music;
+    card.append(el("div", { class: "st-moment-facts" }, [
+      el("span", { class: "st-chip st-chip-quiet", text: `${tracklets.length} text region${tracklets.length === 1 ? "" : "s"}` }),
+      el("span", { class: `st-chip ${warnings.length ? "st-chip-busy" : "st-chip-ok"}`, text: `${warnings.length} warning${warnings.length === 1 ? "" : "s"}` }),
+      music?.present ? el("span", { class: "st-chip st-chip-busy", text: "Music bed detected" }) : null,
+    ]));
+    for (const warning of warnings.slice(0, 2)) {
+      const text = typeof warning === "string"
+        ? warning
+        : (warning?.message || warning?.code || "Check reported an issue.");
+      card.append(el("p", { class: "st-warning", text }));
+    }
+    return card;
+  }
+
   function storyCard(story, index) {
     const hook = story.hook?.text || story.title || `Story ${index + 1}`;
     const payoff = story.payoff?.text || "";
@@ -376,7 +539,10 @@ export function mount(root, ctx) {
       el("span", { class: "st-hint", text: formatCount(story.sentences?.length, "sentence") }),
       el("div", { class: "st-story-actions" }, [button, editButton]),
     ]);
-    card.append(head, meta, quotes, trim, foot, note);
+    card.append(head);
+    const frame = momentFrame(story, index);
+    if (frame) card.append(frame);
+    card.append(meta, quotes, trim, foot, note);
     return card;
   }
 
@@ -421,13 +587,124 @@ export function mount(root, ctx) {
     }
   }
 
+  function openBuilder() {
+    const scenes = Array.isArray(job?.analysis?.scenes) ? job.analysis.scenes : [];
+    if (!scenes.length) {
+      showError("This video has no scenes yet. Finish reading it first.");
+      return;
+    }
+    const dialog = el("dialog", { class: "st-dialog st-moment-builder", "aria-labelledby": "st-moment-builder-title" });
+    const body = el("div", { class: "st-dialog-body" });
+    const picked = new Set();
+    const total = el("span", { class: "st-chip st-chip-quiet", text: "0 scenes · 0 s" });
+    const update = () => {
+      const chosen = scenes.filter((scene) => picked.has(Number(scene.id)));
+      const seconds = chosen.reduce((sum, scene) => sum + Math.max(0, Number(scene.end) - Number(scene.start)), 0);
+      total.textContent = `${chosen.length} scene${chosen.length === 1 ? "" : "s"} · ${formatDuration(seconds)}`;
+    };
+    const list = el("div", { class: "st-moment-scenes" });
+    for (const scene of scenes) {
+      const id = Number(scene.id);
+      const check = el("input", { type: "checkbox", "aria-label": `Scene ${id + 1}` });
+      check.addEventListener("change", () => {
+        if (check.checked) picked.add(id);
+        else picked.delete(id);
+        update();
+      });
+      const text = String(scene.ocr || scene.speech || "").replace(/\s+/g, " ").trim();
+      const row = el("label", { class: "st-moment-scene" }, [
+        check,
+        scene.thumb_url ? el("img", { src: scene.thumb_url, alt: "", loading: "lazy" }) : null,
+        el("span", { class: "st-moment-scene-copy" }, [
+          el("strong", { text: `${formatDuration(scene.start)} → ${formatDuration(scene.end)}` }),
+          el("small", { text: text || "No speech or text in this scene" }),
+        ]),
+      ]);
+      list.append(row);
+    }
+    const title = el("input", { type: "text", maxLength: "120", placeholder: "Moment title", "aria-label": "Moment title" });
+    const error = el("p", { class: "st-error", role: "alert", hidden: true });
+    const build = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Build this moment" });
+    build.addEventListener("click", async () => {
+      const ids = [...picked].sort((a, b) => a - b);
+      if (!ids.length) {
+        error.hidden = false;
+        error.textContent = "Pick at least one scene.";
+        return;
+      }
+      const chosen = scenes.filter((scene) => picked.has(Number(scene.id)));
+      const seconds = chosen.reduce((sum, scene) => sum + Math.max(0, Number(scene.end) - Number(scene.start)), 0);
+      if (seconds < 15) {
+        error.hidden = false;
+        error.textContent = `Those scenes are ${formatDuration(seconds)}; a moment needs at least 15 s.`;
+        return;
+      }
+      error.hidden = true;
+      build.disabled = true;
+      build.textContent = "Building…";
+      try {
+        const banned = scenes.map((scene) => Number(scene.id)).filter((id) => !picked.has(id));
+        const result = await createClipSet(job.id, {
+          count: 3,
+          minS: 15,
+          maxS: 180,
+          locks: ids,
+          banScenes: banned,
+        });
+        let record = result?.clip_set;
+        if (!record?.stories?.length) {
+          if (record?.id) await deleteClipSet(job.id, record.id).catch(() => {});
+          error.hidden = false;
+          error.textContent = "Those scenes do not make a 15–180 s moment. Add another scene or use Find moments.";
+          return;
+        }
+        if (title.value.trim()) {
+          const patched = await patchClipSet(job.id, record.id, [
+            { id: record.stories[0].id, title: title.value.trim() },
+          ]);
+          record = patched?.clip_set || record;
+        }
+        sets = [record, ...sets.filter((item) => item.id !== record.id)];
+        activeSetId = record.id;
+        dialog.close();
+        showStatus(`Built a ${formatDuration(record.stories[0].dur)} moment from ${ids.length} scene${ids.length === 1 ? "" : "s"}.`, "ok");
+        renderStories();
+      } catch (problem) {
+        error.hidden = false;
+        error.textContent = problem?.message || "Could not build that moment.";
+      } finally {
+        build.disabled = false;
+        build.textContent = "Build this moment";
+      }
+    });
+    const cancel = el("button", { class: "st-btn st-btn-quiet", type: "button", text: "Cancel" });
+    cancel.addEventListener("click", () => dialog.close());
+    dialog.append(
+      el("div", { class: "st-dialog-head" }, [
+        el("h2", { id: "st-moment-builder-title", text: "Build your story" }),
+        el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close builder", onclick: () => dialog.close() }),
+      ]),
+      body,
+      el("div", { class: "st-dialog-foot" }, [total, cancel, build]),
+    );
+    body.append(
+      el("p", { class: "st-hint", text: "Pick the scenes that belong together. The best hook and payoff inside them become one moment." }),
+      list,
+      el("label", { class: "st-field" }, [el("span", { text: "Title (optional)" }), title]),
+      error,
+    );
+    dialog.addEventListener("close", () => dialog.remove());
+    root.append(dialog);
+    dialog.showModal();
+  }
+
   function controlsCard() {
     const set = sets.find((item) => item.id === activeSetId) || sets[0];
     const requested = Number(set?.requested) || 3;
     const card = el("div", { class: "st-card st-story-controls" });
     const head = el("div", { class: "st-card-head" }, [
       el("div", {}, [
-        el("h2", { text: set ? "Story picks" : "No stories yet" }),
+        el("h2", { text: set ? "Detected moments" : "No moments yet" }),
         el("p", {
           class: "st-hint",
           text: set
@@ -457,14 +734,42 @@ export function mount(root, ctx) {
       length.append(el("option", { value, text: preset.label, selected: value === current }));
     }
     lengthLabel.append(length);
+    const custom = el("div", { class: "st-moment-custom", hidden: current !== "custom" });
+    const minInput = el("input", { type: "number", min: "15", max: "180", step: "1", value: "30", "aria-label": "Minimum moment length in seconds" });
+    const maxInput = el("input", { type: "number", min: "15", max: "180", step: "1", value: "90", "aria-label": "Maximum moment length in seconds" });
+    custom.append(
+      el("label", { class: "st-field st-field-inline" }, [el("span", { text: "From (s)" }), minInput]),
+      el("label", { class: "st-field st-field-inline" }, [el("span", { text: "To (s)" }), maxInput]),
+      el("span", { class: "st-hint", text: "15–180 s" }),
+    );
+    length.addEventListener("change", () => { custom.hidden = length.value !== "custom"; });
     const build = el("button", {
       class: "st-btn st-btn-primary",
       type: "button",
-      text: set ? "Find stories again" : "Find stories",
+      text: set ? "Find moments again" : "Find moments",
     });
-    build.addEventListener("click", () => buildStories(Number(count.value), build, length.value));
-    actions.append(countLabel, lengthLabel, build);
-    card.append(actions);
+    build.addEventListener("click", () => {
+      if (length.value === "custom") {
+        const low = Number(minInput.value);
+        const high = Number(maxInput.value);
+        if (!(low >= 15 && high <= 180 && high >= low)) {
+          showError("Custom length must be 15–180 seconds, with the low end first.");
+          return;
+        }
+        buildStories(Number(count.value), build, "custom", low, high);
+        return;
+      }
+      buildStories(Number(count.value), build, length.value);
+    });
+    const own = el("button", {
+      class: "st-btn st-btn-ghost",
+      type: "button",
+      text: "Build your story",
+      title: "Choose scenes and make one moment yourself",
+    });
+    own.addEventListener("click", () => { openBuilder(card); });
+    actions.append(countLabel, lengthLabel, build, own);
+    card.append(actions, custom);
 
     const speech = speechCard();
     if (speech) card.append(speech);
@@ -537,7 +842,7 @@ export function mount(root, ctx) {
       job = await getJob(job.id, { fresh: true });
       if (disposed) return;
       showStatus(
-        `Wrote ${formatCount(result?.lines || 0, "line", "lines")} (${result?.language || "auto"}${result?.exact_lines ? `, ${result.exact_lines} kept word for word` : ""}). Find stories now.`,
+        `Wrote ${formatCount(result?.lines || 0, "line", "lines")} (${result?.language || "auto"}${result?.exact_lines ? `, ${result.exact_lines} kept word for word` : ""}). Find moments now.`,
         "ok",
       );
     } catch (error) {
@@ -585,7 +890,7 @@ export function mount(root, ctx) {
       if (disposed) return;
       showStatus(
         result?.segments
-          ? `Read ${formatCount(result.segments, "line", "lines")} of speech (${result.language || "auto"}). Find stories now.`
+          ? `Read ${formatCount(result.segments, "line", "lines")} of speech (${result.language || "auto"}). Find moments now.`
           : "No speech was heard in this video.",
         result?.segments ? "ok" : "",
       );
@@ -634,6 +939,7 @@ export function mount(root, ctx) {
     }
     const set = sets.find((item) => item.id === activeSetId) || sets[0];
     clear(dom.body);
+    dom.body.append(checkCard());
     dom.body.append(controlsCard());
     if (!set) return;
 
@@ -661,8 +967,9 @@ export function mount(root, ctx) {
     aspectLabel.append(aspect);
     const qualityLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Quality" })]);
     const quality = el("select", { "aria-label": "Render quality" });
-    quality.append(el("option", { value: "final", text: "Final" }));
-    quality.append(el("option", { value: "draft", text: "Draft" }));
+    quality.append(el("option", { value: "final", text: "1080p final" }));
+    quality.append(el("option", { value: "720", text: "720p" }));
+    quality.append(el("option", { value: "draft", text: "540p draft" }));
     qualityLabel.append(quality);
     const all = el("button", {
       class: "st-btn st-btn-primary",
@@ -728,7 +1035,7 @@ export function mount(root, ctx) {
     }
   }
 
-  async function buildStories(count, button, length = "auto") {
+  async function buildStories(count, button, length = "auto", minOverride = null, maxOverride = null) {
     if (!job || loading) return;
     loading = true;
     button.disabled = true;
@@ -737,7 +1044,9 @@ export function mount(root, ctx) {
     showStatus("Reading the transcript and choosing complete moments…");
     try {
       const preset = LENGTH_PRESETS[length] || LENGTH_PRESETS.auto;
-      const result = await createClipSet(job.id, { count, minS: preset.min, maxS: preset.max });
+      const minS = Number.isFinite(minOverride) ? minOverride : preset.min;
+      const maxS = Number.isFinite(maxOverride) ? maxOverride : preset.max;
+      const result = await createClipSet(job.id, { count, minS, maxS });
       ctx.refreshSteps?.();
       if (disposed) return;
       const record = result?.clip_set;
@@ -756,7 +1065,7 @@ export function mount(root, ctx) {
     } finally {
       loading = false;
       if (!disposed) {
-        if (button.isConnected) button.textContent = sets.length ? "Find stories again" : "Find stories";
+        if (button.isConnected) button.textContent = sets.length ? "Find moments again" : "Find moments";
       }
     }
   }
@@ -766,8 +1075,9 @@ export function mount(root, ctx) {
       const data = await listClipSets(job.id);
       if (disposed) return;
       sets = Array.isArray(data?.clip_sets) ? data.clip_sets : [];
-      if (!sets.some((item) => item.id === activeSetId)) {
-        activeSetId = sets[0]?.id || "";
+      const usable = sets.filter((item) => Array.isArray(item.stories) && item.stories.length);
+      if (!usable.some((item) => item.id === activeSetId)) {
+        activeSetId = usable[0]?.id || sets[0]?.id || "";
       }
       renderStories();
     } catch (error) {
@@ -830,6 +1140,7 @@ export function mount(root, ctx) {
       job = value;
       announceJob();
       if (value.status === "ready") {
+        await loadCheck();
         await loadSets();
       } else if (value.status === "failed") {
         failedCard(value);
@@ -854,5 +1165,6 @@ export function mount(root, ctx) {
   return () => {
     disposed = true;
     stopPoll();
+    stopCheckPoll();
   };
 }

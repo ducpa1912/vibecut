@@ -34,7 +34,7 @@ LOGGER = logging.getLogger("vibecut.story_queue")
 
 MAX_ITEMS = 10
 ASPECTS = ("9:16", "4:5")
-QUALITIES = ("final", "draft")
+QUALITIES = ("final", "720", "draft")
 QUEUE_STATES = ("queued", "running", "paused", "done", "cancelled")
 ITEM_STATES = ("queued", "running", "done", "failed", "interrupted", "cancelled")
 TERMINAL_ITEMS = frozenset({"done", "failed", "cancelled"})
@@ -121,7 +121,7 @@ def normalize_items(raw: object) -> list[dict]:
             raise QueueError(f"Item {index}: story renders support 9:16 and 4:5.")
         quality = str(value.get("quality") or "final")
         if quality not in QUALITIES:
-            raise QueueError(f"Item {index}: quality must be final or draft.")
+            raise QueueError(f"Item {index}: quality must be final, 720 or draft.")
         identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality)
         if identity in seen:
             raise QueueError(f"Item {index} repeats an earlier story and aspect.")

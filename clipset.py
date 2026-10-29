@@ -28,12 +28,13 @@ CLOSING_PAUSE_S = 0.35
 SPREAD_FRACTION = 0.15
 # Bounds a caller may ask for; the default window above stays 20-75 s.
 LENGTH_FLOOR_S = 15.0
-LENGTH_CEIL_S = 90.0
+LENGTH_CEIL_S = 180.0
 # Studio's length presets (seconds).
 LENGTH_PRESETS = {
     "short": (15.0, 30.0),
     "medium": (30.0, 60.0),
     "long": (45.0, 90.0),
+    "extended": (90.0, 180.0),
 }
 MIN_STORIES = 3
 MAX_STORIES = 12

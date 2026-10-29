@@ -134,7 +134,7 @@ def test_reload_resumes_at_the_best_step():
           m.bestStepFor(true, {status: "ready", check: "done", stories: 3}),
         ];
     """, prelude=NO_PAGE)
-    assert out == ["import", "import", "import", "import", "check", "stories", "edit"]
+    assert out == ["import", "import", "import", "import", "moments", "moments", "edit"]
 
 
 @needs_node

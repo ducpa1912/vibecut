@@ -65,6 +65,15 @@ ASPECTS = {
     "16:9": ((1920, 1080), (960, 540)),
 }
 
+# Final, 720p and draft sizes keyed by quality. 720p is the middle choice
+# Studio offers between a 1080 final and a 540 draft.
+SIZES = {
+    "9:16": {"final": (1080, 1920), "720": (720, 1280), "draft": (540, 960)},
+    "4:5": {"final": (1080, 1350), "720": (720, 900), "draft": (540, 676)},
+    "1:1": {"final": (1080, 1080), "720": (720, 720), "draft": (540, 540)},
+    "16:9": {"final": (1920, 1080), "720": (1280, 720), "draft": (960, 540)},
+}
+
 
 class RenderCancelled(RuntimeError):
     pass
@@ -116,8 +125,8 @@ def _run(
 
 
 def _dims(aspect: str, quality: str) -> tuple[int, int]:
-    final, draft = ASPECTS.get(aspect, ASPECTS["9:16"])
-    return final if quality == "final" else draft
+    sizes = SIZES.get(aspect, SIZES["9:16"])
+    return sizes.get(quality, sizes["final"])
 
 
 def _choose_encoder(requested: str | None = None) -> str:
@@ -157,7 +166,7 @@ def _decoder_args(meta: dict, threads: int | None = None) -> list[str]:
 
 def _encoder_args(encoder: str, quality: str) -> list[str]:
     if encoder == "videotoolbox":
-        bitrate = "10M" if quality == "final" else "3M"
+        bitrate = "10M" if quality == "final" else "6M" if quality == "720" else "3M"
         return [
             "-c:v", "h264_videotoolbox",
             "-b:v", bitrate,
@@ -170,8 +179,8 @@ def _encoder_args(encoder: str, quality: str) -> list[str]:
         ]
     return [
         "-c:v", "libx264",
-        "-preset", "veryfast" if quality == "final" else "ultrafast",
-        "-crf", "18" if quality == "final" else "23",
+        "-preset", "veryfast" if quality in ("final", "720") else "ultrafast",
+        "-crf", "18" if quality == "final" else "20" if quality == "720" else "23",
         "-profile:v", "high", "-level", "4.2",
         "-pix_fmt", "yuv420p",
         # No B-frames keeps every segment starting at PTS 0. That lets the
@@ -1903,7 +1912,7 @@ def render_story_frame(
     cancel_event: threading.Event | None = None,
 ) -> bytes:
     """Render one frame through the same segment and layer graph as a reel."""
-    quality = "draft" if quality == "draft" else "final"
+    quality = quality if quality in ("final", "720", "draft") else "final"
     aspect = aspect or compiled.get("aspect") or "9:16"
     aspect = aspect if aspect in ASPECTS else "9:16"
     out_w, out_h = _dims(aspect, quality)
@@ -2113,7 +2122,7 @@ def render_reel(
     edit: dict | None = None,
     compiled_edit: dict | None = None,
 ) -> dict:
-    quality = "draft" if quality == "draft" else "final"
+    quality = quality if quality in ("final", "720", "draft") else "final"
     aspect = aspect if aspect in ASPECTS else "9:16"
     out_w, out_h = _dims(aspect, quality)
     encoder = _choose_encoder(encoder)

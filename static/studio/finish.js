@@ -36,6 +36,7 @@ const POLL_MS = 2400;
 const ACTIVE_QUEUE = new Set(["queued", "running"]);
 const ACTIVE_ITEM = new Set(["queued", "running"]);
 const ASPECTS = ["9:16", "4:5"];
+const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
 
 /**
  * Where Finish opens after Open in Finish: the cut's set, story, shape and
@@ -188,7 +189,8 @@ function plainVersion(value) {
 
 function artifactLabel(artifact) {
   const version = plainVersion(artifact?.versions?.label || `v${artifact?.version || "?"}`);
-  const quality = artifact?.quality === "draft" ? "Draft" : "Final";
+  const quality = artifact?.quality === "draft" ? "Draft"
+    : artifact?.quality === "720" ? "720p" : "Final";
   const when = artifact?.created ? shortDate(artifact.created) : "";
   return [version, quality, when].filter(Boolean).join(" · ");
 }
@@ -440,7 +442,9 @@ export function downloadName(artifact, index = 0) {
   const shape = artifactAspect(artifact).replace(":", "x");
   const version = artifact?.versions?.version || artifact?.version || "";
   const story = `story-${String(Math.max(0, index) + 1).padStart(2, "0")}`;
-  return [story, shape, version ? `v${version}` : "", artifact?.quality === "draft" ? "draft" : ""]
+  const quality = artifact?.quality === "draft" ? "draft"
+    : artifact?.quality === "720" ? "720p" : "";
+  return [story, shape, version ? `v${version}` : "", quality]
     .filter(Boolean).join("-") + ".mp4";
 }
 
@@ -743,6 +747,20 @@ export function mount(root, ctx) {
       .sort((left, right) => Number(right.created || 0) - Number(left.created || 0));
   }
 
+  /** Open Edit on one cut without losing the set, story and shape. */
+  function openEdit(storyId, shape = aspect) {
+    try {
+      localStorage.setItem(EDIT_CHOICE_KEY, JSON.stringify({
+        setId: activeSetId,
+        storyId: String(storyId || selectedStory()?.id || ""),
+        aspect: ASPECTS.includes(shape) ? shape : "9:16",
+      }));
+    } catch (_) {
+      /* Edit falls back to the first story. */
+    }
+    ctx.go("edit", { force: true });
+  }
+
   /** The live queue item for one story and shape, if it is still waiting/running. */
   function liveQueueItem(storyId, shapeValue) {
     for (const queue of queues) {
@@ -976,6 +994,7 @@ export function mount(root, ctx) {
       if (wasActive && !hasActiveWork()) {
         await Promise.all([loadPackets(), loadShares()]);
         renderVersionsCard();
+        renderReviewCard();
         renderPacketCard();
         renderShareCard();
         const banner = finishBanner(finishOutcome(queues, queueIds, artifacts, artifactIds));
@@ -1003,19 +1022,74 @@ export function mount(root, ctx) {
     dom.body.append(card);
   }
 
+  function reviewCard() {
+    const story = selectedStory();
+    const rows = allArtifactsFor();
+    const ready = rows.filter(artifactReady);
+    const fallback = story
+      ? artifacts.filter((item) => artifactReady(item) && artifactStoryId(item) === String(story.id))
+      : [];
+    const item = ready.find((row) => row.artifact_id === selectedArtifactId)
+      || ready[0] || fallback[0] || null;
+    const card = el("section", { class: "st-card st-finish-card st-finish-review", "aria-labelledby": "st-finish-review-title" });
+    const head = el("div", { class: "st-card-head" }, [
+      el("div", {}, [
+        el("h2", { id: "st-finish-review-title", text: "Review" }),
+        el("p", {
+          class: "st-hint",
+          text: story
+            ? `${storyName(story, selectedIndex())} · ${aspect}. Watch the cut before you publish, or change the moment.`
+            : "No moment selected.",
+        }),
+      ]),
+      story ? el("button", {
+        class: "st-btn st-btn-primary st-btn-small",
+        type: "button",
+        text: "Edit this moment",
+      }) : null,
+    ]);
+    const edit = head.querySelector("button");
+    if (edit) edit.addEventListener("click", () => openEdit(story.id, aspect));
+    card.append(head);
+    if (!item) {
+      card.append(el("p", { class: "st-hint", text: "No finished cut for this moment and shape yet. Queue it above, then review it here." }));
+      return card;
+    }
+    const box = el("figure", { class: "st-finish-review-video" });
+    box.append(el("figcaption", { class: "st-label", text: `${artifactLabel(item).replace(" · current", "")} · ${artifactAspect(item)}` }));
+    box.append(el("video", {
+      src: item.url,
+      poster: item.poster_url || null,
+      controls: true,
+      preload: "metadata",
+      playsinline: true,
+    }));
+    card.append(box);
+    for (const warning of renderWarnings(item)) {
+      card.append(el("p", { class: "st-warning st-finish-review-warning", text: warning }));
+    }
+    const actions = el("div", { class: "st-layer-add" });
+    const again = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Edit and render another version" });
+    again.addEventListener("click", () => openEdit(story.id, aspect));
+    actions.append(again);
+    card.append(actions);
+    return card;
+  }
+
   function renderAll() {
     keepArtifactSelection();
     clear(dom.body);
     if (!stories().length) {
       renderEmpty(
-        "No stories yet",
-        "Pick stories before finishing. Finish renders one story at a time with its own shape and version history.",
-        "stories",
-        "Go to Stories",
+        "No moments yet",
+        "Find or build a moment before finishing. Finish renders one moment at a time with its own shape and version history.",
+        "moments",
+        "Go to Moments",
       );
       return;
     }
     dom.body.append(
+      reviewCard(),
       storyCard(),
       queueCard(),
       versionsCard(),
@@ -1103,8 +1177,9 @@ export function mount(root, ctx) {
 
     const qualityLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Quality" })]);
     const qualitySelect = el("select", { "aria-label": "Render quality" });
-    qualitySelect.append(el("option", { value: "final", text: "Final", selected: quality === "final" }));
-    qualitySelect.append(el("option", { value: "draft", text: "Draft", selected: quality === "draft" }));
+    qualitySelect.append(el("option", { value: "final", text: "1080p final", selected: quality === "final" }));
+    qualitySelect.append(el("option", { value: "720", text: "720p", selected: quality === "720" }));
+    qualitySelect.append(el("option", { value: "draft", text: "540p draft", selected: quality === "draft" }));
     qualitySelect.addEventListener("change", () => { quality = qualitySelect.value; });
     qualityLabel.append(qualitySelect);
 
@@ -1212,11 +1287,17 @@ export function mount(root, ctx) {
     return card;
   }
 
+  function renderReviewCard() {
+    const existing = dom.body.querySelector(".st-finish-review");
+    if (existing) existing.replaceWith(reviewCard());
+  }
+
   function renderStoryCard() {
-    const existing = dom.body.querySelector(".st-finish-card");
+    const existing = dom.body.querySelectorAll(".st-finish-card")[1];
     if (!existing) return;
     const fresh = storyCard();
     existing.replaceWith(fresh);
+    renderReviewCard();
   }
 
   function queueCard() {
@@ -1263,7 +1344,7 @@ export function mount(root, ctx) {
       for (const item of queue.items || []) {
         const itemState = String(item.state || "queued");
         const name = item.title || item.story_id;
-        items.append(el("div", { class: "st-finish-queue-item" }, [
+        const itemRow = el("div", { class: "st-finish-queue-item" }, [
           el("span", {
             class: `st-chip ${itemState === "done" ? "st-chip-ok" : itemState === "failed" ? "st-chip-bad" : itemState === "running" ? "st-chip-busy" : ""}`,
             text: statusText(itemState),
@@ -1271,7 +1352,17 @@ export function mount(root, ctx) {
           el("span", { class: "st-finish-queue-name", text: name }),
           el("span", { class: "st-mono st-hint", text: item.aspect || "9:16" }),
           itemState === "running" ? el("span", { class: "st-mono st-hint", text: itemProgressText(item) }) : null,
-        ]));
+        ]);
+        if (itemState === "done" && item.story_id) {
+          const edit = el("button", {
+            class: "st-btn st-btn-quiet st-btn-small",
+            type: "button",
+            text: "Edit this moment",
+          });
+          edit.addEventListener("click", () => openEdit(item.story_id, item.aspect || "9:16"));
+          itemRow.append(edit);
+        }
+        items.append(itemRow);
         if (item.error) items.append(el("p", { class: "st-error", text: String(item.error).slice(0, 300) }));
       }
       const actions = el("div", { class: "st-layer-add" });
@@ -1293,7 +1384,7 @@ export function mount(root, ctx) {
   }
 
   function renderQueueCard() {
-    const card = dom.body.querySelectorAll(".st-finish-card")[1];
+    const card = dom.body.querySelectorAll(".st-finish-card")[2];
     if (!card) return;
     card.replaceWith(queueCard());
   }
@@ -1357,6 +1448,7 @@ export function mount(root, ctx) {
             packetArtifactId = item.artifact_id;
             shareArtifactId = item.artifact_id;
             renderVersionsCard();
+            renderReviewCard();
             renderPacketCard();
             renderShareCard();
           });
@@ -1409,6 +1501,7 @@ export function mount(root, ctx) {
           packetArtifactId = item.artifact_id;
           shareArtifactId = item.artifact_id;
           renderVersionsCard();
+          renderReviewCard();
           renderPacketCard();
           renderShareCard();
         });
@@ -1515,7 +1608,7 @@ export function mount(root, ctx) {
 
   function renderVersionsCard() {
     const cards = dom.body.querySelectorAll(".st-finish-card");
-    const existing = cards[2];
+    const existing = cards[3];
     if (!existing) return;
     existing.replaceWith(versionsCard());
   }
@@ -1589,7 +1682,7 @@ export function mount(root, ctx) {
     try {
       await loadChecks();
       if (disposed) return;
-      const existing = dom.body.querySelectorAll(".st-finish-card")[3];
+      const existing = dom.body.querySelectorAll(".st-finish-card")[4];
       if (existing) existing.replaceWith(checksCard());
       if (manual) announce(checks.markers.length ? `${formatCount(checks.markers.length, "note")} for this story.` : "No notes for this story.", checks.markers.length ? "" : "ok");
     } catch (error) {
@@ -1768,7 +1861,7 @@ export function mount(root, ctx) {
 
   function renderPacketCard() {
     const cards = dom.body.querySelectorAll(".st-finish-card");
-    const existing = cards[4];
+    const existing = cards[5];
     if (!existing) return;
     existing.replaceWith(packetCard());
   }
@@ -1954,7 +2047,7 @@ export function mount(root, ctx) {
 
   function renderShareCard() {
     const cards = dom.body.querySelectorAll(".st-finish-card");
-    const existing = cards[5];
+    const existing = cards[6];
     if (!existing) return;
     existing.replaceWith(shareCard());
   }
@@ -2085,7 +2178,7 @@ export function mount(root, ctx) {
 
   function renderApplyCard() {
     const cards = dom.body.querySelectorAll(".st-finish-card");
-    const existing = cards[6];
+    const existing = cards[7];
     if (!existing) return;
     existing.replaceWith(applyCard());
   }

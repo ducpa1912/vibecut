@@ -484,12 +484,29 @@ export function trimErrorCurrent(error) {
 }
 
 /** Build a new story set. `POST /api/jobs/{id}/clip-sets`. */
-export function createClipSet(jobId, { count = 3, order = "source", minS = null, maxS = null } = {}) {
+export function createClipSet(jobId, { count = 3, order = "source", minS = null, maxS = null, locks = null, banScenes = null } = {}) {
   const body = { count, order };
   if (Number.isFinite(minS) && Number.isFinite(maxS)) Object.assign(body, { min_s: minS, max_s: maxS });
+  if (Array.isArray(locks) && locks.length) body.locks = locks;
+  if (Array.isArray(banScenes) && banScenes.length) body.ban_scenes = banScenes;
   return request(jobPath(jobId, "/clip-sets"), {
     method: "POST",
     body,
+  });
+}
+
+/** Rename or retitle one story without changing its range. */
+export function patchClipSet(jobId, setId, stories) {
+  return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}`), {
+    method: "PATCH",
+    body: { stories },
+  });
+}
+
+/** Remove a moment set that has no stories left. */
+export function deleteClipSet(jobId, setId) {
+  return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}`), {
+    method: "DELETE",
   });
 }
 
