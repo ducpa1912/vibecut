@@ -265,7 +265,7 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
   }
 
   function enginesCard() {
-    const card = el("div", { class: "vr-card vr-setup-card" }, [
+    const card = el("div", { class: "vr-card vr-setup-card vr-setup-wide" }, [
       el("div", { class: "vr-card-head vr-setup-head" }, [
         el("div", {}, [
           el("h3", { text: "Engines" }),
@@ -333,7 +333,7 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
 
   function configCard(state) {
     const paths = state?.paths || {};
-    return el("div", { class: "vr-card vr-setup-card" }, [
+    return el("div", { class: "vr-card vr-setup-card vr-setup-wide" }, [
       el("div", { class: "vr-card-head vr-setup-head" }, [
         el("div", {}, [
           el("h3", { text: "This app's config" }),
@@ -377,7 +377,12 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
       if (!state) {
         children.push(el("p", { class: "hint", text: "Reading this app's setup…" }));
       } else {
-        children.push(openRouterCard(state), openCodeCard(state), enginesCard(), configCard(state));
+        children.push(el("div", { class: "vr-setup-grid" }, [
+          openRouterCard(state),
+          openCodeCard(state),
+          enginesCard(),
+          configCard(state),
+        ]));
       }
     } else if (state) {
       const runtimeState = state.runtime?.openrouter || {};

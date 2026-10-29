@@ -215,7 +215,7 @@ export function stopPlayback() {
  * `list: false` leaves the cloned voices out, for a page that lists them itself.
  * @param {{ hasKey: () => boolean, onChange?: () => void, sampleText?: () => string, title?: string, list?: boolean }} options
  */
-export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice", list = true }) {
+export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice", list = true, description = "Clone your own voice once, then use it for Voice-over and Dub. Give 30 s to 3 min of clear speech; HeyGen Voice Turbo on OpenRouter speaks in it. The sample stays on this Mac and is sent with each voice line." }) {
   const node = el("div", { class: "st-setup-section st-voice-clone" });
   let clones = [];
   let loaded = false;
@@ -497,13 +497,13 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
 
   function render() {
     if (disposed) return;
-    node.replaceChildren(el("div", { class: "st-setup-section-head" }, [
+    const head = el("div", { class: "st-setup-section-head" }, [
       el("h3", { text: title }),
-      el("p", {
-        class: "st-hint",
-        text: "Clone your own voice once, then use it for Voice-over and Dub. Give 30 s to 3 min of clear speech; HeyGen Voice Turbo on OpenRouter speaks in it. The sample stays on this Mac and is sent with each voice line.",
-      }),
-    ]));
+    ]);
+    if (description) {
+      head.append(el("p", { class: "st-hint", text: description }));
+    }
+    node.replaceChildren(head);
     if (!hasKey()) {
       node.append(el("p", { class: "st-hint", text: "Add an OpenRouter key under Keys to clone a voice." }));
     } else {

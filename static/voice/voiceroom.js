@@ -76,6 +76,7 @@ const myVoice = createMyVoicePanel({
   sampleText: () => testLine,
   title: "From a recording or a file",
   list: false,
+  description: "",
 });
 
 const finder = createClipFinder({
@@ -321,7 +322,7 @@ function mineSection() {
       el("div", {}, [
         el("p", { class: "eyebrow" }, [el("span", { text: "01" }), "your voices"]),
         el("h2", { text: "Cloned voices" }),
-        el("p", { class: "hint", text: "Each clone is a short sample kept on this Mac. HeyGen Voice Turbo on OpenRouter speaks in it, and it shows up under HeyGen Voice Turbo in every voice picker." }),
+        el("p", { class: "hint", text: "Stored on this Mac. Play sends the sample to HeyGen through OpenRouter." }),
       ]),
     ]),
   ]);
@@ -346,7 +347,7 @@ function cloneSection() {
       el("div", {}, [
         el("p", { class: "eyebrow" }, [el("span", { text: "02" }), "clone a voice"]),
         el("h2", { text: "Clone a voice" }),
-        el("p", { class: "hint", text: "Give 30 s to 3 min of clear speech. Only clone your own voice, or a speaker who gave you permission." }),
+        el("p", { class: "hint", text: "Use 30 seconds to 3 minutes of clear speech. Clone only your own voice or a speaker who gave permission." }),
       ]),
     ]),
     el("div", { class: "vr-clone-grid" }, [
@@ -368,7 +369,7 @@ function testCard() {
   const stop = el("button", { class: "ghost small", type: "button", text: "Stop" });
   stop.addEventListener("click", () => stopPlayback());
   return el("div", { class: "vr-card vr-test" }, [
-    el("label", { class: "vr-field" }, [el("span", { text: "Test line · every Play button speaks it" }), line]),
+    el("label", { class: "vr-field" }, [el("span", { text: "Test line · used by every Play" }), line]),
     el("div", { class: "vr-rate" }, [el("span", { class: "hint", text: "Rate" }), speed, speedValue, stop]),
   ]);
 }
@@ -453,7 +454,7 @@ function stockSection() {
       el("div", {}, [
         el("p", { class: "eyebrow" }, [el("span", { text: "03" }), "stock voices"]),
         el("h2", { text: "Voices on this machine" }),
-        el("p", { class: "hint", text: `${total} voices across ${ready.length} engines. Cloud voices use your own keys; Apple voices work offline.` }),
+        el("p", { class: "hint", text: `${total} voices across ${ready.length} engines. Local voices work offline; cloud voices use your keys.` }),
       ]),
       el("div", { class: "vr-filters" }, [search, lang]),
     ]),
@@ -485,7 +486,7 @@ function render() {
   body.append(el("div", { class: "hero vr-hero" }, [
     el("p", { class: "eyebrow" }, [el("span", { text: "voice" }), "room"]),
     el("h1", {}, ["Every voice here,", el("br"), el("em", { text: "and your own." })]),
-    el("p", { class: "lede", text: "Listen to any voice, clone yours from a recording, or clone a speaker from the cleanest clips of one of your videos." }),
+    el("p", { class: "lede", text: "Preview the voices on this Mac, clone your own, or pull a clean reference from a video." }),
   ]));
   if (error) body.append(el("p", { class: "error", role: "alert", text: error }));
   if (notice) {
