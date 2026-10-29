@@ -32,9 +32,10 @@ const CHECK_POLL_MS = 2500;
 const MAX_CLEAN = 32;
 const PREFILL_PREFIX = "vibecut.studio.clean.prefill.";
 
-const KIND_ORDER = ["plate", "blur", "mask", "crop_guard"];
+const KIND_ORDER = ["delogo", "blur", "plate", "mask", "crop_guard"];
 
 const KIND_COPY = {
+  delogo: "Remove (interpolate)",
   plate: "Cover plate",
   blur: "Blur",
   mask: "Mask",
@@ -111,6 +112,7 @@ function actionKind(action) {
   if (value === "crop" || value === "crop_guard") return "crop_guard";
   if (value === "mask") return "mask";
   if (value === "blur") return "blur";
+  if (value === "delogo" || value === "remove") return "delogo";
   return "blur";
 }
 
@@ -200,14 +202,14 @@ function layerFromEntry(entry, tracklet, index, source) {
 function manualLayer(index) {
   return {
     id: `cl_manual_${Date.now().toString(36)}`,
-    kind: "plate",
+    kind: "delogo",
     box: { x: 0.08, y: 0.72, w: 0.84, h: 0.16 },
     ranges: [],
     z: index,
     color: "#000000",
     opacity: 1,
     radius: 12,
-    label: "Manual cover",
+    label: "Remove text",
   };
 }
 
@@ -939,8 +941,8 @@ export function mountCleanPanel(host, ctx) {
     const selected = layers.find((layer) => layer.id === selectedId) || null;
 
     const head = el("div", { class: "st-card st-check-card" }, [
-      el("h3", { text: "Clean old text" }),
-      el("p", { class: "st-hint", text: "Cover, blur, mask or keep the crop away from baked-in text. Nothing here invents missing pixels or removes platform watermarks." }),
+      el("h3", { text: "Remove old text" }),
+      el("p", { class: "st-hint", text: "Remove interpolates nearby pixels; blur softens, cover plates and masks hide, and crop guard keeps the region out of the crop. Nothing invents missing pixels or removes platform watermarks." }),
     ]);
     head.append(renderRights());
     if (loadError) head.append(el("p", { class: "st-error", text: loadError }));

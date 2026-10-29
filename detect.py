@@ -1179,22 +1179,26 @@ def clean_prefill(
             entries.append(entry)
             continue
         if kind == "subtitle":
-            entry["action"] = "blur"
+            entry["action"] = "delogo"
             entry["reason"] = (
-                "Burned-in subtitle. Blur softens it; the pixels are not recovered."
+                "Remove burned-in subtitle by interpolating nearby pixels. "
+                "Review the patch at 1×; it is not generative repair."
             )
-            if box["y"] < 0.62:
-                entry["quality_warning"] = True
             entries.append(entry)
             continue
         if kind == "title":
-            entry["action"] = "mask"
-            entry["reason"] = "Burned-in title or on-screen card."
+            entry["action"] = "delogo"
+            entry["reason"] = "Remove burned-in title by interpolating nearby pixels."
+            entries.append(entry)
+            continue
+        if kind == "lower_third":
+            entry["action"] = "delogo"
+            entry["reason"] = "Remove burned-in lower third by interpolating nearby pixels."
             entries.append(entry)
             continue
         if kind == "credit":
-            entry["action"] = "blur"
-            entry["reason"] = "Small burned-in credit or source mark."
+            entry["action"] = "delogo"
+            entry["reason"] = "Remove small burned-in credit by interpolating nearby pixels."
             entries.append(entry)
             continue
         entry["action"] = "blur"

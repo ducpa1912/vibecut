@@ -1029,7 +1029,7 @@ def test_clean_optional_provenance_keeps_old_hash_unchanged(edit_api):
     normalized = edits.normalize_clean(built["layers"])
     assert normalized[0]["tracklet_id"] == "trk_sub"
     assert normalized[0]["tracklet_kind"] == "subtitle"
-    assert normalized[0]["kind"] == "blur"
+    assert normalized[0]["kind"] == "delogo"
 
 
 def test_preflight_marks_baked_check_text_with_no_clean_layer(edit_api, monkeypatch):

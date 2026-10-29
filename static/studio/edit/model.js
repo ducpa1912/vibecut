@@ -233,6 +233,7 @@ export const CLEAN_LABELS = {
   blur: "Blur",
   plate: "Cover plate",
   mask: "Mask",
+  delogo: "Remove (interpolate)",
 };
 
 export const MOTION_LABELS = {

@@ -51,7 +51,7 @@ MAX_TEXT_LENGTH = 400
 MAX_ID = 64
 
 ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
-CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask")
+CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "delogo")
 MOTION_KINDS = ("punch_in", "snap_zoom", "push", "shake")
 TEXT_KINDS = ("hook", "title", "lower_third", "cta", "emphasis")
 FX_KINDS = ("arrow", "circle", "underline", "progress_bar", "sticker")

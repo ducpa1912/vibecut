@@ -317,6 +317,25 @@ def _clean_filters(
                 f"{_enable_suffix(expression)}"
             )
             applied.append(layer["id"])
+        elif kind == "delogo":
+            # Interpolate from the box border. Keep the box one pixel inside
+            # the frame: delogo reads the surrounding ring.
+            x = max(1, min(width - 3, rect["x"]))
+            y = max(1, min(height - 3, rect["y"]))
+            w = max(2, min(width - x - 1, rect["w"]))
+            h = max(2, min(height - y - 1, rect["h"]))
+            if w < 2 or h < 2:
+                warnings.append({
+                    "code": "clean_region_too_small",
+                    "message": f"Clean layer {layer['id']} is too small to remove.",
+                    "layer_id": layer["id"],
+                })
+                continue
+            filters.append(
+                f"delogo=x={x}:y={y}:w={w}:h={h}"
+                f"{_enable_suffix(expression)}"
+            )
+            applied.append(layer["id"])
         else:  # pragma: no cover - normalize_clean rejects unknown kinds
             warnings.append({
                 "code": "unknown_clean_kind",

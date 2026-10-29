@@ -27,7 +27,7 @@ EXPLICIT_CONFIDENCE = 1.0
 
 SUPPORTED_METHODS = ("blur", "cover", "crop")
 SUPPORTED_ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
-CLEAN_LAYER_KINDS = ("crop_guard", "blur", "plate", "mask")
+CLEAN_LAYER_KINDS = ("crop_guard", "blur", "plate", "mask", "delogo")
 MAX_CLEAN_LAYERS = 32
 MAX_LAYER_RANGES = 64
 RESIDUAL_TARGET_PCT = 0.5
@@ -51,9 +51,10 @@ ASPECT_DIMENSIONS = {
 }
 
 LIMITATIONS = [
-    "Plausible cleanup, not restoration. Covered, blurred, or cropped pixels are not recovered.",
+    "Plausible cleanup, not restoration. Removed, covered, blurred, or cropped pixels are not recovered.",
+    "Remove interpolates nearby pixels; it is not generative repair and leaves no guarantee on complex backgrounds.",
     "No watermark removal and no guarantee that every text overlay is removed.",
-    "No generative repair, inpainting, face repair, logo repair, or temporal reconstruction.",
+    "No generative repair, face repair, logo repair, or temporal reconstruction.",
     "Scene OCR is advisory. When exact OCR boxes are unavailable, detection is approximate.",
     "A human must review every plan and every cleaned output before publishing.",
     "This prototype returns a plan only. It does not render, modify, or queue the source.",
@@ -207,10 +208,14 @@ def normalize_boxes(values: Any) -> list[dict]:
 
 
 _LAYER_LABELS = {
+    ("subtitle", "delogo"): "Remove burned-in subtitle",
     ("subtitle", "plate"): "Burned-in subtitle in the caption zone",
     ("subtitle", "blur"): "Mid-frame burned-in caption",
+    ("title", "delogo"): "Remove burned-in title",
     ("title", "mask"): "Burned-in title",
+    ("lower_third", "delogo"): "Remove burned-in lower third",
     ("lower_third", "blur"): "Burned-in lower third",
+    ("credit", "delogo"): "Remove burned-in credit",
     ("credit", "blur"): "Burned-in credit",
     ("handle_or_logo", "crop_guard"): "Own handle or logo, kept out of the crop",
     ("handle_or_logo", "blur"): "Own handle or logo",
@@ -1133,7 +1138,7 @@ def _clean_regions(
     for layer in layers or []:
         if not isinstance(layer, dict):
             continue
-        if layer.get("kind") not in {"blur", "plate", "mask"}:
+        if layer.get("kind") not in {"blur", "plate", "mask", "delogo"}:
             # crop_guard removes the region from the output; it cannot leave text.
             continue
         if not _layer_active(layer, source_t):
@@ -1292,7 +1297,7 @@ def face_overlap_report(
         faces = [item for item in faces or [] if isinstance(item, dict)]
         faces_checked += len(faces)
         for layer in layers or []:
-            if not isinstance(layer, dict) or layer.get("kind") not in {"blur", "plate", "mask"}:
+            if not isinstance(layer, dict) or layer.get("kind") not in {"blur", "plate", "mask", "delogo"}:
                 continue
             if not _layer_active(layer, source_t):
                 continue

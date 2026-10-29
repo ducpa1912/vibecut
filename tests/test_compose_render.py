@@ -447,3 +447,11 @@ def test_blur_radius_is_capped_for_small_boxes():
     assert "boxblur=luma_radius=20:luma_power=2:chroma_radius=9:chroma_power=2" in (
         segment["pre_filter"]
     )
+
+
+def test_delogo_clean_layer_compiles_to_interpolation():
+    result = _compile(_edit(
+        clean=[{"kind": "delogo", "box": {"x": 0.1, "y": 0.7, "w": 0.5, "h": 0.1}}],
+    ))
+    assert result["segments"][0]["clean_ids"]
+    assert result["segments"][0]["pre_filters"] == ["delogo=x=192:y=756:w=960:h=108"]

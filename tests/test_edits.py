@@ -263,7 +263,7 @@ def test_clean_ranges_merge_and_sort():
     "overrides",
     [
         {"aspect": "2:3"},
-        {"clean": [{"kind": "delogo", "box": {"x": 0, "y": 0, "w": 0.1, "h": 0.1}}]},
+        {"clean": [{"kind": "generative_fill", "box": {"x": 0, "y": 0, "w": 0.1, "h": 0.1}}]},
         {"clean": [{"kind": "inpaint", "box": {"x": 0, "y": 0, "w": 0.1, "h": 0.1}}]},
         {"clean": [{
             "kind": "plate",
