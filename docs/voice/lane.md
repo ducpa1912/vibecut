@@ -58,28 +58,9 @@ test file stands in for real media.
 
 ## Media library
 
-Local copies in `~/vibecut-lanes/media/voiceroom`:
-
-| File | Length | Picture |
-|---|---:|---|
-| `cn-1min29s-720x1280-voice-subtiltle.mp4` | 1:29 | 720×1280 |
-| `en-5mins-640x360-voice-text-overlay.mp4` | 5:25 | 640×360 |
-| `en-17mins4s-540x360-talking-head-voice-only.mp4` | 17:04 | 540×360 |
-| `en-46s-1080x1080-big-text-overlay-sub.mp4` | 0:46 | 1080×1080 |
-| `en-53s-1080x1920-subtitle.mp4` | 0:53 | 1080×1920 |
-| `en-53s-1440x2560-talking-head-voice-subtitle.mp4` | 0:53 | 1440×2560 |
-| `music-bg-41s-1080x1920-text-overlay.mp4` | 0:41 | 1080×1920 |
-| `no-voice-1min-1080x1920-text-overlay.mp4` | 1:00 | 1080×1920 |
-
-Downloaded Shorts, also in the same folder:
-
-| File | Length |
-|---|---:|
-| `Bác sĩ xếp hạng các loại nước ảnh hưởng đến thận ｜ ThS.BS Trần Quốc Phong [8hT0lcEKbSc].webm` | 1:48 |
-| `Give Actionable Advice Fast [ubLqcZKgSNo].webm` | 0:45 |
-| `How to speak to 2 cameras. [MD0V2Q6HpIo].webm` | 0:29 |
-| `Own Your Links Now! [GEHJwh9vcaY].webm` | 0:39 |
-| `유부녀 친구의 남친을 뺏어버린 친구 ㄷㄷ #넷플릭스 #더글로리 [XEiI_GL7EpY].webm` | 0:50 |
+The lane keeps no media by default. `~/vibecut-lanes/media/voiceroom` is empty
+after the input copies were removed to save space. Copy a source video there
+only when a test needs it. Keep media out of the repo.
 
 ## Voice extraction
 
