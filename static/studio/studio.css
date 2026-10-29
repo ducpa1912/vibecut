@@ -829,6 +829,9 @@ body.st-active { overflow: hidden; }
 .st-moment-collage {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  /* Tiles clip their overflow, so auto rows would shrink to fit the
+     max-height; size each row to its tile instead and scroll. */
+  grid-auto-rows: max-content;
   gap: 8px;
   max-height: min(44vh, 420px);
   overflow: auto;
@@ -912,6 +915,7 @@ body.st-active { overflow: hidden; }
   font-size: 11px;
 }
 .st-moment-builder { width: min(760px, calc(100vw - 48px)); }
+.st-moment-builder .st-dialog-body { gap: 12px; padding: 16px 20px; max-height: 62vh; }
 .st-moment-builder .st-dialog-foot { gap: 10px; }
 .st-moment-builder .st-dialog-foot .st-chip { margin-right: auto; }
 

@@ -137,3 +137,25 @@ def test_platform_safe_zones_and_new_shapes():
     assert out["platforms"] == ["auto", "instagram", "tiktok", "youtube", "facebook"]
     assert out["tiktok"]["x"] == 0.06 and out["tiktok"]["y"] == 0.10
     assert out["wide"] == {"width": 1920, "height": 1200, "label": "16:10 wide"}
+
+
+def test_builder_collage_tiles_keep_their_height():
+    """Tiles clip overflow; without max-content rows Chrome squashed them to 30 px."""
+    css = (STUDIO / "studio.css").read_text(encoding="utf-8")
+    collage = css[css.index(".st-moment-collage {"):]
+    collage = collage[:collage.index("}")]
+    assert "grid-auto-rows: max-content;" in collage
+    assert ".st-moment-builder .st-dialog-body { gap: 12px; padding: 16px 20px;" in css
+
+
+def test_step_numbers_follow_the_four_step_rail():
+    edit = (STUDIO / "edit" / "index.js").read_text(encoding="utf-8")
+    assert "Step 4 · Edit" not in edit and "Step 3 · Edit" in edit
+    assert "Step 2 · Moments" in (STUDIO / "stories.js").read_text(encoding="utf-8")
+    assert "Step 4 · Finish" in (STUDIO / "finish.js").read_text(encoding="utf-8")
+
+
+def test_finish_clears_its_loading_line():
+    finish = (STUDIO / "finish.js").read_text(encoding="utf-8")
+    assert "announce(LOADING_NOTE)" in finish
+    assert 'if (!notice || notice === LOADING_NOTE) announce("");' in finish

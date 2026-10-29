@@ -152,7 +152,7 @@ export function mount(root, ctx) {
 
   function renderLoading(message) {
     root.replaceChildren(el("section", { class: "st-panel" }, [
-      el("p", { class: "st-eyebrow", text: "Step 4 · Edit" }),
+      el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-card st-edit-loading" }, [
         el("h1", { text: "Opening the editor" }),
         el("p", { class: "st-hint", text: message || "Reading this story…" }),
@@ -162,7 +162,7 @@ export function mount(root, ctx) {
 
   function renderEmpty({ title, copy, action = "Go to Import", step = "import", tone = "" }) {
     const section = el("section", { class: "st-panel", "aria-labelledby": "st-edit-empty-title" }, [
-      el("p", { class: "st-eyebrow", text: "Step 4 · Edit" }),
+      el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-empty" }, [
         el("span", { class: "st-empty-mark", "aria-hidden": "true", text: "04" }),
         el("h1", { id: "st-edit-empty-title", text: title }),
@@ -178,7 +178,7 @@ export function mount(root, ctx) {
 
   function renderError(message) {
     const section = el("section", { class: "st-panel" }, [
-      el("p", { class: "st-eyebrow", text: "Step 4 · Edit" }),
+      el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-empty" }, [
         el("span", { class: "st-empty-mark", "aria-hidden": "true", text: "04" }),
         el("h1", { text: "The editor could not open" }),
@@ -196,7 +196,7 @@ export function mount(root, ctx) {
       <section class="st-panel st-edit-panel" aria-labelledby="st-edit-title">
         <header class="st-edit-head">
           <div class="st-edit-heading">
-            <p class="st-eyebrow">Step 4 · Edit</p>
+            <p class="st-eyebrow">Step 3 · Edit</p>
             <h1 id="st-edit-title">Shape the moment</h1>
             <p id="st-edit-sub" class="st-edit-sub">One edit per moment and shape. Changes save as you go.</p>
           </div>

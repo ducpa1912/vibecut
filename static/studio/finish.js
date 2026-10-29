@@ -35,6 +35,7 @@ import {
 const POLL_MS = 2400;
 const ACTIVE_QUEUE = new Set(["queued", "running"]);
 const ACTIVE_ITEM = new Set(["queued", "running"]);
+const LOADING_NOTE = "Reading renders…";
 const ASPECTS = ["9:16", "4:5", "1:1", "16:9", "16:10"];
 const ASPECT_LABELS = {
   "9:16": "9:16 vertical",
@@ -945,7 +946,7 @@ export function mount(root, ctx) {
     if (loading) return;
     loading = true;
     clearError();
-    if (!quiet) announce("Reading renders…");
+    if (!quiet) announce(LOADING_NOTE);
     try {
       const hasJob = await loadJob();
       if (!hasJob) {
@@ -968,7 +969,8 @@ export function mount(root, ctx) {
         ]);
       }
       renderAll();
-      if (!notice) announce("");
+      // Clear the loading line, but keep a notice something else set meanwhile.
+      if (!notice || notice === LOADING_NOTE) announce("");
       schedulePoll();
     } catch (error) {
       if (disposed) return;
