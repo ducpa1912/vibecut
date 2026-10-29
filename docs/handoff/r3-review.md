@@ -81,3 +81,42 @@ Still open:
 - **The library list** does not refresh while the dialog stays open.
 - **Older renders without a manifest** are not listed.
 - **Setup's My voice panel** is not gated by `voice_room`; only the Edit clone block is.
+
+## Studio rebuild (2026-10-29)
+
+The founder's first real runs (recordings in `~/vibecut-lanes/recordings/studio/`) reshaped Studio. OpenCode built it on `studio`; Claude reviewed it.
+
+**Built:**
+
+| Commit | What |
+|---|---|
+| `9e243d7` | Lane scripts: `lane.sh`, `serve.sh`, `record.sh`, `ship.sh`, `integrate.sh` |
+| `cf2a7e6` | Check folded into **Moments** (Import → Moments → Edit → Finish). Moment cards show a frame, old-text boxes and a music tag. Lengths up to 180 s, plus a custom range. 720p quality. Finish opens on a **Review** card. |
+| `9e6c755` | Tests for 3-minute moments |
+| `0c2c688` | The recorder saves the trace when the tab closes |
+| `faed7c9` | **Add story** builder (click-to-pick scene collage, build log, no duplicates). Shape per moment card. **+ Add to queue** and **Start edit** on each card. Shapes 9:16, 4:5, 1:1, 16:9, 16:10. Platform safe zones (Instagram, TikTok, YouTube Shorts, Facebook Reels). Text, Captions, Effects and Colour merged into **Texts & Effects**. Clean defaults to blur. Path import can reveal the file in Finder. |
+| `470838e` | Responsive rail and top bar. A stale `#/finish` with no video goes back to Import. |
+
+**Fixed in review:**
+
+| Commit | What |
+|---|---|
+| `9dc2988` | The Add story collage squashed every frame to a 30 px strip, and the dialog had no padding. Edit said "Step 4". Finish kept "Reading renders…" on screen forever (an older bug). |
+| `38a7eda` | Check's Cancel (1b) was lost when Check moved into Moments. The scan card has **Cancel scan** again, resumes a running scan after reload, and **Scan again** really re-scans. |
+
+## Studio plan (revised 2026-10-29)
+
+The founder tests by hand with real files. Each step below ends with a founder recording, not a generated test.
+
+1. **Lane plumbing:** one set of lane scripts with the data in `~/vibecut-lanes/studio`. Then integrate `classic` and `voice-room` into studio, and move `main`.
+2. **Founder test script:** rewritten from the founder's own recordings only (`docs/testing/`).
+3. **Editor revision:** the founder said the Editor "needs a lot of revision". Not started.
+4. **Queue in Edit:** the founder asked for the queue to live in Edit. Today Moments has **+ Add to queue**, but the queue view is still in Finish.
+5. **Custom shape:** any ratio, not only the five presets.
+6. **Clean:** it blurs old text. It does not remove it (no inpainting).
+7. **Still open from Phase B:**
+   - Check's ETA is computed in the browser.
+   - Vision cancel waits for a frame batch.
+   - The library does not refresh while it stays open.
+   - Older renders without a manifest are not listed.
+   - Setup's My voice panel is not gated by `voice_room`.
