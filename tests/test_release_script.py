@@ -12,7 +12,11 @@ pytestmark = pytest.mark.skipif(not shutil.which("git"), reason="git is not inst
 
 
 def _git(cwd, *args):
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    # The temp repos must not inherit the machine's commit-signing key.
+    return subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args],
+        cwd=cwd, check=True, capture_output=True, text=True,
+    ).stdout.strip()
 
 
 def _repo(tmp_path, branch="classic"):
