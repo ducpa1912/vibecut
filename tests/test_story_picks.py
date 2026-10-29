@@ -46,12 +46,12 @@ def test_length_presets_bound_every_story(preset):
         assert low - 0.01 <= story["dur"] <= high + 0.01
 
 
-def test_lengths_outside_15_to_90_are_refused():
+def test_lengths_outside_15_to_180_are_refused():
     scenes = make_scenes(60)
     with pytest.raises(clipset.ClipSetError):
         clipset.build_clipset(scenes, None, 240.0, min_s=10, max_s=30)
     with pytest.raises(clipset.ClipSetError):
-        clipset.build_clipset(scenes, None, 240.0, min_s=30, max_s=95)
+        clipset.build_clipset(scenes, None, 240.0, min_s=30, max_s=185)
 
 
 def _sentences(*texts: str) -> list[dict]:
