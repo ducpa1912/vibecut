@@ -1,21 +1,26 @@
 # Classic beta pass 1 — founder test script
 
-**Build:** the latest `classic` (the commit that ships this version of the script). Every fix from Claude's walk is already in; only **Known issues** below are still open.
+**Build:** the latest `classic` (the commit that ships this version of the script). Nothing here is verified until you run it: an automated walk is not evidence.
 
-**Start the app:** open Terminal and run these two lines. Use port **8793**, never 8787.
+**Start the app:** open Terminal and run these lines. Classic has its own port,
+data folder and media folder. Use port **8796**, never 8787.
 
 ```bash
 cd /Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic
-VIBECUT_EDITION=classic VIBECUT_DATA=~/vibecut-beta-test VIBECUT_PORT=8793 python3 app.py
+eval "$(scripts/lane-env.sh classic)"
+python3 app.py
 ```
 
-Then open `http://127.0.0.1:8793` in your browser. The first run creates `~/vibecut-beta-test`; your normal VibeCut data is untouched.
+Then open `http://127.0.0.1:8796` in your browser. The first run creates `~/vibecut-lanes/classic`; your normal VibeCut data is untouched.
 
-**Videos to use:**
-- **A:** one short own video with speech, under 1 minute.
-- **B:** one 2–3 minute own video with speech.
-- **URL:** `https://www.youtube.com/watch?v=jNQXAC9IVRw` (Me at the zoo).
-- Optional: one voice recording (`voice.m4a`) and one music file (`music.m4a`).
+**Videos to use** (already in `~/vibecut-lanes/media/classic/`):
+- **A:** `en-53s-1080x1920-subtitle.mp4` (53 s, speech) or `en-46s-1080x1080-big-text-overlay-sub.mp4` (46 s).
+- **B:** `en-5mins-640x360-voice-text-overlay.mp4` (5 min, speech) or `en-17mins4s-540x360-talking-head-voice-only.mp4` (17 min).
+- **C:** `cn-1min29s-720x1280-voice-subtiltle.mp4` (non-English speech).
+- **D:** `en-53s-1440x2560-talking-head-voice-subtitle.mp4` (vertical).
+- **E:** `no-voice-1min-1080x1920-text-overlay.mp4` (no speech; it has a music bed).
+- **Music:** `music-bg-41s-1080x1920-text-overlay.mp4`.
+- **URLs:** any of the five YouTube Shorts links the founder supplied.
 
 No cloud key is needed. Setup is optional; the flows below say where a key changes the result.
 
@@ -25,7 +30,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 
 | # | Action: where to click | Intent | Expected | Result |
 |---|---|---|---|---|
-| 1.1 | Run the two commands above, then open `http://127.0.0.1:8793` | A clean Classic beta build | The Classic page opens with **Drop a video**, **Paste a video link**, **Creator** and **Setup**. No Studio view opens. | |
+| 1.1 | Run the commands above, then open `http://127.0.0.1:8796` | A clean Classic beta build | The Classic page opens with **Drop a video**, **Paste a video link**, **Creator** and **Setup**. No Studio view opens. | |
 | 1.2 | Look at the top-right status | Engine check | It says **local only** and a health line such as **vision · whisper**. It does not say **engine offline**. | |
 | 1.3 | If this is the first run, read the banner at the top | First-run nudge | A one-line banner says **Optional: add keys and voices in Setup** with a button that opens Setup. | |
 | 1.4 | Click **Open Setup** in the banner → **Save setup** → close Setup with **×** → reload the page | The nudge is not repeated after Setup was saved | The banner is gone. | |
@@ -186,8 +191,8 @@ Open findings at the time of this script. Do not report these twice.
 
 ## 10. What was walked by automation
 
-These flows were exercised against a local beta build on port 8793 with scratch data and no cloud keys: URL import (Me at the zoo), path import, plan/render/history/export, batches with the rights tick, queue pause/resume/cancel, packet ZIP, Clean, Delete, Recent cuts, every Setup Test button, Creator Debug **Load job**, **Read Analysis**, **Run beta read**, and preflight on a clip-set story id. The new Setup keys, voice engine list, optional pack status and rights lock were checked after the last ship.
+These flows were exercised against a local beta build on port 8796 with scratch data and no cloud keys: URL import (Me at the zoo), path import, plan/render/history/export, batches with the rights tick, queue pause/resume/cancel, packet ZIP, Clean, Delete, Recent cuts, every Setup Test button, Creator Debug **Load job**, **Read Analysis**, **Run beta read**, and preflight on a clip-set story id. The new Setup keys, voice engine list, optional pack status and rights lock were checked after the last ship.
 
 File drop and the native file chooser cannot be driven by automation. Those steps are written for you above.
 
-**When you finish:** press **Ctrl+C** in the Terminal window to stop the app. Your test data stays in `~/vibecut-beta-test`; delete that folder when you no longer need it.
+**When you finish:** press **Ctrl+C** in the Terminal window to stop the app. Your test data stays in `~/vibecut-lanes/classic`; delete that folder when you no longer need it.

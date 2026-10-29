@@ -67,12 +67,12 @@ def test_setup_saves_an_elevenlabs_key_without_returning_it(monkeypatch, tmp_pat
 
 
 def test_setup_scripts_use_the_existing_routes():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert '"/api/classic/packs"' in script
     assert "renderFirstRunNudge" in script
     assert "vibecut.setupSaved" in script
     assert "Optional: add keys and voices in Setup" in (
-        ROOT / "static" / "index.html"
+        ROOT / "static" / "classic" / "index.html"
     ).read_text(encoding="utf-8")
 
 
@@ -88,5 +88,5 @@ def test_classic_packs_count_engines_already_on_this_mac(monkeypatch):
     packs = TestClient(app.app).get("/api/classic/packs").json()["packs"]
     usable = {item["id"]: item["usable"] for item in packs}
     assert usable == {"speech": True, "voice": False, "separation": True}
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "pack.usable === true" in script

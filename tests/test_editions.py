@@ -104,12 +104,18 @@ def test_index_page_carries_voice_room_only_when_the_feature_is_on(switches):
 def test_boot_block_hides_links_for_views_and_features_the_build_lacks():
     from pathlib import Path
 
-    html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text()
+    static = Path(__file__).resolve().parents[1] / "static"
+    classic = (static / "classic" / "index.html").read_text()
+    studio = (static / "index.html").read_text()
     for rule in (
         'html:not([data-views~="studio"]) #classic-studio-return',
-        'html:not([data-views~="classic"]) #st-use-classic',
         'html:not([data-features~="voice_room"]) #classic-voice-room',
+    ):
+        assert rule in classic, rule
+    for rule in (
+        'html:not([data-views~="classic"]) #st-use-classic',
         'html:not([data-features~="voice_room"]) #st-voice-room',
     ):
-        assert rule in html
-    assert "allowed(requested)" in html and "allowed(stored)" in html
+        assert rule in studio, rule
+    for html in (classic, studio):
+        assert "allowed(requested)" in html and "allowed(stored)" in html

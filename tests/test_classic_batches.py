@@ -19,11 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_classic_batch_form_has_the_rights_tick_and_creator_sends_it():
-    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    html = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
     assert 'id="batch-rights"' in html
     assert "I own these videos or have the rights to them" in html
 
-    creator = (ROOT / "static" / "creator.js").read_text(encoding="utf-8")
+    creator = (ROOT / "static" / "classic" / "creator.js").read_text(encoding="utf-8")
     assert "dom.batchRights" in creator
     assert "rights: Boolean(dom.batchRights?.checked)" in creator
 

@@ -4,12 +4,35 @@ Four branches share one codebase. The lanes differ in **what they work on**, not
 in which files exist. Any lane can merge into any other because every lane
 ships through `main`.
 
-| Branch | Role | Worktree |
-|---|---|---|
-| `main` | Archive: the union of every lane. Nobody works on it directly. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut` |
-| `classic` | Beta launch focus: the Classic view (`/?classic=1`). | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic` |
-| `studio` | Work in progress: the Studio view (Import → Check → Stories → Edit → Finish). | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-studio` |
-| `voice-room` | Hidden, independent voice features: Voice Room page, voice clone, voice library, voice extraction. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room` |
+| Branch | Role | Worktree | Port | Data |
+|---|---|---|---|---|
+| `main` | Archive: the union of every lane. Studio moves it; nobody works on it directly. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut` | — | — |
+| `classic` | Beta launch focus: the Classic view. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic` | 8796 | `~/vibecut-lanes/classic` |
+| `classic-prv` | Previous Classic version, kept for rollback. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic-prv` | — | — |
+| `studio` | Work in progress: the Studio view (Import → Check → Stories → Edit → Finish). Owns `main`. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-studio` | 8795 | `~/vibecut-lanes/studio` |
+| `voice-room` | Hidden, independent voice features: Voice Room page, voice clone, voice library, voice extraction. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room` | 8797 | `~/vibecut-lanes/voice` |
+
+Port 8787 is the founder's server. No lane uses it.
+
+## Lane isolation
+
+Each lane has its own page, port, data folder and media folder. Nothing is
+shared at runtime:
+
+```bash
+eval "$(scripts/lane-env.sh classic)"   # or studio / voice
+python3 app.py
+```
+
+Media for a lane lives in `~/vibecut-lanes/media/<lane>`. Tests get their own
+settings and secrets files per test, so a saved key or rights lock cannot leak
+into the next test.
+
+Classic and Voice Room ship with `scripts/ship-lane.sh`: it takes in their own
+branch from GitHub, runs the suite and pushes the branch. **It never moves
+`main`.** Studio ships with `scripts/ship.sh` and owns `main`. When the founder
+asks, the Studio lane merges `classic` or `voice-room` and runs the Classic and
+Voice Room guards before shipping.
 
 ## The one rule
 
@@ -40,8 +63,8 @@ New HTTP routes go into the lane's module (`routes_classic.py`, `routes_studio.p
 
 | Area | Owner lane | Files |
 |---|---|---|
-| Classic view | `classic` | `static/app.js`, `static/creator.js`, `static/style.css`, `static/creator.css`, `static/index.html` (other lanes touch only its edition boot block), `routes_classic.py` |
-| Studio view | `studio` | `static/studio/**`; `edits.py`, `routes_edits.py`, `compose_render.py`, `story_queue.py`, `routes_check.py`, `routes_library.py`, `routes_studio.py` |
+| Classic view | `classic` | `static/classic/**` (own page, JS and CSS), `routes_classic.py` |
+| Studio view | `studio` | `static/index.html` (Studio page), `static/studio/**`; `edits.py`, `routes_edits.py`, `compose_render.py`, `story_queue.py`, `routes_check.py`, `routes_library.py`, `routes_studio.py` |
 | Voice features | `voice-room` | `static/voice/**` (own `api.js`, `ui.js`, `voice.css`), `static/voices.html`, `voice_clone.py`, `voice_extract.py`, `routes_voice_clone.py` |
 | Shared core | any lane, additive | `app.py`, `pipeline.py`, `audio.py`, `tts.py`, `stt.py`, `music.py`, `render.py`, `settings_store.py`, `workflow_config.py`, `admin/`, tests of shared code |
 

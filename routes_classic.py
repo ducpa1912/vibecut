@@ -15,6 +15,18 @@ from pydantic import BaseModel
 router = APIRouter()
 
 
+@router.get("/classic")
+def classic_page():
+    """Serve Classic's own page; Studio-only builds answer 404."""
+    import editions
+
+    if "classic" not in editions.views():
+        raise HTTPException(404, "Not found")
+    import app
+
+    return app.page_response(app.STATIC / "classic" / "index.html")
+
+
 class ExportCutBody(BaseModel):
     """A Classic export that carries the cut on screen, not just a target."""
 

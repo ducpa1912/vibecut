@@ -123,7 +123,7 @@ def test_classic_page_opens_with_its_scripts_and_controls(monkeypatch):
     monkeypatch.setenv("VIBECUT_EDITION", "classic")
     monkeypatch.delenv("VIBECUT_FEATURES", raising=False)
     html = TestClient(app.app).get("/").text
-    for needed in ("/static/app.js", "/static/creator.js", 'id="creator-open"', 'id="setup-open"'):
+    for needed in ("/static/classic/app.js", "/static/classic/creator.js", 'id="creator-open"', 'id="setup-open"'):
         assert needed in html, needed
     assert '"views":["classic"]' in html
 
@@ -159,32 +159,32 @@ def test_edited_cut_export_route_uses_the_clips(classic):
     assert exported.status_code == 200, exported.text
     assert exported.text != auto.text, "the edited clips must reach the export"
 
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "/api/classic/jobs/${state.job.id}/export/${kind}" in script
     assert "clips," in script
 
 
 def test_review_link_uses_the_artifact_on_screen():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "function shownRender()" in script
     assert "shownRender()?.artifact_id" in script
     assert "{ artifact_id: artifactId }" in script
 
 
 def test_history_reel_link_prefers_the_artifact_url():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "entry.artifact_id || render.artifact_id" in script
     assert "/artifacts/${encodeURIComponent(artifactId)}/media/reel.mp4" in script
 
 
 def test_every_static_file_the_classic_page_names_exists():
-    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    html = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
     for path in set(re.findall(r'"/static/([^"?]+)', html)):
         assert (ROOT / "static" / path).is_file(), path
 
 
 def test_classic_export_buttons_fetch_so_refusals_show_as_toasts():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     start = script.index("async function exportCut(kind)")
     body = script[start:script.index("function clipsForHook(", start)]
     assert "window.open" not in body
