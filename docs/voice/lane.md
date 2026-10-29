@@ -24,6 +24,25 @@ It refuses a busy port and writes the server PID to
 `~/vibecut-lanes/voice/server.pid`. Stop only that PID. Do not `pkill` by
 pattern.
 
+## Setup
+
+Top bar → **Setup** in `/voices`.
+
+- OpenRouter key, **Test key**, and the OpenRouter text-model picker.
+- OpenCode key, **Test key**, and the local OpenCode login when no key is set.
+- **On this Mac**: Apple say, Kokoro, cloud voices and every voice-extraction
+  engine, with the install or key hint for each.
+- **This app's config** shows `~/vibecut-lanes/voice/settings.json` and
+  `~/vibecut-lanes/voice/secrets.json`.
+
+Saving a key here overrides the environment key for this app only. It does not
+change Studio or Classic. Saving a new OpenRouter key clears the auth
+quarantine; **Test key** checks the key with one request and shows the exact
+OpenRouter error if it fails.
+
+Cloned voices are read from this app's `voices/` folder even when OpenRouter is
+unavailable. The list does not depend on a cloud call.
+
 ## Record a real flow
 
 ```bash
