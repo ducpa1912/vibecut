@@ -159,3 +159,14 @@ def test_finish_clears_its_loading_line():
     finish = (STUDIO / "finish.js").read_text(encoding="utf-8")
     assert "announce(LOADING_NOTE)" in finish
     assert 'if (!notice || notice === LOADING_NOTE) announce("");' in finish
+
+
+def test_moments_scan_can_be_cancelled_and_rescanned():
+    """1b's Check cancel moved with Check into Moments."""
+    text = (STUDIO / "stories.js").read_text(encoding="utf-8")
+    assert "/check/cancel" in text and '"Cancel scan"' in text
+    assert 'state === "cancelled" || state === "failed" ? null : report' in text
+    assert "body: { sample_text: true, force }" in text
+    refresh = text[text.index("async function refreshCheck("):]
+    refresh = refresh[:refresh.index("\n  }\n")]
+    assert "followCheck();" in refresh and "renderStories();" in refresh

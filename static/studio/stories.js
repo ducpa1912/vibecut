@@ -406,11 +406,46 @@ export function mount(root, ctx) {
     return figure;
   }
 
+  // One read of the scan. A queued or running pass keeps polling; a
+  // cancelled or failed one has no findings to show (a cancelled re-run comes
+  // back "ready" with the last report).
+  function takeCheck(report, { announce = false } = {}) {
+    const state = String(report?.status || "");
+    if (state === "queued" || state === "running") {
+      checkReport = report;
+      checkBusy = true;
+      return true;
+    }
+    checkReport = state === "cancelled" || state === "failed" ? null : report;
+    if (announce && state === "cancelled") checkError = "Scan cancelled. Nothing was saved from it.";
+    if (state === "failed") checkError = report?.error || "The scan stopped without a reason.";
+    checkBusy = false;
+    return false;
+  }
+
+  function followCheck() {
+    stopCheckPoll();
+    checkTimer = window.setTimeout(async () => {
+      if (disposed) return;
+      try {
+        if (takeCheck(await getCheckReport(job.id), { announce: true })) {
+          followCheck();
+          return;
+        }
+      } catch (error) {
+        checkBusy = false;
+        checkError = error?.message || "Could not read the scan.";
+      }
+      stopCheckPoll();
+      if (!disposed) renderStories();
+    }, 1800);
+  }
+
   async function loadCheck() {
     if (!job?.id) return;
     try {
-      checkReport = await getCheckReport(job.id);
       checkError = "";
+      if (takeCheck(await getCheckReport(job.id))) followCheck();
     } catch (error) {
       checkReport = null;
       checkError = Number(error?.status) === 404 ? "" : (error?.message || "");
@@ -430,35 +465,34 @@ export function mount(root, ctx) {
       button.textContent = "Scanning…";
     }
     checkError = "";
+    // "Scan again" must re-run; without force the server returns the last report.
+    const force = Boolean(checkReport);
     try {
       await request(`/api/jobs/${encodeURIComponent(job.id)}/check`, {
         method: "POST",
-        body: { sample_text: true },
+        body: { sample_text: true, force },
       });
-      const poll = async () => {
-        if (disposed) return;
-        try {
-          const report = await getCheckReport(job.id);
-          checkReport = report;
-          if (String(report?.status || "") === "queued" || String(report?.status || "") === "running") {
-            checkTimer = window.setTimeout(() => { void poll(); }, 1800);
-          } else {
-            checkBusy = false;
-            stopCheckPoll();
-            renderStories();
-          }
-        } catch (error) {
-          checkBusy = false;
-          checkError = error?.message || "Could not read the scan.";
-          renderStories();
-        }
-      };
-      checkTimer = window.setTimeout(() => { void poll(); }, 800);
+      followCheck();
     } catch (error) {
       checkBusy = false;
       checkError = error?.message || "Could not start the scan.";
     }
-    if (!disposed && !checkTimer) renderStories();
+    // Show the busy card with its Cancel scan button, or the error.
+    if (!disposed) renderStories();
+  }
+
+  async function cancelCheck(button) {
+    if (!job?.id) return;
+    button.disabled = true;
+    button.textContent = "Stopping…";
+    try {
+      await request(`/api/jobs/${encodeURIComponent(job.id)}/check/cancel`, { method: "POST" });
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "Cancel scan";
+      checkError = error?.message || "Could not cancel the scan.";
+      renderStories();
+    }
   }
 
   function checkCard() {
@@ -482,6 +516,11 @@ export function mount(root, ctx) {
     });
     scan.addEventListener("click", () => { void refreshCheck(scan); });
     head.append(scan);
+    if (checkBusy) {
+      const cancel = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Cancel scan" });
+      cancel.addEventListener("click", () => { void cancelCheck(cancel); });
+      head.append(cancel);
+    }
     card.append(head);
     if (checkError) card.append(el("p", { class: "st-error", text: checkError }));
     if (!checkReport) {
