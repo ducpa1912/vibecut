@@ -3886,7 +3886,9 @@
       dom.audioMode.dispatchEvent(new Event("change", { bubbles: true }));
     });
     dom.audioRewriteRun.addEventListener("click", () => {
-      loadAudioScript({ run: true, forceTranslate: true });
+      // Reuse the on-disk translation memo. Only a language change or the
+      // explicit Retry translation button asks for fresh translations.
+      loadAudioScript({ run: true });
     });
     document.querySelectorAll('input[name="audio-music-source"]').forEach((input) => {
       input.addEventListener("change", () => {
@@ -4534,6 +4536,10 @@
       try { state.scriptAbort.abort(); } catch (_) { /* already settled */ }
       state.scriptAbort = null;
     }
+    if (state.scriptTimer) {
+      clearInterval(state.scriptTimer);
+      state.scriptTimer = null;
+    }
     if (dom.audioRewriteRun) dom.audioRewriteRun.disabled = false;
   }
 
@@ -4557,7 +4563,17 @@
     const controller = new AbortController();
     state.scriptAbort = controller;
     dom.audioScript.hidden = false;
-    dom.audioRewriteNote.textContent = "Translating the full script, then rewriting this cut…";
+    const startedAt = Date.now();
+    if (state.scriptTimer) clearInterval(state.scriptTimer);
+    const ticking = setInterval(() => {
+      if (state.scriptAbort !== controller) return;
+      const seconds = Math.round((Date.now() - startedAt) / 1000);
+      dom.audioRewriteNote.textContent =
+        `Translating and rewriting… ${seconds}s. The first run translates the whole video once; later runs reuse the cache.`;
+    }, 1000);
+    state.scriptTimer = ticking;
+    dom.audioRewriteNote.textContent =
+      "Translating and rewriting… 0s. The first run translates the whole video once; later runs reuse the cache.";
     dom.audioRewriteRun.disabled = true;
     dom.audioScript.innerHTML =
       `<div class="script-head"><span class="label">Script</span><span class="hint">working…</span></div>`;
@@ -4596,7 +4612,7 @@
       const note = fallbackText
         ? `Fallback: ${fallbackText}`
         : result.translated
-          ? `Translated to ${result.target} and rewritten for ${state.target}s.`
+          ? `${result.translation_status?.provider === "cache" ? "Translation reused · " : ""}Translated to ${result.target} and rewritten for ${state.target}s.`
           : `Rewritten for ${state.target}s.`;
       renderScriptBlock(lines, result, note);
       loadHistory();
@@ -4622,6 +4638,10 @@
       }
       loadHistory();
     } finally {
+      if (state.scriptTimer === ticking) {
+        clearInterval(ticking);
+        state.scriptTimer = null;
+      }
       if (state.scriptAbort === controller) {
         state.scriptAbort = null;
         dom.audioRewriteRun.disabled = false;

@@ -40,3 +40,20 @@ def test_an_old_response_cannot_clear_a_newer_rewrite():
     script = _script()
     assert "if (state.scriptAbort === controller) {" in script
     assert "state.scriptAbort = null;" in script
+
+
+def test_rewrite_reuses_the_translation_memo():
+    script = _script()
+    start = script.index('dom.audioRewriteRun.addEventListener("click"')
+    body = script[start:script.index("\n    });", start)]
+    assert "loadAudioScript({ run: true })" in body
+    assert "forceTranslate" not in body
+    retry = script[script.index('querySelectorAll("[data-script-retry]")'):]
+    assert "forceTranslate: true" in retry[:300]
+
+
+def test_the_working_note_counts_seconds_and_explains_the_cache():
+    script = _script()
+    assert "later runs reuse the cache" in script
+    assert "state.scriptTimer" in script
+    assert 'state.scriptTimer === ticking' in script
