@@ -215,6 +215,8 @@
     renderNote: $("#render-note"),
     renderProgress: $("#render-progress"),
     renderError: $("#render-error"),
+    renderBlock: $("#render-block"),
+    renderBlockSetup: $("#render-block-setup"),
     playerWrap: $("#player-wrap"),
     reelVideo: $("#reel-video"),
     reelDuration: $("#reel-duration"),
@@ -953,6 +955,7 @@
 
   function bindSetup() {
     dom.setupOpen.addEventListener("click", openSetup);
+    dom.renderBlockSetup.addEventListener("click", openSetup);
     dom.setupClose.addEventListener("click", closeSetup);
     dom.setup.querySelectorAll("[data-setup-close]").forEach((node) => {
       node.addEventListener("click", closeSetup);
@@ -4889,6 +4892,10 @@
     const blocked = audioBlockReason();
 
     dom.renderError.hidden = true;
+    dom.renderBlock.hidden = !blocked;
+    dom.renderBlock.querySelector("span").textContent = blocked || "";
+    dom.render.title = blocked || "";
+    dom.renderDraft.title = blocked || "";
     dom.playerWrap.hidden = true;
     dom.renderProgress.hidden = true;
     dom.render.disabled = false;
