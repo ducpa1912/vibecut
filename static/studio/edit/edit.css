@@ -277,6 +277,23 @@
   overflow-x: hidden;
   padding: 12px;
 }
+.st-visual-group {
+  display: grid;
+  gap: 8px;
+  padding: 0 0 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--st-line);
+}
+.st-visual-group:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+.st-visual-group-title {
+  margin: 2px 0 0;
+  color: var(--st-accent);
+  font-family: var(--st-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
 
 .st-layer-empty {
   display: grid;

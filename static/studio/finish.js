@@ -35,7 +35,14 @@ import {
 const POLL_MS = 2400;
 const ACTIVE_QUEUE = new Set(["queued", "running"]);
 const ACTIVE_ITEM = new Set(["queued", "running"]);
-const ASPECTS = ["9:16", "4:5"];
+const ASPECTS = ["9:16", "4:5", "1:1", "16:9", "16:10"];
+const ASPECT_LABELS = {
+  "9:16": "9:16 vertical",
+  "4:5": "4:5 feed",
+  "1:1": "1:1 square",
+  "16:9": "16:9 wide",
+  "16:10": "16:10 wide",
+};
 const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
 
 /**
@@ -1156,7 +1163,7 @@ export function mount(root, ctx) {
     for (const value of ASPECTS) {
       shape.append(el("option", {
         value,
-        text: value === "9:16" ? "9:16 vertical" : "4:5 feed",
+        text: ASPECT_LABELS[value] || value,
         selected: value === aspect,
       }));
     }

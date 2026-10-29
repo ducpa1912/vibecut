@@ -6,11 +6,23 @@
  * editor deterministic: the same Edit always draws the same boxes and labels.
  */
 
-export const ASPECTS = ["9:16", "4:5"];
+export const ASPECTS = ["9:16", "4:5", "1:1", "16:9", "16:10"];
 
 export const CANVAS = {
   "9:16": { width: 1080, height: 1920, label: "9:16 vertical" },
   "4:5": { width: 1080, height: 1350, label: "4:5 feed" },
+  "1:1": { width: 1080, height: 1080, label: "1:1 square" },
+  "16:9": { width: 1920, height: 1080, label: "16:9 wide" },
+  "16:10": { width: 1920, height: 1200, label: "16:10 wide" },
+};
+
+/** Platform safe zones. Values are fractions of the output frame. */
+export const SAFE_ZONE_PRESETS = {
+  auto: { label: "This shape", safe_zone: { top: 0.08, right: 0.08, bottom: 0.16, left: 0.08 } },
+  instagram: { label: "Instagram Reels", safe_zone: { top: 0.12, right: 0.06, bottom: 0.20, left: 0.06 } },
+  tiktok: { label: "TikTok", safe_zone: { top: 0.10, right: 0.14, bottom: 0.22, left: 0.06 } },
+  youtube: { label: "YouTube Shorts", safe_zone: { top: 0.08, right: 0.12, bottom: 0.18, left: 0.05 } },
+  facebook: { label: "Facebook Reels", safe_zone: { top: 0.12, right: 0.06, bottom: 0.20, left: 0.06 } },
 };
 
 /** Mirrors the colour presets in `edits.COLOR_PRESETS`. */
@@ -282,24 +294,31 @@ export function formatSpan(start, end) {
 }
 
 export function aspectLabel(aspect) {
-  return aspect === "4:5" ? "4:5 feed" : "9:16 vertical";
+  return CANVAS[aspect]?.label || CANVAS["9:16"].label;
 }
 
-export function safeZoneRects(aspect) {
-  const feed = aspect === "4:5";
+export function safeZoneRects(aspect, platform = "auto") {
+  const canvas = CANVAS[aspect] || CANVAS["9:16"];
+  const preset = SAFE_ZONE_PRESETS[platform] || SAFE_ZONE_PRESETS.auto;
+  const zone = preset.safe_zone;
+  const portrait = canvas.height > canvas.width;
   return {
-    canvas: CANVAS[feed ? "4:5" : "9:16"],
-    safe: { x: 0.05, y: 0.05, w: 0.90, h: feed ? 0.88 : 0.87 },
-    reserved: feed
+    canvas,
+    safe: {
+      x: zone.left,
+      y: zone.top,
+      w: 1 - zone.left - zone.right,
+      h: 1 - zone.top - zone.bottom,
+    },
+    reserved: portrait
       ? [
-        { name: "Top bar", x: 0, y: 0, w: 1, h: 0.05 },
-        { name: "Bottom bar", x: 0, y: 0.93, w: 1, h: 0.07 },
-        { name: "Buttons", x: 0.88, y: 0.30, w: 0.12, h: 0.63 },
+        { name: "Top bar", x: 0, y: 0, w: 1, h: zone.top },
+        { name: "Bottom bar", x: 0, y: 1 - zone.bottom, w: 1, h: zone.bottom },
+        { name: "Buttons", x: 1 - zone.right, y: 0.30, w: zone.right, h: 0.63 },
       ]
       : [
-        { name: "Top bar", x: 0, y: 0, w: 1, h: 0.05 },
-        { name: "Bottom bar", x: 0, y: 0.92, w: 1, h: 0.08 },
-        { name: "Buttons", x: 0.88, y: 0.30, w: 0.12, h: 0.62 },
+        { name: "Top bar", x: 0, y: 0, w: 1, h: zone.top },
+        { name: "Bottom bar", x: 0, y: 1 - zone.bottom, w: 1, h: zone.bottom },
       ],
   };
 }

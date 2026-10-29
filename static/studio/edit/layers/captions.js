@@ -10,6 +10,7 @@ import { el } from "../../ui.js";
 import {
   CAPTION_PRESETS,
   CAPTION_STYLE_DEFAULTS,
+  SAFE_ZONE_PRESETS,
   captionPreset,
   clone,
   clamp,
@@ -115,6 +116,10 @@ export function mountCaptionsPanel(host, ctx) {
   const bottom = numberInput(Math.round(numberOr(style.safe_zone.bottom) * 100), { min: 0, max: 45, step: 1 });
   const top = numberInput(Math.round(numberOr(style.safe_zone.top) * 100), { min: 0, max: 45, step: 1 });
   const upper = el("input", { type: "checkbox", checked: Boolean(style.uppercase) });
+  const platform = el("select", { "aria-label": "Safe zone platform" });
+  for (const [value, preset] of Object.entries(SAFE_ZONE_PRESETS)) {
+    platform.append(el("option", { value, text: preset.label, selected: value === "auto" }));
+  }
 
   const styleDirty = el("span", { class: "st-chip st-chip-busy", text: "Not applied", hidden: true });
   function touchStyle() {
@@ -177,6 +182,12 @@ export function mountCaptionsPanel(host, ctx) {
     style.uppercase = upper.checked;
     touchStyle();
   });
+  platform.addEventListener("change", () => {
+    const preset = SAFE_ZONE_PRESETS[platform.value] || SAFE_ZONE_PRESETS.auto;
+    style.safe_zone = { ...style.safe_zone, ...preset.safe_zone };
+    fillStyle();
+    touchStyle();
+  });
 
   const apply = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Apply style" });
   apply.addEventListener("click", async () => {
@@ -210,6 +221,7 @@ export function mountCaptionsPanel(host, ctx) {
     ]),
     el("div", { class: "st-control-grid" }, [
       field("Background", background),
+      field("Safe zone", platform, "Re-fit captions to this platform."),
       field("Safe bottom (%)", bottom, "Space left for platform buttons."),
       field("Safe top (%)", top),
     ]),
@@ -323,5 +335,6 @@ export function mountCaptionsPanel(host, ctx) {
     bottom.value = String(Math.round(numberOr(style.safe_zone.bottom) * 100));
     top.value = String(Math.round(numberOr(style.safe_zone.top) * 100));
     upper.checked = Boolean(style.uppercase);
+    platform.value = "auto";
   }
 }

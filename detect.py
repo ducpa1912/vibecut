@@ -1179,14 +1179,11 @@ def clean_prefill(
             entries.append(entry)
             continue
         if kind == "subtitle":
-            if box["y"] >= 0.62:
-                entry["action"] = "plate"
-                entry["reason"] = "Burned-in subtitles sit in the new caption zone."
-            else:
-                entry["action"] = "blur"
-                entry["reason"] = (
-                    "Mid-frame burned-in text. Cleanup may leave a visible patch."
-                )
+            entry["action"] = "blur"
+            entry["reason"] = (
+                "Burned-in subtitle. Blur softens it; the pixels are not recovered."
+            )
+            if box["y"] < 0.62:
                 entry["quality_warning"] = True
             entries.append(entry)
             continue

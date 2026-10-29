@@ -125,6 +125,9 @@ def test_thank_you_dropped_only_when_repeated():
     ("北京旅行 vlog", "zh"),
     ("서울 브이로그", "ko"),
     ("The Real Reason Everyone SEEMS Richer Than Me", ""),
+    ("cn-1min29s-720x1280-voice-subtiltle.mp4", "zh"),
+    ("en-53s-1080x1920-subtitle.mp4", "en"),
+    ("no-voice-1min-1080x1920-text-overlay.mp4", ""),
 ])
 def test_guess_language_from_title(title, expected):
     assert stt.guess_language(title) == expected

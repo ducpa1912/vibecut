@@ -730,11 +730,11 @@ def test_lock_off_report_does_not_nag_for_the_rights_note():
     assert entry["enabled"] is True
 
 
-def test_subtitle_prefill_uses_a_plate_in_the_caption_zone():
+def test_subtitle_prefill_uses_blur_in_the_caption_zone():
     job = job_record()
     report = report_for(job, subtitle_rows(4, start=0.0))
     entry = next(item for item in report["clean_prefill"] if item["kind"] == "subtitle")
-    assert entry["action"] == "plate"
+    assert entry["action"] == "blur"
     assert entry["enabled"] is False  # rights not attested
 
 

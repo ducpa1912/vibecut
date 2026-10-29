@@ -35,7 +35,7 @@ def test_finish_focus_pick_keeps_only_what_still_exists():
         return [
           m.finishFocusPick({setId: "setB", storyId: "s3", aspect: "4:5", artifactId: "a1"}, sets),
           m.finishFocusPick({setId: "", storyId: "s2", aspect: "9:16"}, sets),
-          m.finishFocusPick({setId: "setA", storyId: "gone", aspect: "1:1"}, sets),
+          m.finishFocusPick({setId: "setA", storyId: "gone", aspect: "2:3"}, sets),
           m.finishFocusPick(null, sets),
         ];
     """)

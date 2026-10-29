@@ -1,8 +1,9 @@
 /**
  * Inspector tabs.
  *
- * Text, Captions, Color, Clean, Effects and Audio each mount their own panel
- * module. This file only owns the tab strip, counts and the active panel.
+ * Clean, Texts & Effects and Audio each mount their own panel modules.
+ * Texts & Effects holds text, captions, effects and colour in one place,
+ * because creators change them together.
  */
 
 import { el } from "../ui.js";
@@ -15,32 +16,30 @@ import { mountAudioPanel } from "./layers/audio.js";
 
 export const TABS = [
   { id: "clean", label: "Clean" },
-  { id: "text", label: "Text" },
-  { id: "captions", label: "Captions" },
-  { id: "effects", label: "Effects" },
-  { id: "color", label: "Color" },
+  { id: "visual", label: "Texts & Effects" },
   { id: "audio", label: "Audio" },
 ];
 
 export function tabCounts(edit, captions) {
   return {
     clean: (edit?.clean || []).length,
-    text: (edit?.graphics || []).filter((layer) => layer.type === "text").length,
-    captions: captions?.cues?.length || 0,
-    effects: (edit?.motion || []).length
-      + (edit?.graphics || []).filter((layer) => layer.type === "fx").length,
-    color: edit?.color?.preset && edit.color.preset !== "none" ? 1 : 0,
+    visual: (edit?.graphics || []).filter((layer) => layer.type === "text").length
+      + (captions?.cues?.length || 0)
+      + (edit?.motion || []).length
+      + (edit?.graphics || []).filter((layer) => layer.type === "fx").length
+      + (edit?.color?.preset && edit.color.preset !== "none" ? 1 : 0),
     audio: edit?.audio?.mode && edit.audio.mode !== "original" ? 1 : 0,
   };
 }
 
-export function mountInspector(host, { active = "text", edit, captions, panelCtx }) {
+export function mountInspector(host, { active = "visual", edit, captions, panelCtx }) {
   host.replaceChildren();
   const counts = tabCounts(edit, captions);
+  const activeTab = ["text", "captions", "effects", "color"].includes(active) ? "visual" : active;
 
   const tabs = el("div", { class: "st-inspector-tabs", role: "tablist", "aria-label": "Layers" });
   for (const tab of TABS) {
-    const selected = tab.id === active;
+    const selected = tab.id === activeTab;
     const button = el("button", {
       class: `st-inspector-tab${selected ? " is-active" : ""}`,
       type: "button",
@@ -56,19 +55,25 @@ export function mountInspector(host, { active = "text", edit, captions, panelCtx
   }
   host.append(tabs);
 
-  const body = el("div", { class: "st-inspector-body", role: "tabpanel", "aria-label": `${TABS.find((tab) => tab.id === active)?.label || "Layer"} controls` });
+  const body = el("div", { class: "st-inspector-body", role: "tabpanel", "aria-label": `${TABS.find((tab) => tab.id === activeTab)?.label || "Layer"} controls` });
   host.append(body);
 
-  if (active === "text") {
-    mountTextPanel(body, panelCtx);
-  } else if (active === "captions") {
-    mountCaptionsPanel(body, panelCtx);
-  } else if (active === "color") {
-    mountColorPanel(body, panelCtx);
-  } else if (active === "clean") {
+  if (activeTab === "clean") {
     mountCleanPanel(body, panelCtx);
-  } else if (active === "effects") {
-    mountEffectsPanel(body, panelCtx);
+  } else if (activeTab === "visual") {
+    const group = (title, mount) => {
+      const section = el("section", { class: "st-visual-group" }, [
+        el("h3", { class: "st-visual-group-title", text: title }),
+      ]);
+      const content = el("div", { class: "st-visual-group-body" });
+      section.append(content);
+      body.append(section);
+      mount(content, panelCtx);
+    };
+    group("Text", mountTextPanel);
+    group("Captions", mountCaptionsPanel);
+    group("Effects", mountEffectsPanel);
+    group("Colour", mountColorPanel);
   } else {
     mountAudioPanel(body, panelCtx);
   }

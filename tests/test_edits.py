@@ -262,7 +262,7 @@ def test_clean_ranges_merge_and_sort():
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"aspect": "16:9"},
+        {"aspect": "2:3"},
         {"clean": [{"kind": "delogo", "box": {"x": 0, "y": 0, "w": 0.1, "h": 0.1}}]},
         {"clean": [{"kind": "inpaint", "box": {"x": 0, "y": 0, "w": 0.1, "h": 0.1}}]},
         {"clean": [{
@@ -659,7 +659,7 @@ def test_unknown_job_set_story_and_aspect(env):
     ).status_code == 404
     assert client.post(
         f"/api/jobs/{env['job_id']}/edits",
-        json={"set_id": "cs_1", "story_id": "s1", "aspect": "1:1"},
+        json={"set_id": "cs_1", "story_id": "s1", "aspect": "2:3"},
     ).status_code == 422
     assert client.post(
         f"/api/jobs/{env['job_id']}/edits",

@@ -15,6 +15,7 @@
  */
 
 import {
+  addStory,
   createClipSet,
   createStoryQueue,
   deleteClipSet,
@@ -44,6 +45,14 @@ import { sentenceSegments } from "./edit/model.js";
 
 const POLL_MS = 1600;
 const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
+
+export const STORY_SHAPES = [
+  { value: "9:16", label: "9:16 vertical" },
+  { value: "4:5", label: "4:5 feed" },
+  { value: "1:1", label: "1:1 square" },
+  { value: "16:9", label: "16:9 wide" },
+  { value: "16:10", label: "16:10 wide" },
+];
 
 /** Mirrors `clipset.LENGTH_PRESETS`; "auto" is the server default window. */
 export const LENGTH_PRESETS = {
@@ -207,6 +216,7 @@ export function mount(root, ctx) {
   let transcribing = false;
   let scripting = false;
   let briefDraft = null;
+  const storyShapes = new Map();
   let checkReport = null;
   let checkError = "";
   let checkBusy = false;
@@ -309,13 +319,32 @@ export function mount(root, ctx) {
     dom.body.append(card);
   }
 
-  function openInEdit(story) {
-    // Edit reads this choice on open; the shape follows the picker here.
+  function storyShape(story) {
+    return storyShapes.get(String(story?.id || "")) || "9:16";
+  }
+
+  function shapeSelect(story) {
+    const select = el("select", { "aria-label": "Story shape", class: "st-story-shape" });
+    for (const shape of STORY_SHAPES) {
+      select.append(el("option", {
+        value: shape.value,
+        text: shape.label,
+        selected: shape.value === storyShape(story),
+      }));
+    }
+    select.addEventListener("change", () => {
+      storyShapes.set(String(story.id), select.value);
+    });
+    return select;
+  }
+
+  function openInEdit(story, shape = storyShape(story)) {
+    // Edit reads this choice on open; the shape follows the card picker.
     try {
-      const picked = root.querySelector(".st-render-bar select")?.value;
-      const aspect = picked === "4:5" ? "4:5" : "9:16";
       localStorage.setItem(EDIT_CHOICE_KEY, JSON.stringify({
-        setId: activeSetId, storyId: story.id, aspect,
+        setId: activeSetId,
+        storyId: story.id,
+        aspect: STORY_SHAPES.some((item) => item.value === shape) ? shape : "9:16",
       }));
     } catch (_) {
       /* Edit falls back to the first story. */
@@ -523,21 +552,22 @@ export function mount(root, ctx) {
       control.addEventListener("click", () => { void adjustStory(story, next, note, trim); });
       trim.append(control);
     }
-    const button = el("button", {
-      class: "st-btn st-btn-ghost st-btn-small",
+    const add = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small st-story-add",
       type: "button",
-      text: "Render this story",
+      text: "+ Add to queue",
+      title: "Add this moment to the render queue",
     });
-    button.addEventListener("click", () => queueOne(story, button, note));
+    add.addEventListener("click", () => queueOne(story, add, note));
     const editButton = el("button", {
       class: "st-btn st-btn-primary st-btn-small",
       type: "button",
-      text: "Edit this story",
+      text: "Start edit",
     });
     editButton.addEventListener("click", () => openInEdit(story));
     const foot = el("div", { class: "st-story-foot" }, [
       el("span", { class: "st-hint", text: formatCount(story.sentences?.length, "sentence") }),
-      el("div", { class: "st-story-actions" }, [button, editButton]),
+      el("div", { class: "st-story-actions" }, [shapeSelect(story), add, editButton]),
     ]);
     card.append(head);
     const frame = momentFrame(story, index);
@@ -597,34 +627,60 @@ export function mount(root, ctx) {
     const body = el("div", { class: "st-dialog-body" });
     const picked = new Set();
     const total = el("span", { class: "st-chip st-chip-quiet", text: "0 scenes · 0 s" });
+    const log = el("div", { class: "st-build-log", role: "status", "aria-live": "polite" });
+    const addLog = (message) => {
+      log.append(el("p", { text: message }));
+      log.scrollTop = log.scrollHeight;
+    };
     const update = () => {
       const chosen = scenes.filter((scene) => picked.has(Number(scene.id)));
       const seconds = chosen.reduce((sum, scene) => sum + Math.max(0, Number(scene.end) - Number(scene.start)), 0);
       total.textContent = `${chosen.length} scene${chosen.length === 1 ? "" : "s"} · ${formatDuration(seconds)}`;
+      if (chosen.length) addLog(`Selected ${chosen.length} scene${chosen.length === 1 ? "" : "s"} · ${formatDuration(seconds)}`);
     };
-    const list = el("div", { class: "st-moment-scenes" });
+    const collage = el("div", { class: "st-moment-collage" });
     for (const scene of scenes) {
       const id = Number(scene.id);
-      const check = el("input", { type: "checkbox", "aria-label": `Scene ${id + 1}` });
-      check.addEventListener("change", () => {
-        if (check.checked) picked.add(id);
-        else picked.delete(id);
+      const text = String(scene.ocr || scene.speech || "").replace(/\s+/g, " ").trim();
+      const tile = el("button", {
+        class: "st-moment-tile",
+        type: "button",
+        "aria-pressed": "false",
+        title: text || `Scene ${id + 1}`,
+      });
+      if (scene.thumb_url) tile.append(el("img", { src: scene.thumb_url, alt: "", loading: "lazy" }));
+      tile.append(el("span", { class: "st-moment-tile-time", text: formatDuration(scene.start) }));
+      tile.append(el("span", { class: "st-moment-tile-copy", text: text || "No speech or text" }));
+      tile.addEventListener("click", () => {
+        if (picked.has(id)) picked.delete(id);
+        else picked.add(id);
+        tile.classList.toggle("is-picked", picked.has(id));
+        tile.setAttribute("aria-pressed", picked.has(id) ? "true" : "false");
         update();
       });
-      const text = String(scene.ocr || scene.speech || "").replace(/\s+/g, " ").trim();
-      const row = el("label", { class: "st-moment-scene" }, [
-        check,
-        scene.thumb_url ? el("img", { src: scene.thumb_url, alt: "", loading: "lazy" }) : null,
-        el("span", { class: "st-moment-scene-copy" }, [
-          el("strong", { text: `${formatDuration(scene.start)} → ${formatDuration(scene.end)}` }),
-          el("small", { text: text || "No speech or text in this scene" }),
-        ]),
-      ]);
-      list.append(row);
+      collage.append(tile);
     }
-    const title = el("input", { type: "text", maxLength: "120", placeholder: "Moment title", "aria-label": "Moment title" });
+    const selectAll = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Select all" });
+    selectAll.addEventListener("click", () => {
+      for (const scene of scenes) picked.add(Number(scene.id));
+      for (const tile of collage.querySelectorAll(".st-moment-tile")) {
+        tile.classList.add("is-picked");
+        tile.setAttribute("aria-pressed", "true");
+      }
+      update();
+    });
+    const clearAll = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Clear" });
+    clearAll.addEventListener("click", () => {
+      picked.clear();
+      for (const tile of collage.querySelectorAll(".st-moment-tile")) {
+        tile.classList.remove("is-picked");
+        tile.setAttribute("aria-pressed", "false");
+      }
+      update();
+    });
+    const title = el("input", { type: "text", maxLength: "120", placeholder: "Story title", "aria-label": "Story title" });
     const error = el("p", { class: "st-error", role: "alert", hidden: true });
-    const build = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Build this moment" });
+    const build = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Add story" });
     build.addEventListener("click", async () => {
       const ids = [...picked].sort((a, b) => a - b);
       if (!ids.length) {
@@ -636,61 +692,89 @@ export function mount(root, ctx) {
       const seconds = chosen.reduce((sum, scene) => sum + Math.max(0, Number(scene.end) - Number(scene.start)), 0);
       if (seconds < 15) {
         error.hidden = false;
-        error.textContent = `Those scenes are ${formatDuration(seconds)}; a moment needs at least 15 s.`;
+        error.textContent = `Those scenes are ${formatDuration(seconds)}; a story needs at least 15 s.`;
+        return;
+      }
+      const first = Math.min(...chosen.map((scene) => Number(scene.start)));
+      const last = Math.max(...chosen.map((scene) => Number(scene.end)));
+      const duplicate = sets.flatMap((item) => item.stories || []).find(
+        (story) => Math.abs(Number(story.start) - first) < 0.4 && Math.abs(Number(story.end) - last) < 0.4,
+      );
+      if (duplicate) {
+        error.hidden = false;
+        error.textContent = `That story already exists: ${duplicate.title || duplicate.id}.`;
+        addLog(`Skipped duplicate ${duplicate.id}.`);
         return;
       }
       error.hidden = true;
       build.disabled = true;
-      build.textContent = "Building…";
+      build.textContent = "Adding…";
+      addLog(`Adding ${ids.length} scene${ids.length === 1 ? "" : "s"}…`);
       try {
-        const banned = scenes.map((scene) => Number(scene.id)).filter((id) => !picked.has(id));
-        const result = await createClipSet(job.id, {
-          count: 3,
-          minS: 15,
-          maxS: 180,
-          locks: ids,
-          banScenes: banned,
-        });
-        let record = result?.clip_set;
-        if (!record?.stories?.length) {
-          if (record?.id) await deleteClipSet(job.id, record.id).catch(() => {});
-          error.hidden = false;
-          error.textContent = "Those scenes do not make a 15–180 s moment. Add another scene or use Find moments.";
-          return;
+        let record;
+        if (activeSetId) {
+          const result = await addStory(job.id, activeSetId, ids, title.value.trim());
+          record = result?.clip_set;
+          addLog(`Added ${result?.story?.id || "a new story"} to this set.`);
+        } else {
+          const result = await createClipSet(job.id, {
+            count: 3,
+            minS: 15,
+            maxS: Math.min(180, Math.max(15, Math.ceil(seconds))),
+            locks: ids,
+            banScenes: scenes.map((scene) => Number(scene.id)).filter((id) => !picked.has(id)),
+          });
+          record = result?.clip_set;
+          if (!record?.stories?.length) {
+            if (record?.id) await deleteClipSet(job.id, record.id).catch(() => {});
+            error.hidden = false;
+            error.textContent = "Those scenes do not make a 15–180 s story. Add another scene.";
+            addLog("No story fit those scenes.");
+            return;
+          }
+          if (title.value.trim()) {
+            const patched = await patchClipSet(job.id, record.id, [
+              { id: record.stories[0].id, title: title.value.trim() },
+            ]);
+            record = patched?.clip_set || record;
+          }
+          addLog(`Created set with ${record.stories.length} story.`);
         }
-        if (title.value.trim()) {
-          const patched = await patchClipSet(job.id, record.id, [
-            { id: record.stories[0].id, title: title.value.trim() },
-          ]);
-          record = patched?.clip_set || record;
+        if (!record?.stories?.length) {
+          error.hidden = false;
+          error.textContent = "The server returned no story.";
+          return;
         }
         sets = [record, ...sets.filter((item) => item.id !== record.id)];
         activeSetId = record.id;
         dialog.close();
-        showStatus(`Built a ${formatDuration(record.stories[0].dur)} moment from ${ids.length} scene${ids.length === 1 ? "" : "s"}.`, "ok");
+        showStatus(`Added a ${formatDuration(record.stories[record.stories.length - 1]?.dur)} story.`, "ok");
         renderStories();
       } catch (problem) {
         error.hidden = false;
-        error.textContent = problem?.message || "Could not build that moment.";
+        error.textContent = problem?.message || "Could not add that story.";
+        addLog(`Failed: ${problem?.message || "unknown error"}`);
       } finally {
         build.disabled = false;
-        build.textContent = "Build this moment";
+        build.textContent = "Add story";
       }
     });
     const cancel = el("button", { class: "st-btn st-btn-quiet", type: "button", text: "Cancel" });
     cancel.addEventListener("click", () => dialog.close());
     dialog.append(
       el("div", { class: "st-dialog-head" }, [
-        el("h2", { id: "st-moment-builder-title", text: "Build your story" }),
-        el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close builder", onclick: () => dialog.close() }),
+        el("h2", { id: "st-moment-builder-title", text: "Add a story" }),
+        el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close story builder", onclick: () => dialog.close() }),
       ]),
       body,
       el("div", { class: "st-dialog-foot" }, [total, cancel, build]),
     );
     body.append(
-      el("p", { class: "st-hint", text: "Pick the scenes that belong together. The best hook and payoff inside them become one moment." }),
-      list,
-      el("label", { class: "st-field" }, [el("span", { text: "Title (optional)" }), title]),
+      el("p", { class: "st-hint", text: "Tap the frames that belong together. A story needs 15–180 s and cannot overlap one already in this set." }),
+      el("div", { class: "st-layer-add" }, [selectAll, clearAll]),
+      collage,
+      el("label", { class: "st-field" }, [el("span", { text: "Story title (optional)" }), title]),
+      log,
       error,
     );
     dialog.addEventListener("close", () => dialog.remove());
@@ -764,8 +848,8 @@ export function mount(root, ctx) {
     const own = el("button", {
       class: "st-btn st-btn-ghost",
       type: "button",
-      text: "Build your story",
-      title: "Choose scenes and make one moment yourself",
+      text: "Add story",
+      title: "Choose scenes and add one story yourself",
     });
     own.addEventListener("click", () => { openBuilder(card); });
     actions.append(countLabel, lengthLabel, build, own);
@@ -962,8 +1046,9 @@ export function mount(root, ctx) {
     const bar = el("div", { class: "st-card st-render-bar" });
     const aspectLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Shape" })]);
     const aspect = el("select", { "aria-label": "Story shape" });
-    aspect.append(el("option", { value: "9:16", text: "9:16 vertical" }));
-    aspect.append(el("option", { value: "4:5", text: "4:5 feed" }));
+    for (const shape of STORY_SHAPES) {
+      aspect.append(el("option", { value: shape.value, text: shape.label }));
+    }
     aspectLabel.append(aspect);
     const qualityLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Quality" })]);
     const quality = el("select", { "aria-label": "Render quality" });
@@ -989,20 +1074,20 @@ export function mount(root, ctx) {
 
   async function queueOne(story, button, note) {
     if (!job || !activeSetId || button.disabled) return;
-    const aspect = root.querySelector(".st-render-bar select")?.value || "9:16";
+    const aspect = storyShape(story);
     const quality = root.querySelectorAll(".st-render-bar select")[1]?.value || "final";
     button.disabled = true;
-    button.textContent = "Starting…";
+    button.textContent = "Adding…";
     setStatus(note, "");
     try {
       await renderStory(job.id, activeSetId, story.id, { aspect, quality, captions: true });
       if (disposed) return;
-      setStatus(note, `Render started in ${aspect}.`, "ok");
-      button.textContent = "Render again";
+      setStatus(note, `Added to the queue in ${aspect}.`, "ok");
+      button.textContent = "Added";
     } catch (error) {
       if (disposed) return;
-      setStatus(note, error.message || "Could not start this render.", "bad");
-      button.textContent = "Render this story";
+      setStatus(note, error.message || "Could not add this moment to the queue.", "bad");
+      button.textContent = "+ Add to queue";
     } finally {
       if (!disposed) button.disabled = false;
     }

@@ -1895,6 +1895,15 @@ def guess_language(*texts: str) -> str:
     text = " ".join(str(item or "") for item in texts)
     if not text.strip():
         return ""
+    # A file name often carries the language before the first dash:
+    # cn-1min29s..., vi-episode-12..., en-17mins... . Only trust a known
+    # two-letter prefix at the start of a name or path segment.
+    prefix = re.search(
+        r"(?:^|/)(cn|zh|vi|ja|ko|en|es|fr|de|pt|it|hi|ar|th|ru)[-_]",
+        text.lower(),
+    )
+    if prefix:
+        return "zh" if prefix.group(1) == "cn" else prefix.group(1)
     if re.search(r"[\u3040-\u30ff]", text):
         return "ja"
     if len(re.findall(r"[\uac00-\ud7af]", text)) >= 2:

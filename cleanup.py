@@ -26,7 +26,7 @@ APPROXIMATE_CONFIDENCE = 0.2
 EXPLICIT_CONFIDENCE = 1.0
 
 SUPPORTED_METHODS = ("blur", "cover", "crop")
-SUPPORTED_ASPECTS = ("9:16", "4:5", "1:1", "16:9")
+SUPPORTED_ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
 CLEAN_LAYER_KINDS = ("crop_guard", "blur", "plate", "mask")
 MAX_CLEAN_LAYERS = 32
 MAX_LAYER_RANGES = 64
@@ -402,7 +402,7 @@ def tracklet_clean_layers(
         }
         layers.append(base_layer)
         z_cursor += 1
-        if kind == "subtitle" and action == "blur":
+        if kind == "subtitle" and action == "blur" and entry.get("quality_warning"):
             # Mid-frame text has no clean plate already in the frame. Add an
             # opaque cover under the blur so no old glyph can survive.
             if len(layers) >= MAX_CLEAN_LAYERS:

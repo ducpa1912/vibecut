@@ -33,7 +33,7 @@ from typing import Protocol
 LOGGER = logging.getLogger("vibecut.story_queue")
 
 MAX_ITEMS = 10
-ASPECTS = ("9:16", "4:5")
+ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
 QUALITIES = ("final", "720", "draft")
 QUEUE_STATES = ("queued", "running", "paused", "done", "cancelled")
 ITEM_STATES = ("queued", "running", "done", "failed", "interrupted", "cancelled")
@@ -118,7 +118,7 @@ def normalize_items(raw: object) -> list[dict]:
             ids[key] = text
         aspect = str(value.get("aspect") or "9:16")
         if aspect not in ASPECTS:
-            raise QueueError(f"Item {index}: story renders support 9:16 and 4:5.")
+            raise QueueError(f"Item {index}: story renders support 9:16, 4:5, 1:1, 16:9 and 16:10.")
         quality = str(value.get("quality") or "final")
         if quality not in QUALITIES:
             raise QueueError(f"Item {index}: quality must be final, 720 or draft.")

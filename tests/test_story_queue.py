@@ -73,8 +73,8 @@ def test_queue_rejects_more_than_ten_items_and_bad_aspects(tmp_path):
     manager = sq.StoryQueueManager(tmp_path, FakeBackend())
     with pytest.raises(sq.QueueError, match="at most 10"):
         manager.create(items(11))
-    with pytest.raises(sq.QueueError, match="9:16 and 4:5"):
-        manager.create([{**items(1)[0], "aspect": "1:1"}])
+    with pytest.raises(sq.QueueError, match="16:10"):
+        manager.create([{**items(1)[0], "aspect": "2:3"}])
     with pytest.raises(sq.QueueError, match="repeats"):
         manager.create(items(1) + items(1))
 

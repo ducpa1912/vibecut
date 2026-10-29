@@ -394,9 +394,9 @@ def test_invalid_timing_and_aspect_are_rejected(env):
         response = _post(client, env, {"aspect": "9:16", "layers": [layer]})
         assert response.status_code == 422, response.text
 
-    aspect = _post(client, env, {"aspect": "1:1", "layers": [_layer()]})
+    aspect = _post(client, env, {"aspect": "2:3", "layers": [_layer()]})
     assert aspect.status_code == 400
-    assert "9:16 or 4:5" in aspect.json()["detail"]
+    assert "16:10" in aspect.json()["detail"]
 
 
 def test_face_overlap_warning_uses_analysis_face_boxes(env):

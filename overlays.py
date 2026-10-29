@@ -33,7 +33,7 @@ Z_MAX = 99
 FACE_OVERLAP_RATIO = 0.05
 
 KINDS = ("hook", "title", "caption", "lower_third", "cta")
-ASPECTS = ("9:16", "4:5")
+ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
 VERTICAL = ("top", "center", "bottom")
 HORIZONTAL = ("left", "center", "right")
 
@@ -51,6 +51,9 @@ CANVAS = {
 SAFE_AREAS = {
     "9:16": {"x": 0.05, "y": 0.05, "w": 0.90, "h": 0.87},
     "4:5": {"x": 0.05, "y": 0.05, "w": 0.90, "h": 0.88},
+    "1:1": {"x": 0.05, "y": 0.05, "w": 0.90, "h": 0.90},
+    "16:9": {"x": 0.05, "y": 0.05, "w": 0.90, "h": 0.90},
+    "16:10": {"x": 0.05, "y": 0.05, "w": 0.90, "h": 0.90},
 }
 RESERVED_ZONES = {
     "9:16": (
@@ -62,6 +65,18 @@ RESERVED_ZONES = {
         {"name": "top-ui", "x": 0.0, "y": 0.0, "w": 1.0, "h": 0.05},
         {"name": "bottom-ui", "x": 0.0, "y": 0.93, "w": 1.0, "h": 0.07},
         {"name": "right-ui", "x": 0.88, "y": 0.30, "w": 0.12, "h": 0.63},
+    ),
+    "1:1": (
+        {"name": "top-ui", "x": 0.0, "y": 0.0, "w": 1.0, "h": 0.05},
+        {"name": "bottom-ui", "x": 0.0, "y": 0.95, "w": 1.0, "h": 0.05},
+    ),
+    "16:9": (
+        {"name": "top-ui", "x": 0.0, "y": 0.0, "w": 1.0, "h": 0.05},
+        {"name": "bottom-ui", "x": 0.0, "y": 0.95, "w": 1.0, "h": 0.05},
+    ),
+    "16:10": (
+        {"name": "top-ui", "x": 0.0, "y": 0.0, "w": 1.0, "h": 0.05},
+        {"name": "bottom-ui", "x": 0.0, "y": 0.95, "w": 1.0, "h": 0.05},
     ),
 }
 
@@ -236,7 +251,7 @@ def enabled(environ: dict[str, str] | os._Environ | None = None) -> bool:
 def normalize_aspect(value: object) -> str:
     aspect = str(value or "").strip().replace("x", ":").replace("/", ":")
     if aspect not in ASPECTS:
-        raise OverlayInputError("aspect must be 9:16 or 4:5.")
+        raise OverlayInputError("aspect must be 9:16, 4:5, 1:1, 16:9 or 16:10.")
     return aspect
 
 

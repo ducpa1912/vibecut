@@ -201,6 +201,9 @@ export function mount(root, ctx) {
             <div class="st-aspect-group" role="group" aria-label="Story shape">
               <button class="st-aspect" type="button" data-aspect="9:16" aria-pressed="true">9:16</button>
               <button class="st-aspect" type="button" data-aspect="4:5" aria-pressed="false">4:5</button>
+              <button class="st-aspect" type="button" data-aspect="1:1" aria-pressed="false">1:1</button>
+              <button class="st-aspect" type="button" data-aspect="16:9" aria-pressed="false">16:9</button>
+              <button class="st-aspect" type="button" data-aspect="16:10" aria-pressed="false">16:10</button>
             </div>
             <button id="st-edit-repair" class="st-btn st-btn-small st-trim-repair" type="button" hidden>Repair shape</button>
             <button id="st-edit-all" class="st-btn st-btn-quiet st-btn-small" type="button">All stories</button>

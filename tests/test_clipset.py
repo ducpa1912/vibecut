@@ -925,8 +925,7 @@ def test_story_render_validation_and_duplicate_active(api, monkeypatch):
     assert api.post(url, json={"target": 0}).status_code == 400
     assert api.post(url, json={"quality": "cinema"}).status_code == 400
     assert api.post(url, json={"aspect": "21:9"}).status_code == 400
-    assert api.post(url, json={"aspect": "1:1"}).status_code == 400
-    assert api.post(url, json={"aspect": "16:9"}).status_code == 400
+    assert api.post(url, json={"aspect": "2:3"}).status_code == 400
 
     first = api.post(url, json={"target": stored})
     assert first.status_code == 200

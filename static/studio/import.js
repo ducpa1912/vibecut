@@ -18,6 +18,7 @@ import {
   createJobFromUrl,
   listJobs,
   request,
+  revealPath,
   uploadVideo,
 } from "./api.js";
 import {
@@ -161,6 +162,9 @@ export function mount(root, ctx) {
               <input id="st-path-input" type="text" spellcheck="false" autocomplete="off" placeholder="/Users/you/Movies/long-video.mp4">
             </label>
             <p class="st-hint">The file is read in place. Nothing is uploaded or copied.</p>
+            <div class="st-layer-add" style="margin-top:8px">
+              <button id="st-path-reveal" class="st-btn st-btn-ghost st-btn-small" type="button">Show in Finder</button>
+            </div>
           </div>
 
           <div id="st-source-url" role="tabpanel" aria-labelledby="st-tab-url" class="st-source-panel" hidden>
@@ -179,6 +183,27 @@ export function mount(root, ctx) {
               <label class="st-check"><input id="st-opt-crop" type="checkbox" checked><span><strong>Smart crop</strong><small>follows the subject</small></span></label>
               <label class="st-check"><input id="st-opt-track" type="checkbox" checked><span><strong>Track crop</strong><small>smooths the move</small></span></label>
             </div>
+            <label class="st-field st-field-inline" style="margin-top:10px">
+              <span>Spoken language</span>
+              <select id="st-speech-language" aria-label="Spoken language">
+                <option value="auto">Auto detect</option>
+                <option value="en">English</option>
+                <option value="zh">Chinese</option>
+                <option value="vi">Vietnamese</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="pt">Portuguese</option>
+                <option value="it">Italian</option>
+                <option value="hi">Hindi</option>
+                <option value="ar">Arabic</option>
+                <option value="th">Thai</option>
+                <option value="ru">Russian</option>
+              </select>
+            </label>
+            <p class="st-hint">Set this when the title does not reveal the language. It stops a long fallback on the speech engine.</p>
           </fieldset>
 
           <label id="st-attest-row" class="st-attest" hidden>
@@ -233,6 +258,8 @@ export function mount(root, ctx) {
     fileSize: $("#st-file-size"),
     fileClear: $("#st-file-clear"),
     pathInput: $("#st-path-input"),
+    pathReveal: $("#st-path-reveal"),
+    speechLanguage: $("#st-speech-language"),
     urlInput: $("#st-url-input"),
     ocr: $("#st-opt-ocr"),
     transcribe: $("#st-opt-transcribe"),
@@ -267,12 +294,18 @@ export function mount(root, ctx) {
   }
 
   function currentOptions() {
-    return {
+    const result = {
       ocr: dom.ocr.checked,
       transcribe: dom.transcribe.checked,
       smart_crop: dom.crop.checked,
       crop_tracking: dom.track.checked,
     };
+    const language = String(dom.speechLanguage?.value || "auto");
+    if (language !== "auto") {
+      result.speech_language = language;
+      result.speech_language_explicit = language;
+    }
+    return result;
   }
 
   function selectedDisplayName() {
@@ -596,6 +629,22 @@ export function mount(root, ctx) {
   dom.fileInput.addEventListener("change", () => setFile(dom.fileInput.files?.[0] || null));
   dom.fileClear.addEventListener("click", clearFile);
   dom.pathInput.addEventListener("input", syncSubmit);
+  dom.pathReveal.addEventListener("click", async () => {
+    const path = dom.pathInput.value.trim();
+    if (!path) {
+      showError("Type the full path first.");
+      dom.pathInput.focus();
+      return;
+    }
+    dom.pathReveal.disabled = true;
+    try {
+      await revealPath(path);
+    } catch (error) {
+      showError(error?.message || "Could not show that file in Finder.");
+    } finally {
+      if (!disposed) dom.pathReveal.disabled = false;
+    }
+  });
   dom.urlInput.addEventListener("input", syncSubmit);
   dom.urlInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {

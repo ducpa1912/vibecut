@@ -23,6 +23,98 @@ class SpeechRetryBody(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class RevealPathBody(BaseModel):
+    path: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
+class AddStoryBody(BaseModel):
+    scene_ids: list[int] = []
+    title: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
+@router.post("/api/path/reveal")
+def reveal_path(body: RevealPathBody, request: Request) -> dict:
+    """Show a video path in Finder before it is imported."""
+    import app
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    path = Path(body.path).expanduser()
+    if not path.is_absolute() or not path.is_file():
+        raise HTTPException(404, "That file is not on this Mac.")
+    if app.sys.platform != "darwin":
+        raise HTTPException(501, "Reveal in Finder works on a Mac only.")
+    try:
+        app.subprocess.Popen(
+            ["open", "-R", str(path)],
+            stdout=app.subprocess.DEVNULL, stderr=app.subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise HTTPException(500, "Could not open Finder.") from exc
+    return {"revealed": True, "path": str(path)}
+
+
+@router.post("/api/jobs/{job_id}/clip-sets/{set_id}/stories")
+def add_story(job_id: str, set_id: str, body: AddStoryBody) -> dict:
+    """Append one custom moment made from selected scenes."""
+    import app
+    import clipset
+
+    job = app._clipset_job(job_id)
+    record = app._clip_set_in_job(job, set_id)
+    app._clip_set_source_state(job, record)
+    sentences, scenes, transcript = app._clipset_pool(job, record)
+    known = {int(scene["id"]) for scene in scenes if scene.get("id") is not None}
+    selected = sorted({int(value) for value in body.scene_ids if int(value) in known})
+    if not selected:
+        raise HTTPException(400, "Pick at least one scene.")
+    banned = sorted(known - set(selected))
+    chosen = [scene for scene in scenes if int(scene["id"]) in set(selected)]
+    span = sum(
+        max(0.0, float(scene.get("end") or 0.0) - float(scene.get("start") or 0.0))
+        for scene in chosen
+    )
+    try:
+        document = clipset.build_clipset(
+            scenes,
+            transcript,
+            float((job.get("source") or {}).get("duration") or 0.0),
+            count=3,
+            min_s=clipset.LENGTH_FLOOR_S,
+            max_s=min(clipset.LENGTH_CEIL_S, max(clipset.LENGTH_FLOOR_S, span)),
+            locks=selected,
+            ban_scenes=banned,
+            order="source",
+        )
+    except clipset.ClipSetError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    stories = list(document.get("stories") or [])
+    if not stories:
+        raise HTTPException(409, "Those scenes do not make a 15–180 s story.")
+    story = stories[0]
+    for existing in record.get("stories") or []:
+        left, right = float(existing.get("start") or 0), float(existing.get("end") or 0)
+        start, end = float(story.get("start") or 0), float(story.get("end") or 0)
+        if min(right, end) - max(left, start) > 0.01:
+            raise HTTPException(409, "That story already exists, or overlaps one already in this set.")
+    title = str(body.title or "").strip()
+    if title:
+        story["title"] = clipset._clean(title)[:120]
+    stories_out = list(record.get("stories") or []) + [story]
+    stories_out.sort(key=lambda item: (float(item.get("start") or 0), str(item.get("id") or "")))
+    record["stories"] = stories_out
+    record["available"] = len(stories_out)
+    record["complete"] = len(stories_out) >= int(record.get("requested") or 0)
+    record["note"] = None
+    record["updated"] = app.time.time()
+    app._store_clip_set(job_id, record)
+    return {"clip_set": record, "story": story}
+
+
 @router.delete("/api/jobs/{job_id}/clip-sets/{set_id}")
 def delete_clip_set(job_id: str, set_id: str, request: Request) -> dict:
     """Remove one Studio moment set. Edits and renders keep their own files."""

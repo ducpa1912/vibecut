@@ -582,7 +582,7 @@ def test_tracklet_clean_layers_map_kinds_to_edit_clean_layers():
     built = cleanup.tracklet_clean_layers(tracklets, attested=True)
     kinds = {layer["id"]: layer["kind"] for layer in built["layers"]}
     assert kinds == {
-        "cl_trk_0001": "plate",
+        "cl_trk_0001": "blur",
         "cl_trk_0002": "blur",
         "cl_trk_0002_plate": "plate",
         "cl_trk_0003": "mask",
@@ -689,7 +689,7 @@ def test_cleanup_layers_route_builds_gated_layers(env):
     built = env.client.post(f"/api/jobs/{JOB_ID}/cleanup/layers", json={})
     assert built.status_code == 200, built.text
     body = built.json()
-    assert [layer["kind"] for layer in body["layers"]] == ["plate"]
+    assert [layer["kind"] for layer in body["layers"]] == ["blur"]
     blocked = {item["tracklet_id"]: item["blocked"] for item in body["refused"]}
     assert blocked["trk_ui"] == "screen_text"
     assert blocked["trk_water"] == "watermark"
@@ -1041,11 +1041,11 @@ def test_live_fixture_b_finds_chinese_lower_band_subtitles(tmp_path):
         any("\u3400" <= char <= "\u9fff" for char in item["text_sample"])
         for item in subtitles
     )
-    plates = [
+    blurred = [
         item for item in report["clean_prefill"]
-        if item["kind"] == "subtitle" and item["action"] == "plate"
+        if item["kind"] == "subtitle" and item["action"] == "blur"
     ]
-    assert plates
+    assert blurred
     print(json.dumps({"fixture": "B", "tracklets": report["tracklets"]}))
 
 

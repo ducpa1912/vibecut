@@ -50,7 +50,7 @@ MAX_TIMELINE = 4 * 3600.0
 MAX_TEXT_LENGTH = 400
 MAX_ID = 64
 
-ASPECTS = ("9:16", "4:5")
+ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
 CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask")
 MOTION_KINDS = ("punch_in", "snap_zoom", "push", "shake")
 TEXT_KINDS = ("hook", "title", "lower_third", "cta", "emphasis")
@@ -362,7 +362,7 @@ def _unknown(value: dict, allowed: frozenset[str], label: str) -> None:
 def normalize_aspect(value: Any) -> str:
     aspect = str(value or "").strip().replace("x", ":").replace("/", ":")
     if aspect not in ASPECTS:
-        raise EditError("aspect must be 9:16 or 4:5.")
+        raise EditError("aspect must be 9:16, 4:5, 1:1, 16:9 or 16:10.")
     return aspect
 
 

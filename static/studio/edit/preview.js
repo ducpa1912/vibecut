@@ -347,7 +347,7 @@ export function mountPreview(root, options = {}) {
   }
 
   function applyAspect(aspect) {
-    const next = aspect === "4:5" ? "4:5" : "9:16";
+    const next = CANVAS[aspect] ? aspect : "9:16";
     if (state.aspect === next && dom.canvas.width === CANVAS[next].width) return;
     state.aspect = next;
     const size = CANVAS[next];

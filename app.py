@@ -6154,7 +6154,7 @@ class ClipSetPlansBody(BaseModel):
     target: int | None = None
 
 
-STORY_ASPECTS = ("9:16", "4:5")
+STORY_ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
 
 
 class StoryRenderBody(BaseModel):
@@ -6725,7 +6725,7 @@ def _queue_story_render(
     if body.quality not in ("final", "720", "draft"):
         raise HTTPException(400, "Quality must be final, 720 or draft.")
     if body.aspect not in STORY_ASPECTS:
-        raise HTTPException(400, "Story renders support 9:16 and 4:5.")
+        raise HTTPException(400, "Story renders support 9:16, 4:5, 1:1, 16:9 and 16:10.")
     plan = _story_plan(job, record, story, set_id)
     if body.target is not None and int(body.target) != int(plan["target"]):
         raise HTTPException(

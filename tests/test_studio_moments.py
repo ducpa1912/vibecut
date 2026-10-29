@@ -19,6 +19,7 @@ def test_extended_and_custom_lengths_reach_three_minutes():
 def test_720p_is_offered_between_final_and_draft():
     assert render._dims("9:16", "720") == (720, 1280)
     assert render._dims("4:5", "720") == (720, 900)
+    assert render._dims("16:10", "720") == (1280, 800)
     assert render._dims("9:16", "final") == (1080, 1920)
     assert render._dims("9:16", "draft") == (540, 960)
 
@@ -69,4 +70,70 @@ def test_moment_cards_carry_a_frame_boxes_and_the_builder():
     assert "function momentFrame(" in stories
     assert '"st-moment-box"' in stories
     assert "function openBuilder(" in stories
-    assert "banScenes: banned" in stories
+    assert "addStory(job.id, activeSetId, ids" in stories
+    assert "banScenes: scenes.map" in stories
+
+
+def test_reveal_path_shows_a_real_file(env, tmp_path, monkeypatch):
+    import app
+
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"not a real video, only a path")
+    calls = []
+    monkeypatch.setattr(app.subprocess, "Popen", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(app.sys, "platform", "darwin")
+    response = TestClient(app.app).post("/api/path/reveal", json={"path": str(source)})
+    assert response.status_code == 200
+    assert calls and calls[0][0][:2] == ["open", "-R"]
+
+
+def test_add_story_route_appends_a_non_overlapping_story(env):
+    import app
+    import clipset
+    from test_clipset import make_scenes
+
+    scenes = make_scenes(12)
+    job = app.load_job(env.job_id)
+    job["status"] = "ready"
+    job["source"]["duration"] = 48.0
+    job["analysis"] = {"scenes": scenes}
+    document = clipset.build_clipset(scenes, None, 48.0, count=3)
+    document.update({
+        "id": "cs_add_test",
+        "job_id": env.job_id,
+        "created": 1.0,
+        "updated": 1.0,
+    })
+    job["clip_sets"] = [document]
+    app.save_job(job)
+
+    response = TestClient(app.app).post(
+        f"/api/jobs/{env.job_id}/clip-sets/cs_add_test/stories",
+        json={"scene_ids": [0, 1, 2, 3, 4], "title": "Custom opening"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["story"]["title"] == "Custom opening"
+    assert len(body["clip_set"]["stories"]) == len(document["stories"]) + 1
+
+    again = TestClient(app.app).post(
+        f"/api/jobs/{env.job_id}/clip-sets/cs_add_test/stories",
+        json={"scene_ids": [0, 1, 2, 3, 4]},
+    )
+    assert again.status_code == 409
+
+
+@needs_node
+def test_platform_safe_zones_and_new_shapes():
+    out = run_module("edit/model.js", """
+        return {
+          shapes: m.ASPECTS,
+          platforms: Object.keys(m.SAFE_ZONE_PRESETS),
+          tiktok: m.safeZoneRects("9:16", "tiktok").safe,
+          wide: m.CANVAS["16:10"],
+        };
+    """, prelude=NO_PAGE)
+    assert "1:1" in out["shapes"] and "16:10" in out["shapes"]
+    assert out["platforms"] == ["auto", "instagram", "tiktok", "youtube", "facebook"]
+    assert out["tiktok"]["x"] == 0.06 and out["tiktok"]["y"] == 0.10
+    assert out["wide"] == {"width": 1920, "height": 1200, "label": "16:10 wide"}

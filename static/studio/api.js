@@ -503,6 +503,22 @@ export function patchClipSet(jobId, setId, stories) {
   });
 }
 
+/** Append one custom story from selected scenes. */
+export function addStory(jobId, setId, sceneIds, title = "") {
+  return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}/stories`), {
+    method: "POST",
+    body: { scene_ids: sceneIds, title },
+  });
+}
+
+/** Show a not-yet-imported video in Finder. */
+export function revealPath(path) {
+  return request("/api/path/reveal", {
+    method: "POST",
+    body: { path },
+  });
+}
+
 /** Remove a moment set that has no stories left. */
 export function deleteClipSet(jobId, setId) {
   return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}`), {
