@@ -24,7 +24,7 @@ def test_the_player_and_download_come_before_the_edit_form():
     assert html.index('id="player-wrap"') < html.index('id="audio-panel"')
     assert 'id="result-ready"' in html
     assert 'id="result-ready-download"' in html
-    assert 'id="audio-panel" class="audio-panel edit-panel">' in html
+    assert 'id="audio-panel" class="audio-panel edit-panel" open>' in html
     assert "dom.resultReady.hidden = true" in script()
     assert "dom.resultReady.hidden = false" in script()
 
