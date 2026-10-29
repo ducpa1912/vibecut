@@ -26,3 +26,11 @@ def test_the_badge_is_styled_by_status():
     css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
     for status in ("ready", "running", "failed"):
         assert f'.translate-badge[data-status="{status}"]' in css
+
+
+def test_opening_a_job_repaints_the_badge_from_the_flag():
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    start = script.index("function prepareResult(job)")
+    end = script.find("\n  function ", start + 10)
+    body = script[start:end if end != -1 else len(script)]
+    assert "warmTranslation();" in body

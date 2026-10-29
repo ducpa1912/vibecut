@@ -2526,6 +2526,7 @@
     loadAudioEngines();
     loadAudioMoods();
     loadTranslateCheck();
+    warmTranslation();
     loadHistory();
     history.replaceState(null, "", jobHash(job.id));
     document.title = `${fileStem(job.source.name)} · VibeCut`;
