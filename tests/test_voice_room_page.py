@@ -83,7 +83,7 @@ def test_voices_page_has_the_classic_look_without_studio_css():
     assert '<body class="vr-root">' in page
     voice = (VOICE / "voice.css").read_text(encoding="utf-8")
     assert "--st-" not in voice
-    classic = _tokens((ROOT / "static" / "style.css").read_text(encoding="utf-8"))
+    classic = _tokens((ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8"))
     mine = _tokens(voice)
     assert classic, "Classic's :root tokens moved"
     for name, value in classic.items():
@@ -97,7 +97,7 @@ def test_voices_page_has_the_classic_look_without_studio_css():
 def test_classic_top_bar_links_the_voice_room_only_when_it_is_on(monkeypatch):
     import app
 
-    index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    index = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
     assert '<a id="classic-voice-room" href="/voices">Voice Room</a>' in index
     assert 'html:not([data-features~="voice_room"]) #classic-voice-room' in index
     api = TestClient(app.app)

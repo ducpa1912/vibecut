@@ -27,6 +27,13 @@
     setupTranslationMode: $("#setup-translation-mode"),
     setupSttLanguage: $("#setup-stt-language"),
     setupMinimaxKey: $("#setup-minimax-key"),
+    setupElevenlabsKey: $("#setup-elevenlabs-key"),
+    setupVoiceEngines: $("#setup-voice-engines"),
+    setupPacks: $("#setup-packs"),
+    setupPacksRefresh: $("#setup-packs-refresh"),
+    setupRightsLock: $("#setup-rights-lock"),
+    firstRunNudge: $("#first-run-nudge"),
+    firstRunSetup: $("#first-run-setup"),
     setupTestOpencode: $("#setup-test-opencode"),
     setupTestOpenrouter: $("#setup-test-openrouter"),
     setupTestStt: $("#setup-test-stt"),
@@ -104,6 +111,10 @@
     progressCancelUrl: $("#progress-cancel-url"),
     resultTitle: $("#result-title"),
     resultMeta: $("#result-meta"),
+    speechNotice: $("#speech-notice"),
+    speechNoticeDetail: $("#speech-notice-detail"),
+    speechRetry: $("#speech-retry"),
+    speechRetryStatus: $("#speech-retry-status"),
     usageReadout: $("#usage-readout"),
     newVideo: $("#new-video"),
     deleteJob: $("#delete-job"),
@@ -394,6 +405,7 @@
     }
     dom.setupOpencodeStatus.classList.toggle("warn", !runtime.opencode);
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
+    if (dom.setupRightsLock) dom.setupRightsLock.checked = (settings.rights || {}).lock !== false;
     const ingest = settings.ingest || {};
     dom.setupIngestProvider.value = ["auto", "ytdlp", "cobalt", "xhs"].includes(ingest.provider)
       ? ingest.provider : "auto";
@@ -431,12 +443,14 @@
     setSecretHint(dom.setupOpencodeKey, !!secrets.opencode, sources.opencode);
     setSecretHint(dom.setupOpenrouterKey, !!secrets.openrouter, sources.openrouter, true);
     setSecretHint(dom.setupMinimaxKey, !!secrets.minimax, sources.minimax);
+    setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
     setSecretHint(dom.setupCobaltKey, !!secrets.cobalt, sources.cobalt);
     setSecretHint(dom.setupXhsToken, !!secrets.xhs, sources.xhs);
     [
       dom.setupOpencodeKey,
       dom.setupOpenrouterKey,
       dom.setupMinimaxKey,
+      dom.setupElevenlabsKey,
       dom.setupCobaltKey,
       dom.setupXhsToken,
       dom.setupXhsCookie,
@@ -445,6 +459,8 @@
     });
     state.setup = settings;
     state.setupSecrets = secrets;
+    renderSetupEngines();
+    renderFirstRunNudge();
     if (dom.speechNote && !dom.speechNote.textContent.includes("unavailable")) {
       dom.speechNote.textContent = "Apple / local Whisper";
     }
@@ -470,7 +486,9 @@
   async function openSetup() {
     dom.setup.hidden = false;
     dom.setupStatus.textContent = "Loading…";
-    await Promise.all([loadSetup(), loadIngestStatus()]);
+    await Promise.all([
+      loadSetup(), loadIngestStatus(), loadAudioEngines(), loadPackStatus(),
+    ]);
   }
 
   function closeSetup() {
@@ -482,10 +500,81 @@
       opencode: dom.setupOpencodeKey.value.trim(),
       openrouter: dom.setupOpenrouterKey.value.trim(),
       minimax: dom.setupMinimaxKey.value.trim(),
+      elevenlabs: dom.setupElevenlabsKey?.value.trim() || "",
       cobalt: dom.setupCobaltKey.value.trim(),
       xhs: dom.setupXhsToken.value.trim(),
     };
     return Object.fromEntries(Object.entries(values).filter(([, value]) => value));
+  }
+
+  const SETUP_VOICE_ORDER = [
+    ["say", "Apple voices"],
+    ["kokoro", "Kokoro"],
+    ["heygen", "HeyGen Voice Turbo"],
+    ["fish", "Fish Audio"],
+    ["gemini", "Gemini TTS"],
+    ["minimax", "MiniMax Speech"],
+    ["elevenlabs", "ElevenLabs"],
+  ];
+
+  function renderSetupEngines() {
+    if (!dom.setupVoiceEngines) return;
+    const voices = state.audioEngines?.voices;
+    if (!voices) {
+      dom.setupVoiceEngines.innerHTML = '<p class="setup-hint">Voice engine status unavailable. Reopen Setup to check again.</p>';
+      return;
+    }
+    dom.setupVoiceEngines.innerHTML = SETUP_VOICE_ORDER.map(([id, label]) => {
+      const info = voices[id] || {};
+      const ready = info.available === true;
+      const detail = info.install || (ready ? "Ready." : "Needs setup.");
+      return `
+        <div class="setup-engine-row">
+          <div><strong>${esc(label)}</strong><p class="setup-hint">${esc(detail)}</p></div>
+          <span class="setup-chip ${ready ? "ok" : "warn"}">${ready ? "Ready" : "Needs setup"}</span>
+        </div>`;
+    }).join("");
+  }
+
+  async function loadPackStatus() {
+    if (!dom.setupPacks) return;
+    try {
+      const data = await api("/api/classic/packs");
+      const list = data.packs || [];
+      if (!list.length) {
+        dom.setupPacks.innerHTML = '<p class="setup-hint">No optional packs are listed in this build.</p>';
+        return;
+      }
+      dom.setupPacks.innerHTML = list.map((pack) => {
+        const installed = pack.installed === true;
+        // Engines installed outside the pack (pip, Homebrew) already work.
+        const usable = !installed && pack.usable === true;
+        const size = Number(pack.installed_size || pack.size_bytes || 0);
+        const detail = installed
+          ? `${pack.installed_version || pack.version || ""} on disk${size ? ` · ${formatSize(size)}` : ""}.`
+          : usable
+            ? pack.usable_detail || "Already works on this Mac."
+            : `Not on disk${size ? ` · ${formatSize(size)} download` : ""}. No install starts from Classic.`;
+        const chip = installed ? "Installed" : usable ? "Ready" : "Not installed";
+        return `
+          <div class="setup-engine-row">
+            <div><strong>${esc(pack.name || pack.id)}</strong><p class="setup-hint">${esc(detail)}</p></div>
+            <span class="setup-chip ${installed || usable ? "ok" : "warn"}">${chip}</span>
+          </div>`;
+      }).join("");
+    } catch (error) {
+      dom.setupPacks.innerHTML = `<p class="setup-hint">${esc(error.message)}</p>`;
+    }
+  }
+
+  function renderFirstRunNudge() {
+    if (!dom.firstRunNudge) return;
+    let saved = false;
+    try { saved = localStorage.getItem("vibecut.setupSaved") === "1"; } catch (_) { saved = true; }
+    const secrets = state.setupSecrets || {};
+    const hasCloudKey = ["opencode", "openrouter", "minimax", "elevenlabs"]
+      .some((name) => secrets[name] === true);
+    dom.firstRunNudge.hidden = saved || hasCloudKey;
   }
 
   async function saveSetup() {
@@ -508,6 +597,9 @@
           },
           stt: {
             language: dom.setupSttLanguage.value,
+          },
+          rights: {
+            lock: dom.setupRightsLock ? dom.setupRightsLock.checked : true,
           },
           ingest: {
             provider: dom.setupIngestProvider.value || "auto",
@@ -541,10 +633,13 @@
         });
       }
       applySetup(data);
+      try { localStorage.setItem("vibecut.setupSaved", "1"); } catch (_) { /* ignore */ }
       dom.setupStatus.textContent = "Saved. Local fallback still active.";
       toast("Setup saved.");
       await loadIngestStatus(true);
       await loadAudioEngines();
+      await loadPackStatus();
+      renderFirstRunNudge();
       refreshAudioStatus();
     } catch (error) {
       dom.setupStatus.textContent = error.message;
@@ -881,6 +976,8 @@
     dom.setupXhsOpen.addEventListener("click", openXhsSignIn);
     dom.setupXhsCopy.addEventListener("click", copyXhsServiceUrl);
     dom.setupXhsInvite.addEventListener("click", copyXhsInvite);
+    dom.setupPacksRefresh?.addEventListener("click", loadPackStatus);
+    dom.firstRunSetup?.addEventListener("click", openSetup);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !dom.setup.hidden) closeSetup();
     });
@@ -1424,6 +1521,7 @@
       if (pick) useHook(Number(pick.dataset.labHook));
     });
     dom.transcriptToggle.addEventListener("click", toggleTranscript);
+    dom.speechRetry?.addEventListener("click", retrySpeech);
     dom.transcriptPanel.addEventListener("click", (event) => {
       const row = event.target.closest("[data-transcript-time]");
       if (!row) return;
@@ -2342,11 +2440,83 @@
     ].filter(Boolean).join(" + ");
     const deep = analysis.deep_count ?? analysis.scene_count;
     dom.resultMeta.textContent = `${fmtDuration(job.source.duration)} source · ${analysis.scene_count} scenes · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    renderSpeechNotice();
     renderUsage();
     renderHook();
     renderPlan();
     renderScenes();
     updateRenderPanel();
+  }
+
+  const SPEECH_ENGINE_LABELS = {
+    apple: "Apple Speech",
+    whisper: "Local Whisper",
+    openrouter: "OpenRouter",
+    groq: "Groq",
+    deepgram: "Deepgram",
+  };
+
+  function speechFailure(engine) {
+    const failed = !!engine?.stt_enabled && !engine?.whisper;
+    if (!failed || state.job?.analysis?.transcript) return "";
+    const errors = Array.isArray(engine.stt_errors) ? engine.stt_errors : [];
+    // An engine that ran and failed explains more than a route that was never
+    // set up (a cloud engine with no key says only "not available").
+    const ran = errors.filter((item) => item && item.error && item.error !== "Speech engine is not available.");
+    const pick = ran[ran.length - 1] || [...errors].reverse().find((item) => item && item.error);
+    if (!pick) return engine.stt_error || "No speech engine returned a transcript.";
+    const label = SPEECH_ENGINE_LABELS[pick.provider] || pick.provider || "";
+    return label ? `${label}: ${pick.error}` : pick.error;
+  }
+
+  function renderSpeechNotice() {
+    if (!dom.speechNotice) return;
+    const reason = speechFailure(state.job?.analysis?.engine);
+    dom.speechNotice.hidden = !reason;
+    if (!reason) {
+      if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = "";
+      return;
+    }
+    if (dom.speechNoticeDetail) dom.speechNoticeDetail.textContent = `Last error: ${reason}`;
+  }
+
+  async function retrySpeech() {
+    if (!state.job) return;
+    const jobId = state.job.id;
+    dom.speechRetry.disabled = true;
+    if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = "Reading speech…";
+    try {
+      let result = await api(`/api/jobs/${jobId}/transcribe`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      let ticks = 0;
+      // Only a running task (202) carries task_id. A finished one returns its
+      // result, and a task the server no longer tracks answers "idle".
+      while (result && result.task_id && ticks < 300) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        result = await api(`/api/jobs/${jobId}/voice-tasks/transcribe`);
+        ticks += 1;
+        if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = `Reading speech… ${ticks * 2}s`;
+        if (state.job?.id !== jobId) return;
+      }
+      // The job is the truth: reload it and read its transcript.
+      await openJob(jobId);
+      if (state.job?.id !== jobId) return;
+      // The job API sends the transcript summary: segments is a count there.
+      const segments = state.job?.analysis?.transcript?.segments;
+      const lines = Array.isArray(segments) ? segments.length : Number(segments) || 0;
+      if (lines) {
+        if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = `Transcript ready · ${lines} lines.`;
+        toast("Speech read again.");
+      } else if (dom.speechRetryStatus) {
+        dom.speechRetryStatus.textContent = "No transcript returned. Check Setup → Transcription.";
+      }
+    } catch (error) {
+      if (dom.speechRetryStatus) dom.speechRetryStatus.textContent = error.message;
+    } finally {
+      dom.speechRetry.disabled = false;
+    }
   }
 
   function renderUsage() {
@@ -3239,7 +3409,7 @@
         <button class="lab-card" data-lab-hook="${hook.scene}">
           <img src="${esc(withToken(hook.thumb_url))}" alt="" loading="lazy">
           <span class="lab-copy">
-            <b>${Math.round(hook.hook)} hook</b>
+            <b>${roundScoreHalfEven(hook.hook)} hook</b>
             <small>${esc(fmtTime(hook.start, 1))} · ${hook.dur.toFixed(1)}s · ${hook.clip_count} beats · ${hook.plan_total.toFixed(0)}s cut</small>
             <small>${esc((hook.why || hook.ocr || hook.speech || "no text").slice(0, 120))}</small>
           </span>
@@ -3800,8 +3970,26 @@
   }
 
   function audioBlockReason() {
-    if (state.audio.mode === "music" && musicSourceMode() === "none") {
+    const mode = state.audio.mode;
+    if (mode === "music" && musicSourceMode() === "none") {
       return "Music mode needs a source. Choose Use my sound or Generate before rendering.";
+    }
+    const music = state.audioEngines?.music;
+    if (["music", "full"].includes(mode) && musicSourceMode() === "generate" && music) {
+      const ready = ["minimax-music", "lyria-clip"].filter((id) => music[id]?.available);
+      if (!ready.length) {
+        return "Music generation needs a MiniMax or OpenRouter key. Add one in Setup, or choose Use my sound.";
+      }
+      const selected = state.audio.music;
+      if (selected && music[selected] && music[selected].available === false) {
+        return `${musicLabel(selected)} is unavailable. Add a key in Setup, or choose the other music engine.`;
+      }
+    }
+    const voices = state.audioEngines?.voices;
+    if (["bed", "voice", "full"].includes(mode) && state.audio.source !== "upload"
+        && voices && state.audio.engine && voices[state.audio.engine]
+        && voices[state.audio.engine].available === false) {
+      return `${engineLabel(state.audio.engine)} is unavailable. Add a key in Setup, or choose Use my recording.`;
     }
     return "";
   }
@@ -3920,12 +4108,34 @@
     }
   }
 
+  function shownRender() {
+    const finalRecord = findRender("final");
+    const draftRecord = findRender("draft");
+    const hookId = currentHookId();
+    const finalMatches = finalRecord && finalRecord.hook === hookId;
+    const draftMatches = draftRecord && draftRecord.hook === hookId;
+    const draftNewer = draftMatches && draftRecord.status === "ready"
+      && (!finalMatches || finalRecord.status !== "ready"
+        || (draftRecord.updated || 0) > (finalRecord.updated || 0));
+    if (draftNewer) return draftRecord;
+    if (finalMatches && finalRecord.status === "ready") return finalRecord;
+    return null;
+  }
+
   async function createReviewLink() {
     if (!state.job) return;
+    // Share the artifact on screen, not whichever render wrote reel_<target>.mp4 last.
+    const artifactId = String(shownRender()?.artifact_id || "");
     try {
+      const query = artifactId
+        ? ""
+        : `?target=${state.target}&aspect=${encodeURIComponent(state.aspect)}`;
       const result = await api(
-        `/api/jobs/${state.job.id}/share?target=${state.target}&aspect=${encodeURIComponent(state.aspect)}`,
-        { method: "POST" },
+        `/api/jobs/${state.job.id}/share${query}`,
+        {
+          method: "POST",
+          body: JSON.stringify(artifactId ? { artifact_id: artifactId } : {}),
+        },
       );
       const url = `${location.origin}${result.url}`;
       try {
@@ -3939,12 +4149,49 @@
     }
   }
 
-  function exportCut(kind) {
+  async function exportCut(kind) {
     if (!state.job) return;
-    const url = `/api/jobs/${state.job.id}/export/${kind}?target=${state.target}`
-      + `&order=${encodeURIComponent(state.order)}`
-      + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : "");
-    window.open(url, "_blank");
+    const clips = state.edited && state.plan?.clips?.length ? state.plan.clips : null;
+    const headers = {};
+    const token = tokenValue();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    // Fetch, not a new tab: a refusal (no transcript) shows as a toast
+    // instead of a raw JSON tab.
+    const request = clips
+      ? fetch(`/api/classic/jobs/${state.job.id}/export/${kind}`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: state.target,
+          order: state.order,
+          hook_scene: state.overrideHook,
+          clips,
+        }),
+      })
+      : fetch(`/api/jobs/${state.job.id}/export/${kind}?target=${state.target}`
+        + `&order=${encodeURIComponent(state.order)}`
+        + (state.overrideHook !== null ? `&hook_scene=${state.overrideHook}` : ""), { headers });
+    try {
+      const response = await request;
+      if (!response.ok) {
+        let detail = response.statusText;
+        try { detail = (await response.json()).detail || detail; } catch (_) { /* ignore */ }
+        throw new Error(detail);
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = /filename="([^"]+)"/.exec(disposition);
+      const name = match ? match[1] : `cut-${state.target}s.${kind}`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast(clips ? `Exported the edited cut as ${kind.toUpperCase()}.` : `Exported ${kind.toUpperCase()}.`);
+    } catch (error) {
+      toast(error.message);
+    }
   }
 
   function clipsForHook(hookScene) {
@@ -4111,6 +4358,7 @@
     loadAudioTracks();
     refreshAudioStatus();
     loadAudioScript();
+    renderSetupEngines();
   }
 
   function translateLabel(id) {
@@ -4627,7 +4875,8 @@
     if (finalMatches && finalRecord.status === "ready") {
       show(finalRecord, "final");
       dom.renderNote.textContent = blocked
-        || state.plan.note || `${finalRecord.clip_count} beats · original audio · no watermark`;
+        || state.plan.note
+        || `${finalRecord.clip_count} beats · ${renderAudioNote()} · no watermark`;
       renderButton(`Render ${target}s again`);
       return;
     }
@@ -4643,7 +4892,17 @@
     const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080" };
     dom.renderNote.textContent = blocked
       || state.plan.note
-      || `${state.aspect} ${dims[state.aspect] || ""} · original audio${state.captions ? " · captions" : ""} · no watermark`;
+      || `${state.aspect} ${dims[state.aspect] || ""} · ${renderAudioNote()}${state.captions ? " · captions" : ""} · no watermark`;
+  }
+
+  function renderAudioNote() {
+    switch (state.audio.mode) {
+      case "bed": return "voice-over · original audio bed";
+      case "voice": return "dubbed voice";
+      case "music": return "music bed";
+      case "full": return "new voice + music";
+      default: return "original audio";
+    }
   }
 
   function renderButton(label) {
@@ -4908,9 +5167,14 @@
       const plan = snapshot.plan || {};
       const path = String(render.path || entry.path || "");
       const file = path.split("/").pop();
-      const link = file
-        ? `<a class="ghost small" href="${esc(withToken(`/api/jobs/${state.job.id}/media/${encodeURIComponent(file)}`))}" download>Download reel</a>`
-        : "";
+      const artifactId = String(entry.artifact_id || render.artifact_id || "");
+      // The reel_<target>.mp4 name is shared by every render of that length.
+      // Prefer the immutable artifact so an old row downloads its own cut.
+      const link = artifactId
+        ? `<a class="ghost small" href="${esc(withToken(`/api/jobs/${state.job.id}/artifacts/${encodeURIComponent(artifactId)}/media/reel.mp4`))}" download>Download reel</a>`
+        : file
+          ? `<a class="ghost small" href="${esc(withToken(`/api/jobs/${state.job.id}/media/${encodeURIComponent(file)}`))}" download>Download reel</a>`
+          : "";
       body = `
         <div class="history-snapshot">
           <p class="hint">${esc(`${plan.clip_count || 0} beats · ${Number(plan.total || 0).toFixed(1)}s · hook ${plan.hook_scene ?? "auto"} · ${render.quality || entry.quality || ""} · ${render.aspect || entry.aspect || ""}`)}</p>
@@ -5056,7 +5320,7 @@
       </div>
       <div class="drawer-kicker">Scene ${scene.id + 1} · ${esc(role || "outside cut")}</div>
       <h3 class="drawer-title">${esc(fmtTime(scene.start, 1))} – ${esc(fmtTime(scene.end, 1))}</h3>
-      <p class="drawer-meta">${scene.dur.toFixed(2)}s · hook ${Math.round(scene.hook)} · interest ${Math.round(scene.score)}</p>
+      <p class="drawer-meta">${scene.dur.toFixed(2)}s · hook ${roundScoreHalfEven(scene.hook)} · interest ${roundScoreHalfEven(scene.score)}</p>
       ${ocr}
       ${speech}
       <div class="drawer-section"><span class="label">Why ${esc(role || "this beat")}</span><p class="drawer-why">${esc(why)}</p></div>
@@ -5335,11 +5599,22 @@
     return text.length <= limit ? text : `${text.slice(0, limit - 1).trim()}…`;
   }
 
+  function roundScoreHalfEven(value) {
+    const number = Number(value) || 0;
+    const floor = Math.floor(number);
+    // Python's format(score, ".0f") rounds halves to even; match it so the
+    // hook-lab badge and the "Hook score" sentence never differ by one.
+    if (Math.abs(number - floor - 0.5) < 1e-9) {
+      return floor % 2 === 0 ? floor : floor + 1;
+    }
+    return Math.round(number);
+  }
+
   function scoreItem(label, value) {
     const safe = clamp(Number(value) || 0, 0, 100);
     return `
       <div class="score-item">
-        <div class="label"><span>${esc(label)}</span><b>${Math.round(safe)}</b></div>
+        <div class="label"><span>${esc(label)}</span><b>${roundScoreHalfEven(safe)}</b></div>
         <div class="mini-bar"><i style="width:${safe}%"></i></div>
       </div>`;
   }

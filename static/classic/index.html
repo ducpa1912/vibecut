@@ -1,0 +1,1232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>VibeCut — Classic</title>
+  <link rel="stylesheet" href="/static/classic/style.css?v=0.12.0">
+  <link rel="stylesheet" href="/static/classic/creator.css?v=0.14.0">
+  <!-- vibecut:edition -->
+  <style>
+    /* Edition switches (editions.py): hide links to views and features this
+       build does not ship. The code stays; only the way in is hidden. */
+    html:not([data-views~="studio"]) #classic-studio-return,
+    html:not([data-views~="classic"]) #st-use-classic,
+    html:not([data-features~="voice_room"]) #classic-voice-room,
+    html:not([data-features~="voice_room"]) #st-voice-room { display: none !important; }
+  </style>
+  <script>
+    /* Choose the workspace before first paint. The server writes the build's
+       edition above (window.VIBECUT_EDITION); without it both views show and
+       Studio opens first. A saved or ?classic=1 / ?studio=1 choice is honoured
+       only when this build ships that view. */
+    (function () {
+      var edition = window.VIBECUT_EDITION || {
+        views: ["studio", "classic"], default_view: "studio", features: ["voice_room"]
+      };
+      var views = edition.views || ["studio", "classic"];
+      function allowed(name) { return views.indexOf(name) !== -1; }
+      var mode = edition.default_view || views[0];
+      var requested = "";
+      try {
+        var params = new URLSearchParams(window.location.search);
+        if (params.get("classic") === "1") requested = "classic";
+        else if (params.get("studio") === "1") requested = "studio";
+      } catch (_) { /* URL parsing is unavailable; fall through */ }
+      if (requested && !allowed(requested)) requested = "";
+      try {
+        if (requested) localStorage.setItem("vibecut.editor", requested);
+        var stored = localStorage.getItem("vibecut.editor");
+        if (stored && allowed(stored)) mode = stored;
+      } catch (_) { /* storage may be unavailable; the default still opens */ }
+      if (requested) mode = requested;
+      var root = document.documentElement;
+      root.dataset.editor = mode;
+      root.dataset.views = views.join(" ");
+      root.dataset.features = (edition.features || []).join(" ");
+    })();
+  </script>
+  <script src="/static/classic/app.js?v=0.12.0" defer></script>
+  <script src="/static/classic/creator.js?v=0.14.0" defer></script>
+</head>
+<body>
+  <header class="shell topbar">
+    <a class="brand" href="/" id="brand">VibeCut<span class="brand-mark"></span></a>
+    <div class="topbar-right">
+      <a id="classic-studio-return" href="/?studio=1">Open Studio</a>
+      <a id="classic-voice-room" href="/voices">Voice Room</a>
+      <button id="creator-open" class="ghost small" type="button">Creator</button>
+      <button id="setup-open" class="ghost small" type="button">Setup</button>
+      <span class="local-pill"><i class="live-dot"></i> local only</span>
+      <span id="health" class="health">checking engine…</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <div id="first-run-nudge" class="first-run-nudge" role="status" hidden>
+      <span>Optional: add keys and voices in Setup</span>
+      <button id="first-run-setup" class="ghost small" type="button">Open Setup</button>
+    </div>
+    <!-- 01 / ingest -->
+    <section id="ingest-view">
+      <div class="hero">
+        <p class="eyebrow"><span>01</span> ingest</p>
+        <h1>Long video in.<br><em>Reels that keep the vibe.</em></h1>
+        <p class="lede">Drop a video. VibeCut finds the hook, the beats and the crop. Then cuts a 15, 30 or 60 second reel without flattening the original.</p>
+      </div>
+
+      <div class="ingest-grid">
+        <div class="ingest-panel">
+          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Choose a video">
+            <input id="file-input" type="file" accept="video/*" hidden>
+            <div class="drop-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15.5V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3.5"/></svg>
+            </div>
+            <div class="drop-title">Drop a video</div>
+            <div class="drop-sub">or click to choose · files stay on this machine</div>
+          </div>
+
+          <div id="file-card" class="file-card" hidden>
+            <div class="file-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9Z"/></svg>
+            </div>
+            <div class="file-copy">
+              <strong id="file-name"></strong>
+              <span id="file-info"></span>
+            </div>
+            <button id="clear-file" class="icon-btn" aria-label="Remove file">×</button>
+          </div>
+
+          <form id="url-form" class="url-ingest" autocomplete="off" novalidate>
+            <div class="url-head">
+              <label class="url-label" for="url-input">Paste a video link</label>
+              <span id="url-provider-label" class="url-auto">provider auto</span>
+            </div>
+            <div class="url-input-row">
+              <input id="url-input" name="url" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://… or a RedNote share link">
+              <button id="url-get" class="primary small" type="submit">Get video</button>
+            </div>
+            <p id="url-hint" class="url-hint">yt-dlp for most sites · XHS / RedNote for share links.</p>
+            <div id="url-status" class="url-status" role="status" aria-live="polite" hidden></div>
+            <div id="url-error" class="error url-error" role="alert" hidden></div>
+          </form>
+
+          <details class="path-row">
+            <summary>Use a local path instead <span>no copy</span></summary>
+            <div class="path-input">
+              <input id="path-input" type="text" spellcheck="false" placeholder="/Users/you/Movies/long-video.mp4">
+              <button id="path-load" class="ghost small">Load</button>
+            </div>
+          </details>
+
+          <div class="options">
+            <label class="check">
+              <input id="opt-crop" type="checkbox" checked>
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>Smart crop</strong><small>follows the subject</small></span>
+            </label>
+            <label class="check">
+              <input id="opt-track" type="checkbox" checked>
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>Track crop</strong><small>smoothed per beat</small></span>
+            </label>
+            <label class="check">
+              <input id="opt-ocr" type="checkbox" checked>
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>Read text &amp; faces</strong><small>Apple Vision · local</small></span>
+            </label>
+            <label class="check" id="speech-check">
+              <input id="opt-speech" type="checkbox">
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>Transcribe speech</strong><small id="speech-note">local Whisper</small></span>
+            </label>
+          </div>
+
+          <div class="action-row">
+            <button id="analyze" class="primary" disabled>Dissect video <span class="arrow">↗</span></button>
+            <span class="hint" id="ingest-note">ffmpeg cuts first. Analysis follows.</span>
+          </div>
+          <div id="ingest-error" class="error" hidden></div>
+        </div>
+
+        <aside class="principle-panel">
+          <p class="eyebrow">the cut</p>
+          <ol class="principle-list">
+            <li><span>01</span><div><strong>Hook first</strong><p>A strong visual, line or action opens the reel.</p></div></li>
+            <li><span>02</span><div><strong>Keep the story</strong><p>Beats stay in order. No random highlights.</p></div></li>
+            <li><span>03</span><div><strong>Land the ending</strong><p>A payoff beat closes the cut.</p></div></li>
+            <li><span>04</span><div><strong>Follow the subject</strong><p>9:16 crop tracks faces and saliency.</p></div></li>
+          </ol>
+          <div class="local-note"><i class="live-dot"></i>No cloud. No account. No watermark.</div>
+        </aside>
+      </div>
+
+      <section id="recent-section" class="recent-section" hidden>
+        <div class="section-head">
+          <div><p class="eyebrow">recent</p><h2>Recent cuts</h2></div>
+          <span id="recent-count" class="muted"></span>
+        </div>
+        <p id="recent-error" class="error recent-alert" role="alert" hidden></p>
+        <div id="recent" class="recent-grid"></div>
+      </section>
+    </section>
+
+    <!-- 02 / progress -->
+    <section id="progress-view" hidden>
+      <div class="progress-wrap">
+        <p class="eyebrow"><span>02</span> dissect</p>
+        <h2 id="progress-title">Reading the video</h2>
+        <p id="progress-file" class="progress-file"></p>
+
+        <div class="progress-line">
+          <span id="progress-pct" class="mono">0%</span>
+          <div class="bar"><i id="progress-bar"></i></div>
+          <span id="progress-elapsed" class="mono">0:00</span>
+        </div>
+        <p id="progress-message" class="progress-message">Warming up</p>
+
+        <div class="stage-list" id="stages">
+          <div data-stage="scanning"><span class="stage-dot"></span><div><strong>Scan cuts</strong><small>ffmpeg scene detection</small></div></div>
+          <div data-stage="reading"><span class="stage-dot"></span><div><strong>Read frames</strong><small>stills, text, faces, audio</small></div></div>
+          <div data-stage="scoring"><span class="stage-dot"></span><div><strong>Choose hook</strong><small>score beats · build three cuts</small></div></div>
+          <div data-stage="ready"><span class="stage-dot"></span><div><strong>Ready</strong><small>15s · 30s · 60s</small></div></div>
+        </div>
+
+        <p class="hint progress-hint">Runs locally. Leave this tab open.</p>
+        <div id="progress-error" class="error" hidden></div>
+        <div class="progress-actions">
+          <button id="progress-cancel-url" class="ghost" hidden>Cancel download</button>
+          <button id="progress-back" class="ghost" hidden>Back to ingest</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 / result -->
+    <section id="result-view" hidden>
+      <div class="result-top">
+        <div>
+          <p class="eyebrow"><span>03</span> cut</p>
+          <h2 id="result-title">—</h2>
+          <p id="result-meta" class="result-meta"></p>
+          <p id="usage-readout" class="hint"></p>
+        </div>
+        <div class="result-actions">
+          <button id="new-video" class="ghost">New video</button>
+          <select id="clean-profile" class="ghost small" aria-label="Clean profile">
+            <option value="workfiles">Work files</option>
+            <option value="renders">Renders</option>
+            <option value="all">All but source</option>
+          </select>
+          <button id="clean-job" class="ghost">Clean</button>
+          <button id="delete-job" class="ghost danger">Delete</button>
+        </div>
+      </div>
+
+      <div id="speech-notice" class="speech-notice" role="status" hidden>
+        <p><strong>Speech was on, but no transcript came back.</strong> <span id="speech-notice-detail"></span></p>
+        <p class="hint">Try Retry speech first; a busy Mac can make local speech fail once. If it fails again, open Setup → Transcription and click Check local STT. The rest of the analysis is unchanged.</p>
+        <div class="speech-notice-actions">
+          <button id="speech-retry" class="ghost small" type="button">Retry speech</button>
+          <span id="speech-retry-status" class="hint" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <div class="hook-panel">
+        <div class="hook-frame">
+          <img id="hook-img" alt="Hook still">
+          <span class="hook-stamp">hook</span>
+          <span id="hook-crop" class="crop-chip"></span>
+        </div>
+        <div class="hook-info">
+          <div class="hook-kicker">Opening beat <span id="hook-time" class="mono"></span></div>
+          <p id="hook-copy" class="hook-copy"></p>
+          <p id="hook-why" class="hook-why"></p>
+          <div id="hook-scores" class="score-cluster"></div>
+          <div id="hook-tags" class="tag-row"></div>
+          <div class="hook-actions">
+            <button id="hook-change" class="text-btn">Pick another hook →</button>
+            <button id="hook-lab-toggle" class="text-btn">Hook lab →</button>
+            <button id="transcript-toggle" class="text-btn" hidden>CC · transcript</button>
+          </div>
+        </div>
+        <div id="hook-lab" class="hook-lab" hidden></div>
+        <div id="transcript-panel" class="transcript-panel" hidden></div>
+      </div>
+
+      <section id="moments-section" class="moments-section">
+        <div class="section-head">
+          <div><p class="eyebrow">moments</p><h3>Moments</h3></div>
+          <div class="scene-tools">
+            <div class="sort-tabs" id="sort-tabs">
+              <button data-sort="best" class="active">Best</button>
+              <button data-sort="timeline">Timeline</button>
+            </div>
+            <span id="scene-count" class="muted"></span>
+            <button id="moments-expand" class="ghost small" type="button">Expand</button>
+          </div>
+        </div>
+        <div id="moments-rail" class="moments-rail" aria-label="Moments"></div>
+        <input id="moments-scrub" class="moments-scrub" type="range" min="0" max="0" value="0" aria-label="Scrub moments">
+        <div id="moments-full" class="moments-full" hidden>
+          <div id="scene-grid" class="scene-grid"></div>
+          <button id="load-more" class="ghost load-more" hidden>Show more</button>
+        </div>
+      </section>
+
+      <section class="export-panel smart-cut-panel">
+        <div class="export-head">
+          <div><p class="eyebrow">smart cut</p><h3>Smart Cut</h3></div>
+          <div id="target-tabs" class="target-tabs" role="tablist" aria-label="Reel length">
+            <button data-target="15" role="tab">15<span>s</span></button>
+            <button data-target="30" role="tab" class="active">30<span>s</span></button>
+            <button data-target="60" role="tab">60<span>s</span></button>
+          </div>
+        </div>
+
+        <div class="plan-meta">
+          <span id="plan-total">—</span>
+          <span id="plan-badge" class="badge">auto hook</span>
+          <button id="reset-hook" class="text-btn" hidden>Reset hook</button>
+          <button id="edit-cut" class="text-btn">Edit cut</button>
+        </div>
+        <div id="timeline" class="timeline" aria-label="Smart Cut timeline"></div>
+        <div id="timeline-drop" class="timeline-drop" hidden>Drop a moment here to add it · drag a clip here to remove it</div>
+        <p id="plan-why" class="plan-why"></p>
+        <details id="plan-reasoning" class="plan-reasoning" hidden>
+          <summary>Why this cut</summary>
+          <div id="plan-reasoning-body" class="plan-reasoning-body"></div>
+        </details>
+        <div id="edit-bar" class="edit-bar" hidden>
+          <span id="edit-hint" class="hint">← / → select · Alt+← / → reorder · − / + trim · Del remove · e edit · s save · r draft · Space play</span>
+          <input id="variant-name" class="variant-name" placeholder="Variant name" maxlength="40">
+          <button id="save-variant" class="ghost small">Save variant</button>
+          <button id="done-edit" class="ghost small">Done</button>
+        </div>
+        <details id="advanced-settings" class="advanced-settings">
+          <summary>Advanced</summary>
+          <div class="advanced-body">
+            <label class="caption-check"><input id="arc-order" type="checkbox"> Story arc order</label>
+            <select id="preset-select" class="ghost small" aria-label="Platform preset">
+              <option value="">Custom</option>
+              <option value="tiktok">TikTok</option>
+              <option value="reels">Reels</option>
+              <option value="shorts">Shorts</option>
+              <option value="square">Square</option>
+              <option value="landscape">Landscape</option>
+            </select>
+            <select id="aspect-select" class="ghost small" aria-label="Aspect ratio">
+              <option value="9:16">9:16</option>
+              <option value="4:5">4:5</option>
+              <option value="1:1">1:1</option>
+              <option value="16:9">16:9</option>
+            </select>
+            <label class="caption-check"><input id="captions" type="checkbox"> Captions</label>
+            <button id="render-all" class="ghost small">All 15/30/60</button>
+            <button id="render-ab" class="ghost small">A/B hooks</button>
+            <div id="variant-list" class="variant-list"></div>
+          </div>
+        </details>
+
+        <div class="render-row">
+          <button id="render" class="primary">Render 30s reel <span class="arrow">↗</span></button>
+          <button id="render-draft" class="ghost small">Draft</button>
+          <button id="render-cancel" class="ghost small" hidden>Cancel</button>
+          <span id="render-note" class="hint">Vertical 1080×1920 · original audio</span>
+        </div>
+        <div id="render-progress" class="render-progress" hidden>
+          <div class="bar"><i></i></div>
+          <span></span>
+        </div>
+        <div id="render-error" class="error" hidden></div>
+
+        <section id="mixer-panel" class="mixer-panel" hidden>
+          <div class="mixer-head">
+            <span class="label">Automation mixer</span>
+            <span class="hint">click a lane to add a node · drag it anywhere · double-click a node to remove</span>
+            <button id="mixer-reset" class="ghost small" type="button">Reset 100%</button>
+            <button id="mixer-smooth" class="ghost small" type="button">Flatten</button>
+            <span id="mixer-readout" class="hint"></span>
+          </div>
+          <canvas id="mixer-canvas" height="220"></canvas>
+          <div class="mixer-legend">
+            <span><i class="mixer-swatch sw-orig"></i> original audio</span>
+            <span><i class="mixer-swatch sw-music"></i> original music stem</span>
+            <span><i class="mixer-swatch sw-voice"></i> voice line</span>
+            <span><i class="mixer-swatch sw-bed"></i> music line</span>
+          </div>
+        </section>
+
+        <details id="audio-panel" class="audio-panel" open>
+          <summary>Audio · rewrite, voice, music</summary>
+
+          <div class="audio-mode-field">
+            <span>Mode</span>
+            <div id="audio-mode-tabs" class="audio-mode-tabs">
+              <button type="button" data-audio-mode="keep" class="active">Original</button>
+              <button type="button" data-audio-mode="bed">Voice-over</button>
+              <button type="button" data-audio-mode="voice">Dub</button>
+              <button type="button" data-audio-mode="music">Music</button>
+              <button type="button" data-audio-mode="full">Full Replace</button>
+            </div>
+            <select id="audio-mode" hidden>
+              <option value="keep">Original</option>
+              <option value="bed">Voice-over · new voice over original audio</option>
+              <option value="voice">Dub · replace only the voice</option>
+              <option value="music">Music · replace original audio</option>
+              <option value="full">Full Replace · new voice + new music</option>
+            </select>
+          </div>
+
+          <section id="audio-rewrite-step" class="audio-step">
+            <div class="audio-step-head">
+              <span class="audio-step-num">1</span>
+              <div><h4>Rewrite</h4><p>Translate, then rewrite for this cut. Nothing runs until you press play.</p></div>
+            </div>
+            <div class="audio-step-body">
+              <div class="audio-grid">
+                <label class="audio-field">
+                  <span>Language</span>
+                  <select id="audio-lang"></select>
+                </label>
+                <label class="audio-field">
+                  <span>Script style</span>
+                  <select id="audio-style">
+                    <option value="smooth">Smooth · natural short script</option>
+                    <option value="viral">Viral · punchy hook</option>
+                    <option value="fun">Fun · playful and warm</option>
+                    <option value="creative">Creative · vivid and surprising</option>
+                    <option value="sad">Sad · intimate and restrained</option>
+                    <option value="chill">Chill · calm and understated</option>
+                    <option value="literal">Faithful · translation only</option>
+                  </select>
+                </label>
+                <div class="audio-field small audio-rewrite-action">
+                  <span>&nbsp;</span>
+                  <button id="audio-rewrite-run" class="primary small" type="button">▶ Rewrite</button>
+                </div>
+              </div>
+              <p id="audio-rewrite-note" class="hint">Click Rewrite to translate the full script and rewrite the cut.</p>
+              <select id="audio-provider" hidden></select>
+              <select id="audio-rewrite" hidden></select>
+            </div>
+          </section>
+
+          <section id="audio-voice-step" class="audio-step">
+            <div class="audio-step-head">
+              <span class="audio-step-num">2</span>
+              <div><h4>Voice</h4><p>Generate a voice, or fit your own recording to the cut.</p></div>
+            </div>
+            <div class="audio-step-body">
+              <div id="audio-voice-source" class="audio-source-row">
+                <label class="check compact"><input id="audio-source-generate" type="radio" name="audio-source" value="generate" checked> Generate</label>
+                <label class="check compact"><input id="audio-source-upload" type="radio" name="audio-source" value="upload"> Use my recording</label>
+              </div>
+              <div id="audio-voice-generate" class="audio-grid">
+                <label class="audio-field">
+                  <span>Voice list</span>
+                  <select id="audio-engine"></select>
+                </label>
+                <label class="audio-field">
+                  <span>Voice</span>
+                  <select id="audio-voice"></select>
+                </label>
+                <label class="audio-field small">
+                  <span>Rate</span>
+                  <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
+                </label>
+              </div>
+              <p class="hint">Provider order is set in Admin → Models. This voice list applies when that engine is the active route.</p>
+              <div id="audio-voice-upload" class="audio-upload-box" hidden>
+                <input id="audio-upload" type="file" accept="audio/*" hidden>
+                <button id="audio-upload-button" class="ghost small" type="button">Choose recording</button>
+                <span id="audio-upload-name" class="hint">Fit your recording to the cut length.</span>
+              </div>
+              <div class="audio-actions">
+                <button id="audio-preview" class="ghost small" type="button">Test voice</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="audio-music-step" class="audio-step">
+            <div class="audio-step-head">
+              <span class="audio-step-num">3</span>
+              <div><h4>Music</h4><p>Use your own track, or generate a bed.</p></div>
+            </div>
+            <div class="audio-step-body">
+              <div id="audio-music-source" class="audio-source-row">
+                <label class="check compact"><input type="radio" name="audio-music-source" value="none" checked> None</label>
+                <label class="check compact"><input type="radio" name="audio-music-source" value="own"> Use my sound</label>
+                <label class="check compact"><input type="radio" name="audio-music-source" value="generate"> Generate</label>
+              </div>
+              <p id="audio-music-warning" class="audio-warning" hidden></p>
+              <div class="audio-grid">
+                <label class="audio-field">
+                  <span>Music source</span>
+                  <select id="audio-music">
+                    <option value="none">No music</option>
+                    <option value="library">My own track</option>
+                    <option value="minimax-music">AI · MiniMax Music</option>
+                    <option value="lyria-clip">AI · OpenRouter Lyria 3</option>
+                  </select>
+                </label>
+                <label id="audio-track-field" class="audio-field">
+                  <span>Track</span>
+                  <select id="audio-track"></select>
+                </label>
+                <div id="audio-music-upload-box" class="audio-upload-box" hidden>
+                  <input id="audio-music-upload" type="file" accept="audio/*" hidden>
+                  <button id="audio-music-upload-button" class="ghost small" type="button">Choose sound</button>
+                  <button id="audio-music-upload-clear" class="ghost small" type="button" hidden>Clear</button>
+                  <span id="audio-music-upload-name" class="hint">Use your own music file.</span>
+                </div>
+                <label id="audio-prompt-field" class="audio-field">
+                  <span>Music prompt</span>
+                  <input id="audio-prompt" placeholder="auto mood">
+                </label>
+                <label id="audio-gain-field" class="audio-field small">
+                  <span>Music dB</span>
+                  <input id="audio-gain" type="number" min="-40" max="0" step="1" value="-18">
+                </label>
+                <label id="audio-duck-field" class="audio-field checkbox">
+                  <input id="audio-duck" type="checkbox" checked> Duck under voice
+                </label>
+                <label id="audio-beatsync-field" class="audio-field checkbox">
+                  <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <div class="audio-actions audio-bottom">
+            <span id="audio-status" class="hint"></span>
+          </div>
+          <div id="audio-script" class="audio-script"></div>
+        </details>
+
+        <div id="player-wrap" class="player-wrap" hidden>
+          <div class="phone-frame"><video id="reel-video" controls playsinline></video></div>
+          <div class="player-meta">
+            <div class="player-copy"><span id="reel-duration"></span><span id="reel-size"></span></div>
+            <a id="download" class="primary small" download>Download <span class="arrow">↓</span></a>
+            <div class="export-links">
+              <button id="export-srt" class="ghost small" type="button">SRT</button>
+              <button id="export-vtt" class="ghost small" type="button">VTT</button>
+              <button id="export-edl" class="ghost small" type="button">EDL</button>
+              <button id="export-xml" class="ghost small" type="button">XML</button>
+              <button id="share-link" class="ghost small" type="button">Review link</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <details id="history-panel" class="history-panel">
+        <summary>History <span id="history-count" class="muted"></span></summary>
+        <div id="history-list" class="history-list"></div>
+        <div id="history-detail" class="history-detail" hidden></div>
+      </details>
+
+    </section>
+
+    <!-- creator workspace -->
+    <section id="creator-view" class="creator-view" hidden>
+      <header class="creator-head">
+        <div>
+          <p class="eyebrow"><span>✦</span> creator</p>
+          <h2>Post-ready workspace</h2>
+          <p id="creator-context" class="hint">Open a cut to load Clip Set, Caption Studio, packets and shares.</p>
+        </div>
+        <div class="creator-head-actions">
+          <label class="creator-recent-field">
+            <span>Recent job</span>
+            <select id="creator-recent" aria-label="Recent jobs">
+              <option value="">No recent jobs</option>
+            </select>
+          </label>
+          <button id="creator-close" class="ghost small" type="button">Close</button>
+        </div>
+      </header>
+
+      <details id="creator-debug" class="creator-debug">
+        <summary>Debug</summary>
+        <div class="creator-debug-row">
+          <label class="creator-debug-field" for="creator-job-input">Load a job by ID</label>
+          <input id="creator-job-input" class="creator-job-input" type="text" spellcheck="false" placeholder="job id" aria-label="Job ID">
+          <button id="creator-job-load" class="ghost small" type="button">Load job</button>
+        </div>
+      </details>
+
+      <nav id="creator-tabs" class="creator-tabs" role="tablist" aria-label="Creator screens">
+        <button id="creator-tab-clipset" type="button" role="tab" aria-selected="true" aria-controls="creator-panel-clipset" tabindex="0" data-creator-tab="clipset" class="active">Clip Set</button>
+        <button id="creator-tab-captions" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-captions" tabindex="-1" data-creator-tab="captions">Captions</button>
+        <button id="creator-tab-preflight" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-preflight" tabindex="-1" data-creator-tab="preflight">Preflight</button>
+        <button id="creator-tab-packet" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-packet" tabindex="-1" data-creator-tab="packet">Packet</button>
+        <button id="creator-tab-artifacts" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-artifacts" tabindex="-1" data-creator-tab="artifacts">Artifacts &amp; Shares</button>
+        <button id="creator-tab-queue" type="button" role="tab" aria-selected="false" aria-controls="creator-panel-queue" tabindex="-1" data-creator-tab="queue">Queue</button>
+      </nav>
+
+      <div id="creator-global-error" class="error creator-alert" role="alert" hidden></div>
+      <div id="story-queue-banner" class="creator-alert creator-banner" role="status" aria-live="polite" hidden></div>
+
+      <div class="creator-screens">
+        <section id="creator-panel-queue" class="creator-screen" data-creator-panel="queue" role="tabpanel" aria-labelledby="creator-tab-queue" tabindex="0" hidden>
+          <div class="creator-card">
+            <div class="creator-card-head">
+              <div><p class="eyebrow">stories</p><h3>Story render queue</h3></div>
+              <button id="story-queue-refresh" class="ghost small" type="button">Refresh</button>
+            </div>
+            <p class="hint">Up to 10 stories render one after another. If VibeCut stops, the queue waits for you to resume; it never restarts on its own.</p>
+            <div id="story-queue-error" class="error" role="alert" hidden></div>
+            <div id="story-queue-list" class="creator-list" aria-live="polite"><p class="hint">No story queues yet. Use Queue stories on the Clip Set screen.</p></div>
+          </div>
+          <details class="creator-advanced">
+            <summary>Compatibility · source batches (15/30/60)</summary>
+          <div class="creator-grid creator-grid-two">
+            <form id="batch-form" class="creator-card">
+              <div class="creator-card-head">
+                <div><p class="eyebrow">batch</p><h3>Build a 10-item queue</h3></div>
+                <span class="creator-chip">local only</span>
+              </div>
+              <label class="creator-field">
+                <span>Batch name</span>
+                <input id="batch-name" type="text" maxlength="200" placeholder="Friday shorts" aria-label="Batch name">
+              </label>
+              <label class="creator-field">
+                <span>Local paths or URLs · one per line · max 10</span>
+                <textarea id="batch-items" rows="7" spellcheck="false" aria-label="Local paths or URLs, one per line" placeholder="/Users/you/Movies/episode.mp4&#10;https://example.com/video"></textarea>
+              </label>
+              <label class="creator-field">
+                <span>Batch action</span>
+                <select id="batch-mode" aria-label="Batch action">
+                  <option value="analyze_render" selected>Analyze + render selected targets</option>
+                  <option value="analyze_only">Analyze only</option>
+                </select>
+              </label>
+              <fieldset class="creator-fieldset" id="batch-target-fieldset">
+                <legend>Render targets</legend>
+                <label class="creator-check"><input type="checkbox" name="batch-target" value="15"> 15s</label>
+                <label class="creator-check"><input type="checkbox" name="batch-target" value="30" checked> 30s</label>
+                <label class="creator-check"><input type="checkbox" name="batch-target" value="60"> 60s</label>
+              </fieldset>
+              <div class="creator-row">
+                <label class="creator-field creator-field-small">
+                  <span>Max items</span>
+                  <input id="batch-max" type="number" min="1" max="10" value="10" aria-label="Max items">
+                </label>
+                <button id="batch-create" class="primary small" type="submit">Create batch</button>
+              </div>
+              <label class="creator-check"><input id="batch-rights" type="checkbox"> I own these videos or have the rights to them</label>
+              <p class="hint">The server checks free disk before it starts. Batch analyzes sources and renders only the targets you select. Packets stay manual.</p>
+              <div id="batch-error" class="error" role="alert" hidden></div>
+            </form>
+            <div class="creator-card">
+              <div class="creator-card-head">
+                <div><p class="eyebrow">queue</p><h3>Batches</h3></div>
+                <button id="batch-refresh" class="ghost small" type="button">Refresh</button>
+              </div>
+              <div id="batch-list" class="creator-list"><p class="hint">No batches loaded.</p></div>
+            </div>
+          </div>
+          </details>
+        </section>
+
+        <section id="creator-panel-clipset" class="creator-screen" data-creator-panel="clipset" role="tabpanel" aria-labelledby="creator-tab-clipset" tabindex="0">
+          <div class="creator-toolbar">
+            <label class="creator-inline-field">Stories
+              <select id="clipset-count" aria-label="Number of stories">
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+              </select>
+            </label>
+            <button id="clipset-build" class="primary small" type="button">Auto Select</button>
+            <button id="clipset-queue" class="ghost small" type="button">Queue stories</button>
+            <button id="clipset-read-analysis" class="ghost small" type="button" aria-expanded="false" aria-controls="clipset-analysis">Read Analysis</button>
+            <label class="creator-inline-field">Tighten
+              <select id="tighten-target" aria-label="Tighten target">
+                <option value="15">15s</option>
+                <option value="30" selected>30s</option>
+                <option value="60">60s</option>
+              </select>
+            </label>
+            <button id="tighten-run" class="ghost small" type="button">Tighten first story</button>
+          </div>
+          <div id="clipset-error" class="error" role="alert" hidden></div>
+          <div class="creator-grid creator-grid-two creator-grid-wide-left">
+            <div class="creator-card">
+              <div class="creator-card-head">
+                <div><p class="eyebrow">clip set</p><h3 id="clipset-title">Stories</h3></div>
+                <span id="clipset-meta" class="hint"></span>
+              </div>
+              <div id="clipset-stories" class="creator-list"><p class="hint">Build a Clip Set after analysis is ready.</p></div>
+            </div>
+            <div class="creator-side">
+              <div id="clipset-analysis" class="creator-card creator-analysis" hidden>
+                <div class="creator-card-head">
+                  <div><p class="eyebrow">analysis</p><h3>Read Analysis</h3></div>
+                  <span class="creator-chip">evidence first</span>
+                </div>
+                <div id="analysis-tabs" class="creator-subtabs" role="tablist" aria-label="Analysis views">
+                  <button id="analysis-tab-original" type="button" role="tab" aria-selected="true" aria-controls="analysis-original" tabindex="0" class="active" data-analysis-tab="original">Original analysis</button>
+                  <button id="analysis-tab-beta" type="button" role="tab" aria-selected="false" aria-controls="analysis-beta" tabindex="-1" data-analysis-tab="beta">Beta read</button>
+                </div>
+                <div id="analysis-original" role="tabpanel" aria-labelledby="analysis-tab-original" tabindex="0">
+                  <div id="clipset-original-output" class="creator-list" aria-live="polite"><p class="hint">Auto Select builds the original story read.</p></div>
+                </div>
+                <div id="analysis-beta" role="tabpanel" aria-labelledby="analysis-tab-beta" tabindex="0" hidden>
+                  <label class="creator-field">
+                    <span>Optional read prompt · exclusions only</span>
+                    <input id="clipset-prompt" type="text" placeholder="e.g. no politics, avoid crypto" aria-label="Beta read prompt">
+                  </label>
+                  <button id="clipset-v2" class="ghost small" type="button">Run beta read</button>
+                  <div id="clipset-v2-output" class="creator-list" aria-live="polite"><p class="hint">No beta read yet. This optional pass ranks the current stories; the original read stays available.</p></div>
+                </div>
+              </div>
+              <div class="creator-card">
+                <div class="creator-card-head"><div><p class="eyebrow">tighten</p><h3>Filler / silence / punch-ins</h3></div></div>
+                <div id="tighten-output" class="creator-list"><p class="hint">Tightening returns a new plan; the source cut is not overwritten.</p></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="creator-panel-captions" class="creator-screen" data-creator-panel="captions" role="tabpanel" aria-labelledby="creator-tab-captions" tabindex="0" hidden>
+          <div class="creator-toolbar">
+            <label class="creator-inline-field">Target
+              <select id="caption-target" aria-label="Caption target">
+                <option value="15">15s</option>
+                <option value="30" selected>30s</option>
+                <option value="60">60s</option>
+              </select>
+            </label>
+            <label class="creator-inline-field">Style
+              <select id="caption-style" aria-label="Caption style">
+                <option value="clean" selected>Clean</option>
+                <option value="bold">Bold</option>
+                <option value="boxed">Boxed</option>
+                <option value="minimal">Minimal</option>
+              </select>
+            </label>
+            <label class="creator-inline-field">Artifact
+              <select id="caption-artifact" aria-label="Caption artifact"><option value="">Current cut</option></select>
+            </label>
+            <button id="caption-build" class="primary small" type="button">Build caption track</button>
+            <button id="caption-artifact-load" class="ghost small" type="button">Load artifact captions</button>
+            <button id="caption-save" class="ghost small" type="button" disabled>Save cues</button>
+            <button id="caption-export" class="ghost small" type="button" disabled>Download SRT</button>
+            <button id="caption-preview-run" class="ghost small" type="button" disabled>Caption preview</button>
+          </div>
+          <div class="creator-toolbar creator-brand-row" aria-label="Caption brand controls">
+            <label class="creator-inline-field">Font size
+              <input id="caption-font-size" type="range" min="24" max="110" step="1" value="56" aria-label="Caption font size">
+            </label>
+            <label class="creator-inline-field">Text
+              <input id="caption-color" type="color" value="#ffffff" aria-label="Caption text color">
+            </label>
+            <label class="creator-inline-field">Background
+              <input id="caption-bg-opacity" type="range" min="0" max="1" step="0.05" value="0.55" aria-label="Caption background opacity">
+            </label>
+            <label class="creator-inline-field">Position
+              <select id="caption-position" aria-label="Caption position preset">
+                <option value="bottom" selected>Lower safe zone</option>
+                <option value="center">Center safe zone</option>
+                <option value="top">Upper safe zone</option>
+              </select>
+            </label>
+            <label class="creator-check"><input id="caption-uppercase" type="checkbox"> Uppercase</label>
+          </div>
+          <div id="caption-error" class="error" role="alert" hidden></div>
+          <div class="creator-grid creator-grid-two">
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">cues</p><h3>Cue list</h3></div><span id="caption-meta" class="hint"></span></div>
+              <div id="caption-cues" class="creator-list"><p class="hint">Build a track to load speech-timed cues.</p></div>
+            </div>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">caption only</p><h3>Safe-zone preview</h3></div><span class="creator-chip">no full render</span></div>
+              <div id="caption-preview" class="caption-preview">
+                <img id="caption-preview-img" alt="Caption preview still" hidden>
+                <div id="caption-preview-safe" class="caption-safe-layer" hidden></div>
+                <div id="caption-preview-empty" class="caption-preview-empty">
+                  <strong>No caption preview yet</strong>
+                  <span>Build a caption track for this target, or load captions from a ready artifact. The poster appears automatically.</span>
+                </div>
+                <div id="caption-preview-text" class="caption-preview-text" hidden>Caption text appears here.</div>
+              </div>
+              <label class="creator-field creator-field-range">
+                <span>Cue time <b id="caption-preview-readout" class="mono">0.0s</b></span>
+                <input id="caption-preview-time" type="range" min="0" max="1" step="0.05" value="0" aria-label="Cue time">
+              </label>
+              <p class="hint">This preview reads the caption-only endpoint and the render poster. It never starts a reel render.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="creator-panel-packet" class="creator-screen" data-creator-panel="packet" role="tabpanel" aria-labelledby="creator-tab-packet" tabindex="0" hidden>
+          <div class="creator-toolbar">
+            <label class="creator-inline-field">Story
+              <select id="packet-story" aria-label="Packet story"></select>
+            </label>
+            <label class="creator-inline-field">Artifact
+              <select id="packet-artifact" aria-label="Packet artifact"><option value="">Choose a ready artifact</option></select>
+            </label>
+            <span class="hint">Story first. Render a story to create its artifact.</span>
+          </div>
+          <div id="packet-needs-render" class="creator-needs-render" hidden>
+            <div>
+              <strong>This story has no ready artifact yet.</strong>
+              <p class="hint">Render the story first. Packet, preflight and review links unlock when the artifact is ready.</p>
+            </div>
+            <button id="packet-render-story" class="primary small" type="button">Render story</button>
+          </div>
+          <details class="creator-advanced creator-render-key">
+            <summary>Advanced</summary>
+            <div class="creator-advanced-body">
+              <label class="creator-inline-field">Legacy render key
+                <select id="packet-render-key" aria-label="Legacy render key"><option value="">Choose a ready render</option></select>
+              </label>
+              <p class="hint">Only for renders created before artifacts. Leave empty for the normal story-first flow.</p>
+            </div>
+          </details>
+          <div class="creator-grid creator-grid-two">
+            <form id="packet-form" class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">packet</p><h3>Titles, description, hashtags</h3></div><span class="creator-chip">3 titles · 2 covers</span></div>
+              <div class="creator-row creator-row-end">
+                <button id="packet-suggest" class="ghost small" type="button">Suggest copy</button>
+                <span class="hint">Local fallback · fills blank fields only</span>
+              </div>
+              <label class="creator-field">
+                <span>Title 1 <b id="packet-title-1-count" class="creator-counter mono">0/100</b></span>
+                <input id="packet-title-1" type="text" maxlength="100" aria-label="Title 1">
+              </label>
+              <label class="creator-field">
+                <span>Title 2 <b id="packet-title-2-count" class="creator-counter mono">0/100</b></span>
+                <input id="packet-title-2" type="text" maxlength="100" aria-label="Title 2">
+              </label>
+              <label class="creator-field">
+                <span>Title 3 <b id="packet-title-3-count" class="creator-counter mono">0/100</b></span>
+                <input id="packet-title-3" type="text" maxlength="100" aria-label="Title 3">
+              </label>
+              <label class="creator-field">
+                <span>Description hook <b id="packet-desc-count" class="mono">0/125</b></span>
+                <textarea id="packet-description" rows="3" maxlength="125" aria-label="Description hook"></textarea>
+              </label>
+              <label class="creator-field"><span>Hashtags · 3–8, space or comma separated</span><input id="packet-hashtags" type="text" aria-label="Hashtags" placeholder="#shorts #creator #podcast"></label>
+              <label class="creator-field">
+                <span>Pin comment <b class="creator-counter">copy ready</b></span>
+                <textarea id="packet-pin-comment" rows="2" maxlength="220" aria-label="Pin comment"></textarea>
+              </label>
+              <div class="creator-row creator-copy-row">
+                <button class="ghost small" type="button" data-copy-field="titles">Copy titles</button>
+                <button class="ghost small" type="button" data-copy-field="description">Copy description</button>
+                <button class="ghost small" type="button" data-copy-field="hashtags">Copy hashtags</button>
+                <button class="ghost small" type="button" data-copy-field="pin">Copy pin comment</button>
+              </div>
+              <div class="creator-row">
+                <label class="creator-field creator-field-small"><span>Cover 1 · seconds</span><input id="packet-cover-1" type="number" min="0" step="0.1" value="1" aria-label="Cover 1 time"></label>
+                <label class="creator-field creator-field-small"><span>Cover 2 · seconds</span><input id="packet-cover-2" type="number" min="0" step="0.1" value="5" aria-label="Cover 2 time"></label>
+              </div>
+              <div class="creator-cover-previews">
+                <figure>
+                  <img id="packet-cover-img-1" alt="Approximate cover 1 preview from poster" hidden>
+                  <figcaption>Cover 1 · poster/thumbnail preview</figcaption>
+                </figure>
+                <figure>
+                  <img id="packet-cover-img-2" alt="Approximate cover 2 preview from poster" hidden>
+                  <figcaption>Cover 2 · poster/thumbnail preview</figcaption>
+                </figure>
+              </div>
+              <p class="creator-filename">Filename preview <code id="packet-filename">story-30s-&lt;packet&gt;.mp4</code></p>
+              <button id="packet-build" class="primary small" type="submit">Build packet</button>
+              <div id="packet-error" class="error" role="alert" hidden></div>
+            </form>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">result</p><h3>Publish packet</h3></div></div>
+              <div id="packet-result" class="creator-list"><p class="hint">No packet built in this session.</p></div>
+            </div>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">history</p><h3>Packets for this job</h3></div></div>
+              <div id="packet-history" class="creator-list" aria-live="polite"><p class="hint">No packets yet.</p></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="creator-panel-preflight" class="creator-screen" data-creator-panel="preflight" role="tabpanel" aria-labelledby="creator-tab-preflight" tabindex="0" hidden>
+          <div class="creator-toolbar">
+            <label class="creator-inline-field">Story or artifact
+              <select id="preflight-story" aria-label="Preflight story or artifact"></select>
+            </label>
+            <button id="preflight-run" class="primary small" type="button">Run preflight</button>
+            <span class="hint">Runs automatically for the selected artifact. Toggles filter this view; server settings stay authoritative.</span>
+          </div>
+          <div id="preflight-error" class="error" role="alert" hidden></div>
+          <div class="creator-grid creator-grid-two creator-grid-wide-left">
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">checks</p><h3>Five checks</h3></div><span id="preflight-summary" class="hint"></span></div>
+              <div id="preflight-checks" class="creator-list" aria-live="polite"><p class="hint">Run preflight for a story or artifact.</p></div>
+            </div>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">findings</p><h3>Suggestions</h3></div></div>
+              <div id="preflight-findings" class="creator-list" aria-live="polite"><p class="hint">No findings yet.</p></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="creator-panel-artifacts" class="creator-screen" data-creator-panel="artifacts" role="tabpanel" aria-labelledby="creator-tab-artifacts" tabindex="0" hidden>
+          <div class="creator-toolbar">
+            <button id="artifact-refresh" class="ghost small" type="button">Refresh artifacts &amp; shares</button>
+            <span class="hint">Artifact links always target that artifact. Ready legacy renders are adopted as artifacts.</span>
+          </div>
+          <div id="artifact-error" class="error" role="alert" hidden></div>
+          <div class="creator-grid creator-grid-two creator-grid-wide-left">
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">trust core</p><h3>Artifacts</h3></div><span id="artifact-count" class="hint"></span></div>
+              <div id="artifact-list" class="creator-list"><p class="hint">Open a job with rendered artifacts.</p></div>
+            </div>
+            <div class="creator-card">
+              <div class="creator-card-head"><div><p class="eyebrow">review</p><h3>Shares</h3></div></div>
+              <div id="share-list" class="creator-list"><p class="hint">No shares loaded.</p></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="shell footer">
+    <span>VibeCut</span>
+    <span>ffmpeg · local analysis</span>
+    <span id="footer-health"></span>
+  </footer>
+
+  <div id="drawer" class="drawer" hidden>
+    <div class="drawer-backdrop" data-close></div>
+    <aside class="drawer-panel" role="dialog" aria-modal="true" aria-label="Scene detail">
+      <button id="drawer-close" class="icon-btn drawer-close" data-close aria-label="Close">×</button>
+      <div id="drawer-content" class="drawer-content"></div>
+    </aside>
+  </div>
+
+  <div id="setup" class="setup" hidden>
+    <div class="setup-backdrop" data-setup-close></div>
+    <section class="setup-panel" role="dialog" aria-modal="true" aria-label="Setup">
+      <header class="setup-head">
+        <div>
+          <p class="eyebrow">setup</p>
+          <h2>Cloud, optional</h2>
+        </div>
+        <button id="setup-close" class="icon-btn" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="setup-body">
+        <p class="setup-note">OpenCode Go uses the login already stored on this machine — no key copy. Speech keys stay in the project's private secrets file (0600). Local engines remain available as explicit admin-route fallbacks.</p>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Intelligence</h3>
+            <span class="setup-badge">OpenCode Go</span>
+          </div>
+          <label class="setup-check"><input id="setup-opencode-enabled" type="checkbox"> Use OpenCode Go for rewriting and story briefs</label>
+          <p id="setup-opencode-status" class="setup-hint">Checking OpenCode Go…</p>
+          <label class="setup-field">
+            <span>API key · optional</span>
+            <input id="setup-opencode-key" type="password" autocomplete="off" spellcheck="false" placeholder="oc_sk_…">
+          </label>
+          <p class="setup-hint">Leave blank to use the OpenCode login on this machine. A saved key is used only by this project.</p>
+          <label class="setup-field">
+            <span>OpenRouter key · translation/TTS/music fallback</span>
+            <input id="setup-openrouter-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…">
+          </label>
+          <div class="setup-model-routes">
+            <div class="setup-model-head"><span>Model routes</span><a href="/_ductator/" target="_blank" rel="noopener">Open admin console ↗</a></div>
+            <div id="setup-model-routes"></div>
+          </div>
+          <div class="setup-toggles">
+            <label class="setup-check"><input id="setup-use-rewrite" type="checkbox"> Rewrite script</label>
+            <label class="setup-check"><input id="setup-use-brief" type="checkbox"> Story brief</label>
+          </div>
+          <label class="setup-field">
+            <span>Translation mode</span>
+            <select id="setup-translation-mode">
+              <option value="auto">Auto · online first, local fallback</option>
+              <option value="local_first">Local first · online fallback</option>
+              <option value="local_only">Local only · Apple → Argos</option>
+              <option value="online_only">Online only · OpenCode / OpenRouter</option>
+            </select>
+          </label>
+          <p class="setup-hint">Translation engine is internal. Auto: online first, local fallback. Local first: Apple → Argos, then online. Local only: Apple → Argos. Online only: OpenCode → OpenRouter.</p>
+          <div class="setup-actions">
+            <button id="setup-test-opencode" class="ghost small" type="button">Test OpenCode</button>
+            <button id="setup-test-openrouter" class="ghost small" type="button">Test OpenRouter</button>
+          </div>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Video links · yt-dlp</h3>
+            <span id="setup-ytdlp-status" class="setup-chip">Not checked</span>
+          </div>
+          <p class="setup-hint">Native Python downloader for most sites. No Node, Docker, Cobalt, or cloud upload. Highest quality + audio by default; H.264/MP4 preferred for editing. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <label class="setup-field">
+            <span>Link provider</span>
+            <select id="setup-ingest-provider">
+              <option value="auto">Auto · yt-dlp first</option>
+              <option value="ytdlp">yt-dlp only</option>
+              <option value="cobalt">Cobalt only · external</option>
+              <option value="xhs">XHS only · external</option>
+            </select>
+          </label>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>Quality</span>
+              <select id="setup-ytdlp-quality">
+                <option value="max">Maximum</option>
+                <option value="2160">2160p</option>
+                <option value="1440">1440p</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+                <option value="360">360p</option>
+              </select>
+            </label>
+            <label class="setup-field">
+              <span>Codec</span>
+              <select id="setup-ytdlp-codec">
+                <option value="h264">H.264 · compatible</option>
+                <option value="any">Best available</option>
+              </select>
+            </label>
+          </div>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>Container</span>
+              <select id="setup-ytdlp-container">
+                <option value="mp4">MP4</option>
+                <option value="mkv">MKV</option>
+                <option value="webm">WebM</option>
+              </select>
+            </label>
+            <label class="setup-field">
+              <span>Audio</span>
+              <select id="setup-ytdlp-audio">
+                <option value="best">Best available</option>
+                <option value="192">192 kbps max</option>
+                <option value="128">128 kbps max</option>
+              </select>
+            </label>
+          </div>
+          <label class="setup-field">
+            <span>Cookies</span>
+            <select id="setup-ytdlp-cookies">
+              <option value="none">None</option>
+              <option value="browser">Browser cookies</option>
+              <option value="file">cookies.txt file</option>
+            </select>
+          </label>
+          <label id="setup-ytdlp-browser-field" class="setup-field">
+            <span>Browser</span>
+            <select id="setup-ytdlp-browser">
+              <option value="safari">Safari</option>
+              <option value="chrome">Chrome</option>
+              <option value="chromium">Chromium</option>
+              <option value="firefox">Firefox</option>
+              <option value="edge">Edge</option>
+              <option value="brave">Brave</option>
+              <option value="opera">Opera</option>
+              <option value="vivaldi">Vivaldi</option>
+              <option value="whale">Whale</option>
+            </select>
+          </label>
+          <label id="setup-ytdlp-file-field" class="setup-field">
+            <span>Cookie file</span>
+            <input id="setup-ytdlp-cookie-file" type="text" spellcheck="false" placeholder="/Users/you/cookies.txt">
+          </label>
+          <div class="setup-actions setup-ingest-actions">
+            <button id="setup-test-ytdlp" class="ghost small" type="button">Test yt-dlp</button>
+            <span class="setup-hint">No sidecar needed.</span>
+          </div>
+          <p id="setup-ytdlp-detail" class="setup-hint"></p>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Video links · Cobalt</h3>
+            <span id="setup-cobalt-status" class="setup-chip">Not checked</span>
+          </div>
+          <p class="setup-hint">Optional external fallback. Point VibeCut at your own cobalt instance. It sends the link over HTTP; no cobalt code runs here. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <label class="setup-field">
+            <span>Service URL</span>
+            <input id="setup-cobalt-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:9000/">
+          </label>
+          <label class="setup-field">
+            <span>API key · optional</span>
+            <input id="setup-cobalt-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set">
+          </label>
+          <div class="setup-row">
+            <label class="setup-field">
+              <span>Quality</span>
+              <select id="setup-cobalt-quality">
+                <option value="max">Maximum</option>
+                <option value="4320">4320p</option>
+                <option value="2160">2160p</option>
+                <option value="1440">1440p</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+                <option value="360">360p</option>
+                <option value="240">240p</option>
+                <option value="144">144p</option>
+              </select>
+            </label>
+            <label class="setup-field">
+              <span>Codec</span>
+              <select id="setup-cobalt-codec">
+                <option value="h264">H.264 · compatible</option>
+                <option value="av1">AV1 · smaller</option>
+                <option value="vp9">VP9 · WebM</option>
+              </select>
+            </label>
+          </div>
+          <label class="setup-field">
+            <span>Local processing</span>
+            <select id="setup-cobalt-local">
+              <option value="preferred">Preferred · cobalt decides</option>
+              <option value="forced">Forced · merge with local ffmpeg</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="setup-cobalt-fallback" type="checkbox">
+            <span class="check-box"></span>
+            <span class="check-copy"><strong>Fallback after yt-dlp</strong><small>only on yt-dlp failure</small></span>
+          </label>
+          <div class="setup-actions setup-ingest-actions">
+            <button id="setup-test-cobalt" class="ghost small" type="button">Test Cobalt</button>
+            <span class="setup-hint">Uses saved settings.</span>
+          </div>
+          <p id="setup-cobalt-detail" class="setup-hint"></p>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>RedNote · XHS</h3>
+            <span id="setup-xhs-status" class="setup-chip">Not checked</span>
+          </div>
+          <p class="setup-hint">RedNote needs a signed-in <code>xhs_get</code> session. The cookie stays in xhs_get; VibeCut never stores or reads it. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <label class="setup-field">
+            <span>Service URL</span>
+            <input id="setup-xhs-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:5789">
+          </label>
+          <label class="setup-field">
+            <span>Access token · friends mode</span>
+            <input id="setup-xhs-token" type="password" autocomplete="off" spellcheck="false" placeholder="not set">
+          </label>
+          <label class="setup-field">
+            <span>Cookie · one-shot handoff</span>
+            <input id="setup-xhs-cookie" type="password" autocomplete="off" spellcheck="false" placeholder="paste full Cookie header: web_session=…; a1=…; …">
+          </label>
+          <div class="setup-inline">
+            <label class="setup-check"><input id="setup-xhs-no-record" type="checkbox" checked> Fresh download · skip history</label>
+            <label class="setup-field setup-inline-field">
+              <span>Interval · seconds</span>
+              <input id="setup-xhs-interval" type="number" min="0" step="0.5" value="12">
+            </label>
+          </div>
+          <div class="setup-actions setup-ingest-actions">
+            <button id="setup-xhs-open" class="ghost small" type="button">Open sign-in</button>
+            <button id="setup-xhs-invite" class="ghost small" type="button">Copy login link</button>
+            <button id="setup-xhs-copy" class="ghost small" type="button">Copy service URL</button>
+            <button id="setup-xhs-check" class="ghost small" type="button">Check session</button>
+            <button id="setup-xhs-send-cookie" class="ghost small" type="button">Send cookie</button>
+            <button id="setup-test-xhs" class="ghost small" type="button">Test XHS</button>
+          </div>
+          <p id="setup-xhs-detail" class="setup-hint">Open sign-in, scan the QR code in xhs_get, then Check session.</p>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Transcription</h3>
+            <span class="setup-badge">STT</span>
+          </div>
+          <label class="setup-field">
+            <span>Spoken language</span>
+            <select id="setup-stt-language">
+              <option value="auto">Auto detect</option>
+              <option value="en">English</option>
+              <option value="vi">Vietnamese</option>
+              <option value="zh">Chinese</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+              <option value="it">Italian</option>
+              <option value="ru">Russian</option>
+              <option value="hi">Hindi</option>
+              <option value="th">Thai</option>
+              <option value="id">Indonesian</option>
+              <option value="tr">Turkish</option>
+              <option value="ar">Arabic</option>
+            </select>
+          </label>
+          <p class="setup-hint">Spoken language is used by transcription and captions. Provider, model order, and fallbacks are controlled by the admin console model routes below. No cloud STT key is required for local Whisper.</p>
+          <div class="setup-actions">
+            <button id="setup-test-stt" class="ghost small" type="button">Check local STT</button>
+            <button id="setup-test-stt-live" class="ghost small" type="button">Live STT</button>
+          </div>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Voice over</h3>
+            <span class="setup-badge">TTS</span>
+          </div>
+          <label class="setup-field">
+            <span>MiniMax key · TTS + music</span>
+            <input id="setup-minimax-key" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ…">
+          </label>
+          <label class="setup-field">
+            <span>ElevenLabs key · voice</span>
+            <input id="setup-elevenlabs-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set">
+          </label>
+          <p class="setup-hint">Provider order and voice models are controlled by the admin console model routes below. Local Kokoro/Piper/say remain available as explicit fallback routes; every line is cached.</p>
+          <div class="setup-actions">
+            <button id="setup-test-tts" class="ghost small" type="button">Check TTS</button>
+            <button id="setup-test-tts-live" class="ghost small" type="button">Live TTS</button>
+          </div>
+          <audio id="setup-tts-audio" class="setup-audio" controls hidden></audio>
+          <div class="setup-engine-head"><span>Voice engines</span><span class="hint">Ready or needs setup, with what each needs</span></div>
+          <div id="setup-voice-engines" class="setup-engine-list" aria-live="polite">
+            <p class="setup-hint">Checking voice engines…</p>
+          </div>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Optional packs</h3>
+            <button id="setup-packs-refresh" class="ghost small" type="button">Refresh</button>
+          </div>
+          <p class="setup-hint">Speech, Voice and Separation are optional model packs. This list only reports what is on disk; it never starts a fake install.</p>
+          <div id="setup-packs" class="setup-engine-list" aria-live="polite">
+            <p class="setup-hint">Checking packs…</p>
+          </div>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Rights lock</h3>
+            <span class="setup-badge">own footage</span>
+          </div>
+          <label class="setup-check"><input id="setup-rights-lock" type="checkbox" checked> Require the own-footage tick before import and Clean</label>
+          <p class="setup-hint">When the lock is on, Classic asks <strong>I own this footage or have the rights to it</strong> before any import. Turning it off is for your own private test footage only.</p>
+        </section>
+      </div>
+      <footer class="setup-foot">
+        <span id="setup-status" class="hint"></span>
+        <button id="setup-save" class="primary small" type="button">Save setup</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+</body>
+</html>

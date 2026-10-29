@@ -60,3 +60,24 @@
   - Vision cancel waits for the current batch of up to 8 frames.
 - **Founder manual tests:** the "Founder manual test" tables in `docs/handoff/r3-t1.md` through `r3-t4.md`. They use videos A and B.
 - **Deferred per round 6:** client approval and delivery log, the per-source rights record, one shared read for Import and Check, and Studio engine routing.
+
+## Phase B (studio lane) status
+
+Items 1a–1d close the T2 and T4 open items above; 2 and 3 are the Phase B follow-ups.
+
+| Item | Commit | Founder test |
+|---|---|---|
+| 1a speech-only retry (`POST /api/jobs/{id}/transcribe`) | `fd8b8d8` | `docs/testing/studio-b1a-speech-retry.md` |
+| 1b Check cancel, Import read ETA and Cancel, upload ETA and Cancel | `a7e0f50` | `docs/testing/studio-b1b-cancel-eta.md` |
+| 1c Library "Load more" | `c269f15` | `docs/testing/studio-b1c-library-more.md` |
+| 1d Open in Finish carries set, story, shape and cut | `19faef5` | `docs/testing/studio-b1d-open-in-finish.md` |
+| 2 Finish shows render warnings | `0ecc18d` | `docs/testing/studio-b2-render-warnings.md` |
+| 3 Edit hides voice cloning unless `voice_room` is on | `73bbab2` | `docs/testing/studio-b3-clone-gate.md` |
+
+Still open:
+
+- **Check's ETA** is still computed in the browser.
+- **Vision cancel** still waits for the current frame batch (up to 8 frames).
+- **The library list** does not refresh while the dialog stays open.
+- **Older renders without a manifest** are not listed.
+- **Setup's My voice panel** is not gated by `voice_room`; only the Edit clone block is.

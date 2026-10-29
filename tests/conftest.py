@@ -38,6 +38,21 @@ def rights_lock_default_off(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch):
+    """Every test gets its own settings and secrets files.
+
+    The suite runs in one process and one temp data folder, so a test that
+    saves the rights lock or a key used to leak it into the next test. Lane
+    isolation needs the leak gone for good.
+    """
+    import settings_store
+
+    monkeypatch.setattr(settings_store, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(settings_store, "SECRETS_PATH", tmp_path / "secrets.json")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def generous_test_volume(monkeypatch):
     """Keep tests independent of the workstation's real free space.
 
