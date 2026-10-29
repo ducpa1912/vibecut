@@ -151,6 +151,7 @@
     momentsRail: $("#moments-rail"),
     momentsScrub: $("#moments-scrub"),
     momentsFull: $("#moments-full"),
+    momentsList: $("#moments-list"),
     momentsExpand: $("#moments-expand"),
     render: $("#render"),
     renderDraft: $("#render-draft"),
@@ -1538,6 +1539,20 @@
       const card = event.target.closest("[data-moment-scene]");
       if (card) openDrawer(Number(card.dataset.momentScene));
     });
+    dom.momentsList.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-moment-scene]");
+      if (row) openDrawer(Number(row.dataset.momentScene));
+    });
+    dom.momentsList.addEventListener("dragstart", (event) => {
+      const row = event.target.closest("[data-moment-scene]");
+      if (!row) return;
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("application/x-vibecut-scene", row.dataset.momentScene);
+      dom.timelineDrop.hidden = false;
+    });
+    dom.momentsList.addEventListener("dragend", () => {
+      dom.timelineDrop.hidden = true;
+    });
     dom.momentsRail.addEventListener("dragstart", (event) => {
       const card = event.target.closest("[data-moment-scene]");
       if (!card) return;
@@ -1561,8 +1576,13 @@
     dom.momentsExpand.addEventListener("click", () => {
       state.momentsExpanded = !state.momentsExpanded;
       dom.momentsFull.hidden = !state.momentsExpanded;
+      dom.momentsRail.hidden = state.momentsExpanded;
+      dom.momentsScrub.hidden = state.momentsExpanded;
       dom.momentsExpand.textContent = state.momentsExpanded ? "Collapse" : "Expand";
-      if (state.momentsExpanded) renderScenes();
+      if (state.momentsExpanded) {
+        renderMomentList();
+        dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     });
     dom.momentsScrub.addEventListener("input", () => {
       const index = Number(dom.momentsScrub.value) || 0;
@@ -2400,6 +2420,8 @@
     dom.transcriptPanel.hidden = true;
     dom.transcriptPanel.innerHTML = "";
     dom.momentsFull.hidden = true;
+    dom.momentsRail.hidden = false;
+    dom.momentsScrub.hidden = false;
     dom.momentsExpand.textContent = "Expand";
     state.plan = job.analysis.plans[String(state.target)];
     $$("#target-tabs button").forEach((button) => {
@@ -3524,8 +3546,39 @@
         </button>`;
     }).join("");
     if (dom.momentsFull && !dom.momentsFull.hidden) {
-      // Scene grid is rendered separately; expand state only controls visibility.
+      renderMomentList();
     }
+  }
+
+  function renderMomentList() {
+    if (!state.job || !dom.momentsList || dom.momentsFull.hidden) return;
+    const clips = state.plan?.clips || [];
+    const used = new Set(clips.map((clip) => clip.scene));
+    const hookId = currentHookId();
+    const payoffId = clips.length ? clips[clips.length - 1].scene : null;
+    const scenes = [...state.job.analysis.scenes];
+    if (state.sort === "best") {
+      scenes.sort((a, b) => b.hook - a.hook || a.start - b.start);
+    } else {
+      scenes.sort((a, b) => a.start - b.start);
+    }
+    dom.momentsList.innerHTML = scenes.map((scene) => {
+      const still = scene.deep === false
+        ? `<span class="moment-row-still placeholder">quick</span>`
+        : `<img class="moment-row-still" src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+      const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
+      const tags = [...(scene.tags || []), scene.deep === false ? "quick" : ""].filter(Boolean).join(" · ");
+      const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
+      return `
+        <button class="moment-row ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
+          data-moment-scene="${scene.id}" draggable="true" role="listitem"
+          title="Drag into Smart Cut · ${esc(text)}">
+          ${still}
+          <span class="moment-row-time">${esc(fmtTime(scene.start))}</span>
+          <span class="moment-row-copy"><strong>${esc(text)}</strong><small>${esc(tags || `scene ${scene.id + 1}`)}</small></span>
+          <span class="moment-row-meta"><b class="score">${Math.round(scene.hook)}</b>${role ? `<span class="moment-row-role">${esc(role)}</span>` : ""}</span>
+        </button>`;
+    }).join("");
   }
 
   function syncRailScrub() {
