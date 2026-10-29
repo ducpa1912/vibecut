@@ -1,165 +1,83 @@
-# Branches and shipping
+# Branches, lanes and shipping
 
-Four branches share one codebase. The lanes differ in **what they work on**, not
-in which files exist. Any lane can merge into any other because every lane
-ships through `main`.
+Method of 2026-10-29. It replaces the earlier rule that every lane merged `main`.
+That rule failed in practice: the lanes used each other's files, env, notes and
+test ports.
 
-| Branch | Role | Worktree |
-|---|---|---|
-| `main` | Archive: the union of every lane. Nobody works on it directly. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut` |
-| `classic` | Beta launch focus: the Classic view (`/?classic=1`). | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic` |
-| `studio` | Work in progress: the Studio view (Import → Check → Stories → Edit → Finish). | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-studio` |
-| `voice-room` | Hidden, independent voice features: Voice Room page, voice clone, voice library, voice extraction. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room` |
+## The lanes
 
-## The one rule
+| Lane | Role | Worktree | Port | Build switches |
+|---|---|---|---|---|
+| `studio` | Integration lane. Studio embeds Classic and Voice Room. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-studio` | **8795** | `VIBECUT_EDITION=all`, `VIBECUT_FEATURES=voice_room` |
+| `classic` | Beta focus | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic` | **8796** | `VIBECUT_EDITION=classic` |
+| `voice-room` | Hidden voice features: library, clone, extraction | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room` | **8797** | `VIBECUT_EDITION=classic`, `VIBECUT_FEATURES=voice_room` |
+| `main` | Archive. Only studio moves it. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut` | none | none |
 
-**Every change on a lane ships with `scripts/ship.sh` from that lane's worktree.**
-The script:
+`scripts/lane.sh` holds this table.
 
-1. fetches GitHub,
-2. merges any newer copy of the lane and then `main` into the lane (conflicts stop here, on the lane),
-3. runs the test suite,
-4. pushes the lane,
-5. fast-forwards `main` to the lane and pushes `main`.
+## Fully separate
 
-Because each ship first takes in `main`, every lane keeps absorbing the others.
-Merging lane A into lane B is then never bigger than the last few ships.
+Each lane has its own:
 
-Never commit on `main` directly, never force-push, and never delete a feature on a lane
-to hide it. Deleting code on one lane deletes it on every lane at the next
-ship. Hide features with switches (below).
+- **worktree and branch:** it edits only its own checkout.
+- **port:** 8795, 8796 or 8797. Never another lane's, and never 8787 (the founder's own app).
+- **data:** `<worktree>/data`, so jobs, settings, keys and caches are per lane.
+- **notes, briefs and logs:** `<worktree>/.lane/` (ignored by git). No shared notes folder.
+- **OpenCode session:** each lane resumes its own, and never touches another lane's processes. No `pkill` that could hit another lane.
 
-## Who owns what
+Start a lane's server with `scripts/serve.sh`. It refuses a port that is already in use.
 
-Each lane edits its own files freely. Shared files take small, additive changes
-only. Ship them soon, so the other lanes pick them up on their next ship.
+## Merging: classic and voice-room flow into studio
 
-New HTTP routes go into the lane's module (`routes_classic.py`, `routes_studio.py`,
-`routes_voice_clone.py`), never into `app.py`. `tests/test_lane_routes.py` fails if
-`app.py` gains a route.
+```
+classic ──ship──► origin/classic ─┐
+                                  ├─► studio: scripts/integrate.sh ─► origin/studio ─► main
+voice-room ─ship─► origin/voice-room ┘
+```
 
-| Area | Owner lane | Files |
-|---|---|---|
-| Classic view | `classic` | `static/app.js`, `static/creator.js`, `static/style.css`, `static/creator.css`, `static/index.html` (other lanes touch only its edition boot block), `routes_classic.py` |
-| Studio view | `studio` | `static/studio/**`; `edits.py`, `routes_edits.py`, `compose_render.py`, `story_queue.py`, `routes_check.py`, `routes_library.py`, `routes_studio.py` |
-| Voice features | `voice-room` | `static/voice/**` (own `api.js`, `ui.js`, `voice.css`), `static/voices.html`, `voice_clone.py`, `voice_extract.py`, `routes_voice_clone.py` |
-| Shared core | any lane, additive | `app.py`, `pipeline.py`, `audio.py`, `tts.py`, `stt.py`, `music.py`, `render.py`, `settings_store.py`, `workflow_config.py`, `admin/`, tests of shared code |
+1. **classic and voice-room** finish each change with `scripts/ship.sh`: check, test, push their own branch. They never merge `main` or `studio` in, so the Classic beta never gets unfinished Studio work.
+2. **studio** finishes its own latest change and ships it. When the founder says to merge, run `scripts/integrate.sh` once. It:
+   - merges `origin/classic` and `origin/voice-room` into studio
+   - runs the Classic guard and Voice Room tests, then the full suite
+   - pushes studio, then fast-forwards and pushes `main`
+   Never run it on a timer, after every lane ship, or without the founder's instruction. It is manual, so merge requests cannot stack and stall the lanes.
+3. **Every studio edit is checked against Classic and Voice Room,** because both run inside studio. Fix any break on studio. Never fix it by changing a classic or voice-room file from the studio lane; ask that lane.
 
-## Hiding features: switches, not branches
+Ownership still applies:
 
-What a build shows is set by configuration, so one codebase serves every lane.
-Planned switches (see the plan below):
+- `static/app.js`, `static/creator.js` and `routes_classic.py` belong to classic.
+- `static/voice/**` and `routes_voice_clone.py` belong to voice-room.
+- `static/studio/**` and `routes_studio.py` belong to studio.
+- Shared core files take small, additive changes. New routes never go in `app.py` (`tests/test_lane_routes.py`).
 
-- `VIBECUT_EDITION=classic|studio|all`: which view opens by default, and whether
-  the other view's link shows. The beta build uses `classic`.
-- `VIBECUT_FEATURES=voice_room,...`: turns on hidden features. If `voice_room` is
-  off, `/voices` and the voice clone routes answer 404 and no link to them shows.
+## Testing: the founder tests, by hand, with real files
+
+- Only the founder tests the app. Claude and OpenCode never generate test videos, sounds or files to stand in for real media. If media is needed, ask the founder.
+- The founder records a run of a lane with Playwright, using real files:
+  1. In the lane's worktree, run `scripts/serve.sh`.
+  2. Then run `scripts/record.sh`. Press Ctrl-C in the terminal when the flow is done. It saves `trace.zip`, `network.har` and `storage.json` to `~/vibecut-lanes/recordings/<lane>/<date-time>/`, which stays on the founder's Mac and out of the repo.
+- The lane studies the recording to learn the founder's real flow, and replays it only when the founder asks. No generated media or stand-in files.
+- Automated tests stay code checks. They run on every ship and never replace the founder's test.
+
+## Working with OpenCode
+
+- Each lane's Claude session resumes the OpenCode session it used before (`opencode run -s <id> -m opencode-go/deepseek-v4.1-flash ...`).
+- Run it so the lane is told when it ends: a background run that wakes the session on exit, or a done note in `.lane/`. Don't check on it every minute, and send no new request until it is done.
+- OpenCode may have run ahead overnight. Before continuing, read what it did: its report, `git log` and uncommitted changes. Fix any issue, learn its plan, then give it the next step.
+- When the founder must provide something (media, keys, a decision), ask. Never guess.
 
 ## Beta releases
 
-When the founder test pass on `classic` is clean, run this from the classic worktree:
+When the founder's test pass on `classic` is clean, run `scripts/release.sh --founder-passed` from the classic worktree. It tags the shipped `classic` as `beta-YYYYMMDD-N`. Testers build from the tag, with `VIBECUT_EDITION=classic`.
 
-```bash
-scripts/release.sh --founder-passed
-```
+## History
 
-It tags the shipped `classic` as `beta-YYYYMMDD-N` and pushes the tag. It refuses
-when:
+Phase A (foundation) is shipped:
 
-- you are on another lane,
-- there are uncommitted changes,
-- the lane does not match GitHub.
+- `editions.py` switches
+- `static/voice/`
+- lane route modules
+- the Classic guard
+- `scripts/release.sh`
 
-Testers build from the tag, with `VIBECUT_EDITION=classic` and no
-`VIBECUT_FEATURES`.
-
-## Working with OpenCode or another session
-
-Give each session one lane worktree. Tell it to commit on that lane and finish
-with `scripts/ship.sh`. Two sessions on the same lane at once will conflict; use
-one session per lane.
-
-## Upcoming work plan (revised)
-
-### Why the method changed
-
-The first plan let the lanes start in parallel straight away. Four things made that risky:
-
-1. **Studio work would reach the beta untested.** Every ship merges `main` into the lane, so Studio and Voice Room changes flow into `classic`. Only the test suite guards it, and there are no Classic UI tests (only `test_studio_js.py` and `test_studio_layout.py`).
-2. **Hot files every lane edits.** `static/index.html` was changed by Studio, Voice Room and Classic work. `app.py` holds 105 routes in about 9,150 lines. The R3 merge conflicts came from files like these.
-3. **The voice files live inside Studio.** `voiceclone.js` sits in `static/studio/`, and Studio's Edit and Setup import it. Voice Room work would edit Studio's folder.
-4. **No release point.** Beta testers would get whatever the `classic` tip is that day.
-
-The fix: one short foundation phase first, done by one session. Then the three lanes run in parallel, each shipping small. The beta gets tagged releases, not the branch tip.
-
-### Phase A: foundation (one session, on `classic`, before parallel work)
-
-Each step ships on its own.
-
-- **A1. Switches.**
-  - `VIBECUT_EDITION=classic|studio|all` and `VIBECUT_FEATURES=voice_room,...`, read in `settings_store.py` and exposed in `/api/settings`.
-  - The `index.html` boot picks the default view and hides the links to features that are off.
-  - Voice routes and `/voices` answer 404 when `voice_room` is off.
-  - Tests for each combination.
-- **A2. Give Voice Room its own folder.**
-  - Move `voiceroom.js`, `voiceclone.js` and `voices.html` styling into `static/voice/`, with its own small `api.js`.
-  - Studio's Edit and Setup import from there.
-  - A move only, no behaviour change. It is done once now, so the lanes never edit each other's folders.
-- **A3. Cool the hot files.**
-  - New routes go into lane modules: `routes_classic.py`, `routes_studio.py`, and the existing `routes_voice_clone.py`.
-  - `app.py` only registers them, and takes small shared changes.
-  - `static/index.html` belongs to `classic`. Other lanes touch only the A1 boot block.
-  - Existing routes are not moved, to avoid a big-bang diff.
-- **A4. Classic guard tests.**
-  - An API-level Classic flow test with fakes: import → plan → render → history → export.
-  - A smoke test that the Classic page loads its scripts.
-  - `scripts/ship.sh` also runs `node --check` on every JS file.
-  - From then on, a Studio or Voice Room ship cannot break Classic without failing the ship.
-- **A5. Release tags.**
-  - Add `scripts/release.sh`. It tags the current `classic` as `beta-YYYYMMDD-N` and pushes the tag.
-  - The beta build is made from a tag, with `VIBECUT_EDITION=classic` and no extra features.
-  - Tags are made only after the founder test passes.
-
-**Done when** all five have shipped and every lane has taken them in, by running a ship with nothing new to ship.
-
-### Phase B: three lanes in parallel (one session each, own worktree)
-
-The rules for every lane:
-
-- One item = one ship. Ship at least once a day of work; unshipped work is what makes merges hard.
-- Shared core changes stay additive and tested from both views.
-- Every user-visible item ends with a click-by-click founder test script in `docs/testing/`. The founder runs it, and Claude records the result.
-
-**`classic` (beta focus)**
-
-1. A founder test script covering every Classic flow:
-   - import, plan, render, render-all, variants, hooks, mixer, history, export, batches
-   - the Creator workspace: clip set, captions, preflight, packet, artifacts, queue
-2. Fix what that pass and `round_6.md` find, highest severity first. Each fix gets a Classic guard test.
-3. Beta setup inside Classic: first-run keys and voice engines.
-4. When the founder pass is clean, `scripts/release.sh` makes the first beta tag.
-
-**`studio` (work in progress)**
-
-1. R3 open items (`docs/handoff/r3-review.md`):
-   - a speech-only retry route
-   - Check cancel, and Import cancel and ETA
-   - Library "load more"
-   - Open in Finish carries the story and shape
-2. Render warnings in Finish (for example "Music bed skipped").
-3. The Edit clone picker is shown only when `voice_room` is on.
-
-**`voice-room` (hidden, independent)**
-
-1. One page in `static/voice/`: the voice library (stock and cloned voices, preview, rename, delete), cloning, and the clean-clip finder.
-2. Reached from Classic, with the Classic look, when `voice_room` is on.
-3. Open from the review:
-   - a live OpenRouter check of a cloned voice (one 10 s request, with the founder's OK)
-   - a Cancel button for voice tasks
-   - a browser test of the clip picker
-
-### Phase C: beta cadence
-
-- Testers get tags only.
-- `voice_room` can be switched on for chosen testers without a new branch.
-- A fix for a beta problem goes on `classic`, ships, and gets a new tag. The other lanes pick it up on their next ship.
+Phase B ran on the earlier method; the Phase B items each lane shipped are in `docs/testing/` and `docs/handoff/r3-review.md`.
