@@ -8,8 +8,9 @@ request leaves this machine.
 
     python tests/browser/voice_room_server.py PORT
 
-``VR_FAKE_SEARCH_SECONDS`` makes the search wait (checking its cancel switch)
-before it returns, so the spec can press Cancel while it runs.
+``VR_FAKE_SEARCH_SECONDS`` and ``VR_FAKE_CLEAN_SECONDS`` make the search and
+the cleaning wait (checking their cancel switch) before they return, so the
+spec can press Cancel while they run.
 """
 
 from __future__ import annotations
@@ -48,15 +49,18 @@ def tone(path: Path, seconds: float, freq: float = 220.0) -> Path:
     return path
 
 
-def fake_find(source, out_dir, cancel_event=None, on_stage=None, **_kwargs):
-    wait = float(os.environ.get("VR_FAKE_SEARCH_SECONDS") or 0)
-    if on_stage:
-        on_stage("scoring")
-    deadline = time.monotonic() + wait
+def _wait(variable: str, cancel_event) -> None:
+    deadline = time.monotonic() + float(os.environ.get(variable) or 0)
     while time.monotonic() < deadline:
         if cancel_event is not None and cancel_event.is_set():
             raise audio.AudioError("Voice extraction cancelled.")
         time.sleep(0.05)
+
+
+def fake_find(source, out_dir, cancel_event=None, on_stage=None, **_kwargs):
+    if on_stage:
+        on_stage("scoring")
+    _wait("VR_FAKE_SEARCH_SECONDS", cancel_event)
     if on_stage:
         on_stage("exporting")
     out = Path(out_dir)
@@ -81,7 +85,8 @@ def fake_find(source, out_dir, cancel_event=None, on_stage=None, **_kwargs):
     }
 
 
-def fake_clean(source, out_dir, **_kwargs):
+def fake_clean(source, out_dir, cancel_event=None, **_kwargs):
+    _wait("VR_FAKE_CLEAN_SECONDS", cancel_event)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     target = out / "clean.wav"

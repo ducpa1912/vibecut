@@ -454,7 +454,7 @@ def test_my_voice_upload_is_cleaned_before_the_sample(tmp_path, monkeypatch):
 
     heads = []
 
-    def fake_head(raw, work):
+    def fake_head(raw, work, cancel_event=None):
         heads.append(raw)
         return raw
 

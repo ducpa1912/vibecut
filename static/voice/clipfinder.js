@@ -9,19 +9,25 @@
  * Routes:
  *   POST   /api/jobs/{id}/voices/candidates          start (or rejoin) the search
  *   GET    /api/jobs/{id}/voices/candidates          state, stage and clips
+ *   DELETE /api/jobs/{id}/voices/candidates          cancel the search
  *   GET    /api/jobs/{id}/voices/candidates/{n}/audio
  *   POST   /api/jobs/{id}/voices/clone               (candidate, or start/end)
+ *   DELETE /api/voices/tasks/{task}                   cancel that clone
  */
 
 import { syncTokenCookie } from "./api.js";
 import { el, formatDuration } from "./ui.js";
 import {
   CONSENT_COPY,
+  cancelVoiceCandidates,
+  cancelVoiceTask,
   cleaningNote,
   cloneFromVideo,
   findVoiceCandidates,
+  newVoiceTask,
   voiceCandidateAudioUrl,
   voiceCandidateState,
+  wasCancelled,
 } from "./voiceclone.js";
 
 const POLL_MS = 1500;
@@ -77,10 +83,13 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
   let playing = 0;
   let player = null;
   let manual = false;
+  let fullSearch = false;
+  let fastSearch = true;
   let start = "";
   let end = "";
   let name = "";
   let consent = false;
+  let cloneTask = "";
   let disposed = false;
 
   function stopPoll() {
@@ -105,10 +114,13 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     try {
       const state = await voiceCandidateState(forJob);
       if (disposed || forJob !== jobId) return;
+      const same = task && task.state === state.state && task.stage === state.stage;
       task = state;
       error = state.state === "failed" ? (state.error || "The clip search failed.") : "";
       if (isRunning(state)) schedule();
       else pollTimer = 0;
+      // Redraw only on a change, so a button under the pointer stays put.
+      if (same && isRunning(state)) return;
     } catch (cause) {
       if (disposed || forJob !== jobId) return;
       pollTimer = 0;
@@ -143,10 +155,33 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     busy = "find";
     render();
     try {
-      task = await findVoiceCandidates(jobId);
+      task = await findVoiceCandidates(jobId, { full: fullSearch, fast: fastSearch });
       if (isRunning(task)) schedule(1200);
     } catch (cause) {
       error = cause?.message || "Could not start the clip search.";
+    } finally {
+      busy = "";
+      render();
+    }
+  }
+
+  async function cancelSearch() {
+    if (!jobId || busy) return;
+    const forJob = jobId;
+    stopPoll();
+    busy = "cancel-search";
+    render();
+    try {
+      const state = await cancelVoiceCandidates(forJob);
+      if (forJob === jobId) {
+        task = state;
+        error = "";
+        // The worker stops at its next check; poll until it says so.
+        if (isRunning(state)) schedule(800);
+      }
+    } catch (cause) {
+      error = cause?.message || "Could not cancel the search.";
+      if (isRunning(task)) schedule();
     } finally {
       busy = "";
       render();
@@ -202,6 +237,8 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     }
     stopPlayer();
     busy = "clone";
+    cloneTask = newVoiceTask();
+    body.task = cloneTask;
     error = "";
     render();
     try {
@@ -214,9 +251,24 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
       onNotice(`Cloned “${record.name}” from ${which}.${note ? ` ${note}` : ""} It is in Your voices.`, note ? "" : "ok");
       onCloned(record);
     } catch (cause) {
-      error = cause?.message || "Could not clone the video voice.";
+      if (wasCancelled(cause)) onNotice("Cancelled. No voice was cloned.", "");
+      else error = cause?.message || "Could not clone the video voice.";
     } finally {
       busy = "";
+      cloneTask = "";
+      render();
+    }
+  }
+
+  async function cancelClone() {
+    if (busy !== "clone" || !cloneTask) return;
+    busy = "cancel-clone";
+    render();
+    try {
+      await cancelVoiceTask(cloneTask);
+    } catch (cause) {
+      error = cause?.message || "Could not cancel the clone.";
+      busy = "clone";
       render();
     }
   }
@@ -255,12 +307,20 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     const tick = el("input", { type: "checkbox", checked: consent, id: "vr-consent-video" });
     tick.addEventListener("change", () => { consent = Boolean(tick.checked); render(); });
     const ready = manual || Boolean(picked);
+    const cloning = busy === "clone" || busy === "cancel-clone";
     const go = el("button", {
       class: "primary small", type: "button",
-      text: busy === "clone" ? "Cloning…" : (manual ? "Clone this range" : "Clone this clip"),
+      text: cloning ? "Cloning…" : (manual ? "Clone this range" : "Clone this clip"),
       disabled: Boolean(busy) || !consent || !ready,
     });
     go.addEventListener("click", () => { void clone(); });
+    const stop = cloning ? el("button", {
+      class: "ghost small", type: "button",
+      text: busy === "cancel-clone" ? "Cancelling…" : "Cancel",
+      disabled: busy === "cancel-clone",
+      "aria-label": "Cancel the clone",
+    }) : null;
+    stop?.addEventListener("click", () => { void cancelClone(); });
     const form = el("div", { class: "vr-clone-form" }, [
       el("label", { class: "vr-field" }, [el("span", { text: "Name" }), nameInput]),
     ]);
@@ -276,7 +336,7 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     }
     form.append(
       el("label", { class: "vr-consent", for: "vr-consent-video" }, [tick, el("span", { text: CONSENT_COPY.video })]),
-      el("div", { class: "vr-actions" }, [go]),
+      el("div", { class: "vr-actions" }, [go, stop]),
     );
     return form;
   }
@@ -312,11 +372,45 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
       disabled: !jobId || Boolean(busy) || running,
     });
     search.addEventListener("click", () => { void find(); });
+    const stop = running ? el("button", {
+      class: "ghost small danger", type: "button",
+      text: busy === "cancel-search" ? "Cancelling…" : "Cancel",
+      disabled: busy === "cancel-search",
+      "aria-label": "Cancel the clip search",
+    }) : null;
+    stop?.addEventListener("click", () => { void cancelSearch(); });
     node.append(el("div", { class: "vr-finder-pick" }, [
       el("label", { class: "vr-field" }, [el("span", { text: "Video" }), select]),
-      el("div", { class: "vr-actions" }, [search]),
+      el("div", { class: "vr-actions" }, [search, stop]),
     ]));
     if (!jobId) return;
+
+    const whole = el("input", {
+      type: "checkbox",
+      checked: fullSearch,
+      disabled: running || Boolean(busy),
+    });
+    whole.addEventListener("change", () => { fullSearch = whole.checked; });
+    const wholeLabel = el("label", { class: "vr-consent" }, [
+      whole,
+      el("span", {
+        text: "Search the whole video. Off: the first 2:00 only, which is much faster. For a quick clone, use a time range instead.",
+      }),
+    ]);
+
+    const fast = el("input", {
+      type: "checkbox",
+      checked: fastSearch,
+      disabled: running || Boolean(busy),
+    });
+    fast.addEventListener("change", () => { fastSearch = fast.checked; });
+    const fastLabel = el("label", { class: "vr-consent" }, [
+      fast,
+      el("span", {
+        text: "Fast search. Skips music separation, so it returns in seconds. Uncheck for a clean search with the separation model.",
+      }),
+    ]);
+    node.append(el("div", { class: "vr-check-grid" }, [wholeLabel, fastLabel]));
 
     const progress = stageCopy(task);
     if (running && progress) node.append(el("p", { class: "vr-status", role: "status", "data-stage": task.stage || "", text: progress }));
