@@ -2034,8 +2034,10 @@ main { min-height: calc(100vh - 150px); }
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 320px;
+  max-height: min(320px, 60vh);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 6px;
   border: 1px solid var(--line-2);
   border-radius: 12px;
@@ -2044,6 +2046,7 @@ main { min-height: calc(100vh - 150px); }
 }
 .select-menu[hidden] { display: none; }
 .select-menu button {
+  flex: 0 0 auto;
   width: 100%;
   padding: 10px 11px;
   border: 0;

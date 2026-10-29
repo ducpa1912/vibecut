@@ -344,14 +344,22 @@
     select.classList.add("menu-open");
     const rect = select.getBoundingClientRect();
     const width = Math.max(rect.width, 240);
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const openAbove = spaceBelow < 240 && spaceAbove > spaceBelow;
+    const available = Math.max(160, openAbove ? spaceAbove : spaceBelow);
+    selectMenu.style.maxHeight = `${Math.min(320, available)}px`;
     selectMenu.style.width = `${width}px`;
     selectMenu.style.left = `${Math.min(rect.left, window.innerWidth - width - 12)}px`;
-    selectMenu.style.top = `${rect.bottom + 4}px`;
+    selectMenu.style.top = openAbove
+      ? `${Math.max(8, rect.top - Math.min(320, available) - 4)}px`
+      : `${rect.bottom + 4}px`;
     requestAnimationFrame(() => {
       const menuRect = selectMenu.getBoundingClientRect();
       if (menuRect.bottom > window.innerHeight - 8) {
         selectMenu.style.top = `${Math.max(8, rect.top - menuRect.height - 4)}px`;
       }
+      if (menuRect.top < 8) selectMenu.style.top = "8px";
       selectMenu.querySelector(".active")?.scrollIntoView({ block: "nearest" });
     });
   }

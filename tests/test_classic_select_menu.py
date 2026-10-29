@@ -28,3 +28,6 @@ def test_the_menu_is_fifteen_pixels_and_keeps_the_choice():
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "menuSelect.value = option.value" in script
     assert 'new Event("change", { bubbles: true })' in script
+    assert "selectMenu.style.maxHeight" in script
+    assert "spaceBelow" in script and "spaceAbove" in script
+    assert "overscroll-behavior: contain" in css
