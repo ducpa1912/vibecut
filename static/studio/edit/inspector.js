@@ -45,6 +45,7 @@ export function mountInspector(host, { active = "visual", edit, captions, panelC
       type: "button",
       role: "tab",
       "aria-selected": selected ? "true" : "false",
+      tabindex: selected ? "0" : "-1",
       dataset: { tab: tab.id },
     }, [
       el("span", { text: tab.label }),
@@ -53,6 +54,21 @@ export function mountInspector(host, { active = "visual", edit, captions, panelC
     button.addEventListener("click", () => panelCtx.setTab(tab.id));
     tabs.append(button);
   }
+  tabs.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const buttons = Array.from(tabs.querySelectorAll("[role=tab]"));
+    const current = buttons.indexOf(document.activeElement);
+    if (current < 0) return;
+    event.preventDefault();
+    let next = current;
+    if (event.key === "ArrowLeft") next = (current - 1 + buttons.length) % buttons.length;
+    if (event.key === "ArrowRight") next = (current + 1) % buttons.length;
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = buttons.length - 1;
+    const target = TABS[next];
+    panelCtx.setTab(target.id);
+    requestAnimationFrame(() => host.querySelector(`[role=tab][data-tab="${target.id}"]`)?.focus());
+  });
   host.append(tabs);
 
   const body = el("div", { class: "st-inspector-body", role: "tabpanel", "aria-label": `${TABS.find((tab) => tab.id === activeTab)?.label || "Layer"} controls` });

@@ -1,7 +1,7 @@
 /**
  * VibeCut Studio — shell.
  *
- * Five steps: Import · Check · Stories · Edit · Finish.
+ * Four steps: Import · Moments · Edit · Finish.
  * Native ES modules, no build step, no new backend routes.
  *
  * Classic stays whole. This app is an overlay; Settings → "Use Classic editor"
@@ -13,6 +13,7 @@ import { mount as mountMoments } from "./stories.js";
 import { mount as mountEdit } from "./edit.js";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountLibrary } from "./library.js";
+import { SOURCES_TAB } from "./library.js";
 import { mount as mountSetup } from "./setup.js";
 import { cachedJobStamp, getJob, getJobStatus, invalidateReadCache, listClipSets, request } from "./api.js";
 import { el, statusText } from "./ui.js";
@@ -22,7 +23,7 @@ const EDITOR_KEY = "vibecut.editor";
 
 const STEPS = [
   { id: "import", label: "Import", note: "Bring in a video", mount: mountImport },
-  { id: "moments", label: "Moments", note: "Find and build stories", mount: mountMoments },
+  { id: "moments", label: "Moments", note: "Find and build moments", mount: mountMoments },
   { id: "edit", label: "Edit", note: "Shape each moment", mount: mountEdit },
   { id: "finish", label: "Finish", note: "Review, render and share", mount: mountFinish },
 ];
@@ -154,61 +155,64 @@ export function startStudio() {
   root.innerHTML = `
     <div class="st-shell">
       <a class="st-skip" href="#st-main">Skip to content</a>
-      <aside class="st-rail">
-        <div class="st-brand">
-          <span class="st-brand-dot" aria-hidden="true"></span>
-          <span class="st-brand-name">VibeCut</span>
-          <span class="st-brand-tag">Studio</span>
-        </div>
-        <nav class="st-rail-nav" aria-label="Studio steps">
-          <ol class="st-step-list">
-            ${STEPS.map((step, index) => `
-              <li>
-                <button class="st-step" type="button" data-step="${step.id}">
-                  <span class="st-step-num">${String(index + 1).padStart(2, "0")}</span>
-                  <span class="st-step-copy"><strong>${step.label}</strong><small>${step.note}</small></span>
-                </button>
-              </li>
-            `).join("")}
-          </ol>
-        </nav>
-        <p id="st-rail-notice" class="st-rail-notice" role="status" aria-live="polite" hidden></p>
-        <div class="st-rail-foot">
-          <span class="st-local"><i aria-hidden="true"></i>On this Mac</span>
-          <button id="st-setup-open" class="st-rail-settings" type="button" aria-haspopup="dialog">Setup</button>
-          <button id="st-settings-open" class="st-rail-settings" type="button" aria-haspopup="dialog">Settings</button>
-        </div>
-      </aside>
-
       <div class="st-main-wrap">
-        <header class="st-top">
-          <div class="st-top-job">
-            <span class="st-top-label">Current video</span>
-            <strong id="st-current-name">No video open</strong>
-            <span id="st-current-status" class="st-top-status" hidden></span>
-            <div id="st-top-progress" class="st-top-progress" role="status" aria-live="polite" hidden>
-              <div class="st-progress-bar"><i id="st-top-progress-fill"></i></div>
-              <span id="st-top-progress-text"></span>
-              <button id="st-top-reading-action" class="st-btn st-btn-quiet st-btn-small" type="button" hidden></button>
+        <header class="st-top st-appbar">
+          <div class="st-top-row">
+            <div class="st-brand">
+              <span class="st-brand-dot" aria-hidden="true"></span>
+              <span class="st-brand-name">VibeCut</span>
+              <span class="st-brand-tag">Studio</span>
+            </div>
+            <nav class="st-rail-nav" aria-label="Studio steps">
+              <ol class="st-step-list">
+                ${STEPS.map((step, index) => `
+                  <li>
+                    <button class="st-step" type="button" data-step="${step.id}">
+                      <span class="st-step-num">${String(index + 1).padStart(2, "0")}</span>
+                      <span class="st-step-copy"><strong>${step.label}</strong><small>${step.note}</small></span>
+                    </button>
+                  </li>
+                `).join("")}
+              </ol>
+            </nav>
+            <div class="st-top-right">
+              <div class="st-top-job">
+                <span class="st-top-label">Current video</span>
+                <strong id="st-current-name">No video open</strong>
+                <span id="st-current-status" class="st-top-status" hidden></span>
+              </div>
+              <div class="st-top-actions">
+                <button id="st-change-video" class="st-btn st-btn-quiet st-btn-small" type="button">Change video</button>
+                <a id="st-voice-room" class="st-btn st-btn-quiet st-btn-small" href="/voices">Voice Room</a>
+                <button id="st-menu-open" class="st-btn st-btn-ghost st-btn-small st-menu-open" type="button" aria-haspopup="dialog" aria-controls="st-menu-dialog">Menu</button>
+              </div>
             </div>
           </div>
-          <div class="st-top-actions">
-            <button id="st-change-video" class="st-btn st-btn-quiet" type="button">Change video</button>
-            <a id="st-voice-room" class="st-btn st-btn-quiet" href="/voices">Voice Room</a>
-            <button id="st-settings" class="st-icon-btn st-settings-btn" type="button" aria-label="Settings" aria-haspopup="dialog">⚙</button>
+          <div id="st-top-progress" class="st-top-progress" role="status" aria-live="polite" hidden>
+            <div class="st-progress-bar"><i id="st-top-progress-fill"></i></div>
+            <span id="st-top-progress-text"></span>
+            <button id="st-top-reading-action" class="st-btn st-btn-quiet st-btn-small" type="button" hidden></button>
           </div>
+          <p id="st-rail-notice" class="st-rail-notice" role="status" aria-live="polite" hidden></p>
         </header>
         <main id="st-main" class="st-main" tabindex="-1">
           <p class="st-hint">Opening Studio…</p>
         </main>
       </div>
     </div>
-    <dialog id="st-settings-dialog" class="st-dialog" aria-labelledby="st-settings-title">
+    <dialog id="st-menu-dialog" class="st-dialog st-menu-dialog" aria-labelledby="st-menu-title">
       <div class="st-dialog-head">
-        <h2 id="st-settings-title">Settings</h2>
-        <button class="st-icon-btn" type="button" data-dialog-close aria-label="Close settings">×</button>
+        <h2 id="st-menu-title">Studio menu</h2>
+        <button class="st-icon-btn" type="button" data-menu-close aria-label="Close menu">×</button>
       </div>
-      <div class="st-dialog-body">
+      <div class="st-menu-tabs" role="tablist" aria-label="Setup and settings">
+        <button id="st-menu-tab-setup" class="st-menu-tab" type="button" role="tab" aria-selected="true" aria-controls="st-menu-setup" tabindex="0" data-menu-tab="setup">Setup</button>
+        <button id="st-menu-tab-settings" class="st-menu-tab" type="button" role="tab" aria-selected="false" aria-controls="st-menu-settings" tabindex="-1" data-menu-tab="settings">Settings</button>
+      </div>
+      <div id="st-menu-setup" class="st-dialog-body st-menu-panel" role="tabpanel" aria-labelledby="st-menu-tab-setup">
+        <div id="st-setup-host" class="st-setup-host"></div>
+      </div>
+      <div id="st-menu-settings" class="st-dialog-body st-menu-panel" role="tabpanel" aria-labelledby="st-menu-tab-settings" hidden>
         <section class="st-dialog-section">
           <h3>Editor</h3>
           <p>Studio is the new workspace. Classic keeps every older screen, unchanged.</p>
@@ -223,7 +227,8 @@ export function startStudio() {
         </section>
       </div>
       <div class="st-dialog-foot">
-        <button class="st-btn st-btn-primary" type="button" data-dialog-close>Close</button>
+        <span class="st-local"><i aria-hidden="true"></i>On this Mac</span>
+        <button class="st-btn st-btn-primary" type="button" data-menu-close>Close</button>
       </div>
     </dialog>
     <dialog id="st-library-dialog" class="st-dialog st-library-dialog" aria-labelledby="st-library-title">
@@ -239,25 +244,17 @@ export function startStudio() {
         <button class="st-btn st-btn-primary" type="button" data-library-close>Close</button>
       </div>
     </dialog>
-    <dialog id="st-setup-dialog" class="st-dialog st-setup-dialog" aria-labelledby="st-setup-title">
-      <div class="st-dialog-head">
-        <h2 id="st-setup-title">Setup</h2>
-        <button class="st-icon-btn" type="button" data-setup-close aria-label="Close setup">×</button>
-      </div>
-      <div id="st-setup-host" class="st-dialog-body st-setup-host"></div>
-      <div class="st-dialog-foot">
-        <button class="st-btn st-btn-primary" type="button" data-setup-close>Close</button>
-      </div>
-    </dialog>
   `;
 
   const dom = {
     main: root.querySelector("#st-main"),
-    settings: root.querySelector("#st-settings-dialog"),
-    settingsOpen: root.querySelector("#st-settings-open"),
-    settingsTop: root.querySelector("#st-settings"),
-    setup: root.querySelector("#st-setup-dialog"),
-    setupOpen: root.querySelector("#st-setup-open"),
+    menu: root.querySelector("#st-menu-dialog"),
+    menuOpen: root.querySelector("#st-menu-open"),
+    menuTabs: Array.from(root.querySelectorAll("[data-menu-tab]")),
+    menuPanels: {
+      setup: root.querySelector("#st-menu-setup"),
+      settings: root.querySelector("#st-menu-settings"),
+    },
     setupHost: root.querySelector("#st-setup-host"),
     currentName: root.querySelector("#st-current-name"),
     currentStatus: root.querySelector("#st-current-status"),
@@ -304,9 +301,13 @@ export function startStudio() {
       ? `${name || currentJob.id}${status ? ` · ${status}` : ""}`
       : "No video open.";
     dom.forget.disabled = !currentJob;
+    // No video open: there is nothing to change. Import is the one action.
+    dom.change.hidden = !currentJob;
     const known = Boolean(currentJob) && jobState.jobId === currentJob.id;
     const reading = known && isReading(jobState.status);
     const action = known ? readingAction(jobState.status) : null;
+    // Import carries the same Cancel reading control. Keep one visible surface.
+    const duplicate = activeStep === "import";
     dom.progress.hidden = !action;
     if (reading) {
       const percent = Math.max(0, Math.min(100, Math.round(Number(jobState.progress || 0) * 100)));
@@ -318,7 +319,7 @@ export function startStudio() {
         ? "Reading stopped. Other videos can read now."
         : "Reading this video failed.";
     }
-    dom.readingAction.hidden = !action;
+    dom.readingAction.hidden = !action || duplicate;
     if (action && !dom.readingAction.dataset.busy) {
       dom.readingAction.textContent = action.label;
       dom.readingAction.dataset.kind = action.kind;
@@ -362,7 +363,7 @@ export function startStudio() {
       return `Wait for the video to finish reading (${percent}%).`;
     }
     if ((stepId === "edit" || stepId === "finish") && jobState.stories === 0) {
-      return "Pick stories first. Open Stories and press Find stories.";
+      return "Pick moments first. Open Moments and press Find moments.";
     }
     return "";
   }
@@ -374,7 +375,7 @@ export function startStudio() {
       if (isReading(jobState.status)) return { state: "locked", text: "Waits for reading" };
       if (STOPPED.has(jobState.status)) return { state: "locked", text: "Reading stopped" };
       if (jobState.sourceMissing) return { state: "locked", text: "Original file missing" };
-      if (stepId === "edit" || stepId === "finish") return { state: "locked", text: "Needs stories" };
+      if (stepId === "edit" || stepId === "finish") return { state: "locked", text: "Needs moments" };
       return { state: "locked", text: "Not available" };
     }
     if (!known) return { state: "open", text: STEPS.find((step) => step.id === stepId)?.note || "" };
@@ -540,6 +541,8 @@ export function startStudio() {
 
   function openLibrary() {
     ensureLibrary();
+    // Change video is choosing a source, not reopening a finished cut.
+    libraryUi?.setTab?.(SOURCES_TAB);
     if (typeof dom.library.showModal === "function") dom.library.showModal();
     else dom.library.setAttribute("open", "");
     void libraryUi?.refresh();
@@ -587,6 +590,7 @@ export function startStudio() {
     }
     const step = STEPS.find((item) => item.id === stepId);
     document.title = `${step?.label || "Studio"} · VibeCut Studio`;
+    renderJob();
   }
 
   function activate(stepId, { focus = true, force = false } = {}) {
@@ -695,14 +699,10 @@ export function startStudio() {
     dom.main.focus();
   });
 
-  function openSettings() {
-    renderJob();
-    if (typeof dom.settings.showModal === "function") dom.settings.showModal();
-    else dom.settings.setAttribute("open", "");
-  }
+  let menuTab = "setup";
 
-  function openSetup() {
-    if (!dom.setup || !dom.setupHost) return;
+  function mountSetupPanel() {
+    if (!dom.setupHost) return;
     if (typeof setupCleanup === "function") {
       try {
         setupCleanup();
@@ -711,31 +711,66 @@ export function startStudio() {
       }
     }
     setupCleanup = mountSetup(dom.setupHost, ctx) || null;
-    if (typeof dom.setup.showModal === "function") dom.setup.showModal();
-    else dom.setup.setAttribute("open", "");
   }
 
-  dom.settingsOpen.addEventListener("click", openSettings);
-  dom.settingsTop.addEventListener("click", openSettings);
-  dom.setupOpen?.addEventListener("click", openSetup);
-  for (const button of root.querySelectorAll("[data-setup-close]")) {
-    button.addEventListener("click", () => dom.setup.close());
+  function selectMenuTab(name, { focus = false } = {}) {
+    if (!dom.menuPanels[name]) return;
+    menuTab = name;
+    for (const button of dom.menuTabs) {
+      const active = button.dataset.menuTab === name;
+      button.setAttribute("aria-selected", active ? "true" : "false");
+      button.tabIndex = active ? 0 : -1;
+    }
+    for (const [key, panel] of Object.entries(dom.menuPanels)) {
+      panel.hidden = key !== name;
+    }
+    if (name === "setup") mountSetupPanel();
+    if (focus) dom.menuTabs.find((button) => button.dataset.menuTab === name)?.focus();
   }
-  dom.setup?.addEventListener("close", () => {
+
+  function openMenu() {
+    renderJob();
+    selectMenuTab(menuTab);
+    if (typeof dom.menu.showModal === "function") dom.menu.showModal();
+    else dom.menu.setAttribute("open", "");
+    requestAnimationFrame(() => {
+      dom.menuTabs.find((button) => button.dataset.menuTab === menuTab)?.focus();
+    });
+  }
+
+  function closeMenu() {
+    if (typeof dom.menu.close === "function") dom.menu.close();
+    else dom.menu.removeAttribute("open");
+  }
+
+  dom.menuOpen.addEventListener("click", openMenu);
+  for (const button of dom.menuTabs) {
+    button.addEventListener("click", () => selectMenuTab(button.dataset.menuTab));
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const index = dom.menuTabs.indexOf(button);
+      let next = index;
+      if (event.key === "ArrowLeft") next = (index - 1 + dom.menuTabs.length) % dom.menuTabs.length;
+      if (event.key === "ArrowRight") next = (index + 1) % dom.menuTabs.length;
+      if (event.key === "Home") next = 0;
+      if (event.key === "End") next = dom.menuTabs.length - 1;
+      selectMenuTab(dom.menuTabs[next].dataset.menuTab, { focus: true });
+    });
+  }
+  for (const button of root.querySelectorAll("[data-menu-close]")) {
+    button.addEventListener("click", closeMenu);
+  }
+  dom.menu.addEventListener("click", (event) => {
+    if (event.target === dom.menu) closeMenu();
+  });
+  dom.menu.addEventListener("close", () => {
     if (typeof setupCleanup === "function") setupCleanup();
     setupCleanup = null;
-  });
-  dom.setup?.addEventListener("click", (event) => {
-    if (event.target === dom.setup) dom.setup.close();
-  });
-  for (const button of root.querySelectorAll("[data-dialog-close]")) {
-    button.addEventListener("click", () => dom.settings.close());
-  }
-  dom.settings.addEventListener("click", (event) => {
-    if (event.target === dom.settings) dom.settings.close();
+    dom.setupHost?.replaceChildren();
   });
   dom.forget.addEventListener("click", () => {
-    dom.settings.close();
+    closeMenu();
     ctx.clearJob();
   });
   root.querySelector("#st-use-classic")?.addEventListener("click", () => {

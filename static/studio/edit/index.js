@@ -52,7 +52,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=0.1.0";
+    link.href = "/static/studio/edit/edit.css?v=0.2.0";
     document.head.append(link);
   }
   // edit.css is owned elsewhere; the step bar's sticky behaviour lives here.
@@ -105,7 +105,7 @@ function writeChoice(value) {
 
 function storyTitle(story, index) {
   const title = String(story?.title || story?.hook?.text || "").replace(/\s+/g, " ").trim();
-  return `${String(index + 1).padStart(2, "0")} · ${title || `Story ${index + 1}`}`;
+  return `${String(index + 1).padStart(2, "0")} · ${title || `Moment ${index + 1}`}`;
 }
 
 export function mount(root, ctx) {
@@ -155,7 +155,7 @@ export function mount(root, ctx) {
       el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-card st-edit-loading" }, [
         el("h1", { text: "Opening the editor" }),
-        el("p", { class: "st-hint", text: message || "Reading this story…" }),
+        el("p", { class: "st-hint", text: message || "Reading this moment…" }),
       ]),
     ]));
   }
@@ -164,7 +164,6 @@ export function mount(root, ctx) {
     const section = el("section", { class: "st-panel", "aria-labelledby": "st-edit-empty-title" }, [
       el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-empty" }, [
-        el("span", { class: "st-empty-mark", "aria-hidden": "true", text: "04" }),
         el("h1", { id: "st-edit-empty-title", text: title }),
         el("p", { text: copy }),
       ]),
@@ -180,7 +179,6 @@ export function mount(root, ctx) {
     const section = el("section", { class: "st-panel" }, [
       el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-empty" }, [
-        el("span", { class: "st-empty-mark", "aria-hidden": "true", text: "04" }),
         el("h1", { text: "The editor could not open" }),
         el("p", { text: message || "Reload the page to try again." }),
       ]),
@@ -202,10 +200,10 @@ export function mount(root, ctx) {
           </div>
           <div class="st-edit-controls">
             <label class="st-field st-field-inline">
-              <span>Story</span>
-              <select id="st-edit-story" aria-label="Story"></select>
+              <span>Moment</span>
+              <select id="st-edit-story" aria-label="Moment"></select>
             </label>
-            <div class="st-aspect-group" role="group" aria-label="Story shape">
+            <div class="st-aspect-group" role="group" aria-label="Moment shape">
               <button class="st-aspect" type="button" data-aspect="9:16" aria-pressed="true">9:16</button>
               <button class="st-aspect" type="button" data-aspect="4:5" aria-pressed="false">4:5</button>
               <button class="st-aspect" type="button" data-aspect="1:1" aria-pressed="false">1:1</button>
@@ -222,15 +220,23 @@ export function mount(root, ctx) {
           <button id="st-edit-back" class="st-btn st-btn-ghost st-btn-small" type="button">← Back to Moments</button>
           <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
           <span id="st-edit-meta" class="st-hint"></span>
+          <button id="st-edit-inspector-toggle" class="st-btn st-btn-ghost st-btn-small st-edit-inspector-toggle" type="button" aria-controls="st-edit-inspector" aria-expanded="false">Adjust moment</button>
           <button id="st-edit-next" class="st-btn st-btn-primary st-btn-small" type="button" disabled>Next: Finish →</button>
         </div>
         <div id="st-edit-receipt" class="st-trim-receipt" role="status" aria-live="polite" hidden></div>
         <div id="st-edit-notice" class="st-edit-notice" role="alert" hidden></div>
-        <div class="st-edit-workspace">
+        <div class="st-edit-stage">
           <div id="st-edit-preview"></div>
-          <aside id="st-edit-inspector" class="st-inspector" aria-label="Layer controls"></aside>
+          <div id="st-edit-timeline"></div>
+          <aside id="st-edit-inspector" class="st-inspector" aria-label="Moment controls">
+            <div class="st-inspector-sheet-head">
+              <strong>Adjust this moment</strong>
+              <button id="st-edit-inspector-close" class="st-btn st-btn-ghost st-btn-small" type="button">Done</button>
+            </div>
+            <div id="st-edit-inspector-body"></div>
+          </aside>
         </div>
-        <div id="st-edit-timeline"></div>
+        <div id="st-edit-inspector-scrim" class="st-inspector-scrim" hidden></div>
       </section>
     `;
     dom.story = root.querySelector("#st-edit-story");
@@ -247,6 +253,10 @@ export function mount(root, ctx) {
     dom.sub = root.querySelector("#st-edit-sub");
     dom.preview = root.querySelector("#st-edit-preview");
     dom.inspector = root.querySelector("#st-edit-inspector");
+    dom.inspectorBody = root.querySelector("#st-edit-inspector-body");
+    dom.inspectorToggle = root.querySelector("#st-edit-inspector-toggle");
+    dom.inspectorClose = root.querySelector("#st-edit-inspector-close");
+    dom.inspectorScrim = root.querySelector("#st-edit-inspector-scrim");
     dom.timeline = root.querySelector("#st-edit-timeline");
     dom.all = root.querySelector("#st-edit-all");
 
@@ -260,6 +270,38 @@ export function mount(root, ctx) {
     dom.undo.addEventListener("click", () => { void undoLastChange(); });
     dom.undoTrim.addEventListener("click", () => { void undoTrimChange(); });
     dom.repair.addEventListener("click", () => { void repairAspects(); });
+    dom.inspectorToggle?.addEventListener("click", () => {
+      if (dom.inspector?.classList.contains("is-open")) closeInspector();
+      else openInspector();
+    });
+    dom.inspectorClose?.addEventListener("click", closeInspector);
+    dom.inspectorScrim?.addEventListener("click", closeInspector);
+    document.addEventListener("keydown", onInspectorKeydown);
+  }
+
+  function openInspector() {
+    if (!dom.inspector) return;
+    dom.inspector.classList.add("is-open");
+    if (dom.inspectorScrim) dom.inspectorScrim.hidden = false;
+    dom.inspectorToggle?.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => {
+      dom.inspectorBody?.querySelector("[role=tab]")?.focus();
+    });
+  }
+
+  function closeInspector({ restore = true } = {}) {
+    if (!dom.inspector) return;
+    const wasOpen = dom.inspector.classList.contains("is-open");
+    dom.inspector.classList.remove("is-open");
+    if (dom.inspectorScrim) dom.inspectorScrim.hidden = true;
+    dom.inspectorToggle?.setAttribute("aria-expanded", "false");
+    if (wasOpen && restore) dom.inspectorToggle?.focus();
+  }
+
+  function onInspectorKeydown(event) {
+    if (event.key === "Escape" && dom.inspector?.classList.contains("is-open")) {
+      closeInspector();
+    }
   }
 
   function setSaveStatus(message, tone = "") {
@@ -359,7 +401,7 @@ export function mount(root, ctx) {
     dom.receipt.replaceChildren(
       el("div", { class: "st-trim-receipt-copy" }, [
         el("p", { class: "st-eyebrow", text: "Last trim" }),
-        el("p", { class: "st-trim-receipt-line", text: summary || "The story range changed." }),
+        el("p", { class: "st-trim-receipt-line", text: summary || "The moment range changed." }),
         el("p", {
           class: "st-hint",
           text: `${formatTime(oldDuration)} → ${formatTime(newDuration)}${note ? ` · ${note}` : ""}`,
@@ -532,12 +574,12 @@ export function mount(root, ctx) {
       const code = trimErrorCode(error);
       const why = code === "caption_rebuild_failed"
         ? "The captions could not be rebuilt, so nothing changed."
-        : "This story changed in another window.";
+        : "This moment changed in another window.";
       if (reloaded) {
         setSaveStatus("Latest cut open");
         notify(`${why} The latest range is open; check it and drag again.`, "bad");
       } else {
-        notify(`${why} Open the story again from Stories.`, "bad");
+        notify(`${why} Open the moment again from Moments.`, "bad");
       }
     } catch (failure) {
       if (!disposed) {
@@ -611,7 +653,7 @@ export function mount(root, ctx) {
   function trimErrorMessage(error) {
     if (!error) return "";
     if (error.status === 404 || error.status === 405) {
-      return "Trimming needs the latest server. Restart VibeCut and open this story again.";
+      return "Trimming needs the latest server. Restart VibeCut and open this moment again.";
     }
     return error.message || "";
   }
@@ -640,7 +682,7 @@ export function mount(root, ctx) {
       button.classList.toggle("is-stale", needsRepair);
       button.dataset.stale = needsRepair ? "true" : "false";
       button.title = needsRepair
-        ? "This shape's Edit was made before the story changed. Press Repair."
+        ? "This shape's Edit was made before the moment changed. Press Repair."
         : "";
       button.setAttribute(
         "aria-label",
@@ -734,7 +776,7 @@ export function mount(root, ctx) {
   }
 
   function renderInspector() {
-    if (!dom.inspector) return;
+    if (!dom.inspectorBody) return;
     const panelCtx = {
       getEdit: () => state.edit,
       getCaptions: () => state.captions,
@@ -845,7 +887,7 @@ export function mount(root, ctx) {
         }
       },
     };
-    mountInspector(dom.inspector, {
+    mountInspector(dom.inspectorBody, {
       active: state.activeTab,
       edit: state.edit,
       captions: state.captions,
@@ -907,7 +949,7 @@ export function mount(root, ctx) {
   async function reloadHead() {
     const current = await getCurrentEdit(state.job.id, state.set.id, state.story.id, state.aspect);
     if (!current) {
-      notify("This story has no edit now. Open Stories and choose it again.", "bad");
+      notify("This moment has no edit now. Open Moments and choose it again.", "bad");
       return false;
     }
     const fresh = current.edit;
@@ -998,7 +1040,7 @@ export function mount(root, ctx) {
         setSaveStatus(stale ? "Changed in another window" : "Not saved", "bad");
         notify(
           stale
-            ? "This story changed in another window. The latest save is open; check it and try again."
+            ? "This moment changed in another window. The latest save is open; check it and try again."
             : (failed.message || "Could not save this change."),
           "bad",
         );
@@ -1064,10 +1106,10 @@ export function mount(root, ctx) {
     if (!state.job || !state.set || !state.story) return;
     state.selected = null;
     state.playhead = Math.min(state.playhead, Math.max(0.1, state.duration));
-    setSaveStatus("Opening story…", "busy");
+    setSaveStatus("Opening moment…", "busy");
     notify("");
-    if (dom.inspector) {
-      dom.inspector.replaceChildren(el("p", { class: "st-hint", text: "Opening story…" }));
+    if (dom.inspectorBody) {
+      dom.inspectorBody.replaceChildren(el("p", { class: "st-hint", text: "Opening moment…" }));
     }
 
     try {
@@ -1137,15 +1179,15 @@ export function mount(root, ctx) {
       setSaveStatus("Could not open", "bad");
       notify(
         error?.status === 409
-          ? "This story changed since it was cut. Open Stories and build it again."
-          : (error?.message || "Could not open this story."),
+          ? "This moment changed since it was cut. Open Moments and build it again."
+          : (error?.message || "Could not open this moment."),
         "bad",
       );
       if (state.edit) {
         renderEditorParts();
         populateHeader();
       } else {
-        renderError(error?.message || "Could not open this story.");
+        renderError(error?.message || "Could not open this moment.");
       }
     }
   }
@@ -1222,7 +1264,7 @@ export function mount(root, ctx) {
       if (!disposed) {
         renderEditorParts();
         populateHeader();
-        notify("This story changed in another window. The latest save is open.", "bad");
+        notify("This moment changed in another window. The latest save is open.", "bad");
       }
     } catch (error) {
       if (!disposed) notify(error?.message || "Could not reload the latest cut.", "bad");
@@ -1293,8 +1335,8 @@ export function mount(root, ctx) {
         const reloaded = await reloadHead();
         notify(
           reloaded
-            ? "This story changed in another window. The latest save is open."
-            : "This story changed in another window. Open it again from Stories.",
+            ? "This moment changed in another window. The latest save is open."
+            : "This moment changed in another window. Open it again from Moments.",
           "bad",
         );
       } else {
@@ -1310,11 +1352,11 @@ export function mount(root, ctx) {
     if (!jobId) {
       renderEmpty({
         title: "Open a video first",
-        copy: "The editor works on one story at a time. Import a video, then pick its stories.",
+        copy: "The editor works on one moment at a time. Import a video, then pick its moments.",
       });
       return;
     }
-    renderLoading("Reading the video and its story picks…");
+    renderLoading("Reading the video and its moment picks…");
     const seq = ++loadSeq;
     try {
       const [job, result] = await Promise.all([getJob(jobId), listClipSets(jobId)]);
@@ -1334,7 +1376,7 @@ export function mount(root, ctx) {
       if (!usable.length) {
         renderEmpty({
           title: "Pick moments first",
-          copy: "Edit needs a story cut. Open Moments, choose or add one, then come back.",
+          copy: "Edit needs a moment. Open Moments, choose or add one, then come back.",
           action: "Open Moments",
           step: "moments",
         });
@@ -1395,6 +1437,7 @@ export function mount(root, ctx) {
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("pagehide", onPageHide);
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    document.removeEventListener("keydown", onInspectorKeydown);
     root.replaceChildren();
   };
 }

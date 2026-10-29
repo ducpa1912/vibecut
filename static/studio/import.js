@@ -175,43 +175,12 @@ export function mount(root, ctx) {
             <p class="st-hint">Most sites work through the local downloader. Link downloads need a connection.</p>
           </div>
 
-          <fieldset class="st-options">
-            <legend>What to read</legend>
-            <div class="st-options-grid">
-              <label class="st-check"><input id="st-opt-ocr" type="checkbox" checked><span><strong>Text and faces</strong><small>Apple Vision · on this Mac</small></span></label>
-              <label class="st-check"><input id="st-opt-transcribe" type="checkbox" checked><span><strong>Speech</strong><small>word timing for captions</small></span></label>
-              <label class="st-check"><input id="st-opt-crop" type="checkbox" checked><span><strong>Smart crop</strong><small>follows the subject</small></span></label>
-              <label class="st-check"><input id="st-opt-track" type="checkbox" checked><span><strong>Track crop</strong><small>smooths the move</small></span></label>
-            </div>
-            <label class="st-field st-field-inline" style="margin-top:10px">
-              <span>Spoken language</span>
-              <select id="st-speech-language" aria-label="Spoken language">
-                <option value="auto">Auto detect</option>
-                <option value="en">English</option>
-                <option value="zh">Chinese</option>
-                <option value="vi">Vietnamese</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-                <option value="pt">Portuguese</option>
-                <option value="it">Italian</option>
-                <option value="hi">Hindi</option>
-                <option value="ar">Arabic</option>
-                <option value="th">Thai</option>
-                <option value="ru">Russian</option>
-              </select>
-            </label>
-            <p class="st-hint">Set this when the title does not reveal the language. It stops a long fallback on the speech engine.</p>
-          </fieldset>
-
           <label id="st-attest-row" class="st-attest" hidden>
             <input id="st-attest" type="checkbox">
             <span><strong>I own this footage or have the rights to it.</strong><small>Required while the rights lock is on. VibeCut never removes platform watermarks.</small></span>
           </label>
 
-          <div class="st-actions">
+          <div class="st-actions st-import-actions">
             <button id="st-import" class="st-btn st-btn-primary" type="button" disabled>Import video</button>
             <span id="st-import-note" class="st-hint">Confirm the rights note to start.</span>
           </div>
@@ -227,6 +196,39 @@ export function mount(root, ctx) {
           </div>
           <p id="st-import-status" class="st-status" role="status" aria-live="polite" hidden></p>
           <p id="st-import-error" class="st-error" role="alert" hidden></p>
+
+          <details class="st-options-details">
+            <summary><span>What to read</span><small>Text, speech, smart crop and spoken language</small></summary>
+            <div class="st-options-details-body">
+              <div class="st-options-grid">
+                <label class="st-check"><input id="st-opt-ocr" type="checkbox" checked><span><strong>Text and faces</strong><small>Apple Vision · on this Mac</small></span></label>
+                <label class="st-check"><input id="st-opt-transcribe" type="checkbox" checked><span><strong>Speech</strong><small>word timing for captions</small></span></label>
+                <label class="st-check"><input id="st-opt-crop" type="checkbox" checked><span><strong>Smart crop</strong><small>follows the subject</small></span></label>
+                <label class="st-check"><input id="st-opt-track" type="checkbox" checked><span><strong>Track crop</strong><small>smooths the move</small></span></label>
+              </div>
+              <label class="st-field st-field-inline" style="margin-top:10px">
+                <span>Spoken language</span>
+                <select id="st-speech-language" aria-label="Spoken language">
+                  <option value="auto">Auto detect</option>
+                  <option value="en">English</option>
+                  <option value="zh">Chinese</option>
+                  <option value="vi">Vietnamese</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="es">Spanish</option>
+                  <option value="fr">French</option>
+                  <option value="de">German</option>
+                  <option value="pt">Portuguese</option>
+                  <option value="it">Italian</option>
+                  <option value="hi">Hindi</option>
+                  <option value="ar">Arabic</option>
+                  <option value="th">Thai</option>
+                  <option value="ru">Russian</option>
+                </select>
+              </label>
+              <p class="st-hint">Set this when the title does not reveal the language. It stops a long fallback on the speech engine.</p>
+            </div>
+          </details>
         </div>
 
         <aside class="st-card st-recent-card" aria-labelledby="st-recent-title">
@@ -344,7 +346,7 @@ export function mount(root, ctx) {
           : "Enter a full link starting with http:// or https://.";
     } else {
       dom.note.textContent = needsTick
-        ? "Import starts reading the video. Stories unlock when it finishes."
+        ? "Import starts reading the video. Moments unlock when it finishes."
         : "The rights lock is off, so import starts straight away. Watermarks are never removed.";
     }
   }
@@ -491,7 +493,7 @@ export function mount(root, ctx) {
 
       if (!created || !created.id) throw new Error("The server did not return a video id.");
       if (disposed) return;
-      setStatus(dom.status, "Imported. Reading the video now — Check opens by itself when it is ready.", "ok");
+      setStatus(dom.status, "Imported. Reading the video now — Moments opens by itself when it is ready.", "ok");
       ctx.openJob(created.id, { name: selectedDisplayName(), status: "queued" });
     } catch (error) {
       if (disposed) return;
@@ -523,7 +525,7 @@ export function mount(root, ctx) {
         el("span", { class: `st-chip st-chip-${statusTone(job.status)}`, text: statusText(job.status) }),
       ]);
       button.addEventListener("click", () => {
-        // Reopen where the work stopped: reading, Check, Stories or Edit.
+        // Reopen where the work stopped: reading, Moments, Edit or Finish.
         ctx.openJobAndContinue(job.id, { name: job.name || "", status: job.status || "" });
       });
       dom.recentList.append(button);

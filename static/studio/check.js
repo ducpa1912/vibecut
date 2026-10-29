@@ -412,7 +412,6 @@ export function mount(root, ctx) {
 
   function renderEmpty(title, copy, actionLabel = "", action = "") {
     const card = el("div", { class: "st-empty" }, [
-      el("span", { class: "st-empty-mark", "aria-hidden": "true", text: "02" }),
       el("h2", { text: title }),
       el("p", { text: copy }),
     ]);

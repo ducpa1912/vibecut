@@ -45,6 +45,7 @@ import { sentenceSegments } from "./edit/model.js";
 
 const POLL_MS = 1600;
 const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
+const SHAPE_KEY = "vibecut.studio.moments.shape";
 
 export const STORY_SHAPES = [
   { value: "9:16", label: "9:16 vertical" },
@@ -206,6 +207,16 @@ export function receiptSummary(receipt) {
   return parts.join(" · ");
 }
 
+function readSetShapes() {
+  try {
+    const value = JSON.parse(localStorage.getItem(SHAPE_KEY) || "{}");
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  } catch (_) {
+    /* A private window may refuse storage; 9:16 is the safe default. */
+  }
+  return {};
+}
+
 export function mount(root, ctx) {
   let disposed = false;
   let timer = 0;
@@ -216,7 +227,9 @@ export function mount(root, ctx) {
   let transcribing = false;
   let scripting = false;
   let briefDraft = null;
-  const storyShapes = new Map();
+  // One persisted shape per set. Every queue action and every Edit hand-off
+  // for this set uses it, so a card and Queue all cannot disagree.
+  let setShapes = readSetShapes();
   let checkReport = null;
   let checkError = "";
   let checkBusy = false;
@@ -277,9 +290,8 @@ export function mount(root, ctx) {
   function emptyNoJob() {
     clear(dom.body);
     const card = el("div", { class: "st-empty" }, [
-      el("span", { class: "st-empty-mark", "aria-hidden": "true", text: "01" }),
       el("h2", { text: "No video open" }),
-      el("p", { text: "Import a video first. Stories need a finished read of the footage." }),
+      el("p", { text: "Import a video first. Moments need a finished read of the footage." }),
     ]);
     const button = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Go to Import" });
     button.addEventListener("click", () => ctx.go("import"));
@@ -319,27 +331,23 @@ export function mount(root, ctx) {
     dom.body.append(card);
   }
 
-  function storyShape(story) {
-    return storyShapes.get(String(story?.id || "")) || "9:16";
+  function activeShape() {
+    const value = setShapes[String(activeSetId || "")];
+    return STORY_SHAPES.some((shape) => shape.value === value) ? value : "9:16";
   }
 
-  function shapeSelect(story) {
-    const select = el("select", { "aria-label": "Story shape", class: "st-story-shape" });
-    for (const shape of STORY_SHAPES) {
-      select.append(el("option", {
-        value: shape.value,
-        text: shape.label,
-        selected: shape.value === storyShape(story),
-      }));
+  function rememberShape(value) {
+    if (!STORY_SHAPES.some((shape) => shape.value === value)) return;
+    setShapes = { ...setShapes, [String(activeSetId || "")]: value };
+    try {
+      localStorage.setItem(SHAPE_KEY, JSON.stringify(setShapes));
+    } catch (_) {
+      /* The current screen still holds the choice. */
     }
-    select.addEventListener("change", () => {
-      storyShapes.set(String(story.id), select.value);
-    });
-    return select;
   }
 
-  function openInEdit(story, shape = storyShape(story)) {
-    // Edit reads this choice on open; the shape follows the card picker.
+  function openInEdit(story, shape = activeShape()) {
+    // Edit reads this choice on open; the shape follows the set picker.
     try {
       localStorage.setItem(EDIT_CHOICE_KEY, JSON.stringify({
         setId: activeSetId,
@@ -530,22 +538,27 @@ export function mount(root, ctx) {
     const tracklets = Array.isArray(checkReport.tracklets) ? checkReport.tracklets : [];
     const warnings = Array.isArray(checkReport.warnings) ? checkReport.warnings : [];
     const music = checkReport?.audio?.music;
-    card.append(el("div", { class: "st-moment-facts" }, [
-      el("span", { class: "st-chip st-chip-quiet", text: `${tracklets.length} text region${tracklets.length === 1 ? "" : "s"}` }),
-      el("span", { class: `st-chip ${warnings.length ? "st-chip-busy" : "st-chip-ok"}`, text: `${warnings.length} warning${warnings.length === 1 ? "" : "s"}` }),
+    const facts = [
+      tracklets.length
+        ? el("span", { class: "st-chip st-chip-quiet", text: `${tracklets.length} text region${tracklets.length === 1 ? "" : "s"}` })
+        : null,
+      warnings.length
+        ? el("span", { class: "st-chip st-chip-busy", text: `${warnings.length} warning${warnings.length === 1 ? "" : "s"}` })
+        : null,
       music?.present ? el("span", { class: "st-chip st-chip-busy", text: "Music bed detected" }) : null,
-    ]));
+    ].filter(Boolean);
+    if (facts.length) card.append(el("div", { class: "st-moment-facts" }, facts));
     for (const warning of warnings.slice(0, 2)) {
       const text = typeof warning === "string"
         ? warning
-        : (warning?.message || warning?.code || "Check reported an issue.");
+        : (warning?.message || warning?.code || "The scan reported an issue.");
       card.append(el("p", { class: "st-warning", text }));
     }
     return card;
   }
 
   function storyCard(story, index) {
-    const hook = story.hook?.text || story.title || `Story ${index + 1}`;
+    const hook = story.hook?.text || story.title || `Moment ${index + 1}`;
     const payoff = story.payoff?.text || "";
     const strength = Number(story.score);
     const card = el("article", { class: "st-story" });
@@ -572,7 +585,7 @@ export function mount(root, ctx) {
       ]),
     ]);
     const note = el("p", { class: "st-story-note", role: "status", "aria-live": "polite", hidden: true });
-    const trim = el("div", { class: "st-story-trim", role: "group", "aria-label": "Adjust story range" });
+    const trim = el("div", { class: "st-story-trim", role: "group", "aria-label": "Adjust moment range" });
     for (const [edge, delta, text, label] of [
       ["start", -1, "− start", "Start one sentence earlier"],
       ["start", 1, "+ start", "Start one sentence later"],
@@ -606,7 +619,11 @@ export function mount(root, ctx) {
     editButton.addEventListener("click", () => openInEdit(story));
     const foot = el("div", { class: "st-story-foot" }, [
       el("span", { class: "st-hint", text: formatCount(story.sentences?.length, "sentence") }),
-      el("div", { class: "st-story-actions" }, [shapeSelect(story), add, editButton]),
+      el("div", { class: "st-story-actions" }, [
+        el("span", { class: "st-chip st-chip-quiet st-story-shape-chip", text: activeShape() }),
+        add,
+        editButton,
+      ]),
     ]);
     card.append(head);
     const frame = momentFrame(story, index);
@@ -619,7 +636,7 @@ export function mount(root, ctx) {
     if (!job || !activeSetId || !sentences?.length) return;
     for (const control of group.querySelectorAll("button")) control.disabled = true;
     note.hidden = false;
-    setStatus(note, "Trimming the story…");
+    setStatus(note, "Trimming the moment…");
     try {
       // The trim route owns the range, the Edits and the captions. It also
       // rebinds every live aspect, so Stories ± cannot strand an Edit.
@@ -634,7 +651,7 @@ export function mount(root, ctx) {
       await loadSets();
       if (disposed) return;
       showStatus(
-        `${receipt || "Story range updated."}${Number.isFinite(duration) ? ` New length ${formatDuration(duration)}.` : ""}`,
+        `${receipt || "Moment range updated."}${Number.isFinite(duration) ? ` New length ${formatDuration(duration)}.` : ""}`,
         "ok",
       );
     } catch (error) {
@@ -644,8 +661,8 @@ export function mount(root, ctx) {
       setStatus(
         note,
         stale
-          ? `${error?.message || "This story changed."} The latest range is open; try again.`
-          : (error?.message || "Could not change this story's range."),
+          ? `${error?.message || "This moment changed."} The latest range is open; try again.`
+          : (error?.message || "Could not change this moment's range."),
         "bad",
       );
       for (const control of group.querySelectorAll("button")) control.disabled = false;
@@ -676,6 +693,8 @@ export function mount(root, ctx) {
       const seconds = chosen.reduce((sum, scene) => sum + Math.max(0, Number(scene.end) - Number(scene.start)), 0);
       total.textContent = `${chosen.length} scene${chosen.length === 1 ? "" : "s"} · ${formatDuration(seconds)}`;
       if (chosen.length) addLog(`Selected ${chosen.length} scene${chosen.length === 1 ? "" : "s"} · ${formatDuration(seconds)}`);
+      // A moment needs at least one scene before Add can do anything.
+      if (build) build.disabled = chosen.length === 0;
     };
     const collage = el("div", { class: "st-moment-collage" });
     for (const scene of scenes) {
@@ -699,7 +718,7 @@ export function mount(root, ctx) {
       });
       collage.append(tile);
     }
-    const selectAll = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Select all" });
+    const selectAll = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Select all" });
     selectAll.addEventListener("click", () => {
       for (const scene of scenes) picked.add(Number(scene.id));
       for (const tile of collage.querySelectorAll(".st-moment-tile")) {
@@ -708,7 +727,7 @@ export function mount(root, ctx) {
       }
       update();
     });
-    const clearAll = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Clear" });
+    const clearAll = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Clear" });
     clearAll.addEventListener("click", () => {
       picked.clear();
       for (const tile of collage.querySelectorAll(".st-moment-tile")) {
@@ -717,9 +736,9 @@ export function mount(root, ctx) {
       }
       update();
     });
-    const title = el("input", { type: "text", maxLength: "120", placeholder: "Story title", "aria-label": "Story title" });
+    const title = el("input", { type: "text", maxLength: "120", placeholder: "Moment title", "aria-label": "Moment title" });
     const error = el("p", { class: "st-error", role: "alert", hidden: true });
-    const build = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Add story" });
+    const build = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Add moment", disabled: true });
     build.addEventListener("click", async () => {
       const ids = [...picked].sort((a, b) => a - b);
       if (!ids.length) {
@@ -731,7 +750,7 @@ export function mount(root, ctx) {
       const seconds = chosen.reduce((sum, scene) => sum + Math.max(0, Number(scene.end) - Number(scene.start)), 0);
       if (seconds < 15) {
         error.hidden = false;
-        error.textContent = `Those scenes are ${formatDuration(seconds)}; a story needs at least 15 s.`;
+        error.textContent = `Those scenes are ${formatDuration(seconds)}; a moment needs at least 15 s.`;
         return;
       }
       const first = Math.min(...chosen.map((scene) => Number(scene.start)));
@@ -741,7 +760,7 @@ export function mount(root, ctx) {
       );
       if (duplicate) {
         error.hidden = false;
-        error.textContent = `That story already exists: ${duplicate.title || duplicate.id}.`;
+        error.textContent = `That moment already exists: ${duplicate.title || duplicate.id}.`;
         addLog(`Skipped duplicate ${duplicate.id}.`);
         return;
       }
@@ -754,7 +773,7 @@ export function mount(root, ctx) {
         if (activeSetId) {
           const result = await addStory(job.id, activeSetId, ids, title.value.trim());
           record = result?.clip_set;
-          addLog(`Added ${result?.story?.id || "a new story"} to this set.`);
+          addLog(`Added ${result?.story?.id || "a new moment"} to this set.`);
         } else {
           const result = await createClipSet(job.id, {
             count: 3,
@@ -767,8 +786,8 @@ export function mount(root, ctx) {
           if (!record?.stories?.length) {
             if (record?.id) await deleteClipSet(job.id, record.id).catch(() => {});
             error.hidden = false;
-            error.textContent = "Those scenes do not make a 15–180 s story. Add another scene.";
-            addLog("No story fit those scenes.");
+            error.textContent = "Those scenes do not make a 15–180 s moment. Add another scene.";
+            addLog("No moment fit those scenes.");
             return;
           }
           if (title.value.trim()) {
@@ -777,42 +796,42 @@ export function mount(root, ctx) {
             ]);
             record = patched?.clip_set || record;
           }
-          addLog(`Created set with ${record.stories.length} story.`);
+          addLog(`Created set with ${record.stories.length} moment.`);
         }
         if (!record?.stories?.length) {
           error.hidden = false;
-          error.textContent = "The server returned no story.";
+          error.textContent = "The server returned no moment.";
           return;
         }
         sets = [record, ...sets.filter((item) => item.id !== record.id)];
         activeSetId = record.id;
         dialog.close();
-        showStatus(`Added a ${formatDuration(record.stories[record.stories.length - 1]?.dur)} story.`, "ok");
+        showStatus(`Added a ${formatDuration(record.stories[record.stories.length - 1]?.dur)} moment.`, "ok");
         renderStories();
       } catch (problem) {
         error.hidden = false;
-        error.textContent = problem?.message || "Could not add that story.";
+        error.textContent = problem?.message || "Could not add that moment.";
         addLog(`Failed: ${problem?.message || "unknown error"}`);
       } finally {
         build.disabled = false;
-        build.textContent = "Add story";
+        build.textContent = "Add moment";
       }
     });
     const cancel = el("button", { class: "st-btn st-btn-quiet", type: "button", text: "Cancel" });
     cancel.addEventListener("click", () => dialog.close());
     dialog.append(
       el("div", { class: "st-dialog-head" }, [
-        el("h2", { id: "st-moment-builder-title", text: "Add a story" }),
-        el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close story builder", onclick: () => dialog.close() }),
+        el("h2", { id: "st-moment-builder-title", text: "Add a moment" }),
+        el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close moment builder", onclick: () => dialog.close() }),
       ]),
       body,
       el("div", { class: "st-dialog-foot" }, [total, cancel, build]),
     );
     body.append(
-      el("p", { class: "st-hint", text: "Tap the frames that belong together. A story needs 15–180 s and cannot overlap one already in this set." }),
+      el("p", { class: "st-hint", text: "Tap the frames that belong together. A moment needs 15–180 s and cannot overlap one already in this set." }),
       el("div", { class: "st-layer-add" }, [selectAll, clearAll]),
       collage,
-      el("label", { class: "st-field" }, [el("span", { text: "Story title (optional)" }), title]),
+      el("label", { class: "st-field" }, [el("span", { text: "Moment title (optional)" }), title]),
       log,
       error,
     );
@@ -825,17 +844,28 @@ export function mount(root, ctx) {
     const set = sets.find((item) => item.id === activeSetId) || sets[0];
     const requested = Number(set?.requested) || 3;
     const card = el("div", { class: "st-card st-story-controls" });
+    const headActions = el("div", { class: "st-controls-head-actions" });
+    const scan = el("button", {
+      class: "st-btn st-btn-quiet st-btn-small",
+      type: "button",
+      text: checkBusy ? "Scanning…" : "Scan footage",
+      disabled: checkBusy,
+      title: "Find old text, music and picture issues",
+    });
+    scan.addEventListener("click", () => { void refreshCheck(scan); });
+    headActions.append(scan);
+    if (sets.length > 1) headActions.append(setPicker());
     const head = el("div", { class: "st-card-head" }, [
       el("div", {}, [
-        el("h2", { text: set ? "Detected moments" : "No moments yet" }),
+        el("h2", { text: set ? "Moments in this set" : "No moments yet" }),
         el("p", {
           class: "st-hint",
           text: set
-            ? `${formatCount(set.stories?.length, "story", "stories")} from ${formatCount(set.sentence_count || 0, "sentence")}.`
+            ? `${formatCount(set.stories?.length, "moment")} from ${formatCount(set.sentence_count || 0, "sentence")}.`
             : "Build the first set from the finished read.",
         }),
       ]),
-      sets.length > 1 ? setPicker() : null,
+      headActions,
     ]);
     card.append(head);
 
@@ -843,7 +873,7 @@ export function mount(root, ctx) {
     const countLabel = el("label", { class: "st-field st-field-inline" }, [
       el("span", { text: "How many" }),
     ]);
-    const count = el("select", { "aria-label": "How many stories" });
+    const count = el("select", { "aria-label": "How many moments" });
     for (let value = 3; value <= 12; value += 1) {
       count.append(el("option", { value: String(value), text: String(value), selected: value === requested }));
     }
@@ -851,7 +881,7 @@ export function mount(root, ctx) {
     const lengthLabel = el("label", { class: "st-field st-field-inline" }, [
       el("span", { text: "Length" }),
     ]);
-    const length = el("select", { "aria-label": "Story length" });
+    const length = el("select", { "aria-label": "Moment length" });
     const current = lengthPreset(set);
     for (const [value, preset] of Object.entries(LENGTH_PRESETS)) {
       length.append(el("option", { value, text: preset.label, selected: value === current }));
@@ -867,7 +897,8 @@ export function mount(root, ctx) {
     );
     length.addEventListener("change", () => { custom.hidden = length.value !== "custom"; });
     const build = el("button", {
-      class: "st-btn st-btn-primary",
+      // After results, queueing is the primary action; finding again is secondary.
+      class: set ? "st-btn st-btn-ghost" : "st-btn st-btn-primary",
       type: "button",
       text: set ? "Find moments again" : "Find moments",
     });
@@ -887,8 +918,8 @@ export function mount(root, ctx) {
     const own = el("button", {
       class: "st-btn st-btn-ghost",
       type: "button",
-      text: "Add story",
-      title: "Choose scenes and add one story yourself",
+      text: "Add moment",
+      title: "Choose scenes and add one moment yourself",
     });
     own.addEventListener("click", () => { openBuilder(card); });
     actions.append(countLabel, lengthLabel, build, own);
@@ -918,9 +949,9 @@ export function mount(root, ctx) {
     const scripted = state === "scripted";
     if (briefDraft === null) briefDraft = job?.script_brief?.brief || "";
     const intro = scripted
-      ? `Stories are cut on a written voice script (${formatCount(job.script_brief?.lines || job.analysis?.transcript?.segments || 0, "line", "lines")}). Change the description to write it again.`
+      ? `Moments are cut on a written voice script (${formatCount(job.script_brief?.lines || job.analysis?.transcript?.segments || 0, "line", "lines")}). Change the description to write it again.`
       : state === "no_audio"
-        ? "This video has no sound, so there is nothing to cut stories on. Describe it and VibeCut writes a voice-over that fits each scene."
+        ? "This video has no sound, so there is nothing to cut moments on. Describe it and VibeCut writes a voice-over that fits each scene."
         : "No speech was heard in this video. Describe it and VibeCut writes a voice-over that fits each scene.";
     const box = el("textarea", {
       rows: 4,
@@ -942,7 +973,7 @@ export function mount(root, ctx) {
       el("label", { class: "st-field" }, [el("span", { text: "Describe the video" }), box]),
       el("div", { class: "st-script-actions" }, [
         write,
-        el("span", { class: "st-hint", text: "Stories render with this script as a voice-over and captions." }),
+        el("span", { class: "st-hint", text: "These moments render with this script as a voice-over and captions." }),
       ]),
     ]);
   }
@@ -993,7 +1024,7 @@ export function mount(root, ctx) {
     return el("div", { class: "st-speech-missing" }, [
       el("p", {
         class: "st-warning",
-        text: "This video was read without its speech, so stories cannot be cut on what people say. Read the speech now (OpenRouter, about 30 s for a 15 min video), then find stories.",
+        text: "This video was read without its speech, so moments cannot be cut on what people say. Read the speech now (OpenRouter, about 30 s for a 15 min video), then find moments.",
       }),
       read,
     ]);
@@ -1030,7 +1061,7 @@ export function mount(root, ctx) {
     const label = el("label", { class: "st-field st-field-inline" }, [
       el("span", { text: "Earlier picks" }),
     ]);
-    const select = el("select", { "aria-label": "Earlier story picks" });
+    const select = el("select", { "aria-label": "Earlier moment picks" });
     for (const set of sets) {
       const stamp = set.created
         ? new Date(Number(set.created) * 1000).toLocaleString(undefined, {
@@ -1039,7 +1070,7 @@ export function mount(root, ctx) {
         : set.id;
       select.append(el("option", {
         value: set.id,
-        text: `${stamp} · ${formatCount(set.stories?.length, "story", "stories")}`,
+        text: `${stamp} · ${formatCount(set.stories?.length, "moment")}`,
         selected: set.id === activeSetId,
       }));
     }
@@ -1062,32 +1093,43 @@ export function mount(root, ctx) {
     }
     const set = sets.find((item) => item.id === activeSetId) || sets[0];
     clear(dom.body);
-    dom.body.append(checkCard());
     dom.body.append(controlsCard());
-    if (!set) return;
+    if (!set) {
+      appendScan();
+      return;
+    }
 
     const stories = Array.isArray(set.stories) ? set.stories : [];
     if (!stories.length) {
       const state = speechState();
       dom.body.append(el("div", { class: "st-empty" }, [
-        el("h2", { text: "No complete story found" }),
+        el("h2", { text: "No complete moment found" }),
         el("p", {
           text: state === "no_audio" || state === "no_speech"
-            ? "Describe the video above and write a voice script, then find stories again."
+            ? "Describe the video above and write a voice script, then find moments again."
             : state === "no_transcript"
-              ? "Read the speech first (button above), then find stories again."
-              : "Try another length, fewer stories, or a source with more speech.",
+              ? "Read the speech first (button above), then find moments again."
+              : "Try another length, fewer moments, or a source with more speech.",
         }),
       ]));
+      appendScan();
       return;
     }
 
     const bar = el("div", { class: "st-card st-render-bar" });
-    const aspectLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Shape" })]);
-    const aspect = el("select", { "aria-label": "Story shape" });
+    const aspectLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Moment shape" })]);
+    const aspect = el("select", { "aria-label": "Moment shape" });
     for (const shape of STORY_SHAPES) {
-      aspect.append(el("option", { value: shape.value, text: shape.label }));
+      aspect.append(el("option", {
+        value: shape.value,
+        text: shape.label,
+        selected: shape.value === activeShape(),
+      }));
     }
+    aspect.addEventListener("change", () => {
+      rememberShape(aspect.value);
+      for (const chip of root.querySelectorAll(".st-story-shape-chip")) chip.textContent = aspect.value;
+    });
     aspectLabel.append(aspect);
     const qualityLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Quality" })]);
     const quality = el("select", { "aria-label": "Render quality" });
@@ -1100,7 +1142,7 @@ export function mount(root, ctx) {
       type: "button",
       text: `Queue all ${stories.length}`,
     });
-    all.addEventListener("click", () => queueAll(stories, aspect.value, quality.value, all));
+    all.addEventListener("click", () => queueAll(stories, activeShape(), quality.value, all));
     bar.append(aspectLabel, qualityLabel, all);
     dom.body.append(bar);
 
@@ -1109,11 +1151,17 @@ export function mount(root, ctx) {
       list.append(storyCard(story, index));
     });
     dom.body.append(list);
+    appendScan();
+  }
+
+  function appendScan() {
+    // The scan card is optional detail; it never sits above the moments.
+    if (checkReport || checkBusy || checkError) dom.body.append(checkCard());
   }
 
   async function queueOne(story, button, note) {
     if (!job || !activeSetId || button.disabled) return;
-    const aspect = storyShape(story);
+    const aspect = activeShape();
     const quality = root.querySelectorAll(".st-render-bar select")[1]?.value || "final";
     button.disabled = true;
     button.textContent = "Adding…";
@@ -1149,11 +1197,11 @@ export function mount(root, ctx) {
       }));
       await createStoryQueue(items);
       if (disposed) return;
-      showStatus(`${formatCount(items.length, "story", "stories")} queued. They render one at a time.`, "ok");
+      showStatus(`${formatCount(items.length, "moment")} queued. They render one at a time.`, "ok");
       button.textContent = "Queued";
     } catch (error) {
       if (disposed) return;
-      showError(error.message || "Could not queue these stories.");
+      showError(error.message || "Could not queue these moments.");
       button.textContent = `Queue all ${stories.length}`;
       button.disabled = false;
     }
@@ -1180,11 +1228,11 @@ export function mount(root, ctx) {
       } else {
         await loadSets();
       }
-      showStatus(`Found ${formatCount(record?.stories?.length || 0, "story", "stories")}.`, "ok");
+      showStatus(`Found ${formatCount(record?.stories?.length || 0, "moment")}.`, "ok");
       renderStories();
     } catch (error) {
       if (disposed) return;
-      showError(error.message || "Could not find stories in this video.");
+      showError(error.message || "Could not find moments in this video.");
       button.disabled = false;
     } finally {
       loading = false;
@@ -1208,7 +1256,7 @@ export function mount(root, ctx) {
       if (disposed) return;
       showError(error.message || "Could not load stories for this video.");
       clear(dom.body);
-      dom.body.append(emptyNoJobCard("Stories are unavailable", "The video is open, but its story list could not be read."));
+      dom.body.append(emptyNoJobCard("Moments are unavailable", "The video is open, but its moment list could not be read."));
     }
   }
 

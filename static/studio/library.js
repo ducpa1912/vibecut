@@ -204,7 +204,7 @@ export function mount(root, ctx = {}) {
     const meta = [
       formatDuration(job.duration),
       shortDate(job.created),
-      stories ? `${stories} ${stories === 1 ? "story" : "stories"}` : "",
+      stories ? `${stories} ${stories === 1 ? "moment" : "moments"}` : "",
     ].filter(Boolean).join(" · ");
     const thumb = job.hook_thumb && !job.source_deleted
       ? el("img", { class: "st-library-thumb", src: job.hook_thumb, alt: "", loading: "lazy" })
