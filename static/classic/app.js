@@ -5183,7 +5183,10 @@
   function renderHistory() {
     if (!dom.historyList) return;
     const entries = state.history || [];
-    dom.historyCount.textContent = entries.length ? `${entries.length} attempts` : "empty";
+    const renders = entries.filter((entry) => entry.type === "render").length;
+    dom.historyCount.textContent = entries.length
+      ? `${renders} render${renders === 1 ? "" : "s"} · ${entries.length} events`
+      : "empty";
     if (!entries.length) {
       dom.historyList.innerHTML = `<p class="hint history-empty">No script, upload or render attempts yet.</p>`;
       return;
