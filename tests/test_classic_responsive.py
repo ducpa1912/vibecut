@@ -57,8 +57,10 @@ def test_a_finished_render_scrolls_the_player_into_view_once():
     assert "dom.playerWrap.scrollIntoView({ behavior: \"smooth\", block: \"center\" })" in script
 
 
-def test_mobile_result_actions_use_two_columns():
+def test_mobile_result_actions_use_three_columns():
     css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
-    block = css[css.index("@media (max-width: 680px)"):]
-    block = block[:block.index("@media (max-width: 480px)")]
-    assert ".result-actions {\n    display: grid;\n    grid-template-columns: 1fr 1fr;" in block
+    start = css.rindex("@media (max-width: 680px)")
+    block = css[start:css.index("@media (max-width: 480px)", start)]
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in block
+    assert ".result-actions .primary," in block
+    assert ".result-actions .ghost { width: 100%; min-height: 44px;" in block

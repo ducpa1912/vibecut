@@ -111,3 +111,57 @@ scrolling, which a screenshot cannot fully judge.
   need the Studio Edit layer backend; the classic render path does not consume
   `graphics` yet. Do not add dead buttons for them.
 - The mixer still opens as a panel under Smart Cut; the button scrolls to it.
+
+## Fourth pass (expert review fixes)
+
+Checked live at 1440×900 and 390×844 against job `b3207be73257`, plus a
+headless sweep at 1024, 768, 320. No media was generated.
+
+| # | Review item | Fixed in this pass |
+|---|---|---|
+| 1 | Finished player buried under Edit | The player now sits directly under the hook. `#audio-panel` starts closed, and a compact **Final 30s reel ready · Download** strip sits under the result title. |
+| 2 | Ingest primary action below the fold | Hero top padding 78→34 px, `h1` capped at 56 px, dropzone 330→196 px, four options in one row. `#analyze` is at y=790 on 1440×900; with a file card it is at 678. |
+| 3 | Raw filename at 56 px | Result title is the hook line (fallback “30s cut”), capped at 40 px/2 lines. The full filename stays in `title` and `#result-meta`. |
+| 4 | 24 near-identical recent cards | Recent cuts group by source (`24 cuts · 5 sources`), show a resume card plus five groups with “Opened …”, and **View all cuts** opens the full list. Delete moved into that list; no jobs are removed by the grouping. |
+| 5 | Hook panel dead space | Frame 286×508→240×427; `.hook-info` is vertically centred. |
+| 6 | Mobile hook image before data | At ≤680 px `.hook-info` is `order:-1`, then a 200 px-wide frame. |
+| 7 | Dead Copy form | Original/Music/recording modes show one dashed note and **Rewrite this cut →**; the form only renders when a generated voice mode needs it. |
+| 8 | Mode tabs too short and unexplained | Five modes in one segmented control, 44 px high, a 2×2 + full-width grid on mobile, and one description below. |
+| 9 | Tiny moment controls, lime payoff | Check target 32 px, moment time 10.5 px, clip role 11 px with ▾ and a **Change role** heading. Payoff uses a neutral dashed border plus a two-item legend. |
+| 10 | Dim microtype | `--dim` is `#9a999f` in Classic and Creator; labels are at least 11 px and hints 12 px. |
+| 11 | Smart Cut repetition and nesting | Default `#plan-why` removed; a one-line hook→payoff route remains. Smart Cut and Edit are separate bands; the Edit disclosure starts closed, nested panel/script borders are gone, and Render/Draft stay at the bottom right of Edit. |
+| 12 | Music mode repeated warning | One inline message under the music source with **Use my BGM** / **Generate**. Generate is disabled while the source is **No music**; `#render-block` is gone and `#render-note` no longer repeats the reason. |
+| 13 | Orphan Delete | Result actions are three equal columns at ≤680 px. |
+| 14 | Mobile Moments triple count | One short line “12 moments · best first”; sort and **Show all/Show less** share one toolbar row. |
+| 15 | History strip | Renamed **Activity**, one event count, latest event inline while collapsed, 12 px rows, chevron, 48 px summary, 320 px list. |
+
+### Verification
+
+- `node --check static/classic/app.js`: pass.
+- Classic tests (`tests/test_classic*.py`): 75 passed.
+- Full suite: 1,790 passed, 10 skipped, 1 failed. The only failure is the
+  Voice Room token-parity test described below.
+
+### Open items
+
+- `tests/test_voice_room_page.py` compares Voice Room tokens with Classic
+  `:root`. Raising Classic `--dim` to `#9a999f` makes that cross-lane parity
+  test fail (`Voice Room` still has `#6c6b70`). Voice Room was not touched, per
+  the lane rules; report it to the Voice Room owner.
+- The recent drawer shows version rows by creation date, not a named variant;
+  older renders still have no user label.
+- The hook frame keeps a 9:16 thumbnail on mobile; a “View full frame” action
+  is still not built because no lightbox exists yet.
+- The founder still needs to judge the new order, the copy note, and the
+  music-source actions by hand.
+
+### Screenshots used
+
+Captured with Playwright from `~/vibecut-lanes/recorder` (no media generated):
+
+- `.../opencode/ui-after/result-1440.png`, `result-390.png`, `result-390-full.png`
+- `.../opencode/ui-after/ingest-1440.png`, `ingest-390.png`
+- `.../opencode/ui-after/edit-original-1440.png`, `edit-music-1440.png`, `edit-music-390.png`
+- `.../opencode/ui-after/recent-all-1440.png`, `history-open-1440.png`
+- `.../opencode/ui-sweep/result-320.png`, `result-768.png`, `result-1024.png`
+- `.../opencode/ui-sweep/moments-expanded-390.png`, `activity-390.png`

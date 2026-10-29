@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — Classic</title>
-  <link rel="stylesheet" href="/static/classic/style.css?v=0.12.0">
-  <link rel="stylesheet" href="/static/classic/creator.css?v=0.14.0">
+  <link rel="stylesheet" href="/static/classic/style.css?v=0.13.0">
+  <link rel="stylesheet" href="/static/classic/creator.css?v=0.15.0">
   <!-- vibecut:edition -->
   <style>
     /* Edition switches (editions.py): hide links to views and features this
@@ -47,8 +47,8 @@
       root.dataset.features = (edition.features || []).join(" ");
     })();
   </script>
-  <script src="/static/classic/app.js?v=0.12.0" defer></script>
-  <script src="/static/classic/creator.js?v=0.14.0" defer></script>
+  <script src="/static/classic/app.js?v=0.13.0" defer></script>
+  <script src="/static/classic/creator.js?v=0.15.0" defer></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -168,7 +168,16 @@
           <span id="recent-count" class="muted"></span>
         </div>
         <p id="recent-error" class="error recent-alert" role="alert" hidden></p>
+        <div id="recent-resume" class="recent-resume" hidden></div>
         <div id="recent" class="recent-grid"></div>
+        <div class="recent-all-actions">
+          <button id="recent-all" class="ghost small" type="button" aria-expanded="false" aria-controls="recent-all-panel" hidden>
+            <span id="recent-all-label">View all cuts</span> <span id="recent-all-count" class="muted"></span>
+          </button>
+        </div>
+        <div id="recent-all-panel" class="recent-all-panel" hidden>
+          <div id="recent-all-list" class="recent-all-list"></div>
+        </div>
       </section>
     </section>
 
@@ -218,6 +227,12 @@
         </div>
       </div>
 
+      <div id="result-ready" class="result-ready" hidden>
+        <span class="ready-dot" aria-hidden="true"></span>
+        <span id="result-ready-text" class="ready-text"></span>
+        <a id="result-ready-download" class="primary small" download>Download <span class="arrow">↓</span></a>
+      </div>
+
       <div id="speech-notice" class="speech-notice" role="status" hidden>
         <p><strong>Speech was on, but no transcript came back.</strong> <span id="speech-notice-detail"></span></p>
         <p class="hint">Try Retry speech first; a busy Mac can make local speech fail once. If it fails again, open Setup → Transcription and click Check local STT. The rest of the analysis is unchanged.</p>
@@ -249,18 +264,40 @@
         <div id="transcript-panel" class="transcript-panel" hidden></div>
       </div>
 
+      <div id="player-wrap" class="player-wrap" hidden>
+        <div class="phone-frame"><video id="reel-video" controls playsinline></video></div>
+        <div class="player-meta">
+          <div class="player-copy"><span id="reel-duration"></span><span id="reel-size"></span></div>
+          <a id="download" class="primary small" download>Download <span class="arrow">↓</span></a>
+          <div class="export-links">
+            <button id="export-srt" class="ghost small" type="button">SRT</button>
+            <button id="export-vtt" class="ghost small" type="button">VTT</button>
+            <button id="export-edl" class="ghost small" type="button">EDL</button>
+            <button id="export-xml" class="ghost small" type="button">XML</button>
+            <button id="share-link" class="ghost small" type="button">Review link</button>
+          </div>
+        </div>
+      </div>
+
 
       <section id="moments-section" class="moments-section">
-        <div class="section-head">
-          <div><p class="eyebrow">moments</p><h3>Moments</h3></div>
+        <div class="section-head moments-head">
+          <div class="moments-heading">
+            <p class="eyebrow">moments</p>
+            <h3>Moments</h3>
+            <span id="scene-count" class="moments-count"></span>
+          </div>
           <div class="scene-tools">
             <div class="sort-tabs" id="sort-tabs">
               <button data-sort="best" class="active">Best</button>
               <button data-sort="timeline">Timeline</button>
             </div>
-            <span id="scene-count" class="muted"></span>
-            <button id="moments-expand" class="ghost small" type="button">Expand</button>
+            <button id="moments-expand" class="ghost small" type="button" aria-expanded="false">Show all</button>
           </div>
+        </div>
+        <div class="moments-legend" aria-hidden="true">
+          <span><i class="legend-swatch legend-hook"></i>hook</span>
+          <span><i class="legend-swatch legend-payoff"></i>payoff</span>
         </div>
         <div id="moments-rail" class="moments-rail" aria-label="Moments"></div>
         <div id="moments-full" class="moments-full" hidden>
@@ -286,10 +323,10 @@
           <button id="reset-hook" class="text-btn" hidden>Reset hook</button>
           <button id="edit-cut" class="text-btn">Edit cut</button>
         </div>
+        <p id="plan-route" class="plan-route"></p>
         <div id="timeline" class="timeline" aria-label="Smart Cut timeline"></div>
         <div id="clip-menu" class="clip-menu" role="menu" hidden></div>
         <div id="timeline-drop" class="timeline-drop" hidden>Drop a moment here to add it · drag a clip here to remove it</div>
-        <p id="plan-why" class="plan-why"></p>
         <details id="plan-reasoning" class="plan-reasoning" hidden>
           <summary>Why this cut</summary>
           <div id="plan-reasoning-body" class="plan-reasoning-body"></div>
@@ -343,18 +380,27 @@
           </div>
         </section>
 
-        <details id="audio-panel" class="audio-panel edit-panel" open>
-          <summary>Edit · copy, sound, text</summary>
+        <section class="edit-section-head" aria-labelledby="edit-section-title">
+          <div>
+            <p class="eyebrow">edit</p>
+            <h3 id="edit-section-title">Edit</h3>
+          </div>
+          <p class="hint">Copy, sound and text are optional. Render and Draft stay at the end.</p>
+        </section>
+
+        <details id="audio-panel" class="audio-panel edit-panel">
+          <summary>Copy, sound, text</summary>
 
           <div class="edit-mode">
             <span class="label">Mode</span>
-            <div id="audio-mode-tabs" class="audio-mode-tabs">
-              <button type="button" data-audio-mode="keep" class="active">Original</button>
-              <button type="button" data-audio-mode="bed">Voice-over</button>
-              <button type="button" data-audio-mode="voice">Dub</button>
-              <button type="button" data-audio-mode="music">Music</button>
-              <button type="button" data-audio-mode="full">Full Replace</button>
+            <div id="audio-mode-tabs" class="audio-mode-tabs" role="tablist" aria-label="Audio mode">
+              <button type="button" data-audio-mode="keep" class="active" role="tab" aria-selected="true">Original</button>
+              <button type="button" data-audio-mode="bed" role="tab" aria-selected="false">New voice-over</button>
+              <button type="button" data-audio-mode="voice" role="tab" aria-selected="false">Dub voice</button>
+              <button type="button" data-audio-mode="music" role="tab" aria-selected="false">Music only</button>
+              <button type="button" data-audio-mode="full" role="tab" aria-selected="false">New voice + music</button>
             </div>
+            <p id="audio-mode-desc" class="mode-desc">Original audio and transcript. No new voice or music.</p>
             <select id="audio-mode" hidden>
               <option value="keep">Original</option>
               <option value="bed">Voice-over · new voice over original audio</option>
@@ -370,29 +416,35 @@
                 <div><h4>Copy</h4><p>Translate the full video once, then write this cut.</p></div>
                 <span id="translate-badge" class="translate-badge" hidden></span>
               </div>
-              <div class="audio-grid">
-                <label class="audio-field">
-                  <span>Language</span>
-                  <select id="audio-lang"></select>
-                </label>
-                <label class="audio-field">
-                  <span>Script style</span>
-                  <select id="audio-style">
-                    <option value="smooth">Smooth · natural short script</option>
-                    <option value="viral">Viral · punchy hook</option>
-                    <option value="fun">Fun · playful and warm</option>
-                    <option value="creative">Creative · vivid and surprising</option>
-                    <option value="sad">Sad · intimate and restrained</option>
-                    <option value="chill">Chill · calm and understated</option>
-                    <option value="literal">Faithful · translation only</option>
-                  </select>
-                </label>
-                <div class="audio-field small audio-rewrite-action">
-                  <span>&nbsp;</span>
-                  <button id="audio-rewrite-run" class="primary small" type="button">Story cut</button>
+              <div id="audio-copy-form">
+                <div class="audio-grid">
+                  <label class="audio-field">
+                    <span>Language</span>
+                    <select id="audio-lang"></select>
+                  </label>
+                  <label class="audio-field">
+                    <span>Script style</span>
+                    <select id="audio-style">
+                      <option value="smooth">Smooth · natural short script</option>
+                      <option value="viral">Viral · punchy hook</option>
+                      <option value="fun">Fun · playful and warm</option>
+                      <option value="creative">Creative · vivid and surprising</option>
+                      <option value="sad">Sad · intimate and restrained</option>
+                      <option value="chill">Chill · calm and understated</option>
+                      <option value="literal">Faithful · translation only</option>
+                    </select>
+                  </label>
+                  <div class="audio-field small audio-rewrite-action">
+                    <span>&nbsp;</span>
+                    <button id="audio-rewrite-run" class="primary small" type="button">Story cut</button>
+                  </div>
                 </div>
+                <p id="audio-rewrite-note" class="hint">Choose a mode, then copy the cut. The full transcript is reused.</p>
               </div>
-              <p id="audio-rewrite-note" class="hint">Choose a mode, then copy the cut. The full transcript is reused.</p>
+              <div id="audio-copy-note" class="audio-copy-note" hidden>
+                <span id="audio-copy-note-text">Original audio and transcript.</span>
+                <button id="audio-copy-switch" class="text-btn" type="button">Rewrite this cut →</button>
+              </div>
               <select id="audio-provider" hidden></select>
               <select id="audio-rewrite" hidden></select>
             </section>
@@ -479,6 +531,11 @@
                     <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
                   </label>
                 </div>
+                <div id="audio-music-block" class="audio-inline-block" role="alert" hidden>
+                  <span>Choose a music source before rendering.</span>
+                  <button id="audio-music-block-bgm" class="ghost small" type="button">Use my BGM</button>
+                  <button id="audio-music-block-generate" class="ghost small" type="button">Generate</button>
+                </div>
                 <div class="sound-actions">
                   <button id="audio-generate-music" class="primary small" type="button">Generate</button>
                   <button id="audio-play-music" class="ghost small play-btn" type="button" title="Generated music plays in the render" aria-label="Play music" disabled>▶</button>
@@ -486,7 +543,10 @@
                 </div>
               </div>
 
-              <p id="audio-status" class="hint audio-status" hidden></p>
+              <div class="audio-status-row">
+                <p id="audio-status" class="hint audio-status" hidden></p>
+                <button id="audio-status-setup" class="ghost small" type="button" hidden>Open Setup</button>
+              </div>
             </section>
 
             <section id="text-effects-step" class="edit-card edit-text">
@@ -506,10 +566,6 @@
           </section>
 
           <div class="edit-actions">
-            <div id="render-block" class="render-block" role="alert" hidden>
-              <span></span>
-              <button id="render-block-setup" class="ghost small" type="button">Open Setup</button>
-            </div>
             <div id="render-progress" class="render-progress" hidden>
               <div class="bar"><i></i></div>
               <span></span>
@@ -524,25 +580,16 @@
           </div>
         </details>
 
-        <div id="player-wrap" class="player-wrap" hidden>
-          <div class="phone-frame"><video id="reel-video" controls playsinline></video></div>
-          <div class="player-meta">
-            <div class="player-copy"><span id="reel-duration"></span><span id="reel-size"></span></div>
-            <a id="download" class="primary small" download>Download <span class="arrow">↓</span></a>
-            <div class="export-links">
-              <button id="export-srt" class="ghost small" type="button">SRT</button>
-              <button id="export-vtt" class="ghost small" type="button">VTT</button>
-              <button id="export-edl" class="ghost small" type="button">EDL</button>
-              <button id="export-xml" class="ghost small" type="button">XML</button>
-              <button id="share-link" class="ghost small" type="button">Review link</button>
-            </div>
-          </div>
-        </div>
       </section>
 
 
       <details id="history-panel" class="history-panel">
-        <summary>History <span id="history-count" class="muted"></span></summary>
+        <summary>
+          <span class="history-title">Activity</span>
+          <span id="history-latest" class="history-latest"></span>
+          <span id="history-count" class="muted history-count"></span>
+          <span class="history-chevron" aria-hidden="true">›</span>
+        </summary>
         <div id="history-list" class="history-list"></div>
         <div id="history-detail" class="history-detail" hidden></div>
       </details>

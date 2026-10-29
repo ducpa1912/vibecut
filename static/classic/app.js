@@ -111,6 +111,9 @@
     progressCancelUrl: $("#progress-cancel-url"),
     resultTitle: $("#result-title"),
     resultMeta: $("#result-meta"),
+    resultReady: $("#result-ready"),
+    resultReadyText: $("#result-ready-text"),
+    resultReadyDownload: $("#result-ready-download"),
     speechNotice: $("#speech-notice"),
     speechNoticeDetail: $("#speech-notice-detail"),
     speechRetry: $("#speech-retry"),
@@ -130,6 +133,7 @@
     targetTabs: $("#target-tabs"),
     planTotal: $("#plan-total"),
     planBadge: $("#plan-badge"),
+    planRoute: $("#plan-route"),
     resetHook: $("#reset-hook"),
     editCut: $("#edit-cut"),
     editBar: $("#edit-bar"),
@@ -141,7 +145,6 @@
     hookLabToggle: $("#hook-lab-toggle"),
     transcriptToggle: $("#transcript-toggle"),
     transcriptPanel: $("#transcript-panel"),
-    planWhy: $("#plan-why"),
     planReasoning: $("#plan-reasoning"),
     planReasoningBody: $("#plan-reasoning-body"),
     timeline: $("#timeline"),
@@ -164,9 +167,17 @@
     audioPanel: $("#audio-panel"),
     audioMode: $("#audio-mode"),
     audioModeTabs: $("#audio-mode-tabs"),
+    audioModeDesc: $("#audio-mode-desc"),
     audioRewriteStep: $("#audio-rewrite-step"),
+    audioCopyForm: $("#audio-copy-form"),
+    audioCopyNote: $("#audio-copy-note"),
+    audioCopyNoteText: $("#audio-copy-note-text"),
+    audioCopySwitch: $("#audio-copy-switch"),
     audioVoiceStep: $("#audio-voice-step"),
     audioMusicStep: $("#audio-music-step"),
+    audioMusicBlock: $("#audio-music-block"),
+    audioMusicBlockBgm: $("#audio-music-block-bgm"),
+    audioMusicBlockGenerate: $("#audio-music-block-generate"),
     audioRewriteRun: $("#audio-rewrite-run"),
     audioRewriteNote: $("#audio-rewrite-note"),
     translateBadge: $("#translate-badge"),
@@ -216,12 +227,11 @@
     audioPlayMusic: $("#audio-play-music"),
     audioUseBgm: $("#audio-use-bgm"),
     audioStatus: $("#audio-status"),
+    audioStatusSetup: $("#audio-status-setup"),
     audioScript: $("#audio-script"),
     renderNote: $("#render-note"),
     renderProgress: $("#render-progress"),
     renderError: $("#render-error"),
-    renderBlock: $("#render-block"),
-    renderBlockSetup: $("#render-block-setup"),
     playerWrap: $("#player-wrap"),
     reelVideo: $("#reel-video"),
     reelDuration: $("#reel-duration"),
@@ -238,10 +248,17 @@
     loadMore: $("#load-more"),
     recentSection: $("#recent-section"),
     recent: $("#recent"),
+    recentResume: $("#recent-resume"),
     recentCount: $("#recent-count"),
     recentError: $("#recent-error"),
+    recentAll: $("#recent-all"),
+    recentAllLabel: $("#recent-all-label"),
+    recentAllCount: $("#recent-all-count"),
+    recentAllPanel: $("#recent-all-panel"),
+    recentAllList: $("#recent-all-list"),
     historyPanel: $("#history-panel"),
     historyCount: $("#history-count"),
+    historyLatest: $("#history-latest"),
     historyList: $("#history-list"),
     historyDetail: $("#history-detail"),
     drawer: $("#drawer"),
@@ -298,6 +315,8 @@
     historyEntry: null,
     recentJobs: [],
     recentSelectedId: "",
+    recentOpened: {},
+    recentExpanded: false,
     showLiteral: false,
     order: "source",
     preset: "",
@@ -320,8 +339,6 @@
     ingestJob: null,
     cancelRequested: false,
   };
-
-  init();
 
   // Native <select> popups on macOS ignore the page font size. The audio
   // controls open this list instead, at a readable 15px.
@@ -410,6 +427,7 @@
 
   function init() {
     syncTokenCookie();
+    state.recentOpened = readRecentOpened();
     bind();
     enhanceAudioSelects();
     updateUrlState();
@@ -1046,7 +1064,6 @@
 
   function bindSetup() {
     dom.setupOpen.addEventListener("click", openSetup);
-    dom.renderBlockSetup.addEventListener("click", openSetup);
     dom.setupClose.addEventListener("click", closeSetup);
     dom.setup.querySelectorAll("[data-setup-close]").forEach((node) => {
       node.addEventListener("click", closeSetup);
@@ -1215,36 +1232,82 @@
   }
 
   const LIVE_JOB_STATUS = new Set(["queued", "downloading", "scanning", "reading", "scoring"]);
+  const RECENT_OPENED_KEY = "vibecut.classic.opened";
 
-  async function loadRecent() {
+  function readRecentOpened() {
     try {
-      const data = await api("/api/jobs");
-      const jobs = data.jobs || [];
-      state.recentJobs = jobs;
-      if (state.job?.id) state.recentSelectedId = state.job.id;
-      if (state.recentSelectedId && !jobs.some((job) => job.id === state.recentSelectedId)) {
-        state.recentSelectedId = "";
-      }
-      clearRecentError();
-      if (!jobs.length) {
-        dom.recentSection.hidden = true;
-        dom.recentCount.textContent = "";
-        dom.recent.innerHTML = "";
-        return;
-      }
-      dom.recentSection.hidden = false;
-      dom.recentCount.textContent = `${jobs.length} local`;
-      dom.recent.innerHTML = jobs.map(recentCard).join("");
+      const raw = JSON.parse(localStorage.getItem(RECENT_OPENED_KEY) || "{}");
+      if (!raw || typeof raw !== "object") return {};
+      return Object.fromEntries(
+        Object.entries(raw)
+          .map(([id, stamp]) => [id, Number(stamp) || 0])
+          .filter(([, stamp]) => stamp > 0)
+          .slice(-80),
+      );
     } catch (_) {
-      state.recentJobs = [];
-      dom.recentSection.hidden = true;
-      dom.recentCount.textContent = "";
+      return {};
     }
   }
 
-  function recentCard(job) {
-    const name = job.name || "Untitled video";
-    const selected = state.recentSelectedId === job.id || state.job?.id === job.id;
+  function rememberRecentOpened(id) {
+    if (!id) return;
+    state.recentOpened[id] = Math.floor(Date.now() / 1000);
+    try {
+      localStorage.setItem(RECENT_OPENED_KEY, JSON.stringify(state.recentOpened));
+    } catch (_) { /* storage may be unavailable; the in-memory map still works */ }
+  }
+
+  function printRecentTime(timestamp) {
+    const value = Number(timestamp);
+    if (!value) return "";
+    const seconds = Math.max(0, Math.floor(Date.now() / 1000 - value));
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m ago`;
+    const date = new Date(value * 1000);
+    const now = new Date();
+    if (date.toDateString() === now.toDateString()) {
+      return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    }
+    return formatDate(value);
+  }
+
+  function recentOpenedLabel(job) {
+    const opened = state.recentOpened[job.id];
+    if (opened) return `Opened ${printRecentTime(opened)}`;
+    return `Added ${formatDate(job.created)}`;
+  }
+
+  function recentGroupOpened(group) {
+    const stamps = group.jobs.map((job) => state.recentOpened[job.id] || 0);
+    const newest = Math.max(0, ...stamps);
+    const job = group.jobs[0];
+    if (newest) return `Opened ${printRecentTime(newest)}`;
+    return `Added ${formatDate(job.created)}`;
+  }
+
+  function recentLabel(name) {
+    let label = fileStem(name).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    label = label
+      .replace(/^(en|cn|vi|ja|ko|es|fr|de|pt|it|ru|hi|th|id|tr|ar)\s+/i, "")
+      .replace(/\b\d{2,4}x\d{2,4}\b/gi, " ")
+      .replace(/\b\d+s\b/gi, " ")
+      .replace(/\b(sub|subs|subtitle|subtitles|subtitle?d|final|draft)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return label || fileStem(name);
+  }
+
+  function groupRecent(jobs) {
+    const groups = new Map();
+    jobs.forEach((job) => {
+      const key = String(job.name || "Untitled video").trim().toLowerCase();
+      if (!groups.has(key)) groups.set(key, { name: job.name || "Untitled video", jobs: [] });
+      groups.get(key).jobs.push(job);
+    });
+    return [...groups.values()];
+  }
+
+  function recentStatus(job) {
     const failed = job.status === "failed";
     const progress = Math.max(0, Math.min(1, Number(job.progress) || 0));
     const status = job.status === "ready"
@@ -1259,47 +1322,149 @@
     const statusText = failed
       ? job.message || "Ingest failed"
       : job.scene_count
-        ? `${job.scene_count} scenes`
+        ? `${job.scene_count} moments`
         : job.message || (job.status === "ready" ? "ready" : "queued");
+    return { failed, status, statusText, progress };
+  }
+
+  function recentDeleteBlock(job) {
+    if (job.status === "downloading") return "Cancel download first.";
+    if (LIVE_JOB_STATUS.has(job.status)) return "This job is still working.";
+    return "";
+  }
+
+  function recentThumb(job, cls = "recent-thumb") {
+    if (job.hook_thumb) {
+      return `<span class="${cls}"><img src="${esc(withToken(job.hook_thumb))}" alt="" loading="lazy"></span>`;
+    }
+    return `<span class="${cls}"><span class="empty">${job.scene_count ? `${job.scene_count} moments` : "working"}</span></span>`;
+  }
+
+  async function loadRecent() {
+    try {
+      const data = await api("/api/jobs");
+      const jobs = data.jobs || [];
+      state.recentJobs = jobs;
+      if (state.job?.id) state.recentSelectedId = state.job.id;
+      if (state.recentSelectedId && !jobs.some((job) => job.id === state.recentSelectedId)) {
+        state.recentSelectedId = "";
+      }
+      clearRecentError();
+      if (!jobs.length) {
+        dom.recentSection.hidden = true;
+        dom.recentCount.textContent = "";
+        dom.recentResume.innerHTML = "";
+        dom.recent.innerHTML = "";
+        dom.recentAllPanel.hidden = true;
+        dom.recentAll.hidden = true;
+        return;
+      }
+      const groups = groupRecent(jobs);
+      const openedId = Object.entries(state.recentOpened)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .map(([id]) => id)
+        .find((id) => jobs.some((job) => job.id === id));
+      const resumeId = openedId || jobs[0].id;
+      const resume = groups.find((group) => group.jobs.some((job) => job.id === resumeId)) || groups[0];
+      const resumeJob = resume.jobs.find((job) => job.id === resumeId) || resume.jobs[0];
+      const rest = groups.filter((group) => group !== resume);
+      dom.recentSection.hidden = false;
+      dom.recentCount.textContent = `${jobs.length} cut${jobs.length === 1 ? "" : "s"} · ${groups.length} source${groups.length === 1 ? "" : "s"}`;
+      dom.recentResume.hidden = !resume;
+      dom.recentResume.innerHTML = resume ? resumeCard(resume, resumeJob) : "";
+      dom.recent.innerHTML = rest.slice(0, 5).map(recentCard).join("");
+      dom.recentAll.hidden = jobs.length <= 1;
+      dom.recentAllCount.textContent = `(${jobs.length})`;
+      if (jobs.length <= 1) state.recentExpanded = false;
+      dom.recentAllPanel.hidden = !state.recentExpanded;
+      dom.recentAll.setAttribute("aria-expanded", state.recentExpanded ? "true" : "false");
+      dom.recentAllLabel.textContent = state.recentExpanded ? "Hide all cuts" : "View all cuts";
+      dom.recentAllList.innerHTML = recentAllList(groups);
+    } catch (_) {
+      state.recentJobs = [];
+      dom.recentSection.hidden = true;
+      dom.recentCount.textContent = "";
+    }
+  }
+
+  function resumeCard(group, job = group.jobs[0]) {
+    const count = group.jobs.length;
+    return `
+      <button type="button" class="recent-resume-card${state.recentSelectedId === job.id ? " selected" : ""}" data-id="${esc(job.id)}" aria-pressed="${state.recentSelectedId === job.id ? "true" : "false"}">
+        ${recentThumb(job, "recent-resume-thumb")}
+        <span class="recent-resume-copy">
+          <span class="resume-kicker">Resume last cut</span>
+          <strong title="${esc(job.name || "Untitled video")}">${esc(recentLabel(job.name))}</strong>
+          <span class="recent-resume-meta">${esc(recentOpenedLabel(job))} · ${esc(fmtDuration(job.duration))} · ${count} cut${count === 1 ? "" : "s"}</span>
+        </span>
+        <span class="resume-cta">Open cut →</span>
+      </button>`;
+  }
+
+  function recentCard(group) {
+    const job = group.jobs[0];
+    const count = group.jobs.length;
+    const { failed, status, statusText } = recentStatus(job);
     const error = String(job.error || job.ingest_error || (failed ? job.message : "") || "").trim();
-    const provider = job.provider_label || job.provider || "";
-    const meta = [fmtDuration(job.duration), formatDate(job.created), provider].filter(Boolean);
-    const blocked = LIVE_JOB_STATUS.has(job.status);
-    const blockReason = job.status === "downloading"
-      ? "Cancel download first."
-      : blocked ? "This job is still working." : "";
-    const deleteLabel = blockReason ? `Delete ${name}: ${blockReason}` : `Delete ${name}`;
-    const thumb = job.hook_thumb
-      ? `<img src="${esc(withToken(job.hook_thumb))}" alt="" loading="lazy">`
-      : `<span class="empty">${job.scene_count ? `${job.scene_count} scenes` : "working"}</span>`;
+    const selected = state.recentSelectedId === job.id || state.job?.id === job.id;
     return `
       <div class="recent-item">
         <button type="button" class="recent-card${selected ? " selected" : ""}" data-id="${esc(job.id)}" aria-pressed="${selected ? "true" : "false"}">
-          <span class="recent-thumb">${thumb}</span>
+          ${recentThumb(job)}
+          ${count > 1 ? `<span class="recent-count-pill">${count} cuts</span>` : ""}
           <span class="recent-copy">
-            <strong title="${esc(name)}">${esc(name)}</strong>
-            <span>${meta.map(esc).join(" · ")}</span>
+            <strong title="${esc(job.name || "Untitled video")}">${esc(recentLabel(job.name))}</strong>
+            <span>${esc(recentGroupOpened(group))}</span>
           </span>
           <span class="recent-status">
             <span class="recent-status-text">${esc(statusText)}</span>
-            <span class="dot${failed ? " failed" : blocked ? " live" : ""}">${esc(status)}</span>
+            <span class="dot${failed ? " failed" : LIVE_JOB_STATUS.has(job.status) ? " live" : ""}">${esc(status)}</span>
           </span>
           ${error ? `<span class="recent-error" title="${esc(error)}">${esc(error)}</span>` : ""}
-        </button>
-        <button type="button" class="recent-delete" data-delete-id="${esc(job.id)}"
-          ${blockReason ? `data-delete-blocked="${esc(blockReason)}" aria-disabled="true"` : ""}
-          aria-label="${esc(deleteLabel)}" title="${esc(blockReason || deleteLabel)}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
         </button>
       </div>`;
   }
 
+  function recentAllList(groups) {
+    return groups.map((group) => {
+      const count = group.jobs.length;
+      const rows = group.jobs.map((job) => {
+        const { failed, status, statusText } = recentStatus(job);
+        const blockReason = recentDeleteBlock(job);
+        const deleteLabel = blockReason ? `Delete ${job.name}: ${blockReason}` : `Delete ${job.name}`;
+        return `
+          <div class="recent-all-row">
+            <button type="button" class="recent-all-open" data-id="${esc(job.id)}">
+              ${recentThumb(job, "recent-all-thumb")}
+              <span class="recent-all-copy">
+                <strong>${esc(recentLabel(job.name))}</strong>
+                <span>${esc(recentOpenedLabel(job))} · ${esc(statusText)}${count > 1 ? " · version" : ""}</span>
+              </span>
+              <span class="recent-all-state${failed ? " failed" : ""}">${esc(status)}</span>
+            </button>
+            <button type="button" class="recent-delete" data-delete-id="${esc(job.id)}"
+              ${blockReason ? `data-delete-blocked="${esc(blockReason)}" aria-disabled="true"` : ""}
+              aria-label="${esc(deleteLabel)}" title="${esc(blockReason || deleteLabel)}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+            </button>
+          </div>`;
+      }).join("");
+      return `<div class="recent-all-group">
+        ${count > 1 ? `<p class="recent-all-group-title">${esc(recentLabel(group.name))} · ${count} cuts</p>` : ""}
+        ${rows}
+      </div>`;
+    }).join("");
+  }
+
   function syncRecentSelection(id) {
     state.recentSelectedId = id || "";
-    $$(".recent-card", dom.recent).forEach((card) => {
+    $$(".recent-card, .recent-resume-card", dom.recentSection).forEach((card) => {
       const selected = card.dataset.id === id;
       card.classList.toggle("selected", selected);
       card.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    $$(".recent-all-open", dom.recentSection).forEach((row) => {
+      row.classList.toggle("selected", row.dataset.id === id);
     });
   }
 
@@ -1705,13 +1870,14 @@
       state.momentsExpanded = !state.momentsExpanded;
       dom.momentsFull.hidden = !state.momentsExpanded;
       dom.momentsRail.hidden = state.momentsExpanded;
-      dom.momentsExpand.textContent = state.momentsExpanded ? "Collapse" : "Expand";
+      dom.momentsExpand.textContent = state.momentsExpanded ? "Show less" : "Show all";
+      dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
       if (state.momentsExpanded) {
         renderMomentList();
         dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
     });
-    dom.recent.addEventListener("click", (event) => {
+    const handleRecentClick = (event) => {
       const remove = event.target.closest("[data-delete-id]");
       if (remove) {
         event.preventDefault();
@@ -1730,6 +1896,15 @@
         syncRecentSelection(card.dataset.id);
         openJob(card.dataset.id);
       }
+    };
+    dom.recent.addEventListener("click", handleRecentClick);
+    dom.recentResume.addEventListener("click", handleRecentClick);
+    dom.recentAllPanel.addEventListener("click", handleRecentClick);
+    dom.recentAll.addEventListener("click", () => {
+      state.recentExpanded = !state.recentExpanded;
+      dom.recentAllPanel.hidden = !state.recentExpanded;
+      dom.recentAll.setAttribute("aria-expanded", state.recentExpanded ? "true" : "false");
+      dom.recentAllLabel.textContent = state.recentExpanded ? "Hide all cuts" : "View all cuts";
     });
     dom.historyList.addEventListener("click", (event) => {
       const row = event.target.closest("[data-history-entry]");
@@ -2484,12 +2659,14 @@
           dom.historyDetail.innerHTML = "";
         }
         if (dom.historyCount) dom.historyCount.textContent = "";
+        if (dom.historyLatest) dom.historyLatest.textContent = "";
         if (dom.audioUpload) dom.audioUpload.value = "";
         if (dom.audioMusicUpload) dom.audioMusicUpload.value = "";
         if (dom.audioSourceGenerate) dom.audioSourceGenerate.checked = true;
         syncAudioVisibility();
       }
       state.job = job;
+      rememberRecentOpened(job.id);
       syncRecentSelection(job.id);
       state.ingestJob = job.status === "downloading" ? job.id : null;
       state.cancelRequested = false;
@@ -2537,7 +2714,8 @@
     dom.transcriptPanel.innerHTML = "";
     dom.momentsFull.hidden = true;
     dom.momentsRail.hidden = false;
-    dom.momentsExpand.textContent = "Expand";
+    dom.momentsExpand.textContent = "Show all";
+    dom.momentsExpand.setAttribute("aria-expanded", "false");
     state.plan = job.analysis.plans[String(state.target)];
     $$("#target-tabs button").forEach((button) => {
       button.classList.toggle("active", Number(button.dataset.target) === state.target);
@@ -2567,20 +2745,34 @@
     if (index >= 0) state.job.analysis.scenes[index] = { ...state.job.analysis.scenes[index], ...scene };
   }
 
+  function resultHeading() {
+    const scene = currentHookScene();
+    const line = scene ? clipText(sceneLine(scene), 84) : "";
+    if (line) return line;
+    return `${state.target}s cut`;
+  }
+
+  function updateResultHeading() {
+    if (!dom.resultTitle || !state.job) return;
+    const title = resultHeading();
+    dom.resultTitle.textContent = title;
+    dom.resultTitle.title = state.job.source.name || title;
+  }
+
   function renderResult() {
     const job = state.job;
     const analysis = job.analysis;
-    dom.resultTitle.textContent = fileStem(job.source.name);
-    dom.resultTitle.title = job.source.name;
     const engine = [
       analysis.engine?.vision ? "vision" : "center crop",
       analysis.engine?.whisper ? "whisper" : null,
     ].filter(Boolean).join(" + ");
     const deep = analysis.deep_count ?? analysis.scene_count;
-    dom.resultMeta.textContent = `${fmtDuration(job.source.duration)} source · ${analysis.scene_count} scenes · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    dom.resultMeta.textContent = `${fileStem(job.source.name)} · ${fmtDuration(job.source.duration)} source · ${analysis.scene_count} moments · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    dom.resultMeta.title = job.source.name || "";
     renderSpeechNotice();
     renderUsage();
     renderHook();
+    updateResultHeading();
     renderPlan();
     renderScenes();
     updateRenderPanel();
@@ -2720,6 +2912,7 @@
     ].map(([label, value]) => scoreItem(label, value)).join("");
     dom.hookTags.innerHTML = tagsHtml(scene);
     dom.hookCrop.textContent = cropLabel(scene);
+    updateResultHeading();
   }
 
   function renderReasoning(plan) {
@@ -2774,10 +2967,12 @@
     dom.resetHook.hidden = state.overrideHook === null;
     dom.editCut.textContent = state.editMode ? "Editing…" : "Edit cut";
     dom.editBar.hidden = !state.editMode;
-    dom.planWhy.textContent = plan.reasoning?.summary || [
-      plan.hook_why ? `Hook: ${plan.hook_why}` : "",
-      plan.payoff_why ? `Payoff: ${plan.payoff_why}` : "",
-    ].filter(Boolean).join(" ");
+    const clips = plan.clips || [];
+    const first = clips[0];
+    const last = clips[clips.length - 1];
+    dom.planRoute.textContent = first && last
+      ? `Hook ${fmtTime(first.start, 1)} → payoff ${fmtTime(last.start, 1)} · ${plan.clip_count} beats · ${plan.total.toFixed(1)}s`
+      : `${plan.clip_count} beats · ${plan.total.toFixed(1)}s`;
     renderReasoning(plan);
     if (state.editIndex !== null) {
       state.editIndex = Math.max(0, Math.min(plan.clips.length - 1, state.editIndex));
@@ -3384,10 +3579,12 @@
   function openClipMenu(index, x, y) {
     if (!state.plan?.clips[index] || !dom.clipMenu) return;
     const current = state.plan.clips[index].role || "beat";
-    dom.clipMenu.innerHTML = ["hook", "beat", "payoff"].map((role) => `
+    dom.clipMenu.innerHTML = `
+      <span class="clip-menu-head">Change role</span>
+      ${["hook", "beat", "payoff"].map((role) => `
       <button type="button" role="menuitem" data-clip-role="${role}" class="${role === current ? "active" : ""}">
         ${role[0].toUpperCase() + role.slice(1)}
-      </button>`).join("");
+      </button>`).join("")}`;
     dom.clipMenu.hidden = false;
     const width = dom.clipMenu.offsetWidth || 140;
     const height = dom.clipMenu.offsetHeight || 120;
@@ -3709,8 +3906,9 @@
     const clips = state.plan?.clips || [];
     const payoffId = clips.length ? clips[clips.length - 1].scene : null;
     const visible = scenes.slice(0, state.visible);
-    const deep = state.job.analysis.deep_count ?? scenes.length;
-    dom.sceneCount.textContent = `${scenes.length.toLocaleString()} scenes · ${deep.toLocaleString()} deep · showing ${visible.length}`;
+    const order = state.sort === "best" ? "best first" : "timeline order";
+    const shown = visible.length < scenes.length ? ` · showing ${visible.length}` : "";
+    dom.sceneCount.textContent = `${scenes.length} moment${scenes.length === 1 ? "" : "s"} · ${order}${shown}`;
     dom.sceneGrid.innerHTML = visible.map((scene) => {
       const role = roles.get(scene.id) || "";
       const tags = [...(scene.tags || []), ...(scene.deep === false ? ["quick"] : [])].join(" · ");
@@ -3906,6 +4104,20 @@
     ["fi", "Finnish"], ["uk", "Ukrainian"], ["cs", "Czech"],
   ];
 
+  const AUDIO_MODE_META = {
+    keep: "Original audio and transcript. No new voice or music.",
+    bed: "New voice over the original audio bed.",
+    voice: "Replace only the spoken voice with a dub.",
+    music: "Replace all audio with a music bed.",
+    full: "New voice and a new music bed.",
+  };
+
+  const AUDIO_COPY_NOTE = {
+    keep: "Original audio and transcript.",
+    music: "Music only. Copy and script are off.",
+    full: "New voice and music. Copy is off while a recording is used.",
+  };
+
   function canonicalAudio(value) {
     if (Array.isArray(value)) return `[${value.map(canonicalAudio).join(",")}]`;
     if (value && typeof value === "object") {
@@ -3929,6 +4141,12 @@
   function musicSourceMode() {
     const checked = document.querySelector('input[name="audio-music-source"]:checked');
     return checked?.value || state.audio.musicSource || "none";
+  }
+
+  function setAudioMode(mode) {
+    if (!dom.audioMode || !mode) return;
+    dom.audioMode.value = mode;
+    dom.audioMode.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   function currentAudioPlan() {
@@ -4005,8 +4223,13 @@
     const touch = () => {
       state.audio.mode = dom.audioMode.value;
       dom.audioModeTabs.querySelectorAll("[data-audio-mode]").forEach((button) => {
-        button.classList.toggle("active", button.dataset.audioMode === state.audio.mode);
+        const active = button.dataset.audioMode === state.audio.mode;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
       });
+      if (dom.audioModeDesc) {
+        dom.audioModeDesc.textContent = AUDIO_MODE_META[state.audio.mode] || AUDIO_MODE_META.keep;
+      }
       state.audio.source = dom.audioSourceUpload.checked ? "upload" : "generate";
       state.audio.lang = dom.audioLang.value;
       state.audio.provider = "auto";
@@ -4083,8 +4306,18 @@
     dom.audioModeTabs.addEventListener("click", (event) => {
       const button = event.target.closest("[data-audio-mode]");
       if (!button) return;
-      dom.audioMode.value = button.dataset.audioMode;
-      dom.audioMode.dispatchEvent(new Event("change", { bubbles: true }));
+      setAudioMode(button.dataset.audioMode);
+    });
+    dom.audioCopySwitch?.addEventListener("click", () => {
+      const upload = ["bed", "voice", "full"].includes(state.audio.mode) && state.audio.source === "upload";
+      if (upload) {
+        setVoiceSource("generate");
+        loadAudioScript();
+      } else if (state.audio.mode === "music") {
+        setAudioMode("bed");
+      } else {
+        setAudioMode("voice");
+      }
     });
     dom.mixerOpen?.addEventListener("click", toggleMixer);
     dom.audioRewriteRun.addEventListener("click", () => {
@@ -4111,10 +4344,16 @@
     });
     dom.audioUseRecording?.addEventListener("click", openVoicePicker);
     dom.audioGenerateMusic?.addEventListener("click", () => setMusicSource("generate"));
+    dom.audioMusicBlockBgm?.addEventListener("click", () => {
+      setMusicSource("own");
+      dom.audioMusicUploadButton?.click();
+    });
+    dom.audioMusicBlockGenerate?.addEventListener("click", () => setMusicSource("generate"));
     dom.audioUseBgm?.addEventListener("click", () => {
       setMusicSource("own");
       dom.audioMusicUploadButton?.click();
     });
+    dom.audioStatusSetup?.addEventListener("click", openSetup);
     dom.audioPlayMusic?.addEventListener("click", playMusicSample);
     document.querySelectorAll("[data-sound-tab]").forEach((button) => {
       button.addEventListener("click", () => showSoundTab(button.dataset.soundTab));
@@ -4258,7 +4497,25 @@
       });
       root.classList.toggle("is-disabled", disabled);
     };
+
+    if (dom.audioModeDesc) {
+      dom.audioModeDesc.textContent = AUDIO_MODE_META[mode] || AUDIO_MODE_META.keep;
+    }
     setDisabled(dom.audioRewriteStep, !rewriteMode);
+    // The copy card is a one-line note outside voice modes, never a dimmed form.
+    dom.audioRewriteStep.classList.remove("is-disabled");
+    dom.audioCopyForm.hidden = !rewriteMode;
+    dom.audioCopyNote.hidden = rewriteMode;
+    if (!rewriteMode) {
+      const note = AUDIO_COPY_NOTE[mode] || AUDIO_COPY_NOTE.keep;
+      dom.audioCopyNoteText.textContent = upload
+        ? "Using your recording. Copy is off."
+        : note;
+      dom.audioCopySwitch.textContent = upload
+        ? "Switch to generated voice →"
+        : mode === "music" ? "Add a voice-over →" : "Rewrite this cut →";
+    }
+    if (dom.audioCopySwitch) dom.audioCopySwitch.disabled = false;
     setDisabled(dom.audioVoiceStep, !voiceMode);
     setDisabled(dom.audioMusicStep, !musicMode);
     if (voiceMode) {
@@ -4284,6 +4541,9 @@
       if (dom.audioDuck) dom.audioDuck.disabled = false;
       if (dom.audioBeatSync) dom.audioBeatSync.disabled = false;
       if (dom.audioMusicUploadButton) dom.audioMusicUploadButton.disabled = false;
+      [dom.audioMusicBlockBgm, dom.audioMusicBlockGenerate, dom.audioUseBgm].forEach((node) => {
+        if (node) node.disabled = false;
+      });
     }
     if (dom.mixerOpen) dom.mixerOpen.disabled = !(voiceMode || musicMode);
     if (state.lastAudioMode !== mode) {
@@ -4293,7 +4553,6 @@
     }
     if (dom.audioGenerateVoice) dom.audioGenerateVoice.hidden = upload;
     if (dom.audioUseRecording) dom.audioUseRecording.disabled = !voiceMode;
-    if (dom.audioGenerateMusic) dom.audioGenerateMusic.disabled = !musicMode;
     if (dom.audioPlayMusic) {
       dom.audioPlayMusic.disabled = !(musicMode && musicSourceMode() === "own" && state.audio.musicUpload);
     }
@@ -4307,6 +4566,7 @@
     if (dom.audioPreview) dom.audioPreview.hidden = upload;
     syncMusicOptions();
     const source = musicSourceMode();
+    const noSource = source === "none";
     dom.audioTrackField.hidden = source !== "own" || hasUpload;
     dom.audioTrack.disabled = hasUpload;
     dom.audioMusicUploadBox.hidden = source !== "own";
@@ -4315,17 +4575,26 @@
       ? `${state.audio.musicUploadName || "music"} · ${Number(state.audio.musicUploadDuration || 0).toFixed(1)}s`
       : "Use your own music file.";
     dom.audioPromptField.hidden = source !== "generate";
-    dom.audioGainField.hidden = source === "none";
-    dom.audioDuckField.hidden = source === "none";
-    dom.audioBeatSyncField.hidden = source === "none";
-    const block = audioBlockReason();
+    dom.audioGainField.hidden = noSource;
+    dom.audioDuckField.hidden = noSource;
+    dom.audioBeatSyncField.hidden = noSource;
+    if (musicMode) {
+      if (dom.audioMusic) {
+        dom.audioMusic.disabled = noSource;
+        dom.audioMusic.title = noSource ? "Choose a music source first." : "";
+      }
+      if (dom.audioGenerateMusic) dom.audioGenerateMusic.disabled = noSource;
+      if (dom.audioMusicBlock) dom.audioMusicBlock.hidden = !noSource;
+    } else if (dom.audioMusicBlock) {
+      dom.audioMusicBlock.hidden = true;
+    }
     if (state.job && state.plan) updateRenderPanel();
   }
 
   function audioBlockReason() {
     const mode = state.audio.mode;
     if (mode === "music" && musicSourceMode() === "none") {
-      return "Music mode needs a source. Choose Use my sound or Generate before rendering.";
+      return "Choose a music source before rendering.";
     }
     const music = state.audioEngines?.music;
     if (["music", "full"].includes(mode) && musicSourceMode() === "generate" && music) {
@@ -5164,22 +5433,27 @@
 
   function refreshAudioStatus() {
     const engines = state.audioEngines;
-    if (!engines || !state.job) return;
+    if (!state.job) return;
     const pieces = [];
     const mode = state.audio.mode;
     const preferredTts = state.setup?.tts?.provider;
-    if (mode === "voice" && !engines.separation?.demucs?.available) {
-      pieces.push(`Demucs missing · ${engines.separation?.demucs?.install || "pip install demucs"}`);
+    if (mode === "voice" && !engines?.separation?.demucs?.available) {
+      pieces.push(`Demucs missing · ${engines?.separation?.demucs?.install || "pip install demucs"}`);
     }
-    if (musicSourceMode() === "generate") {
+    if (engines && musicSourceMode() === "generate") {
       const info = engines.music?.[state.audio.music];
       if (info && !info.available) pieces.push(info.install);
     }
     if (state.audioMoods.length && ["music", "full"].includes(mode)) {
       pieces.push(`auto mood: ${state.audioMoods.slice(0, 3).join(", ")}`);
     }
+    const block = audioBlockReason();
+    const musicNeedsSource = mode === "music" && musicSourceMode() === "none";
+    if (block && !musicNeedsSource) pieces.push(block);
+    const needsSetup = !!block && !musicNeedsSource && /setup|key|engine|unavailable/i.test(block);
     dom.audioStatus.textContent = pieces.join(" · ");
     dom.audioStatus.hidden = !pieces.length;
+    if (dom.audioStatusSetup) dom.audioStatusSetup.hidden = !needsSetup;
   }
 
   async function loadTranslateCheck() {
@@ -5311,13 +5585,13 @@
     const draftMatches = draftRecord && draftRecord.hook === hookId;
     const active = activeRender();
     const blocked = audioBlockReason();
+    refreshAudioStatus();
 
     const revealPlayer = state.renderWasActive === true && !active;
     state.renderWasActive = !!active;
 
     dom.renderError.hidden = true;
-    dom.renderBlock.hidden = !blocked;
-    dom.renderBlock.querySelector("span").textContent = blocked || "";
+    dom.resultReady.hidden = true;
     dom.render.title = blocked || "";
     dom.renderDraft.title = blocked || "";
     dom.playerWrap.hidden = true;
@@ -5367,8 +5641,13 @@
         : "";
       dom.reelDuration.textContent = `${tag}${record.duration.toFixed(1)}s · ${record.width}×${record.height} · ${record.clip_count} beats`;
       dom.reelSize.textContent = `${formatSize(record.size)} · H.264 / AAC${audioTag}`;
+      const downloadName = `${fileStem(state.job.source.name)}-${target}s${quality === "draft" ? "-draft" : ""}.mp4`;
       dom.download.href = withToken(record.url);
-      dom.download.download = `${fileStem(state.job.source.name)}-${target}s${quality === "draft" ? "-draft" : ""}.mp4`;
+      dom.download.download = downloadName;
+      dom.resultReadyText.textContent = `${quality === "draft" ? "Draft" : "Final"} ${target}s reel ready · ${record.duration.toFixed(1)}s`;
+      dom.resultReadyDownload.href = withToken(record.url);
+      dom.resultReadyDownload.download = downloadName;
+      dom.resultReady.hidden = false;
       if (revealPlayer) {
         setTimeout(() => {
           dom.playerWrap.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -5381,16 +5660,14 @@
         || (draftRecord.updated || 0) > (finalRecord.updated || 0));
     if (draftNewer) {
       show(draftRecord, "draft");
-      dom.renderNote.textContent = blocked
-        || "Draft preview · 540×960 · render final when it feels right.";
+      dom.renderNote.textContent = "Draft preview · 540×960 · render final when it feels right.";
       renderButton(`Render final ${target}s`);
       return;
     }
 
     if (finalMatches && finalRecord.status === "ready") {
       show(finalRecord, "final");
-      dom.renderNote.textContent = blocked
-        || state.plan.note
+      dom.renderNote.textContent = state.plan.note
         || `${finalRecord.clip_count} beats · ${renderAudioNote()} · no watermark`;
       renderButton(`Render ${target}s again`);
       return;
@@ -5405,8 +5682,7 @@
 
     renderButton(`Render ${target}s reel`);
     const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080", "16:10": "1920×1200" };
-    dom.renderNote.textContent = blocked
-      || state.plan.note
+    dom.renderNote.textContent = state.plan.note
       || `${state.aspect} ${dims[state.aspect] || ""} · ${renderAudioNote()}${state.captions ? " · captions" : ""} · no watermark`;
   }
 
@@ -5597,6 +5873,7 @@
       renderHistory();
     } catch (_) {
       if (dom.historyCount) dom.historyCount.textContent = "";
+      if (dom.historyLatest) dom.historyLatest.textContent = "";
     }
   }
 
@@ -5609,13 +5886,33 @@
     ].filter(Boolean).join(" · ");
   }
 
+  function historyEventLabel(entry) {
+    const quality = entry.quality || entry.snapshot?.render?.quality || "";
+    const target = entry.target ? `${entry.target}s` : "";
+    const bits = [entry.type || "event"];
+    if (entry.type === "render") {
+      bits[0] = quality || "final";
+      if (target) bits.push(target);
+    } else if (target) {
+      bits.push(target);
+    }
+    if (entry.status) bits.push(entry.status);
+    return bits.filter(Boolean).join(" ");
+  }
+
   function renderHistory() {
     if (!dom.historyList) return;
     const entries = state.history || [];
-    const renders = entries.filter((entry) => entry.type === "render").length;
     dom.historyCount.textContent = entries.length
-      ? `${renders} render${renders === 1 ? "" : "s"} · ${entries.length} event${entries.length === 1 ? "" : "s"}`
+      ? `${entries.length} event${entries.length === 1 ? "" : "s"}`
       : "empty";
+    if (dom.historyLatest) {
+      const latest = entries[0];
+      dom.historyLatest.textContent = latest
+        ? `Last: ${historyEventLabel(latest)} · ${formatHistoryTime(latest.created)}`
+        : "";
+      dom.historyLatest.hidden = !latest;
+    }
     if (!entries.length) {
       dom.historyList.innerHTML = `<p class="hint history-empty">No script, upload or render attempts yet.</p>`;
       return;
@@ -5629,6 +5926,7 @@
           <span class="history-status">${esc(entry.status || "")}</span>
           <span class="history-meta">${esc(historyMeta(entry))}</span>
           <span class="history-time">${esc(formatHistoryTime(entry.created))}</span>
+          <span class="history-chevron" aria-hidden="true">›</span>
           ${problem ? `<span class="history-problem">${esc(clipText(problem, 90))}</span>` : ""}
         </button>`;
     }).join("");
@@ -5784,7 +6082,7 @@
     const date = new Date(Number(timestamp) * 1000);
     if (Number.isNaN(date.getTime())) return "";
     return date.toLocaleString(undefined, {
-      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
     });
   }
 
@@ -5942,6 +6240,7 @@
       dom.historyDetail.innerHTML = "";
     }
     if (dom.historyCount) dom.historyCount.textContent = "";
+    if (dom.historyLatest) dom.historyLatest.textContent = "";
     dom.ingestNote.textContent = "ffmpeg cuts first. Analysis follows.";
     if (dom.planReasoning) {
       dom.planReasoning.hidden = true;
@@ -6289,4 +6588,6 @@
     const match = location.hash.match(/^#job=([a-z0-9]+)/i);
     if (match) openJob(match[1]);
   }
+
+  init();
 })();
