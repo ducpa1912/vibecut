@@ -7,7 +7,7 @@
   --line-2: #35353a;
   --text: #f1efe9;
   --muted: #929196;
-  --dim: #9a999f;
+  --dim: #6c6b70;
   --accent: #e8a266;
   --accent-soft: rgba(232, 162, 102, 0.12);
   --danger: #df7d6e;
@@ -20,6 +20,7 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
+  --dim: #9a999f;
   margin: 0;
   background:
     radial-gradient(900px 520px at 82% -8%, rgba(232, 162, 102, 0.08), transparent 62%),
