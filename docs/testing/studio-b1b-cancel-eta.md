@@ -1,3 +1,5 @@
+Superseded by studio-founder-pass-1.md for the full flow.
+
 # Studio B1b: cancel and time left in the scan and Import (founder runs, Claude records)
 
 **What changed:**

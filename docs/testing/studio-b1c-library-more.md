@@ -1,3 +1,5 @@
+Superseded by studio-founder-pass-1.md for the full flow.
+
 # Studio B1c: "Load more" in Your videos (founder runs, Claude records)
 
 **What changed:** "Your videos" shows the first 60 finished videos and the first 30 sources. A **Load more** button at the bottom adds the next page under the list.

@@ -1,3 +1,5 @@
+Superseded by studio-founder-pass-1.md for the full flow.
+
 # Studio B1d: Open in Finish lands on the right cut (founder runs, Claude records)
 
 **What changed:** **Open in Finish** in "Your videos" now opens Finish on that video's story set, story and shape, with that cut selected. Before, it always opened on the first story in 9:16.

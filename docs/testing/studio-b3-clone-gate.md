@@ -1,3 +1,5 @@
+Superseded by studio-founder-pass-1.md for the full flow.
+
 # Studio B3: voice cloning shows only when voice_room is on (founder runs, Claude records)
 
 **What changed:** Edit → Audio shows **Clone the video's voice** only in a build with the `voice_room` feature on. With the feature off, nothing about cloning appears and no clone search starts. The default development build has it on; the Classic beta build has it off.

@@ -1,3 +1,5 @@
+Superseded by studio-founder-pass-1.md for the full flow.
+
 # Studio B2: Finish shows render warnings (founder runs, Claude records)
 
 **What changed:** Finish now shows the notes a render recorded, such as **Music bed skipped: …**, under its version row and once above the selected cut. Before, only Classic History showed them, so a cut could look clean in Finish while music was missing.

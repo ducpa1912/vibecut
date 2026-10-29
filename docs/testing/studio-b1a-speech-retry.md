@@ -1,3 +1,5 @@
+Superseded by studio-founder-pass-1.md for the full flow.
+
 # Studio B1a: read the speech again (founder runs, Claude records)
 
 **What changed:** "Read speech" in Stories now uses the one speech-only retry. It reads the sound track again and leaves the frames, crops and plans as they are.

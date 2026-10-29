@@ -1,3 +1,5 @@
+Superseded by studio-founder-pass-1.md for the full flow.
+
 # Studio fix retest (founder runs, Claude records)
 
 **Build:** commit `f40de21`.
