@@ -43,9 +43,13 @@
       if (mode === "classic") {
         /* Classic has its own page (static/classic/index.html). This is the
            Studio page, so a saved Classic choice opens that page instead of
-           an empty Studio. */
-        window.location.replace("/?classic=1");
-        return;
+           an empty Studio. If ?classic=1 itself served this page, the server
+           cannot show Classic: stay on Studio rather than loop. */
+        if (requested !== "classic") {
+          window.location.replace("/?classic=1");
+          return;
+        }
+        mode = "studio";
       }
       var root = document.documentElement;
       root.dataset.editor = mode;
