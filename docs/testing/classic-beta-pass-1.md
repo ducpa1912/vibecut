@@ -55,7 +55,7 @@ speech). The recorder did not capture the file dialog; the HAR shows
 | 1.20 | Click the **Music** block (Use your own track, or generate a bed · None / Use my sound / Generate) | Open music choices | The music controls expand; no request yet. | |
 | 1.21 | Click empty page space | Dismiss focus | Nothing changes. | |
 | 1.22 | In **Voice list**, choose **Kokoro** | Pick a local voice engine | The voice list reloads with 31 Kokoro voices. | |
-| 1.23 | Choose **ElevenLabs** | Pick a cloud engine without a key | The list returns 0 voices. `[F8]` | |
+| 1.23 | Choose **ElevenLabs** | Pick a cloud engine without a key | The list returns 0 voices and the Voice box reads **Add the key in Setup**. `[F8]` | |
 | 1.24 | Choose **HeyGen** | Pick the OpenRouter voice engine | The list returns 10 voices (Nadine, Tabitha, Bram, Gareth, Noelle, Meredith…). | |
 | 1.25 | Click **Test voice** | Hear the HeyGen voice | `POST /voice/sample` returns **400**: `OpenRouter heygen voice failed: HTTP Error 401: Unauthorized`. `[F2]` | |
 | 1.26 | Click **Test voice** again | Retry | **400**: `OpenRouter is quarantined after an auth error; retry in 292.4s.` `[F2]` | |
@@ -149,11 +149,11 @@ recording still shows the old behaviour.
 | F1 | P1 | 1.37 | Rewrite returned a server error after 290.8 s and wrote a failed script row. | `POST /api/jobs/c9047febb2b9/audio/script` → **500**; `cannot access local variable 'OPENCODE_LAST_ERROR' where it is not associated with a value` | Fixed in `6ea61c0`; regression test `tests/test_classic_rewrite_error.py` |
 | F2 | P1 | 1.25–1.27 | HeyGen voice failed with a 401, then OpenRouter was locked for 5 minutes. Test voice was retried three times. | `POST /voice/sample` → **400**; `OpenRouter heygen voice failed: HTTP Error 401: Unauthorized`; then `OpenRouter is quarantined after an auth error; retry in 292.4s.` and `…289.3s.` | Key problem, not code. Reminder below |
 | F3 | P1 | 1.19, 1.51, 2.11, 3.11 | Rewrite sat in **working…** for minutes with no progress or ETA. | `POST /audio/script` latencies: 43.4 s, 95.9 s, 290.8 s (500), 429.0 s, 112.6 s, 208.4 s | Improved after the recordings: 20-line translation batches, ready badge, cache. `1a727db` |
-| F4 | P2 | 2.8, 2.11 | Changing a setting mid-rewrite aborted the browser request (`-1`), but the server kept working and later wrote a 429 s script row. | `POST /audio/script` → **-1** (aborted), then a later script row with 429 s | Open: client abort does not stop the worker |
+| F4 | P2 | 2.8, 2.11 | Changing a setting mid-rewrite aborted the browser request (`-1`), but the server kept working and later wrote a 429 s script row. | `POST /audio/script` → **-1** (aborted), then a later script row with 429 s | Open, P2: stopping the server-side rewrite needs cancel support in shared `audio.py`; the translation warm-up (`1a727db`) now does the slow part once, so an abandoned rewrite costs one model call |
 | F5 | P2 | 1.7, 2.13, 3.5 | **Expand** opened a second scene gallery under the strip, not a vertical collage. | none | Fixed in `582977c`; recordings show the old grid |
 | F6 | P2 | 1.43, 1.54 | History called all worker rows "attempts": **3 attempts** then **8 attempts** for one render. | `GET /history` returned 8 rows: 1 render, 3 script, 2 translation, 2 rewrite | Fixed in `6f951be`; header now **N renders · M events** |
-| F7 | P3 | 1.9, 3.6 | **Expand** was clicked twice while already expanded; the extra click changed nothing. | none | Cosmetic; no error |
-| F8 | P3 | 1.23 | ElevenLabs had no key, and the voice list returned 0 voices with no reason in the list. | `GET /api/audio/voices?engine=elevenlabs` → 200, `voices: []` | Key/config; show "Needs a key" instead of an empty list |
+| F7 | P3 | 1.9, 3.6 | **Expand** was clicked twice while already expanded; the extra click changed nothing. | none | No change needed: in the current build the button reads **Collapse** once open, and a second click closes the list |
+| F8 | P3 | 1.23 | ElevenLabs had no key, and the voice list returned 0 voices with no reason in the list. | `GET /api/audio/voices?engine=elevenlabs` → 200, `voices: []` | No change needed: with no ElevenLabs key the Voice list already reads **Add the key in Setup**; the empty `voices: []` is that case |
 
 No 4xx or 5xx responses appear in passes 2 and 3 other than the pass-1 items
 above. The only aborted request is `-1` in pass 2.
