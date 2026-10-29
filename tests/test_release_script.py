@@ -12,10 +12,14 @@ pytestmark = pytest.mark.skipif(not shutil.which("git"), reason="git is not inst
 
 
 def _git(cwd, *args):
-    # The temp repos must not inherit the machine's commit-signing key.
+    # The developer's global git config may require a signing key. These temp
+    # repos are fixtures, so they must not depend on a machine-specific key.
     return subprocess.run(
         ["git", "-c", "commit.gpgsign=false", *args],
-        cwd=cwd, check=True, capture_output=True, text=True,
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 

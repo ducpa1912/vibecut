@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_audio_block_reason_covers_unavailable_music_and_voice_engines():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert (
         "Music generation needs a MiniMax or OpenRouter key. "
         "Add one in Setup, or choose Use my sound."
@@ -20,7 +20,7 @@ def test_audio_block_reason_covers_unavailable_music_and_voice_engines():
 
 
 def test_render_note_names_the_selected_audio_mode():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "function renderAudioNote()" in script
     for label in (
         "voice-over · original audio bed",
@@ -33,7 +33,7 @@ def test_render_note_names_the_selected_audio_mode():
 
 
 def test_the_music_block_reaches_render_all_and_ab():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     # One block reason feeds Render, Draft, All and A/B, so none can start an
     # unavailable engine.
     assert script.count("const blocked = audioBlockReason();") >= 1

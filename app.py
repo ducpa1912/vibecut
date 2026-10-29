@@ -3197,7 +3197,7 @@ async def insufficient_space(_: Request, exc: disk.InsufficientSpace) -> JSONRes
 # ---------------------------------------------------------------- auth
 
 
-PUBLIC_PATHS = {"/", "/index.html", "/voices", "/favicon.ico", "/api/health", "/docs/url-ingest.md"}
+PUBLIC_PATHS = {"/", "/index.html", "/classic", "/voices", "/favicon.ico", "/api/health", "/docs/url-ingest.md"}
 SHARES = DATA / "shares.json"
 
 
@@ -3401,12 +3401,31 @@ def ffmpeg_version() -> str:
         return "missing"
 
 
-@app.get("/")
-def index() -> Response:
-    # The boot block reads the build's edition before first paint.
-    page = (STATIC / "index.html").read_text(encoding="utf-8")
+def page_response(path: Path) -> Response:
+    """Serve one lane's page with the build's edition inside it."""
+    page = path.read_text(encoding="utf-8")
     page = page.replace("<!-- vibecut:edition -->", editions.boot_script(), 1)
     return Response(page, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
+def page_file(request: Request) -> Path:
+    """Which lane page this request opens.
+
+    Classic owns ``static/classic/index.html``; Studio owns ``static/index.html``.
+    Edition ``all`` keeps the old ``?classic=1`` / ``?studio=1`` switch without
+    loading the other lane's markup.
+    """
+    if editions.edition() == "classic":
+        return STATIC / "classic" / "index.html"
+    if editions.edition() == "all" and request.query_params.get("classic") == "1":
+        return STATIC / "classic" / "index.html"
+    return STATIC / "index.html"
+
+
+@app.get("/")
+def index(request: Request) -> Response:
+    # The boot block reads the build's edition before first paint.
+    return page_response(page_file(request))
 
 
 @app.get("/voices")

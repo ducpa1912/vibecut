@@ -151,6 +151,7 @@
     momentsRail: $("#moments-rail"),
     momentsScrub: $("#moments-scrub"),
     momentsFull: $("#moments-full"),
+    momentsList: $("#moments-list"),
     momentsExpand: $("#moments-expand"),
     render: $("#render"),
     renderDraft: $("#render-draft"),
@@ -169,6 +170,7 @@
     audioMusicStep: $("#audio-music-step"),
     audioRewriteRun: $("#audio-rewrite-run"),
     audioRewriteNote: $("#audio-rewrite-note"),
+    translateBadge: $("#translate-badge"),
     audioVoiceGenerate: $("#audio-voice-generate"),
     audioVoiceUpload: $("#audio-voice-upload"),
     audioMusicSource: $("#audio-music-source"),
@@ -214,6 +216,8 @@
     renderNote: $("#render-note"),
     renderProgress: $("#render-progress"),
     renderError: $("#render-error"),
+    renderBlock: $("#render-block"),
+    renderBlockSetup: $("#render-block-setup"),
     playerWrap: $("#player-wrap"),
     reelVideo: $("#reel-video"),
     reelDuration: $("#reel-duration"),
@@ -315,9 +319,95 @@
 
   init();
 
+  // Native <select> popups on macOS ignore the page font size. The audio
+  // controls open this list instead, at a readable 15px.
+  const selectMenu = document.createElement("div");
+  selectMenu.className = "select-menu";
+  selectMenu.hidden = true;
+  selectMenu.setAttribute("role", "listbox");
+  document.body.appendChild(selectMenu);
+  let menuSelect = null;
+
+  function closeSelectMenu() {
+    selectMenu.hidden = true;
+    if (menuSelect) menuSelect.classList.remove("menu-open");
+    menuSelect = null;
+  }
+
+  function openSelectMenu(select) {
+    if (!select || select.disabled) return;
+    menuSelect = select;
+    selectMenu.innerHTML = [...select.options].map((option, index) => `
+      <button type="button" role="option" data-index="${index}"
+        class="${option.value === select.value ? "active" : ""}"
+        ${option.disabled ? "disabled" : ""}>${esc(option.textContent)}</button>`).join("");
+    selectMenu.hidden = false;
+    select.classList.add("menu-open");
+    const rect = select.getBoundingClientRect();
+    const width = Math.min(Math.max(rect.width, 240), window.innerWidth - 24);
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const openAbove = spaceBelow < 240 && spaceAbove > spaceBelow;
+    const available = Math.max(160, openAbove ? spaceAbove : spaceBelow);
+    selectMenu.style.maxHeight = `${Math.min(320, available)}px`;
+    selectMenu.style.width = `${width}px`;
+    selectMenu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`;
+    selectMenu.style.top = openAbove
+      ? `${Math.max(8, rect.top - Math.min(320, available) - 4)}px`
+      : `${rect.bottom + 4}px`;
+    requestAnimationFrame(() => {
+      const menuRect = selectMenu.getBoundingClientRect();
+      if (menuRect.bottom > window.innerHeight - 8) {
+        selectMenu.style.top = `${Math.max(8, rect.top - menuRect.height - 4)}px`;
+      }
+      if (menuRect.top < 8) selectMenu.style.top = "8px";
+      selectMenu.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function enhanceSelect(select) {
+    if (!select || select.dataset.enhanced) return;
+    select.dataset.enhanced = "1";
+    select.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      openSelectMenu(select);
+    });
+    select.addEventListener("keydown", (event) => {
+      if (!["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) return;
+      event.preventDefault();
+      openSelectMenu(select);
+    });
+  }
+
+  function enhanceAudioSelects() {
+    [dom.audioLang, dom.audioStyle, dom.audioEngine, dom.audioVoice].forEach(enhanceSelect);
+  }
+
+  selectMenu.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-index]");
+    if (!button || !menuSelect) return;
+    const option = menuSelect.options[Number(button.dataset.index)];
+    if (!option) return;
+    menuSelect.value = option.value;
+    menuSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    const select = menuSelect;
+    closeSelectMenu();
+    select.focus();
+  });
+  document.addEventListener("mousedown", (event) => {
+    if (event.target.closest("select[data-enhanced]")) return;
+    if (!selectMenu.hidden && !event.target.closest(".select-menu")) closeSelectMenu();
+  });
+  window.addEventListener("scroll", closeSelectMenu, true);
+  window.addEventListener("resize", closeSelectMenu);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeSelectMenu();
+  });
+
   function init() {
     syncTokenCookie();
     bind();
+    enhanceAudioSelects();
     updateUrlState();
     loadHealth();
     loadRecent();
@@ -952,6 +1042,7 @@
 
   function bindSetup() {
     dom.setupOpen.addEventListener("click", openSetup);
+    dom.renderBlockSetup.addEventListener("click", openSetup);
     dom.setupClose.addEventListener("click", closeSetup);
     dom.setup.querySelectorAll("[data-setup-close]").forEach((node) => {
       node.addEventListener("click", closeSetup);
@@ -1538,6 +1629,20 @@
       const card = event.target.closest("[data-moment-scene]");
       if (card) openDrawer(Number(card.dataset.momentScene));
     });
+    dom.momentsList.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-moment-scene]");
+      if (row) openDrawer(Number(row.dataset.momentScene));
+    });
+    dom.momentsList.addEventListener("dragstart", (event) => {
+      const row = event.target.closest("[data-moment-scene]");
+      if (!row) return;
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("application/x-vibecut-scene", row.dataset.momentScene);
+      dom.timelineDrop.hidden = false;
+    });
+    dom.momentsList.addEventListener("dragend", () => {
+      dom.timelineDrop.hidden = true;
+    });
     dom.momentsRail.addEventListener("dragstart", (event) => {
       const card = event.target.closest("[data-moment-scene]");
       if (!card) return;
@@ -1561,8 +1666,13 @@
     dom.momentsExpand.addEventListener("click", () => {
       state.momentsExpanded = !state.momentsExpanded;
       dom.momentsFull.hidden = !state.momentsExpanded;
+      dom.momentsRail.hidden = state.momentsExpanded;
+      dom.momentsScrub.hidden = state.momentsExpanded;
       dom.momentsExpand.textContent = state.momentsExpanded ? "Collapse" : "Expand";
-      if (state.momentsExpanded) renderScenes();
+      if (state.momentsExpanded) {
+        renderMomentList();
+        dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     });
     dom.momentsScrub.addEventListener("input", () => {
       const index = Number(dom.momentsScrub.value) || 0;
@@ -2400,6 +2510,8 @@
     dom.transcriptPanel.hidden = true;
     dom.transcriptPanel.innerHTML = "";
     dom.momentsFull.hidden = true;
+    dom.momentsRail.hidden = false;
+    dom.momentsScrub.hidden = false;
     dom.momentsExpand.textContent = "Expand";
     state.plan = job.analysis.plans[String(state.target)];
     $$("#target-tabs button").forEach((button) => {
@@ -2414,6 +2526,7 @@
     loadAudioEngines();
     loadAudioMoods();
     loadTranslateCheck();
+    warmTranslation();
     loadHistory();
     history.replaceState(null, "", jobHash(job.id));
     document.title = `${fileStem(job.source.name)} · VibeCut`;
@@ -3524,8 +3637,37 @@
         </button>`;
     }).join("");
     if (dom.momentsFull && !dom.momentsFull.hidden) {
-      // Scene grid is rendered separately; expand state only controls visibility.
+      renderMomentList();
     }
+  }
+
+  function renderMomentList() {
+    if (!state.job || !dom.momentsList || dom.momentsFull.hidden) return;
+    const clips = state.plan?.clips || [];
+    const used = new Set(clips.map((clip) => clip.scene));
+    const hookId = currentHookId();
+    const payoffId = clips.length ? clips[clips.length - 1].scene : null;
+    const scenes = [...state.job.analysis.scenes];
+    if (state.sort === "best") {
+      scenes.sort((a, b) => b.hook - a.hook || a.start - b.start);
+    } else {
+      scenes.sort((a, b) => a.start - b.start);
+    }
+    dom.momentsList.innerHTML = scenes.map((scene) => {
+      const still = scene.deep === false
+        ? `<span class="moment-placeholder"><span>quick</span></span>`
+        : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+      const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
+      const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
+      return `
+        <button class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
+          data-moment-scene="${scene.id}" draggable="true" role="listitem"
+          title="${esc(text)}${role ? ` · ${esc(role)}` : ""} · drag into Smart Cut">
+          ${still}
+          <span class="moment-time">${esc(fmtTime(scene.start))}</span>
+          <span class="moment-score">${Math.round(scene.hook)}</span>
+        </button>`;
+    }).join("");
   }
 
   function syncRailScrub() {
@@ -3789,6 +3931,7 @@
         touch();
         loadTranslateCheck();
         loadAudioScript();
+        warmTranslation();
       });
       dom.audioProvider.addEventListener(event, () => {
         touch();
@@ -3830,7 +3973,9 @@
       dom.audioMode.dispatchEvent(new Event("change", { bubbles: true }));
     });
     dom.audioRewriteRun.addEventListener("click", () => {
-      loadAudioScript({ run: true, forceTranslate: true });
+      // Reuse the on-disk translation memo. Only a language change or the
+      // explicit Retry translation button asks for fresh translations.
+      loadAudioScript({ run: true });
     });
     document.querySelectorAll('input[name="audio-music-source"]').forEach((input) => {
       input.addEventListener("change", () => {
@@ -4459,8 +4604,108 @@
     }
   }
 
+  function languageCode(value) {
+    return String(value || "").split("-")[0];
+  }
+
+  function sourceLanguage() {
+    return languageCode(
+      (state.job?.analysis?.engine || {}).transcript_language || "en",
+    );
+  }
+
+  function targetLanguage() {
+    return languageCode(state.audio?.lang || "");
+  }
+
+  function paintTranslateBadge(info) {
+    if (!dom.translateBadge) return;
+    const target = targetLanguage();
+    if (!target || target === sourceLanguage()) {
+      dom.translateBadge.hidden = true;
+      return;
+    }
+    const status = info?.status
+      || (state.translation?.target === target ? state.translation.status : "idle");
+    dom.translateBadge.hidden = false;
+    dom.translateBadge.dataset.status = status;
+    if (status === "ready") {
+      dom.translateBadge.textContent = `Translation ready · ${target.toUpperCase()}`;
+    } else if (status === "running") {
+      dom.translateBadge.textContent =
+        `Translating batch ${Math.max(1, Number(info?.batch) || 1)}/${info?.batches || "?"}`;
+    } else if (status === "failed") {
+      dom.translateBadge.textContent = "Translation failed";
+    } else {
+      dom.translateBadge.textContent = "Translation not started";
+    }
+  }
+
+  async function translationStatus(target, jobId = state.job?.id) {
+    return api(
+      `/api/classic/jobs/${jobId}/translate/status?target=${encodeURIComponent(target)}`,
+    );
+  }
+
+  async function ensureTranslation(controller) {
+    const target = targetLanguage();
+    const jobId = state.job?.id;
+    if (!jobId || !target || target === sourceLanguage()) {
+      paintTranslateBadge(null);
+      return true;
+    }
+    if (state.translation?.target === target && state.translation.status === "ready") {
+      paintTranslateBadge(state.translation);
+      return true;
+    }
+    let info;
+    try {
+      info = await translationStatus(target, jobId);
+    } catch (error) {
+      dom.audioRewriteNote.textContent = `Translation check failed: ${error.message}`;
+      return false;
+    }
+    if (info.status !== "ready" && info.status !== "running") {
+      try {
+        info = await api(`/api/classic/jobs/${jobId}/translate`, {
+          method: "POST",
+          body: JSON.stringify({ target, provider: "auto" }),
+        });
+      } catch (error) {
+        dom.audioRewriteNote.textContent = `Translation failed: ${error.message}`;
+        paintTranslateBadge({ status: "failed" });
+        return false;
+      }
+    }
+    state.translation = { ...info, target };
+    paintTranslateBadge(info);
+    while (info.status === "running") {
+      if (controller && state.scriptAbort !== controller) return false;
+      if (state.job?.id !== jobId || targetLanguage() !== target) return false;
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      try {
+        info = await translationStatus(target, jobId);
+      } catch (error) {
+        info = { ...info, status: "failed", error: error.message };
+      }
+      state.translation = { ...info, target };
+      paintTranslateBadge(info);
+    }
+    if (info.status === "failed") {
+      dom.audioRewriteNote.textContent =
+        `Translation failed: ${info.error || "unknown error"}`;
+      return false;
+    }
+    return info.status === "ready";
+  }
+
+  function warmTranslation() {
+    ensureTranslation(null).catch(() => {});
+  }
+
   function resetAudioScript(message = "Click ▶ Rewrite to translate the full script and rewrite this cut.") {
     if (!dom.audioScript) return;
+    cancelAudioScript();
     if (dom.audioRewriteNote) dom.audioRewriteNote.textContent = message;
     dom.audioScript.hidden = false;
     dom.audioScript.innerHTML = `
@@ -4470,6 +4715,20 @@
       </div>`;
   }
 
+  function cancelAudioScript() {
+    // A setting change replaces the cut or the language. The old request no
+    // longer owns the panel, so stop waiting on it and free the button.
+    if (state.scriptAbort) {
+      try { state.scriptAbort.abort(); } catch (_) { /* already settled */ }
+      state.scriptAbort = null;
+    }
+    if (state.scriptTimer) {
+      clearInterval(state.scriptTimer);
+      state.scriptTimer = null;
+    }
+    if (dom.audioRewriteRun) dom.audioRewriteRun.disabled = false;
+  }
+
   async function loadAudioScript(options = {}) {
     const run = options.run === true;
     const forceTranslate = options.forceTranslate === true;
@@ -4477,6 +4736,7 @@
     const audio = state.audio;
     const voiceMode = ["bed", "voice", "full"].includes(audio.mode);
     if (!voiceMode || (audio.source === "upload" && voiceMode)) {
+      cancelAudioScript();
       dom.audioScript.hidden = true;
       dom.audioScript.innerHTML = "";
       return;
@@ -4485,14 +4745,30 @@
       resetAudioScript();
       return;
     }
+    if (state.scriptAbort) state.scriptAbort.abort();
+    const controller = new AbortController();
+    state.scriptAbort = controller;
     dom.audioScript.hidden = false;
-    dom.audioRewriteNote.textContent = "Translating the full script, then rewriting this cut…";
+    const startedAt = Date.now();
+    if (state.scriptTimer) clearInterval(state.scriptTimer);
+    const ticking = setInterval(() => {
+      if (state.scriptAbort !== controller) return;
+      const seconds = Math.round((Date.now() - startedAt) / 1000);
+      dom.audioRewriteNote.textContent =
+        `Translating and rewriting… ${seconds}s. The first run translates the whole video once; later runs reuse the cache.`;
+    }, 1000);
+    state.scriptTimer = ticking;
+    dom.audioRewriteNote.textContent =
+      "Translating and rewriting… 0s. The first run translates the whole video once; later runs reuse the cache.";
     dom.audioRewriteRun.disabled = true;
+    const translatedReady = await ensureTranslation(controller);
+    if (!translatedReady) return;
     dom.audioScript.innerHTML =
       `<div class="script-head"><span class="label">Script</span><span class="hint">working…</span></div>`;
     try {
       const result = await api(`/api/jobs/${state.job.id}/audio/script`, {
         method: "POST",
+        signal: controller.signal,
         body: JSON.stringify({
           target: state.target,
           hook_scene: state.overrideHook,
@@ -4524,11 +4800,23 @@
       const note = fallbackText
         ? `Fallback: ${fallbackText}`
         : result.translated
-          ? `Translated to ${result.target} and rewritten for ${state.target}s.`
+          ? `${result.translation_status?.provider === "cache" ? "Translation reused · " : ""}Translated to ${result.target} and rewritten for ${state.target}s.`
           : `Rewritten for ${state.target}s.`;
       renderScriptBlock(lines, result, note);
+      state.translation = {
+        target: targetLanguage(), status: "ready", done: 1, total: 1,
+        batch: 1, batches: 1,
+      };
+      paintTranslateBadge(state.translation);
       loadHistory();
     } catch (error) {
+      if (error?.name === "AbortError") {
+        // A setting change already cleared the panel; keep that message.
+        if (state.scriptAbort === controller) {
+          dom.audioRewriteNote.textContent = "Rewrite cancelled. Click ▶ Rewrite to run it again.";
+        }
+        return;
+      }
       const message = `Rewrite failed: ${error.message}`;
       if (state.lastScript?.lines?.length) {
         renderScriptBlock(
@@ -4543,7 +4831,14 @@
       }
       loadHistory();
     } finally {
-      dom.audioRewriteRun.disabled = false;
+      if (state.scriptTimer === ticking) {
+        clearInterval(ticking);
+        state.scriptTimer = null;
+      }
+      if (state.scriptAbort === controller) {
+        state.scriptAbort = null;
+        dom.audioRewriteRun.disabled = false;
+      }
     }
   }
 
@@ -4810,6 +5105,10 @@
     const blocked = audioBlockReason();
 
     dom.renderError.hidden = true;
+    dom.renderBlock.hidden = !blocked;
+    dom.renderBlock.querySelector("span").textContent = blocked || "";
+    dom.render.title = blocked || "";
+    dom.renderDraft.title = blocked || "";
     dom.playerWrap.hidden = true;
     dom.renderProgress.hidden = true;
     dom.render.disabled = false;
@@ -5097,7 +5396,10 @@
   function renderHistory() {
     if (!dom.historyList) return;
     const entries = state.history || [];
-    dom.historyCount.textContent = entries.length ? `${entries.length} attempts` : "empty";
+    const renders = entries.filter((entry) => entry.type === "render").length;
+    dom.historyCount.textContent = entries.length
+      ? `${renders} render${renders === 1 ? "" : "s"} · ${entries.length} events`
+      : "empty";
     if (!entries.length) {
       dom.historyList.innerHTML = `<p class="hint history-empty">No script, upload or render attempts yet.</p>`;
       return;

@@ -1,193 +1,167 @@
-# Classic beta pass 1 — founder test script
+# Classic beta pass 1 — recorded founder passes
 
-**Build:** the latest `classic` (the commit that ships this version of the script). Every fix from Claude's walk is already in; only **Known issues** below are still open.
+This file replaces the earlier draft. Every step below comes from the founder's
+own recordings in `~/vibecut-lanes/recordings/classic-pass-1`, `-2` and `-3`
+(`actions.spec.js` for the clicks, `session.har` for the requests and results).
+A step that the recorder did not capture says so. Nothing here is invented.
 
-**Start the app:** open Terminal and run these two lines. Use port **8793**, never 8787.
+**Start the app** (Classic only, its own port and data):
 
 ```bash
 cd /Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic
-VIBECUT_EDITION=classic VIBECUT_DATA=~/vibecut-beta-test VIBECUT_PORT=8793 python3 app.py
+eval "$(scripts/lane-env.sh classic)"
+python3 app.py
 ```
 
-Then open `http://127.0.0.1:8793` in your browser. The first run creates `~/vibecut-beta-test`; your normal VibeCut data is untouched.
+Open `http://127.0.0.1:8796`. Never use 8787.
 
-**Videos to use:**
-- **A:** one short own video with speech, under 1 minute.
-- **B:** one 2–3 minute own video with speech.
-- **URL:** `https://www.youtube.com/watch?v=jNQXAC9IVRw` (Me at the zoo).
-- Optional: one voice recording (`voice.m4a`) and one music file (`music.m4a`).
+**Media** (names only, from `~/vibecut-lanes/media/classic/`):
+`cn-1min29s-720x1280-voice-subtiltle.mp4`,
+`en-53s-1080x1920-subtitle.mp4`,
+`en-5mins-640x360-voice-text-overlay.mp4`.
+The recordings also used a YouTube Short, `https://www.youtube.com/shorts/GEHJwh9vcaY`.
 
-No cloud key is needed. Setup is optional; the flows below say where a key changes the result.
+**How to read this**: Expected is what the recording shows, including errors and
+dead ends. `[F#]` points to the Findings section. Leave Result empty unless you
+re-run the step.
 
-Send me pass or fail for each step, what you saw, any times you measured, and any error text exactly as shown. I fill in the Result column.
+## Pass 1 — 08:31–08:50, job `c9047febb2b9`
 
-## 1. Start and first run
-
-| # | Action: where to click | Intent | Expected | Result |
-|---|---|---|---|---|
-| 1.1 | Run the two commands above, then open `http://127.0.0.1:8793` | A clean Classic beta build | The Classic page opens with **Drop a video**, **Paste a video link**, **Creator** and **Setup**. No Studio view opens. | |
-| 1.2 | Look at the top-right status | Engine check | It says **local only** and a health line such as **vision · whisper**. It does not say **engine offline**. | |
-| 1.3 | If this is the first run, read the banner at the top | First-run nudge | A one-line banner says **Optional: add keys and voices in Setup** with a button that opens Setup. | |
-| 1.4 | Click **Open Setup** in the banner → **Save setup** → close Setup with **×** → reload the page | The nudge is not repeated after Setup was saved | The banner is gone. | |
-
-## 2. Import
-
-### 2.1 Choose a file (drag or click)
+Source: `cn-1min29s-720x1280-voice-subtiltle.mp4` (88.8 s, 25 scenes, Chinese
+speech). The recorder did not capture the file dialog; the HAR shows
+`POST /api/jobs/upload 200`.
 
 | # | Action: where to click | Intent | Expected | Result |
 |---|---|---|---|---|
-| 2.1.1 | Drag video **A** onto **Drop a video**, or click it and choose the file | File import | A file card shows the name, duration and size. The card has a **×** button. | |
-| 2.1.2 | Read the note under the card | Local-only promise | It says **Read in place · no copy.** or the file stays on this machine. | |
-| 2.1.3 | Click **×** on the card, then drag **A** again | Removing and re-adding a file | The card clears, then the video returns with no error. | |
+| 1.1 | Click **Dissect video ↗** (the file choice before it was not captured; the HAR shows `POST /api/jobs/upload 200`) | Import with the rights lock | A native dialog asks **The rights lock is on. I own this footage…**; job `c9047febb2b9` reaches **ready** in 50.2 s with 25 scenes, Chinese speech, **whisper**. | |
+| 1.2 | Open `http://127.0.0.1:8796/#job=c9047febb2b9` | Open the finished job | The result view loads with the 30 s plan: 29.7 s, 9 beats. | |
+| 1.3 | Click the opening-beat line **Opening beat 0:16.2 – 0:20.8 · 4.6s 养花种菜之所以轻松 Scene 4 is the strongest opening** | Open a moment | The scene drawer opens with the beat detail. | |
+| 1.4 | Click **:00 ✓** in the drawer | Use this moment as the hook | The hook moves to that moment and the drawer closes. | |
+| 1.5 | Click the drawer backdrop | Close the drawer | The drawer closes with no error. | |
+| 1.6 | Click **:00 ✓** again, then the drawer backdrop | Repeat the hook choice | Same result as 1.4–1.5; no error. | |
+| 1.7 | Click **Expand** | Expand the moments strip | A second grid of scene thumbnails appears under the horizontal strip. `[F5]` | |
+| 1.8 | Click **Collapse** | Close the grid | The grid hides; the strip stays. | |
+| 1.9 | Click **Expand** again, then **Expand** once more | Toggle behaviour | The first click opens the grid; the extra click is recorded but changes nothing visible. `[F7]` | |
+| 1.10 | Click **Timeline**, then **Timeline** again | Sort moments by time | The list re-sorts; the second click is a no-op. | |
+| 1.11 | Click **Best** | Sort by hook score | The strip re-sorts by score. | |
+| 1.12 | Drag the **Scrub moments** slider to the start | Move along the strip | The rail scrolls to the first moment. | |
+| 1.13 | Click **Edit cut** | Enter manual edit | Clip controls appear on the timeline. | |
+| 1.14 | Drag **Scrub moments** to about 21 | Move along the strip while editing | The rail scrolls; the edit state stays. | |
+| 1.15 | Click **Voice-over** | Pick a voice mode | The Rewrite/Voice/Music steps show. | |
+| 1.16 | Click **Dub** | Replace only the voice | Dub is selected; the rewrite step stays. | |
+| 1.17 | Click **Full Replace** | New voice and new music | Full Replace is selected. | |
+| 1.18 | In **Language**, choose **Vietnamese** | Set the target language | The select shows `vi`; a translation-status request starts. | |
+| 1.19 | Click **▶ Rewrite** | Translate and rewrite the cut | A script arrives after 43 s; History gains script, translation and rewrite rows, all **ok**. | |
+| 1.20 | Click the **Music** block (Use your own track, or generate a bed · None / Use my sound / Generate) | Open music choices | The music controls expand; no request yet. | |
+| 1.21 | Click empty page space | Dismiss focus | Nothing changes. | |
+| 1.22 | In **Voice list**, choose **Kokoro** | Pick a local voice engine | The voice list reloads with 31 Kokoro voices. | |
+| 1.23 | Choose **ElevenLabs** | Pick a cloud engine without a key | The list returns 0 voices and the Voice box reads **Add the key in Setup**. `[F8]` | |
+| 1.24 | Choose **HeyGen** | Pick the OpenRouter voice engine | The list returns 10 voices (Nadine, Tabitha, Bram, Gareth, Noelle, Meredith…). | |
+| 1.25 | Click **Test voice** | Hear the HeyGen voice | `POST /voice/sample` returns **400**: `OpenRouter heygen voice failed: HTTP Error 401: Unauthorized`. `[F2]` | |
+| 1.26 | Click **Test voice** again | Retry | **400**: `OpenRouter is quarantined after an auth error; retry in 292.4s.` `[F2]` | |
+| 1.27 | Click **Test voice** a third time | Retry sooner | **400**: `OpenRouter is quarantined after an auth error; retry in 289.3s.` `[F2]` | |
+| 1.28 | Click **Setup** | Open Setup | Setup opens on **Cloud, optional**. | |
+| 1.29 | Click the **Intelligence / OpenCode Go** area | Inspect keys | The OpenCode and OpenRouter key fields show. | |
+| 1.30 | Click **Open admin console ↗** | Open the admin console | A new tab opens the admin console with a password form. | |
+| 1.31 | Type the admin password and confirmation, click **Create admin** | First admin login | The console opens on **Overview**. Do not write the password in this file. | |
+| 1.32 | Click **Keys**, click **Test** twice, click **Models**, click **Refresh catalogs** | Check providers | The console stays responsive; the keys page reports the OpenRouter test result. | |
+| 1.33 | Click **VibeCut ADMIN** to return to Classic | Back to Classic | The Classic Setup is still open. | |
+| 1.34 | Paste the OpenRouter key into **OpenRouter key · translation/TTS/music fallback**, click **Save setup** | Fix the 401 | `POST /api/settings 200`; no key is echoed back. Do not write the key in this file. | |
+| 1.35 | Click the Setup backdrop, then **Test voice** | Retry the voice sample | `POST /voice/sample 200`; a sample plays. | |
+| 1.36 | Click the script panel line **Click ▶ Rewrite to translate** | Select the script panel | No request. | |
+| 1.37 | Click **▶ Rewrite** | Rewrite again after the key fix | `POST /audio/script` returns **500** after 290.8 s; History adds `script failed`. Exact error: `cannot access local variable 'OPENCODE_LAST_ERROR' where it is not associated with a value`. `[F1]` | |
+| 1.38 | Click empty page space twice | Dismiss focus | Nothing changes. | |
+| 1.39 | Click **Generate / Use my recording** | Switch voice source | The source choice updates; no request. | |
+| 1.40 | Set **Script style** to **Creative** | Change rewrite style | The select shows `Creative · vivid and surprising`. | |
+| 1.41 | Set **Language** to **Portuguese**, then **Vietnamese** | Change target twice | Two translation-status requests; no script request. | |
+| 1.42 | Click the **Generate / Use my recording / Voice list** area | Focus the voice panel | No request. | |
+| 1.43 | Open **History** (header **3 attempts**) | Read history | Three rows: rewrite **ok**, translation **ok**, script **ok**. The header counts worker rows. `[F6]` | |
+| 1.44 | Click the **rewrite ok 30s · smooth** row | Inspect a rewrite | The history detail opens for that rewrite. | |
+| 1.45 | Click **Voice-over** | Switch mode | The audio mode changes. | |
+| 1.46 | Set **Script style** to **Fun**, then **Language** to **English** | Change style and language | No script request while the panel is reset. | |
+| 1.47 | Reload `http://127.0.0.1:8796/#job=c9047febb2b9` | Restart the result view | The job reloads **ready** with its ready 30 s render. | |
+| 1.48 | Click **Voice-over** | Switch mode again | The audio mode changes. | |
+| 1.49 | Set **Language** to **Vietnamese** | Target Vietnamese again | A translation-status request; no script request yet. | |
+| 1.50 | In **Voice list**, choose **HeyGen**, then in **Voice**, choose **Weston** | Pick a HeyGen voice | The voice select shows `Weston`. | |
+| 1.51 | Click **▶ Rewrite** | Rewrite with HeyGen | `POST /audio/script 200` after 95.9 s; script and history rows appear. | |
+| 1.52 | Click empty page space | Dismiss focus | Nothing changes. | |
+| 1.53 | Click **Render 30s reel ↗** | Render the cut | `POST /render 200`; the render reaches **ready** in 15.9 s with an artifact and poster. | |
+| 1.54 | Click empty page space, then open **History** (header **8 attempts**) | Read the final history | Eight rows: one render, plus three script/translation/rewrite groups (one failed). The header calls all rows attempts. `[F6]` | |
 
-### 2.2 Local path
+## Pass 2 — 09:07–09:24, jobs `c9047febb2b9` and `a6e2d0a82c9d`
 
-| # | Action: where to click | Intent | Expected | Result |
-|---|---|---|---|---|
-| 2.2.1 | Click **Use a local path instead**, paste the full path to video **A**, click **Load** | Path import reads in place | The file card appears and a toast says **Video loaded in place.** No file is copied. | |
-| 2.2.2 | Click **Dissect video** | The rights dialog | A native OK/Cancel dialog says **The rights lock is on.** and **I own this footage or have the rights to it.** Click **OK**. | |
-| 2.2.3 | Click **Dissect video** again on a fresh path, then click **Cancel** in the rights dialog | Cancel is honest | The import stops and an error says **Import cancelled. Confirm you own this footage or have the rights to it.** | |
-
-### 2.3 URL
-
-| # | Action: where to click | Intent | Expected | Result |
-|---|---|---|---|---|
-| 2.3.1 | Paste `https://www.youtube.com/watch?v=jNQXAC9IVRw` into **Paste a video link**, click **Get video** | URL import with yt-dlp | The provider label shows **yt-dlp**, then a download/progress view starts. No Cobalt or Docker is needed. | |
-| 2.3.2 | Wait for the result view | URL import finishes | The job opens with the title **Me at the zoo**, about 19 seconds, 4 moments, and a hook. | |
-| 2.3.3 | Click **Recent cuts** → the new URL job | The download is a normal job | The row shows the title and **ready**, and it opens again. | |
-
-### 2.4 Speech
-
-| # | Action: where to click | Intent | Expected | Result |
-|---|---|---|---|---|
-| 2.4.1 | On video **A**, tick **Transcribe speech** (it is on by default for speech videos under 15 minutes) | Speech analysis | The result meta line includes **whisper** or the local speech provider, and **CC · transcript** appears under the hook. | |
-| 2.4.2 | Click **CC · transcript** | Transcript view | Timed lines appear. Clicking it again hides them. | |
-| 2.4.3 | Import video **A** once more with **Transcribe speech** off | Speech off is distinct from speech failure | No transcript button appears, and no failure notice appears. | |
-| 2.4.4 | If a speech-on job returns no transcript, read the result view | A speech failure is not silent | A notice says **Speech was on, but no transcript came back.**, names the engine that failed (for example **Local Whisper: No transcript returned.**), and offers **Retry speech**. Click **Retry speech**: the transcript arrives and the notice goes away. | |
-
-## 3. Smart Cut: plan, render, hooks, edit
-
-| # | Action: where to click | Intent | Expected | Result |
-|---|---|---|---|---|
-| 3.1 | Open video **A**, then click **15s**, **30s**, **60s** in the **Smart Cut** section | Plan lengths | Each tab rebuilds the timeline and the button text changes to **Render 15s reel**, **Render 30s reel** or **Render 60s reel**. The total time is close to the target. | |
-| 3.2 | Click **Render 30s reel** | A final render | A progress bar runs, then the player appears. The cut reaches **ready** with a poster. | |
-| 3.3 | Click **Draft** next to Render | A fast draft | A second, shorter render finishes and the player shows the draft cut. | |
-| 3.4 | Start another render, then click **Cancel** while it runs | Cancel is honest | The render stops, says **Cancelled**, and the earlier ready cut stays available. | |
-| 3.5 | Open **Advanced**, tick **Captions**, render again | Burned-in captions | Captions are visible in the player and the render note includes **captions**. | |
-| 3.6 | Open **Advanced** → **Platform preset** → choose **TikTok**, **Reels**, **Shorts**, **Square**, **Landscape** | Presets set shape | The **Aspect ratio** select changes to the matching shape (9:16, 9:16, 9:16, 1:1, 16:9). Render again and the player shape matches. | |
-| 3.7 | Open **Advanced** → **All 15/30/60** | Render all three lengths | Three renders queue in order. Each finishes ready. History gains three rows. | |
-| 3.8 | Open **Advanced** → **A/B hooks** | Hook variants for the same length | Up to three renders queue, one per top hook. Each finishes ready and gets its own **History** row; **Download reel** on each row plays that hook's cut. | |
-| 3.9 | Click **Pick another hook →**, choose a different moment, then **Reset hook** | Hook override | The timeline and hook panel change to the chosen moment. **Reset hook** appears; clicking it restores the automatic hook. | |
-| 3.10 | Click **Hook lab →**, look at the cards | Hook candidates | Up to eight cards show a thumbnail, a hook score badge, time, length and beats. Click one card; it becomes the hook. | |
-| 3.11 | Click **Edit cut**. On a clip, click **−** (trim 0.25 s), **↑ / ↓** (move) or **✕** (remove). Keys also work: **← / →**, **Alt+← / →**, **− / +**, **Del** | Manual cut edit | The timeline and the clip lengths change immediately. | |
-| 3.12 | In edit mode, type a name in **Variant name**, click **Save variant**, then click **Done** | Saved variant | A toast says **Variant saved.** and a chip **name · length** appears next to **Save variant**. Click the chip to load it: the timeline returns to that cut and a toast says **Loaded “…”**. | |
-| 3.13 | Click **✕** on a saved variant | Delete a variant | The chip disappears. The render stays. | |
-| 3.14 | With an edited cut, click **Render 30s reel** | Render the cut on screen | The render uses the edited clips, not the automatic plan. | |
-
-## 4. Audio, voice and music
-
-| # | Action: where to click | Intent | Expected | Result |
-|---|---|---|---|---|
-| 4.1 | Open **Audio · rewrite, voice, music**. Leave **Mode** on **Original**, render | Original audio | The render note says **original audio** and the source speech is heard. | |
-| 4.2 | Click **Voice-over**, then render | New voice over the original bed | The render note says **voice-over**, not **original audio**. The new voice is heard over the original audio. | |
-| 4.3 | Click **Dub**, choose a **Language** in **Rewrite** (for example Vietnamese), click **▶ Rewrite**, then render | Replace only the voice | The render note says **dubbed voice**. The original music/effects remain under the new voice. | |
-| 4.4 | Click **Music**, choose **Generate** with no MiniMax or OpenRouter key | An unavailable engine blocks the render | A warning says **Music generation needs a MiniMax or OpenRouter key. Add one in Setup, or choose Use my sound.** Render, Draft, All and A/B are disabled. | |
-| 4.5 | Click **Music** → **Use my sound** → **Choose sound**, pick `music.m4a`, then render | Own music | The track name and length appear, the bed plays under the cut, and the render note says **music bed**. | |
-| 4.6 | Click **Music** → **Generate** with a MiniMax or OpenRouter key saved in Setup | Generated music | The generate options are selectable, a bed is generated, and the render finishes with music. | |
-| 4.7 | Click **Full Replace**, choose **Generate**, pick a voice, choose **Use my sound**, render | New voice + new music | The render note says **new voice + music**. Both are heard. | |
-| 4.8 | In **Voice**, click **▶ Rewrite** | Script rewrite | A script appears under the audio panel. It is not spoken until you press play/test. | |
-| 4.9 | Click **Test voice** | A voice sample | A short sample plays. The status line names the engine and voice. | |
-| 4.10 | Click **Use my recording** → **Choose recording**, pick `voice.m4a`, then **Test voice** | Own recording | The recording is fitted to the cut length and plays. | |
-| 4.11 | In Voice-over or Full Replace, open **Automation mixer**, click a lane to add a node, drag it, double-click it | Mixer | The node moves and the readout changes. **Reset 100%** and **Flatten** restore the flat line. | |
-| 4.12 | Click **Original** after using the mixer | Mixer hides in Original | The mixer panel is hidden or shows no automation for the Original mode. | |
-
-## 5. Result view: history, export, review link, clean and delete
+Source: first the existing `c9047febb2b9`, then
+`en-53s-1080x1920-subtitle.mp4` (52.9 s, 16 scenes, English speech).
 
 | # | Action: where to click | Intent | Expected | Result |
 |---|---|---|---|---|
-| 5.1 | Open **History** | History list | Rows for renders, script attempts and uploads show a type, status, length, time and any problem. | |
-| 5.2 | Click a **render** row → **Download reel** | The exact cut, not the newest cut | The file plays the cut from that row, even after A/B hooks or All 15/30/60 rendered newer files. | |
-| 5.3 | Click a **script** row → **Restore script** | Restore a saved script | The fields return to that snapshot and a toast confirms the restore. | |
-| 5.4 | Click **Delete** on a history row | Delete one attempt | The row disappears. Other history rows stay. | |
-| 5.5 | With a ready cut, click **SRT**, then **VTT** | Caption export | Each button downloads a non-empty file with timed cues. | |
-| 5.6 | Click **EDL**, then **XML** | Edit export | Each downloads a non-empty file. With an edited cut loaded, the file lists the edited clips. | |
-| 5.7 | Open the video **A** job imported with **Transcribe speech** off (step 2.4.3), then click **SRT**, then **VTT** | No transcript is not an empty file | Each shows a toast: **This cut has no transcript, so there are no captions to export. …** No file downloads and no new tab opens. | |
-| 5.8 | Click **Review link** next to a ready cut | Share the cut on screen | A review link is copied. It opens the same cut, with the right length and shape. | |
-| 5.9 | Change the hook or render a newer cut, then make another **Review link** from the older cut | The link stays on the shown cut | The older link still plays the older cut, not the newest render for that length. | |
-| 5.10 | Click **Clean** once | Clean asks for confirmation | The button changes to **Click to confirm**. | |
-| 5.11 | Click **Click to confirm** | Clean work files | A toast lists what was removed. The source video and the ready renders stay unless **Renders** or **All but source** was chosen. | |
-| 5.12 | Choose **All but source** in the clean menu, then **Clean** twice | Clean profile | The confirmation runs and the job stays open with no error. | |
-| 5.13 | Click **Delete** on a throwaway job, confirm | Delete a job | The job leaves **Recent cuts** and its page returns to ingest. | |
-| 5.14 | Go back to **Recent cuts** | Recent list | Each local job shows a thumbnail or scene count, duration, date and status. A live job cannot be deleted and says why. | |
-| 5.15 | In Creator → **Queue**, open **Compatibility · source batches (15/30/60)**, paste two local paths, choose **Analyze only**, tick **I own these videos or have the rights to them**, click **Create batch** | A batch with the rights lock on | The batch starts. It does not return **409 Confirm you own this footage or have the rights to it.** Each item gets a job id and a state. | |
-| 5.16 | Click **Pause**, **Resume**, then **Cancel** on that batch | Batch controls | Pause stops after the current item, Resume continues, Cancel asks for confirmation and then cancels the rest. | |
+| 2.1 | Open `http://127.0.0.1:8796/`, click the recent card **cn-1min29s-720x1280-voice-subtiltle.mp4 · 1m 29s · Oct 29 · 25 scenes · ready** | Reopen a finished job | Job `c9047febb2b9` opens ready with its 30 s render. | |
+| 2.2 | Click the **VibeCut** brand | Return to ingest | The ingest view shows. | |
+| 2.3 | Click **Dissect video ↗**; the native dialog is dismissed by the recorder (the file choice before it was not captured) | Import a new file | `POST /api/jobs/upload 200`; job `a6e2d0a82c9d` is created. The dismissed dialog is recorded as a cancel. | |
+| 2.4 | Open `http://127.0.0.1:8796/#job=a6e2d0a82c9d` | Open the new job | **ready** in 49.3 s; 16 scenes, English speech, 30 s plan = 30.0 s, 11 beats. | |
+| 2.5 | Click the moment line **Opening beat 0:07.5 – 0:10.0 · 2.5s trading class ships, Scene 2 is the…** | Open a moment | The drawer opens. | |
+| 2.6 | Click **Dub** | Replace only the voice | Dub is selected. | |
+| 2.7 | Set **Language** to **Vietnamese** | Target Vietnamese | Translation-status request; no script yet. | |
+| 2.8 | Click **▶ Rewrite**, then change a setting while it works | Cancel a slow rewrite | The first `POST /audio/script` is recorded as **-1** (aborted in the browser). The server keeps working and later writes a script row. `[F4]` | |
+| 2.9 | Click the **Smart Cut** line, the rewrite step, then the result view, then the **Smart Cut** line again | Move around the page | The page stays responsive; no request. | |
+| 2.10 | Set **Script style** to **Chill** | Change the style | The select shows `Chill · calm and understated`. | |
+| 2.11 | Click **▶ Rewrite** | Rewrite again | `POST /audio/script 200`; History gets a script, translation and rewrite row. The first (aborted) script took 429 s and still appears. `[F3]` `[F4]` | |
+| 2.12 | Click the line **Translating the full script,** | Select the working note | No request. | |
+| 2.13 | Click **Expand** | Expand moments | The scene gallery opens under the strip. `[F5]` | |
+| 2.14 | Click the **Voice / Generate / Use my recording** area | Focus the voice panel | No request. | |
+| 2.15 | Click the **Rate** spinbutton | Focus the rate field | No change. | |
+| 2.16 | Click **Render 30s reel ↗** | Render the cut | `POST /render 200`; **ready** in 30.2 s with an artifact. | |
+| 2.17 | Click the **Test voice** area | Dismiss focus | No request. | |
+| 2.18 | Open **History** (header **1 render · 4 events**) | Read history | Four rows: render, rewrite, translation, script. The header separates renders from events. | |
+| 2.19 | Open **Advanced** | Inspect advanced settings | The advanced panel opens. | |
 
-## 6. Creator: Clip Set and stories
+## Pass 3 — 09:26–09:33, URL job `1fd96e13474d`
 
-| # | Action: where to click | Intent | Expected | Result |
-|---|---|---|---|---|
-| 6.1 | Click **Creator** at the top right, choose video **B** in **Recent job** | The Creator workspace | The job loads with **Clip Set**, **Captions**, **Preflight**, **Packet**, **Artifacts & Shares** and **Queue** tabs. | |
-| 6.2 | Click **Auto Select** with **Stories** set to **3** | Build a Clip Set | Story cards appear with hook, payoff, sentence rows and beat chips. The meta line shows available stories, order and sentence count. | |
-| 6.3 | Click **Read Analysis** | Read the evidence | The **Read Analysis** panel opens on **Original analysis** with one card per story, its duration, time range, hook and payoff. | |
-| 6.4 | Click the **Beta read** tab, type `no politics` in **Optional read prompt · exclusions only**, click **Run beta read** | Optional ranking | Ranked story cards appear with a rank score, duration and why. Excluded stories are tagged **excluded**. | |
-| 6.5 | Click **Tighten first story** with **30s** selected | Tighten a story | A new plan appears under **Filler / silence / punch-ins**. The source cut is not overwritten. | |
-| 6.6 | Click **Render story** on a story card | A story render | The card shows a render state and then a ready artifact. The artifact also appears under **Artifacts & Shares**. | |
-| 6.7 | Click **Open in Smart Cut** on a story | Story to Classic | The Classic result view opens with the story's clips on the timeline and a manual-cut note. | |
-| 6.8 | Edit a sentence order or exclude a sentence, then click **Save edits** | Save Clip Set changes | The card keeps the new order and the meta line updates. | |
-| 6.9 | Click **Queue stories** with a 3-story set | Queue three stories | **Queue stories** opens the Queue tab and a toast says **3 stories queued.** The queue runs one story at a time. | |
-| 6.10 | On a fresh queue, click **Pause**, then **Resume** | Queue pause and resume | Pause says the current story keeps rendering; Resume continues with no duplicate artifact. | |
-| 6.11 | On a fresh queue, click **Cancel** | Queue cancel | The queue says **Cancelled**; waiting items are cancelled and the running render stops. | |
-| 6.12 | Click **Queue stories** twice quickly on the same set | No duplicate queue | The second click attaches to the active queue. No failed row and no Version 2 appear. | |
-
-## 7. Creator: captions, preflight, packet and artifacts
+Source: `https://www.youtube.com/shorts/GEHJwh9vcaY`, imported with
+**Transcribe speech** ticked. Result: title **Own Your Links Now!**, 39.3 s,
+7 scenes, English speech, ready in 25.3 s.
 
 | # | Action: where to click | Intent | Expected | Result |
 |---|---|---|---|---|
-| 7.1 | **Captions** → **Target** 30 → **Build caption track** | Caption cues | Timed cues appear in **Cue list**. The meta line shows the cue count and style. | |
-| 7.2 | Edit one cue's text, click **Save cues** | Save caption edits | A toast confirms the save. Reloading the track shows the edited text. | |
-| 7.3 | Click **Caption preview** | Preview without a render | The poster shows the cue at the chosen **Cue time** in the safe zone. No full render starts. | |
-| 7.4 | Click **Download SRT** | Caption export | A non-empty SRT downloads with the edited cue. | |
-| 7.5 | **Preflight** → choose a story or artifact → **Run preflight** | Preflight on a clip-set story | The five checks and suggestions show, with no **Render this story first** dead end for a story id. | |
-| 7.6 | **Packet** → choose a story with a ready artifact → **Suggest copy** | Local copy fallback | Three titles, a description, 3–8 hashtags, and a pin comment fill blank fields. Titles do not end mid-word. Hashtags are meaningful words, not `#today #want #show`. | |
-| 7.7 | Fill or adjust **Title 1**, choose **Cover 1 · seconds** and **Cover 2 · seconds**, click **Build packet** | Build a packet | A packet card appears with titles, description, hashtags and **Download ZIP**. | |
-| 7.8 | Click **Download ZIP** | Packet ZIP | The ZIP contains `packet.json`, `copy.txt`, two covers, an SRT and the media file. `packet.json` opens as valid JSON. | |
-| 7.9 | Look at **Packets for this job** | Packet history | The packet is listed with its date and a **Download ZIP** button. | |
-| 7.10 | **Artifacts & Shares** → **Refresh artifacts & shares** | Artifact list | Ready story renders appear with title, id, status, length, shape and cue count. | |
-| 7.11 | Click **Pin** on an artifact, then **Unpin** | Pinning | The tag changes to **pinned** and back. | |
-| 7.12 | On an artifact, type a **Review label**, set expiry days, click **Create review link** | Artifact-pinned share | The link is copied and a **review link** tag appears on that artifact. Open it: it plays that artifact. | |
-| 7.13 | **Shares** → **Revoke** → **Confirm revoke** | Revoke a link | The link stops working and the tag changes to **revoked**. | |
+| 3.1 | Paste `https://www.youtube.com/shorts/GEHJwh9vcaY` into **Paste a video link**, click **Get video** | URL import | `POST /api/url/inspect 200`, then `POST /api/jobs/from-url 200`; job `1fd96e13474d` starts **downloading**. | |
+| 3.2 | Click the **Transcribe speech** check box, tick **Transcribe speech Apple / …** | Speech on | The checkbox is ticked before the job is opened. | |
+| 3.3 | Open `http://127.0.0.1:8796/#job=1fd96e13474d` | Open the URL job | **ready** in 25.3 s; 7 scenes, English, 30 s plan = 26.9 s, 6 beats. | |
+| 3.4 | Click the scene line **Store Visits · 306 7 20% · 300 visitors** | Open a moment | The drawer opens. | |
+| 3.5 | Click **Expand** | Expand moments | The scene gallery opens. `[F5]` | |
+| 3.6 | Double-click **Expand**, then click **Collapse** | Toggle twice | The second Expand is a no-op; Collapse closes the gallery. `[F7]` | |
+| 3.7 | Click the result view | Dismiss focus | Nothing changes. | |
+| 3.8 | Click **Dub** | Replace only the voice | Dub is selected. | |
+| 3.9 | Open **Language** and choose **Vietnamese** | Target Vietnamese | The custom list opens; Vietnamese is selected. | |
+| 3.10 | Open **Script style** and choose **Viral · punchy hook** | Set the style | The custom list closes; Viral is selected. | |
+| 3.11 | Click **▶ Rewrite** | Translate and rewrite | `POST /audio/script 200` after 208.4 s; History gets script, translation and rewrite rows. `[F3]` | |
+| 3.12 | Open **Voice list** and choose **OpenRouter HeyGen Voice Turbo** | Pick HeyGen through OpenRouter | The custom list shows the engine; 10 voices load. | |
+| 3.13 | Open **Voice** and choose **Sabrina · multi**, then **Gareth · multi** | Pick voices | The select ends on Gareth; no request. | |
+| 3.14 | Click **Test voice** | Hear the voice | `POST /voice/sample 200`; a sample plays. | |
+| 3.15 | Click empty page space, then **Render 30s reel ↗** | Render the cut | `POST /render 200`; **ready** in 26.9 s with an artifact and poster. | |
 
-## 8. Setup from Classic
+## Findings from the recordings
 
-| # | Action: where to click | Intent | Expected | Result |
-|---|---|---|---|---|
-| 8.1 | Click **Setup** at the top right | The Setup dialog opens | It shows **Cloud, optional** with Intelligence, Video links, RedNote, Transcription, Voice over, Optional packs, Rights lock and **Save setup**. | |
-| 8.2 | Intelligence → **Test OpenCode** | OpenCode login check | It says **OpenCode Go replied.** with a model name and seconds. | |
-| 8.3 | Paste an OpenRouter key, click **Test OpenRouter**, then **Save setup** | OpenRouter key | The test says **OpenRouter replied.** After saving it says **Saved on this Mac.** The key is not shown again. | |
-| 8.4 | Clear the OpenRouter key and click **Test OpenRouter** | An honest missing-key message | It says **OpenRouter model check failed. No OpenRouter key.** | |
-| 8.5 | Video links → **Test yt-dlp** | Downloader check | The chip says **Ready · <version>** and the detail says no sidecar is needed. | |
-| 8.6 | Video links · Cobalt → **Test Cobalt** with no service running | An honest offline message | It says Cobalt is not reachable at the configured URL and suggests checking the service or URL. | |
-| 8.7 | RedNote · XHS → **Test XHS** with no service running | An honest offline message | It says the XHS service is not reachable and suggests starting xhs-get. | |
-| 8.8 | Transcription → choose a spoken language, click **Check local STT**, then **Live STT** | Local speech check | **Check local STT** says local STT is ready. **Live STT** generates a test clip and transcribes it. | |
-| 8.9 | Voice over → paste a MiniMax key, click **Check TTS**, then **Live TTS** | Local/cloud voice check | **Check TTS** lists the ready engines. **Live TTS** plays a short sample. | |
-| 8.10 | Voice engines list | Every voice engine and what it needs | Apple voices, Kokoro, HeyGen, Fish, Gemini, MiniMax and ElevenLabs each show **Ready** or **Needs setup**, with the missing key or pack named. No fake install button appears. | |
-| 8.11 | Optional packs | Honest pack status | Speech, Voice and Separation each show **Installed**, **Ready** (the engine already works on this Mac, for example Whisper installed another way) or **Not installed** with its download size. Nothing downloads from Classic. | |
-| 8.12 | Rights lock | The import gate | The toggle shows the current state. Turning it off removes the import dialog; turning it on restores it. | |
-| 8.13 | Paste an ElevenLabs key, click **Save setup**, reopen Setup | A saved key round-trip | The key field is blank and a status says the key is saved. The key is never returned by the API or shown in the page. | |
-| 8.14 | Fill the other key fields: **API key · optional** (OpenCode), **Service URL** and **API key · optional** (Cobalt), **Service URL**, **Access token · friends mode** and **Cookie · one-shot handoff** (XHS), then **Save setup** | Every key field is real and saved | Each field accepts text, reopens with a configured/blank state, and no saved secret is echoed back into the page. | |
+Ranked by severity. "Fixed" means a later Classic commit covers it; the
+recording still shows the old behaviour.
 
-## 9. Known issues
+| ID | Sev | Pass / step | What happened | Request / exact text | Status |
+|---|---|---|---|---|---|
+| F1 | P1 | 1.37 | Rewrite returned a server error after 290.8 s and wrote a failed script row. | `POST /api/jobs/c9047febb2b9/audio/script` → **500**; `cannot access local variable 'OPENCODE_LAST_ERROR' where it is not associated with a value` | Fixed in `6ea61c0`; regression test `tests/test_classic_rewrite_error.py` |
+| F2 | P1 | 1.25–1.27 | HeyGen voice failed with a 401, then OpenRouter was locked for 5 minutes. Test voice was retried three times. | `POST /voice/sample` → **400**; `OpenRouter heygen voice failed: HTTP Error 401: Unauthorized`; then `OpenRouter is quarantined after an auth error; retry in 292.4s.` and `…289.3s.` | Key problem, not code. Reminder below |
+| F3 | P1 | 1.19, 1.51, 2.11, 3.11 | Rewrite sat in **working…** for minutes with no progress or ETA. | `POST /audio/script` latencies: 43.4 s, 95.9 s, 290.8 s (500), 429.0 s, 112.6 s, 208.4 s | Improved after the recordings: 20-line translation batches, ready badge, cache. `1a727db` |
+| F4 | P2 | 2.8, 2.11 | Changing a setting mid-rewrite aborted the browser request (`-1`), but the server kept working and later wrote a 429 s script row. | `POST /audio/script` → **-1** (aborted), then a later script row with 429 s | Open, P2: stopping the server-side rewrite needs cancel support in shared `audio.py`; the translation warm-up (`1a727db`) now does the slow part once, so an abandoned rewrite costs one model call |
+| F5 | P2 | 1.7, 2.13, 3.5 | **Expand** opened a second scene gallery under the strip, not a vertical collage. | none | Fixed in `582977c`; recordings show the old grid |
+| F6 | P2 | 1.43, 1.54 | History called all worker rows "attempts": **3 attempts** then **8 attempts** for one render. | `GET /history` returned 8 rows: 1 render, 3 script, 2 translation, 2 rewrite | Fixed in `6f951be`; header now **N renders · M events** |
+| F7 | P3 | 1.9, 3.6 | **Expand** was clicked twice while already expanded; the extra click changed nothing. | none | No change needed: in the current build the button reads **Collapse** once open, and a second click closes the list |
+| F8 | P3 | 1.23 | ElevenLabs had no key, and the voice list returned 0 voices with no reason in the list. | `GET /api/audio/voices?engine=elevenlabs` → 200, `voices: []` | No change needed: with no ElevenLabs key the Voice list already reads **Add the key in Setup**; the empty `voices: []` is that case |
 
-Open findings at the time of this script. Do not report these twice.
+No 4xx or 5xx responses appear in passes 2 and 3 other than the pass-1 items
+above. The only aborted request is `-1` in pass 2.
 
-| # | Area | Issue | Status |
-|---|---|---|---|
-| F8 | Captions | Some cues split into one-word lines such as **It** or **dump.** This comes from a story clip that ends mid-sentence; it is not fixed in this pass. | Open |
+## What this file does not cover
 
-## 10. What was walked by automation
-
-These flows were exercised against a local beta build on port 8793 with scratch data and no cloud keys: URL import (Me at the zoo), path import, plan/render/history/export, batches with the rights tick, queue pause/resume/cancel, packet ZIP, Clean, Delete, Recent cuts, every Setup Test button, Creator Debug **Load job**, **Read Analysis**, **Run beta read**, and preflight on a clip-set story id. The new Setup keys, voice engine list, optional pack status and rights lock were checked after the last ship.
-
-File drop and the native file chooser cannot be driven by automation. Those steps are written for you above.
-
-**When you finish:** press **Ctrl+C** in the Terminal window to stop the app. Your test data stays in `~/vibecut-beta-test`; delete that folder when you no longer need it.
+Pass 4 has only `server.log`, no `actions.spec.js` and no HAR, so it has no
+steps here. File-dialog steps are marked where the recorder did not capture
+them. `docs/testing/classic-beta-pass-2.md` describes behaviour added after
+these recordings (translation badge, collage, history count); it is not evidence
+from the recordings.
