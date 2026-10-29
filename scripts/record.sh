@@ -71,7 +71,8 @@ const url = process.env.RECORD_URL;
   process.on("SIGINT", save);
   process.on("SIGTERM", save);
   page.on("close", () => {
-    console.log("Page closed. Press Ctrl-C here to save the trace.");
+    console.log("Page closed. Saving the trace…");
+    void save();
   });
   await new Promise(() => {});
 })().catch((error) => {
