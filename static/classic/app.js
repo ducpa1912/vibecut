@@ -170,6 +170,7 @@
     audioMusicStep: $("#audio-music-step"),
     audioRewriteRun: $("#audio-rewrite-run"),
     audioRewriteNote: $("#audio-rewrite-note"),
+    translateBadge: $("#translate-badge"),
     audioVoiceGenerate: $("#audio-voice-generate"),
     audioVoiceUpload: $("#audio-voice-upload"),
     audioMusicSource: $("#audio-music-source"),
@@ -3929,6 +3930,7 @@
         touch();
         loadTranslateCheck();
         loadAudioScript();
+        warmTranslation();
       });
       dom.audioProvider.addEventListener(event, () => {
         touch();
@@ -4601,6 +4603,104 @@
     }
   }
 
+  function languageCode(value) {
+    return String(value || "").split("-")[0];
+  }
+
+  function sourceLanguage() {
+    return languageCode(
+      (state.job?.analysis?.engine || {}).transcript_language || "en",
+    );
+  }
+
+  function targetLanguage() {
+    return languageCode(state.audio?.lang || "");
+  }
+
+  function paintTranslateBadge(info) {
+    if (!dom.translateBadge) return;
+    const target = targetLanguage();
+    if (!target || target === sourceLanguage()) {
+      dom.translateBadge.hidden = true;
+      return;
+    }
+    const status = info?.status
+      || (state.translation?.target === target ? state.translation.status : "idle");
+    dom.translateBadge.hidden = false;
+    dom.translateBadge.dataset.status = status;
+    if (status === "ready") {
+      dom.translateBadge.textContent = `Translation ready · ${target.toUpperCase()}`;
+    } else if (status === "running") {
+      dom.translateBadge.textContent =
+        `Translating batch ${Math.max(1, Number(info?.batch) || 1)}/${info?.batches || "?"}`;
+    } else if (status === "failed") {
+      dom.translateBadge.textContent = "Translation failed";
+    } else {
+      dom.translateBadge.textContent = "Translation not started";
+    }
+  }
+
+  async function translationStatus(target) {
+    return api(
+      `/api/classic/jobs/${state.job.id}/translate/status?target=${encodeURIComponent(target)}`,
+    );
+  }
+
+  async function ensureTranslation(controller) {
+    const target = targetLanguage();
+    if (!state.job || !target || target === sourceLanguage()) {
+      paintTranslateBadge(null);
+      return true;
+    }
+    if (state.translation?.target === target && state.translation.status === "ready") {
+      paintTranslateBadge(state.translation);
+      return true;
+    }
+    let info;
+    try {
+      info = await translationStatus(target);
+    } catch (error) {
+      dom.audioRewriteNote.textContent = `Translation check failed: ${error.message}`;
+      return false;
+    }
+    if (info.status !== "ready" && info.status !== "running") {
+      try {
+        info = await api(`/api/classic/jobs/${state.job.id}/translate`, {
+          method: "POST",
+          body: JSON.stringify({ target, provider: "auto" }),
+        });
+      } catch (error) {
+        dom.audioRewriteNote.textContent = `Translation failed: ${error.message}`;
+        paintTranslateBadge({ status: "failed" });
+        return false;
+      }
+    }
+    state.translation = { ...info, target };
+    paintTranslateBadge(info);
+    while (info.status === "running") {
+      if (controller && state.scriptAbort !== controller) return false;
+      if (targetLanguage() !== target) return false;
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      try {
+        info = await translationStatus(target);
+      } catch (error) {
+        info = { ...info, status: "failed", error: error.message };
+      }
+      state.translation = { ...info, target };
+      paintTranslateBadge(info);
+    }
+    if (info.status === "failed") {
+      dom.audioRewriteNote.textContent =
+        `Translation failed: ${info.error || "unknown error"}`;
+      return false;
+    }
+    return info.status === "ready";
+  }
+
+  function warmTranslation() {
+    ensureTranslation(null).catch(() => {});
+  }
+
   function resetAudioScript(message = "Click ▶ Rewrite to translate the full script and rewrite this cut.") {
     if (!dom.audioScript) return;
     cancelAudioScript();
@@ -4659,6 +4759,8 @@
     dom.audioRewriteNote.textContent =
       "Translating and rewriting… 0s. The first run translates the whole video once; later runs reuse the cache.";
     dom.audioRewriteRun.disabled = true;
+    const translatedReady = await ensureTranslation(controller);
+    if (!translatedReady) return;
     dom.audioScript.innerHTML =
       `<div class="script-head"><span class="label">Script</span><span class="hint">working…</span></div>`;
     try {
@@ -4699,6 +4801,11 @@
           ? `${result.translation_status?.provider === "cache" ? "Translation reused · " : ""}Translated to ${result.target} and rewritten for ${state.target}s.`
           : `Rewritten for ${state.target}s.`;
       renderScriptBlock(lines, result, note);
+      state.translation = {
+        target: targetLanguage(), status: "ready", done: 1, total: 1,
+        batch: 1, batches: 1,
+      };
+      paintTranslateBadge(state.translation);
       loadHistory();
     } catch (error) {
       if (error?.name === "AbortError") {
