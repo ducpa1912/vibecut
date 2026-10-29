@@ -4461,6 +4461,7 @@
 
   function resetAudioScript(message = "Click ▶ Rewrite to translate the full script and rewrite this cut.") {
     if (!dom.audioScript) return;
+    cancelAudioScript();
     if (dom.audioRewriteNote) dom.audioRewriteNote.textContent = message;
     dom.audioScript.hidden = false;
     dom.audioScript.innerHTML = `
@@ -4470,6 +4471,16 @@
       </div>`;
   }
 
+  function cancelAudioScript() {
+    // A setting change replaces the cut or the language. The old request no
+    // longer owns the panel, so stop waiting on it and free the button.
+    if (state.scriptAbort) {
+      try { state.scriptAbort.abort(); } catch (_) { /* already settled */ }
+      state.scriptAbort = null;
+    }
+    if (dom.audioRewriteRun) dom.audioRewriteRun.disabled = false;
+  }
+
   async function loadAudioScript(options = {}) {
     const run = options.run === true;
     const forceTranslate = options.forceTranslate === true;
@@ -4477,6 +4488,7 @@
     const audio = state.audio;
     const voiceMode = ["bed", "voice", "full"].includes(audio.mode);
     if (!voiceMode || (audio.source === "upload" && voiceMode)) {
+      cancelAudioScript();
       dom.audioScript.hidden = true;
       dom.audioScript.innerHTML = "";
       return;
@@ -4485,6 +4497,9 @@
       resetAudioScript();
       return;
     }
+    if (state.scriptAbort) state.scriptAbort.abort();
+    const controller = new AbortController();
+    state.scriptAbort = controller;
     dom.audioScript.hidden = false;
     dom.audioRewriteNote.textContent = "Translating the full script, then rewriting this cut…";
     dom.audioRewriteRun.disabled = true;
@@ -4493,6 +4508,7 @@
     try {
       const result = await api(`/api/jobs/${state.job.id}/audio/script`, {
         method: "POST",
+        signal: controller.signal,
         body: JSON.stringify({
           target: state.target,
           hook_scene: state.overrideHook,
@@ -4529,6 +4545,13 @@
       renderScriptBlock(lines, result, note);
       loadHistory();
     } catch (error) {
+      if (error?.name === "AbortError") {
+        // A setting change already cleared the panel; keep that message.
+        if (state.scriptAbort === controller) {
+          dom.audioRewriteNote.textContent = "Rewrite cancelled. Click ▶ Rewrite to run it again.";
+        }
+        return;
+      }
       const message = `Rewrite failed: ${error.message}`;
       if (state.lastScript?.lines?.length) {
         renderScriptBlock(
@@ -4543,7 +4566,10 @@
       }
       loadHistory();
     } finally {
-      dom.audioRewriteRun.disabled = false;
+      if (state.scriptAbort === controller) {
+        state.scriptAbort = null;
+        dom.audioRewriteRun.disabled = false;
+      }
     }
   }
 
