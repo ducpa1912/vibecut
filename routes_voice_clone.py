@@ -245,8 +245,11 @@ def _run_candidate_search(
     try:
         if seconds > 0:
             duration = float((job.get("source") or {}).get("duration") or 0.0)
-            start = max(0.0, min(float(start), max(0.0, duration - 1.0)))
-            seconds = max(1.0, min(float(seconds), max(1.0, duration - start)))
+            start = max(0.0, float(start))
+            if duration > 0:
+                # An unknown length (0) keeps the full window instead of 1 s.
+                start = min(start, max(0.0, duration - 1.0))
+                seconds = max(1.0, min(float(seconds), max(1.0, duration - start)))
             window_path = out_dir / "search-window.wav"
             audio._run([
                 audio._ffmpeg(), "-y", "-v", "error",
@@ -529,7 +532,8 @@ def start_candidate_search(
     duration = float((job.get("source") or {}).get("duration") or 0.0)
     start = max(0.0, float(start or 0.0))
     seconds = 0.0 if full else SEARCH_WINDOW_SECONDS
-    if seconds and duration and seconds >= duration:
+    if seconds and (not duration or seconds >= duration):
+        # A short video, or one whose length is unknown, is searched whole.
         seconds = 0.0
     cancel_event = threading.Event()
     _remember(CANDIDATE_CANCELS, job_id, cancel_event)

@@ -105,7 +105,7 @@ async function loadCatalog() {
   try {
     catalog = await request("/api/voices/catalog");
   } catch (cause) {
-    const clones = await listClones().catch(() => []);
+    const clones = (await listClones().catch(() => null))?.voices || [];
     catalog = { engines: [], clones, clone_available: false };
     error = cause?.message || "Could not read the voices on this machine.";
   }
@@ -129,7 +129,7 @@ async function load() {
   if (voicesResult.status === "fulfilled") {
     catalog = voicesResult.value;
   } else {
-    const clones = await listClones().catch(() => []);
+    const clones = (await listClones().catch(() => null))?.voices || [];
     catalog = { engines: [], clones, clone_available: false };
     error = error || voicesResult.reason?.message || "Could not read the voices on this machine.";
   }
