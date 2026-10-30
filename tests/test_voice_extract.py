@@ -371,6 +371,10 @@ def test_speaker_filter_keeps_only_the_chosen_speaker(tmp_path, monkeypatch):
     fake_module.Pipeline = FakePipeline
     monkeypatch.setitem(sys.modules, "pyannote.audio", fake_module)
     monkeypatch.setitem(sys.modules, "pyannote", types.ModuleType("pyannote"))
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        backends=types.SimpleNamespace(mps=None),
+        device=lambda name: name,
+    ))
     monkeypatch.setattr(voice_extract, "_pyannote", lambda: True)
     monkeypatch.setattr(settings_store, "get_secret", lambda name: "hf_test")
     spans = [(0.0, 6.0)]
@@ -405,6 +409,10 @@ def test_speaker_filter_warns_about_overlapping_speech(tmp_path, monkeypatch):
     fake_module.Pipeline = FakePipeline
     monkeypatch.setitem(sys.modules, "pyannote.audio", fake_module)
     monkeypatch.setitem(sys.modules, "pyannote", types.ModuleType("pyannote"))
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        backends=types.SimpleNamespace(mps=None),
+        device=lambda name: name,
+    ))
     monkeypatch.setattr(voice_extract, "_pyannote", lambda: True)
     monkeypatch.setattr(settings_store, "get_secret", lambda name: "hf_test")
     _kept, _label, warnings = voice_extract._speaker_spans(
@@ -435,6 +443,10 @@ def test_speaker_filter_names_available_labels(tmp_path, monkeypatch):
     fake_module.Pipeline = FakePipeline
     monkeypatch.setitem(sys.modules, "pyannote.audio", fake_module)
     monkeypatch.setitem(sys.modules, "pyannote", types.ModuleType("pyannote"))
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        backends=types.SimpleNamespace(mps=None),
+        device=lambda name: name,
+    ))
     monkeypatch.setattr(voice_extract, "_pyannote", lambda: True)
     monkeypatch.setattr(settings_store, "get_secret", lambda name: "hf_test")
     with pytest.raises(audio.AudioError, match="Available: SPEAKER_00"):

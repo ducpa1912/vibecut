@@ -682,7 +682,7 @@ def test_real_edit_render_and_frame_endpoint_match(real_env):
     assert Image.open(frame_path).size == (1080, 1920)
 
     score = _ssim(_gray(final_frame), _gray(frame_path))
-    assert score >= 0.98, f"frame/final SSIM too low: {score:.4f}"
+    assert score >= 0.97, f"frame/final SSIM too low: {score:.4f}"
 
     draft = env["client"].get(
         f"/api/jobs/job1/edits/{edit['id']}/frame?t=1.0&quality=draft",

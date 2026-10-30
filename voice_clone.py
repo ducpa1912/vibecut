@@ -215,14 +215,17 @@ def prepare_sample(
         raise CloneError("The recording or video file is missing.", 404)
     output.parent.mkdir(parents=True, exist_ok=True)
     cmd = [_ffmpeg(), "-y", "-v", "error"]
+    limit = MAX_SAMPLE_SECONDS
     if windows:
         expr = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in windows)
+        window_seconds = sum(max(0.0, float(b) - float(a)) for a, b in windows)
+        limit = min(MAX_SAMPLE_SECONDS, max(1.0, window_seconds))
         cmd += ["-i", str(source), "-vn", "-af", f"aselect='{expr}',asetpts=N/SR/TB"]
     else:
-        cmd += ["-ss", f"{max(0.0, start):.3f}", "-t",
-                f"{min(MAX_SAMPLE_SECONDS, max(1.0, duration)):.3f}",
+        limit = min(MAX_SAMPLE_SECONDS, max(1.0, duration))
+        cmd += ["-ss", f"{max(0.0, start):.3f}", "-t", f"{limit:.3f}",
                 "-i", str(source), "-vn"]
-    cmd += ["-t", f"{MAX_SAMPLE_SECONDS:.0f}", "-ac", "1", "-ar", str(SAMPLE_RATE),
+    cmd += ["-t", f"{limit:.3f}", "-ac", "1", "-ar", str(SAMPLE_RATE),
             "-c:a", "libmp3lame", "-b:a", SAMPLE_BITRATE,
             # Force the MP3 container: callers name the file .wav or .mp3, and
             # ffmpeg would otherwise wrap MP3 frames in a WAV header.
