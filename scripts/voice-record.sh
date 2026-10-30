@@ -2,11 +2,13 @@
 # Record the founder's real Voice Room flow, with a Playwright trace.
 #
 #   scripts/voice-record.sh
+#   VOICE_PATH='/voices?ui=new' scripts/voice-record.sh
 #
 # Start scripts/voice-serve.sh first. The browser opens on
-# http://127.0.0.1:8797/voices. Click the real flow, then press the floating
-# "Finish recording" button, close the browser, or press Ctrl-C here. The trace
-# is saved under ~/vibecut-lanes/recordings/voiceroom/<date-time>/trace.zip.
+# http://127.0.0.1:8797/voices (or VOICE_PATH). Click the real flow, then press
+# the floating "Finish recording" button, close the browser, or press Ctrl-C
+# here. The trace is saved under
+# ~/vibecut-lanes/recordings/voiceroom/<date-time>/trace.zip.
 #
 # The trace stays on this Mac and out of the repo.
 set -euo pipefail
@@ -32,11 +34,14 @@ if [[ -z "$module" || ! -f "$module" ]]; then
 fi
 
 out="${VIBECUT_RECORDINGS:-$HOME/vibecut-lanes/recordings/voiceroom}/$(date +%Y-%m-%d-%H%M%S)"
+path="${VOICE_PATH:-/voices}"
+[[ "$path" == /* ]] || path="/$path"
 mkdir -p "$out"
 echo "Recording Voice Room into $out"
+echo "URL: http://127.0.0.1:$VIBECUT_PORT$path"
 echo "Press the floating 'Finish recording' button, or close the browser, when the flow is finished."
 
-VOICE_TRACE_DIR="$out" VOICE_URL="http://127.0.0.1:$VIBECUT_PORT/voices" \
+VOICE_TRACE_DIR="$out" VOICE_URL="http://127.0.0.1:$VIBECUT_PORT$path" \
 VOICE_PLAYWRIGHT_MODULE="file://$module" \
 node --input-type=module - <<'NODE'
 import fs from "node:fs";

@@ -23,6 +23,10 @@ It refuses a busy port and writes the server PID to
 `~/vibecut-lanes/voice/server.pid`. Stop only that PID. Do not `pkill` by
 pattern.
 
+In Finder, double-click **scripts/Voice Room Server.command**. It opens
+Terminal and starts the same server. Close that Terminal window or press
+Ctrl-C to stop it.
+
 ## Setup
 
 Top bar → **Setup** in `/voices`.
@@ -46,11 +50,17 @@ unavailable. The list does not depend on a cloud call.
 
 ```bash
 scripts/voice-record.sh
+VOICE_PATH='/voices?ui=new' scripts/voice-record.sh
 ```
 
-The browser opens on `http://127.0.0.1:8797/voices`. Click the real flow; close
-the browser when done. The Playwright trace lands in
+The browser opens on `http://127.0.0.1:8797/voices` by default, or on
+`VOICE_PATH` when set. Click the real flow; press the floating **Finish
+recording** button, close the browser, or press Ctrl-C. Wait for `Saved …`.
+The Playwright trace lands in
 `~/vibecut-lanes/recordings/voiceroom/<date-time>/trace.zip`.
+
+In Finder, double-click **scripts/Record Voice Room.command** after the server
+is running. It records the new UI at `/voices?ui=new`.
 
 The founder tests, by hand, with real files. No test video, sound or generated
 test file stands in for real media.
