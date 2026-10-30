@@ -308,6 +308,11 @@ body.vr-root {
 .vr-finder-pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
 .vr-clone-form { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 
+/* Compare voices */
+.vr-compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.vr-compare-status { margin: 0; min-height: 1.5em; }
+.vr-compare-hint { margin: 0; }
+
 /* Stock voices */
 .vr-test { grid-template-columns: minmax(0, 1fr); }
 .vr-test textarea { resize: vertical; }
@@ -452,6 +457,8 @@ body.vr-root {
   .vr-root select { min-height: 44px; }
   .vr-root .vr-actions button,
   .vr-root .vr-voice button,
+  .vr-root .vr-compare button,
+  .vr-root .vr-compare select,
   .vr-root .st-setup-key-actions .st-btn { min-height: 44px; }
   .vr-clone-grid { grid-template-columns: 1fr; }
   .vr-filters { width: 100%; }
@@ -475,6 +482,7 @@ body.vr-root {
   .vr-root .vr-row { grid-template-columns: 1fr; }
   .vr-root .vr-filters { flex-direction: column; align-items: stretch; }
   .vr-root .vr-filters input, .vr-root .vr-filters select { width: 100%; }
+  .vr-compare-grid { grid-template-columns: 1fr; }
   .vr-root .vr-mine, .vr-root .vr-clip { align-items: flex-start; }
   .vr-root .vr-mine .vr-actions, .vr-root .vr-clip .vr-actions { width: 100%; }
   .vr-root .vr-mine .vr-actions button, .vr-root .vr-clip .vr-actions button { flex: 1 1 0; }
