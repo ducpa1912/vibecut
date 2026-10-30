@@ -3,6 +3,32 @@
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+  const CLASSIC_TEXT_ASPECTS = ["9:16", "4:5"];
+  const CLASSIC_TEXT_ANCHORS = {
+    top: "top-center",
+    center: "center",
+    bottom: "bottom-center",
+  };
+  const CLASSIC_TEXT_POSITIONS = {
+    "top-center": "top",
+    center: "center",
+    "bottom-center": "bottom",
+  };
+  const CLASSIC_TEXT_KINDS = {
+    top: "hook",
+    center: "title",
+    bottom: "lower_third",
+  };
+  const CLASSIC_TEXT_BOX = {
+    hook: { w: 0.76, h: 0.16 },
+    title: { w: 0.76, h: 0.14 },
+    lower_third: { w: 0.64, h: 0.14 },
+  };
+  const CLASSIC_EFFECT_LABELS = {
+    punch_in: "Punch in",
+    shake: "Shake",
+    circle: "Circle (centre)",
+  };
 
   const dom = {
     ingest: $("#ingest-view"),
