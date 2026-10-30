@@ -2463,6 +2463,38 @@ select option:disabled { color: #666; }
 .sound-panel[hidden] { display: none; }
 .sound-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .sound-actions .primary { flex: 1 1 150px; }
+.sound-preview-status { margin: 7px 0 0; color: var(--dim); font-size: 11.5px; line-height: 1.45; }
+.sound-preview-status[data-tone="ok"] { color: #a7d69a; }
+.sound-preview-status[data-tone="bad"] { color: #e8a399; }
+.sound-source-row { gap: 6px; margin: 0 0 10px; }
+.sound-source-chip { position: relative; display: inline-flex; }
+.sound-source-chip input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.sound-source-chip span {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.sound-source-chip input:checked + span {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(232, 162, 102, 0.1);
+}
+.sound-source-chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sound-source-chip input:disabled + span { opacity: 0.4; filter: blur(0.25px); cursor: not-allowed; }
+.sound-voice-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 82px; align-items: end; }
+.sound-music-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.rate-control { display: flex; align-items: center; gap: 3px; }
+.rate-control input {
+  width: 52px;
+  padding: 8px 6px;
+  text-align: right;
+}
+.rate-suffix { color: var(--dim); font-size: 11px; }
+.audio-field.is-unavailable { opacity: 0.5; filter: blur(0.2px); }
 .play-btn {
   width: 36px;
   min-width: 36px;
@@ -2471,8 +2503,14 @@ select option:disabled { color: #666; }
   border-radius: 50%;
   font-size: 13px;
 }
-.rate-field input { width: 64px; }
+.play-btn:disabled { opacity: 0.3; filter: blur(0.2px); cursor: not-allowed; }
+.rate-field input { width: 52px; }
 .edit-grid .audio-grid.compacts { gap: 8px 10px; }
+@media (max-width: 560px) {
+  .sound-voice-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .sound-voice-grid .rate-field { grid-column: 1 / -1; }
+  .sound-music-grid { grid-template-columns: 1fr; }
+}
 @media (max-width: 780px) {
   .edit-grid {
     grid-template-areas:

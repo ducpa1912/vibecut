@@ -185,6 +185,9 @@
     audioVoiceUpload: $("#audio-voice-upload"),
     audioMusicSource: $("#audio-music-source"),
     audioTrackField: $("#audio-track-field"),
+    audioMusicField: $("#audio-music-field"),
+    audioVoicePreviewStatus: $("#audio-voice-preview-status"),
+    audioMusicPreviewStatus: $("#audio-music-preview-status"),
     audioMusicUploadBox: $("#audio-music-upload-box"),
     audioMusicUpload: $("#audio-music-upload"),
     audioMusicUploadButton: $("#audio-music-upload-button"),
@@ -306,6 +309,13 @@
       gain: -18,
       duck: true,
     },
+    voiceSampleUrl: "",
+    voiceSampleKey: "",
+    voicePreviewBusy: false,
+    musicPreviewUrl: "",
+    musicPreviewKey: "",
+    musicPreviewBusy: false,
+    soundPlayer: null,
     audioEngines: null,
     mixer: { ready: false, total: 0, clips: [], original: [], music: [], voice: [], bed: [] },
     scriptOverrides: {},
@@ -2647,6 +2657,7 @@
         state.audio.musicUploadName = "";
         state.audio.musicUploadDuration = 0;
         state.audio.source = "generate";
+        resetSoundPreviews();
         state.scriptOverrides = {};
         state.scriptId = null;
         state.lastScript = null;
@@ -3051,9 +3062,10 @@
     loadMixer();
   }
 
-  function toggleMixer() {
+  async function toggleMixer() {
+    if (!state.mixer.ready) await loadMixer();
     if (!state.mixer.ready) {
-      toast("Choose a voice or music mode first.");
+      toast("Open a cut to use the mixer.");
       return;
     }
     state.mixerOpen = !state.mixerOpen;
@@ -3066,7 +3078,7 @@
 
   async function loadMixer() {
     const plan = state.plan;
-    if (!plan || state.audio.mode === "keep") {
+    if (!state.job || !plan) {
       state.mixer.ready = false;
       dom.mixerPanel.hidden = true;
       state.mixerOpen = false;
@@ -4258,6 +4270,7 @@
         loadAudioScript();
       });
       dom.audioMusic.addEventListener(event, () => {
+        clearMusicPreview("Music engine changed. Generate a new preview.");
         touch();
         loadAudioTracks();
       });
@@ -4290,16 +4303,27 @@
         loadBpm();
       });
       dom.audioEngine.addEventListener(event, () => {
+        clearVoicePreview("Voice list changed. Generate a new preview.");
         touch();
         loadAudioVoices();
       });
-      dom.audioVoice.addEventListener(event, touch);
-      dom.audioRate.addEventListener(event, touch);
-      dom.audioTrack.addEventListener(event, () => {
-        if (state.audio.musicUpload) clearMusicUpload();
+      dom.audioVoice.addEventListener(event, () => {
+        clearVoicePreview("Voice changed. Generate a new preview.");
         touch();
       });
-      dom.audioPrompt.addEventListener(event, touch);
+      dom.audioRate.addEventListener(event, () => {
+        clearVoicePreview("Rate changed. Generate a new preview.");
+        touch();
+      });
+      dom.audioTrack.addEventListener(event, () => {
+        if (state.audio.musicUpload) clearMusicUpload();
+        clearMusicPreview("Track changed. Play the BGM to preview it.");
+        touch();
+      });
+      dom.audioPrompt.addEventListener(event, () => {
+        clearMusicPreview("Prompt changed. Generate a new preview.");
+        touch();
+      });
       dom.audioGain.addEventListener(event, touch);
       dom.audioDuck.addEventListener(event, touch);
     });
@@ -4330,25 +4354,29 @@
         state.audio.musicSource = musicSourceMode();
         syncMusicOptions();
         syncAudioVisibility();
+        clearMusicPreview(defaultMusicPreviewNote(), "");
         touch();
         loadAudioTracks();
       });
     });
     dom.audioPreview.addEventListener("click", playVoiceSample);
-    [dom.audioEngine, dom.audioVoice, dom.audioRate].forEach((node) => {
-      node?.addEventListener("change", () => { state.voiceSampleUrl = ""; });
-    });
     dom.audioGenerateVoice?.addEventListener("click", () => {
       setVoiceSource("generate");
-      previewVoice();
+      generateVoicePreview();
     });
     dom.audioUseRecording?.addEventListener("click", openVoicePicker);
-    dom.audioGenerateMusic?.addEventListener("click", () => setMusicSource("generate"));
+    dom.audioGenerateMusic?.addEventListener("click", () => {
+      setMusicSource("generate");
+      generateMusicPreview();
+    });
     dom.audioMusicBlockBgm?.addEventListener("click", () => {
       setMusicSource("own");
       dom.audioMusicUploadButton?.click();
     });
-    dom.audioMusicBlockGenerate?.addEventListener("click", () => setMusicSource("generate"));
+    dom.audioMusicBlockGenerate?.addEventListener("click", () => {
+      setMusicSource("generate");
+      generateMusicPreview();
+    });
     dom.audioUseBgm?.addEventListener("click", () => {
       setMusicSource("own");
       dom.audioMusicUploadButton?.click();
@@ -4357,6 +4385,19 @@
     dom.audioPlayMusic?.addEventListener("click", playMusicSample);
     document.querySelectorAll("[data-sound-tab]").forEach((button) => {
       button.addEventListener("click", () => showSoundTab(button.dataset.soundTab));
+      button.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const tabs = [...document.querySelectorAll("[data-sound-tab]")];
+        const current = tabs.indexOf(button);
+        const next = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? tabs.length - 1
+            : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        tabs[next].focus();
+        showSoundTab(tabs[next].dataset.soundTab);
+      });
     });
     dom.audioSourceGenerate.addEventListener("change", () => {
       setVoiceSource("generate");
@@ -4388,6 +4429,7 @@
     });
     dom.audioMusicUploadClear.addEventListener("click", clearMusicUpload);
     syncAudioVisibility();
+    showSoundTab(state.soundTab || "voice");
   }
 
   let voicePickerPrevious = "generate";
@@ -4396,6 +4438,11 @@
     state.audio.source = source;
     if (dom.audioSourceGenerate) dom.audioSourceGenerate.checked = source === "generate";
     if (dom.audioSourceUpload) dom.audioSourceUpload.checked = source === "upload";
+    if (source === "upload") {
+      setSoundStatus(dom.audioVoicePreviewStatus, "Your recording replaces the generated voice.", "");
+    } else if (!state.voiceSampleUrl) {
+      setSoundStatus(dom.audioVoicePreviewStatus, defaultVoicePreviewNote(), "");
+    }
     syncAudioVisibility();
     updateRenderPanel();
   }
@@ -4403,7 +4450,10 @@
   function showSoundTab(tab) {
     state.soundTab = tab === "music" ? "music" : "voice";
     document.querySelectorAll("[data-sound-tab]").forEach((button) => {
-      button.classList.toggle("active", button.dataset.soundTab === state.soundTab);
+      const active = button.dataset.soundTab === state.soundTab;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+      button.tabIndex = active ? 0 : -1;
     });
     [dom.audioVoiceStep, dom.audioMusicStep].forEach((panel) => {
       if (!panel) return;
@@ -4418,22 +4468,351 @@
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  function playMusicSample() {
-    if (state.audio.musicUploadUrl) {
-      const audio = new Audio(state.audio.musicUploadUrl);
-      audio.play().catch(() => toast("Could not play the BGM."));
+  function setSoundStatus(node, message, tone = "") {
+    if (!node) return;
+    node.textContent = message || "";
+    if (tone) node.dataset.tone = tone;
+    else delete node.dataset.tone;
+  }
+
+  function stopSoundPlayer() {
+    if (!state.soundPlayer) return;
+    try {
+      state.soundPlayer.pause();
+    } catch (_) { /* the element may already be detached */ }
+    state.soundPlayer = null;
+  }
+
+  function playSoundUrl(url) {
+    if (!url) return;
+    stopSoundPlayer();
+    const player = new Audio(url);
+    state.soundPlayer = player;
+    player.addEventListener("ended", () => {
+      if (state.soundPlayer === player) state.soundPlayer = null;
+    }, { once: true });
+    player.play().catch(() => {
+      if (state.soundPlayer === player) state.soundPlayer = null;
+      toast("Playback was blocked. Press play again.");
+    });
+  }
+
+  function defaultMusicPreviewNote() {
+    const source = musicSourceMode();
+    if (source === "own") return "Play a 12s preview of your BGM.";
+    if (source === "generate") return "Generate a 12s AI preview; the render uses the full bed.";
+    return "Choose Use my BGM or Generate.";
+  }
+
+  function defaultVoicePreviewNote() {
+    return "Generate a short voice preview.";
+  }
+
+  function previewVoiceText() {
+    const line = (state.lastScript?.lines || []).find((item) => String(item.text || "").trim());
+    if (line) return String(line.text).replace(/\s+/g, " ").trim().slice(0, 180);
+    const clip = state.plan?.clips?.[0];
+    const scene = clip ? sceneById(clip.scene) : null;
+    return String(scene?.speech || "This is a VibeCut voice test.").replace(/\s+/g, " ").trim().slice(0, 180);
+  }
+
+  function voicePreviewKey() {
+    return [
+      state.job?.id || "",
+      state.audio.engine || "",
+      state.audio.voice || "",
+      Number(state.audio.rate) || 1,
+      previewVoiceText(),
+    ].join("|");
+  }
+
+  function musicPreviewKey() {
+    const source = musicSourceMode();
+    if (source === "own") {
+      return ["own", state.audio.musicUpload || "", state.audio.track || ""].join("|");
+    }
+    return [
+      "generate",
+      state.audio.music || "",
+      state.audio.prompt || "",
+      (state.audioMoods || []).join(","),
+      "12",
+    ].join("|");
+  }
+
+  function voiceEngineReady() {
+    const engines = state.audioEngines?.voices;
+    if (!engines) return true;
+    const info = engines[state.audio.engine];
+    return !!info && info.available !== false;
+  }
+
+  function musicGenerationReady() {
+    const music = state.audioEngines?.music;
+    if (!music) return true;
+    const selected = music[state.audio.music];
+    if (selected && selected.available === false) return false;
+    return ["minimax-music", "lyria-clip"].some((key) => Boolean(music[key]?.available));
+  }
+
+  function voicePreviewBlock() {
+    if (!voiceEngineReady()) {
+      return "This voice engine needs setup. Pick an available voice or use my recording.";
+    }
+    if (!state.audio.voice) return "Choose a voice first.";
+    return "";
+  }
+
+  function musicGenerationBlock() {
+    if (musicSourceMode() !== "generate") return "Choose Generate as the music source.";
+    const music = state.audioEngines?.music;
+    if (!music) return "";
+    const selected = state.audio.music;
+    if (!selected || selected === "none") return "Choose a music engine first.";
+    if (music[selected]?.available === false) {
+      return "This music engine needs setup. Pick an available engine or use my BGM.";
+    }
+    if (!["minimax-music", "lyria-clip"].some((key) => music[key]?.available)) {
+      return "AI music needs a MiniMax or OpenRouter key. Add one in Setup or use my BGM.";
+    }
+    return "";
+  }
+
+  function syncSoundPreviewButtons() {
+    const voiceMode = ["bed", "voice", "full"].includes(state.audio.mode);
+    const musicMode = ["music", "full"].includes(state.audio.mode);
+    const voiceReady = !!state.voiceSampleUrl && state.voiceSampleKey === voicePreviewKey();
+    if (dom.audioPreview) {
+      dom.audioPreview.disabled = !voiceMode || !voiceReady || state.voicePreviewBusy;
+      dom.audioPreview.title = voiceReady
+        ? "Play the generated voice"
+        : "Generate a voice preview first";
+    }
+    if (dom.audioGenerateVoice) {
+      const blocked = voicePreviewBlock();
+      dom.audioGenerateVoice.disabled = !voiceMode || !!blocked || state.voicePreviewBusy;
+      dom.audioGenerateVoice.title = blocked || "";
+    }
+    const source = musicSourceMode();
+    const musicReady = source === "own"
+      || (source === "generate" && !!state.musicPreviewUrl && state.musicPreviewKey === musicPreviewKey());
+    if (dom.audioGenerateMusic) {
+      const blocked = musicGenerationBlock();
+      dom.audioGenerateMusic.disabled = !musicMode || source === "none"
+        || state.musicPreviewBusy
+        || (source === "generate" && !!blocked);
+      dom.audioGenerateMusic.title = source === "none"
+        ? "Choose a music source first."
+        : source === "own"
+          ? "Switch to Generate and make a short AI bed."
+          : (blocked || "");
+    }
+    if (dom.audioPlayMusic) {
+      dom.audioPlayMusic.disabled = !musicMode || !musicReady || state.musicPreviewBusy;
+      dom.audioPlayMusic.title = musicReady
+        ? "Play the 12s preview"
+        : (source === "none" ? "Choose a music source first." : "Generate a music preview first.");
+    }
+    dom.audioEngine?.closest(".audio-field")?.classList.toggle("is-unavailable", !voiceEngineReady());
+    dom.audioMusicField?.classList.toggle(
+      "is-unavailable",
+      source === "generate" && !musicGenerationReady(),
+    );
+  }
+
+  function clearVoicePreview(message = "", tone = "bad") {
+    stopSoundPlayer();
+    if (state.voiceSampleUrl) {
+      try { URL.revokeObjectURL(state.voiceSampleUrl); } catch (_) { /* already gone */ }
+    }
+    state.voiceSampleUrl = "";
+    state.voiceSampleKey = "";
+    if (message) setSoundStatus(dom.audioVoicePreviewStatus, message, tone);
+    syncSoundPreviewButtons();
+  }
+
+  function clearMusicPreview(message = "", tone = "bad") {
+    stopSoundPlayer();
+    if (state.musicPreviewUrl) {
+      try { URL.revokeObjectURL(state.musicPreviewUrl); } catch (_) { /* already gone */ }
+    }
+    state.musicPreviewUrl = "";
+    state.musicPreviewKey = "";
+    if (message) setSoundStatus(dom.audioMusicPreviewStatus, message, tone);
+    syncSoundPreviewButtons();
+  }
+
+  function resetSoundPreviews() {
+    stopSoundPlayer();
+    if (state.voiceSampleUrl) {
+      try { URL.revokeObjectURL(state.voiceSampleUrl); } catch (_) { /* already gone */ }
+    }
+    if (state.musicPreviewUrl) {
+      try { URL.revokeObjectURL(state.musicPreviewUrl); } catch (_) { /* already gone */ }
+    }
+    state.voiceSampleUrl = "";
+    state.voiceSampleKey = "";
+    state.musicPreviewUrl = "";
+    state.musicPreviewKey = "";
+    state.voicePreviewBusy = false;
+    state.musicPreviewBusy = false;
+    setSoundStatus(dom.audioVoicePreviewStatus, defaultVoicePreviewNote(), "");
+    setSoundStatus(dom.audioMusicPreviewStatus, defaultMusicPreviewNote(), "");
+    syncSoundPreviewButtons();
+  }
+
+  async function fetchSoundBlob(url, options = {}) {
+    const token = tokenValue();
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try { detail = (await response.json()).detail || detail; } catch (_) { /* not JSON */ }
+      throw new Error(detail);
+    }
+    return response.blob();
+  }
+
+  async function generateVoicePreview() {
+    if (!state.job) return;
+    const blocked = voicePreviewBlock();
+    if (blocked) {
+      setSoundStatus(dom.audioVoicePreviewStatus, blocked, "bad");
+      syncSoundPreviewButtons();
       return;
     }
-    toast("Generated music plays in the render.");
+    const key = voicePreviewKey();
+    if (state.voiceSampleUrl && state.voiceSampleKey === key) {
+      playSoundUrl(state.voiceSampleUrl);
+      setSoundStatus(dom.audioVoicePreviewStatus, "Voice preview ready.", "ok");
+      return;
+    }
+    state.voicePreviewBusy = true;
+    dom.audioGenerateVoice.textContent = "Generating…";
+    setSoundStatus(dom.audioVoicePreviewStatus, "Generating a short voice preview…");
+    syncSoundPreviewButtons();
+    try {
+      const blob = await fetchSoundBlob(`/api/jobs/${state.job.id}/voice/sample`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          engine: state.audio.engine,
+          voice: state.audio.voice,
+          rate: state.audio.rate,
+          text: previewVoiceText(),
+        }),
+      });
+      if (state.voiceSampleUrl) URL.revokeObjectURL(state.voiceSampleUrl);
+      state.voiceSampleUrl = URL.createObjectURL(blob);
+      state.voiceSampleKey = key;
+      setSoundStatus(dom.audioVoicePreviewStatus, "Voice preview ready. Play ▶ or render to use this voice.", "ok");
+      playSoundUrl(state.voiceSampleUrl);
+    } catch (error) {
+      setSoundStatus(dom.audioVoicePreviewStatus, error.message, "bad");
+    } finally {
+      state.voicePreviewBusy = false;
+      dom.audioGenerateVoice.textContent = "Generate";
+      syncSoundPreviewButtons();
+    }
   }
 
   function playVoiceSample() {
-    if (!state.voiceSampleUrl) {
-      previewVoice();
+    if (!state.voiceSampleUrl || state.voiceSampleKey !== voicePreviewKey()) {
+      setSoundStatus(dom.audioVoicePreviewStatus, "Generate a voice preview first.", "bad");
       return;
     }
-    const audio = new Audio(state.voiceSampleUrl);
-    audio.play().catch(() => toast("Could not play the voice sample."));
+    playSoundUrl(state.voiceSampleUrl);
+  }
+
+  async function generateMusicPreview() {
+    if (!state.job) return;
+    const blocked = musicGenerationBlock();
+    if (blocked) {
+      setSoundStatus(dom.audioMusicPreviewStatus, blocked, "bad");
+      syncSoundPreviewButtons();
+      return;
+    }
+    const key = musicPreviewKey();
+    if (state.musicPreviewUrl && state.musicPreviewKey === key) {
+      playSoundUrl(state.musicPreviewUrl);
+      setSoundStatus(dom.audioMusicPreviewStatus, "Music preview ready.", "ok");
+      return;
+    }
+    state.musicPreviewBusy = true;
+    dom.audioGenerateMusic.textContent = "Generating…";
+    setSoundStatus(dom.audioMusicPreviewStatus, "Generating a 12s AI music preview. One provider call, cached by prompt.");
+    syncSoundPreviewButtons();
+    try {
+      const blob = await fetchSoundBlob(`/api/classic/jobs/${state.job.id}/sound/music-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          engine: state.audio.music,
+          prompt: state.audio.prompt,
+          moods: state.audioMoods,
+          seconds: 12,
+        }),
+      });
+      if (state.musicPreviewUrl) URL.revokeObjectURL(state.musicPreviewUrl);
+      state.musicPreviewUrl = URL.createObjectURL(blob);
+      state.musicPreviewKey = key;
+      setSoundStatus(dom.audioMusicPreviewStatus, "Music preview ready · 12s. The render uses the full bed.", "ok");
+      playSoundUrl(state.musicPreviewUrl);
+    } catch (error) {
+      setSoundStatus(dom.audioMusicPreviewStatus, error.message, "bad");
+    } finally {
+      state.musicPreviewBusy = false;
+      dom.audioGenerateMusic.textContent = "Generate";
+      syncSoundPreviewButtons();
+    }
+  }
+
+  async function playMusicSample() {
+    const source = musicSourceMode();
+    if (source === "none") {
+      setSoundStatus(dom.audioMusicPreviewStatus, "Choose Use my BGM or Generate first.", "bad");
+      return;
+    }
+    if (source === "generate") {
+      if (!state.musicPreviewUrl || state.musicPreviewKey !== musicPreviewKey()) {
+        setSoundStatus(dom.audioMusicPreviewStatus, "Press Generate for a 12s preview. The render makes the full bed.", "bad");
+        return;
+      }
+      playSoundUrl(state.musicPreviewUrl);
+      return;
+    }
+    state.musicPreviewBusy = true;
+    setSoundStatus(dom.audioMusicPreviewStatus, "Loading a 12s BGM preview…");
+    syncSoundPreviewButtons();
+    try {
+      const query = new URLSearchParams({ seconds: "12" });
+      if (state.audio.musicUpload) {
+        query.set("source", "upload");
+        query.set("upload", state.audio.musicUpload);
+      } else {
+        query.set("source", "library");
+        query.set("track", state.audio.track || "");
+        if (state.audioMoods.length) query.set("moods", state.audioMoods.join(","));
+      }
+      const blob = await fetchSoundBlob(
+        `/api/classic/jobs/${state.job.id}/sound/bgm-preview?${query}`,
+      );
+      if (state.musicPreviewUrl) URL.revokeObjectURL(state.musicPreviewUrl);
+      state.musicPreviewUrl = URL.createObjectURL(blob);
+      state.musicPreviewKey = musicPreviewKey();
+      setSoundStatus(dom.audioMusicPreviewStatus, "Playing your BGM · 12s preview.", "ok");
+      playSoundUrl(state.musicPreviewUrl);
+    } catch (error) {
+      setSoundStatus(dom.audioMusicPreviewStatus, error.message, "bad");
+    } finally {
+      state.musicPreviewBusy = false;
+      syncSoundPreviewButtons();
+    }
   }
 
   function openVoicePicker() {
@@ -4460,7 +4839,7 @@
     state.audio.musicUpload = "";
     state.audio.musicUploadName = "";
     state.audio.musicUploadDuration = 0;
-    state.audio.musicUploadUrl = "";
+    clearMusicPreview(defaultMusicPreviewNote(), "");
     if (dom.audioMusicUpload) dom.audioMusicUpload.value = "";
     syncAudioVisibility();
     dom.audioMusic.dispatchEvent(new Event("change", { bubbles: true }));
@@ -4476,8 +4855,13 @@
         : new Set(["none"]);
     const options = full.filter(([id]) => allowed.has(id));
     const current = state.audio.music;
+    const available = options.find(([id, , disabled]) => id !== "none" && !disabled);
     fillSelect(dom.audioMusic, options.length ? options : [["none", "No music"]]);
-    const next = options.some(([id]) => id === current) ? current : (options[0]?.[0] || "none");
+    let next = options.some(([id]) => id === current) ? current : (options[0]?.[0] || "none");
+    if (source === "generate" && next !== "none") {
+      const info = state.audioEngines?.music?.[next];
+      if (info?.available === false && available) next = available[0];
+    }
     dom.audioMusic.value = next;
     state.audio.music = next;
   }
@@ -4523,7 +4907,6 @@
         if (node) node.disabled = false;
       });
       if (dom.audioUploadButton) dom.audioUploadButton.disabled = false;
-      if (dom.audioPreview) dom.audioPreview.disabled = false;
       if (!upload) {
         [dom.audioEngine, dom.audioVoice, dom.audioRate].forEach((node) => {
           if (node) node.disabled = false;
@@ -4545,7 +4928,7 @@
         if (node) node.disabled = false;
       });
     }
-    if (dom.mixerOpen) dom.mixerOpen.disabled = !(voiceMode || musicMode);
+    if (dom.mixerOpen) dom.mixerOpen.disabled = false;
     if (state.lastAudioMode !== mode) {
       state.lastAudioMode = mode;
       if (mode === "music") showSoundTab("music");
@@ -4553,9 +4936,6 @@
     }
     if (dom.audioGenerateVoice) dom.audioGenerateVoice.hidden = upload;
     if (dom.audioUseRecording) dom.audioUseRecording.disabled = !voiceMode;
-    if (dom.audioPlayMusic) {
-      dom.audioPlayMusic.disabled = !(musicMode && musicSourceMode() === "own" && state.audio.musicUpload);
-    }
     dom.audioVoiceGenerate.hidden = upload;
     dom.audioVoiceUpload.hidden = !upload;
     dom.audioUploadButton.hidden = !upload;
@@ -4588,6 +4968,7 @@
     } else if (dom.audioMusicBlock) {
       dom.audioMusicBlock.hidden = true;
     }
+    syncSoundPreviewButtons();
     if (state.job && state.plan) updateRenderPanel();
   }
 
@@ -4636,10 +5017,10 @@
       state.audio.musicUpload = result.path;
       state.audio.musicUploadName = result.name || file.name;
       state.audio.musicUploadDuration = Number(result.duration) || 0;
-      state.audio.musicUploadUrl = URL.createObjectURL(file);
       state.audio.musicSource = "own";
       document.querySelector('input[name="audio-music-source"][value="own"]').checked = true;
       dom.audioMusicUpload.value = "";
+      clearMusicPreview("Your BGM is ready. Play ▶ for a 12s preview.", "ok");
       syncAudioVisibility();
       dom.audioMusic.dispatchEvent(new Event("change", { bubbles: true }));
       loadHistory();
@@ -4672,6 +5053,7 @@
       state.audio.uploadDuration = Number(result.duration) || 0;
       state.audio.source = "upload";
       dom.audioUpload.value = "";
+      clearVoicePreview("Using your recording. Copy is off.");
       setVoiceSource("upload");
       loadHistory();
       toast(`Voice fitted source: ${state.audio.uploadName}`);
@@ -4932,8 +5314,6 @@
         `${engineLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`, !info.available,
       ]);
     fillSelect(dom.audioEngine, voiceOptions);
-    const available = Object.values(engines.voices || {})
-      .filter((info) => info.available).length;
     const musicOptions = [["none", "No music"]];
     const allowedMusic = new Set(["library", "minimax-music", "lyria-clip"]);
     Object.entries(engines.music || {}).forEach(([id, info]) => {
@@ -4969,18 +5349,20 @@
         && engines.voices?.[preferredTts]?.available) {
       state.audio.engine = preferredTts;
     }
+    const firstVoice = voiceOptions.find(([, , disabled]) => !disabled);
+    if (!state.audio.engine || engines.voices?.[state.audio.engine]?.available === false) {
+      state.audio.engine = firstVoice?.[0] || state.audio.engine || "";
+    }
     dom.audioEngine.value = state.audio.engine;
     dom.audioMusic.value = state.audio.music;
     syncMusicOptions();
     dom.audioLang.value = state.audio.lang;
     dom.audioProvider.value = state.audio.provider || "auto";
-    if (!available) {
-      dom.audioStatus.textContent = "No voice engine installed. Apple say is built in.";
-    }
     loadAudioVoices();
     loadAudioTracks();
     refreshAudioStatus();
     loadAudioScript();
+    syncSoundPreviewButtons();
     renderSetupEngines();
   }
 
@@ -5022,6 +5404,8 @@
       if (!voices.length) {
         const needsKey = ["elevenlabs", "minimax", "heygen", "fish", "gemini"].includes(engine);
         fillSelect(dom.audioVoice, [["", needsKey ? "Add the key in Setup" : "No voices found"]]);
+        state.audio.voice = "";
+        syncSoundPreviewButtons();
         return;
       }
       fillSelect(dom.audioVoice, voices.map((voice) => [
@@ -5032,8 +5416,11 @@
         || voices[0];
       dom.audioVoice.value = preferred.id;
       state.audio.voice = preferred.id;
+      syncSoundPreviewButtons();
     } catch (error) {
       fillSelect(dom.audioVoice, [["", error.message]]);
+      state.audio.voice = "";
+      syncSoundPreviewButtons();
     }
   }
 
@@ -5041,6 +5428,8 @@
     const source = state.audio.music;
     if (source !== "library" && source !== "cc0") {
       fillSelect(dom.audioTrack, [["", "Not needed for AI music"]]);
+      state.audio.track = "";
+      syncSoundPreviewButtons();
       return;
     }
     dom.audioTrack.innerHTML = `<option value="">Auto mood</option>`;
@@ -5049,6 +5438,8 @@
       const tracks = result.tracks || [];
       if (!tracks.length) {
         fillSelect(dom.audioTrack, [["", `Empty folder · drop files in assets/music/${source}`]]);
+        state.audio.track = "";
+        syncSoundPreviewButtons();
         return;
       }
       fillSelect(dom.audioTrack, [
@@ -5059,8 +5450,11 @@
         ]),
       ]);
       state.audio.track = dom.audioTrack.value || "";
+      syncSoundPreviewButtons();
     } catch (error) {
       fillSelect(dom.audioTrack, [["", error.message]]);
+      state.audio.track = "";
+      syncSoundPreviewButtons();
     }
   }
 
@@ -5436,13 +5830,8 @@
     if (!state.job) return;
     const pieces = [];
     const mode = state.audio.mode;
-    const preferredTts = state.setup?.tts?.provider;
     if (mode === "voice" && !engines?.separation?.demucs?.available) {
       pieces.push(`Demucs missing · ${engines?.separation?.demucs?.install || "pip install demucs"}`);
-    }
-    if (engines && musicSourceMode() === "generate") {
-      const info = engines.music?.[state.audio.music];
-      if (info && !info.available) pieces.push(info.install);
     }
     if (state.audioMoods.length && ["music", "full"].includes(mode)) {
       pieces.push(`auto mood: ${state.audioMoods.slice(0, 3).join(", ")}`);
@@ -5474,41 +5863,6 @@
       state.translateCheck = null;
     }
     refreshAudioStatus();
-  }
-
-  async function previewVoice() {
-    if (!state.job) return;
-    dom.audioPreview.disabled = true;
-    dom.audioStatus.textContent = "Rendering voice sample…";
-    try {
-      const token = tokenValue();
-      const response = await fetch(`/api/jobs/${state.job.id}/voice/sample`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          engine: state.audio.engine,
-          voice: state.audio.voice,
-          rate: state.audio.rate,
-        }),
-      });
-      if (!response.ok) {
-        let detail = response.statusText;
-        try { detail = (await response.json()).detail || detail; } catch (_) { /* ignore */ }
-        throw new Error(detail);
-      }
-      const blob = await response.blob();
-      state.voiceSampleUrl = URL.createObjectURL(blob);
-      const audio = new Audio(state.voiceSampleUrl);
-      audio.play();
-      dom.audioStatus.textContent = "Voice sample ready.";
-    } catch (error) {
-      dom.audioStatus.textContent = error.message;
-    } finally {
-      dom.audioPreview.disabled = false;
-    }
   }
 
   // ---------------------------------------------------------------- render reel
