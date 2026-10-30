@@ -24,6 +24,7 @@ import { listJobs, request } from "./api.js";
 import { el } from "./ui.js";
 import { cloneKey, isFavorite, stockKey, toggleFavorite } from "./favorites.js";
 import { createClipFinder } from "./clipfinder.js";
+import { createRecentPanel, recentKey, recordRecent } from "./recent.js";
 import { createVoiceSetup } from "./setup.js";
 import {
   createMyVoicePanel,
@@ -182,7 +183,7 @@ function stopVoice() {
  * generating → playing → idle. The row keeps Stop while the sample is made and
  * while the Audio object is speaking; ended/error clears it back to Play.
  */
-async function startPlayback({ key, label, pending, start }) {
+async function startPlayback({ key, label, pending, start, entry = null }) {
   haltPlayback();
   const token = playToken;
   playPhase = "generating";
@@ -213,6 +214,8 @@ async function startPlayback({ key, label, pending, start }) {
       finish(Boolean(player.error));
       return;
     }
+    // The sample is speaking now: only a real start earns a recent entry.
+    if (entry) recordRecent(entry);
     setNotice(`Playing ${label}.`, "ok");
     render();
   } catch (cause) {
@@ -243,6 +246,7 @@ async function play(engine, voice, label) {
     label,
     pending: `Making a sample of ${label}…`,
     start: () => playVoice(engine, voice, testLine, rate),
+    entry: { kind: "stock", engine, voice: String(voice), label },
   });
 }
 
@@ -257,7 +261,29 @@ function playMine(item) {
     label: item.name || "this voice",
     pending: `Speaking the test line as ${item.name}…`,
     start: () => playClone(item.voice_id, testLine),
+    entry: {
+      kind: "clone",
+      engine: "heygen",
+      voice: item.voice_id,
+      clone: item.voice_id,
+      label: item.name || "this voice",
+    },
   });
+}
+
+function replayRecent(entry) {
+  if (entry.kind === "clone") {
+    playMine({ voice_id: entry.clone || entry.voice, name: entry.label });
+    return;
+  }
+  void play(entry.engine, entry.voice, entry.label);
+}
+
+function recentSection() {
+  return createRecentPanel({
+    isSpeaking: (entry) => isPlaying(recentKey(entry)),
+    onPlay: replayRecent,
+  }).node;
 }
 
 async function saveName(item) {
@@ -669,9 +695,9 @@ function render() {
     finder.render();
     const clones = catalog?.clones || [];
     if (clones.length) {
-      body.append(mineSection("01"), cloneSection("02"), stockSection("03"));
+      body.append(mineSection("01"), cloneSection("02"), recentSection(), stockSection("03"));
     } else {
-      body.append(cloneSection("01"), stockSection("02"));
+      body.append(cloneSection("01"), recentSection(), stockSection("02"));
     }
   }
   page.append(body);
