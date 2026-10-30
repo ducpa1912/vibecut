@@ -4417,6 +4417,10 @@ class PlanBody(BaseModel):
     caption_track_id: str | None = None
     caption_style_id: str | None = None
     caption_style: dict | None = None
+    # Classic sends Studio-shaped text overlays and effects. app builds a
+    # valid Edit from them before queueing; Studio keeps sending a stored Edit
+    # through its own routes.
+    edit: dict | None = None
 
 
 class CaptionTrackBody(BaseModel):
@@ -7552,11 +7556,16 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
             caption_track = _caption_track_for_render(
                 job_id, fresh, plan, body, captions, margin,
             )
+            edit, edit_track = _classic_edit_from_body(
+                job_id, fresh, plan, aspect, body, captions, margin, audio_plan,
+            )
+            if edit is not None:
+                caption_track = edit_track
             record = _queue_render(
                 job_id, fresh, plan, quality, aspect, encoder, captions,
                 audio_plan, bool(body.force), preset=preset, caption_margin=margin,
                 script_id=script_id, check_space=True,
-                caption_track=caption_track,
+                caption_track=caption_track, edit=edit,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:
@@ -8661,6 +8670,25 @@ def _render_options(
     return quality, aspect, body.encoder, captions, audio_plan, preset, margin
 
 
+def _classic_edit_from_body(
+    job_id: str,
+    job: dict,
+    plan: dict,
+    aspect: str,
+    body: PlanBody,
+    captions: bool,
+    margin: float | None,
+    audio_plan: dict | None,
+):
+    """Turn Classic's layer payload into the Edit the renderer compiles."""
+    if not isinstance(body.edit, dict) or not body.edit:
+        return None, None
+    return routes_classic.prepare_classic_render(
+        job_id, job, plan, aspect, body.edit,
+        captions=captions, margin=margin, audio_plan=audio_plan,
+    )
+
+
 @app.post("/api/jobs/{job_id}/render")
 def start_render(job_id: str, body: PlanBody) -> dict:
     job = load_job(job_id)
@@ -8670,11 +8698,16 @@ def start_render(job_id: str, body: PlanBody) -> dict:
     caption_track = _caption_track_for_render(
         job_id, job, plan, body, captions, margin,
     )
+    edit, edit_track = _classic_edit_from_body(
+        job_id, job, plan, aspect, body, captions, margin, audio_plan,
+    )
+    if edit is not None:
+        caption_track = edit_track
     record = _queue_render(
         job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
         bool(body.force), preset=preset, caption_margin=margin,
         script_id=_body_script_id(body, audio_plan), check_space=True,
-        caption_track=caption_track,
+        caption_track=caption_track, edit=edit,
     )
     return {"render": _public_render(job_id, record)}
 
@@ -8693,11 +8726,16 @@ def start_render_all(job_id: str, body: PlanBody) -> dict:
             caption_track = _caption_track_for_render(
                 job_id, job, plan, body, captions, margin,
             )
+            edit, edit_track = _classic_edit_from_body(
+                job_id, job, plan, aspect, body, captions, margin, audio_plan,
+            )
+            if edit is not None:
+                caption_track = edit_track
             record = _queue_render(
                 job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
                 bool(body.force), preset=preset, caption_margin=margin,
                 script_id=script_id, check_space=True,
-                caption_track=caption_track,
+                caption_track=caption_track, edit=edit,
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:
