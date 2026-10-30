@@ -6,7 +6,6 @@ and recordings. It shares no runtime file with Classic or Studio.
 | Item | Value |
 |---|---|
 | Branch | `voice-room` |
-| Previous version | `vibecut-room-prv` worktree, branch `vibecut-room-prv` |
 | Port | `8797` |
 | Data | `~/vibecut-lanes/voice` |
 | Media | `~/vibecut-lanes/media/voiceroom` |
