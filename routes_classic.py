@@ -158,7 +158,9 @@ def _translation_state(job_id: str, target: str) -> dict:
     key = (job_id, target)
     with TRANSLATION_LOCK:
         running = dict(TRANSLATION_RUNS.get(key) or {})
-    if running:
+    # A finished run is not proof by itself: the transcript can change under
+    # it. Only live or failed work wins over the flag check below.
+    if running and running.get("status") in {"running", "failed"}:
         return running
     if not target or target == source:
         return {

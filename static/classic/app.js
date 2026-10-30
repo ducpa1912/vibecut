@@ -181,6 +181,7 @@
     audioRewriteRun: $("#audio-rewrite-run"),
     audioRewriteNote: $("#audio-rewrite-note"),
     translateBadge: $("#translate-badge"),
+    copyTranscript: $("#copy-transcript"),
     audioVoiceGenerate: $("#audio-voice-generate"),
     audioVoiceUpload: $("#audio-voice-upload"),
     audioMusicSource: $("#audio-music-source"),
@@ -311,6 +312,10 @@
     scriptOverrides: {},
     scriptId: null,
     lastScript: null,
+    scriptAbort: null,
+    scriptTimer: null,
+    translation: null,
+    translationWarm: null,
     history: [],
     historyEntry: null,
     recentJobs: [],
@@ -2691,6 +2696,9 @@
 
   function prepareResult(job) {
     state.job = job;
+    cancelAudioScript();
+    cancelTranslationWarm();
+    state.translation = null;
     state.meta = {
       width: job.source.width,
       height: job.source.height,
@@ -2770,6 +2778,7 @@
     dom.resultMeta.textContent = `${fileStem(job.source.name)} · ${fmtDuration(job.source.duration)} source · ${analysis.scene_count} moments · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
     dom.resultMeta.title = job.source.name || "";
     renderSpeechNotice();
+    paintTranscriptReady();
     renderUsage();
     renderHook();
     updateResultHeading();
@@ -4323,6 +4332,7 @@
     dom.audioRewriteRun.addEventListener("click", () => {
       // Reuse the on-disk translation memo. Only a language change or the
       // explicit Retry translation button asks for fresh translations.
+      if (state.scriptAbort) return;
       loadAudioScript({ run: true });
     });
     document.querySelectorAll('input[name="audio-music-source"]').forEach((input) => {
@@ -5096,15 +5106,46 @@
     return languageCode(state.audio?.lang || "");
   }
 
+  function transcriptInfo() {
+    const summary = state.job?.analysis?.transcript || null;
+    const engine = state.job?.analysis?.engine || {};
+    const segments = summary?.segments;
+    const lines = Array.isArray(segments) ? segments.length : Number(segments) || 0;
+    const text = String(summary?.text || "").trim();
+    return { ready: lines > 0 || !!text || !!engine.whisper, lines };
+  }
+
+  function paintTranscriptReady() {
+    if (!dom.copyTranscript) return;
+    const info = transcriptInfo();
+    dom.copyTranscript.hidden = !info.ready;
+    dom.copyTranscript.title = info.ready
+      ? `Transcript ready${info.lines ? ` · ${info.lines} lines` : ""}`
+      : "";
+  }
+
+  function isAbortError(error) {
+    return error?.name === "AbortError";
+  }
+
   function paintTranslateBadge(info) {
     if (!dom.translateBadge) return;
     const target = targetLanguage();
-    if (!target || target === sourceLanguage()) {
+    if (!target || target === sourceLanguage() || !transcriptInfo().ready) {
       dom.translateBadge.hidden = true;
+      delete dom.translateBadge.dataset.status;
       return;
     }
-    const status = info?.status
-      || (state.translation?.target === target ? state.translation.status : "idle");
+    const current = state.translation?.target === target ? state.translation : null;
+    const incoming = info && (!info.target || languageCode(info.target) === target)
+      ? info
+      : null;
+    const status = incoming?.status || current?.status || "idle";
+    if (!["ready", "running", "failed"].includes(status)) {
+      dom.translateBadge.hidden = true;
+      delete dom.translateBadge.dataset.status;
+      return;
+    }
     dom.translateBadge.hidden = false;
     dom.translateBadge.dataset.status = status;
     if (status === "ready") {
@@ -5116,55 +5157,91 @@
     }
   }
 
-  async function translationStatus(target, jobId = state.job?.id) {
+  async function translationStatus(target, jobId = state.job?.id, signal = null) {
     return api(
       `/api/classic/jobs/${jobId}/translate/status?target=${encodeURIComponent(target)}`,
+      signal ? { signal } : {},
     );
   }
 
   async function ensureTranslation(controller) {
+    const scriptOwned = controller?.scriptOwned === true;
     const target = targetLanguage();
     const jobId = state.job?.id;
     if (!jobId || !target || target === sourceLanguage()) {
       paintTranslateBadge(null);
       return true;
     }
-    if (state.translation?.target === target && state.translation.status === "ready") {
+    if (!transcriptInfo().ready) {
+      state.translation = null;
+      paintTranslateBadge(null);
+      dom.audioRewriteNote.textContent = "No transcript to translate. Change Language back to the source.";
+      return false;
+    }
+    if (state.translation?.job_id === jobId
+        && state.translation.target === target
+        && state.translation.status === "ready") {
       paintTranslateBadge(state.translation);
       return true;
     }
     let info;
     try {
-      info = await translationStatus(target, jobId);
+      info = await translationStatus(target, jobId, controller?.signal);
     } catch (error) {
+      if (isAbortError(error) || controller?.signal.aborted) return false;
       dom.audioRewriteNote.textContent = `Translation check failed: ${error.message}`;
       return false;
     }
+    if (state.job?.id !== jobId || targetLanguage() !== target) return false;
     if (info.status !== "ready" && info.status !== "running") {
       try {
         info = await api(`/api/classic/jobs/${jobId}/translate`, {
           method: "POST",
+          signal: controller?.signal,
           body: JSON.stringify({ target, provider: "auto" }),
         });
       } catch (error) {
+        if (isAbortError(error) || controller?.signal.aborted) return false;
+        if (error.status === 409) {
+          // No transcript is not a translation failure.
+          state.translation = null;
+          paintTranslateBadge(null);
+          dom.audioRewriteNote.textContent = "No transcript to translate. Change Language back to the source.";
+          return false;
+        }
         dom.audioRewriteNote.textContent = `Translation failed: ${error.message}`;
-        paintTranslateBadge({ status: "failed" });
+        paintTranslateBadge({ status: "failed", target });
         return false;
       }
     }
-    state.translation = { ...info, target };
-    paintTranslateBadge(info);
+    if (state.job?.id !== jobId || targetLanguage() !== target) return false;
+    state.translation = { ...info, target, job_id: jobId };
+    paintTranslateBadge(state.translation);
+    let misses = 0;
     while (info.status === "running") {
-      if (controller && state.scriptAbort !== controller) return false;
+      if (controller?.signal.aborted) return false;
+      if (scriptOwned && controller && state.scriptAbort !== controller) return false;
       if (state.job?.id !== jobId || targetLanguage() !== target) return false;
       await new Promise((resolve) => setTimeout(resolve, 900));
+      if (controller?.signal.aborted) return false;
+      if (state.job?.id !== jobId || targetLanguage() !== target) return false;
       try {
-        info = await translationStatus(target, jobId);
+        info = await translationStatus(target, jobId, controller?.signal);
+        misses = 0;
       } catch (error) {
-        info = { ...info, status: "failed", error: error.message };
+        if (isAbortError(error) || controller?.signal.aborted) return false;
+        // A failed status read is not a failed translation. Try again.
+        misses += 1;
+        if (misses >= 3) {
+          dom.audioRewriteNote.textContent =
+            `Could not read translation status: ${error.message}`;
+          return false;
+        }
+        continue;
       }
-      state.translation = { ...info, target };
-      paintTranslateBadge(info);
+      if (state.job?.id !== jobId || targetLanguage() !== target) return false;
+      state.translation = { ...info, target, job_id: jobId };
+      paintTranslateBadge(state.translation);
     }
     if (info.status === "failed") {
       dom.audioRewriteNote.textContent =
@@ -5174,8 +5251,43 @@
     return info.status === "ready";
   }
 
+  function cancelTranslationWarm() {
+    const warm = state.translationWarm;
+    state.translationWarm = null;
+    if (warm?.controller) {
+      try { warm.controller.abort(); } catch (_) { /* already settled */ }
+    }
+  }
+
   function warmTranslation() {
-    ensureTranslation(null).catch(() => {});
+    const jobId = state.job?.id;
+    const target = targetLanguage();
+    if (!jobId || !target || target === sourceLanguage() || !transcriptInfo().ready) {
+      cancelTranslationWarm();
+      paintTranslateBadge(null);
+      return;
+    }
+    if (state.translation?.job_id === jobId
+        && state.translation.target === target
+        && state.translation.status === "ready") {
+      paintTranslateBadge(state.translation);
+      return;
+    }
+    if (state.translationWarm?.jobId === jobId
+        && state.translationWarm?.target === target) return;
+    cancelTranslationWarm();
+    const controller = new AbortController();
+    state.translationWarm = { jobId, target, controller };
+    state.translation = {
+      job_id: jobId, target, status: "running",
+      done: 0, total: transcriptInfo().lines, batch: 0, batches: 0,
+    };
+    paintTranslateBadge(state.translation);
+    ensureTranslation(controller)
+      .catch(() => {})
+      .finally(() => {
+        if (state.translationWarm?.controller === controller) state.translationWarm = null;
+      });
   }
 
   function resetAudioScript(message = "Choose a mode, then Story cut. The full transcript is reused.") {
@@ -5204,6 +5316,21 @@
     if (dom.audioRewriteRun) dom.audioRewriteRun.disabled = false;
   }
 
+  function showScriptFailure(message) {
+    const note = String(message || "Copy failed.");
+    if (state.lastScript?.lines?.length) {
+      renderScriptBlock(
+        state.lastScript.lines,
+        state.lastScript,
+        `${note} · showing last good script.`,
+      );
+      return;
+    }
+    dom.audioRewriteNote.textContent = note;
+    dom.audioScript.innerHTML =
+      `<div class="script-head"><span class="hint">${esc(note)}</span></div>`;
+  }
+
   async function loadAudioScript(options = {}) {
     const run = options.run === true;
     const forceTranslate = options.forceTranslate === true;
@@ -5220,8 +5347,12 @@
       resetAudioScript();
       return;
     }
-    if (state.scriptAbort) state.scriptAbort.abort();
+    // One rewrite at a time. A repeat click while the cut is being written
+    // must not start a second request or a second server job.
+    if (state.scriptAbort) return;
+    const jobId = state.job.id;
     const controller = new AbortController();
+    controller.scriptOwned = true;
     state.scriptAbort = controller;
     dom.audioScript.hidden = false;
     const startedAt = Date.now();
@@ -5236,17 +5367,25 @@
     dom.audioRewriteNote.textContent =
       "Translating and rewriting… 0s. The first run translates the whole video once; later runs reuse the cache.";
     dom.audioRewriteRun.disabled = true;
-    const translatedReady = await ensureTranslation(controller);
-    if (!translatedReady) return;
-    if (dom.translateBadge) {
-      dom.translateBadge.hidden = false;
-      dom.translateBadge.dataset.status = "running";
-      dom.translateBadge.textContent = "Rewriting…";
-    }
-    dom.audioScript.innerHTML =
-      `<div class="script-head"><span class="label">Script</span><span class="hint">working…</span></div>`;
     try {
-      const result = await api(`/api/jobs/${state.job.id}/audio/script`, {
+      // The language warm-up owns translation. Story cut only waits for the
+      // on-disk memo, then writes this cut.
+      const translatedReady = await ensureTranslation(controller);
+      if (!translatedReady) {
+        if (controller.signal.aborted || state.scriptAbort !== controller) return;
+        showScriptFailure(
+          dom.audioRewriteNote.textContent || "Translation is not ready.",
+        );
+        return;
+      }
+      if (dom.translateBadge) {
+        dom.translateBadge.hidden = false;
+        dom.translateBadge.dataset.status = "running";
+        dom.translateBadge.textContent = "Rewriting…";
+      }
+      dom.audioScript.innerHTML =
+        `<div class="script-head"><span class="label">Script</span><span class="hint">working…</span></div>`;
+      const result = await api(`/api/jobs/${jobId}/audio/script`, {
         method: "POST",
         signal: controller.signal,
         body: JSON.stringify({
@@ -5262,6 +5401,7 @@
           overrides: state.scriptOverrides,
         }),
       });
+      if (state.job?.id !== jobId) return;
       const lines = result.lines || [];
       state.lastScript = result;
       state.scriptOverrides = result.overrides && typeof result.overrides === "object"
@@ -5284,8 +5424,8 @@
           : `Copied for ${state.target}s.`;
       renderScriptBlock(lines, result, note);
       state.translation = {
-        target: targetLanguage(), status: "ready", done: 1, total: 1,
-        batch: 1, batches: 1,
+        job_id: state.job.id, target: targetLanguage(), status: "ready",
+        done: 1, total: 1, batch: 1, batches: 1,
       };
       paintTranslateBadge(state.translation);
       loadHistory();
@@ -5297,18 +5437,7 @@
         }
         return;
       }
-      const message = `Copy failed: ${error.message}`;
-      if (state.lastScript?.lines?.length) {
-        renderScriptBlock(
-          state.lastScript.lines,
-          state.lastScript,
-          `${message} · showing last good script.`,
-        );
-      } else {
-        dom.audioRewriteNote.textContent = message;
-        dom.audioScript.innerHTML =
-          `<div class="script-head"><span class="hint">${esc(message)}</span></div>`;
-      }
+      showScriptFailure(`Copy failed: ${error.message}`);
       loadHistory();
     } finally {
       if (state.scriptTimer === ticking) {
@@ -5319,6 +5448,8 @@
         state.scriptAbort = null;
         dom.audioRewriteRun.disabled = false;
       }
+      // Rewriting is over; the badge belongs to translation again.
+      if (state.job?.id === jobId) paintTranslateBadge(state.translation);
     }
   }
 
