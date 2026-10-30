@@ -3429,10 +3429,11 @@ def index(request: Request) -> Response:
 
 
 @app.get("/voices")
-def voice_room() -> FileResponse:
+def voice_room(request: Request) -> FileResponse:
     if not editions.feature_on("voice_room"):
         raise HTTPException(404, "Not found")
-    return FileResponse(STATIC / "voices.html")
+    page = STATIC / ("voices-next.html" if request.query_params.get("ui") == "new" else "voices.html")
+    return FileResponse(page)
 
 
 @app.get("/_ductator/")

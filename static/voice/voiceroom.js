@@ -351,6 +351,7 @@ function header() {
     el("div", { class: "topbar-right" }, [
       el("span", { class: "vr-room", text: "Voice Room" }),
       el("a", { href: "/", text: "Back to VibeCut" }),
+      el("a", { href: "?ui=new", text: "New UI" }),
       views.includes("studio") ? el("a", { href: "/?studio=1", text: "Open Studio" }) : null,
       setupButton,
       refresh,

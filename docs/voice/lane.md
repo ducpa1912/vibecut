@@ -55,6 +55,17 @@ the browser when done. The Playwright trace lands in
 The founder tests, by hand, with real files. No test video, sound or generated
 test file stands in for real media.
 
+## New UI
+
+The new shell is at `/voices?ui=new`. The old page stays at `/voices` and is
+still the default. Each page links to the other: **New UI** on the old page,
+**Old UI** on the new one.
+
+The new shell uses a left rail on desktop, bottom tabs on mobile, and five
+views: Library, Create, Compare, Recent and Settings. It loads
+`static/voice/next.css` and `static/voice/next.js`; the old modules are reused
+inside the new views.
+
 ## Media library
 
 The lane keeps no media by default. `~/vibecut-lanes/media/voiceroom` is empty
