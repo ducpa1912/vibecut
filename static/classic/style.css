@@ -2403,6 +2403,81 @@ select.menu-open { border-color: var(--accent); }
 .edit-script-card .audio-script { padding: 0; border-top: 0; }
 .edit-script-card .audio-script .script-list { max-height: 240px; }
 .edit-text .hint { margin: 0; }
+.text-shape-note {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.text-layer-list { display: grid; gap: 6px; margin: 4px 0 10px; }
+.text-layer-empty { margin: 2px 0 6px; color: var(--dim); font-size: 11px; }
+.text-layer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.text-layer-copy {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.text-layer-meta {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.text-layer-del {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.text-layer-del:hover { background: rgba(232, 162, 102, 0.14); color: var(--accent); }
+.text-add { display: grid; gap: 6px; margin-bottom: 10px; }
+.text-add input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.text-add-row { display: flex; align-items: flex-end; gap: 6px; flex-wrap: wrap; }
+.text-add-row select { flex: 1 1 96px; min-height: 32px; }
+.text-time { display: grid; gap: 3px; min-width: 58px; }
+.text-time span {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.text-time input {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.text-add-row button { min-height: 32px; }
+.effect-add { margin-top: 2px; }
+#text-layer-controls.is-disabled { opacity: 0.46; }
 .edit-actions {
   display: flex;
   flex-direction: column;

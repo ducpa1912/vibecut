@@ -559,10 +559,37 @@
 
             <section id="text-effects-step" class="edit-card edit-text">
               <div class="edit-card-head">
-                <div><h4>Texts &amp; Effects</h4><p>Subtitles on the cut.</p></div>
+                <div><h4>Texts &amp; Effects</h4><p>Subtitles, text overlays and motion on the cut.</p></div>
               </div>
               <label class="caption-check edit-check"><input id="captions" type="checkbox"> Burn in subtitles</label>
-              <p class="hint">Caption position, font and cue edits live in Creator → Captions.</p>
+              <p id="text-shape-note" class="hint text-shape-note" hidden></p>
+              <div id="text-layer-controls">
+                <div id="text-overlay-list" class="text-layer-list" role="list" aria-label="Text overlays"></div>
+                <div class="text-add">
+                  <input id="text-overlay-text" type="text" maxlength="400" placeholder="Text on the cut" aria-label="Text on the cut">
+                  <div class="text-add-row">
+                    <select id="text-overlay-anchor" aria-label="Text position">
+                      <option value="top">Top</option>
+                      <option value="center" selected>Center</option>
+                      <option value="bottom">Bottom</option>
+                    </select>
+                    <label class="text-time"><span>Start</span><input id="text-overlay-start" type="number" min="0" step="0.1" value="0"></label>
+                    <label class="text-time"><span>End</span><input id="text-overlay-end" type="number" min="0.2" step="0.1" value="2.5"></label>
+                    <button id="text-overlay-add" class="ghost small" type="button">Add text</button>
+                  </div>
+                </div>
+                <div id="effect-list" class="text-layer-list" role="list" aria-label="Effects"></div>
+                <div class="text-add-row effect-add">
+                  <select id="effect-kind" aria-label="Effect">
+                    <option value="punch_in">Punch in</option>
+                    <option value="shake">Shake</option>
+                    <option value="circle">Circle (centre)</option>
+                  </select>
+                  <label class="text-time"><span>Seconds</span><input id="effect-duration" type="number" min="0.2" step="0.1" value="1.2"></label>
+                  <button id="effect-add" class="ghost small" type="button">Add effect</button>
+                </div>
+              </div>
+              <p class="hint">Text and effects burn into the reel on 9:16 and 4:5. Caption position, font and cue edits live in Creator → Captions.</p>
             </section>
           </div>
 

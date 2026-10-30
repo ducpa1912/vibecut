@@ -164,6 +164,19 @@
     renderCancel: $("#render-cancel"),
     aspect: $("#aspect-select"),
     captions: $("#captions"),
+    textEffectsStep: $("#text-effects-step"),
+    textShapeNote: $("#text-shape-note"),
+    textLayerControls: $("#text-layer-controls"),
+    textOverlayList: $("#text-overlay-list"),
+    textOverlayText: $("#text-overlay-text"),
+    textOverlayAnchor: $("#text-overlay-anchor"),
+    textOverlayStart: $("#text-overlay-start"),
+    textOverlayEnd: $("#text-overlay-end"),
+    textOverlayAdd: $("#text-overlay-add"),
+    effectList: $("#effect-list"),
+    effectKind: $("#effect-kind"),
+    effectDuration: $("#effect-duration"),
+    effectAdd: $("#effect-add"),
     audioPanel: $("#audio-panel"),
     audioMode: $("#audio-mode"),
     audioModeTabs: $("#audio-mode-tabs"),
@@ -286,6 +299,16 @@
     target: 30,
     aspect: "9:16",
     captions: false,
+    classicText: {
+      loadedKey: "",
+      dataKey: "",
+      clipsHash: "",
+      overlays: [],
+      effects: [],
+      seq: 0,
+      rev: 0,
+      saveTimer: null,
+    },
     audio: {
       mode: "keep",
       source: "generate",
@@ -1621,6 +1644,7 @@
       state.aspect = dom.aspect.value;
       state.preset = "";
       dom.presetSelect.value = "";
+      updateTextAvailability();
       updateRenderPanel();
       if (state.plan) renderHook();
     });
@@ -1652,6 +1676,8 @@
       updateRenderPanel();
     });
     bindAudio();
+    bindClassicText();
+    updateTextAvailability();
     bindSetup();
 
     dom.timeline.addEventListener("contextmenu", (event) => {
@@ -2669,6 +2695,18 @@
         state.history = [];
         state.historyEntry = null;
         state.timelineScroll = 0;
+        if (state.classicText.saveTimer) clearTimeout(state.classicText.saveTimer);
+        state.classicText = {
+          loadedKey: "",
+          dataKey: "",
+          clipsHash: "",
+          overlays: [],
+          effects: [],
+          seq: 0,
+          rev: 0,
+          saveTimer: null,
+        };
+        renderClassicText();
         if (dom.historyList) dom.historyList.innerHTML = "";
         if (dom.historyDetail) {
           dom.historyDetail.hidden = true;
@@ -3027,6 +3065,9 @@
     dom.timeline.scrollLeft = scroll;
     renderVariants();
     renderMixer();
+    syncClassicTextDefaults();
+    updateTextAvailability();
+    refreshClassicText();
   }
 
   function clipWidth(clip) {
@@ -5099,6 +5140,7 @@
     state.captions = config.captions;
     dom.aspect.value = config.aspect;
     dom.captions.checked = config.captions;
+    updateTextAvailability();
     updateRenderPanel();
   }
 
@@ -5266,6 +5308,7 @@
                 clips: clipsForHook(hook.scene),
                 script_id: state.scriptId || null,
                 audio: currentAudioPlan(),
+                edit: classicEditPayload(),
               }),
             });
             if (result.render) records.push(result.render);
@@ -5996,6 +6039,277 @@
     refreshAudioStatus();
   }
 
+  function classicTextSupported() {
+    return CLASSIC_TEXT_ASPECTS.includes(state.aspect);
+  }
+
+  function classicCutKey(clips) {
+    return (clips || []).map((clip) => {
+      const start = Number(clip.start) || 0;
+      const end = clip.end !== undefined && clip.end !== null
+        ? Number(clip.end)
+        : start + (Number(clip.dur) || 0);
+      return [
+        clip.scene,
+        start.toFixed(3),
+        end.toFixed(3),
+        clip.role || "beat",
+      ].join(":");
+    }).join("|");
+  }
+
+  function classicPlanClips() {
+    return (state.plan?.clips || []).map((clip) => ({ ...clip }));
+  }
+
+  function classicLayerId(prefix) {
+    const taken = new Set([
+      ...state.classicText.overlays.map((layer) => layer.id),
+      ...state.classicText.effects.map((effect) => effect.id),
+    ]);
+    let suffix = 1;
+    while (taken.has(`${prefix}${suffix}`)) suffix += 1;
+    return `${prefix}${suffix}`;
+  }
+
+  function updateTextAvailability() {
+    const supported = classicTextSupported();
+    if (dom.textShapeNote) {
+      dom.textShapeNote.hidden = supported;
+      dom.textShapeNote.textContent = supported
+        ? ""
+        : "Text overlays and effects render on 9:16 and 4:5. Switch the shape to use them.";
+    }
+    if (!dom.textLayerControls) return;
+    dom.textLayerControls.querySelectorAll("input, select, button").forEach((node) => {
+      node.disabled = !supported;
+    });
+    dom.textLayerControls.classList.toggle("is-disabled", !supported);
+  }
+
+  function syncClassicTextDefaults() {
+    const total = Math.max(0, Number(state.plan?.total) || 0);
+    [dom.textOverlayStart, dom.textOverlayEnd].forEach((input) => {
+      if (input) input.max = String(total);
+    });
+    if (dom.effectDuration) {
+      dom.effectDuration.max = String(Math.max(0.2, total));
+    }
+    if (dom.textOverlayStart) {
+      const start = Number(dom.textOverlayStart.value);
+      if (!Number.isFinite(start) || start < 0 || start >= total) {
+        dom.textOverlayStart.value = "0";
+      }
+    }
+    if (dom.textOverlayEnd) {
+      const end = Number(dom.textOverlayEnd.value);
+      if (!Number.isFinite(end) || end <= 0 || end > total) {
+        dom.textOverlayEnd.value = Math.min(2.5, total).toFixed(1);
+      }
+    }
+  }
+
+  function renderClassicText() {
+    if (!dom.textOverlayList || !dom.effectList) return;
+    const overlays = state.classicText.overlays;
+    const effects = state.classicText.effects;
+    dom.textOverlayList.innerHTML = overlays.length
+      ? overlays.map((layer) => {
+        const position = CLASSIC_TEXT_POSITIONS[layer.anchor] || "center";
+        return `
+          <div class="text-layer-row" role="listitem" data-overlay-id="${esc(layer.id)}">
+            <span class="text-layer-copy" title="${esc(layer.text)}">${esc(layer.text)}</span>
+            <span class="text-layer-meta">${esc(position)} · ${fmtTime(layer.start, 1)}–${fmtTime(layer.end, 1)}</span>
+            <button class="text-layer-del" type="button" data-overlay-delete="${esc(layer.id)}" title="Delete text" aria-label="Delete text">✕</button>
+          </div>`;
+      }).join("")
+      : '<p class="hint text-layer-empty">No text yet.</p>';
+    dom.effectList.innerHTML = effects.length
+      ? effects.map((effect) => `
+          <div class="text-layer-row effect-row" role="listitem" data-effect-id="${esc(effect.id)}">
+            <span class="text-layer-copy">${esc(CLASSIC_EFFECT_LABELS[effect.kind] || effect.kind)}</span>
+            <span class="text-layer-meta">${fmtTime(effect.start, 1)}–${fmtTime(effect.end, 1)}</span>
+            <button class="text-layer-del" type="button" data-effect-delete="${esc(effect.id)}" title="Delete effect" aria-label="Delete effect">✕</button>
+          </div>`).join("")
+      : '<p class="hint text-layer-empty">No effects yet.</p>';
+  }
+
+  function applyClassicTextCut(cut, key = "") {
+    state.classicText.dataKey = key;
+    state.classicText.clipsHash = cut?.clips_hash || "";
+    state.classicText.overlays = Array.isArray(cut?.overlays) ? cut.overlays : [];
+    state.classicText.effects = Array.isArray(cut?.effects) ? cut.effects : [];
+    renderClassicText();
+  }
+
+  async function refreshClassicText(force = false) {
+    if (!state.job || !state.plan) return;
+    const clips = classicPlanClips();
+    if (!clips.length) return;
+    const key = classicCutKey(clips);
+    if (!force && key === state.classicText.loadedKey) return;
+    state.classicText.loadedKey = key;
+    const seq = ++state.classicText.seq;
+    const rev = state.classicText.rev;
+    try {
+      const result = await api(`/api/classic/jobs/${state.job.id}/text`, {
+        method: "POST",
+        body: JSON.stringify({ clips }),
+      });
+      if (seq !== state.classicText.seq || rev !== state.classicText.rev) return;
+      applyClassicTextCut(result.cut, key);
+    } catch (_) {
+      if (seq !== state.classicText.seq) return;
+      state.classicText.loadedKey = "";
+      applyClassicTextCut(null);
+    }
+  }
+
+  async function persistClassicText(clips) {
+    if (!state.job || !clips.length) return;
+    try {
+      await api(`/api/classic/jobs/${state.job.id}/text`, {
+        method: "PUT",
+        body: JSON.stringify({
+          clips,
+          overlays: state.classicText.overlays,
+          effects: state.classicText.effects,
+        }),
+      });
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  function saveClassicText() {
+    state.classicText.rev += 1;
+    if (!state.job || !state.plan) return;
+    const clips = classicPlanClips();
+    const key = classicCutKey(clips);
+    state.classicText.loadedKey = key;
+    state.classicText.dataKey = key;
+    if (state.classicText.saveTimer) clearTimeout(state.classicText.saveTimer);
+    state.classicText.saveTimer = setTimeout(() => {
+      state.classicText.saveTimer = null;
+      persistClassicText(clips);
+    }, 350);
+  }
+
+  function addClassicOverlay() {
+    if (!classicTextSupported()) {
+      toast("Text overlays render on 9:16 and 4:5 only.");
+      return;
+    }
+    const text = (dom.textOverlayText?.value || "").trim();
+    if (!text) {
+      toast("Type the text first.");
+      return;
+    }
+    const total = Math.max(0, Number(state.plan?.total) || 0);
+    if (total < 0.2) {
+      toast("The cut is too short for text.");
+      return;
+    }
+    const start = clamp(Number(dom.textOverlayStart?.value) || 0, 0, Math.max(0, total - 0.2));
+    let end = Number(dom.textOverlayEnd?.value);
+    if (!Number.isFinite(end)) end = Math.min(total, start + 2.5);
+    end = clamp(end, start + 0.2, total);
+    if (end <= start) {
+      toast("End must be after start.");
+      return;
+    }
+    const position = dom.textOverlayAnchor?.value || "center";
+    const kind = CLASSIC_TEXT_KINDS[position] || "title";
+    state.classicText.overlays.push({
+      id: classicLayerId("tx"),
+      type: "text",
+      kind,
+      text,
+      start: round2(start),
+      end: round2(end),
+      anchor: CLASSIC_TEXT_ANCHORS[position] || "center",
+      box: { ...CLASSIC_TEXT_BOX[kind] },
+      z: 10 + state.classicText.overlays.length,
+      style: {},
+      safe_zone: true,
+      opacity: 1,
+    });
+    dom.textOverlayText.value = "";
+    dom.textOverlayStart.value = String(round2(end));
+    dom.textOverlayEnd.value = Math.min(total, round2(end) + 2.5).toFixed(1);
+    saveClassicText();
+    renderClassicText();
+  }
+
+  function addClassicEffect() {
+    if (!classicTextSupported()) {
+      toast("Effects render on 9:16 and 4:5 only.");
+      return;
+    }
+    const total = Math.max(0, Number(state.plan?.total) || 0);
+    if (total < 0.2) {
+      toast("The cut is too short for an effect.");
+      return;
+    }
+    const kind = dom.effectKind?.value || "punch_in";
+    const seconds = clamp(Number(dom.effectDuration?.value) || 1.2, 0.2, total);
+    state.classicText.effects.push({
+      id: classicLayerId(kind === "circle" ? "fx" : "mo"),
+      kind,
+      start: 0,
+      end: round2(Math.min(total, seconds)),
+      duration: round2(Math.min(total, seconds)),
+    });
+    saveClassicText();
+    renderClassicText();
+  }
+
+  function deleteClassicOverlay(id) {
+    state.classicText.overlays = state.classicText.overlays.filter((layer) => layer.id !== id);
+    saveClassicText();
+    renderClassicText();
+  }
+
+  function deleteClassicEffect(id) {
+    state.classicText.effects = state.classicText.effects.filter((effect) => effect.id !== id);
+    saveClassicText();
+    renderClassicText();
+  }
+
+  function classicEditPayload() {
+    if (!classicTextSupported()) return null;
+    const key = classicCutKey(classicPlanClips());
+    if (!key || key !== state.classicText.dataKey) return null;
+    const overlays = state.classicText.overlays.map((layer) => ({ ...layer }));
+    const effects = state.classicText.effects.map((effect) => ({
+      id: effect.id,
+      kind: effect.kind,
+      start: Number(effect.start) || 0,
+      end: Number(effect.end) || 0,
+    }));
+    if (!overlays.length && !effects.length) return null;
+    return { overlays, effects };
+  }
+
+  function bindClassicText() {
+    dom.textOverlayAdd?.addEventListener("click", addClassicOverlay);
+    dom.effectAdd?.addEventListener("click", addClassicEffect);
+    dom.textOverlayText?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addClassicOverlay();
+      }
+    });
+    dom.textOverlayList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-overlay-delete]");
+      if (button) deleteClassicOverlay(button.dataset.overlayDelete);
+    });
+    dom.effectList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-effect-delete]");
+      if (button) deleteClassicEffect(button.dataset.effectDelete);
+    });
+  }
+
   // ---------------------------------------------------------------- render reel
 
   function currentHookId() {
@@ -6213,6 +6527,7 @@
           clips: state.edited && state.plan ? state.plan.clips : null,
           script_id: state.scriptId || null,
           audio: currentAudioPlan(),
+          edit: classicEditPayload(),
           force,
         }),
       });
@@ -6258,6 +6573,7 @@
                 clips: state.plan.clips,
                 script_id: state.scriptId || null,
                 audio: currentAudioPlan(),
+                edit: classicEditPayload(),
               }),
             });
             if (result.render) records.push(result.render);
