@@ -25,6 +25,7 @@ import { mountInspector } from "./inspector.js";
 import {
   ASPECTS,
   aspectLabel,
+  captionPreset,
   clone,
   clamp,
   formatTime,
@@ -32,6 +33,7 @@ import {
   storyDuration,
 } from "./model.js";
 import {
+  autoSubtitles,
   buildCaptionTrack,
   createEdit,
   getCaptionTrack,
@@ -52,7 +54,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=0.2.0";
+    link.href = "/static/studio/edit/edit.css?v=0.2.1";
     document.head.append(link);
   }
   // edit.css is owned elsewhere; the step bar's sticky behaviour lives here.
@@ -146,6 +148,17 @@ export function mount(root, ctx) {
     staleAspects: [],
     invalidated: 0,
     trimBusy: false,
+    // Batch auto-subtitles: one route call, then one Edit patch per story.
+    autoSubs: {
+      running: false,
+      phase: "idle",
+      done: 0,
+      total: 0,
+      attached: 0,
+      failures: 0,
+      summary: "",
+    },
+    autoSubsScope: "story",
   };
 
   const dom = {};
@@ -691,9 +704,9 @@ export function mount(root, ctx) {
     }
   }
 
-  function storyTrack() {
-    if (!state.job || !state.set || !state.story) return null;
-    const key = `${state.set.id}:${state.story.id}`;
+  function storyTrack(storyId = state.story?.id) {
+    if (!state.job || !state.set || !storyId) return null;
+    const key = `${state.set.id}:${storyId}`;
     const value = state.job.story_captions?.[key];
     if (!value) return null;
     return getCaptionTrack(state.job.id, value).catch(() => null);
@@ -722,6 +735,247 @@ export function mount(root, ctx) {
         : { enabled: true },
       audio: { mode: "original" },
     };
+  }
+
+  function autoSubsStoryIds(scope) {
+    const ids = (state.set?.stories || [])
+      .map((story) => story.id)
+      .filter(Boolean);
+    if (scope === "set") return ids;
+    return state.story?.id ? [state.story.id] : [];
+  }
+
+  function currentCaptionStyle() {
+    return String(
+      state.edit?.captions?.style_id
+      || state.captions?.style_id
+      || "clean",
+    );
+  }
+
+  function autoSubsSummary({ attached, failures, firstError, keptStyles = 0 }) {
+    const parts = [
+      formatCount(attached, "track"),
+      formatCount(failures, "failure"),
+    ];
+    if (keptStyles) parts.push(`${formatCount(keptStyles, "existing style")} kept`);
+    const head = `Auto subtitles: ${parts.join(", ")}.`;
+    return firstError ? `${head} First error: ${firstError}` : head;
+  }
+
+  /** Keep the current open Edit pointing at the head the batch just patched. */
+  function adoptAutoCaptions(patched, fallbackCaptions) {
+    if (!state.edit) return;
+    const fresh = patched?.edit;
+    if (fresh) {
+      state.edit.id = fresh.id;
+      state.edit.version = fresh.version;
+      state.edit.parent = fresh.parent;
+      state.edit.hash = fresh.hash;
+      state.edit.created = fresh.created;
+      state.edit.story_ref = fresh.story_ref || state.edit.story_ref;
+      state.edit.aspect = fresh.aspect || state.edit.aspect;
+      state.edit.captions = clone(fresh.captions || fallbackCaptions || {});
+    } else if (fallbackCaptions) {
+      state.edit.captions = clone(fallbackCaptions);
+    }
+    state.dirty.delete("captions");
+    state.duration = storyDuration(state.story, state.edit);
+    populateHeader();
+    syncPreview();
+    scheduleTimeline();
+    setUndoState();
+    setMeta();
+  }
+
+  /**
+   * The batch builds every track in the requested style. When a story already
+   * had a different caption style, copy the old track's full style onto the
+   * new track so the creator's style choice survives.
+   */
+  async function keepExistingCaptionStyle(jobId, previous, trackId) {
+    if (!previous?.track_id || !previous.style_id) return false;
+    const old = await getCaptionTrack(jobId, previous.track_id).catch(() => null);
+    const style = old?.style
+      ? { ...clone(old.style), id: old.style.id || previous.style_id }
+      : captionPreset(previous.style_id);
+    await patchCaptionTrack(jobId, trackId, { style });
+    return true;
+  }
+
+  /** Read or create one story's Edit, then point its captions at the new track. */
+  async function attachAutoSubtitleTrack(row, requestedStyle, { jobId, setId, aspect }) {
+    const storyId = String(row?.story_id || "");
+    const trackId = String(row?.track_id || "");
+    if (!storyId || !trackId) {
+      throw new Error("The batch result is missing a story or track id.");
+    }
+    const returnedStyle = String(row.style_id || requestedStyle || "clean");
+    const current = await getCurrentEdit(jobId, setId, storyId, aspect);
+    let edit = current?.edit || null;
+    if (!edit) {
+      const jobTrack = await storyTrack(storyId);
+      const layers = defaultLayers(null, jobTrack);
+      const created = await createEdit(jobId, {
+        set_id: setId,
+        story_id: storyId,
+        aspect,
+        ...layers,
+      });
+      if (!created?.edit) throw new Error("The server did not return the new edit.");
+      edit = created.edit;
+    }
+
+    const previous = edit.captions || {};
+    const hadTrack = Boolean(previous.track_id);
+    const hadStyle = Boolean(previous.style_id);
+    const resolvedStyle = hadStyle ? previous.style_id : returnedStyle;
+    if (hadStyle && previous.style_id !== returnedStyle) {
+      try {
+        await keepExistingCaptionStyle(jobId, previous, trackId);
+      } catch (_) {
+        /* Attaching the track matters more than a restyle; keep the edit ref. */
+      }
+    }
+
+    const captions = {
+      ...previous,
+      track_id: trackId,
+      style_id: resolvedStyle,
+      enabled: true,
+    };
+    const patched = await patchEdit(jobId, edit.id, { captions });
+    if (state.story?.id === storyId && state.aspect === aspect) {
+      adoptAutoCaptions(patched, captions);
+      const track = await getCaptionTrack(jobId, trackId).catch(() => null);
+      if (!disposed) {
+        state.captions = track;
+        syncPreview();
+        scheduleTimeline();
+      }
+    }
+    return { attached: true, keptStyle: hadTrack && hadStyle };
+  }
+
+  async function runAutoSubtitles(scope = "story") {
+    if (state.autoSubs.running) return false;
+    if (!state.job?.id || !state.set?.id || !state.story?.id) {
+      notify("Open a moment before building captions.", "bad");
+      return false;
+    }
+    const storyIds = autoSubsStoryIds(scope);
+    if (!storyIds.length) {
+      notify("This set has no moments to caption.", "bad");
+      return false;
+    }
+    const saved = await flushSave();
+    if (!saved) return false;
+
+    const jobId = state.job.id;
+    const setId = state.set.id;
+    const aspect = state.aspect;
+    const styleId = currentCaptionStyle();
+    state.autoSubsScope = scope === "set" ? "set" : "story";
+    state.autoSubs = {
+      running: true,
+      phase: "building",
+      done: 0,
+      total: storyIds.length,
+      attached: 0,
+      failures: 0,
+      summary: "",
+    };
+    renderAutoSubs();
+    setSaveStatus("Building captions…", "busy");
+
+    try {
+      const result = await autoSubtitles(jobId, {
+        setId,
+        aspect,
+        styleId,
+        storyIds,
+      });
+      if (disposed) return false;
+      const rows = Array.isArray(result?.tracks) ? result.tracks : [];
+      const failed = Array.isArray(result?.failed) ? result.failed.slice() : [];
+      state.autoSubs = {
+        ...state.autoSubs,
+        phase: "attaching",
+        total: rows.length,
+        done: 0,
+      };
+      renderAutoSubs();
+
+      let attached = 0;
+      let keptStyles = 0;
+      for (const row of rows) {
+        if (disposed) return false;
+        try {
+          const outcome = await attachAutoSubtitleTrack(row, styleId, {
+            jobId,
+            setId,
+            aspect,
+          });
+          if (outcome.attached) attached += 1;
+          if (outcome.keptStyle) keptStyles += 1;
+        } catch (error) {
+          failed.push({
+            story_id: row?.story_id || "",
+            error: error?.message || "Could not attach the caption track.",
+          });
+        }
+        state.autoSubs = { ...state.autoSubs, done: state.autoSubs.done + 1 };
+        renderAutoSubs();
+      }
+
+      const summary = autoSubsSummary({
+        attached,
+        failures: failed.length,
+        firstError: failed[0]?.error || "",
+        keptStyles,
+      });
+      state.autoSubs = {
+        ...state.autoSubs,
+        running: false,
+        phase: "done",
+        attached,
+        failures: failed.length,
+        summary,
+      };
+      if (disposed) return true;
+      setSaveStatus(
+        failed.length ? "Auto subtitles partly done" : "Saved",
+        failed.length ? "bad" : "ok",
+      );
+      notify(summary, failed.length ? "bad" : "ok");
+      renderAutoSubs();
+      return true;
+    } catch (error) {
+      if (!disposed) {
+        const summary = autoSubsSummary({
+          attached: 0,
+          failures: 1,
+          firstError: error?.message || "Could not build the caption tracks.",
+        });
+        state.autoSubs = {
+          ...state.autoSubs,
+          running: false,
+          phase: "done",
+          attached: 0,
+          failures: 1,
+          summary,
+        };
+        setSaveStatus("Captions not built", "bad");
+        notify(summary, "bad");
+        renderAutoSubs();
+      }
+      return false;
+    }
+  }
+
+  function renderAutoSubs() {
+    if (disposed) return;
+    renderInspector();
   }
 
   async function resolveCaptionTrack(edit) {
@@ -792,6 +1046,14 @@ export function mount(root, ctx) {
       refresh: () => renderInspector(),
       seek: (time) => seek(time),
       notify,
+      getAutoSubtitles: () => state.autoSubs,
+      getAutoSubtitlesScope: () => state.autoSubsScope,
+      setAutoSubtitlesScope: (scope) => {
+        state.autoSubsScope = scope === "set" ? "set" : "story";
+      },
+      autoSubtitlesStoryCount: () => (state.set?.stories || []).length,
+      canAutoSubtitles: () => Boolean(state.job?.id && state.set?.id && state.story?.id),
+      autoSubtitles: (scope) => runAutoSubtitles(scope),
       setGraphics(next) {
         if (!state.edit) return;
         state.edit.graphics = clone(next);

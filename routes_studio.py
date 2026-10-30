@@ -36,6 +36,37 @@ class AddStoryBody(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class AutoCleanBody(BaseModel):
+    include_handles: bool = False
+
+    model_config = {"extra": "forbid"}
+
+
+def _edit_story(job: dict, edit: dict) -> dict | None:
+    """Resolve an Edit's story inside this job, or ``None``."""
+    reference = edit.get("story_ref") or {}
+    set_id = str(reference.get("set_id") or "")
+    story_id = str(reference.get("story_id") or "")
+    raw = job.get("clip_sets")
+    records = raw.values() if isinstance(raw, dict) else raw or []
+    record = next(
+        (
+            item for item in records
+            if isinstance(item, dict) and str(item.get("id") or "") == set_id
+        ),
+        None,
+    )
+    if record is None:
+        return None
+    return next(
+        (
+            item for item in record.get("stories") or []
+            if isinstance(item, dict) and str(item.get("id") or "") == story_id
+        ),
+        None,
+    )
+
+
 @router.post("/api/path/reveal")
 def reveal_path(body: RevealPathBody, request: Request) -> dict:
     """Show a video path in Finder before it is imported."""
@@ -212,3 +243,73 @@ def retry_speech(job_id: str, request: Request, body: SpeechRetryBody | None = N
         }
 
     return app._voice_task("transcribe", job_id, work, reuse=True)
+
+
+@router.post("/api/jobs/{job_id}/edits/{edit_id}/auto-clean")
+def auto_clean(
+    job_id: str,
+    edit_id: str,
+    request: Request,
+    body: AutoCleanBody | None = None,
+) -> dict:
+    """Build Clean layers from the latest Check report for one Edit.
+
+    The Edit is never written: the response carries only the layers the
+    frontend has not applied yet, and autosave saves the merged Edit. The
+    rights gate, watermark refusal and screen-text refusal stay in
+    :func:`cleanup.tracklet_clean_layers`, never in this route.
+    """
+    import app
+    import cleanup
+    import detect
+    import edits
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = app.load_job(job_id)
+    job_dir = app._job_dir(job_id)
+    try:
+        edit = edits.load_edit(job_dir, edit_id)
+    except edits.EditError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    if edit is None:
+        raise HTTPException(404, "Edit not found.")
+    if _edit_story(job, edit) is None:
+        raise HTTPException(404, "The story for this Edit is not in this job.")
+    report = detect.load_report(job_dir)
+    if report is None:
+        raise HTTPException(404, "Run Scan footage first.")
+    tracklets = [
+        item for item in report.get("tracklets") or [] if isinstance(item, dict)
+    ]
+    built = cleanup.tracklet_clean_layers(
+        tracklets,
+        job=job,
+        settings=app.settings_store.load_settings(),
+        include_handles=bool(body.include_handles) if body else False,
+    )
+    merged = cleanup.merge_auto_clean_layers(
+        edit.get("clean") or [], built.get("layers") or [],
+    )
+    skipped = [
+        {
+            "tracklet_id": item.get("tracklet_id"),
+            "kind": item.get("kind"),
+            "reason": item.get("reason"),
+        }
+        for item in built.get("refused") or []
+    ]
+    skipped.extend(merged["skipped"])
+    warnings = [str(item) for item in built.get("warnings") or []]
+    if not tracklets:
+        warnings.insert(
+            0,
+            "Scan footage found no usable text overlays to clean. "
+            "Run Scan footage again if the video changed.",
+        )
+    return {
+        "layers": merged["layers"],
+        "added": len(merged["layers"]),
+        "skipped": skipped,
+        "warnings": warnings,
+    }

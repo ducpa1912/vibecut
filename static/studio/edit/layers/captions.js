@@ -43,6 +43,84 @@ function colorInput(value) {
   return el("input", { type: "color", value: safe });
 }
 
+function autoSubsProgress(auto) {
+  if (!auto?.running) return "";
+  if (auto.phase === "building") {
+    const count = Number(auto.total) || 0;
+    return `Building ${count === 1 ? "1 caption track" : `${count} caption tracks`}…`;
+  }
+  return `Attaching caption tracks… ${Number(auto.done) || 0}/${Number(auto.total) || 0}`;
+}
+
+/** One quiet batch action: this moment, or every moment in the current set. */
+function autoSubtitlesBlock(ctx) {
+  const auto = ctx.getAutoSubtitles?.() || {};
+  const running = Boolean(auto.running);
+  const available = Boolean(ctx.canAutoSubtitles?.());
+  const scopeValue = ctx.getAutoSubtitlesScope?.() === "set" ? "set" : "story";
+  const storyCount = Number(ctx.autoSubtitlesStoryCount?.()) || 0;
+
+  const scope = el("select", { "aria-label": "Auto subtitles scope", disabled: running });
+  scope.append(el("option", {
+    value: "story",
+    text: "This moment",
+    selected: scopeValue === "story",
+  }));
+  scope.append(el("option", {
+    value: "set",
+    text: storyCount > 1 ? `Every moment in this set (${storyCount})` : "Every moment in this set",
+    selected: scopeValue === "set",
+  }));
+  scope.addEventListener("change", () => ctx.setAutoSubtitlesScope?.(scope.value));
+
+  const button = el("button", {
+    class: "st-btn st-btn-quiet st-btn-small st-auto-subs-run",
+    type: "button",
+    text: running ? "Working…" : "Auto subtitles",
+    disabled: running || !available,
+    title: available
+      ? "Build captions from the speech in this set."
+      : "Open a moment before building captions.",
+  });
+  button.addEventListener("click", async () => {
+    if (running) return;
+    scope.disabled = true;
+    button.disabled = true;
+    button.textContent = "Working…";
+    try {
+      await ctx.autoSubtitles(scope.value);
+    } finally {
+      if (button.isConnected) {
+        button.disabled = Boolean(ctx.getAutoSubtitles?.().running) || !ctx.canAutoSubtitles?.();
+        button.textContent = "Auto subtitles";
+      }
+    }
+  });
+
+  const progress = autoSubsProgress(auto);
+  const message = auto.summary || progress;
+  const status = el("p", {
+    class: "st-hint st-auto-subs-status",
+    role: "status",
+    "aria-live": "polite",
+    text: message,
+    hidden: !message,
+  });
+  if (message && !running) status.dataset.tone = Number(auto.failures) ? "bad" : "ok";
+
+  return el("div", { class: "st-auto-subs" }, [
+    el("div", { class: "st-layer-stage-head" }, [
+      el("h4", { text: "Auto subtitles" }),
+      el("div", { class: "st-auto-subs-controls" }, [scope, button]),
+    ]),
+    el("p", {
+      class: "st-hint",
+      text: "Build caption tracks for the speech in this set. Existing caption text stays in its old track.",
+    }),
+    status,
+  ]);
+}
+
 export function mountCaptionsPanel(host, ctx) {
   const track = ctx.getCaptions();
   host.replaceChildren();
@@ -71,6 +149,7 @@ export function mountCaptionsPanel(host, ctx) {
       el("div", { class: "st-layer-add" }, [preset, build]),
       el("p", { class: "st-hint", text: "Captions need the speech read during import. If none was found, import the video again with Speech on." }),
     ]));
+    host.append(autoSubtitlesBlock(ctx));
     return;
   }
 
@@ -91,6 +170,7 @@ export function mountCaptionsPanel(host, ctx) {
   ]);
   host.append(head);
   host.append(el("p", { class: "st-hint", text: `${track.cues?.length || 0} lines · style ${track.style_id || "clean"} · version ${track.version || 1}` }));
+  host.append(autoSubtitlesBlock(ctx));
 
   const preset = el("select", { "aria-label": "Caption preset" });
   for (const [value, item] of Object.entries(CAPTION_PRESETS)) {

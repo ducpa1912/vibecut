@@ -243,12 +243,7 @@ def _padded_box(box: dict) -> dict:
     }
 
 
-def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
-    raw = str(tracklet.get("tracklet_id") or tracklet.get("id") or "trk").strip()
-    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")[:56]
-    if not safe or not safe[0].isalpha():
-        safe = f"trk_{safe}" if safe else "trk"
-    base = f"cl_{safe}"
+def _unique_layer_id(base: str, used: set[str]) -> str:
     candidate = base[:64]
     index = 2
     while candidate in used:
@@ -257,6 +252,14 @@ def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
         index += 1
     used.add(candidate)
     return candidate
+
+
+def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
+    raw = str(tracklet.get("tracklet_id") or tracklet.get("id") or "trk").strip()
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")[:56]
+    if not safe or not safe[0].isalpha():
+        safe = f"trk_{safe}" if safe else "trk"
+    return _unique_layer_id(f"cl_{safe}", used)
 
 
 def _layer_ranges(tracklet: dict) -> list[dict]:
@@ -433,6 +436,82 @@ def tracklet_clean_layers(
         "attested": bool(effective),
         "tracklets": len(items),
     }
+
+
+def _clean_region_key(layer: dict) -> tuple:
+    """Identify one Clean region without its layer or tracklet id."""
+    box = layer.get("box") if isinstance(layer.get("box"), dict) else {}
+    try:
+        coords = tuple(
+            round(float(box.get(key) or 0.0), 6)
+            for key in ("x", "y", "w", "h")
+        )
+    except (TypeError, ValueError):
+        coords = (0.0, 0.0, 0.0, 0.0)
+    return (
+        str(layer.get("kind") or "").strip().lower(),
+        coords,
+        tuple((item["start"], item["end"]) for item in _layer_ranges(layer)),
+    )
+
+
+def merge_auto_clean_layers(
+    existing: Iterable[dict] | None,
+    generated: Iterable[dict] | None,
+) -> dict:
+    """Return generated Clean layers that an Edit does not already contain.
+
+    The existing layers are never changed. A ``tracklet_id`` is the primary
+    identity; without one, the same kind, box and merged ranges mean the same
+    region. A generated id that collides with an existing id gets a numeric
+    suffix, so the frontend can still save the merged Edit.
+    """
+    current = [item for item in existing or [] if isinstance(item, dict)]
+    tracklet_ids = {
+        str(item.get("tracklet_id") or "").strip()
+        for item in current
+        if str(item.get("tracklet_id") or "").strip()
+    }
+    regions = {_clean_region_key(item) for item in current}
+    used = {
+        str(item.get("id") or "")
+        for item in current
+        if str(item.get("id") or "")
+    }
+    layers: list[dict] = []
+    skipped: list[dict] = []
+    for item in generated or []:
+        if not isinstance(item, dict):
+            continue
+        tracklet_id = str(item.get("tracklet_id") or "").strip()
+        kind = str(item.get("tracklet_kind") or item.get("kind") or "").strip().lower()
+        region = _clean_region_key(item)
+        if tracklet_id and tracklet_id in tracklet_ids:
+            regions.add(region)
+            skipped.append({
+                "tracklet_id": tracklet_id,
+                "kind": kind,
+                "reason": "This tracklet already has a Clean layer in the Edit.",
+            })
+            continue
+        if region in regions:
+            skipped.append({
+                "tracklet_id": tracklet_id or None,
+                "kind": kind,
+                "reason": "An identical Clean region is already in the Edit.",
+            })
+            continue
+        layer = dict(item)
+        raw_id = str(layer.get("id") or "").strip()
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_id).strip("_")[:64]
+        if not safe or not safe[0].isalpha():
+            safe = f"cl_{safe}" if safe else "cl_auto"
+        layer["id"] = _unique_layer_id(safe, used)
+        layers.append(layer)
+        regions.add(region)
+        if tracklet_id:
+            tracklet_ids.add(tracklet_id)
+    return {"layers": layers, "skipped": skipped}
 
 
 def normalize_range(value: Any, span: dict | None) -> dict:

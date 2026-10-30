@@ -31,6 +31,11 @@ import {
 const CHECK_POLL_MS = 2500;
 const MAX_CLEAN = 32;
 const PREFILL_PREFIX = "vibecut.studio.clean.prefill.";
+const SCAN_REQUIRED = "Run Scan footage first.";
+
+// The status outlives one panel mount: selecting a new layer remounts the
+// inspector, and the summary must stay visible after that refresh.
+const AUTO_CLEAN_STATE = new Map();
 
 const KIND_ORDER = ["delogo", "blur", "plate", "mask", "crop_guard"];
 
@@ -77,6 +82,141 @@ async function fetchCheck(jobId) {
     }
     throw error;
   }
+}
+
+/**
+ * POST the Edit's auto-clean route with an empty body.
+ *
+ * Handles are excluded. The server keeps the rights gate and the per-kind
+ * refusals, and returns only the layers the saved Edit does not already hold.
+ */
+export function autoCleanRequest(jobId, editId) {
+  return request(
+    `/api/jobs/${encodeURIComponent(jobId)}/edits/${encodeURIComponent(editId)}/auto-clean`,
+    { method: "POST", body: {} },
+  );
+}
+
+function autoCleanStateFor(jobId) {
+  const key = String(jobId || "open");
+  let state = AUTO_CLEAN_STATE.get(key);
+  if (!state) {
+    state = { busy: false, notice: null };
+    AUTO_CLEAN_STATE.set(key, state);
+    if (AUTO_CLEAN_STATE.size > 8) {
+      AUTO_CLEAN_STATE.delete(AUTO_CLEAN_STATE.keys().next().value);
+    }
+  }
+  return state;
+}
+
+/**
+ * Merge generated layers into the current Edit without touching what is there.
+ *
+ * The server already dedupes against the saved Edit, but this panel can hold
+ * unsaved layers. A tracklet_id is the primary identity; an existing id is a
+ * second guard for older layers that do not carry a tracklet_id.
+ */
+export function mergeAutoCleanLayers(existing, generated, limit = MAX_CLEAN) {
+  const current = Array.isArray(existing)
+    ? existing.filter((layer) => layer && typeof layer === "object")
+    : [];
+  const layers = current.map((layer) => clone(layer));
+  const ids = new Set();
+  const tracklets = new Set();
+  for (const layer of layers) {
+    const id = String(layer?.id || "").trim();
+    if (id) ids.add(id);
+    const trackletId = String(layer?.tracklet_id || "").trim();
+    if (trackletId) tracklets.add(trackletId);
+  }
+
+  const cap = Math.max(0, Math.trunc(numberOr(limit, MAX_CLEAN)));
+  const added = [];
+  const skipped = [];
+  let overflow = 0;
+
+  for (const layer of Array.isArray(generated) ? generated : []) {
+    if (!layer || typeof layer !== "object") continue;
+    const trackletId = String(layer.tracklet_id || "").trim();
+    const layerId = String(layer.id || "").trim();
+    if (trackletId && tracklets.has(trackletId)) {
+      skipped.push({
+        tracklet_id: trackletId,
+        reason: "This tracklet already has a Clean layer in the Edit.",
+      });
+      continue;
+    }
+    if (layerId && ids.has(layerId)) {
+      skipped.push({
+        tracklet_id: trackletId || null,
+        reason: "An identical Clean layer is already in the Edit.",
+      });
+      continue;
+    }
+    if (layers.length >= cap) {
+      overflow += 1;
+      continue;
+    }
+    const next = clone(layer);
+    if (!layerId) {
+      let id = `cl_auto_${layers.length + 1}`;
+      while (ids.has(id)) id = `${id}_${layers.length + 1}`;
+      next.id = id;
+    }
+    layers.push(next);
+    added.push(next);
+    if (next.id) ids.add(String(next.id));
+    if (trackletId) tracklets.add(trackletId);
+  }
+
+  if (overflow) {
+    skipped.push({
+      tracklet_id: null,
+      reason: `${formatCount(overflow, "region")} did not fit; an Edit supports ${cap} clean layers.`,
+    });
+  }
+  return { layers, added, skipped, overflow };
+}
+
+/** One sentence for the panel: counts, the first refusal, then warnings. */
+export function autoCleanSummary(result) {
+  const added = Math.max(0, Math.trunc(numberOr(result?.added, 0)));
+  const skipped = Array.isArray(result?.skipped)
+    ? result.skipped.filter((item) => item && typeof item === "object")
+    : [];
+  const warnings = Array.isArray(result?.warnings)
+    ? result.warnings.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const parts = [
+    added ? `Added ${formatCount(added, "Clean layer")}.` : "No new text was found.",
+  ];
+  if (skipped.length) {
+    const reason = String(skipped[0]?.reason || "").trim();
+    parts.push(`Skipped ${formatCount(skipped.length, "region")}${reason ? `: ${reason}` : "."}`);
+  }
+  if (!added) parts.push("Your current Clean layers are unchanged.");
+  parts.push(...warnings);
+  return {
+    text: parts.join(" "),
+    tone: added && !warnings.length ? "ok" : "",
+    added,
+    skipped: skipped.length,
+    warnings,
+  };
+}
+
+/** Never throw a raw 404: the panel asks for a Scan instead. */
+export function autoCleanFailure(error) {
+  const message = String(error?.message || "").trim();
+  if (error?.status === 404 && /run scan footage first/i.test(message)) {
+    return { text: SCAN_REQUIRED, tone: "bad", scan: true };
+  }
+  return {
+    text: message || "Could not remove detected text.",
+    tone: "bad",
+    scan: false,
+  };
 }
 
 function prefillKey(jobId, storyRef, aspect) {
@@ -281,6 +421,7 @@ export function mountCleanPanel(host, ctx) {
   let policyError = "";
   let rightsBusy = false;
   let handleTicked = false;
+  const autoState = autoCleanStateFor(jobId);
 
   host.replaceChildren(el("p", { class: "st-hint", text: "Reading Check findings…" }));
 
@@ -489,6 +630,95 @@ export function mountCleanPanel(host, ctx) {
     } else if (badge) {
       badge.remove();
     }
+  }
+
+  async function runAutoClean() {
+    if (autoState.busy) return;
+    const activeJob = currentJobId() || jobId;
+    const currentEdit = ctx.getEdit();
+    if (!activeJob || !currentEdit?.id) {
+      autoState.notice = {
+        text: "Open an Edit to remove detected text.",
+        tone: "bad",
+        scan: false,
+      };
+      render();
+      return;
+    }
+    autoState.busy = true;
+    autoState.notice = null;
+    render();
+    try {
+      const result = await autoCleanRequest(activeJob, currentEdit.id);
+      if (disposed) {
+        autoState.busy = false;
+        return;
+      }
+      const merged = mergeAutoCleanLayers(ctx.getEdit()?.clean || [], result?.layers);
+      const first = merged.added[0]?.id || "";
+      if (merged.added.length) ctx.setClean(merged.layers);
+      const summary = autoCleanSummary({
+        ...(result && typeof result === "object" ? result : {}),
+        added: merged.added.length,
+        skipped: [
+          ...(Array.isArray(result?.skipped) ? result.skipped : []),
+          ...merged.skipped,
+        ],
+      });
+      autoState.busy = false;
+      autoState.notice = { text: summary.text, tone: summary.tone, scan: false };
+      if (first) ctx.select("clean", first);
+      else ctx.refresh();
+    } catch (error) {
+      if (disposed) {
+        autoState.busy = false;
+        return;
+      }
+      autoState.busy = false;
+      autoState.notice = autoCleanFailure(error);
+      ctx.refresh();
+    }
+  }
+
+  function autoCleanToolbar() {
+    const running = Boolean(autoState.busy);
+    const editId = ctx.getEdit()?.id || "";
+    const button = el("button", {
+      class: "st-btn st-btn-quiet st-btn-small st-auto-clean-run",
+      type: "button",
+      text: running ? "Removing detected text…" : "Remove all detected text",
+      disabled: running || !editId,
+      "aria-busy": running ? "true" : "false",
+      title: editId
+        ? "Add every Clean layer Check found for this Edit. Regions already covered stay as they are."
+        : "Open an Edit to remove detected text.",
+    });
+    button.addEventListener("click", () => { void runAutoClean(); });
+    return el("div", { class: "st-layer-foot st-clean-toolbar", style: "margin-top:9px" }, [button]);
+  }
+
+  function autoCleanStatusNode() {
+    const notice = autoState.notice;
+    if (!notice?.text) return null;
+    const row = el("div", {
+      class: "st-auto-clean-status",
+      role: "status",
+      dataset: { tone: notice.tone || "" },
+      style: "margin-top:7px",
+    }, [
+      el("p", {
+        class: notice.tone === "bad" ? "st-error" : "st-hint",
+        text: notice.text,
+      }),
+    ]);
+    if (notice.scan) {
+      row.append(el("a", {
+        class: "st-btn st-btn-ghost st-btn-small",
+        href: "#/moments",
+        text: "Open Moments",
+      }));
+    }
+    return row;
   }
 
   function renderRights() {
@@ -944,6 +1174,9 @@ export function mountCleanPanel(host, ctx) {
       el("h3", { text: "Remove old text" }),
       el("p", { class: "st-hint", text: "Remove interpolates nearby pixels; blur softens, cover plates and masks hide, and crop guard keeps the region out of the crop. Nothing invents missing pixels or removes platform watermarks." }),
     ]);
+    head.append(autoCleanToolbar());
+    const autoStatus = autoCleanStatusNode();
+    if (autoStatus) head.append(autoStatus);
     head.append(renderRights());
     if (loadError) head.append(el("p", { class: "st-error", text: loadError }));
     host.append(head);

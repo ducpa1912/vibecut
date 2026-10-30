@@ -108,6 +108,23 @@ export function buildCaptionTrack(jobId, { setId, storyId, styleId = "clean" }) 
 }
 
 /**
+ * `POST /api/jobs/{id}/auto-subtitles`. Builds one caption track per story.
+ * The route writes tracks only; the caller attaches each returned track to
+ * that story's Edit.
+ */
+export function autoSubtitles(jobId, { setId, aspect = "9:16", styleId = "clean", storyIds = [] } = {}) {
+  return request(`${jobRoot(jobId)}/auto-subtitles`, {
+    method: "POST",
+    body: {
+      set_id: setId,
+      aspect,
+      style_id: styleId || "clean",
+      story_ids: Array.isArray(storyIds) ? storyIds : [],
+    },
+  });
+}
+
+/**
  * `PATCH /api/jobs/{id}/captions/{track_id}`.
  * `style` is the full style object; `cues` is optional.
  */

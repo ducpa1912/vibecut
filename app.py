@@ -55,6 +55,7 @@ import pipeline
 import preflight
 import render
 import rights
+import routes_auto_subs
 import routes_batches
 import routes_check
 import routes_classic
@@ -3182,6 +3183,7 @@ app.include_router(routes_overlays.router)
 app.include_router(routes_voice_clone.router)
 # Lane modules: new routes go here, not into app.py (docs/branching.md).
 app.include_router(routes_classic.router)
+app.include_router(routes_auto_subs.router)
 app.include_router(routes_studio.router)
 app.include_router(music.router)
 routes_library.install(app, JOBS)

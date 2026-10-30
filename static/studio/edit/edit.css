@@ -488,6 +488,43 @@
 
 /* ----------------------------------------------------------------- captions */
 
+.st-auto-subs {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px dashed var(--st-line-2);
+  border-radius: 9px;
+  background: rgba(9, 9, 11, 0.35);
+}
+.st-auto-subs .st-layer-stage-head {
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.st-auto-subs-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.st-auto-subs-controls select {
+  min-width: 0;
+  max-width: 150px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--st-line-2);
+  border-radius: 7px;
+  background: #0d0d0f;
+  color: var(--st-text);
+  font-size: 12px;
+}
+.st-auto-subs-controls .st-btn { flex: 0 0 auto; }
+.st-auto-subs p { margin: 0; }
+.st-auto-subs-status { line-height: 1.45; }
+.st-auto-subs-status[data-tone="ok"] { color: var(--st-ok); }
+.st-auto-subs-status[data-tone="bad"] { color: var(--st-bad); }
+
 .st-caption-style,
 .st-caption-cues { display: grid; gap: 8px; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--st-line); }
 .st-caption-style > select {
