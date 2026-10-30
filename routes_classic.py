@@ -9,10 +9,24 @@ module level would be circular.
 
 from __future__ import annotations
 
+import hashlib
+import threading
+import uuid
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 router = APIRouter()
+
+# Sound previews are short, cached and local. A provider call is made only
+# when the generated-music cache has no file for this prompt, and the request
+# is hard-bounded by both the preview length and the provider timeout.
+PREVIEW_SECONDS = 12.0
+PREVIEW_MAX_SECONDS = 20.0
+PREVIEW_TIMEOUT = 90
+PREVIEW_LOCK = threading.Lock()
 
 
 @router.get("/classic")
@@ -305,3 +319,231 @@ def classic_translate(job_id: str, body: TranslateBody) -> dict:
 @router.get("/api/classic/jobs/{job_id}/translate/status")
 def classic_translate_status(job_id: str, target: str = "") -> dict:
     return _translation_state(job_id, target)
+
+
+# ---------------------------------------------------------------- sound previews
+
+
+class MusicPreviewBody(BaseModel):
+    """One bounded AI music preview for the Classic Sound card."""
+
+    engine: str = "minimax-music"
+    prompt: str = ""
+    moods: list[str] = []
+    seconds: float | None = None
+
+
+def _preview_seconds(value: float | None, default: float = PREVIEW_SECONDS) -> float:
+    try:
+        seconds = float(value if value is not None else default)
+    except (TypeError, ValueError):
+        seconds = default
+    return round(max(3.0, min(PREVIEW_MAX_SECONDS, seconds)), 2)
+
+
+def _preview_cache_dir() -> Path:
+    import audio
+
+    directory = audio.CACHE / "classic-preview"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _preview_key(label: str, source: Path, seconds: float) -> str:
+    try:
+        stat = source.stat()
+        stamp = f"{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
+    except OSError:
+        stamp = str(source)
+    return hashlib.sha1(f"{label}|{stamp}|{seconds:.2f}".encode()).hexdigest()[:24]
+
+
+def _write_preview(source: Path, target: Path, seconds: float) -> Path:
+    """Trim and fade a local file into a small WAV preview."""
+    import audio
+
+    duration = audio.media_duration(source)
+    clip = seconds if duration <= 0.05 else min(seconds, duration)
+    clip = max(0.25, clip)
+    filters = ["aresample=48000"]
+    if clip > 0.8:
+        filters.insert(0, f"afade=t=out:st={clip - 0.35:.3f}:d=0.35")
+    tmp = target.with_name(f".{target.stem}.{uuid.uuid4().hex}.part.wav")
+    try:
+        audio._run([
+            audio._ffmpeg(), "-y", "-v", "error", "-i", str(source),
+            "-t", f"{clip:.3f}", "-ac", "2", "-af", ",".join(filters),
+            "-c:a", "pcm_s16le", str(tmp),
+        ], timeout=PREVIEW_TIMEOUT)
+        tmp.replace(target)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    return target
+
+
+def _cached_preview(
+    label: str, source: Path, seconds: float,
+) -> tuple[Path, str]:
+    """Return a cached preview or make one. Returns (path, cache state)."""
+    cache = _preview_cache_dir()
+    target = cache / f"{_preview_key(label, source, seconds)}.wav"
+    if target.is_file() and target.stat().st_size > 512:
+        return target, "hit"
+    with PREVIEW_LOCK:
+        if target.is_file() and target.stat().st_size > 512:
+            return target, "hit"
+        try:
+            _write_preview(source, target, seconds)
+        except Exception as exc:  # noqa: BLE001 - route reports the reason
+            raise HTTPException(400, f"Could not build the audio preview: {str(exc)[:240]}") from exc
+    return target, "miss"
+
+
+def _job_file(job_id: str, value: str) -> Path:
+    import app
+
+    root = app._job_dir(job_id).resolve()
+    candidate = Path(str(value or ""))
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise HTTPException(400, "Music path must be inside this job.")
+    if not resolved.is_file():
+        raise HTTPException(404, "That BGM file is missing. Choose it again.")
+    return resolved
+
+
+def _library_track(source: str, track: str, moods: list[str]) -> Path:
+    import audio
+
+    if source not in audio.MUSIC_DIRS:
+        raise HTTPException(400, "Choose the library or upload your own BGM.")
+    directory = audio.MUSIC_DIRS[source].resolve()
+    if track:
+        candidate = Path(track)
+        if not candidate.is_absolute():
+            candidate = directory / candidate
+        resolved = candidate.resolve()
+        if resolved != directory and directory not in resolved.parents:
+            raise HTTPException(400, "That track is outside the music library.")
+        if not resolved.is_file():
+            raise HTTPException(404, "That track is missing from the music library.")
+        return resolved
+    picked = audio.pick_music(audio.list_music(source), moods)
+    if not picked:
+        raise HTTPException(
+            404,
+            f"No tracks in {directory}. Drop an audio file there or upload your BGM.",
+        )
+    return Path(picked["id"])
+
+
+def _bgm_preview_source(
+    job_id: str, source: str, track: str, upload: str, moods: list[str],
+) -> Path:
+    source = str(source or "library").strip().lower()
+    if source == "upload":
+        if not upload:
+            raise HTTPException(400, "Choose your BGM file first.")
+        return _job_file(job_id, upload)
+    return _library_track(source, track, moods)
+
+
+def _generated_music_preview(body: MusicPreviewBody) -> tuple[Path, str]:
+    """Generate one short preview, cached by engine and prompt.
+
+    The file is cached before the provider is called again. The provider is
+    reached only on a cache miss, with a 90 s timeout and a bounded length.
+    """
+    import audio
+    import music
+
+    engine = str(body.engine or "").strip().lower()
+    allowed = {"minimax-music", "lyria-clip"}
+    if engine not in allowed:
+        raise HTTPException(400, "Choose MiniMax Music or OpenRouter Lyria.")
+    info = (audio.engine_status().get("music") or {}).get(engine) or {}
+    if not info.get("available"):
+        raise HTTPException(
+            409,
+            "AI music needs a MiniMax or OpenRouter key. Add one in Setup or use my BGM.",
+        )
+    seconds = _preview_seconds(body.seconds)
+    moods = [str(mood).strip()[:40] for mood in (body.moods or []) if str(mood).strip()][:6]
+    prompt = " ".join(str(body.prompt or "").split())[:300]
+    if not prompt:
+        prompt = audio.music_prompt(moods, seconds)
+    if f"{seconds:.0f}" not in prompt:
+        prompt = f"{prompt}, {seconds:.0f}-second instrumental preview"
+    cache = _preview_cache_dir()
+    key = hashlib.sha1(
+        f"music|{engine}|{prompt}|{seconds:.2f}".encode(),
+    ).hexdigest()[:24]
+    target = cache / f"music-{key}.wav"
+    if target.is_file() and target.stat().st_size > 1024:
+        return target, "hit"
+    with PREVIEW_LOCK:
+        if target.is_file() and target.stat().st_size > 1024:
+            return target, "hit"
+        try:
+            raw = music.generate_music(
+                engine, prompt, seconds, timeout=PREVIEW_TIMEOUT,
+            )
+        except audio.AudioError as exc:
+            raise HTTPException(409, str(exc)[:400]) from exc
+        if not raw or not Path(raw).is_file():
+            raise HTTPException(502, "Music generation returned no file.")
+        try:
+            _write_preview(Path(raw), target, seconds)
+        except Exception as exc:  # noqa: BLE001 - route reports the reason
+            raise HTTPException(400, f"Could not build the music preview: {str(exc)[:240]}") from exc
+    return target, "miss"
+
+
+@router.get("/api/classic/jobs/{job_id}/sound/bgm-preview")
+def classic_bgm_preview(
+    job_id: str,
+    source: str = "library",
+    track: str = "",
+    upload: str = "",
+    moods: str = "",
+    seconds: float = PREVIEW_SECONDS,
+) -> FileResponse:
+    """Play the chosen BGM as a bounded local preview, never a provider call."""
+    import app
+
+    app.load_job(job_id)
+    mood_list = [item.strip()[:40] for item in str(moods or "").split(",") if item.strip()][:6]
+    path = _bgm_preview_source(job_id, source, track, upload, mood_list)
+    preview, cache_state = _cached_preview("bgm", path, _preview_seconds(seconds))
+    return FileResponse(
+        preview,
+        media_type="audio/wav",
+        filename="bgm-preview.wav",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-VibeCut-Preview": cache_state,
+        },
+    )
+
+
+@router.post("/api/classic/jobs/{job_id}/sound/music-preview")
+def classic_music_preview(job_id: str, body: MusicPreviewBody) -> FileResponse:
+    """Generate or replay one short AI music preview, cached by prompt."""
+    import app
+
+    app.load_job(job_id)
+    path, cache_state = _generated_music_preview(body)
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename="music-preview.wav",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-VibeCut-Preview": cache_state,
+        },
+    )

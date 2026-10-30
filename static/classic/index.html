@@ -458,16 +458,16 @@
                 <button id="mixer-open" class="ghost small" type="button">Mixer</button>
               </div>
               <div class="sound-tabs" role="tablist" aria-label="Sound tabs">
-                <button type="button" data-sound-tab="voice" class="active">Voice</button>
-                <button type="button" data-sound-tab="music">Music</button>
+                <button id="sound-tab-voice" type="button" data-sound-tab="voice" class="active" role="tab" aria-selected="true" aria-controls="audio-voice-step">Voice</button>
+                <button id="sound-tab-music" type="button" data-sound-tab="music" role="tab" aria-selected="false" aria-controls="audio-music-step">Music</button>
               </div>
 
-              <div id="audio-voice-step" class="sound-panel" data-sound-panel="voice">
+              <div id="audio-voice-step" class="sound-panel" data-sound-panel="voice" role="tabpanel" aria-labelledby="sound-tab-voice">
                 <div id="audio-voice-source" class="audio-source-row" hidden>
                   <label class="check compact"><input id="audio-source-generate" type="radio" name="audio-source" value="generate" checked> Generate</label>
                   <label class="check compact"><input id="audio-source-upload" type="radio" name="audio-source" value="upload"> Use my recording</label>
                 </div>
-                <div id="audio-voice-generate" class="audio-grid compacts">
+                <div id="audio-voice-generate" class="audio-grid compacts sound-voice-grid">
                   <label class="audio-field">
                     <span>Voice list</span>
                     <select id="audio-engine"></select>
@@ -478,14 +478,18 @@
                   </label>
                   <label class="audio-field small rate-field">
                     <span>Rate</span>
-                    <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
+                    <div class="rate-control">
+                      <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1" inputmode="decimal" aria-label="Voice rate">
+                      <span class="rate-suffix" aria-hidden="true">×</span>
+                    </div>
                   </label>
                 </div>
                 <div class="sound-actions">
                   <button id="audio-generate-voice" class="primary small" type="button">Generate</button>
-                  <button id="audio-preview" class="ghost small play-btn" type="button" title="Play the generated voice" aria-label="Play the generated voice">▶</button>
+                  <button id="audio-preview" class="ghost small play-btn" type="button" title="Generate a voice preview first" aria-label="Play the generated voice" disabled>▶</button>
                   <button id="audio-use-recording" class="ghost small" type="button">Use my recording</button>
                 </div>
+                <p id="audio-voice-preview-status" class="hint sound-preview-status" role="status">Generate a short voice preview.</p>
                 <div id="audio-voice-upload" class="audio-upload-box" hidden>
                   <input id="audio-upload" type="file" accept="audio/*" hidden>
                   <button id="audio-upload-button" class="ghost small" type="button">Choose recording</button>
@@ -493,15 +497,15 @@
                 </div>
               </div>
 
-              <div id="audio-music-step" class="sound-panel" data-sound-panel="music" hidden>
-                <div id="audio-music-source" class="audio-source-row" hidden>
-                  <label class="check compact"><input type="radio" name="audio-music-source" value="none" checked> None</label>
-                  <label class="check compact"><input type="radio" name="audio-music-source" value="own"> Use my BGM</label>
-                  <label class="check compact"><input type="radio" name="audio-music-source" value="generate"> Generate</label>
+              <div id="audio-music-step" class="sound-panel" data-sound-panel="music" role="tabpanel" aria-labelledby="sound-tab-music" hidden>
+                <div id="audio-music-source" class="audio-source-row sound-source-row" role="radiogroup" aria-label="Music source">
+                  <label class="sound-source-chip"><input type="radio" name="audio-music-source" value="none" checked><span>None</span></label>
+                  <label class="sound-source-chip"><input type="radio" name="audio-music-source" value="own"><span>Use my BGM</span></label>
+                  <label class="sound-source-chip"><input type="radio" name="audio-music-source" value="generate"><span>Generate</span></label>
                 </div>
-                <div class="audio-grid compacts">
-                  <label class="audio-field">
-                    <span>Music source</span>
+                <div class="audio-grid compacts sound-music-grid">
+                  <label id="audio-music-field" class="audio-field">
+                    <span>Music</span>
                     <select id="audio-music">
                       <option value="none">No music</option>
                       <option value="library">My own track</option>
@@ -541,9 +545,10 @@
                 </div>
                 <div class="sound-actions">
                   <button id="audio-generate-music" class="primary small" type="button">Generate</button>
-                  <button id="audio-play-music" class="ghost small play-btn" type="button" title="Generated music plays in the render" aria-label="Play music" disabled>▶</button>
+                  <button id="audio-play-music" class="ghost small play-btn" type="button" title="Choose a BGM or generate a preview first" aria-label="Play music preview" disabled>▶</button>
                   <button id="audio-use-bgm" class="ghost small" type="button">Use my BGM</button>
                 </div>
+                <p id="audio-music-preview-status" class="hint sound-preview-status" role="status">Use my BGM plays a 12s preview. Generate makes a short AI bed; the render uses the full bed.</p>
               </div>
 
               <div class="audio-status-row">
