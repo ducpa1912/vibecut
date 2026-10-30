@@ -10,6 +10,8 @@
  *   * Stock voices: each engine with the voices it has here (Apple voices,
  *     Kokoro, cloud engines with a saved key, HeyGen Voice Turbo), played
  *     with a test line.
+ *   * Favorites: a star on every stock voice and clone, kept in this browser
+ *     (favorites.js).
  *
  * Routes:
  *   GET  /api/voices/catalog
@@ -20,6 +22,7 @@
 
 import { listJobs, request } from "./api.js";
 import { el } from "./ui.js";
+import { cloneKey, isFavorite, stockKey, toggleFavorite } from "./favorites.js";
 import { createClipFinder } from "./clipfinder.js";
 import { createVoiceSetup } from "./setup.js";
 import {
@@ -57,6 +60,8 @@ let testLine = DEFAULT_LINE;
 let rate = 1;
 let query = "";
 let language = "";
+let favoritesOnly = false;
+let paintClones = () => {};
 let playPhase = "idle";
 let playKey = "";
 let playPlayer = null;
@@ -103,6 +108,12 @@ function matches(voice) {
   if (!query) return true;
   const hay = `${voice.name || ""} ${voice.id || ""} ${voice.lang || ""}`.toLowerCase();
   return hay.includes(query.toLowerCase());
+}
+
+/** Stock filters compose: favorites, language, then the text search. */
+function matchesStock(engine, voice) {
+  if (favoritesOnly && !isFavorite(stockKey(engine.id, voice.id))) return false;
+  return matches(voice);
 }
 
 async function loadCatalog() {
@@ -312,9 +323,41 @@ function header() {
   ]);
 }
 
-function cloneRow(item) {
+/** A real button with a 44 px target; ★ when saved, ☆ when not. */
+function starButton({ key, label, onChange = () => {} }) {
+  const name = String(label || "").trim() || "this voice";
+  const saved = isFavorite(key);
+  const action = `${saved ? "Remove" : "Add"} ${name} ${saved ? "from" : "to"} favorites`;
+  const button = el("button", {
+    class: `vr-star${saved ? " is-on" : ""}`,
+    type: "button",
+    text: saved ? "★" : "☆",
+    "aria-label": action,
+    "aria-pressed": saved ? "true" : "false",
+    title: action,
+  });
+  button.addEventListener("click", () => {
+    const now = toggleFavorite(key);
+    const next = `${now ? "Remove" : "Add"} ${name} ${now ? "from" : "to"} favorites`;
+    button.textContent = now ? "★" : "☆";
+    button.classList.toggle("is-on", now);
+    button.setAttribute("aria-pressed", now ? "true" : "false");
+    button.setAttribute("aria-label", next);
+    button.title = next;
+    onChange(now);
+  });
+  return button;
+}
+
+function cloneRow(item, repaint) {
   const id = item.voice_id;
+  const name = item.name || "Cloned voice";
   const busy = Boolean(cloneBusy);
+  const star = starButton({
+    key: cloneKey(id),
+    label: name,
+    onChange: () => { if (favoritesOnly) repaint(); },
+  });
   const row = el("li", { class: "vr-mine", "data-voice": id });
   if (renaming === id) {
     const input = el("input", { type: "text", maxLength: 64, value: renameValue, "aria-label": `New name for ${item.name}` });
@@ -327,7 +370,7 @@ function cloneRow(item) {
     save.addEventListener("click", () => { void saveName(item); });
     const cancel = el("button", { class: "ghost small", type: "button", text: "Cancel", disabled: busy });
     cancel.addEventListener("click", () => { renaming = ""; render(); });
-    row.append(el("div", { class: "vr-mine-copy" }, [input]), el("div", { class: "vr-actions" }, [save, cancel]));
+    row.append(el("div", { class: "vr-mine-copy" }, [input]), el("div", { class: "vr-actions" }, [star, save, cancel]));
     const fresh = renameFresh;
     renameFresh = false;
     window.setTimeout(() => {
@@ -367,13 +410,27 @@ function cloneRow(item) {
       el("strong", { text: item.name || "Cloned voice" }),
       el("span", { class: "hint mono", text: facts }),
     ]),
-    el("div", { class: "vr-actions" }, [playButton, renameButton, deleteButton]),
+    el("div", { class: "vr-actions" }, [star, playButton, renameButton, deleteButton]),
   );
   return row;
 }
 
 function mineSection(number = "01") {
   const clones = catalog?.clones || [];
+  const list = el("div", { class: "vr-clone-list" });
+  const paint = () => {
+    const shown = favoritesOnly ? clones.filter((item) => isFavorite(cloneKey(item.voice_id))) : clones;
+    if (shown.length) {
+      list.replaceChildren(el("ul", { class: "vr-mine-list" }, shown.map((item) => cloneRow(item, paint))));
+    } else {
+      const message = clones.length
+        ? "No favorite cloned voices yet."
+        : "No cloned voices yet. Clone one below.";
+      list.replaceChildren(el("p", { class: "hint vr-empty", text: message }));
+    }
+  };
+  paintClones = paint;
+  paint();
   const section = el("section", { class: "vr-section", "data-panel": "your-voices" }, [
     el("div", { class: "vr-section-head" }, [
       el("div", {}, [
@@ -382,17 +439,13 @@ function mineSection(number = "01") {
         el("p", { class: "hint", text: "Stored on this Mac. Play sends the sample to HeyGen through OpenRouter." }),
       ]),
     ]),
+    list,
   ]);
-  if (clones.length) {
-    section.append(el("ul", { class: "vr-mine-list" }, clones.map(cloneRow)));
-    if (!catalog?.clone_available) {
-      section.append(el("p", {
-        class: "hint",
-        text: "These clones are kept on this Mac. OpenRouter is not ready, so Play needs Setup fixed first.",
-      }));
-    }
-  } else {
-    section.append(el("p", { class: "hint vr-empty", text: "No cloned voices yet. Clone one below." }));
+  if (clones.length && !catalog?.clone_available) {
+    section.append(el("p", {
+      class: "hint",
+      text: "These clones are kept on this Mac. OpenRouter is not ready, so Play needs Setup fixed first.",
+    }));
   }
   return section;
 }
@@ -436,7 +489,7 @@ function stockVoices(engine) {
   return (engine?.voices || []).filter((voice) => !voice.clone);
 }
 
-function voiceRow(engine, voice) {
+function voiceRow(engine, voice, repaint) {
   const id = String(voice.id ?? "");
   const label = voice.name || id || "Default";
   const key = `${engine.id}:${id}`;
@@ -447,19 +500,24 @@ function voiceRow(engine, voice) {
     "aria-label": `${speaking ? "Stop" : "Play"} ${label}`,
   });
   button.addEventListener("click", () => { void play(engine.id, id, label); });
+  const star = starButton({
+    key: stockKey(engine.id, id),
+    label,
+    onChange: () => { if (favoritesOnly) repaint(); },
+  });
   return el("li", { class: "vr-voice" }, [
     el("div", { class: "vr-voice-name" }, [
       el("strong", { text: label }),
       el("span", { class: "mono hint", text: voice.lang || "" }),
     ]),
-    button,
+    el("div", { class: "vr-actions" }, [star, button]),
   ]);
 }
 
 function engineCard(engine, repaint) {
   const voices = stockVoices(engine);
-  const shown = voices.filter(matches);
-  const open = !collapsed.has(engine.id) || Boolean(query || language);
+  const shown = voices.filter((voice) => matchesStock(engine, voice));
+  const open = !collapsed.has(engine.id) || Boolean(query || language || favoritesOnly);
   const toggle = el("button", {
     class: "vr-engine-head", type: "button", "aria-expanded": open ? "true" : "false",
   }, [
@@ -477,7 +535,7 @@ function engineCard(engine, repaint) {
   if (engine.error) card.append(el("p", { class: "error", text: engine.error }));
   if (open) {
     if (shown.length) {
-      card.append(el("ul", { class: "vr-voices" }, shown.map((voice) => voiceRow(engine, voice))));
+      card.append(el("ul", { class: "vr-voices" }, shown.map((voice) => voiceRow(engine, voice, repaint))));
     } else {
       card.append(el("p", { class: "hint", text: "No voice matches the filter." }));
     }
@@ -500,14 +558,24 @@ function stockSection(number = "03") {
       (code) => el("option", { value: code, text: code, selected: code === language }),
     ),
   ]);
+  const favoriteFilter = el("button", {
+    class: `ghost small vr-favorites-filter${favoritesOnly ? " is-on" : ""}`,
+    type: "button",
+    text: "Favorites",
+    "aria-pressed": favoritesOnly ? "true" : "false",
+    title: "Show only favorite voices",
+  });
 
   const list = el("div", { class: "vr-stock-list" });
   const paint = () => {
-    const filtering = Boolean(query || language);
-    const visible = ready.filter((engine) => !filtering || stockVoices(engine).some(matches));
+    const filtering = Boolean(query || language || favoritesOnly);
+    const visible = ready.filter((engine) => !filtering || stockVoices(engine).some((voice) => matchesStock(engine, voice)));
     const nodes = visible.map((engine) => engineCard(engine, paint));
     if (filtering && !visible.length) {
-      nodes.push(el("p", { class: "hint", text: "No voice on this machine matches the filter." }));
+      nodes.push(el("p", {
+        class: "hint vr-empty",
+        text: favoritesOnly ? "No favorite voice on this machine matches the filter." : "No voice on this machine matches the filter.",
+      }));
     }
     if (missing.length) {
       nodes.push(el("details", { class: "vr-card vr-missing" }, [
@@ -550,6 +618,15 @@ function stockSection(number = "03") {
     language = lang.value;
     paint();
   });
+  favoriteFilter.addEventListener("click", () => {
+    favoritesOnly = !favoritesOnly;
+    favoriteFilter.classList.toggle("is-on", favoritesOnly);
+    favoriteFilter.setAttribute("aria-pressed", favoritesOnly ? "true" : "false");
+    window.clearTimeout(debounce);
+    query = search.value.trim();
+    paint();
+    paintClones();
+  });
 
   const section = el("section", { class: "vr-section", "data-panel": "stock-voices" }, [
     el("div", { class: "vr-section-head" }, [
@@ -558,7 +635,7 @@ function stockSection(number = "03") {
         el("h2", { text: "Voices on this machine" }),
         el("p", { class: "hint", text: `${total} voices across ${ready.length} engines. Local voices work offline; cloud voices use your keys.` }),
       ]),
-      el("div", { class: "vr-filters" }, [search, lang]),
+      el("div", { class: "vr-filters" }, [search, lang, favoriteFilter]),
     ]),
     testCard(),
     list,
@@ -569,6 +646,7 @@ function stockSection(number = "03") {
 
 function render() {
   if (!root) return;
+  paintClones = () => {};
   const page = el("div", { class: "vr-page" });
   page.append(header());
   const body = el("main", { class: "shell vr-body" });
