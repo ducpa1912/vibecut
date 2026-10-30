@@ -145,6 +145,24 @@ export async function cloneFromFile(file, { name = "", language = "", consent = 
   return response.json();
 }
 
+/** Detect the language of a recording with local Whisper. */
+export async function detectVoiceLanguage(file) {
+  const form = new FormData();
+  form.append("file", file, file.name || "my-voice.webm");
+  const headers = { Accept: "application/json" };
+  const token = tokenValue();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch("/api/voices/detect-language", {
+    method: "POST", headers, credentials: "same-origin", body: form,
+  });
+  if (!response.ok) {
+    const error = new Error(await detailOf(response));
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
 let currentPlayer = null;
 let pendingSample = null;
 
@@ -239,6 +257,9 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
   let recordingUrl = "";
   let name = "My voice";
   let language = "";
+  let languageAuto = true;
+  let detecting = false;
+  let detectToken = 0;
   let consent = false;
   let task = "";
   let disposed = false;
@@ -296,6 +317,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       recorder = null;
       setNotice(`Recorded ${Math.round((Date.now() - recordStart) / 1000)}s. Listen back, then clone it.`, "ok");
       if (!disposed) render();
+      void detectLanguageFor(recording);
     });
     recordStart = Date.now();
     recorder.start(1000);
@@ -320,6 +342,31 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     recordingUrl = URL.createObjectURL(file);
     setNotice(`Using ${file.name}.`, "ok");
     render();
+    void detectLanguageFor(file);
+  }
+
+  async function detectLanguageFor(file) {
+    if (!file || !languageAuto) return;
+    const token = ++detectToken;
+    detecting = true;
+    setNotice("Detecting the language…", "");
+    if (!disposed) render();
+    try {
+      const result = await detectVoiceLanguage(file);
+      if (token !== detectToken || disposed || !languageAuto) return;
+      const code = String(result?.language || "").trim().toLowerCase();
+      if (!code) throw new Error("No language detected.");
+      language = code;
+      setNotice(`Detected ${code.toUpperCase()}. You can change it.`, "ok");
+    } catch (_) {
+      if (token !== detectToken) return;
+      setNotice("Could not detect the language. Pick one manually.", "bad");
+    } finally {
+      if (token === detectToken) {
+        detecting = false;
+        if (!disposed) render();
+      }
+    }
   }
 
   async function submit() {
@@ -475,14 +522,29 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
         (code) => el("option", { value: code, text: code, selected: code === language }),
       ),
     ]);
-    lang.addEventListener("change", () => { language = lang.value; });
+    lang.addEventListener("change", () => {
+      language = lang.value;
+      languageAuto = !language;
+      detectToken += 1;
+      detecting = false;
+      if (languageAuto && recording) void detectLanguageFor(recording);
+      else render();
+    });
+    const languageHint = el("span", {
+      class: "st-hint",
+      text: detecting
+        ? "Detecting…"
+        : languageAuto && language
+          ? "Detected from the recording."
+          : "Auto-detects after record or upload.",
+    });
     const tick = el("input", { type: "checkbox", checked: consent, id: "st-voice-consent-me" });
     tick.addEventListener("change", () => { consent = Boolean(tick.checked); render(); });
     const cloning = busy === "clone" || busy === "cancel";
     const go = el("button", {
       class: "st-btn st-btn-primary st-btn-small", type: "button",
-      text: cloning ? "Cloning…" : "Clone my voice",
-      disabled: Boolean(busy) || !recording || !consent || recorder?.state === "recording",
+      text: detecting ? "Detecting language…" : cloning ? "Cloning…" : "Clone my voice",
+      disabled: Boolean(busy) || detecting || !recording || !consent || recorder?.state === "recording",
     });
     go.addEventListener("click", () => { void submit(); });
     const stop = cloning ? el("button", {
@@ -494,7 +556,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     return el("div", { class: "st-voice-clone-form" }, [
       el("div", { class: "st-setup-key-form" }, [
         el("label", { class: "st-field" }, [el("span", { text: "Name" }), nameInput]),
-        el("label", { class: "st-field" }, [el("span", { text: "Language" }), lang]),
+        el("label", { class: "st-field" }, [el("span", { text: "Language" }), lang, languageHint]),
       ]),
       el("label", { class: "st-voice-clone-consent", for: "st-voice-consent-me" }, [
         tick, el("span", { text: CONSENT_COPY.me }),

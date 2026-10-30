@@ -630,6 +630,50 @@ def import_library(
         shutil.rmtree(work, ignore_errors=True)
 
 
+@router.post("/api/voices/detect-language")
+def detect_language(request: Request, file: UploadFile = File(...)) -> dict:
+    """Detect the spoken language of a short recording, on this Mac only."""
+    _guard(request)
+    suffix = Path(file.filename or "voice.webm").suffix.lower() or ".webm"
+    if suffix not in UPLOAD_SUFFIXES:
+        raise HTTPException(400, "Use a WAV, MP3, M4A, OGG, WebM or FLAC recording.")
+    work = _work_dir()
+    try:
+        import audio
+
+        raw = work / f"detect{suffix}"
+        size = 0
+        with raw.open("wb") as handle:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > voice_clone.MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "That recording is over 100 MB.")
+                handle.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "That recording is empty.")
+        wav = work / "detect.wav"
+        try:
+            audio._run([
+                audio._ffmpeg(), "-y", "-v", "error", "-i", str(raw),
+                "-t", "45", "-vn", "-ac", "1", "-ar", "16000",
+                "-c:a", "pcm_s16le", str(wav),
+            ], timeout=300)
+        except audio.AudioError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        import stt
+
+        result = stt.transcribe(wav, work, 45.0, lambda *_: None, language="")
+        if not result or not result.get("language"):
+            raise HTTPException(
+                400,
+                "Could not detect the language. Local Whisper is needed; pick the language manually.",
+            )
+        code = str(result["language"]).lower().replace("_", "-").split("-")[0]
+        return {"language": code, "text": str(result.get("text") or "")[:160]}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 @router.post("/api/voices/clones")
 def clone_my_voice(
     request: Request,

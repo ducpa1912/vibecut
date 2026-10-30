@@ -54,6 +54,40 @@ function store(key, value) {
   }
 }
 
+function setTestLine(value, source = "") {
+  testLine = String(value ?? "");
+  store(LINE_KEY, testLine);
+  if (source !== "player" && playerRefs?.line) playerRefs.line.value = testLine;
+  if (source !== "compare" && compareLineEl) compareLineEl.value = testLine;
+  const count = document.querySelector(".vg-line-count");
+  if (count) count.textContent = `${testLine.length}/300`;
+}
+
+function iconSvg(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "18");
+  svg.setAttribute("height", "18");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.7");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  const paths = {
+    mic: ["M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z", "M5 11a7 7 0 0 0 14 0", "M12 18v3"],
+    upload: ["M12 16V4", "m7 9 5-5 5 5", "M5 20h14"],
+    video: ["M4 6h11v12H4z", "m15 10 5-3v10l-5-3z"],
+    plus: ["M12 5v14", "M5 12h14"],
+  };
+  for (const d of paths[name] || []) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
 function viewFromHash() {
   const value = String(window.location.hash || "").replace(/^#\/?/, "");
   return VIEWS.includes(value) ? value : "library";
@@ -86,6 +120,7 @@ let mainEl = null;
 let playerRefs = null;
 let navButtons = [];
 let tabButtons = [];
+let compareLineEl = null;
 
 function setNotice(message, tone = "") {
   notice = message || "";
@@ -213,11 +248,12 @@ function playSelection({ kind, engine = "", voice = "", id = "", label }) {
   const entry = kind === "clone"
     ? { kind: "clone", engine: "heygen", voice: id, clone: id, label }
     : { kind: "stock", engine, voice: String(voice), label };
+  const lineText = String(testLine || "").trim() || DEFAULT_LINE;
   void startPlayback({
     key,
     label,
     pending: kind === "clone" ? `Speaking the test line as ${label}…` : `Making a sample of ${label}…`,
-    start: () => (kind === "clone" ? playClone(id, testLine) : playVoice(engine, voice, testLine, rate)),
+    start: () => (kind === "clone" ? playClone(id, lineText) : playVoice(engine, voice, lineText, rate)),
     entry,
   });
 }
@@ -270,9 +306,9 @@ const setup = createVoiceSetup({
 
 function header() {
   const clone = el("button", {
-    class: "vg-primary", type: "button", text: "Clone a voice",
+    class: "vg-primary", type: "button",
     on: { click: () => navigate("create") },
-  });
+  }, [iconSvg("plus"), "Clone a voice"]);
   return el("header", { class: "vg-header" }, [
     el("div", { class: "vg-brandline" }, [
       el("a", { class: "vg-brand", href: "/" }, ["VibeCut"]),
@@ -319,8 +355,7 @@ function buildPlayer() {
     type: "text", maxLength: 300, value: testLine, "aria-label": "Test line",
   });
   line.addEventListener("input", () => {
-    testLine = line.value || DEFAULT_LINE;
-    store(LINE_KEY, testLine);
+    setTestLine(line.value, "player");
   });
   const rateSelect = el("select", { "aria-label": "Rate" });
   for (const value of RATES) {
@@ -576,9 +611,9 @@ function buildLibrary() {
     ]),
     el("div", { class: "vg-actions" }, [
       el("button", {
-        class: "vg-primary", type: "button", text: "Clone a voice",
+        class: "vg-primary", type: "button",
         on: { click: () => navigate("create") },
-      }),
+      }, [iconSvg("plus"), "Clone a voice"]),
     ]),
   ]);
 
@@ -661,10 +696,13 @@ function buildCreate() {
   const tabs = el("div", { class: "vg-seg vg-create-tabs" });
   const paint = () => {
     tabs.replaceChildren();
-    for (const [name, label] of [["record", "Record or upload"], ["video", "From a video"]]) {
+    for (const [name, label, icon] of [
+      ["record", "Record or upload", "mic"],
+      ["video", "From a video", "video"],
+    ]) {
       const button = el("button", {
-        type: "button", text: label, "aria-pressed": createTab === name ? "true" : "false",
-      });
+        type: "button", "aria-pressed": createTab === name ? "true" : "false",
+      }, [iconSvg(icon), el("span", { text: label })]);
       button.classList.toggle("is-on", createTab === name);
       button.addEventListener("click", () => { createTab = name; paint(); });
       tabs.append(button);
@@ -678,14 +716,67 @@ function buildCreate() {
       panel.append(finder.node);
     }
   };
+  const quick = el("div", { class: "vg-quick" });
+  const quickCard = (icon, title, copy, action) => {
+    const button = el("button", { class: "vg-quick-card", type: "button" }, [
+      el("span", { class: "vg-quick-icon" }, [iconSvg(icon)]),
+      el("strong", { text: title }),
+      el("span", { text: copy }),
+    ]);
+    button.addEventListener("click", action);
+    return button;
+  };
+  quick.append(
+    quickCard("mic", "Record my voice", "Use the microphone", () => {
+      createTab = "record";
+      paint();
+      window.setTimeout(() => {
+        myVoice.node.querySelector(".st-voice-clone-recorder .st-btn")?.click();
+      }, 0);
+    }),
+    quickCard("upload", "Upload a recording", "WAV, MP3, M4A or video", () => {
+      createTab = "record";
+      paint();
+      window.setTimeout(() => {
+        myVoice.node.querySelector('input[type="file"]')?.click();
+      }, 0);
+    }),
+    quickCard("video", "Use a video", "Find clean speech", () => {
+      createTab = "video";
+      paint();
+    }),
+  );
   paint();
-  node.append(head, tabs, panel);
+  node.append(head, quick, tabs, panel);
   return node;
 }
 
 function buildCompare() {
   comparePanel.render();
-  return el("div", { class: "vg-view" }, [comparePanel.node]);
+  const line = el("textarea", {
+    class: "vg-line-hero", rows: 3, maxLength: 300, value: testLine,
+    "aria-label": "Line to compare",
+    placeholder: "Type the line both voices should say",
+  });
+  compareLineEl = line;
+  line.addEventListener("input", () => setTestLine(line.value, "compare"));
+  const count = el("span", { class: "vg-line-count", text: `${line.value.length}/300` });
+  line.addEventListener("input", () => { count.textContent = `${line.value.length}/300`; });
+  const lineCard = el("div", { class: "vg-compare-line" }, [
+    el("div", { class: "vg-compare-line-head" }, [
+      el("div", {}, [
+        el("h1", { text: "Compare voices" }),
+        el("p", { text: "Type the line once. Both voices read the same words at the same rate." }),
+      ]),
+      el("span", { class: "vg-compare-line-tag", text: "Shared line" }),
+    ]),
+    line,
+    el("div", { class: "vg-compare-line-foot" }, [
+      el("span", { text: "This line is also used by every Play in the library." }),
+      count,
+    ]),
+  ]);
+  return el("div", { class: "vg-view vg-compare-view" }, [lineCard, comparePanel.node]);
 }
 
 function buildRecent() {
@@ -702,6 +793,7 @@ function buildSettings() {
 
 function renderView() {
   if (!mainEl) return;
+  compareLineEl = null;
   mainEl.replaceChildren();
   if (loading && !catalog) {
     mainEl.append(el("div", { class: "vg-view" }, [el("p", { class: "hint", text: "Reading this Mac…" })]));
