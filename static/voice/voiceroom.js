@@ -7,6 +7,7 @@
  *   * Your voices: the creator's clones, with Play, Rename and Delete.
  *   * Clone a voice: from a recording or a file (voiceclone.js), or from a
  *     video through the clean-clip finder (clipfinder.js).
+ *   * Compare voices: two selectors on the same test line (compare.js).
  *   * Stock voices: each engine with the voices it has here (Apple voices,
  *     Kokoro, cloud engines with a saved key, HeyGen Voice Turbo), played
  *     with a test line.
@@ -24,6 +25,7 @@ import { listJobs, request } from "./api.js";
 import { el } from "./ui.js";
 import { cloneKey, isFavorite, stockKey, toggleFavorite } from "./favorites.js";
 import { createClipFinder } from "./clipfinder.js";
+import { createComparePanel } from "./compare.js";
 import { createRecentPanel, recentKey, recordRecent } from "./recent.js";
 import { createVoiceSetup } from "./setup.js";
 import {
@@ -98,6 +100,13 @@ const finder = createClipFinder({
 const setup = createVoiceSetup({
   getSettings: () => settings,
   onChanged: () => load(),
+});
+
+const compare = createComparePanel({
+  catalog: () => catalog,
+  play: (engine, voice, label) => play(engine, voice, label),
+  playMine: (item) => playMine(item),
+  playback: () => ({ phase: playPhase, key: playKey }),
 });
 
 function langOf(voice) {
@@ -693,11 +702,12 @@ function render() {
     body.append(el("p", { class: "hint", text: "Reading the voices on this machine…" }));
   } else {
     finder.render();
+    compare.render();
     const clones = catalog?.clones || [];
     if (clones.length) {
-      body.append(mineSection("01"), cloneSection("02"), recentSection(), stockSection("03"));
+      body.append(mineSection("01"), cloneSection("02"), compare.node, recentSection(), stockSection("03"));
     } else {
-      body.append(cloneSection("01"), recentSection(), stockSection("02"));
+      body.append(cloneSection("01"), compare.node, recentSection(), stockSection("02"));
     }
   }
   page.append(body);
