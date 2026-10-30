@@ -517,12 +517,22 @@ body.vr-root {
 .vr-setup-paths { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 0; }
 .vr-setup-paths dt { color: var(--muted); font-size: 12px; }
 .vr-setup-paths dd { margin: 0; font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.vr-library { display: grid; gap: 12px; }
+.vr-library-download { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.vr-library-download > div { display: grid; gap: 3px; }
+.vr-library-download strong { font-size: 13.5px; font-weight: 560; }
+.vr-library-restore { display: grid; gap: 10px; }
+.vr-library-status { min-height: 1.5em; }
 
 @media (max-width: 860px) {
   .vr-setup-grid { grid-template-columns: 1fr; }
   .vr-setup-wide { grid-column: auto; }
   .vr-setup-engines { grid-template-columns: 1fr; }
   .vr-setup-paths { grid-template-columns: 1fr; }
+  .vr-library-download .ghost,
+  .vr-library-restore .primary { min-height: 44px; }
+  .vr-library-consent { min-height: 44px; align-items: center; }
+  .vr-library-consent input { margin-top: 0; width: 20px; height: 20px; }
 }
 
 @media (max-width: 640px) {

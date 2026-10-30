@@ -8,7 +8,13 @@
  * separate from Studio and Classic.
  */
 
-import { request } from "./api.js";
+import {
+  announceChange,
+  errorDetail,
+  request,
+  syncTokenCookie,
+  tokenValue,
+} from "./api.js";
 import { el } from "./ui.js";
 
 const OPENROUTER_TEXT_MODELS = [
@@ -58,6 +64,13 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
   let open = false;
   let userToggled = false;
   let loadEnginesBusy = false;
+  let libraryCard = null;
+  let libraryRefs = null;
+  let libraryFile = null;
+  let libraryConsent = false;
+  let libraryBusy = "";
+  let libraryStatus = "";
+  let libraryTone = "";
 
   function settings() {
     return getSettings() || null;
@@ -163,6 +176,203 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
       busy = "";
       render();
     }
+  }
+
+  function authHeaders(accept) {
+    const headers = { Accept: accept };
+    const token = tokenValue();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+  }
+
+  async function responseError(response, fallback) {
+    let payload = null;
+    try {
+      const text = await response.text();
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch (_) {
+        payload = text;
+      }
+    } catch (_) {
+      payload = null;
+    }
+    return new Error(errorDetail(payload) || fallback || `Request failed (${response.status}).`);
+  }
+
+  function attachmentName(header) {
+    const match = /filename="?([^";]+)"?/i.exec(String(header || ""));
+    return match ? match[1].trim() : "";
+  }
+
+  function backupName() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    return `vibecut-voice-library-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}.zip`;
+  }
+
+  function syncLibrary() {
+    if (!libraryRefs) return;
+    const busy = Boolean(libraryBusy);
+    libraryRefs.download.disabled = busy;
+    libraryRefs.pick.disabled = busy;
+    libraryRefs.consent.checked = libraryConsent;
+    libraryRefs.restore.disabled = busy || !libraryFile || !libraryConsent;
+    libraryRefs.download.textContent = libraryBusy === "export" ? "Preparing…" : "Download backup";
+    libraryRefs.restore.textContent = libraryBusy === "import" ? "Restoring…" : "Restore backup";
+    libraryRefs.status.textContent = libraryStatus;
+    libraryRefs.status.dataset.tone = libraryTone;
+  }
+
+  function setLibraryStatus(message, tone = "") {
+    libraryStatus = message || "";
+    libraryTone = tone;
+    syncLibrary();
+  }
+
+  async function downloadLibrary() {
+    if (libraryBusy) return;
+    libraryBusy = "export";
+    setLibraryStatus("Building the backup…");
+    try {
+      syncTokenCookie();
+      const response = await fetch("/api/voices/library/export", {
+        method: "GET",
+        headers: authHeaders("application/zip"),
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!response.ok) throw await responseError(response, "Could not build the backup.");
+      const blob = await response.blob();
+      const name = attachmentName(response.headers.get("Content-Disposition")) || backupName();
+      const url = URL.createObjectURL(blob);
+      const link = el("a", { href: url, download: name });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setLibraryStatus(`Saved ${name}.`, "ok");
+    } catch (cause) {
+      setLibraryStatus(cause?.message || "Could not build the backup.", "bad");
+    } finally {
+      libraryBusy = "";
+      syncLibrary();
+    }
+  }
+
+  async function restoreLibrary() {
+    if (libraryBusy) return;
+    if (!libraryFile) {
+      setLibraryStatus("Choose a backup ZIP first.", "bad");
+      return;
+    }
+    if (!libraryConsent) {
+      setLibraryStatus("Confirm you have permission to restore these voices.", "bad");
+      return;
+    }
+    libraryBusy = "import";
+    setLibraryStatus("Restoring voices…");
+    try {
+      const form = new FormData();
+      form.append("file", libraryFile, libraryFile.name || "voice-library.zip");
+      form.append("consent", "true");
+      syncTokenCookie();
+      const response = await fetch("/api/voices/library/import", {
+        method: "POST",
+        headers: authHeaders("application/json"),
+        body: form,
+        credentials: "same-origin",
+      });
+      let payload = null;
+      try {
+        const text = await response.text();
+        payload = text ? JSON.parse(text) : null;
+      } catch (_) {
+        payload = null;
+      }
+      if (!response.ok) {
+        throw new Error(errorDetail(payload) || "Could not restore the backup.");
+      }
+      libraryFile = null;
+      libraryConsent = false;
+      if (libraryRefs?.pick) libraryRefs.pick.value = "";
+      const imported = Math.max(0, Number(payload?.imported) || 0);
+      const skipped = Math.max(0, Number(payload?.skipped) || 0);
+      const voices = `${imported} voice${imported === 1 ? "" : "s"}`;
+      setLibraryStatus(
+        skipped ? `Restored ${voices}. Skipped ${skipped}.` : `Restored ${voices}.`,
+        skipped ? "bad" : "ok",
+      );
+      announceChange();
+      await onChanged();
+    } catch (cause) {
+      setLibraryStatus(cause?.message || "Could not restore the backup.", "bad");
+    } finally {
+      libraryBusy = "";
+      syncLibrary();
+    }
+  }
+
+  function libraryCardNode() {
+    if (libraryCard) {
+      syncLibrary();
+      return libraryCard;
+    }
+    const pick = el("input", {
+      type: "file", accept: ".zip,application/zip",
+      "aria-label": "Voice library ZIP",
+    });
+    pick.addEventListener("change", () => {
+      libraryFile = pick.files && pick.files[0] ? pick.files[0] : null;
+      if (libraryFile) setLibraryStatus(`Ready to restore ${libraryFile.name}.`);
+      syncLibrary();
+    });
+    const consent = el("input", { type: "checkbox", checked: libraryConsent });
+    consent.addEventListener("change", () => {
+      libraryConsent = Boolean(consent.checked);
+      syncLibrary();
+    });
+    const download = el("button", {
+      class: "ghost small", type: "button", text: "Download backup",
+      on: { click: () => { void downloadLibrary(); } },
+    });
+    const restore = el("button", {
+      class: "primary small", type: "button", text: "Restore backup",
+      on: { click: () => { void restoreLibrary(); } },
+    });
+    const status = el("p", {
+      class: "vr-status vr-library-status", role: "status",
+    });
+    libraryCard = el("div", { class: "vr-card vr-setup-card vr-setup-wide vr-library" }, [
+      el("div", { class: "vr-card-head vr-setup-head" }, [
+        el("div", {}, [
+          el("h3", { text: "Library backup" }),
+          el("p", { class: "hint", text: "A copy of your cloned voices. Names and samples only; settings and keys stay out." }),
+        ]),
+      ]),
+      el("div", { class: "vr-library-download" }, [
+        el("div", {}, [
+          el("strong", { text: "Back up this Mac's voices" }),
+          el("p", { class: "hint", text: "Downloads a ZIP with a manifest and every clone sample." }),
+        ]),
+        download,
+      ]),
+      el("div", { class: "vr-library-restore" }, [
+        el("label", { class: "vr-field" }, [
+          el("span", { text: "Voice library ZIP" }),
+          pick,
+        ]),
+        el("label", { class: "vr-consent vr-library-consent" }, [
+          consent,
+          el("span", { text: "I have permission to restore these voices." }),
+        ]),
+        el("div", { class: "vr-actions" }, [restore]),
+      ]),
+      status,
+    ]);
+    libraryRefs = { download, restore, pick, consent, status };
+    syncLibrary();
+    return libraryCard;
   }
 
   function keyCard({ name, title, copy, placeholder, source, hasKey, runtime, model }) {
@@ -381,6 +591,7 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
           openCodeCard(state),
           enginesCard(),
           configCard(state),
+          libraryCardNode(),
         ]));
       }
     } else if (state) {
