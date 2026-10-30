@@ -367,6 +367,10 @@
     momentsExpanded: false,
     trim: null,
     timelineScroll: 0,
+    clipMenuIndex: null,
+    clipMenuTrigger: null,
+    playerScrollKey: null,
+    renderWasActive: null,
     drawerScene: null,
     sort: "best",
     visible: 96,
@@ -377,6 +381,10 @@
     ingestJob: null,
     cancelRequested: false,
   };
+
+  // The role menu and every reorder share one order: Hook, Beat, Payoff.
+  const CLIP_ROLES = ["hook", "beat", "payoff"];
+  const CLIP_ROLE_LABELS = { hook: "Hook", beat: "Beat", payoff: "Payoff" };
 
   // Native <select> popups on macOS ignore the page font size. The audio
   // controls open this list instead, at a readable 15px.
@@ -1130,7 +1138,7 @@
     dom.firstRunSetup?.addEventListener("click", openSetup);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !dom.setup.hidden) closeSetup();
-      if (event.key === "Escape") closeClipMenu();
+      if (event.key === "Escape") closeClipMenu({ restoreFocus: true });
     });
     document.addEventListener("click", (event) => {
       if (!event.target.closest("#clip-menu") && !event.target.closest("[data-role-index]")) {
@@ -1628,10 +1636,7 @@
     });
     dom.hookChange.addEventListener("click", () => {
       setSort("best");
-      state.momentsExpanded = true;
-      dom.momentsFull.hidden = false;
-      dom.momentsExpand.textContent = "Collapse";
-      renderScenes();
+      setMomentsExpanded(true, { scroll: false });
       dom.momentsSection?.scrollIntoView({ behavior: "smooth", block: "start" });
       toast("Tap a scene, then use it as the hook.");
     });
@@ -1684,7 +1689,39 @@
       const clip = event.target.closest(".clip[data-index]");
       if (!clip) return;
       event.preventDefault();
-      openClipMenu(Number(clip.dataset.index), event.clientX, event.clientY);
+      openClipMenu(
+        Number(clip.dataset.index),
+        event.clientX,
+        event.clientY,
+        clip.querySelector("[data-role-index]"),
+      );
+    });
+    dom.clipMenu.addEventListener("keydown", (event) => {
+      const buttons = [...dom.clipMenu.querySelectorAll("[data-clip-role]")];
+      if (!buttons.length) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeClipMenu({ restoreFocus: true });
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.stopPropagation();
+        return;
+      }
+      const current = buttons.indexOf(document.activeElement);
+      let next = null;
+      if (event.key === "ArrowDown") next = (current + 1 + buttons.length) % buttons.length;
+      else if (event.key === "ArrowUp") next = (current - 1 + buttons.length) % buttons.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = buttons.length - 1;
+      else if (event.key === "Tab") {
+        closeClipMenu();
+        return;
+      }
+      if (next === null) return;
+      event.preventDefault();
+      buttons[next].focus();
     });
     dom.timeline.addEventListener("click", (event) => {
       if (event.target.closest(".trim-handle")) return;
@@ -1693,7 +1730,7 @@
         event.preventDefault();
         event.stopPropagation();
         const rect = role.getBoundingClientRect();
-        openClipMenu(Number(role.dataset.roleIndex), rect.left, rect.bottom + 6);
+        openClipMenu(Number(role.dataset.roleIndex), rect.left, rect.bottom + 6, role);
         return;
       }
       const tool = event.target.closest("[data-edit]");
@@ -1860,7 +1897,7 @@
       if (toggle) {
         event.preventDefault();
         event.stopPropagation();
-        toggleSceneInPlan(Number(toggle.dataset.momentToggle));
+        toggleMomentSelection(Number(toggle.dataset.momentToggle));
         return;
       }
       const card = event.target.closest("[data-moment-scene]");
@@ -1871,13 +1908,33 @@
       if (toggle) {
         event.preventDefault();
         event.stopPropagation();
-        toggleSceneInPlan(Number(toggle.dataset.momentToggle));
+        toggleMomentSelection(Number(toggle.dataset.momentToggle));
         return;
       }
       const row = event.target.closest("[data-moment-scene]");
       if (row) openDrawer(Number(row.dataset.momentScene));
     });
+    const momentKeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target.closest("[data-moment-toggle]")) return;
+      const card = event.target.closest("[data-moment-scene]");
+      if (!card || card !== event.target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openDrawer(Number(card.dataset.momentScene));
+    };
+    dom.momentsRail.addEventListener("keydown", momentKeydown);
+    dom.momentsList.addEventListener("keydown", momentKeydown);
+    const momentSelectPointer = (event) => {
+      if (event.target.closest("[data-moment-toggle]")) event.stopPropagation();
+    };
+    dom.momentsRail.addEventListener("pointerdown", momentSelectPointer);
+    dom.momentsList.addEventListener("pointerdown", momentSelectPointer);
     dom.momentsList.addEventListener("dragstart", (event) => {
+      if (event.target.closest("[data-moment-toggle]")) {
+        event.preventDefault();
+        return;
+      }
       const row = event.target.closest("[data-moment-scene]");
       if (!row) return;
       event.dataTransfer.effectAllowed = "copy";
@@ -1888,6 +1945,10 @@
       dom.timelineDrop.hidden = true;
     });
     dom.momentsRail.addEventListener("dragstart", (event) => {
+      if (event.target.closest("[data-moment-toggle]")) {
+        event.preventDefault();
+        return;
+      }
       const card = event.target.closest("[data-moment-scene]");
       if (!card) return;
       event.dataTransfer.effectAllowed = "copy";
@@ -1911,12 +1972,16 @@
       state.momentsExpanded = !state.momentsExpanded;
       dom.momentsFull.hidden = !state.momentsExpanded;
       dom.momentsRail.hidden = state.momentsExpanded;
-      dom.momentsExpand.textContent = state.momentsExpanded ? "Show less" : "Show all";
       dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
       if (state.momentsExpanded) {
         renderMomentList();
         dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
+      updateMomentControls(
+        state.job?.analysis?.scenes?.length || 0,
+        Math.min(state.visible, state.job?.analysis?.scenes?.length || 0),
+        state.sort === "best" ? "best first" : "timeline order",
+      );
     });
     const handleRecentClick = (event) => {
       const remove = event.target.closest("[data-delete-id]");
@@ -1993,8 +2058,9 @@
     document.addEventListener("keydown", (event) => {
       if (dom.result.hidden || !state.plan) return;
       if (dom.setup && !dom.setup.hidden) return;
+      if (dom.clipMenu && !dom.clipMenu.hidden) return;
       const tag = String(event.target?.tagName || "").toLowerCase();
-      if (["input", "select", "textarea"].includes(tag) || event.target?.isContentEditable) return;
+      if (["input", "select", "textarea", "button", "a"].includes(tag) || event.target?.isContentEditable) return;
       if (event.metaKey || event.ctrlKey) return;
       if (!dom.drawer.hidden) {
         if (event.key.toLowerCase() === "a" && state.drawerScene !== null) {
@@ -2762,6 +2828,8 @@
     state.momentsExpanded = false;
     state.trim = null;
     state.timelineScroll = 0;
+    state.playerScrollKey = null;
+    state.renderWasActive = null;
     state.sort = "best";
     state.visible = 96;
     state.busy = false;
@@ -3055,7 +3123,8 @@
           ${scene.deep === false
             ? `<span class="clip-placeholder"><span>quick</span></span>`
             : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`}
-          <span class="clip-role" data-role-index="${index}" title="Click or right-click to change hook / beat / payoff">${esc(clip.role)}</span>
+          <button type="button" class="clip-role" data-role-index="${index}" aria-haspopup="menu" aria-controls="clip-menu" aria-expanded="false"
+            title="Change hook / beat / payoff">${esc(clip.role)}</button>
           <span class="clip-time">${clip.dur.toFixed(1)}s</span>
           <span class="trim-handle start" data-trim="start" data-index="${index}" title="Drag to trim start"></span>
           <span class="trim-handle end" data-trim="end" data-index="${index}" title="Drag to trim end"></span>
@@ -3638,14 +3707,20 @@
     updateRenderPanel();
   }
 
-  function openClipMenu(index, x, y) {
+  function openClipMenu(index, x, y, trigger = null) {
     if (!state.plan?.clips[index] || !dom.clipMenu) return;
+    if (state.clipMenuTrigger && state.clipMenuTrigger !== trigger) {
+      state.clipMenuTrigger.setAttribute("aria-expanded", "false");
+    }
+    state.clipMenuIndex = index;
+    state.clipMenuTrigger = trigger || null;
+    if (trigger) trigger.setAttribute("aria-expanded", "true");
     const current = state.plan.clips[index].role || "beat";
     dom.clipMenu.innerHTML = `
       <span class="clip-menu-head">Change role</span>
-      ${["hook", "beat", "payoff"].map((role) => `
-      <button type="button" role="menuitem" data-clip-role="${role}" class="${role === current ? "active" : ""}">
-        ${role[0].toUpperCase() + role.slice(1)}
+      ${CLIP_ROLES.map((role) => `
+      <button type="button" role="menuitemradio" aria-checked="${role === current}" data-clip-role="${role}" class="${role === current ? "active" : ""}">
+        ${CLIP_ROLE_LABELS[role]}
       </button>`).join("")}`;
     dom.clipMenu.hidden = false;
     const width = dom.clipMenu.offsetWidth || 140;
@@ -3657,21 +3732,41 @@
         setClipRole(index, button.dataset.clipRole);
       });
     });
+    const checked = dom.clipMenu.querySelector(`[data-clip-role="${current}"]`);
+    (checked || dom.clipMenu.querySelector("[data-clip-role]"))?.focus({ preventScroll: true });
   }
 
-  function closeClipMenu() {
-    if (dom.clipMenu) dom.clipMenu.hidden = true;
+  function closeClipMenu(options = {}) {
+    if (!dom.clipMenu) return;
+    const trigger = state.clipMenuTrigger;
+    dom.clipMenu.hidden = true;
+    state.clipMenuIndex = null;
+    state.clipMenuTrigger = null;
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+      if (options.restoreFocus && trigger.isConnected) trigger.focus({ preventScroll: true });
+    }
   }
 
   function setClipRole(index, role) {
     if (!state.plan || !state.plan.clips[index]) return;
-    if (!["hook", "beat", "payoff"].includes(role)) return;
+    if (!CLIP_ROLES.includes(role)) return;
+    const sceneId = state.plan.clips[index].scene;
     const clips = state.plan.clips.map((clip) => ({ ...clip }));
+    if (role === "beat" && clips.length <= 2) {
+      closeClipMenu();
+      toast("A two-moment cut needs a hook and a payoff.");
+      return;
+    }
     const [clip] = clips.splice(index, 1);
-    if (role === "hook") clips.unshift(clip);
-    else if (role === "payoff") clips.push(clip);
-    else {
-      const at = Math.max(1, Math.min(index, clips.length - 1));
+    if (role === "hook") {
+      clips.unshift(clip);
+    } else if (role === "payoff") {
+      clips.push(clip);
+    } else {
+      // Beat means "inside the body", never first or last. A demoted payoff
+      // must not land at the end again and keep its payoff position.
+      const at = Math.max(1, Math.min(index, clips.length - 2));
       clips.splice(at, 0, clip);
     }
     normalizePlanRoles(clips);
@@ -3683,7 +3778,9 @@
     renderPlan();
     renderScenes();
     updateRenderPanel();
-    toast(`Moved to ${role} position.`);
+    const next = dom.timeline.querySelector(`.clip[data-scene="${sceneId}"] [data-role-index]`);
+    next?.focus({ preventScroll: true });
+    toast(`Moved to ${CLIP_ROLE_LABELS[role].toLowerCase()} position.`);
   }
 
   function normalizePlanRoles(clips) {
@@ -3692,13 +3789,19 @@
     });
   }
 
+  function planClipsForRender() {
+    if (!state.plan?.clips?.length) return null;
+    const clips = state.plan.clips.map((clip) => ({ ...clip }));
+    normalizePlanRoles(clips);
+    return clips;
+  }
+
   function addSceneToPlan(sceneId, at = null) {
     if (!state.plan) return false;
     const scene = sceneById(sceneId);
     if (!scene) return false;
     if (scene.deep === false) {
       toast("Quick scan · deep-read this moment before adding it.");
-      openDrawer(scene.id);
       return false;
     }
     const clips = state.plan.clips.map((clip) => ({ ...clip }));
@@ -3756,8 +3859,22 @@
 
   function toggleSceneInPlan(sceneId) {
     const inPlan = (state.plan?.clips || []).some((clip) => clip.scene === sceneId);
-    if (inPlan) removeSceneFromPlan(sceneId);
-    else addSceneToPlan(sceneId);
+    if (inPlan) return removeSceneFromPlan(sceneId);
+    return addSceneToPlan(sceneId);
+  }
+
+  function toggleMomentSelection(sceneId) {
+    const railScroll = Number(dom.momentsRail?.scrollLeft) || 0;
+    const listScroll = Number(dom.momentsList?.scrollTop) || 0;
+    const changed = toggleSceneInPlan(sceneId);
+    if (!changed) return;
+    // Re-rendering replaces the card the user just pressed. Keep the rail
+    // where it was and put focus back on the same moment's select.
+    if (dom.momentsRail) dom.momentsRail.scrollLeft = railScroll;
+    if (dom.momentsList) dom.momentsList.scrollTop = listScroll;
+    const scope = state.momentsExpanded ? dom.momentsList : dom.momentsRail;
+    const next = scope?.querySelector(`[data-moment-toggle="${sceneId}"]`);
+    next?.focus({ preventScroll: true });
   }
 
   function moveClip(from, to) {
@@ -3950,9 +4067,32 @@
   }
 
   function momentCheck(scene, checked) {
-    return `<span class="moment-check ${checked ? "checked" : ""}" data-moment-toggle="${scene.id}"
-      role="checkbox" aria-checked="${checked}" tabindex="0"
-      title="${checked ? "Remove from Smart Cut" : "Add to Smart Cut"}"></span>`;
+    const action = checked ? "Remove" : "Add";
+    return `<button type="button" class="moment-check ${checked ? "checked" : ""}" data-moment-toggle="${scene.id}"
+      role="checkbox" aria-checked="${checked}" aria-label="${action} ${esc(fmtTime(scene.start))} moment ${checked ? "from" : "to"} Smart Cut"
+      title="${checked ? "Remove from Smart Cut" : "Add to Smart Cut"}"></button>`;
+  }
+
+  function updateMomentControls(total, shown, order) {
+    const count = `${total} moment${total === 1 ? "" : "s"} · ${order}`;
+    dom.sceneCount.textContent = shown < total ? `${count} · ${shown} shown` : count;
+    dom.momentsExpand.textContent = state.momentsExpanded ? "Show less" : `Show all ${total}`;
+    dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
+  }
+
+  function setMomentsExpanded(expanded, options = {}) {
+    state.momentsExpanded = !!expanded;
+    dom.momentsFull.hidden = !state.momentsExpanded;
+    dom.momentsRail.hidden = state.momentsExpanded;
+    const total = state.job?.analysis?.scenes?.length || 0;
+    dom.momentsExpand.textContent = state.momentsExpanded ? "Show less" : `Show all ${total}`;
+    dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
+    if (state.momentsExpanded) {
+      renderMomentList();
+      if (options.scroll !== false) {
+        dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
   }
 
   function renderScenes() {
@@ -3969,8 +4109,7 @@
     const payoffId = clips.length ? clips[clips.length - 1].scene : null;
     const visible = scenes.slice(0, state.visible);
     const order = state.sort === "best" ? "best first" : "timeline order";
-    const shown = visible.length < scenes.length ? ` · showing ${visible.length}` : "";
-    dom.sceneCount.textContent = `${scenes.length} moment${scenes.length === 1 ? "" : "s"} · ${order}${shown}`;
+    updateMomentControls(scenes.length, visible.length, order);
     dom.sceneGrid.innerHTML = visible.map((scene) => {
       const role = roles.get(scene.id) || "";
       const tags = [...(scene.tags || []), ...(scene.deep === false ? ["quick"] : [])].join(" · ");
@@ -4013,14 +4152,18 @@
       const still = scene.deep === false
         ? `<span class="scene-placeholder"><span>quick</span></span>`
         : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+      const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
+      const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
       return `
-        <button class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
+        <div class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
           data-moment-scene="${scene.id}" data-rail-index="${index}" draggable="true"
-          title="Click for details · ${esc(scene.ocr || scene.speech || `Scene ${scene.id + 1}`)}">
+          role="button" tabindex="0" aria-label="${esc(text)}${role ? ` · ${esc(role)}` : ""} · open details"
+          title="Click for details · ${esc(text)}">
           ${still}
           ${momentCheck(scene, used.has(scene.id))}
           <span class="moment-time">${esc(fmtTime(scene.start))}</span>
-        </button>`;
+          <span class="moment-score">${Math.round(scene.hook)}</span>
+        </div>`;
     }).join("");
     if (dom.momentsFull && !dom.momentsFull.hidden) {
       renderMomentList();
@@ -4046,14 +4189,15 @@
       const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
       const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
       return `
-        <button class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
-          data-moment-scene="${scene.id}" draggable="true" role="listitem"
+        <div class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
+          data-moment-scene="${scene.id}" draggable="true" role="listitem" tabindex="0"
+          aria-label="${esc(text)}${role ? ` · ${esc(role)}` : ""} · open details"
           title="${esc(text)}${role ? ` · ${esc(role)}` : ""} · click for details">
           ${still}
           ${momentCheck(scene, used.has(scene.id))}
           <span class="moment-time">${esc(fmtTime(scene.start))}</span>
           <span class="moment-score">${Math.round(scene.hook)}</span>
-        </button>`;
+        </div>`;
     }).join("");
   }
 
@@ -5288,6 +5432,7 @@
       return;
     }
     dom.renderAb.disabled = true;
+    state.playerScrollKey = null;
     try {
       let records = [];
       const errors = [];
@@ -5304,7 +5449,7 @@
                 aspect: state.aspect,
                 captions: state.captions,
                 preset: state.preset || null,
-                order: state.order,
+                order: "source",
                 clips: clipsForHook(hook.scene),
                 script_id: state.scriptId || null,
                 audio: currentAudioPlan(),
@@ -6447,7 +6592,8 @@
       dom.resultReadyDownload.href = withToken(record.url);
       dom.resultReadyDownload.download = downloadName;
       dom.resultReady.hidden = false;
-      if (revealPlayer) {
+      if (revealPlayer && state.playerScrollKey !== record.key) {
+        state.playerScrollKey = record.key;
         setTimeout(() => {
           dom.playerWrap.scrollIntoView({ behavior: "smooth", block: "center" });
         }, 60);
@@ -6510,6 +6656,8 @@
     const target = state.target;
     const existing = findRender(quality);
     const force = !!(existing && existing.status === "ready" && existing.hook === currentHookId());
+    const clips = state.edited && state.plan ? planClipsForRender() : null;
+    state.playerScrollKey = null;
     dom.render.disabled = true;
     dom.renderDraft.disabled = true;
     dom.renderError.hidden = true;
@@ -6518,13 +6666,15 @@
         method: "POST",
         body: JSON.stringify({
           target,
-          hook_scene: state.overrideHook ?? (state.edited ? state.plan.clips?.[0]?.scene ?? null : null),
+          hook_scene: clips ? clips[0]?.scene ?? null : state.overrideHook,
           quality,
           aspect: state.aspect,
           captions: state.captions,
           preset: state.preset || null,
-          order: state.order,
-          clips: state.edited && state.plan ? state.plan.clips : null,
+          // An explicit cut carries its own Hook > Beat > Payoff order. Story
+          // arc order would move the roles, so the render keeps the cut order.
+          order: clips ? "source" : state.order,
+          clips,
           script_id: state.scriptId || null,
           audio: currentAudioPlan(),
           edit: classicEditPayload(),
@@ -6554,23 +6704,25 @@
       return;
     }
     dom.renderAll.disabled = true;
+    state.playerScrollKey = null;
     try {
       let records = [];
       const errors = [];
       if (state.edited) {
+        const clips = planClipsForRender();
         for (const target of [15, 30, 60]) {
           try {
             const result = await api(`/api/jobs/${state.job.id}/render`, {
               method: "POST",
               body: JSON.stringify({
                 target,
-                hook_scene: state.overrideHook ?? state.plan.hook_scene ?? state.plan.clips?.[0]?.scene ?? null,
+                hook_scene: clips?.[0]?.scene ?? state.overrideHook ?? state.plan.hook_scene ?? null,
                 quality: "final",
                 aspect: state.aspect,
                 captions: state.captions,
                 preset: state.preset || null,
-                order: state.order,
-                clips: state.plan.clips,
+                order: "source",
+                clips,
                 script_id: state.scriptId || null,
                 audio: currentAudioPlan(),
                 edit: classicEditPayload(),
@@ -7008,6 +7160,8 @@
     state.history = [];
     state.historyEntry = null;
     state.timelineScroll = 0;
+    state.playerScrollKey = null;
+    state.renderWasActive = null;
     state.target = 30;
     state.sort = "best";
     state.visible = 96;
