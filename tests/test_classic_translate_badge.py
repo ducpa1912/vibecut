@@ -18,8 +18,9 @@ def test_rewrite_waits_for_the_full_translation():
     assert "/translate/status?target=" in script
     assert "async function ensureTranslation(controller)" in script
     assert "const translatedReady = await ensureTranslation(controller);" in script
-    assert "Translating batch" in script
-    assert "Translation ready · " in script
+    assert "Translating…" in script
+    assert "Rewriting…" in script
+    assert "✓ Translation ready" in script
 
 
 def test_the_badge_is_styled_by_status():

@@ -1,7 +1,9 @@
-"""A blocked render says why, in the page, not only in a toast.
+"""A blocked render says why once, next to the control that fixes it.
 
-The founder pass selected a voice engine with no key. Render was disabled with
-no visible reason, so it looked broken until a reload reset the audio mode.
+Music mode with no source used to print the same sentence in #render-block,
+#render-note and the disabled button title. The music step now owns one inline
+message with Use my BGM / Generate actions; other engine blocks use the Sound
+status line and an Open Setup action.
 """
 
 from __future__ import annotations
@@ -11,19 +13,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_the_page_has_a_persistent_render_block_notice():
+def test_the_page_has_one_inline_music_block():
     page = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
-    assert 'id="render-block"' in page
-    assert 'id="render-block-setup"' in page
-    assert "Open Setup" in page
+    assert 'id="audio-music-block"' in page
+    assert 'id="audio-music-block-bgm"' in page
+    assert 'id="audio-music-block-generate"' in page
+    assert 'id="render-block"' not in page
+    assert 'id="render-block-setup"' not in page
+    assert 'id="audio-status-setup"' in page
 
 
-def test_the_block_reason_fills_the_notice_and_the_button_titles():
+def test_the_block_reason_is_inline_and_on_the_button_title():
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
-    assert "dom.renderBlock.hidden = !blocked" in script
-    assert 'dom.renderBlock.querySelector("span").textContent = blocked || ""' in script
+    assert "dom.audioMusicBlock.hidden = !noSource" in script
+    assert "dom.audioGenerateMusic.disabled = noSource" in script
     assert "dom.render.title = blocked || \"\"" in script
-    assert "dom.renderBlockSetup.addEventListener(\"click\", openSetup)" in script
+    assert "dom.audioStatusSetup.hidden = !needsSetup" in script
+    assert "Choose a music source before rendering." in script
+    # The render note carries render context, never a second copy of the block.
+    assert "dom.renderNote.textContent = blocked" not in script
 
 
 def test_the_render_buttons_stay_disabled_while_blocked():

@@ -3,6 +3,32 @@
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+  const CLASSIC_TEXT_ASPECTS = ["9:16", "4:5"];
+  const CLASSIC_TEXT_ANCHORS = {
+    top: "top-center",
+    center: "center",
+    bottom: "bottom-center",
+  };
+  const CLASSIC_TEXT_POSITIONS = {
+    "top-center": "top",
+    center: "center",
+    "bottom-center": "bottom",
+  };
+  const CLASSIC_TEXT_KINDS = {
+    top: "hook",
+    center: "title",
+    bottom: "lower_third",
+  };
+  const CLASSIC_TEXT_BOX = {
+    hook: { w: 0.76, h: 0.16 },
+    title: { w: 0.76, h: 0.14 },
+    lower_third: { w: 0.64, h: 0.14 },
+  };
+  const CLASSIC_EFFECT_LABELS = {
+    punch_in: "Punch in",
+    shake: "Shake",
+    circle: "Circle (centre)",
+  };
 
   const dom = {
     ingest: $("#ingest-view"),
@@ -111,6 +137,9 @@
     progressCancelUrl: $("#progress-cancel-url"),
     resultTitle: $("#result-title"),
     resultMeta: $("#result-meta"),
+    resultReady: $("#result-ready"),
+    resultReadyText: $("#result-ready-text"),
+    resultReadyDownload: $("#result-ready-download"),
     speechNotice: $("#speech-notice"),
     speechNoticeDetail: $("#speech-notice-detail"),
     speechRetry: $("#speech-retry"),
@@ -119,7 +148,6 @@
     newVideo: $("#new-video"),
     deleteJob: $("#delete-job"),
     cleanJob: $("#clean-job"),
-    cleanProfile: $("#clean-profile"),
     hookImg: $("#hook-img"),
     hookTime: $("#hook-time"),
     hookCopy: $("#hook-copy"),
@@ -131,6 +159,7 @@
     targetTabs: $("#target-tabs"),
     planTotal: $("#plan-total"),
     planBadge: $("#plan-badge"),
+    planRoute: $("#plan-route"),
     resetHook: $("#reset-hook"),
     editCut: $("#edit-cut"),
     editBar: $("#edit-bar"),
@@ -142,18 +171,17 @@
     hookLabToggle: $("#hook-lab-toggle"),
     transcriptToggle: $("#transcript-toggle"),
     transcriptPanel: $("#transcript-panel"),
-    planWhy: $("#plan-why"),
     planReasoning: $("#plan-reasoning"),
     planReasoningBody: $("#plan-reasoning-body"),
     timeline: $("#timeline"),
     timelineDrop: $("#timeline-drop"),
     momentsSection: $("#moments-section"),
     momentsRail: $("#moments-rail"),
-    momentsScrub: $("#moments-scrub"),
     momentsFull: $("#moments-full"),
     momentsList: $("#moments-list"),
     momentsExpand: $("#moments-expand"),
     render: $("#render"),
+    clipMenu: $("#clip-menu"),
     renderDraft: $("#render-draft"),
     renderAll: $("#render-all"),
     renderAb: $("#render-ab"),
@@ -162,25 +190,49 @@
     renderCancel: $("#render-cancel"),
     aspect: $("#aspect-select"),
     captions: $("#captions"),
+    textEffectsStep: $("#text-effects-step"),
+    textShapeNote: $("#text-shape-note"),
+    textLayerControls: $("#text-layer-controls"),
+    textOverlayList: $("#text-overlay-list"),
+    textOverlayText: $("#text-overlay-text"),
+    textOverlayAnchor: $("#text-overlay-anchor"),
+    textOverlayStart: $("#text-overlay-start"),
+    textOverlayEnd: $("#text-overlay-end"),
+    textOverlayAdd: $("#text-overlay-add"),
+    effectList: $("#effect-list"),
+    effectKind: $("#effect-kind"),
+    effectDuration: $("#effect-duration"),
+    effectAdd: $("#effect-add"),
     audioPanel: $("#audio-panel"),
     audioMode: $("#audio-mode"),
     audioModeTabs: $("#audio-mode-tabs"),
+    audioModeDesc: $("#audio-mode-desc"),
     audioRewriteStep: $("#audio-rewrite-step"),
+    audioCopyForm: $("#audio-copy-form"),
+    audioCopyNote: $("#audio-copy-note"),
+    audioCopyNoteText: $("#audio-copy-note-text"),
+    audioCopySwitch: $("#audio-copy-switch"),
     audioVoiceStep: $("#audio-voice-step"),
     audioMusicStep: $("#audio-music-step"),
+    audioMusicBlock: $("#audio-music-block"),
+    audioMusicBlockBgm: $("#audio-music-block-bgm"),
+    audioMusicBlockGenerate: $("#audio-music-block-generate"),
     audioRewriteRun: $("#audio-rewrite-run"),
     audioRewriteNote: $("#audio-rewrite-note"),
     translateBadge: $("#translate-badge"),
+    copyTranscript: $("#copy-transcript"),
     audioVoiceGenerate: $("#audio-voice-generate"),
     audioVoiceUpload: $("#audio-voice-upload"),
     audioMusicSource: $("#audio-music-source"),
     audioTrackField: $("#audio-track-field"),
+    audioMusicField: $("#audio-music-field"),
+    audioVoicePreviewStatus: $("#audio-voice-preview-status"),
+    audioMusicPreviewStatus: $("#audio-music-preview-status"),
     audioMusicUploadBox: $("#audio-music-upload-box"),
     audioMusicUpload: $("#audio-music-upload"),
     audioMusicUploadButton: $("#audio-music-upload-button"),
     audioMusicUploadClear: $("#audio-music-upload-clear"),
     audioMusicUploadName: $("#audio-music-upload-name"),
-    audioMusicWarning: $("#audio-music-warning"),
     audioPromptField: $("#audio-prompt-field"),
     audioGainField: $("#audio-gain-field"),
     audioDuckField: $("#audio-duck-field"),
@@ -197,6 +249,7 @@
     audioBeatSync: $("#audio-beatsync"),
     audioBpm: $("#audio-bpm"),
     mixerPanel: $("#mixer-panel"),
+    mixerOpen: $("#mixer-open"),
     mixerCanvas: $("#mixer-canvas"),
     mixerReadout: $("#mixer-readout"),
     mixerReset: $("#mixer-reset"),
@@ -211,13 +264,17 @@
     audioGain: $("#audio-gain"),
     audioDuck: $("#audio-duck"),
     audioPreview: $("#audio-preview"),
+    audioGenerateVoice: $("#audio-generate-voice"),
+    audioUseRecording: $("#audio-use-recording"),
+    audioGenerateMusic: $("#audio-generate-music"),
+    audioPlayMusic: $("#audio-play-music"),
+    audioUseBgm: $("#audio-use-bgm"),
     audioStatus: $("#audio-status"),
+    audioStatusSetup: $("#audio-status-setup"),
     audioScript: $("#audio-script"),
     renderNote: $("#render-note"),
     renderProgress: $("#render-progress"),
     renderError: $("#render-error"),
-    renderBlock: $("#render-block"),
-    renderBlockSetup: $("#render-block-setup"),
     playerWrap: $("#player-wrap"),
     reelVideo: $("#reel-video"),
     reelDuration: $("#reel-duration"),
@@ -234,10 +291,17 @@
     loadMore: $("#load-more"),
     recentSection: $("#recent-section"),
     recent: $("#recent"),
+    recentResume: $("#recent-resume"),
     recentCount: $("#recent-count"),
     recentError: $("#recent-error"),
+    recentAll: $("#recent-all"),
+    recentAllLabel: $("#recent-all-label"),
+    recentAllCount: $("#recent-all-count"),
+    recentAllPanel: $("#recent-all-panel"),
+    recentAllList: $("#recent-all-list"),
     historyPanel: $("#history-panel"),
     historyCount: $("#history-count"),
+    historyLatest: $("#history-latest"),
     historyList: $("#history-list"),
     historyDetail: $("#history-detail"),
     drawer: $("#drawer"),
@@ -261,6 +325,16 @@
     target: 30,
     aspect: "9:16",
     captions: false,
+    classicText: {
+      loadedKey: "",
+      dataKey: "",
+      clipsHash: "",
+      overlays: [],
+      effects: [],
+      seq: 0,
+      rev: 0,
+      saveTimer: null,
+    },
     audio: {
       mode: "keep",
       source: "generate",
@@ -285,15 +359,28 @@
       gain: -18,
       duck: true,
     },
+    voiceSampleUrl: "",
+    voiceSampleKey: "",
+    voicePreviewBusy: false,
+    musicPreviewUrl: "",
+    musicPreviewKey: "",
+    musicPreviewBusy: false,
+    soundPlayer: null,
     audioEngines: null,
     mixer: { ready: false, total: 0, clips: [], original: [], music: [], voice: [], bed: [] },
     scriptOverrides: {},
     scriptId: null,
     lastScript: null,
+    scriptAbort: null,
+    scriptTimer: null,
+    translation: null,
+    translationWarm: null,
     history: [],
     historyEntry: null,
     recentJobs: [],
     recentSelectedId: "",
+    recentOpened: {},
+    recentExpanded: false,
     showLiteral: false,
     order: "source",
     preset: "",
@@ -306,6 +393,10 @@
     momentsExpanded: false,
     trim: null,
     timelineScroll: 0,
+    clipMenuIndex: null,
+    clipMenuTrigger: null,
+    playerScrollKey: null,
+    renderWasActive: null,
     drawerScene: null,
     sort: "best",
     visible: 96,
@@ -317,7 +408,9 @@
     cancelRequested: false,
   };
 
-  init();
+  // The role menu and every reorder share one order: Hook, Beat, Payoff.
+  const CLIP_ROLES = ["hook", "beat", "payoff"];
+  const CLIP_ROLE_LABELS = { hook: "Hook", beat: "Beat", payoff: "Payoff" };
 
   // Native <select> popups on macOS ignore the page font size. The audio
   // controls open this list instead, at a readable 15px.
@@ -406,6 +499,7 @@
 
   function init() {
     syncTokenCookie();
+    state.recentOpened = readRecentOpened();
     bind();
     enhanceAudioSelects();
     updateUrlState();
@@ -1042,7 +1136,6 @@
 
   function bindSetup() {
     dom.setupOpen.addEventListener("click", openSetup);
-    dom.renderBlockSetup.addEventListener("click", openSetup);
     dom.setupClose.addEventListener("click", closeSetup);
     dom.setup.querySelectorAll("[data-setup-close]").forEach((node) => {
       node.addEventListener("click", closeSetup);
@@ -1071,6 +1164,12 @@
     dom.firstRunSetup?.addEventListener("click", openSetup);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !dom.setup.hidden) closeSetup();
+      if (event.key === "Escape") closeClipMenu({ restoreFocus: true });
+    });
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest("#clip-menu") && !event.target.closest("[data-role-index]")) {
+        closeClipMenu();
+      }
     });
   }
 
@@ -1205,36 +1304,82 @@
   }
 
   const LIVE_JOB_STATUS = new Set(["queued", "downloading", "scanning", "reading", "scoring"]);
+  const RECENT_OPENED_KEY = "vibecut.classic.opened";
 
-  async function loadRecent() {
+  function readRecentOpened() {
     try {
-      const data = await api("/api/jobs");
-      const jobs = data.jobs || [];
-      state.recentJobs = jobs;
-      if (state.job?.id) state.recentSelectedId = state.job.id;
-      if (state.recentSelectedId && !jobs.some((job) => job.id === state.recentSelectedId)) {
-        state.recentSelectedId = "";
-      }
-      clearRecentError();
-      if (!jobs.length) {
-        dom.recentSection.hidden = true;
-        dom.recentCount.textContent = "";
-        dom.recent.innerHTML = "";
-        return;
-      }
-      dom.recentSection.hidden = false;
-      dom.recentCount.textContent = `${jobs.length} local`;
-      dom.recent.innerHTML = jobs.map(recentCard).join("");
+      const raw = JSON.parse(localStorage.getItem(RECENT_OPENED_KEY) || "{}");
+      if (!raw || typeof raw !== "object") return {};
+      return Object.fromEntries(
+        Object.entries(raw)
+          .map(([id, stamp]) => [id, Number(stamp) || 0])
+          .filter(([, stamp]) => stamp > 0)
+          .slice(-80),
+      );
     } catch (_) {
-      state.recentJobs = [];
-      dom.recentSection.hidden = true;
-      dom.recentCount.textContent = "";
+      return {};
     }
   }
 
-  function recentCard(job) {
-    const name = job.name || "Untitled video";
-    const selected = state.recentSelectedId === job.id || state.job?.id === job.id;
+  function rememberRecentOpened(id) {
+    if (!id) return;
+    state.recentOpened[id] = Math.floor(Date.now() / 1000);
+    try {
+      localStorage.setItem(RECENT_OPENED_KEY, JSON.stringify(state.recentOpened));
+    } catch (_) { /* storage may be unavailable; the in-memory map still works */ }
+  }
+
+  function printRecentTime(timestamp) {
+    const value = Number(timestamp);
+    if (!value) return "";
+    const seconds = Math.max(0, Math.floor(Date.now() / 1000 - value));
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m ago`;
+    const date = new Date(value * 1000);
+    const now = new Date();
+    if (date.toDateString() === now.toDateString()) {
+      return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    }
+    return formatDate(value);
+  }
+
+  function recentOpenedLabel(job) {
+    const opened = state.recentOpened[job.id];
+    if (opened) return `Opened ${printRecentTime(opened)}`;
+    return `Added ${formatDate(job.created)}`;
+  }
+
+  function recentGroupOpened(group) {
+    const stamps = group.jobs.map((job) => state.recentOpened[job.id] || 0);
+    const newest = Math.max(0, ...stamps);
+    const job = group.jobs[0];
+    if (newest) return `Opened ${printRecentTime(newest)}`;
+    return `Added ${formatDate(job.created)}`;
+  }
+
+  function recentLabel(name) {
+    let label = fileStem(name).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    label = label
+      .replace(/^(en|cn|vi|ja|ko|es|fr|de|pt|it|ru|hi|th|id|tr|ar)\s+/i, "")
+      .replace(/\b\d{2,4}x\d{2,4}\b/gi, " ")
+      .replace(/\b\d+s\b/gi, " ")
+      .replace(/\b(sub|subs|subtitle|subtitles|subtitle?d|final|draft)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return label || fileStem(name);
+  }
+
+  function groupRecent(jobs) {
+    const groups = new Map();
+    jobs.forEach((job) => {
+      const key = String(job.name || "Untitled video").trim().toLowerCase();
+      if (!groups.has(key)) groups.set(key, { name: job.name || "Untitled video", jobs: [] });
+      groups.get(key).jobs.push(job);
+    });
+    return [...groups.values()];
+  }
+
+  function recentStatus(job) {
     const failed = job.status === "failed";
     const progress = Math.max(0, Math.min(1, Number(job.progress) || 0));
     const status = job.status === "ready"
@@ -1249,47 +1394,149 @@
     const statusText = failed
       ? job.message || "Ingest failed"
       : job.scene_count
-        ? `${job.scene_count} scenes`
+        ? `${job.scene_count} moments`
         : job.message || (job.status === "ready" ? "ready" : "queued");
+    return { failed, status, statusText, progress };
+  }
+
+  function recentDeleteBlock(job) {
+    if (job.status === "downloading") return "Cancel download first.";
+    if (LIVE_JOB_STATUS.has(job.status)) return "This job is still working.";
+    return "";
+  }
+
+  function recentThumb(job, cls = "recent-thumb") {
+    if (job.hook_thumb) {
+      return `<span class="${cls}"><img src="${esc(withToken(job.hook_thumb))}" alt="" loading="lazy"></span>`;
+    }
+    return `<span class="${cls}"><span class="empty">${job.scene_count ? `${job.scene_count} moments` : "working"}</span></span>`;
+  }
+
+  async function loadRecent() {
+    try {
+      const data = await api("/api/jobs");
+      const jobs = data.jobs || [];
+      state.recentJobs = jobs;
+      if (state.job?.id) state.recentSelectedId = state.job.id;
+      if (state.recentSelectedId && !jobs.some((job) => job.id === state.recentSelectedId)) {
+        state.recentSelectedId = "";
+      }
+      clearRecentError();
+      if (!jobs.length) {
+        dom.recentSection.hidden = true;
+        dom.recentCount.textContent = "";
+        dom.recentResume.innerHTML = "";
+        dom.recent.innerHTML = "";
+        dom.recentAllPanel.hidden = true;
+        dom.recentAll.hidden = true;
+        return;
+      }
+      const groups = groupRecent(jobs);
+      const openedId = Object.entries(state.recentOpened)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .map(([id]) => id)
+        .find((id) => jobs.some((job) => job.id === id));
+      const resumeId = openedId || jobs[0].id;
+      const resume = groups.find((group) => group.jobs.some((job) => job.id === resumeId)) || groups[0];
+      const resumeJob = resume.jobs.find((job) => job.id === resumeId) || resume.jobs[0];
+      const rest = groups.filter((group) => group !== resume);
+      dom.recentSection.hidden = false;
+      dom.recentCount.textContent = `${jobs.length} cut${jobs.length === 1 ? "" : "s"} · ${groups.length} source${groups.length === 1 ? "" : "s"}`;
+      dom.recentResume.hidden = !resume;
+      dom.recentResume.innerHTML = resume ? resumeCard(resume, resumeJob) : "";
+      dom.recent.innerHTML = rest.slice(0, 5).map(recentCard).join("");
+      dom.recentAll.hidden = jobs.length <= 1;
+      dom.recentAllCount.textContent = `(${jobs.length})`;
+      if (jobs.length <= 1) state.recentExpanded = false;
+      dom.recentAllPanel.hidden = !state.recentExpanded;
+      dom.recentAll.setAttribute("aria-expanded", state.recentExpanded ? "true" : "false");
+      dom.recentAllLabel.textContent = state.recentExpanded ? "Hide all cuts" : "View all cuts";
+      dom.recentAllList.innerHTML = recentAllList(groups);
+    } catch (_) {
+      state.recentJobs = [];
+      dom.recentSection.hidden = true;
+      dom.recentCount.textContent = "";
+    }
+  }
+
+  function resumeCard(group, job = group.jobs[0]) {
+    const count = group.jobs.length;
+    return `
+      <button type="button" class="recent-resume-card${state.recentSelectedId === job.id ? " selected" : ""}" data-id="${esc(job.id)}" aria-pressed="${state.recentSelectedId === job.id ? "true" : "false"}">
+        ${recentThumb(job, "recent-resume-thumb")}
+        <span class="recent-resume-copy">
+          <span class="resume-kicker">Resume last cut</span>
+          <strong title="${esc(job.name || "Untitled video")}">${esc(recentLabel(job.name))}</strong>
+          <span class="recent-resume-meta">${esc(recentOpenedLabel(job))} · ${esc(fmtDuration(job.duration))} · ${count} cut${count === 1 ? "" : "s"}</span>
+        </span>
+        <span class="resume-cta">Open cut →</span>
+      </button>`;
+  }
+
+  function recentCard(group) {
+    const job = group.jobs[0];
+    const count = group.jobs.length;
+    const { failed, status, statusText } = recentStatus(job);
     const error = String(job.error || job.ingest_error || (failed ? job.message : "") || "").trim();
-    const provider = job.provider_label || job.provider || "";
-    const meta = [fmtDuration(job.duration), formatDate(job.created), provider].filter(Boolean);
-    const blocked = LIVE_JOB_STATUS.has(job.status);
-    const blockReason = job.status === "downloading"
-      ? "Cancel download first."
-      : blocked ? "This job is still working." : "";
-    const deleteLabel = blockReason ? `Delete ${name}: ${blockReason}` : `Delete ${name}`;
-    const thumb = job.hook_thumb
-      ? `<img src="${esc(withToken(job.hook_thumb))}" alt="" loading="lazy">`
-      : `<span class="empty">${job.scene_count ? `${job.scene_count} scenes` : "working"}</span>`;
+    const selected = state.recentSelectedId === job.id || state.job?.id === job.id;
     return `
       <div class="recent-item">
         <button type="button" class="recent-card${selected ? " selected" : ""}" data-id="${esc(job.id)}" aria-pressed="${selected ? "true" : "false"}">
-          <span class="recent-thumb">${thumb}</span>
+          ${recentThumb(job)}
+          ${count > 1 ? `<span class="recent-count-pill">${count} cuts</span>` : ""}
           <span class="recent-copy">
-            <strong title="${esc(name)}">${esc(name)}</strong>
-            <span>${meta.map(esc).join(" · ")}</span>
+            <strong title="${esc(job.name || "Untitled video")}">${esc(recentLabel(job.name))}</strong>
+            <span>${esc(recentGroupOpened(group))}</span>
           </span>
           <span class="recent-status">
             <span class="recent-status-text">${esc(statusText)}</span>
-            <span class="dot${failed ? " failed" : blocked ? " live" : ""}">${esc(status)}</span>
+            <span class="dot${failed ? " failed" : LIVE_JOB_STATUS.has(job.status) ? " live" : ""}">${esc(status)}</span>
           </span>
           ${error ? `<span class="recent-error" title="${esc(error)}">${esc(error)}</span>` : ""}
-        </button>
-        <button type="button" class="recent-delete" data-delete-id="${esc(job.id)}"
-          ${blockReason ? `data-delete-blocked="${esc(blockReason)}" aria-disabled="true"` : ""}
-          aria-label="${esc(deleteLabel)}" title="${esc(blockReason || deleteLabel)}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
         </button>
       </div>`;
   }
 
+  function recentAllList(groups) {
+    return groups.map((group) => {
+      const count = group.jobs.length;
+      const rows = group.jobs.map((job) => {
+        const { failed, status, statusText } = recentStatus(job);
+        const blockReason = recentDeleteBlock(job);
+        const deleteLabel = blockReason ? `Delete ${job.name}: ${blockReason}` : `Delete ${job.name}`;
+        return `
+          <div class="recent-all-row">
+            <button type="button" class="recent-all-open" data-id="${esc(job.id)}">
+              ${recentThumb(job, "recent-all-thumb")}
+              <span class="recent-all-copy">
+                <strong>${esc(recentLabel(job.name))}</strong>
+                <span>${esc(recentOpenedLabel(job))} · ${esc(statusText)}${count > 1 ? " · version" : ""}</span>
+              </span>
+              <span class="recent-all-state${failed ? " failed" : ""}">${esc(status)}</span>
+            </button>
+            <button type="button" class="recent-delete" data-delete-id="${esc(job.id)}"
+              ${blockReason ? `data-delete-blocked="${esc(blockReason)}" aria-disabled="true"` : ""}
+              aria-label="${esc(deleteLabel)}" title="${esc(blockReason || deleteLabel)}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+            </button>
+          </div>`;
+      }).join("");
+      return `<div class="recent-all-group">
+        ${count > 1 ? `<p class="recent-all-group-title">${esc(recentLabel(group.name))} · ${count} cuts</p>` : ""}
+        ${rows}
+      </div>`;
+    }).join("");
+  }
+
   function syncRecentSelection(id) {
     state.recentSelectedId = id || "";
-    $$(".recent-card", dom.recent).forEach((card) => {
+    $$(".recent-card, .recent-resume-card", dom.recentSection).forEach((card) => {
       const selected = card.dataset.id === id;
       card.classList.toggle("selected", selected);
       card.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    $$(".recent-all-open", dom.recentSection).forEach((row) => {
+      row.classList.toggle("selected", row.dataset.id === id);
     });
   }
 
@@ -1415,10 +1662,7 @@
     });
     dom.hookChange.addEventListener("click", () => {
       setSort("best");
-      state.momentsExpanded = true;
-      dom.momentsFull.hidden = false;
-      dom.momentsExpand.textContent = "Collapse";
-      renderScenes();
+      setMomentsExpanded(true, { scroll: false });
       dom.momentsSection?.scrollIntoView({ behavior: "smooth", block: "start" });
       toast("Tap a scene, then use it as the hook.");
     });
@@ -1431,6 +1675,7 @@
       state.aspect = dom.aspect.value;
       state.preset = "";
       dom.presetSelect.value = "";
+      updateTextAvailability();
       updateRenderPanel();
       if (state.plan) renderHook();
     });
@@ -1462,10 +1707,58 @@
       updateRenderPanel();
     });
     bindAudio();
+    bindClassicText();
+    updateTextAvailability();
     bindSetup();
 
+    dom.timeline.addEventListener("contextmenu", (event) => {
+      const clip = event.target.closest(".clip[data-index]");
+      if (!clip) return;
+      event.preventDefault();
+      openClipMenu(
+        Number(clip.dataset.index),
+        event.clientX,
+        event.clientY,
+        clip.querySelector("[data-role-index]"),
+      );
+    });
+    dom.clipMenu.addEventListener("keydown", (event) => {
+      const buttons = [...dom.clipMenu.querySelectorAll("[data-clip-role]")];
+      if (!buttons.length) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeClipMenu({ restoreFocus: true });
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.stopPropagation();
+        return;
+      }
+      const current = buttons.indexOf(document.activeElement);
+      let next = null;
+      if (event.key === "ArrowDown") next = (current + 1 + buttons.length) % buttons.length;
+      else if (event.key === "ArrowUp") next = (current - 1 + buttons.length) % buttons.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = buttons.length - 1;
+      else if (event.key === "Tab") {
+        closeClipMenu();
+        return;
+      }
+      if (next === null) return;
+      event.preventDefault();
+      buttons[next].focus();
+    });
     dom.timeline.addEventListener("click", (event) => {
       if (event.target.closest(".trim-handle")) return;
+      const role = event.target.closest("[data-role-index]");
+      if (role) {
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = role.getBoundingClientRect();
+        openClipMenu(Number(role.dataset.roleIndex), rect.left, rect.bottom + 6, role);
+        return;
+      }
       const tool = event.target.closest("[data-edit]");
       if (tool) {
         event.stopPropagation();
@@ -1626,14 +1919,48 @@
       if (button) openDrawer(Number(button.dataset.scene));
     });
     dom.momentsRail.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-moment-toggle]");
+      if (toggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleMomentSelection(Number(toggle.dataset.momentToggle));
+        return;
+      }
       const card = event.target.closest("[data-moment-scene]");
       if (card) openDrawer(Number(card.dataset.momentScene));
     });
     dom.momentsList.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-moment-toggle]");
+      if (toggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleMomentSelection(Number(toggle.dataset.momentToggle));
+        return;
+      }
       const row = event.target.closest("[data-moment-scene]");
       if (row) openDrawer(Number(row.dataset.momentScene));
     });
+    const momentKeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target.closest("[data-moment-toggle]")) return;
+      const card = event.target.closest("[data-moment-scene]");
+      if (!card || card !== event.target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openDrawer(Number(card.dataset.momentScene));
+    };
+    dom.momentsRail.addEventListener("keydown", momentKeydown);
+    dom.momentsList.addEventListener("keydown", momentKeydown);
+    const momentSelectPointer = (event) => {
+      if (event.target.closest("[data-moment-toggle]")) event.stopPropagation();
+    };
+    dom.momentsRail.addEventListener("pointerdown", momentSelectPointer);
+    dom.momentsList.addEventListener("pointerdown", momentSelectPointer);
     dom.momentsList.addEventListener("dragstart", (event) => {
+      if (event.target.closest("[data-moment-toggle]")) {
+        event.preventDefault();
+        return;
+      }
       const row = event.target.closest("[data-moment-scene]");
       if (!row) return;
       event.dataTransfer.effectAllowed = "copy";
@@ -1644,6 +1971,10 @@
       dom.timelineDrop.hidden = true;
     });
     dom.momentsRail.addEventListener("dragstart", (event) => {
+      if (event.target.closest("[data-moment-toggle]")) {
+        event.preventDefault();
+        return;
+      }
       const card = event.target.closest("[data-moment-scene]");
       if (!card) return;
       event.dataTransfer.effectAllowed = "copy";
@@ -1667,27 +1998,18 @@
       state.momentsExpanded = !state.momentsExpanded;
       dom.momentsFull.hidden = !state.momentsExpanded;
       dom.momentsRail.hidden = state.momentsExpanded;
-      dom.momentsScrub.hidden = state.momentsExpanded;
-      dom.momentsExpand.textContent = state.momentsExpanded ? "Collapse" : "Expand";
+      dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
       if (state.momentsExpanded) {
         renderMomentList();
         dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
+      updateMomentControls(
+        state.job?.analysis?.scenes?.length || 0,
+        Math.min(state.visible, state.job?.analysis?.scenes?.length || 0),
+        state.sort === "best" ? "best first" : "timeline order",
+      );
     });
-    dom.momentsScrub.addEventListener("input", () => {
-      const index = Number(dom.momentsScrub.value) || 0;
-      const card = dom.momentsRail.querySelector(`[data-rail-index="${index}"]`);
-      card?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
-    });
-    let railScrollFrame = null;
-    dom.momentsRail.addEventListener("scroll", () => {
-      if (railScrollFrame) return;
-      railScrollFrame = requestAnimationFrame(() => {
-        railScrollFrame = null;
-        syncRailScrub();
-      });
-    });
-    dom.recent.addEventListener("click", (event) => {
+    const handleRecentClick = (event) => {
       const remove = event.target.closest("[data-delete-id]");
       if (remove) {
         event.preventDefault();
@@ -1706,6 +2028,15 @@
         syncRecentSelection(card.dataset.id);
         openJob(card.dataset.id);
       }
+    };
+    dom.recent.addEventListener("click", handleRecentClick);
+    dom.recentResume.addEventListener("click", handleRecentClick);
+    dom.recentAllPanel.addEventListener("click", handleRecentClick);
+    dom.recentAll.addEventListener("click", () => {
+      state.recentExpanded = !state.recentExpanded;
+      dom.recentAllPanel.hidden = !state.recentExpanded;
+      dom.recentAll.setAttribute("aria-expanded", state.recentExpanded ? "true" : "false");
+      dom.recentAllLabel.textContent = state.recentExpanded ? "Hide all cuts" : "View all cuts";
     });
     dom.historyList.addEventListener("click", (event) => {
       const row = event.target.closest("[data-history-entry]");
@@ -1742,6 +2073,8 @@
       if (use) useHook(Number(use.dataset.useHook));
       const add = event.target.closest("[data-add-scene]");
       if (add && addSceneToPlan(Number(add.dataset.addScene))) closeDrawer();
+      const remove = event.target.closest("[data-remove-scene]");
+      if (remove && removeSceneFromPlan(Number(remove.dataset.removeScene))) closeDrawer();
       const read = event.target.closest("[data-read-scene]");
       if (read) readScene(Number(read.dataset.readScene));
     });
@@ -1751,8 +2084,9 @@
     document.addEventListener("keydown", (event) => {
       if (dom.result.hidden || !state.plan) return;
       if (dom.setup && !dom.setup.hidden) return;
+      if (dom.clipMenu && !dom.clipMenu.hidden) return;
       const tag = String(event.target?.tagName || "").toLowerCase();
-      if (["input", "select", "textarea"].includes(tag) || event.target?.isContentEditable) return;
+      if (["input", "select", "textarea", "button", "a"].includes(tag) || event.target?.isContentEditable) return;
       if (event.metaKey || event.ctrlKey) return;
       if (!dom.drawer.hidden) {
         if (event.key.toLowerCase() === "a" && state.drawerScene !== null) {
@@ -2446,24 +2780,39 @@
         state.audio.musicUploadName = "";
         state.audio.musicUploadDuration = 0;
         state.audio.source = "generate";
+        resetSoundPreviews();
         state.scriptOverrides = {};
         state.scriptId = null;
         state.lastScript = null;
         state.history = [];
         state.historyEntry = null;
         state.timelineScroll = 0;
+        if (state.classicText.saveTimer) clearTimeout(state.classicText.saveTimer);
+        state.classicText = {
+          loadedKey: "",
+          dataKey: "",
+          clipsHash: "",
+          overlays: [],
+          effects: [],
+          seq: 0,
+          rev: 0,
+          saveTimer: null,
+        };
+        renderClassicText();
         if (dom.historyList) dom.historyList.innerHTML = "";
         if (dom.historyDetail) {
           dom.historyDetail.hidden = true;
           dom.historyDetail.innerHTML = "";
         }
         if (dom.historyCount) dom.historyCount.textContent = "";
+        if (dom.historyLatest) dom.historyLatest.textContent = "";
         if (dom.audioUpload) dom.audioUpload.value = "";
         if (dom.audioMusicUpload) dom.audioMusicUpload.value = "";
         if (dom.audioSourceGenerate) dom.audioSourceGenerate.checked = true;
         syncAudioVisibility();
       }
       state.job = job;
+      rememberRecentOpened(job.id);
       syncRecentSelection(job.id);
       state.ingestJob = job.status === "downloading" ? job.id : null;
       state.cancelRequested = false;
@@ -2488,6 +2837,9 @@
 
   function prepareResult(job) {
     state.job = job;
+    cancelAudioScript();
+    cancelTranslationWarm();
+    state.translation = null;
     state.meta = {
       width: job.source.width,
       height: job.source.height,
@@ -2502,6 +2854,8 @@
     state.momentsExpanded = false;
     state.trim = null;
     state.timelineScroll = 0;
+    state.playerScrollKey = null;
+    state.renderWasActive = null;
     state.sort = "best";
     state.visible = 96;
     state.busy = false;
@@ -2511,8 +2865,8 @@
     dom.transcriptPanel.innerHTML = "";
     dom.momentsFull.hidden = true;
     dom.momentsRail.hidden = false;
-    dom.momentsScrub.hidden = false;
-    dom.momentsExpand.textContent = "Expand";
+    dom.momentsExpand.textContent = "Show all";
+    dom.momentsExpand.setAttribute("aria-expanded", "false");
     state.plan = job.analysis.plans[String(state.target)];
     $$("#target-tabs button").forEach((button) => {
       button.classList.toggle("active", Number(button.dataset.target) === state.target);
@@ -2542,20 +2896,35 @@
     if (index >= 0) state.job.analysis.scenes[index] = { ...state.job.analysis.scenes[index], ...scene };
   }
 
+  function resultHeading() {
+    const scene = currentHookScene();
+    const line = scene ? clipText(sceneLine(scene), 84) : "";
+    if (line) return line;
+    return `${state.target}s cut`;
+  }
+
+  function updateResultHeading() {
+    if (!dom.resultTitle || !state.job) return;
+    const title = resultHeading();
+    dom.resultTitle.textContent = title;
+    dom.resultTitle.title = state.job.source.name || title;
+  }
+
   function renderResult() {
     const job = state.job;
     const analysis = job.analysis;
-    dom.resultTitle.textContent = fileStem(job.source.name);
-    dom.resultTitle.title = job.source.name;
     const engine = [
       analysis.engine?.vision ? "vision" : "center crop",
       analysis.engine?.whisper ? "whisper" : null,
     ].filter(Boolean).join(" + ");
     const deep = analysis.deep_count ?? analysis.scene_count;
-    dom.resultMeta.textContent = `${fmtDuration(job.source.duration)} source · ${analysis.scene_count} scenes · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    dom.resultMeta.textContent = `${fileStem(job.source.name)} · ${fmtDuration(job.source.duration)} source · ${analysis.scene_count} moments · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    dom.resultMeta.title = job.source.name || "";
     renderSpeechNotice();
+    paintTranscriptReady();
     renderUsage();
     renderHook();
+    updateResultHeading();
     renderPlan();
     renderScenes();
     updateRenderPanel();
@@ -2667,7 +3036,13 @@
   function renderHook() {
     const scene = currentHookScene();
     if (!scene) return;
-    dom.hookImg.src = thumbUrl(scene);
+    if (scene.deep === false) {
+      dom.hookImg.removeAttribute("src");
+      dom.hookImg.classList.add("quick");
+    } else {
+      dom.hookImg.src = thumbUrl(scene);
+      dom.hookImg.classList.remove("quick");
+    }
     dom.hookImg.alt = `Hook at ${fmtTime(scene.start)}`;
     dom.hookImg.style.objectPosition = objectPosition(scene.crop);
     dom.hookTime.textContent = `${fmtTime(scene.start, 1)} – ${fmtTime(scene.end, 1)} · ${scene.dur.toFixed(1)}s`;
@@ -2689,6 +3064,7 @@
     ].map(([label, value]) => scoreItem(label, value)).join("");
     dom.hookTags.innerHTML = tagsHtml(scene);
     dom.hookCrop.textContent = cropLabel(scene);
+    updateResultHeading();
   }
 
   function renderReasoning(plan) {
@@ -2743,10 +3119,12 @@
     dom.resetHook.hidden = state.overrideHook === null;
     dom.editCut.textContent = state.editMode ? "Editing…" : "Edit cut";
     dom.editBar.hidden = !state.editMode;
-    dom.planWhy.textContent = plan.reasoning?.summary || [
-      plan.hook_why ? `Hook: ${plan.hook_why}` : "",
-      plan.payoff_why ? `Payoff: ${plan.payoff_why}` : "",
-    ].filter(Boolean).join(" ");
+    const clips = plan.clips || [];
+    const first = clips[0];
+    const last = clips[clips.length - 1];
+    dom.planRoute.textContent = first && last
+      ? `Hook ${fmtTime(first.start, 1)} → payoff ${fmtTime(last.start, 1)} · ${plan.clip_count} beats · ${plan.total.toFixed(1)}s`
+      : `${plan.clip_count} beats · ${plan.total.toFixed(1)}s`;
     renderReasoning(plan);
     if (state.editIndex !== null) {
       state.editIndex = Math.max(0, Math.min(plan.clips.length - 1, state.editIndex));
@@ -2768,8 +3146,11 @@
         <div class="clip ${clip.role === "hook" ? "hook" : ""} ${clip.role === "payoff" ? "payoff" : ""} ${state.editMode ? "editing" : ""} ${state.editIndex === index ? "selected" : ""}"
           data-scene="${scene.id}" data-index="${index}" draggable="true" style="flex:0 0 ${clipWidth(clip)}"
           title="${esc(`${clip.role}: ${why}`)}">
-          <img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">
-          <span class="clip-role">${esc(clip.role)}</span>
+          ${scene.deep === false
+            ? `<span class="clip-placeholder"><span>quick</span></span>`
+            : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`}
+          <button type="button" class="clip-role" data-role-index="${index}" aria-haspopup="menu" aria-controls="clip-menu" aria-expanded="false"
+            title="Change hook / beat / payoff">${esc(clip.role)}</button>
           <span class="clip-time">${clip.dur.toFixed(1)}s</span>
           <span class="trim-handle start" data-trim="start" data-index="${index}" title="Drag to trim start"></span>
           <span class="trim-handle end" data-trim="end" data-index="${index}" title="Drag to trim end"></span>
@@ -2779,6 +3160,9 @@
     dom.timeline.scrollLeft = scroll;
     renderVariants();
     renderMixer();
+    syncClassicTextDefaults();
+    updateTextAvailability();
+    refreshClassicText();
   }
 
   function clipWidth(clip) {
@@ -2823,11 +3207,26 @@
     loadMixer();
   }
 
+  async function toggleMixer() {
+    if (!state.mixer.ready) await loadMixer();
+    if (!state.mixer.ready) {
+      toast("Open a cut to use the mixer.");
+      return;
+    }
+    state.mixerOpen = !state.mixerOpen;
+    dom.mixerPanel.hidden = !state.mixerOpen;
+    if (state.mixerOpen) {
+      drawMixer();
+      dom.mixerPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
   async function loadMixer() {
     const plan = state.plan;
-    if (!plan || state.audio.mode === "keep") {
+    if (!state.job || !plan) {
       state.mixer.ready = false;
       dom.mixerPanel.hidden = true;
+      state.mixerOpen = false;
       return;
     }
     try {
@@ -2848,7 +3247,7 @@
         bed: keepBed || [],
         selected: null,
       };
-      dom.mixerPanel.hidden = false;
+      dom.mixerPanel.hidden = !state.mixerOpen;
       drawMixer();
     } catch (error) {
       dom.mixerPanel.hidden = true;
@@ -3334,10 +3733,93 @@
     updateRenderPanel();
   }
 
+  function openClipMenu(index, x, y, trigger = null) {
+    if (!state.plan?.clips[index] || !dom.clipMenu) return;
+    if (state.clipMenuTrigger && state.clipMenuTrigger !== trigger) {
+      state.clipMenuTrigger.setAttribute("aria-expanded", "false");
+    }
+    state.clipMenuIndex = index;
+    state.clipMenuTrigger = trigger || null;
+    if (trigger) trigger.setAttribute("aria-expanded", "true");
+    const current = state.plan.clips[index].role || "beat";
+    dom.clipMenu.innerHTML = `
+      <span class="clip-menu-head">Change role</span>
+      ${CLIP_ROLES.map((role) => `
+      <button type="button" role="menuitemradio" aria-checked="${role === current}" data-clip-role="${role}" class="${role === current ? "active" : ""}">
+        ${CLIP_ROLE_LABELS[role]}
+      </button>`).join("")}`;
+    dom.clipMenu.hidden = false;
+    const width = dom.clipMenu.offsetWidth || 140;
+    const height = dom.clipMenu.offsetHeight || 120;
+    dom.clipMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - width - 8))}px`;
+    dom.clipMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - height - 8))}px`;
+    dom.clipMenu.querySelectorAll("[data-clip-role]").forEach((button) => {
+      button.addEventListener("click", () => {
+        setClipRole(index, button.dataset.clipRole);
+      });
+    });
+    const checked = dom.clipMenu.querySelector(`[data-clip-role="${current}"]`);
+    (checked || dom.clipMenu.querySelector("[data-clip-role]"))?.focus({ preventScroll: true });
+  }
+
+  function closeClipMenu(options = {}) {
+    if (!dom.clipMenu) return;
+    const trigger = state.clipMenuTrigger;
+    dom.clipMenu.hidden = true;
+    state.clipMenuIndex = null;
+    state.clipMenuTrigger = null;
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+      if (options.restoreFocus && trigger.isConnected) trigger.focus({ preventScroll: true });
+    }
+  }
+
+  function setClipRole(index, role) {
+    if (!state.plan || !state.plan.clips[index]) return;
+    if (!CLIP_ROLES.includes(role)) return;
+    const sceneId = state.plan.clips[index].scene;
+    const clips = state.plan.clips.map((clip) => ({ ...clip }));
+    if (role === "beat" && clips.length <= 2) {
+      closeClipMenu();
+      toast("A two-moment cut needs a hook and a payoff.");
+      return;
+    }
+    const [clip] = clips.splice(index, 1);
+    if (role === "hook") {
+      clips.unshift(clip);
+    } else if (role === "payoff") {
+      clips.push(clip);
+    } else {
+      // Beat means "inside the body", never first or last. A demoted payoff
+      // must not land at the end again and keep its payoff position.
+      const at = Math.max(1, Math.min(index, clips.length - 2));
+      clips.splice(at, 0, clip);
+    }
+    normalizePlanRoles(clips);
+    state.plan = { ...state.plan, clips };
+    state.edited = true;
+    state.scriptId = null;
+    syncEditedPlan();
+    closeClipMenu();
+    renderPlan();
+    renderScenes();
+    updateRenderPanel();
+    const next = dom.timeline.querySelector(`.clip[data-scene="${sceneId}"] [data-role-index]`);
+    next?.focus({ preventScroll: true });
+    toast(`Moved to ${CLIP_ROLE_LABELS[role].toLowerCase()} position.`);
+  }
+
   function normalizePlanRoles(clips) {
     clips.forEach((clip, index) => {
       clip.role = index === 0 ? "hook" : index === clips.length - 1 ? "payoff" : "beat";
     });
+  }
+
+  function planClipsForRender() {
+    if (!state.plan?.clips?.length) return null;
+    const clips = state.plan.clips.map((clip) => ({ ...clip }));
+    normalizePlanRoles(clips);
+    return clips;
   }
 
   function addSceneToPlan(sceneId, at = null) {
@@ -3346,7 +3828,6 @@
     if (!scene) return false;
     if (scene.deep === false) {
       toast("Quick scan · deep-read this moment before adding it.");
-      openDrawer(scene.id);
       return false;
     }
     const clips = state.plan.clips.map((clip) => ({ ...clip }));
@@ -3378,6 +3859,48 @@
     updateRenderPanel();
     toast("Moment added to Smart Cut.");
     return true;
+  }
+
+  function removeSceneFromPlan(sceneId) {
+    if (!state.plan) return false;
+    const clips = state.plan.clips.map((clip) => ({ ...clip }));
+    const index = clips.findIndex((clip) => clip.scene === sceneId);
+    if (index === -1) return false;
+    if (clips.length <= 2) {
+      toast("Smart Cut needs at least two moments.");
+      return false;
+    }
+    clips.splice(index, 1);
+    normalizePlanRoles(clips);
+    state.plan = { ...state.plan, clips };
+    state.edited = true;
+    state.scriptId = null;
+    syncEditedPlan();
+    renderPlan();
+    renderScenes();
+    updateRenderPanel();
+    toast("Moment removed from Smart Cut.");
+    return true;
+  }
+
+  function toggleSceneInPlan(sceneId) {
+    const inPlan = (state.plan?.clips || []).some((clip) => clip.scene === sceneId);
+    if (inPlan) return removeSceneFromPlan(sceneId);
+    return addSceneToPlan(sceneId);
+  }
+
+  function toggleMomentSelection(sceneId) {
+    const railScroll = Number(dom.momentsRail?.scrollLeft) || 0;
+    const listScroll = Number(dom.momentsList?.scrollTop) || 0;
+    const changed = toggleSceneInPlan(sceneId);
+    if (!changed) return;
+    // Re-rendering replaces the card the user just pressed. Keep the rail
+    // where it was and put focus back on the same moment's select.
+    if (dom.momentsRail) dom.momentsRail.scrollLeft = railScroll;
+    if (dom.momentsList) dom.momentsList.scrollTop = listScroll;
+    const scope = state.momentsExpanded ? dom.momentsList : dom.momentsRail;
+    const next = scope?.querySelector(`[data-moment-toggle="${sceneId}"]`);
+    next?.focus({ preventScroll: true });
   }
 
   function moveClip(from, to) {
@@ -3569,6 +4092,35 @@
     }
   }
 
+  function momentCheck(scene, checked) {
+    const action = checked ? "Remove" : "Add";
+    return `<button type="button" class="moment-check ${checked ? "checked" : ""}" data-moment-toggle="${scene.id}"
+      role="checkbox" aria-checked="${checked}" aria-label="${action} ${esc(fmtTime(scene.start))} moment ${checked ? "from" : "to"} Smart Cut"
+      title="${checked ? "Remove from Smart Cut" : "Add to Smart Cut"}"></button>`;
+  }
+
+  function updateMomentControls(total, shown, order) {
+    const count = `${total} moment${total === 1 ? "" : "s"} · ${order}`;
+    dom.sceneCount.textContent = shown < total ? `${count} · ${shown} shown` : count;
+    dom.momentsExpand.textContent = state.momentsExpanded ? "Show less" : `Show all ${total}`;
+    dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
+  }
+
+  function setMomentsExpanded(expanded, options = {}) {
+    state.momentsExpanded = !!expanded;
+    dom.momentsFull.hidden = !state.momentsExpanded;
+    dom.momentsRail.hidden = state.momentsExpanded;
+    const total = state.job?.analysis?.scenes?.length || 0;
+    dom.momentsExpand.textContent = state.momentsExpanded ? "Show less" : `Show all ${total}`;
+    dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
+    if (state.momentsExpanded) {
+      renderMomentList();
+      if (options.scroll !== false) {
+        dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+  }
+
   function renderScenes() {
     if (!state.job) return;
     const scenes = [...state.job.analysis.scenes];
@@ -3582,8 +4134,8 @@
     const clips = state.plan?.clips || [];
     const payoffId = clips.length ? clips[clips.length - 1].scene : null;
     const visible = scenes.slice(0, state.visible);
-    const deep = state.job.analysis.deep_count ?? scenes.length;
-    dom.sceneCount.textContent = `${scenes.length.toLocaleString()} scenes · ${deep.toLocaleString()} deep · showing ${visible.length}`;
+    const order = state.sort === "best" ? "best first" : "timeline order";
+    updateMomentControls(scenes.length, visible.length, order);
     dom.sceneGrid.innerHTML = visible.map((scene) => {
       const role = roles.get(scene.id) || "";
       const tags = [...(scene.tags || []), ...(scene.deep === false ? ["quick"] : [])].join(" · ");
@@ -3622,19 +4174,22 @@
     scenes.forEach((scene) => {
       if (!pinned.has(scene.id) && railScenes.length < 48) railScenes.push(scene);
     });
-    dom.momentsScrub.max = Math.max(0, railScenes.length - 1);
-    dom.momentsScrub.value = Math.min(Number(dom.momentsScrub.value) || 0, railScenes.length - 1);
     dom.momentsRail.innerHTML = railScenes.map((scene, index) => {
       const still = scene.deep === false
         ? `<span class="scene-placeholder"><span>quick</span></span>`
         : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+      const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
+      const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
       return `
-        <button class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
+        <div class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
           data-moment-scene="${scene.id}" data-rail-index="${index}" draggable="true"
-          title="Drag into Smart Cut · ${esc(scene.ocr || scene.speech || `Scene ${scene.id + 1}`)}">
+          role="button" tabindex="0" aria-label="${esc(text)}${role ? ` · ${esc(role)}` : ""} · open details"
+          title="Click for details · ${esc(text)}">
           ${still}
+          ${momentCheck(scene, used.has(scene.id))}
           <span class="moment-time">${esc(fmtTime(scene.start))}</span>
-        </button>`;
+          <span class="moment-score">${Math.round(scene.hook)}</span>
+        </div>`;
     }).join("");
     if (dom.momentsFull && !dom.momentsFull.hidden) {
       renderMomentList();
@@ -3660,27 +4215,16 @@
       const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
       const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
       return `
-        <button class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
-          data-moment-scene="${scene.id}" draggable="true" role="listitem"
-          title="${esc(text)}${role ? ` · ${esc(role)}` : ""} · drag into Smart Cut">
+        <div class="moment-card ${used.has(scene.id) ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
+          data-moment-scene="${scene.id}" draggable="true" role="listitem" tabindex="0"
+          aria-label="${esc(text)}${role ? ` · ${esc(role)}` : ""} · open details"
+          title="${esc(text)}${role ? ` · ${esc(role)}` : ""} · click for details">
           ${still}
+          ${momentCheck(scene, used.has(scene.id))}
           <span class="moment-time">${esc(fmtTime(scene.start))}</span>
           <span class="moment-score">${Math.round(scene.hook)}</span>
-        </button>`;
+        </div>`;
     }).join("");
-  }
-
-  function syncRailScrub() {
-    if (!dom.momentsRail || !dom.momentsScrub) return;
-    const cards = dom.momentsRail.querySelectorAll(".moment-card");
-    if (!cards.length) return;
-    const first = cards[0];
-    const styles = getComputedStyle(dom.momentsRail);
-    const gap = parseFloat(styles.columnGap || styles.gap) || 8;
-    const width = first.getBoundingClientRect().width + gap;
-    if (!width) return;
-    const index = clamp(Math.round(dom.momentsRail.scrollLeft / width), 0, cards.length - 1);
-    dom.momentsScrub.value = String(index);
   }
 
   // ---------------------------------------------------------------- plans + targets
@@ -3792,6 +4336,20 @@
     ["fi", "Finnish"], ["uk", "Ukrainian"], ["cs", "Czech"],
   ];
 
+  const AUDIO_MODE_META = {
+    keep: "Original audio and transcript. No new voice or music.",
+    bed: "New voice over the original audio bed.",
+    voice: "Replace only the spoken voice with a dub.",
+    music: "Replace all audio with a music bed.",
+    full: "New voice and a new music bed.",
+  };
+
+  const AUDIO_COPY_NOTE = {
+    keep: "Original audio and transcript.",
+    music: "Music only. Copy and script are off.",
+    full: "New voice and music. Copy is off while a recording is used.",
+  };
+
   function canonicalAudio(value) {
     if (Array.isArray(value)) return `[${value.map(canonicalAudio).join(",")}]`;
     if (value && typeof value === "object") {
@@ -3815,6 +4373,12 @@
   function musicSourceMode() {
     const checked = document.querySelector('input[name="audio-music-source"]:checked');
     return checked?.value || state.audio.musicSource || "none";
+  }
+
+  function setAudioMode(mode) {
+    if (!dom.audioMode || !mode) return;
+    dom.audioMode.value = mode;
+    dom.audioMode.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   function currentAudioPlan() {
@@ -3891,8 +4455,13 @@
     const touch = () => {
       state.audio.mode = dom.audioMode.value;
       dom.audioModeTabs.querySelectorAll("[data-audio-mode]").forEach((button) => {
-        button.classList.toggle("active", button.dataset.audioMode === state.audio.mode);
+        const active = button.dataset.audioMode === state.audio.mode;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
       });
+      if (dom.audioModeDesc) {
+        dom.audioModeDesc.textContent = AUDIO_MODE_META[state.audio.mode] || AUDIO_MODE_META.keep;
+      }
       state.audio.source = dom.audioSourceUpload.checked ? "upload" : "generate";
       state.audio.lang = dom.audioLang.value;
       state.audio.provider = "auto";
@@ -3921,6 +4490,7 @@
         loadAudioScript();
       });
       dom.audioMusic.addEventListener(event, () => {
+        clearMusicPreview("Music engine changed. Generate a new preview.");
         touch();
         loadAudioTracks();
       });
@@ -3953,28 +4523,51 @@
         loadBpm();
       });
       dom.audioEngine.addEventListener(event, () => {
+        clearVoicePreview("Voice list changed. Generate a new preview.");
         touch();
         loadAudioVoices();
       });
-      dom.audioVoice.addEventListener(event, touch);
-      dom.audioRate.addEventListener(event, touch);
-      dom.audioTrack.addEventListener(event, () => {
-        if (state.audio.musicUpload) clearMusicUpload();
+      dom.audioVoice.addEventListener(event, () => {
+        clearVoicePreview("Voice changed. Generate a new preview.");
         touch();
       });
-      dom.audioPrompt.addEventListener(event, touch);
+      dom.audioRate.addEventListener(event, () => {
+        clearVoicePreview("Rate changed. Generate a new preview.");
+        touch();
+      });
+      dom.audioTrack.addEventListener(event, () => {
+        if (state.audio.musicUpload) clearMusicUpload();
+        clearMusicPreview("Track changed. Play the BGM to preview it.");
+        touch();
+      });
+      dom.audioPrompt.addEventListener(event, () => {
+        clearMusicPreview("Prompt changed. Generate a new preview.");
+        touch();
+      });
       dom.audioGain.addEventListener(event, touch);
       dom.audioDuck.addEventListener(event, touch);
     });
     dom.audioModeTabs.addEventListener("click", (event) => {
       const button = event.target.closest("[data-audio-mode]");
       if (!button) return;
-      dom.audioMode.value = button.dataset.audioMode;
-      dom.audioMode.dispatchEvent(new Event("change", { bubbles: true }));
+      setAudioMode(button.dataset.audioMode);
     });
+    dom.audioCopySwitch?.addEventListener("click", () => {
+      const upload = ["bed", "voice", "full"].includes(state.audio.mode) && state.audio.source === "upload";
+      if (upload) {
+        setVoiceSource("generate");
+        loadAudioScript();
+      } else if (state.audio.mode === "music") {
+        setAudioMode("bed");
+      } else {
+        setAudioMode("voice");
+      }
+    });
+    dom.mixerOpen?.addEventListener("click", toggleMixer);
     dom.audioRewriteRun.addEventListener("click", () => {
       // Reuse the on-disk translation memo. Only a language change or the
       // explicit Retry translation button asks for fresh translations.
+      if (state.scriptAbort) return;
       loadAudioScript({ run: true });
     });
     document.querySelectorAll('input[name="audio-music-source"]').forEach((input) => {
@@ -3982,11 +4575,51 @@
         state.audio.musicSource = musicSourceMode();
         syncMusicOptions();
         syncAudioVisibility();
+        clearMusicPreview(defaultMusicPreviewNote(), "");
         touch();
         loadAudioTracks();
       });
     });
-    dom.audioPreview.addEventListener("click", previewVoice);
+    dom.audioPreview.addEventListener("click", playVoiceSample);
+    dom.audioGenerateVoice?.addEventListener("click", () => {
+      setVoiceSource("generate");
+      generateVoicePreview();
+    });
+    dom.audioUseRecording?.addEventListener("click", openVoicePicker);
+    dom.audioGenerateMusic?.addEventListener("click", () => {
+      setMusicSource("generate");
+      generateMusicPreview();
+    });
+    dom.audioMusicBlockBgm?.addEventListener("click", () => {
+      setMusicSource("own");
+      dom.audioMusicUploadButton?.click();
+    });
+    dom.audioMusicBlockGenerate?.addEventListener("click", () => {
+      setMusicSource("generate");
+      generateMusicPreview();
+    });
+    dom.audioUseBgm?.addEventListener("click", () => {
+      setMusicSource("own");
+      dom.audioMusicUploadButton?.click();
+    });
+    dom.audioStatusSetup?.addEventListener("click", openSetup);
+    dom.audioPlayMusic?.addEventListener("click", playMusicSample);
+    document.querySelectorAll("[data-sound-tab]").forEach((button) => {
+      button.addEventListener("click", () => showSoundTab(button.dataset.soundTab));
+      button.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const tabs = [...document.querySelectorAll("[data-sound-tab]")];
+        const current = tabs.indexOf(button);
+        const next = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? tabs.length - 1
+            : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        tabs[next].focus();
+        showSoundTab(tabs[next].dataset.soundTab);
+      });
+    });
     dom.audioSourceGenerate.addEventListener("change", () => {
       setVoiceSource("generate");
       loadAudioScript();
@@ -4017,6 +4650,7 @@
     });
     dom.audioMusicUploadClear.addEventListener("click", clearMusicUpload);
     syncAudioVisibility();
+    showSoundTab(state.soundTab || "voice");
   }
 
   let voicePickerPrevious = "generate";
@@ -4025,8 +4659,381 @@
     state.audio.source = source;
     if (dom.audioSourceGenerate) dom.audioSourceGenerate.checked = source === "generate";
     if (dom.audioSourceUpload) dom.audioSourceUpload.checked = source === "upload";
+    if (source === "upload") {
+      setSoundStatus(dom.audioVoicePreviewStatus, "Your recording replaces the generated voice.", "");
+    } else if (!state.voiceSampleUrl) {
+      setSoundStatus(dom.audioVoicePreviewStatus, defaultVoicePreviewNote(), "");
+    }
     syncAudioVisibility();
     updateRenderPanel();
+  }
+
+  function showSoundTab(tab) {
+    state.soundTab = tab === "music" ? "music" : "voice";
+    document.querySelectorAll("[data-sound-tab]").forEach((button) => {
+      const active = button.dataset.soundTab === state.soundTab;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+      button.tabIndex = active ? 0 : -1;
+    });
+    [dom.audioVoiceStep, dom.audioMusicStep].forEach((panel) => {
+      if (!panel) return;
+      panel.hidden = panel.dataset.soundPanel !== state.soundTab;
+    });
+  }
+
+  function setMusicSource(source) {
+    const input = document.querySelector(`input[name="audio-music-source"][value="${source}"]`);
+    if (!input) return;
+    input.checked = true;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setSoundStatus(node, message, tone = "") {
+    if (!node) return;
+    node.textContent = message || "";
+    if (tone) node.dataset.tone = tone;
+    else delete node.dataset.tone;
+  }
+
+  function stopSoundPlayer() {
+    if (!state.soundPlayer) return;
+    try {
+      state.soundPlayer.pause();
+    } catch (_) { /* the element may already be detached */ }
+    state.soundPlayer = null;
+  }
+
+  function playSoundUrl(url) {
+    if (!url) return;
+    stopSoundPlayer();
+    const player = new Audio(url);
+    state.soundPlayer = player;
+    player.addEventListener("ended", () => {
+      if (state.soundPlayer === player) state.soundPlayer = null;
+    }, { once: true });
+    player.play().catch(() => {
+      if (state.soundPlayer === player) state.soundPlayer = null;
+      toast("Playback was blocked. Press play again.");
+    });
+  }
+
+  function defaultMusicPreviewNote() {
+    const source = musicSourceMode();
+    if (source === "own") return "Play a 12s preview of your BGM.";
+    if (source === "generate") return "Generate a 12s AI preview; the render uses the full bed.";
+    return "Choose Use my BGM or Generate.";
+  }
+
+  function defaultVoicePreviewNote() {
+    return "Generate a short voice preview.";
+  }
+
+  function previewVoiceText() {
+    const line = (state.lastScript?.lines || []).find((item) => String(item.text || "").trim());
+    if (line) return String(line.text).replace(/\s+/g, " ").trim().slice(0, 180);
+    const clip = state.plan?.clips?.[0];
+    const scene = clip ? sceneById(clip.scene) : null;
+    return String(scene?.speech || "This is a VibeCut voice test.").replace(/\s+/g, " ").trim().slice(0, 180);
+  }
+
+  function voicePreviewKey() {
+    return [
+      state.job?.id || "",
+      state.audio.engine || "",
+      state.audio.voice || "",
+      Number(state.audio.rate) || 1,
+      previewVoiceText(),
+    ].join("|");
+  }
+
+  function musicPreviewKey() {
+    const source = musicSourceMode();
+    if (source === "own") {
+      return ["own", state.audio.musicUpload || "", state.audio.track || ""].join("|");
+    }
+    return [
+      "generate",
+      state.audio.music || "",
+      state.audio.prompt || "",
+      (state.audioMoods || []).join(","),
+      "12",
+    ].join("|");
+  }
+
+  function voiceEngineReady() {
+    const engines = state.audioEngines?.voices;
+    if (!engines) return true;
+    const info = engines[state.audio.engine];
+    return !!info && info.available !== false;
+  }
+
+  function musicGenerationReady() {
+    const music = state.audioEngines?.music;
+    if (!music) return true;
+    const selected = music[state.audio.music];
+    if (selected && selected.available === false) return false;
+    return ["minimax-music", "lyria-clip"].some((key) => Boolean(music[key]?.available));
+  }
+
+  function voicePreviewBlock() {
+    if (!voiceEngineReady()) {
+      return "This voice engine needs setup. Pick an available voice or use my recording.";
+    }
+    if (!state.audio.voice) return "Choose a voice first.";
+    return "";
+  }
+
+  function musicGenerationBlock() {
+    if (musicSourceMode() !== "generate") return "Choose Generate as the music source.";
+    const music = state.audioEngines?.music;
+    if (!music) return "";
+    const selected = state.audio.music;
+    if (!selected || selected === "none") return "Choose a music engine first.";
+    if (music[selected]?.available === false) {
+      return "This music engine needs setup. Pick an available engine or use my BGM.";
+    }
+    if (!["minimax-music", "lyria-clip"].some((key) => music[key]?.available)) {
+      return "AI music needs a MiniMax or OpenRouter key. Add one in Setup or use my BGM.";
+    }
+    return "";
+  }
+
+  function syncSoundPreviewButtons() {
+    const voiceMode = ["bed", "voice", "full"].includes(state.audio.mode);
+    const musicMode = ["music", "full"].includes(state.audio.mode);
+    const voiceReady = !!state.voiceSampleUrl && state.voiceSampleKey === voicePreviewKey();
+    if (dom.audioPreview) {
+      dom.audioPreview.disabled = !voiceMode || !voiceReady || state.voicePreviewBusy;
+      dom.audioPreview.title = voiceReady
+        ? "Play the generated voice"
+        : "Generate a voice preview first";
+    }
+    if (dom.audioGenerateVoice) {
+      const blocked = voicePreviewBlock();
+      dom.audioGenerateVoice.disabled = !voiceMode || !!blocked || state.voicePreviewBusy;
+      dom.audioGenerateVoice.title = blocked || "";
+    }
+    const source = musicSourceMode();
+    const musicReady = source === "own"
+      || (source === "generate" && !!state.musicPreviewUrl && state.musicPreviewKey === musicPreviewKey());
+    if (dom.audioGenerateMusic) {
+      const blocked = musicGenerationBlock();
+      dom.audioGenerateMusic.disabled = !musicMode || source === "none"
+        || state.musicPreviewBusy
+        || (source === "generate" && !!blocked);
+      dom.audioGenerateMusic.title = source === "none"
+        ? "Choose a music source first."
+        : source === "own"
+          ? "Switch to Generate and make a short AI bed."
+          : (blocked || "");
+    }
+    if (dom.audioPlayMusic) {
+      dom.audioPlayMusic.disabled = !musicMode || !musicReady || state.musicPreviewBusy;
+      dom.audioPlayMusic.title = musicReady
+        ? "Play the 12s preview"
+        : (source === "none" ? "Choose a music source first." : "Generate a music preview first.");
+    }
+    dom.audioEngine?.closest(".audio-field")?.classList.toggle("is-unavailable", !voiceEngineReady());
+    dom.audioMusicField?.classList.toggle(
+      "is-unavailable",
+      source === "generate" && !musicGenerationReady(),
+    );
+  }
+
+  function clearVoicePreview(message = "", tone = "bad") {
+    stopSoundPlayer();
+    if (state.voiceSampleUrl) {
+      try { URL.revokeObjectURL(state.voiceSampleUrl); } catch (_) { /* already gone */ }
+    }
+    state.voiceSampleUrl = "";
+    state.voiceSampleKey = "";
+    if (message) setSoundStatus(dom.audioVoicePreviewStatus, message, tone);
+    syncSoundPreviewButtons();
+  }
+
+  function clearMusicPreview(message = "", tone = "bad") {
+    stopSoundPlayer();
+    if (state.musicPreviewUrl) {
+      try { URL.revokeObjectURL(state.musicPreviewUrl); } catch (_) { /* already gone */ }
+    }
+    state.musicPreviewUrl = "";
+    state.musicPreviewKey = "";
+    if (message) setSoundStatus(dom.audioMusicPreviewStatus, message, tone);
+    syncSoundPreviewButtons();
+  }
+
+  function resetSoundPreviews() {
+    stopSoundPlayer();
+    if (state.voiceSampleUrl) {
+      try { URL.revokeObjectURL(state.voiceSampleUrl); } catch (_) { /* already gone */ }
+    }
+    if (state.musicPreviewUrl) {
+      try { URL.revokeObjectURL(state.musicPreviewUrl); } catch (_) { /* already gone */ }
+    }
+    state.voiceSampleUrl = "";
+    state.voiceSampleKey = "";
+    state.musicPreviewUrl = "";
+    state.musicPreviewKey = "";
+    state.voicePreviewBusy = false;
+    state.musicPreviewBusy = false;
+    setSoundStatus(dom.audioVoicePreviewStatus, defaultVoicePreviewNote(), "");
+    setSoundStatus(dom.audioMusicPreviewStatus, defaultMusicPreviewNote(), "");
+    syncSoundPreviewButtons();
+  }
+
+  async function fetchSoundBlob(url, options = {}) {
+    const token = tokenValue();
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try { detail = (await response.json()).detail || detail; } catch (_) { /* not JSON */ }
+      throw new Error(detail);
+    }
+    return response.blob();
+  }
+
+  async function generateVoicePreview() {
+    if (!state.job) return;
+    const blocked = voicePreviewBlock();
+    if (blocked) {
+      setSoundStatus(dom.audioVoicePreviewStatus, blocked, "bad");
+      syncSoundPreviewButtons();
+      return;
+    }
+    const key = voicePreviewKey();
+    if (state.voiceSampleUrl && state.voiceSampleKey === key) {
+      playSoundUrl(state.voiceSampleUrl);
+      setSoundStatus(dom.audioVoicePreviewStatus, "Voice preview ready.", "ok");
+      return;
+    }
+    state.voicePreviewBusy = true;
+    dom.audioGenerateVoice.textContent = "Generating…";
+    setSoundStatus(dom.audioVoicePreviewStatus, "Generating a short voice preview…");
+    syncSoundPreviewButtons();
+    try {
+      const blob = await fetchSoundBlob(`/api/jobs/${state.job.id}/voice/sample`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          engine: state.audio.engine,
+          voice: state.audio.voice,
+          rate: state.audio.rate,
+          text: previewVoiceText(),
+        }),
+      });
+      if (state.voiceSampleUrl) URL.revokeObjectURL(state.voiceSampleUrl);
+      state.voiceSampleUrl = URL.createObjectURL(blob);
+      state.voiceSampleKey = key;
+      setSoundStatus(dom.audioVoicePreviewStatus, "Voice preview ready. Play ▶ or render to use this voice.", "ok");
+      playSoundUrl(state.voiceSampleUrl);
+    } catch (error) {
+      setSoundStatus(dom.audioVoicePreviewStatus, error.message, "bad");
+    } finally {
+      state.voicePreviewBusy = false;
+      dom.audioGenerateVoice.textContent = "Generate";
+      syncSoundPreviewButtons();
+    }
+  }
+
+  function playVoiceSample() {
+    if (!state.voiceSampleUrl || state.voiceSampleKey !== voicePreviewKey()) {
+      setSoundStatus(dom.audioVoicePreviewStatus, "Generate a voice preview first.", "bad");
+      return;
+    }
+    playSoundUrl(state.voiceSampleUrl);
+  }
+
+  async function generateMusicPreview() {
+    if (!state.job) return;
+    const blocked = musicGenerationBlock();
+    if (blocked) {
+      setSoundStatus(dom.audioMusicPreviewStatus, blocked, "bad");
+      syncSoundPreviewButtons();
+      return;
+    }
+    const key = musicPreviewKey();
+    if (state.musicPreviewUrl && state.musicPreviewKey === key) {
+      playSoundUrl(state.musicPreviewUrl);
+      setSoundStatus(dom.audioMusicPreviewStatus, "Music preview ready.", "ok");
+      return;
+    }
+    state.musicPreviewBusy = true;
+    dom.audioGenerateMusic.textContent = "Generating…";
+    setSoundStatus(dom.audioMusicPreviewStatus, "Generating a 12s AI music preview. One provider call, cached by prompt.");
+    syncSoundPreviewButtons();
+    try {
+      const blob = await fetchSoundBlob(`/api/classic/jobs/${state.job.id}/sound/music-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          engine: state.audio.music,
+          prompt: state.audio.prompt,
+          moods: state.audioMoods,
+          seconds: 12,
+        }),
+      });
+      if (state.musicPreviewUrl) URL.revokeObjectURL(state.musicPreviewUrl);
+      state.musicPreviewUrl = URL.createObjectURL(blob);
+      state.musicPreviewKey = key;
+      setSoundStatus(dom.audioMusicPreviewStatus, "Music preview ready · 12s. The render uses the full bed.", "ok");
+      playSoundUrl(state.musicPreviewUrl);
+    } catch (error) {
+      setSoundStatus(dom.audioMusicPreviewStatus, error.message, "bad");
+    } finally {
+      state.musicPreviewBusy = false;
+      dom.audioGenerateMusic.textContent = "Generate";
+      syncSoundPreviewButtons();
+    }
+  }
+
+  async function playMusicSample() {
+    const source = musicSourceMode();
+    if (source === "none") {
+      setSoundStatus(dom.audioMusicPreviewStatus, "Choose Use my BGM or Generate first.", "bad");
+      return;
+    }
+    if (source === "generate") {
+      if (!state.musicPreviewUrl || state.musicPreviewKey !== musicPreviewKey()) {
+        setSoundStatus(dom.audioMusicPreviewStatus, "Press Generate for a 12s preview. The render makes the full bed.", "bad");
+        return;
+      }
+      playSoundUrl(state.musicPreviewUrl);
+      return;
+    }
+    state.musicPreviewBusy = true;
+    setSoundStatus(dom.audioMusicPreviewStatus, "Loading a 12s BGM preview…");
+    syncSoundPreviewButtons();
+    try {
+      const query = new URLSearchParams({ seconds: "12" });
+      if (state.audio.musicUpload) {
+        query.set("source", "upload");
+        query.set("upload", state.audio.musicUpload);
+      } else {
+        query.set("source", "library");
+        query.set("track", state.audio.track || "");
+        if (state.audioMoods.length) query.set("moods", state.audioMoods.join(","));
+      }
+      const blob = await fetchSoundBlob(
+        `/api/classic/jobs/${state.job.id}/sound/bgm-preview?${query}`,
+      );
+      if (state.musicPreviewUrl) URL.revokeObjectURL(state.musicPreviewUrl);
+      state.musicPreviewUrl = URL.createObjectURL(blob);
+      state.musicPreviewKey = musicPreviewKey();
+      setSoundStatus(dom.audioMusicPreviewStatus, "Playing your BGM · 12s preview.", "ok");
+      playSoundUrl(state.musicPreviewUrl);
+    } catch (error) {
+      setSoundStatus(dom.audioMusicPreviewStatus, error.message, "bad");
+    } finally {
+      state.musicPreviewBusy = false;
+      syncSoundPreviewButtons();
+    }
   }
 
   function openVoicePicker() {
@@ -4053,6 +5060,7 @@
     state.audio.musicUpload = "";
     state.audio.musicUploadName = "";
     state.audio.musicUploadDuration = 0;
+    clearMusicPreview(defaultMusicPreviewNote(), "");
     if (dom.audioMusicUpload) dom.audioMusicUpload.value = "";
     syncAudioVisibility();
     dom.audioMusic.dispatchEvent(new Event("change", { bubbles: true }));
@@ -4068,8 +5076,13 @@
         : new Set(["none"]);
     const options = full.filter(([id]) => allowed.has(id));
     const current = state.audio.music;
+    const available = options.find(([id, , disabled]) => id !== "none" && !disabled);
     fillSelect(dom.audioMusic, options.length ? options : [["none", "No music"]]);
-    const next = options.some(([id]) => id === current) ? current : (options[0]?.[0] || "none");
+    let next = options.some(([id]) => id === current) ? current : (options[0]?.[0] || "none");
+    if (source === "generate" && next !== "none") {
+      const info = state.audioEngines?.music?.[next];
+      if (info?.available === false && available) next = available[0];
+    }
     dom.audioMusic.value = next;
     state.audio.music = next;
   }
@@ -4080,10 +5093,70 @@
     const upload = voiceMode && state.audio.source === "upload";
     const musicMode = ["music", "full"].includes(mode);
     const rewriteMode = voiceMode && !upload;
-    dom.audioRewriteStep.hidden = !rewriteMode;
-    dom.audioVoiceStep.hidden = !voiceMode;
-    dom.audioMusicStep.hidden = !musicMode;
-    dom.audioVoiceSource.hidden = !voiceMode;
+    const hasUpload = !!state.audio.musicUpload;
+
+    const setDisabled = (root, disabled) => {
+      if (!root) return;
+      root.querySelectorAll("input, select, textarea, button").forEach((node) => {
+        node.disabled = disabled;
+      });
+      root.classList.toggle("is-disabled", disabled);
+    };
+
+    if (dom.audioModeDesc) {
+      dom.audioModeDesc.textContent = AUDIO_MODE_META[mode] || AUDIO_MODE_META.keep;
+    }
+    setDisabled(dom.audioRewriteStep, !rewriteMode);
+    // The copy card is a one-line note outside voice modes, never a dimmed form.
+    dom.audioRewriteStep.classList.remove("is-disabled");
+    dom.audioCopyForm.hidden = !rewriteMode;
+    dom.audioCopyNote.hidden = rewriteMode;
+    if (!rewriteMode) {
+      const note = AUDIO_COPY_NOTE[mode] || AUDIO_COPY_NOTE.keep;
+      dom.audioCopyNoteText.textContent = upload
+        ? "Using your recording. Copy is off."
+        : note;
+      dom.audioCopySwitch.textContent = upload
+        ? "Switch to generated voice →"
+        : mode === "music" ? "Add a voice-over →" : "Rewrite this cut →";
+    }
+    if (dom.audioCopySwitch) dom.audioCopySwitch.disabled = false;
+    setDisabled(dom.audioVoiceStep, !voiceMode);
+    setDisabled(dom.audioMusicStep, !musicMode);
+    if (voiceMode) {
+      [dom.audioSourceGenerate, dom.audioSourceUpload].forEach((node) => {
+        if (node) node.disabled = false;
+      });
+      if (dom.audioUploadButton) dom.audioUploadButton.disabled = false;
+      if (!upload) {
+        [dom.audioEngine, dom.audioVoice, dom.audioRate].forEach((node) => {
+          if (node) node.disabled = false;
+        });
+      }
+    }
+    if (musicMode) {
+      dom.audioMusicStep.querySelectorAll('input[name="audio-music-source"]').forEach((node) => {
+        node.disabled = false;
+      });
+      if (dom.audioMusic) dom.audioMusic.disabled = false;
+      if (dom.audioTrack) dom.audioTrack.disabled = hasUpload;
+      if (dom.audioPrompt) dom.audioPrompt.disabled = false;
+      if (dom.audioGain) dom.audioGain.disabled = false;
+      if (dom.audioDuck) dom.audioDuck.disabled = false;
+      if (dom.audioBeatSync) dom.audioBeatSync.disabled = false;
+      if (dom.audioMusicUploadButton) dom.audioMusicUploadButton.disabled = false;
+      [dom.audioMusicBlockBgm, dom.audioMusicBlockGenerate, dom.audioUseBgm].forEach((node) => {
+        if (node) node.disabled = false;
+      });
+    }
+    if (dom.mixerOpen) dom.mixerOpen.disabled = false;
+    if (state.lastAudioMode !== mode) {
+      state.lastAudioMode = mode;
+      if (mode === "music") showSoundTab("music");
+      else if (voiceMode) showSoundTab("voice");
+    }
+    if (dom.audioGenerateVoice) dom.audioGenerateVoice.hidden = upload;
+    if (dom.audioUseRecording) dom.audioUseRecording.disabled = !voiceMode;
     dom.audioVoiceGenerate.hidden = upload;
     dom.audioVoiceUpload.hidden = !upload;
     dom.audioUploadButton.hidden = !upload;
@@ -4094,7 +5167,7 @@
     if (dom.audioPreview) dom.audioPreview.hidden = upload;
     syncMusicOptions();
     const source = musicSourceMode();
-    const hasUpload = !!state.audio.musicUpload;
+    const noSource = source === "none";
     dom.audioTrackField.hidden = source !== "own" || hasUpload;
     dom.audioTrack.disabled = hasUpload;
     dom.audioMusicUploadBox.hidden = source !== "own";
@@ -4103,21 +5176,27 @@
       ? `${state.audio.musicUploadName || "music"} · ${Number(state.audio.musicUploadDuration || 0).toFixed(1)}s`
       : "Use your own music file.";
     dom.audioPromptField.hidden = source !== "generate";
-    dom.audioGainField.hidden = source === "none";
-    dom.audioDuckField.hidden = source === "none";
-    dom.audioBeatSyncField.hidden = source === "none";
-    const block = audioBlockReason();
-    if (dom.audioMusicWarning) {
-      dom.audioMusicWarning.hidden = !block;
-      dom.audioMusicWarning.textContent = block;
+    dom.audioGainField.hidden = noSource;
+    dom.audioDuckField.hidden = noSource;
+    dom.audioBeatSyncField.hidden = noSource;
+    if (musicMode) {
+      if (dom.audioMusic) {
+        dom.audioMusic.disabled = noSource;
+        dom.audioMusic.title = noSource ? "Choose a music source first." : "";
+      }
+      if (dom.audioGenerateMusic) dom.audioGenerateMusic.disabled = noSource;
+      if (dom.audioMusicBlock) dom.audioMusicBlock.hidden = !noSource;
+    } else if (dom.audioMusicBlock) {
+      dom.audioMusicBlock.hidden = true;
     }
+    syncSoundPreviewButtons();
     if (state.job && state.plan) updateRenderPanel();
   }
 
   function audioBlockReason() {
     const mode = state.audio.mode;
     if (mode === "music" && musicSourceMode() === "none") {
-      return "Music mode needs a source. Choose Use my sound or Generate before rendering.";
+      return "Choose a music source before rendering.";
     }
     const music = state.audioEngines?.music;
     if (["music", "full"].includes(mode) && musicSourceMode() === "generate" && music) {
@@ -4162,6 +5241,7 @@
       state.audio.musicSource = "own";
       document.querySelector('input[name="audio-music-source"][value="own"]').checked = true;
       dom.audioMusicUpload.value = "";
+      clearMusicPreview("Your BGM is ready. Play ▶ for a 12s preview.", "ok");
       syncAudioVisibility();
       dom.audioMusic.dispatchEvent(new Event("change", { bubbles: true }));
       loadHistory();
@@ -4194,6 +5274,7 @@
       state.audio.uploadDuration = Number(result.duration) || 0;
       state.audio.source = "upload";
       dom.audioUpload.value = "";
+      clearVoicePreview("Using your recording. Copy is off.");
       setVoiceSource("upload");
       loadHistory();
       toast(`Voice fitted source: ${state.audio.uploadName}`);
@@ -4205,8 +5286,8 @@
   }
 
   function fillSelect(select, options) {
-    select.innerHTML = options.map(([value, label]) => (
-      `<option value="${esc(value)}">${esc(label)}</option>`
+    select.innerHTML = options.map(([value, label, disabled]) => (
+      `<option value="${esc(value)}"${disabled ? " disabled" : ""}>${esc(label)}</option>`
     )).join("");
   }
 
@@ -4229,6 +5310,7 @@
     state.captions = config.captions;
     dom.aspect.value = config.aspect;
     dom.captions.checked = config.captions;
+    updateTextAvailability();
     updateRenderPanel();
   }
 
@@ -4376,6 +5458,7 @@
       return;
     }
     dom.renderAb.disabled = true;
+    state.playerScrollKey = null;
     try {
       let records = [];
       const errors = [];
@@ -4392,10 +5475,11 @@
                 aspect: state.aspect,
                 captions: state.captions,
                 preset: state.preset || null,
-                order: state.order,
+                order: "source",
                 clips: clipsForHook(hook.scene),
                 script_id: state.scriptId || null,
                 audio: currentAudioPlan(),
+                edit: classicEditPayload(),
               }),
             });
             if (result.render) records.push(result.render);
@@ -4451,18 +5535,16 @@
       .filter(([id]) => allowedVoices.has(id))
       .map(([id, info]) => [
         id,
-        `${info.available ? "" : "unavailable · "}${engineLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`,
+        `${engineLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`, !info.available,
       ]);
     fillSelect(dom.audioEngine, voiceOptions);
-    const available = Object.values(engines.voices || {})
-      .filter((info) => info.available).length;
     const musicOptions = [["none", "No music"]];
     const allowedMusic = new Set(["library", "minimax-music", "lyria-clip"]);
     Object.entries(engines.music || {}).forEach(([id, info]) => {
       if (!allowedMusic.has(id)) return;
       musicOptions.push([
         id,
-        `${info.available ? "" : "unavailable · "}${musicLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`,
+        `${musicLabel(id)}${info.size_mb ? ` (~${info.size_mb} MB)` : ""}`, !info.available,
       ]);
     });
     state.audioMusicOptions = musicOptions;
@@ -4472,7 +5554,7 @@
     (engines.rewrite_models || []).forEach((item) => {
       rewriteOptions.push([
         item.id,
-        `${item.available ? "" : "unavailable · "}${item.name}${item.size_mb ? ` (~${item.size_mb} MB)` : ""}`,
+        `${item.name}${item.size_mb ? ` (~${item.size_mb} MB)` : ""}`, !item.available,
       ]);
     });
     fillSelect(dom.audioRewrite, rewriteOptions);
@@ -4481,7 +5563,7 @@
     (engines.translation || []).forEach((item) => {
       translateOptions.push([
         item.id,
-        `${item.available ? "" : "unavailable · "}${translateLabel(item.id)}`,
+        `${translateLabel(item.id)}`, !item.available,
       ]);
     });
     fillSelect(dom.audioProvider, translateOptions);
@@ -4491,18 +5573,20 @@
         && engines.voices?.[preferredTts]?.available) {
       state.audio.engine = preferredTts;
     }
+    const firstVoice = voiceOptions.find(([, , disabled]) => !disabled);
+    if (!state.audio.engine || engines.voices?.[state.audio.engine]?.available === false) {
+      state.audio.engine = firstVoice?.[0] || state.audio.engine || "";
+    }
     dom.audioEngine.value = state.audio.engine;
     dom.audioMusic.value = state.audio.music;
     syncMusicOptions();
     dom.audioLang.value = state.audio.lang;
     dom.audioProvider.value = state.audio.provider || "auto";
-    if (!available) {
-      dom.audioStatus.textContent = "No voice engine installed. Apple say is built in.";
-    }
     loadAudioVoices();
     loadAudioTracks();
     refreshAudioStatus();
     loadAudioScript();
+    syncSoundPreviewButtons();
     renderSetupEngines();
   }
 
@@ -4544,6 +5628,8 @@
       if (!voices.length) {
         const needsKey = ["elevenlabs", "minimax", "heygen", "fish", "gemini"].includes(engine);
         fillSelect(dom.audioVoice, [["", needsKey ? "Add the key in Setup" : "No voices found"]]);
+        state.audio.voice = "";
+        syncSoundPreviewButtons();
         return;
       }
       fillSelect(dom.audioVoice, voices.map((voice) => [
@@ -4554,8 +5640,11 @@
         || voices[0];
       dom.audioVoice.value = preferred.id;
       state.audio.voice = preferred.id;
+      syncSoundPreviewButtons();
     } catch (error) {
       fillSelect(dom.audioVoice, [["", error.message]]);
+      state.audio.voice = "";
+      syncSoundPreviewButtons();
     }
   }
 
@@ -4563,6 +5652,8 @@
     const source = state.audio.music;
     if (source !== "library" && source !== "cc0") {
       fillSelect(dom.audioTrack, [["", "Not needed for AI music"]]);
+      state.audio.track = "";
+      syncSoundPreviewButtons();
       return;
     }
     dom.audioTrack.innerHTML = `<option value="">Auto mood</option>`;
@@ -4571,6 +5662,8 @@
       const tracks = result.tracks || [];
       if (!tracks.length) {
         fillSelect(dom.audioTrack, [["", `Empty folder · drop files in assets/music/${source}`]]);
+        state.audio.track = "";
+        syncSoundPreviewButtons();
         return;
       }
       fillSelect(dom.audioTrack, [
@@ -4581,8 +5674,11 @@
         ]),
       ]);
       state.audio.track = dom.audioTrack.value || "";
+      syncSoundPreviewButtons();
     } catch (error) {
       fillSelect(dom.audioTrack, [["", error.message]]);
+      state.audio.track = "";
+      syncSoundPreviewButtons();
     }
   }
 
@@ -4618,78 +5714,142 @@
     return languageCode(state.audio?.lang || "");
   }
 
+  function transcriptInfo() {
+    const summary = state.job?.analysis?.transcript || null;
+    const engine = state.job?.analysis?.engine || {};
+    const segments = summary?.segments;
+    const lines = Array.isArray(segments) ? segments.length : Number(segments) || 0;
+    const text = String(summary?.text || "").trim();
+    return { ready: lines > 0 || !!text || !!engine.whisper, lines };
+  }
+
+  function paintTranscriptReady() {
+    if (!dom.copyTranscript) return;
+    const info = transcriptInfo();
+    dom.copyTranscript.hidden = !info.ready;
+    dom.copyTranscript.title = info.ready
+      ? `Transcript ready${info.lines ? ` · ${info.lines} lines` : ""}`
+      : "";
+  }
+
+  function isAbortError(error) {
+    return error?.name === "AbortError";
+  }
+
   function paintTranslateBadge(info) {
     if (!dom.translateBadge) return;
     const target = targetLanguage();
-    if (!target || target === sourceLanguage()) {
+    if (!target || target === sourceLanguage() || !transcriptInfo().ready) {
       dom.translateBadge.hidden = true;
+      delete dom.translateBadge.dataset.status;
       return;
     }
-    const status = info?.status
-      || (state.translation?.target === target ? state.translation.status : "idle");
+    const current = state.translation?.target === target ? state.translation : null;
+    const incoming = info && (!info.target || languageCode(info.target) === target)
+      ? info
+      : null;
+    const status = incoming?.status || current?.status || "idle";
+    if (!["ready", "running", "failed"].includes(status)) {
+      dom.translateBadge.hidden = true;
+      delete dom.translateBadge.dataset.status;
+      return;
+    }
     dom.translateBadge.hidden = false;
     dom.translateBadge.dataset.status = status;
     if (status === "ready") {
-      dom.translateBadge.textContent = `Translation ready · ${target.toUpperCase()}`;
-    } else if (status === "running") {
-      dom.translateBadge.textContent =
-        `Translating batch ${Math.max(1, Number(info?.batch) || 1)}/${info?.batches || "?"}`;
+      dom.translateBadge.textContent = "✓ Translation ready";
     } else if (status === "failed") {
       dom.translateBadge.textContent = "Translation failed";
     } else {
-      dom.translateBadge.textContent = "Translation not started";
+      dom.translateBadge.textContent = "Translating…";
     }
   }
 
-  async function translationStatus(target, jobId = state.job?.id) {
+  async function translationStatus(target, jobId = state.job?.id, signal = null) {
     return api(
       `/api/classic/jobs/${jobId}/translate/status?target=${encodeURIComponent(target)}`,
+      signal ? { signal } : {},
     );
   }
 
   async function ensureTranslation(controller) {
+    const scriptOwned = controller?.scriptOwned === true;
     const target = targetLanguage();
     const jobId = state.job?.id;
     if (!jobId || !target || target === sourceLanguage()) {
       paintTranslateBadge(null);
       return true;
     }
-    if (state.translation?.target === target && state.translation.status === "ready") {
+    if (!transcriptInfo().ready) {
+      state.translation = null;
+      paintTranslateBadge(null);
+      dom.audioRewriteNote.textContent = "No transcript to translate. Change Language back to the source.";
+      return false;
+    }
+    if (state.translation?.job_id === jobId
+        && state.translation.target === target
+        && state.translation.status === "ready") {
       paintTranslateBadge(state.translation);
       return true;
     }
     let info;
     try {
-      info = await translationStatus(target, jobId);
+      info = await translationStatus(target, jobId, controller?.signal);
     } catch (error) {
+      if (isAbortError(error) || controller?.signal.aborted) return false;
       dom.audioRewriteNote.textContent = `Translation check failed: ${error.message}`;
       return false;
     }
+    if (state.job?.id !== jobId || targetLanguage() !== target) return false;
     if (info.status !== "ready" && info.status !== "running") {
       try {
         info = await api(`/api/classic/jobs/${jobId}/translate`, {
           method: "POST",
+          signal: controller?.signal,
           body: JSON.stringify({ target, provider: "auto" }),
         });
       } catch (error) {
+        if (isAbortError(error) || controller?.signal.aborted) return false;
+        if (error.status === 409) {
+          // No transcript is not a translation failure.
+          state.translation = null;
+          paintTranslateBadge(null);
+          dom.audioRewriteNote.textContent = "No transcript to translate. Change Language back to the source.";
+          return false;
+        }
         dom.audioRewriteNote.textContent = `Translation failed: ${error.message}`;
-        paintTranslateBadge({ status: "failed" });
+        paintTranslateBadge({ status: "failed", target });
         return false;
       }
     }
-    state.translation = { ...info, target };
-    paintTranslateBadge(info);
+    if (state.job?.id !== jobId || targetLanguage() !== target) return false;
+    state.translation = { ...info, target, job_id: jobId };
+    paintTranslateBadge(state.translation);
+    let misses = 0;
     while (info.status === "running") {
-      if (controller && state.scriptAbort !== controller) return false;
+      if (controller?.signal.aborted) return false;
+      if (scriptOwned && controller && state.scriptAbort !== controller) return false;
       if (state.job?.id !== jobId || targetLanguage() !== target) return false;
       await new Promise((resolve) => setTimeout(resolve, 900));
+      if (controller?.signal.aborted) return false;
+      if (state.job?.id !== jobId || targetLanguage() !== target) return false;
       try {
-        info = await translationStatus(target, jobId);
+        info = await translationStatus(target, jobId, controller?.signal);
+        misses = 0;
       } catch (error) {
-        info = { ...info, status: "failed", error: error.message };
+        if (isAbortError(error) || controller?.signal.aborted) return false;
+        // A failed status read is not a failed translation. Try again.
+        misses += 1;
+        if (misses >= 3) {
+          dom.audioRewriteNote.textContent =
+            `Could not read translation status: ${error.message}`;
+          return false;
+        }
+        continue;
       }
-      state.translation = { ...info, target };
-      paintTranslateBadge(info);
+      if (state.job?.id !== jobId || targetLanguage() !== target) return false;
+      state.translation = { ...info, target, job_id: jobId };
+      paintTranslateBadge(state.translation);
     }
     if (info.status === "failed") {
       dom.audioRewriteNote.textContent =
@@ -4699,11 +5859,46 @@
     return info.status === "ready";
   }
 
-  function warmTranslation() {
-    ensureTranslation(null).catch(() => {});
+  function cancelTranslationWarm() {
+    const warm = state.translationWarm;
+    state.translationWarm = null;
+    if (warm?.controller) {
+      try { warm.controller.abort(); } catch (_) { /* already settled */ }
+    }
   }
 
-  function resetAudioScript(message = "Click ▶ Rewrite to translate the full script and rewrite this cut.") {
+  function warmTranslation() {
+    const jobId = state.job?.id;
+    const target = targetLanguage();
+    if (!jobId || !target || target === sourceLanguage() || !transcriptInfo().ready) {
+      cancelTranslationWarm();
+      paintTranslateBadge(null);
+      return;
+    }
+    if (state.translation?.job_id === jobId
+        && state.translation.target === target
+        && state.translation.status === "ready") {
+      paintTranslateBadge(state.translation);
+      return;
+    }
+    if (state.translationWarm?.jobId === jobId
+        && state.translationWarm?.target === target) return;
+    cancelTranslationWarm();
+    const controller = new AbortController();
+    state.translationWarm = { jobId, target, controller };
+    state.translation = {
+      job_id: jobId, target, status: "running",
+      done: 0, total: transcriptInfo().lines, batch: 0, batches: 0,
+    };
+    paintTranslateBadge(state.translation);
+    ensureTranslation(controller)
+      .catch(() => {})
+      .finally(() => {
+        if (state.translationWarm?.controller === controller) state.translationWarm = null;
+      });
+  }
+
+  function resetAudioScript(message = "Choose a mode, then Story cut. The full transcript is reused.") {
     if (!dom.audioScript) return;
     cancelAudioScript();
     if (dom.audioRewriteNote) dom.audioRewriteNote.textContent = message;
@@ -4729,6 +5924,21 @@
     if (dom.audioRewriteRun) dom.audioRewriteRun.disabled = false;
   }
 
+  function showScriptFailure(message) {
+    const note = String(message || "Copy failed.");
+    if (state.lastScript?.lines?.length) {
+      renderScriptBlock(
+        state.lastScript.lines,
+        state.lastScript,
+        `${note} · showing last good script.`,
+      );
+      return;
+    }
+    dom.audioRewriteNote.textContent = note;
+    dom.audioScript.innerHTML =
+      `<div class="script-head"><span class="hint">${esc(note)}</span></div>`;
+  }
+
   async function loadAudioScript(options = {}) {
     const run = options.run === true;
     const forceTranslate = options.forceTranslate === true;
@@ -4745,8 +5955,12 @@
       resetAudioScript();
       return;
     }
-    if (state.scriptAbort) state.scriptAbort.abort();
+    // One rewrite at a time. A repeat click while the cut is being written
+    // must not start a second request or a second server job.
+    if (state.scriptAbort) return;
+    const jobId = state.job.id;
     const controller = new AbortController();
+    controller.scriptOwned = true;
     state.scriptAbort = controller;
     dom.audioScript.hidden = false;
     const startedAt = Date.now();
@@ -4761,12 +5975,25 @@
     dom.audioRewriteNote.textContent =
       "Translating and rewriting… 0s. The first run translates the whole video once; later runs reuse the cache.";
     dom.audioRewriteRun.disabled = true;
-    const translatedReady = await ensureTranslation(controller);
-    if (!translatedReady) return;
-    dom.audioScript.innerHTML =
-      `<div class="script-head"><span class="label">Script</span><span class="hint">working…</span></div>`;
     try {
-      const result = await api(`/api/jobs/${state.job.id}/audio/script`, {
+      // The language warm-up owns translation. Story cut only waits for the
+      // on-disk memo, then writes this cut.
+      const translatedReady = await ensureTranslation(controller);
+      if (!translatedReady) {
+        if (controller.signal.aborted || state.scriptAbort !== controller) return;
+        showScriptFailure(
+          dom.audioRewriteNote.textContent || "Translation is not ready.",
+        );
+        return;
+      }
+      if (dom.translateBadge) {
+        dom.translateBadge.hidden = false;
+        dom.translateBadge.dataset.status = "running";
+        dom.translateBadge.textContent = "Rewriting…";
+      }
+      dom.audioScript.innerHTML =
+        `<div class="script-head"><span class="label">Script</span><span class="hint">working…</span></div>`;
+      const result = await api(`/api/jobs/${jobId}/audio/script`, {
         method: "POST",
         signal: controller.signal,
         body: JSON.stringify({
@@ -4782,6 +6009,7 @@
           overrides: state.scriptOverrides,
         }),
       });
+      if (state.job?.id !== jobId) return;
       const lines = result.lines || [];
       state.lastScript = result;
       state.scriptOverrides = result.overrides && typeof result.overrides === "object"
@@ -4795,17 +6023,17 @@
       }
       const fallbackText = result.warning
         || (result.rewrite_status?.fallback
-          ? (result.rewrite_status?.error || "Rewrite unavailable; kept the literal translation.")
+          ? (result.rewrite_status?.error || "Copy unavailable; kept the literal translation.")
           : "");
       const note = fallbackText
         ? `Fallback: ${fallbackText}`
         : result.translated
           ? `${result.translation_status?.provider === "cache" ? "Translation reused · " : ""}Translated to ${result.target} and rewritten for ${state.target}s.`
-          : `Rewritten for ${state.target}s.`;
+          : `Copied for ${state.target}s.`;
       renderScriptBlock(lines, result, note);
       state.translation = {
-        target: targetLanguage(), status: "ready", done: 1, total: 1,
-        batch: 1, batches: 1,
+        job_id: state.job.id, target: targetLanguage(), status: "ready",
+        done: 1, total: 1, batch: 1, batches: 1,
       };
       paintTranslateBadge(state.translation);
       loadHistory();
@@ -4813,22 +6041,11 @@
       if (error?.name === "AbortError") {
         // A setting change already cleared the panel; keep that message.
         if (state.scriptAbort === controller) {
-          dom.audioRewriteNote.textContent = "Rewrite cancelled. Click ▶ Rewrite to run it again.";
+          dom.audioRewriteNote.textContent = "Copy cancelled. Press Story cut to run it again.";
         }
         return;
       }
-      const message = `Rewrite failed: ${error.message}`;
-      if (state.lastScript?.lines?.length) {
-        renderScriptBlock(
-          state.lastScript.lines,
-          state.lastScript,
-          `${message} · showing last good script.`,
-        );
-      } else {
-        dom.audioRewriteNote.textContent = message;
-        dom.audioScript.innerHTML =
-          `<div class="script-head"><span class="hint">${esc(message)}</span></div>`;
-      }
+      showScriptFailure(`Copy failed: ${error.message}`);
       loadHistory();
     } finally {
       if (state.scriptTimer === ticking) {
@@ -4839,6 +6056,8 @@
         state.scriptAbort = null;
         dom.audioRewriteRun.disabled = false;
       }
+      // Rewriting is over; the badge belongs to translation again.
+      if (state.job?.id === jobId) paintTranslateBadge(state.translation);
     }
   }
 
@@ -4849,7 +6068,7 @@
       ? rewriteValue
       : rewriteValue?.used || result.rewrite_status?.used || "";
     if (warning || result.rewrite_status?.fallback) return "fallback";
-    if (rewrite) return rewrite === "literal" ? "literal" : `rewrite · ${rewrite}`;
+    if (rewrite) return rewrite === "literal" ? "literal" : `copy · ${rewrite}`;
     return result.mode || "literal";
   }
 
@@ -4859,7 +6078,7 @@
     const finalText = lines.map((line) => String(line.text || "")).join("\n");
     const warning = result.warning
       || (result.rewrite_status?.fallback
-        ? (result.rewrite_status?.error || "Rewrite unavailable; kept the literal translation.")
+        ? (result.rewrite_status?.error || "Copy unavailable; kept the literal translation.")
         : "");
     const head = `${lines.length} lines · ${result.source_lang || "?"}${
       result.translated ? ` → ${result.target || "?"}` : ""} · ${scriptHeadLabel(result)}`;
@@ -4873,13 +6092,13 @@
         <span class="hint">${esc(head)}</span>${warn}
         <span class="script-copy-actions">
           <button class="ghost small" data-copy-script="original" type="button">Copy original</button>
-          <button class="ghost small" data-copy-script="final" type="button">Copy ${result.translated ? "translation" : "rewrite"}</button>
+          <button class="ghost small" data-copy-script="final" type="button">Copy ${result.translated ? "translation" : "copy"}</button>
           ${result.translated && !options.snapshot ? '<button class="ghost small" data-script-retry type="button">Retry translation</button>' : ""}
         </span>
       </div>
       <div class="script-list script-grid">
         <div class="script-column-label">Original</div>
-        <div class="script-column-label">${result.translated ? "Translation · rewrite" : "Rewrite"}</div>
+        <div class="script-column-label">${result.translated ? "Translation · copy" : "Copy"}</div>
         ${lines.map((line) => {
           const original = line.original || line.literal || line.text || "";
           return `
@@ -4916,7 +6135,7 @@
         if (next.trim()) state.scriptOverrides[sceneId] = next.trim();
         else delete state.scriptOverrides[sceneId];
         state.scriptId = null;
-        resetAudioScript("Edit saved. Click ▶ Rewrite to regenerate the cut.");
+        resetAudioScript("Edit saved. Press Story cut to regenerate the cut.");
       });
     });
   }
@@ -4932,7 +6151,7 @@
       rewrite: snapshot.rewrite?.used || snapshot.rewrite || "",
       mode: snapshot.style || "",
     };
-    const note = "Restored from history. Overrides applied; click ▶ Rewrite to regenerate audio.";
+    const note = "Restored from history. Overrides applied; press Story cut to regenerate audio.";
     renderScriptBlock(lines, result, note, { snapshot: true });
   }
 
@@ -4953,26 +6172,22 @@
 
   function refreshAudioStatus() {
     const engines = state.audioEngines;
-    if (!engines || !state.job) return;
+    if (!state.job) return;
     const pieces = [];
     const mode = state.audio.mode;
-    const preferredTts = state.setup?.tts?.provider;
-    if (preferredTts && !["auto", "local"].includes(preferredTts)
-        && engines.voices?.[preferredTts] && !engines.voices[preferredTts].available
-        && state.audio.engine !== preferredTts) {
-      pieces.push(`Preferred ${engineLabel(preferredTts)} unavailable · using ${engineLabel(state.audio.engine)}`);
-    }
-    if (mode === "voice" && !engines.separation?.demucs?.available) {
-      pieces.push(`Demucs missing · ${engines.separation?.demucs?.install || "pip install demucs"}`);
-    }
-    if (musicSourceMode() === "generate") {
-      const info = engines.music?.[state.audio.music];
-      if (info && !info.available) pieces.push(info.install);
+    if (mode === "voice" && !engines?.separation?.demucs?.available) {
+      pieces.push(`Demucs missing · ${engines?.separation?.demucs?.install || "pip install demucs"}`);
     }
     if (state.audioMoods.length && ["music", "full"].includes(mode)) {
       pieces.push(`auto mood: ${state.audioMoods.slice(0, 3).join(", ")}`);
     }
+    const block = audioBlockReason();
+    const musicNeedsSource = mode === "music" && musicSourceMode() === "none";
+    if (block && !musicNeedsSource) pieces.push(block);
+    const needsSetup = !!block && !musicNeedsSource && /setup|key|engine|unavailable/i.test(block);
     dom.audioStatus.textContent = pieces.join(" · ");
+    dom.audioStatus.hidden = !pieces.length;
+    if (dom.audioStatusSetup) dom.audioStatusSetup.hidden = !needsSetup;
   }
 
   async function loadTranslateCheck() {
@@ -4995,38 +6210,275 @@
     refreshAudioStatus();
   }
 
-  async function previewVoice() {
-    if (!state.job) return;
-    dom.audioPreview.disabled = true;
-    dom.audioStatus.textContent = "Rendering voice sample…";
+  function classicTextSupported() {
+    return CLASSIC_TEXT_ASPECTS.includes(state.aspect);
+  }
+
+  function classicCutKey(clips) {
+    return (clips || []).map((clip) => {
+      const start = Number(clip.start) || 0;
+      const end = clip.end !== undefined && clip.end !== null
+        ? Number(clip.end)
+        : start + (Number(clip.dur) || 0);
+      return [
+        clip.scene,
+        start.toFixed(3),
+        end.toFixed(3),
+        clip.role || "beat",
+      ].join(":");
+    }).join("|");
+  }
+
+  function classicPlanClips() {
+    return (state.plan?.clips || []).map((clip) => ({ ...clip }));
+  }
+
+  function classicLayerId(prefix) {
+    const taken = new Set([
+      ...state.classicText.overlays.map((layer) => layer.id),
+      ...state.classicText.effects.map((effect) => effect.id),
+    ]);
+    let suffix = 1;
+    while (taken.has(`${prefix}${suffix}`)) suffix += 1;
+    return `${prefix}${suffix}`;
+  }
+
+  function updateTextAvailability() {
+    const supported = classicTextSupported();
+    if (dom.textShapeNote) {
+      dom.textShapeNote.hidden = supported;
+      dom.textShapeNote.textContent = supported
+        ? ""
+        : "Text overlays and effects render on 9:16 and 4:5. Switch the shape to use them.";
+    }
+    if (!dom.textLayerControls) return;
+    dom.textLayerControls.querySelectorAll("input, select, button").forEach((node) => {
+      node.disabled = !supported;
+    });
+    dom.textLayerControls.classList.toggle("is-disabled", !supported);
+  }
+
+  function syncClassicTextDefaults() {
+    const total = Math.max(0, Number(state.plan?.total) || 0);
+    [dom.textOverlayStart, dom.textOverlayEnd].forEach((input) => {
+      if (input) input.max = String(total);
+    });
+    if (dom.effectDuration) {
+      dom.effectDuration.max = String(Math.max(0.2, total));
+    }
+    if (dom.textOverlayStart) {
+      const start = Number(dom.textOverlayStart.value);
+      if (!Number.isFinite(start) || start < 0 || start >= total) {
+        dom.textOverlayStart.value = "0";
+      }
+    }
+    if (dom.textOverlayEnd) {
+      const end = Number(dom.textOverlayEnd.value);
+      if (!Number.isFinite(end) || end <= 0 || end > total) {
+        dom.textOverlayEnd.value = Math.min(2.5, total).toFixed(1);
+      }
+    }
+  }
+
+  function renderClassicText() {
+    if (!dom.textOverlayList || !dom.effectList) return;
+    const overlays = state.classicText.overlays;
+    const effects = state.classicText.effects;
+    dom.textOverlayList.innerHTML = overlays.length
+      ? overlays.map((layer) => {
+        const position = CLASSIC_TEXT_POSITIONS[layer.anchor] || "center";
+        return `
+          <div class="text-layer-row" role="listitem" data-overlay-id="${esc(layer.id)}">
+            <span class="text-layer-copy" title="${esc(layer.text)}">${esc(layer.text)}</span>
+            <span class="text-layer-meta">${esc(position)} · ${fmtTime(layer.start, 1)}–${fmtTime(layer.end, 1)}</span>
+            <button class="text-layer-del" type="button" data-overlay-delete="${esc(layer.id)}" title="Delete text" aria-label="Delete text">✕</button>
+          </div>`;
+      }).join("")
+      : '<p class="hint text-layer-empty">No text yet.</p>';
+    dom.effectList.innerHTML = effects.length
+      ? effects.map((effect) => `
+          <div class="text-layer-row effect-row" role="listitem" data-effect-id="${esc(effect.id)}">
+            <span class="text-layer-copy">${esc(CLASSIC_EFFECT_LABELS[effect.kind] || effect.kind)}</span>
+            <span class="text-layer-meta">${fmtTime(effect.start, 1)}–${fmtTime(effect.end, 1)}</span>
+            <button class="text-layer-del" type="button" data-effect-delete="${esc(effect.id)}" title="Delete effect" aria-label="Delete effect">✕</button>
+          </div>`).join("")
+      : '<p class="hint text-layer-empty">No effects yet.</p>';
+  }
+
+  function applyClassicTextCut(cut, key = "") {
+    state.classicText.dataKey = key;
+    state.classicText.clipsHash = cut?.clips_hash || "";
+    state.classicText.overlays = Array.isArray(cut?.overlays) ? cut.overlays : [];
+    state.classicText.effects = Array.isArray(cut?.effects) ? cut.effects : [];
+    renderClassicText();
+  }
+
+  async function refreshClassicText(force = false) {
+    if (!state.job || !state.plan) return;
+    const clips = classicPlanClips();
+    if (!clips.length) return;
+    const key = classicCutKey(clips);
+    if (!force && key === state.classicText.loadedKey) return;
+    state.classicText.loadedKey = key;
+    const seq = ++state.classicText.seq;
+    const rev = state.classicText.rev;
     try {
-      const token = tokenValue();
-      const response = await fetch(`/api/jobs/${state.job.id}/voice/sample`, {
+      const result = await api(`/api/classic/jobs/${state.job.id}/text`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        body: JSON.stringify({ clips }),
+      });
+      if (seq !== state.classicText.seq || rev !== state.classicText.rev) return;
+      applyClassicTextCut(result.cut, key);
+    } catch (_) {
+      if (seq !== state.classicText.seq) return;
+      state.classicText.loadedKey = "";
+      applyClassicTextCut(null);
+    }
+  }
+
+  async function persistClassicText(clips) {
+    if (!state.job || !clips.length) return;
+    try {
+      await api(`/api/classic/jobs/${state.job.id}/text`, {
+        method: "PUT",
         body: JSON.stringify({
-          engine: state.audio.engine,
-          voice: state.audio.voice,
-          rate: state.audio.rate,
+          clips,
+          overlays: state.classicText.overlays,
+          effects: state.classicText.effects,
         }),
       });
-      if (!response.ok) {
-        let detail = response.statusText;
-        try { detail = (await response.json()).detail || detail; } catch (_) { /* ignore */ }
-        throw new Error(detail);
-      }
-      const blob = await response.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
-      audio.play();
-      dom.audioStatus.textContent = "Voice sample ready.";
     } catch (error) {
-      dom.audioStatus.textContent = error.message;
-    } finally {
-      dom.audioPreview.disabled = false;
+      toast(error.message);
     }
+  }
+
+  function saveClassicText() {
+    state.classicText.rev += 1;
+    if (!state.job || !state.plan) return;
+    const clips = classicPlanClips();
+    const key = classicCutKey(clips);
+    state.classicText.loadedKey = key;
+    state.classicText.dataKey = key;
+    if (state.classicText.saveTimer) clearTimeout(state.classicText.saveTimer);
+    state.classicText.saveTimer = setTimeout(() => {
+      state.classicText.saveTimer = null;
+      persistClassicText(clips);
+    }, 350);
+  }
+
+  function addClassicOverlay() {
+    if (!classicTextSupported()) {
+      toast("Text overlays render on 9:16 and 4:5 only.");
+      return;
+    }
+    const text = (dom.textOverlayText?.value || "").trim();
+    if (!text) {
+      toast("Type the text first.");
+      return;
+    }
+    const total = Math.max(0, Number(state.plan?.total) || 0);
+    if (total < 0.2) {
+      toast("The cut is too short for text.");
+      return;
+    }
+    const start = clamp(Number(dom.textOverlayStart?.value) || 0, 0, Math.max(0, total - 0.2));
+    let end = Number(dom.textOverlayEnd?.value);
+    if (!Number.isFinite(end)) end = Math.min(total, start + 2.5);
+    end = clamp(end, start + 0.2, total);
+    if (end <= start) {
+      toast("End must be after start.");
+      return;
+    }
+    const position = dom.textOverlayAnchor?.value || "center";
+    const kind = CLASSIC_TEXT_KINDS[position] || "title";
+    state.classicText.overlays.push({
+      id: classicLayerId("tx"),
+      type: "text",
+      kind,
+      text,
+      start: round2(start),
+      end: round2(end),
+      anchor: CLASSIC_TEXT_ANCHORS[position] || "center",
+      box: { ...CLASSIC_TEXT_BOX[kind] },
+      z: 10 + state.classicText.overlays.length,
+      style: {},
+      safe_zone: true,
+      opacity: 1,
+    });
+    dom.textOverlayText.value = "";
+    dom.textOverlayStart.value = String(round2(end));
+    dom.textOverlayEnd.value = Math.min(total, round2(end) + 2.5).toFixed(1);
+    saveClassicText();
+    renderClassicText();
+  }
+
+  function addClassicEffect() {
+    if (!classicTextSupported()) {
+      toast("Effects render on 9:16 and 4:5 only.");
+      return;
+    }
+    const total = Math.max(0, Number(state.plan?.total) || 0);
+    if (total < 0.2) {
+      toast("The cut is too short for an effect.");
+      return;
+    }
+    const kind = dom.effectKind?.value || "punch_in";
+    const seconds = clamp(Number(dom.effectDuration?.value) || 1.2, 0.2, total);
+    state.classicText.effects.push({
+      id: classicLayerId(kind === "circle" ? "fx" : "mo"),
+      kind,
+      start: 0,
+      end: round2(Math.min(total, seconds)),
+      duration: round2(Math.min(total, seconds)),
+    });
+    saveClassicText();
+    renderClassicText();
+  }
+
+  function deleteClassicOverlay(id) {
+    state.classicText.overlays = state.classicText.overlays.filter((layer) => layer.id !== id);
+    saveClassicText();
+    renderClassicText();
+  }
+
+  function deleteClassicEffect(id) {
+    state.classicText.effects = state.classicText.effects.filter((effect) => effect.id !== id);
+    saveClassicText();
+    renderClassicText();
+  }
+
+  function classicEditPayload() {
+    if (!classicTextSupported()) return null;
+    const key = classicCutKey(classicPlanClips());
+    if (!key || key !== state.classicText.dataKey) return null;
+    const overlays = state.classicText.overlays.map((layer) => ({ ...layer }));
+    const effects = state.classicText.effects.map((effect) => ({
+      id: effect.id,
+      kind: effect.kind,
+      start: Number(effect.start) || 0,
+      end: Number(effect.end) || 0,
+    }));
+    if (!overlays.length && !effects.length) return null;
+    return { overlays, effects };
+  }
+
+  function bindClassicText() {
+    dom.textOverlayAdd?.addEventListener("click", addClassicOverlay);
+    dom.effectAdd?.addEventListener("click", addClassicEffect);
+    dom.textOverlayText?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addClassicOverlay();
+      }
+    });
+    dom.textOverlayList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-overlay-delete]");
+      if (button) deleteClassicOverlay(button.dataset.overlayDelete);
+    });
+    dom.effectList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-effect-delete]");
+      if (button) deleteClassicEffect(button.dataset.effectDelete);
+    });
   }
 
   // ---------------------------------------------------------------- render reel
@@ -5103,10 +6555,13 @@
     const draftMatches = draftRecord && draftRecord.hook === hookId;
     const active = activeRender();
     const blocked = audioBlockReason();
+    refreshAudioStatus();
+
+    const revealPlayer = state.renderWasActive === true && !active;
+    state.renderWasActive = !!active;
 
     dom.renderError.hidden = true;
-    dom.renderBlock.hidden = !blocked;
-    dom.renderBlock.querySelector("span").textContent = blocked || "";
+    dom.resultReady.hidden = true;
     dom.render.title = blocked || "";
     dom.renderDraft.title = blocked || "";
     dom.playerWrap.hidden = true;
@@ -5156,8 +6611,19 @@
         : "";
       dom.reelDuration.textContent = `${tag}${record.duration.toFixed(1)}s · ${record.width}×${record.height} · ${record.clip_count} beats`;
       dom.reelSize.textContent = `${formatSize(record.size)} · H.264 / AAC${audioTag}`;
+      const downloadName = `${fileStem(state.job.source.name)}-${target}s${quality === "draft" ? "-draft" : ""}.mp4`;
       dom.download.href = withToken(record.url);
-      dom.download.download = `${fileStem(state.job.source.name)}-${target}s${quality === "draft" ? "-draft" : ""}.mp4`;
+      dom.download.download = downloadName;
+      dom.resultReadyText.textContent = `${quality === "draft" ? "Draft" : "Final"} ${target}s reel ready · ${record.duration.toFixed(1)}s`;
+      dom.resultReadyDownload.href = withToken(record.url);
+      dom.resultReadyDownload.download = downloadName;
+      dom.resultReady.hidden = false;
+      if (revealPlayer && state.playerScrollKey !== record.key) {
+        state.playerScrollKey = record.key;
+        setTimeout(() => {
+          dom.playerWrap.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 60);
+      }
     };
 
     const draftNewer = draftMatches && draftRecord.status === "ready"
@@ -5165,16 +6631,14 @@
         || (draftRecord.updated || 0) > (finalRecord.updated || 0));
     if (draftNewer) {
       show(draftRecord, "draft");
-      dom.renderNote.textContent = blocked
-        || "Draft preview · 540×960 · render final when it feels right.";
+      dom.renderNote.textContent = "Draft preview · 540×960 · render final when it feels right.";
       renderButton(`Render final ${target}s`);
       return;
     }
 
     if (finalMatches && finalRecord.status === "ready") {
       show(finalRecord, "final");
-      dom.renderNote.textContent = blocked
-        || state.plan.note
+      dom.renderNote.textContent = state.plan.note
         || `${finalRecord.clip_count} beats · ${renderAudioNote()} · no watermark`;
       renderButton(`Render ${target}s again`);
       return;
@@ -5188,9 +6652,8 @@
     }
 
     renderButton(`Render ${target}s reel`);
-    const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080" };
-    dom.renderNote.textContent = blocked
-      || state.plan.note
+    const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080", "16:10": "1920×1200" };
+    dom.renderNote.textContent = state.plan.note
       || `${state.aspect} ${dims[state.aspect] || ""} · ${renderAudioNote()}${state.captions ? " · captions" : ""} · no watermark`;
   }
 
@@ -5219,6 +6682,8 @@
     const target = state.target;
     const existing = findRender(quality);
     const force = !!(existing && existing.status === "ready" && existing.hook === currentHookId());
+    const clips = state.edited && state.plan ? planClipsForRender() : null;
+    state.playerScrollKey = null;
     dom.render.disabled = true;
     dom.renderDraft.disabled = true;
     dom.renderError.hidden = true;
@@ -5227,15 +6692,18 @@
         method: "POST",
         body: JSON.stringify({
           target,
-          hook_scene: state.overrideHook ?? (state.edited ? state.plan.clips?.[0]?.scene ?? null : null),
+          hook_scene: clips ? clips[0]?.scene ?? null : state.overrideHook,
           quality,
           aspect: state.aspect,
           captions: state.captions,
           preset: state.preset || null,
-          order: state.order,
-          clips: state.edited && state.plan ? state.plan.clips : null,
+          // An explicit cut carries its own Hook > Beat > Payoff order. Story
+          // arc order would move the roles, so the render keeps the cut order.
+          order: clips ? "source" : state.order,
+          clips,
           script_id: state.scriptId || null,
           audio: currentAudioPlan(),
+          edit: classicEditPayload(),
           force,
         }),
       });
@@ -5262,25 +6730,28 @@
       return;
     }
     dom.renderAll.disabled = true;
+    state.playerScrollKey = null;
     try {
       let records = [];
       const errors = [];
       if (state.edited) {
+        const clips = planClipsForRender();
         for (const target of [15, 30, 60]) {
           try {
             const result = await api(`/api/jobs/${state.job.id}/render`, {
               method: "POST",
               body: JSON.stringify({
                 target,
-                hook_scene: state.overrideHook ?? state.plan.hook_scene ?? state.plan.clips?.[0]?.scene ?? null,
+                hook_scene: clips?.[0]?.scene ?? state.overrideHook ?? state.plan.hook_scene ?? null,
                 quality: "final",
                 aspect: state.aspect,
                 captions: state.captions,
                 preset: state.preset || null,
-                order: state.order,
-                clips: state.plan.clips,
+                order: "source",
+                clips,
                 script_id: state.scriptId || null,
                 audio: currentAudioPlan(),
+                edit: classicEditPayload(),
               }),
             });
             if (result.render) records.push(result.render);
@@ -5381,6 +6852,7 @@
       renderHistory();
     } catch (_) {
       if (dom.historyCount) dom.historyCount.textContent = "";
+      if (dom.historyLatest) dom.historyLatest.textContent = "";
     }
   }
 
@@ -5393,13 +6865,33 @@
     ].filter(Boolean).join(" · ");
   }
 
+  function historyEventLabel(entry) {
+    const quality = entry.quality || entry.snapshot?.render?.quality || "";
+    const target = entry.target ? `${entry.target}s` : "";
+    const bits = [entry.type || "event"];
+    if (entry.type === "render") {
+      bits[0] = quality || "final";
+      if (target) bits.push(target);
+    } else if (target) {
+      bits.push(target);
+    }
+    if (entry.status) bits.push(entry.status);
+    return bits.filter(Boolean).join(" ");
+  }
+
   function renderHistory() {
     if (!dom.historyList) return;
     const entries = state.history || [];
-    const renders = entries.filter((entry) => entry.type === "render").length;
     dom.historyCount.textContent = entries.length
-      ? `${renders} render${renders === 1 ? "" : "s"} · ${entries.length} events`
+      ? `${entries.length} event${entries.length === 1 ? "" : "s"}`
       : "empty";
+    if (dom.historyLatest) {
+      const latest = entries[0];
+      dom.historyLatest.textContent = latest
+        ? `Last: ${historyEventLabel(latest)} · ${formatHistoryTime(latest.created)}`
+        : "";
+      dom.historyLatest.hidden = !latest;
+    }
     if (!entries.length) {
       dom.historyList.innerHTML = `<p class="hint history-empty">No script, upload or render attempts yet.</p>`;
       return;
@@ -5413,6 +6905,7 @@
           <span class="history-status">${esc(entry.status || "")}</span>
           <span class="history-meta">${esc(historyMeta(entry))}</span>
           <span class="history-time">${esc(formatHistoryTime(entry.created))}</span>
+          <span class="history-chevron" aria-hidden="true">›</span>
           ${problem ? `<span class="history-problem">${esc(clipText(problem, 90))}</span>` : ""}
         </button>`;
     }).join("");
@@ -5568,7 +7061,7 @@
     const date = new Date(Number(timestamp) * 1000);
     if (Number.isNaN(date.getTime())) return "";
     return date.toLocaleString(undefined, {
-      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
     });
   }
 
@@ -5633,7 +7126,7 @@
         ${!isDeep
           ? `<button class="primary" data-read-scene="${scene.id}">Deep-read this scene <span class="arrow">↗</span></button>`
           : planClip
-            ? `<button class="ghost" disabled>In Smart Cut</button>`
+            ? `<button class="ghost danger" data-remove-scene="${scene.id}">Remove from Smart Cut</button>`
             : `<button class="primary" data-add-scene="${scene.id}">Add to Smart Cut <span class="arrow">↗</span></button>`}
         ${!isDeep || planClip || isHook ? "" : `<button class="ghost" data-use-hook="${scene.id}">Use as hook</button>`}
         <button class="ghost" data-close>Close</button>
@@ -5693,6 +7186,8 @@
     state.history = [];
     state.historyEntry = null;
     state.timelineScroll = 0;
+    state.playerScrollKey = null;
+    state.renderWasActive = null;
     state.target = 30;
     state.sort = "best";
     state.visible = 96;
@@ -5726,6 +7221,7 @@
       dom.historyDetail.innerHTML = "";
     }
     if (dom.historyCount) dom.historyCount.textContent = "";
+    if (dom.historyLatest) dom.historyLatest.textContent = "";
     dom.ingestNote.textContent = "ffmpeg cuts first. Analysis follows.";
     if (dom.planReasoning) {
       dom.planReasoning.hidden = true;
@@ -5783,7 +7279,7 @@
     try {
       const result = await api(`/api/jobs/${state.job.id}/clean`, {
         method: "POST",
-        body: JSON.stringify({ profile: dom.cleanProfile.value || "workfiles" }),
+        body: JSON.stringify({ profile: "workfiles" }),
       });
       toast(`Cleaned: ${(result.cleaned || []).join(", ") || "nothing to remove"}.`);
       await openJob(state.job.id);
@@ -6073,4 +7569,6 @@
     const match = location.hash.match(/^#job=([a-z0-9]+)/i);
     if (match) openJob(match[1]);
   }
+
+  init();
 })();

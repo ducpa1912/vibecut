@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — Classic</title>
-  <link rel="stylesheet" href="/static/classic/style.css?v=0.12.0">
-  <link rel="stylesheet" href="/static/classic/creator.css?v=0.14.0">
+  <link rel="stylesheet" href="/static/classic/style.css?v=0.13.0">
+  <link rel="stylesheet" href="/static/classic/creator.css?v=0.15.0">
   <!-- vibecut:edition -->
   <style>
     /* Edition switches (editions.py): hide links to views and features this
@@ -47,8 +47,8 @@
       root.dataset.features = (edition.features || []).join(" ");
     })();
   </script>
-  <script src="/static/classic/app.js?v=0.12.0" defer></script>
-  <script src="/static/classic/creator.js?v=0.14.0" defer></script>
+  <script src="/static/classic/app.js?v=0.13.0" defer></script>
+  <script src="/static/classic/creator.js?v=0.15.0" defer></script>
 </head>
 <body>
   <header class="shell topbar">
@@ -168,7 +168,16 @@
           <span id="recent-count" class="muted"></span>
         </div>
         <p id="recent-error" class="error recent-alert" role="alert" hidden></p>
+        <div id="recent-resume" class="recent-resume" hidden></div>
         <div id="recent" class="recent-grid"></div>
+        <div class="recent-all-actions">
+          <button id="recent-all" class="ghost small" type="button" aria-expanded="false" aria-controls="recent-all-panel" hidden>
+            <span id="recent-all-label">View all cuts</span> <span id="recent-all-count" class="muted"></span>
+          </button>
+        </div>
+        <div id="recent-all-panel" class="recent-all-panel" hidden>
+          <div id="recent-all-list" class="recent-all-list"></div>
+        </div>
       </section>
     </section>
 
@@ -213,14 +222,15 @@
         </div>
         <div class="result-actions">
           <button id="new-video" class="ghost">New video</button>
-          <select id="clean-profile" class="ghost small" aria-label="Clean profile">
-            <option value="workfiles">Work files</option>
-            <option value="renders">Renders</option>
-            <option value="all">All but source</option>
-          </select>
           <button id="clean-job" class="ghost">Clean</button>
           <button id="delete-job" class="ghost danger">Delete</button>
         </div>
+      </div>
+
+      <div id="result-ready" class="result-ready" hidden>
+        <span class="ready-dot" aria-hidden="true"></span>
+        <span id="result-ready-text" class="ready-text"></span>
+        <a id="result-ready-download" class="primary small" download>Download <span class="arrow">↓</span></a>
       </div>
 
       <div id="speech-notice" class="speech-notice" role="status" hidden>
@@ -254,20 +264,42 @@
         <div id="transcript-panel" class="transcript-panel" hidden></div>
       </div>
 
+      <div id="player-wrap" class="player-wrap" hidden>
+        <div class="phone-frame"><video id="reel-video" controls playsinline></video></div>
+        <div class="player-meta">
+          <div class="player-copy"><span id="reel-duration"></span><span id="reel-size"></span></div>
+          <a id="download" class="primary small" download>Download <span class="arrow">↓</span></a>
+          <div class="export-links">
+            <button id="export-srt" class="ghost small" type="button">SRT</button>
+            <button id="export-vtt" class="ghost small" type="button">VTT</button>
+            <button id="export-edl" class="ghost small" type="button">EDL</button>
+            <button id="export-xml" class="ghost small" type="button">XML</button>
+            <button id="share-link" class="ghost small" type="button">Review link</button>
+          </div>
+        </div>
+      </div>
+
+
       <section id="moments-section" class="moments-section">
-        <div class="section-head">
-          <div><p class="eyebrow">moments</p><h3>Moments</h3></div>
+        <div class="section-head moments-head">
+          <div class="moments-heading">
+            <p class="eyebrow">moments</p>
+            <h3>Moments</h3>
+            <span id="scene-count" class="moments-count"></span>
+          </div>
           <div class="scene-tools">
             <div class="sort-tabs" id="sort-tabs">
               <button data-sort="best" class="active">Best</button>
               <button data-sort="timeline">Timeline</button>
             </div>
-            <span id="scene-count" class="muted"></span>
-            <button id="moments-expand" class="ghost small" type="button">Expand</button>
+            <button id="moments-expand" class="ghost small" type="button" aria-expanded="false">Show all</button>
           </div>
         </div>
+        <div class="moments-legend" aria-hidden="true">
+          <span><i class="legend-swatch legend-hook"></i>HOOK</span>
+          <span><i class="legend-swatch legend-payoff"></i>PAYOFF</span>
+        </div>
         <div id="moments-rail" class="moments-rail" aria-label="Moments"></div>
-        <input id="moments-scrub" class="moments-scrub" type="range" min="0" max="0" value="0" aria-label="Scrub moments">
         <div id="moments-full" class="moments-full" hidden>
           <div id="moments-list" class="moments-list" role="list" aria-label="All moments"></div>
           <div id="scene-grid" class="scene-grid" hidden></div>
@@ -291,9 +323,10 @@
           <button id="reset-hook" class="text-btn" hidden>Reset hook</button>
           <button id="edit-cut" class="text-btn">Edit cut</button>
         </div>
+        <p id="plan-route" class="plan-route"></p>
         <div id="timeline" class="timeline" aria-label="Smart Cut timeline"></div>
+        <div id="clip-menu" class="clip-menu" role="menu" aria-label="Change clip role" hidden></div>
         <div id="timeline-drop" class="timeline-drop" hidden>Drop a moment here to add it · drag a clip here to remove it</div>
-        <p id="plan-why" class="plan-why"></p>
         <details id="plan-reasoning" class="plan-reasoning" hidden>
           <summary>Why this cut</summary>
           <div id="plan-reasoning-body" class="plan-reasoning-body"></div>
@@ -321,29 +354,14 @@
               <option value="4:5">4:5</option>
               <option value="1:1">1:1</option>
               <option value="16:9">16:9</option>
+              <option value="16:10">16:10</option>
             </select>
-            <label class="caption-check"><input id="captions" type="checkbox"> Captions</label>
             <button id="render-all" class="ghost small">All 15/30/60</button>
             <button id="render-ab" class="ghost small">A/B hooks</button>
             <div id="variant-list" class="variant-list"></div>
           </div>
         </details>
 
-        <div id="render-block" class="render-block" role="alert" hidden>
-          <span></span>
-          <button id="render-block-setup" class="ghost small" type="button">Open Setup</button>
-        </div>
-        <div class="render-row">
-          <button id="render" class="primary">Render 30s reel <span class="arrow">↗</span></button>
-          <button id="render-draft" class="ghost small">Draft</button>
-          <button id="render-cancel" class="ghost small" hidden>Cancel</button>
-          <span id="render-note" class="hint">Vertical 1080×1920 · original audio</span>
-        </div>
-        <div id="render-progress" class="render-progress" hidden>
-          <div class="bar"><i></i></div>
-          <span></span>
-        </div>
-        <div id="render-error" class="error" hidden></div>
 
         <section id="mixer-panel" class="mixer-panel" hidden>
           <div class="mixer-head">
@@ -362,172 +380,251 @@
           </div>
         </section>
 
-        <details id="audio-panel" class="audio-panel" open>
-          <summary>Audio · rewrite, voice, music</summary>
+        <section class="edit-section-head" aria-labelledby="edit-section-title">
+          <div>
+            <p class="eyebrow">edit</p>
+            <h3 id="edit-section-title">Edit</h3>
+          </div>
+          <p class="hint">Copy, sound and text are optional. Render and Draft stay at the end.</p>
+        </section>
 
-          <div class="audio-mode-field">
-            <span>Mode</span>
-            <div id="audio-mode-tabs" class="audio-mode-tabs">
-              <button type="button" data-audio-mode="keep" class="active">Original</button>
-              <button type="button" data-audio-mode="bed">Voice-over</button>
-              <button type="button" data-audio-mode="voice">Dub</button>
-              <button type="button" data-audio-mode="music">Music</button>
-              <button type="button" data-audio-mode="full">Full Replace</button>
+        <details id="audio-panel" class="audio-panel edit-panel" open>
+          <summary>Copy, sound, text</summary>
+
+          <div class="edit-mode">
+            <span class="label">Mode</span>
+            <div id="audio-mode-tabs" class="audio-mode-tabs" role="tablist" aria-label="Audio mode">
+              <button type="button" data-audio-mode="keep" class="active" role="tab" aria-selected="true">Original</button>
+              <button type="button" data-audio-mode="bed" role="tab" aria-selected="false">New voice-over</button>
+              <button type="button" data-audio-mode="voice" role="tab" aria-selected="false">Dub voice</button>
+              <button type="button" data-audio-mode="music" role="tab" aria-selected="false">Music only</button>
+              <button type="button" data-audio-mode="full" role="tab" aria-selected="false">New voice + music</button>
             </div>
+            <p id="audio-mode-desc" class="mode-desc">Original audio and transcript. No new voice or music.</p>
             <select id="audio-mode" hidden>
               <option value="keep">Original</option>
               <option value="bed">Voice-over · new voice over original audio</option>
               <option value="voice">Dub · replace only the voice</option>
               <option value="music">Music · replace original audio</option>
-              <option value="full">Full Replace · new voice + new music</option>
+              <option value="full">Full Replace · new voice and new music</option>
             </select>
           </div>
 
-          <section id="audio-rewrite-step" class="audio-step">
-            <div class="audio-step-head">
-              <span class="audio-step-num">1</span>
-              <div><h4>Rewrite</h4><p>Translate, then rewrite for this cut. Nothing runs until you press play.</p></div>
-              <span id="translate-badge" class="translate-badge" hidden></span>
-            </div>
-            <div class="audio-step-body">
-              <div class="audio-grid">
-                <label class="audio-field">
-                  <span>Language</span>
-                  <select id="audio-lang"></select>
-                </label>
-                <label class="audio-field">
-                  <span>Script style</span>
-                  <select id="audio-style">
-                    <option value="smooth">Smooth · natural short script</option>
-                    <option value="viral">Viral · punchy hook</option>
-                    <option value="fun">Fun · playful and warm</option>
-                    <option value="creative">Creative · vivid and surprising</option>
-                    <option value="sad">Sad · intimate and restrained</option>
-                    <option value="chill">Chill · calm and understated</option>
-                    <option value="literal">Faithful · translation only</option>
-                  </select>
-                </label>
-                <div class="audio-field small audio-rewrite-action">
-                  <span>&nbsp;</span>
-                  <button id="audio-rewrite-run" class="primary small" type="button">▶ Rewrite</button>
-                </div>
+          <div class="edit-grid">
+            <section id="audio-rewrite-step" class="edit-card edit-copy">
+              <div class="edit-card-head">
+                <div><h4>Copy</h4><p>Translate the full video once, then write this cut.</p></div>
+                <span class="copy-flags">
+                  <span id="copy-transcript" class="copy-transcript" role="img" aria-label="Transcript ready" title="Transcript ready" hidden>▤</span>
+                  <span id="translate-badge" class="translate-badge" hidden></span>
+                </span>
               </div>
-              <p id="audio-rewrite-note" class="hint">Click Rewrite to translate the full script and rewrite the cut.</p>
+              <div id="audio-copy-form">
+                <div class="audio-grid">
+                  <label class="audio-field">
+                    <span>Language</span>
+                    <select id="audio-lang"></select>
+                  </label>
+                  <label class="audio-field">
+                    <span>Script style</span>
+                    <select id="audio-style">
+                      <option value="smooth">Smooth · natural short script</option>
+                      <option value="viral">Viral · punchy hook</option>
+                      <option value="fun">Fun · playful and warm</option>
+                      <option value="creative">Creative · vivid and surprising</option>
+                      <option value="sad">Sad · intimate and restrained</option>
+                      <option value="chill">Chill · calm and understated</option>
+                      <option value="literal">Faithful · translation only</option>
+                    </select>
+                  </label>
+                  <div class="audio-field small audio-rewrite-action">
+                    <span>&nbsp;</span>
+                    <button id="audio-rewrite-run" class="primary small" type="button">Story cut</button>
+                  </div>
+                </div>
+                <p id="audio-rewrite-note" class="hint">Choose a mode, then copy the cut. The full transcript is reused.</p>
+              </div>
+              <div id="audio-copy-note" class="audio-copy-note" hidden>
+                <span id="audio-copy-note-text">Original audio and transcript.</span>
+                <button id="audio-copy-switch" class="text-btn" type="button">Rewrite this cut →</button>
+              </div>
               <select id="audio-provider" hidden></select>
               <select id="audio-rewrite" hidden></select>
-            </div>
-          </section>
+            </section>
 
-          <section id="audio-voice-step" class="audio-step">
-            <div class="audio-step-head">
-              <span class="audio-step-num">2</span>
-              <div><h4>Voice</h4><p>Generate a voice, or fit your own recording to the cut.</p></div>
-            </div>
-            <div class="audio-step-body">
-              <div id="audio-voice-source" class="audio-source-row">
-                <label class="check compact"><input id="audio-source-generate" type="radio" name="audio-source" value="generate" checked> Generate</label>
-                <label class="check compact"><input id="audio-source-upload" type="radio" name="audio-source" value="upload"> Use my recording</label>
+            <section class="edit-card edit-sound">
+              <div class="edit-card-head">
+                <div><h4>Sound</h4><p>Voice or music for this cut.</p></div>
+                <button id="mixer-open" class="ghost small" type="button">Mixer</button>
               </div>
-              <div id="audio-voice-generate" class="audio-grid">
-                <label class="audio-field">
-                  <span>Voice list</span>
-                  <select id="audio-engine"></select>
-                </label>
-                <label class="audio-field">
-                  <span>Voice</span>
-                  <select id="audio-voice"></select>
-                </label>
-                <label class="audio-field small">
-                  <span>Rate</span>
-                  <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1">
-                </label>
+              <div class="sound-tabs" role="tablist" aria-label="Sound tabs">
+                <button id="sound-tab-voice" type="button" data-sound-tab="voice" class="active" role="tab" aria-selected="true" aria-controls="audio-voice-step">Voice</button>
+                <button id="sound-tab-music" type="button" data-sound-tab="music" role="tab" aria-selected="false" aria-controls="audio-music-step">Music</button>
               </div>
-              <p class="hint">Provider order is set in Admin → Models. This voice list applies when that engine is the active route.</p>
-              <div id="audio-voice-upload" class="audio-upload-box" hidden>
-                <input id="audio-upload" type="file" accept="audio/*" hidden>
-                <button id="audio-upload-button" class="ghost small" type="button">Choose recording</button>
-                <span id="audio-upload-name" class="hint">Fit your recording to the cut length.</span>
-              </div>
-              <div class="audio-actions">
-                <button id="audio-preview" class="ghost small" type="button">Test voice</button>
-              </div>
-            </div>
-          </section>
 
-          <section id="audio-music-step" class="audio-step">
-            <div class="audio-step-head">
-              <span class="audio-step-num">3</span>
-              <div><h4>Music</h4><p>Use your own track, or generate a bed.</p></div>
-            </div>
-            <div class="audio-step-body">
-              <div id="audio-music-source" class="audio-source-row">
-                <label class="check compact"><input type="radio" name="audio-music-source" value="none" checked> None</label>
-                <label class="check compact"><input type="radio" name="audio-music-source" value="own"> Use my sound</label>
-                <label class="check compact"><input type="radio" name="audio-music-source" value="generate"> Generate</label>
-              </div>
-              <p id="audio-music-warning" class="audio-warning" hidden></p>
-              <div class="audio-grid">
-                <label class="audio-field">
-                  <span>Music source</span>
-                  <select id="audio-music">
-                    <option value="none">No music</option>
-                    <option value="library">My own track</option>
-                    <option value="minimax-music">AI · MiniMax Music</option>
-                    <option value="lyria-clip">AI · OpenRouter Lyria 3</option>
-                  </select>
-                </label>
-                <label id="audio-track-field" class="audio-field">
-                  <span>Track</span>
-                  <select id="audio-track"></select>
-                </label>
-                <div id="audio-music-upload-box" class="audio-upload-box" hidden>
-                  <input id="audio-music-upload" type="file" accept="audio/*" hidden>
-                  <button id="audio-music-upload-button" class="ghost small" type="button">Choose sound</button>
-                  <button id="audio-music-upload-clear" class="ghost small" type="button" hidden>Clear</button>
-                  <span id="audio-music-upload-name" class="hint">Use your own music file.</span>
+              <div id="audio-voice-step" class="sound-panel" data-sound-panel="voice" role="tabpanel" aria-labelledby="sound-tab-voice">
+                <div id="audio-voice-source" class="audio-source-row" hidden>
+                  <label class="check compact"><input id="audio-source-generate" type="radio" name="audio-source" value="generate" checked> Generate</label>
+                  <label class="check compact"><input id="audio-source-upload" type="radio" name="audio-source" value="upload"> Use my recording</label>
                 </div>
-                <label id="audio-prompt-field" class="audio-field">
-                  <span>Music prompt</span>
-                  <input id="audio-prompt" placeholder="auto mood">
-                </label>
-                <label id="audio-gain-field" class="audio-field small">
-                  <span>Music dB</span>
-                  <input id="audio-gain" type="number" min="-40" max="0" step="1" value="-18">
-                </label>
-                <label id="audio-duck-field" class="audio-field checkbox">
-                  <input id="audio-duck" type="checkbox" checked> Duck under voice
-                </label>
-                <label id="audio-beatsync-field" class="audio-field checkbox">
-                  <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
-                </label>
+                <div id="audio-voice-generate" class="audio-grid compacts sound-voice-grid">
+                  <label class="audio-field">
+                    <span>Voice list</span>
+                    <select id="audio-engine"></select>
+                  </label>
+                  <label class="audio-field">
+                    <span>Voice</span>
+                    <select id="audio-voice"></select>
+                  </label>
+                  <label class="audio-field small rate-field">
+                    <span>Rate</span>
+                    <div class="rate-control">
+                      <input id="audio-rate" type="number" min="0.6" max="1.6" step="0.05" value="1" inputmode="decimal" aria-label="Voice rate">
+                      <span class="rate-suffix" aria-hidden="true">×</span>
+                    </div>
+                  </label>
+                </div>
+                <div class="sound-actions">
+                  <button id="audio-generate-voice" class="primary small" type="button">Generate</button>
+                  <button id="audio-preview" class="ghost small play-btn" type="button" title="Generate a voice preview first" aria-label="Play the generated voice" disabled>▶</button>
+                  <button id="audio-use-recording" class="ghost small" type="button">Use my recording</button>
+                </div>
+                <p id="audio-voice-preview-status" class="hint sound-preview-status" role="status">Generate a short voice preview.</p>
+                <div id="audio-voice-upload" class="audio-upload-box" hidden>
+                  <input id="audio-upload" type="file" accept="audio/*" hidden>
+                  <button id="audio-upload-button" class="ghost small" type="button">Choose recording</button>
+                  <span id="audio-upload-name" class="hint">Fit your recording to the cut length.</span>
+                </div>
               </div>
+
+              <div id="audio-music-step" class="sound-panel" data-sound-panel="music" role="tabpanel" aria-labelledby="sound-tab-music" hidden>
+                <div id="audio-music-source" class="audio-source-row sound-source-row" role="radiogroup" aria-label="Music source">
+                  <label class="sound-source-chip"><input type="radio" name="audio-music-source" value="none" checked><span>None</span></label>
+                  <label class="sound-source-chip"><input type="radio" name="audio-music-source" value="own"><span>Use my BGM</span></label>
+                  <label class="sound-source-chip"><input type="radio" name="audio-music-source" value="generate"><span>Generate</span></label>
+                </div>
+                <div class="audio-grid compacts sound-music-grid">
+                  <label id="audio-music-field" class="audio-field">
+                    <span>Music</span>
+                    <select id="audio-music">
+                      <option value="none">No music</option>
+                      <option value="library">My own track</option>
+                      <option value="minimax-music">AI · MiniMax Music</option>
+                      <option value="lyria-clip">AI · OpenRouter Lyria 3</option>
+                    </select>
+                  </label>
+                  <label id="audio-track-field" class="audio-field">
+                    <span>Track</span>
+                    <select id="audio-track"></select>
+                  </label>
+                  <div id="audio-music-upload-box" class="audio-upload-box" hidden>
+                    <input id="audio-music-upload" type="file" accept="audio/*" hidden>
+                    <button id="audio-music-upload-button" class="ghost small" type="button">Choose BGM</button>
+                    <button id="audio-music-upload-clear" class="ghost small" type="button" hidden>Clear</button>
+                    <span id="audio-music-upload-name" class="hint">Use your own music file.</span>
+                  </div>
+                  <label id="audio-prompt-field" class="audio-field">
+                    <span>Music prompt</span>
+                    <input id="audio-prompt" placeholder="auto mood">
+                  </label>
+                  <label id="audio-gain-field" class="audio-field small">
+                    <span>Music dB</span>
+                    <input id="audio-gain" type="number" min="-40" max="0" step="1" value="-18">
+                  </label>
+                  <label id="audio-duck-field" class="audio-field checkbox">
+                    <input id="audio-duck" type="checkbox" checked> Duck under voice
+                  </label>
+                  <label id="audio-beatsync-field" class="audio-field checkbox">
+                    <input id="audio-beatsync" type="checkbox"> Beat sync <span id="audio-bpm" class="hint"></span>
+                  </label>
+                </div>
+                <div id="audio-music-block" class="audio-inline-block" role="alert" hidden>
+                  <span>Choose a music source before rendering.</span>
+                  <button id="audio-music-block-bgm" class="ghost small" type="button">Use my BGM</button>
+                  <button id="audio-music-block-generate" class="ghost small" type="button">Generate</button>
+                </div>
+                <div class="sound-actions">
+                  <button id="audio-generate-music" class="primary small" type="button">Generate</button>
+                  <button id="audio-play-music" class="ghost small play-btn" type="button" title="Choose a BGM or generate a preview first" aria-label="Play music preview" disabled>▶</button>
+                  <button id="audio-use-bgm" class="ghost small" type="button">Use my BGM</button>
+                </div>
+                <p id="audio-music-preview-status" class="hint sound-preview-status" role="status">Use my BGM plays a 12s preview. Generate makes a short AI bed; the render uses the full bed.</p>
+              </div>
+
+              <div class="audio-status-row">
+                <p id="audio-status" class="hint audio-status" hidden></p>
+                <button id="audio-status-setup" class="ghost small" type="button" hidden>Open Setup</button>
+              </div>
+            </section>
+
+            <section id="text-effects-step" class="edit-card edit-text">
+              <div class="edit-card-head">
+                <div><h4>Texts &amp; Effects</h4><p>Subtitles, text overlays and motion on the cut.</p></div>
+              </div>
+              <label class="caption-check edit-check"><input id="captions" type="checkbox"> Burn in subtitles</label>
+              <p id="text-shape-note" class="hint text-shape-note" hidden></p>
+              <div id="text-layer-controls">
+                <div id="text-overlay-list" class="text-layer-list" role="list" aria-label="Text overlays"></div>
+                <div class="text-add">
+                  <input id="text-overlay-text" type="text" maxlength="400" placeholder="Text on the cut" aria-label="Text on the cut">
+                  <div class="text-add-row">
+                    <select id="text-overlay-anchor" aria-label="Text position">
+                      <option value="top">Top</option>
+                      <option value="center" selected>Center</option>
+                      <option value="bottom">Bottom</option>
+                    </select>
+                    <label class="text-time"><span>Start</span><input id="text-overlay-start" type="number" min="0" step="0.1" value="0"></label>
+                    <label class="text-time"><span>End</span><input id="text-overlay-end" type="number" min="0.2" step="0.1" value="2.5"></label>
+                    <button id="text-overlay-add" class="ghost small" type="button">Add text</button>
+                  </div>
+                </div>
+                <div id="effect-list" class="text-layer-list" role="list" aria-label="Effects"></div>
+                <div class="text-add-row effect-add">
+                  <select id="effect-kind" aria-label="Effect">
+                    <option value="punch_in">Punch in</option>
+                    <option value="shake">Shake</option>
+                    <option value="circle">Circle (centre)</option>
+                  </select>
+                  <label class="text-time"><span>Seconds</span><input id="effect-duration" type="number" min="0.2" step="0.1" value="1.2"></label>
+                  <button id="effect-add" class="ghost small" type="button">Add effect</button>
+                </div>
+              </div>
+              <p class="hint">Text and effects burn into the reel on 9:16 and 4:5. Caption position, font and cue edits live in Creator → Captions.</p>
+            </section>
+          </div>
+
+          <section class="edit-script">
+            <div class="edit-card-head">
+              <div><h4>Script</h4><p>The lines this cut will say.</p></div>
             </div>
+            <div id="audio-script" class="audio-script"></div>
           </section>
 
-          <div class="audio-actions audio-bottom">
-            <span id="audio-status" class="hint"></span>
+          <div class="edit-actions">
+            <div id="render-progress" class="render-progress" hidden>
+              <div class="bar"><i></i></div>
+              <span></span>
+            </div>
+            <div id="render-error" class="error" hidden></div>
+            <div class="render-row">
+              <span id="render-note" class="hint"></span>
+              <button id="render-cancel" class="ghost small" hidden>Cancel</button>
+              <button id="render-draft" class="ghost small">Draft</button>
+              <button id="render" class="primary">Render 30s reel <span class="arrow">↗</span></button>
+            </div>
           </div>
-          <div id="audio-script" class="audio-script"></div>
         </details>
 
-        <div id="player-wrap" class="player-wrap" hidden>
-          <div class="phone-frame"><video id="reel-video" controls playsinline></video></div>
-          <div class="player-meta">
-            <div class="player-copy"><span id="reel-duration"></span><span id="reel-size"></span></div>
-            <a id="download" class="primary small" download>Download <span class="arrow">↓</span></a>
-            <div class="export-links">
-              <button id="export-srt" class="ghost small" type="button">SRT</button>
-              <button id="export-vtt" class="ghost small" type="button">VTT</button>
-              <button id="export-edl" class="ghost small" type="button">EDL</button>
-              <button id="export-xml" class="ghost small" type="button">XML</button>
-              <button id="share-link" class="ghost small" type="button">Review link</button>
-            </div>
-          </div>
-        </div>
       </section>
 
+
       <details id="history-panel" class="history-panel">
-        <summary>History <span id="history-count" class="muted"></span></summary>
+        <summary>
+          <span class="history-title">Activity</span>
+          <span id="history-latest" class="history-latest"></span>
+          <span id="history-count" class="muted history-count"></span>
+          <span class="history-chevron" aria-hidden="true">›</span>
+        </summary>
         <div id="history-list" class="history-list"></div>
         <div id="history-detail" class="history-detail" hidden></div>
       </details>

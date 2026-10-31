@@ -2,7 +2,7 @@
 
 body.creator-mode {
   /* Creator surfaces use AA-contrast secondary text on the dark panels. */
-  --dim: #8f8e95;
+  --dim: #9a999f;
   --muted: #a5a4aa;
 }
 
@@ -219,7 +219,7 @@ body.creator-mode .creator-view {
   border-radius: 999px;
   padding: 3px 9px;
   color: var(--dim);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -371,7 +371,7 @@ body.creator-mode .creator-view {
 .creator-render-key { margin: 0 0 18px; }
 .creator-counter {
   color: var(--dim);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 400;
 }
 .creator-filename {
@@ -446,7 +446,7 @@ body.creator-mode .creator-view {
   padding: 2px 7px;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   white-space: nowrap;
 }
 .creator-tag.ok { color: #a9d3a3; border-color: rgba(143, 188, 139, 0.35); }
@@ -474,7 +474,7 @@ body.creator-mode .creator-view {
 .creator-item-row .creator-item-path {
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   word-break: break-all;
 }
 .creator-actions {
@@ -546,7 +546,7 @@ body.creator-mode .creator-view {
 .sentence-row input[type="checkbox"] { margin-top: 3px; accent-color: var(--accent); }
 .sentence-copy { min-width: 0; }
 .sentence-copy p { margin: 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
-.sentence-copy small { color: var(--dim); font-family: var(--mono); font-size: 10px; }
+.sentence-copy small { color: var(--dim); font-family: var(--mono); font-size: 11px; }
 .sentence-tools { display: flex; gap: 3px; }
 
 .beat-list {
@@ -565,13 +565,13 @@ body.creator-mode .creator-view {
   background: var(--panel);
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 .beat-chip button {
   border: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   cursor: pointer;
   padding: 0 2px;
 }
@@ -599,11 +599,11 @@ body.creator-mode .creator-view {
   background: var(--panel);
   padding: 6px;
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 11px;
   color: var(--dim);
   overflow-wrap: anywhere;
 }
-.matrix-cell strong { display: block; color: var(--text); font-size: 10px; }
+.matrix-cell strong { display: block; color: var(--text); font-size: 11px; }
 .matrix-cell.error { border-color: rgba(223, 125, 110, 0.35); color: var(--danger); }
 
 .caption-preview {
@@ -686,7 +686,7 @@ body.creator-mode .creator-view {
   color: var(--text);
   padding: 6px;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 .cue-row textarea {
   width: 100%;
@@ -720,7 +720,7 @@ body.creator-mode .creator-view {
 }
 .check-row input { margin-top: 3px; accent-color: var(--accent); }
 .check-row h4 { margin: 0; font-size: 12.5px; }
-.check-row p { margin: 3px 0 0; color: var(--dim); font-size: 11px; line-height: 1.4; }
+.check-row p { margin: 3px 0 0; color: var(--dim); font-size: 12px; line-height: 1.4; }
 .check-row.is-off { opacity: 0.72; }
 
 .artifact-card .artifact-preview {
@@ -752,7 +752,7 @@ body.creator-mode .creator-view {
 .creator-cover-previews figcaption {
   margin-top: 4px;
   color: var(--dim);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.4;
 }
 .artifact-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -796,7 +796,7 @@ body.creator-mode .creator-view {
   background: #0d0d0f;
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
 }
