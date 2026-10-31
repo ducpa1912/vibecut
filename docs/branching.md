@@ -13,7 +13,7 @@ That rule failed in practice: the lanes used each other's files, env, notes and 
 | `main` | Archive. Only studio moves it. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut` | none | none | none |
 
 - Port 8787 is the founder's own app. No lane uses it.
-- `vibecut-studio-prv` is a frozen rollback worktree, not a lane. The old `classic-prv` copy is gone.
+- Rollback worktrees are gone (`classic-prv`, `vibecut-studio-prv`). Use git history or tags to roll back.
 
 ## Lanes share nothing
 
