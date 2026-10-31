@@ -345,7 +345,7 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     if (disposed) return;
     node.replaceChildren(el("div", { class: "vr-card-head" }, [
       el("h3", { text: "From a video" }),
-      el("p", { class: "hint", text: "Pick a video in VibeCut. VibeCut finds its cleanest speech clips with the music removed; listen, pick one, and clone the speaker." }),
+      el("p", { class: "hint", text: "Find the cleanest speech in one of your videos, then clone the speaker." }),
     ]));
     if (!available()) {
       node.append(el("p", { class: "hint", text: "Add an OpenRouter key in Setup to clone a voice." }));
@@ -394,7 +394,7 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     const wholeLabel = el("label", { class: "vr-consent" }, [
       whole,
       el("span", {
-        text: "Search the whole video. Off: the first 2:00 only, which is much faster. For a quick clone, use a time range instead.",
+        text: "Search the whole video · slower. Off searches the first 2:00.",
       }),
     ]);
 
@@ -407,7 +407,7 @@ export function createClipFinder({ jobs, available, onCloned = () => {}, onNotic
     const fastLabel = el("label", { class: "vr-consent" }, [
       fast,
       el("span", {
-        text: "Fast search. Skips music separation, so it returns in seconds. Uncheck for a clean search with the separation model.",
+        text: "Fast search · skips music separation. Uncheck for a clean search.",
       }),
     ]);
     node.append(el("div", { class: "vr-check-grid" }, [wholeLabel, fastLabel]));

@@ -6,7 +6,6 @@ and recordings. It shares no runtime file with Classic or Studio.
 | Item | Value |
 |---|---|
 | Branch | `voice-room` |
-| Previous version | `vibecut-room-prv` worktree, branch `vibecut-room-prv` |
 | Port | `8797` |
 | Data | `~/vibecut-lanes/voice` |
 | Media | `~/vibecut-lanes/media/voiceroom` |
@@ -23,6 +22,10 @@ scripts/voice-serve.sh
 It refuses a busy port and writes the server PID to
 `~/vibecut-lanes/voice/server.pid`. Stop only that PID. Do not `pkill` by
 pattern.
+
+In Finder, double-click **scripts/Voice Room Server.command**. It opens
+Terminal and starts the same server. Close that Terminal window or press
+Ctrl-C to stop it.
 
 ## Setup
 
@@ -47,39 +50,37 @@ unavailable. The list does not depend on a cloud call.
 
 ```bash
 scripts/voice-record.sh
+VOICE_PATH='/voices?ui=new' scripts/voice-record.sh
 ```
 
-The browser opens on `http://127.0.0.1:8797/voices`. Click the real flow; close
-the browser when done. The Playwright trace lands in
+The browser opens on `http://127.0.0.1:8797/voices` by default, or on
+`VOICE_PATH` when set. Click the real flow; press the floating **Finish
+recording** button, close the browser, or press Ctrl-C. Wait for `Saved …`.
+The Playwright trace lands in
 `~/vibecut-lanes/recordings/voiceroom/<date-time>/trace.zip`.
+
+In Finder, double-click **scripts/Record Voice Room.command** after the server
+is running. It records the new UI at `/voices?ui=new`.
 
 The founder tests, by hand, with real files. No test video, sound or generated
 test file stands in for real media.
 
+## New UI
+
+The new shell is at `/voices?ui=new`. The old page stays at `/voices` and is
+still the default. Each page links to the other: **New UI** on the old page,
+**Old UI** on the new one.
+
+The new shell uses a left rail on desktop, bottom tabs on mobile, and five
+views: Library, Create, Compare, Recent and Settings. It loads
+`static/voice/next.css` and `static/voice/next.js`; the old modules are reused
+inside the new views.
+
 ## Media library
 
-Local copies in `~/vibecut-lanes/media/voiceroom`:
-
-| File | Length | Picture |
-|---|---:|---|
-| `cn-1min29s-720x1280-voice-subtiltle.mp4` | 1:29 | 720×1280 |
-| `en-5mins-640x360-voice-text-overlay.mp4` | 5:25 | 640×360 |
-| `en-17mins4s-540x360-talking-head-voice-only.mp4` | 17:04 | 540×360 |
-| `en-46s-1080x1080-big-text-overlay-sub.mp4` | 0:46 | 1080×1080 |
-| `en-53s-1080x1920-subtitle.mp4` | 0:53 | 1080×1920 |
-| `en-53s-1440x2560-talking-head-voice-subtitle.mp4` | 0:53 | 1440×2560 |
-| `music-bg-41s-1080x1920-text-overlay.mp4` | 0:41 | 1080×1920 |
-| `no-voice-1min-1080x1920-text-overlay.mp4` | 1:00 | 1080×1920 |
-
-Downloaded Shorts, also in the same folder:
-
-| File | Length |
-|---|---:|
-| `Bác sĩ xếp hạng các loại nước ảnh hưởng đến thận ｜ ThS.BS Trần Quốc Phong [8hT0lcEKbSc].webm` | 1:48 |
-| `Give Actionable Advice Fast [ubLqcZKgSNo].webm` | 0:45 |
-| `How to speak to 2 cameras. [MD0V2Q6HpIo].webm` | 0:29 |
-| `Own Your Links Now! [GEHJwh9vcaY].webm` | 0:39 |
-| `유부녀 친구의 남친을 뺏어버린 친구 ㄷㄷ #넷플릭스 #더글로리 [XEiI_GL7EpY].webm` | 0:50 |
+The lane keeps no media by default. `~/vibecut-lanes/media/voiceroom` is empty
+after the input copies were removed to save space. Copy a source video there
+only when a test needs it. Keep media out of the repo.
 
 ## Voice extraction
 

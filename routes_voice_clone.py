@@ -2,6 +2,7 @@
 
 * Setup, **My voice**: record or upload the creator's own voice.
 * Edit, **Clone the video voice**: clone the speaker of the open video.
+* Setup, **Library backup**: move every clone to another Mac as a ZIP.
 
 Both end in the same store (`voice_clone`): a reference sample kept on this
 Mac that OpenRouter's HeyGen Voice Turbo clones on every speech request. A
@@ -12,15 +13,19 @@ flag.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import shutil
 import threading
 import uuid
-from pathlib import Path
+import zipfile
+import zlib
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 import editions
@@ -51,6 +56,12 @@ MUSIC_RESIDUAL_DB = -24.0
 #: much of the file, which is twice what a clone sample keeps.
 UPLOAD_CLEAN_SECONDS = 2 * voice_clone.MAX_SAMPLE_SECONDS
 NO_SOUND = "This video has no sound track, so there is no voice to clone."
+#: A voice library backup holds only clone metadata and samples. The version
+#: lets a later import refuse a manifest it does not understand.
+LIBRARY_VERSION = 1
+LIBRARY_MANIFEST = "manifest.json"
+LIBRARY_MANIFEST_BYTES = 1024 * 1024
+LIBRARY_MAX_VOICES = 500
 CANDIDATE_CANCELS: dict[str, threading.Event] = {}
 CANDIDATE_STAGES: dict[str, str] = {}
 CANDIDATE_RESULTS: dict[str, dict] = {}
@@ -385,6 +396,282 @@ def list_clones() -> dict:
             "max_seconds": voice_clone.MAX_SAMPLE_SECONDS,
         },
     }
+
+
+def _library_bad_manifest() -> HTTPException:
+    return HTTPException(400, "That backup's manifest.json is not a voice library manifest.")
+
+
+def _library_manifest(raw: bytes) -> list[dict]:
+    """The clone rows in a backup manifest, with every identity checked."""
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _library_bad_manifest() from exc
+    if not isinstance(data, dict):
+        raise _library_bad_manifest()
+    if str(data.get("version") or "") != str(LIBRARY_VERSION):
+        raise HTTPException(400, "That backup comes from another version of VibeCut.")
+    voices = data.get("voices")
+    if not isinstance(voices, list) or len(voices) > LIBRARY_MAX_VOICES:
+        raise _library_bad_manifest()
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for item in voices:
+        if not isinstance(item, dict):
+            raise _library_bad_manifest()
+        voice_id = str(item.get("voice_id") or "")
+        if not voice_clone.is_voice_id(voice_id) or voice_id in seen:
+            raise _library_bad_manifest()
+        source = item.get("source")
+        if source is not None and source not in voice_clone.SOURCES:
+            raise _library_bad_manifest()
+        created = item.get("created", 0)
+        seconds = item.get("sample_seconds", 0)
+        if isinstance(created, bool) or not isinstance(created, (int, float)):
+            raise _library_bad_manifest()
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            raise _library_bad_manifest()
+        name = item.get("name")
+        language = item.get("language")
+        seen.add(voice_id)
+        rows.append({
+            "voice_id": voice_id,
+            "name": name if isinstance(name, str) else "",
+            "language": language if isinstance(language, str) else "",
+            "source": source or "me",
+            "created": float(created),
+            "sample_seconds": float(seconds),
+        })
+    return rows
+
+
+def _library_member(info: zipfile.ZipInfo) -> PurePosixPath:
+    """A member path that cannot escape the archive root."""
+    name = str(info.filename or "").replace("\\", "/")
+    path = PurePosixPath(name)
+    drive = bool(path.parts and re.match(r"^[A-Za-z]:", path.parts[0]))
+    if (
+        not name or "\x00" in name or name.startswith("/") or path.is_absolute()
+        or ".." in path.parts or drive
+    ):
+        raise HTTPException(400, "That backup has an unsafe file path.")
+    return path
+
+
+def _library_samples(archive: zipfile.ZipFile, voice_ids: set[str]) -> dict[str, zipfile.ZipInfo]:
+    """Map each archive sample to its manifest voice; reject any other file."""
+    samples: dict[str, zipfile.ZipInfo] = {}
+    for info in archive.infolist():
+        path = _library_member(info)
+        if info.is_dir():
+            continue
+        if path.name == LIBRARY_MANIFEST and len(path.parts) == 1:
+            continue
+        parts = path.parts
+        if len(parts) == 1:
+            filename = parts[0]
+        elif len(parts) == 2 and parts[0] == "samples":
+            filename = parts[1]
+        else:
+            raise HTTPException(
+                400, "A file in that backup does not match a voice in its manifest.",
+            )
+        stem = Path(filename).stem
+        if (
+            Path(filename).suffix.lower() != ".mp3"
+            or not voice_clone.is_voice_id(stem)
+            or stem not in voice_ids
+        ):
+            raise HTTPException(
+                400, "A sample in that backup does not match a voice in its manifest.",
+            )
+        if stem in samples:
+            raise HTTPException(400, "That backup holds two samples for the same voice.")
+        samples[stem] = info
+    return samples
+
+
+def _copy_library_sample(archive: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path) -> int:
+    limit = voice_clone.MAX_REFERENCE_BYTES
+    if info.file_size > limit:
+        raise HTTPException(413, "A voice sample in that backup is over 15 MB.")
+    size = 0
+    with archive.open(info) as reader, target.open("wb") as writer:
+        while chunk := reader.read(1024 * 1024):
+            size += len(chunk)
+            if size > limit:
+                raise HTTPException(413, "A voice sample in that backup is over 15 MB.")
+            writer.write(chunk)
+    return size
+
+
+def _restore_library(path: Path, work: Path) -> dict:
+    with zipfile.ZipFile(path) as archive:
+        infos = [info for info in archive.infolist() if not info.is_dir()]
+        for info in infos:
+            _library_member(info)
+        manifests = [info for info in infos if info.filename == LIBRARY_MANIFEST]
+        if len(manifests) != 1:
+            raise HTTPException(400, "That backup has no manifest.json.")
+        if manifests[0].file_size > LIBRARY_MANIFEST_BYTES:
+            raise _library_bad_manifest()
+        rows = _library_manifest(archive.read(manifests[0]))
+        samples = _library_samples(archive, {row["voice_id"] for row in rows})
+        limit = voice_clone.MAX_UPLOAD_BYTES
+        if sum(info.file_size for info in samples.values()) > limit:
+            raise HTTPException(413, "That backup is over 100 MB.")
+        imported = 0
+        skipped = 0
+        for row in rows:
+            info = samples.get(row["voice_id"])
+            if info is None:
+                skipped += 1
+                continue
+            sample = work / f"{row['voice_id']}.mp3"
+            if _copy_library_sample(archive, info, sample) == 0:
+                skipped += 1
+                continue
+            try:
+                voice_clone.create_clone(
+                    sample,
+                    name=row["name"],
+                    source=row["source"],
+                    consent=True,
+                    language=row["language"],
+                    seconds=row["sample_seconds"],
+                )
+                imported += 1
+            except (OSError, voice_clone.CloneError):
+                skipped += 1
+    return {"imported": imported, "skipped": skipped}
+
+
+@router.get("/api/voices/library/export")
+def export_library() -> Response:
+    """Every cloned voice and its sample as a ZIP, built in memory."""
+    rows = voice_clone.list_clones()
+    voices: list[dict] = []
+    samples: list[tuple[str, bytes]] = []
+    for row in rows:
+        path = voice_clone.sample_path(row["voice_id"])
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        voices.append({
+            "voice_id": row["voice_id"],
+            "name": row.get("name") or "",
+            "language": row.get("language") or "",
+            "source": row.get("source") or "me",
+            "created": row.get("created") or 0,
+            "sample_seconds": row.get("sample_seconds") or 0,
+        })
+        samples.append((f"{row['voice_id']}.mp3", raw))
+    manifest = {
+        "version": LIBRARY_VERSION,
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "voices": voices,
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr(
+            LIBRARY_MANIFEST, json.dumps(manifest, ensure_ascii=False, indent=1),
+        )
+        for name, raw in samples:
+            archive.writestr(name, raw)
+    filename = f"vibecut-voice-library-{datetime.now(timezone.utc):%Y%m%d-%H%M}.zip"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.post("/api/voices/library/import")
+def import_library(
+    request: Request,
+    file: UploadFile = File(...),
+    consent: bool = Form(False),
+) -> dict:
+    """Restore a voice library. Existing clones are never touched."""
+    _guard(request)
+    if not consent:
+        raise HTTPException(
+            400, "Confirm you have permission to restore these voices.",
+        )
+    work = _work_dir()
+    try:
+        path = work / "library.zip"
+        size = 0
+        with path.open("wb") as handle:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > voice_clone.MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "That backup is over 100 MB.")
+                handle.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "That file is empty.")
+        if not zipfile.is_zipfile(path):
+            raise HTTPException(400, "Restore a VibeCut voice library ZIP file.")
+        try:
+            return _restore_library(path, work)
+        except HTTPException:
+            raise
+        except (
+            zipfile.BadZipFile, zlib.error, RuntimeError,
+            NotImplementedError, EOFError, KeyError,
+        ) as exc:
+            raise HTTPException(400, "That backup is not a valid ZIP file.") from exc
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+@router.post("/api/voices/detect-language")
+def detect_language(request: Request, file: UploadFile = File(...)) -> dict:
+    """Detect the spoken language of a short recording, on this Mac only."""
+    _guard(request)
+    suffix = Path(file.filename or "voice.webm").suffix.lower() or ".webm"
+    if suffix not in UPLOAD_SUFFIXES:
+        raise HTTPException(400, "Use a WAV, MP3, M4A, OGG, WebM or FLAC recording.")
+    work = _work_dir()
+    try:
+        import audio
+
+        raw = work / f"detect{suffix}"
+        size = 0
+        with raw.open("wb") as handle:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > voice_clone.MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "That recording is over 100 MB.")
+                handle.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "That recording is empty.")
+        wav = work / "detect.wav"
+        try:
+            audio._run([
+                audio._ffmpeg(), "-y", "-v", "error", "-i", str(raw),
+                "-t", "45", "-vn", "-ac", "1", "-ar", "16000",
+                "-c:a", "pcm_s16le", str(wav),
+            ], timeout=300)
+        except audio.AudioError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        import stt
+
+        result = stt.transcribe(wav, work, 45.0, lambda *_: None, language="")
+        if not result or not result.get("language"):
+            raise HTTPException(
+                400,
+                "Could not detect the language. Local Whisper is needed; pick the language manually.",
+            )
+        code = str(result["language"]).lower().replace("_", "-").split("-")[0]
+        return {"language": code, "text": str(result.get("text") or "")[:160]}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 @router.post("/api/voices/clones")

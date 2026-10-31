@@ -145,6 +145,24 @@ export async function cloneFromFile(file, { name = "", language = "", consent = 
   return response.json();
 }
 
+/** Detect the language of a recording with local Whisper. */
+export async function detectVoiceLanguage(file) {
+  const form = new FormData();
+  form.append("file", file, file.name || "my-voice.webm");
+  const headers = { Accept: "application/json" };
+  const token = tokenValue();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch("/api/voices/detect-language", {
+    method: "POST", headers, credentials: "same-origin", body: form,
+  });
+  if (!response.ok) {
+    const error = new Error(await detailOf(response));
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
 let currentPlayer = null;
 let pendingSample = null;
 
@@ -184,10 +202,18 @@ async function playSample(path, body) {
   if (currentPlayer) currentPlayer.pause();
   const player = new Audio(url);
   currentPlayer = player;
-  const done = () => URL.revokeObjectURL(url);
+  const done = () => {
+    URL.revokeObjectURL(url);
+    if (currentPlayer === player) currentPlayer = null;
+  };
   player.addEventListener("ended", done, { once: true });
   player.addEventListener("error", done, { once: true });
-  await player.play();
+  try {
+    await player.play();
+  } catch (error) {
+    done();
+    throw error;
+  }
   return player;
 }
 
@@ -215,7 +241,7 @@ export function stopPlayback() {
  * `list: false` leaves the cloned voices out, for a page that lists them itself.
  * @param {{ hasKey: () => boolean, onChange?: () => void, sampleText?: () => string, title?: string, list?: boolean }} options
  */
-export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice", list = true }) {
+export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice", list = true, description = "Clone your own voice once, then use it for Voice-over and Dub. Give 30 s to 3 min of clear speech; HeyGen Voice Turbo on OpenRouter speaks in it. The sample stays on this Mac and is sent with each voice line." }) {
   const node = el("div", { class: "st-setup-section st-voice-clone" });
   let clones = [];
   let loaded = false;
@@ -231,6 +257,9 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
   let recordingUrl = "";
   let name = "My voice";
   let language = "";
+  let languageAuto = true;
+  let detecting = false;
+  let detectToken = 0;
   let consent = false;
   let task = "";
   let disposed = false;
@@ -288,6 +317,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       recorder = null;
       setNotice(`Recorded ${Math.round((Date.now() - recordStart) / 1000)}s. Listen back, then clone it.`, "ok");
       if (!disposed) render();
+      void detectLanguageFor(recording);
     });
     recordStart = Date.now();
     recorder.start(1000);
@@ -312,6 +342,31 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     recordingUrl = URL.createObjectURL(file);
     setNotice(`Using ${file.name}.`, "ok");
     render();
+    void detectLanguageFor(file);
+  }
+
+  async function detectLanguageFor(file) {
+    if (!file || !languageAuto) return;
+    const token = ++detectToken;
+    detecting = true;
+    setNotice("Detecting the language…", "");
+    if (!disposed) render();
+    try {
+      const result = await detectVoiceLanguage(file);
+      if (token !== detectToken || disposed || !languageAuto) return;
+      const code = String(result?.language || "").trim().toLowerCase();
+      if (!code) throw new Error("No language detected.");
+      language = code;
+      setNotice(`Detected ${code.toUpperCase()}. You can change it.`, "ok");
+    } catch (_) {
+      if (token !== detectToken) return;
+      setNotice("Could not detect the language. Pick one manually.", "bad");
+    } finally {
+      if (token === detectToken) {
+        detecting = false;
+        if (!disposed) render();
+      }
+    }
   }
 
   async function submit() {
@@ -467,14 +522,29 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
         (code) => el("option", { value: code, text: code, selected: code === language }),
       ),
     ]);
-    lang.addEventListener("change", () => { language = lang.value; });
+    lang.addEventListener("change", () => {
+      language = lang.value;
+      languageAuto = !language;
+      detectToken += 1;
+      detecting = false;
+      if (languageAuto && recording) void detectLanguageFor(recording);
+      else render();
+    });
+    const languageHint = el("span", {
+      class: "st-hint",
+      text: detecting
+        ? "Detecting…"
+        : languageAuto && language
+          ? "Detected from the recording."
+          : "Auto-detects after record or upload.",
+    });
     const tick = el("input", { type: "checkbox", checked: consent, id: "st-voice-consent-me" });
     tick.addEventListener("change", () => { consent = Boolean(tick.checked); render(); });
     const cloning = busy === "clone" || busy === "cancel";
     const go = el("button", {
       class: "st-btn st-btn-primary st-btn-small", type: "button",
-      text: cloning ? "Cloning…" : "Clone my voice",
-      disabled: Boolean(busy) || !recording || !consent || recorder?.state === "recording",
+      text: detecting ? "Detecting language…" : cloning ? "Cloning…" : "Clone my voice",
+      disabled: Boolean(busy) || detecting || !recording || !consent || recorder?.state === "recording",
     });
     go.addEventListener("click", () => { void submit(); });
     const stop = cloning ? el("button", {
@@ -486,7 +556,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     return el("div", { class: "st-voice-clone-form" }, [
       el("div", { class: "st-setup-key-form" }, [
         el("label", { class: "st-field" }, [el("span", { text: "Name" }), nameInput]),
-        el("label", { class: "st-field" }, [el("span", { text: "Language" }), lang]),
+        el("label", { class: "st-field" }, [el("span", { text: "Language" }), lang, languageHint]),
       ]),
       el("label", { class: "st-voice-clone-consent", for: "st-voice-consent-me" }, [
         tick, el("span", { text: CONSENT_COPY.me }),
@@ -497,13 +567,13 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
 
   function render() {
     if (disposed) return;
-    node.replaceChildren(el("div", { class: "st-setup-section-head" }, [
+    const head = el("div", { class: "st-setup-section-head" }, [
       el("h3", { text: title }),
-      el("p", {
-        class: "st-hint",
-        text: "Clone your own voice once, then use it for Voice-over and Dub. Give 30 s to 3 min of clear speech; HeyGen Voice Turbo on OpenRouter speaks in it. The sample stays on this Mac and is sent with each voice line.",
-      }),
-    ]));
+    ]);
+    if (description) {
+      head.append(el("p", { class: "st-hint", text: description }));
+    }
+    node.replaceChildren(head);
     if (!hasKey()) {
       node.append(el("p", { class: "st-hint", text: "Add an OpenRouter key under Keys to clone a voice." }));
     } else {
