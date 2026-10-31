@@ -3979,6 +3979,12 @@ def test_settings(body: SettingsTestBody) -> dict:
     raise HTTPException(400, "Unknown test kind.")
 
 
+class XhsCookieBody(BaseModel):
+    cookie: str = ""
+    url: str = ""
+    token: str = ""
+
+
 @app.post("/api/ingest/xhs/cookie")
 def ingest_xhs_cookie(body: XhsCookieBody) -> dict:
     value = str(body.cookie or "").strip()
@@ -4002,12 +4008,6 @@ def ingest_xhs_cookie(body: XhsCookieBody) -> dict:
 
 
 class XhsInviteBody(BaseModel):
-    url: str = ""
-    token: str = ""
-
-
-class XhsCookieBody(BaseModel):
-    cookie: str = ""
     url: str = ""
     token: str = ""
 

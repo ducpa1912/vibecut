@@ -86,4 +86,6 @@ only when a test needs it. Keep media out of the repo.
 
 Voice extraction is already part of this lane through commit `92200c0`
 (`fix(voice): import language, clone engine, scripted keep, silent search,
-voice queue`). The separate `vibecut-voice-extract` worktree has no newer code.
+voice queue`). The separate `vibecut-voice-extract` worktree was fully merged
+into this lane and removed on 2026-10-31; its briefs are archived under
+`~/vibecut-lanes/reviews/voice-extract-briefs-20261031/`.
