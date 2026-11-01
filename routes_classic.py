@@ -518,12 +518,6 @@ def prepare_classic_render(
     """
     if not isinstance(payload, dict):
         raise HTTPException(400, "edit must be an object of overlays and effects.")
-    if aspect not in CLASSIC_EDIT_ASPECTS:
-        raise HTTPException(
-            422,
-            "Text overlays and effects render on 9:16 and 4:5 only. "
-            "Switch the shape or clear them.",
-        )
     clips = _classic_clips(plan.get("clips"))
     total = _classic_total(clips)
     try:
@@ -534,8 +528,15 @@ def prepare_classic_render(
         )
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    # An empty payload is no Edit at all, so any shape may render it.
     if not (layers["overlays"] or layers["graphics"] or layers["motion"]):
         return None, None
+    if aspect not in CLASSIC_EDIT_ASPECTS:
+        raise HTTPException(
+            422,
+            "Text overlays and effects render on 9:16 and 4:5 only. "
+            "Switch the shape or clear them.",
+        )
     track = None
     if captions:
         import app
