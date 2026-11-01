@@ -32,6 +32,14 @@ PREVIEW_SECONDS = 12.0
 PREVIEW_MAX_SECONDS = 20.0
 PREVIEW_TIMEOUT = 90
 PREVIEW_LOCK = threading.Lock()
+# One lock per preview file: a 90 s AI music call must not hold up a local BGM
+# preview, or a different prompt. PREVIEW_LOCK only guards this table.
+PREVIEW_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _preview_lock(target: Path) -> threading.Lock:
+    with PREVIEW_LOCK:
+        return PREVIEW_LOCKS.setdefault(target.name, threading.Lock())
 
 
 @router.get("/classic")
@@ -863,7 +871,7 @@ def _cached_preview(
     target = cache / f"{_preview_key(label, source, seconds)}.wav"
     if target.is_file() and target.stat().st_size > 512:
         return target, "hit"
-    with PREVIEW_LOCK:
+    with _preview_lock(target):
         if target.is_file() and target.stat().st_size > 512:
             return target, "hit"
         try:
@@ -957,7 +965,7 @@ def _generated_music_preview(body: MusicPreviewBody) -> tuple[Path, str]:
     target = cache / f"music-{key}.wav"
     if target.is_file() and target.stat().st_size > 1024:
         return target, "hit"
-    with PREVIEW_LOCK:
+    with _preview_lock(target):
         if target.is_file() and target.stat().st_size > 1024:
             return target, "hit"
         try:
