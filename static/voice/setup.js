@@ -298,11 +298,12 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
       if (libraryRefs?.pick) libraryRefs.pick.value = "";
       const imported = Math.max(0, Number(payload?.imported) || 0);
       const skipped = Math.max(0, Number(payload?.skipped) || 0);
+      const already = Math.max(0, Number(payload?.already) || 0);
       const voices = `${imported} voice${imported === 1 ? "" : "s"}`;
-      setLibraryStatus(
-        skipped ? `Restored ${voices}. Skipped ${skipped}.` : `Restored ${voices}.`,
-        skipped ? "bad" : "ok",
-      );
+      const parts = [`Restored ${voices}.`];
+      if (already) parts.push(`${already} ${already === 1 ? "was" : "were"} already here.`);
+      if (skipped) parts.push(`Skipped ${skipped}.`);
+      setLibraryStatus(parts.join(" "), skipped ? "bad" : "ok");
       announceChange();
       await onChanged();
     } catch (cause) {

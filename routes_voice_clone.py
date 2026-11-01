@@ -13,6 +13,7 @@ flag.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
@@ -506,6 +507,25 @@ def _copy_library_sample(archive: zipfile.ZipFile, info: zipfile.ZipInfo, target
     return size
 
 
+def _sample_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _library_digests() -> set[str]:
+    """Fingerprints of the samples already in this library."""
+    digests: set[str] = set()
+    for row in voice_clone.list_clones():
+        try:
+            digests.add(_sample_digest(voice_clone.sample_path(row["voice_id"])))
+        except OSError:
+            continue
+    return digests
+
+
 def _restore_library(path: Path, work: Path) -> dict:
     with zipfile.ZipFile(path) as archive:
         infos = [info for info in archive.infolist() if not info.is_dir()]
@@ -523,6 +543,10 @@ def _restore_library(path: Path, work: Path) -> dict:
             raise HTTPException(413, "That backup is over 100 MB.")
         imported = 0
         skipped = 0
+        # Restoring the same backup twice must not duplicate every voice: a
+        # sample already in the library is counted, not cloned again.
+        present = _library_digests()
+        already = 0
         for row in rows:
             info = samples.get(row["voice_id"])
             if info is None:
@@ -531,6 +555,10 @@ def _restore_library(path: Path, work: Path) -> dict:
             sample = work / f"{row['voice_id']}.mp3"
             if _copy_library_sample(archive, info, sample) == 0:
                 skipped += 1
+                continue
+            digest = _sample_digest(sample)
+            if digest in present:
+                already += 1
                 continue
             try:
                 voice_clone.create_clone(
@@ -542,9 +570,10 @@ def _restore_library(path: Path, work: Path) -> dict:
                     seconds=row["sample_seconds"],
                 )
                 imported += 1
+                present.add(digest)
             except (OSError, voice_clone.CloneError):
                 skipped += 1
-    return {"imported": imported, "skipped": skipped}
+    return {"imported": imported, "skipped": skipped, "already": already}
 
 
 @router.get("/api/voices/library/export")
