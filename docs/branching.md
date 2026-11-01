@@ -14,6 +14,11 @@ ships through `main`.
 
 Port 8787 is the founder's server. No lane uses it.
 
+Start a lane on its own port, and only when that port is free. Never start a
+server, smoke check or test run on an ad-hoc or ephemeral port: it leaves stray
+processes and hides which lane is which. Stop only the PID you started; the lane
+script writes it.
+
 ## Lane isolation
 
 Each lane has its own page, port, data folder and media folder. Nothing is
