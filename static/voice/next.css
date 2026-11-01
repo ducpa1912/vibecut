@@ -947,3 +947,6 @@ body.vg-root {
   min-height: 0;
 }
 .vg-vo-keep:empty { display: none; }
+
+.vg-take-check { display: grid; gap: 3px; }
+.vg-take-checknote { color: var(--hint); font-size: 10px; line-height: 1.4; }

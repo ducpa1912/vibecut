@@ -235,12 +235,17 @@ export function createTakesPanel({
 
   function flagsFor(take) {
     const flags = checkFlags(take);
-    if (!flags.length) return null;
-    return el("div", { class: "vg-take-flags" }, flags.map((flag) => el("span", {
-      class: `vg-take-flag is-${flag.key}`,
-      text: flag.label,
-      title: flag.note || "Advisory only; the audio was not changed.",
-    })));
+    const advice = Array.isArray(take?.check?.advice) ? take.check.advice : [];
+    if (!flags.length && !advice.length) return null;
+    const box = el("div", { class: "vg-take-check" }, [
+      flags.length ? el("div", { class: "vg-take-flags" }, flags.map((flag) => el("span", {
+        class: `vg-take-flag is-${flag.key}`,
+        text: flag.label,
+        title: flag.note || "Advisory only; the audio was not changed.",
+      }))) : null,
+      advice.length ? el("span", { class: "vg-take-checknote", text: `${advice[0]} Advice only; the audio was not changed.` }) : null,
+    ]);
+    return box;
   }
 
   function driftFor(take) {

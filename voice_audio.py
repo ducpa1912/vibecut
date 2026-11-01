@@ -46,6 +46,16 @@ CHECK_NOTES = {
     "clean": "The levels look usable.",
 }
 
+#: The same flags, worded for something we made rather than something the
+#: creator recorded. Always advice; the audio is never changed.
+OUTPUT_ADVICE = {
+    "silent": "This take has no audible speech. Check the voice and the line, then make it again if you need it.",
+    "too_quiet": "This take is quiet. Play it in the video before relying on it.",
+    "too_loud": "This take is loud enough to distort in a mix. Play it before using it.",
+    "clipping": "This take clips at the loudest words. Make it again at a lower rate, or use another take.",
+    "clean": "The levels look usable.",
+}
+
 
 def _ffmpeg() -> str:
     path = shutil.which("ffmpeg")
@@ -185,6 +195,18 @@ def analyse(path: Path) -> dict:
         "clipping": bool(clipping),
         "notes": notes,
     }
+
+
+def output_advice(check: dict | None) -> list[str]:
+    """One short line of advice for a generated take. Never a gate."""
+    report = check or {}
+    lines: list[str] = []
+    for key in ("silent", "too_quiet", "too_loud", "clipping"):
+        if report.get(key):
+            lines.append(OUTPUT_ADVICE[key])
+    if not lines:
+        lines.append(OUTPUT_ADVICE["clean"])
+    return lines
 
 
 def peaks(path: Path, count: int = 240) -> list[float]:

@@ -1030,6 +1030,10 @@ function paintVoiceover() {
           title: flag.note || "Advisory only; the audio was not changed.",
         }))));
       }
+      const advice = Array.isArray(take.check?.advice) ? take.check.advice[0] : "";
+      if (advice) {
+        result.append(el("p", { class: "vg-vo-note", text: `${advice} Advice only; the audio was not changed.` }));
+      }
       const check = take.selfcheck || {};
       result.append(el("p", { class: "vg-vo-note", text: check.note || "" }));
       const play = el("button", {

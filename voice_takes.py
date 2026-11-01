@@ -197,11 +197,14 @@ def _remember(record: dict) -> dict:
 
 def _check(path: Path) -> dict | None:
     try:
-        return voice_audio.analyse(path)
+        report = voice_audio.analyse(path)
     except (RuntimeError, OSError, ValueError):
         # Decoration only: a take that was made must never be lost because
         # the measurement failed.
         return None
+    report["advice"] = voice_audio.output_advice(report)
+    report["advisory"] = True
+    return report
 
 
 def record_preview(
