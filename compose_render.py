@@ -290,7 +290,8 @@ def _clean_filters(
         if not active:
             continue
         kind = layer["kind"]
-        if kind == "crop_guard":
+        if kind in {"crop_guard", "fill"}:
+            # A fill layer is not an ffmpeg filter: see _fill_plan.
             continue
         rect = _box_rect(layer["box"], width, height, even=True)
         if kind in {"plate", "mask"}:
@@ -346,6 +347,46 @@ def _clean_filters(
 
 
 # ---------------------------------------------------------------- motion
+
+
+def _fill_plan(
+    clean: list[dict],
+    start: float,
+    end: float,
+) -> tuple[dict | None, list[dict]]:
+    """Active AI fill layers of one segment, for the render's pre-pass.
+
+    One method runs per segment: the lowest layer's. Returns (plan, warnings).
+    """
+    active = [
+        layer for layer in clean
+        if layer["kind"] == "fill" and _active_window(layer, start, end)[0]
+    ]
+    if not active:
+        return None, []
+    method = active[0].get("method") or edits.FILL_METHODS[0]
+    warnings = []
+    if any((layer.get("method") or method) != method for layer in active):
+        warnings.append({
+            "code": "fill_method_mixed",
+            "message": (
+                "Fill layers on one beat use different engines; "
+                f"{method.upper()} fills them all."
+            ),
+        })
+    return {
+        "method": method,
+        "ids": [layer["id"] for layer in active],
+        "layers": [
+            {
+                "id": layer["id"],
+                "box": dict(layer["box"]),
+                "ranges": [dict(item) for item in layer.get("ranges") or []],
+                **({"tracklet_id": layer["tracklet_id"]} if layer.get("tracklet_id") else {}),
+            }
+            for layer in active
+        ],
+    }, warnings
 
 
 def _motion_filter(
@@ -938,11 +979,14 @@ def compile_edit(
         clean_filter_list, clean_ids, skipped = _clean_filters(
             normalized["clean"], clip["start"], clip["end"], width, height,
         )
+        fill_plan, fill_warnings = _fill_plan(
+            normalized["clean"], clip["start"], clip["end"],
+        )
         warnings.extend(clean_warnings)
         warnings.extend({
             **item,
             "segment": clip["index"],
-        } for item in skipped)
+        } for item in skipped + fill_warnings)
 
         pre_filter = ",".join(clean_filter_list)
         crop_filter = f"crop={crop['w']}:{crop['h']}:{crop['x']}:{crop['y']}"
@@ -987,6 +1031,7 @@ def compile_edit(
             "crop": crop,
             "crop_path_ref": reframe.get("crop_path_ref"),
             "clean_ids": clean_ids,
+            "fill": fill_plan,
             "motion_ids": motion_ids,
             "motion_engine": motion_engine if motion_filters else "none",
             "pre_filters": clean_filter_list,

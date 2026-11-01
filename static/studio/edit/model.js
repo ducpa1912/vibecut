@@ -234,6 +234,7 @@ export const CLEAN_LABELS = {
   plate: "Cover plate",
   mask: "Mask",
   delogo: "Remove (interpolate)",
+  fill: "AI fill",
 };
 
 export const MOTION_LABELS = {

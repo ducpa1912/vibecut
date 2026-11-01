@@ -51,7 +51,9 @@ MAX_TEXT_LENGTH = 400
 MAX_ID = 64
 
 ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
-CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "delogo")
+CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "delogo", "fill")
+# AI text fill engines for kind "fill" (see textfill/). STTN is the default.
+FILL_METHODS = ("sttn", "lama")
 MOTION_KINDS = ("punch_in", "snap_zoom", "push", "shake")
 TEXT_KINDS = ("hook", "title", "lower_third", "cta", "emphasis")
 FX_KINDS = ("arrow", "circle", "underline", "progress_bar", "sticker")
@@ -124,7 +126,7 @@ _STORY_REF_KEYS = frozenset({
 })
 _CLEAN_KEYS = frozenset({
     "id", "kind", "box", "ranges", "z", "color", "opacity", "radius", "label",
-    "tracklet_id", "tracklet_kind",
+    "tracklet_id", "tracklet_kind", "method",
 })
 # Detected Check kinds an optional Clean layer may name. The layer's own
 # ``kind`` remains the cleanup method; ``tracklet_kind`` carries provenance
@@ -522,6 +524,14 @@ def normalize_clean(value: Any) -> list[dict]:
             "radius": radius,
             "label": label,
         }
+        if kind == "fill":
+            method = str(raw.get("method") or FILL_METHODS[0]).strip().lower()
+            if method not in FILL_METHODS:
+                raise EditError(
+                    f"clean[{index}].method must be one of: "
+                    + ", ".join(FILL_METHODS) + "."
+                )
+            layer["method"] = method
         tracklet_id = raw.get("tracklet_id")
         if tracklet_id is not None:
             layer["tracklet_id"] = _safe_id(

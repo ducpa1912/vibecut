@@ -37,15 +37,41 @@ const SCAN_REQUIRED = "Run Scan footage first.";
 // inspector, and the summary must stay visible after that refresh.
 const AUTO_CLEAN_STATE = new Map();
 
-const KIND_ORDER = ["delogo", "blur", "plate", "mask", "crop_guard"];
+const KIND_ORDER = ["delogo", "fill", "blur", "plate", "mask", "crop_guard"];
 
 const KIND_COPY = {
   delogo: "Remove (interpolate)",
+  fill: "AI fill",
   plate: "Cover plate",
   blur: "Blur",
   mask: "Mask",
   crop_guard: "Keep out of crop",
 };
+
+// AI fill engines. The server keeps the same list (edits.FILL_METHODS).
+const FILL_METHODS = [
+  ["sttn", "STTN · video, best on subtitles"],
+  ["lama", "LaMa · per frame, best on still backgrounds"],
+];
+const FILL_KINDS = new Set(["delogo", "blur", "plate", "mask"]);
+
+/** Set a layer's kind, adding or dropping the fill engine to match. */
+export function setLayerKind(layer, kind) {
+  layer.kind = kind;
+  if (kind === "fill") {
+    if (!FILL_METHODS.some(([value]) => value === layer.method)) layer.method = FILL_METHODS[0][0];
+  } else {
+    delete layer.method;
+  }
+  return layer;
+}
+
+/** Turn every text cover (remove, blur, plate, mask) into an AI fill. */
+export function useFillForAll(layers, method = FILL_METHODS[0][0]) {
+  return layers.map((layer) => (
+    FILL_KINDS.has(layer.kind) ? setLayerKind({ ...clone(layer), method }, "fill") : layer
+  ));
+}
 
 const TRACKLET_LABELS = {
   subtitle: "Burned-in subtitles",
@@ -936,6 +962,21 @@ export function mountCleanPanel(host, ctx) {
         list.append(row);
       }
       card.append(list);
+      const covers = layers.filter((layer) => FILL_KINDS.has(layer.kind)).length;
+      if (covers) {
+        const toFill = el("button", {
+          class: "st-btn st-btn-ghost st-btn-small",
+          type: "button",
+          text: `Use AI fill for all ${covers} text ${covers === 1 ? "layer" : "layers"}`,
+          disabled: !canClean(),
+          style: "margin-top:8px",
+        });
+        toFill.addEventListener("click", () => {
+          ctx.setClean(useFillForAll(ctx.getEdit()?.clean || []));
+          ctx.refresh();
+        });
+        card.append(toFill);
+      }
     }
 
     const addRow = el("div", { class: "st-layer-add", style: "margin-top:9px" });
@@ -953,7 +994,7 @@ export function mountCleanPanel(host, ctx) {
     add.addEventListener("click", () => {
       const layers = (ctx.getEdit()?.clean || []).slice();
       const layer = manualLayer(layers.length);
-      layer.kind = kind.value;
+      setLayerKind(layer, kind.value);
       if (layer.kind === "crop_guard") layer.box = { x: 0.08, y: 0.72, w: 0.84, h: 0.16 };
       layers.push(layer);
       ctx.setClean(layers);
@@ -986,7 +1027,7 @@ export function mountCleanPanel(host, ctx) {
       kindSelect.append(el("option", { value, text: KIND_COPY[value], selected: value === layer.kind }));
     }
     kindSelect.addEventListener("change", () => {
-      layer.kind = kindSelect.value;
+      setLayerKind(layer, kindSelect.value);
       commit();
       ctx.refresh();
     });
@@ -1078,6 +1119,24 @@ export function mountCleanPanel(host, ctx) {
         opacity,
         opacityValue,
       ]));
+    }
+
+    if (layer.kind === "fill") {
+      const method = el("select", { "aria-label": "AI fill engine", disabled: !canClean() });
+      for (const [value, text] of FILL_METHODS) {
+        method.append(el("option", { value, text, selected: value === (layer.method || FILL_METHODS[0][0]) }));
+      }
+      method.addEventListener("change", () => {
+        layer.method = method.value;
+        commit();
+      });
+      stage.append(el("div", { class: "st-control-grid" }, [
+        field("Engine", method, "Runs on this Mac when you render. It can take minutes per beat."),
+      ]));
+      stage.append(el("p", {
+        class: "st-field-hint",
+        text: "The preview shows the box only. The filled picture appears in the render.",
+      }));
     }
 
     if (layer.kind === "blur") {

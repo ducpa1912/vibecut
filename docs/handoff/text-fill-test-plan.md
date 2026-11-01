@@ -198,3 +198,51 @@ Only when a method passes:
 
 Steps 2–5 are one OpenCode run, resumed in the studio session, after the
 founder approves step 1.
+
+## 7. Built into Studio (2026-11-01)
+
+The founder chose to build the feature in Studio before any test run, so the
+bench script in Part 3 was not written. What exists now:
+
+- **Edit kind `fill`** (`edits.py`): Clean layers take `kind: "fill"` and
+  `method: "sttn" | "lama"` (default `sttn`). Other kinds carry no method.
+  Label words like "inpaint" stay refused, as before.
+- **Studio Clean panel** (`static/studio/edit/layers/clean.js`): "AI fill" in
+  the kind list, an Engine picker, a note that the preview shows only the box,
+  and a "Use AI fill for all N text layers" button that turns every remove,
+  blur, plate and mask layer into a fill. Auto-clean still adds "Remove
+  (interpolate)" layers; the button switches them.
+- **Compile** (`compose_render.py`): a fill layer adds no ffmpeg filter. Each
+  segment gets `fill: {method, ids, layers}` when a fill layer is active on it
+  (`fill_method_mixed` warns when one beat mixes engines; the lowest layer's
+  engine wins).
+- **Render pre-pass** (`render._prepare_fills`): before the beats are cut, each
+  beat with a fill gets a filled clip from `textfill.prepare_span`, cached in
+  `jobs/<id>/fill/<key>.mp4` (key: source, span, layers, engine, model file).
+  The beat reads that clip instead of the source; other Clean layers, crop,
+  motion and colour apply on top. Progress shows "Filling text, beat i/n"
+  from 2% to 45%. Cancel stops it.
+- **`textfill/`**: `mask.py` (pad 6% of box height, +1 s on detected ranges,
+  feathered paste-back, pixels outside the feather untouched), `sttn.py`
+  (STTN generator, 640x120 strips, 50-frame chunks with 10-frame cross-fade),
+  `lama.py` (512x512, one fixed work area per beat, 30% carry from the
+  previous frame).
+- **Tests**: `tests/test_textfill.py`, arrays and fake fillers only.
+
+Knobs: `VIBECUT_FILL_MODELS` (model folder), `VIBECUT_FILL_DEVICE`
+(`auto|mps|cpu`, STTN), `VIBECUT_FILL_LAMA_PROVIDER` (`cpu|coreml`, LaMa).
+
+### First speed reading (not a test of quality)
+
+Both models ran once on random in-memory arrays, no video. The Mac had 7.7 GB
+of swap in use and about 60 MB free, so these numbers are swap-bound:
+
+| Engine | Device | Per frame |
+|---|---|---|
+| STTN, 50 strips of 720x135 | MPS | 4.1 s |
+| LaMa, 720x200 area | CPU | 16.1 s |
+
+At these speeds a 15 s moment (450 frames) takes about 30 minutes with STTN
+and about 2 hours with LaMa. Measure again on the founder's first real render
+with other apps closed. If it stays slow, the next steps are LaMa on CoreML or
+fp16, and STTN on fewer frames (text-only frames, lower strip count).
