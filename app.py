@@ -1791,6 +1791,11 @@ def _share_captions(job: dict, artifact: str) -> str:
         raise HTTPException(404, "Captions are not available for this artifact.") from exc
 
 
+#: Render file names carry their shape; a 9:16 file has no token. Every other
+#: shape must be listed, or a 9:16 lookup can pick its file.
+_OTHER_SHAPE_TOKENS = ("_16x9", "_16x10", "_1x1", "_4x5")
+
+
 def _find_share_render(job: dict, target: int, aspect: str) -> dict | None:
     rows = []
     for record in (job.get("renders") or {}).values():
@@ -1799,7 +1804,7 @@ def _find_share_render(job: dict, target: int, aspect: str) -> dict | None:
         if f"reel_{int(target)}" not in str(record["path"]):
             continue
         path = str(record["path"])
-        if aspect == "9:16" and any(token in path for token in ("_16x9", "_1x1", "_4x5")):
+        if aspect == "9:16" and any(token in path for token in _OTHER_SHAPE_TOKENS):
             continue
         if aspect != "9:16" and aspect.replace(":", "x") not in path:
             continue
@@ -1813,7 +1818,7 @@ def _find_share_render(job: dict, target: int, aspect: str) -> dict | None:
     candidates = []
     for path in directory.glob(pattern):
         name = path.name
-        if aspect == "9:16" and any(token in name for token in ("_16x9", "_1x1", "_4x5")):
+        if aspect == "9:16" and any(token in name for token in _OTHER_SHAPE_TOKENS):
             continue
         if aspect != "9:16" and aspect.replace(":", "x") not in name:
             continue
