@@ -290,7 +290,35 @@ def _load_unlocked(job_id: str) -> dict:
         raise HTTPException(500, "Job data is unreadable.") from exc
     if not isinstance(job, dict):
         raise HTTPException(500, "Job data is unreadable.")
+    _relocate_source(job)
     return artifacts.ensure_job_schema(job, path.parent)
+
+
+def _relocate_source(job: dict) -> None:
+    """Follow a source copy that moved with the data folder.
+
+    Lane data moved from ``<worktree>/data`` to ``~/vibecut-lanes/<lane>``
+    (scripts/serve.sh). Uploads and link downloads keep their file inside the
+    data folder, so a missing ``.../data/<rest>`` path is looked up again
+    under today's ``DATA``. A path outside a data folder (a video imported in
+    place) is left alone and still reads as missing.
+    """
+    source = job.get("source")
+    if not isinstance(source, dict):
+        return
+    raw = str(source.get("path") or "")
+    if not raw or _source_exists(raw):
+        return
+    parts = Path(raw).parts
+    if "data" not in parts:
+        return
+    index = len(parts) - 1 - parts[::-1].index("data")
+    rest = parts[index + 1:]
+    if not rest:
+        return
+    candidate = DATA.joinpath(*rest)
+    if _source_exists(str(candidate)):
+        source["path"] = str(candidate)
 
 
 def load_job(job_id: str) -> dict:
@@ -5022,6 +5050,7 @@ def job_index() -> list[tuple[float, dict]]:
         if cached is None or cached[0] != stamp:
             try:
                 job = json.loads(path.read_text())
+                _relocate_source(job)
                 row = _job_index_row(job)
             except Exception:  # noqa: BLE001 - one unreadable job never hides the rest
                 continue

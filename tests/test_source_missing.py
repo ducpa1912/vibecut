@@ -75,3 +75,34 @@ def test_missing_source_blocks_check_stories_and_render(env):
         )
     assert caught.value.status_code == 409
     assert "moved or deleted" in caught.value.detail
+
+
+def test_a_copy_that_moved_with_the_data_folder_is_found(env, tmp_path):
+    """Lane data moved from <worktree>/data to ~/vibecut-lanes/<lane>."""
+    client, _source = env
+    moved = app.JOBS / "j1" / "source.mp4"
+    moved.write_bytes(b"x")
+    job_file = app.JOBS / "j1" / "job.json"
+    job = json.loads(job_file.read_text())
+    job["source"]["path"] = "/old/worktree/data/jobs/j1/source.mp4"
+    job_file.write_text(json.dumps(job))
+    assert app.load_job("j1")["source"]["path"] == str(moved)
+    assert client.get("/api/jobs/j1/status").json()["source_missing"] is False
+
+
+def test_a_file_imported_in_place_still_reads_as_missing(env):
+    client, source = env
+    source.unlink()
+    assert app.load_job("j1")["source"]["path"] == str(source)
+    assert client.get("/api/jobs/j1/status").json()["source_missing"] is True
+
+
+def test_the_job_list_follows_a_moved_copy_too(env):
+    client, _source = env
+    (app.JOBS / "j1" / "source.mp4").write_bytes(b"x")
+    job_file = app.JOBS / "j1" / "job.json"
+    job = json.loads(job_file.read_text())
+    job["source"]["path"] = "/old/worktree/data/jobs/j1/source.mp4"
+    job_file.write_text(json.dumps(job))
+    row = next(item for item in client.get("/api/jobs").json()["jobs"] if item["id"] == "j1")
+    assert row["source_missing"] is False
