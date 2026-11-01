@@ -88,6 +88,7 @@ const myVoice = createMyVoicePanel({
   title: "From a recording or a file",
   list: false,
   description: "",
+  trim: true,
 });
 
 const finder = createClipFinder({

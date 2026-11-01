@@ -19,6 +19,7 @@
 
 import { announceChange, request } from "./api.js";
 import { el } from "./ui.js";
+import { openTrimmer } from "./trimmer.js";
 
 /** The server's cleaning warning for a new clone, or "" when it was cleaned. */
 export function cleaningNote(record) {
@@ -163,6 +164,40 @@ export async function detectVoiceLanguage(file) {
   return response.json();
 }
 
+/**
+ * Upload a reference once. The server decodes it, measures it and proposes a
+ * clean 10-15 s window; the trimmer works from this session.
+ */
+export async function uploadReference(file) {
+  const form = new FormData();
+  form.append("file", file, file.name || "reference.webm");
+  const headers = { Accept: "application/json" };
+  const token = tokenValue();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch("/api/voices/reference", {
+    method: "POST", headers, credentials: "same-origin", body: form,
+  });
+  if (!response.ok) {
+    const error = new Error(await detailOf(response));
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+/** Clone from the chosen range of a reference session. */
+export function cloneReference(refId, body) {
+  return request(`/api/voices/reference/${encodeURIComponent(refId)}/clone`, {
+    method: "POST", body,
+  });
+}
+
+/** Forget a reference session; its upload is removed from this Mac. */
+export function discardReference(refId) {
+  if (!refId) return Promise.resolve({ deleted: false });
+  return request(`/api/voices/reference/${encodeURIComponent(refId)}`, { method: "DELETE" });
+}
+
 let currentPlayer = null;
 let pendingSample = null;
 
@@ -241,7 +276,7 @@ export function stopPlayback() {
  * `list: false` leaves the cloned voices out, for a page that lists them itself.
  * @param {{ hasKey: () => boolean, onChange?: () => void, sampleText?: () => string, title?: string, list?: boolean }} options
  */
-export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice", list = true, description = "Clone your own voice once, then use it for Voice-over and Dub. Give 30 s to 3 min of clear speech; HeyGen Voice Turbo on OpenRouter speaks in it. The sample stays on this Mac and is sent with each voice line." }) {
+export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = () => "", title = "My voice", list = true, description = "Clone your own voice once, then use it for Voice-over and Dub. Give 30 s to 3 min of clear speech; HeyGen Voice Turbo on OpenRouter speaks in it. The sample stays on this Mac and is sent with each voice line.", trim = false }) {
   const node = el("div", { class: "st-setup-section st-voice-clone" });
   let clones = [];
   let loaded = false;
@@ -263,6 +298,12 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
   let consent = false;
   let task = "";
   let disposed = false;
+  // The reference session behind the trimmer. One upload, then one cut.
+  let reference = null;
+  let refRange = null;
+  let refToken = 0;
+  let preparing = false;
+  let trimOpenedFor = "";
 
   function setNotice(message, tone = "") {
     notice = message || "";
@@ -291,6 +332,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       render();
       return;
     }
+    resetReference();
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
@@ -318,6 +360,7 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       setNotice(`Recorded ${Math.round((Date.now() - recordStart) / 1000)}s. Listen back, then clone it.`, "ok");
       if (!disposed) render();
       void detectLanguageFor(recording);
+      void prepareReference(recording);
     });
     recordStart = Date.now();
     recorder.start(1000);
@@ -338,11 +381,86 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
   function useFile(file) {
     if (!file) return;
     if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+    resetReference();
     recording = file;
     recordingUrl = URL.createObjectURL(file);
     setNotice(`Using ${file.name}.`, "ok");
     render();
     void detectLanguageFor(file);
+    void prepareReference(file);
+  }
+
+  function resetReference() {
+    const old = reference;
+    reference = null;
+    refRange = null;
+    trimOpenedFor = "";
+    refToken += 1;
+    if (old?.id) void discardReference(old.id).catch(() => {});
+  }
+
+  function requestTrim() {
+    if (!reference || disposed) return;
+    if (trimOpenedFor === reference.id) return;
+    trimOpenedFor = reference.id;
+    const current = reference;
+    openTrimmer({
+      audioUrl: current.audio_url,
+      duration: Number(current.duration) || 0,
+      peaks: Array.isArray(current.peaks) ? current.peaks : [],
+      best: current.best || {},
+      minSeconds: Number(current.limits?.min_seconds || 8),
+      maxSeconds: Number(current.limits?.max_seconds || 15),
+      onConfirm: (range) => {
+        trimOpenedFor = "";
+        if (reference?.id !== current.id) return;
+        refRange = range;
+        setNotice(`Using ${range.seconds.toFixed(1)} s of the recording.`, "ok");
+        render();
+      },
+      onCancel: () => {
+        trimOpenedFor = "";
+        if (reference?.id !== current.id) return;
+        setNotice("Choose a part of the recording in the trimmer, then clone it.", "");
+        render();
+      },
+    });
+  }
+
+  /** Upload once; over 15 s opens the trimmer on the server's best window. */
+  async function prepareReference(file) {
+    if (!trim || !file) return;
+    const token = ++refToken;
+    preparing = true;
+    setNotice("Reading the recording and finding clean speech…", "");
+    if (!disposed) render();
+    try {
+      const result = await uploadReference(file);
+      if (token !== refToken || disposed) {
+        void discardReference(result?.id).catch(() => {});
+        return;
+      }
+      reference = result;
+      const duration = Number(result?.duration) || 0;
+      const max = Number(result?.limits?.max_seconds || 15);
+      if (duration > max) {
+        refRange = null;
+        setNotice(`The recording is ${Math.round(duration)} s. Choose 8-15 s of clean speech to use.`, "bad");
+        if (!disposed) render();
+        requestTrim();
+      } else {
+        refRange = { start: 0, end: Number(duration.toFixed(3)), seconds: Number(duration.toFixed(2)) };
+        setNotice(`Reference ready: ${duration.toFixed(1)} s.`, "ok");
+      }
+    } catch (error) {
+      if (token !== refToken) return;
+      reference = null;
+      refRange = null;
+      setNotice(error?.message || "Could not read that recording. Choose a WAV or MP3 file and try again.", "bad");
+    } finally {
+      preparing = false;
+      if (!disposed) render();
+    }
   }
 
   async function detectLanguageFor(file) {
@@ -385,17 +503,45 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     setNotice("Preparing your voice sample…", "");
     render();
     try {
-      const record = await cloneFromFile(recording, { name, language, consent, task });
+      let record = null;
+      if (trim) {
+        if (!reference) await prepareReference(recording);
+        if (reference) {
+          const duration = Number(reference.duration) || 0;
+          const max = Number(reference.limits?.max_seconds || 15);
+          if (duration > max && !refRange) {
+            busy = "";
+            task = "";
+            setNotice("Choose 8-15 s of clean speech in the trimmer, then press Clone my voice.", "bad");
+            render();
+            requestTrim();
+            return;
+          }
+          const range = refRange || { start: 0, end: duration };
+          setNotice("Cutting the part you chose, then cloning it…", "");
+          record = await cloneReference(reference.id, {
+            name,
+            language,
+            consent,
+            start: range.start,
+            end: range.end,
+            task,
+          });
+        }
+      }
+      if (!record) record = await cloneFromFile(recording, { name, language, consent, task });
       clones = [record, ...clones.filter((item) => item.voice_id !== record.voice_id)];
       recording = null;
       if (recordingUrl) URL.revokeObjectURL(recordingUrl);
       recordingUrl = "";
       consent = false;
+      const used = Number(record?.trim?.seconds);
       const note = cleaningNote(record);
       setNotice(
-        `Your voice is ready.${note ? ` ${note}` : ""} Press Play to hear it, or pick it under HeyGen Voice Turbo in any voice picker.`,
+        `Your voice is ready${used ? ` from ${used.toFixed(1)} s` : ""}.${note ? ` ${note}` : ""} Press Play to hear it, or pick it under HeyGen Voice Turbo in any voice picker.`,
         note ? "" : "ok",
       );
+      resetReference();
       onChange();
     } catch (error) {
       if (wasCancelled(error)) setNotice("Cancelled. No voice was cloned.", "");
@@ -541,10 +687,16 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     const tick = el("input", { type: "checkbox", checked: consent, id: "st-voice-consent-me" });
     tick.addEventListener("change", () => { consent = Boolean(tick.checked); render(); });
     const cloning = busy === "clone" || busy === "cancel";
+    const tooLong = trim && reference
+      && Number(reference.duration) > Number(reference.limits?.max_seconds || 15)
+      && !refRange;
     const go = el("button", {
       class: "st-btn st-btn-primary st-btn-small", type: "button",
-      text: detecting ? "Detecting language…" : cloning ? "Cloning…" : "Clone my voice",
-      disabled: Boolean(busy) || detecting || !recording || !consent || recorder?.state === "recording",
+      text: preparing
+        ? "Reading the recording…"
+        : detecting ? "Detecting language…" : cloning ? "Cloning…" : "Clone my voice",
+      disabled: Boolean(busy) || preparing || detecting || !recording || !consent
+        || recorder?.state === "recording" || tooLong,
     });
     go.addEventListener("click", () => { void submit(); });
     const stop = cloning ? el("button", {
@@ -553,6 +705,17 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       disabled: busy === "cancel",
     }) : null;
     stop?.addEventListener("click", () => { void cancelClone(); });
+    const trimNote = trim && reference
+      ? el("p", { class: "st-hint", text: refRange
+        ? `Using ${Number(refRange.seconds).toFixed(1)} s of the recording.`
+        : `The recording is ${Math.round(Number(reference.duration) || 0)} s. Choose 8-15 s of clean speech.` })
+      : null;
+    const adjust = trim && reference && Number(reference.duration) > Number(reference.limits?.max_seconds || 15)
+      ? el("button", {
+        class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Adjust the part",
+        on: { click: () => requestTrim() },
+      })
+      : null;
     return el("div", { class: "st-voice-clone-form" }, [
       el("div", { class: "st-setup-key-form" }, [
         el("label", { class: "st-field" }, [el("span", { text: "Name" }), nameInput]),
@@ -561,6 +724,8 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
       el("label", { class: "st-voice-clone-consent", for: "st-voice-consent-me" }, [
         tick, el("span", { text: CONSENT_COPY.me }),
       ]),
+      trimNote,
+      adjust ? el("div", { class: "st-setup-key-actions" }, [adjust]) : null,
       el("div", { class: "st-setup-key-actions" }, [go, stop]),
     ]);
   }
@@ -603,6 +768,8 @@ export function createMyVoicePanel({ hasKey, onChange = () => {}, sampleText = (
     refresh: load,
     dispose() {
       disposed = true;
+      if (reference?.id) void discardReference(reference.id).catch(() => {});
+      reference = null;
       if (recorder?.state === "recording") recorder.stop();
       stopTracks();
       window.clearInterval(timer);

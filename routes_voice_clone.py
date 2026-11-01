@@ -31,8 +31,10 @@ from pydantic import BaseModel
 
 import editions
 import job_queue
+import voice_audio
 import voice_clone
 import voice_errors
+import voice_reference
 import voice_takes
 
 
@@ -183,6 +185,17 @@ class TakeSaveBody(BaseModel):
 class TakeCleanupBody(BaseModel):
     confirm: bool = False
     days: int | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class ReferenceCloneBody(BaseModel):
+    name: str = ""
+    language: str = ""
+    consent: bool = False
+    start: float | None = None
+    end: float | None = None
+    task: str = ""
 
     model_config = {"extra": "forbid"}
 
@@ -754,6 +767,166 @@ def detect_language(request: Request, file: UploadFile = File(...)) -> dict:
         return {"language": code, "text": str(result.get("text") or "")[:160]}
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- reference
+
+
+@router.post("/api/voices/reference")
+def upload_reference(request: Request, file: UploadFile = File(...)) -> dict:
+    """Keep a reference upload and propose a clean 10-15 s window.
+
+    The clip over 15 s never goes to the cloud whole: the trimmer uses this
+    session and the clone is cut from it.
+    """
+    _guard(request)
+    suffix = Path(file.filename or "voice.wav").suffix.lower() or ".wav"
+    if suffix not in UPLOAD_SUFFIXES:
+        raise HTTPException(400, voice_errors.BAD_FORMAT)
+    work = _work_dir()
+    try:
+        raw = work / f"reference{suffix}"
+        size = 0
+        with raw.open("wb") as handle:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > voice_clone.MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, voice_errors.TOO_LARGE)
+                handle.write(chunk)
+        if size == 0:
+            raise HTTPException(400, voice_errors.EMPTY_FILE)
+        try:
+            return voice_reference.create(
+                raw, suffix=suffix, name=Path(file.filename or "Recording").stem,
+            )
+        except voice_reference.ReferenceError as exc:
+            raise HTTPException(exc.status_code, voice_errors.clean(str(exc))) from exc
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+@router.get("/api/voices/reference/{ref_id}/audio")
+def reference_audio(ref_id: str) -> FileResponse:
+    """The decoded reference for the trimmer's preview and waveform."""
+    try:
+        path = voice_reference.audio_path(ref_id)
+    except voice_reference.ReferenceError as exc:
+        raise HTTPException(exc.status_code, voice_errors.clean(str(exc))) from exc
+    return FileResponse(path, media_type="audio/wav", filename=f"{ref_id}.wav")
+
+
+@router.delete("/api/voices/reference/{ref_id}")
+def discard_reference(ref_id: str, request: Request) -> dict:
+    _guard(request)
+    return {"deleted": voice_reference.delete(ref_id)}
+
+
+def _clone_reference(
+    ref_id: str, body: ReferenceCloneBody, cancel_event: threading.Event | None,
+) -> dict:
+    if not voice_clone.available():
+        raise HTTPException(400, voice_errors.NO_KEY)
+    if not body.consent:
+        raise HTTPException(400, voice_errors.CONSENT_CLONE)
+    meta = voice_reference.get(ref_id)
+    if meta is None:
+        raise HTTPException(
+            404,
+            voice_errors.fix(
+                "That reference is not on this Mac any more",
+                "Upload the recording again, choose 8-15 s, then clone it",
+            ),
+        )
+    try:
+        start, end = voice_reference.window_for(meta, body.start, body.end)
+    except voice_reference.ReferenceError as exc:
+        raise HTTPException(exc.status_code, voice_errors.clean(str(exc))) from exc
+    length = round(end - start, 2)
+    if length > voice_audio.MAX_REFERENCE_SECONDS + 0.05:
+        raise HTTPException(
+            400,
+            voice_errors.trim_too_long(length, voice_audio.MAX_REFERENCE_SECONDS),
+        )
+    if length < voice_audio.MIN_REFERENCE_SECONDS - 0.05:
+        raise HTTPException(
+            400,
+            voice_errors.trim_too_short(length, voice_audio.MIN_REFERENCE_SECONDS),
+        )
+    source = voice_reference.source_path(ref_id)
+    work = _work_dir()
+    try:
+        cut = work / "cut.wav"
+        try:
+            voice_audio.cut(source, cut, start, end)
+        except RuntimeError as exc:
+            raise HTTPException(400, voice_errors.clean(str(exc), voice_errors.UNREADABLE)) from exc
+        _stop_if_cancelled(cancel_event)
+        cleaned = False
+        warning = ""
+        sample_source = cut
+        try:
+            import voice_extract
+
+            report = voice_extract.extract_clean_voice(
+                cut, work / "clean",
+                target_seconds=voice_audio.MAX_REFERENCE_SECONDS,
+                cancel_event=cancel_event,
+            )
+            sample_source = Path(str(report["path"]))
+            cleaned = True
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - cleaning is optional
+            _stop_if_cancelled(cancel_event)
+            warning = f"Used the raw cut: cleaning failed ({_short_error(exc)})."
+            sample_source = cut
+        sample = work / "sample.mp3"
+        try:
+            try:
+                seconds = voice_clone.prepare_sample(sample_source, sample)
+            except voice_clone.CloneError:
+                if not cleaned:
+                    raise
+                cleaned = False
+                warning = "Used the raw cut: the cleaned clip was too short."
+                seconds = voice_clone.prepare_sample(cut, sample)
+            if _silent_reference(sample) and cleaned:
+                cleaned = False
+                warning = "Used the raw cut: the cleaned clip had no speech."
+                seconds = voice_clone.prepare_sample(cut, sample)
+            _refuse_silent(sample)
+            _stop_if_cancelled(cancel_event)
+            record = voice_clone.create_clone(
+                sample,
+                name=body.name or f"{meta.get('name') or 'My'} voice"[:64],
+                source="me",
+                consent=body.consent,
+                language=body.language,
+                seconds=seconds,
+            )
+        except voice_clone.CloneError as exc:
+            raise _fail(exc) from exc
+        voice_reference.delete(ref_id)
+        return {
+            **record,
+            "trim": {"start": start, "end": end, "seconds": length},
+            "cleaned": cleaned,
+            "warning": warning,
+            "warnings": [],
+        }
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+@router.post("/api/voices/reference/{ref_id}/clone")
+def clone_reference(ref_id: str, body: ReferenceCloneBody, request: Request) -> dict:
+    """Clone from the chosen range of a reference session."""
+    _guard(request)
+    cancel_event = _task_event(body.task)
+    try:
+        return _clone_reference(ref_id, body, cancel_event)
+    finally:
+        _task_done(body.task)
 
 
 @router.post("/api/voices/clones")

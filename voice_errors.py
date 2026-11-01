@@ -76,6 +76,18 @@ CLEANUP_WARNING = (
     "Old unstarred takes can be removed. Review them first; starred takes are always kept."
 )
 
+
+def trim_too_long(seconds: float, limit: float = 15.0) -> str:
+    return (
+        f"That selection is {seconds:.1f} s. Trim it to {limit:.0f} s or less, then clone it."
+    )
+
+
+def trim_too_short(seconds: float, minimum: float = 8.0) -> str:
+    return (
+        f"That selection is {seconds:.1f} s. Choose at least {minimum:.0f} s of clear speech, then clone it."
+    )
+
 _TRACEBACK = re.compile(r"(?i)\btraceback\b|\bfile \"[^\"]+\", line \d+|stack trace")
 _WHITESPACE = re.compile(r"\s+")
 

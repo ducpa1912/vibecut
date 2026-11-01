@@ -79,6 +79,11 @@ def _decode(source: Path, output: Path, *, start: float = 0.0, end: float | None
     return output
 
 
+def to_wav(source: Path, output: Path) -> Path:
+    """Decode any supported file to mono 16 kHz PCM WAV for reading or serving."""
+    return _decode(Path(source), Path(output))
+
+
 def _frames(path: Path, frame_seconds: float = FRAME_SECONDS):
     """Yield ``(block_start_seconds, float array block)`` from mono PCM WAV."""
     import numpy as np  # noqa: PLC0415 - numpy is only needed for measurement

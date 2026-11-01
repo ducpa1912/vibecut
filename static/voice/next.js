@@ -401,6 +401,7 @@ const myVoice = createMyVoicePanel({
   title: "Record or upload",
   list: false,
   description: "",
+  trim: true,
 });
 
 const finder = createClipFinder({
