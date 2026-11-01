@@ -98,21 +98,26 @@ def test_the_render_payload_keeps_the_custom_clip_order_and_roles():
     assert "state.plan.clips.map((clip) => ({ ...clip }))" in plan
     assert "normalizePlanRoles(clips);" in plan
 
+    request_start = js.index("function renderRequestFor(")
+    request = js[request_start:js.index("function renderSignatureOf", request_start)]
+    assert "const clips = state.edited && state.plan ? planClipsForRender() : null;" in request
+    assert 'order: clips ? "source" : state.order,' in request
+    assert "hook_scene: clips ? clips[0]?.scene ?? null : state.overrideHook," in request
+    assert "      clips," in request
+
     start = js.index("async function startRender(quality")
     block = js[start:js.index("async function startRenderAll", start)]
-    assert "const clips = state.edited && state.plan ? planClipsForRender() : null;" in block
-    assert 'order: clips ? "source" : state.order,' in block
-    assert "hook_scene: clips ? clips[0]?.scene ?? null : state.overrideHook," in block
-    assert "          clips," in block
+    assert "const body = renderRequestFor(target, quality);" in block
+    assert "JSON.stringify({ ...body, force })" in block
 
 
 def test_render_all_and_ab_use_the_edited_order():
     js = script()
     all_start = js.index("async function startRenderAll()")
     all_block = js[all_start:js.index("async function cancelRender", all_start)]
-    assert "const clips = planClipsForRender();" in all_block
-    assert 'order: "source",' in all_block
-    assert "hook_scene: clips?.[0]?.scene ?? state.overrideHook" in all_block
+    assert 'const body = renderRequestFor(target, "final");' in all_block
+    assert 'const body = renderRequestFor(state.target, "final");' in all_block
+    assert "clips: null," in all_block
 
     ab_start = js.index("async function abHooks()")
     ab_block = js[ab_start:js.index("async function loadAudioEngines", ab_start)]

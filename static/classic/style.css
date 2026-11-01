@@ -738,6 +738,15 @@ main { min-height: calc(100vh - 150px); }
 }
 .ready-text { flex: 1; min-width: 0; color: var(--text); font-size: 13px; }
 .result-ready .primary { flex: 0 0 auto; }
+.render-stale {
+  margin: -12px 0 22px;
+  padding: 8px 12px;
+  border: 1px solid rgba(232, 162, 102, 0.32);
+  border-radius: 9px;
+  background: rgba(232, 162, 102, 0.06);
+  color: #e0b37d;
+  font-size: 12px;
+}
 
 .speech-notice {
   margin: 0 0 24px;

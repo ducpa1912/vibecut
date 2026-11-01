@@ -280,6 +280,7 @@
     audioStatusSetup: $("#audio-status-setup"),
     audioScript: $("#audio-script"),
     renderNote: $("#render-note"),
+    renderStale: $("#render-stale"),
     renderProgress: $("#render-progress"),
     renderError: $("#render-error"),
     playerWrap: $("#player-wrap"),
@@ -5658,6 +5659,12 @@
       state.job.renders = state.job.renders || {};
       records.forEach((record) => {
         state.job.renders[record.record_key || renderKey(record.target)] = record;
+        if (record.hook === currentHookId()) {
+          rememberRenderSignature(
+            record,
+            renderRequestFor(record.target, record.quality || "final"),
+          );
+        }
       });
       updateRenderPanel();
       startRenderPoll(state.job.id);
@@ -6495,6 +6502,7 @@
       });
       if (seq !== state.classicText.seq || rev !== state.classicText.rev) return;
       applyClassicTextCut(result.cut, key);
+      updateRenderPanel();
     } catch (_) {
       if (seq !== state.classicText.seq) return;
       state.classicText.loadedKey = "";
@@ -6521,6 +6529,7 @@
   function saveClassicText() {
     state.classicText.rev += 1;
     if (!state.job || !state.plan) return;
+    updateRenderPanel();
     const clips = classicPlanClips();
     const key = classicCutKey(clips);
     state.classicText.loadedKey = key;
@@ -6711,6 +6720,62 @@
     return !!record && (record.status === "queued" || record.status === "rendering" || record.status === "cancelling");
   }
 
+  function renderRequestFor(target = state.target, quality = "final") {
+    const clips = state.edited && state.plan ? planClipsForRender() : null;
+    return {
+      target,
+      hook_scene: clips ? clips[0]?.scene ?? null : state.overrideHook,
+      quality,
+      aspect: state.aspect,
+      captions: state.captions,
+      preset: state.preset || null,
+      // An explicit cut carries its own Hook > Beat > Payoff order.
+      order: clips ? "source" : state.order,
+      clips,
+      script_id: state.scriptId || null,
+      audio: currentAudioPlan(),
+      edit: classicEditPayload(),
+    };
+  }
+
+  function renderSignatureOf(body) {
+    const trust = window.ClassicTrust;
+    return trust && typeof trust.renderSignature === "function"
+      ? trust.renderSignature(body)
+      : JSON.stringify(body);
+  }
+
+  function renderSigKey(record) {
+    const key = record?.key || record?.record_key;
+    return key && state.job?.id ? `classic-render-sig:${state.job.id}:${key}` : "";
+  }
+
+  function rememberRenderSignature(record, body) {
+    const key = renderSigKey(record);
+    if (!key) return;
+    try {
+      localStorage.setItem(key, renderSignatureOf(body));
+    } catch (_) { /* storage may be unavailable */ }
+  }
+
+  function updateRenderStale(record) {
+    if (!dom.renderStale) return;
+    let stale = false;
+    const key = renderSigKey(record);
+    if (record && key) {
+      let stored = "";
+      try { stored = localStorage.getItem(key) || ""; } catch (_) { /* ignore */ }
+      if (stored) {
+        stale = stored !== renderSignatureOf(
+          renderRequestFor(record.target, record.quality || "final"),
+        );
+      }
+    }
+    dom.renderStale.textContent = window.ClassicTrust?.STALE_RENDER_TEXT
+      || "Changed since this render — render again to see it.";
+    dom.renderStale.hidden = !stale;
+  }
+
   function withLayerNote(text) {
     const trust = window.ClassicTrust;
     if (!trust || typeof trust.layerRenderNote !== "function") return text;
@@ -6722,6 +6787,14 @@
     if (!note) return text;
     const base = String(text || "").trim();
     return `${base}${/[.!?]$/.test(base) ? " " : ". "}${note}`;
+  }
+
+  function lastReadyRender() {
+    const records = Object.values(state.job?.renders || {}).filter((record) => record
+      && record.status === "ready"
+      && record.target === state.target);
+    records.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    return records[0] || null;
   }
 
   function updateRenderPanel() {
@@ -6741,6 +6814,7 @@
 
     dom.renderError.hidden = true;
     dom.resultReady.hidden = true;
+    if (dom.renderStale) dom.renderStale.hidden = true;
     dom.render.title = blocked || "";
     dom.renderDraft.title = blocked || "";
     dom.playerWrap.hidden = true;
@@ -6797,6 +6871,7 @@
       dom.resultReadyDownload.href = withToken(record.url);
       dom.resultReadyDownload.download = downloadName;
       dom.resultReady.hidden = false;
+      updateRenderStale(record);
       if (revealPlayer && state.playerScrollKey !== record.key) {
         state.playerScrollKey = record.key;
         setTimeout(() => {
@@ -6820,6 +6895,19 @@
       dom.renderNote.textContent = withLayerNote(state.plan.note
         || `${finalRecord.clip_count} beats · ${renderAudioNote()} · no watermark`);
       renderButton(`Render ${target}s again`);
+      return;
+    }
+
+    const last = lastReadyRender();
+    if (last) {
+      const isDraft = (last.quality || "final") === "draft";
+      show(last, isDraft ? "draft" : "final");
+      dom.renderNote.textContent = withLayerNote(
+        isDraft
+          ? "Draft preview · 540×960 · render final when it feels right."
+          : `${last.clip_count} beats · ${renderAudioNote()} · no watermark`,
+      );
+      renderButton(isDraft ? `Render final ${target}s` : `Render ${target}s again`);
       return;
     }
 
@@ -6861,7 +6949,7 @@
     const target = state.target;
     const existing = findRender(quality);
     const force = !!(existing && existing.status === "ready" && existing.hook === currentHookId());
-    const clips = state.edited && state.plan ? planClipsForRender() : null;
+    const body = renderRequestFor(target, quality);
     state.playerScrollKey = null;
     dom.render.disabled = true;
     dom.renderDraft.disabled = true;
@@ -6869,27 +6957,13 @@
     try {
       const result = await api(`/api/jobs/${state.job.id}/render`, {
         method: "POST",
-        body: JSON.stringify({
-          target,
-          hook_scene: clips ? clips[0]?.scene ?? null : state.overrideHook,
-          quality,
-          aspect: state.aspect,
-          captions: state.captions,
-          preset: state.preset || null,
-          // An explicit cut carries its own Hook > Beat > Payoff order. Story
-          // arc order would move the roles, so the render keeps the cut order.
-          order: clips ? "source" : state.order,
-          clips,
-          script_id: state.scriptId || null,
-          audio: currentAudioPlan(),
-          edit: classicEditPayload(),
-          force,
-        }),
+        body: JSON.stringify({ ...body, force }),
       });
       state.job.renders = state.job.renders || {};
       state.job.renders[result.render.record_key || renderKey(
         target, quality, state.aspect, state.captions,
       )] = result.render;
+      rememberRenderSignature(result.render, body);
       updateRenderPanel();
       startRenderPoll(state.job.id);
       loadHistory();
@@ -6914,46 +6988,44 @@
       let records = [];
       const errors = [];
       if (state.edited) {
-        const clips = planClipsForRender();
         for (const target of [15, 30, 60]) {
           try {
+            const body = renderRequestFor(target, "final");
             const result = await api(`/api/jobs/${state.job.id}/render`, {
               method: "POST",
-              body: JSON.stringify({
-                target,
-                hook_scene: clips?.[0]?.scene ?? state.overrideHook ?? state.plan.hook_scene ?? null,
-                quality: "final",
-                aspect: state.aspect,
-                captions: state.captions,
-                preset: state.preset || null,
-                order: "source",
-                clips,
-                script_id: state.scriptId || null,
-                audio: currentAudioPlan(),
-                edit: classicEditPayload(),
-              }),
+              body: JSON.stringify(body),
             });
-            if (result.render) records.push(result.render);
+            if (result.render) {
+              records.push(result.render);
+              rememberRenderSignature(result.render, body);
+            }
           } catch (error) {
             errors.push({ target, detail: error.message });
           }
         }
       } else {
+        const body = renderRequestFor(state.target, "final");
         const result = await api(`/api/jobs/${state.job.id}/render-all`, {
           method: "POST",
           body: JSON.stringify({
-            hook_scene: state.overrideHook,
-            quality: "final",
-            aspect: state.aspect,
-            captions: state.captions,
-            preset: state.preset || null,
-            order: state.order,
+            hook_scene: body.hook_scene,
+            quality: body.quality,
+            aspect: body.aspect,
+            captions: body.captions,
+            preset: body.preset,
+            order: body.order,
             clips: null,
-            script_id: state.scriptId || null,
-            audio: currentAudioPlan(),
+            script_id: body.script_id,
+            audio: body.audio,
           }),
         });
         records = result.renders || [];
+        records.forEach((record) => {
+          rememberRenderSignature(
+            record,
+            renderRequestFor(record.target, record.quality || "final"),
+          );
+        });
         errors.push(...(result.errors || []));
       }
       state.job.renders = state.job.renders || {};
@@ -7011,6 +7083,16 @@
           loadUsage();
           loadHistory();
           stopPoll();
+          // The status snapshot can land between the last progress write and
+          // the ready record. Read the job once more so the player and the
+          // stale marker reflect the finished render.
+          try {
+            const job = await api(`/api/jobs/${id}`);
+            if (state.job?.id === id) {
+              state.job.renders = job.renders || {};
+              updateRenderPanel();
+            }
+          } catch (_) { /* keep the last snapshot */ }
         }
       } catch (_) {
         state.pollTimer = setTimeout(tick, 1800);

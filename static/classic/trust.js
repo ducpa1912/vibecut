@@ -88,6 +88,25 @@
     return "Text layers are left out at this shape.";
   };
 
+  function canonical(value) {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === "object") {
+      const out = {};
+      Object.keys(value).sort().forEach((key) => {
+        if (value[key] !== undefined) out[key] = canonical(value[key]);
+      });
+      return out;
+    }
+    return value;
+  }
+
+  /** Stable signature of the exact render request body. */
+  api.renderSignature = function renderSignature(payload) {
+    return JSON.stringify(canonical(payload === undefined ? null : payload));
+  };
+
+  api.STALE_RENDER_TEXT = "Changed since this render — render again to see it.";
+
   const apiExport = api;
   if (typeof module !== "undefined" && module.exports) module.exports = apiExport;
   if (typeof window !== "undefined") window.ClassicTrust = apiExport;
