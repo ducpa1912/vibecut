@@ -250,10 +250,16 @@ export function createTakesPanel({
 
   function driftFor(take) {
     const lines = driftLines(take);
+    const check = take?.selfcheck;
     if (!lines.length) {
-      const check = take?.selfcheck;
       if (check?.status === "checked") {
         return el("span", { class: "vg-take-ok", text: "Lines match the script" });
+      }
+      if (check?.status === "unavailable") {
+        return el("span", {
+          class: "vg-take-checknote",
+          text: "Lines not checked: local Whisper is not installed. Install it in Setup to check the next voiceover.",
+        });
       }
       return null;
     }
@@ -273,7 +279,10 @@ export function createTakesPanel({
     if (open) {
       box.append(el("ul", {}, lines.map((line) => el("li", {}, [
         el("span", { class: "vg-take-drift-line", text: `${line.index}. ${line.script}` }),
-        el("span", { class: "vg-take-drift-heard", text: line.heard ? `heard: ${line.heard}` : "heard: nothing" }),
+        el("span", {
+          class: "vg-take-drift-heard",
+          text: `${line.heard ? `heard: ${line.heard}` : "heard: nothing"} · match ${Math.round(Number(line.ratio || 0) * 100)}%`,
+        }),
       ]))));
     }
     return box;
