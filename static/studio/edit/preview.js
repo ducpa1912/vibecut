@@ -11,6 +11,7 @@ import { el } from "../ui.js";
 import {
   CANVAS,
   CLEAN_LABELS,
+  LAYER_COLOURS,
   TEXT_KINDS,
   clamp,
   colorFilter,
@@ -33,6 +34,7 @@ import {
 } from "./canvas-tools.js";
 import { fetchFrame, framePath, proxyPath, syncMediaCookie } from "./api.js";
 import { drawOverlay } from "./overlay.js";
+import { icon } from "./icons.js";
 
 const FADE_IN_SKIP = 0.15;
 
@@ -136,6 +138,10 @@ export function mountPreview(root, options = {}) {
     tools: Array.from(root.querySelectorAll(".st-preview-tool")),
   };
   const ctx = dom.canvas.getContext("2d");
+
+  for (const button of dom.tools) {
+    button.prepend(icon(button.dataset.tool === "select" ? "cursor" : "square", { size: 13 }));
+  }
 
   function setNote(message, tone = "") {
     dom.note.textContent = message || "";
@@ -305,15 +311,6 @@ export function mountPreview(root, options = {}) {
     return { ...captions, cues };
   }
 
-  const CLEAN_COLORS = {
-    delogo: "#e8a266",
-    fill: "#e8a266",
-    blur: "#7b9bb8",
-    plate: "#c5a0d9",
-    mask: "#c5a0d9",
-    crop_guard: "#8ec9a3",
-  };
-
   function currentCrop() {
     return cropAt({
       edit: state.edit,
@@ -460,7 +457,7 @@ export function mountPreview(root, options = {}) {
         continue;
       }
       const rect = pxRect(clipped, width, height);
-      const colour = CLEAN_COLORS[item.layer.kind] || "#e8a266";
+      const colour = LAYER_COLOURS.clean;
       ctx.save();
       ctx.globalAlpha = item.active ? 1 : 0.34;
       ctx.strokeStyle = colour;
@@ -538,12 +535,15 @@ export function mountPreview(root, options = {}) {
     const y = rect.y * height;
     const w = rect.w * width;
     const h = rect.h * height;
+    const colour = state.selected.kind === "captions"
+      ? LAYER_COLOURS.captions
+      : LAYER_COLOURS.text;
     ctx.save();
-    ctx.strokeStyle = "#e8a266";
+    ctx.strokeStyle = colour;
     ctx.lineWidth = 6;
     ctx.strokeRect(x, y, w, h);
     const handle = 14;
-    ctx.fillStyle = "#e8a266";
+    ctx.fillStyle = colour;
     const points = [
       [x, y], [x + w / 2, y], [x + w, y],
       [x + w, y + h / 2], [x + w, y + h],
@@ -885,6 +885,11 @@ export function mountPreview(root, options = {}) {
     if (frameAvailable) scheduleFrame(0);
   }
 
+  function togglePlay() {
+    if (playing || videoPlaying) pause();
+    else play();
+  }
+
   // The parent owns the duration; an Edit's `story_ref.duration` is only a
   // fallback for direct callers. A trim updates both together.
   function setEdit(edit, { keepTime = false } = {}) {
@@ -1164,14 +1169,7 @@ export function mountPreview(root, options = {}) {
       && (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName) || target.isContentEditable)) {
       return;
     }
-    if (event.code === "Space") {
-      event.preventDefault();
-      play();
-    } else if (event.key === "v" || event.key === "V") {
-      setTool("select");
-    } else if (event.key === "b" || event.key === "B") {
-      setTool("box");
-    } else if (event.key === "Escape" && (drag || state.tool === "box")) {
+    if (event.key === "Escape" && (drag || state.tool === "box")) {
       drag = null;
       drawPreview = null;
       setTool("select");
@@ -1211,6 +1209,7 @@ export function mountPreview(root, options = {}) {
     step,
     play,
     pause,
+    togglePlay,
     invalidate,
     refresh: draw,
     destroy() {

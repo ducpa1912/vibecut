@@ -12,6 +12,7 @@
  */
 
 import { el } from "../ui.js";
+import { icon } from "./icons.js";
 import { formatSpan, formatTime, layerSpans, numberOr } from "./model.js";
 import { trimStory } from "../api.js";
 import { receiptSummary } from "../stories.js";
@@ -25,13 +26,13 @@ const LANE_LABELS = {
   audio: "Audio",
 };
 
-const EMPTY_COPY = {
-  clean: "No text boxes yet",
-  text: "No text yet",
-  captions: "No captions yet",
-  effects: "No motion or effects",
-  color: "Original colour",
-  audio: "Original sound",
+const EMPTY_ACTION = {
+  clean: "Add a box",
+  text: "Add text",
+  captions: "Open captions",
+  effects: "Add an effect",
+  color: "Choose a colour",
+  audio: "Add music",
 };
 
 const DRY_RUN_MS = 90;
@@ -457,7 +458,21 @@ export function mountTimeline(root, options = {}) {
       );
     }
     if (!row.items.length && row.kind !== "sentences") {
-      track.append(el("span", { class: "st-tl-empty", text: EMPTY_COPY[row.kind] || "Empty" }));
+      const action = EMPTY_ACTION[row.kind] || "Add a layer";
+      const empty = el("button", {
+        class: "st-tl-empty",
+        type: "button",
+        title: action,
+      }, [
+        icon("plus", { size: 11 }),
+        el("span", { text: action }),
+      ]);
+      empty.addEventListener("pointerdown", (event) => event.stopPropagation());
+      empty.addEventListener("click", (event) => {
+        event.stopPropagation();
+        handlers.onAdd(row.kind);
+      });
+      track.append(empty);
     }
     track.addEventListener("pointerdown", (event) => {
       if (event.target.closest(".st-tl-bar, .st-tl-trim")) return;
@@ -829,10 +844,9 @@ export function mountTimeline(root, options = {}) {
         const add = el("button", {
           class: "st-tl-add",
           type: "button",
-          text: "+",
           title: `Add ${row.label || LANE_LABELS[row.kind] || "layer"}`,
           "aria-label": `Add ${row.label || LANE_LABELS[row.kind] || "layer"}`,
-        });
+        }, [icon("plus", { size: 11 })]);
         add.addEventListener("click", (event) => {
           event.stopPropagation();
           handlers.onAdd(row.kind);
@@ -889,13 +903,16 @@ export function mountTimeline(root, options = {}) {
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      const delta = event.shiftKey ? 1 : 0.1;
+      event.stopPropagation();
+      const delta = event.shiftKey ? 1 : 1 / 30;
       handlers.onSeek(numberOr(state.time) + (event.key === "ArrowRight" ? delta : -delta));
     } else if (event.key === "Home") {
       event.preventDefault();
+      event.stopPropagation();
       handlers.onSeek(0);
     } else if (event.key === "End") {
       event.preventDefault();
+      event.stopPropagation();
       handlers.onSeek(duration);
     }
   });

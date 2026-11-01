@@ -196,6 +196,74 @@ try {
           null,
           { timeout: 10000 },
         );
+
+        await page.keyboard.press("Shift+/");
+        await page.locator("#st-edit-shortcuts").waitFor({ state: "visible", timeout: 5000 });
+        assert(
+          await page.locator("#st-edit-shortcuts kbd").count() >= 12,
+          `${where}: shortcut sheet is missing keys`,
+        );
+        if (screenshotPrefix) {
+          await page.screenshot({ path: `${screenshotPrefix}-shortcuts-${viewport.width}.png` });
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(
+          () => !document.querySelector("#st-edit-shortcuts")?.open,
+          null,
+          { timeout: 5000 },
+        );
+
+        await page.keyboard.press("b");
+        assert(
+          await page.locator("#st-preview-tool-box").getAttribute("aria-pressed") === "true",
+          `${where}: B did not choose the draw tool`,
+        );
+        await page.keyboard.press("v");
+        assert(
+          await page.locator("#st-preview-tool-select").getAttribute("aria-pressed") === "true",
+          `${where}: V did not choose the select tool`,
+        );
+
+        const scrub = page.locator("#st-preview-scrub");
+        const beforeStep = Number(await scrub.inputValue());
+        await page.keyboard.press("ArrowRight");
+        await page.waitForFunction(
+          (before) => Math.abs(Number(document.querySelector("#st-preview-scrub")?.value) - before) > 0.02,
+          beforeStep,
+          { timeout: 5000 },
+        );
+        const afterStep = Number(await scrub.inputValue());
+        assert(
+          Math.abs(afterStep - beforeStep - 1 / 30) < 0.01,
+          `${where}: one frame step was ${afterStep - beforeStep}s`,
+        );
+        await page.keyboard.press("Shift+ArrowRight");
+        await page.waitForFunction(
+          (before) => Number(document.querySelector("#st-preview-scrub")?.value) - before > 0.9,
+          afterStep,
+          { timeout: 5000 },
+        );
+
+        const textRows = page.locator('.st-layer-item[data-kind="text"]');
+        const textBefore = await textRows.count();
+        await page.locator('.st-layer-group[data-kind="text"] .st-layer-group-add').click();
+        await page.waitForFunction(
+          (count) => document.querySelectorAll('.st-layer-item[data-kind="text"]').length === count + 1,
+          textBefore,
+          { timeout: 15000 },
+        );
+        await page.keyboard.press("Meta+z");
+        await page.waitForFunction(
+          (count) => document.querySelectorAll('.st-layer-item[data-kind="text"]').length === count,
+          textBefore,
+          { timeout: 15000 },
+        );
+        await page.keyboard.press("Meta+Shift+z");
+        await page.waitForFunction(
+          (count) => document.querySelectorAll('.st-layer-item[data-kind="text"]').length === count + 1,
+          textBefore,
+          { timeout: 15000 },
+        );
       }
 
       if (screenshotPrefix) {

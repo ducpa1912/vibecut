@@ -24,6 +24,7 @@ import { mountTimeline } from "./timeline.js";
 import { mountInspector } from "./inspector.js";
 import { renderLayersPanel } from "./layers-panel.js";
 import { cropAt } from "./canvas-tools.js";
+import { icon } from "./icons.js";
 import { manualLayer } from "./layers/clean.js";
 import {
   ASPECTS,
@@ -45,6 +46,7 @@ import {
   getCurrentEdit,
   patchCaptionTrack,
   patchEdit,
+  restoreEdit,
   syncMediaCookie,
   undoEdit,
 } from "./api.js";
@@ -127,6 +129,9 @@ export function mount(root, ctx) {
     trim: null,
     trimRevision: 0,
     undoToken: "",
+    // Version ids undone in this session, newest last. Any new change clears
+    // them, so Redo never jumps across a different edit path.
+    redoIds: [],
     receipt: null,
     staleAspects: [],
     invalidated: 0,
@@ -208,14 +213,16 @@ export function mount(root, ctx) {
               <button class="st-aspect" type="button" data-aspect="16:10" aria-pressed="false">16:10</button>
             </div>
             <button id="st-edit-repair" class="st-btn st-btn-small st-trim-repair" type="button" hidden>Repair shape</button>
-            <div class="st-edit-history" role="group" aria-label="Undo">
+            <div class="st-edit-history" role="group" aria-label="Undo and redo">
               <button id="st-edit-undo-trim" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo trim</button>
-              <button id="st-edit-undo" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo</button>
+              <button id="st-edit-undo" class="st-btn st-btn-ghost st-btn-small" type="button" aria-label="Undo" title="Undo (⌘Z)" disabled><span class="st-btn-label">Undo</span></button>
+              <button id="st-edit-redo" class="st-btn st-btn-ghost st-btn-small" type="button" aria-label="Redo" title="Redo (⇧⌘Z)" disabled><span class="st-btn-label">Redo</span></button>
             </div>
           </div>
           <div class="st-edit-toolbar-end">
             <span id="st-edit-meta" class="st-hint st-edit-meta"></span>
             <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
+            <button id="st-edit-help" class="st-btn st-btn-ghost st-btn-small st-edit-help" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"></button>
             <button id="st-edit-inspector-toggle" class="st-btn st-btn-ghost st-btn-small st-edit-inspector-toggle" type="button" aria-controls="st-edit-inspector" aria-expanded="false">Adjust</button>
             <button id="st-edit-next" class="st-btn st-btn-primary st-btn-small" type="button" aria-label="Next: Finish" title="Next: Finish" disabled>Finish →</button>
           </div>
@@ -235,11 +242,35 @@ export function mount(root, ctx) {
           </aside>
         </div>
         <div id="st-edit-inspector-scrim" class="st-inspector-scrim" hidden></div>
+        <dialog id="st-edit-shortcuts" class="st-shortcuts" aria-labelledby="st-edit-shortcuts-title">
+          <header class="st-shortcuts-head">
+            <h2 id="st-edit-shortcuts-title">Keyboard shortcuts</h2>
+            <button id="st-edit-shortcuts-close" class="st-icon-btn" type="button" aria-label="Close shortcuts">×</button>
+          </header>
+          <div class="st-shortcuts-body">
+            <dl class="st-shortcuts-list">
+              <div><dt>Play / pause</dt><dd><kbd>Space</kbd></dd></div>
+              <div><dt>Back 1 second</dt><dd><kbd>J</kbd></dd></div>
+              <div><dt>Pause</dt><dd><kbd>K</kbd></dd></div>
+              <div><dt>Play</dt><dd><kbd>L</kbd></dd></div>
+              <div><dt>One frame back / forward</dt><dd><kbd>←</kbd> <kbd>→</kbd></dd></div>
+              <div><dt>One second back / forward</dt><dd><kbd>Shift</kbd> + <kbd>←</kbd> / <kbd>→</kbd></dd></div>
+              <div><dt>Select tool</dt><dd><kbd>V</kbd></dd></div>
+              <div><dt>Draw a Remove-text box</dt><dd><kbd>B</kbd></dd></div>
+              <div><dt>Remove the selected layer</dt><dd><kbd>Delete</kbd></dd></div>
+              <div><dt>Undo / redo</dt><dd><kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd></dd></div>
+              <div><dt>This list</dt><dd><kbd>?</kbd></dd></div>
+              <div><dt>Close a panel or tool</dt><dd><kbd>Esc</kbd></dd></div>
+            </dl>
+            <p class="st-hint">Shortcuts work when you are not typing in a field.</p>
+          </div>
+        </dialog>
       </section>
     `;
     dom.story = root.querySelector("#st-edit-story");
     dom.aspect = Array.from(root.querySelectorAll(".st-aspect"));
     dom.undo = root.querySelector("#st-edit-undo");
+    dom.redo = root.querySelector("#st-edit-redo");
     dom.undoTrim = root.querySelector("#st-edit-undo-trim");
     dom.repair = root.querySelector("#st-edit-repair");
     dom.receipt = root.querySelector("#st-edit-receipt");
@@ -250,6 +281,9 @@ export function mount(root, ctx) {
     dom.notice = root.querySelector("#st-edit-notice");
     dom.layers = root.querySelector("#st-edit-layers");
     dom.preview = root.querySelector("#st-edit-preview");
+    dom.help = root.querySelector("#st-edit-help");
+    dom.shortcuts = root.querySelector("#st-edit-shortcuts");
+    dom.shortcutsClose = root.querySelector("#st-edit-shortcuts-close");
     dom.inspector = root.querySelector("#st-edit-inspector");
     dom.inspectorBody = root.querySelector("#st-edit-inspector-body");
     dom.inspectorToggle = root.querySelector("#st-edit-inspector-toggle");
@@ -271,7 +305,20 @@ export function mount(root, ctx) {
     dom.back.addEventListener("click", () => { void leaveTo("moments", dom.back); });
     dom.next.addEventListener("click", () => { void leaveTo("finish", dom.next); });
     dom.undo.addEventListener("click", () => { void undoLastChange(); });
+    dom.redo.addEventListener("click", () => { void redoLastChange(); });
     dom.undoTrim.addEventListener("click", () => { void undoTrimChange(); });
+    dom.help?.addEventListener("click", openShortcuts);
+    dom.shortcutsClose?.addEventListener("click", closeShortcuts);
+    dom.shortcuts?.addEventListener("click", (event) => {
+      if (event.target === dom.shortcuts) closeShortcuts();
+    });
+    for (const [node, name] of [
+      [dom.undo, "undo"],
+      [dom.redo, "redo"],
+      [dom.help, "keyboard"],
+    ]) {
+      if (node) node.prepend(icon(name, { size: 13 }));
+    }
     dom.repair.addEventListener("click", () => { void repairAspects(); });
     dom.inspectorToggle?.addEventListener("click", () => {
       if (dom.inspector?.classList.contains("is-open")) closeInspector();
@@ -281,6 +328,7 @@ export function mount(root, ctx) {
     dom.inspectorScrim?.addEventListener("click", closeInspector);
     document.addEventListener("keydown", onInspectorKeydown);
     document.addEventListener("keydown", onLayerKeydown);
+    document.addEventListener("keydown", onEditorKeydown);
   }
 
   function openInspector() {
@@ -305,6 +353,80 @@ export function mount(root, ctx) {
   function onInspectorKeydown(event) {
     if (event.key === "Escape" && dom.inspector?.classList.contains("is-open")) {
       closeInspector();
+    }
+  }
+
+  function openShortcuts() {
+    if (!dom.shortcuts) return;
+    if (!dom.shortcuts.open) dom.shortcuts.showModal();
+    requestAnimationFrame(() => dom.shortcutsClose?.focus());
+  }
+
+  function closeShortcuts() {
+    if (dom.shortcuts?.open) dom.shortcuts.close();
+  }
+
+  function onEditorKeydown(event) {
+    if (dom.shortcuts?.open) return;
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      if (target.isContentEditable
+        || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) {
+        return;
+      }
+      if ((event.key === " " || event.key === "Enter")
+        && target.closest("button, a, [role=button]")) {
+        return;
+      }
+    }
+    if ((event.metaKey || event.ctrlKey) && !event.altKey) {
+      const key = String(event.key || "").toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) void redoLastChange();
+        else void undoLastChange();
+      }
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === " " || event.code === "Space") {
+      event.preventDefault();
+      preview?.togglePlay();
+      return;
+    }
+    if (event.key === "?" || (event.key === "/" && event.shiftKey)) {
+      event.preventDefault();
+      openShortcuts();
+      return;
+    }
+    if (event.key === "j" || event.key === "J") {
+      event.preventDefault();
+      preview?.pause();
+      seek(state.playhead - 1);
+    } else if (event.key === "k" || event.key === "K") {
+      event.preventDefault();
+      preview?.pause();
+    } else if (event.key === "l" || event.key === "L") {
+      event.preventDefault();
+      preview?.play();
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      seek(state.playhead - (event.shiftKey ? 1 : 1 / 30));
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      seek(state.playhead + (event.shiftKey ? 1 : 1 / 30));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      seek(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      seek(state.duration);
+    } else if (event.key === "v" || event.key === "V") {
+      event.preventDefault();
+      preview?.setTool("select");
+    } else if (event.key === "b" || event.key === "B") {
+      event.preventDefault();
+      preview?.setTool("box");
     }
   }
 
@@ -343,6 +465,7 @@ export function mount(root, ctx) {
 
   function setUndoState() {
     if (dom.undo) dom.undo.disabled = saving || !state.edit?.parent;
+    if (dom.redo) dom.redo.disabled = saving || !state.redoIds.length;
     updateTrimChrome();
   }
 
@@ -489,6 +612,7 @@ export function mount(root, ctx) {
   /** The one place a TrimResult lands. Header, preview, scrubber, player and timeline read from here. */
   function applyTrimResult(result, label = "Trimmed") {
     if (!result) return;
+    state.redoIds = [];
     const story = mergeStory(result.story);
     if (story) {
       state.story = story;
@@ -1359,6 +1483,7 @@ export function mount(root, ctx) {
 
   function touch(field) {
     if (!LAYER_FIELDS.includes(field)) return;
+    state.redoIds = [];
     state.revisions[field] = (state.revisions[field] || 0) + 1;
     state.dirty.add(field);
     setSaveStatus("Unsaved changes", "dirty");
@@ -1553,6 +1678,7 @@ export function mount(root, ctx) {
     state.selected = null;
     state.hiddenLayers.clear();
     state.foundText = [];
+    state.redoIds = [];
     state.playhead = Math.min(state.playhead, Math.max(0.1, state.duration));
     setSaveStatus("Opening moment…", "busy");
     notify("");
@@ -1764,13 +1890,16 @@ export function mount(root, ctx) {
   }
 
   async function undoLastChange() {
-    if (!state.edit?.parent || disposed) return;
+    if (!state.edit || disposed) return;
     const saved = await flushSave();
     if (!saved) return;
+    if (!state.edit?.parent) return;
     dom.undo.disabled = true;
+    const undoneId = state.edit.id;
     try {
       const result = await undoEdit(state.job.id, state.edit.id);
       if (disposed || !result?.edit) return;
+      state.redoIds.push(undoneId);
       state.edit = result.edit;
       state.duration = storyDuration(state.story, state.edit);
       state.selected = null;
@@ -1794,6 +1923,45 @@ export function mount(root, ctx) {
         );
       } else {
         notify(error?.message || "Could not undo the last change.", "bad");
+      }
+    } finally {
+      if (!disposed) setUndoState();
+    }
+  }
+
+  async function redoLastChange() {
+    if (!state.redoIds.length || !state.edit || disposed) return;
+    const saved = await flushSave();
+    if (!saved) return;
+    const target = state.redoIds[state.redoIds.length - 1];
+    dom.redo.disabled = true;
+    try {
+      const result = await restoreEdit(state.job.id, state.edit.id, target);
+      if (disposed || !result?.edit) return;
+      state.redoIds.pop();
+      state.edit = result.edit;
+      state.duration = storyDuration(state.story, state.edit);
+      state.selected = null;
+      state.dirty.clear();
+      await resolveCaptionTrack(state.edit);
+      await refreshTrimState();
+      if (disposed) return;
+      renderEditorParts();
+      populateHeader();
+      setSaveStatus("Redid the last change", "ok");
+      notify("Redid the last change.", "ok");
+    } catch (error) {
+      if (disposed) return;
+      if (error?.status === 409) {
+        const reloaded = await reloadHead();
+        notify(
+          reloaded
+            ? "This moment changed in another window. The latest save is open."
+            : "This moment changed in another window. Open it again from Moments.",
+          "bad",
+        );
+      } else {
+        notify(error?.message || "Could not redo the last change.", "bad");
       }
     } finally {
       if (!disposed) setUndoState();
@@ -1893,6 +2061,7 @@ export function mount(root, ctx) {
     document.removeEventListener("visibilitychange", onVisibilityChange);
     document.removeEventListener("keydown", onInspectorKeydown);
     document.removeEventListener("keydown", onLayerKeydown);
+    document.removeEventListener("keydown", onEditorKeydown);
     delete root.dataset.editorFrame;
     root.replaceChildren();
   };

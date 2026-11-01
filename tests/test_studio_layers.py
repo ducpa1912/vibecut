@@ -140,7 +140,8 @@ def test_preview_draws_clean_boxes_and_has_box_tools():
     assert "onBoxCreate" in PREVIEW
     assert 'id="st-preview-tool-select"' in PREVIEW
     assert 'id="st-preview-tool-box"' in PREVIEW
-    assert 'event.key === "b" || event.key === "B"' in PREVIEW
+    assert 'event.key === "b" || event.key === "B"' in INDEX
+    assert 'preview?.setTool("box")' in INDEX
 
 
 def test_delete_removes_the_selected_layer_from_all_three_places():

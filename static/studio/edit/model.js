@@ -237,6 +237,16 @@ export const CLEAN_LABELS = {
   fill: "AI fill",
 };
 
+/** One colour per layer family, used by Layers, preview and timeline. */
+export const LAYER_COLOURS = {
+  clean: "#e8a266",
+  text: "#7b9bb8",
+  captions: "#8ec9a3",
+  effects: "#c5a0d9",
+  color: "#f4c169",
+  audio: "#5fb7b0",
+};
+
 export const MOTION_LABELS = {
   punch_in: "Punch in",
   snap_zoom: "Snap zoom",

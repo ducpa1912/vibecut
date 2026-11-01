@@ -79,6 +79,14 @@ export function undoEdit(jobId, editId) {
   return request(`${editRoot(jobId, editId)}/undo`, { method: "POST", body: {} });
 }
 
+/** `POST /api/jobs/{id}/edits/{edit_id}/restore`. Restores one version. */
+export function restoreEdit(jobId, editId, version) {
+  return request(`${editRoot(jobId, editId)}/restore`, {
+    method: "POST",
+    body: { version },
+  });
+}
+
 /** `GET /api/jobs/{id}/edits/{edit_id}/versions`. */
 export function listVersions(jobId, editId) {
   return request(`${editRoot(jobId, editId)}/versions`);

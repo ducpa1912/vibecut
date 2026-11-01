@@ -13,19 +13,21 @@ import {
   CLEAN_LABELS,
   COLOR_PRESETS,
   FX_LABELS,
+  LAYER_COLOURS,
   MOTION_LABELS,
   formatSpan,
   numberOr,
 } from "./model.js";
 import { boxToFrame, visibleRect } from "./canvas-tools.js";
+import { icon } from "./icons.js";
 
 const GROUPS = [
-  { kind: "clean", label: "Remove text", empty: "No text layers", colour: "#e8a266" },
-  { kind: "text", label: "Text", empty: "No text layers", colour: "#7b9bb8" },
-  { kind: "captions", label: "Captions", empty: "No captions", colour: "#8ec9a3" },
-  { kind: "effects", label: "Effects", empty: "No effects", colour: "#c5a0d9" },
-  { kind: "color", label: "Colour", empty: "Original colour", colour: "#f4c169" },
-  { kind: "audio", label: "Audio", empty: "Original sound", colour: "#5fb7b0" },
+  { kind: "clean", label: "Remove text", empty: "No text layers", action: "Add a text box", icon: "eraser", colour: LAYER_COLOURS.clean },
+  { kind: "text", label: "Text", empty: "No text layers", action: "Add text", icon: "type", colour: LAYER_COLOURS.text },
+  { kind: "captions", label: "Captions", empty: "No captions", action: "Open captions", icon: "captions", colour: LAYER_COLOURS.captions },
+  { kind: "effects", label: "Effects", empty: "No effects", action: "Add an effect", icon: "sparkles", colour: LAYER_COLOURS.effects },
+  { kind: "color", label: "Colour", empty: "Original colour", action: "Choose a colour", icon: "palette", colour: LAYER_COLOURS.color },
+  { kind: "audio", label: "Audio", empty: "Original sound", action: "Add music", icon: "audio-lines", colour: LAYER_COLOURS.audio },
 ];
 
 const CLEAN_NAMES = {
@@ -133,21 +135,7 @@ function warningFor(kind, row, crop) {
 }
 
 function eyeIcon(hidden) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("focusable", "false");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", hidden
-    ? "M3 3l18 18M10.6 10.7a2 2 0 0 0 2.7 2.7M9.9 5.2A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3 4.2M6.3 6.4A17 17 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4.2-.9"
-    : "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z");
-  path.setAttribute("fill", "none");
-  path.setAttribute("stroke", "currentColor");
-  path.setAttribute("stroke-width", "1.7");
-  path.setAttribute("stroke-linecap", "round");
-  path.setAttribute("stroke-linejoin", "round");
-  svg.append(path);
-  return svg;
+  return icon(hidden ? "eye-off" : "eye", { size: 14 });
 }
 
 export function renderLayersPanel(host, ctx) {
@@ -179,10 +167,9 @@ export function renderLayersPanel(host, ctx) {
     const add = el("button", {
       class: "st-layer-group-add",
       type: "button",
-      text: "+",
       title: `Add ${group.label.toLowerCase()}`,
       "aria-label": `Add ${group.label.toLowerCase()}`,
-    });
+    }, [icon("plus", { size: 13 })]);
     add.addEventListener("click", (event) => {
       event.stopPropagation();
       ctx.add(group.kind);
@@ -191,8 +178,9 @@ export function renderLayersPanel(host, ctx) {
       class: "st-layer-group-title",
       type: "button",
       title: `Show ${group.label.toLowerCase()} settings`,
+      style: `--layer-colour:${group.colour}`,
     }, [
-      el("i", { class: "st-layer-colour", "aria-hidden": "true", style: `background:${group.colour}` }),
+      icon(group.icon, { size: 13, className: "st-layer-group-icon" }),
       el("span", { text: group.label }),
       el("small", { text: String(group.rows.length) }),
     ]);
@@ -200,7 +188,16 @@ export function renderLayersPanel(host, ctx) {
     section.append(el("div", { class: "st-layer-group-head" }, [title, add]));
 
     if (!group.rows.length) {
-      section.append(el("p", { class: "st-layer-empty-row", text: group.empty }));
+      const empty = el("button", {
+        class: "st-layer-empty-action",
+        type: "button",
+        title: group.action,
+      }, [
+        icon("plus", { size: 12 }),
+        el("span", { text: group.action }),
+      ]);
+      empty.addEventListener("click", () => ctx.add(group.kind));
+      section.append(empty);
     } else {
       const list = el("div", { class: "st-layer-items", role: "list" });
       for (const row of group.rows) {
