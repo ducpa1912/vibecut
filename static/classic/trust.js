@@ -88,6 +88,13 @@
     return "Text layers are left out at this shape.";
   };
 
+  /** The Render button's own cost line: the render calls these providers. */
+  api.renderCostNote = function renderCostNote({ voiceProvider = "", musicProvider = "" } = {}) {
+    const names = [voiceProvider, musicProvider].filter(Boolean);
+    if (!names.length) return "";
+    return `Render calls ${names.join(" and ")} · may cost credits.`;
+  };
+
   function canonical(value) {
     if (Array.isArray(value)) return value.map(canonical);
     if (value && typeof value === "object") {

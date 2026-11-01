@@ -585,6 +585,9 @@
         voiceEngine: state.audio.engine || "",
         musicEngine: state.audio.music || "",
         musicSource: state.audio.musicSource || "",
+        // OpenCode Go signs in without a saved key, and rewrite or translate
+        // can still go online through it.
+        onlineTranslation: translationMayUseCloudNow() || rewriteMayUseCloudNow(),
       })
       : "Local by default";
     if (dom.privacyLabel) dom.privacyLabel.textContent = label;
@@ -6777,6 +6780,29 @@
     dom.renderStale.hidden = !stale;
   }
 
+  // The render itself can call a paid provider (cloud voice, generated
+  // music). Say so next to the Render button, not only in the cards.
+  function renderCostText() {
+    const trust = window.ClassicTrust;
+    if (!trust || typeof trust.renderCostNote !== "function") return "";
+    const mode = state.audio.mode;
+    const voiceMode = ["bed", "voice", "full"].includes(mode);
+    const upload = voiceMode && state.audio.source === "upload";
+    const musicMode = ["music", "full"].includes(mode);
+    return trust.renderCostNote({
+      voiceProvider: voiceMode && !upload ? voiceProviderName(state.audio.engine) : "",
+      musicProvider: musicMode && musicSourceMode() === "generate"
+        ? musicProviderName(state.audio.music) : "",
+    });
+  }
+
+  function withRenderNotes(text) {
+    const base = String(withLayerNote(text) || "").trim();
+    const cost = renderCostText();
+    if (!cost) return base;
+    return `${base}${/[.!?]$/.test(base) ? " " : ". "}${cost}`;
+  }
+
   function withLayerNote(text) {
     const trust = window.ClassicTrust;
     if (!trust || typeof trust.layerRenderNote !== "function") return text;
@@ -6845,7 +6871,7 @@
       dom.renderAll.disabled = true;
       dom.renderCancel.hidden = false;
       renderButton(active.quality === "draft" ? "Rendering draft…" : "Rendering final…");
-      dom.renderNote.textContent = withLayerNote(state.plan.note || "One render at a time.");
+      dom.renderNote.textContent = withRenderNotes(state.plan.note || "One render at a time.");
       return;
     }
 
@@ -6886,14 +6912,14 @@
         || (draftRecord.updated || 0) > (finalRecord.updated || 0));
     if (draftNewer) {
       show(draftRecord, "draft");
-      dom.renderNote.textContent = withLayerNote("Draft preview · 540×960 · render final when it feels right.");
+      dom.renderNote.textContent = withRenderNotes("Draft preview · 540×960 · render final when it feels right.");
       renderButton(`Render final ${target}s`);
       return;
     }
 
     if (finalMatches && finalRecord.status === "ready") {
       show(finalRecord, "final");
-      dom.renderNote.textContent = withLayerNote(state.plan.note
+      dom.renderNote.textContent = withRenderNotes(state.plan.note
         || `${finalRecord.clip_count} beats · ${renderAudioNote()} · no watermark`);
       renderButton(`Render ${target}s again`);
       return;
@@ -6903,7 +6929,7 @@
     if (last) {
       const isDraft = (last.quality || "final") === "draft";
       show(last, isDraft ? "draft" : "final");
-      dom.renderNote.textContent = withLayerNote(
+      dom.renderNote.textContent = withRenderNotes(
         isDraft
           ? "Draft preview · 540×960 · render final when it feels right."
           : `${last.clip_count} beats · ${renderAudioNote()} · no watermark`,
@@ -6921,7 +6947,7 @@
 
     renderButton(`Render ${target}s reel`);
     const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080", "16:10": "1920×1200" };
-    dom.renderNote.textContent = withLayerNote(state.plan.note
+    dom.renderNote.textContent = withRenderNotes(state.plan.note
       || `${state.aspect} ${dims[state.aspect] || ""} · ${renderAudioNote()}${state.captions ? " · captions" : ""} · no watermark`);
   }
 

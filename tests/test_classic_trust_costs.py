@@ -68,3 +68,25 @@ def test_the_music_preview_reads_the_cache_header():
     source = APP.read_text(encoding="utf-8")
     assert 'headers.get("X-VibeCut-Preview")' in source
     assert "Cached · no new call" in source
+
+
+def test_the_render_names_the_providers_it_will_call():
+    assert _node(
+        "t.renderCostNote({voiceProvider:'MiniMax Speech',musicProvider:'OpenRouter (Lyria 3)'})"
+    ) == "Render calls MiniMax Speech and OpenRouter (Lyria 3) · may cost credits."
+    assert _node("t.renderCostNote({})") == ""
+    script = APP.read_text(encoding="utf-8")
+    # Every render note goes through the cost line, not only the cards.
+    assert "dom.renderNote.textContent = withLayerNote(" not in script
+    assert script.count("dom.renderNote.textContent = withRenderNotes(") == 5
+
+
+def test_an_opencode_login_without_a_key_turns_the_pill_online():
+    assert _node(
+        "t.privacyLabel({secrets:{},onlineTranslation:true})"
+    ) == "Online features on"
+    script = APP.read_text(encoding="utf-8")
+    pill = script[script.index("function updatePrivacyPill"):]
+    pill = pill[:pill.index("\n  }\n")]
+    assert "rewriteMayUseCloudNow()" in pill
+    assert "translationMayUseCloudNow()" in pill
