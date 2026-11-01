@@ -45,8 +45,8 @@ import {
 } from "./api.js";
 
 const CSS_ID = "vibecut-studio-edit-css";
-const NAV_CSS_ID = "vibecut-studio-edit-nav-css";
 const CHOICE_KEY = "vibecut.studio.edit.choice";
+const ALL_MOMENTS = "__all_moments";
 const LAYER_FIELDS = ["clean", "reframe", "motion", "color", "graphics", "captions", "audio"];
 
 function ensureStyles() {
@@ -54,36 +54,8 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=0.2.1";
+    link.href = "/static/studio/edit/edit.css?v=0.3.0";
     document.head.append(link);
-  }
-  // edit.css is owned elsewhere; the step bar's sticky behaviour lives here.
-  if (!document.getElementById(NAV_CSS_ID)) {
-    const style = document.createElement("style");
-    style.id = NAV_CSS_ID;
-    style.textContent = `
-      .st-edit-stepnav {
-        position: sticky; top: 0; z-index: 30;
-        display: flex; align-items: center; flex-wrap: wrap;
-        gap: 8px 12px; margin: 0 0 12px; padding: 10px 0;
-        border-bottom: 1px solid var(--st-line);
-        background: color-mix(in srgb, var(--st-bg) 92%, transparent);
-        backdrop-filter: blur(10px);
-      }
-      .st-edit-stepnav .st-edit-save { margin-left: 2px; }
-      .st-edit-stepnav #st-edit-next { margin-left: auto; }
-      @media (max-width: 700px) {
-        .st-edit-stepnav { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-        .st-edit-stepnav .st-edit-save,
-        .st-edit-stepnav .st-hint { grid-column: 1 / -1; }
-        .st-edit-stepnav #st-edit-next { margin-left: 0; grid-column: 1 / -1; justify-self: stretch; }
-      }
-      @media (max-width: 460px) {
-        .st-edit-stepnav { grid-template-columns: minmax(0, 1fr); }
-        .st-edit-stepnav .st-btn { justify-self: stretch; }
-      }
-    `;
-    document.head.append(style);
   }
 }
 
@@ -164,6 +136,7 @@ export function mount(root, ctx) {
   const dom = {};
 
   function renderLoading(message) {
+    delete root.dataset.editorFrame;
     root.replaceChildren(el("section", { class: "st-panel" }, [
       el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-card st-edit-loading" }, [
@@ -174,6 +147,7 @@ export function mount(root, ctx) {
   }
 
   function renderEmpty({ title, copy, action = "Go to Import", step = "import", tone = "" }) {
+    delete root.dataset.editorFrame;
     const section = el("section", { class: "st-panel", "aria-labelledby": "st-edit-empty-title" }, [
       el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-empty" }, [
@@ -189,6 +163,7 @@ export function mount(root, ctx) {
   }
 
   function renderError(message) {
+    delete root.dataset.editorFrame;
     const section = el("section", { class: "st-panel" }, [
       el("p", { class: "st-eyebrow", text: "Step 3 · Edit" }),
       el("div", { class: "st-empty" }, [
@@ -203,16 +178,14 @@ export function mount(root, ctx) {
   }
 
   function renderShell() {
+    root.dataset.editorFrame = "fixed";
     root.innerHTML = `
       <section class="st-panel st-edit-panel" aria-labelledby="st-edit-title">
-        <header class="st-edit-head">
-          <div class="st-edit-heading">
-            <p class="st-eyebrow">Step 3 · Edit</p>
-            <h1 id="st-edit-title">Shape the moment</h1>
-            <p id="st-edit-sub" class="st-edit-sub">One edit per moment and shape. Changes save as you go.</p>
-          </div>
-          <div class="st-edit-controls">
-            <label class="st-field st-field-inline">
+        <h1 id="st-edit-title" class="st-visually-hidden">Edit this moment</h1>
+        <header class="st-edit-toolbar" aria-label="Edit toolbar">
+          <div class="st-edit-toolbar-start">
+            <button id="st-edit-back" class="st-btn st-btn-ghost st-btn-small st-edit-back" type="button" aria-label="Back to Moments" title="Back to Moments">← Moments</button>
+            <label class="st-field st-field-inline st-edit-moment">
               <span>Moment</span>
               <select id="st-edit-story" aria-label="Moment"></select>
             </label>
@@ -224,18 +197,18 @@ export function mount(root, ctx) {
               <button class="st-aspect" type="button" data-aspect="16:10" aria-pressed="false">16:10</button>
             </div>
             <button id="st-edit-repair" class="st-btn st-btn-small st-trim-repair" type="button" hidden>Repair shape</button>
-            <button id="st-edit-all" class="st-btn st-btn-quiet st-btn-small" type="button">All moments</button>
-            <button id="st-edit-undo-trim" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo trim</button>
-            <button id="st-edit-undo" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo</button>
+            <div class="st-edit-history" role="group" aria-label="Undo">
+              <button id="st-edit-undo-trim" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo trim</button>
+              <button id="st-edit-undo" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo</button>
+            </div>
+          </div>
+          <div class="st-edit-toolbar-end">
+            <span id="st-edit-meta" class="st-hint st-edit-meta"></span>
+            <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
+            <button id="st-edit-inspector-toggle" class="st-btn st-btn-ghost st-btn-small st-edit-inspector-toggle" type="button" aria-controls="st-edit-inspector" aria-expanded="false">Adjust</button>
+            <button id="st-edit-next" class="st-btn st-btn-primary st-btn-small" type="button" aria-label="Next: Finish" title="Next: Finish" disabled>Finish →</button>
           </div>
         </header>
-        <div class="st-edit-stepnav" aria-label="Edit step navigation">
-          <button id="st-edit-back" class="st-btn st-btn-ghost st-btn-small" type="button">← Back to Moments</button>
-          <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
-          <span id="st-edit-meta" class="st-hint"></span>
-          <button id="st-edit-inspector-toggle" class="st-btn st-btn-ghost st-btn-small st-edit-inspector-toggle" type="button" aria-controls="st-edit-inspector" aria-expanded="false">Adjust moment</button>
-          <button id="st-edit-next" class="st-btn st-btn-primary st-btn-small" type="button" disabled>Next: Finish →</button>
-        </div>
         <div id="st-edit-receipt" class="st-trim-receipt" role="status" aria-live="polite" hidden></div>
         <div id="st-edit-notice" class="st-edit-notice" role="alert" hidden></div>
         <div class="st-edit-stage">
@@ -263,7 +236,6 @@ export function mount(root, ctx) {
     dom.back = root.querySelector("#st-edit-back");
     dom.next = root.querySelector("#st-edit-next");
     dom.notice = root.querySelector("#st-edit-notice");
-    dom.sub = root.querySelector("#st-edit-sub");
     dom.preview = root.querySelector("#st-edit-preview");
     dom.inspector = root.querySelector("#st-edit-inspector");
     dom.inspectorBody = root.querySelector("#st-edit-inspector-body");
@@ -271,13 +243,18 @@ export function mount(root, ctx) {
     dom.inspectorClose = root.querySelector("#st-edit-inspector-close");
     dom.inspectorScrim = root.querySelector("#st-edit-inspector-scrim");
     dom.timeline = root.querySelector("#st-edit-timeline");
-    dom.all = root.querySelector("#st-edit-all");
 
-    dom.story.addEventListener("change", () => { void switchStory(dom.story.value); });
+    dom.story.addEventListener("change", () => {
+      if (dom.story.value === ALL_MOMENTS) {
+        dom.story.value = state.story?.id || "";
+        void leaveTo("moments", dom.back);
+        return;
+      }
+      void switchStory(dom.story.value);
+    });
     for (const button of dom.aspect) {
       button.addEventListener("click", () => { void switchAspect(button.dataset.aspect); });
     }
-    dom.all.addEventListener("click", () => { void leaveTo("moments", dom.all); });
     dom.back.addEventListener("click", () => { void leaveTo("moments", dom.back); });
     dom.next.addEventListener("click", () => { void leaveTo("finish", dom.next); });
     dom.undo.addEventListener("click", () => { void undoLastChange(); });
@@ -356,9 +333,6 @@ export function mount(root, ctx) {
     dom.meta.textContent = story
       ? `${formatTime(state.duration)} · ${aspectLabel(state.aspect)}`
       : "";
-    if (dom.sub && story) {
-      dom.sub.textContent = String(story.title || "Shape the moment");
-    }
   }
 
   /** Merge a trim's compact story into the full story the screen already has. */
@@ -681,6 +655,7 @@ export function mount(root, ctx) {
         selected: story.id === state.story?.id,
       }));
     });
+    dom.story.append(el("option", { value: ALL_MOMENTS, text: "All moments…" }));
     dom.story.value = state.story?.id || "";
   }
 
@@ -1700,6 +1675,7 @@ export function mount(root, ctx) {
     window.removeEventListener("pagehide", onPageHide);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     document.removeEventListener("keydown", onInspectorKeydown);
+    delete root.dataset.editorFrame;
     root.replaceChildren();
   };
 }

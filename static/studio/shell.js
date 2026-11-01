@@ -608,6 +608,7 @@ export function startStudio() {
     }
     cleanup = null;
     activeStep = step.id;
+    dom.main.dataset.step = step.id;
     setActive(step.id);
     dom.main.replaceChildren();
     try {

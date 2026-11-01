@@ -1,8 +1,8 @@
 /**
  * Inspector tabs.
  *
- * Clean, Texts & Effects and Audio each mount their own panel modules.
- * Texts & Effects holds text, captions, effects and colour in one place,
+ * Remove text, Text & Effects and Audio each mount their own panel modules.
+ * Text & Effects holds text, captions, effects and colour in one place,
  * because creators change them together.
  */
 
@@ -15,8 +15,8 @@ import { mountEffectsPanel } from "./layers/effects.js";
 import { mountAudioPanel } from "./layers/audio.js";
 
 export const TABS = [
-  { id: "clean", label: "Clean" },
-  { id: "visual", label: "Texts & Effects" },
+  { id: "clean", label: "Remove text" },
+  { id: "visual", label: "Text & effects" },
   { id: "audio", label: "Audio" },
 ];
 

@@ -97,7 +97,12 @@ function currentJobId() {
 async function fetchCheck(jobId) {
   if (!jobId) return { report: null, pending: false };
   try {
-    return { report: await request(`/api/jobs/${encodeURIComponent(jobId)}/check`), pending: false };
+    const report = await request(`/api/jobs/${encodeURIComponent(jobId)}/check`);
+    const status = String(report?.status || "").toLowerCase();
+    return {
+      report,
+      pending: status === "queued" || status === "running" || report?.complete === false,
+    };
   } catch (error) {
     if (error?.status === 404) return { report: null, pending: false };
     if (error?.status === 202) {
@@ -443,6 +448,7 @@ export function mountCleanPanel(host, ctx) {
   let timer = 0;
   let loading = true;
   let prefillBusy = false;
+  let scanBusy = false;
   let policy = null;
   let policyError = "";
   let rightsBusy = false;
@@ -706,13 +712,143 @@ export function mountCleanPanel(host, ctx) {
     }
   }
 
+  function scanState() {
+    const status = String(report?.status || "").toLowerCase();
+    if (pending || status === "queued" || status === "running") return "running";
+    if (!report) return "missing";
+    if (status === "cancelled") return "cancelled";
+    if (status === "failed") return "failed";
+    if (report.text?.confirmed !== true) return "unconfirmed";
+    return "ready";
+  }
+
+  function scanPercent() {
+    return Math.max(0, Math.min(100, Math.round(numberOr(report?.progress, 0) * 100)));
+  }
+
+  async function startTextScan() {
+    if (!jobId || scanBusy || pending) return;
+    scanBusy = true;
+    loadError = "";
+    render();
+    try {
+      const next = await request(`/api/jobs/${encodeURIComponent(jobId)}/check`, {
+        method: "POST",
+        body: { force: true, sample_text: true },
+      });
+      if (disposed) return;
+      const status = String(next?.status || "").toLowerCase();
+      report = next || null;
+      pending = status === "queued" || status === "running" || next?.complete === false;
+      loading = false;
+      scanBusy = false;
+      render();
+      if (pending) {
+        stopPoll();
+        timer = window.setTimeout(() => { void load(); }, CHECK_POLL_MS);
+      } else {
+        void autoFill();
+      }
+    } catch (error) {
+      if (disposed) return;
+      scanBusy = false;
+      loadError = error?.message || "Could not start the text scan.";
+      render();
+    }
+  }
+
+  async function cancelTextScan() {
+    if (!jobId || scanBusy) return;
+    scanBusy = true;
+    render();
+    try {
+      await request(`/api/jobs/${encodeURIComponent(jobId)}/check/cancel`, {
+        method: "POST",
+        body: {},
+      });
+      await load();
+    } catch (error) {
+      if (!disposed) loadError = error?.message || "Could not cancel the text scan.";
+    } finally {
+      scanBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function scanButton(label = "Find text on screen", { primary = true, quiet = false } = {}) {
+    const button = el("button", {
+      class: `st-btn st-btn-small ${primary ? "st-btn-primary" : "st-btn-ghost"}${quiet ? " st-btn-quiet" : ""} st-clean-scan-start`,
+      type: "button",
+      text: scanBusy ? "Starting the scan…" : label,
+      disabled: scanBusy || pending,
+    });
+    button.addEventListener("click", () => { void startTextScan(); });
+    return button;
+  }
+
+  function scanProgressRow() {
+    const row = el("div", { class: "st-clean-scan is-running", role: "status" }, [
+      el("div", { class: "st-clean-scan-head" }, [
+        el("strong", { text: "Finding text on screen" }),
+        el("span", { class: "st-mono", text: `${scanPercent()}%` }),
+      ]),
+      el("progress", {
+        class: "st-clean-progress",
+        max: "100",
+        value: String(scanPercent()),
+        "aria-label": "Text scan progress",
+      }),
+      el("p", { class: "st-hint", text: report?.message || "Reading frames for burned-in text…" }),
+    ]);
+    const cancel = el("button", {
+      class: "st-btn st-btn-quiet st-btn-small",
+      type: "button",
+      text: scanBusy ? "Stopping…" : "Cancel scan",
+      disabled: scanBusy,
+    });
+    cancel.addEventListener("click", () => { void cancelTextScan(); });
+    row.append(cancel);
+    return row;
+  }
+
+  function scanPrompt(state) {
+    const copy = {
+      missing: "Find the text burned into this video, then choose what to remove.",
+      cancelled: "The last text scan was cancelled, so no text has been found yet. Run it again.",
+      failed: "The last text scan failed. Try it again; your layers are unchanged.",
+      unconfirmed: "The text pass did not finish, so an empty result is unconfirmed. Run it again.",
+      empty: "No on-screen text was found in the last scan. Scan again if the video changed.",
+    }[state] || "Find on-screen text before removing it.";
+    const row = el("div", { class: "st-clean-scan" }, [
+      el("p", { class: "st-hint", text: copy }),
+    ]);
+    if (state === "failed" && report?.error) {
+      row.append(el("p", { class: "st-error", text: String(report.error) }));
+    }
+    row.append(el("div", { class: "st-clean-scan-actions" }, [
+      scanButton(state === "empty" ? "Scan again" : "Find text on screen"),
+      el("a", { class: "st-btn st-btn-quiet st-btn-small", href: "#/check", text: "Open Check" }),
+    ]));
+    return row;
+  }
+
+  function scanToolbar() {
+    const status = scanState();
+    if (status === "running") return scanProgressRow();
+    if (status === "missing" || status === "cancelled" || status === "failed" || status === "unconfirmed") {
+      return scanPrompt(status);
+    }
+    if (!(report?.tracklets || []).length) return scanPrompt("empty");
+    return autoCleanToolbar();
+  }
+
   function autoCleanToolbar() {
     const running = Boolean(autoState.busy);
     const editId = ctx.getEdit()?.id || "";
     const button = el("button", {
       class: "st-btn st-btn-quiet st-btn-small st-auto-clean-run",
       type: "button",
-      text: running ? "Removing detected text…" : "Remove all detected text",
+      text: running ? "Removing found text…" : "Remove all found text",
       disabled: running || !editId,
       "aria-busy": running ? "true" : "false",
       title: editId
@@ -738,11 +874,14 @@ export function mountCleanPanel(host, ctx) {
       }),
     ]);
     if (notice.scan) {
-      row.append(el("a", {
-        class: "st-btn st-btn-ghost st-btn-small",
-        href: "#/moments",
-        text: "Open Moments",
-      }));
+      row.append(el("div", { class: "st-clean-scan-actions" }, [
+        scanButton("Find text on screen"),
+        el("a", {
+          class: "st-btn st-btn-ghost st-btn-small",
+          href: "#/check",
+          text: "Open Check",
+        }),
+      ]));
     }
     return row;
   }
@@ -833,25 +972,15 @@ export function mountCleanPanel(host, ctx) {
     const current = ctx.getEdit()?.clean || [];
     const existing = new Set(current.map((layer) => layer.id));
     const full = current.length >= MAX_CLEAN;
+    const scan = scanState();
     const card = el("div", { class: "st-card st-check-card" });
-    card.append(el("h3", { text: "From Check" }));
+    card.append(el("h3", { text: "Text on screen" }));
 
-    if (!report) {
-      card.append(el("p", { class: "st-hint", text: "Run Check to list old text regions for this source." }));
-      const link = el("a", { class: "st-btn st-btn-ghost st-btn-small", href: "#/check", text: "Open Check" });
-      card.append(link);
-      return card;
+    if (scan === "running") return null;
+    if (scan === "missing" || scan === "cancelled" || scan === "failed" || scan === "unconfirmed") {
+      return null;
     }
-    if (pending) {
-      card.append(el("p", { class: "st-hint", text: report?.message || "Check is still running. Findings appear here when it finishes." }));
-      return card;
-    }
-    if (!tracklets.length) {
-      card.append(el("p", { class: "st-hint", text: report?.text?.confirmed
-        ? "No on-screen text was found."
-        : "The full text pass did not run. Check the frame yourself before publishing." }));
-      return card;
-    }
+    if (!tracklets.length) return null;
 
     card.append(el("p", { class: "st-hint", text: full
       ? `This edit already has ${MAX_CLEAN} clean layers, the most one story can hold. Remove one to add another.`
@@ -1230,10 +1359,10 @@ export function mountCleanPanel(host, ctx) {
     const selected = layers.find((layer) => layer.id === selectedId) || null;
 
     const head = el("div", { class: "st-card st-check-card" }, [
-      el("h3", { text: "Remove old text" }),
-      el("p", { class: "st-hint", text: "Remove interpolates nearby pixels; blur softens, cover plates and masks hide, and crop guard keeps the region out of the crop. Nothing invents missing pixels or removes platform watermarks." }),
+      el("h3", { text: "Remove text on screen" }),
+      el("p", { class: "st-hint", text: "Remove text burned into the video. AI fill rebuilds the background; Blur and Cover hide it. Check the result before you post." }),
     ]);
-    head.append(autoCleanToolbar());
+    head.append(scanToolbar());
     const autoStatus = autoCleanStatusNode();
     if (autoStatus) head.append(autoStatus);
     head.append(renderRights());
@@ -1246,7 +1375,8 @@ export function mountCleanPanel(host, ctx) {
     host.append(existingCard(selectedId));
     const editor = editorCard(selected, selectedId);
     if (editor) host.append(editor);
-    host.append(suggestionsCard());
+    const found = suggestionsCard();
+    if (found) host.append(found);
 
     if (!canClean() && report) {
       host.append(el("p", {
@@ -1290,6 +1420,7 @@ export function mountCleanPanel(host, ctx) {
       report = result.report;
       pending = Boolean(result.pending);
       loading = false;
+      loadError = "";
       void autoFill();
       if (disposed) return;
       render();

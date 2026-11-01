@@ -158,7 +158,7 @@ def test_auto_clean_404_asks_for_a_scan_and_keeps_other_errors_readable():
 def test_clean_panel_has_one_quiet_remove_all_action():
     clean = source("edit/layers/clean.js")
 
-    assert "Remove all detected text" in clean
+    assert "Remove all found text" in clean
     assert "st-btn st-btn-quiet st-btn-small st-auto-clean-run" in clean
     assert "disabled: running || !editId" in clean
     # The header action stays secondary.
@@ -195,3 +195,19 @@ def test_clean_panel_keeps_the_rights_gate_and_manual_add_box():
     assert "Adding is locked by the server rights policy." in clean
     assert 'text: "Add box"' in clean
     assert "manualLayer" in clean
+
+
+def test_clean_panel_can_start_and_cancel_a_text_scan_in_edit():
+    clean = source("edit/layers/clean.js")
+
+    assert "Find text on screen" in clean
+    assert "startTextScan" in clean
+    assert "cancelTextScan" in clean
+    assert 'method: "POST"' in clean
+    assert "/api/jobs/${encodeURIComponent(jobId)}/check" in clean
+    assert "/check/cancel" in clean
+    assert '"queued"' in clean and '"running"' in clean
+    assert "st-clean-scan" in clean
+    # A cancelled or missing pass is now a task, not a dead end.
+    assert 'cancelled: "The last text scan was cancelled' in clean
+    assert "Nothing invents missing pixels" not in clean
