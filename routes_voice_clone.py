@@ -1060,7 +1060,7 @@ def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileRespo
     cache.mkdir(parents=True, exist_ok=True)
     try:
         path = audio.voice_sample(
-            "heygen", voice_id, text, cache, rate=body.rate,
+            "heygen", voice_id, text, cache, rate=max(0.5, min(2.0, body.rate)),
             language=str(record.get("language") or ""),
         )
     except audio.AudioError as exc:

@@ -269,7 +269,7 @@ function playMine(item) {
     key,
     label: item.name || "this voice",
     pending: `Speaking the test line as ${item.name}…`,
-    start: () => playClone(item.voice_id, testLine),
+    start: () => playClone(item.voice_id, testLine, rate),
     entry: {
       kind: "clone",
       engine: "heygen",

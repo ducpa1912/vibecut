@@ -218,8 +218,8 @@ async function playSample(path, body) {
 }
 
 /** Speak a short line in a clone and play it. Resolves once playback starts. */
-export function playClone(voiceId, text = "") {
-  return playSample(`/api/voices/clones/${encodeURIComponent(voiceId)}/sample`, { text });
+export function playClone(voiceId, text = "", rate = 1) {
+  return playSample(`/api/voices/clones/${encodeURIComponent(voiceId)}/sample`, { text, rate });
 }
 
 /** Speak a short line in any voice on this machine. */

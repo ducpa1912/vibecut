@@ -253,7 +253,7 @@ function playSelection({ kind, engine = "", voice = "", id = "", label }) {
     key,
     label,
     pending: kind === "clone" ? `Speaking the test line as ${label}…` : `Making a sample of ${label}…`,
-    start: () => (kind === "clone" ? playClone(id, lineText) : playVoice(engine, voice, lineText, rate)),
+    start: () => (kind === "clone" ? playClone(id, lineText, rate) : playVoice(engine, voice, lineText, rate)),
     entry,
   });
 }
