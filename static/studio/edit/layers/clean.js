@@ -24,13 +24,13 @@ import {
   clamp,
   clone,
   formatSpan,
+  formatTime,
   numberOr,
   round,
 } from "../model.js";
 
 const CHECK_POLL_MS = 2500;
 const MAX_CLEAN = 32;
-const PREFILL_PREFIX = "vibecut.studio.clean.prefill.";
 const SCAN_REQUIRED = "Run Scan footage first.";
 
 // The status outlives one panel mount: selecting a new layer remounts the
@@ -121,10 +121,10 @@ async function fetchCheck(jobId) {
  * Handles are excluded. The server keeps the rights gate and the per-kind
  * refusals, and returns only the layers the saved Edit does not already hold.
  */
-export function autoCleanRequest(jobId, editId) {
+export function autoCleanRequest(jobId, editId, body = {}) {
   return request(
     `/api/jobs/${encodeURIComponent(jobId)}/edits/${encodeURIComponent(editId)}/auto-clean`,
-    { method: "POST", body: {} },
+    { method: "POST", body },
   );
 }
 
@@ -248,26 +248,6 @@ export function autoCleanFailure(error) {
     tone: "bad",
     scan: false,
   };
-}
-
-function prefillKey(jobId, storyRef, aspect) {
-  return `${PREFILL_PREFIX}${jobId}:${storyRef?.set_id || ""}:${storyRef?.story_id || ""}:${aspect || ""}`;
-}
-
-function readFlag(key) {
-  try {
-    return Boolean(localStorage.getItem(key));
-  } catch (_) {
-    return false;
-  }
-}
-
-function writeFlag(key) {
-  try {
-    localStorage.setItem(key, "1");
-  } catch (_) {
-    /* A private window may refuse storage; the fill still lands in the edit. */
-  }
 }
 
 function safeId(value) {
@@ -447,13 +427,23 @@ export function mountCleanPanel(host, ctx) {
   let loadError = "";
   let timer = 0;
   let loading = true;
-  let prefillBusy = false;
   let scanBusy = false;
   let policy = null;
   let policyError = "";
   let rightsBusy = false;
   let handleTicked = false;
   const autoState = autoCleanStateFor(jobId);
+  // P2 found-text list and AI fill preview.
+  let fillStatus = null;
+  let fillStatusError = "";
+  let removeMethod = "blur";
+  let fillMethod = "sttn";
+  let methodTouched = false;
+  let previewBusy = false;
+  let previewError = "";
+  let previewData = null;
+  let previewController = null;
+  const foundTicks = new Map();
 
   host.replaceChildren(el("p", { class: "st-hint", text: "Reading Check findings…" }));
 
@@ -575,77 +565,89 @@ export function mountCleanPanel(host, ctx) {
     return map;
   }
 
-  async function autoFill() {
-    const layers = ctx.getEdit()?.clean || [];
-    if (loading || prefillBusy || layers.length) return;
-    if (!report?.complete || report?.status !== "ready") return;
-    if (!report?.text?.present || !canClean()) return;
-    if (!jobId || readFlag(prefillKey(jobId, edit.story_ref, edit.aspect))) return;
-    const tracklets = trackletById();
-    const entries = (report.clean_prefill || []).filter((entry) => (
-      entry?.enabled
-      && entry.action !== "refused"
-      && !entry.blocked
-      && tracklets.has(String(entry.tracklet_id))
-    ));
-    if (!entries.length) return;
-    prefillBusy = true;
-    try {
-      // The server owns the one policy gate. It knows each tracklet's kind
-      // and refuses watermarks, screen text and un-attested handles. The
-      // browser sends the selected ids; it never builds the saved layers.
-      const selected = entries
-        .map((entry) => String(entry.tracklet_id))
-        .filter(Boolean);
-      if (!selected.length) return;
-      const result = await request(
-        `/api/jobs/${encodeURIComponent(jobId)}/cleanup/layers`,
-        {
-          method: "POST",
-          body: {
-            tracklet_ids: selected,
-            include_handles: false,
-          },
-        },
-      );
-      if (disposed) return;
-      const built = Array.isArray(result?.layers) ? result.layers : [];
-      const next = built.slice(0, MAX_CLEAN).map((layer) => clone(layer));
-      writeFlag(prefillKey(jobId, edit.story_ref, edit.aspect));
-      if (!next.length) {
-        ctx.notify(
-          `Check found ${formatCount(entries.length, "region")}, but the server policy allowed none. Review them in Check or place a box by hand.`,
-          "bad",
-        );
-        return;
+  function foundRows() {
+    const current = ctx.getEdit()?.clean || [];
+    const addedIds = new Set(
+      current.map((layer) => String(layer?.tracklet_id || "")).filter(Boolean),
+    );
+    const prefill = prefillByTracklet();
+    const full = current.length >= MAX_CLEAN;
+    const rows = [];
+    for (const tracklet of report?.tracklets || []) {
+      const id = String(tracklet?.id || "");
+      if (!id) continue;
+      const kind = String(tracklet?.kind || "");
+      const entry = prefill.get(id) || null;
+      const reasonCode = kindReason(kind);
+      const blocked = kind === "watermark" || reasonCode === "watermark";
+      const skipped = kind === "screen_text"
+        || reasonCode === "screen_text"
+        || entry?.action === "none"
+        || entry?.blocked === "screen_text";
+      const locked = !blocked && !skipped && Boolean(reasonCode);
+      const added = addedIds.has(id);
+      let reason = reasonText(kind, entry);
+      if (added) reason = "Already added to this moment.";
+      else if (full && !blocked && !skipped) {
+        reason = `This moment has ${MAX_CLEAN} text layers, the most it can hold.`;
       }
-      ctx.setClean(next);
-      syncCleanTab(next.length);
-      const refused = Array.isArray(result?.refused) ? result.refused.length : 0;
-      const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
-      const cap = next.length >= MAX_CLEAN
-        ? ` All ${MAX_CLEAN} cover slots are used. Remove one to add another.`
-        : "";
-      const more = entries.length > next.length
-        ? ` ${entries.length - next.length} more stay in Check.`
-        : "";
-      const held = refused ? ` ${formatCount(refused, "region")} stayed refused by the server policy.` : "";
-      const note = warnings.length ? ` ${warnings[0]}` : "";
-      ctx.notify(
-        `Filled ${formatCount(next.length, "cover")} from Check.${cap}${more}${held}${note}`,
-        next.length >= MAX_CLEAN ? "bad" : refused ? "" : "ok",
-      );
-    } catch (error) {
-      if (disposed) return;
-      ctx.notify(
-        error?.status === 404
-          ? (error?.message || "Clean auto-fill is off in this build. Add boxes by hand.")
-          : (error?.message || "The server could not build Clean covers for this story."),
-        "bad",
-      );
-    } finally {
-      prefillBusy = false;
+      const allowed = !blocked
+        && !skipped
+        && !locked
+        && !added
+        && !full
+        && canCleanKind(kind);
+      const ticked = foundTicks.has(id) ? Boolean(foundTicks.get(id)) : allowed;
+      rows.push({
+        id,
+        tracklet,
+        kind,
+        entry,
+        box: tracklet?.box && typeof tracklet.box === "object" ? tracklet.box : null,
+        text: String(tracklet?.text_sample || "").trim() || "No words read",
+        time: rangeSummary(tracklet?.ranges),
+        reason,
+        blocked: blocked || skipped,
+        locked,
+        added,
+        allowed,
+        ticked,
+      });
     }
+    return rows;
+  }
+
+  function tickedFoundRows() {
+    return foundRows().filter((row) => row.allowed && row.ticked);
+  }
+
+  function setFoundTicked(id, value) {
+    foundTicks.set(String(id), Boolean(value));
+    render();
+  }
+
+  function setAllFoundTicked(value) {
+    for (const row of foundRows()) {
+      if (row.allowed) foundTicks.set(row.id, Boolean(value));
+    }
+    render();
+  }
+
+  function pushFoundToPreview(rows) {
+    if (!ctx.setFoundText) return;
+    ctx.setFoundText(
+      rows
+        .filter((row) => row.box && !row.added)
+        .map((row) => ({
+          id: row.id,
+          box: { ...row.box },
+          ranges: Array.isArray(row.tracklet?.ranges) ? row.tracklet.ranges : [],
+          text: row.text,
+          kind: row.kind,
+          ticked: row.ticked,
+          blocked: row.blocked,
+        })),
+    );
   }
 
   function syncCleanTab(count) {
@@ -677,17 +679,44 @@ export function mountCleanPanel(host, ctx) {
       render();
       return;
     }
+    const ticked = tickedFoundRows();
+    if (!ticked.length) {
+      autoState.notice = {
+        text: "Tick at least one found text region first.",
+        tone: "bad",
+        scan: false,
+      };
+      render();
+      return;
+    }
+    if (removeMethod === "ai" && !fillReady(fillMethod)) {
+      autoState.notice = {
+        text: fillStatusError || "The AI fill model is not available. Choose Blur or Cover.",
+        tone: "bad",
+        scan: false,
+      };
+      render();
+      return;
+    }
     autoState.busy = true;
     autoState.notice = null;
     render();
     try {
-      const result = await autoCleanRequest(activeJob, currentEdit.id);
+      const result = await autoCleanRequest(activeJob, currentEdit.id, {
+        include_handles: false,
+        tracklet_ids: ticked.map((row) => row.id),
+        method: removeMethod,
+        fill_method: fillMethod,
+      });
       if (disposed) {
         autoState.busy = false;
         return;
       }
       const merged = mergeAutoCleanLayers(ctx.getEdit()?.clean || [], result?.layers);
       const first = merged.added[0]?.id || "";
+      for (const layer of merged.added) {
+        if (layer.tracklet_id) foundTicks.delete(String(layer.tracklet_id));
+      }
       if (merged.added.length) ctx.setClean(merged.layers);
       const summary = autoCleanSummary({
         ...(result && typeof result === "object" ? result : {}),
@@ -746,8 +775,6 @@ export function mountCleanPanel(host, ctx) {
       if (pending) {
         stopPoll();
         timer = window.setTimeout(() => { void load(); }, CHECK_POLL_MS);
-      } else {
-        void autoFill();
       }
     } catch (error) {
       if (disposed) return;
@@ -839,24 +866,92 @@ export function mountCleanPanel(host, ctx) {
       return scanPrompt(status);
     }
     if (!(report?.tracklets || []).length) return scanPrompt("empty");
-    return autoCleanToolbar();
+    return el("p", {
+      class: "st-hint",
+      text: `${formatCount(report.tracklets.length, "text region")} found. Review and tick them below.`,
+    });
   }
 
   function autoCleanToolbar() {
     const running = Boolean(autoState.busy);
     const editId = ctx.getEdit()?.id || "";
+    const rows = foundRows();
+    const ticked = rows.filter((row) => row.allowed && row.ticked);
+    const aiReady = Boolean(firstFillMethod());
+    const method = el("select", {
+      class: "st-found-method",
+      "aria-label": "Remove text with",
+      disabled: running || !editId,
+    }, [
+      el("option", {
+        value: "ai",
+        text: aiReady
+          ? "AI fill"
+          : fillStatusError ? "AI fill (status unavailable)" : "AI fill (model missing)",
+        selected: removeMethod === "ai",
+        disabled: !aiReady,
+      }),
+      el("option", { value: "blur", text: "Blur", selected: removeMethod === "blur" }),
+      el("option", { value: "cover", text: "Cover", selected: removeMethod === "cover" }),
+    ]);
+    method.addEventListener("change", () => {
+      methodTouched = true;
+      removeMethod = ["ai", "blur", "cover"].includes(method.value) ? method.value : "blur";
+      previewData = null;
+      previewError = "";
+      render();
+    });
+    const controls = [
+      el("label", { class: "st-found-method-wrap" }, [
+        el("span", { text: "Remove with" }),
+        method,
+      ]),
+    ];
+    if (removeMethod === "ai" && aiReady) {
+      const engine = el("select", {
+        class: "st-found-engine",
+        "aria-label": "AI fill engine",
+        disabled: running || !editId,
+      }, Object.entries(fillStatus?.methods || {})
+        .filter(([, value]) => value?.ready)
+        .map(([id, value]) => el("option", {
+          value: id,
+          text: value.label || id,
+          selected: fillMethod === id,
+        })));
+      engine.addEventListener("change", () => {
+        fillMethod = engine.value;
+        previewData = null;
+        previewError = "";
+        render();
+      });
+      controls.push(el("label", { class: "st-found-method-wrap" }, [
+        el("span", { text: "Engine" }),
+        engine,
+      ]));
+    }
     const button = el("button", {
-      class: "st-btn st-btn-quiet st-btn-small st-auto-clean-run",
+      class: "st-btn st-btn-ghost st-btn-small st-auto-clean-run",
       type: "button",
       text: running ? "Removing found text…" : "Remove all found text",
-      disabled: running || !editId,
+      disabled: running || !editId || !ticked.length,
       "aria-busy": running ? "true" : "false",
-      title: editId
-        ? "Add every Clean layer Check found for this Edit. Regions already covered stay as they are."
-        : "Open an Edit to remove detected text.",
+      title: !editId
+        ? "Open an Edit to remove detected text."
+        : !ticked.length
+          ? "Tick at least one found text region first."
+          : `Remove ${ticked.length} ticked ${ticked.length === 1 ? "region" : "regions"} with ${removeMethod === "ai" ? "AI fill" : removeMethod}.`,
     });
     button.addEventListener("click", () => { void runAutoClean(); });
-    return el("div", { class: "st-layer-foot st-clean-toolbar", style: "margin-top:9px" }, [button]);
+    controls.push(button);
+    const wrap = el("div", { class: "st-found-actions st-clean-toolbar" }, controls);
+    if (removeMethod === "ai" && !aiReady) {
+      wrap.append(el("p", {
+        class: "st-found-note",
+        text: fillStatusError || "AI fill needs its model in the fill models folder. Blur and Cover work without it.",
+      }));
+    }
+    return wrap;
   }
 
   function autoCleanStatusNode() {
@@ -884,6 +979,148 @@ export function mountCleanPanel(host, ctx) {
       ]));
     }
     return row;
+  }
+
+  function cancelFillPreview() {
+    if (previewController) previewController.abort();
+    previewController = null;
+    previewBusy = false;
+    render();
+  }
+
+  async function startFillPreview() {
+    if (previewBusy) {
+      cancelFillPreview();
+      return;
+    }
+    const currentEdit = ctx.getEdit();
+    if (!jobId || !currentEdit?.id) {
+      previewError = "Open an Edit before previewing the fill.";
+      render();
+      return;
+    }
+    const controller = new AbortController();
+    previewController = controller;
+    previewBusy = true;
+    previewError = "";
+    previewData = null;
+    render();
+    try {
+      if (ctx.save) await ctx.save();
+      const result = await request(
+        `/api/jobs/${encodeURIComponent(jobId)}/edits/${encodeURIComponent(currentEdit.id)}/fill-preview`,
+        {
+          method: "POST",
+          body: { t: ctx.getPlayhead(), method: "lama" },
+          signal: controller.signal,
+        },
+      );
+      if (disposed || controller.signal.aborted) return;
+      previewData = result && typeof result === "object" ? result : null;
+    } catch (error) {
+      if (!disposed && !controller.signal.aborted) {
+        previewError = error?.message || "Could not preview this frame.";
+      }
+    } finally {
+      if (previewController === controller) previewController = null;
+      previewBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function fillCompare(data) {
+    const stage = el("div", { class: "st-fill-compare-stage" });
+    const before = el("img", {
+      class: "st-fill-before",
+      src: data.before,
+      alt: "Before the AI fill",
+    });
+    const after = el("img", {
+      class: "st-fill-after",
+      src: data.after,
+      alt: "After the AI fill",
+    });
+    const divider = el("i", { class: "st-fill-divider", "aria-hidden": "true" });
+    stage.append(before, after, divider);
+    const slider = el("input", {
+      class: "st-fill-slider",
+      type: "range",
+      min: "0",
+      max: "100",
+      value: "50",
+      "aria-label": "Compare before and after the AI fill",
+    });
+    const apply = (value) => {
+      const position = Math.max(0, Math.min(100, Number(value) || 0));
+      after.style.clipPath = `inset(0 0 0 ${position}%)`;
+      divider.style.left = `${position}%`;
+    };
+    slider.addEventListener("input", () => apply(slider.value));
+    apply(50);
+    return el("div", { class: "st-fill-compare" }, [
+      el("div", { class: "st-fill-compare-head" }, [
+        el("span", { class: "st-fill-badge", text: "Before" }),
+        el("span", { class: "st-hint", text: "LaMa · one frame" }),
+        el("span", { class: "st-fill-badge st-fill-badge-after", text: "After" }),
+      ]),
+      stage,
+      slider,
+      el("p", {
+        class: "st-hint",
+        text: data.time !== undefined
+          ? `One frame at ${formatTime(data.time)}. The full render fills every frame.`
+          : "One frame. The full render fills every frame.",
+      }),
+    ]);
+  }
+
+  function fillPreviewSection() {
+    if (removeMethod !== "ai") return null;
+    const fills = (ctx.getEdit()?.clean || []).filter((layer) => layer?.kind === "fill");
+    const wrap = el("div", { class: "st-fill-preview" });
+    const head = el("div", { class: "st-fill-preview-head" }, [
+      el("strong", { text: "Preview this frame" }),
+      el("span", { class: "st-hint", text: fillStatus?.preview ? "LaMa · one frame" : "LaMa model needed" }),
+    ]);
+    const button = el("button", {
+      class: `st-btn st-btn-small ${previewBusy ? "st-btn-ghost" : "st-btn-ghost"} st-fill-preview-run`,
+      type: "button",
+      text: previewBusy ? "Cancel preview" : previewData ? "Preview again" : "Preview this frame",
+      disabled: !previewBusy && (!fillStatus?.preview || !fills.length),
+      title: !fills.length
+        ? "Remove ticked text with AI fill first."
+        : !fillStatus?.preview
+          ? "Put the LaMa fill model on this Mac to preview a frame."
+          : "Fill the current frame with LaMa and compare before and after.",
+    });
+    button.addEventListener("click", () => { void startFillPreview(); });
+    head.append(button);
+    wrap.append(head);
+    if (!fills.length) {
+      wrap.append(el("p", {
+        class: "st-hint",
+        text: "Remove the ticked text with AI fill first, then preview one frame here.",
+      }));
+    }
+    if (previewBusy) {
+      wrap.append(el("p", { class: "st-hint", text: "Filling one frame with LaMa… this can take a few seconds." }));
+    }
+    if (previewError) wrap.append(el("p", { class: "st-error", text: previewError }));
+    if (previewData) {
+      wrap.append(fillCompare(previewData));
+      const close = el("button", {
+        class: "st-btn st-btn-quiet st-btn-small",
+        type: "button",
+        text: "Close preview",
+      });
+      close.addEventListener("click", () => {
+        previewData = null;
+        previewError = "";
+        render();
+      });
+      wrap.append(close);
+    }
+    return wrap;
   }
 
   function renderRights() {
@@ -966,105 +1203,95 @@ export function mountCleanPanel(host, ctx) {
     return card;
   }
 
-  function suggestionsCard() {
-    const tracklets = report?.tracklets || [];
-    const prefill = prefillByTracklet();
-    const current = ctx.getEdit()?.clean || [];
-    const existing = new Set(current.map((layer) => layer.id));
-    const full = current.length >= MAX_CLEAN;
-    const scan = scanState();
-    const card = el("div", { class: "st-card st-check-card" });
-    card.append(el("h3", { text: "Text on screen" }));
-
-    if (scan === "running") return null;
-    if (scan === "missing" || scan === "cancelled" || scan === "failed" || scan === "unconfirmed") {
-      return null;
-    }
-    if (!tracklets.length) return null;
-
-    card.append(el("p", { class: "st-hint", text: full
-      ? `This edit already has ${MAX_CLEAN} clean layers, the most one story can hold. Remove one to add another.`
-      : "Each region can become one Clean layer. The box and times stay in source coordinates." }));
-    const list = el("div", { class: "st-layer-list", style: "margin-top:9px" });
-    let shown = 0;
-    for (const tracklet of tracklets.slice(0, 40)) {
-      const kind = String(tracklet?.kind || "");
-      const reasonCode = kindReason(kind);
-      const blocked = kind === "watermark" || reasonCode === "watermark";
-      const entry = prefill.get(String(tracklet.id)) || null;
-      const candidates = layersFromEntry(
-        entry || {}, tracklet, current.length, report?.source,
-      );
-      const missing = candidates.filter((layer) => !existing.has(layer.id));
-      const added = missing.length === 0;
-      const wouldOverflow = current.length + missing.length > MAX_CLEAN;
-      const skipped = kind === "screen_text"
-        || reasonCode === "screen_text"
-        || entry?.action === "none"
-        || entry?.blocked === "screen_text";
-      const locked = !blocked && !skipped && Boolean(reasonCode);
-      if (added && !blocked && !skipped) continue;
-      if (full && !blocked && !skipped) continue;
-      shown += 1;
-      // The policy reason is the server's. The prefill sentence is used where
-      // the server supplied one; the code is humanised otherwise.
-      const reason = reasonText(kind, entry);
-      const actionLabel = blocked
-        ? "Never cleaned"
-        : skipped
-          ? "Never cleaned"
-          : (KIND_COPY[candidates[0]?.kind] || "Cover");
-      const button = el("button", {
-        class: "st-btn st-btn-ghost st-btn-small",
-        type: "button",
-        text: added ? "Added" : blocked || skipped ? "Never" : "Add",
-        disabled: blocked || skipped || added || locked || !canCleanKind(kind) || full || wouldOverflow,
-        title: reason || `Add a ${actionLabel.toLowerCase()} for this region.`,
-        style: "flex:0 0 auto;white-space:nowrap",
-      });
-      button.dataset.reason = reasonCode || "";
-      button.addEventListener("click", () => {
-        const layers = (ctx.getEdit()?.clean || []).slice();
-        const next = candidates.filter((layer) => !layers.some((item) => item.id === layer.id));
-        if (!next.length) return;
-        layers.push(...next.map((layer) => clone(layer)));
-        ctx.setClean(layers.slice(0, MAX_CLEAN));
-        ctx.notify(
-          candidates.length > 1
-            ? "Blur and cover plate added from Check."
-            : `${KIND_COPY[candidates[0]?.kind] || "Cover"} added from Check.`,
-          "ok",
-        );
-        ctx.select("clean", candidates[0]?.id || "");
-      });
-
-      const row = el("div", { class: "st-layer-row st-layer-row-static", style: "align-items:flex-start" }, [
+  function foundRowNode(row) {
+    const checkbox = el("input", {
+      type: "checkbox",
+      class: "st-found-tick",
+      checked: row.ticked,
+      disabled: !row.allowed,
+      "aria-label": row.allowed
+        ? `Remove ${row.text}`
+        : `${row.text} is not removed`,
+    });
+    checkbox.addEventListener("change", () => {
+      setFoundTicked(row.id, checkbox.checked);
+    });
+    const thumb = el("img", {
+      class: "st-found-thumb",
+      src: `/api/jobs/${encodeURIComponent(jobId)}/check/tracklets/${encodeURIComponent(row.id)}/thumb?ts=${encodeURIComponent(String(report?.created || report?.generated || ""))}`,
+      alt: "",
+      loading: "lazy",
+    });
+    thumb.addEventListener("error", () => thumb.classList.add("is-missing"));
+    const chip = row.added
+      ? "Added"
+      : row.blocked
+        ? "Never removed"
+        : TRACKLET_LABELS[row.kind] || "Text";
+    const copy = el("div", { class: "st-found-copy" }, [
+      el("div", { class: "st-found-line" }, [
+        el("strong", { text: row.text }),
         el("span", {
-          class: `st-chip${blocked ? " st-chip-bad" : kind === "handle_or_logo" || locked ? " st-chip-busy" : ""}`,
-          text: TRACKLET_LABELS[kind] || "Text",
-          title: reason || "",
-          dataset: { reason: reasonCode || "" },
+          class: `st-found-chip${row.blocked ? " is-never" : row.added ? " is-added" : ""}`,
+          text: chip,
         }),
-        el("span", { class: "st-layer-name" }, [
-          el("strong", { text: tracklet?.text_sample || "No words read", style: "display:block;color:var(--st-text);font-weight:500" }),
-          el("small", { text: `${rangeSummary(tracklet?.ranges)}${reason ? ` · ${reason}` : ""}` }),
-        ]),
-        button,
-      ]);
-      list.append(row);
+      ]),
+      el("small", { text: row.time }),
+      row.reason ? el("small", { class: "st-found-reason", text: row.reason }) : null,
+    ]);
+    const node = el("div", {
+      class: `st-found-row${row.ticked ? " is-ticked" : ""}${row.added ? " is-added" : ""}${row.blocked ? " is-blocked" : ""}`,
+      role: "listitem",
+      dataset: { id: row.id, kind: row.kind, reason: row.reason || "" },
+    }, [checkbox, thumb, copy]);
+    if (row.allowed) {
+      node.addEventListener("click", (event) => {
+        if (event.target.closest("input")) return;
+        setFoundTicked(row.id, !row.ticked);
+      });
     }
-    if (!shown) {
-      card.append(el("p", {
-        class: "st-hint",
-        text: full
-          ? `The ${MAX_CLEAN} cover slots are used. Remove a layer above to add another region.`
-          : `All ${tracklets.length} Check ${tracklets.length === 1 ? "region is" : "regions are"} covered. Review them in the layer list above.`,
-      }));
-      return card;
+    return node;
+  }
+
+  function suggestionsCard() {
+    const scan = scanState();
+    const rows = scan === "ready" ? foundRows() : [];
+    pushFoundToPreview(rows);
+    if (scan !== "ready" || !rows.length) return null;
+    const allowed = rows.filter((row) => row.allowed);
+    const ticked = rows.filter((row) => row.allowed && row.ticked);
+    const allTicked = allowed.length > 0 && allowed.every((row) => row.ticked);
+    const card = el("div", { class: "st-card st-check-card st-found-card" });
+    const toggle = allowed.length ? el("button", {
+      class: "st-btn st-btn-quiet st-btn-small st-found-select-all",
+      type: "button",
+      text: allTicked ? "Clear ticks" : "Select all",
+    }) : null;
+    if (toggle) {
+      toggle.addEventListener("click", () => setAllFoundTicked(!allTicked));
     }
+    card.append(el("div", { class: "st-found-head" }, [
+      el("div", { class: "st-found-heading" }, [
+        el("h3", { text: "Found on screen" }),
+        el("span", { class: "st-chip st-chip-quiet", text: `${rows.length}` }),
+      ]),
+      toggle,
+    ]));
+    card.append(el("p", {
+      class: "st-hint",
+      text: `${formatCount(ticked.length, "region")} ticked. AI fill rebuilds the background; Blur and Cover hide the text.`,
+    }));
+    const list = el("div", { class: "st-found-list", role: "list" });
+    for (const row of rows.slice(0, 40)) list.append(foundRowNode(row));
     card.append(list);
-    if (tracklets.length > 40) card.append(el("p", { class: "st-hint", text: `Showing 40 of ${tracklets.length}.` }));
-    if (tracklets.length > shown) card.append(el("p", { class: "st-hint", text: `${tracklets.length - shown} already covered ${tracklets.length - shown === 1 ? "region is" : "regions are"} hidden here.` }));
+    if (rows.length > 40) {
+      card.append(el("p", { class: "st-hint", text: `Showing 40 of ${rows.length} found regions.` }));
+    }
+    card.append(autoCleanToolbar());
+    const status = autoCleanStatusNode();
+    if (status) card.append(status);
+    const preview = fillPreviewSection();
+    if (preview) card.append(preview);
     return card;
   }
 
@@ -1353,6 +1580,7 @@ export function mountCleanPanel(host, ctx) {
   }
 
   function render() {
+    const scrollTop = host.scrollTop;
     host.replaceChildren();
     const selectedId = ctx.getSelectedId("clean");
     const layers = ctx.getEdit()?.clean || [];
@@ -1363,8 +1591,6 @@ export function mountCleanPanel(host, ctx) {
       el("p", { class: "st-hint", text: "Remove text burned into the video. AI fill rebuilds the background; Blur and Cover hide it. Check the result before you post." }),
     ]);
     head.append(scanToolbar());
-    const autoStatus = autoCleanStatusNode();
-    if (autoStatus) head.append(autoStatus);
     head.append(renderRights());
     if (loadError) head.append(el("p", { class: "st-error", text: loadError }));
     host.append(head);
@@ -1372,11 +1598,11 @@ export function mountCleanPanel(host, ctx) {
     const warnings = renderWarnings();
     if (warnings) host.append(warnings);
 
+    const found = suggestionsCard();
+    if (found) host.append(found);
     host.append(existingCard(selectedId));
     const editor = editorCard(selected, selectedId);
     if (editor) host.append(editor);
-    const found = suggestionsCard();
-    if (found) host.append(found);
 
     if (!canClean() && report) {
       host.append(el("p", {
@@ -1386,10 +1612,39 @@ export function mountCleanPanel(host, ctx) {
           : (policyError || "Reading the rights policy…"),
       }));
     }
+    host.scrollTop = scrollTop;
   }
 
-  async function loadPolicy() {
-    if (!jobId) return;
+  function fillReady(method) {
+    return Boolean(fillStatus?.methods?.[method]?.ready);
+  }
+
+  function firstFillMethod() {
+    const methods = fillStatus?.methods || {};
+    if (fillStatus?.default && methods[fillStatus.default]?.ready) return fillStatus.default;
+    return ["sttn", "lama"].find((method) => methods[method]?.ready) || "";
+  }
+
+  async function loadFillStatus() {
+    try {
+      const status = await request("/api/fill/status");
+      if (disposed) return;
+      fillStatus = status && typeof status === "object" ? status : null;
+      fillStatusError = "";
+      const first = firstFillMethod();
+      if (!methodTouched) removeMethod = first ? "ai" : "blur";
+      if (removeMethod === "ai" && !first) removeMethod = "blur";
+      if (first && (!methodTouched || !fillReady(fillMethod))) fillMethod = first;
+      render();
+    } catch (error) {
+      if (disposed) return;
+      fillStatusError = error?.message || "Could not check the AI fill models.";
+      if (!methodTouched) removeMethod = "blur";
+      render();
+    }
+  }
+
+  async function loadPolicy() {    if (!jobId) return;
     try {
       const loaded = await getJob(jobId);
       if (disposed) return;
@@ -1421,7 +1676,6 @@ export function mountCleanPanel(host, ctx) {
       pending = Boolean(result.pending);
       loading = false;
       loadError = "";
-      void autoFill();
       if (disposed) return;
       render();
       if (pending) {
@@ -1435,10 +1689,13 @@ export function mountCleanPanel(host, ctx) {
     }
   }
 
+  void loadFillStatus();
   void load();
 
   return () => {
     disposed = true;
     stopPoll();
+    if (previewController) previewController.abort();
+    if (ctx.setFoundText) ctx.setFoundText([]);
   };
 }

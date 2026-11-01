@@ -358,3 +358,36 @@ def test_studio_clean_panel_offers_ai_fill():
     assert 'fill: "AI fill"' in model
     assert '["sttn",' in clean and '["lama",' in clean
     assert "Use AI fill for all" in clean
+
+
+# --- single-frame preview --------------------------------------------------
+
+def test_fill_frame_runs_lama_one_frame_and_leaves_the_rest_alone(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIBECUT_FILL_MODELS", raising=False)
+    models = textfill.models_dir(tmp_path)
+    models.mkdir(parents=True)
+    (models / "lama_fp32.onnx").write_bytes(b"model")
+
+    class FakeFiller:
+        def fill(self, area, hole):
+            out = area.copy()
+            out[hole] = np.array([0, 255, 0], dtype=np.uint8)
+            return out
+
+    monkeypatch.setattr(textfill, "_filler", lambda method, path: FakeFiller())
+    frame = np.zeros((100, 200, 3), dtype=np.uint8)
+    rects = [(20, 70, 180, 90)]
+    out = textfill.fill_frame(frame, rects, data_root=tmp_path)
+
+    assert out.shape == frame.shape
+    assert np.array_equal(out[:60], frame[:60])
+    assert (out[70:90, 20:180] == np.array([0, 255, 0])).any()
+    with pytest.raises(textfill.FillError):
+        textfill.fill_frame(frame, rects, data_root=tmp_path, method="sttn")
+
+
+def test_fill_frame_names_the_missing_lama_model(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIBECUT_FILL_MODELS", raising=False)
+    frame = np.zeros((40, 40, 3), dtype=np.uint8)
+    with pytest.raises(textfill.FillError, match="LaMa"):
+        textfill.fill_frame(frame, [(5, 20, 30, 30)], data_root=tmp_path)

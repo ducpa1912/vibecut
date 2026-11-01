@@ -159,7 +159,7 @@ def test_clean_panel_has_one_quiet_remove_all_action():
     clean = source("edit/layers/clean.js")
 
     assert "Remove all found text" in clean
-    assert "st-btn st-btn-quiet st-btn-small st-auto-clean-run" in clean
+    assert "st-btn st-btn-ghost st-btn-small st-auto-clean-run" in clean
     assert "disabled: running || !editId" in clean
     # The header action stays secondary.
     index = clean.index("st-auto-clean-run")
@@ -211,3 +211,26 @@ def test_clean_panel_can_start_and_cancel_a_text_scan_in_edit():
     # A cancelled or missing pass is now a task, not a dead end.
     assert 'cancelled: "The last text scan was cancelled' in clean
     assert "Nothing invents missing pixels" not in clean
+
+
+@needs_node
+def test_auto_clean_sends_the_ticked_ids_and_chosen_method():
+    out = run_module("edit/layers/clean.js", FETCH_STUB + """
+        await m.autoCleanRequest("job 1", "edit/2", {
+          include_handles: false,
+          tracklet_ids: ["trk_a", "trk_b"],
+          method: "ai",
+          fill_method: "lama",
+        });
+        return calls;
+    """)
+
+    assert len(out) == 1
+    call = out[0]
+    assert call["method"] == "POST"
+    assert json.loads(call["body"]) == {
+        "include_handles": False,
+        "tracklet_ids": ["trk_a", "trk_b"],
+        "method": "ai",
+        "fill_method": "lama",
+    }

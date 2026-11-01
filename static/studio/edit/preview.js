@@ -56,6 +56,7 @@ export function mountPreview(root, options = {}) {
     showSafeZones: true,
     selected: null,
     hiddenLayers: new Set(),
+    foundText: [],
     tool: "select",
     jobId: options.jobId || "",
   };
@@ -399,6 +400,55 @@ export function mountPreview(root, options = {}) {
     ctx.restore();
   }
 
+  function foundRects() {
+    if (!state.foundText.length) return [];
+    const added = new Set(
+      (state.edit?.clean || [])
+        .map((layer) => String(layer?.tracklet_id || ""))
+        .filter(Boolean),
+    );
+    const crop = currentCrop();
+    const time = sourceTime();
+    return state.foundText
+      .filter((row) => row?.box && !added.has(String(row.id || "")))
+      .map((row) => ({
+        row,
+        frame: boxToFrame(row.box, crop),
+        active: layerActive({ ranges: row.ranges || [] }, time),
+      }));
+  }
+
+  function drawFoundBoxes(width, height) {
+    for (const item of foundRects()) {
+      if (!item.active) continue;
+      const clipped = visibleRect(item.frame);
+      if (!clipped) continue;
+      const rect = pxRect(clipped, width, height);
+      const colour = item.row.blocked
+        ? "#77777f"
+        : item.row.ticked ? "#e8a266" : "#7b9bb8";
+      ctx.save();
+      ctx.globalAlpha = item.row.blocked ? 0.5 : item.row.ticked ? 0.95 : 0.7;
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = Math.max(2, width * 0.0024);
+      ctx.setLineDash([Math.max(5, width * 0.007), Math.max(4, width * 0.005)]);
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      if (item.row.ticked && !item.row.blocked) {
+        const label = String(item.row.text || "Text").slice(0, 34);
+        ctx.font = `600 ${Math.max(16, Math.round(width * 0.022))}px ui-sans-serif, -apple-system, sans-serif`;
+        const labelWidth = Math.min(rect.w, ctx.measureText(label).width + 16);
+        const labelY = Math.max(0, rect.y - Math.max(22, width * 0.034));
+        ctx.fillStyle = "rgba(10, 10, 12, 0.8)";
+        ctx.fillRect(rect.x, labelY, labelWidth, Math.max(20, width * 0.032));
+        ctx.fillStyle = "#f1efe9";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(label, rect.x + 8, labelY + 4);
+      }
+      ctx.restore();
+    }
+  }
+
   function drawCleanBoxes(width, height) {
     const rects = cleanRects();
     const handle = Math.max(18, Math.round(width * 0.02));
@@ -548,6 +598,7 @@ export function mountPreview(root, options = {}) {
     }
 
     drawSafeZones(width, height);
+    drawFoundBoxes(width, height);
     drawCleanBoxes(width, height);
     drawSelection(width, height);
     drawDrawPreview(width, height);
@@ -875,7 +926,7 @@ export function mountPreview(root, options = {}) {
   }
 
   function setData({
-    aspect, edit, captions, duration, selected, jobId, job, story, hiddenLayers,
+    aspect, edit, captions, duration, selected, jobId, job, story, hiddenLayers, foundText,
   } = {}) {
     if (jobId && jobId !== state.jobId) {
       state.jobId = jobId;
@@ -888,6 +939,9 @@ export function mountPreview(root, options = {}) {
     if (story !== undefined) state.story = story;
     if (hiddenLayers !== undefined) {
       state.hiddenLayers = hiddenLayers instanceof Set ? hiddenLayers : new Set(hiddenLayers || []);
+    }
+    if (foundText !== undefined) {
+      state.foundText = Array.isArray(foundText) ? foundText : [];
     }
     if (captions !== undefined) state.captions = captions;
     if (selected !== undefined) state.selected = selected;
@@ -1146,6 +1200,10 @@ export function mountPreview(root, options = {}) {
     setTool,
     setHiddenLayers(hidden) {
       state.hiddenLayers = hidden instanceof Set ? hidden : new Set(hidden || []);
+      draw();
+    },
+    setFoundText(found) {
+      state.foundText = Array.isArray(found) ? found : [];
       draw();
     },
     setTime,

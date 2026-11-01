@@ -119,6 +119,8 @@ export function mount(root, ctx) {
     // Preview-only hide toggles. Clean layers have no `hidden` field on the
     // server, and hiding a layer in the editor should never change the render.
     hiddenLayers: new Set(),
+    // Check tracklets shown on the preview before they become Clean layers.
+    foundText: [],
     dirty: new Set(),
     revisions: {},
     // R2 atomic trim: the GET payload, the last receipt and its undo token.
@@ -1014,6 +1016,7 @@ export function mount(root, ctx) {
       job: state.job,
       story: state.story,
       hiddenLayers: state.hiddenLayers,
+      foundText: state.foundText,
     });
   }
 
@@ -1043,12 +1046,18 @@ export function mount(root, ctx) {
 
   function renderInspector() {
     if (!dom.inspectorBody) return;
+    const scrollTop = dom.inspectorBody.scrollTop;
     const panelCtx = {
       getEdit: () => state.edit,
       getCaptions: () => state.captions,
       getStory: () => state.story,
       getDuration: () => state.duration,
       getPlayhead: () => state.playhead,
+      save: () => saveNow(),
+      setFoundText: (rows) => {
+        state.foundText = Array.isArray(rows) ? rows : [];
+        preview?.setFoundText(state.foundText);
+      },
       getSelectedId: (kind) => (state.selected?.kind === kind ? state.selected.id : ""),
       // Hooks carry the R2 `story_start` pin only once the trim route exists,
       // so an older server keeps accepting the layout anchor.
@@ -1170,6 +1179,7 @@ export function mount(root, ctx) {
       captions: state.captions,
       panelCtx,
     });
+    dom.inspectorBody.scrollTop = scrollTop;
   }
 
   function layerCrop() {
@@ -1542,6 +1552,7 @@ export function mount(root, ctx) {
     if (!state.job || !state.set || !state.story) return;
     state.selected = null;
     state.hiddenLayers.clear();
+    state.foundText = [];
     state.playhead = Math.min(state.playhead, Math.max(0.1, state.duration));
     setSaveStatus("Opening moment…", "busy");
     notify("");

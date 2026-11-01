@@ -375,3 +375,178 @@ def test_only_text_on_screen_during_the_moment_is_added(env):
     assert body["layers"][0]["ranges"] == [{"start": 2.0, "end": 5.0}, {"start": 7.0, "end": 8.0}]
     assert {"tracklet_id": "trk_out", "kind": "title",
             "reason": "This text is not on screen during this moment."} in body["skipped"]
+
+
+# ---------------------------------------------------------------- P2 method picker
+
+
+def test_remove_all_uses_only_the_ticked_tracklets(env):
+    detect.write_report(env.directory, _report([
+        _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
+        _tracklet("trk_title", "title", {"x": 0.1, "y": 0.2, "w": 0.8, "h": 0.18}),
+    ]))
+
+    body = _call(env, tracklet_ids=["trk_title"]).json()
+
+    assert [layer["tracklet_id"] for layer in body["layers"]] == ["trk_title"]
+    assert body["added"] == 1
+
+
+def test_remove_all_can_choose_ai_fill_blur_or_cover(env):
+    detect.write_report(env.directory, _report([
+        _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
+    ]))
+
+    ai = _call(env, method="ai", fill_method="lama").json()["layers"][0]
+    assert ai["kind"] == "fill" and ai["method"] == "lama"
+    assert ai["tracklet_id"] == "trk_sub"
+
+    blur = _call(env, method="blur").json()["layers"][0]
+    assert blur["kind"] == "blur"
+
+    cover = _call(env, method="cover").json()["layers"][0]
+    assert cover["kind"] == "plate"
+
+
+def test_an_unknown_clean_method_is_rejected(env):
+    detect.write_report(env.directory, _report([]))
+
+    response = _call(env, method="magic")
+
+    assert response.status_code == 422
+    assert "method" in response.json()["detail"]
+
+
+def test_fill_status_reports_the_models_on_this_machine(env):
+    missing = env.client.get("/api/fill/status")
+    assert missing.status_code == 200
+    body = missing.json()
+    assert body["methods"]["sttn"]["ready"] is False
+    assert body["methods"]["lama"]["ready"] is False
+    assert body["default"] is None and body["preview"] is None
+
+    models = env.data / "models" / "fill"
+    models.mkdir(parents=True)
+    (models / "lama_fp32.onnx").write_bytes(b"model")
+    ready = env.client.get("/api/fill/status").json()
+    assert ready["methods"]["lama"]["ready"] is True
+    assert ready["default"] == "lama" and ready["preview"] == "lama"
+
+
+def test_fill_preview_returns_before_and_after_and_caches(env, tmp_path, monkeypatch):
+    import base64
+    import shutil
+    import subprocess
+
+    import textfill
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is needed for the fill preview")
+    source = tmp_path / "fill-source.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-y", "-v", "error", "-f", "lavfi",
+            "-i", "color=c=blue:s=540x960:d=8:r=10",
+            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+            str(source),
+        ],
+        check=True, timeout=60,
+    )
+    job = _job_record()
+    job["source"].update({
+        "path": str(source), "width": 540, "height": 960,
+        "duration": 8.0, "fps": 10.0,
+    })
+    _write_job(env.jobs, job)
+    models = env.data / "models" / "fill"
+    models.mkdir(parents=True)
+    (models / "lama_fp32.onnx").write_bytes(b"model")
+    edit = _save_edit(
+        env.directory,
+        clean=[{
+            "id": "cl_fill",
+            "kind": "fill",
+            "method": "lama",
+            "box": {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09},
+            "ranges": [{"start": 0.0, "end": 8.0}],
+            "z": 0,
+            "color": "#000000",
+            "opacity": 1,
+            "radius": 12,
+            "label": "Remove text",
+        }],
+    )
+
+    def fake_fill(frame, rects, **kwargs):
+        out = frame.copy()
+        for x0, y0, x1, y1 in rects:
+            out[y0:y1, x0:x1] = [0, 255, 0]
+        return out
+
+    monkeypatch.setattr(textfill, "fill_frame", fake_fill)
+    response = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-preview",
+        json={"t": 0.1, "method": "lama"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["width"] == 540 and body["height"] == 960
+    assert body["method"] == "lama" and body["cached"] is False
+    before = base64.b64decode(body["before"].split(",", 1)[1])
+    after = base64.b64decode(body["after"].split(",", 1)[1])
+    assert before.startswith(b"\xff\xd8") and after.startswith(b"\xff\xd8")
+    assert before != after
+
+    cached = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-preview",
+        json={"t": 0.1, "method": "lama"},
+    ).json()
+    assert cached["cached"] is True
+    assert cached["before"] == body["before"]
+    assert cached["after"] == body["after"]
+
+
+def test_fill_preview_needs_an_active_fill_layer(env):
+    response = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{env.edit['id']}/fill-preview",
+        json={"t": 0.1},
+    )
+
+    assert response.status_code == 422
+    assert "no AI fill layer" in response.json()["detail"]
+
+
+def test_tracklet_thumbnail_crops_the_source_frame(env, tmp_path):
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is needed for a thumbnail")
+    source = tmp_path / "thumb-source.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-y", "-v", "error", "-f", "lavfi",
+            "-i", "color=c=red:s=540x960:d=4:r=10",
+            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+            str(source),
+        ],
+        check=True, timeout=60,
+    )
+    job = _job_record()
+    job["source"].update({"path": str(source), "width": 540, "height": 960, "fps": 10.0})
+    _write_job(env.jobs, job)
+    detect.write_report(env.directory, _report([
+        _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
+    ]))
+
+    response = env.client.get(
+        f"/api/jobs/{JOB_ID}/check/tracklets/trk_sub/thumb",
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.content.startswith(b"\xff\xd8")
+    assert "max-age" in response.headers.get("cache-control", "")

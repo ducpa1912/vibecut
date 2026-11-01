@@ -274,6 +274,42 @@ def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_fr
             return
 
 
+def fill_frame(
+    frame: np.ndarray,
+    rects: Iterable[masks.Rect],
+    *,
+    data_root: Path | str,
+    method: str = "lama",
+) -> np.ndarray:
+    """Fill one RGB frame in place of a sequence.
+
+    The single-frame preview uses LaMa: it is the per-frame engine, so one
+    frame is a supported input. STTN needs neighbouring frames and is left to
+    the full render.
+    """
+    if method != "lama":
+        raise FillError("The single-frame fill preview uses the LaMa model.")
+    directory = models_dir(data_root)
+    problem = missing_model(method, directory)
+    if problem:
+        raise FillError(problem)
+    local_rects = [rect for rect in rects if rect[2] > rect[0] and rect[3] > rect[1]]
+    height, width = frame.shape[:2]
+    area = masks.lama_area(local_rects, width, height)
+    if area is None:
+        return frame.copy()
+    x0, y0, x1, y1 = area
+    local = _local(local_rects, x0, y0, x1, y1)
+    if not local:
+        return frame.copy()
+    work = frame[y0:y1, x0:x1]
+    hole = masks.rasterize(local, x1 - x0, y1 - y0)
+    filled = _filler(method, model_path(method, directory)).fill(work, hole)
+    out = frame.copy()
+    out[y0:y1, x0:x1] = masks.paste(work, filled, masks.feather(hole))
+    return out
+
+
 def prepare_span(
     *,
     source: str,

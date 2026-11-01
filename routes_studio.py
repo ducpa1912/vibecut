@@ -12,7 +12,8 @@ import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict
 
 router = APIRouter()
 
@@ -38,8 +39,22 @@ class AddStoryBody(BaseModel):
 
 class AutoCleanBody(BaseModel):
     include_handles: bool = False
+    # None keeps the old "all allowed regions" behaviour. An explicit list is
+    # the found-text list's ticks, so Remove all only touches what was ticked.
+    tracklet_ids: list[str] | None = None
+    # auto keeps Check's own action; ai turns every tick into an AI fill;
+    # blur and cover are the two explicit cover methods.
+    method: str = "auto"
+    fill_method: str = "sttn"
 
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
+
+
+class FillPreviewBody(BaseModel):
+    t: float = 0.0
+    method: str = "lama"
+
+    model_config = ConfigDict(extra="forbid")
 
 
 def _edit_story(job: dict, edit: dict) -> dict | None:
@@ -65,6 +80,100 @@ def _edit_story(job: dict, edit: dict) -> dict | None:
         ),
         None,
     )
+
+
+def _apply_clean_method(
+    layers: list[dict],
+    method: str,
+    fill_method: str,
+) -> list[dict]:
+    """Turn Check's default layers into the method chosen in Edit.
+
+    ``auto`` keeps Check's own action. ``ai`` makes every allowed region an AI
+    fill; ``blur`` and ``cover`` use the two simple hides. The mid-frame cover
+    companion is only useful for blur, so AI/cover drop it rather than adding
+    a second layer on the same box.
+    """
+    if method == "auto":
+        return layers
+    out: list[dict] = []
+    for layer in layers:
+        if method != "blur" and str(layer.get("label") or "") == "Mid-frame caption cover":
+            continue
+        item = dict(layer)
+        if method == "ai":
+            item["kind"] = "fill"
+            item["method"] = fill_method
+        elif method == "blur":
+            item["kind"] = "blur"
+        else:
+            item["kind"] = "plate"
+        out.append(item)
+    return out
+
+
+def _data_url(path: Path) -> str:
+    import base64
+
+    return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+def _read_source_frame(path: Path, width: int, height: int, at: float):
+    """One RGB frame from the source at ``at`` seconds."""
+    import subprocess
+
+    import numpy as np
+
+    import render
+
+    command = [
+        render._ffmpeg(), "-v", "error", "-nostdin",
+        "-ss", f"{max(0.0, float(at)):.6f}", "-i", str(path),
+        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24",
+        "-s", f"{int(width)}x{int(height)}", "pipe:1",
+    ]
+    completed = subprocess.run(command, capture_output=True, timeout=60, check=False)
+    expected = int(width) * int(height) * 3
+    if completed.returncode != 0 or len(completed.stdout) < expected:
+        tail = (completed.stderr or b"")[-800:].decode("utf-8", "replace")
+        raise HTTPException(500, f"Could not read the preview frame. {tail}".strip())
+    return np.frombuffer(
+        completed.stdout[:expected], dtype=np.uint8,
+    ).reshape((int(height), int(width), 3)).copy()
+
+
+def _preview_filter_chain(segment: dict, out_w: int, out_h: int) -> str:
+    """The source-side clean, crop, scale and colour chain for one frame."""
+    parts = [str(item) for item in segment.get("pre_filters") or []]
+    crop = segment.get("crop") or {}
+    try:
+        crop_w = int(crop.get("w") or 0)
+        crop_h = int(crop.get("h") or 0)
+        crop_x = int(crop.get("x") or 0)
+        crop_y = int(crop.get("y") or 0)
+    except (TypeError, ValueError):
+        crop_w = crop_h = 0
+    if crop_w > 1 and crop_h > 1:
+        parts.append(f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}")
+    parts.extend([f"scale={out_w}:{out_h}:flags=lanczos", "setsar=1"])
+    parts.extend(str(item) for item in segment.get("post_filters") or [])
+    return ",".join(part for part in parts if part)
+
+
+def _render_preview_jpeg(png: Path, output: Path, chain: str) -> None:
+    """Encode one PNG through the same crop/colour chain as the beat."""
+    import subprocess
+
+    import render
+
+    command = [
+        render._ffmpeg(), "-y", "-v", "error", "-i", str(png),
+        "-vf", chain, "-frames:v", "1", "-q:v", "2", str(output),
+    ]
+    completed = subprocess.run(command, capture_output=True, timeout=90, check=False)
+    if completed.returncode != 0 or not output.is_file():
+        tail = (completed.stderr or b"")[-1200:].decode("utf-8", "replace")
+        raise HTTPException(500, f"Could not prepare the fill preview. {tail}".strip())
 
 
 def _layers_in_story(layers: list[dict], story: dict) -> tuple[list[dict], list[dict]]:
@@ -96,6 +205,119 @@ def _layers_in_story(layers: list[dict], story: dict) -> tuple[list[dict], list[
         else:
             outside.append(layer)
     return kept, outside
+
+
+@router.get("/api/fill/status")
+def fill_status() -> dict:
+    """Which text-fill engines are usable on this machine.
+
+    The UI only offers AI fill when a model file is present. The single-frame
+    preview always uses LaMa, so it reports that separately.
+    """
+    import app
+    import textfill
+
+    directory = textfill.models_dir(app.DATA)
+    methods = {}
+    for method in textfill.METHODS:
+        problem = textfill.missing_model(method, directory)
+        methods[method] = {
+            "id": method,
+            "label": textfill.METHOD_COPY.get(method, method),
+            "ready": problem is None,
+            "reason": problem or "",
+        }
+    default = next(
+        (method for method in ("sttn", "lama") if methods[method]["ready"]),
+        None,
+    )
+    return {
+        "methods": methods,
+        "default": default,
+        "preview": "lama" if methods["lama"]["ready"] else None,
+        "models_dir": str(directory),
+    }
+
+
+@router.get(
+    "/api/jobs/{job_id}/check/tracklets/{tracklet_id}/thumb",
+    responses={200: {"content": {"image/jpeg": {}}}},
+)
+def tracklet_thumb(job_id: str, tracklet_id: str):
+    """A small crop of one found text region, for the found-text list."""
+    import math
+    import subprocess
+
+    import app
+    import detect
+    import render
+
+    job = app.load_job(job_id)
+    app.require_source(job)
+    report = detect.load_report(app._job_dir(job_id))
+    if report is None:
+        raise HTTPException(404, "Run Check first.")
+    tracklet = next(
+        (
+            item for item in report.get("tracklets") or []
+            if isinstance(item, dict) and str(item.get("id") or "") == tracklet_id
+        ),
+        None,
+    )
+    if tracklet is None:
+        raise HTTPException(404, "That text region is not in the latest Check.")
+    box = tracklet.get("box") if isinstance(tracklet.get("box"), dict) else None
+    if not box:
+        raise HTTPException(404, "That text region has no box to crop.")
+    ranges = [item for item in tracklet.get("ranges") or [] if isinstance(item, dict)]
+    if ranges:
+        first = ranges[0]
+        start = float(first.get("start") or 0.0)
+        end = float(first.get("end") or start)
+        at = start + max(0.0, min(0.25, (end - start) / 2.0))
+    else:
+        at = 0.0
+    source = job.get("source") or {}
+    width = int(source.get("width") or 0)
+    height = int(source.get("height") or 0)
+    if width < 2 or height < 2:
+        raise HTTPException(409, "The source size is not available for a thumbnail.")
+    base_x0 = int(math.floor(float(box.get("x") or 0.0) * width))
+    base_y0 = int(math.floor(float(box.get("y") or 0.0) * height))
+    base_x1 = int(math.ceil((float(box.get("x") or 0.0) + float(box.get("w") or 0.0)) * width))
+    base_y1 = int(math.ceil((float(box.get("y") or 0.0) + float(box.get("h") or 0.0)) * height))
+    pad_x = max(6, int(round((base_x1 - base_x0) * 0.06)))
+    pad_y = max(4, int(round((base_y1 - base_y0) * 0.35)))
+    x0 = max(0, base_x0 - pad_x)
+    y0 = max(0, base_y0 - pad_y)
+    x1 = min(width, base_x1 + pad_x)
+    y1 = min(height, base_y1 + pad_y)
+    crop_w = max(2, x1 - x0)
+    crop_h = max(2, y1 - y0)
+    source_path = Path(str(source.get("path") or ""))
+    if not source_path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    command = [
+        render._ffmpeg(), "-v", "error", "-nostdin",
+        "-ss", f"{max(0.0, at):.3f}", "-i", str(source_path),
+        "-frames:v", "1",
+        "-vf", f"crop={crop_w}:{crop_h}:{x0}:{y0},scale=240:-2",
+        "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+    ]
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, timeout=20, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(500, "Could not read a frame for this text region.") from exc
+    if completed.returncode != 0 or not completed.stdout:
+        tail = (completed.stderr or b"")[-800:].decode("utf-8", "replace")
+        raise HTTPException(500, f"Could not crop the text region. {tail}".strip())
+    return Response(
+        content=completed.stdout,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @router.post("/api/path/reveal")
@@ -294,9 +516,17 @@ def auto_clean(
     import cleanup
     import detect
     import edits
+    import textfill
 
     if not app._setup_origin_ok(request):
         raise HTTPException(403, "Cross-site writes are blocked.")
+    body = body or AutoCleanBody()
+    method = str(body.method or "auto").strip().lower()
+    if method not in {"auto", "ai", "blur", "cover"}:
+        raise HTTPException(422, "method must be auto, ai, blur or cover.")
+    fill_method = str(body.fill_method or "sttn").strip().lower()
+    if fill_method not in textfill.METHODS:
+        raise HTTPException(422, "fill_method must be sttn or lama.")
     job = app.load_job(job_id)
     job_dir = app._job_dir(job_id)
     try:
@@ -318,9 +548,13 @@ def auto_clean(
         tracklets,
         job=job,
         settings=app.settings_store.load_settings(),
-        include_handles=bool(body.include_handles) if body else False,
+        include_handles=bool(body.include_handles),
+        selected=None if body.tracklet_ids is None else body.tracklet_ids,
     )
-    in_story, outside = _layers_in_story(list(built.get("layers") or []), story)
+    generated = _apply_clean_method(
+        list(built.get("layers") or []), method, fill_method,
+    )
+    in_story, outside = _layers_in_story(generated, story)
     merged = cleanup.merge_auto_clean_layers(edit.get("clean") or [], in_story)
     skipped = [
         {
@@ -351,4 +585,158 @@ def auto_clean(
         "added": len(merged["layers"]),
         "skipped": skipped,
         "warnings": warnings,
+    }
+
+
+@router.post("/api/jobs/{job_id}/edits/{edit_id}/fill-preview")
+def fill_preview(
+    job_id: str,
+    edit_id: str,
+    request: Request,
+    body: FillPreviewBody | None = None,
+) -> dict:
+    """Before/after JPEGs of one frame with LaMa filling the AI-fill boxes.
+
+    This is deliberately one frame, not a render: the full render still does
+    the whole span. The returned images share the crop, colour and overlays,
+    so the slider compares only the fill. Results are cached by Edit hash,
+    frame and model stamp.
+    """
+    import hashlib
+    import math
+    import shutil
+    import uuid
+
+    from PIL import Image
+
+    import app
+    import render
+    import routes_edits
+    import textfill
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    body = body or FillPreviewBody()
+    method = str(body.method or "lama").strip().lower()
+    if method != "lama":
+        raise HTTPException(422, "The single-frame preview uses the LaMa model.")
+    if not math.isfinite(float(body.t)):
+        raise HTTPException(422, "t must be a finite time in seconds.")
+    job, edit, story = routes_edits._fresh_story(job_id, edit_id)
+    source = job.get("source") or {}
+    source_path = Path(str(source.get("path") or ""))
+    width = int(source.get("width") or 0)
+    height = int(source.get("height") or 0)
+    out_w, out_h = render._dims(edit["aspect"], "draft")
+    compiled = routes_edits._compiled_preview(
+        job_id, job, edit, story, size=(out_w, out_h),
+    )
+    segments = compiled.get("segments") or []
+    if not segments:
+        raise HTTPException(422, "This Edit has no frames to preview.")
+    total = float(segments[-1].get("out_end") or 0.0)
+    frame = max(0, int(round(float(body.t) * render.OUT_FPS)))
+    last_frame = max(0, int(round(total * render.OUT_FPS)) - 1)
+    frame = min(frame, last_frame)
+    at = frame / render.OUT_FPS
+    try:
+        _index, segment = render._compiled_segment_at(compiled, at)
+    except render.PipelineError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    fill_plan = segment.get("fill") or {}
+    fill_layers = [item for item in fill_plan.get("layers") or [] if isinstance(item, dict)]
+    if not fill_layers:
+        raise HTTPException(
+            422,
+            "This frame has no AI fill layer. Choose AI fill and remove the found text first.",
+        )
+    if not source_path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    if width < 2 or height < 2:
+        raise HTTPException(409, "The source size is not available for a fill preview.")
+    fps = float(source.get("fps") or render.OUT_FPS)
+    source_time = float(segment.get("start") or 0.0) + max(
+        0.0, at - float(segment.get("out_start") or 0.0),
+    )
+    rects = textfill.masks.frame_rects(
+        fill_layers,
+        start=source_time - (0.5 / max(1.0, fps)),
+        fps=fps,
+        frames=1,
+        width=width,
+        height=height,
+    )[0]
+    if not rects:
+        raise HTTPException(422, "No AI fill region is active at this frame.")
+
+    directory = textfill.models_dir(app.DATA)
+    problem = textfill.missing_model("lama", directory)
+    if problem:
+        raise HTTPException(409, problem)
+    model_path = textfill.model_path("lama", directory)
+    stamp = model_path.stat()
+    key = hashlib.sha1(
+        (
+            f"{edit['hash']}:{frame}:{out_w}x{out_h}:lama:"
+            f"{stamp.st_size}:{stamp.st_mtime_ns}:{source.get('fingerprint')}"
+        ).encode("utf-8"),
+    ).hexdigest()[:20]
+    job_dir = app._job_dir(job_id)
+    cache_dir = job_dir / "fill" / "preview"
+    before_jpg = cache_dir / f"{key}_before.jpg"
+    after_jpg = cache_dir / f"{key}_after.jpg"
+    if before_jpg.is_file() and after_jpg.is_file():
+        return {
+            "before": _data_url(before_jpg),
+            "after": _data_url(after_jpg),
+            "width": out_w,
+            "height": out_h,
+            "time": round(at, 3),
+            "method": "lama",
+            "cached": True,
+        }
+
+    frame_rgb = _read_source_frame(source_path, width, height, source_time)
+    try:
+        filled_rgb = textfill.fill_frame(
+            frame_rgb, rects, data_root=job_dir.parent.parent, method="lama",
+        )
+    except textfill.FillError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    tmp = job_dir / "renders" / f"tmp_fill_preview_{uuid.uuid4().hex}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    try:
+        before_png = tmp / "before.png"
+        after_png = tmp / "after.png"
+        Image.fromarray(frame_rgb).save(before_png)
+        Image.fromarray(filled_rgb).save(after_png)
+        chain = _preview_filter_chain(segment, out_w, out_h)
+        before_raw = tmp / "before_raw.jpg"
+        after_raw = tmp / "after_raw.jpg"
+        _render_preview_jpeg(before_png, before_raw, chain)
+        _render_preview_jpeg(after_png, after_raw, chain)
+        before_final = tmp / "before_final.jpg"
+        after_final = tmp / "after_final.jpg"
+        layer_cache = job_dir.parent.parent / "cache" / "layers"
+        render._burn_frame(
+            before_raw, compiled.get("overlays") or [], before_final,
+            out_w, out_h, at, layer_cache,
+        )
+        render._burn_frame(
+            after_raw, compiled.get("overlays") or [], after_final,
+            out_w, out_h, at, layer_cache,
+        )
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(before_final, before_jpg)
+        shutil.copyfile(after_final, after_jpg)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {
+        "before": _data_url(before_jpg),
+        "after": _data_url(after_jpg),
+        "width": out_w,
+        "height": out_h,
+        "time": round(at, 3),
+        "method": "lama",
+        "cached": False,
     }
