@@ -43,3 +43,11 @@ The founder's OpenCode review (2026-10-31) found that the room ends at "preview 
 3. **Avatar later**, through one surface with capability flags (`twin_from_video`, `portrait_lipsync`, `character_consistency`, `live_stream`), one provider first. Not before step 1 is used by the founder.
 
 Each step ends with a founder recording and a script built from it, as for pass 1.
+
+## Learning from VoiceStudio (2026-11-01)
+
+VoiceStudio is AGPL-3.0, so we learn from it but take no code. Three notes:
+
+- `docs/voice/clean-room-spec.md`: its UI and UX in plain words, plus the specs to build. OpenCode builds from this note only and never opens VoiceStudio's code.
+- `docs/voice/cloud-first-plan.md`: stay on the cloud for now and match or beat its UX. This build order replaces the "Next build" list above.
+- `docs/voice/local-future.md`: local cloning on Apple Silicon (lead: VoxCPM2), then any machine.
