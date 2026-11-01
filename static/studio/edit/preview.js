@@ -10,6 +10,7 @@
 import { el } from "../ui.js";
 import {
   CANVAS,
+  CLEAN_LABELS,
   TEXT_KINDS,
   clamp,
   colorFilter,
@@ -18,6 +19,18 @@ import {
   numberOr,
   safeZoneRects,
 } from "./model.js";
+import {
+  boxToFrame,
+  cropAt,
+  frameToBox,
+  handleAt,
+  insideRect,
+  layerActive,
+  moveBox,
+  resizeBox,
+  sourceTimeAt,
+  visibleRect,
+} from "./canvas-tools.js";
 import { fetchFrame, framePath, proxyPath, syncMediaCookie } from "./api.js";
 import { drawOverlay } from "./overlay.js";
 
@@ -28,15 +41,22 @@ export function mountPreview(root, options = {}) {
     onTime: options.onTime || (() => {}),
     onStatus: options.onStatus || (() => {}),
     onStale: options.onStale || (() => {}),
+    onSelect: options.onSelect || (() => {}),
+    onBoxChange: options.onBoxChange || (() => {}),
+    onBoxCreate: options.onBoxCreate || (() => {}),
   };
   const state = {
     aspect: "9:16",
     edit: null,
     captions: null,
+    job: null,
+    story: null,
     duration: 10,
     time: 0,
     showSafeZones: true,
     selected: null,
+    hiddenLayers: new Set(),
+    tool: "select",
     jobId: options.jobId || "",
   };
 
@@ -66,6 +86,10 @@ export function mountPreview(root, options = {}) {
   let lastTick = 0;
   let lastFrameAt = 0;
   let keyHandler = null;
+  // Clean-box editing on the canvas.
+  let drag = null;
+  let drawPreview = null;
+  let suppressClick = false;
 
   root.innerHTML = `
     <section class="st-preview" aria-label="Story preview">
@@ -75,6 +99,10 @@ export function mountPreview(root, options = {}) {
           <span id="st-preview-aspect" class="st-chip st-chip-quiet">9:16</span>
         </div>
         <div class="st-preview-tools">
+          <div class="st-preview-toolgroup" role="group" aria-label="Canvas tool">
+            <button id="st-preview-tool-select" class="st-preview-tool is-active" type="button" data-tool="select" aria-pressed="true" title="Select and move boxes (V)">Select</button>
+            <button id="st-preview-tool-box" class="st-preview-tool" type="button" data-tool="box" aria-pressed="false" title="Draw a Remove-text box (B)">Draw box</button>
+          </div>
           <label class="st-switch">
             <input id="st-preview-safe" type="checkbox" checked>
             <span>Safe zones</span>
@@ -83,7 +111,7 @@ export function mountPreview(root, options = {}) {
         </div>
       </div>
       <div class="st-preview-stage">
-        <canvas id="st-preview-canvas" class="st-preview-canvas" width="1080" height="1920" aria-label="Story preview with safe zones"></canvas>
+        <canvas id="st-preview-canvas" class="st-preview-canvas" width="1080" height="1920" aria-label="Story preview with safe zones and editable boxes"></canvas>
       </div>
       <div class="st-preview-transport">
         <button id="st-preview-play" class="st-icon-btn st-preview-play" type="button" aria-label="Play preview">▶</button>
@@ -104,6 +132,7 @@ export function mountPreview(root, options = {}) {
     time: $("#st-preview-time"),
     scrub: $("#st-preview-scrub"),
     note: $("#st-preview-note"),
+    tools: Array.from(root.querySelectorAll(".st-preview-tool")),
   };
   const ctx = dom.canvas.getContext("2d");
 
@@ -246,7 +275,11 @@ export function mountPreview(root, options = {}) {
     const graphics = Array.isArray(edit.graphics) ? edit.graphics : [];
     const pins = new Set(["source", "story_start", "story_end"]);
     const visible = graphics
-      .filter((layer) => !layer?.hidden)
+      .filter((layer) => {
+        if (!layer || layer.hidden) return false;
+        const kind = layer.type === "text" ? "text" : "effects";
+        return !state.hiddenLayers.has(`${kind}:${layer.id}`);
+      })
       .map((layer) => {
         // "story_start" is a pin (the R2 schema stores it under `pin`). If a
         // freshly added hook still carries it in `anchor`, draw the kind's
@@ -264,8 +297,170 @@ export function mountPreview(root, options = {}) {
     return { ...edit, graphics: visible };
   }
 
+  function visibleCaptions(captions) {
+    if (!captions || !Array.isArray(captions.cues)) return captions;
+    const cues = captions.cues.filter((cue) => !state.hiddenLayers.has(`captions:${cue.id}`));
+    if (cues.length === captions.cues.length) return captions;
+    return { ...captions, cues };
+  }
+
+  const CLEAN_COLORS = {
+    delogo: "#e8a266",
+    fill: "#e8a266",
+    blur: "#7b9bb8",
+    plate: "#c5a0d9",
+    mask: "#c5a0d9",
+    crop_guard: "#8ec9a3",
+  };
+
+  function currentCrop() {
+    return cropAt({
+      edit: state.edit,
+      job: state.job,
+      story: state.story,
+      time: state.time,
+      aspect: state.aspect,
+    });
+  }
+
+  function cleanLayers() {
+    return (state.edit?.clean || []).filter((layer) => layer && layer.id);
+  }
+
+  function hiddenKey(kind, id) {
+    return `${kind}:${id}`;
+  }
+
+  function sourceTime() {
+    return sourceTimeAt(state.story, state.time);
+  }
+
+  function cleanRects() {
+    const crop = currentCrop();
+    const time = sourceTime();
+    const selected = state.selected?.kind === "clean" ? state.selected.id : "";
+    return cleanLayers().map((layer) => {
+      const frame = boxToFrame(layer.box, crop);
+      return {
+        layer,
+        frame,
+        active: layerActive(layer, time),
+        selected: layer.id === selected,
+        hidden: state.hiddenLayers.has(hiddenKey("clean", layer.id)),
+      };
+    });
+  }
+
+  function pxRect(frame, width, height) {
+    return {
+      x: frame.x * width,
+      y: frame.y * height,
+      w: frame.w * width,
+      h: frame.h * height,
+    };
+  }
+
+  function cleanAt(frame, width, height) {
+    const rects = cleanRects().filter((item) => !item.hidden);
+    for (let index = rects.length - 1; index >= 0; index -= 1) {
+      const item = rects[index];
+      const clipped = visibleRect(item.frame);
+      if (!clipped) continue;
+      if (insideRect(clipped, frame)) return item;
+    }
+    return null;
+  }
+
+  function selectedClean() {
+    if (state.selected?.kind !== "clean") return null;
+    return cleanRects().find((item) => item.selected && !item.hidden) || null;
+  }
+
+  function drawEdgeMarkers(frame, width, height) {
+    const size = Math.max(8, Math.round(width * 0.012));
+    const colour = "#e8a266";
+    const centerX = clamp((frame.x + frame.w / 2) * width, 0, width);
+    const centerY = clamp((frame.y + frame.h / 2) * height, 0, height);
+    const marks = [];
+    if (frame.x < 0) marks.push([0, centerY, 1, 0]);
+    if (frame.x + frame.w > 1) marks.push([width, centerY, -1, 0]);
+    if (frame.y < 0) marks.push([centerX, 0, 0, 1]);
+    if (frame.y + frame.h > 1) marks.push([centerX, height, 0, -1]);
+    ctx.save();
+    ctx.fillStyle = colour;
+    for (const [x, y, dx, dy] of marks) {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + dx * size + (dy ? size / 2 : 0), y + dy * size + (dx ? size / 2 : 0));
+      ctx.lineTo(x + dx * size - (dy ? size / 2 : 0), y + dy * size - (dx ? size / 2 : 0));
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawCleanBoxes(width, height) {
+    const rects = cleanRects();
+    const handle = Math.max(18, Math.round(width * 0.02));
+    for (const item of rects) {
+      if (item.hidden) continue;
+      const clipped = visibleRect(item.frame);
+      if (!clipped) {
+        if (item.selected) drawEdgeMarkers(item.frame, width, height);
+        continue;
+      }
+      const rect = pxRect(clipped, width, height);
+      const colour = CLEAN_COLORS[item.layer.kind] || "#e8a266";
+      ctx.save();
+      ctx.globalAlpha = item.active ? 1 : 0.34;
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = item.selected ? Math.max(3, width * 0.004) : Math.max(2, width * 0.0022);
+      ctx.setLineDash(item.selected ? [] : [Math.max(6, width * 0.008), Math.max(4, width * 0.006)]);
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      if (item.selected) {
+        const points = [
+          [rect.x, rect.y], [rect.x + rect.w / 2, rect.y], [rect.x + rect.w, rect.y],
+          [rect.x + rect.w, rect.y + rect.h / 2], [rect.x + rect.w, rect.y + rect.h],
+          [rect.x + rect.w / 2, rect.y + rect.h], [rect.x, rect.y + rect.h],
+          [rect.x, rect.y + rect.h / 2],
+        ];
+        ctx.setLineDash([]);
+        ctx.fillStyle = colour;
+        for (const [hx, hy] of points) {
+          ctx.fillRect(hx - handle / 2, hy - handle / 2, handle, handle);
+        }
+        const label = String(item.layer.label || CLEAN_LABELS[item.layer.kind] || "Remove text").slice(0, 42);
+        ctx.font = `600 ${Math.max(18, Math.round(width * 0.026))}px ui-sans-serif, -apple-system, sans-serif`;
+        const textWidth = Math.min(rect.w, ctx.measureText(label).width + 24);
+        const labelY = Math.max(0, rect.y - Math.max(26, width * 0.04));
+        ctx.fillStyle = "rgba(10, 10, 12, 0.86)";
+        ctx.fillRect(rect.x, labelY, textWidth, Math.max(24, width * 0.038));
+        ctx.fillStyle = "#f1efe9";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(label, rect.x + 10, labelY + 5);
+      }
+      ctx.restore();
+      if (item.selected) drawEdgeMarkers(item.frame, width, height);
+    }
+  }
+
+  function drawDrawPreview(width, height) {
+    if (!drawPreview) return;
+    const rect = pxRect(drawPreview, width, height);
+    ctx.save();
+    ctx.fillStyle = "rgba(232, 162, 102, 0.16)";
+    ctx.strokeStyle = "#e8a266";
+    ctx.lineWidth = Math.max(2, width * 0.003);
+    ctx.setLineDash([Math.max(6, width * 0.008), Math.max(4, width * 0.006)]);
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.restore();
+  }
+
   function drawSelection(width, height) {
     if (!state.selected || !state.edit) return;
+    if (state.selected.kind === "clean") return;
     let rect = null;
     let label = "Selected";
     if (state.selected.kind === "text") {
@@ -299,7 +494,12 @@ export function mountPreview(root, options = {}) {
     ctx.strokeRect(x, y, w, h);
     const handle = 14;
     ctx.fillStyle = "#e8a266";
-    for (const [hx, hy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
+    const points = [
+      [x, y], [x + w / 2, y], [x + w, y],
+      [x + w, y + h / 2], [x + w, y + h],
+      [x + w / 2, y + h], [x, y + h], [x, y + h / 2],
+    ];
+    for (const [hx, hy] of points) {
       ctx.fillRect(hx - handle / 2, hy - handle / 2, handle, handle);
     }
     ctx.font = "600 28px ui-sans-serif, -apple-system, sans-serif";
@@ -329,21 +529,28 @@ export function mountPreview(root, options = {}) {
     if (source) {
       ctx.save();
       if (source === proxyVideo) {
-        ctx.filter = colorFilter(state.edit?.color);
+        ctx.filter = state.hiddenLayers.has("color:color")
+          ? "none"
+          : colorFilter(state.edit?.color);
       }
       drawCover(source, width, height);
       ctx.restore();
       // The proxy is the raw story range; the exact frame already has every
       // layer burned in, so only the proxy gets the live overlay.
       if (source === proxyVideo) {
-        drawOverlay(ctx, visibleEdit(state.edit), state.captions, state.time, width, height);
+        drawOverlay(
+          ctx, visibleEdit(state.edit), visibleCaptions(state.captions),
+          state.time, width, height,
+        );
       }
     } else {
       drawPlaceholder(width, height);
     }
 
     drawSafeZones(width, height);
+    drawCleanBoxes(width, height);
     drawSelection(width, height);
+    drawDrawPreview(width, height);
   }
 
   function applyAspect(aspect) {
@@ -667,7 +874,9 @@ export function mountPreview(root, options = {}) {
     draw();
   }
 
-  function setData({ aspect, edit, captions, duration, selected, jobId } = {}) {
+  function setData({
+    aspect, edit, captions, duration, selected, jobId, job, story, hiddenLayers,
+  } = {}) {
     if (jobId && jobId !== state.jobId) {
       state.jobId = jobId;
       rebuilding = false;
@@ -675,6 +884,11 @@ export function mountPreview(root, options = {}) {
       resetProxy();
     }
     if (aspect) applyAspect(aspect);
+    if (job !== undefined) state.job = job;
+    if (story !== undefined) state.story = story;
+    if (hiddenLayers !== undefined) {
+      state.hiddenLayers = hiddenLayers instanceof Set ? hiddenLayers : new Set(hiddenLayers || []);
+    }
     if (captions !== undefined) state.captions = captions;
     if (selected !== undefined) state.selected = selected;
     if (edit !== undefined) setEdit(edit);
@@ -724,6 +938,158 @@ export function mountPreview(root, options = {}) {
     seek(state.time + delta);
   }
 
+  function canvasPoint(event) {
+    const box = dom.canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX - box.left) * (dom.canvas.width / Math.max(1, box.width)),
+      y: (event.clientY - box.top) * (dom.canvas.height / Math.max(1, box.height)),
+    };
+  }
+
+  function framePoint(event) {
+    const point = canvasPoint(event);
+    return { x: point.x / dom.canvas.width, y: point.y / dom.canvas.height };
+  }
+
+  function setTool(tool) {
+    state.tool = tool === "box" ? "box" : "select";
+    for (const button of dom.tools) {
+      const active = button.dataset.tool === state.tool;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+    dom.canvas.dataset.tool = state.tool;
+    dom.canvas.style.cursor = state.tool === "box" ? "crosshair" : "default";
+  }
+
+  function textAt(frame) {
+    const layers = (state.edit?.graphics || [])
+      .filter((layer) => layer?.type === "text" && !layer.hidden)
+      .filter((layer) => !state.hiddenLayers.has(`text:${layer.id}`))
+      .filter((layer) => state.time >= numberOr(layer.start, 0) && state.time < numberOr(layer.end, 0));
+    for (let index = layers.length - 1; index >= 0; index -= 1) {
+      if (insideRect(graphicRect(layers[index]), frame)) return layers[index];
+    }
+    return null;
+  }
+
+  function dragRect(start, current) {
+    const left = clamp(Math.min(start.x, current.x), 0, 1);
+    const top = clamp(Math.min(start.y, current.y), 0, 1);
+    const right = clamp(Math.max(start.x, current.x), 0, 1);
+    const bottom = clamp(Math.max(start.y, current.y), 0, 1);
+    return { x: left, y: top, w: right - left, h: bottom - top };
+  }
+
+  function beginPointer(event) {
+    if (disposed || event.button !== 0 || !state.edit) return;
+    const point = canvasPoint(event);
+    const frame = framePoint(event);
+    const crop = currentCrop();
+    if (state.tool === "box") {
+      pauseClockOnly();
+      drag = { mode: "draw", crop, startFrame: frame };
+      drawPreview = { x: frame.x, y: frame.y, w: 0, h: 0 };
+      dom.canvas.setPointerCapture?.(event.pointerId);
+      draw();
+      event.preventDefault();
+      return;
+    }
+    const selected = selectedClean();
+    if (selected) {
+      const handle = handleAt(
+        pxRect(selected.frame, dom.canvas.width, dom.canvas.height),
+        point,
+        Math.max(24, dom.canvas.width * 0.028),
+      );
+      if (handle) {
+        pauseClockOnly();
+        drag = {
+          mode: "resize",
+          id: selected.layer.id,
+          handle,
+          crop,
+          startFrame: frame,
+          startBox: { ...selected.layer.box },
+        };
+        dom.canvas.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+        return;
+      }
+    }
+    const hit = cleanAt(frame, dom.canvas.width, dom.canvas.height);
+    if (hit) {
+      pauseClockOnly();
+      callbacks.onSelect("clean", hit.layer.id);
+      drag = {
+        mode: "move",
+        id: hit.layer.id,
+        crop,
+        startFrame: frame,
+        startBox: { ...hit.layer.box },
+      };
+      dom.canvas.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+    const text = textAt(frame);
+    if (text) callbacks.onSelect("text", text.id);
+  }
+
+  function movePointer(event) {
+    if (!drag) return;
+    const frame = framePoint(event);
+    if (drag.mode === "draw") {
+      drawPreview = dragRect(drag.startFrame, frame);
+      draw();
+      event.preventDefault();
+      return;
+    }
+    const dx = (frame.x - drag.startFrame.x) * drag.crop.w;
+    const dy = (frame.y - drag.startFrame.y) * drag.crop.h;
+    const box = drag.mode === "move"
+      ? moveBox(drag.startBox, dx, dy)
+      : resizeBox(drag.startBox, drag.handle, dx, dy);
+    drag.box = box;
+    callbacks.onBoxChange(drag.id, box, { commit: false });
+    draw();
+    event.preventDefault();
+  }
+
+  function endPointer(event) {
+    if (!drag) return;
+    const current = drag;
+    drag = null;
+    if (current.mode === "draw") {
+      const rect = drawPreview;
+      drawPreview = null;
+      if (rect && rect.w * current.crop.w > 0.006 && rect.h * current.crop.h > 0.006) {
+        callbacks.onBoxCreate(frameToBox(rect, current.crop));
+      }
+      setTool("select");
+    } else if (current.box) {
+      callbacks.onBoxChange(current.id, current.box, { commit: true });
+    }
+    dom.canvas.releasePointerCapture?.(event.pointerId);
+    draw();
+    event.preventDefault();
+  }
+
+  function cancelPointer(event) {
+    drag = null;
+    drawPreview = null;
+    dom.canvas.releasePointerCapture?.(event.pointerId);
+    draw();
+  }
+
+  dom.canvas.addEventListener("pointerdown", beginPointer);
+  dom.canvas.addEventListener("pointermove", movePointer);
+  dom.canvas.addEventListener("pointerup", endPointer);
+  dom.canvas.addEventListener("pointercancel", cancelPointer);
+  for (const button of dom.tools) {
+    button.addEventListener("click", () => setTool(button.dataset.tool));
+  }
+
   dom.safe.addEventListener("change", () => {
     state.showSafeZones = Boolean(dom.safe.checked);
     draw();
@@ -747,6 +1113,15 @@ export function mountPreview(root, options = {}) {
     if (event.code === "Space") {
       event.preventDefault();
       play();
+    } else if (event.key === "v" || event.key === "V") {
+      setTool("select");
+    } else if (event.key === "b" || event.key === "B") {
+      setTool("box");
+    } else if (event.key === "Escape" && (drag || state.tool === "box")) {
+      drag = null;
+      drawPreview = null;
+      setTool("select");
+      draw();
     }
   };
   window.addEventListener("keydown", keyHandler);
@@ -766,6 +1141,11 @@ export function mountPreview(root, options = {}) {
     },
     setSelected(selected) {
       state.selected = selected;
+      draw();
+    },
+    setTool,
+    setHiddenLayers(hidden) {
+      state.hiddenLayers = hidden instanceof Set ? hidden : new Set(hidden || []);
       draw();
     },
     setTime,

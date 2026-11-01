@@ -233,7 +233,7 @@ export const CLEAN_LABELS = {
   blur: "Blur",
   plate: "Cover plate",
   mask: "Mask",
-  delogo: "Remove (interpolate)",
+  delogo: "Remove text",
   fill: "AI fill",
 };
 
@@ -448,7 +448,7 @@ export function layerSpans(edit, captions, duration) {
       end: Math.max(numberOr(range.start) + 0.1, numberOr(range.end)),
     }));
   }).flat();
-  rows.push({ id: "clean", label: "Clean", kind: "clean", items: cleanItems });
+  rows.push({ id: "clean", label: "Remove text", kind: "clean", items: cleanItems });
 
   const textItems = (edit?.graphics || [])
     .filter((layer) => layer.type === "text")
@@ -495,7 +495,7 @@ export function layerSpans(edit, captions, duration) {
   const preset = edit?.color?.preset || "none";
   rows.push({
     id: "color",
-    label: "Color",
+    label: "Colour",
     kind: "color",
     items: [{
       id: "color",

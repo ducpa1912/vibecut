@@ -22,6 +22,9 @@ import { receiptSummary } from "../stories.js";
 import { mountPreview } from "./preview.js";
 import { mountTimeline } from "./timeline.js";
 import { mountInspector } from "./inspector.js";
+import { renderLayersPanel } from "./layers-panel.js";
+import { cropAt } from "./canvas-tools.js";
+import { manualLayer } from "./layers/clean.js";
 import {
   ASPECTS,
   aspectLabel,
@@ -29,7 +32,9 @@ import {
   clone,
   clamp,
   formatTime,
+  newTextLayer,
   numberOr,
+  round,
   storyDuration,
 } from "./model.js";
 import {
@@ -97,6 +102,7 @@ export function mount(root, ctx) {
   let loadSeq = 0;
   let timelineRaf = 0;
   let staleReload = false;
+  let noticeTimer = 0;
 
   const state = {
     job: null,
@@ -110,6 +116,9 @@ export function mount(root, ctx) {
     playhead: 0,
     activeTab: "text",
     selected: null,
+    // Preview-only hide toggles. Clean layers have no `hidden` field on the
+    // server, and hiding a layer in the editor should never change the render.
+    hiddenLayers: new Set(),
     dirty: new Set(),
     revisions: {},
     // R2 atomic trim: the GET payload, the last receipt and its undo token.
@@ -212,6 +221,7 @@ export function mount(root, ctx) {
         <div id="st-edit-receipt" class="st-trim-receipt" role="status" aria-live="polite" hidden></div>
         <div id="st-edit-notice" class="st-edit-notice" role="alert" hidden></div>
         <div class="st-edit-stage">
+          <aside id="st-edit-layers" class="st-layers" aria-label="Layers"></aside>
           <div id="st-edit-preview"></div>
           <div id="st-edit-timeline"></div>
           <aside id="st-edit-inspector" class="st-inspector" aria-label="Moment controls">
@@ -236,6 +246,7 @@ export function mount(root, ctx) {
     dom.back = root.querySelector("#st-edit-back");
     dom.next = root.querySelector("#st-edit-next");
     dom.notice = root.querySelector("#st-edit-notice");
+    dom.layers = root.querySelector("#st-edit-layers");
     dom.preview = root.querySelector("#st-edit-preview");
     dom.inspector = root.querySelector("#st-edit-inspector");
     dom.inspectorBody = root.querySelector("#st-edit-inspector-body");
@@ -267,6 +278,7 @@ export function mount(root, ctx) {
     dom.inspectorClose?.addEventListener("click", closeInspector);
     dom.inspectorScrim?.addEventListener("click", closeInspector);
     document.addEventListener("keydown", onInspectorKeydown);
+    document.addEventListener("keydown", onLayerKeydown);
   }
 
   function openInspector() {
@@ -294,6 +306,18 @@ export function mount(root, ctx) {
     }
   }
 
+  function onLayerKeydown(event) {
+    if (event.key !== "Delete" && event.key !== "Backspace") return;
+    const target = event.target;
+    if (target instanceof HTMLElement
+      && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) {
+      return;
+    }
+    if (!state.selected || saving) return;
+    event.preventDefault();
+    removeSelectedLayer();
+  }
+
   function setSaveStatus(message, tone = "") {
     if (!dom.save) return;
     dom.save.textContent = message;
@@ -302,7 +326,17 @@ export function mount(root, ctx) {
 
   function notify(message, tone = "") {
     if (!dom.notice) return;
+    if (noticeTimer) {
+      window.clearTimeout(noticeTimer);
+      noticeTimer = 0;
+    }
     setStatus(dom.notice, message, tone);
+    if (message && tone !== "bad") {
+      noticeTimer = window.setTimeout(() => {
+        noticeTimer = 0;
+        if (dom.notice) setStatus(dom.notice, "");
+      }, 6000);
+    }
   }
 
   function setUndoState() {
@@ -977,6 +1011,9 @@ export function mount(root, ctx) {
       duration: state.duration,
       selected: state.selected,
       jobId: state.job?.id || "",
+      job: state.job,
+      story: state.story,
+      hiddenLayers: state.hiddenLayers,
     });
   }
 
@@ -1018,7 +1055,10 @@ export function mount(root, ctx) {
       trimReady: () => Boolean(state.trim),
       select: (kind, id) => selectLayer(kind, id),
       setTab: (tab) => setActiveTab(tab),
-      refresh: () => renderInspector(),
+      refresh: () => {
+        renderLayers();
+        renderInspector();
+      },
       seek: (time) => seek(time),
       notify,
       getAutoSubtitles: () => state.autoSubs,
@@ -1132,13 +1172,172 @@ export function mount(root, ctx) {
     });
   }
 
+  function layerCrop() {
+    return cropAt({
+      edit: state.edit,
+      job: state.job,
+      story: state.story,
+      time: state.playhead,
+      aspect: state.aspect,
+    });
+  }
+
+  function layerHiddenKey(kind, id) {
+    return `${kind}:${id}`;
+  }
+
+  function renderLayers() {
+    if (!dom.layers || !state.edit) return;
+    renderLayersPanel(dom.layers, {
+      getEdit: () => state.edit,
+      getCaptions: () => state.captions,
+      getSelected: () => state.selected,
+      getCrop: layerCrop,
+      isHidden: (kind, id) => state.hiddenLayers.has(layerHiddenKey(kind, id)),
+      select: (kind, id) => selectLayer(kind, id),
+      add: (kind) => addLayer(kind),
+      toggleHidden: (kind, id) => toggleLayerHidden(kind, id),
+      remove: (kind, id) => removeLayer(kind, id),
+    });
+  }
+
+  function addCleanBox(box = null) {
+    if (!state.edit) return;
+    const layers = (state.edit.clean || []).slice();
+    const layer = manualLayer(layers.length, box);
+    layers.push(layer);
+    state.edit.clean = layers;
+    touch("clean");
+    selectLayer("clean", layer.id);
+    scheduleTimeline();
+  }
+
+  function addLayer(kind) {
+    if (!state.edit) return;
+    if (kind === "clean") {
+      addCleanBox();
+      notify("Remove-text box added. Drag it on the picture or use Exact position.", "ok");
+      return;
+    }
+    if (kind === "text") {
+      const graphics = (state.edit.graphics || []).slice();
+      const layer = newTextLayer("lower_third", {
+        duration: state.duration,
+        playhead: state.playhead,
+        index: graphics.length,
+      });
+      graphics.push(layer);
+      state.edit.graphics = graphics;
+      touch("graphics");
+      selectLayer("text", layer.id);
+      scheduleTimeline();
+      notify("Text layer added at the playhead.", "ok");
+      return;
+    }
+    setActiveTab(kind);
+  }
+
+  function updateCleanBox(id, box, { commit = false } = {}) {
+    if (!state.edit || !id) return;
+    const layer = (state.edit.clean || []).find((item) => item.id === id);
+    if (!layer) return;
+    const x = round(clamp(numberOr(box?.x), 0, 1), 4);
+    const y = round(clamp(numberOr(box?.y), 0, 1), 4);
+    layer.box = {
+      x,
+      y,
+      w: round(clamp(numberOr(box?.w, 0.004), 0.004, 1 - x), 4),
+      h: round(clamp(numberOr(box?.h, 0.004), 0.004, 1 - y), 4),
+    };
+    if (commit) {
+      touch("clean");
+      renderLayers();
+    }
+  }
+
+  function createCleanBox(box) {
+    addCleanBox(box);
+    notify("Remove-text box drawn.", "ok");
+  }
+
+  function toggleLayerHidden(kind, id) {
+    if (!id) return;
+    const key = layerHiddenKey(kind, id);
+    if (state.hiddenLayers.has(key)) state.hiddenLayers.delete(key);
+    else state.hiddenLayers.add(key);
+    preview?.setHiddenLayers(state.hiddenLayers);
+    renderLayers();
+  }
+
+  function removeLayer(kind, id) {
+    if (!state.edit || !id) return;
+    let removed = false;
+    if (kind === "clean") {
+      const layers = state.edit.clean || [];
+      const next = layers.filter((layer) => layer.id !== id);
+      removed = next.length !== layers.length;
+      if (removed) {
+        state.edit.clean = next;
+        touch("clean");
+      }
+    } else if (kind === "text" || kind === "effects") {
+      const graphics = state.edit.graphics || [];
+      const next = graphics.filter((layer) => layer.id !== id);
+      removed = next.length !== graphics.length;
+      if (removed) {
+        state.edit.graphics = next;
+        touch("graphics");
+      }
+      if (!removed && kind === "effects") {
+        const motion = state.edit.motion || [];
+        const nextMotion = motion.filter((layer) => layer.id !== id);
+        removed = nextMotion.length !== motion.length;
+        if (removed) {
+          state.edit.motion = nextMotion;
+          touch("motion");
+        }
+      }
+    } else if (kind === "color") {
+      state.edit.color = { ...(state.edit.color || {}), preset: "none" };
+      touch("color");
+      removed = true;
+    } else if (kind === "audio") {
+      state.edit.audio = { ...(state.edit.audio || {}), mode: "original" };
+      touch("audio");
+      removed = true;
+    }
+    if (!removed) {
+      notify("Open the Captions panel to remove this caption line.", "");
+      setActiveTab(kind);
+      return;
+    }
+    if (state.selected?.kind === kind && state.selected?.id === id) {
+      state.selected = null;
+      preview?.setSelected(null);
+      timeline?.setSelected(null);
+    }
+    renderLayers();
+    renderInspector();
+    scheduleTimeline();
+    preview?.refresh();
+    notify("Layer removed.", "ok");
+  }
+
+  function removeSelectedLayer() {
+    if (!state.selected) return;
+    removeLayer(state.selected.kind, state.selected.id);
+  }
+
   function selectLayer(kind, id) {
     const tab = kind === "sentences" ? state.activeTab : kind;
     if (tab) state.activeTab = tab;
     if (kind === "sentences") return;
     state.selected = id ? { kind, id } : null;
-    preview?.setSelected(kind === "text" || kind === "captions" ? state.selected : null);
+    preview?.setSelected(
+      ["clean", "text", "captions"].includes(kind) ? state.selected : null,
+    );
     timeline?.setSelected(state.selected);
+    renderLayers();
     renderInspector();
   }
 
@@ -1342,6 +1541,7 @@ export function mount(root, ctx) {
     const seq = ++loadSeq;
     if (!state.job || !state.set || !state.story) return;
     state.selected = null;
+    state.hiddenLayers.clear();
     state.playhead = Math.min(state.playhead, Math.max(0.1, state.duration));
     setSaveStatus("Opening moment…", "busy");
     notify("");
@@ -1449,6 +1649,9 @@ export function mount(root, ctx) {
           timeline?.setTime(time);
         },
         onStale: () => { void handleStalePreview(); },
+        onSelect: (kind, id) => selectLayer(kind, id),
+        onBoxChange: (id, box, options) => updateCleanBox(id, box, options),
+        onBoxCreate: (box) => createCleanBox(box),
       });
     }
     if (!timeline) {
@@ -1456,6 +1659,7 @@ export function mount(root, ctx) {
         jobId: state.job.id,
         onSeek: (time) => seek(time),
         onSelect: (kind, id) => selectLayer(kind, id),
+        onAdd: (kind) => addLayer(kind),
         beforeTrim: () => flushSave(),
         onTrim: (result) => applyTrimResult(result, "Trimmed"),
         onConflict: (error) => { void handleTrimConflict(error); },
@@ -1482,6 +1686,7 @@ export function mount(root, ctx) {
     });
     timeline.setTime(state.playhead);
     timeline.setSelected(state.selected);
+    renderLayers();
     renderInspector();
   }
 
@@ -1667,6 +1872,7 @@ export function mount(root, ctx) {
   return () => {
     disposed = true;
     if (saveTimer) window.clearTimeout(saveTimer);
+    if (noticeTimer) window.clearTimeout(noticeTimer);
     if (timelineRaf) window.cancelAnimationFrame(timelineRaf);
     if (state.dirty.size) void saveNow();
     preview?.destroy();
@@ -1675,6 +1881,7 @@ export function mount(root, ctx) {
     window.removeEventListener("pagehide", onPageHide);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     document.removeEventListener("keydown", onInspectorKeydown);
+    document.removeEventListener("keydown", onLayerKeydown);
     delete root.dataset.editorFrame;
     root.replaceChildren();
   };

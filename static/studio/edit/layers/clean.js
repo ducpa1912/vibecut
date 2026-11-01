@@ -40,7 +40,7 @@ const AUTO_CLEAN_STATE = new Map();
 const KIND_ORDER = ["delogo", "fill", "blur", "plate", "mask", "crop_guard"];
 
 const KIND_COPY = {
-  delogo: "Remove (interpolate)",
+  delogo: "Remove text",
   fill: "AI fill",
   plate: "Cover plate",
   blur: "Blur",
@@ -370,11 +370,11 @@ function layerFromEntry(entry, tracklet, index, source) {
   };
 }
 
-function manualLayer(index) {
+export function manualLayer(index, box = null) {
   return {
     id: `cl_manual_${Date.now().toString(36)}`,
     kind: "delogo",
-    box: { x: 0.08, y: 0.72, w: 0.84, h: 0.16 },
+    box: paddedBox(box, "delogo"),
     ranges: [],
     z: index,
     color: "#000000",

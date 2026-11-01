@@ -26,7 +26,7 @@ const LANE_LABELS = {
 };
 
 const EMPTY_COPY = {
-  clean: "No old text marked",
+  clean: "No text boxes yet",
   text: "No text yet",
   captions: "No captions yet",
   effects: "No motion or effects",
@@ -104,6 +104,7 @@ export function mountTimeline(root, options = {}) {
   const handlers = {
     onSeek: options.onSeek || (() => {}),
     onSelect: options.onSelect || (() => {}),
+    onAdd: options.onAdd || (() => {}),
     onTrim: options.onTrim || (() => {}),
     onConflict: options.onConflict || (() => {}),
     beforeTrim: options.beforeTrim || (() => Promise.resolve(true)),
@@ -825,6 +826,18 @@ export function mountTimeline(root, options = {}) {
         row.kind !== "sentences" ? el("small", { text: String(row.items.length) }) : null,
       ]);
       if (row.kind !== "sentences") {
+        const add = el("button", {
+          class: "st-tl-add",
+          type: "button",
+          text: "+",
+          title: `Add ${row.label || LANE_LABELS[row.kind] || "layer"}`,
+          "aria-label": `Add ${row.label || LANE_LABELS[row.kind] || "layer"}`,
+        });
+        add.addEventListener("click", (event) => {
+          event.stopPropagation();
+          handlers.onAdd(row.kind);
+        });
+        label.append(add);
         label.setAttribute("role", "button");
         label.setAttribute("tabindex", "0");
         label.addEventListener("click", () => handlers.onSelect(row.kind, ""));

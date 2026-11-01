@@ -143,6 +143,61 @@ try {
         `${where}: Edit does not offer the text scan (${scanLabel})`,
       );
 
+      // P1: draw, move and delete a Remove-text box without a number field.
+      if (viewport.width === 1280) {
+        await page.locator("#st-preview-tool-box").click();
+        const canvas = page.locator("#st-preview-canvas");
+        const box = await canvas.boundingBox();
+        assert(box && box.width > 100 && box.height > 100, `${where}: preview canvas is not measurable`);
+        const start = { x: box.x + box.width * 0.32, y: box.y + box.height * 0.34 };
+        const end = { x: box.x + box.width * 0.68, y: box.y + box.height * 0.48 };
+        await page.mouse.move(start.x, start.y);
+        await page.mouse.down();
+        await page.mouse.move(end.x, end.y, { steps: 8 });
+        await page.mouse.up();
+
+        const cleanRow = page.locator('.st-layer-item[data-kind="clean"]').first();
+        await cleanRow.waitFor({ state: "visible", timeout: 10000 });
+        const before = JSON.parse(await cleanRow.getAttribute("data-box"));
+        assert(before.w > 0.01 && before.h > 0.01, `${where}: drawn box has no size`);
+
+        const live = await canvas.boundingBox();
+        const centre = { x: live.x + live.width * 0.5, y: live.y + live.height * 0.41 };
+        await page.mouse.move(centre.x, centre.y);
+        await page.mouse.down();
+        await page.mouse.move(centre.x + 14, centre.y + 10, { steps: 6 });
+        await page.mouse.up();
+        await page.waitForTimeout(150);
+        const moved = JSON.parse(await cleanRow.getAttribute("data-box"));
+        assert(
+          Math.abs(moved.x - before.x) > 0.001 || Math.abs(moved.y - before.y) > 0.001,
+          `${where}: dragging the box did not move it`,
+        );
+
+        const resizeCanvas = await canvas.boundingBox();
+        const corner = {
+          x: resizeCanvas.x + (moved.x + moved.w) * resizeCanvas.width,
+          y: resizeCanvas.y + (moved.y + moved.h) * resizeCanvas.height,
+        };
+        await page.mouse.move(corner.x, corner.y);
+        await page.mouse.down();
+        await page.mouse.move(corner.x + 16, corner.y + 12, { steps: 6 });
+        await page.mouse.up();
+        const resized = JSON.parse(await cleanRow.getAttribute("data-box"));
+        assert(
+          Math.abs(resized.w - moved.w) > 0.001 || Math.abs(resized.h - moved.h) > 0.001,
+          `${where}: dragging the handle did not resize the box`,
+        );
+
+        await page.keyboard.press("Delete");
+        await cleanRow.waitFor({ state: "detached", timeout: 10000 });
+        await page.waitForFunction(
+          () => !document.querySelector(".st-tl-bar-clean"),
+          null,
+          { timeout: 10000 },
+        );
+      }
+
       if (screenshotPrefix) {
         await page.screenshot({
           path: `${screenshotPrefix}-${viewport.width}.png`,
