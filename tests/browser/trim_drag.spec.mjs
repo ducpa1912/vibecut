@@ -186,6 +186,11 @@ try {
   const afterWiden = await durationChanged(afterEnd, 1);
   assert(afterWiden > afterEnd + 0.5,
     `keyboard widen did not lengthen the header (${afterEnd} -> ${afterWiden})`);
+  await page.waitForFunction(
+    () => document.activeElement?.dataset?.edge === "start",
+    null,
+    { timeout: 5000 },
+  ).catch(() => {});
   assert(await startHandle.evaluate(
     (node) => document.activeElement === node,
   ), "start handle lost focus after the keyboard trim");
