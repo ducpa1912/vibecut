@@ -67,6 +67,37 @@ def _edit_story(job: dict, edit: dict) -> dict | None:
     )
 
 
+def _layers_in_story(layers: list[dict], story: dict) -> tuple[list[dict], list[dict]]:
+    """Keep Clean layers whose text is on screen during this story.
+
+    Check tracklets cover the whole source; a moment needs only the text
+    inside its own ``start``-``end``. Ranges are clipped to the story. A
+    layer without ranges is on screen the whole time and is kept.
+    """
+    start = float(story.get("start") or 0.0)
+    end = float(story.get("end") or 0.0)
+    if end <= start:
+        return layers, []
+    kept: list[dict] = []
+    outside: list[dict] = []
+    for layer in layers:
+        ranges = [item for item in layer.get("ranges") or [] if isinstance(item, dict)]
+        if not ranges:
+            kept.append(layer)
+            continue
+        clipped = []
+        for item in ranges:
+            left = max(start, float(item.get("start") or 0.0))
+            right = min(end, float(item.get("end") or 0.0))
+            if right - left > 0.05:
+                clipped.append({"start": round(left, 3), "end": round(right, 3)})
+        if clipped:
+            kept.append({**layer, "ranges": clipped})
+        else:
+            outside.append(layer)
+    return kept, outside
+
+
 @router.post("/api/path/reveal")
 def reveal_path(body: RevealPathBody, request: Request) -> dict:
     """Show a video path in Finder before it is imported."""
@@ -274,7 +305,8 @@ def auto_clean(
         raise HTTPException(exc.status_code, str(exc)) from exc
     if edit is None:
         raise HTTPException(404, "Edit not found.")
-    if _edit_story(job, edit) is None:
+    story = _edit_story(job, edit)
+    if story is None:
         raise HTTPException(404, "The story for this Edit is not in this job.")
     report = detect.load_report(job_dir)
     if report is None:
@@ -288,9 +320,8 @@ def auto_clean(
         settings=app.settings_store.load_settings(),
         include_handles=bool(body.include_handles) if body else False,
     )
-    merged = cleanup.merge_auto_clean_layers(
-        edit.get("clean") or [], built.get("layers") or [],
-    )
+    in_story, outside = _layers_in_story(list(built.get("layers") or []), story)
+    merged = cleanup.merge_auto_clean_layers(edit.get("clean") or [], in_story)
     skipped = [
         {
             "tracklet_id": item.get("tracklet_id"),
@@ -299,6 +330,14 @@ def auto_clean(
         }
         for item in built.get("refused") or []
     ]
+    skipped.extend(
+        {
+            "tracklet_id": item.get("tracklet_id"),
+            "kind": item.get("tracklet_kind") or item.get("kind"),
+            "reason": "This text is not on screen during this moment.",
+        }
+        for item in outside
+    )
     skipped.extend(merged["skipped"])
     warnings = [str(item) for item in built.get("warnings") or []]
     if not tracklets:

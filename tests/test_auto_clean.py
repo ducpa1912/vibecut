@@ -355,3 +355,23 @@ def test_cross_site_writes_are_blocked(env):
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Cross-site writes are blocked."
+
+
+def test_only_text_on_screen_during_the_moment_is_added(env):
+    job = _job_record()
+    job["source"]["duration"] = 30.0
+    job["clip_sets"][0]["stories"][0].update(start=2.0, end=8.0)
+    _write_job(env.jobs, job)
+    detect.write_report(env.directory, _report([
+        _tracklet("trk_in", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09},
+                  ranges=[{"start": 0.0, "end": 5.0}, {"start": 7.0, "end": 12.0}]),
+        _tracklet("trk_out", "title", {"x": 0.1, "y": 0.2, "w": 0.8, "h": 0.18},
+                  ranges=[{"start": 20.0, "end": 25.0}]),
+    ]))
+
+    body = _call(env).json()
+
+    assert [layer["tracklet_id"] for layer in body["layers"]] == ["trk_in"]
+    assert body["layers"][0]["ranges"] == [{"start": 2.0, "end": 5.0}, {"start": 7.0, "end": 8.0}]
+    assert {"tracklet_id": "trk_out", "kind": "title",
+            "reason": "This text is not on screen during this moment."} in body["skipped"]
