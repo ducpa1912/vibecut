@@ -55,12 +55,12 @@ def test_recent_jobs_expose_failure_context(api):
         status="failed",
         progress=1.0,
         message="URL ingest failed",
-        error="Cobalt: HTTP 403 Forbidden",
+        error="yt-dlp: HTTP 403 Forbidden",
         ingest={
-            "provider": "cobalt",
-            "label": "Cobalt",
+            "provider": "ytdlp",
+            "label": "yt-dlp",
             "status": "failed",
-            "error": "Cobalt: HTTP 403 Forbidden",
+            "error": "yt-dlp: HTTP 403 Forbidden",
         },
     )
 
@@ -70,11 +70,11 @@ def test_recent_jobs_expose_failure_context(api):
     job = response.json()["jobs"][0]
     assert job["status"] == "failed"
     assert job["message"] == "URL ingest failed"
-    assert job["error"] == "Cobalt: HTTP 403 Forbidden"
-    assert job["provider"] == "cobalt"
-    assert job["provider_label"] == "Cobalt"
+    assert job["error"] == "yt-dlp: HTTP 403 Forbidden"
+    assert job["provider"] == "ytdlp"
+    assert job["provider_label"] == "yt-dlp"
     assert job["ingest_status"] == "failed"
-    assert job["ingest_error"] == "Cobalt: HTTP 403 Forbidden"
+    assert job["ingest_error"] == "yt-dlp: HTTP 403 Forbidden"
 
 
 def test_failed_recent_cut_can_be_deleted(api):

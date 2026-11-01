@@ -216,12 +216,21 @@ function header() {
   const refresh = el("button", { class: "ghost small", type: "button", text: "Refresh" });
   refresh.addEventListener("click", () => { void load(); });
   const views = settings?.edition?.views || [];
+  const language = el("select", {
+    id: "ui-language", class: "ghost small lang-select", "aria-label": "Interface language",
+  }, [
+    el("option", { value: "en", text: "English" }),
+    el("option", { value: "vi", text: "Tiếng Việt" }),
+  ]);
+  language.value = window.VibeCutI18N?.current?.() || "en";
+  language.addEventListener("change", () => window.VibeCutI18N?.setLanguage?.(language.value));
   return el("header", { class: "shell topbar vr-top" }, [
     el("a", { class: "brand", href: "/" }, ["VibeCut", el("span", { class: "brand-mark" })]),
     el("div", { class: "topbar-right" }, [
       el("span", { class: "vr-room", text: "Voice Room" }),
       el("a", { href: "/", text: "Back to VibeCut" }),
       views.includes("studio") ? el("a", { href: "/?studio=1", text: "Open Studio" }) : null,
+      language,
       refresh,
     ]),
   ]);

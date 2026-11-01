@@ -58,7 +58,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 
 | # | Action: where to click | Intent | Expected | Result |
 |---|---|---|---|---|
-| 2.3.1 | Paste `https://www.youtube.com/watch?v=jNQXAC9IVRw` into **Paste a video link**, click **Get video** | URL import with yt-dlp | The provider label shows **yt-dlp**, then a download/progress view starts. No Cobalt or Docker is needed. | |
+| 2.3.1 | Paste `https://www.youtube.com/watch?v=jNQXAC9IVRw` into **Paste a video link**, click **Get video** | URL import with yt-dlp | The provider label shows **yt-dlp**, then a download/progress view starts. No Docker is needed. | |
 | 2.3.2 | Wait for the result view | URL import finishes | The job opens with the title **Me at the zoo**, about 19 seconds, 4 moments, and a hook. | |
 | 2.3.3 | Click **Recent cuts** → the new URL job | The download is a normal job | The row shows the title and **ready**, and it opens again. | |
 
@@ -177,7 +177,6 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 8.3 | Paste an OpenRouter key, click **Test OpenRouter**, then **Save setup** | OpenRouter key | The test says **OpenRouter replied.** After saving it says **Saved on this Mac.** The key is not shown again. | |
 | 8.4 | Clear the OpenRouter key and click **Test OpenRouter** | An honest missing-key message | It says **OpenRouter model check failed. No OpenRouter key.** | |
 | 8.5 | Video links → **Test yt-dlp** | Downloader check | The chip says **Ready · <version>** and the detail says no sidecar is needed. | |
-| 8.6 | Video links · Cobalt → **Test Cobalt** with no service running | An honest offline message | It says Cobalt is not reachable at the configured URL and suggests checking the service or URL. | |
 | 8.7 | RedNote · XHS → **Test XHS** with no service running | An honest offline message | It says the XHS service is not reachable and suggests starting xhs-get. | |
 | 8.8 | Transcription → choose a spoken language, click **Check local STT**, then **Live STT** | Local speech check | **Check local STT** says local STT is ready. **Live STT** generates a test clip and transcribes it. | |
 | 8.9 | Voice over → paste a MiniMax key, click **Check TTS**, then **Live TTS** | Local/cloud voice check | **Check TTS** lists the ready engines. **Live TTS** plays a short sample. | |
@@ -185,7 +184,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 8.11 | Optional packs | Honest pack status | Speech, Voice and Separation each show **Installed**, **Ready** (the engine already works on this Mac, for example Whisper installed another way) or **Not installed** with its download size. Nothing downloads from Classic. | |
 | 8.12 | Rights lock | The import gate | The toggle shows the current state. Turning it off removes the import dialog; turning it on restores it. | |
 | 8.13 | Paste an ElevenLabs key, click **Save setup**, reopen Setup | A saved key round-trip | The key field is blank and a status says the key is saved. The key is never returned by the API or shown in the page. | |
-| 8.14 | Fill the other key fields: **API key · optional** (OpenCode), **Service URL** and **API key · optional** (Cobalt), **Service URL**, **Access token · friends mode** and **Cookie · one-shot handoff** (XHS), then **Save setup** | Every key field is real and saved | Each field accepts text, reopens with a configured/blank state, and no saved secret is echoed back into the page. | |
+| 8.14 | Fill the other key fields: **API key · optional** (OpenCode), **Service URL**, **Access token · friends mode** and **Cookie · one-shot handoff** (XHS), then **Save setup** | Every key field is real and saved | Each field accepts text, reopens with a configured/blank state, and no saved secret is echoed back into the page. | |
 
 ## 9. Known issues
 

@@ -36,19 +36,15 @@ the installed version.
 
 ## Optional external sidecars
 
-Cobalt and xhs_get are not part of the proprietary VibeCut source tree or
-default artifact. If a distribution ships them alongside VibeCut, keep them in
-separate artifacts and comply with their licenses:
+xhs_get is not part of the proprietary VibeCut source tree or default
+artifact. If a distribution ships it alongside VibeCut, keep it in a separate
+artifact and comply with its license:
 
-- **Cobalt API** — AGPL-3.0. Provide corresponding source or a written offer
-  valid for three years, plus the license text and modification status.
-- **Cobalt web UI/assets** — CC-BY-NC-SA-4.0 with branding excluded. Do not use
-  Cobalt marks as VibeCut branding.
 - **xhs_get** — GPL-3.0. Provide corresponding source or a written offer and the
   license text. Keep its cookies and session inside its own process.
 
-No Cobalt or xhs_get source, comments, tests, or assets are copied into the
-VibeCut URL-ingest modules. The integration is HTTP-only.
+No xhs_get source, comments, tests, or assets are copied into the VibeCut
+URL-ingest modules. The integration is HTTP-only.
 
 ## Voice extraction engines
 

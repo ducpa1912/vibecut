@@ -48,6 +48,7 @@
     })();
   </script>
   <script src="/static/classic/trust.js?v=0.1.0" defer></script>
+  <script src="/static/classic/i18n.js?v=0.1.0" defer></script>
   <script src="/static/classic/app.js?v=0.13.0" defer></script>
   <script src="/static/classic/creator.js?v=0.15.0" defer></script>
 </head>
@@ -59,6 +60,10 @@
       <a id="classic-voice-room" href="/voices">Voice Room</a>
       <button id="creator-open" class="ghost small" type="button">Creator</button>
       <button id="setup-open" class="ghost small" type="button">Setup</button>
+      <select id="ui-language" class="ghost small lang-select" aria-label="Interface language">
+        <option value="en">English</option>
+        <option value="vi">Tiếng Việt</option>
+      </select>
       <span id="privacy-pill" class="local-pill"><i class="live-dot"></i> <span id="privacy-label">Local by default</span></span>
       <span id="health" class="health">checking engine…</span>
     </div>
@@ -1080,13 +1085,12 @@
             <h3>Video links · yt-dlp</h3>
             <span id="setup-ytdlp-status" class="setup-chip">Not checked</span>
           </div>
-          <p class="setup-hint">Native Python downloader for most sites. No Node, Docker, Cobalt, or cloud upload. Highest quality + audio by default; H.264/MP4 preferred for editing. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <p class="setup-hint">Native Python downloader for most sites. No Node, Docker, or cloud upload. Highest quality + audio by default; H.264/MP4 preferred for editing. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
           <label class="setup-field">
             <span>Link provider</span>
             <select id="setup-ingest-provider">
               <option value="auto">Auto · yt-dlp first</option>
               <option value="ytdlp">yt-dlp only</option>
-              <option value="cobalt">Cobalt only · external</option>
               <option value="xhs">XHS only · external</option>
             </select>
           </label>
@@ -1162,70 +1166,13 @@
           <p id="setup-ytdlp-detail" class="setup-hint"></p>
         </section>
 
-        <section class="setup-section">
-          <div class="setup-title">
-            <h3>Video links · Cobalt</h3>
-            <span id="setup-cobalt-status" class="setup-chip">Not checked</span>
-          </div>
-          <p class="setup-hint">Optional external fallback. Point VibeCut at your own cobalt instance. It sends the link over HTTP; no cobalt code runs here. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
-          <label class="setup-field">
-            <span>Service URL</span>
-            <input id="setup-cobalt-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:9000/">
-          </label>
-          <label class="setup-field">
-            <span>API key · optional</span>
-            <input id="setup-cobalt-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set">
-          </label>
-          <div class="setup-row">
-            <label class="setup-field">
-              <span>Quality</span>
-              <select id="setup-cobalt-quality">
-                <option value="max">Maximum</option>
-                <option value="4320">4320p</option>
-                <option value="2160">2160p</option>
-                <option value="1440">1440p</option>
-                <option value="1080">1080p</option>
-                <option value="720">720p</option>
-                <option value="480">480p</option>
-                <option value="360">360p</option>
-                <option value="240">240p</option>
-                <option value="144">144p</option>
-              </select>
-            </label>
-            <label class="setup-field">
-              <span>Codec</span>
-              <select id="setup-cobalt-codec">
-                <option value="h264">H.264 · compatible</option>
-                <option value="av1">AV1 · smaller</option>
-                <option value="vp9">VP9 · WebM</option>
-              </select>
-            </label>
-          </div>
-          <label class="setup-field">
-            <span>Local processing</span>
-            <select id="setup-cobalt-local">
-              <option value="preferred">Preferred · cobalt decides</option>
-              <option value="forced">Forced · merge with local ffmpeg</option>
-            </select>
-          </label>
-          <label class="check">
-            <input id="setup-cobalt-fallback" type="checkbox">
-            <span class="check-box"></span>
-            <span class="check-copy"><strong>Fallback after yt-dlp</strong><small>only on yt-dlp failure</small></span>
-          </label>
-          <div class="setup-actions setup-ingest-actions">
-            <button id="setup-test-cobalt" class="ghost small" type="button">Test Cobalt</button>
-            <span class="setup-hint">Uses saved settings.</span>
-          </div>
-          <p id="setup-cobalt-detail" class="setup-hint"></p>
-        </section>
 
         <section class="setup-section">
           <div class="setup-title">
             <h3>RedNote · XHS</h3>
             <span id="setup-xhs-status" class="setup-chip">Not checked</span>
           </div>
-          <p class="setup-hint">RedNote needs a signed-in <code>xhs_get</code> session. The cookie stays in xhs_get; VibeCut never stores or reads it. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <p class="setup-hint">yt-dlp can read some public notes, but many RedNote links need a signed-in <code>xhs_get</code> session. The cookie stays in xhs_get; VibeCut never stores or reads it. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
           <label class="setup-field">
             <span>Service URL</span>
             <input id="setup-xhs-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:5789">

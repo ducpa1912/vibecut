@@ -5,8 +5,8 @@ release checklist, not legal advice. Review it with counsel before shipping a
 paid or publicly distributed build.
 
 The URL-ingest design keeps every strong-copyleft downloader at arm's length:
-yt-dlp runs in-process under the Unlicense, while Cobalt and xhs_get are
-optional, unmodified, separate processes that VibeCut only calls over HTTP.
+yt-dlp runs in-process under the Unlicense, while xhs_get is an optional,
+unmodified, separate process that VibeCut only calls over HTTP.
 
 ## 1. Product position
 
@@ -19,7 +19,7 @@ optional, unmodified, separate processes that VibeCut only calls over HTTP.
   cannot override them.
 - Every release artifact must include the notices described in section 5.
 - Redistributing a sidecar is optional and is a separate compliance event.
-  The default build does not include Cobalt or xhs_get.
+  The default build does not include xhs_get.
 
 ## 2. Dependency inventory
 
@@ -66,11 +66,7 @@ Homebrew ffmpeg with `--enable-gpl --enable-version3` is GPL-3.0-or-later.
 
 | Component | Role | License | Boundary |
 |---|---|---|---|
-| Cobalt API | Optional general-site downloader | AGPL-3.0 | Separate self-hosted service. VibeCut only sends HTTP requests. Hosted `api.cobalt.tools` is not supported. |
-| Cobalt web UI/assets | Optional browser UI | CC-BY-NC-SA-4.0; branding excluded | Do not ship the UI in a commercial build. Do not use Cobalt marks beyond factual attribution. |
 | xhs_get | Optional RedNote/Xiaohongshu note downloader | GPL-3.0 | Separate self-hosted service. Cookie and session stay inside xhs_get. |
-| Node.js | Runs Cobalt from source | MIT | Not required by VibeCut, including for common URLs. Only Cobalt's own runtime needs it. |
-| Docker / Compose | Optional Cobalt packaging | Apache-2.0 | Not required by VibeCut. |
 
 ### Optional local engines and models (outside URL ingest)
 
@@ -98,21 +94,19 @@ Rules for every contributor and release:
 
 1. yt-dlp is the only downloader library linked into VibeCut. It is imported
    as the public `yt_dlp` package and is licensed under the Unlicense.
-2. `url_ingest/cobalt.py` and `url_ingest/xhs.py` are original HTTP clients.
-   They may use public API documentation and observed HTTP behavior. They must
-   not import, vendor, copy, or translate source from Cobalt or xhs_get.
+2. `url_ingest/xhs.py` is an original HTTP client. It may use public API
+   documentation and observed HTTP behavior. It must not import, vendor, copy,
+   or translate source from xhs_get.
 3. Do not paste AGPL/GPL code, comments, tests, or assets into VibeCut. Record
    provenance in the commit message when behavior is derived from upstream
    documentation.
-4. Do not add Cobalt or xhs_get as git submodules, Python dependencies, npm
-   packages, Docker layers, or app-bundle resources.
-5. Do not use the hosted `api.cobalt.tools` service. The Cobalt provider
-   rejects that host and requires a user-configured instance.
+4. Do not add xhs_get as a git submodule, Python dependency, npm package,
+   Docker layer, or app-bundle resource.
 6. Do not add DRM removal, paywall bypass, private-content access, or
    credential harvesting. Cookies are user-supplied and only used to reach
    content the user can already access.
-7. VibeCut must stay fully functional for common URLs with no Node, Docker,
-   Cobalt, or xhs_get installed.
+7. VibeCut must stay fully functional for common URLs with no Node, Docker or
+   xhs_get installed.
 8. Run the release gate before tagging. It fails on GPL/AGPL direct
    requirements, sidecar module imports, vendored sidecar paths, and an
    installed yt-dlp below the documented floor.
@@ -126,8 +120,8 @@ inventory, ffmpeg version block, and the artifact file list.
 
 ## 4. Optional sidecar distribution rules
 
-The safe default is: do not distribute Cobalt or xhs_get. Tell users how to run
-them separately, as `docs/url-ingest.md` does.
+The safe default is: do not distribute xhs_get. Tell users how to run it
+separately, as `docs/url-ingest.md` does.
 
 If a build intentionally ships a sidecar, all of the following apply:
 
@@ -138,15 +132,14 @@ If a build intentionally ships a sidecar, all of the following apply:
   valid for at least three years, with the same version and build scripts.
   AGPL-3.0 also requires a source offer to users who interact with a modified
   instance over a network (section 13).
-- **License text.** Include `AGPL-3.0.txt` for Cobalt and `GPL-3.0.txt` for
-  xhs_get, plus any upstream NOTICE/README attribution.
+- **License text.** Include `GPL-3.0.txt` for xhs_get, plus any upstream
+  NOTICE/README attribution.
 - **Modifications.** State whether the sidecar is unmodified. Publish patches
   or a source diff if it is modified.
 - **No extra restrictions.** Do not add terms that forbid reverse engineering
   or redistribution of the sidecar beyond what GPL/AGPL allows.
-- **Branding.** Do not imply VibeCut is endorsed by Cobalt or xhs_get. Do not
-  ship Cobalt's UI assets, logos, or naming in a commercial package; the web
-  UI is CC-BY-NC-SA-4.0 and branding is excluded from the license.
+- **Branding.** Do not imply VibeCut is endorsed by xhs_get. Do not ship
+  xhs_get UI assets, logos, or naming in a commercial package.
 - **No user data.** Never ship cookies, sessions, tokens, logs, or downloaded
   media with the sidecar.
 - **Container notices.** A sidecar Docker image also distributes a base image,
@@ -157,10 +150,10 @@ If a build intentionally ships a sidecar, all of the following apply:
 Suggested notice block:
 
 ```text
-This distribution includes Cobalt <version>, licensed under AGPL-3.0.
+This distribution includes xhs_get <version>, licensed under GPL-3.0.
 Source: <source archive or URL>
 Written offer: <contact>, valid for three years from distribution.
-License text: LICENSES/AGPL-3.0.txt
+License text: LICENSES/GPL-3.0.txt
 Modifications: none
 ```
 
@@ -269,11 +262,11 @@ Copy this into the release ticket and attach evidence.
 - [ ] `pip-licenses` inventory generated; every `UNKNOWN`, GPL, and AGPL row
       resolved or removed from the artifact.
 - [ ] `THIRD_PARTY_NOTICES.md`, `LICENSES/`, and the proprietary EULA included.
-- [ ] Artifact contains no `cobalt/`, `xhs_get/`, `node_modules/`, sidecar
-      container, or copied upstream source.
+- [ ] Artifact contains no `xhs_get/`, `node_modules/`, sidecar container, or
+      copied upstream source.
 - [ ] Artifact contains no `data/`, cookies, tokens, logs, or user media.
-- [ ] No Node, Docker, Cobalt, or xhs_get required for YouTube, TikTok,
-      Instagram, X, Reddit, or Vimeo ingest.
+- [ ] No Node, Docker or xhs_get required for YouTube, TikTok, Instagram, X,
+      Reddit, or Vimeo ingest.
 - [ ] ffmpeg is either a declared system dependency or a compliant bundled
       binary with source/written offer.
 - [ ] Optional Piper/Kokoro/espeak/minisbd binaries and models are excluded
@@ -287,8 +280,8 @@ Copy this into the release ticket and attach evidence.
 
 - VibeCut is proprietary; yt-dlp is Unlicense; ffmpeg is the user's system
   dependency unless explicitly bundled.
-- Cobalt (AGPL-3.0) and xhs_get (GPL-3.0) are optional external processes, not
-  part of VibeCut, and are not downloaded automatically.
+- xhs_get (GPL-3.0) is an optional external process, not part of VibeCut, and
+  is not downloaded automatically.
 - No DRM, private-content, or paywall bypass is supported.
 - Local Piper/espeak and some optional models carry copyleft or
   non-commercial terms; they are not part of the default URL-ingest build.

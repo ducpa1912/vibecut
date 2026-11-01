@@ -425,3 +425,5 @@ body.vr-root {
   .vr-finder-pick { grid-template-columns: 1fr; }
   .vr-root .st-voice-clone-form .st-setup-key-form { grid-template-columns: 1fr; }
 }
+
+.lang-select { padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; font-size: 12px; }

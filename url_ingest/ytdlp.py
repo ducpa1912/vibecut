@@ -1,8 +1,8 @@
 """Native yt-dlp ingest provider.
 
 This is a clean-room Python integration using the public ``yt-dlp`` package
-(Unlicense). It does not import, call, or copy Cobalt or xhs_get code, and it
-never starts a subprocess.
+(Unlicense). It does not import, call, or copy xhs_get code, and it never
+starts a subprocess.
 
 The provider resolves one URL (or a playlist), downloads the selected video
 into a VibeCut job temp path, and returns metadata. Playlist links return a

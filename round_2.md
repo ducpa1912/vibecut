@@ -352,7 +352,7 @@ Round 1 treated caption/package parity as v0.15 work and “private batch” as 
 - Analytics/virality/trends
 - Avatars/voice cloning/stock B-roll
 - New provider/admin expansion
-- Cobalt/XHS
+- XHS
 - Parallel/cloud render
 
 ---

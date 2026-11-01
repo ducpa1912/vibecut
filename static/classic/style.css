@@ -436,6 +436,7 @@ main { min-height: calc(100vh - 150px); }
 .primary:disabled { opacity: 0.28; cursor: not-allowed; }
 .primary .arrow { font-size: 15px; line-height: 1; }
 .primary.small, .ghost.small { padding: 10px 14px; font-size: 12px; }
+.lang-select { padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; font-size: 12px; }
 .ghost { background: transparent; border-color: var(--line); color: var(--text); }
 .ghost:hover { border-color: var(--line-2); background: var(--panel); }
 .ghost.danger { color: var(--danger); }

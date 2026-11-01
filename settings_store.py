@@ -33,7 +33,7 @@ STALE_SECRETS = ("cartesia", "openai")
 
 SECRET_NAMES = (
     "opencode", "openrouter", "minimax", "groq", "openai", "deepgram",
-    "elevenlabs", "cartesia", "cobalt", "xhs",
+    "elevenlabs", "cartesia", "xhs",
 )
 
 # A saved project key beats the environment for these providers.
@@ -48,7 +48,6 @@ ENV_KEYS = {
     "deepgram": ("VIBECUT_DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY"),
     "elevenlabs": ("VIBECUT_ELEVENLABS_API_KEY", "ELEVENLABS_API_KEY"),
     "cartesia": ("VIBECUT_CARTESIA_API_KEY", "CARTESIA_API_KEY"),
-    "cobalt": ("VIBECUT_COBALT_API_KEY", "COBALT_API_KEY"),
     "xhs": ("VIBECUT_XHS_GET_TOKEN", "XHS_GET_TOKEN"),
 }
 
@@ -269,8 +268,6 @@ def _clean_ingest(settings: dict) -> None:
     ingest = dict(settings.get("ingest") or {})
     # Secrets belong in secrets.json, never in the public settings document.
     for key in (
-        "cobalt_api_key",
-        "cobalt_key",
         "xhs_token",
         "xhs_api_key",
         "xhs_access_token",

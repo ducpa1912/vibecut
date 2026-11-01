@@ -74,7 +74,7 @@ The moderator sided with the private cutting bench, but not with a purely engine
 | Package vs publish-ready | Creator/YouTuber: the last mile is where hours disappear. | Engineer: VibeCut cannot guarantee platform safety, rights, or caption accuracy. |
 | Measurement | YouTuber/marketer: retention data should influence the next batch. | Product owner: local CSV is fine; a dashboard is support-heavy and easy to overinterpret. |
 | 15/30/60 | Product owner: clients still ask for standard lengths. | Creator/YouTuber: three lengths of one cut is not a week of content. |
-| Cobalt/XHS | Existing code and optional sidecars work. | Product owner: fragile credentials, legal exposure, support drag; yt-dlp covers the main path. |
+| XHS | Existing optional sidecar works. | Product owner: fragile credentials, legal exposure, support drag; yt-dlp covers the main path. |
 | Caption ambition | Creator: editable word-level captions and saved brand styles. | Engineer: ship speech-timed cues first; no karaoke promise. |
 
 ---
@@ -225,7 +225,7 @@ The moderator sided with the private cutting bench, but not with a purely engine
 - Provider/admin expansion.
 - Pro audio, mixer automation, beat sync, stem buses, mastering, SFX, voice cloning.
 - Render matrix as default.
-- Cobalt/XHS sidecars, playlist bulk, Docker promises, Windows parity.
+- XHS sidecar, playlist bulk, Docker promises, Windows parity.
 
 **Releases**
 
@@ -421,9 +421,9 @@ Minimum v0.14 package:
 
 No publishing. No platform guarantees. Just stop making the creator assemble the post by hand.
 
-### 2. Do not rip out Cobalt/XHS; demote them
+### 2. Do not rip out XHS; demote it
 
-“Never supported” is too strong. They already exist, are optional, and are documented. Removing working code creates regression risk and breaks users. Freeze investment, hide them from the default path, and keep them as advanced sidecars.
+“Never supported” is too strong. It already exists, is optional, and is documented. Removing working code creates regression risk and breaks users. Freeze investment, hide it from the default path, and keep it as an advanced sidecar.
 
 ### 3. Fix review-link integrity now
 
