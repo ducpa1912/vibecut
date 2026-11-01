@@ -32,6 +32,7 @@ from pydantic import BaseModel
 import editions
 import job_queue
 import voice_clone
+import voice_errors
 import voice_takes
 
 
@@ -88,7 +89,7 @@ def _task_event(task_id: str) -> threading.Event | None:
     if not task_id:
         return None
     if not VOICE_TASK_ID.match(task_id):
-        raise HTTPException(400, "Bad voice task id.")
+        raise HTTPException(400, voice_errors.BAD_TASK)
     with _TASK_LOCK:
         event = VOICE_TASK_CANCELS.get(task_id)
         if event is None:
@@ -209,11 +210,11 @@ def _app():
 
 def _guard(request: Request) -> None:
     if not _app()._setup_origin_ok(request):
-        raise HTTPException(403, "Cross-site voice writes are blocked.")
+        raise HTTPException(403, voice_errors.CROSS_SITE)
 
 
 def _fail(exc: voice_clone.CloneError) -> HTTPException:
-    return HTTPException(exc.status_code, str(exc))
+    return HTTPException(exc.status_code, voice_errors.clean(str(exc)))
 
 
 def _work_dir() -> Path:
@@ -232,7 +233,7 @@ def _candidate_file(job_id: str, index: int) -> Path:
 
 def _short_error(exc: Exception) -> str:
     text = str(exc).splitlines()[0].strip() if str(exc) else exc.__class__.__name__
-    return text[:180]
+    return voice_errors.clean(text, "That step failed. Try again.")
 
 
 def _read_candidate_report(job_id: str) -> dict:
@@ -255,6 +256,22 @@ def _upload_head(raw: Path, work: Path, cancel_event: threading.Event | None = N
         "-c:a", "pcm_s16le", str(head),
     ], timeout=300, cancel_event=cancel_event)
     return head
+
+
+def _silent_reference(path: Path) -> bool:
+    """True when a reference holds no speech. An unreadable file is not silence."""
+    import voice_audio
+
+    try:
+        return bool(voice_audio.analyse(path).get("silent"))
+    except (RuntimeError, OSError, ValueError):
+        return False
+
+
+def _refuse_silent(path: Path) -> None:
+    """Stop before a silent clip becomes a voice, with the fix in the message."""
+    if _silent_reference(path):
+        raise HTTPException(400, voice_errors.NO_SPEECH)
 
 
 def _set_stage(job_id: str, stage: str) -> None:
@@ -435,7 +452,7 @@ def list_clones() -> dict:
 
 
 def _library_bad_manifest() -> HTTPException:
-    return HTTPException(400, "That backup's manifest.json is not a voice library manifest.")
+    return HTTPException(400, voice_errors.BAD_MANIFEST)
 
 
 def _library_manifest(raw: bytes) -> list[dict]:
@@ -447,7 +464,7 @@ def _library_manifest(raw: bytes) -> list[dict]:
     if not isinstance(data, dict):
         raise _library_bad_manifest()
     if str(data.get("version") or "") != str(LIBRARY_VERSION):
-        raise HTTPException(400, "That backup comes from another version of VibeCut.")
+        raise HTTPException(400, voice_errors.OLD_BACKUP)
     voices = data.get("voices")
     if not isinstance(voices, list) or len(voices) > LIBRARY_MAX_VOICES:
         raise _library_bad_manifest()
@@ -491,7 +508,7 @@ def _library_member(info: zipfile.ZipInfo) -> PurePosixPath:
         not name or "\x00" in name or name.startswith("/") or path.is_absolute()
         or ".." in path.parts or drive
     ):
-        raise HTTPException(400, "That backup has an unsafe file path.")
+        raise HTTPException(400, voice_errors.UNSAFE_BACKUP)
     return path
 
 
@@ -511,7 +528,7 @@ def _library_samples(archive: zipfile.ZipFile, voice_ids: set[str]) -> dict[str,
             filename = parts[1]
         else:
             raise HTTPException(
-                400, "A file in that backup does not match a voice in its manifest.",
+                400, voice_errors.MISMATCHED_BACKUP,
             )
         stem = Path(filename).stem
         if (
@@ -520,10 +537,10 @@ def _library_samples(archive: zipfile.ZipFile, voice_ids: set[str]) -> dict[str,
             or stem not in voice_ids
         ):
             raise HTTPException(
-                400, "A sample in that backup does not match a voice in its manifest.",
+                400, voice_errors.MISMATCHED_BACKUP,
             )
         if stem in samples:
-            raise HTTPException(400, "That backup holds two samples for the same voice.")
+            raise HTTPException(400, voice_errors.DUPLICATE_SAMPLE)
         samples[stem] = info
     return samples
 
@@ -531,13 +548,13 @@ def _library_samples(archive: zipfile.ZipFile, voice_ids: set[str]) -> dict[str,
 def _copy_library_sample(archive: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path) -> int:
     limit = voice_clone.MAX_REFERENCE_BYTES
     if info.file_size > limit:
-        raise HTTPException(413, "A voice sample in that backup is over 15 MB.")
+        raise HTTPException(413, voice_errors.BIG_SAMPLE)
     size = 0
     with archive.open(info) as reader, target.open("wb") as writer:
         while chunk := reader.read(1024 * 1024):
             size += len(chunk)
             if size > limit:
-                raise HTTPException(413, "A voice sample in that backup is over 15 MB.")
+                raise HTTPException(413, voice_errors.BIG_SAMPLE)
             writer.write(chunk)
     return size
 
@@ -568,14 +585,14 @@ def _restore_library(path: Path, work: Path) -> dict:
             _library_member(info)
         manifests = [info for info in infos if info.filename == LIBRARY_MANIFEST]
         if len(manifests) != 1:
-            raise HTTPException(400, "That backup has no manifest.json.")
+            raise HTTPException(400, voice_errors.BAD_MANIFEST)
         if manifests[0].file_size > LIBRARY_MANIFEST_BYTES:
             raise _library_bad_manifest()
         rows = _library_manifest(archive.read(manifests[0]))
         samples = _library_samples(archive, {row["voice_id"] for row in rows})
         limit = voice_clone.MAX_UPLOAD_BYTES
         if sum(info.file_size for info in samples.values()) > limit:
-            raise HTTPException(413, "That backup is over 100 MB.")
+            raise HTTPException(413, voice_errors.BIG_BACKUP)
         imported = 0
         skipped = 0
         # Restoring the same backup twice must not duplicate every voice: a
@@ -665,7 +682,7 @@ def import_library(
     _guard(request)
     if not consent:
         raise HTTPException(
-            400, "Confirm you have permission to restore these voices.",
+            400, voice_errors.CONSENT_RESTORE,
         )
     work = _work_dir()
     try:
@@ -675,12 +692,12 @@ def import_library(
             while chunk := file.file.read(1024 * 1024):
                 size += len(chunk)
                 if size > voice_clone.MAX_UPLOAD_BYTES:
-                    raise HTTPException(413, "That backup is over 100 MB.")
+                    raise HTTPException(413, voice_errors.BIG_BACKUP)
                 handle.write(chunk)
         if size == 0:
-            raise HTTPException(400, "That file is empty.")
+            raise HTTPException(400, voice_errors.EMPTY_FILE)
         if not zipfile.is_zipfile(path):
-            raise HTTPException(400, "Restore a VibeCut voice library ZIP file.")
+            raise HTTPException(400, voice_errors.UNREADABLE_BACKUP)
         try:
             return _restore_library(path, work)
         except HTTPException:
@@ -689,7 +706,7 @@ def import_library(
             zipfile.BadZipFile, zlib.error, RuntimeError,
             NotImplementedError, EOFError, KeyError,
         ) as exc:
-            raise HTTPException(400, "That backup is not a valid ZIP file.") from exc
+            raise HTTPException(400, voice_errors.UNREADABLE_BACKUP) from exc
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -700,7 +717,7 @@ def detect_language(request: Request, file: UploadFile = File(...)) -> dict:
     _guard(request)
     suffix = Path(file.filename or "voice.webm").suffix.lower() or ".webm"
     if suffix not in UPLOAD_SUFFIXES:
-        raise HTTPException(400, "Use a WAV, MP3, M4A, OGG, WebM or FLAC recording.")
+        raise HTTPException(400, voice_errors.BAD_FORMAT)
     work = _work_dir()
     try:
         import audio
@@ -711,10 +728,10 @@ def detect_language(request: Request, file: UploadFile = File(...)) -> dict:
             while chunk := file.file.read(1024 * 1024):
                 size += len(chunk)
                 if size > voice_clone.MAX_UPLOAD_BYTES:
-                    raise HTTPException(413, "That recording is over 100 MB.")
+                    raise HTTPException(413, voice_errors.TOO_LARGE)
                 handle.write(chunk)
         if size == 0:
-            raise HTTPException(400, "That recording is empty.")
+            raise HTTPException(400, voice_errors.EMPTY_FILE)
         wav = work / "detect.wav"
         try:
             audio._run([
@@ -723,7 +740,8 @@ def detect_language(request: Request, file: UploadFile = File(...)) -> dict:
                 "-c:a", "pcm_s16le", str(wav),
             ], timeout=300)
         except audio.AudioError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            raise HTTPException(400, voice_errors.clean(str(exc), voice_errors.UNREADABLE)) from exc
+        _refuse_silent(wav)
         import stt
 
         result = stt.transcribe(wav, work, 45.0, lambda *_: None, language="")
@@ -761,12 +779,12 @@ def _clone_my_voice(
     cancel_event: threading.Event | None,
 ) -> dict:
     if not voice_clone.available():
-        raise HTTPException(400, "Add an OpenRouter key in Setup to clone a voice.")
+        raise HTTPException(400, voice_errors.NO_KEY)
     if not consent:
-        raise HTTPException(400, "Confirm this is your own voice before cloning it.")
+        raise HTTPException(400, voice_errors.CONSENT_CLONE)
     suffix = Path(file.filename or "voice.webm").suffix.lower() or ".webm"
     if suffix not in UPLOAD_SUFFIXES:
-        raise HTTPException(400, "Use a WAV, MP3, M4A, OGG, WebM or FLAC recording.")
+        raise HTTPException(400, voice_errors.BAD_FORMAT)
     work = _work_dir()
     try:
         raw = work / f"upload{suffix}"
@@ -775,7 +793,7 @@ def _clone_my_voice(
             while chunk := file.file.read(1024 * 1024):
                 size += len(chunk)
                 if size > voice_clone.MAX_UPLOAD_BYTES:
-                    raise HTTPException(413, "That recording is over 100 MB.")
+                    raise HTTPException(413, voice_errors.TOO_LARGE)
                 handle.write(chunk)
         sample = work / "sample.mp3"
         cleaned = False
@@ -829,6 +847,13 @@ def _clone_my_voice(
                 cleaned = False
                 warning = "Used the raw recording: the cleaned clip was too short."
                 seconds = voice_clone.prepare_sample(raw, sample)
+            if _silent_reference(sample) and cleaned:
+                # The cleaner can keep only a pause. The raw upload is the
+                # fair second chance before refusing the clone.
+                cleaned = False
+                warning = "Used the raw recording: the cleaned clip had no speech."
+                seconds = voice_clone.prepare_sample(raw, sample)
+            _refuse_silent(sample)
             _stop_if_cancelled(cancel_event)
             record = voice_clone.create_clone(
                 sample, name=name or "My voice", source="me", consent=consent,
@@ -857,7 +882,7 @@ def start_candidate_search(
     job = app.load_job(job_id)
     source = Path(str((job.get("source") or {}).get("path") or ""))
     if not source.is_file():
-        raise HTTPException(404, "The source video for this job is missing.")
+        raise HTTPException(404, voice_errors.MISSING_SOURCE)
     if (job.get("source") or {}).get("has_audio") is False:
         # A silent source would decode to silence and run every model on it.
         raise HTTPException(400, NO_SOUND)
@@ -923,10 +948,10 @@ def candidate_audio(job_id: str, index: int) -> FileResponse:
     """Serve one cleaned candidate WAV for the Edit picker."""
     _app().load_job(job_id)
     if index < 1 or index > CANDIDATE_COUNT:
-        raise HTTPException(404, "No such voice candidate.")
+        raise HTTPException(404, voice_errors.MISSING_CLIP)
     path = _candidate_file(job_id, index)
     if not path.is_file():
-        raise HTTPException(404, "No such voice candidate.")
+        raise HTTPException(404, voice_errors.MISSING_CLIP)
     return FileResponse(path, media_type="audio/wav", filename=path.name)
 
 
@@ -958,14 +983,14 @@ def _clone_video_voice(
     app = _app()
     job = app.load_job(job_id)
     if not voice_clone.available():
-        raise HTTPException(400, "Add an OpenRouter key in Setup to clone a voice.")
+        raise HTTPException(400, voice_errors.NO_KEY)
     if not body.consent:
         raise HTTPException(
-            400, "Confirm you own this voice or have the speaker's permission to clone it.",
+            400, voice_errors.CONSENT_VIDEO,
         )
     source = Path(str((job.get("source") or {}).get("path") or ""))
     if not source.is_file():
-        raise HTTPException(404, "The source video for this job is missing.")
+        raise HTTPException(404, voice_errors.MISSING_SOURCE)
     if (job.get("source") or {}).get("has_audio") is False:
         raise HTTPException(400, NO_SOUND)
     title = Path(str((job.get("source") or {}).get("name") or "video")).stem
@@ -973,15 +998,16 @@ def _clone_video_voice(
 
     if body.candidate is not None:
         if body.candidate < 1 or body.candidate > CANDIDATE_COUNT:
-            raise HTTPException(400, "Pick one of the voice clips that were found.")
+            raise HTTPException(400, voice_errors.PICK_CLIP)
         candidate = _candidate_file(job_id, body.candidate)
         if not candidate.is_file():
-            raise HTTPException(404, "Find the best voice clips before cloning one.")
+            raise HTTPException(404, voice_errors.FIND_CLIPS)
         work = _work_dir()
         try:
             sample = work / "sample.mp3"
             try:
                 seconds = voice_clone.prepare_sample(candidate, sample)
+                _refuse_silent(sample)
                 _stop_if_cancelled(cancel_event)
                 record = voice_clone.create_clone(
                     sample, name=body.name or f"{title} voice"[:64], source="video",
@@ -1001,7 +1027,7 @@ def _clone_video_voice(
             shutil.rmtree(work, ignore_errors=True)
 
     if body.start is not None and body.end is not None and body.end <= body.start:
-        raise HTTPException(400, "The end must come after the start.")
+        raise HTTPException(400, voice_errors.END_BEFORE_START)
 
     segments: list[dict] = []
     transcript = app._job_dir(job_id) / "transcript" / "transcript.json"
@@ -1050,6 +1076,7 @@ def _clone_video_voice(
                 f"Used the raw cut: clean voice extraction failed ({_short_error(exc)})."
             )
             sample = raw
+        _refuse_silent(sample)
         _stop_if_cancelled(cancel_event)
         try:
             record = voice_clone.create_clone(
@@ -1087,7 +1114,7 @@ def cancel_voice_task(task_id: str, request: Request) -> dict:
 def clone_status(voice_id: str) -> dict:
     record = voice_clone.get_clone(voice_id)
     if record is None:
-        raise HTTPException(404, "No such cloned voice.")
+        raise HTTPException(404, voice_errors.MISSING_VOICE)
     return record
 
 
@@ -1108,6 +1135,16 @@ def delete_clone(voice_id: str, request: Request) -> dict:
     except voice_clone.CloneError as exc:
         raise _fail(exc) from exc
     return {"deleted": voice_id}
+
+
+def _audio_message(exc: Exception) -> str:
+    """A speech failure that always ends with a step the creator can take."""
+    message = voice_errors.clean(
+        str(exc), "The voice could not speak that line. Check the voice and the key in Setup, then try again.",
+    )
+    if voice_errors.has_next_step(message):
+        return message
+    return voice_errors.fix(message, "Check the voice and the key in Setup, then try again.")
 
 
 def _cached_line(engine: str, voice: str, text: str, rate: float, language: str, cache) -> bool:
@@ -1144,7 +1181,7 @@ def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileRespo
 
     record = voice_clone.get_clone(voice_id)
     if record is None:
-        raise HTTPException(404, "No such cloned voice.")
+        raise HTTPException(404, voice_errors.MISSING_VOICE)
     text = " ".join((body.text or "").split())[:300] or "Hi, this is my cloned voice in VibeCut."
     rate = max(0.5, min(2.0, body.rate))
     language = str(record.get("language") or "")
@@ -1155,7 +1192,7 @@ def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileRespo
             "heygen", voice_id, text, cache, rate=rate, language=language,
         )
     except audio.AudioError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(400, _audio_message(exc)) from exc
     _keep_preview(
         path, engine="heygen", voice=voice_id, text=text, rate=rate,
         language=language, label=str(record.get("name") or "Cloned voice"),
@@ -1214,7 +1251,7 @@ def any_voice_sample(body: AnyVoiceSampleBody, request: Request) -> FileResponse
 
     engine = body.engine.strip().lower()
     if engine not in tts.SYNTHESIZERS:
-        raise HTTPException(400, "Unknown voice engine.")
+        raise HTTPException(400, voice_errors.NO_ENGINE)
     text = " ".join((body.text or "").split())[:300] or "This is how this voice sounds in VibeCut."
     record = voice_clone.get_clone(body.voice) if engine == "heygen" else None
     rate = max(0.5, min(2.0, body.rate))
@@ -1226,7 +1263,7 @@ def any_voice_sample(body: AnyVoiceSampleBody, request: Request) -> FileResponse
             engine, body.voice, text, cache, rate=rate, language=language,
         )
     except audio.AudioError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(400, _audio_message(exc)) from exc
     _keep_preview(
         path, engine=engine, voice=body.voice, text=text, rate=rate,
         language=language,
@@ -1240,7 +1277,7 @@ def any_voice_sample(body: AnyVoiceSampleBody, request: Request) -> FileResponse
 
 
 def _take_fail(exc: voice_takes.TakeError) -> HTTPException:
-    return HTTPException(exc.status_code, str(exc))
+    return HTTPException(exc.status_code, voice_errors.clean(str(exc)))
 
 
 @router.get("/api/voices/takes")
@@ -1275,7 +1312,7 @@ def take_cleanup(body: TakeCleanupBody, request: Request) -> dict:
 def one_take(take_id: str) -> dict:
     take = voice_takes.get_take(take_id)
     if take is None:
-        raise HTTPException(404, "No such take.")
+        raise HTTPException(404, voice_errors.MISSING_TAKE)
     return take
 
 
@@ -1329,7 +1366,7 @@ def make_voiceover(body: VoiceoverBody, request: Request) -> dict:
     if engine not in tts.SYNTHESIZERS:
         raise HTTPException(
             400,
-            "That voice engine is unknown. Pick a voice from the library, then try again.",
+            voice_errors.NO_ENGINE,
         )
     clone = body.clone or (body.voice if voice_clone.is_clone(body.voice) else "")
     cancel_event = _task_event(body.task)

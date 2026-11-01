@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import settings_store
+import voice_errors
 
 #: HeyGen uses only the first three minutes of a reference recording.
 MAX_SAMPLE_SECONDS = 180.0
@@ -212,7 +213,7 @@ def prepare_sample(
 ) -> float:
     """Cut a mono MP3 reference sample and return its length in seconds."""
     if not source.is_file():
-        raise CloneError("The recording or video file is missing.", 404)
+        raise CloneError(voice_errors.fix("The recording or video file is missing", "Choose the file again, then retry"), 404)
     output.parent.mkdir(parents=True, exist_ok=True)
     cmd = [_ffmpeg(), "-y", "-v", "error"]
     if windows:
@@ -230,11 +231,13 @@ def prepare_sample(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
-        raise CloneError(f"Could not read the audio: {exc}") from exc
-    if result.returncode != 0 or not output.is_file() or output.stat().st_size < 2048:
-        raise CloneError("Could not cut a voice sample from that file. Is there any sound in it?")
+        raise CloneError(voice_errors.fix(f"Could not read the audio: {exc}", "Check that the file plays in another app, then choose it again")) from exc
+    if result.returncode != 0 or not output.is_file():
+        raise CloneError(voice_errors.UNREADABLE)
+    if output.stat().st_size < 2048:
+        raise CloneError(voice_errors.NO_SPEECH)
     if output.stat().st_size > MAX_REFERENCE_BYTES:
-        raise CloneError("The voice sample is over 15 MB. Use a shorter recording.")
+        raise CloneError("The voice sample is over 15 MB. Use a recording under 15 MB or trim it first.")
     seconds = _probe_seconds(output) or output.stat().st_size / 8000
     if seconds < MIN_SAMPLE_SECONDS:
         raise CloneError(
@@ -258,9 +261,9 @@ def create_clone(
             "permission to clone it."
         )
     if source not in SOURCES:
-        raise CloneError("Unknown clone source.")
+        raise CloneError("The clone source was not understood. Reload Voice Room, then clone the voice again.")
     if not sample.is_file():
-        raise CloneError("The voice sample is missing.", 404)
+        raise CloneError(voice_errors.fix("The voice sample is missing", "Record or upload the voice again"), 404)
     clean_name = " ".join(str(name or "").split())[:64] or (
         "My voice" if source == "me" else "Video voice"
     )
@@ -288,16 +291,16 @@ def create_clone(
 def rename(voice_id: str, name: str) -> dict:
     record = get_clone(voice_id)
     if record is None:
-        raise CloneError("No such cloned voice.", 404)
+        raise CloneError(voice_errors.MISSING_VOICE, 404)
     clean = " ".join(str(name or "").split())[:64]
     if not clean:
-        raise CloneError("Give the voice a name.")
+        raise CloneError("Give the voice a name of up to 64 characters, then save it.")
     return _upsert({**record, "name": clean})
 
 
 def delete_clone(voice_id: str) -> bool:
     if not is_voice_id(voice_id):
-        raise CloneError("No such cloned voice.", 404)
+        raise CloneError(voice_errors.MISSING_VOICE, 404)
     with LOCK:
         rows = _read()
         kept = [row for row in rows if row.get("voice_id") != voice_id]
@@ -310,7 +313,7 @@ def delete_clone(voice_id: str) -> bool:
     except FileNotFoundError:
         pass
     if not found:
-        raise CloneError("No such cloned voice.", 404)
+        raise CloneError(voice_errors.MISSING_VOICE, 404)
     return True
 
 
@@ -324,7 +327,7 @@ def speech_fields(voice_id: str) -> dict[str, Any]:
     """
     record = get_clone(voice_id)
     if record is None:
-        raise CloneError("No such cloned voice.", 404)
+        raise CloneError(voice_errors.MISSING_VOICE, 404)
     raw = sample_path(voice_id).read_bytes()
     # Clones saved before the container fix hold MP3 frames in a WAV header.
     mime = "audio/wav" if raw[:4] == b"RIFF" else "audio/mpeg"
