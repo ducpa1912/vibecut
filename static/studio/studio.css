@@ -148,7 +148,8 @@ body.st-active { overflow: hidden; }
   text-transform: uppercase;
 }
 
-.st-rail-nav { flex: 1 1 auto; min-width: 0; }
+/* The steps keep their full labels; the video name truncates first. */
+.st-rail-nav { flex: 0 0 auto; min-width: 0; }
 .st-step-list {
   list-style: none;
   margin: 0;
@@ -163,6 +164,7 @@ body.st-active { overflow: hidden; }
 .st-step-list::-webkit-scrollbar { display: none; }
 .st-step {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 7px;
   min-width: 0;
@@ -217,16 +219,20 @@ body.st-active { overflow: hidden; }
 
 .st-top-right {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   min-width: 0;
   margin-left: auto;
 }
 .st-top-job {
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
   gap: 7px;
   min-width: 0;
+  overflow: hidden;
 }
 .st-top-label { display: none; }
 .st-top-job strong {
@@ -238,7 +244,11 @@ body.st-active { overflow: hidden; }
   font-weight: 600;
 }
 .st-top-status {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 2px 8px;
   border: 1px solid var(--st-line-2);
   border-radius: 999px;

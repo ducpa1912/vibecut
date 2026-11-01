@@ -170,3 +170,18 @@ def test_moments_scan_can_be_cancelled_and_rescanned():
     refresh = text[text.index("async function refreshCheck("):]
     refresh = refresh[:refresh.index("\n  }\n")]
     assert "followCheck();" in refresh and "renderStories();" in refresh
+
+
+def test_header_steps_keep_their_labels_and_the_video_name_truncates():
+    """At 800 px "04 Finish" was squeezed to "4" behind the video name."""
+    css = (STUDIO / "studio.css").read_text(encoding="utf-8")
+
+    def rule(selector):
+        start = css.index(selector + " {")
+        return css[start:css.index("}", start)]
+
+    assert "flex: 0 0 auto;" in rule(".st-rail-nav")
+    assert "flex: 0 0 auto;" in rule(".st-step")
+    assert "flex: 1 1 auto;" in rule(".st-top-right")
+    status = rule(".st-top-status")
+    assert "flex: 0 1 auto;" in status and "text-overflow: ellipsis;" in status
