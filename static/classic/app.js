@@ -6406,12 +6406,16 @@
   }
 
   function updateTextAvailability() {
-    const supported = classicTextSupported();
+    const trust = window.ClassicTrust;
+    const supported = trust && typeof trust.textShapeNote === "function"
+      ? !trust.textShapeNote({ aspect: state.aspect })
+      : classicTextSupported();
     if (dom.textShapeNote) {
-      dom.textShapeNote.hidden = supported;
-      dom.textShapeNote.textContent = supported
-        ? ""
-        : "Text overlays and effects render on 9:16 and 4:5. Switch the shape to use them.";
+      const note = trust && typeof trust.textShapeNote === "function"
+        ? trust.textShapeNote({ aspect: state.aspect })
+        : (supported ? "" : "Text overlays and effects render on 9:16 and 4:5. Switch the shape to use them.");
+      dom.textShapeNote.hidden = !note;
+      dom.textShapeNote.textContent = note;
     }
     if (!dom.textLayerControls) return;
     dom.textLayerControls.querySelectorAll("input, select, button").forEach((node) => {
@@ -6707,6 +6711,19 @@
     return !!record && (record.status === "queued" || record.status === "rendering" || record.status === "cancelling");
   }
 
+  function withLayerNote(text) {
+    const trust = window.ClassicTrust;
+    if (!trust || typeof trust.layerRenderNote !== "function") return text;
+    const hasLayers = !!(
+      (state.classicText?.overlays || []).length
+      || (state.classicText?.effects || []).length
+    );
+    const note = trust.layerRenderNote({ aspect: state.aspect, hasLayers });
+    if (!note) return text;
+    const base = String(text || "").trim();
+    return `${base}${/[.!?]$/.test(base) ? " " : ". "}${note}`;
+  }
+
   function updateRenderPanel() {
     if (!state.job || !state.plan) return;
     const target = state.target;
@@ -6753,7 +6770,7 @@
       dom.renderAll.disabled = true;
       dom.renderCancel.hidden = false;
       renderButton(active.quality === "draft" ? "Rendering draft…" : "Rendering final…");
-      dom.renderNote.textContent = state.plan.note || "One render at a time.";
+      dom.renderNote.textContent = withLayerNote(state.plan.note || "One render at a time.");
       return;
     }
 
@@ -6793,15 +6810,15 @@
         || (draftRecord.updated || 0) > (finalRecord.updated || 0));
     if (draftNewer) {
       show(draftRecord, "draft");
-      dom.renderNote.textContent = "Draft preview · 540×960 · render final when it feels right.";
+      dom.renderNote.textContent = withLayerNote("Draft preview · 540×960 · render final when it feels right.");
       renderButton(`Render final ${target}s`);
       return;
     }
 
     if (finalMatches && finalRecord.status === "ready") {
       show(finalRecord, "final");
-      dom.renderNote.textContent = state.plan.note
-        || `${finalRecord.clip_count} beats · ${renderAudioNote()} · no watermark`;
+      dom.renderNote.textContent = withLayerNote(state.plan.note
+        || `${finalRecord.clip_count} beats · ${renderAudioNote()} · no watermark`);
       renderButton(`Render ${target}s again`);
       return;
     }
@@ -6815,8 +6832,8 @@
 
     renderButton(`Render ${target}s reel`);
     const dims = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080", "16:10": "1920×1200" };
-    dom.renderNote.textContent = state.plan.note
-      || `${state.aspect} ${dims[state.aspect] || ""} · ${renderAudioNote()}${state.captions ? " · captions" : ""} · no watermark`;
+    dom.renderNote.textContent = withLayerNote(state.plan.note
+      || `${state.aspect} ${dims[state.aspect] || ""} · ${renderAudioNote()}${state.captions ? " · captions" : ""} · no watermark`);
   }
 
   function renderAudioNote() {

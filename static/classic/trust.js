@@ -73,6 +73,21 @@
     return "The render uses the voice and settings above; this sample is only a preview.";
   };
 
+  const TEXT_SHAPES = ["9:16", "4:5"];
+
+  /** The Texts card warns before anything is typed. */
+  api.textShapeNote = function textShapeNote({ aspect = "9:16" } = {}) {
+    if (TEXT_SHAPES.includes(aspect)) return "";
+    return "Text overlays and effects render on 9:16 and 4:5. Switch the shape to use them.";
+  };
+
+  /** The render note must never drop existing layers silently. */
+  api.layerRenderNote = function layerRenderNote({ aspect = "9:16", hasLayers = false } = {}) {
+    if (TEXT_SHAPES.includes(aspect)) return "";
+    if (!hasLayers) return "";
+    return "Text layers are left out at this shape.";
+  };
+
   const apiExport = api;
   if (typeof module !== "undefined" && module.exports) module.exports = apiExport;
   if (typeof window !== "undefined") window.ClassicTrust = apiExport;
