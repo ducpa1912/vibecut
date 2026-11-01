@@ -487,10 +487,11 @@
                   </label>
                 </div>
                 <div class="sound-actions">
-                  <button id="audio-generate-voice" class="primary small" type="button">Generate</button>
+                  <button id="audio-generate-voice" class="primary small" type="button">Generate voice sample</button>
                   <button id="audio-preview" class="ghost small play-btn" type="button" title="Generate a voice preview first" aria-label="Play the generated voice" disabled>▶</button>
                   <button id="audio-use-recording" class="ghost small" type="button">Use my recording</button>
                 </div>
+                <p id="audio-voice-use" class="hint sound-use-note">The render uses the voice and settings above; this sample is only a preview.</p>
                 <p id="audio-voice-cost" class="hint cost-note" role="status" hidden></p>
                 <p id="audio-voice-preview-status" class="hint sound-preview-status" role="status">Generate a short voice preview.</p>
                 <div id="audio-voice-upload" class="audio-upload-box" hidden>
@@ -544,13 +545,14 @@
                 <div id="audio-music-block" class="audio-inline-block" role="alert" hidden>
                   <span>Choose a music source before rendering.</span>
                   <button id="audio-music-block-bgm" class="ghost small" type="button">Use my BGM</button>
-                  <button id="audio-music-block-generate" class="ghost small" type="button">Generate</button>
+                  <button id="audio-music-block-generate" class="ghost small" type="button">Generate music preview</button>
                 </div>
                 <div class="sound-actions">
-                  <button id="audio-generate-music" class="primary small" type="button">Generate</button>
+                  <button id="audio-generate-music" class="primary small" type="button">Generate music preview</button>
                   <button id="audio-play-music" class="ghost small play-btn" type="button" title="Choose a BGM or generate a preview first" aria-label="Play music preview" disabled>▶</button>
                   <button id="audio-use-bgm" class="ghost small" type="button">Use my BGM</button>
                 </div>
+                <p id="audio-music-use" class="hint sound-use-note">The render generates its own music bed from this prompt.</p>
                 <p id="audio-music-cost" class="hint cost-note" role="status" hidden></p>
                 <p id="audio-music-preview-status" class="hint sound-preview-status" role="status">Use my BGM plays a 12s preview. Generate makes a short AI bed; the render uses the full bed.</p>
               </div>

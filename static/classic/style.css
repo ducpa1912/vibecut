@@ -2580,6 +2580,7 @@ select option:disabled { color: #666; }
 .sound-preview-status[data-tone="ok"] { color: #a7d69a; }
 .sound-preview-status[data-tone="bad"] { color: #e8a399; }
 .cost-note { margin: 8px 0 0; color: #d7b98a; font-size: 11.5px; line-height: 1.45; }
+.sound-use-note { margin: 8px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
 .sound-source-row { gap: 6px; margin: 0 0 10px; }
 .sound-source-chip { position: relative; display: inline-flex; }
 .sound-source-chip input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }

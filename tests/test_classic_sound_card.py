@@ -64,7 +64,7 @@ def test_music_has_a_real_preview_and_no_fake_playback_copy():
     assert "sound/music-preview" in js
     assert "sound/bgm-preview" in js
     assert "Generated music plays in the render." not in js
-    assert "Press Generate for a 12s preview. The render makes the full bed." in js
+    assert "Press Generate music preview for a 12s preview. The render makes the full bed." in js
     assert "musicPreviewBusy" in js
 
 

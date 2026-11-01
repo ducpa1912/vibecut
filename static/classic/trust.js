@@ -56,6 +56,23 @@
       && item.available !== false);
   };
 
+  /** Say what the final render will actually use, next to the preview button. */
+  api.soundUseNote = function soundUseNote({ kind = "voice", source = "generate" } = {}) {
+    if (kind === "music") {
+      if (source === "own") {
+        return "The render uses the BGM file you choose; this preview is only a listen.";
+      }
+      if (source === "generate") {
+        return "The render generates its own music bed from this prompt.";
+      }
+      return "";
+    }
+    if (source === "upload") {
+      return "The render uses your recording; the voice list and sample are not used.";
+    }
+    return "The render uses the voice and settings above; this sample is only a preview.";
+  };
+
   const apiExport = api;
   if (typeof module !== "undefined" && module.exports) module.exports = apiExport;
   if (typeof window !== "undefined") window.ClassicTrust = apiExport;

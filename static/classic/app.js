@@ -233,6 +233,8 @@
     audioVoiceCost: $("#audio-voice-cost"),
     audioMusicCost: $("#audio-music-cost"),
     audioCopyCost: $("#audio-copy-cost"),
+    audioVoiceUse: $("#audio-voice-use"),
+    audioMusicUse: $("#audio-music-use"),
     audioMusicUploadBox: $("#audio-music-upload-box"),
     audioMusicUpload: $("#audio-music-upload"),
     audioMusicUploadButton: $("#audio-music-upload-button"),
@@ -4962,7 +4964,7 @@
       setSoundStatus(dom.audioVoicePreviewStatus, error.message, "bad");
     } finally {
       state.voicePreviewBusy = false;
-      dom.audioGenerateVoice.textContent = "Generate";
+      dom.audioGenerateVoice.textContent = "Generate voice sample";
       syncSoundPreviewButtons();
     }
   }
@@ -5019,7 +5021,7 @@
       setSoundStatus(dom.audioMusicPreviewStatus, error.message, "bad");
     } finally {
       state.musicPreviewBusy = false;
-      dom.audioGenerateMusic.textContent = "Generate";
+      dom.audioGenerateMusic.textContent = "Generate music preview";
       syncSoundPreviewButtons();
     }
   }
@@ -5032,7 +5034,7 @@
     }
     if (source === "generate") {
       if (!state.musicPreviewUrl || state.musicPreviewKey !== musicPreviewKey()) {
-        setSoundStatus(dom.audioMusicPreviewStatus, "Press Generate for a 12s preview. The render makes the full bed.", "bad");
+        setSoundStatus(dom.audioMusicPreviewStatus, "Press Generate music preview for a 12s preview. The render makes the full bed.", "bad");
         return;
       }
       playSoundUrl(state.musicPreviewUrl);
@@ -5165,6 +5167,24 @@
     if (!node) return;
     node.textContent = text || "";
     node.hidden = !text;
+  }
+
+  function updateSoundUseNotes() {
+    const trust = window.ClassicTrust;
+    if (!trust || typeof trust.soundUseNote !== "function") return;
+    const upload = state.audio.source === "upload";
+    if (dom.audioVoiceUse) {
+      dom.audioVoiceUse.textContent = trust.soundUseNote({
+        kind: "voice",
+        source: upload ? "upload" : "generate",
+      });
+    }
+    const source = musicSourceMode();
+    if (dom.audioMusicUse) {
+      const note = trust.soundUseNote({ kind: "music", source });
+      dom.audioMusicUse.textContent = note;
+      dom.audioMusicUse.hidden = !note;
+    }
   }
 
   function updateCostNotices() {
@@ -5317,6 +5337,7 @@
       dom.audioMusicBlock.hidden = true;
     }
     syncSoundPreviewButtons();
+    updateSoundUseNotes();
     updateCostNotices();
     if (state.job && state.plan) updateRenderPanel();
   }
