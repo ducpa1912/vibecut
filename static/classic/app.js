@@ -36,6 +36,8 @@
     result: $("#result-view"),
     brand: $("#brand"),
     health: $("#health"),
+    privacyPill: $("#privacy-pill"),
+    privacyLabel: $("#privacy-label"),
     footerHealth: $("#footer-health"),
     setup: $("#setup"),
     setupOpen: $("#setup-open"),
@@ -322,6 +324,7 @@
     ingestStatus: null,
     job: null,
     plan: null,
+    setupSecrets: {},
     target: 30,
     aspect: "9:16",
     captions: false,
@@ -567,6 +570,20 @@
     });
   }
 
+  function updatePrivacyPill() {
+    const trust = window.ClassicTrust;
+    const label = trust && typeof trust.privacyLabel === "function"
+      ? trust.privacyLabel({
+        secrets: state.setupSecrets || {},
+        voiceEngine: state.audio.engine || "",
+        musicEngine: state.audio.music || "",
+        musicSource: state.audio.musicSource || "",
+      })
+      : "Local by default";
+    if (dom.privacyLabel) dom.privacyLabel.textContent = label;
+    dom.privacyPill?.classList.toggle("online", label === "Online features on");
+  }
+
   function applySetup(data) {
     const settings = data.settings || {};
     const secrets = data.secrets || {};
@@ -643,6 +660,7 @@
     });
     state.setup = settings;
     state.setupSecrets = secrets;
+    updatePrivacyPill();
     renderSetupEngines();
     renderFirstRunNudge();
     if (dom.speechNote && !dom.speechNote.textContent.includes("unavailable")) {
@@ -4479,6 +4497,7 @@
       state.audio.duck = dom.audioDuck.checked;
       syncAudioVisibility();
       updateRenderPanel();
+      updatePrivacyPill();
       refreshAudioStatus();
       renderMixer();
     };
@@ -5588,6 +5607,7 @@
     loadAudioScript();
     syncSoundPreviewButtons();
     renderSetupEngines();
+    updatePrivacyPill();
   }
 
   function translateLabel(id) {

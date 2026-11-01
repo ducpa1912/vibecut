@@ -47,6 +47,7 @@
       root.dataset.features = (edition.features || []).join(" ");
     })();
   </script>
+  <script src="/static/classic/trust.js?v=0.1.0" defer></script>
   <script src="/static/classic/app.js?v=0.13.0" defer></script>
   <script src="/static/classic/creator.js?v=0.15.0" defer></script>
 </head>
@@ -58,7 +59,7 @@
       <a id="classic-voice-room" href="/voices">Voice Room</a>
       <button id="creator-open" class="ghost small" type="button">Creator</button>
       <button id="setup-open" class="ghost small" type="button">Setup</button>
-      <span class="local-pill"><i class="live-dot"></i> local only</span>
+      <span id="privacy-pill" class="local-pill"><i class="live-dot"></i> <span id="privacy-label">Local by default</span></span>
       <span id="health" class="health">checking engine…</span>
     </div>
   </header>
@@ -158,7 +159,7 @@
             <li><span>03</span><div><strong>Land the ending</strong><p>A payoff beat closes the cut.</p></div></li>
             <li><span>04</span><div><strong>Follow the subject</strong><p>9:16 crop tracks faces and saliency.</p></div></li>
           </ol>
-          <div class="local-note"><i class="live-dot"></i>No cloud. No account. No watermark.</div>
+          <div class="local-note"><i class="live-dot"></i>Local processing by default. Optional AI features may send data to external providers. No watermark.</div>
         </aside>
       </div>
 
@@ -688,7 +689,7 @@
             <form id="batch-form" class="creator-card">
               <div class="creator-card-head">
                 <div><p class="eyebrow">batch</p><h3>Build a 10-item queue</h3></div>
-                <span class="creator-chip">local only</span>
+                <span class="creator-chip">Local by default</span>
               </div>
               <label class="creator-field">
                 <span>Batch name</span>
