@@ -23,12 +23,25 @@ they upload the founder's video.
 
 ### Downloads (founder approves each one first)
 
-| File | From | Approx. size | Where it goes |
-|---|---|---|---|
-| `lama_fp32.onnx` | huggingface.co/Carve/LaMa-ONNX | ~200 MB | `~/vibecut-lanes/studio/models/fill/` |
-| STTN checkpoint (`sttn.pth` or VSR's `infer_model.pth`) | researchmm/STTN release or the VSR release | ~200 MB | same folder |
+Founder approved both on 2026-11-01. Downloaded to
+`~/vibecut-lanes/studio/models/fill/`, hashes in `SHA256SUMS` there:
 
-Check each size at download time and record the SHA-256 next to the file.
+| File | From | Size | SHA-256 |
+|---|---|---|---|
+| `lama_fp32.onnx` | huggingface.co/Carve/LaMa-ONNX (Apache 2.0) | 208,044,816 B | `1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6` (matches the Hub etag) |
+| `sttn_infer_model.pth` | YaoFANGUK/video-subtitle-remover `backend/models/sttn-auto/infer_model.pth` (repo Apache 2.0; STTN MIT) | 66,271,967 B | `c8408c9dd1300bd7000ea3a81b8236db89d9c0f185837781e38283c1e464675b` |
+
+Load checks done:
+
+- LaMa inputs `image [b,3,512,512]` and `mask [b,1,512,512]`, output
+  `output [b,3,512,512]`. CoreML covers only 3984 of 7917 nodes in 585
+  partitions, so the bench times **both** the CoreML and the CPU-only provider
+  and keeps the faster one.
+- STTN: a dict `{"netG": state_dict}`, 112 tensors, 16.6 M parameters,
+  `transformer.*` keys as in VSR's `sttn-auto` network. Always load with
+  `torch.load(..., weights_only=True)`; never unpickle full objects. MPS is
+  available.
+
 No model is committed to git, and no other lane reads this folder.
 
 Python packages already present on the studio machine: `torch 2.14`,
