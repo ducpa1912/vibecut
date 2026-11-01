@@ -165,3 +165,79 @@ steps here. File-dialog steps are marked where the recorder did not capture
 them. `docs/testing/classic-beta-pass-2.md` describes behaviour added after
 these recordings (translation badge, collage, history count); it is not evidence
 from the recordings.
+
+## Trust fixes T1–T6
+
+Founder checks for `classic` at `1652c92`. Run them by hand on 8796 with your
+own media. The labels and sentences below are exact. T2 checks that reach a
+provider may cost credits; read the notice and only click if you accept the
+cost. Do not paste keys into this file.
+
+### T1 — honest privacy copy
+
+| # | Action: where to click | Intent | Expected | Result |
+|---|---|---|---|---|
+| T1.1 | Open the ingest screen, read the note under **The cut** | The promise matches the product | The note reads **Local processing by default. Optional AI features may send data to external providers. No watermark.** | |
+| T1.2 | Read the top bar pill | Local state is visible | With no cloud key and a local voice engine the pill reads **Local by default**. | |
+| T1.3 | Save any cloud key in Setup, or choose ElevenLabs / MiniMax / HeyGen / Fish / Gemini as the voice engine | Online state is visible | The top pill reads **Online features on**. | |
+| T1.4 | Open Creator → **Compatibility · source batches** | The old promise is gone | The chip reads **Local by default**. No screen says **No cloud. No account.** | |
+
+### T2 — cost and data notice before paid calls
+
+| # | Action: where to click | Intent | Expected | Result |
+|---|---|---|---|---|
+| T2.1 | Choose a voice mode, open **Sound → Voice**, choose **ElevenLabs** (or another cloud voice) | Cloud voice notice | Under the actions: **ElevenLabs · sends the preview line and script text · may cost credits.** The provider name follows the chosen engine. | |
+| T2.2 | Choose **Apple say** or **Kokoro** | Local voice has no cost notice | No cost line appears. | |
+| T2.3 | Open **Sound → Music**, choose **Generate** as the source and **AI · MiniMax Music** | Cloud music notice | Under the actions: **MiniMax Music · sends a music prompt · may cost credits.** | |
+| T2.4 | Choose **AI · OpenRouter Lyria 3** | Provider name follows the engine | The line reads **OpenRouter (Lyria 3) · sends a music prompt · may cost credits.** | |
+| T2.5 | Choose **Use my BGM** | Own music has no cost notice | No cost line appears. | |
+| T2.6 | Choose a voice mode with a cloud key, set **Language** to a language other than the source | Translation notice before the click | The Copy card shows **OpenCode Go or OpenRouter · sends the transcript text and the cut script · may cost credits.** No **Translating…** badge starts on its own. | |
+| T2.7 | Wait 10 seconds after T2.6 | No automatic paid call | No translating badge and no script starts. The paid call begins only after **Story cut**. | |
+| T2.8 | With the music prompt unchanged, click **Generate music preview** twice (optional, paid on the first click) | A cache hit is named | The first status is a preview message. The second status reads exactly **Cached · no new call**. | |
+
+### T3 — sample versus final
+
+| # | Action: where to click | Intent | Expected | Result |
+|---|---|---|---|---|
+| T3.1 | Open **Sound → Voice** | The button names a sample | The primary button reads **Generate voice sample**. Under it: **The render uses the voice and settings above; this sample is only a preview.** | |
+| T3.2 | Click **Use my recording**, choose a file | The render source changes | Under the actions: **The render uses your recording; the voice list and sample are not used.** | |
+| T3.3 | Switch back to **Generate** | The sample promise returns | The line returns to the T3.1 sentence. | |
+| T3.4 | Open **Sound → Music**, choose **Generate** | The button names a preview | The primary button reads **Generate music preview**. Under it: **The render generates its own music bed from this prompt.** | |
+| T3.5 | Choose **Use my BGM** | The own-track promise | The line reads **The render uses the BGM file you choose; this preview is only a listen.** | |
+| T3.6 | Generate a voice sample, then a music preview (optional, paid) | Buttons restore | The busy label is temporary; the buttons return to **Generate voice sample** and **Generate music preview**. | |
+
+### T4 — shape limit early and at render time
+
+| # | Action: where to click | Intent | Expected | Result |
+|---|---|---|---|---|
+| T4.1 | Open a ready job at **9:16** | Supported shape is quiet | The Texts & Effects card shows no shape warning. | |
+| T4.2 | Change the shape to **16:9**, before typing anything | The limit is early | Above the controls: **Text overlays and effects render on 9:16 and 4:5. Switch the shape to use them.** The text controls are disabled. | |
+| T4.3 | Switch back to **9:16**, add a text overlay, then switch to **16:9** | Existing layers are not dropped silently | The render note above the buttons ends with **Text layers are left out at this shape.** | |
+| T4.4 | With the T4.3 note visible, click **Render 30s reel** | Render still runs | The render queues and finishes normally. It does not refuse because layers exist. | |
+
+### T5 — changed since this render
+
+| # | Action: where to click | Intent | Expected | Result |
+|---|---|---|---|---|
+| T5.1 | Render a cut and wait until the player appears | A fresh render is current | Under the ready strip there is no stale line. | |
+| T5.2 | Add a text overlay or an effect, or change the music source | The shown render is now old | The line appears under the ready strip: **Changed since this render — render again to see it.** The player stays visible. | |
+| T5.3 | Change the hook, a moment, sound or captions | Every edit is covered | The same stale line appears. The player keeps the last finished reel. | |
+| T5.4 | Click **Render 30s again** and wait for **ready** | The line clears only for the current state | The stale line disappears when the new render is ready. It stays if you edit while that render runs. | |
+| T5.5 | Reload the page after T5.2 | The warning survives a reload | The stale line is still shown for the changed state in the same browser. | |
+
+### T6 — plain Clean confirmation
+
+| # | Action: where to click | Intent | Expected | Result |
+|---|---|---|---|---|
+| T6.1 | Open the clean menu beside **Clean** | The profile is visible | The menu offers **Work files**, **Renders**, **All but source**. | |
+| T6.2 | Keep **Work files**, click **Clean** | Plain confirmation | A native dialog titled **Clean work files?** says **Deletes: thumbnails, the transcript, extracted audio and deep-read scores.** and **Keeps: the source video, rendered reels and job details.** and **Analysis work files can be rebuilt by analyzing again.** | |
+| T6.3 | Click **Cancel** | Cancel is safe | Nothing is removed. The button still reads **Clean**. | |
+| T6.4 | Choose **Renders**, click **Clean** | Render confirmation | The dialog is titled **Clean rendered reels?** and names **rendered reels, render masters and legacy render files** as deleted, with the source, transcript, thumbnails and job details kept. | |
+| T6.5 | Choose **All but source**, click **Clean** | Everything-but-source confirmation | The dialog is titled **Clean everything except the source?** and says the source video and job details stay. | |
+| T6.6 | Confirm **Work files** on a throwaway job | The action matches the words | The toast lists what was removed. The source video and ready reels stay. | |
+
+### Not covered here
+
+- T2.8 and T3.6 need one paid preview; skip them if you do not accept the cost.
+- The native Clean dialogs are browser dialogs; screenshots of the page do not
+  show them. Record the dialog text or leave Result empty.
