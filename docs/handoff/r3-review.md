@@ -104,7 +104,7 @@ The founder's first real runs (recordings in `~/vibecut-lanes/recordings/studio/
 | `9dc2988` | The Add story collage squashed every frame to a 30 px strip, and the dialog had no padding. Edit said "Step 4". Finish kept "Reading renders…" on screen forever (an older bug). |
 | `38a7eda` | Check's Cancel (1b) was lost when Check moved into Moments. The scan card has **Cancel scan** again, resumes a running scan after reload, and **Scan again** really re-scans. |
 
-## Studio plan (revised 2026-10-29)
+## Studio plan (revised 2026-10-29, superseded below)
 
 The founder tests by hand with real files. Each step below ends with a founder recording, not a generated test.
 
@@ -120,3 +120,68 @@ The founder tests by hand with real files. Each step below ends with a founder r
    - The library does not refresh while it stays open.
    - Older renders without a manifest are not listed.
    - Setup's My voice panel is not gated by `voice_room`.
+
+## Studio review (2026-11-01)
+
+**Built since `d5a4bd2`** (OpenCode, at the founder's request):
+
+| Commit | What |
+|---|---|
+| `78afd48`, `09d9877` | One header (brand, four steps, Menu); Edit inspector as drawer or sheet; Finish in Review, Render and Publish stages; Add story became **Add moment** |
+| `3009924` | Clean **Remove (interpolate)**: ffmpeg `delogo` replaces the black cover |
+| `e0c0aac` | **Auto subtitles** (`routes_auto_subs.py`) and **Remove all detected text** (`/edits/{id}/auto-clean`) |
+| `3edca8d`, `e8f3256`, `c709e8f` | CI: Classic and Voice paths, portable render and voice tests, Node 24 |
+| `4d1c20d`, `3491ab1` | `classic` and `voice-room` merged into studio (2026-10-31) |
+| `851de42` | `/openapi.json` works again (XHS cookie body defined before its route) |
+
+**Fixed in this review:**
+
+| Commit | What |
+|---|---|
+| `56244cb` | The one-time data move left job sources at the old `vibecut-studio/data` path, so the founder's test video read "Original file missing". Moved copies are now found under today's data folder. |
+| `e09e645` | Remove all detected text added layers for text anywhere in the video; it now adds only text on screen during the moment, clipped to it. |
+| `4f3849f` | At 800 px the header squeezed "04 Finish" to "4" behind the video name; steps keep their labels and the name truncates. |
+| `268fce8` | C3: the old review-link lookup could hand a 16:10 file to a 9:16 link. |
+
+**Review notes, not bugs:**
+
+- `e8f3256` changed `voice_clone.py` (voice-room's file) to cap a sample to its window. The change is right, and voice-room has it since the 10-31 merge, but a studio commit should not have touched it.
+- The delogo "too small" warning cannot trigger: `_box_rect` already keeps boxes at least 2 px.
+- Auto subtitles validates `aspect` but does not use it. It also builds every story's track in one request, which can be slow on a long set.
+- `static/studio/check.js` is no longer mounted; it is dead code with old copy.
+
+## Studio plan (revised 2026-11-01)
+
+In order, with the reason for each place.
+
+1. **Sources the founder can trust.** Show where each source lives, offer Relink when it is missing, and decide how long a cloud build keeps an import (the founder named 7 days). *Why first:* "Original file missing" stopped the founder's last run, and every later test needs the source.
+2. **A founder pass on today's build.** The founder records one full run on 8795. `scripts/record.sh` should also log each click (selector and label), because traces hold snapshots but no clicks. Then rewrite `studio-founder-pass-1.md` from that run, and settle OpenCode's four script questions. *Why:* the next three items need evidence of where the founder struggles, not guesses.
+3. **Queue in Edit.** Add to queue, the queue list and per-item status move from Finish into Edit; Finish keeps Review and Publish. *Why:* the founder asked for it twice, and it is a contained change.
+4. **Editor revision.** Scope it from step 2's recording: the founder said it "needs a lot of revision". Bring in C1 (single-word caption cues, in shared `captions.py`): merge a cue under about 3 words into its neighbour. Studio's auto subtitles show the same problem. *Why here:* the biggest build, done once the recording shows what to fix.
+5. **Moments quality.** First measure suggestions against the founder's own picks (usable / usable after edit / unusable). Then change the custom builder so it no longer bans every unselected scene, and add beat-level candidates and a semantic rerank. *Why after the editor:* a better ranking matters only once a moment can be finished well.
+6. **Shared core with classic.**
+   - F4: a running rewrite keeps going after a setting change. It needs a cancel event through `audio.py`, for the subprocess and the cloud call. Do it with classic, after classic's beta pass.
+   - C3: done (`268fce8`).
+7. **Clean beyond interpolation.** Generative inpainting for busy backgrounds needs a model choice and a cost decision from the founder. Until then, delogo plus review at 1×.
+8. **Custom shape.** Any ratio beyond the five presets. It touches render, safe zones and every layer.
+9. **Leftovers:**
+   - Check's ETA is computed in the browser.
+   - Vision cancel waits for a frame batch.
+   - The library does not refresh while it stays open.
+   - Older renders without a manifest are not listed.
+   - Setup's My voice panel is not gated by `voice_room`.
+   - Studio's Edit clip finder now searches only the first 2:00 (voice-room note): pass `full` or say so in the panel.
+   - Remove `check.js`.
+   - Use or drop the auto subtitles `aspect` field.
+
+**Integration risks** (dry check on 2026-11-01: studio merges `origin/classic` `940bfcb` and `origin/voice-room` `742e281` with no conflicts, separately and together):
+
+- **Launch scripts:** voice-room keeps its own `voice-serve.sh`, `voice-record.sh` and the Finder `.command` launchers, beside the unified set (`c8f8913`). They agree today because both read `scripts/lane-env.sh voice`. Voice-room should switch to `serve.sh` / `record.sh` when it next takes studio, or two sets will drift.
+- **voice-room merged classic once** (`caa6758`, 10-29 19:51). Classic commits reach studio by two paths. Git merges them cleanly, but a classic revert would also need reverting in voice-room.
+- **Classic shared changes:**
+  - four feature branches merged into classic (moments, sound, copy, texts and effects);
+  - text-layer constants in `app.py` (`94dfb47`);
+  - 16:10 in `render.py`.
+
+  All are already in studio since `4d1c20d`. The new classic commits touch only classic files and docs.
+- **Old ship scripts:** classic and voice-room still carry the old `ship.sh` that moves `main`. Only `ship-lane.sh` is safe there.

@@ -106,7 +106,7 @@ When the founder's test pass on `classic` is clean, run `scripts/release.sh --fo
 
 ## Studio plan
 
-The current Studio plan and open items are in `docs/handoff/r3-review.md` ("Studio plan (revised 2026-10-29)").
+The current Studio plan and open items are in `docs/handoff/r3-review.md` ("Studio plan (revised 2026-11-01)").
 
 ## History
 
