@@ -16,6 +16,7 @@ import {
   tokenValue,
 } from "./api.js";
 import { el } from "./ui.js";
+import { importPersona } from "./voiceclone.js";
 
 const OPENROUTER_TEXT_MODELS = [
   ["deepseek/deepseek-v4.1-flash:floor", "DeepSeek V4.1 Flash · floor"],
@@ -75,6 +76,12 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
   let readinessBusy = "";
   let readinessError = "";
   let readinessLoaded = false;
+  let personaFile = null;
+  let personaConsent = false;
+  let personaName = "";
+  let personaBusy = false;
+  let personaStatus = "";
+  let personaTone = "";
 
   function settings() {
     return getSettings() || null;
@@ -630,6 +637,96 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
     return card;
   }
 
+  async function importVoiceFile() {
+    if (personaBusy) return;
+    if (!personaFile) {
+      setNotice("Choose a .vcutvoice file first.", "bad");
+      return;
+    }
+    if (!personaConsent) {
+      setNotice("Tick the box to confirm you have permission to import this voice.", "bad");
+      return;
+    }
+    personaBusy = true;
+    personaStatus = "Importing the voice…";
+    personaTone = "";
+    render();
+    try {
+      const result = await importPersona(personaFile, {
+        consent: true, name: personaName,
+      });
+      const voice = result?.voice || {};
+      if (result?.imported) {
+        personaStatus = `Imported “${voice.name || "the voice"}”.`;
+        personaTone = "ok";
+      } else {
+        personaStatus = `“${voice.name || "That voice"}” is already in this library.`;
+        personaTone = "";
+      }
+      personaFile = null;
+      personaConsent = false;
+      personaName = "";
+      announceChange();
+      await onChanged();
+    } catch (cause) {
+      personaStatus = cause?.message || "Could not import that voice file. Check it and try again.";
+      personaTone = "bad";
+    } finally {
+      personaBusy = false;
+      render();
+    }
+  }
+
+  function personaCard() {
+    const pick = el("input", {
+      type: "file", accept: ".vcutvoice,application/zip",
+      "aria-label": "Portable voice file",
+      disabled: personaBusy,
+    });
+    pick.addEventListener("change", () => {
+      personaFile = pick.files && pick.files[0] ? pick.files[0] : null;
+      personaStatus = personaFile ? `Ready to import ${personaFile.name}.` : "";
+      personaTone = "";
+      render();
+    });
+    const nameInput = el("input", {
+      type: "text", maxLength: 64, value: personaName,
+      placeholder: "Keep the file's name", "aria-label": "Name for the imported voice",
+      disabled: personaBusy,
+    });
+    nameInput.addEventListener("input", () => { personaName = nameInput.value; });
+    const tick = el("input", { type: "checkbox", checked: personaConsent, id: "vr-persona-consent", disabled: personaBusy });
+    tick.addEventListener("change", () => {
+      personaConsent = Boolean(tick.checked);
+      render();
+    });
+    const go = el("button", {
+      class: "primary small", type: "button",
+      text: personaBusy ? "Importing…" : "Import voice file",
+      disabled: personaBusy || !personaFile || !personaConsent,
+    });
+    go.addEventListener("click", () => { void importVoiceFile(); });
+    const status = el("p", { class: "vr-status", role: "status", "data-tone": personaTone, text: personaStatus });
+    return el("div", { class: "vr-card vr-setup-card vr-setup-wide vr-persona" }, [
+      el("div", { class: "vr-card-head vr-setup-head" }, [
+        el("div", {}, [
+          el("h3", { text: "Import a voice file" }),
+          el("p", { class: "hint", text: "A .vcutvoice file holds the name, language, consent record, licence tag and a short preview. It can speak only if the recording was included." }),
+        ]),
+      ]),
+      el("div", { class: "vr-persona-grid" }, [
+        el("label", { class: "vr-field" }, [el("span", { text: "Voice file" }), pick]),
+        el("label", { class: "vr-field" }, [el("span", { text: "Name (optional)" }), nameInput]),
+      ]),
+      el("label", { class: "vr-consent", for: "vr-persona-consent" }, [
+        tick,
+        el("span", { text: "I have permission to import and use this voice." }),
+      ]),
+      el("div", { class: "vr-actions" }, [go]),
+      status,
+    ]);
+  }
+
   function configCard(state) {
     const paths = state?.paths || {};
     return el("div", { class: "vr-card vr-setup-card vr-setup-wide" }, [
@@ -682,6 +779,7 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
           enginesCard(),
           configCard(state),
           libraryCardNode(),
+          personaCard(),
         ]));
       }
     } else if (state) {

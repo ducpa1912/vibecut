@@ -91,6 +91,33 @@ export function keepTakeOnVoice(voiceId, takeId) {
   });
 }
 
+/** The download URL for a portable .vcutvoice file. */
+export function personaUrl(voiceId, includeReference = false) {
+  const query = includeReference ? "?include_reference=1" : "";
+  return `/api/voices/clones/${encodeURIComponent(voiceId)}/persona${query}`;
+}
+
+/** Import a .vcutvoice file; the caller confirms permission. */
+export async function importPersona(file, { consent = false, name = "" } = {}) {
+  const form = new FormData();
+  form.append("file", file, file.name || "voice.vcutvoice");
+  form.append("consent", consent ? "true" : "false");
+  form.append("name", name);
+  const headers = { Accept: "application/json" };
+  const token = tokenValue();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch("/api/voices/personas/import", {
+    method: "POST", headers, credentials: "same-origin", body: form,
+  });
+  announceChange();
+  if (!response.ok) {
+    const error = new Error(await detailOf(response));
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
 export function cloneFromVideo(jobId, body) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/clone`, { method: "POST", body });
 }

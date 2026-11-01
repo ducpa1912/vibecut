@@ -34,6 +34,7 @@ import {
   isStopped,
   listClones,
   lockClone,
+  personaUrl,
   playClone,
   playVoice,
   renameClone,
@@ -463,6 +464,20 @@ function cloneRow(item, repaint) {
     disabled: busy, "aria-label": `${item.locked ? "Unlock" : "Lock"} ${item.name}`,
   });
   lockButton.addEventListener("click", () => { void toggleLock(item); });
+  const fileButton = el("button", {
+    class: "ghost small", type: "button", text: "Voice file",
+    disabled: busy, "aria-label": `Export a voice file for ${item.name}`,
+  });
+  fileButton.addEventListener("click", () => {
+    const include = window.confirm(
+      "Include the original recording in the voice file? Click OK only if the speaker gave permission. Cancel keeps the recording out and exports the preview only.",
+    );
+    const link = el("a", { href: personaUrl(item.voice_id, include), download: "" });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setNotice(`Preparing the voice file for “${item.name}”.`, "ok");
+  });
   const deleteButton = el("button", {
     class: "ghost small danger", type: "button",
     text: cloneBusy === `delete:${id}` ? "Deleting…" : "Delete",
@@ -481,7 +496,7 @@ function cloneRow(item, repaint) {
       el("strong", { text: item.name || "Cloned voice" }),
       el("span", { class: "hint mono", text: facts }),
     ]),
-    el("div", { class: "vr-actions" }, [star, playButton, lockButton, renameButton, deleteButton]),
+    el("div", { class: "vr-actions" }, [star, playButton, lockButton, fileButton, renameButton, deleteButton]),
   );
   return row;
 }

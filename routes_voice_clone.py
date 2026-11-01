@@ -34,6 +34,7 @@ import job_queue
 import voice_audio
 import voice_clone
 import voice_errors
+import voice_persona
 import voice_readiness
 import voice_reference
 import voice_takes
@@ -1405,6 +1406,51 @@ def _keep_preview(path, *, engine: str, voice: str, text: str, rate: float,
         )
     except Exception:  # noqa: BLE001 - never break playback for history
         pass
+
+
+@router.get("/api/voices/clones/{voice_id}/persona")
+def export_voice_file(voice_id: str, include_reference: bool = False) -> Response:
+    """A .vcutvoice file: manifest, short preview, and the clip only if ticked."""
+    record = voice_clone.get_clone(voice_id)
+    if record is None:
+        raise HTTPException(404, voice_errors.MISSING_VOICE)
+    cache = voice_clone.settings_store.DATA / "cache" / "voice"
+    try:
+        preview = voice_persona.preview_path(record, cache)
+        data = voice_persona.build(record, preview, bool(include_reference))
+    except voice_persona.PersonaError as exc:
+        raise HTTPException(exc.status_code, voice_errors.clean(str(exc))) from exc
+    filename = voice_persona.filename(record)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.post("/api/voices/personas/import")
+def import_voice_file(
+    request: Request,
+    file: UploadFile = File(...),
+    consent: bool = Form(False),
+    name: str = Form(""),
+) -> dict:
+    """Import a .vcutvoice file. Nothing existing is overwritten."""
+    _guard(request)
+    raw = bytearray()
+    while chunk := file.file.read(1024 * 1024):
+        raw.extend(chunk)
+        if len(raw) > voice_persona.MAX_IMPORT_BYTES:
+            raise HTTPException(413, "That voice file is over 60 MB. Import a smaller one, then try again.")
+    try:
+        return voice_persona.import_voice(bytes(raw), consent=bool(consent), name=name)
+    except voice_persona.PersonaError as exc:
+        raise HTTPException(exc.status_code, voice_errors.clean(str(exc))) from exc
+    except voice_clone.CloneError as exc:
+        raise _fail(exc) from exc
 
 
 @router.post("/api/voices/clones/{voice_id}/sample")

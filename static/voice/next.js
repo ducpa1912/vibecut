@@ -6,7 +6,7 @@
  * The old page stays at /voices; this one is /voices?ui=new.
  */
 
-import { listJobs, request } from "./api.js";
+import { errorDetail, listJobs, request, syncTokenCookie, tokenValue } from "./api.js";
 import { el, formatDuration } from "./ui.js";
 import { cloneKey, isFavorite, stockKey, toggleFavorite } from "./favorites.js";
 import { createClipFinder } from "./clipfinder.js";
@@ -22,6 +22,7 @@ import {
   keepTakeOnVoice,
   lockClone,
   newVoiceTask,
+  personaUrl,
   playClone,
   playVoice,
   renameClone,
@@ -636,6 +637,98 @@ function starFor(key, label, onChange) {
   return button;
 }
 
+async function downloadVoiceFile(item, includeReference) {
+  syncTokenCookie();
+  const headers = { Accept: "application/zip" };
+  const token = tokenValue();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let response;
+  try {
+    response = await fetch(personaUrl(item.voice_id, includeReference), {
+      headers, credentials: "same-origin", cache: "no-store",
+    });
+  } catch (_) {
+    throw new Error("Cannot reach VibeCut. Is the server running? Then export the voice file again.");
+  }
+  if (!response.ok) {
+    let payload = null;
+    try {
+      const text = await response.text();
+      payload = text ? JSON.parse(text) : null;
+    } catch (_) {
+      payload = null;
+    }
+    throw new Error(errorDetail(payload) || "Could not export the voice file. Check the voice and the key in Setup, then try again.");
+  }
+  const blob = await response.blob();
+  const match = /filename="?([^";]+)"?/i.exec(String(response.headers.get("Content-Disposition") || ""));
+  const url = URL.createObjectURL(blob);
+  const link = el("a", { href: url, download: match ? match[1] : `${item.name || "voice"}.vcutvoice` });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** A small dialog: the clip is included only when the creator ticks it. */
+function exportVoiceFile(item) {
+  const include = el("input", { type: "checkbox", id: "vg-persona-clip" });
+  const note = el("p", { class: "hint", text: "The file always holds the name, language, consent record, licence tag and a short preview. The original recording stays out unless you tick the box." });
+  const error = el("p", { class: "vg-vo-error", role: "alert" });
+  error.hidden = true;
+  const cancel = el("button", { class: "vg-secondary", type: "button", text: "Cancel" });
+  const go = el("button", { class: "vg-primary", type: "button", text: "Export voice file" });
+  const dialog = el("section", {
+    class: "vr-export-dialog", role: "dialog", "aria-modal": "true", "aria-label": "Export voice file",
+  }, [
+    el("div", { class: "vg-view-head" }, [
+      el("div", {}, [
+        el("h2", { text: `Export “${item.name || "this voice"}”` }),
+        el("p", { text: "A portable .vcutvoice file you can import into another VibeCut voice room." }),
+      ]),
+    ]),
+    note,
+    el("label", { class: "vr-consent", for: "vg-persona-clip" }, [
+      include,
+      el("span", { text: "Include the original recording. Export it only with the speaker's permission." }),
+    ]),
+    error,
+    el("div", { class: "vg-take-actions" }, [cancel, go]),
+  ]);
+  const backdrop = el("div", { class: "vr-trimmer-backdrop" }, [dialog]);
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  function onKey(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  }
+  cancel.addEventListener("click", close);
+  backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+  go.addEventListener("click", () => {
+    go.disabled = true;
+    go.textContent = "Making the preview…";
+    error.hidden = true;
+    void downloadVoiceFile(item, Boolean(include.checked))
+      .then(() => {
+        close();
+        setNotice(`Saved the voice file for “${item.name || "this voice"}”.`, "ok");
+      })
+      .catch((cause) => {
+        go.disabled = false;
+        go.textContent = "Export voice file";
+        error.hidden = false;
+        error.textContent = cause?.message || "Could not export the voice file. Try again.";
+      });
+  });
+  document.body.append(backdrop);
+  document.addEventListener("keydown", onKey, true);
+  go.focus();
+}
+
 function cloneRow(item, repaint) {
   const id = item.voice_id;
   const name = cloneName(item);
@@ -697,6 +790,10 @@ function cloneRow(item, repaint) {
       el("button", {
         type: "button", text: item.locked ? "Unlock identity" : "Lock identity",
         on: { click: () => { void toggleLock(item, repaint); } },
+      }),
+      el("button", {
+        type: "button", text: "Export voice file…",
+        on: { click: () => exportVoiceFile(item) },
       }),
       el("button", {
         type: "button", text: "Rename",

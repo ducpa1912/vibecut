@@ -739,3 +739,31 @@ body.vr-root {
   .vr-readiness-action { grid-column: 1 / -1; min-height: 44px; }
   .vr-readiness-chip { justify-self: end; }
 }
+
+/* ---------------------------------------------------------------- voice file */
+
+.vr-persona-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.vr-export-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(540px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel, #111715);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.vr-export-dialog h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.vr-export-dialog p { margin: 4px 0 0; }
+.vr-export-dialog .vg-view-head { margin: 0; }
+
+@media (max-width: 640px) {
+  .vr-persona-grid { grid-template-columns: 1fr; }
+  .vr-export-dialog { padding: 16px; }
+}
