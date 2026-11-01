@@ -1,0 +1,5 @@
+# Optional high-quality voice-fit backend.
+# Signalsmith Stretch via the MIT python-stretch binding.
+# Install with: .venv/bin/python -m pip install -r requirements-optional.txt
+# VibeCut falls back to FFmpeg atempo when this is absent.
+python-stretch>=0.3.1

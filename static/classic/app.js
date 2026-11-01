@@ -56,6 +56,11 @@
     setupSttLanguage: $("#setup-stt-language"),
     setupMinimaxKey: $("#setup-minimax-key"),
     setupElevenlabsKey: $("#setup-elevenlabs-key"),
+    setupVoicePreserve: $("#setup-voice-preserve"),
+    setupVoiceMax: $("#setup-voice-max"),
+    setupVoiceEngine: $("#setup-voice-engine"),
+    setupVoiceExtreme: $("#setup-voice-extreme"),
+    setupVoiceWarning: $("#setup-voice-warning"),
     setupVoiceEngines: $("#setup-voice-engines"),
     setupPacks: $("#setup-packs"),
     setupPacksRefresh: $("#setup-packs-refresh"),
@@ -594,6 +599,28 @@
     dom.privacyPill?.classList.toggle("online", label === "Online features on");
   }
 
+  function updateVoiceFitWarning() {
+    const preserve = dom.setupVoicePreserve?.checked !== false;
+    if (dom.setupVoiceExtreme) {
+      dom.setupVoiceExtreme.disabled = preserve;
+      if (preserve) dom.setupVoiceExtreme.checked = false;
+    }
+    if (dom.setupVoiceMax) {
+      if (dom.setupVoiceExtreme?.checked) dom.setupVoiceMax.value = "2.50";
+      else if (dom.setupVoiceMax.value === "2.50") dom.setupVoiceMax.value = "1.80";
+    }
+    if (!dom.setupVoiceWarning) return;
+    if (preserve) {
+      dom.setupVoiceWarning.hidden = true;
+      dom.setupVoiceWarning.textContent = "";
+      return;
+    }
+    dom.setupVoiceWarning.hidden = false;
+    dom.setupVoiceWarning.textContent = dom.setupVoiceExtreme?.checked
+      ? "Preserve voice is off. Speeds above 1.8× will raise the pitch sharply and may sound like a chipmunk."
+      : "Preserve voice is off. Faster lines will raise the voice pitch and may create a chipmunk sound.";
+  }
+
   function applySetup(data) {
     const settings = data.settings || {};
     const secrets = data.secrets || {};
@@ -606,7 +633,34 @@
     dom.setupUseRewrite.checked = opencode.use_rewrite !== false;
     dom.setupUseBrief.checked = opencode.use_brief !== false;
     dom.setupTranslationMode.value = (settings.translation || {}).mode || "auto";
+    const voiceFit = settings.voice_fit || {};
+    if (dom.setupVoicePreserve) dom.setupVoicePreserve.checked = voiceFit.preserve_pitch !== false;
+    if (dom.setupVoiceMax) {
+      const speed = Number(voiceFit.max_speed || 1.80);
+      const value = [1.10, 1.15, 1.20, 1.25, 1.50, 1.80, 2.50]
+        .find((item) => Math.abs(item - speed) < 0.005) || 1.80;
+      dom.setupVoiceMax.value = value.toFixed(2);
+    }
+    if (dom.setupVoiceEngine) {
+      dom.setupVoiceEngine.value = ["auto", "ffmpeg", "signalsmith"].includes(voiceFit.engine)
+        ? voiceFit.engine : "auto";
+    }
+    if (dom.setupVoiceExtreme) dom.setupVoiceExtreme.checked = voiceFit.allow_extreme_speed === true;
     const runtime = data.runtime || {};
+    if (dom.setupVoiceEngine) {
+      const signalsmith = runtime.voice_fit?.signalsmith === true;
+      const option = dom.setupVoiceEngine.querySelector('option[value="signalsmith"]');
+      if (option) {
+        option.disabled = !signalsmith;
+        option.textContent = signalsmith
+          ? "Signalsmith Stretch"
+          : "Signalsmith Stretch · not installed";
+      }
+      if (!signalsmith && dom.setupVoiceEngine.value === "signalsmith") {
+        dom.setupVoiceEngine.value = "auto";
+      }
+    }
+    updateVoiceFitWarning();
     if (runtime.opencode_mode === "api") {
       dom.setupOpencodeStatus.textContent = "Direct OpenCode Go API key configured for this project · low reasoning.";
     } else if (runtime.opencode) {
@@ -812,6 +866,12 @@
           },
           rights: {
             lock: dom.setupRightsLock ? dom.setupRightsLock.checked : true,
+          },
+          voice_fit: {
+            preserve_pitch: dom.setupVoicePreserve ? dom.setupVoicePreserve.checked : true,
+            max_speed: Number(dom.setupVoiceMax?.value || 1.80),
+            engine: dom.setupVoiceEngine?.value || "auto",
+            allow_extreme_speed: dom.setupVoiceExtreme?.checked === true,
           },
           ingest: {
             provider: dom.setupIngestProvider.value || "auto",
@@ -1169,6 +1229,15 @@
       node.addEventListener("click", closeSetup);
     });
     dom.setupSave.addEventListener("click", saveSetup);
+    dom.setupVoicePreserve?.addEventListener("change", updateVoiceFitWarning);
+    dom.setupVoiceExtreme?.addEventListener("change", updateVoiceFitWarning);
+    dom.setupVoiceEngine?.addEventListener("change", updateVoiceFitWarning);
+    dom.setupVoiceMax?.addEventListener("change", () => {
+      if (dom.setupVoiceMax.value === "2.50" && dom.setupVoicePreserve?.checked === false) {
+        dom.setupVoiceExtreme.checked = true;
+      }
+      updateVoiceFitWarning();
+    });
     dom.setupTestOpencode.addEventListener("click", () => testSetup("opencode", dom.setupTestOpencode));
     dom.setupTestOpenrouter.addEventListener("click", () => testSetup("openrouter", dom.setupTestOpenrouter));
     dom.setupTestStt.addEventListener("click", () => testSetup("stt", dom.setupTestStt));
@@ -4772,6 +4841,7 @@
       state.audio.engine || "",
       state.audio.voice || "",
       Number(state.audio.rate) || 1,
+      JSON.stringify(state.setup?.voice_fit || {}),
       previewVoiceText(),
     ].join("|");
   }

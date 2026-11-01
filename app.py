@@ -72,6 +72,7 @@ import story_queue
 import tighten
 import usage_store
 import vision
+import voice_fit
 import workflow_config
 from url_ingest import fallback as ingest_fallback
 from url_ingest import registry
@@ -3610,6 +3611,12 @@ def _settings_state() -> dict:
         "opencode_mode": audio.opencode_mode(),
         "openrouter": audio.openrouter_status(),
         "whisper_models": pipeline.whisper_models(),
+        "voice_fit": {
+            "signalsmith": voice_fit.signalsmith_available(),
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "preserve_max_speed": voice_fit.PRESERVE_MAX_SPEED,
+            "chipmunk_max_speed": voice_fit.CHIPMUNK_MAX_SPEED,
+        },
     }
     return state
 
@@ -3647,7 +3654,7 @@ async def save_settings(request: Request) -> dict:
             )
         allowed_settings = {
             "opencode", "translation", "openrouter", "minimax", "stt", "tts",
-            "ingest", "preflight", "caption_styles", "rights",
+            "ingest", "preflight", "caption_styles", "rights", "voice_fit",
         }
         unknown = sorted(set(patch) - allowed_settings)
         if unknown:
@@ -3663,6 +3670,28 @@ async def save_settings(request: Request) -> dict:
                 )
             if "lock" in section and not isinstance(section["lock"], bool):
                 raise HTTPException(400, "rights.lock must be true or false.")
+        if "voice_fit" in patch:
+            section = patch["voice_fit"]
+            if not isinstance(section, dict):
+                raise HTTPException(400, "voice_fit must be an object.")
+            unknown_voice = sorted(set(section) - {
+                "preserve_pitch", "max_speed", "engine", "allow_extreme_speed",
+            })
+            if unknown_voice:
+                raise HTTPException(
+                    400, f"Unknown voice_fit setting: {unknown_voice[0]}.",
+                )
+            if "engine" in section and section["engine"] not in {
+                None, "", "auto", "ffmpeg", "signalsmith",
+            }:
+                raise HTTPException(400, "Unknown voice_fit engine.")
+            if "max_speed" in section:
+                try:
+                    speed = float(section["max_speed"])
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(400, "voice_fit.max_speed must be a number.") from exc
+                if not math.isfinite(speed) or speed < 1.0 or speed > 2.5:
+                    raise HTTPException(400, "voice_fit.max_speed must be between 1.0 and 2.5.")
         if "preflight" in patch:
             try:
                 preflight.validate_settings(patch["preflight"])

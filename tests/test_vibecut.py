@@ -4,6 +4,7 @@ import math
 import os
 import stat
 import time
+import types
 import urllib.error
 import wave
 
@@ -1643,9 +1644,15 @@ def test_uploaded_voice_fit(tmp_path, monkeypatch):
     source = tmp_path / "voice.wav"
     source.write_bytes(b"RIFF" + b"0" * 4096)
     calls = []
+    fitted = []
 
     def fake_media_duration(path):
         return 4.0
+
+    def fake_fit(input_path, output_path, rate, **kwargs):
+        fitted.append(rate)
+        __import__("pathlib").Path(output_path).write_bytes(b"RIFF" + b"0" * 4096)
+        return types.SimpleNamespace(applied=rate, backend="ffmpeg", warning="")
 
     def fake_run(cmd, timeout=None, cancel_event=None):
         calls.append(cmd)
@@ -1653,10 +1660,12 @@ def test_uploaded_voice_fit(tmp_path, monkeypatch):
         target.write_bytes(b"RIFF" + b"0" * 4096)
 
     monkeypatch.setattr(audio, "media_duration", fake_media_duration)
+    monkeypatch.setattr(audio.voice_fit, "fit_audio", fake_fit)
     monkeypatch.setattr(audio, "_run", fake_run)
     out = audio._fit_uploaded_voice(source, 2.0, tmp_path, 0.0)
     assert out == tmp_path / "uploaded_voice.wav"
-    assert any("atempo=" in part for part in calls[0])
+    assert fitted == [1.25]
+    assert not any("atempo=" in part for part in calls[0])
     assert any("apad" in part for part in calls[0])
 
 

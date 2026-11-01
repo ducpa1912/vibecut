@@ -32,6 +32,7 @@ from typing import Any, Callable, Mapping, Sequence
 import packs
 import editions
 import voice_clone
+import voice_fit
 
 # Imported last: audio re-exports this module, so the facade must finish first.
 import audio  # noqa: E402
@@ -47,7 +48,7 @@ ENGINES = ("minimax", "elevenlabs", "openrouter", "kokoro", "say")
 #: Dub slot fitting: the accepted ``atempo`` band. Outside it the line is
 #: flagged for Shorten (AI rewrite) or an explicit overlap choice.
 SLOT_MIN_RATE = 0.90
-SLOT_MAX_RATE = 1.15
+SLOT_MAX_RATE = 1.25
 SYNTHESIZERS = ("minimax", "elevenlabs", "heygen", "fish", "gemini", "kokoro", "say")
 CLOUD_ENGINES = frozenset({"minimax", "elevenlabs", "heygen", "fish", "gemini"})
 LOCAL_ENGINES = frozenset({"kokoro", "say"})
@@ -126,6 +127,7 @@ def line_cache_key(
     text: str,
     rate: float = 1.0,
     language: str = "",
+    policy: str = "",
 ) -> str:
     """SHA-256 cache key for one sentence.
 
@@ -139,7 +141,8 @@ def line_cache_key(
         "text": str(text or ""),
         "rate": f"{float(rate or 1.0):.3f}",
         "language": str(language or "").strip().lower(),
-        "schema": 1,
+        "policy": str(policy or ""),
+        "schema": 2,
     }
     blob = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -156,8 +159,9 @@ def line_cache_path(
     rate: float = 1.0,
     language: str = "",
     suffix: str = ".flac",
+    policy: str = "",
 ) -> Path:
-    key = line_cache_key(engine, model, voice, text, rate, language)
+    key = line_cache_key(engine, model, voice, text, rate, language, policy)
     return (cache_dir / f"{key}{suffix}").resolve()
 
 
@@ -171,8 +175,8 @@ def plan_slot_fit(
     """Decide the ``atempo`` factor for one dubbed sentence.
 
     ``atempo`` is the playback speed, so a line longer than its slot needs a
-    factor above 1. Inside 0.90–1.15× the line simply fits. A line beyond
-    1.15× is flagged "Too long by N s" and the caller can choose Shorten or an
+    factor above 1. Inside 0.90–1.25× the line simply fits. A line beyond
+    1.25× is flagged "Too long by N s" and the caller can choose Shorten or an
     explicit overlap; playback is still capped at the band edge.
     """
     native = max(0.0, float(native_seconds or 0.0))
@@ -216,6 +220,7 @@ def fit_dub_lines(
     *,
     duration_of: Callable[[Path], float] | None = None,
     shorten: Callable[[Mapping[str, Any], float], str | None] | None = None,
+    max_rate: float | None = None,
 ) -> list[dict[str, Any]]:
     """Attach slot-fit decisions to dubbed lines and optionally call Shorten.
 
@@ -239,7 +244,10 @@ def fit_dub_lines(
                 native = 0.0
         if not native:
             native = float(line.get("estimated") or 0.0)
-        fit = plan_slot_fit(native, slot)
+        fit = plan_slot_fit(
+            native, slot,
+            max_rate=max_rate or voice_fit.max_speed_default(),
+        )
         if fit["action"] == "shorten" and shorten is not None:
             replacement = shorten(line, float(fit["overflow"]))
             if replacement and str(replacement).strip():
@@ -254,7 +262,7 @@ def fit_dub_lines(
 
 
 def slot_fit_summary(lines: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Percent of lines that fit the 0.90–1.15× band without a flag."""
+    """Percent of lines that fit the 0.90–1.25× band without a flag."""
     total = len(lines)
     fitted = sum(1 for line in lines if (line.get("fit") or {}).get("fits"))
     return {
@@ -274,7 +282,7 @@ def shorten_text_for_slot(
     max_rate: float = SLOT_MAX_RATE,
     margin: float = 0.95,
 ) -> str:
-    """Shorten a translation so a retake can fit the 0.90–1.15× band.
+    """Shorten a translation so a retake can fit the 0.90–1.25× band.
 
     The estimate uses the measured length of the previous take, not a generic
     characters-per-second guess, so one retake usually lands inside the band.
@@ -709,7 +717,7 @@ def _kokoro_voice(
         sys.executable, str(worker),
         "--model", str(model), "--voices", str(voices),
         "--voice", voice or "af_heart", "--out", str(output),
-        "--speed", f"{max(0.6, min(1.6, float(rate or 1.0))):.3f}",
+        "--speed", "1.000",
     ], input_text=text, timeout=900, cancel_event=cancel_event)
 
 
@@ -739,8 +747,7 @@ def _elevenlabs_voice(
             raw.write_bytes(response.read())
     except Exception as exc:  # noqa: BLE001
         raise audio.AudioError(f"ElevenLabs synthesis failed: {exc}") from exc
-    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    audio._convert(raw, output, extra)
+    audio._convert(raw, output)
     try:
         raw.unlink()
     except OSError:
@@ -761,7 +768,7 @@ def _minimax_voice(
         "stream": False,
         "voice_setting": {
             "voice_id": voice or "female-shaonv",
-            "speed": max(0.5, min(2.0, float(rate or 1.0))),
+            "speed": 1.0,
             "vol": 1.0,
             "pitch": 0,
         },
@@ -791,8 +798,7 @@ def _minimax_voice(
         raise audio.AudioError("MiniMax voice returned no audio.")
     raw = output.with_name(f"{output.stem}.minimax.tmp.wav")
     raw.write_bytes(bytes.fromhex(audio_hex))
-    extra = ["-filter:a", f"atempo={max(0.8, min(1.25, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    audio._convert(raw, output, extra)
+    audio._convert(raw, output)
     try:
         raw.unlink()
     except OSError:
@@ -870,8 +876,7 @@ def _openrouter_voice(
     else:
         raw = output.with_name(f"{output.stem}.{engine}.tmp.mp3")
         raw.write_bytes(content)
-    extra = ["-filter:a", f"atempo={max(0.7, min(1.4, float(rate or 1.0)))}"] if rate and rate != 1.0 else []
-    audio._convert(raw, output, extra)
+    audio._convert(raw, output)
     try:
         raw.unlink()
     except OSError:
@@ -901,18 +906,18 @@ def synthesize_line(
     if engine == "say":
         if not audio.say_available():
             raise audio.AudioError("Apple say is not available.")
-        audio._say_voice(text, voice, rate, target)
+        audio._say_voice(text, voice, 1.0, target)
     elif engine == "kokoro":
         if not audio.kokoro_available():
             raise audio.AudioError("Kokoro is not installed or has no model files.")
-        audio._kokoro_voice(text, voice, target, rate, cancel_event)
+        audio._kokoro_voice(text, voice, target, 1.0, cancel_event)
     elif engine == "elevenlabs":
-        audio._elevenlabs_voice(text, voice, target, rate, model=model, timeout=timeout)
+        audio._elevenlabs_voice(text, voice, target, 1.0, model=model, timeout=timeout)
     elif engine == "minimax":
-        audio._minimax_voice(text, voice, target, rate, model=model, timeout=timeout)
+        audio._minimax_voice(text, voice, target, 1.0, model=model, timeout=timeout)
     elif engine in OPENROUTER_ENGINES:
         audio._openrouter_voice(
-            text, voice, target, rate, engine, model=model, timeout=timeout,
+            text, voice, target, 1.0, engine, model=model, timeout=timeout,
         )
     else:
         raise audio.AudioError(f"Unknown voice engine {engine!r}.")
@@ -920,6 +925,17 @@ def synthesize_line(
         audio.usage_store.record("tts", engine, chars=len(text))
     if not target.is_file() or target.stat().st_size == 0:
         raise audio.AudioError("Voice synthesis produced no audio.")
+    if abs(float(rate or 1.0) - 1.0) > 0.005:
+        fitted = target.with_name(f"{target.stem}.fit{target.suffix}")
+        try:
+            voice_fit.fit_audio(target, fitted, float(rate or 1.0))
+            fitted.replace(target)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                fitted.unlink()
+            except OSError:
+                pass
+            raise audio.AudioError(f"Voice fit failed: {exc}") from exc
     if flac:
         audio._to_flac(target, output, mono=True)
         try:
@@ -983,7 +999,8 @@ def voice_sample(
     language: str = "",
 ) -> Path:
     target = line_cache_path(
-        cache_dir, engine, model, voice, text, rate, language, suffix=".wav",
+        cache_dir, engine, model, voice, text, rate, language,
+        suffix=".wav", policy=voice_fit.policy_fingerprint(),
     )
     if target.is_file() and target.stat().st_size > 512:
         return target

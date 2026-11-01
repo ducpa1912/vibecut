@@ -34,6 +34,8 @@ optional, unmodified, separate processes that VibeCut only calls over HTTP.
 | numpy | `>=1.26` | Analysis math | BSD-3-Clause (bundled components also 0BSD, MIT, Zlib, CC0) | License expression varies by release; record the installed expression. |
 | pillow | `>=10.0` | Thumbnails/images | MIT-CMU (HPND) | |
 | yt-dlp | `>=2025.10.22` | Default URL ingest | Unlicense | Public Python API only. Keep current; extractors change often. |
+| python-stretch (optional) | `>=0.3.1` | Signalsmith Stretch binding | MIT | Optional voice-fit backend; `requirements-optional.txt`. |
+| Signalsmith Stretch (optional) | via python-stretch | Pitch/time stretch | MIT | Vendored inside the python-stretch wheel; keep the MIT notice. |
 
 All direct requirements above are permissive or public-domain dedications; none
 is GPL or AGPL. The audit script checks both the requirement names and the
@@ -82,6 +84,7 @@ optional extras, and they are the most likely source of copyleft in a build.
 | espeak-ng | GPL-3.0-or-later | System library used by Piper and the Kokoro worker. Dynamic loading still needs review before bundling. |
 | minisbd | AGPL-3.0 | Audit flag in some environments; not declared by VibeCut. Keep out of release artifacts. |
 | kokoro-onnx / Kokoro-82M | MIT package / Apache-2.0 weights | Verify model card at release. |
+| python-stretch / Signalsmith Stretch | MIT | Optional voice-fit backend; include the MIT notice if installed. |
 | mlx-whisper / Whisper weights | MIT | Verify model card at release. |
 | Demucs | MIT | Verify at release. |
 | stable-audio-tools | MIT | Package metadata may report `UNKNOWN`; include the upstream license text. |
