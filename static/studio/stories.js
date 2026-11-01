@@ -237,10 +237,13 @@ export function mount(root, ctx) {
 
   root.innerHTML = `
     <section class="st-panel" aria-labelledby="st-stories-title">
-      <header class="st-panel-head">
-        <p class="st-eyebrow">Step 2 · Moments</p>
-        <h1 id="st-stories-title">Find the moments</h1>
-        <p class="st-lede">Every moment is a complete beat: a frame, its hook and payoff, the text already on screen, and the shape it will render in. Pick one, tune the range, or build your own from scenes.</p>
+      <header class="st-panel-head st-panel-head-row">
+        <div>
+          <p class="st-eyebrow">Step 2 · Moments</p>
+          <h1 id="st-stories-title">Find the moments</h1>
+          <p class="st-lede">Every moment is a complete beat: a frame, its hook and payoff, the text already on screen, and the shape it will render in. Pick one, tune the range, or build your own from scenes.</p>
+        </div>
+        <div id="st-moment-actions" class="st-panel-actions"></div>
       </header>
       <div id="st-story-body" class="st-story-body"></div>
       <p id="st-story-status" class="st-status" role="status" aria-live="polite" hidden></p>
@@ -251,6 +254,7 @@ export function mount(root, ctx) {
   const $ = (selector) => root.querySelector(selector);
   const dom = {
     body: $("#st-story-body"),
+    actions: $("#st-moment-actions"),
     status: $("#st-story-status"),
     error: $("#st-story-error"),
   };
@@ -501,6 +505,43 @@ export function mount(root, ctx) {
       checkError = error?.message || "Could not cancel the scan.";
       renderStories();
     }
+  }
+
+  function scanStatusText() {
+    if (checkBusy) return { text: "Checking text…", tone: "busy" };
+    if (checkError) return { text: "Scan needs attention", tone: "bad" };
+    if (checkReport) {
+      const count = Array.isArray(checkReport.tracklets) ? checkReport.tracklets.length : 0;
+      return {
+        text: count ? `${formatCount(count, "text region")} found` : "No on-screen text",
+        tone: count ? "ok" : "quiet",
+      };
+    }
+    return { text: "Text not scanned", tone: "quiet" };
+  }
+
+  function renderScanAction() {
+    if (!dom.actions) return;
+    if (!job || job.status !== "ready") {
+      dom.actions.replaceChildren();
+      return;
+    }
+    const state = scanStatusText();
+    const chip = el("span", {
+      class: `st-chip st-chip-${state.tone}`,
+      text: state.text,
+    });
+    const button = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: checkBusy ? "Cancel scan" : checkReport ? "Scan again" : "Scan for text",
+      disabled: false,
+    });
+    button.addEventListener("click", () => {
+      if (checkBusy) void cancelCheck(button);
+      else void refreshCheck(button);
+    });
+    dom.actions.replaceChildren(chip, button);
   }
 
   function checkCard() {
@@ -1083,6 +1124,7 @@ export function mount(root, ctx) {
   }
 
   function renderStories() {
+    renderScanAction();
     if (!job) {
       emptyNoJob();
       return;

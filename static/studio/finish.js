@@ -544,10 +544,15 @@ export function mount(root, ctx) {
 
   root.innerHTML = `
     <section class="st-panel st-finish-panel" aria-labelledby="st-finish-title">
-      <header class="st-panel-head">
-        <p class="st-eyebrow">Step 4 · Finish</p>
-        <h1 id="st-finish-title">Render and share</h1>
-        <p class="st-lede">Render every moment in any of the five shapes. Keep every version. Review the cut, then hand off a publish kit and a review link.</p>
+      <header class="st-panel-head st-finish-head">
+        <div class="st-finish-heading">
+          <p class="st-eyebrow">Step 4 · Finish</p>
+          <h1 id="st-finish-title">Render and share</h1>
+          <p class="st-lede">Render every moment in any of the five shapes. Keep every version. Review the cut, then hand off a publish kit and a review link.</p>
+        </div>
+        <div class="st-finish-head-actions">
+          <button id="st-finish-back" class="st-btn st-btn-ghost st-btn-small" type="button">← Edit</button>
+        </div>
       </header>
       <p id="st-finish-status" class="st-status" role="status" aria-live="polite" hidden></p>
       <p id="st-finish-error" class="st-error" role="alert" hidden></p>
@@ -557,11 +562,14 @@ export function mount(root, ctx) {
   `;
 
   const dom = {
+    back: root.querySelector("#st-finish-back"),
     status: root.querySelector("#st-finish-status"),
     error: root.querySelector("#st-finish-error"),
     repair: root.querySelector("#st-finish-repair"),
     body: root.querySelector("#st-finish-body"),
   };
+
+  dom.back?.addEventListener("click", () => ctx.go("edit"));
 
   function setBusyStatus(message, tone = "") {
     setStatus(dom.status, message, tone);

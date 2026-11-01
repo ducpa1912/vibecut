@@ -106,8 +106,8 @@ body.st-active { overflow: hidden; }
 .st-top {
   flex: 0 0 auto;
   display: grid;
-  gap: 6px;
-  padding: 10px clamp(14px, 2.6vw, 32px);
+  gap: 4px;
+  padding: 7px clamp(14px, 2.6vw, 32px);
   border-bottom: 1px solid var(--st-line);
   background: rgba(11, 11, 12, 0.82);
   backdrop-filter: blur(12px);
@@ -168,10 +168,10 @@ body.st-active { overflow: hidden; }
   align-items: center;
   gap: 7px;
   min-width: 0;
-  min-height: 38px;
-  padding: 8px 11px;
+  min-height: 34px;
+  padding: 5px 10px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: var(--st-muted);
   text-align: left;
@@ -374,6 +374,63 @@ body.st-active { overflow: hidden; }
 }
 
 .st-panel-head { max-width: 720px; margin-bottom: 26px; }
+.st-panel-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px 28px;
+  max-width: none;
+}
+.st-panel-head-row > div:first-child { max-width: 760px; min-width: 0; }
+.st-panel-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 26px;
+}
+
+/* Finish keeps the same one-screen frame as Edit: a compact head and one
+   scrolling body. No second page scroll, no nested panel scroll. */
+main.st-main[data-step="finish"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px clamp(14px, 2.6vw, 32px) 14px;
+}
+main.st-main[data-step="finish"] > .st-finish-panel {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.st-finish-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px 24px;
+  max-width: none;
+  margin: 0 0 10px;
+}
+.st-finish-heading { max-width: 860px; min-width: 0; }
+#st-finish-title { font-size: clamp(22px, 2.2vw, 28px); }
+.st-finish-head h1 { font-size: clamp(22px, 2.2vw, 28px); }
+.st-finish-head .st-lede { max-width: 760px; margin-top: 6px; font-size: 13px; }
+.st-finish-head-actions { flex: 0 0 auto; padding-top: 2px; }
+.st-finish-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
+  gap: 16px;
+}
 .st-eyebrow {
   margin: 0 0 10px;
   color: var(--st-accent);
@@ -496,6 +553,13 @@ body.st-active { overflow: hidden; }
   gap: 18px;
   align-items: start;
 }
+.st-import-grid .st-import-card { order: 1; }
+.st-import-grid .st-recent-card { order: 2; }
+.st-import-grid.has-recent { grid-template-columns: minmax(280px, 0.55fr) minmax(0, 1.45fr); }
+.st-import-grid.has-recent .st-import-card { order: 2; }
+.st-import-grid.has-recent .st-recent-card { order: 1; }
+.st-import-start { display: grid; gap: 12px; margin-top: 14px; }
+.st-import-start .st-import-actions { margin-top: 0; }
 .st-import-card { padding: 22px; }
 
 .st-source-tabs {
@@ -1069,6 +1133,14 @@ body.st-active { overflow: hidden; }
 /* One entry: Setup and Settings are tabs in the same dialog. */
 #studio-root dialog.st-menu-dialog { width: min(780px, calc(100vw - 36px)); }
 .st-menu-dialog .st-dialog-head { border-bottom: 0; padding-bottom: 4px; }
+.st-menu-workspace {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 20px 10px;
+}
+.st-menu-workspace .st-btn { min-height: 30px; }
 .st-menu-tabs {
   display: flex;
   gap: 3px;
@@ -1199,7 +1271,7 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
 
 /* ------------------------------------------------------------------ finish */
 
-.st-finish-body { display: grid; gap: 26px; min-width: 0; counter-reset: finish-stage; }
+.st-finish-body { display: grid; gap: 16px; min-width: 0; counter-reset: finish-stage; }
 .st-finish-stage {
   display: grid;
   gap: 12px;
@@ -1815,3 +1887,12 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
 }
 .st-script-brief textarea:focus { border-color: var(--st-accent); outline: none; box-shadow: 0 0 0 1px var(--st-accent); }
 .st-script-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* P4: the compact app bar and the Finish/Moments heads at narrow widths. */
+@media (max-width: 767px) {
+  .st-panel-head-row { flex-direction: column; gap: 10px; }
+  .st-panel-actions { padding-top: 0; }
+  .st-finish-head { flex-direction: column; gap: 8px; }
+  .st-finish-head-actions { padding-top: 0; }
+  .st-finish-head .st-lede { display: none; }
+}

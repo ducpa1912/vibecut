@@ -272,6 +272,70 @@ try {
           fullPage: false,
         });
       }
+
+      // P4: Finish keeps the same one-screen frame as Edit.
+      if (viewport.width === 1280) {
+        await page.waitForFunction(
+          () => !document.querySelector("#st-edit-next")?.disabled,
+          null,
+          { timeout: 15000 },
+        );
+        await page.locator("#st-edit-next").click();
+        await page.locator(".st-finish-panel").waitFor({ state: "visible", timeout: 30000 });
+        const finish = await page.evaluate(() => {
+          const main = document.querySelector("main.st-main");
+          const body = document.querySelector(".st-finish-body");
+          const panel = document.querySelector(".st-finish-panel");
+          const back = document.querySelector("#st-finish-back");
+          return {
+            overflowY: getComputedStyle(main).overflowY,
+            bodyOverflowY: getComputedStyle(body).overflowY,
+            gutter: getComputedStyle(body).scrollbarGutter,
+            panelHeight: panel.getBoundingClientRect().height,
+            backVisible: Boolean(back && back.offsetParent !== null),
+          };
+        });
+        assert(finish.overflowY === "hidden", `${where}: Finish still scrolls the page`);
+        assert(finish.bodyOverflowY === "auto", `${where}: Finish body does not own its scroll`);
+        assert(finish.gutter === "stable", `${where}: Finish body has no stable gutter`);
+        assert(finish.panelHeight > 400, `${where}: Finish panel collapsed`);
+        assert(finish.backVisible, `${where}: Finish has no Back to Edit`);
+        if (screenshotPrefix) {
+          await page.screenshot({ path: `${screenshotPrefix}-finish-${viewport.width}.png` });
+        }
+
+        // P4: Moments shows the per-video text scan next to its title.
+        await page.locator('.st-step[data-step="moments"]').click();
+        await page.locator(".st-panel-head-row").waitFor({ state: "visible", timeout: 30000 });
+        const scanAction = page.locator("#st-moment-actions button");
+        await scanAction.waitFor({ state: "visible", timeout: 15000 });
+        assert(
+          (await scanAction.textContent())?.trim() === "Scan for text",
+          `${where}: Moments has no Scan for text action`,
+        );
+        if (screenshotPrefix) {
+          await page.screenshot({ path: `${screenshotPrefix}-moments-${viewport.width}.png` });
+        }
+
+        // P4: Import puts the rights gate beside Start and recent videos first.
+        await page.locator('.st-step[data-step="import"]').click();
+        await page.locator(".st-import-grid.has-recent").waitFor({ state: "visible", timeout: 20000 });
+        const importState = await page.evaluate(() => {
+          const attest = document.querySelector("#st-attest-row");
+          const start = document.querySelector(".st-import-start");
+          return {
+            attestInStart: Boolean(attest && start && start.contains(attest)),
+            startInStart: Boolean(start && start.contains(document.querySelector("#st-import"))),
+            recentFirst: document.querySelector(".st-import-grid")?.classList.contains("has-recent"),
+          };
+        });
+        assert(importState.attestInStart, `${where}: rights gate is not beside Start`);
+        assert(importState.startInStart, `${where}: Start is not in the import start block`);
+        assert(importState.recentFirst, `${where}: recent videos are not first`);
+        if (screenshotPrefix) {
+          await page.screenshot({ path: `${screenshotPrefix}-import-${viewport.width}.png` });
+        }
+      }
       assert(pageErrors.length === 0, `${where}: page errors: ${pageErrors.join(" | ")}`);
     } catch (error) {
       failures.push(`${viewport.label}: ${error?.message || error}`);

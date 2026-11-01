@@ -182,8 +182,6 @@ export function startStudio() {
                 <span id="st-current-status" class="st-top-status" hidden></span>
               </div>
               <div class="st-top-actions">
-                <button id="st-change-video" class="st-btn st-btn-quiet st-btn-small" type="button">Change video</button>
-                <a id="st-voice-room" class="st-btn st-btn-quiet st-btn-small" href="/voices">Voice Room</a>
                 <button id="st-menu-open" class="st-btn st-btn-ghost st-btn-small st-menu-open" type="button" aria-haspopup="dialog" aria-controls="st-menu-dialog">Menu</button>
               </div>
             </div>
@@ -204,6 +202,10 @@ export function startStudio() {
       <div class="st-dialog-head">
         <h2 id="st-menu-title">Studio menu</h2>
         <button class="st-icon-btn" type="button" data-menu-close aria-label="Close menu">×</button>
+      </div>
+      <div class="st-menu-workspace" aria-label="Workspace">
+        <button id="st-change-video" class="st-btn st-btn-ghost st-btn-small" type="button">Change video</button>
+        <a id="st-voice-room" class="st-btn st-btn-quiet st-btn-small" href="/voices">Voice Room</a>
       </div>
       <div class="st-menu-tabs" role="tablist" aria-label="Setup and settings">
         <button id="st-menu-tab-setup" class="st-menu-tab" type="button" role="tab" aria-selected="true" aria-controls="st-menu-setup" tabindex="0" data-menu-tab="setup">Setup</button>
@@ -683,7 +685,10 @@ export function startStudio() {
   for (const button of dom.steps) {
     button.addEventListener("click", () => go(button.dataset.step));
   }
-  dom.change.addEventListener("click", openLibrary);
+  dom.change.addEventListener("click", () => {
+    closeMenu();
+    openLibrary();
+  });
   dom.readingAction.addEventListener("click", () => { void readingButton(); });
   for (const button of root.querySelectorAll("[data-library-close]")) {
     button.addEventListener("click", () => dom.library.close());

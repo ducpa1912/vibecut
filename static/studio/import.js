@@ -175,14 +175,15 @@ export function mount(root, ctx) {
             <p class="st-hint">Most sites work through the local downloader. Link downloads need a connection.</p>
           </div>
 
-          <label id="st-attest-row" class="st-attest" hidden>
-            <input id="st-attest" type="checkbox">
-            <span><strong>I own this footage or have the rights to it.</strong><small>Required while the rights lock is on. VibeCut never removes platform watermarks.</small></span>
-          </label>
-
-          <div class="st-actions st-import-actions">
-            <button id="st-import" class="st-btn st-btn-primary" type="button" disabled>Import video</button>
-            <span id="st-import-note" class="st-hint">Confirm the rights note to start.</span>
+          <div class="st-import-start">
+            <label id="st-attest-row" class="st-attest" hidden>
+              <input id="st-attest" type="checkbox">
+              <span><strong>I own this footage or have the rights to it.</strong><small>Required while the rights lock is on. VibeCut never removes platform watermarks.</small></span>
+            </label>
+            <div class="st-actions st-import-actions">
+              <button id="st-import" class="st-btn st-btn-primary" type="button" disabled>Import video</button>
+              <span id="st-import-note" class="st-hint">Confirm the rights note to start.</span>
+            </div>
           </div>
           <div class="st-progress" id="st-progress" hidden>
             <div class="st-progress-bar"><i id="st-progress-fill"></i></div>
@@ -506,6 +507,7 @@ export function mount(root, ctx) {
   }
 
   function renderRecent(jobs) {
+    root.querySelector(".st-import-grid")?.classList.toggle("has-recent", jobs.length > 0);
     dom.recentList.replaceChildren();
     setStatus(dom.recentError, "");
     if (!jobs.length) {
