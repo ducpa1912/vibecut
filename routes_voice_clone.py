@@ -1670,7 +1670,11 @@ def make_voiceover(body: VoiceoverBody, request: Request) -> dict:
         except voice_clone.CloneError as exc:
             raise _fail(exc) from exc
         locked = record.get("locked") if isinstance(record.get("locked"), dict) else {}
-        language = language or str(locked.get("language") or record.get("language") or "")
+        language = (
+            str(locked.get("language") or "")
+            or language
+            or str(record.get("language") or "")
+        )
     cancel_event = _task_event(body.task)
     task = str(body.task or "")
     voice_takes.set_progress(task, "running", "Preparing the lines", 0.0)

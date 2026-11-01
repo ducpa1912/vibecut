@@ -158,6 +158,30 @@ def test_old_unstarred_takes_are_only_cleaned_after_a_warning(api, tmp_path):
     assert [row["id"] for row in left] == [rows[0]["id"]]
 
 
+@needs_ffmpeg
+def test_cleanup_removes_every_expired_take_not_only_the_review_page(api, tmp_path):
+    source = tone(tmp_path / "one.wav")
+    old = time.time() - 31 * 86400
+    rows = []
+    voice_takes.audio_dir().mkdir(parents=True, exist_ok=True)
+    for index in range(55):
+        take_id = f"take_{index:024x}"
+        voice_takes.audio_dir().joinpath(f"{take_id}.wav").write_bytes(source.read_bytes())
+        rows.append({
+            "id": take_id, "kind": "preview", "label": f"take {index}",
+            "created": old, "starred": False, "clone_voice": "", "cached": False,
+            "seconds": 0.5, "check": None,
+            "settings": {"text": "line", "engine": "say", "voice": "Samantha", "rate": 1.0, "language": ""},
+        })
+    voice_takes.store_path().write_text(json.dumps({"version": 1, "takes": rows}))
+    plan = api.get("/api/voices/takes/cleanup").json()
+    assert plan["count"] == 55
+    assert len(plan["takes"]) == 50
+    done = api.post("/api/voices/takes/cleanup", json={"confirm": True}).json()
+    assert done["deleted"] == 55
+    assert api.get("/api/voices/takes").json()["takes"] == []
+
+
 def test_split_script_keeps_sentences_whole_and_under_the_limit():
     text = "One short line. " + ("A much longer sentence, with clauses, that has to be split. " * 4)
     chunks = voice_takes.split_script(text)

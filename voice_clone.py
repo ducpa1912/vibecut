@@ -333,7 +333,7 @@ def set_keep(voice_id: str, keep: dict | None) -> dict:
         raise CloneError(voice_errors.MISSING_VOICE, 404)
     if keep is None:
         return _upsert({key: value for key, value in record.items() if key != "keep"})
-    text = " ".join(str(keep.get("text") or "").split())[:500]
+    text = " ".join(str(keep.get("text") or "").split())[:4000]
     if not text:
         raise CloneError("That take has no script to keep. Make a preview or voiceover with words, then keep it.")
     try:

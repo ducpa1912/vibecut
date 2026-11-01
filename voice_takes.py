@@ -358,8 +358,15 @@ def cleanup(confirm: bool = False, days: int = CLEANUP_DAYS) -> dict:
     plan = cleanup_plan(days=days)
     if not confirm:
         return {"deleted": 0, "kept": plan["count"], "plan": plan, "confirmed": False}
+    # Remove every expired take, not just the first page the review showed.
+    cutoff = float(plan["cutoff"])
+    rows = [row for row in (_clean_row(item) for item in _read()) if row]
+    expired = [
+        row for row in rows
+        if not row.get("starred") and float(row.get("created") or 0.0) < cutoff
+    ]
     deleted = 0
-    for row in plan["takes"]:
+    for row in expired:
         try:
             if delete(row["id"]):
                 deleted += 1
