@@ -230,6 +230,9 @@
     audioMusicField: $("#audio-music-field"),
     audioVoicePreviewStatus: $("#audio-voice-preview-status"),
     audioMusicPreviewStatus: $("#audio-music-preview-status"),
+    audioVoiceCost: $("#audio-voice-cost"),
+    audioMusicCost: $("#audio-music-cost"),
+    audioCopyCost: $("#audio-copy-cost"),
     audioMusicUploadBox: $("#audio-music-upload-box"),
     audioMusicUpload: $("#audio-music-upload"),
     audioMusicUploadButton: $("#audio-music-upload-button"),
@@ -4915,7 +4918,10 @@
       try { detail = (await response.json()).detail || detail; } catch (_) { /* not JSON */ }
       throw new Error(detail);
     }
-    return response.blob();
+    return {
+      blob: await response.blob(),
+      cache: response.headers.get("X-VibeCut-Preview") || "",
+    };
   }
 
   async function generateVoicePreview() {
@@ -4937,7 +4943,7 @@
     setSoundStatus(dom.audioVoicePreviewStatus, "Generating a short voice preview…");
     syncSoundPreviewButtons();
     try {
-      const blob = await fetchSoundBlob(`/api/jobs/${state.job.id}/voice/sample`, {
+      const { blob } = await fetchSoundBlob(`/api/jobs/${state.job.id}/voice/sample`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4988,7 +4994,7 @@
     setSoundStatus(dom.audioMusicPreviewStatus, "Generating a 12s AI music preview. One provider call, cached by prompt.");
     syncSoundPreviewButtons();
     try {
-      const blob = await fetchSoundBlob(`/api/classic/jobs/${state.job.id}/sound/music-preview`, {
+      const { blob, cache } = await fetchSoundBlob(`/api/classic/jobs/${state.job.id}/sound/music-preview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -5001,7 +5007,13 @@
       if (state.musicPreviewUrl) URL.revokeObjectURL(state.musicPreviewUrl);
       state.musicPreviewUrl = URL.createObjectURL(blob);
       state.musicPreviewKey = key;
-      setSoundStatus(dom.audioMusicPreviewStatus, "Music preview ready · 12s. The render uses the full bed.", "ok");
+      setSoundStatus(
+        dom.audioMusicPreviewStatus,
+        cache === "hit"
+          ? (window.ClassicTrust?.costNotice({ cached: true }) || "Cached · no new call")
+          : "Music preview ready · 12s. The render uses the full bed.",
+        "ok",
+      );
       playSoundUrl(state.musicPreviewUrl);
     } catch (error) {
       setSoundStatus(dom.audioMusicPreviewStatus, error.message, "bad");
@@ -5039,7 +5051,7 @@
         query.set("track", state.audio.track || "");
         if (state.audioMoods.length) query.set("moods", state.audioMoods.join(","));
       }
-      const blob = await fetchSoundBlob(
+      const { blob } = await fetchSoundBlob(
         `/api/classic/jobs/${state.job.id}/sound/bgm-preview?${query}`,
       );
       if (state.musicPreviewUrl) URL.revokeObjectURL(state.musicPreviewUrl);
@@ -5104,6 +5116,102 @@
     }
     dom.audioMusic.value = next;
     state.audio.music = next;
+  }
+
+  function voiceProviderName(engine) {
+    return {
+      elevenlabs: "ElevenLabs",
+      minimax: "MiniMax Speech",
+      heygen: "OpenRouter (HeyGen)",
+      fish: "OpenRouter (Fish Audio)",
+      gemini: "OpenRouter (Gemini TTS)",
+    }[engine] || "";
+  }
+
+  function musicProviderName(engine) {
+    return {
+      "minimax-music": "MiniMax Music",
+      "lyria-clip": "OpenRouter (Lyria 3)",
+    }[engine] || "";
+  }
+
+  function translationMayUseCloudNow() {
+    const trust = window.ClassicTrust;
+    if (!trust || typeof trust.translationMayUseCloud !== "function") return false;
+    return trust.translationMayUseCloud({
+      mode: state.setup?.translation?.mode || "auto",
+      providers: state.audioEngines?.translation || [],
+    });
+  }
+
+  function rewriteMayUseCloudNow() {
+    const trust = window.ClassicTrust;
+    if (!trust || typeof trust.rewriteMayUseCloud !== "function") return false;
+    return trust.rewriteMayUseCloud({ models: state.audioEngines?.rewrite_models || [] });
+  }
+
+  function cloudTextProviderName() {
+    const translation = state.audioEngines?.translation || [];
+    const rewrite = state.audioEngines?.rewrite_models || [];
+    const ready = (id) => translation.some((item) => item.id === id && item.available !== false)
+      || rewrite.some((item) => item.id === id && item.available !== false);
+    const names = [];
+    if (ready("opencode")) names.push("OpenCode Go");
+    if (ready("openrouter")) names.push("OpenRouter");
+    return names.join(" or ");
+  }
+
+  function setCostNote(node, text) {
+    if (!node) return;
+    node.textContent = text || "";
+    node.hidden = !text;
+  }
+
+  function updateCostNotices() {
+    const trust = window.ClassicTrust;
+    if (!trust || typeof trust.costNotice !== "function") return;
+    const mode = state.audio.mode;
+    const voiceMode = ["bed", "voice", "full"].includes(mode);
+    const upload = voiceMode && state.audio.source === "upload";
+    const translate = voiceMode && !upload
+      && !!targetLanguage() && targetLanguage() !== sourceLanguage()
+      && translationMayUseCloudNow();
+    const rewrite = voiceMode && !upload && rewriteMayUseCloudNow();
+    const provider = cloudTextProviderName();
+    const what = translate && rewrite
+      ? "the transcript text and the cut script"
+      : translate ? "the transcript text" : "the cut script";
+    setCostNote(
+      dom.audioCopyCost,
+      (translate || rewrite)
+        ? trust.costNotice({ provider, what })
+        : "",
+    );
+
+    const voiceCloud = voiceMode && !upload && !!voiceProviderName(state.audio.engine);
+    setCostNote(
+      dom.audioVoiceCost,
+      voiceCloud
+        ? trust.costNotice({
+          provider: voiceProviderName(state.audio.engine),
+          what: "the preview line and script text",
+        })
+        : "",
+    );
+
+    const source = musicSourceMode();
+    const musicCloud = ["music", "full"].includes(mode)
+      && source === "generate"
+      && !!musicProviderName(state.audio.music);
+    setCostNote(
+      dom.audioMusicCost,
+      musicCloud
+        ? trust.costNotice({
+          provider: musicProviderName(state.audio.music),
+          what: "a music prompt",
+        })
+        : "",
+    );
   }
 
   function syncAudioVisibility() {
@@ -5209,6 +5317,7 @@
       dom.audioMusicBlock.hidden = true;
     }
     syncSoundPreviewButtons();
+    updateCostNotices();
     if (state.job && state.plan) updateRenderPanel();
   }
 
@@ -5608,6 +5717,10 @@
     syncSoundPreviewButtons();
     renderSetupEngines();
     updatePrivacyPill();
+    updateCostNotices();
+    if (state.job && targetLanguage() && targetLanguage() !== sourceLanguage()) {
+      warmTranslation();
+    }
   }
 
   function translateLabel(id) {
@@ -5891,6 +6004,14 @@
     const jobId = state.job?.id;
     const target = targetLanguage();
     if (!jobId || !target || target === sourceLanguage() || !transcriptInfo().ready) {
+      cancelTranslationWarm();
+      paintTranslateBadge(null);
+      return;
+    }
+    // A cloud translation costs credits. Never start one automatically: the
+    // founder presses Story cut after seeing the cost notice. Local-only
+    // translation can still warm in the background.
+    if (!state.audioEngines || translationMayUseCloudNow()) {
       cancelTranslationWarm();
       paintTranslateBadge(null);
       return;
