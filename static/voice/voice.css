@@ -706,3 +706,36 @@ body.vr-root {
   .vr-trimmer-fields { grid-template-columns: 1fr; }
   .vr-trimmer-btn { min-height: 44px; }
 }
+
+/* ---------------------------------------------------------------- readiness */
+
+.vr-readiness { margin-bottom: 12px; }
+.vr-readiness-list { display: grid; gap: 8px; }
+.vr-readiness-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2, #161d1a);
+}
+.vr-readiness-copy { display: grid; gap: 2px; min-width: 0; }
+.vr-readiness-copy strong { font-size: 13px; font-weight: 560; }
+.vr-readiness-copy .hint { margin: 0; font-size: 11.5px; line-height: 1.45; }
+.vr-readiness-chip {
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.vr-readiness-chip.is-ready { border-color: rgba(155, 201, 169, 0.5); color: var(--ok, #9bc9a9); }
+.vr-readiness-chip.is-working { border-color: rgba(168, 213, 191, 0.5); color: var(--accent, #a8d5bf); }
+.vr-readiness-chip.is-failed { border-color: rgba(224, 141, 127, 0.5); color: var(--danger, #e08d7f); }
+.vr-readiness-action { white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .vr-readiness-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .vr-readiness-action { grid-column: 1 / -1; min-height: 44px; }
+  .vr-readiness-chip { justify-self: end; }
+}

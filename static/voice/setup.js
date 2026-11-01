@@ -71,6 +71,10 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
   let libraryBusy = "";
   let libraryStatus = "";
   let libraryTone = "";
+  let readiness = null;
+  let readinessBusy = "";
+  let readinessError = "";
+  let readinessLoaded = false;
 
   function settings() {
     return getSettings() || null;
@@ -98,6 +102,42 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
       engines = null;
     } finally {
       loadEnginesBusy = false;
+      render();
+    }
+  }
+
+  async function loadReadiness() {
+    try {
+      const result = await request("/api/voices/readiness");
+      readiness = Array.isArray(result?.items) ? result.items : [];
+      readinessError = "";
+    } catch (cause) {
+      readinessError = cause?.message || "Could not check this Mac.";
+    }
+    readinessLoaded = true;
+    render();
+  }
+
+  /**
+   * One action per check. "Working" shows while the existing settings test
+   * runs; the checklist is read again afterwards, so the chip is honest.
+   */
+  async function runReadiness(item) {
+    if (!item || readinessBusy) return;
+    readinessBusy = item.id;
+    render();
+    try {
+      const kind = item.action?.kind === "test_key"
+        ? "openrouter"
+        : item.action?.kind === "check_whisper" ? "stt" : "tts";
+      const result = await request("/api/settings/test", { method: "POST", body: { kind } });
+      if (result?.detail) setNotice(result.detail, result.ok ? "ok" : "bad");
+      await loadReadiness();
+      await onChanged();
+    } catch (cause) {
+      setNotice(cause?.message || "That check did not finish. Try it again.", "bad");
+    } finally {
+      readinessBusy = "";
       render();
     }
   }
@@ -542,6 +582,54 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
     return card;
   }
 
+  function readinessCard() {
+    const rows = readiness || [];
+    const card = el("div", { class: "vr-card vr-setup-card vr-setup-wide vr-readiness" }, [
+      el("div", { class: "vr-card-head vr-setup-head" }, [
+        el("div", {}, [
+          el("h3", { text: "Before you start" }),
+          el("p", { class: "hint", text: "Three checks in the order they matter: the key, the clone engine, then local Whisper. Each says what to do next." }),
+        ]),
+        el("button", {
+          class: "ghost small", type: "button",
+          text: readinessBusy ? "Checking…" : "Check again",
+          disabled: Boolean(readinessBusy),
+          on: { click: () => { void loadReadiness(); } },
+        }),
+      ]),
+    ]);
+    if (readinessError) {
+      card.append(el("p", { class: "error", role: "alert", text: readinessError }));
+    }
+    if (!readinessLoaded && !rows.length) {
+      card.append(el("p", { class: "hint", text: "Checking this Mac…" }));
+      return card;
+    }
+    const list = el("div", { class: "vr-readiness-list" });
+    for (const item of rows) {
+      const working = readinessBusy === item.id;
+      const state = working ? "working" : item.state;
+      const chipText = state === "ready" ? "Ready" : state === "working" ? "Working…" : "Failed";
+      const action = el("button", {
+        class: `ghost small vr-readiness-action is-${state}`, type: "button",
+        text: working ? "Working…" : (item.action?.label || "Check again"),
+        disabled: Boolean(readinessBusy),
+        "aria-label": `${item.action?.label || "Check"} for ${item.label}`,
+      });
+      action.addEventListener("click", () => { void runReadiness(item); });
+      list.append(el("div", { class: "vr-readiness-row", "data-check": item.id }, [
+        el("div", { class: "vr-readiness-copy" }, [
+          el("strong", { text: item.label }),
+          el("span", { class: "hint", text: item.detail || "" }),
+        ]),
+        el("span", { class: `vr-chip vr-readiness-chip is-${state}`, text: chipText }),
+        action,
+      ]));
+    }
+    card.append(list);
+    return card;
+  }
+
   function configCard(state) {
     const paths = state?.paths || {};
     return el("div", { class: "vr-card vr-setup-card vr-setup-wide" }, [
@@ -587,6 +675,7 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
       if (!state) {
         children.push(el("p", { class: "hint", text: "Reading this app's setup…" }));
       } else {
+        children.push(readinessCard());
         children.push(el("div", { class: "vr-setup-grid" }, [
           openRouterCard(state),
           openCodeCard(state),
@@ -608,6 +697,7 @@ export function createVoiceSetup({ getSettings, onChanged = () => {} }) {
 
   render();
   void loadEngines();
+  void loadReadiness();
 
   return { node, render, open: openSetup };
 }

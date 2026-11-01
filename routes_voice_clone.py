@@ -34,6 +34,7 @@ import job_queue
 import voice_audio
 import voice_clone
 import voice_errors
+import voice_readiness
 import voice_reference
 import voice_takes
 
@@ -1375,6 +1376,12 @@ def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileRespo
 
 
 # ---------------------------------------------------------------- Voice Room
+
+
+@router.get("/api/voices/readiness")
+def voice_readiness_check() -> dict:
+    """OpenRouter key, clone engine and local Whisper, each Ready or Failed."""
+    return voice_readiness.checklist()
 
 
 @router.get("/api/voices/catalog")
