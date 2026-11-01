@@ -107,6 +107,44 @@
 
   api.STALE_RENDER_TEXT = "Changed since this render — render again to see it.";
 
+  const CLEAN_PROFILES = {
+    workfiles: {
+      title: "Clean work files?",
+      deletes: "thumbnails, the transcript, extracted audio and deep-read scores",
+      keeps: "the source video, rendered reels and job details",
+      note: "Analysis work files can be rebuilt by analyzing again.",
+    },
+    renders: {
+      title: "Clean rendered reels?",
+      deletes: "rendered reels, render masters and legacy render files",
+      keeps: "the source video, transcript, thumbnails and job details",
+      note: "Review links and pinned artifacts are protected. If they cannot be protected, Clean stops.",
+    },
+    all: {
+      title: "Clean everything except the source?",
+      deletes: "work files and rendered reels (thumbnails, transcript, extracted audio, deep-read scores, render masters)",
+      keeps: "the source video and job details",
+      note: "Review links and pinned artifacts are protected. If they cannot be protected, Clean stops.",
+    },
+  };
+
+  /** Plain words for the destructive confirm step. */
+  api.cleanProfile = function cleanProfile(profile = "workfiles") {
+    return CLEAN_PROFILES[profile] || CLEAN_PROFILES.workfiles;
+  };
+
+  api.cleanConfirmText = function cleanConfirmText(profile = "workfiles") {
+    const item = api.cleanProfile(profile);
+    return [
+      item.title,
+      "",
+      `Deletes: ${item.deletes}.`,
+      `Keeps: ${item.keeps}.`,
+      "",
+      item.note,
+    ].join("\n");
+  };
+
   const apiExport = api;
   if (typeof module !== "undefined" && module.exports) module.exports = apiExport;
   if (typeof window !== "undefined") window.ClassicTrust = apiExport;

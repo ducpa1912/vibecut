@@ -150,6 +150,7 @@
     newVideo: $("#new-video"),
     deleteJob: $("#delete-job"),
     cleanJob: $("#clean-job"),
+    cleanProfile: $("#clean-profile"),
     hookImg: $("#hook-img"),
     hookTime: $("#hook-time"),
     hookCopy: $("#hook-copy"),
@@ -7521,26 +7522,20 @@
     }
   }
 
-  let cleanArmedAt = 0;
-
   async function cleanJobFiles() {
     if (!state.job) return;
-    const now = Date.now();
-    if (now - cleanArmedAt > 5000) {
-      cleanArmedAt = now;
-      dom.cleanJob.textContent = "Click to confirm";
-      setTimeout(() => {
-        if (Date.now() - cleanArmedAt >= 5000) dom.cleanJob.textContent = "Clean";
-      }, 5200);
-      return;
-    }
-    cleanArmedAt = 0;
+    const profile = dom.cleanProfile?.value || "workfiles";
+    const trust = window.ClassicTrust;
+    const message = trust && typeof trust.cleanConfirmText === "function"
+      ? trust.cleanConfirmText(profile)
+      : "Clean this job? The source video stays.";
+    if (!window.confirm(message)) return;
     dom.cleanJob.disabled = true;
     dom.cleanJob.textContent = "Cleaning…";
     try {
       const result = await api(`/api/jobs/${state.job.id}/clean`, {
         method: "POST",
-        body: JSON.stringify({ profile: "workfiles" }),
+        body: JSON.stringify({ profile }),
       });
       toast(`Cleaned: ${(result.cleaned || []).join(", ") || "nothing to remove"}.`);
       await openJob(state.job.id);

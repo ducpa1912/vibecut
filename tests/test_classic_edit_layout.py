@@ -40,12 +40,16 @@ def test_render_and_draft_sit_inside_edit_at_the_bottom():
     assert panel.index('id="render-draft"') < panel.index('id="render"')
 
 
-def test_clean_has_no_profile_dropdown_and_shapes_include_16_10():
+def test_clean_has_a_plain_profile_menu_and_shapes_include_16_10():
     page = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
-    assert 'id="clean-profile"' not in page
+    assert 'id="clean-profile"' in page
+    assert '<option value="workfiles" selected>Work files</option>' in page
+    assert '<option value="renders">Renders</option>' in page
+    assert '<option value="all">All but source</option>' in page
     assert '<option value="16:10">16:10</option>' in page
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
-    assert 'profile: "workfiles"' in script
+    assert "cleanConfirmText(profile)" in script
+    assert "JSON.stringify({ profile })" in script
 
 
 def test_mode_tags_disable_the_edit_cards():
