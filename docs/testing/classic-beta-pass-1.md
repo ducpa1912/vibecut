@@ -194,6 +194,8 @@ cost. Do not paste keys into this file.
 | T2.6 | Choose a voice mode with a cloud key, set **Language** to a language other than the source | Translation notice before the click | The Copy card shows **OpenCode Go or OpenRouter · sends the transcript text and the cut script · may cost credits.** No **Translating…** badge starts on its own. | |
 | T2.7 | Wait 10 seconds after T2.6 | No automatic paid call | No translating badge and no script starts. The paid call begins only after **Story cut**. | |
 | T2.8 | With the music prompt unchanged, click **Generate music preview** twice (optional, paid on the first click) | A cache hit is named | The first status is a preview message. The second status reads exactly **Cached · no new call**. | |
+| T2.9 | Choose **Voice-over** with a cloud voice (for example HeyGen), or **Music → Generate** | The render's own paid call is named | The note above the Render buttons ends with **Render calls <provider> · may cost credits.** With Apple say, Kokoro or your own files, no such line appears. | |
+| T2.10 | With OpenCode Go signed in and no cloud key saved, look at the top-right pill | The pill counts the OpenCode login | It reads **Online features on**, because rewrite and translation can use OpenCode Go. | |
 
 ### T3 — sample versus final
 
