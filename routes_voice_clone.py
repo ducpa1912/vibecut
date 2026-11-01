@@ -32,6 +32,7 @@ from pydantic import BaseModel
 import editions
 import job_queue
 import voice_clone
+import voice_takes
 
 
 def _voice_room_on() -> None:
@@ -162,6 +163,40 @@ class AnyVoiceSampleBody(BaseModel):
     voice: str = ""
     text: str = ""
     rate: float = 1.0
+
+    model_config = {"extra": "forbid"}
+
+
+class TakeStarBody(BaseModel):
+    starred: bool = True
+
+    model_config = {"extra": "forbid"}
+
+
+class TakeSaveBody(BaseModel):
+    name: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
+class TakeCleanupBody(BaseModel):
+    confirm: bool = False
+    days: int | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class VoiceoverBody(BaseModel):
+    engine: str = "heygen"
+    voice: str = ""
+    text: str = ""
+    rate: float = 1.0
+    language: str = ""
+    label: str = ""
+    clone: str = ""
+    selfcheck: bool = True
+    #: Client task id; `DELETE /api/voices/tasks/{task}` stops this voiceover.
+    task: str = ""
 
     model_config = {"extra": "forbid"}
 
@@ -1075,6 +1110,32 @@ def delete_clone(voice_id: str, request: Request) -> dict:
     return {"deleted": voice_id}
 
 
+def _cached_line(engine: str, voice: str, text: str, rate: float, language: str, cache) -> bool:
+    """True when this exact line is already on this Mac, so nothing is sent."""
+    import tts
+
+    try:
+        target = tts.line_cache_path(
+            cache, engine, "", voice, text, rate, language, suffix=".wav",
+        )
+        return target.is_file() and target.stat().st_size > 512
+    except (OSError, ValueError):
+        return False
+
+
+def _keep_preview(path, *, engine: str, voice: str, text: str, rate: float,
+                  language: str, label: str, clone: str, cache) -> None:
+    """History is a convenience: a failed copy never fails the preview."""
+    try:
+        voice_takes.record_preview(
+            path, engine=engine, voice=voice, text=text, rate=rate,
+            language=language, label=label, clone=clone,
+            cached=_cached_line(engine, voice, text, rate, language, cache),
+        )
+    except Exception:  # noqa: BLE001 - never break playback for history
+        pass
+
+
 @router.post("/api/voices/clones/{voice_id}/sample")
 def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileResponse:
     """Speak a short line in a cloned voice through OpenRouter HeyGen Turbo."""
@@ -1085,15 +1146,21 @@ def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileRespo
     if record is None:
         raise HTTPException(404, "No such cloned voice.")
     text = " ".join((body.text or "").split())[:300] or "Hi, this is my cloned voice in VibeCut."
+    rate = max(0.5, min(2.0, body.rate))
+    language = str(record.get("language") or "")
     cache = voice_clone.settings_store.DATA / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)
     try:
         path = audio.voice_sample(
-            "heygen", voice_id, text, cache, rate=max(0.5, min(2.0, body.rate)),
-            language=str(record.get("language") or ""),
+            "heygen", voice_id, text, cache, rate=rate, language=language,
         )
     except audio.AudioError as exc:
         raise HTTPException(400, str(exc)) from exc
+    _keep_preview(
+        path, engine="heygen", voice=voice_id, text=text, rate=rate,
+        language=language, label=str(record.get("name") or "Cloned voice"),
+        clone=voice_id, cache=cache,
+    )
     return FileResponse(path, media_type="audio/wav", filename="cloned-voice.wav")
 
 
@@ -1150,13 +1217,150 @@ def any_voice_sample(body: AnyVoiceSampleBody, request: Request) -> FileResponse
         raise HTTPException(400, "Unknown voice engine.")
     text = " ".join((body.text or "").split())[:300] or "This is how this voice sounds in VibeCut."
     record = voice_clone.get_clone(body.voice) if engine == "heygen" else None
+    rate = max(0.5, min(2.0, body.rate))
+    language = str((record or {}).get("language") or "")
     cache = voice_clone.settings_store.DATA / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)
     try:
         path = audio.voice_sample(
-            engine, body.voice, text, cache, rate=max(0.5, min(2.0, body.rate)),
-            language=str((record or {}).get("language") or ""),
+            engine, body.voice, text, cache, rate=rate, language=language,
         )
     except audio.AudioError as exc:
         raise HTTPException(400, str(exc)) from exc
+    _keep_preview(
+        path, engine=engine, voice=body.voice, text=text, rate=rate,
+        language=language,
+        label=str((record or {}).get("name") or body.voice or "Stock voice"),
+        clone=body.voice if record else "", cache=cache,
+    )
     return FileResponse(path, media_type="audio/wav", filename="voice-sample.wav")
+
+
+# ------------------------------------------------------------------ takes
+
+
+def _take_fail(exc: voice_takes.TakeError) -> HTTPException:
+    return HTTPException(exc.status_code, str(exc))
+
+
+@router.get("/api/voices/takes")
+def list_takes() -> dict:
+    """Every preview and voiceover, starred first, then newest."""
+    return {
+        "takes": voice_takes.list_takes(),
+        "cleanup": voice_takes.cleanup_plan(),
+        "limits": {
+            "cleanup_days": voice_takes.CLEANUP_DAYS,
+            "max_script_chars": voice_takes.MAX_SCRIPT_CHARS,
+            "self_check_threshold": voice_takes.SELF_CHECK_THRESHOLD,
+        },
+    }
+
+
+@router.get("/api/voices/takes/cleanup")
+def take_cleanup_plan(days: int = voice_takes.CLEANUP_DAYS) -> dict:
+    """What a cleanup would remove. Nothing is deleted."""
+    return voice_takes.cleanup_plan(days=max(1, min(3650, int(days))))
+
+
+@router.post("/api/voices/takes/cleanup")
+def take_cleanup(body: TakeCleanupBody, request: Request) -> dict:
+    """Remove old unstarred takes, only after the page confirms."""
+    _guard(request)
+    days = voice_takes.CLEANUP_DAYS if body.days is None else max(1, min(3650, int(body.days)))
+    return voice_takes.cleanup(confirm=bool(body.confirm), days=days)
+
+
+@router.get("/api/voices/takes/{take_id}")
+def one_take(take_id: str) -> dict:
+    take = voice_takes.get_take(take_id)
+    if take is None:
+        raise HTTPException(404, "No such take.")
+    return take
+
+
+@router.patch("/api/voices/takes/{take_id}")
+def star_take(take_id: str, body: TakeStarBody, request: Request) -> dict:
+    _guard(request)
+    try:
+        return voice_takes.star(take_id, body.starred)
+    except voice_takes.TakeError as exc:
+        raise _take_fail(exc) from exc
+
+
+@router.delete("/api/voices/takes/{take_id}")
+def delete_take(take_id: str, request: Request) -> dict:
+    _guard(request)
+    try:
+        voice_takes.delete(take_id)
+    except voice_takes.TakeError as exc:
+        raise _take_fail(exc) from exc
+    return {"deleted": take_id}
+
+
+@router.get("/api/voices/takes/{take_id}/audio")
+def take_audio(take_id: str) -> FileResponse:
+    try:
+        path = voice_takes.audio_path(take_id)
+    except voice_takes.TakeError as exc:
+        raise _take_fail(exc) from exc
+    return FileResponse(path, media_type="audio/wav", filename=f"{take_id}.wav")
+
+
+@router.post("/api/voices/takes/{take_id}/save-voice")
+def save_take_as_voice(take_id: str, body: TakeSaveBody, request: Request) -> dict:
+    """Make a new clone from the reference behind a take."""
+    _guard(request)
+    try:
+        return voice_takes.save_as_voice(take_id, body.name)
+    except voice_takes.TakeError as exc:
+        raise _take_fail(exc) from exc
+    except voice_clone.CloneError as exc:
+        raise _fail(exc) from exc
+
+
+@router.post("/api/voices/voiceovers")
+def make_voiceover(body: VoiceoverBody, request: Request) -> dict:
+    """Speak a whole script in sentence lines and keep it as one take."""
+    _guard(request)
+    import tts
+
+    engine = str(body.engine or "").strip().lower()
+    if engine not in tts.SYNTHESIZERS:
+        raise HTTPException(
+            400,
+            "That voice engine is unknown. Pick a voice from the library, then try again.",
+        )
+    clone = body.clone or (body.voice if voice_clone.is_clone(body.voice) else "")
+    cancel_event = _task_event(body.task)
+    task = str(body.task or "")
+    voice_takes.set_progress(task, "running", "Preparing the lines", 0.0)
+    try:
+        result = voice_takes.create_voiceover(
+            text=body.text,
+            engine=engine,
+            voice=body.voice,
+            rate=max(0.5, min(2.0, body.rate)),
+            language=body.language,
+            label=body.label or " ".join(str(body.text or "").split())[:48],
+            clone=clone,
+            selfcheck=bool(body.selfcheck),
+            cancel_event=cancel_event,
+            progress=lambda fraction, stage: voice_takes.set_progress(
+                task, "running", stage, fraction,
+            ),
+        )
+        voice_takes.set_progress(task, "done", "Done", 1.0)
+        return result
+    except voice_takes.TakeError as exc:
+        state = "cancelled" if exc.status_code == 409 and "Cancel" in str(exc) else "failed"
+        voice_takes.set_progress(task, state, str(exc), 0.0)
+        raise _take_fail(exc) from exc
+    finally:
+        _task_done(body.task)
+
+
+@router.get("/api/voices/tasks/{task_id}")
+def voice_task_progress(task_id: str) -> dict:
+    """What a running voiceover is doing. Read-only; the DELETE stops it."""
+    return voice_takes.progress(task_id)

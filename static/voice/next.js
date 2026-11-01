@@ -13,10 +13,13 @@ import { createClipFinder } from "./clipfinder.js";
 import { createComparePanel } from "./compare.js";
 import { createRecentPanel, recentKey, recordRecent } from "./recent.js";
 import { createVoiceSetup } from "./setup.js";
+import { checkFlags, createTakesPanel, playTakeAudio } from "./takes.js";
 import {
+  cancelVoiceTask,
   createMyVoicePanel,
   deleteClone,
   isStopped,
+  newVoiceTask,
   playClone,
   playVoice,
   renameClone,
@@ -26,6 +29,9 @@ import {
 const DEFAULT_LINE = "Hi, this is how I sound in VibeCut. Short, clear and easy to follow.";
 const LINE_KEY = "vibecut.voice.testline.v1";
 const RATE_KEY = "vibecut.voice.rate.v1";
+const SCRIPT_KEY = "vibecut.voice.script.v1";
+const VOICE_KEY = "vibecut.voice.pick.v1";
+const MAX_SCRIPT = 4000;
 const VIEWS = ["library", "create", "compare", "recent", "settings"];
 const NAV = [
   ["library", "Library", "01"],
@@ -79,6 +85,7 @@ function iconSvg(name) {
     upload: ["M12 16V4", "m7 9 5-5 5 5", "M5 20h14"],
     video: ["M4 6h11v12H4z", "m15 10 5-3v10l-5-3z"],
     plus: ["M12 5v14", "M5 12h14"],
+    wave: ["M4 10v4", "M8 6v12", "M12 3v18", "M16 8v8", "M20 11v2"],
   };
   for (const d of paths[name] || []) {
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -115,6 +122,22 @@ let playKey = "";
 let playLabel = "";
 let playPlayer = null;
 let playToken = 0;
+
+// One take's settings, restored into the editor by Load settings.
+let loadedVoice = null;
+// The voiceover strip: one job at a time, with an honest seconds counter.
+let script = String(stored(SCRIPT_KEY, ""));
+let scriptVoice = String(stored(VOICE_KEY, ""));
+let scriptRate = rate;
+let scriptState = "idle";
+let scriptStage = "";
+let scriptSeconds = 0;
+let scriptResult = null;
+let scriptError = "";
+let scriptTask = "";
+let scriptAbort = null;
+let scriptTimer = 0;
+let scriptPoll = 0;
 
 let mainEl = null;
 let playerRefs = null;
@@ -221,6 +244,8 @@ async function startPlayback({ key, label, pending, start, entry }) {
     if (entry) recordRecent(entry);
     setNotice(`Playing ${label}.`, "ok");
     updatePlayer();
+    // The server keeps the preview as a take before it answers.
+    void takesPanel.refresh();
   } catch (cause) {
     if (token !== playToken) return;
     playToken += 1;
@@ -271,6 +296,104 @@ function replayRecent(entry) {
   playSelection({ kind: "stock", engine: entry.engine, voice: entry.voice, label: entry.label });
 }
 
+function playTake(take) {
+  const key = `take:${take.id}`;
+  if (isPlaying(key)) {
+    stopVoice();
+    return;
+  }
+  void startPlayback({
+    key,
+    label: take.label || "this take",
+    pending: "Playing this take…",
+    start: () => playTakeAudio(take),
+  });
+}
+
+/** Restore a take's script, voice, rate and language into the editor. */
+function loadTakeSettings(take) {
+  const saved = take?.settings || {};
+  setTestLine(saved.text || "");
+  const nextRate = Number(saved.rate);
+  if (Number.isFinite(nextRate) && RATES.includes(nextRate)) {
+    rate = nextRate;
+    store(RATE_KEY, rate);
+    if (playerRefs?.rateSelect) playerRefs.rateSelect.value = String(rate);
+  }
+  if (saved.engine && saved.voice) {
+    loadedVoice = {
+      engine: saved.engine,
+      voice: saved.voice,
+      clone: take.clone_voice || "",
+      label: take.label || saved.voice,
+      language: saved.language || "",
+    };
+    scriptVoice = voiceChoiceValue(loadedVoice);
+    store(VOICE_KEY, scriptVoice);
+  }
+  createTab = "voiceover";
+  navigate("create");
+  setNotice(`Loaded the settings from “${take.label || "that take"}”.`, "ok");
+}
+
+function voiceChoiceValue(job) {
+  if (!job) return "";
+  if (job.clone || (job.engine === "heygen" && String(job.voice).startsWith("clone_"))) {
+    return `clone:${job.clone || job.voice}`;
+  }
+  return `${job.engine}:${job.voice}`;
+}
+
+function voiceChoiceLabel(job) {
+  if (job?.label) return job.label;
+  if (job?.name) return job.name;
+  return job?.voice || "This voice";
+}
+
+function parseVoiceChoice(value) {
+  const text = String(value || "");
+  if (text.startsWith("clone:")) {
+    const id = text.slice(6);
+    const item = (catalog?.clones || []).find((row) => row.voice_id === id);
+    return {
+      engine: "heygen", voice: id, clone: id,
+      label: item?.name || cloneName(item) || "Cloned voice",
+      language: item?.language || "",
+    };
+  }
+  const cut = text.indexOf(":");
+  if (cut <= 0) return null;
+  return {
+    engine: text.slice(0, cut),
+    voice: text.slice(cut + 1),
+    clone: "",
+    label: "",
+    language: "",
+  };
+}
+
+function voiceChoices() {
+  const rows = [];
+  for (const item of catalog?.clones || []) {
+    rows.push({
+      value: `clone:${item.voice_id}`,
+      label: `${cloneName(item)} · my voice`,
+      job: { engine: "heygen", voice: item.voice_id, clone: item.voice_id, label: cloneName(item), language: item.language || "" },
+    });
+  }
+  for (const engine of catalog?.engines || []) {
+    if (!engine.available) continue;
+    for (const voice of stockVoices(engine)) {
+      rows.push({
+        value: `${engine.id}:${voice.id}`,
+        label: `${stockName(voice)} · ${engine.label || engine.id}`,
+        job: { engine: engine.id, voice: String(voice.id), clone: "", label: stockName(voice), language: voice.lang || "" },
+      });
+    }
+  }
+  return rows;
+}
+
 const myVoice = createMyVoicePanel({
   hasKey: () => Boolean(settings?.secrets?.openrouter),
   onChange: () => { void loadCatalog(); },
@@ -304,6 +427,17 @@ const setup = createVoiceSetup({
   onChanged: () => loadAll(),
 });
 
+const takesPanel = createTakesPanel({
+  onLoadSettings: loadTakeSettings,
+  onPlayTake: playTake,
+  onSaved: (record) => {
+    void loadCatalog();
+    if (record?.voice_id) setNotice(`“${record.name || "The new voice"}” is ready in the library.`, "ok");
+  },
+  onNotice: (message, tone) => setNotice(message, tone),
+  isActive: (take) => isPlaying(`take:${take.id}`),
+});
+
 function header() {
   const clone = el("button", {
     class: "vg-primary", type: "button",
@@ -315,6 +449,16 @@ function header() {
       el("span", { class: "vg-domain", text: "Voice Room" }),
     ]),
     el("div", { class: "vg-header-actions" }, [
+      el("button", {
+        class: "vg-secondary vg-takes-toggle", type: "button", text: "Takes",
+        "aria-controls": "vg-takes",
+        on: {
+          click: () => {
+            const open = document.body.classList.toggle("vg-takes-open");
+            document.querySelector(".vg-takes")?.classList.toggle("is-open", open);
+          },
+        },
+      }),
       el("a", { class: "vg-oldui", href: "/voices", text: "Old UI" }),
       clone,
     ]),
@@ -684,6 +828,234 @@ function buildLibrary() {
   return node;
 }
 
+function parseSeconds(value, fallback = 1) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function stopVoiceover() {
+  if (!scriptTask) return;
+  const task = scriptTask;
+  void cancelVoiceTask(task).catch(() => {});
+  try { scriptAbort?.abort(); } catch (_) { /* already finished */ }
+  scriptStage = "Stopping…";
+  scriptState = "stopping";
+  paintVoiceover();
+}
+
+function paintVoiceover() {
+  const make = document.querySelector("[data-vo-make]");
+  const stop = document.querySelector("[data-vo-stop]");
+  const status = document.querySelector("[data-vo-status]");
+  const result = document.querySelector("[data-vo-result]");
+  const error = document.querySelector("[data-vo-error]");
+  const running = scriptState === "running" || scriptState === "stopping";
+  if (make) {
+    make.disabled = running || !script.trim() || !scriptVoice;
+    make.textContent = running
+      ? `Making voiceover… ${Math.max(0, Math.round(scriptSeconds))}s`
+      : "Make voiceover";
+  }
+  if (stop) {
+    stop.hidden = !running;
+    stop.disabled = scriptState === "stopping";
+    stop.textContent = scriptState === "stopping" ? "Stopping…" : "Stop";
+  }
+  if (status) {
+    status.textContent = running
+      ? `${scriptStage || "Working"} · ${Math.max(0, Math.round(scriptSeconds))}s`
+      : "";
+  }
+  if (error) {
+    error.hidden = !scriptError;
+    error.textContent = scriptError;
+  }
+  if (result) {
+    result.replaceChildren();
+    if (scriptResult) {
+      const take = scriptResult;
+      const lines = (take.chunks || []).length;
+      result.append(el("strong", {
+        text: `Voiceover ready · ${lines} line${lines === 1 ? "" : "s"} · ${Math.round(Number(take.seconds) || 0)}s`,
+      }));
+      const flags = checkFlags(take);
+      if (flags.length) {
+        result.append(el("div", { class: "vg-take-flags" }, flags.map((flag) => el("span", {
+          class: `vg-take-flag is-${flag.key}`, text: flag.label,
+          title: flag.note || "Advisory only; the audio was not changed.",
+        }))));
+      }
+      const check = take.selfcheck || {};
+      result.append(el("p", { class: "vg-vo-note", text: check.note || "" }));
+      const play = el("button", {
+        class: "vg-take-action", type: "button", text: "Play this take",
+        on: { click: () => playTake(take) },
+      });
+      result.append(el("div", { class: "vg-take-actions" }, [play]));
+    }
+  }
+}
+
+async function makeVoiceover() {
+  if (!script.trim()) {
+    scriptError = "Type the script first, then make the voiceover.";
+    paintVoiceover();
+    return;
+  }
+  const job = parseVoiceChoice(scriptVoice);
+  if (!job) {
+    scriptError = "Pick the voice that should read the script, then try again.";
+    paintVoiceover();
+    return;
+  }
+  const controller = new AbortController();
+  const task = newVoiceTask();
+  scriptAbort = controller;
+  scriptTask = task;
+  scriptState = "running";
+  scriptStage = "Preparing the lines";
+  scriptSeconds = 0;
+  scriptResult = null;
+  scriptError = "";
+  paintVoiceover();
+  window.clearInterval(scriptTimer);
+  scriptTimer = window.setInterval(() => {
+    scriptSeconds += 1;
+    paintVoiceover();
+  }, 1000);
+  void (async function poll() {
+    if (scriptTask !== task) return;
+    try {
+      const state = await request(`/api/voices/tasks/${encodeURIComponent(task)}`);
+      if (scriptTask !== task) return;
+      if (state?.stage) scriptStage = state.stage;
+      if (Number(state?.elapsed) > scriptSeconds) scriptSeconds = Number(state.elapsed);
+      paintVoiceover();
+    } catch (_) {
+      /* progress is decoration; the request itself reports the outcome */
+    }
+    if (scriptTask === task) scriptPoll = window.setTimeout(poll, 1200);
+  })();
+  try {
+    const take = await request("/api/voices/voiceovers", {
+      method: "POST",
+      signal: controller.signal,
+      body: {
+        engine: job.engine,
+        voice: job.voice,
+        clone: job.clone,
+        text: script,
+        rate: scriptRate,
+        language: job.language || "",
+        label: script.trim().slice(0, 48),
+        task,
+        selfcheck: true,
+      },
+    });
+    scriptState = "idle";
+    scriptResult = take;
+    scriptStage = "";
+    setNotice(`Voiceover ready: ${(take.chunks || []).length} lines. It is in Takes.`, "ok");
+    await takesPanel.refresh();
+  } catch (cause) {
+    scriptState = "idle";
+    if (controller.signal.aborted) {
+      setNotice("Stopped the voiceover. Nothing was kept.", "");
+    } else {
+      scriptError = cause?.message || "Could not make the voiceover. Check the voice and the key in Setup, then try again.";
+    }
+  } finally {
+    window.clearInterval(scriptTimer);
+    window.clearTimeout(scriptPoll);
+    if (scriptTask === task) scriptTask = "";
+    scriptAbort = null;
+    paintVoiceover();
+  }
+}
+
+function buildVoiceover() {
+  const node = el("div", { class: "vg-vo" });
+  const choices = voiceChoices();
+  if (loadedVoice && !choices.some((row) => row.value === voiceChoiceValue(loadedVoice))) {
+    choices.unshift({
+      value: voiceChoiceValue(loadedVoice),
+      label: loadedVoice.label || loadedVoice.voice,
+      job: loadedVoice,
+    });
+  }
+  if (!choices.some((row) => row.value === scriptVoice)) scriptVoice = choices[0]?.value || "";
+  const voice = el("select", { class: "vg-select", "aria-label": "Voice for the voiceover" }, choices.map(
+    (row) => el("option", { value: row.value, text: row.label, selected: row.value === scriptVoice }),
+  ));
+  voice.disabled = scriptState === "running" || scriptState === "stopping";
+  voice.addEventListener("change", () => {
+    scriptVoice = voice.value;
+    store(VOICE_KEY, scriptVoice);
+  });
+  const speed = el("select", { class: "vg-rate-select", "aria-label": "Voiceover rate" }, RATES.map(
+    (value) => el("option", { value: String(value), text: `${value.toFixed(2)}×`, selected: value === scriptRate }),
+  ));
+  speed.disabled = scriptState === "running" || scriptState === "stopping";
+  speed.addEventListener("change", () => { scriptRate = Number(speed.value) || 1; });
+
+  const area = el("textarea", {
+    class: "vg-script", rows: 8, maxLength: MAX_SCRIPT, value: script,
+    placeholder: "Paste or type the script. Each sentence is spoken as its own line, so one bad line can be fixed without redoing the rest.",
+    "aria-label": "Voiceover script",
+  });
+  area.disabled = scriptState === "running" || scriptState === "stopping";
+  const count = el("span", { class: "vg-script-count", text: `${script.length}/${MAX_SCRIPT}` });
+  area.addEventListener("input", () => {
+    script = area.value;
+    store(SCRIPT_KEY, script);
+    count.textContent = `${script.length}/${MAX_SCRIPT}`;
+    paintVoiceover();
+  });
+
+  const make = el("button", {
+    class: "vg-primary", type: "button", text: "Make voiceover", "data-vo-make": "",
+    on: { click: () => { void makeVoiceover(); } },
+  });
+  const stop = el("button", {
+    class: "vg-secondary", type: "button", text: "Stop", "data-vo-stop": "",
+    on: { click: stopVoiceover },
+  });
+  stop.hidden = true;
+  const status = el("p", { class: "vg-vo-status", role: "status", "data-vo-status": "" });
+  const error = el("p", { class: "vg-vo-error", role: "alert", "data-vo-error": "" });
+  error.hidden = true;
+  const result = el("div", { class: "vg-vo-result", "data-vo-result": "" });
+
+  if (!choices.length) {
+    node.append(el("p", {
+      class: "hint",
+      text: "No voice is ready yet. Add a key in Setup, clone a voice, or use a voice on this Mac.",
+    }));
+  }
+  node.append(
+    el("div", { class: "vg-vo-head" }, [
+      el("div", {}, [
+        el("h2", { text: "Make a voiceover" }),
+        el("p", { class: "hint", text: "The script is split into sentences and spoken one line at a time. Nothing is sent twice: a repeated line comes from this Mac's cache." }),
+      ]),
+    ]),
+    el("label", { class: "vg-field" }, [
+      el("span", { text: "Script" }), area, count,
+    ]),
+    el("div", { class: "vg-vo-controls" }, [
+      el("label", { class: "vg-field" }, [el("span", { text: "Voice" }), voice]),
+      el("label", { class: "vg-field" }, [el("span", { text: "Rate" }), speed]),
+      make,
+      stop,
+    ]),
+    status,
+    error,
+    result,
+  );
+  window.setTimeout(paintVoiceover, 0);
+  return node;
+}
+
 function buildCreate() {
   const node = el("div", { class: "vg-view" });
   const panel = el("div", { class: "vg-create-panel" });
@@ -699,6 +1071,7 @@ function buildCreate() {
     for (const [name, label, icon] of [
       ["record", "Record or upload", "mic"],
       ["video", "From a video", "video"],
+      ["voiceover", "Voiceover", "wave"],
     ]) {
       const button = el("button", {
         type: "button", "aria-pressed": createTab === name ? "true" : "false",
@@ -708,9 +1081,12 @@ function buildCreate() {
       tabs.append(button);
     }
     panel.replaceChildren();
+    quick.hidden = createTab === "voiceover";
     if (createTab === "record") {
       myVoice.render();
       panel.append(myVoice.node);
+    } else if (createTab === "voiceover") {
+      panel.append(buildVoiceover());
     } else {
       finder.render();
       panel.append(finder.node);
@@ -743,6 +1119,10 @@ function buildCreate() {
     }),
     quickCard("video", "Use a video", "Find clean speech", () => {
       createTab = "video";
+      paint();
+    }),
+    quickCard("wave", "Make a voiceover", "Speak a whole script", () => {
+      createTab = "voiceover";
       paint();
     }),
   );
@@ -816,6 +1196,7 @@ function shell() {
     header(),
     rail(),
     mainEl,
+    takesPanel.node,
     buildPlayer(),
     tabs(),
   ]);
@@ -842,6 +1223,7 @@ async function loadAll() {
   loading = false;
   renderView();
   updatePlayer();
+  void takesPanel.refresh();
 }
 
 async function loadCatalog() {
