@@ -190,6 +190,18 @@ class TakeCleanupBody(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class LockBody(BaseModel):
+    locked: bool = True
+
+    model_config = {"extra": "forbid"}
+
+
+class KeepBody(BaseModel):
+    take_id: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
 class ReferenceCloneBody(BaseModel):
     name: str = ""
     language: str = ""
@@ -1311,6 +1323,54 @@ def delete_clone(voice_id: str, request: Request) -> dict:
     return {"deleted": voice_id}
 
 
+@router.post("/api/voices/clones/{voice_id}/lock")
+def lock_clone(voice_id: str, body: LockBody, request: Request) -> dict:
+    """Freeze or release the reference. Unlocking warns that takes may differ."""
+    _guard(request)
+    try:
+        record = voice_clone.lock(voice_id, bool(body.locked))
+    except voice_clone.CloneError as exc:
+        raise _fail(exc) from exc
+    if not body.locked:
+        record["unlock_warning"] = (
+            "Unlocked. Later takes may sound different if the reference is replaced, "
+            "so lock the voice again when it sounds right."
+        )
+    return record
+
+
+@router.post("/api/voices/clones/{voice_id}/keep")
+def keep_take_on_voice(voice_id: str, body: KeepBody, request: Request) -> dict:
+    """Pin a take's script, rate and language on this voice, or clear them."""
+    _guard(request)
+    if not body.take_id:
+        try:
+            return voice_clone.set_keep(voice_id, None)
+        except voice_clone.CloneError as exc:
+            raise _fail(exc) from exc
+    take = voice_takes.get_take(body.take_id)
+    if take is None:
+        raise HTTPException(404, voice_errors.MISSING_TAKE)
+    if str(take.get("clone_voice") or "") != str(voice_id):
+        raise HTTPException(
+            400,
+            voice_errors.fix(
+                "That take was made in another voice",
+                "Choose a take from this voice, then keep it",
+            ),
+        )
+    settings = take.get("settings") or {}
+    try:
+        return voice_clone.set_keep(voice_id, {
+            "take_id": body.take_id,
+            "text": settings.get("text") or "",
+            "rate": settings.get("rate") or 1.0,
+            "language": settings.get("language") or "",
+        })
+    except voice_clone.CloneError as exc:
+        raise _fail(exc) from exc
+
+
 def _audio_message(exc: Exception) -> str:
     """A speech failure that always ends with a step the creator can take."""
     message = voice_errors.clean(
@@ -1356,9 +1416,14 @@ def clone_sample(voice_id: str, body: SampleBody, request: Request) -> FileRespo
     record = voice_clone.get_clone(voice_id)
     if record is None:
         raise HTTPException(404, voice_errors.MISSING_VOICE)
+    try:
+        voice_clone.verify_lock(record)
+    except voice_clone.CloneError as exc:
+        raise _fail(exc) from exc
     text = " ".join((body.text or "").split())[:300] or "Hi, this is my cloned voice in VibeCut."
     rate = max(0.5, min(2.0, body.rate))
-    language = str(record.get("language") or "")
+    locked = record.get("locked") if isinstance(record.get("locked"), dict) else {}
+    language = str(locked.get("language") or record.get("language") or "")
     cache = voice_clone.settings_store.DATA / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)
     try:
@@ -1549,6 +1614,17 @@ def make_voiceover(body: VoiceoverBody, request: Request) -> dict:
             voice_errors.NO_ENGINE,
         )
     clone = body.clone or (body.voice if voice_clone.is_clone(body.voice) else "")
+    language = body.language
+    if clone:
+        record = voice_clone.get_clone(clone)
+        if record is None:
+            raise HTTPException(404, voice_errors.MISSING_VOICE)
+        try:
+            voice_clone.verify_lock(record)
+        except voice_clone.CloneError as exc:
+            raise _fail(exc) from exc
+        locked = record.get("locked") if isinstance(record.get("locked"), dict) else {}
+        language = language or str(locked.get("language") or record.get("language") or "")
     cancel_event = _task_event(body.task)
     task = str(body.task or "")
     voice_takes.set_progress(task, "running", "Preparing the lines", 0.0)
@@ -1558,7 +1634,7 @@ def make_voiceover(body: VoiceoverBody, request: Request) -> dict:
             engine=engine,
             voice=body.voice,
             rate=max(0.5, min(2.0, body.rate)),
-            language=body.language,
+            language=language,
             label=body.label or " ".join(str(body.text or "").split())[:48],
             clone=clone,
             selfcheck=bool(body.selfcheck),

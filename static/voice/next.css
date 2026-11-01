@@ -938,3 +938,12 @@ body.vg-root {
     transition-duration: 0.001ms !important;
   }
 }
+
+.vg-vo-keep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+}
+.vg-vo-keep:empty { display: none; }

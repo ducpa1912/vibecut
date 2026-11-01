@@ -19,6 +19,7 @@ sample is stored under ``data/voices/`` and deleted with the voice.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -245,6 +246,110 @@ def prepare_sample(
             f"{MIN_SAMPLE_SECONDS:.0f}s of clear speech (30 s to 3 min is best)."
         )
     return round(seconds, 2)
+
+
+# ---------------------------------------------------------------- identity
+
+
+def _digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def lock(voice_id: str, locked: bool = True) -> dict:
+    """Freeze, or release, a voice's reference.
+
+    A locked voice keeps the exact sample it had at that moment. Every later
+    speech request checks the fingerprint first, so a replaced or corrupted
+    reference is refused instead of quietly changing how the voice sounds.
+    """
+    record = get_clone(voice_id)
+    if record is None:
+        raise CloneError(voice_errors.MISSING_VOICE, 404)
+    path = sample_path(voice_id)
+    if not locked:
+        try:
+            os.chmod(path, 0o644)
+        except OSError:
+            pass
+        record = {key: value for key, value in record.items() if key != "locked"}
+        return _upsert(record)
+    try:
+        os.chmod(path, 0o444)
+        digest = _digest(path)
+        size = path.stat().st_size
+    except OSError as exc:
+        raise CloneError(
+            voice_errors.fix(
+                "The reference could not be locked", "Unlock the file in Finder, then lock the voice again",
+            )
+        ) from exc
+    return _upsert({
+        **record,
+        "locked": {
+            "at": round(time.time(), 3),
+            "sha256": digest,
+            "bytes": int(size),
+            "language": str(record.get("language") or ""),
+        },
+    })
+
+
+def verify_lock(record: dict) -> None:
+    """Refuse a speech request when a locked reference no longer matches."""
+    locked = record.get("locked") if isinstance(record.get("locked"), dict) else None
+    if not locked:
+        return
+    expected = str(locked.get("sha256") or "")
+    if not expected:
+        return
+    try:
+        actual = _digest(sample_path(record["voice_id"]))
+    except OSError as exc:
+        raise CloneError(
+            voice_errors.fix(
+                "The locked reference is missing from this Mac",
+                "Restore it from a library backup or unlock the voice",
+            ),
+            409,
+        ) from exc
+    if actual != expected:
+        raise CloneError(
+            voice_errors.fix(
+                "The reference for this voice changed after it was locked",
+                "Unlock the voice, or restore the original sample, then try again",
+            ),
+            409,
+        )
+
+
+def set_keep(voice_id: str, keep: dict | None) -> dict:
+    """Pin, or clear, the settings of a good take on this voice."""
+    record = get_clone(voice_id)
+    if record is None:
+        raise CloneError(voice_errors.MISSING_VOICE, 404)
+    if keep is None:
+        return _upsert({key: value for key, value in record.items() if key != "keep"})
+    text = " ".join(str(keep.get("text") or "").split())[:500]
+    if not text:
+        raise CloneError("That take has no script to keep. Make a preview or voiceover with words, then keep it.")
+    try:
+        rate = float(keep.get("rate") or 1.0)
+    except (TypeError, ValueError):
+        rate = 1.0
+    return _upsert({
+        **record,
+        "keep": {
+            "take_id": str(keep.get("take_id") or ""),
+            "text": text,
+            "rate": round(max(0.5, min(2.0, rate)), 3),
+            "language": str(keep.get("language") or "")[:12].lower().split("-")[0],
+            "at": round(time.time(), 3),
+        },
+    })
 
 
 # ---------------------------------------------------------------- lifecycle

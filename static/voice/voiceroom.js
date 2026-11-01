@@ -33,6 +33,7 @@ import {
   deleteClone,
   isStopped,
   listClones,
+  lockClone,
   playClone,
   playVoice,
   renameClone,
@@ -339,6 +340,31 @@ async function removeMine(item) {
   }
 }
 
+async function toggleLock(item) {
+  const locked = Boolean(item.locked);
+  if (locked && !window.confirm(
+    "Unlock this voice? The reference stays as it is, but later takes may sound different if it is replaced.",
+  )) return;
+  cloneBusy = `lock:${item.voice_id}`;
+  render();
+  try {
+    const record = await lockClone(item.voice_id, !locked);
+    Object.assign(item, record);
+    setNotice(
+      locked
+        ? `Unlocked “${item.name}”.`
+        : `Locked “${item.name}”. Later takes keep this reference.`,
+      "ok",
+    );
+    void loadCatalog();
+  } catch (cause) {
+    setNotice(cause?.message || "Could not change the lock.", "bad");
+  } finally {
+    cloneBusy = "";
+    render();
+  }
+}
+
 // ------------------------------------------------------------------ views
 
 function header() {
@@ -431,6 +457,12 @@ function cloneRow(item, repaint) {
     renameFresh = true;
     render();
   });
+  const lockButton = el("button", {
+    class: "ghost small", type: "button",
+    text: item.locked ? "Unlock identity" : "Lock identity",
+    disabled: busy, "aria-label": `${item.locked ? "Unlock" : "Lock"} ${item.name}`,
+  });
+  lockButton.addEventListener("click", () => { void toggleLock(item); });
   const deleteButton = el("button", {
     class: "ghost small danger", type: "button",
     text: cloneBusy === `delete:${id}` ? "Deleting…" : "Delete",
@@ -441,13 +473,15 @@ function cloneRow(item, repaint) {
     item.source === "video" ? "From a video" : "My voice",
     item.sample_seconds ? `${Math.round(item.sample_seconds)} s sample` : "",
     item.language || "",
+    item.locked ? "Locked" : "",
+    item.keep ? `Kept take ${Number(item.keep.rate || 1).toFixed(2)}×` : "",
   ].filter(Boolean).join(" · ");
   row.append(
     el("div", { class: "vr-mine-copy" }, [
       el("strong", { text: item.name || "Cloned voice" }),
       el("span", { class: "hint mono", text: facts }),
     ]),
-    el("div", { class: "vr-actions" }, [star, playButton, renameButton, deleteButton]),
+    el("div", { class: "vr-actions" }, [star, playButton, lockButton, renameButton, deleteButton]),
   );
   return row;
 }

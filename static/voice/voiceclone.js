@@ -77,6 +77,20 @@ export function deleteClone(voiceId) {
   return request(`/api/voices/clones/${encodeURIComponent(voiceId)}`, { method: "DELETE" });
 }
 
+/** Freeze the reference so later takes keep the same identity. */
+export function lockClone(voiceId, locked = true) {
+  return request(`/api/voices/clones/${encodeURIComponent(voiceId)}/lock`, {
+    method: "POST", body: { locked: Boolean(locked) },
+  });
+}
+
+/** Pin a take's script, rate and language on this voice. */
+export function keepTakeOnVoice(voiceId, takeId) {
+  return request(`/api/voices/clones/${encodeURIComponent(voiceId)}/keep`, {
+    method: "POST", body: { take_id: takeId || "" },
+  });
+}
+
 export function cloneFromVideo(jobId, body) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/voices/clone`, { method: "POST", body });
 }

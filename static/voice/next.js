@@ -19,6 +19,8 @@ import {
   createMyVoicePanel,
   deleteClone,
   isStopped,
+  keepTakeOnVoice,
+  lockClone,
   newVoiceTask,
   playClone,
   playVoice,
@@ -377,8 +379,12 @@ function voiceChoices() {
   for (const item of catalog?.clones || []) {
     rows.push({
       value: `clone:${item.voice_id}`,
-      label: `${cloneName(item)} · my voice`,
-      job: { engine: "heygen", voice: item.voice_id, clone: item.voice_id, label: cloneName(item), language: item.language || "" },
+      label: `${cloneName(item)} · my voice${item.locked ? " · locked" : ""}`,
+      job: {
+        engine: "heygen", voice: item.voice_id, clone: item.voice_id,
+        label: cloneName(item), language: item.language || "",
+        keep: item.keep || null, locked: Boolean(item.locked),
+      },
     });
   }
   for (const engine of catalog?.engines || []) {
@@ -437,7 +443,42 @@ const takesPanel = createTakesPanel({
   },
   onNotice: (message, tone) => setNotice(message, tone),
   isActive: (take) => isPlaying(`take:${take.id}`),
+  onKeepTake: async (take) => {
+    const record = await keepTakeOnVoice(take.clone_voice, take.id);
+    if (catalog?.clones) {
+      catalog.clones = catalog.clones.map((row) => (row.voice_id === record.voice_id ? { ...row, ...record } : row));
+    }
+    return record;
+  },
+  onLockVoice: (voiceId) => {
+    const item = (catalog?.clones || []).find((row) => row.voice_id === voiceId);
+    if (item) void toggleLock(item, () => renderView());
+  },
 });
+
+/** Lock or unlock one voice, with the warning on the way out. */
+async function toggleLock(item, repaint = () => {}) {
+  const locked = Boolean(item?.locked);
+  if (locked) {
+    const ok = window.confirm(
+      "Unlock this voice? The reference stays as it is, but later takes may sound different if it is replaced.",
+    );
+    if (!ok) return null;
+  }
+  try {
+    const record = await lockClone(item.voice_id, !locked);
+    Object.assign(item, record);
+    if (catalog?.clones) {
+      catalog.clones = catalog.clones.map((row) => (row.voice_id === item.voice_id ? { ...row, ...record } : row));
+    }
+    setNotice(locked ? `Unlocked ${item.name || "the voice"}.` : `Locked ${item.name || "the voice"}. Later takes keep this reference.`, "ok");
+    repaint();
+    return record;
+  } catch (cause) {
+    setNotice(cause?.message || "Could not change the lock.", "bad");
+    return null;
+  }
+}
 
 function header() {
   const clone = el("button", {
@@ -612,6 +653,8 @@ function cloneRow(item, repaint) {
     item.source === "video" ? "From a video" : "My voice",
     item.sample_seconds ? `${formatDuration(item.sample_seconds)} sample` : "",
     item.language || "",
+    item.locked ? "Locked" : "",
+    item.keep ? `Kept take ${Number(item.keep.rate || 1).toFixed(2)}×` : "",
   ].filter(Boolean).join(" · ");
   const main = el("div", { class: "vg-row-main" });
   if (renamingId === id) {
@@ -651,6 +694,10 @@ function cloneRow(item, repaint) {
   const menu = el("details", { class: "vg-menu" }, [
     el("summary", { text: "⋯", "aria-label": `More actions for ${name}` }),
     el("div", {}, [
+      el("button", {
+        type: "button", text: item.locked ? "Unlock identity" : "Lock identity",
+        on: { click: () => { void toggleLock(item, repaint); } },
+      }),
       el("button", {
         type: "button", text: "Rename",
         on: { click: () => { renamingId = id; renameValue = name; repaint(); } },
@@ -909,6 +956,10 @@ async function makeVoiceover() {
     paintVoiceover();
     return;
   }
+  const kept = job.clone
+    ? (catalog?.clones || []).find((row) => row.voice_id === job.clone)?.keep
+    : null;
+  const language = kept?.language || job.language || "";
   const controller = new AbortController();
   const task = newVoiceTask();
   scriptAbort = controller;
@@ -947,7 +998,7 @@ async function makeVoiceover() {
         clone: job.clone,
         text: script,
         rate: scriptRate,
-        language: job.language || "",
+        language,
         label: script.trim().slice(0, 48),
         task,
         selfcheck: true,
@@ -992,6 +1043,7 @@ function buildVoiceover() {
   voice.addEventListener("change", () => {
     scriptVoice = voice.value;
     store(VOICE_KEY, scriptVoice);
+    paintKeep(true);
   });
   const speed = el("select", { class: "vg-rate-select", "aria-label": "Voiceover rate" }, RATES.map(
     (value) => el("option", { value: String(value), text: `${value.toFixed(2)}×`, selected: value === scriptRate }),
@@ -1012,6 +1064,51 @@ function buildVoiceover() {
     count.textContent = `${script.length}/${MAX_SCRIPT}`;
     paintVoiceover();
   });
+  const keepNote = el("div", { class: "vg-vo-keep" });
+
+  function selectedClone() {
+    const job = parseVoiceChoice(scriptVoice);
+    if (!job?.clone) return null;
+    return (catalog?.clones || []).find((row) => row.voice_id === job.clone) || null;
+  }
+
+  function applyKeep(item, fillText = true) {
+    const keep = item?.keep;
+    if (!keep) return;
+    const nextRate = Number(keep.rate);
+    if (Number.isFinite(nextRate) && RATES.includes(nextRate)) {
+      scriptRate = nextRate;
+      speed.value = String(nextRate);
+    }
+    if (fillText && keep.text) {
+      script = keep.text;
+      area.value = script;
+      store(SCRIPT_KEY, script);
+      count.textContent = `${script.length}/${MAX_SCRIPT}`;
+    }
+    setNotice(`Using the settings kept on “${item.name || "this voice"}”.`, "ok");
+    paintVoiceover();
+  }
+
+  function paintKeep(applyRate = false) {
+    const item = selectedClone();
+    keepNote.replaceChildren();
+    if (!item) return;
+    if (item.locked) {
+      keepNote.append(el("span", { class: "vr-chip", text: "Locked reference" }));
+    }
+    if (!item.keep) return;
+    keepNote.append(el("span", {
+      class: "vr-chip",
+      text: `Kept take · ${Number(item.keep.rate || 1).toFixed(2)}×${item.keep.language ? ` · ${item.keep.language}` : ""}`,
+    }));
+    keepNote.append(el("button", {
+      class: "vg-take-action", type: "button", text: "Use kept settings",
+      title: item.keep.text ? `“${item.keep.text.slice(0, 80)}”` : "Restore the kept rate",
+      on: { click: () => applyKeep(item, true) },
+    }));
+    if (applyRate) applyKeep(item, false);
+  }
 
   const make = el("button", {
     class: "vg-primary", type: "button", text: "Make voiceover", "data-vo-make": "",
@@ -1049,11 +1146,15 @@ function buildVoiceover() {
       make,
       stop,
     ]),
+    keepNote,
     status,
     error,
     result,
   );
-  window.setTimeout(paintVoiceover, 0);
+  window.setTimeout(() => {
+    paintVoiceover();
+    paintKeep(false);
+  }, 0);
   return node;
 }
 
