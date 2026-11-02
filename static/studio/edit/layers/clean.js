@@ -66,10 +66,16 @@ export function setLayerKind(layer, kind) {
   return layer;
 }
 
-/** Turn every text cover (remove, blur, plate, mask) into an AI fill. */
+/** Turn every detected text cover (remove, blur, plate, mask) into an AI fill.
+ *
+ * Manual boxes are left alone: the model should only invent pixels where a
+ * scan found text, not inside a box the creator drew for another reason.
+ */
 export function useFillForAll(layers, method = FILL_METHODS[0][0]) {
   return layers.map((layer) => (
-    FILL_KINDS.has(layer.kind) ? setLayerKind({ ...clone(layer), method }, "fill") : layer
+    FILL_KINDS.has(layer.kind) && String(layer.tracklet_id || "").trim()
+      ? setLayerKind({ ...clone(layer), method }, "fill")
+      : layer
   ));
 }
 
@@ -1318,12 +1324,14 @@ export function mountCleanPanel(host, ctx) {
         list.append(row);
       }
       card.append(list);
-      const covers = layers.filter((layer) => FILL_KINDS.has(layer.kind)).length;
+      const covers = layers.filter((layer) => (
+        FILL_KINDS.has(layer.kind) && String(layer.tracklet_id || "").trim()
+      )).length;
       if (covers) {
         const toFill = el("button", {
           class: "st-btn st-btn-ghost st-btn-small",
           type: "button",
-          text: `Use AI fill for all ${covers} text ${covers === 1 ? "layer" : "layers"}`,
+          text: `Use AI fill for all ${covers} detected ${covers === 1 ? "layer" : "layers"}`,
           disabled: !canClean(),
           style: "margin-top:8px",
         });
