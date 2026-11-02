@@ -77,9 +77,37 @@ def test_unavailable_models_are_disabled_options():
     css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
     assert ".select-menu button:disabled" in css
     assert "filter: blur(0.35px)" in css
+    assert 'event.target?.closest?.(".select-menu")' in script
 
 
 def test_sixteen_by_ten_is_a_render_shape():
+    import pipeline
     import render
 
     assert "16:10" in render.ASPECTS
+    assert "16:10" in pipeline.ASPECT_RATIOS
+
+
+def test_shape_control_is_visible_and_thumbnails_follow_the_selected_shape():
+    page = (ROOT / "static" / "classic" / "index.html").read_text(encoding="utf-8")
+    plan_meta = page[page.index('class="plan-meta"'):page.index("</div>", page.index('class="plan-meta"'))]
+    assert 'id="aspect-select"' in plan_meta
+    assert 'id="shape-note"' in plan_meta
+    script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "objectPosition(cropFor(scene))" in script
+    assert "objectPosition(scene.crop)" not in script
+    assert "renderScenes();" in script[script.index("dom.aspect.addEventListener"):script.index("dom.presetSelect.addEventListener")]
+
+
+def test_crop_center_tracks_a_face_across_vertical_and_widescreen_shapes():
+    import pipeline
+
+    scene = {
+        "attention": {
+            "face": {"x": 0.78, "y": 0.18, "w": 0.12, "h": 0.12, "confidence": 0.9},
+        },
+    }
+    cx, cy = pipeline.crop_center(scene, 1920, 1080, 9 / 16)
+    assert cx > 0.7 and cy == 0.5
+    cx, cy = pipeline.crop_center(scene, 1080, 1920, 16 / 10)
+    assert cx == 0.5 and cy < 0.4

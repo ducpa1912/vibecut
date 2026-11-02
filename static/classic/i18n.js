@@ -10,6 +10,7 @@
 
   const KEY = "vibecut.ui_lang";
   const SUPPORTED = ["en", "vi"];
+  let activeLang = "en";
 
   const VI = {
     // Header and shared controls
@@ -67,7 +68,7 @@
     "Keep the story": "Giữ mạch truyện",
     "Beats stay in order. No random highlights.": "Các nhịp giữ đúng thứ tự. Không cắt ngẫu nhiên.",
     "Land the ending": "Chốt phần kết",
-    "A payoff beat closes the cut.": "Một nhịp trả đũa khép lại bản cắt.",
+    "A payoff beat closes the cut.": "Một nhịp cao trào khép lại bản cắt.",
     "Follow the subject": "Bám theo chủ thể",
     "9:16 crop tracks faces and saliency.": "Khung 9:16 theo dõi khuôn mặt và điểm nổi bật.",
     "Local processing by default. Optional AI features may send data to external providers. No watermark.": "Mặc định xử lý cục bộ. Tính năng AI tùy chọn có thể gửi dữ liệu đến nhà cung cấp bên ngoài. Không có watermark.",
@@ -102,8 +103,8 @@
     "Hook lab →": "Phòng thử mở đầu →",
     "CC · transcript": "CC · bản chép lời",
     "Review link": "Liên kết xem lại",
-    "moments": "son",
-    "Moments": "Son",
+    "moments": "khoảnh khắc",
+    "Moments": "Khoảnh khắc",
     "Best": "Tốt nhất",
     "Timeline": "Dòng thời gian",
     "Show all": "Hiện tất cả",
@@ -113,11 +114,11 @@
     "auto hook": "mở đầu tự động",
     "Reset hook": "Đặt lại mở đầu",
     "Edit cut": "Sửa bản cắt",
-    "Drop a moment here to add it · drag a clip here to remove it": "Thả một son vào đây để thêm · kéo clip vào đây để xóa",
+    "Drop a moment here to add it · drag a clip here to remove it": "Thả một khoảnh khắc vào đây để thêm · kéo clip vào đây để xóa",
     "Why this cut": "Vì sao cắt như vậy",
     "Save variant": "Lưu biến thể",
     "Advanced": "Nâng cao",
-    "Story arc order": "Thứ tự cung truyện",
+    "Story arc order": "Thứ tự mạch truyện",
     "Custom": "Tùy chỉnh",
     "All 15/30/60": "Tất cả 15/30/60",
     "A/B hooks": "Mở đầu A/B",
@@ -125,15 +126,15 @@
     "Reset 100%": "Đặt lại 100%",
     "Flatten": "Làm phẳng",
     "original audio": "âm thanh gốc",
-    "original music stem": "stem nhạc gốc",
+    "original music stem": "bản nhạc gốc",
     "voice line": "dòng giọng nói",
     "music line": "dòng nhạc",
 
     // Edit / copy / sound
     "edit": "sửa",
     "Edit": "Sửa",
-    "Copy, sound and text are optional. Render and Draft stay at the end.": "Copy, âm thanh và chữ là tùy chọn. Render và Draft luôn ở cuối.",
-    "Copy, sound, text": "Copy, âm thanh, chữ",
+    "Copy, sound and text are optional. Render and Draft stay at the end.": "Viết lại, âm thanh và chữ là tùy chọn. Render và Draft luôn ở cuối.",
+    "Copy, sound, text": "Viết lại, âm thanh, chữ",
     "Mode": "Chế độ",
     "Original": "Bản gốc",
     "New voice-over": "Lồng tiếng mới",
@@ -145,7 +146,7 @@
     "Dub · replace only the voice": "Lồng giọng · chỉ thay giọng",
     "Music · replace original audio": "Nhạc · thay âm thanh gốc",
     "Full Replace · new voice and new music": "Thay toàn bộ · giọng mới và nhạc mới",
-    "Copy": "Copy",
+    "Copy": "Viết lại",
     "Translate the full video once, then write this cut.": "Dịch toàn bộ video một lần, rồi viết cho bản cắt này.",
     "Script style": "Phong cách kịch bản",
     "Smooth · natural short script": "Mượt · kịch bản ngắn tự nhiên",
@@ -156,7 +157,7 @@
     "Chill · calm and understated": "Chill · nhẹ nhàng và kín đáo",
     "Faithful · translation only": "Trung thành · chỉ dịch",
     "Story cut": "Cắt truyện",
-    "Choose a mode, then copy the cut. The full transcript is reused.": "Chọn chế độ, rồi copy bản cắt. Bản chép lời đầy đủ được tái sử dụng.",
+    "Choose a mode, then copy the cut. The full transcript is reused.": "Chọn chế độ, rồi viết lại bản cắt. Bản chép lời đầy đủ được tái sử dụng.",
     "Original audio and transcript.": "Âm thanh và bản chép lời gốc.",
     "Rewrite this cut →": "Viết lại bản cắt này →",
     "Sound": "Âm thanh",
@@ -222,7 +223,7 @@
     "Preserve voice pitch &amp; tone": "Giữ nguyên cao độ & âm sắc",
     "Keeps the original pitch. Speeds a line up to 1.25×; if it still does not fit, the script is shortened instead of pushing the voice.": "Giữ nguyên cao độ gốc. Tăng tốc tối đa 1.25×; nếu vẫn không vừa, kịch bản sẽ được rút gọn thay vì ép giọng.",
     "Maximum speed": "Tốc độ tối đa",
-    "Stretch engine": "Engine kéo giãn",
+    "Stretch engine": "Bộ kéo giãn",
     "Allow extreme chipmunk speed above 1.8×": "Cho phép tốc độ chipmunk cực cao trên 1.8×",
     "Spoken language": "Ngôn ngữ nói",
     "yt-dlp can read some public notes, but many RedNote links need a signed-in xhs_get session. The cookie stays in xhs_get; VibeCut never stores or reads it.": "yt-dlp có thể đọc một số bài công khai, nhưng nhiều liên kết RedNote cần phiên xhs_get đã đăng nhập. Cookie ở lại xhs_get; VibeCut không lưu hoặc đọc cookie.",
@@ -274,7 +275,7 @@
     [/^Render (\d+)s reel ↗$/, "Render reel $1 giây ↗"],
     [/^(\d+) scenes$/, "$1 cảnh"],
     [/^(\d+) voices$/, "$1 giọng"],
-    [/^(\d+) moments?$/, "$1 son"],
+    [/^(\d+) moments?$/, "$1 khoảnh khắc"],
     [/^(\d+) beats?$/, "$1 nhịp"],
     [/^(\d+) attempts?$/, "$1 lần thử"],
     [/^(\d+) renders?$/, "$1 bản render"],
@@ -283,7 +284,7 @@
   ];
 
   const SKIP = [
-    "script", "style", "textarea", "input", "select", "option", "code", "pre",
+    "script", "style", "textarea", "input", "code", "pre",
     "[contenteditable='true']", "[data-i18n-skip]",
     "#transcript-panel", ".transcript-list", ".recent-grid", ".recent-all-list",
     "#history-list", ".vr-voices", ".vr-mine", ".vr-missing-list",
@@ -354,11 +355,25 @@
     }
   }
 
+  function syncSelector(lang) {
+    const selector = document.getElementById("ui-language");
+    if (!selector) return;
+    if (selector.matches("select")) {
+      selector.value = lang;
+      return;
+    }
+    for (const button of selector.querySelectorAll("[data-lang]")) {
+      const active = button.dataset.lang === lang;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+  }
+
   function apply() {
     const lang = current();
+    activeLang = lang;
     document.documentElement.lang = lang;
-    const selector = document.getElementById("ui-language");
-    if (selector) selector.value = lang;
+    syncSelector(lang);
     if (lang !== "vi") return;
     walk(document.body);
   }
@@ -366,20 +381,37 @@
   function setLanguage(lang) {
     if (!SUPPORTED.includes(lang)) return;
     try { localStorage.setItem(KEY, lang); } catch (_) { /* ignore */ }
-    window.location.reload();
+    // The query string is a one-visit override. Remove it before reloading,
+    // otherwise ?lang=vi keeps winning after the user picks English.
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("lang");
+      window.location.replace(url.toString());
+    } catch (_) {
+      window.location.reload();
+    }
   }
 
   function installSelector() {
     const selector = document.getElementById("ui-language");
     if (!selector) return;
-    selector.value = current();
-    selector.addEventListener("change", () => setLanguage(selector.value));
+    if (selector.matches("select")) {
+      selector.value = current();
+      selector.addEventListener("change", () => setLanguage(selector.value));
+      return;
+    }
+    for (const button of selector.querySelectorAll("[data-lang]")) {
+      button.addEventListener("click", () => setLanguage(button.dataset.lang));
+    }
   }
 
   function start() {
     installSelector();
     apply();
     const observer = new MutationObserver((records) => {
+      // English is the source language. Translating dynamic English strings
+      // after the user switches back is what made the UI mixed.
+      if (activeLang !== "vi") return;
       for (const record of records) {
         if (record.type === "characterData") {
           if (!shouldSkip(record.target)) {

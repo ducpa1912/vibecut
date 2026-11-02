@@ -159,6 +159,7 @@
     planTotal: $("#plan-total"),
     planBadge: $("#plan-badge"),
     planRoute: $("#plan-route"),
+    shapeNote: $("#shape-note"),
     resetHook: $("#reset-hook"),
     editCut: $("#edit-cut"),
     editBar: $("#edit-bar"),
@@ -497,7 +498,11 @@
     if (event.target.closest("select[data-enhanced]")) return;
     if (!selectMenu.hidden && !event.target.closest(".select-menu")) closeSelectMenu();
   });
-  window.addEventListener("scroll", closeSelectMenu, true);
+  window.addEventListener("scroll", (event) => {
+    // Scrolling inside the open list must not close it.
+    if (event.target?.closest?.(".select-menu")) return;
+    closeSelectMenu();
+  }, true);
   window.addEventListener("resize", closeSelectMenu);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeSelectMenu();
@@ -1717,7 +1722,10 @@
       dom.presetSelect.value = "";
       updateTextAvailability();
       updateRenderPanel();
-      if (state.plan) renderHook();
+      if (state.plan) {
+        renderScenes();
+        renderHook();
+      }
     });
     dom.presetSelect.addEventListener("change", applyPreset);
     dom.arcOrder.addEventListener("change", async () => {
@@ -3083,7 +3091,7 @@
       dom.hookImg.classList.remove("quick");
     }
     dom.hookImg.alt = `Hook at ${fmtTime(scene.start)}`;
-    dom.hookImg.style.objectPosition = objectPosition(scene.crop);
+    dom.hookImg.style.objectPosition = objectPosition(cropFor(scene));
     dom.hookTime.textContent = `${fmtTime(scene.start, 1)} – ${fmtTime(scene.end, 1)} · ${scene.dur.toFixed(1)}s`;
     dom.hookCopy.textContent = sceneLine(scene);
     dom.hookWhy.textContent = state.plan?.reasoning?.hook?.headline
@@ -3103,6 +3111,7 @@
     ].map(([label, value]) => scoreItem(label, value)).join("");
     dom.hookTags.innerHTML = tagsHtml(scene);
     dom.hookCrop.textContent = cropLabel(scene);
+    if (dom.shapeNote) dom.shapeNote.textContent = cropLabel(scene);
     updateResultHeading();
   }
 
@@ -3187,7 +3196,7 @@
           title="${esc(`${clip.role}: ${why}`)}">
           ${scene.deep === false
             ? `<span class="clip-placeholder"><span>quick</span></span>`
-            : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`}
+            : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(cropFor(scene))}">`}
           <button type="button" class="clip-role" data-role-index="${index}" aria-haspopup="menu" aria-controls="clip-menu" aria-expanded="false"
             title="Change hook / beat / payoff">${esc(clip.role)}</button>
           <span class="clip-time">${clip.dur.toFixed(1)}s</span>
@@ -4180,7 +4189,7 @@
       const tags = [...(scene.tags || []), ...(scene.deep === false ? ["quick"] : [])].join(" · ");
       const still = scene.deep === false
         ? `<span class="scene-placeholder"><span>quick</span></span>`
-        : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+        : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(cropFor(scene))}">`;
       return `
         <button class="scene-card ${role ? "in-plan" : ""} ${scene.id === hookId ? "is-hook" : ""} ${scene.id === payoffId ? "is-payoff" : ""}"
           data-scene="${scene.id}" draggable="true" title="${esc(scene.ocr || scene.speech || `Scene ${scene.id + 1}`)}">
@@ -4216,7 +4225,7 @@
     dom.momentsRail.innerHTML = railScenes.map((scene, index) => {
       const still = scene.deep === false
         ? `<span class="scene-placeholder"><span>quick</span></span>`
-        : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+        : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(cropFor(scene))}">`;
       const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
       const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
       return `
@@ -4250,7 +4259,7 @@
     dom.momentsList.innerHTML = scenes.map((scene) => {
       const still = scene.deep === false
         ? `<span class="moment-placeholder"><span>quick</span></span>`
-        : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(scene.crop)}">`;
+        : `<img src="${esc(thumbUrl(scene))}" alt="" loading="lazy" style="object-position:${objectPosition(cropFor(scene))}">`;
       const text = (scene.ocr || scene.speech || `Scene ${scene.id + 1}`).trim();
       const role = scene.id === hookId ? "hook" : scene.id === payoffId ? "payoff" : (used.has(scene.id) ? "in cut" : "");
       return `
@@ -7407,7 +7416,7 @@
       }`
       : "center fallback";
     const frame = isDeep
-      ? `<img src="${esc(thumbUrl(scene))}" alt="" style="object-position:${objectPosition(scene.crop)}">`
+      ? `<img src="${esc(thumbUrl(scene))}" alt="" style="object-position:${objectPosition(cropFor(scene))}">`
       : `<div class="drawer-placeholder"><span>quick scan</span><small>no still extracted yet</small></div>`;
     dom.drawerContent.innerHTML = `
       <div class="drawer-frame">
@@ -7642,11 +7651,47 @@
   }
 
   function cropFor(scene) {
-    return scene?.crops?.[state.aspect] || scene?.crop || { cx: 0.5, cy: 0.5 };
+    const stored = scene?.crops?.[state.aspect];
+    if (stored) return stored;
+    // Older analyses did not store 16:10 (or every shape). Mirror the
+    // renderer's attention fallback so the preview matches the cut.
+    const meta = state.meta;
+    const attention = scene?.attention;
+    if (attention && meta?.width && meta?.height) {
+      const source = Number(meta.width) / Math.max(1, Number(meta.height));
+      const target = aspectValue(state.aspect);
+      if (Math.abs(source - target) <= 0.01) return { cx: 0.5, cy: 0.5 };
+      const face = attention.face;
+      const salient = attention.salient;
+      let cx = 0.5;
+      let cy = 0.5;
+      if (face) {
+        cx = Number(face.x || 0) + Number(face.w || 0) / 2;
+        cy = Number(face.y || 0) + Number(face.h || 0) / 2;
+      } else if (salient) {
+        cx = Number(salient.x || 0) + Number(salient.w || 0) / 2;
+        cy = Number(salient.y || 0) + Number(salient.h || 0) / 2;
+      }
+      if (source > target) {
+        const width = target * Number(meta.height) / Math.max(1, Number(meta.width));
+        cx = clamp(cx, width / 2, 1 - width / 2);
+        cy = 0.5;
+      } else {
+        const height = (Number(meta.width) / Math.max(0.01, target)) / Math.max(1, Number(meta.height));
+        cy = clamp(cy, height / 2, 1 - height / 2);
+        cx = 0.5;
+      }
+      return { cx, cy };
+    }
+    if (state.aspect !== "9:16") return { cx: 0.5, cy: 0.5 };
+    return scene?.crop || { cx: 0.5, cy: 0.5 };
   }
 
   function cropModeFor(scene) {
-    return scene?.crop_modes?.[state.aspect] || scene?.crop_mode || "center";
+    const stored = scene?.crop_modes?.[state.aspect];
+    if (stored) return stored;
+    if (scene?.attention && state.aspect !== "9:16") return "smart";
+    return scene?.crop_mode || "center";
   }
 
   function cropLabel(scene) {

@@ -60,10 +60,10 @@
       <a id="classic-voice-room" href="/voices">Voice Room</a>
       <button id="creator-open" class="ghost small" type="button">Creator</button>
       <button id="setup-open" class="ghost small" type="button">Setup</button>
-      <select id="ui-language" class="ghost small lang-select" aria-label="Interface language">
-        <option value="en">English</option>
-        <option value="vi">Tiếng Việt</option>
-      </select>
+      <div id="ui-language" class="lang-switch" role="group" aria-label="Interface language">
+        <button type="button" data-lang="en" aria-pressed="false" title="English">EN</button>
+        <button type="button" data-lang="vi" aria-pressed="false" aria-label="Tiếng Việt" title="Tiếng Việt">VI</button>
+      </div>
       <span id="privacy-pill" class="local-pill"><i class="live-dot"></i> <span id="privacy-label">Local by default</span></span>
       <span id="health" class="health">checking engine…</span>
     </div>
@@ -332,6 +332,17 @@
         <div class="plan-meta">
           <span id="plan-total">—</span>
           <span id="plan-badge" class="badge">auto hook</span>
+          <label class="shape-pick">
+            <span>Shape</span>
+            <select id="aspect-select" class="ghost small" aria-label="Aspect ratio">
+              <option value="9:16">9:16</option>
+              <option value="4:5">4:5</option>
+              <option value="1:1">1:1</option>
+              <option value="16:9">16:9</option>
+              <option value="16:10">16:10</option>
+            </select>
+          </label>
+          <span id="shape-note" class="shape-note"></span>
           <button id="reset-hook" class="text-btn" hidden>Reset hook</button>
           <button id="edit-cut" class="text-btn">Edit cut</button>
         </div>
@@ -360,13 +371,6 @@
               <option value="shorts">Shorts</option>
               <option value="square">Square</option>
               <option value="landscape">Landscape</option>
-            </select>
-            <select id="aspect-select" class="ghost small" aria-label="Aspect ratio">
-              <option value="9:16">9:16</option>
-              <option value="4:5">4:5</option>
-              <option value="1:1">1:1</option>
-              <option value="16:9">16:9</option>
-              <option value="16:10">16:10</option>
             </select>
             <button id="render-all" class="ghost small">All 15/30/60</button>
             <button id="render-ab" class="ghost small">A/B hooks</button>

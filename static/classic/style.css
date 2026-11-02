@@ -437,6 +437,10 @@ main { min-height: calc(100vh - 150px); }
 .primary .arrow { font-size: 15px; line-height: 1; }
 .primary.small, .ghost.small { padding: 10px 14px; font-size: 12px; }
 .lang-select { padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; font-size: 12px; }
+.lang-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.lang-switch button { padding: 8px 9px; border: 0; background: transparent; color: var(--muted); font-family: var(--mono); font-size: 11px; line-height: 1; cursor: pointer; }
+.lang-switch button + button { border-left: 1px solid var(--line); }
+.lang-switch button.active { background: var(--accent-soft); color: var(--accent); }
 .ghost { background: transparent; border-color: var(--line); color: var(--text); }
 .ghost:hover { border-color: var(--line-2); background: var(--panel); }
 .ghost.danger { color: var(--danger); }
@@ -904,6 +908,9 @@ main { min-height: calc(100vh - 150px); }
 .target-tabs button.active, .sort-tabs button.active { background: var(--panel-3); color: var(--text); }
 .target-tabs button.active span { color: var(--accent); }
 .plan-meta { display: flex; align-items: center; gap: 12px; margin-top: 24px; color: var(--muted); font-family: var(--mono); font-size: 11px; flex-wrap: wrap; }
+.shape-pick { display: inline-flex; align-items: center; gap: 7px; color: var(--dim); }
+.shape-pick select { padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); color: var(--text); font-family: var(--mono); font-size: 11px; cursor: pointer; }
+.shape-note { color: var(--dim); }
 .plan-route { margin: 8px 0 0; color: var(--dim); font-family: var(--mono); font-size: 11px; }
 .badge {
   padding: 3px 7px;

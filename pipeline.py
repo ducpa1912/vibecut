@@ -26,7 +26,13 @@ from vision import probe_image, probe_images
 
 ROOT = Path(__file__).resolve().parent
 TARGET_AR = 9 / 16
-ASPECT_RATIOS = {"9:16": 9 / 16, "4:5": 4 / 5, "1:1": 1.0, "16:9": 16 / 9}
+ASPECT_RATIOS = {
+    "9:16": 9 / 16,
+    "4:5": 4 / 5,
+    "1:1": 1.0,
+    "16:9": 16 / 9,
+    "16:10": 16 / 10,
+}
 
 
 def _pipeline_log(
