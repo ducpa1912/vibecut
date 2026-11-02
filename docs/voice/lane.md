@@ -23,6 +23,10 @@ It refuses a busy port and writes the server PID to
 `~/vibecut-lanes/voice/server.pid`. Stop only that PID. Do not `pkill` by
 pattern.
 
+Stay on port `8797`. Do not start this lane, a smoke check or a test run on an
+ad-hoc or ephemeral port; the lane script writes `server.pid`, and only that PID
+is stopped.
+
 In Finder, double-click **scripts/Voice Room Server.command**. It opens
 Terminal and starts the same server. Close that Terminal window or press
 Ctrl-C to stop it.
