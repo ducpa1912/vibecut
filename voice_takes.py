@@ -427,6 +427,33 @@ def _stop(cancel_event: threading.Event | None) -> None:
         raise TakeError(CANCELLED, 409)
 
 
+def _speak(speak: Callable[[], Path], cancel_event: threading.Event | None) -> Path:
+    """Run one line's request, but stop waiting the moment Cancel is pressed.
+
+    The speech engines take no cancel switch, so a line already sent keeps
+    going in the background and lands in the speech cache; asking again for
+    the same line then costs nothing.
+    """
+    if cancel_event is None:
+        return speak()
+    result: dict = {}
+
+    def run() -> None:
+        try:
+            result["path"] = speak()
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            result["error"] = exc
+
+    worker = threading.Thread(target=run, name="voiceover-line", daemon=True)
+    worker.start()
+    while worker.is_alive():
+        if cancel_event.wait(0.2):
+            raise TakeError(CANCELLED, 409)
+    if "error" in result:
+        raise result["error"]
+    return result["path"]
+
+
 def _probe(path: Path) -> float:
     import voice_clone  # noqa: PLC0415
 
@@ -594,9 +621,14 @@ def create_voiceover(
             )
             cached = before.is_file() and before.stat().st_size > 512
             try:
-                path = Path(tts.voice_sample(
-                    engine, voice, line, cache, rate=rate, language=language,
+                path = Path(_speak(
+                    lambda line=line: tts.voice_sample(
+                        engine, voice, line, cache, rate=rate, language=language,
+                    ),
+                    cancel_event,
                 ))
+            except TakeError:
+                raise
             except Exception as exc:  # noqa: BLE001 - reword, keep the cause
                 raise TakeError(
                     f"Could not speak line {index} of {len(chunks_text)}: {exc}. "

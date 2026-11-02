@@ -251,3 +251,26 @@ def test_new_shell_holds_the_takes_aside():
     for name in ("onLoadSettings", "saveTakeAsVoice", "starTake", "deleteTake"):
         assert name in takes_js
     assert "takesPanel.refresh()" in next_js
+
+
+def test_cancel_stops_waiting_for_a_line_already_sent():
+    import threading
+
+    event = threading.Event()
+    release = threading.Event()
+
+    def slow_line():
+        release.wait(5)
+        return Path("late.wav")
+
+    timer = threading.Timer(0.1, event.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(voice_takes.TakeError) as caught:
+            voice_takes._speak(slow_line, event)
+    finally:
+        release.set()
+        timer.cancel()
+    assert caught.value.status_code == 409
+    assert time.monotonic() - started < 2.0
