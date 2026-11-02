@@ -356,15 +356,21 @@ def _fill_plan(
 ) -> tuple[dict | None, list[dict]]:
     """Active AI fill layers of one segment, for the render's pre-pass.
 
-    One method runs per segment: the lowest layer's. Returns (plan, warnings).
+    One method runs per segment: the topmost active layer's. The list is
+    ordered by ``z`` (then id), so a mixed beat still has one deterministic
+    engine and the layer the viewer sees on top decides it. Returns
+    (plan, warnings).
     """
-    active = [
-        layer for layer in clean
-        if layer["kind"] == "fill" and _active_window(layer, start, end)[0]
-    ]
+    active = sorted(
+        (
+            layer for layer in clean
+            if layer["kind"] == "fill" and _active_window(layer, start, end)[0]
+        ),
+        key=lambda layer: (int(layer.get("z") or 0), str(layer.get("id") or "")),
+    )
     if not active:
         return None, []
-    method = active[0].get("method") or edits.FILL_METHODS[0]
+    method = active[-1].get("method") or edits.FILL_METHODS[0]
     warnings = []
     if any((layer.get("method") or method) != method for layer in active):
         warnings.append({

@@ -36,6 +36,7 @@ LAMA_CARRY = 0.3
 Progress = Callable[[float, str], None]
 
 _LOCK = threading.Lock()
+_FILLERS_LOCK = threading.Lock()
 _FILLERS: dict[tuple[str, str], object] = {}
 
 
@@ -76,6 +77,24 @@ def _model_stamp(path: Path) -> str:
     return f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
 
 
+def model_signature(methods: Iterable[str], directory: Path | str) -> str:
+    """A stable signature of the model files a render will read.
+
+    The render's master cache key includes this, so replacing a checkpoint
+    never reuses a master cut with the old model's pixels.
+    """
+    directory = Path(directory)
+    parts = []
+    for method in sorted({str(item) for item in methods}):
+        if method not in METHODS:
+            continue
+        path = model_path(method, directory)
+        present = path.is_file() and path.stat().st_size > 0
+        parts.append([method, _model_stamp(path) if present else "missing"])
+    payload = {"version": VERSION, "models": parts}
+    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def span_key(
     *,
     meta: dict,
@@ -108,22 +127,34 @@ def span_key(
 
 def _filler(method: str, path: Path):
     key = (method, str(path))
-    filler = _FILLERS.get(key)
-    if filler is None:
-        try:
-            if method == "sttn":
-                from .sttn import SttnFiller
-                filler = SttnFiller(path)
-            else:
-                from .lama import LamaFiller
-                filler = LamaFiller(path)
-        except ImportError as exc:
-            package = "torch" if method == "sttn" else "onnxruntime"
-            raise FillError(
-                f"{METHOD_COPY[method]} fill needs the {package} package on this Mac."
-            ) from exc
-        _FILLERS[key] = filler
-    return filler
+    with _FILLERS_LOCK:
+        filler = _FILLERS.get(key)
+        if filler is None:
+            try:
+                if method == "sttn":
+                    from .sttn import SttnFiller
+                    filler = SttnFiller(path)
+                else:
+                    from .lama import LamaFiller
+                    filler = LamaFiller(path)
+            except ImportError as exc:
+                package = "torch" if method == "sttn" else "onnxruntime"
+                raise FillError(
+                    f"{METHOD_COPY[method]} fill needs the {package} package on this Mac."
+                ) from exc
+            _FILLERS[key] = filler
+        return filler
+
+
+def release_fillers() -> None:
+    """Drop the loaded model sessions so a finished render frees their memory."""
+    with _FILLERS_LOCK:
+        _FILLERS.clear()
+
+
+def _check_cancel(cancelled: Callable[[], bool] | None) -> None:
+    if cancelled is not None and cancelled():
+        raise FillCancelled("Render cancelled.")
 
 
 class _Reader:
@@ -167,13 +198,33 @@ class _Writer:
         self.proc.stdin.write(np.ascontiguousarray(frame, dtype=np.uint8).tobytes())
 
 
-def _stop(proc: subprocess.Popen) -> None:
+def _stop(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    try:
+        if proc.stdin and not proc.stdin.closed:
+            proc.stdin.close()
+    except OSError:
+        pass
     if proc.poll() is None:
         proc.kill()
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    for stream in (proc.stdout, proc.stderr):
+        try:
+            if stream:
+                stream.close()
+        except OSError:
+            pass
 
 
 def _local(rects: list[masks.Rect], x0: int, y0: int, x1: int, y1: int) -> list[masks.Rect]:
@@ -186,11 +237,12 @@ def _local(rects: list[masks.Rect], x0: int, y0: int, x1: int, y1: int) -> list[
     return out
 
 
-def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None):
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None):
     """Yield filled frames. ``rects_for(index)`` gives that frame's rects."""
     x0, y0, x1, y1 = area
     previous: np.ndarray | None = None
     for index, frame in enumerate(frames):
+        _check_cancel(cancelled)
         local = _local(rects_for(index), x0, y0, x1, y1)
         if not local:
             previous = None
@@ -198,6 +250,7 @@ def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None):
         else:
             work = frame[y0:y1, x0:x1]
             hole = masks.rasterize(local, x1 - x0, y1 - y0)
+            _check_cancel(cancelled)
             filled = filler.fill(work, hole)
             if previous is not None:
                 filled = np.clip(
@@ -213,7 +266,7 @@ def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None):
             on_frame(index)
 
 
-def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_frame=None):
+def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_frame=None, cancelled=None):
     """Yield filled frames, running the model on overlapping chunks.
 
     Frames in an overlap get both chunks' strips, cross-faded linearly.
@@ -225,6 +278,7 @@ def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_fr
     next_index = 0
     lookahead = next(iterator, None)
     while True:
+        _check_cancel(cancelled)
         while len(buffer) < chunk and lookahead is not None:
             buffer.append((next_index, lookahead))
             next_index += 1
@@ -238,6 +292,7 @@ def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_fr
         active = any(rects_for(index) for index in indexes)
         outputs = None
         if active:
+            _check_cancel(cancelled)
             outputs = [
                 filler.fill([frame[y0:y1] for _, frame in buffer])
                 for y0, y1 in strips
@@ -364,51 +419,70 @@ def prepare_span(
     def rects_for(index: int) -> list[masks.Rect]:
         return rect_table[min(index, len(rect_table) - 1)]
 
+    def cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
     def on_frame(index: int) -> None:
-        if cancel_event is not None and cancel_event.is_set():
-            raise FillCancelled("Render cancelled.")
+        _check_cancel(cancelled)
         if progress and index % 10 == 0:
             progress(min(1.0, (index + 1) / expected), f"{METHOD_COPY[method]} {index + 1}/{expected}")
 
-    with _LOCK:
+    # A cancel while another render holds the lock must not wait for it.
+    _check_cancel(cancelled)
+    while not _LOCK.acquire(timeout=0.2):
+        _check_cancel(cancelled)
+    reader = writer = None
+    try:
+        _check_cancel(cancelled)
         filler = _filler(method, path)
         reader = _Reader(ffmpeg, source, start, duration, fps, width, height)
         writer = _Writer(ffmpeg, part, fps, width, height)
 
         def frames():
             while True:
+                _check_cancel(cancelled)
                 frame = reader.read()
                 if frame is None:
                     return
                 yield frame
 
-        try:
-            if method == "lama":
-                area = masks.lama_area(span_rects, width, height)
-                stream = fill_frames_lama(frames(), rects_for, filler, area, on_frame=on_frame)
-            else:
-                from .sttn import CHUNK, OVERLAP
-                strips = masks.sttn_strips(span_rects, width, height)
-                stream = fill_frames_sttn(
-                    frames(), rects_for, filler, strips,
-                    chunk=CHUNK, overlap=OVERLAP, on_frame=on_frame,
-                )
-            written = 0
-            for frame in stream:
-                writer.write(frame)
-                written += 1
-            writer.proc.stdin.close()
-            code = writer.proc.wait(timeout=300)
-            reader.proc.wait(timeout=30)
-            if code != 0 or written == 0:
-                detail = writer.proc.stderr.read().decode("utf-8", "replace").strip()[-400:]
-                raise FillError(f"AI fill could not write the clip. {detail}".strip())
-        except BaseException:
+        if method == "lama":
+            area = masks.lama_area(span_rects, width, height)
+            stream = fill_frames_lama(
+                frames(), rects_for, filler, area,
+                on_frame=on_frame, cancelled=cancelled,
+            )
+        else:
+            from .sttn import CHUNK, OVERLAP
+            strips = masks.sttn_strips(span_rects, width, height)
+            stream = fill_frames_sttn(
+                frames(), rects_for, filler, strips,
+                chunk=CHUNK, overlap=OVERLAP,
+                on_frame=on_frame, cancelled=cancelled,
+            )
+        written = 0
+        for frame in stream:
+            writer.write(frame)
+            written += 1
+        writer.proc.stdin.close()
+        code = writer.proc.wait(timeout=300)
+        reader.proc.wait(timeout=30)
+        if code != 0 or written == 0:
+            detail = writer.proc.stderr.read().decode("utf-8", "replace").strip()[-400:]
+            raise FillError(f"AI fill could not write the clip. {detail}".strip())
+        os.replace(part, output)
+    except BaseException:
+        _stop(reader.proc if reader is not None else None)
+        _stop(writer.proc if writer is not None else None)
+        part.unlink(missing_ok=True)
+        raise
+    finally:
+        # Close both ffmpeg pipes even on the success path.
+        if reader is not None:
             _stop(reader.proc)
+        if writer is not None:
             _stop(writer.proc)
-            part.unlink(missing_ok=True)
-            raise
-    os.replace(part, output)
+        _LOCK.release()
     if progress:
         progress(1.0, f"{METHOD_COPY[method]} done")
     return {"path": str(output), "key": key, "cached": False, "method": method}

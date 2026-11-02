@@ -214,7 +214,7 @@ bench script in Part 3 was not written. What exists now:
   (interpolate)" layers; the button switches them.
 - **Compile** (`compose_render.py`): a fill layer adds no ffmpeg filter. Each
   segment gets `fill: {method, ids, layers}` when a fill layer is active on it
-  (`fill_method_mixed` warns when one beat mixes engines; the lowest layer's
+  (`fill_method_mixed` warns when one beat mixes engines; the topmost layer's
   engine wins).
 - **Render pre-pass** (`render._prepare_fills`): before the beats are cut, each
   beat with a fill gets a filled clip from `textfill.prepare_span`, cached in

@@ -2138,35 +2138,40 @@ def _prepare_fills(
     if not planned:
         return results
     data_root = job_dir.parent.parent
-    for position, (index, segment) in enumerate(planned):
-        plan = segment["fill"]
-        low = 0.02 + 0.43 * position / len(planned)
-        high = 0.02 + 0.43 * (position + 1) / len(planned)
+    try:
+        for position, (index, segment) in enumerate(planned):
+            plan = segment["fill"]
+            low = 0.02 + 0.43 * position / len(planned)
+            high = 0.02 + 0.43 * (position + 1) / len(planned)
 
-        def report(fraction: float, message: str, low=low, high=high) -> None:
-            progress(
-                low + (high - low) * max(0.0, min(1.0, fraction)),
-                f"Filling text, beat {position + 1}/{len(planned)} · {message}",
-            )
+            def report(fraction: float, message: str, low=low, high=high) -> None:
+                progress(
+                    low + (high - low) * max(0.0, min(1.0, fraction)),
+                    f"Filling text, beat {position + 1}/{len(planned)} · {message}",
+                )
 
-        try:
-            results[index] = textfill.prepare_span(
-                source=source,
-                meta=meta,
-                start=float(segment["start"]),
-                duration=int(segment["frames"]) / OUT_FPS,
-                layers=plan.get("layers") or [],
-                method=plan.get("method") or textfill.DEFAULT_METHOD,
-                cache_dir=job_dir / "fill",
-                data_root=data_root,
-                ffmpeg=_ffmpeg(),
-                progress=report,
-                cancel_event=cancel_event,
-            )
-        except textfill.FillCancelled as exc:
-            raise RenderCancelled("Render cancelled.") from exc
-        except textfill.FillError as exc:
-            raise PipelineError(str(exc)) from exc
+            try:
+                results[index] = textfill.prepare_span(
+                    source=source,
+                    meta=meta,
+                    start=float(segment["start"]),
+                    duration=int(segment["frames"]) / OUT_FPS,
+                    layers=plan.get("layers") or [],
+                    method=plan.get("method") or textfill.DEFAULT_METHOD,
+                    cache_dir=job_dir / "fill",
+                    data_root=data_root,
+                    ffmpeg=_ffmpeg(),
+                    progress=report,
+                    cancel_event=cancel_event,
+                )
+            except textfill.FillCancelled as exc:
+                raise RenderCancelled("Render cancelled.") from exc
+            except textfill.FillError as exc:
+                raise PipelineError(str(exc)) from exc
+    finally:
+        # Model sessions are large; a finished or failed pre-pass must not
+        # hold STTN or LaMa memory for the rest of the app's life.
+        textfill.release_fillers()
     return results
 
 
@@ -2305,6 +2310,15 @@ def render_reel(
         ], sort_keys=True).encode()).hexdigest()[:16]
         if layers else ""
     )
+    fill_methods = sorted({
+        str((segment.get("fill") or {}).get("method") or "")
+        for segment in edit_segments
+        if (segment.get("fill") or {}).get("method")
+    })
+    fill_sig = (
+        textfill.model_signature(fill_methods, textfill.models_dir(job_dir.parent.parent))
+        if fill_methods else ""
+    )
     master_key = hashlib.sha1(json.dumps({
         "target": target,
         "clips": [
@@ -2323,6 +2337,9 @@ def render_reel(
         "encoder": encoder,
         "edit": compiled.get("edit_hash") if compiled is not None else None,
         "layers": layer_sig,
+        # Fill model files: replacing a checkpoint must not reuse a master
+        # whose beats were built from the old model.
+        "fill_models": fill_sig,
         # Text raster version: a font change must not reuse an old master.
         "text_skin": LAYER_CACHE_VERSION,
     }, sort_keys=True).encode()).hexdigest()[:16]
