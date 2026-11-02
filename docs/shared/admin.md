@@ -107,6 +107,12 @@ Catalog sources:
 | MLX | local catalog |
 | MiniMax, Deepgram, Cartesia, Apple | built-in catalogs |
 
+OpenRouter's general `/models` endpoint does not list every transcription
+model. The built-in catalog carries the current speech-to-text collection
+(for example `microsoft/mai-transcribe-2` and
+`nvidia/nemotron-3.5-transcribe`) and merges it into the cached catalog on every
+read, so a catalog refresh is not required to see those rows.
+
 Catalogs are cached under `data/admin/model_catalog.json` for 15 minutes. A
 failed refresh keeps the last good list. If no list is available, the UI shows
 a catalog error instead of allowing free text.

@@ -1027,3 +1027,30 @@ def test_legacy_mirrors_follow_each_admin_provider(admin_api):
     assert stored["stt"]["model"] == "whisper-custom"
     assert stored["openrouter"]["model"] == "openrouter-custom"
     assert stored["openrouter"]["reasoning"] == "high"
+
+
+def test_openrouter_catalog_offers_mai_transcribe_as_stt():
+    ids = {item["id"] for item in catalog._STATIC["openrouter"]}
+    assert "microsoft/mai-transcribe-2" in ids
+    assert "nvidia/nemotron-3.5-transcribe" in ids
+    assert catalog._openrouter_kind(
+        "microsoft/mai-transcribe-2",
+        {"architecture": {"input_modalities": ["audio"], "output_modalities": ["text"]}},
+    ) == "stt"
+
+
+def test_catalog_merges_new_static_stt_into_a_fresh_cache(admin_api, monkeypatch):
+    monkeypatch.setattr(catalog, "_read_cache", lambda: {
+        "openrouter": {
+            "provider": "openrouter",
+            "models": [{"id": "openai/whisper-large-v3", "name": "Whisper", "kind": "stt"}],
+            "source": "cache",
+            "fetched_at": time.time(),
+            "stale": False,
+            "error": "",
+        },
+    })
+    result = catalog.catalog("openrouter")
+    ids = {item["id"] for item in result["models"]}
+    assert "microsoft/mai-transcribe-2" in ids
+    assert "nvidia/nemotron-3.5-transcribe" in ids
