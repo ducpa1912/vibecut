@@ -209,9 +209,10 @@ bench script in Part 3 was not written. What exists now:
   Label words like "inpaint" stay refused, as before.
 - **Studio Clean panel** (`static/studio/edit/layers/clean.js`): "AI fill" in
   the kind list, an Engine picker, a note that the preview shows only the box,
-  and a "Use AI fill for all N text layers" button that turns every remove,
-  blur, plate and mask layer into a fill. Auto-clean still adds "Remove
-  (interpolate)" layers; the button switches them.
+  and a "Use AI fill for all N detected layers" button that turns detected
+  remove, blur, plate and mask layers into a fill. Manual boxes keep their
+  kind. Auto-clean still adds "Remove (interpolate)" layers; the button
+  switches them.
 - **Compile** (`compose_render.py`): a fill layer adds no ffmpeg filter. Each
   segment gets `fill: {method, ids, layers}` when a fill layer is active on it
   (`fill_method_mixed` warns when one beat mixes engines; the topmost layer's
