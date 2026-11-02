@@ -87,22 +87,19 @@ existing Classic frame endpoint that can address the cut time and shape.
 **Done when:** the founder adds, moves and deletes a Remove-text box without
 typing a percentage.
 
-### C2 — Found text and AI fill
+### C2a — Found text, Blur and Cover
 
-**Goal:** remove old text from the regions Check actually found.
+**Goal:** remove old text from the regions Check actually found with Blur or
+Cover. AI fill follows in C2b.
 
 - Found-text list with thumbnails, words, time and ticks.
 - Watermarks and screen UI greyed with the server reason; never tickable.
-- Method picker: AI fill, Blur, Cover.
-- AI-fill engine status and missing-model note.
-- Single-frame LaMa preview with before/after slider.
+- Method picker: Blur and Cover in C2a; AI fill joins in C2b.
 - Rights gate and Clean layer storage on the server.
-- AI-fill render pre-pass and cache keys.
 
 **Backend:** do not import Studio's `routes_studio.py`. Extract or fork the
-Clean/Edit schema, Clean compilation, rights gate and Check contract into a
-shared backend module with a versioned API and Classic tests. Port `textfill`
-and the render hook. This is the largest phase.
+Clean/Edit schema, Clean compilation, rights gate and Check contract into
+`edit_contract.py` with a versioned API and Classic tests.
 
 C2 also needs a model-pack prerequisite before AI fill is offered:
 
@@ -114,8 +111,21 @@ C2 also needs a model-pack prerequisite before AI fill is offered:
 
 Until the model pack and frame route exist, C2 stays at Blur/Cover.
 
-**Done when:** the founder removes every subtitle in a moment and sees an AI
-fill preview before rendering.
+**Done when:** the founder removes every subtitle in a moment with Blur or
+Cover and the rights gate refuses watermarks and screen UI.
+
+### C2b — AI fill
+
+**Goal:** add AI fill to C2a.
+
+- Engine status and missing-model note.
+- Single-frame LaMa preview with before/after slider.
+- `textfill` port and render hook.
+- Model pack, license notices and cache keys.
+
+**Done when:** the model pack is installed, the founder sees the AI-fill
+preview, and the full render fills every frame. Until then, C2 stays at Blur
+and Cover.
 
 ### C3 — Polish
 

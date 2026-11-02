@@ -33,7 +33,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 |---|---|---|---|---|
 | 1.1 | Run the commands above, then open `http://127.0.0.1:8796` | A clean Classic beta build | The Classic page opens with **Drop a video**, **Paste a video link**, **Creator** and **Setup**. No Studio view opens. | |
 | 1.2 | Look at the top-right status | Capability check | It says **On-device AI**, **Cloud AI** or **Mixed AI** for this machine, and a health line such as **vision · whisper**. It does not promise **local only** on a machine that needs a cloud route. | |
-| 1.2.1 | Open **Setup** → **Intelligence**, **Transcription** and **Voice over** | Route per capability | Each section names the active route or says it is not configured. The top pill matches whether any cloud route is active. | |
+| 1.2.1 | Open **Setup** → **Intelligence**, **Transcription** and **Voice over** | Route per capability | Each section names the active route or says it is not configured. The top pill matches whether any cloud route is active or a cloud key is saved. | |
 | 1.2.2 | Switch the language to **VI** and back to **EN** | UI language is curated | Navigation and task labels change; product names, acronyms and provider names stay as designed. User job titles and transcript text never change. | |
 | 1.3 | If this is the first run, read the banner at the top | First-run nudge | A one-line banner says **Optional: add keys and voices in Setup** with a button that opens Setup. | |
 | 1.4 | Click **Open Setup** in the banner → **Save setup** → close Setup with **×** → reload the page | The nudge is not repeated after Setup was saved | The banner is gone. | |

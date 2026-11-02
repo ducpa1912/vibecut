@@ -67,7 +67,7 @@ def test_refuses_an_unsigned_release_commit(tmp_path):
     work, _remote = _repo(tmp_path)
     result = _release(work, "--founder-passed", allow_unsigned=False)
     assert result.returncode != 0
-    assert "not signed" in result.stderr
+    assert "Unsigned commits" in result.stderr
 
 
 def test_tags_and_pushes_the_shipped_classic(tmp_path):

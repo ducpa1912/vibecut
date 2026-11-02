@@ -60,9 +60,16 @@ tag="beta-$day-$n"
 commit=$(git rev-parse --short HEAD)
 
 allow_unsigned="${VIBECUT_ALLOW_UNSIGNED:-0}"
-if [[ "$allow_unsigned" != "1" ]] && ! git verify-commit HEAD >/dev/null 2>&1; then
-  echo "HEAD is not signed. Sign the release commit before tagging." >&2
-  exit 1
+if [[ "$allow_unsigned" != "1" ]]; then
+  base="$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null || true)"
+  range="${base:+$base..}HEAD"
+  unsigned="$(git log --format='%H %G?' "$range" | awk '$2 != "G" {print $1}' | grep -v -E '^(732254a|8186e2a)' || true)"
+  if [[ -n "$unsigned" ]]; then
+    echo "Unsigned commits in the release range:" >&2
+    echo "$unsigned" >&2
+    echo "Sign them before tagging. The pre-signing 732254a and 8186e2a are recorded exceptions." >&2
+    exit 1
+  fi
 fi
 
 if [[ "$dry_run" -eq 1 ]]; then

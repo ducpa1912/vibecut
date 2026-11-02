@@ -400,6 +400,7 @@
     editMode: false,
     editIndex: null,
     edited: false,
+    cutDirty: false,
     momentsExpanded: false,
     trim: null,
     timelineScroll: 0,
@@ -511,7 +512,7 @@
     if (event.key === "Escape") closeSelectMenu();
   });
 
-  window.VibeCutClassicHasUnsaved = () => Boolean(state.edited && state.editMode);
+  window.VibeCutClassicHasUnsaved = () => Boolean(state.cutDirty);
 
   function init() {
     syncTokenCookie();
@@ -590,9 +591,10 @@
     const nativeTts = platform.native_tts === true;
     const nativeVision = platform.native_vision === true;
     const rows = [
-      ["STT / transcript", nativeStt ? "Native" : "Cloud / not configured"],
-      ["TTS / voice", nativeTts ? "Native" : "Cloud / not configured"],
-      ["Vision / text", nativeVision ? "Native" : "Not configured"],
+      ["STT / transcript", nativeStt ? "Native" : "Not native · check Setup"],
+      ["TTS / voice", nativeTts ? "Native" : "Not native · check Setup"],
+      ["Vision / text", nativeVision ? "Native" : "Not available · center crop"],
+      ["Translation / rewrite", "See Setup routes"],
       ["Render", "Local"],
     ];
     if (dom.setupPlatformBadge) dom.setupPlatformBadge.textContent = dom.privacyLabel?.textContent || "AI";
@@ -601,7 +603,7 @@
     }
     if (dom.setupPlatformRows) {
       dom.setupPlatformRows.innerHTML = rows.map(([label, value]) => `
-        <div class="setup-model-row"><strong>${esc(label)}</strong><span>${esc(value)}</span></div>
+        <div class="setup-model-row"><strong>${esc(tr(label))}</strong><span>${esc(tr(value))}</span></div>
       `).join("");
     }
   }
@@ -1369,7 +1371,7 @@
       const platform = health.platform || {};
       const anyNative = platform.native_stt || platform.native_tts || platform.native_vision;
       const mode = platform.native_ai ? "on-device" : (anyNative ? "mixed" : "AI not configured");
-      dom.footerHealth.textContent = `${mode} · ${health.vision ? "apple vision" : "center crop"}`;
+      dom.footerHealth.textContent = tr(`${mode} · ${health.vision ? "apple vision" : "center crop"}`);
       updatePrivacyPill();
       renderPlatformCapabilities();
       if (!health.vision) {
@@ -1773,6 +1775,7 @@
     dom.arcOrder.addEventListener("change", async () => {
       state.order = dom.arcOrder.checked ? "arc" : "source";
       state.edited = false;
+      state.cutDirty = false;
       state.scriptOverrides = {};
       state.scriptId = null;
       state.lastScript = null;
@@ -2940,6 +2943,7 @@
     state.overrideHook = null;
     state.editMode = false;
     state.edited = false;
+      state.cutDirty = false;
     state.momentsExpanded = false;
     state.trim = null;
     state.timelineScroll = 0;
@@ -3212,9 +3216,9 @@
     const clips = plan.clips || [];
     const first = clips[0];
     const last = clips[clips.length - 1];
-    dom.planRoute.textContent = first && last
+    dom.planRoute.textContent = tr(first && last
       ? `Hook ${fmtTime(first.start, 1)} → payoff ${fmtTime(last.start, 1)} · ${plan.clip_count} beats · ${plan.total.toFixed(1)}s`
-      : `${plan.clip_count} beats · ${plan.total.toFixed(1)}s`;
+      : `${plan.clip_count} beats · ${plan.total.toFixed(1)}s`);
     renderReasoning(plan);
     if (state.editIndex !== null) {
       state.editIndex = Math.max(0, Math.min(plan.clips.length - 1, state.editIndex));
@@ -3773,6 +3777,7 @@
       payoff_why: reasoning.payoff.headline,
     };
     state.edited = true;
+    state.cutDirty = true;
     state.scriptId = null;
   }
 
@@ -3888,6 +3893,7 @@
     normalizePlanRoles(clips);
     state.plan = { ...state.plan, clips };
     state.edited = true;
+    state.cutDirty = true;
     state.scriptId = null;
     syncEditedPlan();
     closeClipMenu();
@@ -3943,6 +3949,7 @@
     normalizePlanRoles(clips);
     state.plan = { ...state.plan, clips };
     state.edited = true;
+    state.cutDirty = true;
     syncEditedPlan();
     renderPlan();
     renderScenes();
@@ -3964,6 +3971,7 @@
     normalizePlanRoles(clips);
     state.plan = { ...state.plan, clips };
     state.edited = true;
+    state.cutDirty = true;
     state.scriptId = null;
     syncEditedPlan();
     renderPlan();
@@ -4011,6 +4019,7 @@
     normalizePlanRoles(clips);
     state.plan = { ...state.plan, clips };
     state.edited = true;
+    state.cutDirty = true;
     state.editIndex = null;
     syncEditedPlan();
     renderPlan();
@@ -4029,6 +4038,7 @@
     normalizePlanRoles(clips);
     state.plan = { ...state.plan, clips };
     state.edited = true;
+    state.cutDirty = true;
     state.editIndex = null;
     syncEditedPlan();
     renderPlan();
@@ -4061,6 +4071,7 @@
       });
       state.job.variants = result.variants;
       dom.variantName.value = "";
+      state.cutDirty = false;
       renderVariants();
       toast("Variant saved.");
     } catch (error) {
@@ -4101,6 +4112,7 @@
     state.plan.hook_why = reasoning.hook.headline;
     state.plan.payoff_why = reasoning.payoff.headline;
     state.edited = true;
+    state.cutDirty = true;
     state.editMode = true;
     renderHook();
     renderPlan();
@@ -4323,6 +4335,7 @@
     if (state.target === target) return;
     state.target = target;
     state.edited = false;
+      state.cutDirty = false;
     state.editMode = false;
     state.scriptOverrides = {};
     state.scriptId = null;
@@ -4375,6 +4388,7 @@
   async function resetHook() {
     state.overrideHook = null;
     state.edited = false;
+      state.cutDirty = false;
     state.editMode = false;
     state.scriptOverrides = {};
     state.scriptId = null;
@@ -4393,6 +4407,7 @@
     const scene = sceneById(sceneId);
     state.overrideHook = sceneId === state.job.analysis.hook_scene ? null : sceneId;
     state.edited = false;
+      state.cutDirty = false;
     state.editMode = false;
     state.scriptOverrides = {};
     state.scriptId = null;
@@ -5689,23 +5704,28 @@
         const hooks = await api(`/api/jobs/${state.job.id}/hooks?target=${state.target}&limit=3`);
         for (const hook of (hooks.hooks || []).slice(0, 3)) {
           try {
+            const body = {
+              target: state.target,
+              hook_scene: hook.scene,
+              quality: "final",
+              aspect: state.aspect,
+              captions: state.captions,
+              preset: state.preset || null,
+              order: "source",
+              clips: clipsForHook(hook.scene),
+              script_id: state.scriptId || null,
+              audio: currentAudioPlan(),
+              edit: classicEditPayload(),
+            };
+            const requestSig = renderSignatureOf(body);
             const result = await api(`/api/jobs/${state.job.id}/render`, {
               method: "POST",
-              body: JSON.stringify({
-                target: state.target,
-                hook_scene: hook.scene,
-                quality: "final",
-                aspect: state.aspect,
-                captions: state.captions,
-                preset: state.preset || null,
-                order: "source",
-                clips: clipsForHook(hook.scene),
-                script_id: state.scriptId || null,
-                audio: currentAudioPlan(),
-                edit: classicEditPayload(),
-              }),
+              body: JSON.stringify({ ...body, request_sig: requestSig }),
             });
-            if (result.render) records.push(result.render);
+            if (result.render) {
+              records.push(result.render);
+              rememberRenderSignature(result.render, body);
+            }
           } catch (error) {
             errors.push({ hook: hook.scene, detail: error.message });
           }
@@ -5727,8 +5747,17 @@
           }),
         });
         records = result.renders || [];
+        records.forEach((record) => {
+          const base = renderRequestFor(record.target, record.quality || "final");
+          rememberRenderSignature(record, {
+            ...base,
+            hook_scene: record.hook,
+            clips: null,
+          });
+        });
         errors.push(...(result.errors || []));
       }
+      state.cutDirty = false;
       state.job.renders = state.job.renders || {};
       records.forEach((record) => {
         state.job.renders[record.record_key || renderKey(record.target)] = record;
@@ -5739,6 +5768,7 @@
           );
         }
       });
+      state.cutDirty = false;
       updateRenderPanel();
       startRenderPoll(state.job.id);
       loadHistory();
@@ -7067,6 +7097,7 @@
         target, quality, state.aspect, state.captions,
       )] = result.render;
       rememberRenderSignature(result.render, body);
+      state.cutDirty = false;
       updateRenderPanel();
       startRenderPoll(state.job.id);
       loadHistory();
@@ -7951,6 +7982,7 @@
     state.target = Number(plan.target) || state.target;
     state.plan = plan;
     state.edited = true;
+    state.cutDirty = true;
     state.editMode = false;
     state.overrideHook = plan.hook_scene ?? null;
     state.scriptOverrides = {};

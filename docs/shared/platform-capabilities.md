@@ -7,7 +7,7 @@ not a promise of the brand.
 
 | Capability | macOS Apple Silicon | macOS Intel | Windows / Linux |
 |---|---|---|---|
-| STT / transcript | Native on-device where available | Native where available; cloud otherwise | Cloud |
+| STT / transcript | Native on-device where available | Native where available; cloud otherwise | Native where installed; cloud otherwise |
 | TTS / voice | Native on-device where available | Native where available; cloud otherwise | Native where installed; cloud otherwise |
 | Vision / text scan | Native on-device | Native where available; otherwise center crop / no text | Native where available; otherwise center crop / no text |
 | Translation / rewrite | Native or cloud route | Native or cloud route | Cloud route |
@@ -21,9 +21,9 @@ engines. It is not the default claim for Intel Macs, Windows or Linux.
 
 Use capability-aware labels, not a universal “Local by default”:
 
-- **On-device AI** — every active AI capability is native.
-- **Cloud AI** — every active AI capability uses a cloud route.
-- **Mixed AI** — some capabilities are native and some are cloud.
+- **On-device AI** — every AI capability is native and no cloud key is saved.
+- **Cloud AI** — no native AI is available; a cloud route or saved key is present.
+- **Mixed AI** — some capabilities are native and some use cloud or a saved key.
 
 The label must have a tooltip or nearby detail that names the capabilities.
 Do not say “local” when a cloud route can run.
@@ -56,6 +56,6 @@ Add a capability snapshot to the server health/settings payload and test these
 profiles:
 
 - Apple Silicon with native STT/TTS/vision.
-- Intel Mac with native vision but cloud TTS.
+- Intel Mac with native vision and `say`, cloud Kokoro or another TTS route.
 - Windows/Linux with cloud AI and local render.
 - No cloud keys configured.

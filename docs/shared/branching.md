@@ -65,6 +65,7 @@ New HTTP routes go into the lane's module (`routes_classic.py`, `routes_studio.p
 | Studio view | `studio` | `static/index.html` (Studio page), `static/studio/**`; `edits.py`, `routes_edits.py`, `compose_render.py`, `story_queue.py`, `routes_check.py`, `routes_library.py`, `routes_studio.py` |
 | Voice features | `voice-room` | `static/voice/**` (own `api.js`, `ui.js`, `voice.css`), `static/voices.html`, `voice_clone.py`, `voice_extract.py`, `routes_voice_clone.py` |
 | Shared core | any lane, additive | `app.py`, `pipeline.py`, `audio.py`, `tts.py`, `stt.py`, `music.py`, `render.py`, `settings_store.py`, `workflow_config.py`, `admin/`, tests of shared code |
+| Shared Edit/Clean contract (planned) | any lane, additive | `edit_contract.py`: Clean/Edit schema, Clean compilation and rights gate. C2 adds it with Classic contract tests; Classic keeps its own route adapter. |
 
 ## Hiding features: switches, not branches
 
@@ -90,7 +91,9 @@ when:
 - you are on another lane,
 - there are uncommitted changes,
 - the lane does not match GitHub,
-- the release commit is not signed.
+- the release commit is not signed,
+- any commit in the release range is unsigned (except the recorded
+  pre-signing `732254a` and `8186e2a`).
 
 Testers build from the tag, with `VIBECUT_EDITION=classic` and no
 `VIBECUT_FEATURES`.

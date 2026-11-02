@@ -3459,22 +3459,16 @@ def _platform_capabilities() -> dict:
 
 @app.get("/api/health")
 def health() -> dict:
+    platform_caps = _platform_capabilities()
     return {
         "ok": True,
         "ffmpeg": ffmpeg_version(),
-        "vision": vision.available(),
-        "whisper": bool(shutil.which("mlx_whisper"))
-        or (
-            sys.platform == "darwin"
-            and (
-                (ROOT / "bin" / "transcribe_apple").is_file()
-                or bool(shutil.which("swiftc"))
-            )
-        ),
+        "vision": platform_caps["native_vision"],
+        "whisper": platform_caps["native_stt"],
         "data": str(DATA),
         "encoder": render._choose_encoder(),
         "opencode": audio.opencode_available(),
-        "platform": _platform_capabilities(),
+        "platform": platform_caps,
         "version": 2,
     }
 

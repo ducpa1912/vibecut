@@ -53,5 +53,5 @@ def test_dynamic_ui_strings_have_explicit_patterns():
     assert "Xóa:" in script
     assert "window.VibeCutI18N?.tBlock" in app
     assert "window.VibeCutI18N?.t" in app
-    assert "VibeCutClassicHasUnsaved" in app
+    assert "VibeCutClassicHasUnsaved = () => Boolean(state.cutDirty)" in app
     assert "Switching language reloads the page" in script

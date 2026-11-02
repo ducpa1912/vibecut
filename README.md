@@ -6,9 +6,10 @@ finds a hook, builds 15 / 30 / 60 second cuts, reframes the subject, optionally
 replaces the audio, and renders the reel on your machine.
 
 Rendering and files stay on your machine. On supported Macs, AI transcription,
-voice and vision run on-device. On Intel Macs, Windows and Linux, capabilities
-without a native engine use the cloud routes configured in Setup. There is no
-account and no watermark.
+voice and vision run on-device. On Intel Macs, Windows and Linux, transcription
+and voice use the cloud routes configured in Setup when no native engine exists;
+vision falls back to center crop and no text. There is no account and no
+watermark.
 The source is proprietary and closed-source; see [LICENSE](LICENSE) and
 [docs/shared/licensing.md](docs/shared/licensing.md).
 
@@ -99,7 +100,7 @@ VibeCut keeps one local job record per source. The pipeline is:
 - Jobs, sources, renders, caches, settings, secrets, and logs stay under
   `data/` by default.
 - No account, login, cloud workspace, analytics, or telemetry is required.
-- Cloud calls happen only when a provider route is configured and a key exists.
+- Cloud calls happen only when a provider route is configured and a key or OpenCode login is available.
 - The render path uses local ffmpeg; Apple Vision and MLX are local.
 - The main app is bound to `127.0.0.1` unless `VIBECUT_HOST` changes it.
 

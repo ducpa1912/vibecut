@@ -63,9 +63,9 @@ Preserve-pitch is the default for shared TTS. Classic exposes the effective
 
 ### C. Vietnamese UI/UX
 
-- [x] Remove the global DOM translator and its `MutationObserver`.
-- [ ] Translate only explicit `data-i18n` elements. *(load-time static walk
-  remains; dynamic copy now falls back to English.)*
+- [x] Remove the live `MutationObserver`.
+- [ ] Replace the load-time whole-body walk with a `data-i18n` allowlist.
+  *(dynamic copy now falls back to English; static walk remains.)*
 - [x] Add `t(value)` / `tBlock(value)` for curated dynamic strings.
 - [ ] Keep the glossary terms in English. *(glossary added; dictionary
   cleanup still open.)*

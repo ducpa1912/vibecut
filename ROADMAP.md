@@ -23,7 +23,7 @@ IMPORT → CHECK → STORIES → EDIT → FINISH
 - **Edit** is one document per story/aspect: Clean, Reframe, Motion, Color, Text, Captions, Audio.
 - **Finish** renders 9:16/4:5, builds packet v2, preflight markers, versions, review links.
 
-Platforms: Classic on macOS, Windows and Linux; Studio on macOS 26+ Apple Silicon. Native AI is preferred where available; cloud routes cover missing native AI on Intel Macs, Windows and Linux.
+Platforms: Classic on macOS, Windows and Linux; Studio on macOS 26+ Apple Silicon. Native AI is preferred where available; cloud transcription and voice cover missing native engines on Intel Macs, Windows and Linux. Vision falls back to center crop where unavailable.
 
 ### Shipped by wave and round
 
