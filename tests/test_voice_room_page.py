@@ -119,15 +119,21 @@ def test_clip_finder_uses_the_candidate_routes():
 
 
 def test_voiceclone_keeps_its_studio_exports():
-    """Studio's Edit and Setup import these; the Voice Room adds, never removes."""
-    text = (VOICE / "voiceclone.js").read_text(encoding="utf-8")
-    for name in (
+    """The Voice Room keeps every export it had; Studio ships its own copy.
+
+    Studio's copy under ``static/studio/voice`` must offer the same functions,
+    so Setup and the Edit audio layer work with the Voice Room tree absent.
+    """
+    names = (
         "CONSENT_COPY", "listClones", "deleteClone", "cloneFromVideo", "findVoiceCandidates",
         "voiceCandidateState", "cancelVoiceCandidates", "voiceCandidateAudioUrl", "cloneFromFile",
         "playClone", "playVoice", "stopPlayback", "createMyVoicePanel",
-    ):
-        assert f"export function {name}" in text or f"export const {name}" in text or f"export async function {name}" in text, name
-    assert 'title = "My voice", list = true' in text
+    )
+    for module in (VOICE / "voiceclone.js", ROOT / "static" / "studio" / "voice" / "voiceclone.js"):
+        text = module.read_text(encoding="utf-8")
+        for name in names:
+            assert f"export function {name}" in text or f"export const {name}" in text or f"export async function {name}" in text, f"{module}: {name}"
+        assert 'title = "My voice", list = true' in text, module
 
 
 # ---------------------------------------------------------------- node

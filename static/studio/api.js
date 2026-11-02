@@ -260,6 +260,18 @@ async function performRequest(path, options = {}) {
 }
 
 /**
+ * Tell other panels on the page that server data changed.
+ *
+ * The read cache already listens for this event, so a client module that
+ * writes through a different path can still refresh the shell.
+ */
+export function announceChange() {
+  try {
+    window.dispatchEvent(new CustomEvent("vibecut:data-changed"));
+  } catch (_) { /* no window (tests); nothing to tell */ }
+}
+
+/**
  * Perform a JSON request against the local server.
  *
  * GETs of the job, its clip-sets, its Check report and its edits list are
