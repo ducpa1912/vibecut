@@ -1305,6 +1305,37 @@
 
         <section class="setup-section">
           <div class="setup-title">
+            <h3>Voice fit</h3>
+            <span class="setup-badge">advanced</span>
+          </div>
+          <label class="setup-check"><input id="setup-voice-preserve" type="checkbox" checked> Preserve voice pitch &amp; tone</label>
+          <p class="setup-hint">Keeps the original pitch. Speeds a line up to 1.25×; if it still does not fit, the script is shortened instead of pushing the voice.</p>
+          <label class="setup-field">
+            <span>Maximum speed</span>
+            <select id="setup-voice-max">
+              <option value="1.10">1.10×</option>
+              <option value="1.15">1.15×</option>
+              <option value="1.20">1.20×</option>
+              <option value="1.25">1.25× · preserve voice</option>
+              <option value="1.50">1.50×</option>
+              <option value="1.80">1.80×</option>
+              <option value="2.50">2.50× · extreme</option>
+            </select>
+          </label>
+          <label class="setup-field">
+            <span>Stretch engine</span>
+            <select id="setup-voice-engine">
+              <option value="auto">Auto · Signalsmith if installed, then FFmpeg</option>
+              <option value="ffmpeg">FFmpeg · atempo</option>
+              <option value="signalsmith">Signalsmith Stretch</option>
+            </select>
+          </label>
+          <label class="setup-check"><input id="setup-voice-extreme" type="checkbox"> Allow extreme chipmunk speed above 1.8×</label>
+          <p id="setup-voice-warning" class="setup-hint" role="status" hidden></p>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
             <h3>Optional packs</h3>
             <button id="setup-packs-refresh" class="ghost small" type="button">Refresh</button>
           </div>

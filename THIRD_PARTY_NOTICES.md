@@ -15,6 +15,8 @@ Resolve exact versions and full license texts from the release environment; see
 | NumPy | BSD-3-Clause and bundled permissive notices | https://numpy.org |
 | Pillow | MIT-CMU (HPND) | https://python-pillow.org |
 | yt-dlp | Unlicense | https://github.com/yt-dlp/yt-dlp |
+| python-stretch (optional) | MIT | https://github.com/gregogiudici/python-stretch |
+| Signalsmith Stretch (optional, via python-stretch) | MIT | https://github.com/Signalsmith-Audio/signalsmith-stretch |
 
 yt-dlp is the default URL downloader and is used through its public Python API.
 A copy of the Unlicense text must be included in release artifacts. No

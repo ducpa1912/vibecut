@@ -10,6 +10,7 @@ import json
 import math
 import os
 import struct
+import types
 import wave
 from pathlib import Path
 
@@ -143,10 +144,18 @@ def test_duck_and_mix_ducks_original_speech_and_new_bed_under_dub(monkeypatch, t
     assert mixed == tmp_path / "mix.wav"
 
 
-def test_voice_track_uses_slot_band_and_never_past_1_15(monkeypatch, tmp_path):
+def test_voice_track_uses_slot_band_and_never_past_1_25(monkeypatch, tmp_path):
     calls: list[list[str]] = []
+    fitted: list[float] = []
     monkeypatch.setattr(audio, "_run", lambda args, **kwargs: calls.append(list(args)))
     monkeypatch.setattr(audio, "media_duration", lambda path: 8.0)
+
+    def fake_fit(source, output, rate, **kwargs):
+        fitted.append(rate)
+        applied = min(rate, float(kwargs.get("max_speed") or 1.25))
+        return types.SimpleNamespace(applied=applied, backend="ffmpeg", warning="")
+
+    monkeypatch.setattr(audio.voice_fit, "fit_audio", fake_fit)
     line = {
         "path": tmp_path / "line.wav",
         "text": "hello",
@@ -157,10 +166,11 @@ def test_voice_track_uses_slot_band_and_never_past_1_15(monkeypatch, tmp_path):
     }
     audio._voice_track([], [line], tmp_path, 10.0, 0.0)
     graph = calls[-1][calls[-1].index("-filter_complex") + 1]
-    assert "atempo=1.1500" in graph
-    assert "atempo=1.3500" not in graph
+    assert fitted == [pytest.approx(8.0 / 3.94)]
+    assert "atempo=1.25" not in graph
+    assert "atempo=1.15" not in graph
     assert line["fit"]["action"] == "shorten"
-    assert line["fit"]["overflow"] == 3.4
+    assert line["fit"]["overflow"] == 3.0
 
 
 # ---------------------------------------------------------------- slot fit
@@ -175,8 +185,8 @@ def test_slot_fit_band():
     too_long = tts.plan_slot_fit(13.0, 10.0)
     assert too_long["fits"] is False
     assert too_long["action"] == "shorten"
-    assert too_long["tempo"] == 1.15
-    assert too_long["overflow"] == 1.5
+    assert too_long["tempo"] == 1.25
+    assert too_long["overflow"] == 0.5
     too_short = tts.plan_slot_fit(7.0, 10.0)
     assert too_short["action"] == "pad"
     assert too_short["tempo"] == 0.9
@@ -193,10 +203,10 @@ def test_fit_dub_lines_calls_shorten_and_summarises():
         return "短句"
 
     fitted = tts.fit_dub_lines(lines, shorten=shorten)
-    assert calls == [3.4]
+    assert calls == [3.0]
     assert fitted[0]["text"] == "短句"
     assert fitted[0]["shortened"] is True
-    assert fitted[0]["too_long_by"] == 3.4
+    assert fitted[0]["too_long_by"] == 3.0
     assert tts.slot_fit_summary(fitted) == {
         "total": 1, "fitted": 0, "percent": 0.0, "flagged": 1,
     }
@@ -616,3 +626,62 @@ def test_minimax_only_music_route_falls_back_to_openrouter_lyria(tmp_path, monke
     )
     assert result.is_file()
     assert tried == ["openrouter:google/lyria-3-pro-preview"]
+
+
+def test_voice_track_honors_requested_line_rate(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+    fitted: list[float] = []
+    monkeypatch.setattr(audio, "_run", lambda args, **kwargs: calls.append(list(args)))
+    monkeypatch.setattr(audio, "media_duration", lambda path: 2.0)
+
+    def fake_fit(source, output, rate, **kwargs):
+        fitted.append(rate)
+        applied = min(rate, float(kwargs.get("max_speed") or 1.25))
+        return types.SimpleNamespace(applied=applied, backend="ffmpeg", warning="")
+
+    monkeypatch.setattr(audio.voice_fit, "fit_audio", fake_fit)
+    line = {
+        "path": tmp_path / "line.wav",
+        "text": "hello",
+        "offset": 0.0,
+        "slot": 5.0,
+        "rate": 1.4,
+    }
+    audio._voice_track([], [line], tmp_path, 6.0, 0.0)
+    assert fitted == [1.4]
+    assert line["requested_rate"] == 1.4
+    assert line["effective_tempo"] == 1.25
+
+
+def test_voice_track_slow_request_never_overflows_slot(monkeypatch, tmp_path):
+    fitted: list[float] = []
+    monkeypatch.setattr(audio, "_run", lambda args, **kwargs: None)
+    monkeypatch.setattr(audio, "media_duration", lambda path: 10.1)
+
+    def fake_fit(source, output, rate, **kwargs):
+        fitted.append(rate)
+        applied = min(rate, float(kwargs.get("max_speed") or 1.25))
+        return types.SimpleNamespace(applied=applied, backend="ffmpeg", warning="")
+
+    monkeypatch.setattr(audio.voice_fit, "fit_audio", fake_fit)
+    line = {
+        "path": tmp_path / "line.wav",
+        "text": "hello",
+        "offset": 0.0,
+        "slot": 10.0,
+        "rate": 0.94,
+    }
+    audio._voice_track([], [line], tmp_path, 10.0, 0.0)
+    assert fitted == [pytest.approx(10.1 / 9.94)]
+    assert line["effective_tempo"] == pytest.approx(10.1 / 9.94, abs=0.001)
+
+
+def test_refit_script_does_not_double_count_the_fit_rate():
+    text = "one two three four five six seven eight nine ten " * 3
+    out = audio.refit_script([{
+        "text": text,
+        "duration": 2.0,
+        "rate": 1.0,
+    }], 1.0)
+    assert out and out[0]["shortened"] is True
+    assert audio.estimate_seconds(out[0]["text"], 1.0) <= 2.0 * 1.25 + 0.05

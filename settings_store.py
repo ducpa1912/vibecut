@@ -10,6 +10,7 @@ shadow the project's own key.
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 from pathlib import Path
@@ -90,6 +91,12 @@ DEFAULTS = {
     },
     "rights": {
         "lock": True,
+    },
+    "voice_fit": {
+        "preserve_pitch": True,
+        "max_speed": 1.80,
+        "engine": "auto",
+        "allow_extreme_speed": False,
     },
     "caption_styles": captions.default_style_settings(),
     "workflows": workflow_config.default_workflows(),
@@ -230,6 +237,34 @@ def _normalize_rights(value: object) -> dict:
     return {"lock": lock}
 
 
+def _normalize_voice_fit(value: object) -> dict:
+    """Keep the shared voice-fit policy valid across lanes."""
+    section = dict(value) if isinstance(value, dict) else {}
+    preserve = section.get("preserve_pitch", True)
+    if isinstance(preserve, str):
+        preserve = preserve.strip().casefold() not in {"0", "false", "no", "off", ""}
+    preserve = bool(preserve)
+    try:
+        speed = float(section.get("max_speed", 1.80))
+    except (TypeError, ValueError):
+        speed = 1.80
+    if not math.isfinite(speed):
+        speed = 1.80
+    speed = max(1.0, min(2.5, speed))
+    engine = str(section.get("engine") or "auto").strip().lower()
+    if engine not in {"auto", "ffmpeg", "signalsmith"}:
+        engine = "auto"
+    extreme = section.get("allow_extreme_speed", False)
+    if isinstance(extreme, str):
+        extreme = extreme.strip().casefold() in {"1", "true", "yes", "on"}
+    return {
+        "preserve_pitch": preserve,
+        "max_speed": round(speed, 2),
+        "engine": engine,
+        "allow_extreme_speed": bool(extreme),
+    }
+
+
 def _clean_ingest(settings: dict) -> None:
     ingest = dict(settings.get("ingest") or {})
     # Secrets belong in secrets.json, never in the public settings document.
@@ -277,6 +312,7 @@ def load_settings() -> dict:
         merged["translation"] = translation
     _clean_ingest(merged)
     merged["rights"] = _normalize_rights(merged.get("rights"))
+    merged["voice_fit"] = _normalize_voice_fit(merged.get("voice_fit"))
     try:
         merged["caption_styles"] = captions.normalize_style_settings(
             merged.get("caption_styles"),
@@ -301,6 +337,7 @@ def save_settings(patch: dict) -> dict:
         current = load_settings()
         merged = _merge(current, patch)
         merged["rights"] = _normalize_rights(merged.get("rights"))
+        merged["voice_fit"] = _normalize_voice_fit(merged.get("voice_fit"))
         DATA.mkdir(parents=True, exist_ok=True)
         try:
             DATA.chmod(0o700)

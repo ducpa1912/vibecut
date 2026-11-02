@@ -61,6 +61,11 @@ let notice = "";
 let noticeTone = "";
 let testLine = DEFAULT_LINE;
 let rate = 1;
+let preservePitch = true;
+let maxSpeed = 1.80;
+let stretchEngine = "auto";
+let extremeSpeed = false;
+let voiceFitSaving = "";
 let query = "";
 let language = "";
 let favoritesOnly = false;
@@ -148,6 +153,12 @@ async function load() {
   ]);
   if (stateResult.status === "fulfilled") {
     settings = stateResult.value;
+    const voiceFit = settings?.settings?.voice_fit || {};
+    preservePitch = voiceFit.preserve_pitch !== false;
+    maxSpeed = Number(voiceFit.max_speed || 1.80);
+    stretchEngine = ["auto", "ffmpeg", "signalsmith"].includes(voiceFit.engine)
+      ? voiceFit.engine : "auto";
+    extremeSpeed = voiceFit.allow_extreme_speed === true;
   } else {
     error = stateResult.reason?.message || "Could not read this app's setup.";
   }
@@ -503,10 +514,40 @@ function cloneSection(number = "02") {
   ]);
 }
 
+async function saveVoiceFit(patch) {
+  voiceFitSaving = "saving";
+  try {
+    const result = await request("/api/settings", {
+      method: "POST",
+      body: { settings: { voice_fit: patch } },
+    });
+    settings = result;
+    const voiceFit = result?.settings?.voice_fit || {};
+    preservePitch = voiceFit.preserve_pitch !== false;
+    maxSpeed = Number(voiceFit.max_speed || 1.80);
+    stretchEngine = ["auto", "ffmpeg", "signalsmith"].includes(voiceFit.engine)
+      ? voiceFit.engine : "auto";
+    extremeSpeed = voiceFit.allow_extreme_speed === true;
+    setNotice("Voice fit saved for this project.", "ok");
+  } catch (error) {
+    setNotice(error?.message || "Could not save voice fit.", "bad");
+  } finally {
+    voiceFitSaving = "";
+    render();
+  }
+}
+
 function testCard() {
   const line = el("textarea", { rows: 2, maxLength: 300, value: testLine, "aria-label": "Test line" });
   line.addEventListener("input", () => { testLine = line.value.trim() || DEFAULT_LINE; });
-  const speed = el("input", { type: "range", min: "0.7", max: "1.4", step: "0.05", value: String(rate), "aria-label": "Rate" });
+  const sliderMax = preservePitch
+    ? Math.min(1.25, maxSpeed)
+    : (extremeSpeed ? 2.5 : Math.min(maxSpeed, 1.8));
+  const speed = el("input", {
+    type: "range", min: "0.7", max: String(sliderMax),
+    step: "0.05", value: String(Math.min(rate, sliderMax)),
+    "aria-label": "Rate",
+  });
   const speedValue = el("span", { class: "mono hint", text: `${rate.toFixed(2)}×` });
   speed.addEventListener("input", () => {
     rate = Number(speed.value) || 1;
@@ -514,9 +555,101 @@ function testCard() {
   });
   const stop = el("button", { class: "ghost small", type: "button", text: "Stop" });
   stop.addEventListener("click", () => stopVoice());
+
+  const preserve = el("input", { type: "checkbox", checked: preservePitch, "aria-label": "Preserve voice pitch and tone" });
+  preserve.addEventListener("change", () => {
+    preservePitch = preserve.checked;
+    if (preservePitch) {
+      extremeSpeed = false;
+      if (maxSpeed > 1.8) maxSpeed = 1.8;
+      if (rate > 1.25) rate = 1.25;
+    }
+    void saveVoiceFit({
+      preserve_pitch: preservePitch,
+      max_speed: maxSpeed,
+      engine: stretchEngine,
+      allow_extreme_speed: extremeSpeed,
+    });
+  });
+
+  const max = el("select", { "aria-label": "Maximum voice speed" });
+  [1.10, 1.15, 1.20, 1.25, 1.50, 1.80, 2.50].forEach((value) => {
+    const option = el("option", { value: value.toFixed(2), text: `${value.toFixed(2)}×` });
+    if (Math.abs(value - maxSpeed) < 0.005) option.selected = true;
+    max.append(option);
+  });
+  max.addEventListener("change", () => {
+    maxSpeed = Number(max.value) || 1.80;
+    if (maxSpeed >= 2.5) extremeSpeed = true;
+    else if (maxSpeed <= 1.8) extremeSpeed = false;
+    void saveVoiceFit({
+      preserve_pitch: preservePitch,
+      max_speed: maxSpeed,
+      engine: stretchEngine,
+      allow_extreme_speed: extremeSpeed,
+    });
+  });
+
+  const signalsmith = settings?.runtime?.voice_fit?.signalsmith === true;
+  const engine = el("select", { "aria-label": "Stretch engine" });
+  [
+    ["auto", "Auto · Signalsmith if installed, then FFmpeg"],
+    ["ffmpeg", "FFmpeg · atempo"],
+    ["signalsmith", signalsmith ? "Signalsmith Stretch" : "Signalsmith Stretch · not installed"],
+  ].forEach(([value, label]) => {
+    const option = el("option", { value, text: label });
+    if (value === stretchEngine) option.selected = true;
+    if (value === "signalsmith" && !signalsmith) option.disabled = true;
+    engine.append(option);
+  });
+  engine.addEventListener("change", () => {
+    stretchEngine = engine.value || "auto";
+    void saveVoiceFit({
+      preserve_pitch: preservePitch,
+      max_speed: maxSpeed,
+      engine: stretchEngine,
+      allow_extreme_speed: extremeSpeed,
+    });
+  });
+
+  const extreme = el("input", { type: "checkbox", checked: extremeSpeed, "aria-label": "Allow extreme chipmunk speed" });
+  extreme.disabled = preservePitch;
+  extreme.addEventListener("change", () => {
+    extremeSpeed = extreme.checked;
+    if (extremeSpeed) {
+      maxSpeed = 2.5;
+      max.value = "2.50";
+    } else if (maxSpeed > 1.8) {
+      maxSpeed = 1.8;
+      max.value = "1.80";
+    }
+    void saveVoiceFit({
+      preserve_pitch: preservePitch,
+      max_speed: maxSpeed,
+      engine: stretchEngine,
+      allow_extreme_speed: extremeSpeed,
+    });
+  });
+
+  const warning = el("p", {
+    class: "hint",
+    text: preservePitch
+      ? "Preserve voice keeps pitch and tone; lines are capped at 1.25× and the script is shortened if needed."
+      : "Preserve voice is off. Faster lines raise pitch and may create a chipmunk sound.",
+  });
+
   return el("div", { class: "vr-card vr-test" }, [
     el("label", { class: "vr-field" }, [el("span", { text: "Test line · used by every Play" }), line]),
     el("div", { class: "vr-rate" }, [el("span", { class: "hint", text: "Rate" }), speed, speedValue, stop]),
+    el("details", { class: "vr-advanced" }, [
+      el("summary", { text: "Advanced voice fit" }),
+      el("label", { class: "vr-check" }, [preserve, el("span", { text: "Preserve voice pitch & tone" })]),
+      warning,
+      el("div", { class: "vr-rate" }, [el("span", { class: "hint", text: "Max speed" }), max]),
+      el("div", { class: "vr-rate" }, [el("span", { class: "hint", text: "Stretch engine" }), engine]),
+      el("label", { class: "vr-check" }, [extreme, el("span", { text: "Allow extreme chipmunk speed above 1.8×" })]),
+      voiceFitSaving ? el("p", { class: "hint", text: "Saving voice fit…" }) : "",
+    ]),
   ]);
 }
 

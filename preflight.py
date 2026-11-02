@@ -28,6 +28,7 @@ import detect
 import edits
 import overlays
 import routes_cleanup
+import voice_fit
 
 LOGGER = logging.getLogger("vibecut.preflight")
 
@@ -1319,7 +1320,7 @@ PREFLIGHT_RESIDUAL_FRAMES = 24
 PREFLIGHT_RESIDUAL_TIMEOUT = 90.0
 MARKER_LIMIT = 200
 VOICE_FIT_MIN = 0.90
-VOICE_FIT_MAX = 1.15
+VOICE_FIT_MAX = 1.25
 _LOUDNESS_KEYS = ("integrated_lufs", "measured_lufs", "loudness_lufs")
 
 router = APIRouter()
@@ -1868,7 +1869,7 @@ def voice_fit_markers(edit: dict, duration: float) -> list[dict]:
         action = str(fit.get("action") or line.get("action") or "").lower()
         native = _number(fit.get("native") if fit else line.get("native"))
         slot = _number(line.get("slot"))
-        if action not in {"shorten", "pad"} and native and slot and slot > 0.05:
+        if action not in {"shorten", "pad"} and not fit and native and slot and slot > 0.05:
             ratio = native / slot
             if ratio > VOICE_FIT_MAX:
                 action = "shorten"
@@ -1903,12 +1904,13 @@ def voice_fit_markers(edit: dict, duration: float) -> list[dict]:
             start, end, "voice_fit", message,
         ))
     rate = _number(voice.get("rate"))
-    if rate is not None and not (VOICE_FIT_MIN <= rate <= VOICE_FIT_MAX):
+    fit_max = max(VOICE_FIT_MAX, voice_fit.max_speed_default())
+    if rate is not None and not (VOICE_FIT_MIN <= rate <= fit_max):
         markers.append(_marker(
             0.0, duration, "voice_fit",
             (
                 f"Voice rate is {rate:.2f}×, outside the "
-                f"{VOICE_FIT_MIN:.2f}–{VOICE_FIT_MAX:.2f}× slot-fit band."
+                f"{VOICE_FIT_MIN:.2f}–{fit_max:.2f}× slot-fit band."
             ),
         ))
     if not markers:
