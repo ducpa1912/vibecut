@@ -1409,8 +1409,14 @@ def _keep_preview(path, *, engine: str, voice: str, text: str, rate: float,
 
 
 @router.get("/api/voices/clones/{voice_id}/persona")
-def export_voice_file(voice_id: str, include_reference: bool = False) -> Response:
-    """A .vcutvoice file: manifest, short preview, and the clip only if ticked."""
+def export_voice_file(
+    voice_id: str, request: Request, include_reference: bool = False,
+) -> Response:
+    """A .vcutvoice file: manifest, short preview, and the clip only if ticked.
+
+    It can carry the raw voice clip, so another site may not even start it.
+    """
+    _guard(request)
     record = voice_clone.get_clone(voice_id)
     if record is None:
         raise HTTPException(404, voice_errors.MISSING_VOICE)

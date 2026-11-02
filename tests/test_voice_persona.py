@@ -250,3 +250,11 @@ def test_the_ui_exports_and_imports_voice_files():
     assert "Import a voice file" in setup
     assert "export function personaUrl" in clone
     assert "export async function importPersona" in clone
+
+
+def test_another_site_cannot_start_an_export(api, tmp_path):
+    record = clone(tmp_path)
+    url = f"/api/voices/clones/{record['voice_id']}/persona?include_reference=1"
+    blocked = api.get(url, headers={"Sec-Fetch-Site": "cross-site"})
+    assert blocked.status_code == 403
+    assert api.get(url, headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
