@@ -4,8 +4,8 @@
  * Four steps: Import · Moments · Edit · Finish.
  * Native ES modules, no build step, no new backend routes.
  *
- * Classic stays whole. This app is an overlay; Settings → "Use Classic editor"
- * saves the choice in this browser and reopens the Classic page.
+ * Studio is its own workspace: one page, one app, no link into Classic or the
+ * Voice Room. Voice features live in Setup and the Edit audio layer.
  */
 
 import { mount as mountImport } from "./import.js";
@@ -19,7 +19,6 @@ import { cachedJobStamp, getJob, getJobStatus, invalidateReadCache, listClipSets
 import { el, statusText } from "./ui.js";
 
 const JOB_KEY = "vibecut.studio.job";
-const EDITOR_KEY = "vibecut.editor";
 
 const STEPS = [
   { id: "import", label: "Import", note: "Bring in a video", mount: mountImport },
@@ -141,7 +140,6 @@ export function startStudio() {
   const root = document.getElementById("studio-root");
   if (!root) return;
 
-  if (document.documentElement.dataset.editor === "classic") return;
   if (document.documentElement.dataset.editor === undefined
     || document.documentElement.dataset.editor === "") {
     document.documentElement.dataset.editor = "studio";
@@ -205,7 +203,6 @@ export function startStudio() {
       </div>
       <div class="st-menu-workspace" aria-label="Workspace">
         <button id="st-change-video" class="st-btn st-btn-ghost st-btn-small" type="button">Change video</button>
-        <a id="st-voice-room" class="st-btn st-btn-quiet st-btn-small" href="/voices">Voice Room</a>
       </div>
       <div class="st-menu-tabs" role="tablist" aria-label="Setup and settings">
         <button id="st-menu-tab-setup" class="st-menu-tab" type="button" role="tab" aria-selected="true" aria-controls="st-menu-setup" tabindex="0" data-menu-tab="setup">Setup</button>
@@ -215,12 +212,6 @@ export function startStudio() {
         <div id="st-setup-host" class="st-setup-host"></div>
       </div>
       <div id="st-menu-settings" class="st-dialog-body st-menu-panel" role="tabpanel" aria-labelledby="st-menu-tab-settings" hidden>
-        <section class="st-dialog-section">
-          <h3>Editor</h3>
-          <p>Studio is the new workspace. Classic keeps every older screen, unchanged.</p>
-          <a id="st-use-classic" class="st-btn st-btn-ghost" href="/?classic=1">Use Classic editor</a>
-          <p class="st-hint">Saved in this browser. Classic opens in a fresh page; an “Open Studio” link brings you back.</p>
-        </section>
         <section class="st-dialog-section">
           <h3>Current video</h3>
           <p id="st-dialog-job" class="st-dialog-job">No video open.</p>
@@ -778,13 +769,6 @@ export function startStudio() {
   dom.forget.addEventListener("click", () => {
     closeMenu();
     ctx.clearJob();
-  });
-  root.querySelector("#st-use-classic")?.addEventListener("click", () => {
-    try {
-      localStorage.setItem(EDITOR_KEY, "classic");
-    } catch (_) {
-      /* The query parameter still selects Classic. */
-    }
   });
 
   document.body.classList.add("st-active");

@@ -41,7 +41,6 @@
 }
 
 #studio-root:empty { display: none !important; }
-html[data-editor="classic"] #studio-root { display: none !important; }
 body.st-active { overflow: hidden; }
 
 #studio-root *,
@@ -57,8 +56,7 @@ body.st-active { overflow: hidden; }
 #studio-root img { display: block; max-width: 100%; }
 #studio-root [hidden] { display: none !important; }
 
-#studio-root :focus-visible,
-#classic-studio-return:focus-visible {
+#studio-root :focus-visible {
   outline: 2px solid var(--st-accent, #e8a266);
   outline-offset: 3px;
 }
@@ -1171,33 +1169,6 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 .st-menu-dialog .st-dialog-foot { justify-content: space-between; }
 .st-menu-dialog .st-dialog-foot .st-local { font-size: 12px; }
 
-/* ------------------------------------------------ Classic return, on Classic */
-
-#classic-studio-return {
-  display: none;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 12px;
-  border: 1px solid #35353a;
-  border-radius: 999px;
-  background: transparent;
-  color: #f1efe9;
-  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-}
-#classic-studio-return:hover { border-color: #5a5a62; background: #17171a; }
-#classic-studio-return::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #e8a266;
-}
-html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
-
 /* -------------------------------------------------------------- responsive */
 
 @media (max-width: 1100px) {
@@ -1219,10 +1190,6 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
   .st-step { padding: 7px 9px; }
   .st-step-num { display: none; }
   .st-step-copy strong { font-size: 12.5px; }
-}
-
-@media (max-width: 700px) {
-  #st-voice-room { display: none; }
 }
 
 @media (max-width: 620px) {
@@ -1861,16 +1828,6 @@ html[data-editor="classic"] #classic-studio-return { display: inline-flex; }
 .st-voice-clone-row { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--st-line); border-radius: 8px; }
 .st-voice-clone-row p { margin: 0; }
 .st-voice-clone-edit { display: grid; gap: 8px; }
-
-/* Voice Room entry: beside Open Studio on Classic, in the Studio top bar. */
-#classic-voice-room {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 6px 12px; border: 1px solid #35353a; border-radius: 999px;
-  color: #f1efe9; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap;
-}
-#classic-voice-room:hover { border-color: #5a5a62; background: #17171a; }
-#classic-voice-room::before { content: "◉"; font-size: 10px; color: #e8a266; }
 
 /* Stories: a video read without its speech. */
 .st-speech-missing { display: grid; gap: 8px; justify-items: start; margin-top: 12px; }

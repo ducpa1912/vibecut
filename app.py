@@ -33,6 +33,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+# ``studio_app.py`` sets this before importing the module. Studio's build owns
+# its page and does not import Classic's router, so the Classic tree can be
+# absent without breaking boot. The default keeps the shared app as it was.
+STUDIO_APP = os.environ.get("VIBECUT_APP", "").strip().lower() == "studio"
+
 import artifacts
 import audio
 import captions as caption_engine
@@ -58,7 +63,8 @@ import rights
 import routes_auto_subs
 import routes_batches
 import routes_check
-import routes_classic
+if not STUDIO_APP:
+    import routes_classic
 import routes_cleanup
 import routes_edits
 import routes_library
@@ -3186,8 +3192,10 @@ app.include_router(routes_edits.router)
 app.include_router(__import__("routes_trim", fromlist=["router"]).router)
 app.include_router(routes_overlays.router)
 app.include_router(routes_voice_clone.router)
+# Studio owns its page, so its build skips the Classic router entirely.
+if not STUDIO_APP:
+    app.include_router(routes_classic.router)
 # Lane modules: new routes go here, not into app.py (docs/branching.md).
-app.include_router(routes_classic.router)
 app.include_router(routes_auto_subs.router)
 app.include_router(routes_studio.router)
 app.include_router(music.router)
@@ -3422,6 +3430,8 @@ def page_file(request: Request) -> Path:
     Edition ``all`` keeps the old ``?classic=1`` / ``?studio=1`` switch without
     loading the other lane's markup.
     """
+    if STUDIO_APP:
+        return STATIC / "index.html"
     if editions.edition() == "classic":
         return STATIC / "classic" / "index.html"
     if editions.edition() == "all" and request.query_params.get("classic") == "1":
@@ -3435,12 +3445,17 @@ def index(request: Request) -> Response:
     return page_response(page_file(request))
 
 
-@app.get("/voices")
 def voice_room(request: Request) -> FileResponse:
     if not editions.feature_on("voice_room"):
         raise HTTPException(404, "Not found")
     page = STATIC / ("voices-next.html" if request.query_params.get("ui") == "new" else "voices.html")
     return FileResponse(page)
+
+
+# The Voice Room page belongs to its own lane. Studio ships the voice features
+# inside Setup and Edit, not this page, so a Studio build does not register it.
+if not STUDIO_APP:
+    app.add_api_route("/voices", voice_room, methods=["GET"])
 
 
 @app.get("/_ductator/")
@@ -8694,6 +8709,9 @@ def _classic_edit_from_body(
     audio_plan: dict | None,
 ):
     """Turn Classic's layer payload into the Edit the renderer compiles."""
+    if STUDIO_APP:
+        # Studio renders saved edits through routes_edits, never this payload.
+        return None, None
     if not isinstance(body.edit, dict) or not body.edit:
         return None, None
     return routes_classic.prepare_classic_render(

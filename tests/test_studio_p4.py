@@ -16,9 +16,11 @@ CSS = (STUDIO / "studio.css").read_text(encoding="utf-8")
 def test_app_bar_is_compact_and_moves_video_actions_into_the_menu():
     assert 'class="st-top-actions"' in SHELL
     assert 'id="st-change-video"' in SHELL
-    assert 'id="st-voice-room"' in SHELL
     assert "st-menu-workspace" in SHELL
-    assert 'href="/voices"' in SHELL
+    # Studio owns its workspace: no link into the Classic or Voice Room pages.
+    assert 'id="st-voice-room"' not in SHELL
+    assert 'href="/voices"' not in SHELL
+    assert 'href="/?classic=1"' not in SHELL
     # The top row has one action: the Menu button.
     start = SHELL.index('<div class="st-top-actions">')
     end = SHELL.index("</div>", start)
