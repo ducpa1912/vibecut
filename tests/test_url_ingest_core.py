@@ -50,7 +50,6 @@ def test_detect_ytdlp_domains(url: str) -> None:
 def test_detect_explicit_override_wins() -> None:
     xhs_url = "https://www.xiaohongshu.com/explore/abc"
     video_url = "https://www.youtube.com/watch?v=abc"
-    assert registry.detect(xhs_url, registry.COBALT) == registry.COBALT
     assert registry.detect(video_url, registry.XHS) == registry.XHS
     assert registry.detect(xhs_url, "xhs_get") == registry.XHS
     assert registry.detect(video_url, "yt-dlp") == registry.YTDLP
@@ -81,16 +80,6 @@ def test_detect_explicit_override_wins() -> None:
 def test_detect_rejects_invalid_urls(url: object) -> None:
     with pytest.raises(IngestError):
         registry.detect(url)  # type: ignore[arg-type]
-
-
-def test_cobalt_is_never_a_default() -> None:
-    for url in (
-        "https://www.youtube.com/watch?v=abc",
-        "https://vimeo.com/123456",
-        "https://example.com/video.mp4",
-    ):
-        assert registry.detect(url) == registry.YTDLP
-        assert registry.detect(url) != registry.COBALT
 
 
 def test_detect_rejects_unknown_override() -> None:
@@ -134,25 +123,19 @@ def test_normalize_settings_accepts_full_app_settings() -> None:
             "opencode": {"model": "unrelated"},
             "ingest": {
                 "provider": "XHS_GET",
-                "cobalt_url": "  http://127.0.0.1:8123  ",
-                "cobalt_quality": 720,
-                "cobalt_codec": " H265 ",
-                "cobalt_local_processing": "FORCED",
+                "xhs_url": "  http://127.0.0.1:8123  ",
                 "xhs_no_record": "false",
                 "xhs_interval": "2.5",
-                "cobalt_api_key": "secret-value",
+                "xhs_token": "secret-value",
             },
         }
     )
     assert normalized["provider"] == registry.XHS
-    assert normalized["cobalt_url"] == "http://127.0.0.1:8123"
-    assert normalized["cobalt_quality"] == "720"
-    assert normalized["cobalt_codec"] == "h265"
-    assert normalized["cobalt_local_processing"] == "forced"
+    assert normalized["xhs_url"] == "http://127.0.0.1:8123"
     assert normalized["xhs_no_record"] is False
     assert normalized["xhs_interval"] == 2.5
     # Provider extensions pass through untouched.
-    assert normalized["cobalt_api_key"] == "secret-value"
+    assert normalized["xhs_token"] == "secret-value"
 
 
 def test_normalize_settings_falls_back_on_invalid_values() -> None:
@@ -160,9 +143,7 @@ def test_normalize_settings_falls_back_on_invalid_values() -> None:
         {
             "ingest": {
                 "provider": "bogus",
-                "cobalt_url": "   ",
-                "cobalt_quality": None,
-                "cobalt_local_processing": "sometimes",
+                "xhs_url": "   ",
                 "xhs_no_record": "maybe",
                 "xhs_interval": "nan",
             }
@@ -170,9 +151,7 @@ def test_normalize_settings_falls_back_on_invalid_values() -> None:
     )
     assert normalized["provider"] == registry.AUTO
     # An explicitly cleared endpoint stays cleared.
-    assert normalized["cobalt_url"] == ""
-    assert normalized["cobalt_quality"] == "1080"
-    assert normalized["cobalt_local_processing"] == "preferred"
+    assert normalized["xhs_url"] == ""
     assert normalized["xhs_no_record"] is True
     assert normalized["xhs_interval"] == 12.0
 
@@ -192,7 +171,6 @@ def test_options_from_settings() -> None:
             "ytdlp_cookies": "browser",
             "ytdlp_browser": "firefox",
             "ytdlp_cookie_file": "/tmp/cookies.txt",
-            "cobalt_local_processing": "forced",
             "xhs_no_record": False,
             "xhs_interval": "3",
         }
@@ -205,7 +183,7 @@ def test_options_from_settings() -> None:
         cookies="browser",
         browser="firefox",
         cookie_file="/tmp/cookies.txt",
-        local_processing="forced",
+        local_processing="preferred",
         no_record=False,
         interval=3.0,
     )
@@ -229,7 +207,7 @@ def test_options_from_settings() -> None:
         cookies="file",
         browser="firefox",
         cookie_file="/tmp/cookies.txt",
-        local_processing="forced",
+        local_processing="preferred",
         no_record=True,
         interval=5.5,
     )
@@ -239,24 +217,13 @@ def test_options_from_settings() -> None:
 # Provider construction and status
 
 
-class _FakeCobalt(Provider):
-    id = "cobalt"
-    label = "Cobalt"
+class _FakeXhs(Provider):
+    id = "xhs"
+    label = "XHS / RedNote"
 
     def __init__(self, settings: dict | None = None) -> None:
         super().__init__(settings)
         self.seen_settings = dict(settings or {})
-
-    def inspect(self, url: str, options: IngestOptions) -> dict:
-        return {"url": url}
-
-    def download(self, url, dest, options, progress, cancel_event):  # type: ignore[no-untyped-def]
-        raise NotImplementedError
-
-
-class _FakeXhs(Provider):
-    id = "xhs"
-    label = "XHS / RedNote"
 
     def inspect(self, url: str, options: IngestOptions) -> dict:
         return {"url": url}
@@ -287,7 +254,7 @@ def _install_fake_module(
 def test_provider_construction_is_lazy_and_passes_normalized_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_fake_module(monkeypatch, "cobalt", "CobaltProvider", _FakeCobalt)
+    _install_fake_module(monkeypatch, "xhs", "XhsGetProvider", _FakeXhs)
     calls: list[str] = []
     real_import = registry._import_provider_module
 
@@ -297,19 +264,18 @@ def test_provider_construction_is_lazy_and_passes_normalized_settings(
 
     monkeypatch.setattr(registry, "_import_provider_module", tracked_import)
     instance = registry.provider(
-        "cobalt",
+        "xhs",
         {
             "ingest": {
-                "cobalt_url": "http://127.0.0.1:9999/",
-                "cobalt_api_key": "key-123",
+                "xhs_url": "http://127.0.0.1:9999/",
+                "xhs_token": "key-123",
             }
         },
     )
-    assert isinstance(instance, _FakeCobalt)
-    assert instance.seen_settings["cobalt_url"] == "http://127.0.0.1:9999/"
-    assert instance.seen_settings["cobalt_api_key"] == "key-123"
-    assert instance.seen_settings["cobalt_quality"] == "1080"
-    assert calls == ["cobalt"]
+    assert isinstance(instance, _FakeXhs)
+    assert instance.seen_settings["xhs_url"] == "http://127.0.0.1:9999/"
+    assert instance.seen_settings["xhs_token"] == "key-123"
+    assert calls == ["xhs"]
 
 
 def test_provider_auto_uses_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -362,18 +328,17 @@ def test_unknown_provider_errors() -> None:
 def test_missing_provider_module_is_an_ingest_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setitem(sys.modules, "url_ingest.cobalt", None)
-    with pytest.raises(IngestError, match="Cobalt provider is unavailable"):
-        registry.provider("cobalt", {"ingest": {}})
+    monkeypatch.setitem(sys.modules, "url_ingest.xhs", None)
+    with pytest.raises(IngestError, match="XHS / RedNote provider is unavailable"):
+        registry.provider("xhs", {"ingest": {}})
 
 
 def test_status_with_provider_modules_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "url_ingest.ytdlp", None)
-    monkeypatch.setitem(sys.modules, "url_ingest.cobalt", None)
     monkeypatch.setitem(sys.modules, "url_ingest.xhs", None)
 
     result = registry.status({"ingest": {}})
-    assert set(result) == {registry.YTDLP, registry.COBALT, registry.XHS}
+    assert set(result) == {registry.YTDLP, registry.XHS}
     for provider_id, entry in result.items():
         assert set(entry) == {"id", "label", "configured", "available", "error"}
         assert entry["id"] == provider_id
@@ -381,7 +346,6 @@ def test_status_with_provider_modules_absent(monkeypatch: pytest.MonkeyPatch) ->
         assert entry["available"] is False
         assert "module is unavailable" in entry["error"]
     assert result[registry.YTDLP]["label"] == "yt-dlp"
-    assert result[registry.COBALT]["label"] == "Cobalt"
     assert result[registry.XHS]["label"] == "XHS / RedNote"
 
 
@@ -400,45 +364,30 @@ def test_status_reports_ytdlp_version_without_sidecars(
             }
 
     _install_fake_module(monkeypatch, "ytdlp", "YtDlpProvider", VersionedYtdlp)
-    monkeypatch.setitem(sys.modules, "url_ingest.cobalt", None)
     monkeypatch.setitem(sys.modules, "url_ingest.xhs", None)
 
     result = registry.status({"ingest": {}})
     assert result[registry.YTDLP]["available"] is True
     assert result[registry.YTDLP]["version"] == "2026.10.21"
-    assert result[registry.COBALT]["available"] is False
     assert result[registry.XHS]["available"] is False
 
 
 def test_status_reports_invalid_configured_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "url_ingest.cobalt", None)
-    result = registry.status({"ingest": {"cobalt_url": "ftp://example.com"}})
-    entry = result[registry.COBALT]
+    monkeypatch.setitem(sys.modules, "url_ingest.xhs", None)
+    result = registry.status({"ingest": {"xhs_url": "ftp://example.com"}})
+    entry = result[registry.XHS]
     assert entry["configured"] is False
     assert entry["available"] is False
     assert "URL is invalid" in entry["error"]
 
 
 def test_status_uses_provider_health_check(monkeypatch: pytest.MonkeyPatch) -> None:
-    class DownCobalt(_FakeCobalt):
-        def status(self, settings: dict) -> dict:
-            return {"configured": True, "available": False, "error": "service is down"}
-
     class ReadyXhs(_FakeXhs):
         def status(self) -> dict:
             return {"configured": True, "available": True, "error": ""}
 
-    _install_fake_module(monkeypatch, "cobalt", "CobaltProvider", DownCobalt)
     _install_fake_module(monkeypatch, "xhs", "XhsGetProvider", ReadyXhs)
-
     result = registry.status({"ingest": {}})
-    assert result[registry.COBALT] == {
-        "id": "cobalt",
-        "label": "Cobalt",
-        "configured": True,
-        "available": False,
-        "error": "service is down",
-    }
     assert result[registry.XHS] == {
         "id": "xhs",
         "label": "XHS / RedNote",
@@ -446,22 +395,6 @@ def test_status_uses_provider_health_check(monkeypatch: pytest.MonkeyPatch) -> N
         "available": True,
         "error": "",
     }
-
-
-def test_status_health_error_forces_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    class ConfusedCobalt(_FakeCobalt):
-        def status(self, settings: dict) -> dict:
-            return {"configured": True, "available": True, "error": "token missing"}
-
-    _install_fake_module(monkeypatch, "cobalt", "CobaltProvider", ConfusedCobalt)
-    monkeypatch.setitem(sys.modules, "url_ingest.xhs", None)
-    result = registry.status({"ingest": {}})
-    assert result[registry.COBALT]["available"] is False
-    assert result[registry.COBALT]["error"] == "token missing"
-
-
-# ---------------------------------------------------------------------------
-# Filenames and result data
 
 
 def test_safe_filename_blocks_paths_and_illegal_characters() -> None:
@@ -495,7 +428,7 @@ def test_safe_filename_fallbacks(value: str, expected: str) -> None:
 
 
 def test_ingest_result_normalizes_path_and_filename() -> None:
-    result = IngestResult(path="/tmp/example.mp4", filename="", provider="cobalt")
+    result = IngestResult(path="/tmp/example.mp4", filename="", provider="ytdlp")
     assert result.path == Path("/tmp/example.mp4")
     assert result.filename == "example.mp4"
     assert result.meta == {}

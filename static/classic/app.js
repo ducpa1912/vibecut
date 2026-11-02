@@ -85,15 +85,6 @@
     setupYtdlpFileField: $("#setup-ytdlp-file-field"),
     setupYtdlpDetail: $("#setup-ytdlp-detail"),
     setupTestYtdlp: $("#setup-test-ytdlp"),
-    setupCobaltStatus: $("#setup-cobalt-status"),
-    setupCobaltUrl: $("#setup-cobalt-url"),
-    setupCobaltKey: $("#setup-cobalt-key"),
-    setupCobaltQuality: $("#setup-cobalt-quality"),
-    setupCobaltCodec: $("#setup-cobalt-codec"),
-    setupCobaltLocal: $("#setup-cobalt-local"),
-    setupCobaltFallback: $("#setup-cobalt-fallback"),
-    setupCobaltDetail: $("#setup-cobalt-detail"),
-    setupTestCobalt: $("#setup-test-cobalt"),
     setupXhsStatus: $("#setup-xhs-status"),
     setupXhsUrl: $("#setup-xhs-url"),
     setupXhsToken: $("#setup-xhs-token"),
@@ -645,13 +636,12 @@
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
     if (dom.setupRightsLock) dom.setupRightsLock.checked = (settings.rights || {}).lock !== false;
     const ingest = settings.ingest || {};
-    dom.setupIngestProvider.value = ["auto", "ytdlp", "cobalt", "xhs"].includes(ingest.provider)
+    dom.setupIngestProvider.value = ["auto", "ytdlp", "xhs"].includes(ingest.provider)
       ? ingest.provider : "auto";
     if (dom.urlProviderLabel) {
       dom.urlProviderLabel.textContent = `provider ${{
         auto: "auto",
         ytdlp: "yt-dlp",
-        cobalt: "Cobalt",
         xhs: "XHS",
       }[dom.setupIngestProvider.value] || "auto"}`;
     }
@@ -668,13 +658,6 @@
       ? ingest.ytdlp_browser : "safari";
     dom.setupYtdlpCookieFile.value = ingest.ytdlp_cookie_file || "";
     syncYtdlpCookieFields();
-    dom.setupCobaltUrl.value = ingest.cobalt_url || "";
-    dom.setupCobaltQuality.value = ["max", "4320", "2160", "1440", "1080", "720", "480", "360", "240", "144"].includes(ingest.cobalt_quality)
-      ? ingest.cobalt_quality : "1080";
-    dom.setupCobaltCodec.value = ["h264", "av1", "vp9"].includes(ingest.cobalt_codec)
-      ? ingest.cobalt_codec : "h264";
-    dom.setupCobaltLocal.value = ingest.cobalt_local_processing === "forced" ? "forced" : "preferred";
-    dom.setupCobaltFallback.checked = ingest.cobalt_fallback === true;
     dom.setupXhsUrl.value = ingest.xhs_url || "";
     dom.setupXhsNoRecord.checked = ingest.xhs_no_record !== false;
     dom.setupXhsInterval.value = ingest.xhs_interval ?? 12;
@@ -682,14 +665,12 @@
     setSecretHint(dom.setupOpenrouterKey, !!secrets.openrouter, sources.openrouter, true);
     setSecretHint(dom.setupMinimaxKey, !!secrets.minimax, sources.minimax);
     setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
-    setSecretHint(dom.setupCobaltKey, !!secrets.cobalt, sources.cobalt);
     setSecretHint(dom.setupXhsToken, !!secrets.xhs, sources.xhs);
     [
       dom.setupOpencodeKey,
       dom.setupOpenrouterKey,
       dom.setupMinimaxKey,
       dom.setupElevenlabsKey,
-      dom.setupCobaltKey,
       dom.setupXhsToken,
       dom.setupXhsCookie,
     ].forEach((input) => {
@@ -739,7 +720,6 @@
       openrouter: dom.setupOpenrouterKey.value.trim(),
       minimax: dom.setupMinimaxKey.value.trim(),
       elevenlabs: dom.setupElevenlabsKey?.value.trim() || "",
-      cobalt: dom.setupCobaltKey.value.trim(),
       xhs: dom.setupXhsToken.value.trim(),
     };
     return Object.fromEntries(Object.entries(values).filter(([, value]) => value));
@@ -855,11 +835,6 @@
             ytdlp_cookies: dom.setupYtdlpCookies.value || "none",
             ytdlp_browser: dom.setupYtdlpBrowser.value || "safari",
             ytdlp_cookie_file: dom.setupYtdlpCookieFile.value.trim(),
-            cobalt_url: dom.setupCobaltUrl.value.trim(),
-            cobalt_quality: dom.setupCobaltQuality.value || "1080",
-            cobalt_codec: dom.setupCobaltCodec.value || "h264",
-            cobalt_local_processing: dom.setupCobaltLocal.value || "preferred",
-            cobalt_fallback: dom.setupCobaltFallback.checked,
             xhs_url: dom.setupXhsUrl.value.trim(),
             xhs_no_record: dom.setupXhsNoRecord.checked,
             xhs_interval: readInterval(dom.setupXhsInterval.value, 12),
@@ -950,30 +925,6 @@
     }
   }
 
-  function applyCobaltStatus(entry) {
-    const value = entry && typeof entry === "object" ? entry : {};
-    const error = String(value.error || "").trim();
-    if (value.available === true) {
-      setSetupChip(dom.setupCobaltStatus, "Reachable", "ok", error);
-      if (dom.setupCobaltDetail) {
-        dom.setupCobaltDetail.textContent = "Instance reachable.";
-        dom.setupCobaltDetail.classList.remove("warn");
-      }
-      return;
-    }
-    if (value.configured === false) {
-      setSetupChip(dom.setupCobaltStatus, "Not set", "warn", error);
-    } else if (value.available === false) {
-      setSetupChip(dom.setupCobaltStatus, "Offline", "warn", error);
-    } else {
-      setSetupChip(dom.setupCobaltStatus, "Not checked", "", error);
-    }
-    if (dom.setupCobaltDetail) {
-      dom.setupCobaltDetail.textContent = error || "Set the service URL, then Test Cobalt.";
-      dom.setupCobaltDetail.classList.toggle("warn", !!error);
-    }
-  }
-
   function applyXhsStatus(entry) {
     const value = entry && typeof entry === "object" ? entry : {};
     const session = value.session && typeof value.session === "object" ? value.session : {};
@@ -1024,7 +975,6 @@
     state.ingestStatus = data || null;
     const providers = data && typeof data === "object" ? (data.providers || data) : {};
     if (providers.ytdlp) applyYtdlpStatus(providers.ytdlp);
-    if (providers.cobalt) applyCobaltStatus(providers.cobalt);
     if (providers.xhs) applyXhsStatus(providers.xhs);
   }
 
@@ -1035,7 +985,6 @@
       return data;
     } catch (error) {
       setSetupChip(dom.setupYtdlpStatus, "Status unavailable", "warn", error.message);
-      setSetupChip(dom.setupCobaltStatus, "Status unavailable", "warn", error.message);
       setSetupChip(dom.setupXhsStatus, "Status unavailable", "warn", error.message);
       if (!quiet && dom.setupStatus) dom.setupStatus.textContent = error.message;
       return null;
@@ -1054,8 +1003,6 @@
       });
       if (kind === "ytdlp") {
         applyYtdlpStatus(result.status || result);
-      } else if (kind === "cobalt") {
-        applyCobaltStatus(result);
       } else {
         applyXhsStatus(result);
       }
@@ -1069,9 +1016,6 @@
       if (kind === "ytdlp") {
         setSetupChip(dom.setupYtdlpStatus, "Unavailable", "warn", error.message);
         if (dom.setupYtdlpDetail) dom.setupYtdlpDetail.textContent = error.message;
-      } else if (kind === "cobalt") {
-        setSetupChip(dom.setupCobaltStatus, "Offline", "warn", error.message);
-        if (dom.setupCobaltDetail) dom.setupCobaltDetail.textContent = error.message;
       } else {
         setSetupChip(dom.setupXhsStatus, "Offline", "warn", error.message);
         if (dom.setupXhsDetail) dom.setupXhsDetail.textContent = error.message;
@@ -1223,7 +1167,6 @@
     ));
     dom.setupTestYtdlp.addEventListener("click", () => testIngest("ytdlp", dom.setupTestYtdlp));
     dom.setupYtdlpCookies.addEventListener("change", syncYtdlpCookieFields);
-    dom.setupTestCobalt.addEventListener("click", () => testIngest("cobalt", dom.setupTestCobalt));
     dom.setupTestXhs.addEventListener("click", () => testIngest("xhs", dom.setupTestXhs));
     dom.setupXhsCheck.addEventListener("click", () => checkXhsSession(dom.setupXhsCheck));
     dom.setupXhsSendCookie.addEventListener("click", sendXhsCookie);
@@ -2401,7 +2344,6 @@
     if (label) return label;
     if (provider === "ytdlp") return "yt-dlp";
     if (provider === "xhs") return "XHS / RedNote";
-    if (provider === "cobalt") return "Cobalt";
     return "yt-dlp";
   }
 

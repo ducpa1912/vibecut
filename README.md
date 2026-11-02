@@ -135,7 +135,7 @@ preferences and optional keys, but it cannot edit workflow model routes.
 | **Voice over** | MiniMax, ElevenLabs or OpenRouter key and voice readiness. Provider order is admin-owned. Kokoro and Apple `say` are on-device fallbacks. |
 | **Music** | Music generation availability and route readiness. Provider order is admin-owned. |
 | **Packs** | Optional Speech, Voice and Separation downloads with size shown before download. |
-| **Video links** | yt-dlp quality, codec, container, audio, cookie source and browser; optional Cobalt fallback URL; optional xhs_get URL and token. |
+| **Video links** | yt-dlp quality, codec, container, audio, cookie source and browser; optional xhs_get URL and token. |
 
 Final engine set:
 
@@ -165,8 +165,8 @@ Old OpenAI and Cartesia keys belong to removed engines. They are hidden from
 the key list and deleted only after the creator confirms **Delete stored keys**
 in the admin console.
 
-Cobalt and xhs_get credentials remain in the existing Setup drawer because
-they are optional URL sidecars, not AI model providers.
+xhs_get credentials remain in the existing Setup drawer because it is an
+optional URL sidecar, not an AI model provider.
 
 Keys are stored in `data/secrets.json` with mode `0600`. The API never returns
 a complete key. Short keys become fixed bullets; longer keys show a short
@@ -186,7 +186,6 @@ Common environment key names:
 ```text
 OPENCODE_GO_API_KEY   OPENROUTER_API_KEY   MINIMAX_API_KEY
 GROQ_API_KEY          DEEPGRAM_API_KEY     ELEVENLABS_API_KEY
-VIBECUT_COBALT_API_KEY
 VIBECUT_XHS_GET_TOKEN
 ```
 
@@ -383,8 +382,8 @@ The main screen accepts:
 - **Drop a video** — upload. The default ceiling is 20 GB
   (`VIBECUT_MAX_UPLOAD_GB`).
 - **Use a local path instead** — analyze a file in place without copying it.
-- **Paste a video link** — URL ingest through yt-dlp, with optional Cobalt or
-  xhs_get sidecars.
+- **Paste a video link** — URL ingest through yt-dlp, with an optional
+  xhs_get sidecar.
 
 Uploads are stored in the content-addressed source store
 (`data/sources/<hash>/`) and hardlinked into the job directory. A cross-volume
@@ -537,7 +536,7 @@ hostile extractor, so treat URL ingest as a privileged network feature.
 ### yt-dlp (default)
 
 The normal path is the native Python **yt-dlp** API. It needs no Node, Docker,
-Cobalt server, or cloud upload. It downloads the best matching video + audio,
+or cloud upload. It downloads the best matching video + audio,
 prefers H.264/MP4 for editor compatibility, then starts dissection only after
 the download completes.
 
@@ -550,20 +549,6 @@ the download completes.
   marks the attempt failed.
 - Site extractors change often. Update with
   `python -m pip install -U yt-dlp` when a previously working site fails.
-
-### Cobalt (optional fallback)
-
-Cobalt is a separate AGPL-3.0 service. It is not bundled, not imported, and not
-started by VibeCut. It is contacted only when:
-
-- `ingest.provider` is explicitly `cobalt`, or
-- `auto` mode tries yt-dlp, yt-dlp fails, and **Fallback after yt-dlp** is
-  enabled with a Cobalt URL.
-
-The hosted `api.cobalt.tools` service is rejected; configure your own instance.
-Cobalt code and assets stay outside this repository. See
-[docs/url-ingest.md](docs/url-ingest.md) and
-[docs/licensing.md](docs/licensing.md).
 
 ### xhs_get / RedNote (optional sidecar)
 
@@ -643,7 +628,7 @@ require the app token. All clip-set routes live under
 | POST | `/api/settings` | Save allowed Setup sections. Rejects `workflows`; admin owns routes. |
 | POST | `/api/settings/test` | Test OpenCode, OpenRouter, STT, TTS, or ingest providers. |
 | GET | `/api/settings/tts-test/{engine}.wav` | Download a generated TTS test clip. |
-| GET | `/api/ingest/status` | yt-dlp, Cobalt and xhs_get status; public ingest settings. |
+| GET | `/api/ingest/status` | yt-dlp and xhs_get status; public ingest settings. |
 | POST | `/api/ingest/xhs/cookie` | Forward a RedNote cookie to xhs_get. Not stored by VibeCut. |
 | GET | `/api/ingest/xhs/invite` | Build an xhs_get invite URL. |
 | POST | `/api/ingest/xhs/invite` | Build an xhs_get invite URL with a supplied URL/token. |
@@ -947,7 +932,7 @@ installed engines, models and cache sizes with removal hints.
 | `VIBECUT_DATA` | `./data` | Data root. |
 | `VIBECUT_TOKEN` | unset | Shared app token for `/api/*` and UI media. |
 | `VIBECUT_MAX_UPLOAD_GB` | `20` | Upload ceiling. |
-| `VIBECUT_URL_MAX_GB` | `4` | Cobalt/xhs_get download ceiling. |
+| `VIBECUT_URL_MAX_GB` | `4` | xhs_get download ceiling. |
 | `VIBECUT_DEEP_SCENES` | `300` | Deep-read shortlist size. |
 | `VIBECUT_ENCODER` | `auto` | `auto`, `videotoolbox` or `libx264`. |
 | `VIBECUT_RENDER_WORKERS` | `4` | Parallel segment workers. |
@@ -965,7 +950,6 @@ Model and local engine variables:
 | `VIBECUT_GROQ_API_KEY` | unset | Groq STT/text key. |
 | `VIBECUT_DEEPGRAM_API_KEY` | unset | Deepgram STT key. |
 | `VIBECUT_ELEVENLABS_API_KEY` | unset | ElevenLabs TTS key. |
-| `VIBECUT_COBALT_API_KEY` | unset | Optional Cobalt instance key. |
 | `VIBECUT_XHS_GET_TOKEN` | unset | Optional xhs_get friends-mode token. |
 | `VIBECUT_OPENCODE_BIN` | `opencode` on `PATH` | OpenCode CLI path. |
 | `VIBECUT_REWRITE_CONTEXT_CHARS` | `6000` | Transcript context cap. |
@@ -1019,8 +1003,8 @@ removed:
 - **Old keys:** OpenAI and Cartesia keys are hidden from the admin key list.
   Setup deletes the stored copies only after confirmation; environment-managed
   keys stay until the variable is unset.
-- **Cobalt and xhs_get** are optional external sidecars. They are never
-  bundled, imported, or required for common URLs.
+- **xhs_get** is an optional external sidecar. It is never bundled, imported,
+  or required for common URLs.
 - **Old settings** are migrated once on load and written back. v0.7 OpenRouter
   settings are copied to OpenCode when no OpenCode section exists.
 - **Old jobs** without variants, history, crop tracking, or newer render keys
@@ -1097,11 +1081,11 @@ warnings are expected: `setuptools` lacks usable license metadata.
 
 VibeCut is proprietary and closed-source. No open-source license is granted for
 the VibeCut source, UI, prompts, or build scripts. Third-party components keep
-their own licenses. Cobalt, xhs_get, yt-dlp, ffmpeg, model weights and optional
+their own licenses. xhs_get, yt-dlp, ffmpeg, model weights and optional
 engines have separate terms; see [docs/licensing.md](docs/licensing.md) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-The default build does not include Cobalt or xhs_get. Running them as separate
+The default build does not include xhs_get. Running it as a separate
 services is optional. If you distribute a build that bundles a sidecar, follow
 the source-offer, license-text, branding and separate-process requirements in
 [docs/licensing.md](docs/licensing.md).

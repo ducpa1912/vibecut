@@ -2,9 +2,9 @@
 
 This module is deliberately dependency-light: standard library only. The
 native ``url_ingest.ytdlp`` provider handles ordinary video sites. The optional
-``url_ingest.cobalt`` and ``url_ingest.xhs`` modules are imported lazily by
-:mod:`url_ingest.registry`, so importing the package and detecting a URL never
-require a sidecar service to be installed or running.
+``url_ingest.xhs`` module is imported lazily by :mod:`url_ingest.registry`,
+so importing the package and detecting a URL never require a sidecar service
+to be installed or running.
 
 Every provider implements :class:`Provider` with a settings mapping,
 ``inspect(url, options)`` for metadata, and

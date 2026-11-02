@@ -5,7 +5,7 @@ Checks, using only the standard library:
 
 1. Direct Python requirements are not GPL/AGPL packages.
 2. Installed metadata for each direct requirement reports no GPL/AGPL license.
-3. Source files do not import Cobalt or xhs_get as Python modules.
+3. Source files do not import xhs_get as a Python module.
 4. The repo root does not contain vendored sidecar code or node_modules.
 5. yt-dlp is a declared requirement and, when installed, meets the floor.
 
@@ -31,9 +31,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENT_FILES = ("requirements.txt", "requirements-music.txt")
 MIN_YTDLP = (2025, 10, 22)
-SIDECAR_IMPORT_ROOTS = frozenset({"cobalt", "xhs_get", "xhsget"})
-SIDECAR_PACKAGES = frozenset({"cobalt", "cobalt-api", "xhs-get", "xhsget", "xhs-get-api"})
-SIDECAR_DIRS = ("cobalt", "xhs_get", "xhsget", "node_modules")
+SIDECAR_IMPORT_ROOTS = frozenset({"xhs_get", "xhsget"})
+SIDECAR_PACKAGES = frozenset({"xhs-get", "xhsget", "xhs-get-api"})
+SIDECAR_DIRS = ("xhs_get", "xhsget", "node_modules")
 SKIP_DIRS = frozenset(
     {
         ".git",

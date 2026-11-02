@@ -25,11 +25,11 @@ Do not start the matrix until all of these are true:
 - [ ] `python scripts/check_proprietary_deps.py` passes.
 - [ ] Unit tests pass, including provider detection tests that expect
       `ytdlp` for non-RedNote links.
-- [ ] Setup exposes provider mode (`auto` / `yt-dlp` / `Cobalt` / `XHS`) and
-      the yt-dlp quality, codec, container, audio and cookie fields.
+- [ ] Setup exposes provider mode (`auto` / `yt-dlp` / `XHS`) and the yt-dlp
+      quality, codec, container, audio and cookie fields.
 - [ ] The playlist picker flow is reachable from the URL bar.
-- [ ] Baseline machine has no Cobalt, xhs_get, Node.js or Docker installed,
-      unless a case explicitly enables them.
+- [ ] Baseline machine has no xhs_get, Node.js or Docker installed, unless a
+      case explicitly enables it.
 - [ ] Test URLs and accounts are available and permitted for testing. Do not
       use content you are not allowed to access.
 
@@ -42,7 +42,7 @@ Apply these after every successful ingest unless a case says otherwise.
 | SC-01 | Source file exists under `data/sources/`, is non-zero, and probes with a duration greater than zero. |
 | SC-02 | Job moves to `queued` / analysis starts; no stuck `downloading` state. |
 | SC-03 | History has one `ingest` entry with status `ok`, provider id, title, duration, size and redacted source URL. |
-| SC-04 | No Cobalt, xhs_get, Node or Docker process was spawned for a yt-dlp ingest. |
+| SC-04 | No xhs_get, Node or Docker process was spawned for a yt-dlp ingest. |
 | SC-05 | No cookie value, access token, `xsec_token`, or authorization header appears in `job.json`, history, or server logs. |
 | SC-06 | No `.ingest-*` file remains in `data/sources/`, including `.part` and per-format fragments. |
 | SC-07 | Display filename is sanitized; no path separators, control characters, or `..`. |
@@ -71,7 +71,6 @@ Apply these after every successful ingest unless a case says otherwise.
 | C-FILE | Valid Netscape `cookies.txt` for the test account. |
 | C-BAD | Malformed or truncated `cookies.txt`. |
 | C-EXP | Expired cookies for the test account. |
-| S-COBALT | Local self-hosted Cobalt instance. |
 | S-XHS | Local xhs_get instance with a signed-in session. |
 | D-TINY | 200 MB APFS volume or disk image for the disk-full case. |
 
@@ -89,7 +88,6 @@ Apply these after every successful ingest unless a case says otherwise.
 | D-08 | P1 | Inspect F-RN-SHORT with `auto`. | `xhs`. |
 | D-09 | P0 | Inspect `https://xiaohongshu.com.evil.example/explore/x`. | `ytdlp`; not treated as RedNote. |
 | D-10 | P0 | Inspect `https://rednote.com@evil.example/explore/x`. | `ytdlp`; host is `evil.example`, not RedNote. |
-| D-11 | P1 | Set provider `cobalt`, inspect F-YT. | `cobalt`; request goes to the configured Cobalt URL. |
 | D-12 | P2 | Set provider `ytdlp`, inspect F-RN. | `ytdlp`; unsupported or extractor error, no crash, no automatic XHS fallback. |
 | D-13 | P0 | Submit `ftp://example.com/video.mp4`. | HTTP 400 before any provider call. |
 | D-14 | P0 | Submit a URL with a space, backslash, or control character. | HTTP 400 before any provider call. |
@@ -97,24 +95,6 @@ Apply these after every successful ingest unless a case says otherwise.
 | D-16 | P1 | Submit `provider: "youtube"`. | HTTP 400 unknown provider. |
 | D-17 | P1 | Save provider `ytdlp`, inspect F-RN. | `ytdlp`; configured mode wins over auto detection. |
 | D-18 | P2 | Inspect a URL with a 8 KB+ query string. | Clear "URL is too long" error, no crash. |
-
-## B. Fallback chain
-
-`auto` tries yt-dlp first, then a configured Cobalt instance only after failure and only when **Fallback after yt-dlp** is enabled.
-Explicit provider modes and RedNote never fall back. Cancellation is final.
-
-| ID | P | Steps | Expected |
-|---|---|---|---|
-| FB-01 | P0 | Enable **Fallback after yt-dlp**, configure Cobalt, ingest F-YT successfully. | Cobalt receives no request; result metadata says fallback not used. |
-| FB-02 | P0 | Enable **Fallback after yt-dlp**, make yt-dlp inspect fail (unsupported fixture), inspect the link. | Cobalt inspect result is returned; provider is `cobalt`. |
-| FB-03 | P0 | Enable **Fallback after yt-dlp**, make yt-dlp download fail after a successful inspect, then ingest. | One Cobalt retry succeeds; job continues; metadata lists both attempts and `fallback.used: true`. |
-| FB-04 | P1 | Make both yt-dlp and Cobalt fail. | UI shows the yt-dlp error, not the fallback error; metadata records both attempts; no duplicate job. |
-| FB-05 | P0 | Set provider `ytdlp`, make yt-dlp fail with Cobalt configured. | No Cobalt request; yt-dlp error surfaces. |
-| FB-06 | P1 | Set provider `cobalt`, make Cobalt fail. | No yt-dlp request; Cobalt error surfaces. |
-| FB-07 | P0 | Cancel during a yt-dlp download with Cobalt configured. | No Cobalt request; job failed with "Download cancelled." |
-| FB-08 | P1 | Make RedNote/xhs_get fail with Cobalt configured. | No Cobalt request; XHS error surfaces. |
-| FB-09 | P1 | Configure a Cobalt URL that is unreachable, then fail yt-dlp. | Primary yt-dlp error survives; no crash or hang beyond the Cobalt timeout. |
-| FB-10 | P0 | After FB-03/FB-04, inspect `data/sources/`. | Failed yt-dlp attempt files are removed before/after the fallback; no stale fragments. |
 
 ## C. Single-video ingest
 
@@ -214,16 +194,15 @@ Run SC-01 through SC-08 for every success case.
 | FL-10 | P2 | Ingest a file with a very long title or Unicode filename. | Sanitized display name; source remains valid; no path traversal. |
 | FL-11 | P0 | Check server logs after every failure case. | No stack trace with tokens, cookies, or full local paths exposed to the UI. |
 
-## I. No Cobalt / Docker / Node, fresh Mac
+## I. No Docker / Node, fresh Mac
 
 | ID | P | Steps | Expected |
 |---|---|---|---|
 | EN-01 | P0 | On a clean user account, install only Python 3.11, ffmpeg and `requirements.txt`. | App starts; YouTube/TikTok ingest works. |
-| EN-02 | P0 | Confirm `node`, `docker`, `cobalt`, `xhs_get` are absent. | No install prompt appears for common URLs; no failure caused by their absence. |
-| EN-03 | P1 | Open Setup with no Cobalt instance. | Cobalt shows unavailable/not configured; `auto` yt-dlp ingest still works. |
+| EN-02 | P0 | Confirm `node`, `docker`, `xhs_get` are absent. | No install prompt appears for common URLs; no failure caused by their absence. |
 | EN-04 | P1 | Open Setup with no xhs_get instance. | XHS shows not configured; non-RedNote ingest still works. |
-| EN-05 | P1 | Press every Setup test button with both sidecars absent. | Inline unavailable messages; no 500, no crash, no stuck spinner. |
-| EN-06 | P1 | Build and run the Docker image; ingest F-YT. | yt-dlp works in the container; no Node or Cobalt required. Apple-only analysis features may fall back. |
+| EN-05 | P1 | Press every Setup test button with the xhs_get sidecar absent. | Inline unavailable messages; no 500, no crash, no stuck spinner. |
+| EN-06 | P1 | Build and run the Docker image; ingest F-YT. | yt-dlp works in the container; no Node required. Apple-only analysis features may fall back. |
 | EN-07 | P0 | Remove ffmpeg from `PATH` on a fresh account. | Clear install error; app does not crash. |
 | EN-08 | P1 | Run under Python 3.12 and 3.13 venvs. | Import, inspect and ingest work; no syntax or dependency break. |
 | EN-09 | P1 | Run on macOS 14, 15 and 26. | URL ingest works; Apple framework differences do not affect download. |
@@ -259,12 +238,10 @@ Run SC-01 through SC-08 for every success case.
 
 | ID | P | Steps | Expected |
 |---|---|---|---|
-| LG-01 | P0 | Set Cobalt URL to `https://api.cobalt.tools/`. | Rejected with a self-hosted-instance message. |
-| LG-02 | P0 | List the release artifact. | No Cobalt, xhs_get, Node, `node_modules`, or copied sidecar source. |
+| LG-02 | P0 | List the release artifact. | No xhs_get, Node, `node_modules`, or copied sidecar source. |
 | LG-03 | P0 | Run `python scripts/check_proprietary_deps.py` in the clean release venv. | Exit 0; no GPL/AGPL direct dependency or sidecar import. |
 | LG-04 | P0 | Try a private, paid, or DRM-protected link with cookies. | Still refused where the account is not authorized; no decryption or bypass is attempted. |
-| LG-05 | P1 | Submit an unsupported site. | Clear unsupported error; automatic Cobalt fallback only when explicitly enabled, and no hidden call otherwise. |
-| LG-06 | P1 | Configure Cobalt to return a private-network tunnel URL (mock upstream). | VibeCut rejects the private target; no fetch of local services. |
+| LG-05 | P1 | Submit an unsupported site. | Clear unsupported error; no hidden sidecar call. |
 | LG-07 | P1 | Grep the artifact for license files. | `THIRD_PARTY_NOTICES.md`, yt-dlp Unlicense, and the proprietary EULA are present. |
 
 ## Result log
@@ -280,8 +257,6 @@ Per-case result:
 | D-01 | ✅ pass | live YouTube inspect returned provider `ytdlp`, title and duration |
 | YT-02 | ✅ pass | live 19s YouTube download → probe → analysis ready; source name `Me at the zoo.mp4` |
 | YT-03 | ✅ pass | live provider at 360p produced H.264 MP4 |
-| FB-03 | ✅ pass (mocked) | API test: yt-dlp download failure → Cobalt success; attempts recorded |
-| FB-04 | ✅ pass (mocked) | primary yt-dlp error preserved; both attempts stored |
 | PL-01 | ✅ pass | live playlist returned 182 choices with thumbnails |
 | PL-02 | ✅ pass (mocked) | selected-entry URL is passed to yt-dlp download |
 | PL-03 | ✅ pass | playlist POST returns 409 before job creation |

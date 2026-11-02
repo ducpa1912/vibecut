@@ -62,8 +62,8 @@ audit log, export, or database. Environment-managed keys are read-only in the
 UI and rejected by the save endpoint; change the environment to rotate them.
 
 Saving or clearing a key clears provider quarantine/breakers and model/voice/
-music caches so a rotated key is usable immediately. Cobalt and XHS sidecar
-credentials remain in the existing Setup drawer.
+music caches so a rotated key is usable immediately. XHS sidecar credentials
+remain in the existing Setup drawer.
 
 ## Models
 

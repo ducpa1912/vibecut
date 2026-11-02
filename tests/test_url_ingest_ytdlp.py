@@ -776,7 +776,7 @@ def test_provider_has_no_subprocess_or_sidecar_imports() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
     assert "subprocess" not in imported
-    assert "cobalt" not in imported
+    assert "xhs" not in imported
     assert "xhs" not in imported
 
 

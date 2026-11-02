@@ -1,9 +1,7 @@
 """Ordered provider fallback for URL ingest.
 
-The normal URL path uses ``yt-dlp`` first. A configured Cobalt instance may be
-tried only after yt-dlp fails; Cobalt is never required and is not contacted
-when yt-dlp succeeds. RedNote/Xiaohongshu links stay on their dedicated
-provider and never fall back to Cobalt.
+The normal URL path uses ``yt-dlp`` first. RedNote/Xiaohongshu links stay on
+their dedicated provider and never fall back to another downloader.
 
 This module is deliberately small and dependency-light: it imports only the
 standard library and :mod:`url_ingest.base`. It never imports the concrete
@@ -29,10 +27,9 @@ from .base import IngestError, IngestOptions, IngestResult, ProgressCallback, Pr
 
 AUTO = "auto"
 YTDLP = "ytdlp"
-COBALT = "cobalt"
 XHS = "xhs"
 
-_PROVIDER_IDS = frozenset({YTDLP, COBALT, XHS})
+_PROVIDER_IDS = frozenset({YTDLP, XHS})
 _ALIASES = {
     "": AUTO,
     AUTO: AUTO,
@@ -40,7 +37,6 @@ _ALIASES = {
     "yt-dlp": YTDLP,
     "yt_dlp": YTDLP,
     "youtube-dl": YTDLP,
-    COBALT: COBALT,
     XHS: XHS,
     "xhs-get": XHS,
     "xhs_get": XHS,
@@ -59,14 +55,13 @@ def fallback_provider_ids(
     configured: Any,
     detected: Any,
     ytdlp_available: bool,
-    cobalt_configured: bool,
 ) -> list[str]:
     """Return the ordered provider ids to try for one link.
 
     ``configured`` is the user's provider setting or request override.
     ``detected`` is the registry's URL detection result. Explicit providers win
     and are the only entry. In auto mode, RedNote/Xiaohongshu stays on ``xhs``;
-    every other link gets yt-dlp first and configured Cobalt second.
+    every other link gets yt-dlp.
     """
 
     requested = _provider_id(configured)
@@ -78,12 +73,8 @@ def fallback_provider_ids(
         return [XHS]
 
     # Keep yt-dlp first even when the package is unavailable, so its install
-    # error is the primary failure and Cobalt remains a fallback, never the
-    # silent primary downloader.
-    chain: list[str] = [YTDLP]
-    if cobalt_configured:
-        chain.append(COBALT)
-    return chain
+    # error is the primary failure.
+    return [YTDLP]
 
 
 @dataclass(frozen=True)
@@ -330,8 +321,8 @@ class ProviderChain:
     """Run inspect/download attempts in a fixed, pre-computed order.
 
     Provider values may be instances or zero-argument factories. Factories are
-    resolved only when their turn comes, so constructing Cobalt is deferred
-    until yt-dlp has failed.
+    resolved only when their turn comes, so an optional provider is constructed
+    lazily.
     """
 
     def __init__(
@@ -587,7 +578,6 @@ def run_inspect(
 
 __all__ = [
     "AUTO",
-    "COBALT",
     "XHS",
     "YTDLP",
     "Attempt",
