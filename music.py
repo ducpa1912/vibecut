@@ -400,7 +400,7 @@ def _minimax_music(
     key = audio.minimax_key()
     if not key:
         raise audio.AudioError("Set MINIMAX_API_KEY to use MiniMax music.")
-    model = model or str((audio.settings_store.load_settings().get("minimax") or {}).get("music_model") or "music-3.0")
+    model = model or str((audio.settings_store.load_settings().get("minimax") or {}).get("music_model") or audio.settings_store.DEFAULTS["minimax"]["music_model"])
     payload = json.dumps({
         "model": model,
         "prompt": prompt,

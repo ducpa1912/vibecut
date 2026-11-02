@@ -452,11 +452,11 @@ def rewrite_models() -> list[dict]:
          "available": sys.platform == "darwin", "size_mb": 0,
          "install": "enable Apple Intelligence on macOS 26"},
         {"id": "opencode", "name": "OpenCode Go · DeepSeek V4.1 Flash",
-         "model": opencode_model() if opencode_available() else "deepseek-v4.1-flash",
+         "model": opencode_model() if opencode_available() else OPENCODE_DEFAULT_MODEL,
          "available": opencode_available(), "size_mb": 0,
          "install": "Install OpenCode and sign in to OpenCode Go. Uses the local login; low reasoning."},
         {"id": "openrouter", "name": "OpenRouter · DeepSeek V4.1 Flash",
-         "model": openrouter_model() if openrouter_available() else "deepseek/deepseek-v4.1-flash:floor",
+         "model": openrouter_model() if openrouter_available() else _default_workflow_model("rewrite", "openrouter"),
          "available": openrouter_available(), "size_mb": 0,
          "install": "Add an OpenRouter key in Setup."},
     ]
@@ -1449,8 +1449,14 @@ def openrouter_media_available() -> bool:
 
 
 def openrouter_model() -> str:
-    settings = settings_store.load_settings().get("openrouter") or {}
-    return str(settings.get("model") or "deepseek/deepseek-v4.1-flash:floor")
+    settings = settings_store.load_settings()
+    workflows = settings.get("workflows")
+    if isinstance(workflows, dict) and workflows:
+        for route in workflow_config.routes(workflows, "rewrite"):
+            if str(route.get("provider") or "") == "openrouter" and route.get("model"):
+                return str(route["model"])
+    legacy = settings.get("openrouter") or {}
+    return str(legacy.get("model") or _default_workflow_model("rewrite", "openrouter"))
 
 
 def _openrouter_http_error_text(exc: urllib.error.HTTPError, key: str) -> str:
@@ -1628,8 +1634,17 @@ def _openrouter_text(
 
 
 OPENCODE_URL = "https://opencode.ai/inference/go/openai/v1/chat/completions"
-OPENCODE_DEFAULT_MODEL = "deepseek-v4.1-flash"
-OPENCODE_DEFAULT_VARIANT = "low"
+def _default_workflow_model(workflow: str, provider: str) -> str:
+    for route in workflow_config.DEFAULT_WORKFLOWS.get(workflow, {}).get("routes", []):
+        if str(route.get("provider") or "") == provider:
+            return str(route.get("model") or "")
+    return ""
+
+
+OPENCODE_DEFAULT_MODEL = _default_workflow_model("rewrite", "opencode-go")
+OPENCODE_DEFAULT_VARIANT = str(
+    workflow_config.DEFAULT_WORKFLOWS["rewrite"].get("reasoning") or "low"
+)
 OPENCODE_LAST_ERROR = ""
 
 
@@ -1666,14 +1681,26 @@ def opencode_available() -> bool:
 
 
 def opencode_model() -> str:
-    settings = settings_store.load_settings().get("opencode") or {}
-    return str(settings.get("model") or OPENCODE_DEFAULT_MODEL)
+    settings = settings_store.load_settings()
+    workflows = settings.get("workflows")
+    if isinstance(workflows, dict) and workflows:
+        for route in workflow_config.routes(workflows, "rewrite"):
+            if str(route.get("provider") or "") == "opencode-go" and route.get("model"):
+                return str(route["model"])
+    legacy = settings.get("opencode") or {}
+    return str(legacy.get("model") or OPENCODE_DEFAULT_MODEL)
 
 
 def opencode_variant() -> str:
-    settings = settings_store.load_settings().get("opencode") or {}
-    variant = str(settings.get("variant") or OPENCODE_DEFAULT_VARIANT).lower()
-    return variant if variant in {"low", "high", "max"} else OPENCODE_DEFAULT_VARIANT
+    settings = settings_store.load_settings()
+    workflows = settings.get("workflows")
+    route = (
+        workflow_config.effective(workflows, "rewrite")
+        if isinstance(workflows, dict) and workflows else {}
+    )
+    legacy = settings.get("opencode") or {}
+    variant = str(route.get("reasoning") or legacy.get("variant") or OPENCODE_DEFAULT_VARIANT).lower()
+    return variant if variant in {"none", "low", "medium", "high", "max"} else OPENCODE_DEFAULT_VARIANT
 
 
 def _opencode_api(args: list[str], body: dict | None = None, allow_empty: bool = False) -> dict | None:

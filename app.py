@@ -3473,10 +3473,6 @@ def health() -> dict:
     }
 
 
-OPENCODE_MODEL = "deepseek-v4.1-flash"
-OPENCODE_VARIANT = "low"
-STT_PROVIDERS = {"auto", "apple", "whisper"}
-TTS_PROVIDERS = {"auto", "local", "say", "kokoro", "elevenlabs", "minimax", "heygen", "fish", "gemini"}
 
 
 class SettingsTestBody(BaseModel):
@@ -3686,21 +3682,30 @@ async def save_settings(request: Request) -> dict:
 
         opencode = patch.get("opencode")
         if isinstance(opencode, dict):
-            requested = str(opencode.get("model") or OPENCODE_MODEL)
-            if requested != OPENCODE_MODEL:
-                raise HTTPException(400, f"Only {OPENCODE_MODEL} is supported.")
-            requested_variant = str(opencode.get("variant") or OPENCODE_VARIANT)
-            if requested_variant != OPENCODE_VARIANT:
-                raise HTTPException(400, "OpenCode reasoning is locked to low.")
-            opencode["model"] = OPENCODE_MODEL
-            opencode["variant"] = OPENCODE_VARIANT
+            if "model" in opencode:
+                model = str(opencode.get("model") or "").strip()
+                if len(model) > 240:
+                    raise HTTPException(400, "OpenCode model id is too long.")
+                if model:
+                    opencode["model"] = model
+                else:
+                    opencode.pop("model", None)
+            if "variant" in opencode:
+                variant = str(opencode.get("variant") or "").strip().lower()
+                if variant and variant not in {"none", "low", "medium", "high", "max"}:
+                    raise HTTPException(400, "Unknown OpenCode reasoning variant.")
+                if variant:
+                    opencode["variant"] = variant
+                else:
+                    opencode.pop("variant", None)
         stt = patch.get("stt")
-        if isinstance(stt, dict) and stt.get("provider") not in (None, "") and stt["provider"] not in STT_PROVIDERS:
-            raise HTTPException(400, "Unknown transcription provider.")
-        if isinstance(stt, dict) and stt.get("model") not in (None, "") and stt["model"] not in {
-            item["id"] for item in pipeline.WHISPER_MODELS
-        }:
-            raise HTTPException(400, "Unknown Whisper model.")
+        if isinstance(stt, dict):
+            provider = str(stt.get("provider") or "").strip()
+            model = str(stt.get("model") or "").strip()
+            if len(provider) > 40:
+                raise HTTPException(400, "Transcription provider id is too long.")
+            if len(model) > 240:
+                raise HTTPException(400, "Transcription model id is too long.")
         translation = patch.get("translation")
         if isinstance(translation, dict) and translation.get("mode") not in (None, "", "auto", "local_first", "local_only", "online_only"):
             raise HTTPException(400, "Unknown translation mode.")
@@ -3722,8 +3727,10 @@ async def save_settings(request: Request) -> dict:
                 if interval < 0 or not math.isfinite(interval):
                     raise HTTPException(400, "xhs_interval must be a non-negative number.")
         tts = patch.get("tts")
-        if isinstance(tts, dict) and tts.get("provider") not in (None, "") and tts["provider"] not in TTS_PROVIDERS:
-            raise HTTPException(400, "Unknown voice provider.")
+        if isinstance(tts, dict):
+            provider = str(tts.get("provider") or "").strip()
+            if len(provider) > 40:
+                raise HTTPException(400, "Voice provider id is too long.")
         settings_store.save_settings(patch)
     if isinstance(secrets, dict):
         settings_store.save_secrets(secrets)
@@ -3823,7 +3830,7 @@ def test_settings(body: SettingsTestBody) -> dict:
             "ok": bool(answer),
             "kind": "opencode",
             "model": audio.opencode_model(),
-            "variant": OPENCODE_VARIANT,
+            "variant": audio.opencode_variant(),
             "mode": audio.opencode_mode(),
             "seconds": round(time.time() - started, 2),
             "answer": (answer or "")[:160],

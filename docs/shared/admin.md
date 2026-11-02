@@ -89,6 +89,11 @@ configured providers/models and record each attempt in the pipeline log. Local
 languages/voices are selected from the route model where applicable; no hidden
 provider ladder is appended.
 
+**Admin routes are the source of truth.** Legacy Setup fields (`opencode.model`,
+`openrouter.model`, `minimax.tts_model`, `stt.model`, and the like) are mirrors
+of the first admin route, kept for old callers and UI summaries. Saving an admin
+route updates the mirror. Setup cannot lock or override an admin model choice.
+
 Catalog sources:
 
 | Provider | Source |
