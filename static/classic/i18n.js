@@ -24,6 +24,7 @@
     "Mixed AI": "AI hỗn hợp",
     "AI off": "AI đang tắt",
     "AI": "AI",
+    "Switching language reloads the page and discards unsaved cut changes. Continue?": "Đổi ngôn ngữ sẽ tải lại trang và bỏ các thay đổi bản cắt chưa lưu. Tiếp tục?",
     "checking engine…": "đang kiểm tra engine…",
     "ffmpeg · local analysis": "ffmpeg · phân tích cục bộ",
     "Save setup": "Lưu cài đặt",
@@ -32,6 +33,17 @@
     "Save": "Lưu",
     "Done": "Xong",
     "Delete": "Xóa",
+    "Clean work files?": "Dọn tệp làm việc?",
+    "thumbnails, the transcript, extracted audio and deep-read scores": "ảnh thu nhỏ, bản chép lời, âm thanh đã trích xuất và điểm đọc sâu",
+    "the source video, rendered reels and job details": "video gốc, reel đã render và thông tin job",
+    "Analysis work files can be rebuilt by analyzing again.": "Có thể tạo lại tệp phân tích bằng cách phân tích lại.",
+    "Clean rendered reels?": "Dọn reel đã render?",
+    "rendered reels, render masters and legacy render files": "reel đã render, bản master và tệp render cũ",
+    "the source video, transcript, thumbnails and job details": "video gốc, bản chép lời, ảnh thu nhỏ và thông tin job",
+    "Review links and pinned artifacts are protected. If they cannot be protected, Clean stops.": "Liên kết xem lại và artifact đã ghim được bảo vệ. Nếu không thể bảo vệ, Clean sẽ dừng.",
+    "Clean everything except the source?": "Dọn mọi thứ trừ video gốc?",
+    "work files and rendered reels (thumbnails, transcript, extracted audio, deep-read scores, render masters)": "tệp làm việc và reel đã render (ảnh thu nhỏ, bản chép lời, âm thanh đã trích xuất, điểm đọc sâu, bản master)",
+    "the source video and job details": "video gốc và thông tin job",
     "Download": "Tải xuống",
     "Refresh": "Làm mới",
     "Close": "Đóng",
@@ -283,6 +295,16 @@
     [/^(\d+) renders?$/, "$1 bản render"],
     [/^(\d+) events?$/, "$1 sự kiện"],
     [/^(\d+)%$/, "$1%"],
+    [/^(\d+(?:\.\d+)?)s cut · (\d+) beats$/, "$1 giây cắt · $2 nhịp"],
+    [/^(\d+) cuts? · (\d+) sources?$/, "$1 bản cắt · $2 nguồn"],
+    [/^(\d+) moments? · (.+)$/, "$1 khoảnh khắc · $2"],
+    [/^(\d+) · (\d+) shown$/, "$1 · hiện $2"],
+    [/^(.+) · (.+) source · (\d+) moments · (\d+) deep-read · ([\d.]+)s analysis · (.+)$/, "$1 · nguồn $2 · $3 khoảnh khắc · $4 đọc sâu · phân tích $5 giây · $6"],
+    [/^(\d+) beats · (.+) · no watermark$/, "$1 nhịp · $2 · không watermark"],
+    [/^(\d+) beats · (.+)$/, "$1 nhịp · $2"],
+    [/^(.+) · sends (.+) · may cost credits\.$/, "$1 · gửi $2 · có thể tốn tín dụng."],
+    [/^Render calls (.+) · may cost credits\.$/, "Render gọi $1 · có thể tốn tín dụng."],
+    [/^Cached · no new call$/, "Đã lưu · không gọi mới"],
   ];
 
   const SKIP = [
@@ -303,6 +325,19 @@
       if (stored && SUPPORTED.includes(stored)) return stored;
     } catch (_) { /* storage may be unavailable */ }
     return "en";
+  }
+
+  function t(value) {
+    return current() === "vi" ? translateValue(value) : value;
+  }
+
+  function tBlock(value) {
+    if (current() !== "vi") return value;
+    return String(value).split("\n").map((line) => {
+      if (line.startsWith("Deletes: ")) return `Xóa: ${translateValue(line.slice(9))}`;
+      if (line.startsWith("Keeps: ")) return `Giữ: ${translateValue(line.slice(7))}`;
+      return translateValue(line);
+    }).join("\n");
   }
 
   function translateValue(value) {
@@ -381,6 +416,12 @@
 
   function setLanguage(lang) {
     if (!SUPPORTED.includes(lang)) return;
+    if (window.VibeCutClassicHasUnsaved?.()) {
+      const warning = t(
+        "Switching language reloads the page and discards unsaved cut changes. Continue?",
+      );
+      if (!window.confirm(warning)) return;
+    }
     try { localStorage.setItem(KEY, lang); } catch (_) { /* ignore */ }
     // The query string is a one-visit override. Remove it before reloading,
     // otherwise ?lang=vi keeps winning after the user picks English.
@@ -414,7 +455,7 @@
     // data-i18n or a future t() call.
   }
 
-  window.VibeCutI18N = { current, setLanguage, apply, translateValue };
+  window.VibeCutI18N = { current, setLanguage, apply, t, tBlock, translateValue };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start, { once: true });

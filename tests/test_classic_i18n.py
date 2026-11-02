@@ -39,3 +39,17 @@ def test_voice_room_loads_the_same_translator():
     assert "/static/classic/i18n.js" in page
     assert 'id: "ui-language"' in room
     assert "Tiếng Việt" in room
+
+
+def test_dynamic_ui_strings_have_explicit_patterns():
+    script = (ROOT / "static" / "classic" / "i18n.js").read_text(encoding="utf-8")
+    app = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "function tBlock" in script
+    assert "giây cắt" in script
+    assert "khoảnh khắc" in script
+    assert "Render gọi" in script
+    assert "Xóa:" in script
+    assert "window.VibeCutI18N?.tBlock" in app
+    assert "window.VibeCutI18N?.t" in app
+    assert "VibeCutClassicHasUnsaved" in app
+    assert "Switching language reloads the page" in script

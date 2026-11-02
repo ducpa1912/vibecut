@@ -56,6 +56,15 @@ def test_a_cloud_voice_or_music_engine_turns_the_pill_cloud_or_mixed():
     assert _node(f"t.privacyLabel({{musicEngine:'lyria-clip',platform:{platform}}})") == "Cloud AI"
 
 
+def test_a_machine_with_only_some_native_engines_is_mixed():
+    assert _node(
+        "t.privacyLabel({platform:{native_stt:true,native_tts:false,native_vision:true}})"
+    ) == "Mixed AI"
+    assert _node(
+        "t.privacyLabel({platform:{native_stt:false,native_tts:false,native_vision:false}})"
+    ) == "AI off"
+
+
 def test_local_engines_keep_the_pill_on_device():
     assert _node(
         "t.privacyLabel({secrets:{},voiceEngine:'say',musicEngine:'library',musicSource:'own',platform:{native_stt:true,native_tts:true,native_vision:true}})"

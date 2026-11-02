@@ -508,6 +508,8 @@
     if (event.key === "Escape") closeSelectMenu();
   });
 
+  window.VibeCutClassicHasUnsaved = () => Boolean(state.edited);
+
   function init() {
     syncTokenCookie();
     state.recentOpened = readRecentOpened();
@@ -1497,7 +1499,7 @@
       const resumeJob = resume.jobs.find((job) => job.id === resumeId) || resume.jobs[0];
       const rest = groups.filter((group) => group !== resume);
       dom.recentSection.hidden = false;
-      dom.recentCount.textContent = `${jobs.length} cut${jobs.length === 1 ? "" : "s"} · ${groups.length} source${groups.length === 1 ? "" : "s"}`;
+      dom.recentCount.textContent = tr(`${jobs.length} cut${jobs.length === 1 ? "" : "s"} · ${groups.length} source${groups.length === 1 ? "" : "s"}`);
       dom.recentResume.hidden = !resume;
       dom.recentResume.innerHTML = resume ? resumeCard(resume, resumeJob) : "";
       dom.recent.innerHTML = rest.slice(0, 5).map(recentCard).join("");
@@ -2976,7 +2978,7 @@
       analysis.engine?.whisper ? "whisper" : null,
     ].filter(Boolean).join(" + ");
     const deep = analysis.deep_count ?? analysis.scene_count;
-    dom.resultMeta.textContent = `${fileStem(job.source.name)} · ${fmtDuration(job.source.duration)} source · ${analysis.scene_count} moments · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`;
+    dom.resultMeta.textContent = tr(`${fileStem(job.source.name)} · ${fmtDuration(job.source.duration)} source · ${analysis.scene_count} moments · ${deep} deep-read · ${analysis.elapsed.toFixed(1)}s analysis · ${engine}`);
     dom.resultMeta.title = job.source.name || "";
     renderSpeechNotice();
     paintTranscriptReady();
@@ -3172,7 +3174,7 @@
     const plan = state.plan;
     if (!plan) return;
     const scroll = Number(state.timelineScroll) || 0;
-    dom.planTotal.textContent = `${plan.total.toFixed(1)}s cut · ${plan.clip_count} beats`;
+    dom.planTotal.textContent = tr(`${plan.total.toFixed(1)}s cut · ${plan.clip_count} beats`);
     dom.planBadge.textContent = plan.auto ? "auto hook" : "custom hook";
     dom.planBadge.classList.toggle("custom", !plan.auto);
     dom.resetHook.hidden = state.overrideHook === null;
@@ -4160,7 +4162,7 @@
 
   function updateMomentControls(total, shown, order) {
     const count = `${total} moment${total === 1 ? "" : "s"} · ${order}`;
-    dom.sceneCount.textContent = shown < total ? `${count} · ${shown} shown` : count;
+    dom.sceneCount.textContent = shown < total ? tr(`${count} · ${shown} shown`) : count;
     dom.momentsExpand.textContent = state.momentsExpanded ? "Show less" : `Show all ${total}`;
     dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
   }
@@ -5055,7 +5057,7 @@
       setSoundStatus(
         dom.audioMusicPreviewStatus,
         cache === "hit"
-          ? (window.ClassicTrust?.costNotice({ cached: true }) || "Cached · no new call")
+          ? tr(window.ClassicTrust?.costNotice({ cached: true }) || "Cached · no new call")
           : "Music preview ready · 12s. The render uses the full bed.",
         "ok",
       );
@@ -5247,7 +5249,7 @@
     setCostNote(
       dom.audioCopyCost,
       (translate || rewrite)
-        ? trust.costNotice({ provider, what })
+        ? tr(trust.costNotice({ provider, what }))
         : "",
     );
 
@@ -5255,10 +5257,10 @@
     setCostNote(
       dom.audioVoiceCost,
       voiceCloud
-        ? trust.costNotice({
+        ? tr(trust.costNotice({
           provider: voiceProviderName(state.audio.engine),
           what: "the preview line and script text",
-        })
+        }))
         : "",
     );
 
@@ -5269,10 +5271,10 @@
     setCostNote(
       dom.audioMusicCost,
       musicCloud
-        ? trust.costNotice({
+        ? tr(trust.costNotice({
           provider: musicProviderName(state.audio.music),
           what: "a music prompt",
-        })
+        }))
         : "",
     );
   }
@@ -6831,11 +6833,11 @@
     const voiceMode = ["bed", "voice", "full"].includes(mode);
     const upload = voiceMode && state.audio.source === "upload";
     const musicMode = ["music", "full"].includes(mode);
-    return trust.renderCostNote({
+    return tr(trust.renderCostNote({
       voiceProvider: voiceMode && !upload ? voiceProviderName(state.audio.engine) : "",
       musicProvider: musicMode && musicSourceMode() === "generate"
         ? musicProviderName(state.audio.music) : "",
-    });
+    }));
   }
 
   function withRenderNotes(text) {
@@ -7606,7 +7608,8 @@
     const message = trust && typeof trust.cleanConfirmText === "function"
       ? trust.cleanConfirmText(profile)
       : "Clean this job? The source video stays.";
-    if (!window.confirm(message)) return;
+    const localized = window.VibeCutI18N?.tBlock ? window.VibeCutI18N.tBlock(message) : message;
+    if (!window.confirm(localized)) return;
     dom.cleanJob.disabled = true;
     dom.cleanJob.textContent = "Cleaning…";
     try {
@@ -7847,6 +7850,10 @@
 
   function clamp(value, low, high) {
     return Math.max(low, Math.min(high, value));
+  }
+
+  function tr(value) {
+    return window.VibeCutI18N?.t ? window.VibeCutI18N.t(value) : value;
   }
 
   function esc(value) {
