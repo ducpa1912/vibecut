@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 #: Routes defined directly in app.py when the lane rule started. Lower it when
 #: a route moves out; never raise it. New routes go into routes_classic.py,
-#: routes_studio.py or routes_voice_clone.py (docs/branching.md).
+#: routes_studio.py or routes_voice_clone.py (docs/shared/branching.md).
 APP_ROUTE_CEILING = 104
 
 

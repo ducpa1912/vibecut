@@ -70,3 +70,5 @@ def test_the_page_wires_the_signature_into_the_shown_render():
     assert "rememberRenderSignature(result.render, body)" in source
     assert "updateRenderStale(record)" in source
     assert "classic-render-sig:" in source
+    assert "record?.request_sig" in source
+    assert "No render baseline on this browser." in source

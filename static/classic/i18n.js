@@ -10,7 +10,6 @@
 
   const KEY = "vibecut.ui_lang";
   const SUPPORTED = ["en", "vi"];
-  let activeLang = "en";
 
   const VI = {
     // Header and shared controls
@@ -20,8 +19,11 @@
     "Back to VibeCut": "Quay lại VibeCut",
     "Creator": "Creator",
     "Setup": "Cài đặt",
-    "Local by default": "Mặc định cục bộ",
-    "Online features on": "Đang bật tính năng trực tuyến",
+    "On-device AI": "AI trên thiết bị",
+    "Cloud AI": "AI trên đám mây",
+    "Mixed AI": "AI hỗn hợp",
+    "AI off": "AI đang tắt",
+    "AI": "AI",
     "checking engine…": "đang kiểm tra engine…",
     "ffmpeg · local analysis": "ffmpeg · phân tích cục bộ",
     "Save setup": "Lưu cài đặt",
@@ -71,7 +73,7 @@
     "A payoff beat closes the cut.": "Một nhịp cao trào khép lại bản cắt.",
     "Follow the subject": "Bám theo chủ thể",
     "9:16 crop tracks faces and saliency.": "Khung 9:16 theo dõi khuôn mặt và điểm nổi bật.",
-    "Local processing by default. Optional AI features may send data to external providers. No watermark.": "Mặc định xử lý cục bộ. Tính năng AI tùy chọn có thể gửi dữ liệu đến nhà cung cấp bên ngoài. Không có watermark.",
+    "On-device AI on supported Macs; cloud AI where native engines are not available. No watermark.": "AI trên thiết bị với Mac được hỗ trợ; AI trên đám mây khi máy không có engine gốc. Không có watermark.",
     "recent": "gần đây",
     "Recent cuts": "Bản cắt gần đây",
     "View all cuts": "Xem tất cả bản cắt",
@@ -371,7 +373,6 @@
 
   function apply() {
     const lang = current();
-    activeLang = lang;
     document.documentElement.lang = lang;
     syncSelector(lang);
     if (lang !== "vi") return;
@@ -408,22 +409,9 @@
   function start() {
     installSelector();
     apply();
-    const observer = new MutationObserver((records) => {
-      // English is the source language. Translating dynamic English strings
-      // after the user switches back is what made the UI mixed.
-      if (activeLang !== "vi") return;
-      for (const record of records) {
-        if (record.type === "characterData") {
-          if (!shouldSkip(record.target)) {
-            const next = translateValue(record.target.nodeValue);
-            if (next !== record.target.nodeValue) record.target.nodeValue = next;
-          }
-        } else {
-          for (const node of record.addedNodes) walk(node);
-        }
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    // No live DOM observer: dynamic English copy is source copy. Translate
+    // only explicit UI copy at load time. New dynamic strings can opt in with
+    // data-i18n or a future t() call.
   }
 
   window.VibeCutI18N = { current, setLanguage, apply, translateValue };

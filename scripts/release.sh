@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tag the shipped classic lane as a beta release and push the tag.
-# Beta testers get tags, never a branch tip (docs/branching.md, Phase C).
+# Beta testers get tags, never a branch tip (docs/shared/branching.md, Phase C).
 #
 #   scripts/release.sh --founder-passed            # tag and push beta-YYYYMMDD-N
 #   scripts/release.sh --founder-passed --dry-run  # say what it would tag
@@ -47,7 +47,7 @@ net() {
 
 net fetch -q "$url" '+refs/heads/classic:refs/remotes/origin/classic' '+refs/tags/*:refs/tags/*'
 if [[ "$(git rev-parse HEAD)" != "$(git rev-parse refs/remotes/origin/classic)" ]]; then
-  echo "This classic is not what GitHub has. Run scripts/ship.sh first, so the tag is a shipped commit." >&2
+  echo "This classic is not what GitHub has. Run scripts/ship-lane.sh first, so the tag is a shipped commit." >&2
   exit 1
 fi
 
@@ -64,6 +64,19 @@ if [[ "$dry_run" -eq 1 ]]; then
   exit 0
 fi
 
-git tag -a "$tag" -m "Beta $tag: classic at $commit. Build with VIBECUT_EDITION=classic and no VIBECUT_FEATURES."
+allow_unsigned="${VIBECUT_ALLOW_UNSIGNED:-0}"
+if [[ "$allow_unsigned" != "1" ]] && ! git verify-commit HEAD >/dev/null 2>&1; then
+  echo "HEAD is not signed. Sign the release commit before tagging." >&2
+  exit 1
+fi
+if [[ "$allow_unsigned" == "1" ]]; then
+  git tag -a "$tag" -m "Beta $tag: classic at $commit. Build with VIBECUT_EDITION=classic and no VIBECUT_FEATURES."
+else
+  git tag -s "$tag" -m "Beta $tag: classic at $commit. Build with VIBECUT_EDITION=classic and no VIBECUT_FEATURES."
+  if ! git verify-tag "$tag" >/dev/null 2>&1; then
+    echo "Tag $tag is not signed. Nothing was pushed." >&2
+    exit 1
+  fi
+fi
 net push "$url" "refs/tags/$tag"
 echo "Released $tag ($commit). Testers build from this tag, not from the branch."

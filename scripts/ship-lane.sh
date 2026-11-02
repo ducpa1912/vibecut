@@ -6,7 +6,7 @@
 #   scripts/ship-lane.sh --skip-tests  # only when the suite already ran
 #
 # Every lane keeps its own port, data folder and media folder. See
-# scripts/lane-env.sh and docs/branching.md.
+# scripts/lane-env.sh and docs/shared/branching.md.
 set -euo pipefail
 
 skip_tests=0
@@ -16,10 +16,10 @@ fi
 
 branch=$(git rev-parse --abbrev-ref HEAD)
 case "$branch" in
-  classic|classic-b|classic-prv|voice-room) ;;
+  classic|classic-b|studio|voice-room) ;;
   *)
-    echo "Run this on a Classic or Voice Room branch, not '$branch'." >&2
-    echo "Studio ships with scripts/ship.sh because Studio owns main." >&2
+    echo "Run this on a Classic, Studio or Voice Room branch, not '$branch'." >&2
+    echo "A main release uses scripts/ship.sh --release-main." >&2
     exit 1
     ;;
 esac
@@ -62,6 +62,11 @@ fi
 if [[ "$skip_tests" -eq 0 ]]; then
   echo "-> Running the test suite"
   python3 -m pytest -q -p no:cacheprovider
+fi
+
+if ! git verify-commit HEAD >/dev/null 2>&1; then
+  echo "HEAD is not signed. Sign the commit before shipping." >&2
+  exit 1
 fi
 
 echo "-> Pushing '$branch' (main is not moved)"

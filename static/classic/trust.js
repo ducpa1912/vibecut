@@ -17,14 +17,24 @@
     musicEngine = "",
     musicSource = "",
     onlineTranslation = false,
+    platform = null,
   } = {}) {
     const cloudKey = CLOUD_KEYS.some((name) => secrets[name] === true);
     const cloudVoice = CLOUD_VOICES.includes(voiceEngine);
     const cloudMusic = musicSource === "generate"
       || ["minimax-music", "lyria-clip"].includes(musicEngine);
-    return cloudKey || cloudVoice || cloudMusic || onlineTranslation
-      ? "Online features on"
-      : "Local by default";
+    const cloud = cloudKey || cloudVoice || cloudMusic || onlineTranslation;
+    if (!platform || typeof platform !== "object") {
+      return cloud ? "Cloud AI" : "On-device AI";
+    }
+    const nativeStt = platform.native_stt === true;
+    const nativeTts = platform.native_tts === true;
+    const nativeVision = platform.native_vision === true;
+    const anyNative = nativeStt || nativeTts || nativeVision;
+    const allNative = nativeStt && nativeTts && nativeVision;
+    if (cloud) return anyNative ? "Mixed AI" : "Cloud AI";
+    if (allNative) return "On-device AI";
+    return anyNative ? "Mixed AI" : "AI off";
   };
 
   /** One short notice shown next to the button that can reach a provider. */

@@ -128,6 +128,9 @@ def test_setup_and_voice_room_expose_voice_fit_controls():
     assert "Preserve voice pitch &amp; tone" in classic
     assert "Advanced voice fit" in room
     assert "Preserve voice pitch & tone" in room
+    app = (root / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "option.disabled = preserve" in app
+    assert 'dom.setupVoiceMax.value = "1.25"' in app
 
 
 def test_provider_synthesis_is_normalized_and_fit_once(monkeypatch, tmp_path):

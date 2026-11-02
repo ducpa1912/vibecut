@@ -108,7 +108,7 @@ def test_the_render_payload_keeps_the_custom_clip_order_and_roles():
     start = js.index("async function startRender(quality")
     block = js[start:js.index("async function startRenderAll", start)]
     assert "const body = renderRequestFor(target, quality);" in block
-    assert "JSON.stringify({ ...body, force })" in block
+    assert "JSON.stringify({ ...body, force, request_sig: requestSig })" in block
 
 
 def test_render_all_and_ab_use_the_edited_order():

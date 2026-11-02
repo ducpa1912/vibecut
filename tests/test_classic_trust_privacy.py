@@ -25,30 +25,50 @@ def _node(expression: str) -> str:
 def test_the_local_promise_is_qualified_on_the_page():
     html = PAGE.read_text(encoding="utf-8")
     assert (
-        "Local processing by default. Optional AI features may send data "
-        "to external providers." in html
+        "On-device AI on supported Macs; cloud AI where native engines are "
+        "not available." in html
     )
     assert "No cloud. No account. No watermark." not in html
     assert "> local only<" not in html
-    assert ">Local by default<" in html
+    assert ">Local by default<" not in html
     assert 'id="privacy-label"' in html
 
 
-def test_the_pill_says_local_by_default_without_cloud_use():
-    assert _node("t.privacyLabel({})") == "Local by default"
-
-
-def test_a_saved_cloud_key_turns_the_pill_online():
-    assert _node("t.privacyLabel({secrets:{openrouter:true}})") == "Online features on"
-
-
-def test_a_cloud_voice_or_music_engine_turns_the_pill_online():
-    assert _node("t.privacyLabel({voiceEngine:'elevenlabs'})") == "Online features on"
-    assert _node("t.privacyLabel({musicSource:'generate'})") == "Online features on"
-    assert _node("t.privacyLabel({musicEngine:'lyria-clip'})") == "Online features on"
-
-
-def test_local_engines_keep_the_pill_local():
+def test_the_pill_reports_on_device_ai_when_all_native_engines_exist():
     assert _node(
-        "t.privacyLabel({secrets:{},voiceEngine:'say',musicEngine:'library',musicSource:'own'})"
-    ) == "Local by default"
+        "t.privacyLabel({platform:{native_stt:true,native_tts:true,native_vision:true}})"
+    ) == "On-device AI"
+
+
+def test_a_saved_cloud_key_turns_the_pill_cloud_or_mixed():
+    assert _node(
+        "t.privacyLabel({secrets:{openrouter:true},platform:{native_stt:false,native_tts:false,native_vision:false}})"
+    ) == "Cloud AI"
+    assert _node(
+        "t.privacyLabel({secrets:{openrouter:true},platform:{native_stt:true,native_tts:true,native_vision:true}})"
+    ) == "Mixed AI"
+
+
+def test_a_cloud_voice_or_music_engine_turns_the_pill_cloud_or_mixed():
+    platform = "{native_stt:false,native_tts:false,native_vision:false}"
+    assert _node(f"t.privacyLabel({{voiceEngine:'elevenlabs',platform:{platform}}})") == "Cloud AI"
+    assert _node(f"t.privacyLabel({{musicSource:'generate',platform:{platform}}})") == "Cloud AI"
+    assert _node(f"t.privacyLabel({{musicEngine:'lyria-clip',platform:{platform}}})") == "Cloud AI"
+
+
+def test_local_engines_keep_the_pill_on_device():
+    assert _node(
+        "t.privacyLabel({secrets:{},voiceEngine:'say',musicEngine:'library',musicSource:'own',platform:{native_stt:true,native_tts:true,native_vision:true}})"
+    ) == "On-device AI"
+
+
+def test_health_reports_platform_capabilities():
+    import app
+
+    platform = app.health()["platform"]
+    assert platform["system"]
+    assert platform["machine"]
+    assert isinstance(platform["native_stt"], bool)
+    assert isinstance(platform["native_tts"], bool)
+    assert isinstance(platform["native_vision"], bool)
+    assert isinstance(platform["native_ai"], bool)

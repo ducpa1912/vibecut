@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import platform
 import re
 import shutil
 import signal
@@ -1735,6 +1736,11 @@ def _share_captions(job: dict, artifact: str) -> str:
         raise HTTPException(404, "Captions are not available for this artifact.") from exc
 
 
+#: Render file names carry their shape; a 9:16 file has no token. Every other
+#: shape must be listed, or a 9:16 lookup can pick its file.
+_OTHER_SHAPE_TOKENS = ("_16x9", "_16x10", "_1x1", "_4x5")
+
+
 def _find_share_render(job: dict, target: int, aspect: str) -> dict | None:
     rows = []
     for record in (job.get("renders") or {}).values():
@@ -1743,7 +1749,7 @@ def _find_share_render(job: dict, target: int, aspect: str) -> dict | None:
         if f"reel_{int(target)}" not in str(record["path"]):
             continue
         path = str(record["path"])
-        if aspect == "9:16" and any(token in path for token in ("_16x9", "_1x1", "_4x5")):
+        if aspect == "9:16" and any(token in path for token in _OTHER_SHAPE_TOKENS):
             continue
         if aspect != "9:16" and aspect.replace(":", "x") not in path:
             continue
@@ -1757,7 +1763,7 @@ def _find_share_render(job: dict, target: int, aspect: str) -> dict | None:
     candidates = []
     for path in directory.glob(pattern):
         name = path.name
-        if aspect == "9:16" and any(token in name for token in ("_16x9", "_1x1", "_4x5")):
+        if aspect == "9:16" and any(token in name for token in _OTHER_SHAPE_TOKENS):
             continue
         if aspect != "9:16" and aspect.replace(":", "x") not in name:
             continue
@@ -3152,7 +3158,7 @@ app.include_router(routes_edits.router)
 app.include_router(__import__("routes_trim", fromlist=["router"]).router)
 app.include_router(routes_overlays.router)
 app.include_router(routes_voice_clone.router)
-# Lane modules: new routes go here, not into app.py (docs/branching.md).
+# Lane modules: new routes go here, not into app.py (docs/shared/branching.md).
 app.include_router(routes_classic.router)
 app.include_router(routes_studio.router)
 app.include_router(music.router)
@@ -3424,10 +3430,33 @@ def admin_index_redirect() -> RedirectResponse:
 
 @app.get("/docs/url-ingest.md")
 def url_ingest_docs() -> FileResponse:
-    path = ROOT / "docs" / "url-ingest.md"
+    path = ROOT / "docs" / "shared" / "url-ingest.md"
     if not path.is_file():
         raise HTTPException(404, "URL ingest guide not found.")
     return FileResponse(path, media_type="text/markdown; charset=utf-8")
+
+
+def _platform_capabilities() -> dict:
+    """What this machine can do without a cloud route."""
+    native_stt = bool(shutil.which("mlx_whisper")) or (
+        sys.platform == "darwin"
+        and (
+            (ROOT / "bin" / "transcribe_apple").is_file()
+            or bool(shutil.which("swiftc"))
+        )
+    )
+    native_tts = audio.say_available() or audio.kokoro_available()
+    native_vision = vision.available()
+    return {
+        "system": sys.platform,
+        "machine": platform.machine(),
+        "apple_silicon": sys.platform == "darwin" and platform.machine() == "arm64",
+        "native_stt": native_stt,
+        "native_transcript": native_stt,
+        "native_tts": native_tts,
+        "native_vision": native_vision,
+        "native_ai": bool(native_stt and native_tts and native_vision),
+    }
 
 
 @app.get("/api/health")
@@ -3447,6 +3476,7 @@ def health() -> dict:
         "data": str(DATA),
         "encoder": render._choose_encoder(),
         "opencode": audio.opencode_available(),
+        "platform": _platform_capabilities(),
         "version": 2,
     }
 
@@ -4391,6 +4421,10 @@ class PlanBody(BaseModel):
     # valid Edit from them before queueing; Studio keeps sending a stored Edit
     # through its own routes.
     edit: dict | None = None
+    # Classic's exact request signature, stored with the render so the
+    # "changed since this render" marker survives a reload or another browser.
+    request_sig: str | None = None
+    request_sigs: dict[str, str] | None = None
 
 
 class CaptionTrackBody(BaseModel):
@@ -7386,11 +7420,21 @@ def voice_sample(job_id: str, body: VoiceBody) -> FileResponse:
     text = (body.text or "").strip() or "This is a VibeCut voice test."
     cache = DATA / "cache" / "voice"
     cache.mkdir(parents=True, exist_ok=True)
+    target = audio.voice_sample_target(body.engine, body.voice, text, cache, rate=body.rate)
+    cached = target.is_file() and target.stat().st_size > 512
     try:
         path = audio.voice_sample(body.engine, body.voice, text, cache, rate=body.rate)
     except audio.AudioError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return FileResponse(path, media_type="audio/wav", filename="voice-sample.wav")
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename="voice-sample.wav",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-VibeCut-Preview": "cached" if cached else "new",
+        },
+    )
 
 
 @app.get("/api/audio/beats")
@@ -7535,6 +7579,7 @@ def ab_package(job_id: str, body: PlanBody) -> dict:
                 audio_plan, bool(body.force), preset=preset, caption_margin=margin,
                 script_id=script_id, check_space=True,
                 caption_track=caption_track, edit=edit,
+                request_sig=((body.request_sigs or {}).get(str(target)) or body.request_sig),
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:
@@ -8318,6 +8363,7 @@ def _queue_render(
     caption_track: caption_engine.CaptionTrack | None = None,
     reject_active: bool = False,
     edit: dict | None = None,
+    request_sig: str | None = None,
 ) -> dict:
     """Serialize check/write/submit so one record key cannot queue twice."""
     require_source(job)
@@ -8327,7 +8373,7 @@ def _queue_render(
             force, preset=preset, caption_margin=caption_margin,
             script_id=script_id, check_space=check_space,
             caption_track=caption_track, reject_active=reject_active,
-            edit=edit,
+            edit=edit, request_sig=request_sig,
         )
 
 
@@ -8348,6 +8394,7 @@ def _queue_render_locked(
     caption_track: caption_engine.CaptionTrack | None = None,
     reject_active: bool = False,
     edit: dict | None = None,
+    request_sig: str | None = None,
 ) -> dict:
     # Reserve generations and write manifests serially so two force requests
     # can never race to the same artifact id.
@@ -8358,7 +8405,7 @@ def _queue_render_locked(
             audio_plan, force, preset=preset,
             caption_margin=caption_margin, script_id=script_id,
             check_space=check_space, caption_track=caption_track,
-            reject_active=reject_active, edit=edit,
+            reject_active=reject_active, edit=edit, request_sig=request_sig,
         )
 
 
@@ -8379,6 +8426,7 @@ def _queue_render_locked_impl(
     caption_track: caption_engine.CaptionTrack | None = None,
     reject_active: bool = False,
     edit: dict | None = None,
+    request_sig: str | None = None,
 ) -> dict:
     target = int(plan["target"])
     audio_sig = _audio_signature(audio_plan)
@@ -8574,6 +8622,7 @@ def _queue_render_locked_impl(
         "set_id": plan.get("clip_set_id"),
         "edit_id": (edit or {}).get("id"),
         "edit_hash": (edit or {}).get("hash"),
+        "request_sig": request_sig or None,
         "plan_snapshot": {
             "target": target,
             "hook_scene": plan.get("hook_scene"),
@@ -8676,7 +8725,7 @@ def start_render(job_id: str, body: PlanBody) -> dict:
         job_id, job, plan, quality, aspect, encoder, captions, audio_plan,
         bool(body.force), preset=preset, caption_margin=margin,
         script_id=_body_script_id(body, audio_plan), check_space=True,
-        caption_track=caption_track, edit=edit,
+        caption_track=caption_track, edit=edit, request_sig=body.request_sig,
     )
     return {"render": _public_render(job_id, record)}
 
@@ -8705,6 +8754,7 @@ def start_render_all(job_id: str, body: PlanBody) -> dict:
                 bool(body.force), preset=preset, caption_margin=margin,
                 script_id=script_id, check_space=True,
                 caption_track=caption_track, edit=edit,
+                request_sig=((body.request_sigs or {}).get(str(target)) or body.request_sig),
             )
             renders.append(_public_render(job_id, record))
         except HTTPException as exc:

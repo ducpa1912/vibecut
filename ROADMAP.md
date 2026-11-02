@@ -69,7 +69,7 @@ Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music
 
 | Item | Owner / note |
 |---|---|
-| Founder checklists `docs/testing/w3-live-checklist.md`, `w4-founder-checklist.md`, R1/R2 tables | Founder → Claude records |
+| Founder checklists `docs/studio/testing/w3-live-checklist.md`, `w4-founder-checklist.md`, R1/R2 tables | Founder → Claude records |
 | Pack install/remove HTTP route; real SHA-256 pins/URLs | Wave 5 packaging |
 | 90-minute performance: frame endpoint, proxy, residual sampling | Wave 5 performance |
 | Frame/vs/final 60 fps path; overlapping caption fallback | Wave 5 |
@@ -108,7 +108,7 @@ Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music
 
 ### R3 founder-session fixes (planned, from round_6.md)
 
-Source: founder session 1 (`docs/testing/founder-session-1/`) and the round 6 panel. Four tracks with disjoint files, so they can be built in parallel and merged T1 → T4.
+Source: founder session 1 (`docs/studio/testing/founder-session-1/`) and the round 6 panel. Four tracks with disjoint files, so they can be built in parallel and merged T1 → T4.
 
 **T1 Dub and voice workflow** (`static/studio/edit/layers/audio.js`, `audio.py` messages, `story_queue.py` failure reason)
 - Dub gets a source-language confirm and a target-language picker; Studio writes `audio.translate`.
@@ -251,9 +251,9 @@ Import, Check, Stories, Edit, render and packet work with the network off. Cloud
 ## 5. Pointers
 
 - Discussion records: `round_*.md`.
-- Wave/round handoffs: `docs/handoff/**`.
-- QA evidence/checklists: `docs/testing/**`.
-- Product brief: `FOUNDER_BRIEF.md`; paid-v1 PRD: `PRD.md`; setup and feature docs: `README.md`, `docs/*.md`.
+- Wave/round handoffs: `docs/studio/handoff/**`.
+- QA evidence/checklists: `docs/shared/testing/**`, `docs/classic/testing/**`, `docs/studio/testing/**`, `docs/voice-room/testing/**`.
+- Product brief: `FOUNDER_BRIEF.md`; paid-v1 PRD: `PRD.md`; setup and feature docs: `README.md`, `docs/shared/**`.
 - Tags: `wave-1-done`, `wave-2-done`, `wave-3-done`, `wave-4-done`, `refactor-1-done`, `refactor-2-done`.
 
 **Rule:** this roadmap is the only active plan/roadmap. If a proposal is not in §2 or a contract in §3, it is historical.

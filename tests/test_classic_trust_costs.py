@@ -81,10 +81,10 @@ def test_the_render_names_the_providers_it_will_call():
     assert script.count("dom.renderNote.textContent = withRenderNotes(") == 5
 
 
-def test_an_opencode_login_without_a_key_turns_the_pill_online():
+def test_an_opencode_login_without_a_key_turns_the_pill_cloud_or_mixed():
     assert _node(
-        "t.privacyLabel({secrets:{},onlineTranslation:true})"
-    ) == "Online features on"
+        "t.privacyLabel({secrets:{},onlineTranslation:true,platform:{native_stt:false,native_tts:false,native_vision:false}})"
+    ) == "Cloud AI"
     script = APP.read_text(encoding="utf-8")
     pill = script[script.index("function updatePrivacyPill"):]
     pill = pill[:pill.index("\n  }\n")]

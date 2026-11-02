@@ -39,8 +39,10 @@ def _repo(tmp_path, branch="classic"):
     return work, remote
 
 
-def _release(work, *args):
+def _release(work, *args, allow_unsigned=True):
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "HOME": str(work)}
+    if allow_unsigned:
+        env["VIBECUT_ALLOW_UNSIGNED"] = "1"
     return subprocess.run(["bash", str(SCRIPT), *args], cwd=work, capture_output=True, text=True, env=env)
 
 
@@ -59,6 +61,13 @@ def test_refuses_other_lanes_and_unshipped_commits(tmp_path):
     _git(work2, "add", "b.txt")
     _git(work2, "commit", "-q", "-m", "b")
     assert "not what GitHub has" in _release(work2, "--founder-passed").stderr
+
+
+def test_refuses_an_unsigned_release_commit(tmp_path):
+    work, _remote = _repo(tmp_path)
+    result = _release(work, "--founder-passed", allow_unsigned=False)
+    assert result.returncode != 0
+    assert "not signed" in result.stderr
 
 
 def test_tags_and_pushes_the_shipped_classic(tmp_path):

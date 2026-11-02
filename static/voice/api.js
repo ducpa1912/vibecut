@@ -2,7 +2,7 @@
  * Voice Room — API client.
  *
  * Its own small copy of the request helper, so the hidden Voice Room feature
- * does not depend on Studio's client (see docs/branching.md). Writes announce
+ * does not depend on Studio's client (see docs/shared/branching.md). Writes announce
  * `vibecut:data-changed`, which Studio's read cache listens to when a voice
  * panel runs inside Studio.
  */

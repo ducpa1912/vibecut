@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# Ship the current lane branch: take in main, test, push the branch, then move
-# main to it and push main. Every lane ships this way, so main always holds all
-# lanes and any lane can be merged into any other. See docs/branching.md.
+# Release main from a lane branch: take in main, test, push the branch, then
+# move main to it and push main. Lanes ship themselves with ship-lane.sh; this
+# script is only for an explicit release merge. See docs/shared/branching.md.
 #
-#   scripts/ship.sh               # from a lane worktree (classic, studio, voice-room)
-#   scripts/ship.sh --skip-tests  # only when the suite already ran on this commit
+#   scripts/ship.sh --release-main               # explicit main release
+#   scripts/ship.sh --release-main --skip-tests  # only when the suite already ran
 set -euo pipefail
+
+# A lane ships itself with ship-lane.sh. This script moves main only when the
+# release engineer asks explicitly.
+if [[ "${1:-}" != "--release-main" ]]; then
+  exec "$(dirname "$0")/ship-lane.sh" "$@"
+fi
+shift
 
 skip_tests=0
 if [[ "${1:-}" == "--skip-tests" ]]; then
@@ -62,6 +69,11 @@ fi
 if [[ "$skip_tests" -eq 0 ]]; then
   echo "-> Running the test suite (includes tests/test_classic_guard.py)"
   python3 -m pytest -q -p no:cacheprovider
+fi
+
+if ! git verify-commit HEAD >/dev/null 2>&1; then
+  echo "HEAD is not signed. Sign the commit before releasing." >&2
+  exit 1
 fi
 
 echo "-> Pushing '$branch'"

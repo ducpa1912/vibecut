@@ -1,6 +1,6 @@
 """Which views and hidden features a build shows.
 
-One codebase serves every lane (see ``docs/branching.md``); a build differs
+One codebase serves every lane (see ``docs/shared/branching.md``); a build differs
 only by two environment switches:
 
 * ``VIBECUT_EDITION``: ``all`` (default, both views, Studio opens first),

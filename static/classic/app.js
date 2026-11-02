@@ -589,10 +589,11 @@
         // OpenCode Go signs in without a saved key, and rewrite or translate
         // can still go online through it.
         onlineTranslation: translationMayUseCloudNow() || rewriteMayUseCloudNow(),
+        platform: state.health?.platform || null,
       })
-      : "Local by default";
+      : "Cloud AI";
     if (dom.privacyLabel) dom.privacyLabel.textContent = label;
-    dom.privacyPill?.classList.toggle("online", label === "Online features on");
+    dom.privacyPill?.classList.toggle("online", label === "Cloud AI" || label === "Mixed AI");
   }
 
   function updateVoiceFitWarning() {
@@ -602,6 +603,13 @@
       if (preserve) dom.setupVoiceExtreme.checked = false;
     }
     if (dom.setupVoiceMax) {
+      for (const option of dom.setupVoiceMax.options) {
+        const value = Number(option.value);
+        if (Number.isFinite(value) && value > 1.25) option.disabled = preserve;
+      }
+      if (preserve && Number(dom.setupVoiceMax.value) > 1.25) {
+        dom.setupVoiceMax.value = "1.25";
+      }
       if (dom.setupVoiceExtreme?.checked) dom.setupVoiceMax.value = "2.50";
       else if (dom.setupVoiceMax.value === "2.50") dom.setupVoiceMax.value = "1.80";
     }
@@ -1329,7 +1337,10 @@
       state.health = health;
       const version = (health.ffmpeg.match(/ffmpeg version (\S+)/) || [])[1] || "ffmpeg";
       dom.health.textContent = `${version} · ${health.vision ? "vision" : "center crop"} · ${health.whisper ? "whisper" : "no speech"}`;
-      dom.footerHealth.textContent = `local · ${health.vision ? "apple vision" : "center crop"}`;
+      const platform = health.platform || {};
+      const mode = platform.native_ai ? "on-device" : (platform.native_stt || platform.native_tts || platform.native_vision ? "mixed" : "cloud");
+      dom.footerHealth.textContent = `${mode} · ${health.vision ? "apple vision" : "center crop"}`;
+      updatePrivacyPill();
       if (!health.vision) {
         dom.optOcr.checked = false;
         dom.optOcr.disabled = true;
@@ -4971,7 +4982,7 @@
     setSoundStatus(dom.audioVoicePreviewStatus, "Generating a short voice preview…");
     syncSoundPreviewButtons();
     try {
-      const { blob } = await fetchSoundBlob(`/api/jobs/${state.job.id}/voice/sample`, {
+      const { blob, cache } = await fetchSoundBlob(`/api/jobs/${state.job.id}/voice/sample`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4984,7 +4995,13 @@
       if (state.voiceSampleUrl) URL.revokeObjectURL(state.voiceSampleUrl);
       state.voiceSampleUrl = URL.createObjectURL(blob);
       state.voiceSampleKey = key;
-      setSoundStatus(dom.audioVoicePreviewStatus, "Voice preview ready. Play ▶ or render to use this voice.", "ok");
+      setSoundStatus(
+        dom.audioVoicePreviewStatus,
+        cache === "cached"
+          ? "Voice preview ready · cached, no new call. Play ▶ or render to use this voice."
+          : "Voice preview ready. Play ▶ or render to use this voice.",
+        "ok",
+      );
       playSoundUrl(state.voiceSampleUrl);
     } catch (error) {
       setSoundStatus(dom.audioVoicePreviewStatus, error.message, "bad");
@@ -6786,15 +6803,19 @@
   function updateRenderStale(record) {
     if (!dom.renderStale) return;
     let stale = false;
+    let baseline = String(record?.request_sig || "");
     const key = renderSigKey(record);
-    if (record && key) {
-      let stored = "";
-      try { stored = localStorage.getItem(key) || ""; } catch (_) { /* ignore */ }
-      if (stored) {
-        stale = stored !== renderSignatureOf(
-          renderRequestFor(record.target, record.quality || "final"),
-        );
-      }
+    if (!baseline && record && key) {
+      try { baseline = localStorage.getItem(key) || ""; } catch (_) { /* ignore */ }
+    }
+    if (baseline) {
+      stale = baseline !== renderSignatureOf(
+        renderRequestFor(record.target, record.quality || "final"),
+      );
+    } else if (record) {
+      dom.renderStale.textContent = "No render baseline on this browser. Render again to confirm this cut matches.";
+      dom.renderStale.hidden = false;
+      return;
     }
     dom.renderStale.textContent = window.ClassicTrust?.STALE_RENDER_TEXT
       || "Changed since this render — render again to see it.";
@@ -6998,6 +7019,7 @@
     const existing = findRender(quality);
     const force = !!(existing && existing.status === "ready" && existing.hook === currentHookId());
     const body = renderRequestFor(target, quality);
+    const requestSig = renderSignatureOf(body);
     state.playerScrollKey = null;
     dom.render.disabled = true;
     dom.renderDraft.disabled = true;
@@ -7005,7 +7027,7 @@
     try {
       const result = await api(`/api/jobs/${state.job.id}/render`, {
         method: "POST",
-        body: JSON.stringify({ ...body, force }),
+        body: JSON.stringify({ ...body, force, request_sig: requestSig }),
       });
       state.job.renders = state.job.renders || {};
       state.job.renders[result.render.record_key || renderKey(
@@ -7039,9 +7061,10 @@
         for (const target of [15, 30, 60]) {
           try {
             const body = renderRequestFor(target, "final");
+            const requestSig = renderSignatureOf(body);
             const result = await api(`/api/jobs/${state.job.id}/render`, {
               method: "POST",
-              body: JSON.stringify(body),
+              body: JSON.stringify({ ...body, request_sig: requestSig }),
             });
             if (result.render) {
               records.push(result.render);
@@ -7053,6 +7076,12 @@
         }
       } else {
         const body = renderRequestFor(state.target, "final");
+        const requestSigs = Object.fromEntries(
+          [15, 30, 60].map((target) => [
+            String(target),
+            renderSignatureOf(renderRequestFor(target, "final")),
+          ]),
+        );
         const result = await api(`/api/jobs/${state.job.id}/render-all`, {
           method: "POST",
           body: JSON.stringify({
@@ -7065,6 +7094,7 @@
             clips: null,
             script_id: body.script_id,
             audio: body.audio,
+            request_sigs: requestSigs,
           }),
         });
         records = result.renders || [];

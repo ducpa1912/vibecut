@@ -63,7 +63,7 @@ git diff --check                    clean
 
 - No mounted pointer-drag test. Pure helpers and TestClient paths are covered; the browser drag/focus path is not.
 - No live browser run on the founder’s videos in this review.
-- The founder manual tables exist in `docs/handoff/r1-t1.md` through `r1-t4.md` and are unrun.
+- The founder manual tables exist in `docs/studio/handoff/r1-t1.md` through `r1-t4.md` and are unrun.
 - GitHub CI had not run on the merged main at the time of the R1 review.
 
 ---
@@ -476,6 +476,6 @@ Creators would value split/merge, multi-range, word-level, and silence/beat trim
 | Non-atomic trim | `static/studio/edit/timeline.js:382-398`; `app.py:6262-6282` |
 | Revision gap | `app.py:6170-6196` |
 | Tests | `tests/test_clipset_trim.py`; `tests/test_studio_js.py`; `tests/test_clipset_picks.py` |
-| Handoffs | `docs/handoff/r1-review.md`; `r1-t1.md`; `r1-t2.md`; `r1-t3.md`; `r1-t4.md` |
+| Handoffs | `docs/studio/handoff/r1-review.md`; `r1-t1.md`; `r1-t2.md`; `r1-t3.md`; `r1-t4.md` |
 
 **No code changes were made during this review.**

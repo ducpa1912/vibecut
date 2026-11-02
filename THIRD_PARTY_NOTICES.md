@@ -3,7 +3,7 @@
 VibeCut is proprietary software. The components below remain under their own
 licenses. This file is a release checklist entry point, not legal advice.
 Resolve exact versions and full license texts from the release environment; see
-[docs/licensing.md](docs/licensing.md).
+[docs/shared/licensing.md](docs/shared/licensing.md).
 
 ## Runtime Python packages
 

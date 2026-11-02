@@ -3,7 +3,7 @@
 **Date:** 2026-10-28
 **Build:** `main` at `b3c0354` (voice/music fallback without MiniMax; Check cache fix `3da8ac3`)
 **Method:** five personas replayed the recorded founder session, one at a time, each with one server on port 8811, one Chromium, Playwright 1.64, and its own scratch data. Sources imported read-only by path. No code changes.
-**Evidence:** founder `actions.js`, `network-summary.md`, and the 37 MB HAR read in place; five live panel reports under `docs/testing/founder-session-1/panel-*.md`; per-persona HARs, traces, screenshots, and logs kept in scratch only.
+**Evidence:** founder `actions.js`, `network-summary.md`, and the 37 MB HAR read in place; five live panel reports under `docs/studio/testing/founder-session-1/panel-*.md`; per-persona HARs, traces, screenshots, and logs kept in scratch only.
 **Caveat:** the harness restarted several times. Some personas re-ran phases; host load reached 18–40 during one long-form A run (`Check` 182 s), and one client run hit a deliberate disk-reserve test. Absolute times below are given as ranges, not one benchmark.
 
 ---

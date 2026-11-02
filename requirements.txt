@@ -1,5 +1,5 @@
 # VibeCut runtime dependencies.
-# Python 3.11+ and ffmpeg/ffprobe on PATH are required; see docs/licensing.md.
+# Python 3.11+ and ffmpeg/ffprobe on PATH are required; see docs/shared/licensing.md.
 fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9

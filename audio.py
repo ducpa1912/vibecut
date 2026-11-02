@@ -4283,6 +4283,7 @@ from tts import (  # noqa: E402,F401
     synthesize_line,
     voice_candidates,
     voice_sample,
+    voice_sample_target,
 )
 from music import (  # noqa: E402,F401
     BEATS,

@@ -18,10 +18,9 @@ def test_classic_page_has_the_language_selector_and_translator():
     assert '"Voice Room": "Phòng giọng nói"' in script
 
 
-def test_english_mode_is_not_translated_by_the_live_observer():
+def test_english_mode_is_not_translated_by_a_live_observer():
     script = (ROOT / "static" / "classic" / "i18n.js").read_text(encoding="utf-8")
-    assert 'let activeLang = "en";' in script
-    assert 'if (activeLang !== "vi") return;' in script
+    assert "MutationObserver" not in script
     assert 'url.searchParams.delete("lang")' in script
 
 

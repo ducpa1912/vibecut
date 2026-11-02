@@ -1,7 +1,7 @@
 """Classic beta guard: the core Classic flow through its own HTTP routes.
 
 Studio and Voice Room work ships through main into the classic lane
-(docs/branching.md). These tests fail that ship if it breaks Classic:
+(docs/shared/branching.md). These tests fail that ship if it breaks Classic:
 plan → render → job state → history → export, and the Classic page itself.
 Rendering is faked; everything else is the real route code.
 """

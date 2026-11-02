@@ -1,4 +1,4 @@
-"""Low findings from docs/reviews/merge-cff3ba1-review.md (F10-F19)."""
+"""Low findings from docs/shared/reviews/merge-cff3ba1-review.md (F10-F19)."""
 
 from __future__ import annotations
 

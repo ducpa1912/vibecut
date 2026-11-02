@@ -8,11 +8,11 @@ replaces the audio, and renders the reel on your machine.
 Everything runs locally by default. There is no account, no cloud upload, and
 no watermark. Cloud providers are optional and inactive until a key is saved.
 The source is proprietary and closed-source; see [LICENSE](LICENSE) and
-[docs/licensing.md](docs/licensing.md).
+[docs/shared/licensing.md](docs/shared/licensing.md).
 
-**v0.13.0** · [Roadmap](ROADMAP.md) · [Admin console](docs/admin.md) ·
-[URL ingest](docs/url-ingest.md) · [Cloud speech](docs/cloud-speech.md) ·
-[Interface language](docs/interface-language.md)
+**v0.13.0** · [Roadmap](ROADMAP.md) · [Admin console](docs/shared/admin.md) ·
+[URL ingest](docs/shared/url-ingest.md) · [Cloud speech](docs/shared/cloud-speech.md) ·
+[Interface language](docs/shared/interface-language.md)
 
 ## Quick start
 
@@ -229,7 +229,7 @@ The admin console is a single-account, password-only local control room at
 `/_ductator/`. There is no signup, SMTP, magic link, email provider, user
 account system, or second admin registration.
 
-Full details: [docs/admin.md](docs/admin.md).
+Full details: [docs/shared/admin.md](docs/shared/admin.md).
 
 ### Bootstrap and reset
 
@@ -564,7 +564,7 @@ bundled. VibeCut calls its HTTP API for a single note.
 - xhs_get is never used for non-RedNote links.
 
 URL sidecar routing and failure details are in
-[docs/url-ingest.md](docs/url-ingest.md).
+[docs/shared/url-ingest.md](docs/shared/url-ingest.md).
 
 ## CLI
 
@@ -953,7 +953,7 @@ Model and local engine variables:
 | `VIBECUT_ELEVENLABS_API_KEY` | unset | ElevenLabs TTS key. |
 | `VIBECUT_XHS_GET_TOKEN` | unset | Optional xhs_get friends-mode token. |
 | `VIBECUT_OPENCODE_BIN` | `opencode` on `PATH` | OpenCode CLI path. |
-| `VIBECUT_REWRITE_CONTEXT_CHARS` | `6000` | Transcript context cap. |
+| `VIBECUT_REWRITE_CONTEXT_CHARS` | `10000` | Transcript context cap. |
 | `VIBECUT_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` | Whisper model from the Speech Pack. |
 | `VIBECUT_GROQ_STT_MODEL` | route/default | Groq STT model override. |
 | `VIBECUT_OPENROUTER_QUARANTINE_SECONDS` | `300` | OpenRouter auth-failure quarantine. |
@@ -1066,15 +1066,15 @@ warnings are expected: `setuptools` lacks usable license metadata.
 
 ## Documentation
 
-- [Admin console](docs/admin.md)
-- [URL ingest and sidecars](docs/url-ingest.md)
-- [URL ingest QA](docs/url-ingest-qa.md)
-- [Cloud speech and provider costs](docs/cloud-speech.md)
-- [Audio replacement](docs/audio-replacement.md)
-- [Local models](docs/local-models.md)
-- [History API](docs/history-api.md)
-- [Rewrite prompt](docs/rewrite-prompt.md)
-- [Licensing and distribution](docs/licensing.md)
+- [Admin console](docs/shared/admin.md)
+- [URL ingest and sidecars](docs/shared/url-ingest.md)
+- [URL ingest QA](docs/shared/url-ingest-qa.md)
+- [Cloud speech and provider costs](docs/shared/cloud-speech.md)
+- [Audio replacement](docs/shared/audio-replacement.md)
+- [Local models](docs/shared/local-models.md)
+- [History API](docs/shared/history-api.md)
+- [Rewrite prompt](docs/shared/rewrite-prompt.md)
+- [Licensing and distribution](docs/shared/licensing.md)
 - [Architecture and contracts](ROADMAP.md#3-product-contracts-still-in-force)
 - [Roadmap](ROADMAP.md)
 
@@ -1083,10 +1083,10 @@ warnings are expected: `setuptools` lacks usable license metadata.
 VibeCut is proprietary and closed-source. No open-source license is granted for
 the VibeCut source, UI, prompts, or build scripts. Third-party components keep
 their own licenses. xhs_get, yt-dlp, ffmpeg, model weights and optional
-engines have separate terms; see [docs/licensing.md](docs/licensing.md) and
+engines have separate terms; see [docs/shared/licensing.md](docs/shared/licensing.md) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 The default build does not include xhs_get. Running it as a separate
 services is optional. If you distribute a build that bundles a sidecar, follow
 the source-offer, license-text, branding and separate-process requirements in
-[docs/licensing.md](docs/licensing.md).
+[docs/shared/licensing.md](docs/shared/licensing.md).

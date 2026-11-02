@@ -988,6 +988,22 @@ def voice_engine_status() -> dict[str, dict]:
     }
 
 
+def voice_sample_target(
+    engine: str,
+    voice: str,
+    text: str,
+    cache_dir: Path,
+    rate: float = 1.0,
+    *,
+    model: str = "",
+    language: str = "",
+) -> Path:
+    return line_cache_path(
+        cache_dir, engine, model, voice, text, rate, language,
+        suffix=".wav", policy=voice_fit.policy_fingerprint(),
+    )
+
+
 def voice_sample(
     engine: str,
     voice: str,
@@ -998,9 +1014,8 @@ def voice_sample(
     model: str = "",
     language: str = "",
 ) -> Path:
-    target = line_cache_path(
-        cache_dir, engine, model, voice, text, rate, language,
-        suffix=".wav", policy=voice_fit.policy_fingerprint(),
+    target = voice_sample_target(
+        engine, voice, text, cache_dir, rate, model=model, language=language,
     )
     if target.is_file() and target.stat().st_size > 512:
         return target
