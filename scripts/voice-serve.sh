@@ -28,11 +28,17 @@ echo "Data:       $VIBECUT_DATA"
 echo "Media:      $VIBECUT_LANE_MEDIA"
 echo "Log:        $log"
 
+# Finder's Terminal does not activate the project venv, so use it when present.
+python_bin="${VIBECUT_PYTHON:-$PWD/.venv/bin/python}"
+if [[ ! -x "$python_bin" ]]; then
+  python_bin="$(command -v python3)"
+fi
+
 VIBECUT_PORT="$VIBECUT_PORT" \
 VIBECUT_DATA="$VIBECUT_DATA" \
 VIBECUT_EDITION="$VIBECUT_EDITION" \
 VIBECUT_FEATURES="$VIBECUT_FEATURES" \
-  python3 app.py >>"$log" 2>&1 &
+  "$python_bin" app.py >>"$log" 2>&1 &
 pid=$!
 echo "$pid" >"$pidfile"
 cleanup() {

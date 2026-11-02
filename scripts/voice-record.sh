@@ -22,14 +22,23 @@ fi
 
 module="${PLAYWRIGHT_MODULE:-}"
 if [[ -z "$module" ]]; then
+  # The newest Playwright is not always usable: version 1.64 has no Chromium
+  # build for macOS 13. Pick the newest module whose browser is on this Mac.
   module=$(for pkg in "$HOME"/.npm/_npx/*/node_modules/playwright/package.json; do
     [[ -f "$pkg" ]] || continue
     version=$(node -p "require('$pkg').version" 2>/dev/null || true)
     [[ -n "$version" ]] && printf '%s\t%s\n' "$version" "${pkg%/package.json}/index.mjs"
-  done | sort -V | tail -1 | cut -f2-)
+  done | sort -Vr | while IFS=$'\t' read -r version module_path; do
+    if node --input-type=module -e "import fs from 'node:fs'; const {chromium}=await import('file://$module_path'); process.exit(fs.existsSync(chromium.executablePath())?0:1)" >/dev/null 2>&1; then
+      printf '%s\n' "$module_path"
+      break
+    fi
+  done)
 fi
 if [[ -z "$module" || ! -f "$module" ]]; then
-  echo "Playwright is not installed. Install it with 'npx playwright install chromium'." >&2
+  echo "No installed Playwright has a Chromium build this Mac can run." >&2
+  echo "Install one with: npm i -g playwright@1.49.1 && npx playwright@1.49.1 install chromium" >&2
+  echo "Or set PLAYWRIGHT_MODULE=file:///path/to/playwright/index.mjs." >&2
   exit 1
 fi
 
