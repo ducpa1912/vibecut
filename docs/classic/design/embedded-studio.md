@@ -1,6 +1,6 @@
 # Studio features embedded in Classic
 
-Status: plan. Base: `origin/studio` at `8457728`; Classic current worktree.
+Status: plan. Base: `origin/studio` at `8457728`; Classic at `e38004a`.
 
 Classic is not an iframe around Studio. The goal is to bring the interaction
 patterns that fixed Studio's editor into Classic, while keeping Classic's page,

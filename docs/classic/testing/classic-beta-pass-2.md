@@ -1,6 +1,6 @@
 # Classic beta pass 2 — founder test script
 
-**Build:** the latest shipped `classic` commit (ask me for the hash). Nothing here is verified until you run it. An automated walk is not evidence; only your Result column counts.
+**Build:** `classic` at `e38004a`. Nothing here is verified until you run it. An automated walk is not evidence; only your Result column counts.
 
 **Start the app:** open Terminal and run these lines. Classic has its own port,
 data folder and media folder. Use port **8796**, never 8787.

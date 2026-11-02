@@ -1,6 +1,6 @@
 # Classic lane plan
 
-Status: **active**, Classic lane only. Last reviewed on the current `classic` worktree.
+Status: **active**, Classic lane only. Last reviewed at `classic` `e38004a`.
 
 Classic is an independent lane. It owns `static/classic/**`, `routes_classic.py`,
 and `docs/classic/**`. It does not import Studio or Voice Room UI state, and it
