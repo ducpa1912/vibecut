@@ -13,7 +13,7 @@ lane=${1:-}
 case "$lane" in
   classic) port=8796; edition=classic; features="" ;;
   studio)  port=8795; edition=studio;  features="" ;;
-  voice)   port=8797; edition=classic; features="voice_room"; folder=voice; media=voiceroom ;;
+  voice)   port=8797; edition=voice; features="voice_room"; folder=voice; media=voiceroom ;;
   *)
     echo "usage: $0 classic|studio|voice" >&2
     exit 2

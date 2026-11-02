@@ -23,7 +23,7 @@ fi
 mkdir -p "$VIBECUT_DATA" "$VIBECUT_DATA/logs"
 log="$VIBECUT_DATA/logs/server.log"
 pidfile="$VIBECUT_DATA/server.pid"
-echo "Voice Room: http://127.0.0.1:$VIBECUT_PORT/voices"
+echo "VibeCut Voice: http://127.0.0.1:$VIBECUT_PORT/"
 echo "Data:       $VIBECUT_DATA"
 echo "Media:      $VIBECUT_LANE_MEDIA"
 echo "Log:        $log"

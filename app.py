@@ -3411,10 +3411,13 @@ def page_response(path: Path) -> Response:
 def page_file(request: Request) -> Path:
     """Which lane page this request opens.
 
-    Classic owns ``static/classic/index.html``; Studio owns ``static/index.html``.
-    Edition ``all`` keeps the old ``?classic=1`` / ``?studio=1`` switch without
-    loading the other lane's markup.
+    Classic owns ``static/classic/index.html``; Studio owns ``static/index.html``;
+    the standalone Voice build owns ``static/voices-next.html``. Edition ``all``
+    keeps the old ``?classic=1`` / ``?studio=1`` switch without loading the
+    other lane's markup.
     """
+    if editions.edition() == "voice":
+        return STATIC / "voices-next.html"
     if editions.edition() == "classic":
         return STATIC / "classic" / "index.html"
     if editions.edition() == "all" and request.query_params.get("classic") == "1":
@@ -3429,11 +3432,11 @@ def index(request: Request) -> Response:
 
 
 @app.get("/voices")
-def voice_room(request: Request) -> FileResponse:
+def voice_room() -> Response:
+    """The Voice Room is one shell now; the old ?ui= switch is retired."""
     if not editions.feature_on("voice_room"):
         raise HTTPException(404, "Not found")
-    page = STATIC / ("voices-next.html" if request.query_params.get("ui") == "new" else "voices.html")
-    return FileResponse(page)
+    return page_response(STATIC / "voices-next.html")
 
 
 @app.get("/_ductator/")

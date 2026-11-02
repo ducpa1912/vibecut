@@ -767,3 +767,46 @@ body.vr-root {
   .vr-persona-grid { grid-template-columns: 1fr; }
   .vr-export-dialog { padding: 16px; }
 }
+
+/* ---------------------------------------------------------------- setup keys */
+
+.vr-key {
+  display: grid;
+  gap: 7px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2, #161d1a);
+}
+.vr-key-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.vr-key-head strong { font-size: 13px; font-weight: 560; }
+.vr-key p { margin: 0; }
+.vr-key-form {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.vr-key-form input {
+  flex: 1 1 180px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.vr-key-form input:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
+.vr-setup-engine .vr-key-form { margin-top: 2px; }
+
+@media (max-width: 860px) {
+  .vr-key-form input { flex-basis: 100%; }
+  .vr-key-form button { min-height: 44px; }
+}

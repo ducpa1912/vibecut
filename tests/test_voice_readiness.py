@@ -91,14 +91,17 @@ def test_the_route_returns_the_checklist_and_hides_with_the_feature(monkeypatch)
     assert api.get("/api/voices/readiness").status_code == 404
 
 
-def test_setup_shows_the_three_states_with_one_action():
+def test_setup_has_one_key_list_and_the_whisper_status():
     text = (ROOT / "static" / "voice" / "setup.js").read_text(encoding="utf-8")
-    assert "/api/voices/readiness" in text
-    assert "Before you start" in text
-    for state in ("Ready", "Working…", "Failed"):
-        assert state in text
-    assert "runReadiness" in text
-    assert 'body: { kind }' in text
+    # One Setup copied from the original layout, not a second readiness screen.
+    assert "Before you start" not in text
+    assert "runReadiness" not in text
+    for title in ("Keys", "OpenRouter", "MiniMax", "ElevenLabs", "Voices", "Local Whisper"):
+        assert title in text, title
+    assert "Save key" in text and "Remove saved key" in text
+    assert "/api/voices/readiness" in text  # Whisper is the one live check
+    assert "Check again" in text
+    assert "One key; no per-model setup" in text
     css = (ROOT / "static" / "voice" / "voice.css").read_text(encoding="utf-8")
-    for name in ("vr-readiness", "vr-readiness-chip", "vr-readiness-row"):
-        assert name in css
+    for name in ("vr-key", "vr-key-form", "vr-setup-engine"):
+        assert name in css, name

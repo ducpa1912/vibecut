@@ -35,6 +35,18 @@ def test_classic_and_studio_pages_load_only_their_own_files(monkeypatch):
     assert 'id="studio-root"' in studio
 
 
+def test_voice_page_loads_only_voice_files(monkeypatch):
+    voice = _page(monkeypatch, "voice")
+    assert "/static/voice/next.js" in voice
+    assert "/static/classic/" not in voice
+    assert "/static/studio/" not in voice
+    assert "VibeCut Voice" in voice
+    app_js = (ROOT / "static" / "voice" / "next.js").read_text(encoding="utf-8")
+    assert "Old UI" not in app_js
+    assert "Back to VibeCut" not in app_js
+    assert "VibeCut Voice" in app_js
+
+
 def test_classic_page_route_follows_the_edition(monkeypatch):
     monkeypatch.setenv("VIBECUT_EDITION", "classic")
     import app
@@ -73,6 +85,12 @@ def test_lane_env_ports_and_data_are_distinct():
         ).stdout
         assert f"VIBECUT_PORT={port}" in out, lane
         assert f"/vibecut-lanes/{lane}" in out, lane
+    voice = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "lane-env.sh"), "voice"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "VIBECUT_EDITION=voice" in voice
+    assert "VIBECUT_FEATURES=voice_room" in voice
 
     assert "8787" not in subprocess.run(
         ["bash", str(ROOT / "scripts" / "lane-env.sh"), "classic"],

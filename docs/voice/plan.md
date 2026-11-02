@@ -6,13 +6,13 @@ The Voice Room is the `voice-room` lane: port `8797`, data `~/vibecut-lanes/voic
 
 | Area | What works | Where |
 |---|---|---|
-| Library | Stock voices per engine, cloned voices with Play, Rename and Delete, search and language filter | `/voices`, `voiceroom.js` |
+| Library | Stock voices per engine, cloned voices with Play, Rename and Delete, search and language filter | `/voices`, `next.js` |
 | Cloning | From a recording or an upload (cleaned locally), and from a video through the clean-clip finder (fast search by default, the first 2:00 unless *whole video* is ticked) | `voiceclone.js`, `clipfinder.js`, `routes_voice_clone.py` |
 | Cancel | Clip search, clone requests (`DELETE /api/voices/tasks/{id}`), and a sample still being made | same |
 | Playback | One player with honest Play/Stop states; A/B compare on one line; recent previews; favorites | `compare.js`, `recent.js`, `favorites.js` |
-| Setup | This app's own OpenRouter and OpenCode keys, engine status, and library backup and restore (ZIP) | `setup.js` |
+| Setup | One Setup for this app: OpenRouter, MiniMax and ElevenLabs keys; voices; local Whisper; library backup and restore; `.vcutvoice` import | `setup.js` |
 | Language | Detected locally with Whisper right after a recording or an upload; a manual pick wins | `POST /api/voices/detect-language` |
-| New shell | Left rail and mobile tabs, one persistent player, behind `/voices?ui=new` | `next.js`, `next.css`, `voices-next.html` |
+| App | **VibeCut Voice**: its own edition, left rail and mobile tabs, one persistent player, at `/voices` and `/` | `next.js`, `next.css`, `voices-next.html`, `edition voice` |
 | Founder tools | Finder launchers (`Voice Room Server.command`, `Record Voice Room.command`), Playwright recording, a guarded live check | `scripts/` |
 
 ## Fixed in the 2026-11-01 review
@@ -25,11 +25,11 @@ The Voice Room is the `voice-room` lane: port `8797`, data `~/vibecut-lanes/voic
 
 1. **Founder checks**, by hand, with real files:
    - `docs/testing/voice-room-pass-1.md` (current UI, from the 09:22 recording). Its labels still match, but the Compare and Recent panels now sit between sections 02 and 03, and its step 4.1 (the new rate on a clone) only works since `24c2176`.
-   - A **new recording of `?ui=new`** (`Record Voice Room.command`); the new shell has no founder script yet.
+   - A **new recording of the standalone app** (`Record Voice Room.command`).
    - A recording of what pass 1 did not cover: cloning from a recording or upload, the clip finder, Rename and Delete, Cancel, backup and restore, language detection.
    - The damaged first recording `~/vibecut-lanes/recordings/voiceroom/2026-10-29-085746` needs redoing.
 2. **Live OpenRouter check** of one clone (`scripts/voice_live_check.py`): waits for the founder's explicit OK.
-3. **Pick one UI.** Two front ends now run side by side (`voiceroom.js` and `next.js`, about 1,600 lines that duplicate playback and library code). Once the founder approves the new shell from a recording, make it the default and retire the old page, or drop the new one.
+3. **One UI.** `/voices` serves only the standalone app now; the old `voiceroom.js` page and the `?ui=new` switch are retired. The dead files can be deleted after a merge.
 4. **Tests that follow the founder's recordings.** The Chromium spec covers the old page only and builds tone files in a temp folder. Under the founder-only testing rule, decide whether automated tests may keep using synthetic audio. If not, replace them with fixtures the founder provides.
 5. **Clip finder defaults.** Studio's Edit panel calls the same search without options, so it now searches only the first 2:00 of a longer video (with separation, not the fast path). Studio should say so, or pass `full`.
 6. **Signatures and history.** Many lane commits from 2026-10-29/30 are unsigned, and `caa6758` merged `classic` into the lane on 2026-10-29 19:51. Both are in the pushed history and stay there (no force-push); studio integration sees them.

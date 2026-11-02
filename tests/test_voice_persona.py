@@ -247,7 +247,7 @@ def test_the_ui_exports_and_imports_voice_files():
     assert "Export voice file" in next_js
     assert "Include the original recording" in next_js
     assert "personaUrl" in old_js
-    assert "Import a voice file" in setup
+    assert "Voice file" in setup and "Import voice file" in setup
     assert "export function personaUrl" in clone
     assert "export async function importPersona" in clone
 

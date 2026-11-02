@@ -68,14 +68,17 @@ def test_detect_language_refusals(api):
     assert blocked.status_code == 403
 
 
-def test_new_ui_is_served_only_on_request(api):
-    old = api.get("/voices")
-    new = api.get("/voices?ui=new")
-    assert old.status_code == new.status_code == 200
-    assert "voiceroom.js" in old.text and "voiceroom.js" not in new.text
-    assert "next.js" in new.text
+def test_voices_serves_the_standalone_app(api):
+    page = api.get("/voices")
+    assert page.status_code == 200
+    assert "next.js" in page.text
+    assert "voiceroom.js" not in page.text
+    assert "VibeCut Voice" in page.text
+    assert "window.VIBECUT_EDITION" in page.text
+    # The old ?ui= switch is retired, not a second app.
+    assert api.get("/voices?ui=new").text == page.text
 
 
-def test_new_ui_hides_with_the_voice_room_switch(api, monkeypatch):
+def test_the_app_hides_with_the_voice_room_switch(api, monkeypatch):
     monkeypatch.setenv("VIBECUT_FEATURES", "")
-    assert api.get("/voices?ui=new").status_code == 404
+    assert api.get("/voices").status_code == 404

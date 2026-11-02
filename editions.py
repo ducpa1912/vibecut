@@ -4,7 +4,8 @@ One codebase serves every lane (see ``docs/branching.md``); a build differs
 only by two environment switches:
 
 * ``VIBECUT_EDITION``: ``all`` (default, both views, Studio opens first),
-  ``classic`` (Classic only, the beta build) or ``studio`` (Studio only).
+  ``classic`` (Classic only, the beta build), ``studio`` (Studio only) or
+  ``voice`` (the standalone Voice Room app).
 * ``VIBECUT_FEATURES``: comma-separated hidden features to turn on, such as
   ``voice_room``. Edition ``all`` turns every feature on unless the variable
   is set, so a development checkout keeps today's behaviour.
@@ -17,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 
-EDITIONS = ("all", "classic", "studio")
+EDITIONS = ("all", "classic", "studio", "voice")
 FEATURES = ("voice_room",)
 
 
@@ -29,7 +30,7 @@ def edition() -> str:
 def features() -> frozenset[str]:
     raw = os.environ.get("VIBECUT_FEATURES")
     if raw is None:
-        return frozenset(FEATURES) if edition() == "all" else frozenset()
+        return frozenset(FEATURES) if edition() in {"all", "voice"} else frozenset()
     names = {item.strip().lower() for item in raw.split(",")}
     return frozenset(name for name in names if name in FEATURES)
 
@@ -44,6 +45,8 @@ def views() -> tuple[str, ...]:
         return ("classic",)
     if current == "studio":
         return ("studio",)
+    if current == "voice":
+        return ("voice",)
     return ("studio", "classic")
 
 

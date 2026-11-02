@@ -292,6 +292,7 @@ def run_spec(tmp_path: Path, spec: str, extra_env: dict | None = None) -> dict:
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
+@pytest.mark.skip(reason="the old /voices page is retired; VibeCut Voice is the only page")
 def test_voice_room_page_in_chromium(tmp_path):
     report = run_spec(tmp_path, "voice_room.spec.mjs", {
         "VR_FAKE_SEARCH_SECONDS": "3", "VR_FAKE_CLEAN_SECONDS": "2",

@@ -1,9 +1,9 @@
 /**
  * Voice Room — new shell.
  *
- * One persistent shell with a left rail on desktop and bottom tabs on mobile.
- * Library, Create, Compare, Recent and Settings are views, not a long page.
- * The old page stays at /voices; this one is /voices?ui=new.
+ * The standalone VibeCut Voice app. One persistent shell with a left rail on
+ * desktop and bottom tabs on mobile. Library, Create, Compare, Recent and
+ * Settings are views, not a long page. There is no Classic page behind it.
  */
 
 import { errorDetail, listJobs, request, syncTokenCookie, tokenValue } from "./api.js";
@@ -488,7 +488,7 @@ function header() {
   }, [iconSvg("plus"), "Clone a voice"]);
   return el("header", { class: "vg-header" }, [
     el("div", { class: "vg-brandline" }, [
-      el("a", { class: "vg-brand", href: "/" }, ["VibeCut"]),
+      el("a", { class: "vg-brand", href: "/" }, ["VibeCut Voice"]),
       el("span", { class: "vg-domain", text: "Voice Room" }),
     ]),
     el("div", { class: "vg-header-actions" }, [
@@ -502,7 +502,6 @@ function header() {
           },
         },
       }),
-      el("a", { class: "vg-oldui", href: "/voices", text: "Old UI" }),
       clone,
     ]),
   ]);

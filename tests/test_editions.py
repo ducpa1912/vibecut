@@ -63,6 +63,23 @@ def test_index_page_carries_the_edition_before_the_boot_block(switches):
     assert "<!-- vibecut:edition -->" not in html
 
 
+def test_voice_build_is_its_own_app(switches):
+    import app
+
+    switches(edition="voice")
+    assert editions.views() == ("voice",)
+    assert editions.public() == {
+        "edition": "voice", "views": ["voice"],
+        "default_view": "voice", "features": ["voice_room"],
+    }
+    html = TestClient(app.app).get("/").text
+    assert "next.js" in html
+    assert "voiceroom.js" not in html
+    assert "VibeCut Voice" in html
+    assert _boot(html)["views"] == ["voice"]
+    assert TestClient(app.app).get("/voices").status_code == 200
+
+
 def test_voice_room_is_404_when_the_feature_is_off(switches):
     import app
 
