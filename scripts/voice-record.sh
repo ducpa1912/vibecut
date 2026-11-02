@@ -2,7 +2,7 @@
 # Record the founder's real Voice Room flow, with a Playwright trace.
 #
 #   scripts/voice-record.sh
-#   VOICE_PATH='/voices?ui=new' scripts/voice-record.sh
+#   VOICE_PATH='/voices' scripts/voice-record.sh
 #
 # Start scripts/voice-serve.sh first. The browser opens on
 # http://127.0.0.1:8797/voices (or VOICE_PATH). Click the real flow, then press
