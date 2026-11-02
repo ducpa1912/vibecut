@@ -8,8 +8,8 @@ not a promise of the brand.
 | Capability | macOS Apple Silicon | macOS Intel | Windows / Linux |
 |---|---|---|---|
 | STT / transcript | Native on-device where available | Native where available; cloud otherwise | Cloud |
-| TTS / voice | Native on-device where available | Native where available; cloud otherwise | Cloud |
-| Vision / text scan | Native on-device | Native where available; cloud otherwise | Native where available; cloud otherwise |
+| TTS / voice | Native on-device where available | Native where available; cloud otherwise | Native where installed; cloud otherwise |
+| Vision / text scan | Native on-device | Native where available; otherwise center crop / no text | Native where available; otherwise center crop / no text |
 | Translation / rewrite | Native or cloud route | Native or cloud route | Cloud route |
 | Render / ffmpeg | Local | Local | Local |
 | File storage | Local | Local | Local |

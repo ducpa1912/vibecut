@@ -1,9 +1,9 @@
 """Classic beta guard: the core Classic flow through its own HTTP routes.
 
-Studio and Voice Room work ships through main into the classic lane
-(docs/shared/branching.md). These tests fail that ship if it breaks Classic:
-plan → render → job state → history → export, and the Classic page itself.
-Rendering is faked; everything else is the real route code.
+Classic is an independent lane (docs/shared/branching.md). These tests guard
+the core Classic flow when shared code changes: plan → render → job state →
+history → export, and the Classic page itself. Rendering is faked; everything
+else is the real route code.
 """
 
 from __future__ import annotations

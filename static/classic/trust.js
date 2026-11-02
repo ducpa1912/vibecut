@@ -25,7 +25,7 @@
       || ["minimax-music", "lyria-clip"].includes(musicEngine);
     const cloud = cloudKey || cloudVoice || cloudMusic || onlineTranslation;
     if (!platform || typeof platform !== "object") {
-      return cloud ? "Cloud AI" : "On-device AI";
+      return cloud ? "Cloud AI" : "AI";
     }
     const nativeStt = platform.native_stt === true;
     const nativeTts = platform.native_tts === true;

@@ -10,7 +10,8 @@ set -euo pipefail
 # A lane ships itself with ship-lane.sh. This script moves main only when the
 # release engineer asks explicitly.
 if [[ "${1:-}" != "--release-main" ]]; then
-  exec "$(dirname "$0")/ship-lane.sh" "$@"
+  echo "Use scripts/ship-lane.sh for a lane. Use scripts/ship.sh --release-main for a main release." >&2
+  exit 2
 fi
 shift
 

@@ -5,6 +5,6 @@ copy, modify, distribute, sublicense, or sell this software or its source code
 except under a separate written agreement with the copyright holder.
 
 Third-party components remain under their own licenses. See
-THIRD_PARTY_NOTICES.md and docs/licensing.md before distributing a build.
+THIRD_PARTY_NOTICES.md and docs/shared/licensing.md before distributing a build.
 xhs_get is an optional, separate process and is not part of this proprietary
 source tree.

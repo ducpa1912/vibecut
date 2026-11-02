@@ -22,6 +22,7 @@ def test_english_mode_is_not_translated_by_a_live_observer():
     script = (ROOT / "static" / "classic" / "i18n.js").read_text(encoding="utf-8")
     assert "MutationObserver" not in script
     assert 'url.searchParams.delete("lang")' in script
+    assert "lang === current()" in script
 
 
 def test_vietnamese_copy_has_no_machine_mistranslations():
@@ -39,6 +40,7 @@ def test_voice_room_loads_the_same_translator():
     assert "/static/classic/i18n.js" in page
     assert 'id: "ui-language"' in room
     assert "Tiếng Việt" in room
+    assert "window.VibeCutI18N?.apply?.()" in room
 
 
 def test_dynamic_ui_strings_have_explicit_patterns():

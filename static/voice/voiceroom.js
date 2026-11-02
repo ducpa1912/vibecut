@@ -598,6 +598,7 @@ function render() {
   page.append(body);
   const scroll = window.scrollY || 0;
   root.replaceChildren(page);
+  window.VibeCutI18N?.apply?.();
   window.scrollTo(0, scroll);
 }
 

@@ -3438,12 +3438,10 @@ def url_ingest_docs() -> FileResponse:
 
 def _platform_capabilities() -> dict:
     """What this machine can do without a cloud route."""
-    native_stt = bool(shutil.which("mlx_whisper")) or (
-        sys.platform == "darwin"
-        and (
-            (ROOT / "bin" / "transcribe_apple").is_file()
-            or bool(shutil.which("swiftc"))
-        )
+    import stt as stt_engine
+
+    native_stt = bool(stt_engine._whisper_command()) or (
+        (ROOT / "bin" / "transcribe_apple").is_file()
     )
     native_tts = audio.say_available() or audio.kokoro_available()
     native_vision = vision.available()
@@ -4173,8 +4171,10 @@ def _merge_adopted_record(
             except (TypeError, ValueError):
                 same_target = False
             same_aspect = str(record.get("aspect") or "9:16") == aspect
+            path = str(record.get("path") or "")
+            if aspect == "9:16" and any(token in path for token in _OTHER_SHAPE_TOKENS):
+                continue
             if not (same_target and same_aspect):
-                path = str(record.get("path") or "")
                 if f"reel_{int(target)}" not in path:
                     continue
                 if aspect != "9:16" and aspect.replace(":", "x") not in path:

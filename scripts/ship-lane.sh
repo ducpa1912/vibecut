@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Ship a lane branch without moving main. Studio owns main and merges a lane
-# when the founder asks for it; Classic and Voice Room never fast-forward it.
+# Ship a lane branch without moving main. A main release is a separate,
+# explicit scripts/ship.sh --release-main decision.
 #
 #   scripts/ship-lane.sh               # from a lane worktree
 #   scripts/ship-lane.sh --skip-tests  # only when the suite already ran
@@ -71,4 +71,4 @@ fi
 
 echo "-> Pushing '$branch' (main is not moved)"
 net push "$url" "HEAD:refs/heads/$branch"
-echo "Shipped '$branch' at $(git rev-parse --short HEAD). Main stays with Studio."
+echo "Shipped '$branch' at $(git rev-parse --short HEAD). Main was not moved."

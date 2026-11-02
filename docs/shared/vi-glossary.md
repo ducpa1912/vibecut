@@ -27,7 +27,9 @@ when that is clearer or more natural.
   `xhs_get`, `FFmpeg`, `Signalsmith`
 - Units and formats: `fps`, `dB`, `px`, `s`, `ms`, `×`, `9:16`, `4:5`, `1:1`,
   `16:9`, `16:10`, `1080×1920`
-- Common editor terms when clearer: `Render`, `Draft`, `Clean`, `BGM`, `SFX`
+- Common editor terms when clearer: `Render`, `SFX`. `Clean`, `Draft` and
+  `BGM` are translated in navigation labels but stay unchanged in code and
+  provider names.
 - Short UI labels where Vietnamese would be longer or awkward.
 
 ## Translate

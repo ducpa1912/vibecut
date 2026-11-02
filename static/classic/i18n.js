@@ -25,6 +25,10 @@
     "AI off": "AI đang tắt",
     "AI": "AI",
     "Switching language reloads the page and discards unsaved cut changes. Continue?": "Đổi ngôn ngữ sẽ tải lại trang và bỏ các thay đổi bản cắt chưa lưu. Tiếp tục?",
+    "No render baseline on this browser. Render again to confirm this cut matches.": "Trình duyệt này chưa có mốc render. Hãy render lại để xác nhận bản cắt khớp.",
+    "Voice preview ready · cached, no new call. Play ▶ or render to use this voice.": "Bản nghe thử giọng đã sẵn sàng · dùng bộ nhớ đệm, không gọi mới. Phát ▶ hoặc render để dùng giọng này.",
+    "Voice preview ready. Play ▶ or render to use this voice.": "Bản nghe thử giọng đã sẵn sàng. Phát ▶ hoặc render để dùng giọng này.",
+    "custom hook": "mở đầu tùy chỉnh",
     "checking engine…": "đang kiểm tra engine…",
     "ffmpeg · local analysis": "ffmpeg · phân tích cục bộ",
     "Save setup": "Lưu cài đặt",
@@ -334,8 +338,13 @@
   function tBlock(value) {
     if (current() !== "vi") return value;
     return String(value).split("\n").map((line) => {
-      if (line.startsWith("Deletes: ")) return `Xóa: ${translateValue(line.slice(9))}`;
-      if (line.startsWith("Keeps: ")) return `Giữ: ${translateValue(line.slice(7))}`;
+      const trailing = line.endsWith(".") ? "." : "";
+      if (line.startsWith("Deletes: ")) {
+        return `Xóa: ${translateValue(line.slice(9).replace(/\.$/, ""))}${trailing}`;
+      }
+      if (line.startsWith("Keeps: ")) {
+        return `Giữ: ${translateValue(line.slice(7).replace(/\.$/, ""))}${trailing}`;
+      }
       return translateValue(line);
     }).join("\n");
   }
@@ -415,7 +424,7 @@
   }
 
   function setLanguage(lang) {
-    if (!SUPPORTED.includes(lang)) return;
+    if (!SUPPORTED.includes(lang) || lang === current()) return;
     if (window.VibeCutClassicHasUnsaved?.()) {
       const warning = t(
         "Switching language reloads the page and discards unsaved cut changes. Continue?",

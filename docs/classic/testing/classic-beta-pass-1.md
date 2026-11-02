@@ -1,4 +1,7 @@
-# Classic beta pass 1 — recorded founder passes
+# Classic beta pass 1 — historical recorded passes
+
+**Historical:** this pass targets `1652c92` and predates the current platform
+and Vietnamese copy. Use `classic-beta-pass-2.md` for the current build.
 
 This file replaces the earlier draft. Every step below comes from the founder's
 own recordings in `~/vibecut-lanes/recordings/classic-pass-1`, `-2` and `-3`

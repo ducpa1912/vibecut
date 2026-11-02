@@ -5,8 +5,10 @@ minutes- or hours-long video; VibeCut scans it, reads the frames and speech,
 finds a hook, builds 15 / 30 / 60 second cuts, reframes the subject, optionally
 replaces the audio, and renders the reel on your machine.
 
-Everything runs locally by default. There is no account, no cloud upload, and
-no watermark. Cloud providers are optional and inactive until a key is saved.
+Rendering and files stay on your machine. On supported Macs, AI transcription,
+voice and vision run on-device. On Intel Macs, Windows and Linux, capabilities
+without a native engine use the cloud routes configured in Setup. There is no
+account and no watermark.
 The source is proprietary and closed-source; see [LICENSE](LICENSE) and
 [docs/shared/licensing.md](docs/shared/licensing.md).
 
@@ -434,7 +436,7 @@ After analysis:
 - **Keyboard editing**: `←/→` select, `Alt+←/→` reorder, `−/+` trim, `Del`
   remove, `e` edit, `s` save, `r` draft, `Space` play.
 
-Bilateral smart crop stores attention crops for 9:16, 4:5, 1:1 and 16:9. A
+Bilateral smart crop stores attention crops for 9:16, 4:5, 1:1, 16:9 and 16:10. A
 portrait source cropped to 16:9 follows the subject on the vertical axis; a
 landscape source cropped to 9:16 follows it on the horizontal axis. Switching
 aspect is a true reframe with no re-analysis. **Track crop** samples extra
@@ -492,7 +494,7 @@ estimated cost per job. Estimates are visibility, not a hard billing system.
 
 - **Draft** renders 540×960 for a fast check. **Render final** renders 1080×1920.
 - **All 15/30/60** queues every length.
-- **Aspect** switches between 9:16, 4:5, 1:1 and 16:9.
+- **Aspect** switches between 9:16, 4:5, 1:1, 16:9 and 16:10.
 - **Captions** burns OCR/speech text as styled overlays.
 - **Render again** forces a fresh encode. **Cancel** stops a running render.
 - Renders are cached per plan, quality, aspect, captions, audio mix and hook.
@@ -591,7 +593,7 @@ Audio replacement: `--audio-mode keep|full|bed|voice|music`,
 
 All routes are local by default. JSON errors use `{"detail": "..."}`. Job IDs
 are 12 lowercase hex characters. `target` is 15, 30 or 60. `quality` is `final`
-or `draft`. `aspect` is `9:16`, `4:5`, `1:1` or `16:9`. `order` is `source` or
+or `draft`. `aspect` is `9:16`, `4:5`, `1:1`, `16:9` or `16:10`. `order` is `source` or
 `arc`.
 
 When `VIBECUT_TOKEN` is set, supply it as:

@@ -59,15 +59,15 @@ done
 tag="beta-$day-$n"
 commit=$(git rev-parse --short HEAD)
 
-if [[ "$dry_run" -eq 1 ]]; then
-  echo "Would tag $commit as $tag and push it."
-  exit 0
-fi
-
 allow_unsigned="${VIBECUT_ALLOW_UNSIGNED:-0}"
 if [[ "$allow_unsigned" != "1" ]] && ! git verify-commit HEAD >/dev/null 2>&1; then
   echo "HEAD is not signed. Sign the release commit before tagging." >&2
   exit 1
+fi
+
+if [[ "$dry_run" -eq 1 ]]; then
+  echo "Would tag $commit as $tag and push it."
+  exit 0
 fi
 if [[ "$allow_unsigned" == "1" ]]; then
   git tag -a "$tag" -m "Beta $tag: classic at $commit. Build with VIBECUT_EDITION=classic and no VIBECUT_FEATURES."

@@ -1,6 +1,6 @@
 # Studio features embedded in Classic
 
-Status: plan. Base: `origin/studio` at `8457728`; Classic at `ba31215`.
+Status: plan. Base: `origin/studio` at `8457728`; Classic current worktree.
 
 Classic is not an iframe around Studio. The goal is to bring the interaction
 patterns that fixed Studio's editor into Classic, while keeping Classic's page,
@@ -81,8 +81,8 @@ Edit.
 - Selecting a row, timeline bar or box selects the same layer.
 - `+` on every group; eye toggle; warnings for boxes outside the crop.
 
-**Backend:** a Classic preview/frame route for the current cut, or reuse an
-existing frame endpoint if it can address the cut time and shape.
+**Backend:** add a Classic frame/proxy route for the current cut. There is no
+existing Classic frame endpoint that can address the cut time and shape.
 
 **Done when:** the founder adds, moves and deletes a Remove-text box without
 typing a percentage.
@@ -99,8 +99,20 @@ typing a percentage.
 - Rights gate and Clean layer storage on the server.
 - AI-fill render pre-pass and cache keys.
 
-**Backend:** port/share `edits.py` Clean layers, `textfill`, `compose_render`
-Clean compilation and the render hook. This is the largest phase.
+**Backend:** do not import Studio's `routes_studio.py`. Extract or fork the
+Clean/Edit schema, Clean compilation, rights gate and Check contract into a
+shared backend module with a versioned API and Classic tests. Port `textfill`
+and the render hook. This is the largest phase.
+
+C2 also needs a model-pack prerequisite before AI fill is offered:
+
+- `sttn_infer_model.pth` and `lama_fp32.onnx`
+- size and SHA-256 in the release notes
+- install path under `~/vibecut-lanes/classic/models/fill`
+- license notices for STTN and LaMa
+- a missing-model state that falls back to Blur/Cover
+
+Until the model pack and frame route exist, C2 stays at Blur/Cover.
 
 **Done when:** the founder removes every subtitle in a moment and sees an AI
 fill preview before rendering.

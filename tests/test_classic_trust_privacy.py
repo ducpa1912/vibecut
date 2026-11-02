@@ -39,6 +39,10 @@ def test_the_local_promise_is_qualified_on_the_page():
     assert "STT / transcript" in app
 
 
+def test_the_pill_waits_for_platform_data_before_claiming_on_device():
+    assert _node("t.privacyLabel({})") == "AI"
+
+
 def test_the_pill_reports_on_device_ai_when_all_native_engines_exist():
     assert _node(
         "t.privacyLabel({platform:{native_stt:true,native_tts:true,native_vision:true}})"

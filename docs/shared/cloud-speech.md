@@ -1,14 +1,15 @@
 > **Scope:** Setup exposes OpenCode, OpenRouter, MiniMax and local engines. The
 > admin console manages all eight AI keys and the ordered route lists for
-> intelligence, speech, music, and transcription. Cloud STT/TTS are optional;
-> local engines remain the default. OpenRouter project keys override env.
+> intelligence, speech, music, and transcription. Native engines are preferred
+> where available; cloud STT/TTS cover machines without a native engine.
+> OpenRouter project keys override env.
 
 # Cloud speech: optional providers behind ordered admin routes
 
-VibeCut is local-first. The admin console adds optional cloud providers for the
-stages where local models cost the most time or quality: intelligence,
-transcription and voice over. Setup keeps the spoken language and optional key
-entry; route order lives in the admin console.
+VibeCut prefers native engines where the machine has them. The admin console
+adds cloud providers for the stages where native models are missing or cost the
+most time: intelligence, transcription and voice over. Setup keeps the spoken
+language and optional key entry; route order lives in the admin console.
 
 Keys are stored in the configured data directory (`secrets.json`, default `data/secrets.json`) with mode `0600`. Environment variables
 win, so Docker and CI can inject keys without writing a file. If a key comes from
@@ -41,11 +42,14 @@ runs Whisper large-v3-turbo, cloud buys speed rather than accuracy; use Groq
 large-v3 or Deepgram for hard audio.
 
 The ladder is whatever the admin console transcription routes list, top to
-bottom. The default is local:
+bottom. On a Mac with native speech the default starts local:
 
 ```
 Apple SpeechAnalyzer → mlx-whisper
 ```
+
+On Windows/Linux, or an Intel Mac without a native route, add a cloud STT route
+and put it first.
 
 Add Groq, OpenAI, or Deepgram routes to opt into cloud STT. Audio is uploaded
 as mono 16 kHz mp3 to stay under provider limits. Segments come back as verbose

@@ -16,5 +16,8 @@ The translator only touches explicit UI copy. User content, job titles, file
 names, transcript lines, OCR text and provider/model names are never
 translated.
 
-The old whole-DOM dictionary is being replaced by explicit keys and a `t()`
-helper so new dynamic English copy is not translated by accident.
+The current translator uses a curated dictionary plus `t(value)` and
+`tBlock(value)` for explicit dynamic UI strings. Static UI is translated once
+at load; there is no live DOM observer, so new dynamic English copy stays
+English until it is explicitly passed through `t()`. A `data-i18n` allowlist
+is the next migration step.

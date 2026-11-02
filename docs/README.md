@@ -25,7 +25,7 @@ Lane-specific documents live in their own folder. Shared documents live in
 
 - [Plan](classic/plan.md)
 - [Studio features embedded in Classic](classic/design/embedded-studio.md)
-- [Beta pass 1](classic/testing/classic-beta-pass-1.md)
+- [Beta pass 1 (historical at `1652c92`)](classic/testing/classic-beta-pass-1.md)
 - [Beta pass 2](classic/testing/classic-beta-pass-2.md)
 - [Responsive review](classic/testing/classic-responsive-review.md)
 

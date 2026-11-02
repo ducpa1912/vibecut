@@ -511,7 +511,7 @@
     if (event.key === "Escape") closeSelectMenu();
   });
 
-  window.VibeCutClassicHasUnsaved = () => Boolean(state.edited);
+  window.VibeCutClassicHasUnsaved = () => Boolean(state.edited && state.editMode);
 
   function init() {
     syncTokenCookie();
@@ -590,9 +590,9 @@
     const nativeTts = platform.native_tts === true;
     const nativeVision = platform.native_vision === true;
     const rows = [
-      ["STT / transcript", nativeStt ? "Native" : "Cloud"],
-      ["TTS / voice", nativeTts ? "Native" : "Cloud"],
-      ["Vision / text", nativeVision ? "Native" : "Cloud"],
+      ["STT / transcript", nativeStt ? "Native" : "Cloud / not configured"],
+      ["TTS / voice", nativeTts ? "Native" : "Cloud / not configured"],
+      ["Vision / text", nativeVision ? "Native" : "Not configured"],
       ["Render", "Local"],
     ];
     if (dom.setupPlatformBadge) dom.setupPlatformBadge.textContent = dom.privacyLabel?.textContent || "AI";
@@ -620,7 +620,7 @@
         platform: state.health?.platform || null,
       })
       : "Cloud AI";
-    if (dom.privacyLabel) dom.privacyLabel.textContent = label;
+    if (dom.privacyLabel) dom.privacyLabel.textContent = tr(label);
     dom.privacyPill?.classList.toggle("online", label === "Cloud AI" || label === "Mixed AI");
     renderPlatformCapabilities();
   }
@@ -1367,7 +1367,8 @@
       const version = (health.ffmpeg.match(/ffmpeg version (\S+)/) || [])[1] || "ffmpeg";
       dom.health.textContent = `${version} · ${health.vision ? "vision" : "center crop"} · ${health.whisper ? "whisper" : "no speech"}`;
       const platform = health.platform || {};
-      const mode = platform.native_ai ? "on-device" : (platform.native_stt || platform.native_tts || platform.native_vision ? "mixed" : "cloud");
+      const anyNative = platform.native_stt || platform.native_tts || platform.native_vision;
+      const mode = platform.native_ai ? "on-device" : (anyNative ? "mixed" : "AI not configured");
       dom.footerHealth.textContent = `${mode} · ${health.vision ? "apple vision" : "center crop"}`;
       updatePrivacyPill();
       renderPlatformCapabilities();
@@ -3203,7 +3204,7 @@
     if (!plan) return;
     const scroll = Number(state.timelineScroll) || 0;
     dom.planTotal.textContent = tr(`${plan.total.toFixed(1)}s cut · ${plan.clip_count} beats`);
-    dom.planBadge.textContent = plan.auto ? "auto hook" : "custom hook";
+    dom.planBadge.textContent = tr(plan.auto ? "auto hook" : "custom hook");
     dom.planBadge.classList.toggle("custom", !plan.auto);
     dom.resetHook.hidden = state.overrideHook === null;
     dom.editCut.textContent = state.editMode ? "Editing…" : "Edit cut";
@@ -5027,9 +5028,9 @@
       state.voiceSampleKey = key;
       setSoundStatus(
         dom.audioVoicePreviewStatus,
-        cache === "cached"
+        tr(cache === "cached"
           ? "Voice preview ready · cached, no new call. Play ▶ or render to use this voice."
-          : "Voice preview ready. Play ▶ or render to use this voice.",
+          : "Voice preview ready. Play ▶ or render to use this voice."),
         "ok",
       );
       playSoundUrl(state.voiceSampleUrl);
@@ -6843,12 +6844,14 @@
         renderRequestFor(record.target, record.quality || "final"),
       );
     } else if (record) {
-      dom.renderStale.textContent = "No render baseline on this browser. Render again to confirm this cut matches.";
+      dom.renderStale.textContent = tr("No render baseline on this browser. Render again to confirm this cut matches.");
       dom.renderStale.hidden = false;
       return;
     }
-    dom.renderStale.textContent = window.ClassicTrust?.STALE_RENDER_TEXT
-      || "Changed since this render — render again to see it.";
+    dom.renderStale.textContent = tr(
+      window.ClassicTrust?.STALE_RENDER_TEXT
+      || "Changed since this render — render again to see it.",
+    );
     dom.renderStale.hidden = !stale;
   }
 
@@ -7722,16 +7725,28 @@
       const source = Number(meta.width) / Math.max(1, Number(meta.height));
       const target = aspectValue(state.aspect);
       if (Math.abs(source - target) <= 0.01) return { cx: 0.5, cy: 0.5 };
-      const face = attention.face;
-      const salient = attention.salient;
+      const faces = (attention.face ? [attention.face] : (scene?.faces || []))
+        .filter((box) => Number(box?.confidence || 0) > 0.35
+          && Number(box?.w || 0) * Number(box?.h || 0) > 0.003);
+      const salient = (attention.salient ? [attention.salient] : (scene?.salient || []))
+        .filter((box) => Number(box?.confidence || 0) > 0.25
+          && Number(box?.w || 0) * Number(box?.h || 0) > 0.006
+          && !(Number(box?.w || 0) > 0.88 && Number(box?.h || 0) > 0.88));
+      const area = (box) => Number(box.w || 0) * Number(box.h || 0) * Number(box.confidence || 0);
+      const face = faces.sort((a, b) => area(b) - area(a))[0];
+      const sal = salient.sort((a, b) => area(b) - area(a))[0];
       let cx = 0.5;
       let cy = 0.5;
       if (face) {
         cx = Number(face.x || 0) + Number(face.w || 0) / 2;
         cy = Number(face.y || 0) + Number(face.h || 0) / 2;
-      } else if (salient) {
-        cx = Number(salient.x || 0) + Number(salient.w || 0) / 2;
-        cy = Number(salient.y || 0) + Number(salient.h || 0) / 2;
+        if (sal) {
+          cx = 0.78 * cx + 0.22 * (Number(sal.x || 0) + Number(sal.w || 0) / 2);
+          cy = 0.78 * cy + 0.22 * (Number(sal.y || 0) + Number(sal.h || 0) / 2);
+        }
+      } else if (sal) {
+        cx = Number(sal.x || 0) + Number(sal.w || 0) / 2;
+        cy = Number(sal.y || 0) + Number(sal.h || 0) / 2;
       }
       if (source > target) {
         const width = target * Number(meta.height) / Math.max(1, Number(meta.width));

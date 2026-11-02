@@ -1,6 +1,6 @@
 # Classic lane plan
 
-Status: **active**, Classic lane only. Last reviewed at `classic` `ba31215`.
+Status: **active**, Classic lane only. Last reviewed on the current `classic` worktree.
 
 Classic is an independent lane. It owns `static/classic/**`, `routes_classic.py`,
 and `docs/classic/**`. It does not import Studio or Voice Room UI state, and it
@@ -106,6 +106,7 @@ The detailed port plan is in `docs/classic/design/embedded-studio.md`.
 - [ ] No P0 or P1 open.
 - [ ] Classic tests pass on the chosen tip.
 - [ ] Founder pass recorded on the chosen tip.
-- [ ] All commits and the beta tag are signed.
+- [ ] All new commits and the beta tag are signed. `732254a` and `8186e2a`
+  are recorded pre-signing exceptions; do not rewrite them casually.
 - [ ] `docs/classic/testing/classic-beta-pass-2.md` matches the build.
 - [ ] Merge target confirmed: Classic lane only, or explicit merge to `main`.
