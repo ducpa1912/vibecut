@@ -255,10 +255,21 @@ def _mirror_legacy_workflow(name: str, normalized: dict[str, Any]) -> None:
         })
     elif name == "music" and provider == "minimax":
         settings_store.save_settings({"minimax": {"music_model": model}})
+    elif name in {"rewrite", "translate", "story_brief", "hook_rank", "script"}:
+        reasoning = str(normalized.get("reasoning") or "low")
+        if provider == "opencode-go":
+            settings_store.save_settings({
+                "opencode": {"model": model, "variant": reasoning},
+            })
+        elif provider == "openrouter":
+            settings_store.save_settings({
+                "openrouter": {"model": model, "reasoning": reasoning},
+            })
     elif name == "stt":
         provider_map = {
             "apple": "apple", "whisper": "whisper",
             "groq": "groq", "deepgram": "deepgram",
+            "openrouter": "openrouter",
         }
         legacy = {"provider": provider_map.get(provider, "apple")}
         # The legacy Setup field only lists Whisper model IDs. Apple is a

@@ -1312,7 +1312,7 @@ def test_openrouter_settings_survive_settings_load(monkeypatch, tmp_path):
     assert loaded["model"] == "custom/model-x"
 
 
-def test_settings_api_locks_model_and_masks_keys(tmp_path, monkeypatch):
+def test_settings_api_allows_admin_model_choice_and_masks_keys(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_store, "DATA", tmp_path)
     monkeypatch.setattr(settings_store, "SETTINGS_PATH", tmp_path / "settings.json")
     monkeypatch.setattr(settings_store, "SECRETS_PATH", tmp_path / "secrets.json")
@@ -1321,12 +1321,16 @@ def test_settings_api_locks_model_and_masks_keys(tmp_path, monkeypatch):
             monkeypatch.delenv(env_name, raising=False)
 
     client = TestClient(app.app)
-    bad = client.post("/api/settings", json={
-        "settings": {"opencode": {"model": "openai/gpt-4"}},
+    chosen = client.post("/api/settings", json={
+        "settings": {"opencode": {"model": "openai/gpt-4", "variant": "high"}},
     })
-    assert bad.status_code == 400
+    assert chosen.status_code == 200
+    chosen_body = chosen.json()
+    assert chosen_body["settings"]["opencode"]["model"] == "openai/gpt-4"
+    assert chosen_body["settings"]["opencode"]["variant"] == "high"
+
     bad_reasoning = client.post("/api/settings", json={
-        "settings": {"opencode": {"variant": "high"}},
+        "settings": {"opencode": {"variant": "turbo"}},
     })
     assert bad_reasoning.status_code == 400
 
@@ -2028,3 +2032,22 @@ def test_tts_voice_defaults_and_fish_empty(monkeypatch):
     assert audio._tts_voice_for("gemini", "default", "gemini") == "Kore"
     assert audio._tts_voice_for("kokoro", "female-shaonv", "minimax") == "af_heart"
     assert audio._tts_voice_for("minimax", "Samantha", "say") == "female-shaonv"
+
+
+def test_admin_workflow_route_wins_over_legacy_model_fields(monkeypatch):
+    monkeypatch.setattr(settings_store, "load_settings", lambda: {
+        "opencode": {"model": "legacy-opencode", "variant": "low"},
+        "openrouter": {"model": "legacy-openrouter"},
+        "workflows": {
+            "rewrite": {
+                "routes": [
+                    {"provider": "opencode-go", "model": "glm-5.3-flash"},
+                    {"provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash"},
+                ],
+                "reasoning": "medium",
+            },
+        },
+    })
+    assert audio.opencode_model() == "glm-5.3-flash"
+    assert audio.opencode_variant() == "medium"
+    assert audio.openrouter_model() == "deepseek/deepseek-v4.1-flash"

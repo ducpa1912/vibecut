@@ -70,6 +70,29 @@ _STATIC: dict[str, list[dict[str, Any]]] = {
         {"id": "google/lyria-3-clip-preview", "name": "Lyria 3 Clip", "reasoning": False, "kind": "music"},
         {"id": "openai/whisper-large-v3-turbo", "name": "Whisper Large v3 Turbo (OpenRouter)", "reasoning": False, "kind": "stt"},
         {"id": "openai/whisper-large-v3", "name": "Whisper Large v3 (OpenRouter)", "reasoning": False, "kind": "stt"},
+        {"id": "microsoft/mai-transcribe-2", "name": "Microsoft MAI-Transcribe 2", "reasoning": False, "kind": "stt"},
+        {"id": "microsoft/mai-transcribe-1.5", "name": "Microsoft MAI-Transcribe 1.5", "reasoning": False, "kind": "stt"},
+        {"id": "nvidia/nemotron-3.5-transcribe", "name": "NVIDIA Nemotron 3.5 Transcribe", "reasoning": False, "kind": "stt"},
+        {"id": "nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b", "name": "NVIDIA Nemotron 3.5 ASR Streaming 0.6B", "reasoning": False, "kind": "stt"},
+        {"id": "nvidia/parakeet-tdt-0.6b-v3", "name": "NVIDIA Parakeet TDT 0.6B v3", "reasoning": False, "kind": "stt"},
+        {"id": "elevenlabs/scribe-v2", "name": "ElevenLabs Scribe v2", "reasoning": False, "kind": "stt"},
+        {"id": "elevenlabs/scribe-v2-medical", "name": "ElevenLabs Scribe v2 Medical", "reasoning": False, "kind": "stt"},
+        {"id": "openai/gpt-4o-mini-transcribe", "name": "OpenAI GPT-4o Mini Transcribe", "reasoning": False, "kind": "stt"},
+        {"id": "openai/gpt-4o-transcribe", "name": "OpenAI GPT-4o Transcribe", "reasoning": False, "kind": "stt"},
+        {"id": "openai/gpt-transcribe", "name": "OpenAI GPT Transcribe", "reasoning": False, "kind": "stt"},
+        {"id": "openai/whisper-1", "name": "OpenAI Whisper 1", "reasoning": False, "kind": "stt"},
+        {"id": "google/gemini-3.5-transcribe", "name": "Google Gemini 3.5 Transcribe", "reasoning": False, "kind": "stt"},
+        {"id": "google/chirp-3", "name": "Google Chirp 3", "reasoning": False, "kind": "stt"},
+        {"id": "mistralai/voxtral-mini-transcribe", "name": "Mistral Voxtral Mini Transcribe", "reasoning": False, "kind": "stt"},
+        {"id": "mistralai/voxtral-mini-transcribe-3-0", "name": "Mistral Voxtral Mini Transcribe 3", "reasoning": False, "kind": "stt"},
+        {"id": "mistralai/voxtral-small-transcribe-3-0", "name": "Mistral Voxtral Small Transcribe 3", "reasoning": False, "kind": "stt"},
+        {"id": "qwen/qwen3-asr-0.6b", "name": "Qwen3 ASR 0.6B", "reasoning": False, "kind": "stt"},
+        {"id": "qwen/qwen3-asr-1.7b", "name": "Qwen3 ASR 1.7B", "reasoning": False, "kind": "stt"},
+        {"id": "fish-audio/transcribe-1-pro", "name": "Fish Audio Transcribe 1 Pro", "reasoning": False, "kind": "stt"},
+        {"id": "assemblyai/universal-3-5-pro", "name": "AssemblyAI Universal-3.5 Pro", "reasoning": False, "kind": "stt"},
+        {"id": "assemblyai/universal-3-6-pro", "name": "AssemblyAI Universal-3.6 Pro", "reasoning": False, "kind": "stt"},
+        {"id": "x-ai/grok-stt-1.0", "name": "SpaceXAI Grok STT 1.0", "reasoning": False, "kind": "stt"},
+        {"id": "deepgram/nova-3", "name": "Deepgram Nova-3", "reasoning": False, "kind": "stt"},
     ],
     "elevenlabs": [
         {"id": "eleven_multilingual_v2", "name": "Eleven Multilingual v2", "reasoning": False, "kind": "tts"},
@@ -247,6 +270,8 @@ def _openrouter_kind(identifier: str, item: dict[str, Any]) -> str | None:
         return "music" if any(word in lowered for word in ("lyria", "music")) else "tts"
     if outputs and "text" not in outputs:
         return None
+    if "text" in outputs and inputs == {"audio"}:
+        return "stt"
     if "text" not in inputs and inputs:
         return None
     return "text"
@@ -407,7 +432,12 @@ def catalog(provider: str, *, refresh: bool = False, stale_ok: bool = True) -> d
     now = time.time()
     fetched = float(entry.get("fetched_at") or 0)
     if not refresh and entry and now - fetched < CATALOG_TTL:
-        return {**entry, "stale": False, "provider": provider}
+        return {
+            **entry,
+            "models": _merge_static(provider, entry.get("models") or []),
+            "stale": False,
+            "provider": provider,
+        }
     error = ""
     models: list[dict[str, Any]] = []
     source = "built-in catalog"
@@ -416,7 +446,13 @@ def catalog(provider: str, *, refresh: bool = False, stale_ok: bool = True) -> d
     except Exception as exc:  # noqa: BLE001
         error = store.redact_text(str(exc))[:300]
         if entry and stale_ok:
-            return {**entry, "stale": True, "error": error, "provider": provider}
+            return {
+                **entry,
+                "models": _merge_static(provider, entry.get("models") or []),
+                "stale": True,
+                "error": error,
+                "provider": provider,
+            }
     models = _merge_static(provider, models) if models else []
     if models:
         entry = {
@@ -436,7 +472,13 @@ def catalog(provider: str, *, refresh: bool = False, stale_ok: bool = True) -> d
                 pass
         return entry
     if entry and stale_ok:
-        return {**entry, "stale": True, "error": error, "provider": provider}
+        return {
+            **entry,
+            "models": _merge_static(provider, entry.get("models") or []),
+            "stale": True,
+            "error": error,
+            "provider": provider,
+        }
     return {
         "provider": provider,
         "models": _merge_static(provider, []),

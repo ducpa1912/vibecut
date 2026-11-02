@@ -600,8 +600,8 @@
     const sources = data.sources || {};
     const opencode = settings.opencode || {};
     dom.setupOpencodeEnabled.checked = opencode.enabled !== false;
-    if (dom.setupOpencodeModel) dom.setupOpencodeModel.value = opencode.model || "deepseek-v4.1-flash";
-    if (dom.setupOpencodeVariant) dom.setupOpencodeVariant.value = opencode.variant || "low";
+    if (dom.setupOpencodeModel) dom.setupOpencodeModel.value = opencode.model || "";
+    if (dom.setupOpencodeVariant) dom.setupOpencodeVariant.value = opencode.variant || "";
     renderSetupModelRoutes(settings.workflows || {});
     dom.setupUseRewrite.checked = opencode.use_rewrite !== false;
     dom.setupUseBrief.checked = opencode.use_brief !== false;
@@ -820,16 +820,17 @@
     dom.setupStatus.textContent = "Saving…";
     const pendingXhsCookie = dom.setupXhsCookie.value.trim();
     try {
+      const opencode = {
+        enabled: dom.setupOpencodeEnabled.checked,
+        use_rewrite: dom.setupUseRewrite.checked,
+        use_brief: dom.setupUseBrief.checked,
+        use_translate: dom.setupTranslationMode.value !== "local_only",
+      };
+      if (dom.setupOpencodeModel?.value.trim()) opencode.model = dom.setupOpencodeModel.value.trim();
+      if (dom.setupOpencodeVariant?.value) opencode.variant = dom.setupOpencodeVariant.value;
       const payload = {
         settings: {
-          opencode: {
-            enabled: dom.setupOpencodeEnabled.checked,
-            model: dom.setupOpencodeModel?.value.trim() || "deepseek-v4.1-flash",
-            variant: "low",
-            use_rewrite: dom.setupUseRewrite.checked,
-            use_brief: dom.setupUseBrief.checked,
-            use_translate: dom.setupTranslationMode.value !== "local_only",
-          },
+          opencode,
           translation: {
             mode: dom.setupTranslationMode.value,
           },

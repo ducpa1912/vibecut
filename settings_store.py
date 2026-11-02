@@ -52,11 +52,18 @@ ENV_KEYS = {
     "xhs": ("VIBECUT_XHS_GET_TOKEN", "XHS_GET_TOKEN"),
 }
 
+def _default_route_model(workflow: str, provider: str) -> str:
+    for route in workflow_config.DEFAULT_WORKFLOWS.get(workflow, {}).get("routes", []):
+        if str(route.get("provider") or "") == provider:
+            return str(route.get("model") or "")
+    return ""
+
+
 DEFAULTS = {
     "opencode": {
         "enabled": True,
-        "model": "deepseek-v4.1-flash",
-        "variant": "low",
+        "model": _default_route_model("rewrite", "opencode-go"),
+        "variant": str(workflow_config.DEFAULT_WORKFLOWS["rewrite"].get("reasoning") or "low"),
         "use_rewrite": True,
         "use_brief": True,
         "use_translate": True,
@@ -66,8 +73,8 @@ DEFAULTS = {
     },
     "openrouter": {
         "enabled": True,
-        "model": "deepseek/deepseek-v4.1-flash:floor",
-        "reasoning": "low",
+        "model": _default_route_model("rewrite", "openrouter"),
+        "reasoning": str(workflow_config.DEFAULT_WORKFLOWS["rewrite"].get("reasoning") or "low"),
         "use_rewrite": True,
         "use_translate": True,
         "use_tts": True,
@@ -75,13 +82,13 @@ DEFAULTS = {
     },
     "minimax": {
         "enabled": True,
-        "tts_model": "speech-2.8-turbo",
-        "music_model": "music-3.0",
+        "tts_model": _default_route_model("tts", "minimax"),
+        "music_model": _default_route_model("music", "minimax"),
     },
     "stt": {
         "provider": "auto",
         "language": "en",
-        "model": "mlx-community/whisper-large-v3-turbo",
+        "model": _default_route_model("stt", "whisper"),
     },
     "tts": {"provider": "minimax"},
     "preflight": {
