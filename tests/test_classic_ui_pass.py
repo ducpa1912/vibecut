@@ -33,7 +33,7 @@ def test_result_title_is_a_hook_line_with_the_filename_in_the_meta():
     js = script()
     assert "function resultHeading()" in js
     assert "updateResultHeading()" in js
-    assert "dom.resultMeta.textContent = `${fileStem(job.source.name)}" in js
+    assert "dom.resultMeta.textContent = tr(`${fileStem(job.source.name)}" in js
     assert "dom.resultTitle.title = state.job.source.name" in js
     assert "-webkit-line-clamp: 2;" in css()
 

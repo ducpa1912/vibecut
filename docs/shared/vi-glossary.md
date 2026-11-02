@@ -18,7 +18,9 @@ when that is clearer or more natural.
 
 ## Keep in English
 
-- Product names: `VibeCut`, `Studio`, `Voice Room`, `Creator`
+- Product names: `VibeCut`, `Studio`, `Creator`. `Voice Room` may be translated
+  as `Phòng giọng nói` in navigation, but stays `Voice Room` in configuration
+  and provider names.
 - AI and API terms: `AI`, `TTS`, `STT`, `API`, `URL`, `JSON`, `HTTP`
 - Providers and models: `OpenCode`, `OpenRouter`, `ElevenLabs`, `MiniMax`,
   `OpenAI`, `Groq`, `Deepgram`, `Whisper`, `Apple Vision`, `yt-dlp`, `XHS`,

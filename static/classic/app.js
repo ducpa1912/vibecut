@@ -44,6 +44,9 @@
     setupClose: $("#setup-close"),
     setupSave: $("#setup-save"),
     setupStatus: $("#setup-status"),
+    setupPlatformBadge: $("#setup-platform-badge"),
+    setupPlatformSummary: $("#setup-platform-summary"),
+    setupPlatformRows: $("#setup-platform-rows"),
     setupOpencodeEnabled: $("#setup-opencode-enabled"),
     setupOpencodeStatus: $("#setup-opencode-status"),
     setupOpencodeKey: $("#setup-opencode-key"),
@@ -580,6 +583,29 @@
     });
   }
 
+  function renderPlatformCapabilities() {
+    const platform = state.health?.platform;
+    if (!platform) return;
+    const nativeStt = platform.native_stt === true;
+    const nativeTts = platform.native_tts === true;
+    const nativeVision = platform.native_vision === true;
+    const rows = [
+      ["STT / transcript", nativeStt ? "Native" : "Cloud"],
+      ["TTS / voice", nativeTts ? "Native" : "Cloud"],
+      ["Vision / text", nativeVision ? "Native" : "Cloud"],
+      ["Render", "Local"],
+    ];
+    if (dom.setupPlatformBadge) dom.setupPlatformBadge.textContent = dom.privacyLabel?.textContent || "AI";
+    if (dom.setupPlatformSummary) {
+      dom.setupPlatformSummary.textContent = `${platform.system || "unknown"} · ${platform.machine || "unknown"} · ${platform.apple_silicon ? "Apple Silicon" : "non-Apple-Silicon"}`;
+    }
+    if (dom.setupPlatformRows) {
+      dom.setupPlatformRows.innerHTML = rows.map(([label, value]) => `
+        <div class="setup-model-row"><strong>${esc(label)}</strong><span>${esc(value)}</span></div>
+      `).join("");
+    }
+  }
+
   function updatePrivacyPill() {
     const trust = window.ClassicTrust;
     const label = trust && typeof trust.privacyLabel === "function"
@@ -596,6 +622,7 @@
       : "Cloud AI";
     if (dom.privacyLabel) dom.privacyLabel.textContent = label;
     dom.privacyPill?.classList.toggle("online", label === "Cloud AI" || label === "Mixed AI");
+    renderPlatformCapabilities();
   }
 
   function updateVoiceFitWarning() {
@@ -1343,6 +1370,7 @@
       const mode = platform.native_ai ? "on-device" : (platform.native_stt || platform.native_tts || platform.native_vision ? "mixed" : "cloud");
       dom.footerHealth.textContent = `${mode} · ${health.vision ? "apple vision" : "center crop"}`;
       updatePrivacyPill();
+      renderPlatformCapabilities();
       if (!health.vision) {
         dom.optOcr.checked = false;
         dom.optOcr.disabled = true;

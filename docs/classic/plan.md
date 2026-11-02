@@ -57,21 +57,23 @@ Preserve-pitch is the default for shared TTS. Classic exposes the effective
 
 - [x] Add a capability snapshot to `/api/health`.
 - [x] Replace the universal `Local by default` pill with capability-aware copy.
-- [ ] Update the hero, footer, Setup, render notes and founder scripts. *(hero,
-  footer and founder script started; Setup detail still open.)*
+- [x] Update the hero, footer, Setup, render notes and founder scripts.
 - [ ] Add tests for Apple Silicon, Intel, Windows and Linux profiles. *(health
-  keys and label logic tested; OS profile matrix still open.)*
+  keys, Setup rows and label logic tested; full OS profile matrix still open.)*
 
 ### C. Vietnamese UI/UX
 
 - [x] Remove the global DOM translator and its `MutationObserver`.
 - [ ] Translate only explicit `data-i18n` elements. *(load-time static walk
   remains; dynamic copy now falls back to English.)*
-- [ ] Add `t(key, vars)` for dynamic strings.
-- [ ] Keep the glossary terms in English.
-- [ ] Cover result metadata, cost notices and native confirmations.
-- [ ] Preserve unsaved edits across a language switch.
-- [ ] Add DOM-level tests for English, Vietnamese and user content.
+- [x] Add `t(value)` / `tBlock(value)` for curated dynamic strings.
+- [ ] Keep the glossary terms in English. *(glossary added; dictionary
+  cleanup still open.)*
+- [x] Cover result metadata, cost notices and native confirmations.
+- [ ] Preserve unsaved edits across a language switch. *(warns before the
+  reload; state restore still open.)*
+- [ ] Add DOM-level tests for English, Vietnamese and user content. *(source
+  tests added; browser DOM test still open.)*
 
 ### D. Outstanding fixes
 

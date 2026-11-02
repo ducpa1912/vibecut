@@ -58,4 +58,5 @@ def test_the_menu_offers_the_three_profiles():
 def test_the_old_two_click_label_is_gone_and_confirm_is_used():
     source = APP.read_text(encoding="utf-8")
     assert "Click to confirm" not in source
-    assert "window.confirm(message)" in source
+    assert "window.confirm(localized)" in source
+    assert "VibeCutI18N?.tBlock" in source

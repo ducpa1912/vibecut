@@ -32,6 +32,11 @@ def test_the_local_promise_is_qualified_on_the_page():
     assert "> local only<" not in html
     assert ">Local by default<" not in html
     assert 'id="privacy-label"' in html
+    assert 'id="setup-platform-badge"' in html
+    assert 'id="setup-platform-rows"' in html
+    app = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "renderPlatformCapabilities" in app
+    assert "STT / transcript" in app
 
 
 def test_the_pill_reports_on_device_ai_when_all_native_engines_exist():
