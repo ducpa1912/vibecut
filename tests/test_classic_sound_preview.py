@@ -209,3 +209,38 @@ def test_the_generated_route_is_registered_and_returns_audio(preview_env, monkey
     assert response.status_code == 200, response.text
     assert response.headers["x-vibecut-preview"] in {"hit", "miss"}
     assert response.headers["content-type"].startswith("audio/wav")
+
+
+def test_a_slow_ai_preview_does_not_block_a_local_bgm_preview(preview_env, monkeypatch):
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_generate(engine, prompt, seconds, timeout=None):
+        started.set()
+        release.wait(5)
+        return str(preview_env["raw"])
+
+    monkeypatch.setattr(music, "generate_music", slow_generate)
+    monkeypatch.setattr(audio, "engine_status", lambda: {
+        "music": {"minimax-music": {"available": True}},
+    })
+    worker = threading.Thread(
+        target=routes._generated_music_preview,
+        args=(routes.MusicPreviewBody(engine="minimax-music", prompt="calm piano"),),
+    )
+    worker.start()
+    try:
+        assert started.wait(5)
+        done = threading.Event()
+
+        def local():
+            routes._cached_preview("bgm", preview_env["track"], 12.0)
+            done.set()
+
+        threading.Thread(target=local).start()
+        assert done.wait(2), "a local BGM preview waited behind the AI music call"
+    finally:
+        release.set()
+        worker.join(5)
