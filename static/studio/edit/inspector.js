@@ -78,16 +78,16 @@ export function mountInspector(host, { active = "visual", edit, captions, panelC
   if (activeTab === "clean") {
     mountCleanPanel(body, panelCtx);
   } else if (activeTab === "visual") {
-    const group = (title, mount) => {
-      const section = el("section", { class: "st-visual-group" }, [
-        el("h3", { class: "st-visual-group-title", text: title }),
-      ]);
+    const group = (title, mount, open = false) => {
+      const section = el("details", { class: "st-visual-group" });
+      if (open) section.open = true;
+      const summary = el("summary", { class: "st-visual-group-title", text: title });
       const content = el("div", { class: "st-visual-group-body" });
-      section.append(content);
+      section.append(summary, content);
       body.append(section);
       mount(content, panelCtx);
     };
-    group("Text", mountTextPanel);
+    group("Text", mountTextPanel, true);
     group("Effects", mountEffectsPanel);
     group("Colour", mountColorPanel);
   } else if (activeTab === "captions") {

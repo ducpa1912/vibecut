@@ -2192,7 +2192,12 @@ export function mountAudioPanel(host, ctx) {
     if (translateError) card.append(el("p", { class: "st-error", text: translateError }));
     if (copyError) card.append(el("p", { class: "st-error", text: copyError }));
 
-    const list = el("div", { class: "st-transcript-list" });
+    const list = el("div", {
+      class: "st-transcript-list",
+      role: "region",
+      tabindex: "0",
+      "aria-label": "Transcript lines. Use arrow keys to scroll.",
+    });
     const translatedByIndex = new Map(
       (translated?.lines || []).map((line, index) => [index, line]),
     );
@@ -2257,7 +2262,8 @@ export function mountAudioPanel(host, ctx) {
       }));
     }
     host.append(head);
-    host.append(copyCard());
+    // Transcript, translation and Write Copy live in the permanent right
+    // panel. Repeating them inside the Audio tool doubles the controls.
     host.append(modeCard());
     host.append(voiceCard());
     if (plan.mode === "dub") host.append(dubCard());

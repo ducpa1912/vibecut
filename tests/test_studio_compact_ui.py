@@ -79,3 +79,11 @@ def test_original_audio_has_three_visible_bus_actions():
     assert "No voice" in TIMELINE and "No BGM" in TIMELINE
     assert "onAudioBus" in TIMELINE
     assert "onAudioBus: (mode) =>" in INDEX
+
+
+def test_focus_mode_and_progressive_textfx_exist():
+    assert 'id="st-edit-focus"' in INDEX
+    assert "toggleFocusMode" in INDEX
+    assert 'data-focus' in INDEX or 'dataset.focus' in INDEX
+    assert '"details"' in INSPECTOR
+    assert 'class: "st-visual-group"' in INSPECTOR

@@ -225,6 +225,7 @@ export function mount(root, ctx) {
           <div class="st-edit-toolbar-end">
             <span id="st-edit-meta" class="st-hint st-edit-meta"></span>
             <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
+            <button id="st-edit-focus" class="st-btn st-btn-ghost st-btn-small" type="button" aria-pressed="false" title="Focus the preview (F)">Focus</button>
             <button id="st-edit-help" class="st-btn st-btn-ghost st-btn-small st-edit-help" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"></button>
             <button id="st-edit-inspector-toggle" class="st-btn st-btn-ghost st-btn-small st-edit-inspector-toggle" type="button" aria-controls="st-edit-inspector" aria-expanded="false">Adjust</button>
             <button id="st-edit-next" class="st-btn st-btn-primary st-btn-small" type="button" aria-label="Next: Finish" title="Next: Finish" disabled>Finish →</button>
@@ -291,6 +292,7 @@ export function mount(root, ctx) {
     dom.shortcutsClose = root.querySelector("#st-edit-shortcuts-close");
     dom.moments = root.querySelector("#st-edit-moments");
     dom.transcript = root.querySelector("#st-edit-transcript");
+    dom.focus = root.querySelector("#st-edit-focus");
     dom.inspector = root.querySelector("#st-edit-inspector");
     dom.layers.append(dom.inspector);
     dom.inspectorBody = root.querySelector("#st-edit-inspector-body");
@@ -333,6 +335,7 @@ export function mount(root, ctx) {
       else openInspector();
     });
     dom.inspectorClose?.addEventListener("click", closeInspector);
+    dom.focus?.addEventListener("click", toggleFocusMode);
     dom.inspectorScrim?.addEventListener("click", closeInspector);
     document.addEventListener("keydown", onInspectorKeydown);
     document.addEventListener("keydown", onLayerKeydown);
@@ -347,6 +350,22 @@ export function mount(root, ctx) {
     requestAnimationFrame(() => {
       dom.inspectorBody?.querySelector("[role=tab]")?.focus();
     });
+  }
+
+  function setFocusMode(on) {
+    const panel = root.querySelector(".st-edit-panel");
+    if (!panel) return;
+    panel.dataset.focus = on ? "1" : "0";
+    dom.focus?.setAttribute("aria-pressed", on ? "true" : "false");
+    if (on) {
+      closeInspector({ restore: false });
+      preview?.refresh();
+    }
+  }
+
+  function toggleFocusMode() {
+    const panel = root.querySelector(".st-edit-panel");
+    setFocusMode(panel?.dataset.focus !== "1");
   }
 
   function closeInspector({ restore = true } = {}) {
@@ -400,6 +419,11 @@ export function mount(root, ctx) {
     if (event.key === " " || event.code === "Space") {
       event.preventDefault();
       preview?.togglePlay();
+      return;
+    }
+    if (event.key === "f" || event.key === "F") {
+      event.preventDefault();
+      toggleFocusMode();
       return;
     }
     if (event.key === "?" || (event.key === "/" && event.shiftKey)) {
