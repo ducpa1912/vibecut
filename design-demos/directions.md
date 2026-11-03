@@ -85,3 +85,23 @@ Final three: **A1 Cutting Table**, **B1 Paper Edit**, **C2 Control Room**.
 - Tool rail, scene rows and timeline bars are keyboard reachable.
 - The preview is never covered by a panel.
 - Light and dark directions both keep 4.5:1 body contrast.
+
+---
+
+## Direction 4 — Moment Board (revision from founder feedback)
+
+**Logic and source.** The founder’s correction: the first three directions made the cut hard to review. This version makes the selected scene order the first thing on screen, then puts one tool rail and one preview under it, with the transcript on the right.
+
+**Borrowed rules.** 1:1 contact sheet for review; numbered cut order; only selected scenes by default; Add scene expands source scenes for drag into the cut. Tool rail from Cutting Table. Transcript and translation from Control Room. Compact five-lane timeline with lock and hide.
+
+**Main material.** The five selected scenes at 1:1 with role labels, the frame, the full transcript.
+
+**Skeleton.** 50px top bar · 120px moment board · 220px tool rail + preview + 380px transcript · 250px timeline.
+
+**Courage.** The moment board is a review surface, not a filmstrip. Selected order, role and duration are visible before any editing control.
+
+**Form from content.** A 21-second cut is five decisions. Show those five first; everything else is secondary.
+
+**Tools.** Clean (detected wrap + model), TextFX, Audio, Caption.
+
+**Timeline lanes.** Scene, Detected text (overlapping), Transcript, Voice over, Caption. Every lane can lock or hide.
