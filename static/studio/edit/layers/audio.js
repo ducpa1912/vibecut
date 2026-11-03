@@ -2137,9 +2137,93 @@ export function mountAudioPanel(host, ctx) {
     return card;
   }
 
+  function transcriptPanel() {
+    const card = el("section", { class: "st-transcript-card" });
+    const head = el("div", { class: "st-transcript-head" }, [
+      el("h2", { text: "Transcript" }),
+      el("span", { text: `${transcript?.segments?.length || 0} lines · ${languageLabel(sourceLang)}` }),
+    ]);
+    card.append(head);
+
+    const target = el("select", { "aria-label": "Translate into" });
+    languageOptions(target, targetLang, "Translate into…");
+    target.addEventListener("change", () => {
+      targetLang = target.value;
+      translated = null;
+      copyResult = null;
+      translateError = "";
+      render();
+    });
+    const translate = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: translateBusy ? "Translating…" : "Translate",
+      disabled: translateBusy || !targetLang || targetLang === sourceLang,
+    });
+    translate.addEventListener("click", () => { void runTranslate(); });
+    card.append(el("div", { class: "st-transcript-controls" }, [target, translate]));
+
+    const style = el("select", { "aria-label": "Copy style" });
+    for (const [value, label] of [
+      ["smooth", "Smooth script"],
+      ["viral", "Viral hook"],
+      ["fun", "Fun"],
+      ["creative", "Creative"],
+      ["sad", "Sad"],
+      ["chill", "Chill"],
+      ["literal", "Faithful translation"],
+    ]) {
+      style.append(el("option", { value, label, selected: value === copyStyle }));
+    }
+    style.addEventListener("change", () => {
+      copyStyle = style.value;
+      copyResult = null;
+      copyError = "";
+      render();
+    });
+    const write = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: copyBusy ? "Writing…" : "Write Copy",
+      disabled: copyBusy || Boolean(targetLang && targetLang !== sourceLang && !translated),
+    });
+    write.addEventListener("click", () => { void runCopy(); });
+    card.append(el("div", { class: "st-transcript-controls" }, [style, write]));
+    if (translateError) card.append(el("p", { class: "st-error", text: translateError }));
+    if (copyError) card.append(el("p", { class: "st-error", text: copyError }));
+
+    const list = el("div", { class: "st-transcript-list" });
+    const translatedByIndex = new Map(
+      (translated?.lines || []).map((line, index) => [index, line]),
+    );
+    for (const [index, line] of (transcript?.segments || []).entries()) {
+      const row = el("div", { class: "st-transcript-line" }, [
+        el("time", { text: formatDuration(line.start) }),
+        el("span", {}, [
+          el("strong", { text: line.text }),
+          translatedByIndex.has(index)
+            ? el("small", { text: translatedByIndex.get(index).text })
+            : null,
+        ]),
+      ]);
+      list.append(row);
+    }
+    if (!transcript?.segments?.length) {
+      list.append(el("p", { class: "st-hint", text: transcriptError || "No transcript for this video." }));
+    }
+    if (copyResult?.lines?.length) {
+      list.append(el("div", { class: "st-transcript-result" }, [
+        el("h3", { text: "Written copy" }),
+        ...copyResult.lines.map((line) => el("p", { text: line.text })),
+      ]));
+    }
+    card.append(list);
+    return card;
+  }
+
   function render() {
     if (transcriptOnly) {
-      host.replaceChildren(copyCard());
+      host.replaceChildren(transcriptPanel());
       return;
     }
     host.replaceChildren();
