@@ -75,10 +75,9 @@ export function mountColorPanel(host, ctx) {
     grid.append(button);
   }
   host.append(el("div", { class: "st-layer-stage-head" }, [
-    el("h3", { text: "Colour" }),
+    el("h3", { text: "Look" }),
     el("span", { class: "st-hint", text: COLOR_PRESETS[color.preset]?.label || "Original" }),
   ]));
-  host.append(el("p", { class: "st-hint", text: "Picture colour only: exposure, contrast, warmth and grain. Text and caption colours live under Text and Captions." }));
   host.append(grid);
 
   const controls = el("div", { class: "st-color-controls" });

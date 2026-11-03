@@ -868,6 +868,10 @@ def _clips(clips: Any) -> list[dict]:
         if raw.get("kind") == "blank":
             item["kind"] = "blank"
             item["color"] = str(raw.get("color") or "#000000")
+        elif raw.get("kind") == "freeze":
+            item["kind"] = "freeze"
+        if raw.get("reverse") is True:
+            item["reverse"] = True
         result.append(item)
     return result
 
@@ -1073,6 +1077,8 @@ def compile_edit(
             "index": clip["index"],
             "scene": clip["scene"],
             "role": clip.get("role") or "beat",
+            "reverse": bool(clip.get("reverse")),
+            "freeze": bool(clip.get("kind") == "freeze"),
             "start": clip["start"],
             "end": clip["start"] + duration,
             "duration": round(duration, 6),

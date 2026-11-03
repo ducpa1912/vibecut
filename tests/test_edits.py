@@ -898,3 +898,23 @@ def test_render_preparation_keeps_blank_duration():
     assert prepared["clips"][0]["kind"] == "blank"
     assert prepared["clips"][0]["duration"] == pytest.approx(0.8, abs=0.05)
     assert prepared["clips"][1]["scene"] == 0
+
+
+def test_output_resolution_and_audio_fade_are_valid():
+    edit = _build(
+        output={"width": 2160, "height": 3840, "fps": 60},
+        audio={"mode": "original", "fade": {"in": 1.2, "out": 2.4}},
+    )
+    assert edit["output"] == {
+        "width": 2160, "height": 3840, "fps": 60, "hdr": False,
+    }
+    assert edit["audio"]["fade"] == {"in": 1.2, "out": 2.4}
+    plan = audio.plan_from_edit(edit["audio"])
+    assert plan["fade"] == {"in": 1.2, "out": 2.4}
+
+    with pytest.raises(edits.EditError):
+        _build(output={"width": 1000, "height": 1001, "fps": 30})
+    with pytest.raises(edits.EditError):
+        _build(output={"width": 1000, "height": 1000, "fps": 25})
+    with pytest.raises(edits.EditError):
+        _build(output={"width": 1000, "height": 1000, "fps": 30, "hdr": True})

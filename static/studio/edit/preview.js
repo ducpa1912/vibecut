@@ -145,7 +145,7 @@ export function mountPreview(root, options = {}) {
           <button id="st-preview-resolution" class="st-preview-chip" type="button" title="Output resolution" aria-haspopup="menu">1080p</button>
           <button id="st-preview-frame" class="st-icon-btn" type="button" title="Save this frame" aria-label="Save this frame"></button>
           <button id="st-preview-hdr" class="st-preview-chip" type="button" disabled title="HDR output is not available in this build">HDR</button>
-          <button id="st-preview-fps" class="st-preview-chip" type="button" title="Preview and output frame rate">30</button>
+          <button id="st-preview-fps" class="st-preview-chip" type="button" title="Preview frame rate">30</button>
         </div>
         <input id="st-preview-scrub" class="st-visually-hidden" type="range" min="0" max="10" step="0.01" value="0" aria-label="Preview position" tabindex="-1">
       </div>
@@ -1053,6 +1053,15 @@ export function mountPreview(root, options = {}) {
       resetProxy();
     }
     if (aspect) applyAspect(aspect);
+    if (edit?.output?.width && edit?.output?.height) {
+      output = {
+        resolution: `${edit.output.width}×${edit.output.height}`,
+        width: Number(edit.output.width),
+        height: Number(edit.output.height),
+        fps: Number(edit.output.fps) || 30,
+      };
+      paintOutput();
+    }
     if (job !== undefined) state.job = job;
     if (story !== undefined) state.story = story;
     if (hiddenLayers !== undefined) {
@@ -1276,6 +1285,16 @@ export function mountPreview(root, options = {}) {
     try { localStorage.setItem(OUTPUT_KEY, JSON.stringify(value)); } catch (_) { /* private window */ }
     callbacks.onOutput(value);
   }
+  function resolutionSize(aspect, label) {
+    const table = {
+      "16:9": { "720p": [1280, 720], "1080p": [1920, 1080], "1440p": [2560, 1440], "4K": [3840, 2160] },
+      "16:10": { "720p": [1280, 800], "1080p": [1920, 1200], "1440p": [2560, 1600], "4K": [3840, 2400] },
+      "1:1": { "720p": [720, 720], "1080p": [1080, 1080], "1440p": [1440, 1440], "4K": [2160, 2160] },
+      "4:5": { "720p": [720, 900], "1080p": [1080, 1350], "1440p": [1440, 1800], "4K": [2160, 2700] },
+      "9:16": { "720p": [720, 1280], "1080p": [1080, 1920], "1440p": [1440, 2560], "4K": [2160, 3840] },
+    };
+    return (table[aspect] || table["9:16"])[label] || null;
+  }
   let output = readOutput() || { resolution: "1080p", width: 0, height: 0, fps: 30 };
   function paintOutput() {
     if (dom.resolution) dom.resolution.textContent = output.resolution || "1080p";
@@ -1369,7 +1388,13 @@ export function mountPreview(root, options = {}) {
   });
   for (const item of root.querySelectorAll("#st-preview-res-menu [data-res]")) {
     item.addEventListener("click", () => {
-      output = { ...output, resolution: item.dataset.res, width: 0, height: 0 };
+      const size = resolutionSize(state.aspect, item.dataset.res);
+      output = {
+        ...output,
+        resolution: item.dataset.res,
+        width: size ? size[0] : 0,
+        height: size ? size[1] : 0,
+      };
       paintOutput();
       writeOutput(output);
       closeMenus();

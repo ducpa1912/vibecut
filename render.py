@@ -342,7 +342,7 @@ def prepare_render(plan: dict, meta: dict, audio_plan: dict | None = None) -> di
         if end is None:
             end = start + float(duration_hint or 0.0)
         wanted = max(0.2, float(end) - start)
-        if clip.get("kind") == "blank":
+        if clip.get("kind") == "blank" or clip.get("freeze"):
             frames = max(1, int(round(wanted * OUT_FPS)))
             clips.append({
                 "kind": "blank",
@@ -433,6 +433,8 @@ def _segment_cache_key(
     pre_filters: list[str] | None = None,
     post_filters: list[str] | None = None,
     fill_key: str | None = None,
+    reverse: bool = False,
+    freeze: bool = False,
 ) -> str:
     payload = {
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
@@ -446,6 +448,10 @@ def _segment_cache_key(
         "first": first,
         "last": last,
     }
+    if reverse:
+        payload["reverse"] = True
+    if freeze:
+        payload["freeze"] = True
     pre_hash = _filters_hash(pre_filters)
     post_hash = _filters_hash(post_filters)
     if pre_hash:
@@ -479,6 +485,8 @@ def _segment(
     post_filters: list[str] | None = None,
     decode_threads: int | None = None,
     fill: dict | None = None,
+    reverse: bool = False,
+    freeze: bool = False,
 ) -> bool:
     """Render one beat. Return True when the segment came from cache.
 
@@ -488,7 +496,7 @@ def _segment(
     key = _segment_cache_key(
         meta, scene, start, frames, out_w, out_h, quality, encoder, first, last,
         crop, crop_path, pre_filters, post_filters,
-        fill_key=(fill or {}).get("key"),
+        fill_key=(fill or {}).get("key"), reverse=reverse, freeze=freeze,
     )
     cached = cache_dir / f"{key}.mp4"
     if cached.exists() and cached.stat().st_size > 0:
@@ -497,6 +505,8 @@ def _segment(
 
     ffmpeg = _ffmpeg()
     parts: list[str] = []
+    if freeze:
+        parts.append(f"tpad=stop_mode=clone:stop_duration={max(0.0, duration - 0.04):.3f}")
     if pre_filters:
         parts.append(",".join(str(item) for item in pre_filters))
     parts.append(_crop_filter(
@@ -505,6 +515,8 @@ def _segment(
     ))
     if post_filters:
         parts.append(",".join(str(item) for item in post_filters))
+    if reverse:
+        parts.append("reverse")
     vf = ",".join(part for part in parts if part)
 
     if first and duration > 0.4:
@@ -551,6 +563,7 @@ def _audio_track(
     output: Path,
     total: float,
     cancel_event: threading.Event | None = None,
+    fade: dict | None = None,
 ) -> None:
     """Build one continuous PCM bed from each clip's own exact input window.
 
@@ -568,7 +581,7 @@ def _audio_track(
 
     cmd = [ffmpeg, "-y", "-v", "error"]
     for clip in clips:
-        if clip.get("kind") == "blank":
+        if clip.get("kind") == "blank" or clip.get("freeze"):
             cmd += [
                 "-f", "lavfi",
                 "-t", f"{float(clip['duration']):.6f}",
@@ -589,6 +602,8 @@ def _audio_track(
             f"atrim=start=0:end={duration:.6f},"
             f"asetpts=PTS-STARTPTS"
         )
+        if clip.get("reverse"):
+            branch += ",areverse"
         if duration > 0.02:
             branch += (
                 f",afade=t=in:st=0:d=0.005"
@@ -600,10 +615,24 @@ def _audio_track(
         f"concat=n={len(clips)}:v=0:a=1[cat]"
     )
     fades = ["apad"]
-    if total > 0.4:
-        fades.append("afade=t=in:st=0:d=0.12")
-    if total > 0.6:
-        fades.append(f"afade=t=out:st={max(0.0, total - 0.5):.6f}:d=0.5")
+    try:
+        fade_in = max(0.0, min(10.0, float((fade or {}).get("in") or 0.0)))
+        fade_out = max(0.0, min(10.0, float((fade or {}).get("out") or 0.0)))
+    except (TypeError, ValueError):
+        fade_in = fade_out = 0.0
+    if fade_in > 0 or fade_out > 0:
+        if fade_in > 0:
+            fades.append(f"afade=t=in:st=0:d={min(fade_in, total):.3f}")
+        if fade_out > 0:
+            fades.append(
+                f"afade=t=out:st={max(0.0, total - fade_out):.6f}:"
+                f"d={min(fade_out, total):.3f}"
+            )
+    else:
+        if total > 0.4:
+            fades.append("afade=t=in:st=0:d=0.12")
+        if total > 0.6:
+            fades.append(f"afade=t=out:st={max(0.0, total - 0.5):.6f}:d=0.5")
     graph.append("[cat]" + ",".join(fades) + "[out]")
 
     cmd += [
@@ -1835,14 +1864,32 @@ def _mux(
     quality: str,
     normalize: bool,
     cancel_event: threading.Event | None = None,
+    border: dict | None = None,
 ) -> None:
-    """Attach one audio bed to the cached video master. Video is copied."""
+    """Attach one audio bed to the cached video master. Video is copied
+    unless a border needs a re-encode."""
     base = [
         _ffmpeg(), "-y", "-v", "error",
         "-i", str(master), "-i", str(audio_path),
     ]
     audio_filters = ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11"] if normalize else []
-    final = base + [
+    border_filter = ""
+    if isinstance(border, dict):
+        try:
+            border_width = max(0, min(64, int(border.get("width") or 0)))
+        except (TypeError, ValueError):
+            border_width = 0
+        if border_width:
+            raw_color = str(border.get("color") or "#f1efe9").lstrip("#")
+            color = f"0x{raw_color}" if len(raw_color) == 6 else "white"
+            border_filter = (
+                f"drawbox=x=0:y=0:w=iw:h=ih:"
+                f"color={color}:t={border_width}"
+            )
+    if border_filter:
+        final = []
+    else:
+        final = base + [
         "-map", "0:v:0", "-map", "1:a:0",
         "-c:v", "copy",
         *audio_filters,
@@ -1853,16 +1900,18 @@ def _mux(
         "-metadata", f"title={job_title}",
         "-metadata", "comment=Made with VibeCut. Original vibe preserved.",
         str(output),
-    ]
-    try:
-        _run(final, timeout=900, cancel_event=cancel_event)
-        return
-    except RenderCancelled:
-        raise
-    except PipelineError:
-        pass
+        ]
+    if final:
+        try:
+            _run(final, timeout=900, cancel_event=cancel_event)
+            return
+        except RenderCancelled:
+            raise
+        except PipelineError:
+            pass
     fallback = base + [
         "-map", "0:v:0", "-map", "1:a:0",
+        *( ["-vf", border_filter] if border_filter else [] ),
         *_encoder_args("libx264", quality),
         *audio_filters,
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
@@ -2028,6 +2077,8 @@ def render_story_frame(
             cancel_event=cancel_event,
             pre_filters=segment.get("pre_filters") or [],
             post_filters=segment.get("post_filters") or [],
+            reverse=bool(segment.get("reverse")),
+            freeze=bool(segment.get("freeze")),
         )
         local = max(0, min(
             segment_frames - 1,
@@ -2258,10 +2309,20 @@ def render_reel(
     caption_style: dict | None = None,
     edit: dict | None = None,
     compiled_edit: dict | None = None,
+    output_size: tuple[int, int] | None = None,
 ) -> dict:
     quality = quality if quality in ("final", "720", "draft") else "final"
     aspect = aspect if aspect in ASPECTS else "9:16"
     out_w, out_h = _dims(aspect, quality)
+    if output_size is None and isinstance(edit, dict) and isinstance(edit.get("output"), dict):
+        output_size = (edit["output"].get("width"), edit["output"].get("height"))
+    if output_size:
+        try:
+            width, height = int(output_size[0]), int(output_size[1])
+        except (TypeError, ValueError, IndexError):
+            width = height = 0
+        if width >= 240 and height >= 240 and width % 2 == 0 and height % 2 == 0:
+            out_w, out_h = width, height
     encoder = _choose_encoder(encoder)
     target = int(plan["target"])
     suffix = ""
@@ -2269,6 +2330,9 @@ def render_reel(
         suffix += f"_{quality}"
     if aspect != "9:16":
         suffix += f"_{aspect.replace(':', 'x')}"
+    default_w, default_h = _dims(aspect, quality)
+    if (out_w, out_h) != (default_w, default_h):
+        suffix += f"_{out_w}x{out_h}"
     if audio_plan and str(audio_plan.get("mode") or "keep") != "keep":
         audio_sig = audio_sig or audio.signature(audio_plan)
         if audio_sig:
@@ -2313,6 +2377,8 @@ def render_reel(
                 "start": float(segment["start"]),
                 "frames": int(segment["frames"]),
                 "duration": int(segment["frames"]) / OUT_FPS,
+                "reverse": bool(segment.get("reverse")),
+                "freeze": bool(segment.get("freeze")),
             }
             for segment in edit_segments
         ]
@@ -2473,6 +2539,8 @@ def render_reel(
                         out_w, out_h, quality, encoder, cache_dir, crop, crop_path, cancel_event,
                         pre_filters, post_filters, decode_threads,
                         fills[index] if index < len(fills) else None,
+                        reverse=bool(clip.get("reverse")),
+                        freeze=bool(clip.get("freeze")),
                     )] = index
                 for future in as_completed(futures):
                     if cancel_event is not None and cancel_event.is_set():
@@ -2543,7 +2611,10 @@ def render_reel(
                 audio_info["warnings"] = list(audio_plan["_warnings"])
         if bed is None:
             progress(0.90, "Building the original audio bed")
-            _audio_track(source, meta, clips, audio_path, total, cancel_event)
+            _audio_track(
+                source, meta, clips, audio_path, total, cancel_event,
+                fade=(audio_plan or {}).get("fade"),
+            )
         else:
             audio_path = bed
 
@@ -2552,6 +2623,7 @@ def render_reel(
             master, audio_path, out_tmp, job_title, total, quality,
             not (audio_plan and str(audio_plan.get("mode") or "keep") != "keep"),
             cancel_event,
+            border=(edit or {}).get("border"),
         )
 
         info = probe(out_tmp)

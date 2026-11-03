@@ -10,7 +10,7 @@
 
 import { mount as mountImport } from "./import.js";
 import { mount as mountMoments } from "./stories.js";
-import { mount as mountEdit } from "./edit.js?v=20261103-10";
+import { mount as mountEdit } from "./edit.js?v=20261103-11";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountLibrary } from "./library.js";
 import { SOURCES_TAB } from "./library.js";

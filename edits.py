@@ -172,7 +172,7 @@ BEAT_KINDS = ("context", "statement", "proof", "broll", "transition")
 _TOP_KEYS = frozenset({
     "schema_version", "renderer_version", "id", "version", "parent", "hash",
     "created", "story_ref", "aspect", "sequence", "clean", "reframe", "motion",
-    "color", "graphics", "captions", "audio", "border",
+    "color", "graphics", "captions", "audio", "border", "output",
 })
 
 
@@ -1164,6 +1164,29 @@ def _check_hash(value: Any, label: str) -> str:
 # ---------------------------------------------------------------- document
 
 
+def normalize_output(value: Any) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise EditError("output must be an object.")
+    _unknown(value, frozenset({"width", "height", "fps", "hdr"}), "output")
+    width = _integer(value.get("width", 0), "output.width", minimum=0, maximum=4096)
+    height = _integer(value.get("height", 0), "output.height", minimum=0, maximum=4096)
+    fps = _integer(value.get("fps", 30), "output.fps", minimum=24, maximum=60)
+    if fps not in (24, 30, 60):
+        raise EditError("output.fps must be 24, 30 or 60.")
+    hdr = _strict_bool(value.get("hdr"), False, "output.hdr")
+    if hdr:
+        raise EditError("HDR output is not available in this renderer.")
+    if not width and not height:
+        return None
+    if width < 240 or height < 240:
+        raise EditError("output width and height must be at least 240.")
+    if width % 2 or height % 2:
+        raise EditError("output width and height must be even.")
+    return {"width": width, "height": height, "fps": fps, "hdr": False}
+
+
 def normalize_border(value: Any) -> dict | None:
     if value is None:
         return None
@@ -1191,6 +1214,7 @@ def build_edit(
     captions: Any = None,
     audio: Any = None,
     border: Any = None,
+    output: Any = None,
     version: int = 1,
     parent: str | None = None,
     created: float | None = None,
@@ -1224,6 +1248,9 @@ def build_edit(
     normalized_border = normalize_border(border)
     if normalized_border:
         content["border"] = normalized_border
+    normalized_output = normalize_output(output)
+    if normalized_output:
+        content["output"] = normalized_output
     if normalized_sequence:
         content["sequence"] = normalized_sequence
     content_hash_value = content_hash(content)
@@ -1250,6 +1277,7 @@ def build_edit(
         "captions": content["captions"],
         "audio": content["audio"],
         **({"border": content["border"]} if "border" in content else {}),
+        **({"output": content["output"]} if "output" in content else {}),
     }
 
 
@@ -1282,6 +1310,7 @@ def normalize_edit(value: Any) -> dict:
         captions=value.get("captions"),
         audio=value.get("audio"),
         border=value.get("border"),
+        output=value.get("output"),
         version=version,
         parent=parent,
         created=value.get("created"),
@@ -1316,6 +1345,7 @@ def restored_edit(target: dict, *, parent_edit: dict, created: float | None = No
         captions=target["captions"],
         audio=target["audio"],
         border=target.get("border"),
+        output=target.get("output"),
         version=int(parent_edit["version"]) + 1,
         parent=str(parent_edit["id"]),
         created=created,

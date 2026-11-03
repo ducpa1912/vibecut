@@ -49,6 +49,7 @@ class EditCreateBody(BaseModel):
     captions: dict = Field(default_factory=dict)
     audio: dict = Field(default_factory=dict)
     border: dict = Field(default_factory=dict)
+    output: dict = Field(default_factory=dict)
 
 
 class EditPatchBody(BaseModel):
@@ -63,6 +64,7 @@ class EditPatchBody(BaseModel):
     captions: dict = Field(default_factory=dict)
     audio: dict = Field(default_factory=dict)
     border: dict = Field(default_factory=dict)
+    output: dict = Field(default_factory=dict)
     # Studio autosave sets this: a save within COALESCE_S of the head it
     # replaces folds into that version instead of adding one per keystroke.
     coalesce: bool = False
@@ -83,7 +85,7 @@ router = APIRouter()
 
 _LAYER_FIELDS = (
     "sequence", "clean", "reframe", "motion", "color", "graphics", "captions",
-    "audio", "border",
+    "audio", "border", "output",
 )
 
 

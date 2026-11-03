@@ -1973,6 +1973,10 @@ def run_render(
             render_total=prepared_total,
             caption_style=plan.get("_caption_style"),
             edit=edit,
+            output_size=(
+                tuple(edit.get("output", {}).get(k) for k in ("width", "height"))
+                if edit and edit.get("output") else None
+            ),
         )
         result["caption_count"] = len(cues)
         render_delta = usage_store.delta(before_usage)

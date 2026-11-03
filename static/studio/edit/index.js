@@ -53,14 +53,14 @@ import {
 
 const CSS_ID = "vibecut-studio-edit-css";
 const CHOICE_KEY = "vibecut.studio.edit.choice";
-const LAYER_FIELDS = ["sequence", "clean", "reframe", "motion", "color", "graphics", "captions", "audio", "border"];
+const LAYER_FIELDS = ["sequence", "clean", "reframe", "motion", "color", "graphics", "captions", "audio", "border", "output"];
 
 function ensureStyles() {
   if (!document.getElementById(CSS_ID)) {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261103-10";
+    link.href = "/static/studio/edit/edit.css?v=20261103-11";
     document.head.append(link);
   }
 }
@@ -875,6 +875,7 @@ export function mount(root, ctx) {
         captions: clone(fork.captions || {}),
         audio: clone(fork.audio || { mode: "original" }),
         border: clone(fork.border || {}),
+        output: clone(fork.output || {}),
       };
     }
     return {
@@ -889,6 +890,7 @@ export function mount(root, ctx) {
       captions: { enabled: false },
       audio: { mode: "original" },
       border: {},
+      output: {},
     };
   }
 
@@ -1453,6 +1455,20 @@ export function mount(root, ctx) {
         renderLayers();
         preview?.refresh();
         scheduleTimeline();
+      },
+      setOutput(next) {
+        if (!state.edit) return;
+        const width = Number(next?.width) || 0;
+        const height = Number(next?.height) || 0;
+        if (!width || !height) return;
+        state.edit.output = {
+          width,
+          height,
+          fps: [24, 30, 60].includes(Number(next.fps)) ? Number(next.fps) : 30,
+          hdr: false,
+        };
+        state.output = { ...state.edit.output };
+        touch("output");
       },
       setAudioFade(next) {
         if (!state.edit) return;
@@ -2366,7 +2382,10 @@ export function mount(root, ctx) {
         onBoxChange: (id, box, options) => updateCleanBox(id, box, options),
         onBoxCreate: (box) => createCleanBox(box),
         onAspect: (value) => { void switchAspect(value); },
-        onOutput: (value) => { state.output = value || state.output; },
+        onOutput: (value) => {
+          state.output = value || state.output;
+          layerPanelCtx?.setOutput?.(value);
+        },
       });
     }
     if (!timeline) {

@@ -934,3 +934,63 @@ def test_real_frame_and_render_burn_a_multiline_caption(real_env):
     still = _extract_frame(final, 30, env["data"] / "multi.png")
     pixels = np.asarray(Image.open(still).convert("RGB"))
     assert _white_pixels_low(pixels) > 200, "caption missing from the render"
+
+
+@needs_ffmpeg
+def test_custom_output_size_border_and_audio_fade_render(real_env):
+    env = real_env
+    edit = _save_current(env, _edit(
+        output={"width": 540, "height": 960, "fps": 30},
+        border={"width": 8, "color": "#ff0000", "radius": 0},
+        audio={"mode": "original", "fade": {"in": 0.4, "out": 0.4}},
+    ))
+    source, meta = env["source"], env["meta"]
+    result = render.render_reel(
+        str(source), meta, env["dir"], _plan(), "Custom", lambda *args: None,
+        quality="final", aspect="9:16", edit=edit,
+        audio_plan=audio.plan_from_edit(edit["audio"]),
+    )
+    assert result["width"] == 540 and result["height"] == 960
+    final = env["dir"] / "renders" / result["path"]
+    assert final.is_file() and final.stat().st_size > 1024
+    still = _extract_frame(final, 30, env["data"] / "custom.png")
+    pixels = np.asarray(Image.open(still).convert("RGB"))
+    red = tuple(int(value) for value in pixels[0, 0])
+    assert red[0] > 220 and red[1] < 30 and red[2] < 30
+
+
+def test_reverse_and_freeze_clip_intents_compile():
+    edit = _edit(
+        sequence=[
+            {"scene": 0, "start": 0.0, "end": 1.0, "role": "hook", "reverse": True},
+            {"kind": "freeze", "scene": 0, "start": 1.0, "end": 2.0, "role": "beat"},
+        ],
+    )
+    clips = [
+        {"scene": 0, "start": 0.0, "end": 1.0, "role": "hook", "reverse": True},
+        {"kind": "freeze", "scene": 0, "start": 1.0, "end": 2.0, "role": "beat"},
+    ]
+    compiled = compose_render.compile_edit(
+        edit, clips=clips, source={"width": 1920, "height": 1080}, scenes=SCENES,
+        size=(540, 960),
+    )
+    assert compiled["segments"][0]["reverse"] is True
+    assert compiled["segments"][1]["freeze"] is True
+
+
+@needs_ffmpeg
+def test_reverse_and_freeze_render(real_env):
+    env = real_env
+    clips = [
+        {"scene": 0, "start": 0.0, "end": 1.0, "role": "hook", "reverse": True},
+        {"kind": "freeze", "scene": 0, "start": 1.0, "end": 2.0, "role": "beat"},
+    ]
+    edit = _save_current(env, _edit(sequence=clips))
+    result = render.render_reel(
+        str(env["source"]), env["meta"], env["dir"],
+        {"target": 3, "clips": clips, "_scenes": list(SCENES)},
+        "Reverse", lambda *args: None,
+        quality="draft", aspect="9:16", edit=edit,
+    )
+    assert result["duration"] == pytest.approx(2.0, abs=0.15)
+    assert (env["dir"] / "renders" / result["path"]).is_file()

@@ -1067,17 +1067,17 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
 
 .st-color-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px;
-  margin: 8px 0 11px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+  margin: 5px 0 8px;
 }
 .st-color-preset {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
-  padding: 5px;
+  padding: 2px;
   border: 1px solid var(--st-line);
-  border-radius: 8px;
+  border-radius: 4px;
   background: rgba(13, 13, 15, 0.5);
   color: var(--st-muted);
   text-align: left;
@@ -1088,14 +1088,15 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
 .st-color-preset i {
   display: block;
   width: 100%;
-  height: 26px;
-  border-radius: 5px;
+  height: 42px;
+  border-radius: 3px;
 }
 .st-color-preset span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  padding: 0 1px 1px;
+  font-size: 9px;
 }
 .st-color-controls { display: grid; gap: 7px; margin-top: 5px; }
 
@@ -1535,7 +1536,7 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
   .st-tl-track { height: 26px; }
   .st-tl-label { height: 26px; }
   .st-range-row { grid-template-columns: 64px minmax(0, 1fr) 36px; }
-  .st-color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .st-color-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 /* ------------------------------------------------------- compact moment board */

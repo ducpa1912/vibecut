@@ -398,6 +398,8 @@ def plan_from_edit(audio_section: dict | None) -> dict | None:
         "duck_db": source.get("duck_db", DUCK_DB),
         "loudness": source.get("loudness") or {},
     }
+    if isinstance(source.get("fade"), dict):
+        plan["fade"] = dict(source["fade"])
     music = source.get("music")
     if isinstance(music, dict):
         copied = dict(music)
