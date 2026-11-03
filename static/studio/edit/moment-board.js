@@ -93,7 +93,6 @@ export function mountMomentBoard(host, ctx) {
     title: "Add 0.8s dark filler",
   });
   blank.addEventListener("click", () => ctx.appendBlank());
-  strip.append(blank);
 
   const add = el("button", {
     class: `st-mb-add${expanded ? " is-open" : ""}`,
@@ -102,7 +101,6 @@ export function mountMomentBoard(host, ctx) {
     text: expanded ? "Close scenes" : "Add scene",
   });
   add.addEventListener("click", () => ctx.toggleExpanded());
-  strip.append(add);
-
-  host.replaceChildren(head, strip);
+  const actions = el("div", { class: "st-mb-actions" }, [blank, add]);
+  host.replaceChildren(head, strip, actions);
 }

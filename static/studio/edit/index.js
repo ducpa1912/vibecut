@@ -1727,10 +1727,11 @@ export function mount(root, ctx) {
   }
 
   function setActiveTab(tab) {
-    // "visual" is the inspector's grouped Text, Captions, Effects and Colour
-    // tab. The older per-kind ids still select it when a layer is chosen.
+    // "visual" is the inspector's grouped Text, Effects and Colour tab. The
+    // older per-kind ids still select it when a layer is chosen.
     if (!["clean", "visual", "text", "captions", "effects", "color", "audio"].includes(tab)) return;
     state.activeTab = tab;
+    renderLayers();
     renderInspector();
   }
 

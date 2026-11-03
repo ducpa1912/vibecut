@@ -1720,7 +1720,7 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
 .st-tl-label small { font-size: 7.5px; }
 
 @media (max-height: 780px) {
-  .st-edit-stage { grid-template-rows: minmax(0, 1fr) 196px; }
+  .st-edit-stage { grid-template-rows: minmax(0, 1fr) 178px; }
   .st-moment-board { padding: 4px 0 5px; margin-bottom: 5px; }
   .st-mb-tile, .st-mb-add { flex-basis: 56px; width: 56px; height: 56px; }
   .st-mb-head p { display: none; }
@@ -1758,3 +1758,9 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
 .st-mb-tile.is-blank { background: #141414; border-style: dashed; }
 .st-mb-tile.is-blank .st-mb-role { color: #9a9a9a; }
 .st-mb-add.is-blank { font-size: 8.5px; }
+
+.st-mb-actions { flex: 0 0 68px; display: grid; gap: 5px; align-self: stretch; }
+.st-mb-actions .st-mb-add { width: 68px; height: 31px; }
+.st-layers-heading { display: none; }
+.st-layers-head { justify-content: flex-end; min-height: 26px; padding: 2px 6px; }
+.st-layers-scroll { display: none; }
