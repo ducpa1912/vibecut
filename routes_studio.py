@@ -9,6 +9,7 @@ helpers; importing at module level would be circular.
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -53,6 +54,15 @@ class AutoCleanBody(BaseModel):
 class FillPreviewBody(BaseModel):
     t: float = 0.0
     method: str = "lama"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TranslateTranscriptBody(BaseModel):
+    target: str = ""
+    source: str = ""
+    provider: str = "auto"
+    force: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -236,6 +246,57 @@ def fill_status() -> dict:
         "default": default,
         "preview": "lama" if methods["lama"]["ready"] else None,
         "models_dir": str(directory),
+    }
+
+
+@router.post("/api/jobs/{job_id}/transcript/translate")
+def translate_transcript(job_id: str, body: TranslateTranscriptBody) -> dict:
+    """Translate the whole transcript once, then reuse the disk memo.
+
+    The Edit calls this only after the creator chooses a target language.
+    Opening the Audio tool or switching moments never calls a provider.
+    """
+    import app
+    import audio
+    import pipeline
+
+    job = app.load_job(job_id)
+    segments = pipeline.read_transcript(app._job_dir(job_id)) or []
+    if not segments:
+        raise HTTPException(404, "No transcript for this job.")
+    engine = (job.get("analysis") or {}).get("engine") or {}
+    source = str(body.source or engine.get("transcript_language") or "en").split("-")[0]
+    target = str(body.target or "").split("-")[0]
+    if not target:
+        raise HTTPException(422, "Choose a target language first.")
+    source_lines = [str(item.get("text") or "").strip() for item in segments]
+    source_lines = [line for line in source_lines if line]
+    started = time.time()
+    if body.force:
+        audio.clear_translation_memo(source_lines, source, target, body.provider)
+    try:
+        translated = audio.translate_lines(source_lines, source, target, body.provider)
+    except audio.AudioError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    lines = []
+    index = 0
+    for item in segments:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        lines.append({
+            "start": round(float(item.get("start") or 0.0), 2),
+            "end": round(float(item.get("end") or 0.0), 2),
+            "source": text,
+            "text": translated[index] if index < len(translated) else text,
+        })
+        index += 1
+    return {
+        "source": source,
+        "target": target,
+        "provider": audio.translation_status().get("provider") or "",
+        "lines": lines,
+        "latency_ms": round((time.time() - started) * 1000),
     }
 
 

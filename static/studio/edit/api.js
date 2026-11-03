@@ -92,6 +92,35 @@ export function listVersions(jobId, editId) {
   return request(`${editRoot(jobId, editId)}/versions`);
 }
 
+/** `GET /api/jobs/{id}/transcript` for the full timed transcript. */
+export function getTranscript(jobId) {
+  return request(`${jobRoot(jobId)}/transcript`);
+}
+
+/** Translate the full transcript once for one target language. */
+export function translateTranscript(jobId, { target, source = "", provider = "auto", force = false }) {
+  return request(`${jobRoot(jobId)}/transcript/translate`, {
+    method: "POST",
+    body: { target, source, provider, force: Boolean(force) },
+  });
+}
+
+/** Write the copy for this moment through the existing script route. */
+export function writeMomentCopy(jobId, { target, clips, translate = null, mode = "smooth", overrides = {} }) {
+  return request(`${jobRoot(jobId)}/audio/script`, {
+    method: "POST",
+    body: {
+      target,
+      clips,
+      translate: translate || null,
+      provider: "auto",
+      mode,
+      rewrite_provider: "auto",
+      overrides,
+    },
+  });
+}
+
 /** `GET /api/jobs/{id}/captions/{track_id}`. Returns null for 404. */
 export async function getCaptionTrack(jobId, trackId) {
   try {

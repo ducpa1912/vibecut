@@ -23,8 +23,11 @@ import {
 } from "../model.js";
 import {
   getCurrentEdit,
+  getTranscript,
   patchEdit,
   syncMediaCookie,
+  translateTranscript,
+  writeMomentCopy,
 } from "../api.js";
 import { CONSENT_COPY, cloneFromVideo, cancelVoiceCandidates, findVoiceCandidates, voiceCandidateAudioUrl, voiceCandidateState } from "../../../voice/voiceclone.js";
 
@@ -376,6 +379,17 @@ export function mountAudioPanel(host, ctx) {
   let sourceLang = String(plan.translate?.source || storyLanguage(ctx) || "en");
   let targetLang = String(plan.translate?.target || "");
   let translateStyle = String(plan.translate?.mode || "smooth");
+  // Edit copy is read-only until the creator asks for it. Opening Audio never
+  // translates or rewrites on its own.
+  let transcript = null;
+  let transcriptError = "";
+  let translated = null;
+  let translateBusy = false;
+  let translateError = "";
+  let copyStyle = String(plan.translate?.mode || "smooth");
+  let copyBusy = false;
+  let copyError = "";
+  let copyResult = null;
   let notice = "";
   let noticeTone = "";
   let dirty = false;
@@ -1919,6 +1933,205 @@ export function mountAudioPanel(host, ctx) {
     return card;
   }
 
+  async function loadTranscript() {
+    const jobId = currentJobId();
+    if (!jobId || transcript || translateBusy) return;
+    try {
+      const result = await getTranscript(jobId);
+      if (disposed) return;
+      transcript = result;
+      transcriptError = "";
+      if (result?.language) sourceLang = String(result.language).split("-")[0];
+    } catch (error) {
+      if (!disposed) transcriptError = error?.message || "Could not read the transcript.";
+    }
+    if (!disposed) render();
+  }
+
+  async function runTranslate() {
+    const jobId = currentJobId();
+    if (!jobId || translateBusy || !targetLang) return;
+    translateBusy = true;
+    translateError = "";
+    render();
+    try {
+      const result = await translateTranscript(jobId, {
+        target: targetLang,
+        source: sourceLang,
+      });
+      if (disposed) return;
+      translated = result;
+      copyResult = null;
+      copyError = "";
+    } catch (error) {
+      if (!disposed) translateError = error?.message || "Could not translate the transcript.";
+    } finally {
+      translateBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  async function runCopy() {
+    const jobId = currentJobId();
+    if (!jobId || copyBusy) return;
+    const story = ctx.getStory();
+    const clips = (story?.clips || []).map((clip) => ({
+      scene: clip.scene,
+      start: clip.start,
+      end: clip.end,
+      role: clip.role || "beat",
+    }));
+    if (!clips.length) {
+      copyError = "This moment has no clips to write.";
+      render();
+      return;
+    }
+    const needsTranslation = targetLang && targetLang !== sourceLang;
+    if (needsTranslation && !translated) {
+      copyError = "Translate the transcript first, then write the copy.";
+      render();
+      return;
+    }
+    copyBusy = true;
+    copyError = "";
+    render();
+    try {
+      const result = await writeMomentCopy(jobId, {
+        target: briefTarget(storySeconds(ctx)),
+        clips,
+        translate: needsTranslation ? targetLang : null,
+        mode: copyStyle,
+      });
+      if (disposed) return;
+      copyResult = result;
+    } catch (error) {
+      if (!disposed) copyError = error?.message || "Could not write the copy.";
+    } finally {
+      copyBusy = false;
+      if (!disposed) render();
+    }
+  }
+
+  function copyCard() {
+    const card = el("div", { class: "st-card st-check-card" });
+    card.append(el("h3", { text: "Video and moment" }));
+    card.append(el("p", {
+      class: "st-hint",
+      text: "Language is detected from the transcript. Translation runs once for the whole video; copy is written only for this moment.",
+    }));
+    const detected = el("div", { class: "st-copy-meta" }, [
+      el("span", { class: "st-label", text: "Detected language" }),
+      el("strong", { text: languageLabel(sourceLang) }),
+      el("span", { class: "st-hint", text: transcript ? `${transcript.segments?.length || 0} lines` : "Reading transcript…" }),
+    ]);
+    card.append(detected);
+    card.append(el("div", { class: "st-copy-meta" }, [
+      el("span", { class: "st-label", text: "Moment" }),
+      el("strong", { text: ctx.getStory()?.title || "Current moment" }),
+      el("span", { class: "st-hint", text: formatDuration(storySeconds(ctx)) }),
+    ]));
+    if (transcriptError) card.append(el("p", { class: "st-error", text: transcriptError }));
+
+    if (transcript?.segments?.length) {
+      const sourceLines = el("div", { class: "st-copy-lines" });
+      for (const line of transcript.segments.slice(0, 200)) {
+        sourceLines.append(el("div", { class: "st-copy-line" }, [
+          el("span", { class: "st-mono st-copy-time", text: formatDuration(line.start) }),
+          el("span", {}, [el("strong", { text: line.text })]),
+        ]));
+      }
+      card.append(el("div", { class: "st-layer-stage-head", style: "margin-top:12px" }, [
+        el("h4", { text: "Full transcript" }),
+        el("span", { class: "st-hint", text: `${transcript.segments.length} lines` }),
+      ]));
+      card.append(sourceLines);
+    }
+
+    const target = el("select", { "aria-label": "Translate into" });
+    languageOptions(target, targetLang, "Choose a language");
+    target.addEventListener("change", () => {
+      targetLang = target.value;
+      translated = null;
+      copyResult = null;
+      translateError = "";
+      render();
+    });
+    card.append(el("div", { class: "st-control-grid" }, [
+      field("Translate into", target, "The whole transcript, not only this moment."),
+    ]));
+    const translate = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: translateBusy ? "Translating…" : translated ? "Translate again" : "Translate transcript",
+      disabled: translateBusy || !targetLang,
+    });
+    translate.addEventListener("click", () => { void runTranslate(); });
+    card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [translate]));
+    if (translateError) card.append(el("p", { class: "st-error", text: translateError }));
+
+    if (translated?.lines?.length) {
+      const lines = el("div", { class: "st-copy-lines" });
+      for (const line of translated.lines.slice(0, 12)) {
+        lines.append(el("div", { class: "st-copy-line" }, [
+          el("span", { class: "st-mono st-copy-time", text: formatDuration(line.start) }),
+          el("span", {}, [
+            el("strong", { text: line.text }),
+            el("small", { text: line.source }),
+          ]),
+        ]));
+      }
+      card.append(lines);
+      if (translated.lines.length > 12) {
+        card.append(el("p", { class: "st-hint", text: `${translated.lines.length - 12} more lines are kept in the cache.` }));
+      }
+    }
+
+    const style = el("select", { "aria-label": "Copy style" });
+    for (const [value, label] of [
+      ["smooth", "Smooth · natural short script"],
+      ["viral", "Viral · punchy hook"],
+      ["fun", "Fun · playful and warm"],
+      ["creative", "Creative · vivid and surprising"],
+      ["sad", "Sad · intimate and restrained"],
+      ["chill", "Chill · calm and understated"],
+      ["literal", "Faithful · translation only"],
+    ]) {
+      style.append(el("option", { value, label, selected: value === copyStyle }));
+    }
+    style.addEventListener("change", () => {
+      copyStyle = style.value;
+      copyResult = null;
+      copyError = "";
+      render();
+    });
+    card.append(el("div", { class: "st-control-grid", style: "margin-top:12px" }, [
+      field("Copy style", style, "No rewrite happens until you press Write Copy."),
+    ]));
+    const write = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: copyBusy ? "Writing…" : "Write Copy",
+      disabled: copyBusy || Boolean(targetLang && targetLang !== sourceLang && !translated),
+    });
+    write.addEventListener("click", () => { void runCopy(); });
+    card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [write]));
+    if (copyError) card.append(el("p", { class: "st-error", text: copyError }));
+    if (copyResult?.lines?.length) {
+      const lines = el("div", { class: "st-copy-lines" });
+      for (const line of copyResult.lines) {
+        lines.append(el("div", { class: "st-copy-line" }, [
+          el("span", { class: "st-chip st-chip-quiet", text: line.role || "beat" }),
+          el("span", {}, [
+            el("strong", { text: line.text }),
+            el("small", { text: line.original || "" }),
+          ]),
+        ]));
+      }
+      card.append(lines);
+    }
+    return card;
+  }
+
   function render() {
     host.replaceChildren();
     const blocked = dubBlockReason(plan.mode, targetLang);
@@ -1946,6 +2159,7 @@ export function mountAudioPanel(host, ctx) {
       }));
     }
     host.append(head);
+    host.append(copyCard());
     host.append(modeCard());
     host.append(voiceCard());
     if (plan.mode === "dub") host.append(dubCard());
@@ -1956,6 +2170,7 @@ export function mountAudioPanel(host, ctx) {
   }
 
   render();
+  void loadTranscript();
   void loadEngines();
   void loadLibrary();
 

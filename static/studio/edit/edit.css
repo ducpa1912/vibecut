@@ -629,6 +629,29 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
   border-bottom: 1px solid var(--st-line);
 }
 .st-visual-group:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+.st-copy-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--st-line);
+  border-radius: 8px;
+  background: var(--st-panel-2);
+}
+.st-copy-lines { display: grid; gap: 6px; margin-top: 10px; max-height: 220px; overflow: auto; }
+.st-copy-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: var(--st-panel-2);
+}
+.st-copy-line strong { display: block; font-weight: 500; font-size: 12.5px; line-height: 1.35; }
+.st-copy-line small { display: block; margin-top: 2px; color: var(--st-dim); font-size: 11px; line-height: 1.3; }
+.st-copy-time { color: var(--st-dim); font-size: 10px; padding-top: 2px; }
 .st-visual-group-title {
   margin: 2px 0 0;
   color: var(--st-accent);
@@ -1214,6 +1237,7 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
   overflow: hidden;
   touch-action: none;
 }
+.st-tl-track-scenes { background: rgba(142, 201, 163, 0.04); }
 .st-tl-track-sentences { background: rgba(232, 162, 102, 0.035); }
 
 .st-tl-bar {
@@ -1240,6 +1264,9 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
 .st-tl-bar.is-muted { border-color: var(--st-line-2); background: rgba(58, 58, 64, 0.35); color: var(--st-muted); }
 .st-tl-bar.is-dashed { border-style: dashed; background: rgba(58, 58, 64, 0.22); }
 .st-tl-bar-sentences { background: rgba(241, 239, 233, 0.10); border-color: rgba(241, 239, 233, 0.18); color: #d7d4cd; }
+.st-tl-bar-scenes { border-color: rgba(142, 201, 163, 0.34); background: rgba(142, 201, 163, 0.14); color: #c6e5d0; font-size: 9.5px; }
+.st-tl-bar-scenes.st-tl-role-hook { border-color: rgba(232, 162, 102, 0.6); background: rgba(232, 162, 102, 0.22); color: #f3d3b4; }
+.st-tl-bar-scenes.st-tl-role-payoff { border-color: rgba(142, 201, 163, 0.65); background: rgba(142, 201, 163, 0.24); color: #d6f0df; }
 .st-tl-bar-clean { border-color: rgba(232, 162, 102, 0.42); background: rgba(232, 162, 102, 0.20); color: #f3d3b4; }
 .st-tl-bar-text { border-color: rgba(123, 155, 184, 0.42); background: rgba(123, 155, 184, 0.20); color: #c7d8e8; }
 .st-tl-bar-captions { border-color: rgba(142, 201, 163, 0.38); background: rgba(142, 201, 163, 0.18); color: #c4e5cf; }

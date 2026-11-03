@@ -18,6 +18,7 @@ import { trimStory } from "../api.js";
 import { receiptSummary } from "../stories.js";
 
 const LANE_LABELS = {
+  scenes: "Scenes",
   clean: "Clean",
   text: "Text",
   captions: "Captions",
@@ -292,7 +293,7 @@ export function mountTimeline(root, options = {}) {
       : formatSpan(storyStart, storyEnd ?? storyStart);
     const title = `${label || LANE_LABELS[kind] || "Layer"} · ${span}${outside ? " · outside the trimmed story" : ""}${item.hidden ? " · hidden outside, kept in the Edit" : ""}${item.pinned ? " · pinned to the story start" : ""}`;
     const button = el("button", {
-      class: `st-tl-bar st-tl-bar-${kind}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
+      class: `st-tl-bar st-tl-bar-${kind}${item.sceneClip ? ` st-tl-role-${item.role || "beat"}` : ""}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
       type: "button",
       title,
       "aria-label": title,
@@ -308,11 +309,35 @@ export function mountTimeline(root, options = {}) {
     ]);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      handlers.onSelect(kind, item.layerId || item.id);
+      if (kind !== "scenes") handlers.onSelect(kind, item.layerId || item.id);
       const seekTo = storyStart ?? (numberOr(item.start) < view.leading ? 0 : duration);
       handlers.onSeek(Math.max(0, Math.min(duration, seekTo)));
     });
     return button;
+  }
+
+  function sceneRows() {
+    const clips = Array.isArray(state.story?.clips) ? state.story.clips : [];
+    const rows = [];
+    let offset = 0;
+    for (const clip of clips) {
+      const span = Math.max(0.05, numberOr(clip?.dur, numberOr(clip?.end) - numberOr(clip?.start)));
+      const scene = Number(clip?.scene);
+      const role = String(clip?.role || "beat");
+      rows.push({
+        id: `scene-${clip?.scene}-${offset.toFixed(3)}`,
+        label: `${role === "hook" ? "Hook" : role === "payoff" ? "Payoff" : "Scene"} ${Number.isFinite(scene) ? scene + 1 : ""}`.trim(),
+        start: offset,
+        end: offset + span,
+        storyStart: offset,
+        storyEnd: offset + span,
+        role,
+        scene,
+        sceneClip: true,
+      });
+      offset += span;
+    }
+    return rows;
   }
 
   function sentenceRows(view) {
@@ -457,7 +482,7 @@ export function mountTimeline(root, options = {}) {
         makeTrimHandle("end", view),
       );
     }
-    if (!row.items.length && row.kind !== "sentences") {
+    if (!row.items.length && row.kind !== "sentences" && row.kind !== "scenes") {
       const action = EMPTY_ACTION[row.kind] || "Add a layer";
       const empty = el("button", {
         class: "st-tl-empty",
@@ -825,6 +850,12 @@ export function mountTimeline(root, options = {}) {
     const view = model();
     const focused = document.activeElement?.dataset?.edge || pendingFocus || "";
     pendingFocus = "";
+    const sceneRow = {
+      id: "scenes",
+      label: "Scenes",
+      kind: "scenes",
+      items: sceneRows(),
+    };
     const sentenceRow = {
       id: "sentences",
       label: "Sentences",
@@ -835,12 +866,12 @@ export function mountTimeline(root, options = {}) {
 
     dom.grid.replaceChildren();
     dom.grid.append(el("div", { class: "st-tl-corner", text: "Track" }), makeRuler(view));
-    for (const row of [sentenceRow, ...layers]) {
+    for (const row of [sceneRow, sentenceRow, ...layers]) {
       const label = el("div", { class: `st-tl-label st-tl-label-${row.kind}` }, [
         el("span", { text: row.label || LANE_LABELS[row.kind] || "Layer" }),
         row.kind !== "sentences" ? el("small", { text: String(row.items.length) }) : null,
       ]);
-      if (row.kind !== "sentences") {
+      if (row.kind !== "sentences" && row.kind !== "scenes") {
         const add = el("button", {
           class: "st-tl-add",
           type: "button",
