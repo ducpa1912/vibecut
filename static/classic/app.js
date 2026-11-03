@@ -54,6 +54,11 @@
     setupSttLanguage: $("#setup-stt-language"),
     setupMinimaxKey: $("#setup-minimax-key"),
     setupElevenlabsKey: $("#setup-elevenlabs-key"),
+    setupVoicePreserve: $("#setup-voice-preserve"),
+    setupVoiceMax: $("#setup-voice-max"),
+    setupVoiceEngine: $("#setup-voice-engine"),
+    setupVoiceExtreme: $("#setup-voice-extreme"),
+    setupVoiceWarning: $("#setup-voice-warning"),
     setupVoiceEngines: $("#setup-voice-engines"),
     setupPacks: $("#setup-packs"),
     setupPacksRefresh: $("#setup-packs-refresh"),
@@ -80,15 +85,6 @@
     setupYtdlpFileField: $("#setup-ytdlp-file-field"),
     setupYtdlpDetail: $("#setup-ytdlp-detail"),
     setupTestYtdlp: $("#setup-test-ytdlp"),
-    setupCobaltStatus: $("#setup-cobalt-status"),
-    setupCobaltUrl: $("#setup-cobalt-url"),
-    setupCobaltKey: $("#setup-cobalt-key"),
-    setupCobaltQuality: $("#setup-cobalt-quality"),
-    setupCobaltCodec: $("#setup-cobalt-codec"),
-    setupCobaltLocal: $("#setup-cobalt-local"),
-    setupCobaltFallback: $("#setup-cobalt-fallback"),
-    setupCobaltDetail: $("#setup-cobalt-detail"),
-    setupTestCobalt: $("#setup-test-cobalt"),
     setupXhsStatus: $("#setup-xhs-status"),
     setupXhsUrl: $("#setup-xhs-url"),
     setupXhsToken: $("#setup-xhs-token"),
@@ -567,19 +563,68 @@
     });
   }
 
+  function updateVoiceFitWarning() {
+    const preserve = dom.setupVoicePreserve?.checked !== false;
+    if (dom.setupVoiceExtreme) {
+      dom.setupVoiceExtreme.disabled = preserve;
+      if (preserve) dom.setupVoiceExtreme.checked = false;
+    }
+    if (dom.setupVoiceMax) {
+      if (dom.setupVoiceExtreme?.checked) dom.setupVoiceMax.value = "2.50";
+      else if (dom.setupVoiceMax.value === "2.50") dom.setupVoiceMax.value = "1.80";
+    }
+    if (!dom.setupVoiceWarning) return;
+    if (preserve) {
+      dom.setupVoiceWarning.hidden = true;
+      dom.setupVoiceWarning.textContent = "";
+      return;
+    }
+    dom.setupVoiceWarning.hidden = false;
+    dom.setupVoiceWarning.textContent = dom.setupVoiceExtreme?.checked
+      ? "Preserve voice is off. Speeds above 1.8× will raise the pitch sharply and may sound like a chipmunk."
+      : "Preserve voice is off. Faster lines will raise the voice pitch and may create a chipmunk sound.";
+  }
+
   function applySetup(data) {
     const settings = data.settings || {};
     const secrets = data.secrets || {};
     const sources = data.sources || {};
     const opencode = settings.opencode || {};
     dom.setupOpencodeEnabled.checked = opencode.enabled !== false;
-    if (dom.setupOpencodeModel) dom.setupOpencodeModel.value = opencode.model || "deepseek-v4.1-flash";
-    if (dom.setupOpencodeVariant) dom.setupOpencodeVariant.value = opencode.variant || "low";
+    if (dom.setupOpencodeModel) dom.setupOpencodeModel.value = opencode.model || "";
+    if (dom.setupOpencodeVariant) dom.setupOpencodeVariant.value = opencode.variant || "";
     renderSetupModelRoutes(settings.workflows || {});
     dom.setupUseRewrite.checked = opencode.use_rewrite !== false;
     dom.setupUseBrief.checked = opencode.use_brief !== false;
     dom.setupTranslationMode.value = (settings.translation || {}).mode || "auto";
+    const voiceFit = settings.voice_fit || {};
+    if (dom.setupVoicePreserve) dom.setupVoicePreserve.checked = voiceFit.preserve_pitch !== false;
+    if (dom.setupVoiceMax) {
+      const speed = Number(voiceFit.max_speed || 1.80);
+      const value = [1.10, 1.15, 1.20, 1.25, 1.50, 1.80, 2.50]
+        .find((item) => Math.abs(item - speed) < 0.005) || 1.80;
+      dom.setupVoiceMax.value = value.toFixed(2);
+    }
+    if (dom.setupVoiceEngine) {
+      dom.setupVoiceEngine.value = ["auto", "ffmpeg", "signalsmith"].includes(voiceFit.engine)
+        ? voiceFit.engine : "auto";
+    }
+    if (dom.setupVoiceExtreme) dom.setupVoiceExtreme.checked = voiceFit.allow_extreme_speed === true;
     const runtime = data.runtime || {};
+    if (dom.setupVoiceEngine) {
+      const signalsmith = runtime.voice_fit?.signalsmith === true;
+      const option = dom.setupVoiceEngine.querySelector('option[value="signalsmith"]');
+      if (option) {
+        option.disabled = !signalsmith;
+        option.textContent = signalsmith
+          ? "Signalsmith Stretch"
+          : "Signalsmith Stretch · not installed";
+      }
+      if (!signalsmith && dom.setupVoiceEngine.value === "signalsmith") {
+        dom.setupVoiceEngine.value = "auto";
+      }
+    }
+    updateVoiceFitWarning();
     if (runtime.opencode_mode === "api") {
       dom.setupOpencodeStatus.textContent = "Direct OpenCode Go API key configured for this project · low reasoning.";
     } else if (runtime.opencode) {
@@ -591,13 +636,12 @@
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
     if (dom.setupRightsLock) dom.setupRightsLock.checked = (settings.rights || {}).lock !== false;
     const ingest = settings.ingest || {};
-    dom.setupIngestProvider.value = ["auto", "ytdlp", "cobalt", "xhs"].includes(ingest.provider)
+    dom.setupIngestProvider.value = ["auto", "ytdlp", "xhs"].includes(ingest.provider)
       ? ingest.provider : "auto";
     if (dom.urlProviderLabel) {
       dom.urlProviderLabel.textContent = `provider ${{
         auto: "auto",
         ytdlp: "yt-dlp",
-        cobalt: "Cobalt",
         xhs: "XHS",
       }[dom.setupIngestProvider.value] || "auto"}`;
     }
@@ -614,13 +658,6 @@
       ? ingest.ytdlp_browser : "safari";
     dom.setupYtdlpCookieFile.value = ingest.ytdlp_cookie_file || "";
     syncYtdlpCookieFields();
-    dom.setupCobaltUrl.value = ingest.cobalt_url || "";
-    dom.setupCobaltQuality.value = ["max", "4320", "2160", "1440", "1080", "720", "480", "360", "240", "144"].includes(ingest.cobalt_quality)
-      ? ingest.cobalt_quality : "1080";
-    dom.setupCobaltCodec.value = ["h264", "av1", "vp9"].includes(ingest.cobalt_codec)
-      ? ingest.cobalt_codec : "h264";
-    dom.setupCobaltLocal.value = ingest.cobalt_local_processing === "forced" ? "forced" : "preferred";
-    dom.setupCobaltFallback.checked = ingest.cobalt_fallback === true;
     dom.setupXhsUrl.value = ingest.xhs_url || "";
     dom.setupXhsNoRecord.checked = ingest.xhs_no_record !== false;
     dom.setupXhsInterval.value = ingest.xhs_interval ?? 12;
@@ -628,14 +665,12 @@
     setSecretHint(dom.setupOpenrouterKey, !!secrets.openrouter, sources.openrouter, true);
     setSecretHint(dom.setupMinimaxKey, !!secrets.minimax, sources.minimax);
     setSecretHint(dom.setupElevenlabsKey, !!secrets.elevenlabs, sources.elevenlabs);
-    setSecretHint(dom.setupCobaltKey, !!secrets.cobalt, sources.cobalt);
     setSecretHint(dom.setupXhsToken, !!secrets.xhs, sources.xhs);
     [
       dom.setupOpencodeKey,
       dom.setupOpenrouterKey,
       dom.setupMinimaxKey,
       dom.setupElevenlabsKey,
-      dom.setupCobaltKey,
       dom.setupXhsToken,
       dom.setupXhsCookie,
     ].forEach((input) => {
@@ -685,7 +720,6 @@
       openrouter: dom.setupOpenrouterKey.value.trim(),
       minimax: dom.setupMinimaxKey.value.trim(),
       elevenlabs: dom.setupElevenlabsKey?.value.trim() || "",
-      cobalt: dom.setupCobaltKey.value.trim(),
       xhs: dom.setupXhsToken.value.trim(),
     };
     return Object.fromEntries(Object.entries(values).filter(([, value]) => value));
@@ -766,16 +800,17 @@
     dom.setupStatus.textContent = "Saving…";
     const pendingXhsCookie = dom.setupXhsCookie.value.trim();
     try {
+      const opencode = {
+        enabled: dom.setupOpencodeEnabled.checked,
+        use_rewrite: dom.setupUseRewrite.checked,
+        use_brief: dom.setupUseBrief.checked,
+        use_translate: dom.setupTranslationMode.value !== "local_only",
+      };
+      if (dom.setupOpencodeModel?.value.trim()) opencode.model = dom.setupOpencodeModel.value.trim();
+      if (dom.setupOpencodeVariant?.value) opencode.variant = dom.setupOpencodeVariant.value;
       const payload = {
         settings: {
-          opencode: {
-            enabled: dom.setupOpencodeEnabled.checked,
-            model: dom.setupOpencodeModel?.value.trim() || "deepseek-v4.1-flash",
-            variant: "low",
-            use_rewrite: dom.setupUseRewrite.checked,
-            use_brief: dom.setupUseBrief.checked,
-            use_translate: dom.setupTranslationMode.value !== "local_only",
-          },
+          opencode,
           translation: {
             mode: dom.setupTranslationMode.value,
           },
@@ -784,6 +819,12 @@
           },
           rights: {
             lock: dom.setupRightsLock ? dom.setupRightsLock.checked : true,
+          },
+          voice_fit: {
+            preserve_pitch: dom.setupVoicePreserve ? dom.setupVoicePreserve.checked : true,
+            max_speed: Number(dom.setupVoiceMax?.value || 1.80),
+            engine: dom.setupVoiceEngine?.value || "auto",
+            allow_extreme_speed: dom.setupVoiceExtreme?.checked === true,
           },
           ingest: {
             provider: dom.setupIngestProvider.value || "auto",
@@ -794,11 +835,6 @@
             ytdlp_cookies: dom.setupYtdlpCookies.value || "none",
             ytdlp_browser: dom.setupYtdlpBrowser.value || "safari",
             ytdlp_cookie_file: dom.setupYtdlpCookieFile.value.trim(),
-            cobalt_url: dom.setupCobaltUrl.value.trim(),
-            cobalt_quality: dom.setupCobaltQuality.value || "1080",
-            cobalt_codec: dom.setupCobaltCodec.value || "h264",
-            cobalt_local_processing: dom.setupCobaltLocal.value || "preferred",
-            cobalt_fallback: dom.setupCobaltFallback.checked,
             xhs_url: dom.setupXhsUrl.value.trim(),
             xhs_no_record: dom.setupXhsNoRecord.checked,
             xhs_interval: readInterval(dom.setupXhsInterval.value, 12),
@@ -889,30 +925,6 @@
     }
   }
 
-  function applyCobaltStatus(entry) {
-    const value = entry && typeof entry === "object" ? entry : {};
-    const error = String(value.error || "").trim();
-    if (value.available === true) {
-      setSetupChip(dom.setupCobaltStatus, "Reachable", "ok", error);
-      if (dom.setupCobaltDetail) {
-        dom.setupCobaltDetail.textContent = "Instance reachable.";
-        dom.setupCobaltDetail.classList.remove("warn");
-      }
-      return;
-    }
-    if (value.configured === false) {
-      setSetupChip(dom.setupCobaltStatus, "Not set", "warn", error);
-    } else if (value.available === false) {
-      setSetupChip(dom.setupCobaltStatus, "Offline", "warn", error);
-    } else {
-      setSetupChip(dom.setupCobaltStatus, "Not checked", "", error);
-    }
-    if (dom.setupCobaltDetail) {
-      dom.setupCobaltDetail.textContent = error || "Set the service URL, then Test Cobalt.";
-      dom.setupCobaltDetail.classList.toggle("warn", !!error);
-    }
-  }
-
   function applyXhsStatus(entry) {
     const value = entry && typeof entry === "object" ? entry : {};
     const session = value.session && typeof value.session === "object" ? value.session : {};
@@ -963,7 +975,6 @@
     state.ingestStatus = data || null;
     const providers = data && typeof data === "object" ? (data.providers || data) : {};
     if (providers.ytdlp) applyYtdlpStatus(providers.ytdlp);
-    if (providers.cobalt) applyCobaltStatus(providers.cobalt);
     if (providers.xhs) applyXhsStatus(providers.xhs);
   }
 
@@ -974,7 +985,6 @@
       return data;
     } catch (error) {
       setSetupChip(dom.setupYtdlpStatus, "Status unavailable", "warn", error.message);
-      setSetupChip(dom.setupCobaltStatus, "Status unavailable", "warn", error.message);
       setSetupChip(dom.setupXhsStatus, "Status unavailable", "warn", error.message);
       if (!quiet && dom.setupStatus) dom.setupStatus.textContent = error.message;
       return null;
@@ -993,8 +1003,6 @@
       });
       if (kind === "ytdlp") {
         applyYtdlpStatus(result.status || result);
-      } else if (kind === "cobalt") {
-        applyCobaltStatus(result);
       } else {
         applyXhsStatus(result);
       }
@@ -1008,9 +1016,6 @@
       if (kind === "ytdlp") {
         setSetupChip(dom.setupYtdlpStatus, "Unavailable", "warn", error.message);
         if (dom.setupYtdlpDetail) dom.setupYtdlpDetail.textContent = error.message;
-      } else if (kind === "cobalt") {
-        setSetupChip(dom.setupCobaltStatus, "Offline", "warn", error.message);
-        if (dom.setupCobaltDetail) dom.setupCobaltDetail.textContent = error.message;
       } else {
         setSetupChip(dom.setupXhsStatus, "Offline", "warn", error.message);
         if (dom.setupXhsDetail) dom.setupXhsDetail.textContent = error.message;
@@ -1141,6 +1146,15 @@
       node.addEventListener("click", closeSetup);
     });
     dom.setupSave.addEventListener("click", saveSetup);
+    dom.setupVoicePreserve?.addEventListener("change", updateVoiceFitWarning);
+    dom.setupVoiceExtreme?.addEventListener("change", updateVoiceFitWarning);
+    dom.setupVoiceEngine?.addEventListener("change", updateVoiceFitWarning);
+    dom.setupVoiceMax?.addEventListener("change", () => {
+      if (dom.setupVoiceMax.value === "2.50" && dom.setupVoicePreserve?.checked === false) {
+        dom.setupVoiceExtreme.checked = true;
+      }
+      updateVoiceFitWarning();
+    });
     dom.setupTestOpencode.addEventListener("click", () => testSetup("opencode", dom.setupTestOpencode));
     dom.setupTestOpenrouter.addEventListener("click", () => testSetup("openrouter", dom.setupTestOpenrouter));
     dom.setupTestStt.addEventListener("click", () => testSetup("stt", dom.setupTestStt));
@@ -1153,7 +1167,6 @@
     ));
     dom.setupTestYtdlp.addEventListener("click", () => testIngest("ytdlp", dom.setupTestYtdlp));
     dom.setupYtdlpCookies.addEventListener("change", syncYtdlpCookieFields);
-    dom.setupTestCobalt.addEventListener("click", () => testIngest("cobalt", dom.setupTestCobalt));
     dom.setupTestXhs.addEventListener("click", () => testIngest("xhs", dom.setupTestXhs));
     dom.setupXhsCheck.addEventListener("click", () => checkXhsSession(dom.setupXhsCheck));
     dom.setupXhsSendCookie.addEventListener("click", sendXhsCookie);
@@ -2331,7 +2344,6 @@
     if (label) return label;
     if (provider === "ytdlp") return "yt-dlp";
     if (provider === "xhs") return "XHS / RedNote";
-    if (provider === "cobalt") return "Cobalt";
     return "yt-dlp";
   }
 
@@ -4743,6 +4755,7 @@
       state.audio.engine || "",
       state.audio.voice || "",
       Number(state.audio.rate) || 1,
+      JSON.stringify(state.setup?.voice_fit || {}),
       previewVoiceText(),
     ].join("|");
   }

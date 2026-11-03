@@ -15,6 +15,8 @@ Resolve exact versions and full license texts from the release environment; see
 | NumPy | BSD-3-Clause and bundled permissive notices | https://numpy.org |
 | Pillow | MIT-CMU (HPND) | https://python-pillow.org |
 | yt-dlp | Unlicense | https://github.com/yt-dlp/yt-dlp |
+| python-stretch (optional) | MIT | https://github.com/gregogiudici/python-stretch |
+| Signalsmith Stretch (optional, via python-stretch) | MIT | https://github.com/Signalsmith-Audio/signalsmith-stretch |
 
 yt-dlp is the default URL downloader and is used through its public Python API.
 A copy of the Unlicense text must be included in release artifacts. No
@@ -34,19 +36,15 @@ the installed version.
 
 ## Optional external sidecars
 
-Cobalt and xhs_get are not part of the proprietary VibeCut source tree or
-default artifact. If a distribution ships them alongside VibeCut, keep them in
-separate artifacts and comply with their licenses:
+xhs_get is not part of the proprietary VibeCut source tree or default
+artifact. If a distribution ships it alongside VibeCut, keep it in a separate
+artifact and comply with its license:
 
-- **Cobalt API** — AGPL-3.0. Provide corresponding source or a written offer
-  valid for three years, plus the license text and modification status.
-- **Cobalt web UI/assets** — CC-BY-NC-SA-4.0 with branding excluded. Do not use
-  Cobalt marks as VibeCut branding.
 - **xhs_get** — GPL-3.0. Provide corresponding source or a written offer and the
   license text. Keep its cookies and session inside its own process.
 
-No Cobalt or xhs_get source, comments, tests, or assets are copied into the
-VibeCut URL-ingest modules. The integration is HTTP-only.
+No xhs_get source, comments, tests, or assets are copied into the VibeCut
+URL-ingest modules. The integration is HTTP-only.
 
 ## Voice extraction engines
 

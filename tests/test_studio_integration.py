@@ -32,9 +32,11 @@ def test_studio_build_serves_studio_classic_and_voice_room(monkeypatch):
 
 def test_a_saved_classic_choice_leaves_the_studio_page_once():
     page = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
-    boot = page[page.index("Choose the workspace"):page.index("</script>", page.index("Choose the workspace"))]
-    assert 'window.location.replace("/?classic=1")' in boot
-    # ?classic=1 that still lands here must not redirect again.
-    assert re.search(r'if \(requested !== "classic"\) \{\s*window\.location\.replace', boot)
-    assert 'mode = "studio";' in boot
+    boot = page[page.index("Studio is the only workspace here"):page.index("</script>", page.index("Studio is the only workspace here"))]
+    # Studio owns this page. It does not redirect to Classic and keeps no
+    # Classic editor choice; Classic lives on its own page.
+    assert 'window.location.replace("/?classic=1")' not in boot
+    assert 'root.dataset.editor = "studio"' in boot
+    assert 'root.dataset.views = "studio"' in boot
+    assert "vibecut.editor" not in page
     assert "/static/app.js" not in page and "/static/creator.js" not in page

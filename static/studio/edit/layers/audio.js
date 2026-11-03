@@ -29,7 +29,7 @@ import {
   translateTranscript,
   writeMomentCopy,
 } from "../api.js";
-import { CONSENT_COPY, cloneFromVideo, cancelVoiceCandidates, findVoiceCandidates, voiceCandidateAudioUrl, voiceCandidateState } from "../../../voice/voiceclone.js";
+import { CONSENT_COPY, cloneFromVideo, cancelVoiceCandidates, findVoiceCandidates, voiceCandidateAudioUrl, voiceCandidateState } from "../../voice/voiceclone.js";
 
 const ENGINE_LABELS = {
   say: "Apple voices · on this Mac",

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_studio_js import needs_node, run_module
+
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO = ROOT / "static" / "studio"
 CLEAN = (STUDIO / "edit" / "layers" / "clean.js").read_text(encoding="utf-8")
@@ -35,6 +37,21 @@ def test_remove_all_sends_the_ticks_and_the_chosen_method():
     assert "AI fill (model missing)" in CLEAN
     assert "/api/fill/status" in CLEAN
     assert "st-found-method" in CLEAN and "st-found-engine" in CLEAN
+
+
+@needs_node
+def test_fill_for_all_only_converts_detected_tracklets():
+    out = run_module("edit/layers/clean.js", """
+        return m.useFillForAll([
+          {id: "a", kind: "delogo", tracklet_id: "trk_a", z: 0},
+          {id: "b", kind: "blur", z: 1},
+          {id: "c", kind: "plate", tracklet_id: "trk_c", z: 2},
+        ], "lama");
+    """)
+
+    assert [layer["kind"] for layer in out] == ["fill", "blur", "fill"]
+    assert out[0]["method"] == "lama" and out[2]["method"] == "lama"
+    assert out[1] == {"id": "b", "kind": "blur", "z": 1}
 
 
 def test_fill_preview_runs_one_frame_and_shows_a_before_after_slider():

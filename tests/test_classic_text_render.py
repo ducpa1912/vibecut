@@ -205,6 +205,21 @@ def test_sixteen_by_nine_refuses_layers_with_a_reason(classic):
     assert not captured
 
 
+def test_an_empty_layer_payload_renders_on_any_shape(classic):
+    client, captured = classic
+    clips = _clips(client)
+    response = client.post("/api/jobs/classic1/render", json={
+        "target": 30,
+        "quality": "final",
+        "aspect": "16:9",
+        "captions": False,
+        "clips": clips,
+        "edit": {"overlays": [], "effects": []},
+    })
+    assert response.status_code == 200, response.text
+    assert captured and not captured[-1].get("edit")
+
+
 def test_the_card_offers_overlays_effects_and_a_disabled_reason():
     from pathlib import Path
 

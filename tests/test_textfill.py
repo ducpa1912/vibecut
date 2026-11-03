@@ -5,6 +5,7 @@ Arrays and fake fillers only. No media file is created or read.
 
 from __future__ import annotations
 
+import io
 import threading
 from pathlib import Path
 
@@ -178,9 +179,34 @@ def test_lama_stream_fills_only_masked_frames_and_carries_a_little():
     assert np.all(out[1][:10] == 10)
 
 
+def test_the_streams_check_cancel_before_running_the_model():
+    class Uncalled:
+        def fill(self, *args):
+            raise AssertionError("the model ran after cancel")
+
+    frames = [np.zeros((40, 32, 3), dtype=np.uint8) for _ in range(4)]
+    with pytest.raises(textfill.FillCancelled):
+        list(textfill.fill_frames_sttn(
+            iter(frames), lambda index: [(8, 20, 24, 28)], Uncalled(), [(16, 32)],
+            chunk=50, overlap=10, cancelled=lambda: True,
+        ))
+    with pytest.raises(textfill.FillCancelled):
+        list(textfill.fill_frames_lama(
+            iter(frames), lambda index: [(8, 20, 24, 28)], Uncalled(), (0, 0, 32, 40),
+            cancelled=lambda: True,
+        ))
+
+
 # --- prepare_span guards ---------------------------------------------------
 
 META = {"width": 720, "height": 1280, "fps": 30.0, "fingerprint": "x:1:2"}
+
+
+def _ready_model(tmp_path: Path, method: str = "sttn") -> Path:
+    directory = tmp_path / "models" / "fill"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / textfill.MODEL_FILES[method]).write_bytes(b"x" * 10)
+    return directory
 
 
 def test_prepare_span_returns_none_when_no_layer_touches_the_span(tmp_path):
@@ -220,6 +246,89 @@ def test_prepare_span_reuses_a_cached_clip(tmp_path, monkeypatch):
     assert result == {"path": str(cache / f"{key}.mp4"), "key": key, "cached": True, "method": "sttn"}
 
 
+def test_prepare_span_cancels_while_waiting_for_the_fill_lock(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIBECUT_FILL_MODELS", raising=False)
+    _ready_model(tmp_path)
+    cancel = threading.Event()
+    textfill._LOCK.acquire()
+    timer = threading.Timer(0.05, cancel.set)
+    timer.start()
+    try:
+        with pytest.raises(textfill.FillCancelled):
+            textfill.prepare_span(
+                source="unused.mp4", meta=META, start=0.0, duration=1.0,
+                layers=[_layer()], method="sttn", cache_dir=tmp_path / "fill",
+                data_root=tmp_path, cancel_event=cancel,
+            )
+    finally:
+        timer.cancel()
+        textfill._LOCK.release()
+
+
+def test_prepare_span_checks_cancel_before_loading_the_model(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIBECUT_FILL_MODELS", raising=False)
+    _ready_model(tmp_path)
+    loaded = []
+    monkeypatch.setattr(textfill, "_filler", lambda *args: loaded.append(args))
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(textfill.FillCancelled):
+        textfill.prepare_span(
+            source="unused.mp4", meta=META, start=0.0, duration=1.0,
+            layers=[_layer()], method="sttn", cache_dir=tmp_path / "fill",
+            data_root=tmp_path, cancel_event=cancel,
+        )
+    assert loaded == []
+
+
+def test_prepare_span_kills_ffmpeg_and_removes_the_part_file_on_failure(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIBECUT_FILL_MODELS", raising=False)
+    _ready_model(tmp_path)
+    processes = []
+
+    class FakeProc:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+            self.killed = False
+            processes.append(self)
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            return 1
+
+    class FakeReader:
+        def __init__(self, *args):
+            self.proc = FakeProc()
+
+        def read(self):
+            raise textfill.FillCancelled("stop")
+
+    class FakeWriter:
+        def __init__(self, _ffmpeg, output, *args):
+            self.proc = FakeProc()
+            Path(output).write_bytes(b"partial")
+
+    monkeypatch.setattr(textfill, "_Reader", FakeReader)
+    monkeypatch.setattr(textfill, "_Writer", FakeWriter)
+    monkeypatch.setattr(textfill, "_filler", lambda *args: object())
+
+    with pytest.raises(textfill.FillCancelled):
+        textfill.prepare_span(
+            source="unused.mp4", meta=META, start=0.0, duration=1.0,
+            layers=[_layer()], method="sttn", cache_dir=tmp_path / "fill",
+            data_root=tmp_path,
+        )
+    assert processes and all(proc.killed for proc in processes)
+    assert list((tmp_path / "fill").iterdir()) == []
+
+
 def test_span_key_changes_with_engine_box_and_span():
     base = dict(meta=META, start=1.0, duration=2.0, layers=[_layer()], method="sttn", model_stamp="m")
     key = textfill.span_key(**base)
@@ -227,6 +336,26 @@ def test_span_key_changes_with_engine_box_and_span():
     assert textfill.span_key(**{**base, "start": 1.5}) != key
     moved = _layer(box={"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.1})
     assert textfill.span_key(**{**base, "layers": [moved]}) != key
+
+
+def test_model_signature_changes_with_the_file_and_names_missing_models(tmp_path):
+    directory = tmp_path / "models"
+    directory.mkdir()
+    missing = textfill.model_signature(["sttn", "lama"], directory)
+    path = directory / textfill.MODEL_FILES["sttn"]
+    path.write_bytes(b"a" * 10)
+    first = textfill.model_signature(["sttn"], directory)
+    assert first != missing
+    path.write_bytes(b"a" * 20)
+    assert textfill.model_signature(["sttn"], directory) != first
+    assert textfill.model_signature([], directory) != first
+
+
+def test_release_fillers_drops_loaded_sessions():
+    textfill._FILLERS[("sttn", "x")] = object()
+    textfill._FILLERS[("lama", "y")] = object()
+    textfill.release_fillers()
+    assert textfill._FILLERS == {}
 
 
 def test_models_dir_follows_the_lane_data_folder(tmp_path, monkeypatch):
@@ -287,8 +416,18 @@ def test_compile_warns_when_one_beat_mixes_engines():
     compiled = compose_render.compile_edit(
         _edit([_layer(), _layer(id="cl02", method="lama", z=1)]), clips=CLIPS, source=SOURCE,
     )
-    assert compiled["segments"][0]["fill"]["method"] == "sttn"
+    assert compiled["segments"][0]["fill"]["method"] == "lama"
     assert any(item["code"] == "fill_method_mixed" for item in compiled["warnings"])
+
+
+def test_fill_plan_orders_layers_by_z_not_input_order():
+    plan, warnings = compose_render._fill_plan([
+        _layer(id="cl09", method="lama", z=9),
+        _layer(id="cl01", method="sttn", z=1),
+    ], 0.0, 4.0)
+    assert plan["method"] == "lama"
+    assert plan["ids"] == ["cl01", "cl09"]
+    assert any(item["code"] == "fill_method_mixed" for item in warnings)
 
 
 def test_render_prepare_fills_maps_progress_and_errors(tmp_path, monkeypatch):
@@ -326,6 +465,26 @@ def test_render_prepare_fills_maps_progress_and_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(textfill, "prepare_span", cancelled)
     with pytest.raises(render.RenderCancelled):
         render._prepare_fills("src.mp4", {}, job_dir, segments, lambda f, m: None, threading.Event())
+
+
+def test_render_prepare_fills_releases_models_after_the_pass(tmp_path, monkeypatch):
+    job_dir = tmp_path / "jobs" / "j1"
+    job_dir.mkdir(parents=True)
+    released = []
+    monkeypatch.setattr(
+        textfill, "prepare_span",
+        lambda **kwargs: {"path": "x.mp4", "key": "k1", "cached": False, "method": "sttn"},
+    )
+    monkeypatch.setattr(textfill, "release_fillers", lambda: released.append(True))
+    segments = [{"start": 0.0, "frames": 30, "fill": {"method": "sttn", "layers": [_layer()]}}]
+    render._prepare_fills("src.mp4", {}, job_dir, segments, lambda f, m: None, None)
+    assert released == [True]
+
+
+def test_render_master_key_includes_the_fill_model_signature():
+    source = Path(render.__file__).read_text(encoding="utf-8")
+    assert "textfill.model_signature(" in source
+    assert '"fill_models": fill_sig' in source
 
 
 def test_segment_cache_key_includes_the_fill():

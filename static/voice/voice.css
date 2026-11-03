@@ -318,6 +318,9 @@ body.vr-root {
 .vr-test textarea { resize: vertical; }
 .vr-rate { display: flex; align-items: center; gap: 10px; }
 .vr-rate input[type="range"] { flex: 1; min-width: 0; }
+.vr-advanced { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.vr-advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.vr-check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .vr-filters { display: flex; gap: 8px; }
 .vr-filters input { width: 220px; }
 .vr-filters select { width: auto; flex: none; }

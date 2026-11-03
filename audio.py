@@ -30,6 +30,7 @@ from typing import Mapping, Sequence
 import packs
 import settings_store
 import usage_store
+import voice_fit
 import workflow_config
 
 ROOT = Path(__file__).resolve().parent
@@ -451,11 +452,11 @@ def rewrite_models() -> list[dict]:
          "available": sys.platform == "darwin", "size_mb": 0,
          "install": "enable Apple Intelligence on macOS 26"},
         {"id": "opencode", "name": "OpenCode Go · DeepSeek V4.1 Flash",
-         "model": opencode_model() if opencode_available() else "deepseek-v4.1-flash",
+         "model": opencode_model() if opencode_available() else OPENCODE_DEFAULT_MODEL,
          "available": opencode_available(), "size_mb": 0,
          "install": "Install OpenCode and sign in to OpenCode Go. Uses the local login; low reasoning."},
         {"id": "openrouter", "name": "OpenRouter · DeepSeek V4.1 Flash",
-         "model": openrouter_model() if openrouter_available() else "deepseek/deepseek-v4.1-flash:floor",
+         "model": openrouter_model() if openrouter_available() else _default_workflow_model("rewrite", "openrouter"),
          "available": openrouter_available(), "size_mb": 0,
          "install": "Add an OpenRouter key in Setup."},
     ]
@@ -1186,7 +1187,7 @@ def scene_emotion(scene: dict, clip_duration: float, base_rate: float = 1.0) -> 
         label, factor = "punchy", 1.06
     else:
         label, factor = "neutral", 1.0
-    rate = max(0.6, min(1.6, float(base_rate or 1.0) * factor))
+    rate = max(0.6, min(2.5, float(base_rate or 1.0) * factor))
     return label, round(rate, 3)
 
 
@@ -1448,8 +1449,14 @@ def openrouter_media_available() -> bool:
 
 
 def openrouter_model() -> str:
-    settings = settings_store.load_settings().get("openrouter") or {}
-    return str(settings.get("model") or "deepseek/deepseek-v4.1-flash:floor")
+    settings = settings_store.load_settings()
+    workflows = settings.get("workflows")
+    if isinstance(workflows, dict) and workflows:
+        for route in workflow_config.routes(workflows, "rewrite"):
+            if str(route.get("provider") or "") == "openrouter" and route.get("model"):
+                return str(route["model"])
+    legacy = settings.get("openrouter") or {}
+    return str(legacy.get("model") or _default_workflow_model("rewrite", "openrouter"))
 
 
 def _openrouter_http_error_text(exc: urllib.error.HTTPError, key: str) -> str:
@@ -1627,8 +1634,17 @@ def _openrouter_text(
 
 
 OPENCODE_URL = "https://opencode.ai/inference/go/openai/v1/chat/completions"
-OPENCODE_DEFAULT_MODEL = "deepseek-v4.1-flash"
-OPENCODE_DEFAULT_VARIANT = "low"
+def _default_workflow_model(workflow: str, provider: str) -> str:
+    for route in workflow_config.DEFAULT_WORKFLOWS.get(workflow, {}).get("routes", []):
+        if str(route.get("provider") or "") == provider:
+            return str(route.get("model") or "")
+    return ""
+
+
+OPENCODE_DEFAULT_MODEL = _default_workflow_model("rewrite", "opencode-go")
+OPENCODE_DEFAULT_VARIANT = str(
+    workflow_config.DEFAULT_WORKFLOWS["rewrite"].get("reasoning") or "low"
+)
 OPENCODE_LAST_ERROR = ""
 
 
@@ -1665,14 +1681,26 @@ def opencode_available() -> bool:
 
 
 def opencode_model() -> str:
-    settings = settings_store.load_settings().get("opencode") or {}
-    return str(settings.get("model") or OPENCODE_DEFAULT_MODEL)
+    settings = settings_store.load_settings()
+    workflows = settings.get("workflows")
+    if isinstance(workflows, dict) and workflows:
+        for route in workflow_config.routes(workflows, "rewrite"):
+            if str(route.get("provider") or "") == "opencode-go" and route.get("model"):
+                return str(route["model"])
+    legacy = settings.get("opencode") or {}
+    return str(legacy.get("model") or OPENCODE_DEFAULT_MODEL)
 
 
 def opencode_variant() -> str:
-    settings = settings_store.load_settings().get("opencode") or {}
-    variant = str(settings.get("variant") or OPENCODE_DEFAULT_VARIANT).lower()
-    return variant if variant in {"low", "high", "max"} else OPENCODE_DEFAULT_VARIANT
+    settings = settings_store.load_settings()
+    workflows = settings.get("workflows")
+    route = (
+        workflow_config.effective(workflows, "rewrite")
+        if isinstance(workflows, dict) and workflows else {}
+    )
+    legacy = settings.get("opencode") or {}
+    variant = str(route.get("reasoning") or legacy.get("variant") or OPENCODE_DEFAULT_VARIANT).lower()
+    return variant if variant in {"none", "low", "medium", "high", "max"} else OPENCODE_DEFAULT_VARIANT
 
 
 def _opencode_api(args: list[str], body: dict | None = None, allow_empty: bool = False) -> dict | None:
@@ -1951,6 +1979,19 @@ def _target_chars_per_second(target: str) -> float:
     return 4.6 if (target or "").split("-")[0].lower() in {"zh", "ja", "ko"} else 14.0
 
 
+def _script_fit_rate_value(rate: float) -> float:
+    """Speed the script may assume, shared by rewrite, refit and repair."""
+    requested = max(0.5, min(2.5, float(rate or 1.0)))
+    max_speed = voice_fit.max_speed_default()
+    if requested < 1.0:
+        return max(0.5, min(requested, max_speed))
+    return min(max(requested, 1.25), max_speed)
+
+
+def _script_fit_rate(line: Mapping) -> float:
+    return _script_fit_rate_value(float(line.get("rate") or 1.0))
+
+
 def _rewrite_prompt(
     script: list[dict], source: str, target: str, mode: str, literal: list[str],
     context: dict | None = None,
@@ -1964,12 +2005,15 @@ def _rewrite_prompt(
             source_line = str(context_beats[index].get("source") or "")
         duration = max(0.8, float(line.get("duration") or 0.0))
         rate = max(0.6, float(line.get("rate") or 1.0))
+        fit_rate = _script_fit_rate(line)
         rows.append({
             "beat": index,
             "role": str(line.get("role") or "beat"),
             "seconds": round(duration, 2),
-            "max_chars": max(12, int((duration - 0.10) * rate * chars_per_second)),
-            "max_words": max(3, int((duration - 0.10) * rate * 2.9)),
+            "scene_seconds": round(float(line.get("scene_duration") or duration), 2),
+            "max_rate": round(fit_rate, 2),
+            "max_chars": max(12, int((duration - 0.10) * fit_rate * chars_per_second)),
+            "max_words": max(3, int((duration - 0.10) * fit_rate * 2.9)),
             "source_line": source_line,
             "literal": literal[index],
         })
@@ -1990,6 +2034,9 @@ def _rewrite_prompt(
         f"You are writing ONE coherent short-video voice over in "
         f"{_language_name(target)}, not separate captions.",
         f"The cut has exactly {len(rows)} beat{'s' if len(rows) != 1 else ''}.",
+        "Each beat's scene may be longer than its cut slot. Use the full scene "
+        "transcript for context, but keep the spoken line inside the cut slot; "
+        "max_chars and max_words already allow the shared voice-fit speed.",
         "Read the FULL VOICE SCRIPT and VIDEO AESTHETIC first. Keep the same story, "
         "speaker, setting, tone, pacing and visual mood.",
         f"Style: {style}.",
@@ -2014,7 +2061,7 @@ def _rewrite_prompt(
     if aesthetic:
         parts.append("VIDEO AESTHETIC:\n" + json.dumps(aesthetic, ensure_ascii=False))
     if context_text and (context or {}).get("full_context"):
-        parts.append("FULL VOICE SCRIPT:\n" + context_text[:6000])
+        parts.append("FULL VOICE SCRIPT:\n" + context_text[:10000])
     elif context_text:
         query = " ".join(str(row["source_line"]) or str(row["literal"]) for row in rows)
         relevant = retrieve_lines(context_text, query, limit=8)
@@ -2040,8 +2087,9 @@ def _line_needs_repair(text: str, duration: float, rate: float, target: str) -> 
     if words and words[-1] in BAD_LINE_ENDINGS:
         return True
     cjk = (target or "").split("-")[0].lower() in {"zh", "ja", "ko"}
-    budget = max(1.0, duration * 1.15)
-    return estimate_seconds(value, rate) > budget
+    fit_rate = _script_fit_rate_value(rate)
+    budget = max(1.0, duration * fit_rate)
+    return estimate_seconds(value, 1.0) > budget
 
 
 def _condense_opencode(
@@ -2055,12 +2103,13 @@ def _condense_opencode(
     for index in indices:
         duration = max(0.8, float(script[index].get("duration") or 0.0))
         rate = max(0.6, float(script[index].get("rate") or 1.0))
+        fit_rate = _script_fit_rate_value(rate)
         rows.append({
             "beat": index,
             "text": values[index],
             "seconds": round(duration, 2),
-            "max_chars": max(12, int((duration - 0.10) * rate * chars_per_second)),
-            "max_words": max(3, int((duration - 0.10) * rate * 2.9)),
+            "max_chars": max(12, int((duration - 0.10) * fit_rate * chars_per_second)),
+            "max_words": max(3, int((duration - 0.10) * fit_rate * 2.9)),
         })
     context_text = str(
         (context or {}).get("target_text") or (context or {}).get("full_text") or ""
@@ -2153,7 +2202,8 @@ def _rewrite_opencode(
         if _line_needs_repair(text, duration, rate, target):
             # Last resort only: the repair pass failed. Keep a clause, never
             # leave an unpunctuated fragment.
-            text = trim_to_seconds(text, duration * 1.10, rate)
+            fit_rate = _script_fit_rate_value(rate)
+            text = trim_to_seconds(text, duration, fit_rate)
             text = ensure_terminal(text, cjk)
         if not text:
             return None
@@ -2191,9 +2241,10 @@ def _rewrite_openrouter(
     for index, value in enumerate(values):
         text = ensure_terminal(str(value).strip(), cjk)
         rate = float(script[index].get("rate") or 1.0)
+        fit_rate = _script_fit_rate_value(rate)
         duration = max(1.0, float(script[index].get("duration") or 1.0))
-        if estimate_seconds(text, rate) > duration * 1.35:
-            text = ensure_terminal(trim_to_seconds(text, duration * 1.20, rate), cjk)
+        if estimate_seconds(text, 1.0) > duration * fit_rate:
+            text = ensure_terminal(trim_to_seconds(text, duration, fit_rate), cjk)
         if not text:
             return None
         cleaned.append(text)
@@ -2214,9 +2265,9 @@ def transcript_context(
     """Whole-video context plus one complete source line per selected beat."""
     if cap_chars is None:
         try:
-            cap_chars = int(os.environ.get("VIBECUT_REWRITE_CONTEXT_CHARS", "6000"))
+            cap_chars = int(os.environ.get("VIBECUT_REWRITE_CONTEXT_CHARS", "10000"))
         except ValueError:
-            cap_chars = 6000
+            cap_chars = 10000
     by_id = {scene["id"]: scene for scene in scenes}
     beats = []
     for clip in clips:
@@ -2346,6 +2397,7 @@ def build_script(
             "clip": clip_index,
             "role": clip.get("role") or "beat",
             "duration": round(duration, 3),
+            "scene_duration": round(max(duration, float(scene.get("dur") or 0.0)), 3),
             "text": complete,
             "original": text,
             "from_ocr": used_ocr,
@@ -2372,11 +2424,12 @@ def refit_script(lines: list[dict], base_rate: float = 1.0) -> list[dict]:
         accepted.append(norm)
         duration = float(line.get("duration") or 0.0)
         rate = float(line.get("rate") or base_rate)
-        # The voice track can compress up to 1.35x. Keep a complete sentence
-        # within that window; only trim the rare line that cannot fit.
-        budget = max(0.7, duration * 1.30)
-        fitted = text if estimate_seconds(text, rate) <= budget else trim_to_seconds(
-            text, duration * 1.20, rate,
+        # Keep a complete sentence inside the shared voice-fit window; only
+        # trim the rare line that cannot fit.
+        fit_rate = _script_fit_rate_value(rate)
+        budget = max(0.7, duration * fit_rate)
+        fitted = text if estimate_seconds(text, 1.0) <= budget else trim_to_seconds(
+            text, duration, fit_rate,
         )
         if not fitted:
             continue
@@ -2415,7 +2468,9 @@ def _shorten_dub_line(
         return value
     language = _language_name(target or "en")
     native = max(0.05, float(native or 0.0))
-    ideal = max(4, int(round(len(value) * float(slot) / native * 0.96)))
+    fit_max = voice_fit.max_speed_default()
+    target_seconds = float(slot) * fit_max
+    ideal = max(4, int(round(len(value) * target_seconds / native * 0.96)))
     low = max(3, int(ideal * 0.88))
     high = max(low + 2, int(ideal * 1.08))
     best: str = ""
@@ -2424,7 +2479,7 @@ def _shorten_dub_line(
         feedback = ""
         if best:
             measured = estimate_seconds(best, 1.0)
-            if measured < float(slot) * 0.92:
+            if measured < target_seconds * 0.92:
                 feedback = (
                     f" The previous attempt was too short ({len(best)} characters); "
                     f"write at least {low} characters."
@@ -2458,7 +2513,7 @@ def _shorten_dub_line(
             if not candidate.endswith(("。", "！", "？", ".", "!", "?")):
                 candidate = ensure_terminal(candidate, bool(CJK_RE.search(candidate)))
             measured = estimate_seconds(candidate, 1.0)
-            ratio = measured / max(0.1, float(slot))
+            ratio = measured / max(0.1, target_seconds)
             score = 1.0 - min(1.0, abs(ratio - 1.0))
             if score > best_score:
                 best, best_score = candidate, score
@@ -2466,7 +2521,9 @@ def _shorten_dub_line(
                 return candidate
     if best and best_score > 0.55:
         return best
-    return shorten_text_for_slot(value, native, slot, language=target)
+    return shorten_text_for_slot(
+        value, native, slot, language=target, max_rate=fit_max,
+    )
 
 
 def _voice_track(
@@ -2485,30 +2542,51 @@ def _voice_track(
     placed = [line for line in lines if line.get("path")]
     if not placed:
         return None
+    preserve_pitch = voice_fit.preserve_pitch_default()
+    max_rate = voice_fit.max_speed_default(preserve_pitch)
     inputs: list[str] = []
     filters: list[str] = []
     for index, line in enumerate(placed):
-        inputs += ["-i", str(line["path"])]
+        source = Path(line["path"])
         offset = max(0.0, float(line.get("offset") or 0.0))
         slot = float(line.get("slot") or 0.0)
-        native = media_duration(Path(line["path"])) or estimate_seconds(
-            str(line.get("text") or ""), float(line.get("rate") or 1.0),
+        native = media_duration(source) or estimate_seconds(
+            str(line.get("text") or ""), 1.0,
         )
+        requested_rate = max(0.5, min(2.5, float(line.get("rate") or 1.0)))
+        line["requested_rate"] = round(requested_rate, 3)
+        tempo = requested_rate
         parts = ["aresample=48000"]
-        if slot > 0.2:
-            usable = max(0.4, slot - 0.06)
-            fit = line.get("fit") if isinstance(line.get("fit"), dict) else None
-            if fit is None:
-                fit = plan_slot_fit(native, slot)
-                line["fit"] = fit
-            tempo = float(fit.get("tempo") or 1.0)
-            if abs(tempo - 1.0) > 0.005:
-                parts.append(f"atempo={tempo:.4f}")
-                line["tempo"] = round(tempo, 3)
+        usable = max(0.4, slot - 0.06) if slot > 0.2 else 0.0
+        if usable:
+            fit = plan_slot_fit(native, slot, max_rate=max_rate)
+            line["fit"] = fit
+            needed = native / usable if usable else 1.0
+            # Honour the requested pacing, but never let a slow request push
+            # the line past the slot; fit_audio applies the cap and warning.
+            tempo = max(0.5, max(requested_rate, needed))
+        line["effective_tempo"] = round(min(max(0.5, tempo), max_rate), 3)
+        if abs(tempo - 1.0) > 0.005:
+            fitted = tmp / f"voice_fit_{index}.wav"
+            try:
+                result = voice_fit.fit_audio(
+                    source, fitted, tempo,
+                    preserve_pitch=preserve_pitch,
+                    max_speed=max_rate,
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise AudioError(f"Voice fit failed: {exc}") from exc
+            source = fitted
+            line["tempo"] = round(result.applied, 3)
+            line["effective_tempo"] = round(result.applied, 3)
+            line["fit_backend"] = result.backend
+            line["fit_warning"] = result.warning
+        if usable:
             parts.append(f"atrim=0:{usable:.3f}")
             fade = min(0.09, max(0.03, usable / 6))
             parts.append("afade=t=in:st=0:d=0.02")
             parts.append(f"afade=t=out:st={max(0.0, usable - fade):.3f}:d={fade:.3f}")
+        inputs += ["-i", str(source)]
         delay = int(offset * 1000)
         parts.append(f"adelay={delay}|{delay}")
         parts.append(f"volume={float(line.get('gain_db', gain_db)):.2f}dB")
@@ -2927,26 +3005,46 @@ def _source_audio_bed(
 def _fit_uploaded_voice(
     source: Path, total: float, tmp: Path, gain_db: float = 0.0,
     expr: str | None = None, cancel_event=None,
+    warnings: list[str] | None = None,
 ) -> Path:
     """Fit an uploaded recording to the cut length without changing its voice."""
     output = tmp / "uploaded_voice.wav"
     native = media_duration(source) or 0.0
+    preserve_pitch = voice_fit.preserve_pitch_default()
+    max_rate = voice_fit.max_speed_default(preserve_pitch)
     tempo = 1.0
     if native > total > 0.1:
-        tempo = max(1.0, min(1.35, native / total))
-    filters = ["aresample=48000"]
+        tempo = max(1.0, min(max_rate, native / total))
+    fitted_source = source
     if tempo > 1.001:
-        filters.append(f"atempo={tempo:.4f}")
-    filters.extend([
+        fitted_source = tmp / "uploaded_voice.fit.wav"
+        try:
+            result = voice_fit.fit_audio(
+                source, fitted_source, tempo,
+                preserve_pitch=preserve_pitch,
+                max_speed=max_rate,
+                engine="ffmpeg" if native > 120 else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise AudioError(f"Uploaded voice fit failed: {exc}") from exc
+        if result.warning and warnings is not None:
+            warnings.append(result.warning)
+    if native > total * max_rate and warnings is not None:
+        warnings.append(
+            f"Uploaded voice is longer than {total * max_rate:.1f}s; "
+            "the tail was trimmed to the cut."
+        )
+    filters = [
+        "aresample=48000",
         f"atrim=0:{total:.6f}",
         "apad",
         f"atrim=0:{total:.6f}",
         f"volume={float(gain_db):.2f}dB",
-    ])
+    ]
     if expr:
         filters.append(expr)
     _run([
-        _ffmpeg(), "-y", "-v", "error", "-i", str(source),
+        _ffmpeg(), "-y", "-v", "error", "-i", str(fitted_source),
         "-af", ",".join(filters), "-ar", "48000", "-ac", "2",
         "-c:a", "pcm_s16le", str(output),
     ], timeout=900, cancel_event=cancel_event)
@@ -3005,6 +3103,7 @@ def build_bed(
             float(voice_plan.get("gain_db") or 0.0),
             automation_expression(automation.get("voice"), total),
             cancel_event,
+            warnings=audio_plan.setdefault("_warnings", []),
         )
     elif needs_voice and voice_plan.get("engine"):
         progress(0.86, "Writing the voice script")
@@ -3078,7 +3177,7 @@ def build_bed(
                 model = candidate.get("model") or ""
                 key = _text_hash(
                     engine, model, candidate_voice,
-                    f"{float(line['rate']):.3f}", line["text"],
+                    "1.000", "raw-v2", line["text"],
                 )
                 path = _voice_cache(cache_dir, key)
                 started = time.time()
@@ -3093,7 +3192,7 @@ def build_bed(
                 try:
                     synthesize_line(
                         engine, candidate_voice, line["text"], path,
-                        rate=float(line["rate"]),
+                        rate=1.0,
                         cancel_event=cancel_event,
                         model=model,
                         timeout=tts_timeout,
@@ -3180,7 +3279,10 @@ def build_bed(
                 expanded.pop("fit", None)
                 _index, path = synth_one(index, expanded)
                 native = media_duration(path)
-                fit = plan_slot_fit(native, float(expanded.get("slot") or 0.0))
+                fit = plan_slot_fit(
+                    native, float(expanded.get("slot") or 0.0),
+                    max_rate=voice_fit.max_speed_default(),
+                )
                 if fit["action"] != "pad":
                     prepared[index] = {
                         **expanded,
@@ -3212,7 +3314,10 @@ def build_bed(
                     line.pop("fit", None)
                     _index, path = synth_one(index, line)
                     native = media_duration(path)
-                    fit = plan_slot_fit(native, float(line.get("slot") or 0.0))
+                    fit = plan_slot_fit(
+                        native, float(line.get("slot") or 0.0),
+                        max_rate=voice_fit.max_speed_default(),
+                    )
                     if fit["action"] == "pad" and previous_fit.get("action") == "shorten":
                         # The rewrite overshot. Keep the longer take; atempo can
                         # compress a little, but it cannot invent missing words.
@@ -3225,20 +3330,6 @@ def build_bed(
                         "fit": fit,
                     }
                 prepared = fit_dub_lines(prepared, duration_of=media_duration)
-        audio_plan["_slot_fit"] = slot_fit_summary(prepared)
-        audio_plan["_slot_lines"] = [
-            {
-                "text": item.get("text"),
-                "slot": item.get("slot"),
-                "native": (item.get("fit") or {}).get("native"),
-                "tempo": (item.get("fit") or {}).get("tempo"),
-                "action": (item.get("fit") or {}).get("action"),
-                "overflow": (item.get("fit") or {}).get("overflow"),
-                "shortened": bool(item.get("shortened")),
-            }
-            for item in prepared
-        ]
-
         automation = audio_plan.get("automation") or {}
         voice_expr = automation_expression(automation.get("voice"), total)
         voice_path = _voice_track(
@@ -3247,6 +3338,26 @@ def build_bed(
             voice_expr,
             cancel_event,
         )
+        audio_plan["_slot_fit"] = slot_fit_summary(prepared)
+        audio_plan["_slot_lines"] = [
+            {
+                "text": item.get("text"),
+                "slot": item.get("slot"),
+                "native": (item.get("fit") or {}).get("native"),
+                "tempo": item.get("effective_tempo") or (item.get("fit") or {}).get("tempo"),
+                "requested_rate": item.get("requested_rate"),
+                "action": (item.get("fit") or {}).get("action"),
+                "overflow": (item.get("fit") or {}).get("overflow"),
+                "shortened": bool(item.get("shortened")),
+                "backend": item.get("fit_backend"),
+                "warning": item.get("fit_warning"),
+            }
+            for item in prepared
+        ]
+        for item in prepared:
+            warning = str(item.get("fit_warning") or "").strip()
+            if warning:
+                audio_plan.setdefault("_warnings", []).append(warning)
 
     music_path: Path | None = None
     chosen: Path | None = None

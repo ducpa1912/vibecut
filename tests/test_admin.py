@@ -152,7 +152,25 @@ def test_admin_workflow_save_and_catalog_validation(admin_api, monkeypatch):
     saved = response.json()["value"]
     assert saved["routes"] == [{"provider": "opencode-go", "model": "glm-5.3-flash"}]
     assert saved["reasoning"] == "medium"
-    assert settings_store.load_settings()["workflows"]["rewrite"]["max_output_tokens"] == 2048
+    stored = settings_store.load_settings()
+    assert stored["workflows"]["rewrite"]["max_output_tokens"] == 2048
+    assert stored["opencode"]["model"] == "glm-5.3-flash"
+    assert stored["opencode"]["variant"] == "medium"
+
+    openrouter = admin_api.post(
+        "/_ductator/api/workflows/rewrite",
+        json={
+            "routes": [{"provider": "openrouter", "model": "deepseek-v4.1-flash"}],
+            "reasoning": "high",
+            "max_output_tokens": 2048,
+            "timeout_s": 120,
+        },
+        headers={"X-VibeCut-Admin-CSRF": data["csrf"]},
+    )
+    assert openrouter.status_code == 200, openrouter.text
+    stored = settings_store.load_settings()
+    assert stored["openrouter"]["model"] == "deepseek-v4.1-flash"
+    assert stored["openrouter"]["reasoning"] == "high"
     invalid = admin_api.post(
         "/_ductator/api/workflows/rewrite",
         json={
@@ -983,3 +1001,56 @@ def test_admin_workflow_rejects_piper_and_removed_provider(admin_api, monkeypatc
         {"provider": "openai", "model": "gpt-4o-mini-tts"},
     ])
     assert openai.status_code == 400
+
+
+def test_legacy_mirrors_follow_each_admin_provider(admin_api):
+    import admin.routes as admin_routes
+
+    admin_routes._mirror_legacy_workflow(
+        "tts", {"routes": [{"provider": "minimax", "model": "speech-custom"}]},
+    )
+    admin_routes._mirror_legacy_workflow(
+        "music", {"routes": [{"provider": "minimax", "model": "music-custom"}]},
+    )
+    admin_routes._mirror_legacy_workflow(
+        "stt", {"routes": [{"provider": "groq", "model": "whisper-custom"}]},
+    )
+    admin_routes._mirror_legacy_workflow(
+        "rewrite",
+        {"routes": [{"provider": "openrouter", "model": "openrouter-custom"}], "reasoning": "high"},
+    )
+
+    stored = settings_store.load_settings()
+    assert stored["minimax"]["tts_model"] == "speech-custom"
+    assert stored["minimax"]["music_model"] == "music-custom"
+    assert stored["stt"]["provider"] == "groq"
+    assert stored["stt"]["model"] == "whisper-custom"
+    assert stored["openrouter"]["model"] == "openrouter-custom"
+    assert stored["openrouter"]["reasoning"] == "high"
+
+
+def test_openrouter_catalog_offers_mai_transcribe_as_stt():
+    ids = {item["id"] for item in catalog._STATIC["openrouter"]}
+    assert "microsoft/mai-transcribe-2" in ids
+    assert "nvidia/nemotron-3.5-transcribe" in ids
+    assert catalog._openrouter_kind(
+        "microsoft/mai-transcribe-2",
+        {"architecture": {"input_modalities": ["audio"], "output_modalities": ["text"]}},
+    ) == "stt"
+
+
+def test_catalog_merges_new_static_stt_into_a_fresh_cache(admin_api, monkeypatch):
+    monkeypatch.setattr(catalog, "_read_cache", lambda: {
+        "openrouter": {
+            "provider": "openrouter",
+            "models": [{"id": "openai/whisper-large-v3", "name": "Whisper", "kind": "stt"}],
+            "source": "cache",
+            "fetched_at": time.time(),
+            "stale": False,
+            "error": "",
+        },
+    })
+    result = catalog.catalog("openrouter")
+    ids = {item["id"] for item in result["models"]}
+    assert "microsoft/mai-transcribe-2" in ids
+    assert "nvidia/nemotron-3.5-transcribe" in ids

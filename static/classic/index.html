@@ -1068,13 +1068,12 @@
             <h3>Video links · yt-dlp</h3>
             <span id="setup-ytdlp-status" class="setup-chip">Not checked</span>
           </div>
-          <p class="setup-hint">Native Python downloader for most sites. No Node, Docker, Cobalt, or cloud upload. Highest quality + audio by default; H.264/MP4 preferred for editing. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
+          <p class="setup-hint">Native Python downloader for most sites. No Node, Docker, or cloud upload. Highest quality + audio by default; H.264/MP4 preferred for editing. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
           <label class="setup-field">
             <span>Link provider</span>
             <select id="setup-ingest-provider">
               <option value="auto">Auto · yt-dlp first</option>
               <option value="ytdlp">yt-dlp only</option>
-              <option value="cobalt">Cobalt only · external</option>
               <option value="xhs">XHS only · external</option>
             </select>
           </label>
@@ -1148,64 +1147,6 @@
             <span class="setup-hint">No sidecar needed.</span>
           </div>
           <p id="setup-ytdlp-detail" class="setup-hint"></p>
-        </section>
-
-        <section class="setup-section">
-          <div class="setup-title">
-            <h3>Video links · Cobalt</h3>
-            <span id="setup-cobalt-status" class="setup-chip">Not checked</span>
-          </div>
-          <p class="setup-hint">Optional external fallback. Point VibeCut at your own cobalt instance. It sends the link over HTTP; no cobalt code runs here. <a href="/docs/url-ingest.md" target="_blank" rel="noopener">Setup guide ↗</a></p>
-          <label class="setup-field">
-            <span>Service URL</span>
-            <input id="setup-cobalt-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:9000/">
-          </label>
-          <label class="setup-field">
-            <span>API key · optional</span>
-            <input id="setup-cobalt-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set">
-          </label>
-          <div class="setup-row">
-            <label class="setup-field">
-              <span>Quality</span>
-              <select id="setup-cobalt-quality">
-                <option value="max">Maximum</option>
-                <option value="4320">4320p</option>
-                <option value="2160">2160p</option>
-                <option value="1440">1440p</option>
-                <option value="1080">1080p</option>
-                <option value="720">720p</option>
-                <option value="480">480p</option>
-                <option value="360">360p</option>
-                <option value="240">240p</option>
-                <option value="144">144p</option>
-              </select>
-            </label>
-            <label class="setup-field">
-              <span>Codec</span>
-              <select id="setup-cobalt-codec">
-                <option value="h264">H.264 · compatible</option>
-                <option value="av1">AV1 · smaller</option>
-                <option value="vp9">VP9 · WebM</option>
-              </select>
-            </label>
-          </div>
-          <label class="setup-field">
-            <span>Local processing</span>
-            <select id="setup-cobalt-local">
-              <option value="preferred">Preferred · cobalt decides</option>
-              <option value="forced">Forced · merge with local ffmpeg</option>
-            </select>
-          </label>
-          <label class="check">
-            <input id="setup-cobalt-fallback" type="checkbox">
-            <span class="check-box"></span>
-            <span class="check-copy"><strong>Fallback after yt-dlp</strong><small>only on yt-dlp failure</small></span>
-          </label>
-          <div class="setup-actions setup-ingest-actions">
-            <button id="setup-test-cobalt" class="ghost small" type="button">Test Cobalt</button>
-            <span class="setup-hint">Uses saved settings.</span>
-          </div>
-          <p id="setup-cobalt-detail" class="setup-hint"></p>
         </section>
 
         <section class="setup-section">
@@ -1301,6 +1242,37 @@
           <div id="setup-voice-engines" class="setup-engine-list" aria-live="polite">
             <p class="setup-hint">Checking voice engines…</p>
           </div>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Voice fit</h3>
+            <span class="setup-badge">advanced</span>
+          </div>
+          <label class="setup-check"><input id="setup-voice-preserve" type="checkbox" checked> Preserve voice pitch &amp; tone</label>
+          <p class="setup-hint">Keeps the original pitch. Speeds a line up to 1.25×; if it still does not fit, the script is shortened instead of pushing the voice.</p>
+          <label class="setup-field">
+            <span>Maximum speed</span>
+            <select id="setup-voice-max">
+              <option value="1.10">1.10×</option>
+              <option value="1.15">1.15×</option>
+              <option value="1.20">1.20×</option>
+              <option value="1.25">1.25× · preserve voice</option>
+              <option value="1.50">1.50×</option>
+              <option value="1.80">1.80×</option>
+              <option value="2.50">2.50× · extreme</option>
+            </select>
+          </label>
+          <label class="setup-field">
+            <span>Stretch engine</span>
+            <select id="setup-voice-engine">
+              <option value="auto">Auto · Signalsmith if installed, then FFmpeg</option>
+              <option value="ffmpeg">FFmpeg · atempo</option>
+              <option value="signalsmith">Signalsmith Stretch</option>
+            </select>
+          </label>
+          <label class="setup-check"><input id="setup-voice-extreme" type="checkbox"> Allow extreme chipmunk speed above 1.8×</label>
+          <p id="setup-voice-warning" class="setup-hint" role="status" hidden></p>
         </section>
 
         <section class="setup-section">

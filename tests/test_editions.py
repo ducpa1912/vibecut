@@ -56,10 +56,17 @@ def test_unknown_values_fall_back_safely(switches):
 def test_index_page_carries_the_edition_before_the_boot_block(switches):
     import app
 
+    api = TestClient(app.app)
     switches(edition="classic")
-    html = TestClient(app.app).get("/").text
+    html = api.get("/").text
     assert _boot(html)["views"] == ["classic"]
     assert html.index("window.VIBECUT_EDITION") < html.index("Choose the workspace before first paint")
+    assert "<!-- vibecut:edition -->" not in html
+
+    switches(edition="studio")
+    html = api.get("/").text
+    assert _boot(html)["views"] == ["studio"]
+    assert html.index("window.VIBECUT_EDITION") < html.index("Studio is the only workspace here")
     assert "<!-- vibecut:edition -->" not in html
 
 
@@ -112,10 +119,14 @@ def test_boot_block_hides_links_for_views_and_features_the_build_lacks():
         'html:not([data-features~="voice_room"]) #classic-voice-room',
     ):
         assert rule in classic, rule
-    for rule in (
+    # Studio's page owns one view now, so it no longer carries Classic's switch
+    # or a Classic redirect.
+    for gone in (
         'html:not([data-views~="classic"]) #st-use-classic',
         'html:not([data-features~="voice_room"]) #st-voice-room',
+        'window.location.replace("/?classic=1")',
+        "localStorage.getItem(\"vibecut.editor\")",
     ):
-        assert rule in studio, rule
-    for html in (classic, studio):
-        assert "allowed(requested)" in html and "allowed(stored)" in html
+        assert gone not in studio, gone
+    assert 'root.dataset.editor = "studio"' in studio
+    assert "allowed(requested)" in classic and "allowed(stored)" in classic

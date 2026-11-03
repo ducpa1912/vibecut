@@ -19,11 +19,10 @@ from urllib.parse import urlsplit
 from .base import IngestError, IngestOptions, Provider
 
 YTDLP = "ytdlp"
-COBALT = "cobalt"
 XHS = "xhs"
 AUTO = "auto"
 
-PROVIDER_IDS = (YTDLP, XHS, COBALT)
+PROVIDER_IDS = (YTDLP, XHS)
 XHS_DOMAINS = ("rednote.com", "xiaohongshu.com", "xhslink.com", "xhslink.cn")
 
 # The public settings schema. Values here are copied, never mutated.
@@ -36,11 +35,6 @@ DEFAULT_INGEST_SETTINGS: dict[str, Any] = {
     "ytdlp_cookies": "none",
     "ytdlp_browser": "safari",
     "ytdlp_cookie_file": "",
-    "cobalt_fallback": False,
-    "cobalt_url": "http://127.0.0.1:9000/",
-    "cobalt_quality": "1080",
-    "cobalt_codec": "h264",
-    "cobalt_local_processing": "preferred",
     "xhs_url": "http://127.0.0.1:5789",
     "xhs_no_record": True,
     "xhs_interval": 12.0,
@@ -54,7 +48,6 @@ _PROVIDER_ALIASES = {
     "yt-dlp": YTDLP,
     "yt_dlp": YTDLP,
     "youtube-dl": YTDLP,
-    COBALT: COBALT,
     XHS: XHS,
     "xhs_get": XHS,
     "xhs-get": XHS,
@@ -63,7 +56,6 @@ _PROVIDER_ALIASES = {
     "xiaohongshu": XHS,
 }
 
-_LOCAL_PROCESSING_VALUES = frozenset({"preferred", "forced"})
 
 _ILLEGAL_FILENAME = re.compile(
     r'[\x00-\x1f\x7f<>:"/\\|?*\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]+'
@@ -95,14 +87,6 @@ _SPECS: dict[str, _ProviderSpec] = {
         class_name="YtDlpProvider",
         class_aliases=("YtDlpProvider", "YTDLPProvider", "YtDlp"),
         url_key="",
-    ),
-    COBALT: _ProviderSpec(
-        id=COBALT,
-        label="Cobalt",
-        module=f"{_PACKAGE}.cobalt",
-        class_name="CobaltProvider",
-        class_aliases=("CobaltProvider",),
-        url_key="cobalt_url",
     ),
     XHS: _ProviderSpec(
         id=XHS,
@@ -162,13 +146,13 @@ def validate_url(url: Any) -> str:
 
 
 def normalize_provider_id(value: Any, *, strict: bool = False) -> str:
-    """Normalize a provider setting/name to ``auto``, ``ytdlp``, ``cobalt``, or ``xhs``."""
+    """Normalize a provider setting/name to ``auto``, ``ytdlp``, or ``xhs``."""
     if value is None:
         return AUTO
     if not isinstance(value, str):
         if strict:
             raise IngestError(
-                "Provider must be 'auto', 'ytdlp', 'cobalt', or 'xhs'."
+                "Provider must be 'auto', 'ytdlp', or 'xhs'."
             )
         return AUTO
     key = value.strip().lower()
@@ -178,7 +162,7 @@ def normalize_provider_id(value: Any, *, strict: bool = False) -> str:
     if strict:
         raise IngestError(
             f"Unknown ingest provider {value!r}. "
-            "Use 'auto', 'ytdlp', 'cobalt', or 'xhs'."
+            "Use 'auto', 'ytdlp', or 'xhs'."
         )
     return AUTO
 
@@ -195,8 +179,8 @@ def detect(url: str, override: str | None = None) -> str:
     """Return the provider id for *url*.
 
     RedNote/Xiaohongshu domains map to ``xhs``; every other valid HTTP(S) URL
-    maps to the native ``ytdlp`` provider. Cobalt is never chosen automatically.
-    An explicit provider override wins after the URL itself has been validated.
+    maps to the native ``ytdlp`` provider. An explicit provider override wins
+    after the URL itself has been validated.
     """
     value = validate_url(url)
     if override is not None:
@@ -285,8 +269,9 @@ def normalize_settings(settings: Mapping[str, Any] | None = None) -> dict[str, A
     result: dict[str, Any] = {**DEFAULT_INGEST_SETTINGS, **raw}
 
     result["provider"] = normalize_provider_id(result.get("provider"))
-    for key in ("cobalt_url", "xhs_url"):
-        result[key] = _endpoint(result.get(key), DEFAULT_INGEST_SETTINGS[key])
+    result["xhs_url"] = _endpoint(
+        result.get("xhs_url"), DEFAULT_INGEST_SETTINGS["xhs_url"]
+    )
     result["ytdlp_quality"] = _choice(
         result.get("ytdlp_quality"), DEFAULT_INGEST_SETTINGS["ytdlp_quality"]
     )
@@ -307,20 +292,6 @@ def normalize_settings(settings: Mapping[str, Any] | None = None) -> dict[str, A
     )
     result["ytdlp_cookie_file"] = _text(
         result.get("ytdlp_cookie_file"), DEFAULT_INGEST_SETTINGS["ytdlp_cookie_file"]
-    )
-    result["cobalt_fallback"] = _boolean(
-        result.get("cobalt_fallback"), bool(DEFAULT_INGEST_SETTINGS["cobalt_fallback"])
-    )
-    result["cobalt_quality"] = _choice(
-        result.get("cobalt_quality"), DEFAULT_INGEST_SETTINGS["cobalt_quality"]
-    )
-    result["cobalt_codec"] = _choice(
-        result.get("cobalt_codec"), DEFAULT_INGEST_SETTINGS["cobalt_codec"]
-    )
-    result["cobalt_local_processing"] = _choice(
-        result.get("cobalt_local_processing"),
-        DEFAULT_INGEST_SETTINGS["cobalt_local_processing"],
-        _LOCAL_PROCESSING_VALUES,
     )
     result["xhs_no_record"] = _boolean(
         result.get("xhs_no_record"), bool(DEFAULT_INGEST_SETTINGS["xhs_no_record"])
@@ -350,7 +321,7 @@ def options_from_settings(
         "cookies": normalized["ytdlp_cookies"],
         "browser": normalized["ytdlp_browser"],
         "cookie_file": normalized["ytdlp_cookie_file"],
-        "local_processing": normalized["cobalt_local_processing"],
+        "local_processing": "preferred",
         "no_record": normalized["xhs_no_record"],
         "interval": normalized["xhs_interval"],
     }
@@ -366,7 +337,7 @@ def options_from_settings(
                 values[key] = _choice(overrides[key], str(values[key]))
         if overrides.get("local_processing") is not None:
             values["local_processing"] = _choice(
-                overrides["local_processing"], "preferred", _LOCAL_PROCESSING_VALUES
+                overrides["local_processing"], "preferred", frozenset({"preferred", "forced"})
             )
         if overrides.get("no_record") is not None:
             values["no_record"] = _boolean(overrides["no_record"], True)

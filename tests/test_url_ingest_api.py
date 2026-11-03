@@ -28,8 +28,8 @@ class CapturePool:
 
 
 class FakeProvider:
-    id = "cobalt"
-    label = "Cobalt"
+    id = "ytdlp"
+    label = "yt-dlp"
 
     def __init__(
         self,
@@ -206,7 +206,6 @@ def test_settings_defaults_match_registry(api):
     body = api.get("/api/settings")
     assert body.status_code == 200
     assert body.json()["settings"]["ingest"] == registry.DEFAULT_INGEST_SETTINGS
-    assert "cobalt" in body.json()["secrets"]
     assert "xhs" in body.json()["secrets"]
 
 
@@ -214,9 +213,6 @@ def test_settings_defaults_match_registry(api):
     "patch",
     [
         {"provider": "bogus"},
-        {"cobalt_quality": "8k"},
-        {"cobalt_codec": "theora"},
-        {"cobalt_local_processing": "disabled"},
         {"ytdlp_quality": "8k"},
         {"ytdlp_codec": "theora"},
         {"ytdlp_container": "avi"},
@@ -238,46 +234,30 @@ def test_settings_save_masks_ingest_secrets(api):
             "settings": {
                 "ingest": {
                     "provider": "xhs_get",
-                    "cobalt_url": "http://127.0.0.1:9000/",
-                    "cobalt_quality": "720",
-                    "cobalt_codec": "av1",
-                    "cobalt_local_processing": "forced",
                     "xhs_url": "http://127.0.0.1:5789",
                     "xhs_no_record": False,
                     "xhs_interval": 3.5,
-                    "cobalt_api_key": "must-not-persist",
                     "xhs_token": "must-not-persist",
                 },
             },
-            "secrets": {"cobalt": "cobalt-secret-value", "xhs": "xhs-secret-value"},
+            "secrets": {"xhs": "xhs-secret-value"},
         },
     )
     assert response.status_code == 200
     body = response.json()
     ingest = body["settings"]["ingest"]
     assert ingest["provider"] == "xhs"
-    assert ingest["cobalt_quality"] == "720"
-    assert ingest["cobalt_codec"] == "av1"
-    assert ingest["cobalt_local_processing"] == "forced"
     assert ingest["xhs_no_record"] is False
     assert ingest["xhs_interval"] == 3.5
-    assert "cobalt_api_key" not in ingest
     assert "xhs_token" not in ingest
-    assert body["secrets"]["cobalt"] is True
     assert body["secrets"]["xhs"] is True
-    assert body["sources"]["cobalt"] == "file"
     assert body["sources"]["xhs"] == "file"
-    assert "cobalt-secret-value" not in response.text
     assert "xhs-secret-value" not in response.text
     assert "must-not-persist" not in response.text
-    assert settings_store.get_secret("cobalt") == "cobalt-secret-value"
     assert settings_store.get_secret("xhs") == "xhs-secret-value"
     persisted = settings_store.SETTINGS_PATH.read_text()
-    assert "cobalt-secret-value" not in persisted
     assert "xhs-secret-value" not in persisted
-    assert "cobalt_api_key" not in persisted
     assert "xhs_token" not in persisted
-
 
 def test_settings_save_ytdlp_defaults_and_cookie_mode(api):
     response = api.post(
@@ -316,9 +296,6 @@ def test_settings_partial_ingest_patch_keeps_existing_values(api):
             "settings": {
                 "ingest": {
                     "provider": "xhs",
-                    "cobalt_quality": "720",
-                    "cobalt_codec": "vp9",
-                    "cobalt_local_processing": "forced",
                     "xhs_interval": 4,
                 }
             }
@@ -327,23 +304,20 @@ def test_settings_partial_ingest_patch_keeps_existing_values(api):
     assert first.status_code == 200
 
     second = api.post(
-        "/api/settings", json={"settings": {"ingest": {"cobalt_quality": "480"}}}
+        "/api/settings", json={"settings": {"ingest": {"xhs_interval": 5}}}
     )
     assert second.status_code == 200
     ingest = second.json()["settings"]["ingest"]
     assert ingest["provider"] == "xhs"
-    assert ingest["cobalt_quality"] == "480"
-    assert ingest["cobalt_codec"] == "vp9"
-    assert ingest["cobalt_local_processing"] == "forced"
-    assert ingest["xhs_interval"] == 4.0
+    assert ingest["xhs_interval"] == 5.0
 
 
 def test_inspect_returns_provider_status_meta_and_session(api, monkeypatch):
     provider = FakeProvider(
-        id="cobalt",
+        id="ytdlp",
         inspect_result={
-            "provider": "cobalt",
-            "label": "Cobalt",
+            "provider": "ytdlp",
+            "label": "yt-dlp",
             "available": True,
             "warning": "",
             "title": "Clip title",
@@ -361,7 +335,7 @@ def test_inspect_returns_provider_status_meta_and_session(api, monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["provider"] == "ytdlp"
-    assert body["label"] == "Cobalt"
+    assert body["label"] == "yt-dlp"
     assert body["available"] is True
     assert body["warning"] == ""
     assert body["session"] == {}
@@ -371,80 +345,7 @@ def test_inspect_returns_provider_status_meta_and_session(api, monkeypatch):
     assert body["options"]["quality"] == "720"
     assert body["provider_status"]["available"] is True
     assert captured["provider"] == "ytdlp"
-    assert captured["settings"]["ingest"]["cobalt_api_key"] == ""
     assert captured["settings"]["ingest"]["ytdlp_quality"] == "max"
-    assert "cobalt_api_key" not in response.text
-
-
-def enable_cobalt_fallback(api):
-    response = api.post(
-        "/api/settings",
-        json={"settings": {"ingest": {"cobalt_fallback": True}}},
-    )
-    assert response.status_code == 200
-
-
-def test_provider_order_only_adds_enabled_cobalt_fallback(monkeypatch):
-    import url_ingest.ytdlp as ytdlp_module
-    monkeypatch.setattr(ytdlp_module, "ytdlp_available", lambda: True)
-    settings = {
-        "ingest": {
-            "provider": "auto",
-            "cobalt_url": "http://127.0.0.1:9000/",
-            "cobalt_fallback": False,
-        }
-    }
-    assert app._ingest_provider_order("https://youtube.com/watch?v=abc", None, settings) == [
-        "ytdlp"
-    ]
-    settings["ingest"]["cobalt_fallback"] = True
-    assert app._ingest_provider_order("https://youtube.com/watch?v=abc", None, settings) == [
-        "ytdlp",
-        "cobalt",
-    ]
-    assert app._ingest_provider_order(
-        "https://youtube.com/watch?v=abc", "ytdlp", settings
-    ) == ["ytdlp"]
-    assert app._ingest_provider_order(
-        "https://www.xiaohongshu.com/explore/1?xsec_token=x", None, settings
-    ) == ["xhs"]
-
-
-def test_auto_inspect_falls_back_to_cobalt_after_ytdlp_failure(api, monkeypatch):
-    enable_cobalt_fallback(api)
-    primary = FakeProvider(
-        id="ytdlp",
-        label="yt-dlp",
-        inspect_error=IngestError("yt-dlp does not support this URL."),
-    )
-    fallback = FakeProvider(
-        id="cobalt",
-        label="Cobalt",
-        inspect_result={
-            "provider": "cobalt",
-            "label": "Cobalt",
-            "available": True,
-            "title": "Fallback clip",
-            "status": "tunnel",
-        },
-    )
-    calls: list[str] = []
-
-    def fake_provider(provider_id: str, settings=None):
-        calls.append(provider_id)
-        return {"ytdlp": primary, "cobalt": fallback}[provider_id]
-
-    monkeypatch.setattr(app.registry, "provider", fake_provider)
-    response = api.post(
-        "/api/url/inspect", json={"url": "https://example.com/video"}
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["provider"] == "cobalt"
-    assert body["label"] == "Cobalt"
-    assert body["title"] == "Fallback clip"
-    assert calls == ["ytdlp", "cobalt"]
-    assert [item["provider"] for item in body["attempts"]] == ["ytdlp", "cobalt"]
 
 
 def test_explicit_ytdlp_does_not_fallback(api, monkeypatch):
@@ -519,7 +420,7 @@ def test_inspect_detects_xhs_and_returns_session_warning(api, monkeypatch):
 
 
 def test_inspect_provider_error_is_inline_warning(api, monkeypatch):
-    provider = FakeProvider(inspect_error=IngestError("Cobalt is not reachable."))
+    provider = FakeProvider(inspect_error=IngestError("yt-dlp is not reachable."))
     install_provider(monkeypatch, provider)
 
     response = api.post(
@@ -538,51 +439,6 @@ def test_inspect_rejects_invalid_url_before_provider(api, monkeypatch):
     monkeypatch.setattr(app.registry, "provider", explode)
     response = api.post("/api/url/inspect", json={"url": "not a url"})
     assert response.status_code == 400
-
-
-def test_from_url_uses_provider_that_succeeded_at_inspection(api, monkeypatch):
-    enable_cobalt_fallback(api)
-    primary = FakeProvider(
-        id="ytdlp",
-        label="yt-dlp",
-        inspect_error=IngestError("yt-dlp cannot inspect."),
-    )
-    fallback = FakeProvider(
-        id="cobalt",
-        label="Cobalt",
-        inspect_result={"available": True, "title": "Cobalt clip"},
-    )
-    calls: list[str] = []
-
-    def fake_provider(provider_id: str, settings=None):
-        calls.append(provider_id)
-        return {"ytdlp": primary, "cobalt": fallback}[provider_id]
-
-    monkeypatch.setattr(app.registry, "provider", fake_provider)
-    monkeypatch.setattr(
-        app.pipeline,
-        "probe",
-        lambda path: {
-            "path": str(path),
-            "duration": 12.5,
-            "width": 1280,
-            "height": 720,
-            "fps": 30.0,
-            "has_audio": True,
-            "size": 16,
-        },
-    )
-
-    response = api.post(
-        "/api/jobs/from-url", json={"url": "https://example.com/video"}
-    )
-    assert response.status_code == 200
-    job_id = response.json()["id"]
-    wait_status(api, job_id, {"queued"})
-
-    job = api.get(f"/api/jobs/{job_id}").json()
-    assert job["ingest"]["provider"] == "cobalt"
-    assert calls == ["ytdlp", "cobalt", "cobalt"]
 
 
 def test_failed_ingest_redacts_tokens_from_attempts_and_history(api, monkeypatch):
@@ -618,53 +474,6 @@ def test_failed_ingest_redacts_tokens_from_attempts_and_history(api, monkeypatch
     assert "redacted" in json.dumps(attempts)
 
 
-def test_from_url_download_falls_back_to_cobalt_and_records_attempts(api, monkeypatch):
-    enable_cobalt_fallback(api)
-    primary = FakeProvider(
-        id="ytdlp",
-        label="yt-dlp",
-        download_error=IngestError("yt-dlp extractor failed."),
-    )
-    fallback = FakeProvider(id="cobalt", label="Cobalt")
-    calls: list[str] = []
-
-    def fake_provider(provider_id: str, settings=None):
-        calls.append(provider_id)
-        return {"ytdlp": primary, "cobalt": fallback}[provider_id]
-
-    monkeypatch.setattr(app.registry, "provider", fake_provider)
-    monkeypatch.setattr(
-        app.pipeline,
-        "probe",
-        lambda path: {
-            "path": str(path),
-            "duration": 12.5,
-            "width": 1280,
-            "height": 720,
-            "fps": 30.0,
-            "has_audio": True,
-            "size": 16,
-        },
-    )
-
-    response = api.post(
-        "/api/jobs/from-url", json={"url": "https://example.com/video"}
-    )
-    assert response.status_code == 200
-    job_id = response.json()["id"]
-    wait_status(api, job_id, {"queued"})
-
-    job = api.get(f"/api/jobs/{job_id}").json()
-    assert job["ingest"]["provider"] == "cobalt"
-    assert job["ingest"]["label"] == "Cobalt"
-    assert job["ingest"]["meta"]["fallback"]["used"] is True
-    assert [item["provider"] for item in job["ingest"]["meta"]["attempts"]] == [
-        "ytdlp",
-        "cobalt",
-    ]
-    assert calls == ["ytdlp", "ytdlp", "cobalt"]
-
-
 def test_from_url_rejects_playlist_picker_before_creating_job(api, monkeypatch):
     provider = FakeProvider(
         inspect_result={
@@ -692,7 +501,6 @@ def test_from_url_rejects_playlist_picker_before_creating_job(api, monkeypatch):
 
 
 def test_from_url_success_runs_background_ingest_and_history(api, monkeypatch):
-    settings_store.save_secrets({"cobalt": "secret-cobalt"})
     provider = FakeProvider()
     captured: dict = {}
     install_provider(monkeypatch, provider, captured)
@@ -727,7 +535,6 @@ def test_from_url_success_runs_background_ingest_and_history(api, monkeypatch):
     accepted = response.json()
     assert accepted["status"] == "downloading"
     assert accepted["provider"] == "ytdlp"
-    assert "secret-cobalt" not in response.text
     job_id = accepted["id"]
 
     job_file = api.data_dir / "jobs" / job_id / "job.json"
@@ -775,19 +582,12 @@ def test_from_url_success_runs_background_ingest_and_history(api, monkeypatch):
         "ytdlp_cookies",
         "ytdlp_browser",
         "ytdlp_cookie_file",
-        "cobalt_fallback",
-        "cobalt_url",
-        "cobalt_api_key",
-        "cobalt_quality",
-        "cobalt_codec",
-        "cobalt_local_processing",
         "xhs_url",
         "xhs_token",
         "xhs_no_record",
         "xhs_interval",
     ):
         assert key in sent
-    assert sent["cobalt_api_key"] == "secret-cobalt"
     assert provider.options is not None
     assert provider.options.quality == "720"
     assert provider.options.local_processing == "forced"
@@ -797,11 +597,10 @@ def test_from_url_success_runs_background_ingest_and_history(api, monkeypatch):
     stored = list(api.data_dir.glob("sources/*/source.mp4"))
     assert len(stored) == 1
     assert stored[0].read_bytes() == b"fake video bytes"
-    assert "secret-cobalt" not in job_file.read_text()
 
 
 def test_from_url_failure_keeps_job_and_records_history(api, monkeypatch):
-    provider = FakeProvider(download_error=IngestError("Cobalt is down."))
+    provider = FakeProvider(download_error=IngestError("yt-dlp is down."))
     install_provider(monkeypatch, provider)
 
     response = api.post(
@@ -811,7 +610,7 @@ def test_from_url_failure_keeps_job_and_records_history(api, monkeypatch):
     job_id = response.json()["id"]
 
     status = wait_status(api, job_id, {"failed"})
-    assert status["error"] == "Cobalt is down."
+    assert status["error"] == "yt-dlp is down."
     assert status["progress"] == 1.0
     assert (api.data_dir / "jobs" / job_id / "job.json").is_file()
     assert provider.temp_path is not None
@@ -821,7 +620,7 @@ def test_from_url_failure_keeps_job_and_records_history(api, monkeypatch):
     assert entries[0]["type"] == "ingest"
     assert entries[0]["status"] == "failed"
     assert entries[0]["provider"] == "ytdlp"
-    assert entries[0]["error"] == "Cobalt is down."
+    assert entries[0]["error"] == "yt-dlp is down."
     detail = api.get(f"/api/jobs/{job_id}/history/{entries[0]['id']}").json()
     assert detail["snapshot"]["source_url"] == "https://youtube.com/watch?v=down"
 
@@ -886,7 +685,7 @@ def test_cancel_after_completion_is_noop(api, monkeypatch):
 
 
 def test_ingest_status_includes_registry_and_xhs_session_fields(api, monkeypatch):
-    settings_store.save_secrets({"cobalt": "cobalt-hidden", "xhs": "xhs-hidden"})
+    settings_store.save_secrets({"xhs": "xhs-hidden"})
     provider = FakeProvider(
         id="xhs",
         label="XHS / RedNote",
@@ -917,13 +716,6 @@ def test_ingest_status_includes_registry_and_xhs_session_fields(api, monkeypatch
         app.registry,
         "status",
         lambda settings: {
-            "cobalt": {
-                "id": "cobalt",
-                "label": "Cobalt",
-                "configured": True,
-                "available": True,
-                "error": "",
-            },
             "xhs": {
                 "id": "xhs",
                 "label": "XHS / RedNote",
@@ -938,19 +730,15 @@ def test_ingest_status_includes_registry_and_xhs_session_fields(api, monkeypatch
     response = api.get("/api/ingest/status")
     assert response.status_code == 200
     body = response.json()
-    assert body["cobalt"]["available"] is True
-    assert body["providers"]["cobalt"]["id"] == "cobalt"
     assert body["xhs"]["cookie_set"] is True
     assert body["xhs"]["session_ok"] is True
     assert body["xhs"]["user"] == "tester"
     assert body["xhs"]["session"]["cookie_set"] is True
-    assert body["settings"]["cobalt_url"] == "http://127.0.0.1:9000/"
-    assert "cobalt-hidden" not in response.text
     assert "xhs-hidden" not in response.text
 
 
 def test_settings_test_uses_live_provider_status_without_secrets(api, monkeypatch):
-    settings_store.save_secrets({"cobalt": "cobalt-secret", "xhs": "xhs-secret"})
+    settings_store.save_secrets({"xhs": "xhs-secret"})
     provider = FakeProvider(
         id="xhs",
         label="XHS / RedNote",
@@ -978,22 +766,21 @@ def test_settings_test_uses_live_provider_status_without_secrets(api, monkeypatc
     assert body["session"]["cookie_set"] is True
     assert response.text.count("xhs-secret") == 0
     assert captured["settings"]["ingest"]["xhs_token"] == "xhs-secret"
-    assert captured["settings"]["ingest"]["cobalt_api_key"] == "cobalt-secret"
 
 
 def test_settings_test_reports_provider_down(api, monkeypatch):
     provider = FakeProvider(
         status_result={
-            "id": "cobalt",
-            "label": "Cobalt",
+            "id": "xhs",
+            "label": "XHS / RedNote",
             "configured": True,
             "available": False,
-            "error": "Cobalt is not reachable.",
+            "error": "XHS is not reachable.",
         }
     )
     install_provider(monkeypatch, provider)
 
-    response = api.post("/api/settings/test", json={"kind": "cobalt"})
+    response = api.post("/api/settings/test", json={"kind": "xhs"})
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is False

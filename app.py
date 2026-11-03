@@ -33,6 +33,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+# ``studio_app.py`` sets this before importing the module. Studio's build owns
+# its page and does not import Classic's router, so the Classic tree can be
+# absent without breaking boot. The default keeps the shared app as it was.
+STUDIO_APP = os.environ.get("VIBECUT_APP", "").strip().lower() == "studio"
+
 import artifacts
 import audio
 import captions as caption_engine
@@ -58,7 +63,8 @@ import rights
 import routes_auto_subs
 import routes_batches
 import routes_check
-import routes_classic
+if not STUDIO_APP:
+    import routes_classic
 import routes_cleanup
 import routes_edits
 import routes_library
@@ -73,6 +79,7 @@ import story_queue
 import tighten
 import usage_store
 import vision
+import voice_fit
 import workflow_config
 from url_ingest import fallback as ingest_fallback
 from url_ingest import registry
@@ -655,11 +662,6 @@ def _history_append(job_id: str, entry: dict, snapshot: dict | None = None) -> d
 
 # ---------------------------------------------------------------- url ingest
 
-INGEST_QUALITY_VALUES = frozenset(
-    {"max", "best", "source", "4320", "2160", "1440", "1080", "720", "480", "360", "240", "144"}
-)
-INGEST_CODEC_VALUES = frozenset({"h264", "av1", "vp9"})
-INGEST_LOCAL_VALUES = frozenset({"preferred", "forced"})
 YTDLP_QUALITY_VALUES = frozenset({"max", "2160", "1440", "1080", "720", "480", "360"})
 YTDLP_CODEC_VALUES = frozenset({"h264", "any"})
 YTDLP_CONTAINER_VALUES = frozenset({"mp4", "mkv", "webm"})
@@ -673,8 +675,6 @@ INGEST_VIDEO_SUFFIXES = frozenset(
 )
 _INGEST_SECRET_KEYS = frozenset(
     {
-        "cobalt_api_key",
-        "cobalt_key",
         "xhs_token",
         "xhs_api_key",
         "xhs_access_token",
@@ -705,11 +705,6 @@ def _public_ingest_settings(settings: dict) -> dict:
         "ytdlp_cookies": ingest.get("ytdlp_cookies", "none"),
         "ytdlp_browser": ingest.get("ytdlp_browser", "safari"),
         "ytdlp_cookie_file": ingest.get("ytdlp_cookie_file", ""),
-        "cobalt_fallback": ingest.get("cobalt_fallback", False),
-        "cobalt_url": ingest.get("cobalt_url", ""),
-        "cobalt_quality": ingest.get("cobalt_quality", "1080"),
-        "cobalt_codec": ingest.get("cobalt_codec", "h264"),
-        "cobalt_local_processing": ingest.get("cobalt_local_processing", "preferred"),
         "xhs_url": ingest.get("xhs_url", ""),
         "xhs_no_record": ingest.get("xhs_no_record", True),
         "xhs_interval": ingest.get("xhs_interval", 12.0),
@@ -731,12 +726,6 @@ def _ingest_provider_settings(
         "ytdlp_cookies": normalized.get("ytdlp_cookies", "none"),
         "ytdlp_browser": normalized.get("ytdlp_browser", "safari"),
         "ytdlp_cookie_file": normalized.get("ytdlp_cookie_file", ""),
-        "cobalt_fallback": normalized.get("cobalt_fallback", False),
-        "cobalt_url": normalized.get("cobalt_url", ""),
-        "cobalt_quality": normalized.get("cobalt_quality", "1080"),
-        "cobalt_codec": normalized.get("cobalt_codec", "h264"),
-        "cobalt_local_processing": normalized.get("cobalt_local_processing", "preferred"),
-        "cobalt_api_key": settings_store.get_secret("cobalt"),
         "xhs_url": xhs_url if xhs_url is not None else normalized.get("xhs_url", ""),
         "xhs_token": xhs_token if xhs_token is not None else settings_store.get_secret("xhs"),
         "xhs_no_record": normalized.get("xhs_no_record", True),
@@ -803,9 +792,7 @@ def _validate_remote_ingest_url(url: str) -> str:
 def _ingest_provider_order(url: str, override: str | None, settings: dict) -> list[str]:
     """Return the ordered provider ids for this link.
 
-    Auto mode starts with yt-dlp. A non-empty Cobalt endpoint is an optional
-    second attempt after a yt-dlp failure; a down Cobalt service never blocks
-    the primary path. RedNote stays on xhs.
+    Auto mode starts with yt-dlp. RedNote stays on xhs.
     """
     ingest = settings.get("ingest") if isinstance(settings, dict) else {}
     ingest = ingest if isinstance(ingest, dict) else {}
@@ -813,12 +800,6 @@ def _ingest_provider_order(url: str, override: str | None, settings: dict) -> li
         configured = registry.normalize_provider_id(override, strict=True)
     else:
         configured = registry.normalize_provider_id(ingest.get("provider"))
-    cobalt_url = str(ingest.get("cobalt_url") or "").strip()
-    try:
-        registry.validate_url(cobalt_url)
-        cobalt_configured = bool(cobalt_url) and bool(ingest.get("cobalt_fallback"))
-    except IngestError:
-        cobalt_configured = False
     try:
         from url_ingest import ytdlp as ytdlp_ingest
 
@@ -829,14 +810,12 @@ def _ingest_provider_order(url: str, override: str | None, settings: dict) -> li
         configured,
         registry.detect(url),
         ytdlp_available,
-        cobalt_configured,
     )
 
 
 def _ingest_provider_chain(settings: dict, order: list[str]):
     sources = {
         registry.YTDLP: lambda: registry.provider(registry.YTDLP, settings),
-        registry.COBALT: lambda: registry.provider(registry.COBALT, settings),
         registry.XHS: lambda: registry.provider(registry.XHS, settings),
     }
     return ingest_fallback.ProviderChain(sources, order=order)
@@ -2558,7 +2537,6 @@ def recover_jobs() -> None:
     if SOURCES.is_dir():
         for pattern in (
             ".ingest-*", "ingest-*",
-            ".cobalt-*", "cobalt-*",
             ".incoming-*", "incoming-*",
         ):
             for stale in SOURCES.glob(pattern):
@@ -3214,8 +3192,10 @@ app.include_router(routes_edits.router)
 app.include_router(__import__("routes_trim", fromlist=["router"]).router)
 app.include_router(routes_overlays.router)
 app.include_router(routes_voice_clone.router)
+# Studio owns its page, so its build skips the Classic router entirely.
+if not STUDIO_APP:
+    app.include_router(routes_classic.router)
 # Lane modules: new routes go here, not into app.py (docs/branching.md).
-app.include_router(routes_classic.router)
 app.include_router(routes_auto_subs.router)
 app.include_router(routes_studio.router)
 app.include_router(music.router)
@@ -3450,6 +3430,8 @@ def page_file(request: Request) -> Path:
     Edition ``all`` keeps the old ``?classic=1`` / ``?studio=1`` switch without
     loading the other lane's markup.
     """
+    if STUDIO_APP:
+        return STATIC / "index.html"
     if editions.edition() == "classic":
         return STATIC / "classic" / "index.html"
     if editions.edition() == "all" and request.query_params.get("classic") == "1":
@@ -3463,12 +3445,17 @@ def index(request: Request) -> Response:
     return page_response(page_file(request))
 
 
-@app.get("/voices")
 def voice_room(request: Request) -> FileResponse:
     if not editions.feature_on("voice_room"):
         raise HTTPException(404, "Not found")
     page = STATIC / ("voices-next.html" if request.query_params.get("ui") == "new" else "voices.html")
     return FileResponse(page)
+
+
+# The Voice Room page belongs to its own lane. Studio ships the voice features
+# inside Setup and Edit, not this page, so a Studio build does not register it.
+if not STUDIO_APP:
+    app.add_api_route("/voices", voice_room, methods=["GET"])
 
 
 @app.get("/_ductator/")
@@ -3515,10 +3502,6 @@ def health() -> dict:
     }
 
 
-OPENCODE_MODEL = "deepseek-v4.1-flash"
-OPENCODE_VARIANT = "low"
-STT_PROVIDERS = {"auto", "apple", "whisper"}
-TTS_PROVIDERS = {"auto", "local", "say", "kokoro", "elevenlabs", "minimax", "heygen", "fish", "gemini"}
 
 
 class SettingsTestBody(BaseModel):
@@ -3574,27 +3557,6 @@ def _validate_ingest_patch(patch: dict) -> None:
             raise HTTPException(400, "The yt-dlp cookie file path is too long.")
         cleaned["ytdlp_cookie_file"] = cookie_file
 
-    quality = cleaned.get("cobalt_quality")
-    if quality not in (None, ""):
-        quality = str(quality).strip().lower()
-        if quality not in INGEST_QUALITY_VALUES:
-            raise HTTPException(400, "Unknown Cobalt video quality.")
-        cleaned["cobalt_quality"] = quality
-
-    codec = cleaned.get("cobalt_codec")
-    if codec not in (None, ""):
-        codec = str(codec).strip().lower()
-        if codec not in INGEST_CODEC_VALUES:
-            raise HTTPException(400, "Unknown Cobalt video codec.")
-        cleaned["cobalt_codec"] = codec
-
-    local = cleaned.get("cobalt_local_processing")
-    if local not in (None, ""):
-        local = str(local).strip().lower()
-        if local not in INGEST_LOCAL_VALUES:
-            raise HTTPException(400, "Unknown Cobalt local processing mode.")
-        cleaned["cobalt_local_processing"] = local
-
     interval = cleaned.get("xhs_interval")
     if interval not in (None, ""):
         try:
@@ -3646,6 +3608,12 @@ def _settings_state() -> dict:
         "opencode_mode": audio.opencode_mode(),
         "openrouter": audio.openrouter_status(),
         "whisper_models": pipeline.whisper_models(),
+        "voice_fit": {
+            "signalsmith": voice_fit.signalsmith_available(),
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "preserve_max_speed": voice_fit.PRESERVE_MAX_SPEED,
+            "chipmunk_max_speed": voice_fit.CHIPMUNK_MAX_SPEED,
+        },
     }
     return state
 
@@ -3683,7 +3651,7 @@ async def save_settings(request: Request) -> dict:
             )
         allowed_settings = {
             "opencode", "translation", "openrouter", "minimax", "stt", "tts",
-            "ingest", "preflight", "caption_styles", "rights",
+            "ingest", "preflight", "caption_styles", "rights", "voice_fit",
         }
         unknown = sorted(set(patch) - allowed_settings)
         if unknown:
@@ -3699,6 +3667,28 @@ async def save_settings(request: Request) -> dict:
                 )
             if "lock" in section and not isinstance(section["lock"], bool):
                 raise HTTPException(400, "rights.lock must be true or false.")
+        if "voice_fit" in patch:
+            section = patch["voice_fit"]
+            if not isinstance(section, dict):
+                raise HTTPException(400, "voice_fit must be an object.")
+            unknown_voice = sorted(set(section) - {
+                "preserve_pitch", "max_speed", "engine", "allow_extreme_speed",
+            })
+            if unknown_voice:
+                raise HTTPException(
+                    400, f"Unknown voice_fit setting: {unknown_voice[0]}.",
+                )
+            if "engine" in section and section["engine"] not in {
+                None, "", "auto", "ffmpeg", "signalsmith",
+            }:
+                raise HTTPException(400, "Unknown voice_fit engine.")
+            if "max_speed" in section:
+                try:
+                    speed = float(section["max_speed"])
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(400, "voice_fit.max_speed must be a number.") from exc
+                if not math.isfinite(speed) or speed < 1.0 or speed > 2.5:
+                    raise HTTPException(400, "voice_fit.max_speed must be between 1.0 and 2.5.")
         if "preflight" in patch:
             try:
                 preflight.validate_settings(patch["preflight"])
@@ -3721,41 +3711,41 @@ async def save_settings(request: Request) -> dict:
 
         opencode = patch.get("opencode")
         if isinstance(opencode, dict):
-            requested = str(opencode.get("model") or OPENCODE_MODEL)
-            if requested != OPENCODE_MODEL:
-                raise HTTPException(400, f"Only {OPENCODE_MODEL} is supported.")
-            requested_variant = str(opencode.get("variant") or OPENCODE_VARIANT)
-            if requested_variant != OPENCODE_VARIANT:
-                raise HTTPException(400, "OpenCode reasoning is locked to low.")
-            opencode["model"] = OPENCODE_MODEL
-            opencode["variant"] = OPENCODE_VARIANT
+            if "model" in opencode:
+                model = str(opencode.get("model") or "").strip()
+                if len(model) > 240:
+                    raise HTTPException(400, "OpenCode model id is too long.")
+                if model:
+                    opencode["model"] = model
+                else:
+                    opencode.pop("model", None)
+            if "variant" in opencode:
+                variant = str(opencode.get("variant") or "").strip().lower()
+                if variant and variant not in {"none", "low", "medium", "high", "max"}:
+                    raise HTTPException(400, "Unknown OpenCode reasoning variant.")
+                if variant:
+                    opencode["variant"] = variant
+                else:
+                    opencode.pop("variant", None)
         stt = patch.get("stt")
-        if isinstance(stt, dict) and stt.get("provider") not in (None, "") and stt["provider"] not in STT_PROVIDERS:
-            raise HTTPException(400, "Unknown transcription provider.")
-        if isinstance(stt, dict) and stt.get("model") not in (None, "") and stt["model"] not in {
-            item["id"] for item in pipeline.WHISPER_MODELS
-        }:
-            raise HTTPException(400, "Unknown Whisper model.")
+        if isinstance(stt, dict):
+            provider = str(stt.get("provider") or "").strip()
+            model = str(stt.get("model") or "").strip()
+            if len(provider) > 40:
+                raise HTTPException(400, "Transcription provider id is too long.")
+            if len(model) > 240:
+                raise HTTPException(400, "Transcription model id is too long.")
         translation = patch.get("translation")
         if isinstance(translation, dict) and translation.get("mode") not in (None, "", "auto", "local_first", "local_only", "online_only"):
             raise HTTPException(400, "Unknown translation mode.")
         ingest = patch.get("ingest")
         if isinstance(ingest, dict):
-            for key in ("cobalt_url", "xhs_url"):
-                value = ingest.get(key)
-                if value:
-                    try:
-                        registry.validate_url(str(value))
-                    except IngestError as exc:
-                        raise HTTPException(400, f"Invalid {key}: {exc}") from exc
-            for key, allowed in (
-                ("cobalt_quality", {"max", "4320", "2160", "1440", "1080", "720", "480", "360", "240", "144"}),
-                ("cobalt_codec", {"h264", "av1", "vp9"}),
-                ("cobalt_local_processing", {"preferred", "forced"}),
-            ):
-                value = ingest.get(key)
-                if value not in (None, "") and str(value) not in allowed:
-                    raise HTTPException(400, f"Invalid {key}.")
+            value = ingest.get("xhs_url")
+            if value:
+                try:
+                    registry.validate_url(str(value))
+                except IngestError as exc:
+                    raise HTTPException(400, f"Invalid xhs_url: {exc}") from exc
             if "xhs_no_record" in ingest and not isinstance(ingest["xhs_no_record"], bool):
                 raise HTTPException(400, "xhs_no_record must be true or false.")
             if "xhs_interval" in ingest:
@@ -3766,8 +3756,10 @@ async def save_settings(request: Request) -> dict:
                 if interval < 0 or not math.isfinite(interval):
                     raise HTTPException(400, "xhs_interval must be a non-negative number.")
         tts = patch.get("tts")
-        if isinstance(tts, dict) and tts.get("provider") not in (None, "") and tts["provider"] not in TTS_PROVIDERS:
-            raise HTTPException(400, "Unknown voice provider.")
+        if isinstance(tts, dict):
+            provider = str(tts.get("provider") or "").strip()
+            if len(provider) > 40:
+                raise HTTPException(400, "Voice provider id is too long.")
         settings_store.save_settings(patch)
     if isinstance(secrets, dict):
         settings_store.save_secrets(secrets)
@@ -3811,7 +3803,7 @@ def test_settings(body: SettingsTestBody) -> dict:
         kind = registry.XHS
     if kind in {"yt-dlp", "yt_dlp", "youtube-dl"}:
         kind = registry.YTDLP
-    if kind in {registry.YTDLP, registry.COBALT, registry.XHS}:
+    if kind in {registry.YTDLP, registry.XHS}:
         started = time.time()
         provider_settings = _ingest_provider_settings()
         try:
@@ -3867,7 +3859,7 @@ def test_settings(body: SettingsTestBody) -> dict:
             "ok": bool(answer),
             "kind": "opencode",
             "model": audio.opencode_model(),
-            "variant": OPENCODE_VARIANT,
+            "variant": audio.opencode_variant(),
             "mode": audio.opencode_mode(),
             "seconds": round(time.time() - started, 2),
             "answer": (answer or "")[:160],
@@ -4540,7 +4532,7 @@ def inspect_url(body: UrlInspectBody) -> dict:
         instance = chain.last_provider
     except Exception as exc:  # noqa: BLE001
         # Show the primary provider and its error. Fallback attempts stay in
-        # metadata so a down Cobalt service cannot obscure the yt-dlp reason.
+        # metadata.
         provider_id = order[0]
         instance = chain.last_provider if chain.last_provider_id == provider_id else None
         status_entry = (
@@ -4552,7 +4544,6 @@ def inspect_url(body: UrlInspectBody) -> dict:
             getattr(instance, "label", "")
             or {
                 registry.YTDLP: "yt-dlp",
-                registry.COBALT: "Cobalt",
                 registry.XHS: "XHS / RedNote",
             }.get(provider_id)
             or provider_id
@@ -8718,6 +8709,9 @@ def _classic_edit_from_body(
     audio_plan: dict | None,
 ):
     """Turn Classic's layer payload into the Edit the renderer compiles."""
+    if STUDIO_APP:
+        # Studio renders saved edits through routes_edits, never this payload.
+        return None, None
     if not isinstance(body.edit, dict) or not body.edit:
         return None, None
     return routes_classic.prepare_classic_render(

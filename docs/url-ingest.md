@@ -1,16 +1,14 @@
 # Video links · yt-dlp first, sidecars optional
 
 VibeCut can start from a URL instead of a file. **yt-dlp is the default path**
-for common sites and runs inside the VibeCut Python process. Cobalt is an
-optional fallback after yt-dlp fails, and xhs_get handles RedNote links. Both
-sidecars are external services: they are never bundled and never started by
-VibeCut.
+for common sites and runs inside the VibeCut Python process. xhs_get handles
+RedNote links. It is an external service: it is never bundled and never started
+by VibeCut.
 
 ```
 VibeCut URL bar
   ├── yt-dlp (default, in-process, Unlicense)
   │     YouTube · TikTok · Instagram · X · Reddit · Vimeo · direct media
-  ├── Cobalt (optional retry or explicit mode, AGPL-3.0, separate service)
   └── xhs_get (RedNote only, GPL-3.0, separate service)
         ↓
   local source file
@@ -32,8 +30,8 @@ python -m pip install -r requirements.txt
 ./run.sh
 ```
 
-The default yt-dlp path needs no Node.js, Docker, Cobalt or xhs_get for
-YouTube, TikTok, Instagram, X, Reddit, Vimeo or a direct video URL.
+The default yt-dlp path needs no Node.js, Docker or xhs_get for YouTube,
+TikTok, Instagram, X, Reddit, Vimeo or a direct video URL.
 
 ## Network safety
 
@@ -58,18 +56,16 @@ Setup stores the provider mode in `ingest.provider`:
 
 | Value | Behavior |
 |---|---|
-| `auto` (default) | RedNote/Xiaohongshu hosts go to `xhs`. Every other HTTP(S) link tries `yt-dlp` first; if it fails and **Fallback after yt-dlp** is enabled with a Cobalt URL, VibeCut retries once through `cobalt`. |
-| `ytdlp` | Force the in-process yt-dlp provider. No fallback. |
-| `cobalt` | Force the optional Cobalt HTTP sidecar. No fallback. |
-| `xhs` | Force the optional xhs_get sidecar. No fallback. |
+| `auto` (default) | RedNote/Xiaohongshu hosts go to `xhs`. Every other HTTP(S) link uses `yt-dlp`. |
+| `ytdlp` | Force the in-process yt-dlp provider. |
+| `xhs` | Force the optional xhs_get sidecar. |
 
 An API request may also pass `provider` to override the mode for one URL.
 Explicit modes try only the named provider. Cancellation is final and never
-starts a fallback. RedNote links never fall back to Cobalt.
+starts a fallback.
 
-If every provider in the chain fails, the error shown is the first provider's
-error (normally yt-dlp), and the job metadata records each attempt. Cobalt is
-never contacted when yt-dlp succeeds.
+If the selected provider fails, the error shown is that provider's error and
+the job metadata records the attempt.
 
 RedNote links are routed to xhs_get in `auto` mode. Explicit `ytdlp` normalizes
 `rednote.com` / `xiaohongshu.com` note URLs before calling yt-dlp. If xhs_get is
@@ -168,41 +164,6 @@ yt-dlp first when a previously working site fails:
 python -m pip install -U yt-dlp
 ```
 
-## Cobalt (optional fallback)
-
-Cobalt is a separate AGPL-3.0 service. It is not part of the VibeCut process,
-is not bundled, and is never contacted when yt-dlp succeeds. In `auto` mode it
-is retried only after yt-dlp fails and only when **Fallback after yt-dlp** is
-enabled in Setup with a valid Cobalt URL.
-Select `cobalt` to force it for a link. The hosted `api.cobalt.tools` API is
-rejected; configure your own instance.
-
-```bash
-# separate directory, outside the VibeCut tree
-git clone https://github.com/imputnet/cobalt.git
-cd cobalt
-# copy docs/examples/docker-compose.example.yml to docker-compose.yml
-# set API_URL to this instance's URL
-docker compose up -d
-```
-
-Default settings:
-
-```text
-Service URL:       http://127.0.0.1:9000/
-Quality:           1080
-Codec:             h264
-Local processing:  preferred
-```
-
-The API key is optional unless the instance requires authentication. VibeCut
-sends `localProcessing` and performs merge/remux with local ffmpeg for
-`local-processing` responses. It rejects audio-only, GIF, HLS, and multi-item
-picker responses for the video-ingest path.
-
-Cobalt code, assets and branding stay outside VibeCut. Distribution rules:
-`docs/licensing.md`.
-
 ## xhs_get / RedNote (optional sidecar)
 
 xhs_get is a separate GPL-3.0 program. It is not bundled and is only used for
@@ -270,10 +231,9 @@ download folder.
 
 | Situation | Behavior |
 |---|---|
-| yt-dlp missing | Inline install error; if Cobalt fallback is enabled, one Cobalt retry is allowed. |
+| yt-dlp missing | Inline install error; no sidecar retry. |
 | yt-dlp extractor outdated | Site error is surfaced; upgrade yt-dlp and retry. |
-| yt-dlp fails, Cobalt fallback enabled | One Cobalt retry; success continues normally, both-fail shows the yt-dlp error and records both attempts. |
-| yt-dlp fails, fallback off | yt-dlp error; no sidecar call. |
+| yt-dlp fails | yt-dlp error; no sidecar call. |
 | Explicit provider fails | Its error; no fallback. |
 | Playlist or multi-item link | Picker payload on inspect; job creation rejects with 409. |
 | Private / age-gated / members-only | Clear error; cookies are optional, no bypass. |
@@ -281,8 +241,6 @@ download folder.
 | Download cancelled | Worker stops, temp file removed, job marked failed. |
 | Disk full / permission denied | Job failed with the OS error; no analysis starts. |
 | ffmpeg missing | Probe or merge fails; install ffmpeg/ffprobe. |
-| Cobalt down, explicit mode | Inline "Start the cobalt service" error; no job. |
-| Cobalt down, auto fallback enabled | Both attempts fail; the yt-dlp error is shown and the Cobalt attempt is recorded. |
 | xhs_get down | Inline service error. |
 | XHS missing token | Setup says "Needs token". |
 | XHS missing cookie | Open sign-in / cookie handoff. |
@@ -291,10 +249,10 @@ download folder.
 
 ## License boundary
 
-VibeCut is proprietary. The Cobalt and XHS clients in `url_ingest/` are
-original HTTP clients; the yt-dlp integration uses only the public package
-API. No Cobalt or xhs_get source is imported or copied. Running optional
-sidecars as separate processes keeps them outside the VibeCut work.
+VibeCut is proprietary. The XHS client in `url_ingest/` is an original HTTP
+client; the yt-dlp integration uses only the public package API. No xhs_get
+source is imported or copied. Running the optional sidecar as a separate
+process keeps it outside the VibeCut work.
 
 Read `docs/licensing.md` for the dependency table, third-party notice rules,
 sidecar source-offer requirements, SBOM commands, and the release checklist.
@@ -319,8 +277,13 @@ Not legal advice.
   playlist.
 - **RedNote link fails** — start xhs_get, set its URL, and use a tokenized
   share link. yt-dlp is not the RedNote path.
-- **Cobalt link fails** — in `auto`, read the yt-dlp error first; Cobalt is a
-  retry, not the primary path. Set `provider` to `cobalt` to force it and
-  confirm the instance is running.
 - **No Node/Docker on this machine** — nothing to install for the default
   yt-dlp path.
+
+## yt-dlp and RedNote / Xiaohongshu
+
+yt-dlp ships a `XiaoHongShu` extractor, but it is not a reliable login-free
+downloader. A public note with a fresh `xsec_token` can work; many links return
+`No video formats found` without a `web_session` cookie. If you need RedNote
+regularly, keep the optional xhs_get sidecar configured and use a tokenized
+share link. yt-dlp remains the default for every non-RedNote site.
