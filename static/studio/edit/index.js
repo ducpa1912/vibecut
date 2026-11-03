@@ -117,7 +117,7 @@ export function mount(root, ctx) {
     captions: null,
     duration: 10,
     playhead: 0,
-    activeTab: "text",
+    activeTab: "audio",
     selected: null,
     // Preview-only hide toggles. Clean layers have no `hidden` field on the
     // server, and hiding a layer in the editor should never change the render.
