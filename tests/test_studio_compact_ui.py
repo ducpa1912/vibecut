@@ -61,7 +61,7 @@ def test_audio_rows_split_into_original_voice_and_bgm():
 def test_compact_rows_have_explicit_heights():
     assert ".st-tl-label-text" in CSS
     assert ".st-tl-label-audio_original" in CSS
-    assert "clamp(260px, 31vh, 300px)" in CSS
+    assert "clamp(180px, 22vh, 260px)" in CSS
     assert "grid-template-columns: minmax(0, 1fr);" in CSS
 
 

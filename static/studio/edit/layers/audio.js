@@ -2197,7 +2197,11 @@ export function mountAudioPanel(host, ctx) {
       (translated?.lines || []).map((line, index) => [index, line]),
     );
     for (const [index, line] of (transcript?.segments || []).entries()) {
-      const row = el("div", { class: "st-transcript-line" }, [
+      const row = el("button", {
+        class: "st-transcript-line",
+        type: "button",
+        title: `Seek to ${formatDuration(line.start)}`,
+      }, [
         el("time", { text: formatDuration(line.start) }),
         el("span", {}, [
           el("strong", { text: line.text }),
@@ -2206,6 +2210,7 @@ export function mountAudioPanel(host, ctx) {
             : null,
         ]),
       ]);
+      row.addEventListener("click", () => ctx.seek?.(line.start));
       list.append(row);
     }
     if (!transcript?.segments?.length) {

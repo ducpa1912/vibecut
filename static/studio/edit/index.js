@@ -1526,6 +1526,7 @@ export function mount(root, ctx) {
       getStory: () => state.story,
       getDuration: () => state.duration,
       getPlayhead: () => state.playhead,
+      seek: (time) => seek(time),
       notify,
     });
   }
