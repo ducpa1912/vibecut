@@ -1,6 +1,8 @@
 # Classic lane plan
 
-Status: **active**, Classic lane only. Last reviewed at `classic` `e38004a`.
+Status: **active**, Classic lane only. Last reviewed at `classic` `193b60e`.
+(The pin commit that carries only documentation changes sits on top of that
+code tip; nothing after `193b60e` changes the build.)
 
 Classic is an independent lane. It owns `static/classic/**`, `routes_classic.py`,
 and `docs/classic/**`. It does not import Studio or Voice Room UI state, and it
@@ -15,8 +17,9 @@ current OpenRouter speech-to-text catalog). **Both are in scope for this beta
 build.** They only make the admin workflow routes the single source for the
 rewrite, TTS, music and STT models that Classic's Setup tests and cost notices
 read; they are additive to shared core, no Classic page or route was reverted,
-and the Classic suite is green with them. The beta pin therefore moves forward
-to the tip that contains them instead of back to `e38004a`.
+and the Classic suite is green with them (1,897 passed, 11 skipped). The beta pin
+therefore moves forward to `193b60e`, the tip that contains them, instead of back
+to `e38004a`.
 
 ## Product decisions
 
@@ -130,10 +133,16 @@ The detailed port plan is in `docs/classic/design/embedded-studio.md`.
 
 ## Release gate
 
-- [ ] No P0 or P1 open.
-- [ ] Classic tests pass on the chosen tip.
-- [ ] Founder pass recorded on the chosen tip.
-- [ ] All new commits and the beta tag are signed. `732254a` and `8186e2a`
-  are recorded pre-signing exceptions; do not rewrite them casually.
-- [ ] `docs/classic/testing/classic-beta-pass-2.md` matches the build.
+- [ ] No P0 or P1 open. *(no sign-off recorded yet.)*
+- [x] Classic tests pass on the chosen tip. *(1,897 passed, 11 skipped at
+  `193b60e`; `node --check` on `app.js`, `trust.js` and `i18n.js`.)*
+- [ ] Founder pass recorded on the chosen tip. *(no pass at `193b60e` yet; the
+  record table is at the top of the beta pass.)*
+- [x] All new commits and the beta tag are signed. *(Checked with
+  `scripts/verify-signatures.sh`. `732254a` and `8186e2a` are recorded
+  pre-signing exceptions; do not rewrite them casually. No beta tag exists.)*
+- [x] `docs/classic/testing/classic-beta-pass-2.md` matches the build. *(Labels,
+  paths, media and the T1–T6 trust table were re-checked against the source at
+  `193b60e`. The founder's Result column is still the only evidence for a pass.)*
 - [ ] Merge target confirmed: Classic lane only, or explicit merge to `main`.
+  *(Nothing is merged; the lane stays on `classic` until someone asks.)*

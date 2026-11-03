@@ -1,6 +1,12 @@
 # Classic beta pass 2 — founder test script
 
-**Build:** `classic` at `e38004a`. Nothing here is verified until you run it. An automated walk is not evidence; only your Result column counts.
+**Build:** `classic` at `193b60e`. Nothing here is verified until you run it. An automated walk is not evidence; only your Result column counts.
+
+**Recorded results.** No founder pass has been run at `193b60e` yet. Write the hash you actually tested, the date and the outcome here, then fill the Result column. `scripts/release.sh` needs that same hash before a beta tag.
+
+| Hash tested | Date | Outcome | Notes |
+|---|---|---|---|
+| `193b60e` | — | not run | — |
 
 **Start the app:** open Terminal and run these lines. Classic has its own port,
 data folder and media folder. Use port **8796**, never 8787.
