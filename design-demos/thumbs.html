@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VibeCut Edit — six directions</title>
+<style>
+  :root{--ink:#171717;--muted:#747474;--line:#d9d9d4;--paper:#f4f3ef}
+  *{box-sizing:border-box}
+  body{margin:0;background:#e9e8e3;color:var(--ink);font-family:"Avenir Next",Avenir,system-ui,sans-serif}
+  header{padding:28px 32px 18px;display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #c9c8c2}
+  h1{font-size:22px;letter-spacing:-.03em;margin:0}
+  header p{margin:0;color:#666;font-size:12px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;padding:24px 32px 40px}
+  .thumb{background:var(--paper);border:1px solid #cdccc6;border-radius:10px;overflow:hidden;position:relative}
+  .thumb h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:0;padding:10px 12px;border-bottom:1px solid #d8d7d1;color:#555;display:flex;justify-content:space-between}
+  .thumb h2 b{font-weight:600;color:#111;letter-spacing:0}
+  .shot{height:300px;position:relative;overflow:hidden}
+  .dark{background:#0b0b0c;color:#eee}
+  .light{background:#f7f7f4;color:#151515}
+  .control{background:#080a0b;color:#e8ebe8}
+  .rail{position:absolute;left:0;top:0;bottom:0;width:31px;border-right:1px solid #252527;display:grid;align-content:start;gap:10px;padding:12px 6px;color:#8a8a8a;font-size:5px;text-align:center}
+  .rail i{display:block;width:17px;height:17px;border:1px solid #37373a;border-radius:3px;margin:0 auto 3px}
+  .frame{position:absolute;left:50%;top:12px;transform:translateX(-50%);width:132px;height:236px;background:url(assets/scene-0.jpg) center/cover;border:1px solid #3d3d3f}
+  .frame:after{content:"";position:absolute;inset:9px;border:1px dashed rgba(255,255,255,.28)}
+  .miniTitle{position:absolute;left:8px;right:8px;bottom:7px;background:#f3e900;color:#101010;font-weight:800;font-size:9px;line-height:1.02;padding:3px 4px;text-transform:uppercase}
+  .inspector{position:absolute;right:0;top:0;bottom:0;width:88px;border-left:1px solid #252527;padding:9px 7px;background:#111113}
+  .inspector b{display:block;font-size:6px;color:#aaa;margin-bottom:6px;letter-spacing:.08em}
+  .sceneRow{display:flex;gap:4px;align-items:center;font-size:5.5px;color:#bcbcbc;margin-bottom:5px}
+  .sceneRow img{width:20px;height:14px;object-fit:cover}
+  .sceneRow.active{color:#f0b070}
+  .strip{position:absolute;left:31px;right:88px;bottom:0;height:56px;border-top:1px solid #252527;padding:6px 8px;display:flex;gap:3px}
+  .strip span{flex:1;background-size:cover;background-position:center;opacity:.55;border-bottom:2px solid transparent}
+  .strip span.on{border-color:#e8a266;opacity:1}
+  .label{position:absolute;left:8px;bottom:2px;font-size:5px;color:#777;letter-spacing:.08em}
+
+  .paper{display:grid;grid-template-columns:104px 1fr 118px;height:300px}
+  .paperL{border-right:1px solid #d5d4ce;padding:10px 8px;overflow:hidden}
+  .paperL h3,.paperM h3,.paperR h3{font-size:6px;letter-spacing:.12em;text-transform:uppercase;color:#777;margin:0 0 7px}
+  .line{font-size:6.2px;line-height:1.35;padding:3px 0;border-bottom:1px solid #e3e2dc;color:#343434}
+  .line.on{background:#e6ecff;border-left:2px solid #2449d8;padding-left:4px;color:#152461}
+  .paperM{padding:10px 8px;background:#fbfbf9;overflow:hidden}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  .card{border:1px solid #d8d7d1;background:#fff;padding:3px}
+  .card img{width:100%;height:33px;object-fit:cover;display:block;filter:saturate(.85)}
+  .card b{display:block;font-size:5px;margin-top:3px;color:#222}
+  .card small{font-size:4.5px;color:#777}
+  .paperR{border-left:1px solid #d5d4ce;padding:9px 8px;background:#f7f7f4}
+  .paperFrame{height:154px;background:url(assets/scene-0.jpg) center/cover;border:1px solid #c9c8c2;position:relative}
+  .paperFrame:after{content:"9:16";position:absolute;right:4px;top:4px;background:#111;color:#fff;font-size:5px;padding:2px 3px}
+  .btn{margin-top:8px;background:#2449d8;color:#fff;font-size:6px;font-weight:700;padding:5px;text-align:center}
+
+  .control .top{position:absolute;left:0;right:0;top:0;height:16px;border-bottom:1px solid #1a1e20;display:flex;align-items:center;justify-content:space-between;padding:0 8px;font-size:5px;color:#7a8580}
+  .control .lanes{position:absolute;left:34px;right:8px;top:24px;height:116px;display:grid;grid-template-rows:repeat(5,1fr);gap:2px}
+  .lane{position:relative;border-bottom:1px solid #151a1c}
+  .lane small{position:absolute;left:-31px;top:2px;font-size:4.5px;color:#6f7974;width:28px;text-align:right}
+  .lane i{position:absolute;top:2px;bottom:2px;border-radius:1px;background:#22302b;border:1px solid #345147}
+  .lane i.role{background:#2b2418;border-color:#7b5a2d}
+  .lane i.pay{background:#162a24;border-color:#397a63}
+  .lane i.txt{background:#1b2330;border-color:#344b71}
+  .control .bottom{position:absolute;left:34px;right:8px;bottom:8px;top:148px;display:grid;grid-template-columns:150px 1fr;gap:7px}
+  .control .cframe{background:url(assets/scene-0.jpg) center/cover;border:1px solid #26302c;position:relative}
+  .control .cframe:after{content:"";position:absolute;inset:9px;border:1px dashed rgba(121,242,192,.25)}
+  .control .copy{border:1px solid #1d2522;padding:7px;background:#0c100e;overflow:hidden}
+  .control .copy h3{font-size:5px;letter-spacing:.14em;text-transform:uppercase;color:#7ee7b0;margin:0 0 5px}
+  .control .copy p{font-size:5.4px;line-height:1.35;margin:0 0 4px;color:#c4ccc8;border-bottom:1px solid #151c18;padding-bottom:4px}
+  .control .copy .go{display:inline-block;margin-top:4px;background:#79f2c0;color:#08100c;font-size:5px;font-weight:800;padding:4px 6px}
+</style>
+</head>
+<body>
+<header><h1>VibeCut Edit — six directions</h1><p>same real content · three finalists</p></header>
+<div class="grid">
+  <article class="thumb"><h2><b>A1 · Cutting Table</b><span>finalist</span></h2><div class="shot dark">
+    <div class="rail"><div><i></i>Cut</div><div><i></i>Text</div><div><i></i>CC</div><div><i></i>Audio</div></div>
+    <div class="frame"><div class="miniTitle">How to stop people from interrupting you</div></div>
+    <div class="inspector"><b>SCENE 02 · HOOK</b><div class="sceneRow active"><img src="assets/scene-0.jpg">If you know…</div><div class="sceneRow"><img src="assets/scene-1.jpg">prime the…</div><div class="sceneRow"><img src="assets/scene-2.jpg">share my idea</div><div class="sceneRow"><img src="assets/scene-3.jpg">five minutes</div><b style="margin-top:9px">ROLE</b><div class="sceneRow active">Hook</div><div class="sceneRow">B-roll</div></div>
+    <div class="strip"><span class="on" style="background-image:url(assets/scene-0.jpg)"></span><span style="background-image:url(assets/scene-1.jpg)"></span><span style="background-image:url(assets/scene-2.jpg)"></span><span style="background-image:url(assets/scene-3.jpg)"></span><span style="background-image:url(assets/scene-5.jpg)"></span><span style="background-image:url(assets/scene-6.jpg)"></span><span style="background-image:url(assets/scene-0.jpg)"></span><span style="background-image:url(assets/scene-1.jpg)"></span></div>
+    <span class="label">00:07.4 / 00:21.5</span>
+  </div></article>
+
+  <article class="thumb"><h2><b>A2 · Contact Sheet</b><span>alternate</span></h2><div class="shot dark">
+    <div style="position:absolute;inset:8px;display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,1fr);gap:3px">
+      <div style="background:url(assets/scene-0.jpg) center/cover"></div><div style="background:url(assets/scene-1.jpg) center/cover"></div><div style="background:url(assets/scene-2.jpg) center/cover"></div><div style="background:url(assets/scene-3.jpg) center/cover"></div>
+      <div style="background:url(assets/scene-5.jpg) center/cover"></div><div style="background:url(assets/scene-6.jpg) center/cover"></div><div style="background:url(assets/scene-0.jpg) center/cover"></div><div style="background:url(assets/scene-1.jpg) center/cover"></div>
+      <div style="background:url(assets/scene-2.jpg) center/cover"></div><div style="background:url(assets/scene-3.jpg) center/cover"></div><div style="background:url(assets/scene-5.jpg) center/cover"></div><div style="background:url(assets/scene-6.jpg) center/cover"></div>
+    </div>
+    <div style="position:absolute;left:8px;bottom:8px;background:#f3e900;color:#111;font-weight:800;font-size:8px;padding:4px 5px;max-width:150px">15 frames · one story</div>
+  </div></article>
+
+  <article class="thumb"><h2><b>B1 · Paper Edit</b><span>finalist</span></h2><div class="shot light"><div class="paper">
+    <div class="paperL"><h3>Transcript</h3><div class="line">Oh, but if I pause…</div><div class="line on">If you know there's a serial interrupter,</div><div class="line">you just need to prime the conversation.</div><div class="line">You just need to say, hey, look…</div><div class="line">I want to share my idea.</div><div class="line">If you give me five minutes…</div><div class="line">I would love to ask for your input.</div></div>
+    <div class="paperM"><h3>Storyboard · 15 scenes</h3><div class="cards">
+      <div class="card"><img src="assets/scene-0.jpg"><b>Hook · scene 2</b><small>1.5s</small></div><div class="card"><img src="assets/scene-1.jpg"><b>Context</b><small>1.1s</small></div><div class="card"><img src="assets/scene-2.jpg"><b>Statement</b><small>2.7s</small></div><div class="card"><img src="assets/scene-3.jpg"><b>Proof</b><small>1.3s</small></div><div class="card"><img src="assets/scene-5.jpg"><b>B-roll</b><small>1.0s</small></div><div class="card"><img src="assets/scene-6.jpg"><b>Payoff</b><small>1.4s</small></div>
+    </div></div>
+    <div class="paperR"><h3>Moment 01</h3><div class="paperFrame"></div><div class="btn">Write Copy →</div><div style="font-size:5px;color:#777;margin-top:5px">English → Vietnamese<br>21.5s · 16 lines</div></div>
+  </div></div></article>
+
+  <article class="thumb"><h2><b>B2 · Scene Cards</b><span>alternate</span></h2><div class="shot light">
+    <div style="padding:9px"><div style="font-size:6px;color:#777;letter-spacing:.12em;text-transform:uppercase">Moment 01 · 21.5s</div><div style="display:flex;gap:4px;margin-top:8px"><div style="width:47px;height:74px;background:url(assets/scene-0.jpg) center/cover;border:2px solid #2449d8"></div><div style="width:47px;height:74px;background:url(assets/scene-1.jpg) center/cover"></div><div style="width:47px;height:74px;background:url(assets/scene-2.jpg) center/cover"></div><div style="width:47px;height:74px;background:url(assets/scene-3.jpg) center/cover"></div><div style="width:47px;height:74px;background:url(assets/scene-5.jpg) center/cover"></div><div style="width:47px;height:74px;background:url(assets/scene-6.jpg) center/cover"></div></div><div style="margin-top:10px;font-size:6px;line-height:1.4;color:#333">If you know there's a serial interrupter, you just need to prime the conversation. <b style="color:#2449d8">Write Copy</b></div></div>
+  </div></article>
+
+  <article class="thumb"><h2><b>C1 · Editorial Grid</b><span>alternate</span></h2><div class="shot light">
+    <div style="display:grid;grid-template-columns:1fr 1fr;height:100%"><div style="padding:10px;border-right:1px solid #d7d6d0"><div style="font-size:6px;letter-spacing:.12em;color:#777">01 / MOMENT</div><div style="font:700 16px/1.1 'Iowan Old Style',serif;margin-top:5px">If you know there's a serial interrupter</div><div style="font-size:5.5px;color:#555;margin-top:6px">21.5 seconds · 9:16 · 16 lines</div><div style="margin-top:8px;height:1px;background:#ccc"></div><div style="font-size:5.5px;margin-top:7px;color:#333">Hook<br>Context<br>Bold statement<br>B-roll<br>Payoff</div></div><div style="padding:7px"><div style="height:140px;background:url(assets/scene-0.jpg) center/cover"></div><div style="font-size:5px;color:#555;margin-top:5px">Scene 02 · Hook · 00:01.5</div></div></div>
+  </div></article>
+
+  <article class="thumb"><h2><b>C2 · Control Room</b><span>finalist</span></h2><div class="shot control">
+    <div class="top"><span>VIBECUT / MOMENT 01 / 00:07.4</span><span>9:16 · 1080p</span></div>
+    <div class="lanes">
+      <div class="lane"><small>Scenes</small><i class="role" style="left:2%;width:7%"></i><i style="left:10%;width:9%"></i><i style="left:20%;width:11%"></i><i style="left:32%;width:8%"></i><i style="left:41%;width:12%"></i><i style="left:54%;width:10%"></i><i class="pay" style="left:65%;width:9%"></i><i style="left:75%;width:12%"></i></div>
+      <div class="lane"><small>Sentences</small><i class="txt" style="left:2%;width:12%"></i><i class="txt" style="left:15%;width:11%"></i><i class="txt" style="left:27%;width:14%"></i><i class="txt" style="left:42%;width:10%"></i><i class="txt" style="left:53%;width:13%"></i><i class="txt" style="left:67%;width:14%"></i></div>
+      <div class="lane"><small>Captions</small><i class="txt" style="left:2%;width:10%"></i><i class="txt" style="left:14%;width:12%"></i><i class="txt" style="left:27%;width:9%"></i><i class="txt" style="left:38%;width:12%"></i><i class="txt" style="left:52%;width:11%"></i><i class="txt" style="left:64%;width:9%"></i></div>
+      <div class="lane"><small>Clean</small><i style="left:15%;width:24%"></i><i style="left:44%;width:18%"></i></div>
+      <div class="lane"><small>Audio</small><i class="pay" style="left:2%;width:86%"></i></div>
+    </div>
+    <div class="bottom"><div class="cframe"></div><div class="copy"><h3>Transcript · English → Vietnamese</h3><p>If you know there's a serial interrupter,</p><p>you just need to prime the conversation.</p><p>I want to share my idea.</p><span class="go">Write Copy</span></div></div>
+  </div></article>
+</div>
+</body>
+</html>
