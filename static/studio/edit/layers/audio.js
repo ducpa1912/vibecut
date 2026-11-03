@@ -323,9 +323,14 @@ function licenseLabel(license) {
   return "Licence noted";
 }
 
+export function mountTranscriptPanel(host, ctx) {
+  return mountAudioPanel(host, { ...ctx, transcriptOnly: true });
+}
+
 export function mountAudioPanel(host, ctx) {
   ensureCheckStyles();
   let disposed = false;
+  const transcriptOnly = Boolean(ctx.transcriptOnly);
   const edit = ctx.getEdit();
   let plan = clone(edit?.audio || { mode: "original" });
   if (!AUDIO_LABELS[plan.mode]) plan.mode = "original";
@@ -2015,10 +2020,12 @@ export function mountAudioPanel(host, ctx) {
   function copyCard() {
     const card = el("div", { class: "st-card st-check-card" });
     card.append(el("h3", { text: "Video and moment" }));
-    card.append(el("p", {
-      class: "st-hint",
-      text: "Language is detected from the transcript. Translation runs once for the whole video; copy is written only for this moment.",
-    }));
+    if (!transcriptOnly) {
+      card.append(el("p", {
+        class: "st-hint",
+        text: "Language is detected from the transcript. Translation runs once for the whole video; copy is written only for this moment.",
+      }));
+    }
     const detected = el("div", { class: "st-copy-meta" }, [
       el("span", { class: "st-label", text: "Detected language" }),
       el("strong", { text: languageLabel(sourceLang) }),
@@ -2031,21 +2038,6 @@ export function mountAudioPanel(host, ctx) {
       el("span", { class: "st-hint", text: formatDuration(storySeconds(ctx)) }),
     ]));
     if (transcriptError) card.append(el("p", { class: "st-error", text: transcriptError }));
-
-    if (transcript?.segments?.length) {
-      const sourceLines = el("div", { class: "st-copy-lines" });
-      for (const line of transcript.segments.slice(0, 200)) {
-        sourceLines.append(el("div", { class: "st-copy-line" }, [
-          el("span", { class: "st-mono st-copy-time", text: formatDuration(line.start) }),
-          el("span", {}, [el("strong", { text: line.text })]),
-        ]));
-      }
-      card.append(el("div", { class: "st-layer-stage-head", style: "margin-top:12px" }, [
-        el("h4", { text: "Full transcript" }),
-        el("span", { class: "st-hint", text: `${transcript.segments.length} lines` }),
-      ]));
-      card.append(sourceLines);
-    }
 
     const target = el("select", { "aria-label": "Translate into" });
     languageOptions(target, targetLang, "Choose a language");
@@ -2104,9 +2096,7 @@ export function mountAudioPanel(host, ctx) {
       copyError = "";
       render();
     });
-    card.append(el("div", { class: "st-control-grid", style: "margin-top:12px" }, [
-      field("Copy style", style, "No rewrite happens until you press Write Copy."),
-    ]));
+    const styleField = field("Copy style", style);
     const write = el("button", {
       class: "st-btn st-btn-primary st-btn-small",
       type: "button",
@@ -2114,8 +2104,23 @@ export function mountAudioPanel(host, ctx) {
       disabled: copyBusy || Boolean(targetLang && targetLang !== sourceLang && !translated),
     });
     write.addEventListener("click", () => { void runCopy(); });
-    card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [write]));
+    card.append(el("div", { class: "st-copy-actions" }, [styleField, write]));
     if (copyError) card.append(el("p", { class: "st-error", text: copyError }));
+    if (transcript?.segments?.length) {
+      const sourceLines = el("div", { class: "st-copy-lines" });
+      for (const line of transcript.segments.slice(0, 200)) {
+        sourceLines.append(el("div", { class: "st-copy-line" }, [
+          el("span", { class: "st-mono st-copy-time", text: formatDuration(line.start) }),
+          el("span", {}, [el("strong", { text: line.text })]),
+        ]));
+      }
+      card.append(el("div", { class: "st-layer-stage-head", style: "margin-top:12px" }, [
+        el("h4", { text: "Full transcript" }),
+        el("span", { class: "st-hint", text: `${transcript.segments.length} lines` }),
+      ]));
+      card.append(sourceLines);
+    }
+
     if (copyResult?.lines?.length) {
       const lines = el("div", { class: "st-copy-lines" });
       for (const line of copyResult.lines) {
@@ -2133,6 +2138,10 @@ export function mountAudioPanel(host, ctx) {
   }
 
   function render() {
+    if (transcriptOnly) {
+      host.replaceChildren(copyCard());
+      return;
+    }
     host.replaceChildren();
     const blocked = dubBlockReason(plan.mode, targetLang);
     const head = el("div", { class: "st-card st-check-card" }, [
@@ -2171,8 +2180,10 @@ export function mountAudioPanel(host, ctx) {
 
   render();
   void loadTranscript();
-  void loadEngines();
-  void loadLibrary();
+  if (!transcriptOnly) {
+    void loadEngines();
+    void loadLibrary();
+  }
 
   return () => {
     if (saveTimer) window.clearTimeout(saveTimer);

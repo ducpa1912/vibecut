@@ -46,8 +46,8 @@ def test_edit_frame_is_fixed_and_the_page_does_not_scroll():
     assert "flex: 1 1 auto" in stage
     # Two rows: a shrinking preview and a timeline that never leaves the screen.
     assert "grid-template-rows: minmax(0, 1fr) clamp(" in stage
-    assert '"layers preview inspector"' in stage
-    assert '"layers timeline inspector"' in stage
+    assert '"tools preview transcript"' in stage
+    assert '"timeline timeline timeline"' in stage
 
 
 def test_toolbar_is_not_sticky():
@@ -74,11 +74,11 @@ def test_each_panel_has_its_own_stable_scroll():
     assert "st-cue-list" in CSS
 
 
-def test_settings_stay_on_the_right_at_1024():
+def test_tools_transcript_and_preview_keep_their_columns_at_desktop():
     assert "@media (max-width: 1023px)" in CSS
     assert "@media (max-width: 1040px)" not in CSS
     desktop = CSS.split("@media (max-width: 1023px)")[0]
-    assert "grid-template-columns: clamp(204px, 18vw, 232px) minmax(0, 1fr) clamp(300px, 24vw, 340px)" in desktop
+    assert "grid-template-columns: clamp(230px, 18vw, 260px) minmax(0, 1fr) clamp(340px, 27vw, 390px)" in desktop
 
 
 def test_toolbar_moves_all_moments_into_the_picker():

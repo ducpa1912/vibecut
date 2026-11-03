@@ -12,7 +12,8 @@ def test_audio_shows_the_full_transcript_and_two_actions():
     assert "Full transcript" in AUDIO
     assert "Translate transcript" in AUDIO
     assert "Write Copy" in AUDIO
-    assert "No rewrite happens until you press Write Copy." in AUDIO
+    assert "Copy style" in AUDIO
+    assert "st-copy-actions" in AUDIO
 
 
 def test_open_never_translates_or_rewrites():

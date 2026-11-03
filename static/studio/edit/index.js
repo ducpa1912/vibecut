@@ -24,6 +24,7 @@ import { mountTimeline } from "./timeline.js";
 import { mountInspector } from "./inspector.js";
 import { renderLayersPanel } from "./layers-panel.js";
 import { mountMomentBoard } from "./moment-board.js";
+import { mountTranscriptPanel } from "./layers/audio.js";
 import { cropAt } from "./canvas-tools.js";
 import { icon } from "./icons.js";
 import { manualLayer } from "./layers/clean.js";
@@ -117,7 +118,7 @@ export function mount(root, ctx) {
     captions: null,
     duration: 10,
     playhead: 0,
-    activeTab: "audio",
+    activeTab: "clean",
     selected: null,
     // Preview-only hide toggles. Clean layers have no `hidden` field on the
     // server, and hiding a layer in the editor should never change the render.
@@ -233,10 +234,11 @@ export function mount(root, ctx) {
         <div id="st-edit-notice" class="st-edit-notice" role="alert" hidden></div>
         <section id="st-edit-moments" class="st-moment-board" aria-label="Selected moments"></section>
         <div class="st-edit-stage">
-          <aside id="st-edit-layers" class="st-layers" aria-label="Layers"></aside>
+          <aside id="st-edit-layers" class="st-layers" aria-label="Tools and layers"></aside>
           <div id="st-edit-preview"></div>
+          <aside id="st-edit-transcript" class="st-transcript-panel" aria-label="Transcript and translation"></aside>
           <div id="st-edit-timeline"></div>
-          <aside id="st-edit-inspector" class="st-inspector" aria-label="Moment controls">
+          <aside id="st-edit-inspector" class="st-inspector" aria-label="Tool controls">
             <div class="st-inspector-sheet-head">
               <strong>Adjust this moment</strong>
               <button id="st-edit-inspector-close" class="st-btn st-btn-ghost st-btn-small" type="button">Done</button>
@@ -288,7 +290,9 @@ export function mount(root, ctx) {
     dom.shortcuts = root.querySelector("#st-edit-shortcuts");
     dom.shortcutsClose = root.querySelector("#st-edit-shortcuts-close");
     dom.moments = root.querySelector("#st-edit-moments");
+    dom.transcript = root.querySelector("#st-edit-transcript");
     dom.inspector = root.querySelector("#st-edit-inspector");
+    dom.layers.append(dom.inspector);
     dom.inspectorBody = root.querySelector("#st-edit-inspector-body");
     dom.inspectorToggle = root.querySelector("#st-edit-inspector-toggle");
     dom.inspectorClose = root.querySelector("#st-edit-inspector-close");
@@ -1509,6 +1513,23 @@ export function mount(root, ctx) {
     return `${kind}:${id}`;
   }
 
+  let transcriptPanel = null;
+
+  function renderTranscriptPanel() {
+    if (!dom.transcript || !state.edit) return;
+    if (transcriptPanel) {
+      transcriptPanel();
+      transcriptPanel = null;
+    }
+    transcriptPanel = mountTranscriptPanel(dom.transcript, {
+      getEdit: () => state.edit,
+      getStory: () => state.story,
+      getDuration: () => state.duration,
+      getPlayhead: () => state.playhead,
+      notify,
+    });
+  }
+
   function renderMomentBoard() {
     if (!dom.moments || !state.edit || !state.story) return;
     mountMomentBoard(dom.moments, {
@@ -1550,6 +1571,8 @@ export function mount(root, ctx) {
       toggleHidden: (kind, id) => toggleLayerHidden(kind, id),
       remove: (kind, id) => removeLayer(kind, id),
     });
+    // The tool list re-renders on selection; keep the tool controls attached.
+    if (dom.inspector) dom.layers.append(dom.inspector);
   }
 
   function addCleanBox(box = null) {
@@ -1998,6 +2021,7 @@ export function mount(root, ctx) {
   function renderEditorParts() {
     if (!dom.preview || !dom.timeline) return;
     renderMomentBoard();
+    renderTranscriptPanel();
     if (!preview) {
       preview = mountPreview(dom.preview, {
         jobId: state.job.id,

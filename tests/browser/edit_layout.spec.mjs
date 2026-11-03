@@ -96,6 +96,7 @@ try {
           preview: rect(preview),
           timeline: rect(timeline),
           inspector: rect(inspector),
+          transcript: rect(document.querySelector("#st-edit-transcript")),
           toolbar: rect(toolbar),
         };
       });
@@ -129,12 +130,16 @@ try {
         `${where}: settings panel leaves the viewport`,
       );
       assert(
-        layout.inspector.left >= layout.preview.right - 1,
-        `${where}: settings panel is not to the right of the preview`,
+        layout.inspector.left <= layout.preview.left,
+        `${where}: tool panel is not left of the preview`,
+      );
+      assert(
+        layout.transcript.left >= layout.preview.right - 1,
+        `${where}: transcript is not to the right of the preview`,
       );
       assert(layout.bodyOverflowY === "auto", `${where}: settings panel lost its own scroll`);
 
-      await page.locator('.st-inspector-tab[data-tab="clean"]').click();
+      await page.locator('.st-tool', { hasText: 'Clean' }).click();
       const scanButton = page.locator(".st-clean-scan-start").first();
       await scanButton.waitFor({ state: "visible", timeout: 15000 });
       const scanLabel = (await scanButton.textContent())?.trim() || "";
@@ -157,7 +162,7 @@ try {
         await page.mouse.up();
 
         const cleanRow = page.locator('.st-layer-item[data-kind="clean"]').first();
-        await cleanRow.waitFor({ state: "visible", timeout: 10000 });
+        await cleanRow.waitFor({ state: "attached", timeout: 10000 });
         const before = JSON.parse(await cleanRow.getAttribute("data-box"));
         assert(before.w > 0.01 && before.h > 0.01, `${where}: drawn box has no size`);
 
