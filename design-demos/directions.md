@@ -105,3 +105,17 @@ Final three: **A1 Cutting Table**, **B1 Paper Edit**, **C2 Control Room**.
 **Tools.** Clean (detected wrap + model), TextFX, Audio, Caption.
 
 **Timeline lanes.** Scene, Detected text (overlapping), Transcript, Voice over, Caption. Every lane can lock or hide.
+
+---
+
+## Direction 5 — Compact Moment Board
+
+**Change from revision 04.** The founder asked for a denser timeline and a standard feature grouping.
+
+- Selected scenes remain a 1:1 numbered board; a **Blank** filler keeps moments continuous.
+- Tools are Clean, TextFX, Audio, Caption.
+- Timeline groups: **Moments / Selected scenes**, **Clean / Detected text**, **TextFX**, **Caption**, **Audio**.
+- Text-only lanes are half height. Detected text keeps the taller overlapping lane.
+- Audio splits into **Original audio**, **Voice over**, **BGM**. Original carries lock, hide and the three bus actions: Original, No voice, No BGM.
+- Every lane has lock and hide.
+- Icons are drawn, not text glyphs.
