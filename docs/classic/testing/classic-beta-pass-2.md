@@ -120,7 +120,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 4.8 | In **Copy**, click **Story cut** | Script write | A script appears under the audio panel. It is not spoken until you press play. | |
 | 4.9 | Click **Generate voice sample**, then **▶** next to it | A voice sample, then play | The status line reads **Generating a short voice preview…**, then **Voice preview ready.** **▶** plays the sample and the render is unchanged. | |
 | 4.10 | Click **Use my recording** → **Choose recording**, pick your own voice recording, then **Generate voice sample** and **▶** | Own recording | The status says **Your recording replaces the generated voice.**, the recording is fitted to the cut length, and **▶** plays it. | |
-| 4.11 | In Voice-over or Full Replace, open **Automation mixer**, click a lane to add a node, drag it, double-click it | Mixer | The node moves and the readout changes. **Reset 100%** and **Flatten** restore the flat line. | |
+| 4.11 | In **New voice-over** or **New voice + music**, open **Automation mixer**, click a lane to add a node, drag it, double-click it | Mixer | The node moves and the readout changes. **Reset 100%** and **Flatten** restore the flat line. | |
 | 4.12 | Click **Original** in **Mode** after using the mixer | Mixer hides in Original | The mixer panel is hidden or shows no automation for the Original mode. | |
 
 ## 5. Result view: history, export, review link, clean and delete
