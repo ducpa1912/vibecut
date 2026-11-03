@@ -55,7 +55,7 @@ def test_audio_rows_split_into_original_voice_and_bgm():
     assert "effects" not in ids and "color" not in ids
     labels = {row["id"]: row["label"] for row in rows}
     assert labels["text"] == "TextFX"
-    assert labels["captions"] == "Caption"
+    assert labels["captions"] == "Caption · cues"
 
 
 def test_compact_rows_have_explicit_heights():
@@ -72,3 +72,10 @@ def test_transcript_is_the_permanent_right_panel():
     assert "grid-template-areas:" in CSS
     assert '"tools preview transcript"' in CSS
     assert '"timeline timeline timeline"' in CSS
+
+
+def test_original_audio_has_three_visible_bus_actions():
+    assert "st-tl-modes" in TIMELINE
+    assert "No voice" in TIMELINE and "No BGM" in TIMELINE
+    assert "onAudioBus" in TIMELINE
+    assert "onAudioBus: (mode) =>" in INDEX

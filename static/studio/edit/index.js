@@ -2044,6 +2044,15 @@ export function mount(root, ctx) {
         onAddMoment: () => appendMomentDialog(),
         onReorder: (from, to) => reorderScene(from, to),
         onRole: (index, item) => sceneRoleDialog(index, item),
+        onAudioBus: (mode) => {
+          if (!state.edit) return;
+          state.edit.audio = { ...(state.edit.audio || {}), mode, mode_chosen: true };
+          touch("audio");
+          renderLayers();
+          renderInspector();
+          preview?.refresh();
+          scheduleTimeline();
+        },
         beforeTrim: () => flushSave(),
         onTrim: (result) => applyTrimResult(result, "Trimmed"),
         onConflict: (error) => { void handleTrimConflict(error); },

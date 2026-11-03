@@ -458,7 +458,7 @@ export function layerSpans(edit, captions, duration) {
       end: Math.max(numberOr(range.start) + 0.1, numberOr(range.end)),
     }));
   }).flat();
-  rows.push({ id: "clean", label: "Clean", kind: "clean", items: cleanItems });
+  rows.push({ id: "clean", label: "Clean · text", kind: "clean", items: cleanItems });
 
   const textItems = [
     ...(edit?.graphics || [])
@@ -510,7 +510,7 @@ export function layerSpans(edit, captions, duration) {
     start: numberOr(cue.start),
     end: numberOr(cue.end),
   }));
-  rows.push({ id: "captions", label: "Caption", kind: "captions", items: cueItems });
+  rows.push({ id: "captions", label: "Caption · cues", kind: "captions", items: cueItems });
 
   const mode = edit?.audio?.mode || "original";
   const music = edit?.audio?.music && typeof edit.audio.music === "object"
@@ -518,7 +518,7 @@ export function layerSpans(edit, captions, duration) {
     : null;
   rows.push({
     id: "audio_original",
-    label: "Original audio",
+    label: "Original · source",
     kind: "audio",
     items: [{
       id: "audio_original",
@@ -531,7 +531,7 @@ export function layerSpans(edit, captions, duration) {
   });
   rows.push({
     id: "audio_voice",
-    label: "Voice over",
+    label: "Voice · generated",
     kind: "audio",
     items: [{
       id: "audio_voice",
@@ -544,7 +544,7 @@ export function layerSpans(edit, captions, duration) {
   });
   rows.push({
     id: "audio_bgm",
-    label: "BGM",
+    label: "BGM · music",
     kind: "audio",
     items: [{
       id: "audio_bgm",

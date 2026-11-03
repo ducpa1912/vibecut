@@ -101,6 +101,7 @@ export function mountTimeline(root, options = {}) {
     onAddMoment: options.onAddMoment || (() => {}),
     onReorder: options.onReorder || (() => {}),
     onRole: options.onRole || (() => {}),
+    onAudioBus: options.onAudioBus || (() => {}),
     onTrim: options.onTrim || (() => {}),
     onConflict: options.onConflict || (() => {}),
     beforeTrim: options.beforeTrim || (() => Promise.resolve(true)),
@@ -890,7 +891,7 @@ export function mountTimeline(root, options = {}) {
     pendingFocus = "";
     const sceneRow = {
       id: "scenes",
-      label: "Moments",
+      label: "Moments · scenes",
       kind: "scenes",
       items: sceneRows(),
     };
@@ -908,6 +909,31 @@ export function mountTimeline(root, options = {}) {
       const label = el("div", { class: `st-tl-label st-tl-label-${row.kind} st-tl-label-${row.id}` }, [
         el("span", { text: row.label || LANE_LABELS[row.kind] || "Layer" }),
         row.kind !== "sentences" ? el("small", { text: String(row.items.length) }) : null,
+        row.id === "audio_original" ? (() => {
+          const mode = String(state.edit?.audio?.mode || "original");
+          const hasMusic = Boolean(state.edit?.audio?.music);
+          const modes = el("span", { class: "st-tl-modes" });
+          for (const [label, title, next, active] of [
+            ["O", "Original audio", hasMusic ? "original_bed" : "original", ["original", "original_bed"].includes(mode)],
+            ["V", "No voice", "music_only", mode === "music_only"],
+            ["B", "No BGM", "original", mode === "original"],
+          ]) {
+            const button = el("button", {
+              class: `st-tl-mode${active ? " is-on" : ""}`,
+              type: "button",
+              text: label,
+              title,
+              "aria-label": title,
+              "aria-pressed": active ? "true" : "false",
+            });
+            button.addEventListener("click", (event) => {
+              event.stopPropagation();
+              handlers.onAudioBus(next);
+            });
+            modes.append(button);
+          }
+          return modes;
+        })() : null,
         el("span", { class: "st-tl-lane-tools" }, [
           el("button", {
             class: `st-tl-lane-btn${laneLocked.has(row.id) ? " is-on" : ""}`,

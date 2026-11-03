@@ -1740,3 +1740,18 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
 .st-copy-actions .st-btn { white-space: nowrap; }
 
 #st-edit-layers .st-inspector .st-check-card > p.st-hint:first-of-type { display: none; }
+.st-tl-modes { display: inline-flex; gap: 1px; flex: 0 0 auto; }
+.st-tl-mode {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid var(--st-line-2);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--st-dim);
+  font-family: var(--st-mono);
+  font-size: 7px;
+  line-height: 1;
+  cursor: pointer;
+}
+.st-tl-mode.is-on { border-color: var(--st-accent); color: var(--st-accent); background: var(--st-accent-soft); }
