@@ -650,6 +650,13 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 .st-file-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
 .st-file-copy span { color: var(--st-dim); font-family: var(--st-mono); font-size: 12px; }
 
+.st-options-panel {
+  margin: 20px 0 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--st-line);
+}
+.st-options-panel .st-card-head { margin-bottom: 12px; }
+.st-options-panel .st-card-head h2 { font-size: 13px; }
 .st-options-details {
   margin: 20px 0 0;
   padding: 14px 0 0;

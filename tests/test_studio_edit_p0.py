@@ -98,6 +98,19 @@ def test_inspector_tabs_are_plain_and_not_truncated():
     assert "display: flex" in tabs
 
 
+def test_text_and_effects_tab_is_selectable():
+    # The inspector tab id is "visual"; setActiveTab must accept it or the tab
+    # silently does nothing while Audio still opens.
+    assert '"visual"' in INDEX
+    assert 'if (!["clean", "visual", "text", "captions", "effects", "color", "audio"].includes(tab)) return;' in INDEX
+
+
+def test_new_edits_start_without_captions():
+    block = INDEX[INDEX.index("function defaultLayers"):INDEX.index("function autoSubsStoryIds")]
+    assert "captions: { enabled: false }" in block
+    assert "track_id: jobTrack.id" not in block
+
+
 def test_clean_copy_is_true_and_scan_is_a_task_in_edit():
     assert "Nothing invents missing pixels" not in CLEAN
     assert "AI fill rebuilds the background" in CLEAN

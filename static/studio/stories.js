@@ -241,7 +241,7 @@ export function mount(root, ctx) {
         <div>
           <p class="st-eyebrow">Step 2 · Moments</p>
           <h1 id="st-stories-title">Find the moments</h1>
-          <p class="st-lede">Every moment is a complete beat: a frame, its hook and payoff, the text already on screen, and the shape it will render in. Pick one, tune the range, or build your own from scenes.</p>
+          <p class="st-lede">Every moment is a complete beat. The <strong>hook</strong> is its first sentence; the <strong>payoff</strong> is its last. Pick one, tune the range, or build your own from scenes.</p>
         </div>
         <div id="st-moment-actions" class="st-panel-actions"></div>
       </header>
@@ -621,6 +621,10 @@ export function mount(root, ctx) {
     ]);
     const quotes = el("div", { class: "st-story-quotes" }, [
       el("div", {}, [
+        el("span", { class: "st-label", text: "Hook" }),
+        el("p", { text: story.hook?.text || "No speech at the start." }),
+      ]),
+      el("div", {}, [
         el("span", { class: "st-label", text: "Payoff" }),
         el("p", { text: payoff || "No speech at the end." }),
       ]),
@@ -959,8 +963,8 @@ export function mount(root, ctx) {
     const own = el("button", {
       class: "st-btn st-btn-ghost",
       type: "button",
-      text: "Add moment",
-      title: "Choose scenes and add one moment yourself",
+      text: "Build your moment",
+      title: "Choose scenes and build one moment yourself",
     });
     own.addEventListener("click", () => { openBuilder(card); });
     actions.append(countLabel, lengthLabel, build, own);

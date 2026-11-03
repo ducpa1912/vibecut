@@ -847,7 +847,7 @@ export function mount(root, ctx) {
     return getCaptionTrack(state.job.id, value).catch(() => null);
   }
 
-  function defaultLayers(fork, jobTrack) {
+  function defaultLayers(fork, _jobTrack) {
     if (fork) {
       return {
         clean: clone(fork.clean || []),
@@ -865,9 +865,9 @@ export function mount(root, ctx) {
       motion: [],
       color: { preset: "none" },
       graphics: [],
-      captions: jobTrack
-        ? { track_id: jobTrack.id, style_id: jobTrack.style_id, enabled: true }
-        : { enabled: true },
+      // Captions are opt-in: a new Edit starts with no track and captions off.
+      // The creator adds them from the Captions tool or Auto subtitles.
+      captions: { enabled: false },
       audio: { mode: "original" },
     };
   }
@@ -1476,7 +1476,9 @@ export function mount(root, ctx) {
   }
 
   function setActiveTab(tab) {
-    if (!["clean", "text", "captions", "effects", "color", "audio"].includes(tab)) return;
+    // "visual" is the inspector's grouped Text, Captions, Effects and Colour
+    // tab. The older per-kind ids still select it when a layer is chosen.
+    if (!["clean", "visual", "text", "captions", "effects", "color", "audio"].includes(tab)) return;
     state.activeTab = tab;
     renderInspector();
   }

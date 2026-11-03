@@ -114,7 +114,6 @@ function validHttpUrl(value) {
 }
 
 export function mount(root, ctx) {
-  let source = "file";
   let selectedFile = null;
   let busy = false;
   let disposed = false;
@@ -136,43 +135,25 @@ export function mount(root, ctx) {
 
       <div class="st-import-grid">
         <div class="st-card st-import-card">
-          <div class="st-source-tabs" role="tablist" aria-label="Where the video comes from">
-            <button type="button" role="tab" id="st-tab-file" aria-controls="st-source-file" aria-selected="true" tabindex="0" data-source="file">File</button>
-            <button type="button" role="tab" id="st-tab-path" aria-controls="st-source-path" aria-selected="false" tabindex="-1" data-source="path">Path</button>
-            <button type="button" role="tab" id="st-tab-url" aria-controls="st-source-url" aria-selected="false" tabindex="-1" data-source="url">Link</button>
+          <div id="st-dropzone" class="st-dropzone" role="button" tabindex="0" aria-label="Choose a video file">
+            <span class="st-drop-icon" aria-hidden="true">↓</span>
+            <strong>Drop a video here</strong>
+            <span>or choose a file from this Mac</span>
+            <input id="st-file-input" type="file" accept="video/*,.mkv,.avi,.mpg,.mpeg" aria-label="Choose a video file" hidden>
+          </div>
+          <div id="st-file-card" class="st-file-card" hidden>
+            <span class="st-file-glyph" aria-hidden="true">▶</span>
+            <span class="st-file-copy"><strong id="st-file-name"></strong><span id="st-file-size"></span></span>
+            <button id="st-file-clear" class="st-icon-btn" type="button" aria-label="Remove chosen file">×</button>
           </div>
 
-          <div id="st-source-file" role="tabpanel" aria-labelledby="st-tab-file" class="st-source-panel">
-            <div id="st-dropzone" class="st-dropzone" role="button" tabindex="0" aria-label="Choose a video file">
-              <span class="st-drop-icon" aria-hidden="true">↓</span>
-              <strong>Drop a video here</strong>
-              <span>or choose a file from this Mac</span>
-              <input id="st-file-input" type="file" accept="video/*,.mkv,.avi,.mpg,.mpeg" aria-label="Choose a video file" hidden>
-            </div>
-            <div id="st-file-card" class="st-file-card" hidden>
-              <span class="st-file-glyph" aria-hidden="true">▶</span>
-              <span class="st-file-copy"><strong id="st-file-name"></strong><span id="st-file-size"></span></span>
-              <button id="st-file-clear" class="st-icon-btn" type="button" aria-label="Remove chosen file">×</button>
-            </div>
-          </div>
-
-          <div id="st-source-path" role="tabpanel" aria-labelledby="st-tab-path" class="st-source-panel" hidden>
-            <label class="st-field" for="st-path-input">
-              <span>Full path on this Mac</span>
-              <input id="st-path-input" type="text" spellcheck="false" autocomplete="off" placeholder="/Users/you/Movies/long-video.mp4">
-            </label>
-            <p class="st-hint">The file is read in place. Nothing is uploaded or copied.</p>
-            <div class="st-layer-add" style="margin-top:8px">
-              <button id="st-path-reveal" class="st-btn st-btn-ghost st-btn-small" type="button">Show in Finder</button>
-            </div>
-          </div>
-
-          <div id="st-source-url" role="tabpanel" aria-labelledby="st-tab-url" class="st-source-panel" hidden>
-            <label class="st-field" for="st-url-input">
-              <span>Video link</span>
-              <input id="st-url-input" type="url" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://…">
-            </label>
-            <p class="st-hint">Most sites work through the local downloader. Link downloads need a connection.</p>
+          <label class="st-field" for="st-location-input" style="margin-top:18px">
+            <span>Or use a link or full path</span>
+            <input id="st-location-input" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://… or /Users/you/Movies/long-video.mp4">
+          </label>
+          <p class="st-hint">A link downloads through the local downloader. A path is read in place and is not copied.</p>
+          <div class="st-layer-add" style="margin-top:8px">
+            <button id="st-path-reveal" class="st-btn st-btn-ghost st-btn-small" type="button" hidden>Show in Finder</button>
           </div>
 
           <div class="st-import-start">
@@ -198,8 +179,11 @@ export function mount(root, ctx) {
           <p id="st-import-status" class="st-status" role="status" aria-live="polite" hidden></p>
           <p id="st-import-error" class="st-error" role="alert" hidden></p>
 
-          <details class="st-options-details">
-            <summary><span>What to read</span><small>Text, speech, smart crop and spoken language</small></summary>
+          <section class="st-options-panel" aria-labelledby="st-options-title">
+            <div class="st-card-head">
+              <h2 id="st-options-title">What to read</h2>
+              <span class="st-hint">Text, speech, smart crop and spoken language</span>
+            </div>
             <div class="st-options-details-body">
               <div class="st-options-grid">
                 <label class="st-check"><input id="st-opt-ocr" type="checkbox" checked><span><strong>Text and faces</strong><small>Apple Vision · on this Mac</small></span></label>
@@ -229,7 +213,7 @@ export function mount(root, ctx) {
               </label>
               <p class="st-hint">Set this when the title does not reveal the language. It stops a long fallback on the speech engine.</p>
             </div>
-          </details>
+          </section>
         </div>
 
         <aside class="st-card st-recent-card" aria-labelledby="st-recent-title">
@@ -248,22 +232,15 @@ export function mount(root, ctx) {
 
   const $ = (selector) => root.querySelector(selector);
   const dom = {
-    tabs: Array.from(root.querySelectorAll("[role=tab]")),
-    panels: {
-      file: $("#st-source-file"),
-      path: $("#st-source-path"),
-      url: $("#st-source-url"),
-    },
     dropzone: $("#st-dropzone"),
     fileInput: $("#st-file-input"),
     fileCard: $("#st-file-card"),
     fileName: $("#st-file-name"),
     fileSize: $("#st-file-size"),
     fileClear: $("#st-file-clear"),
-    pathInput: $("#st-path-input"),
+    locationInput: $("#st-location-input"),
     pathReveal: $("#st-path-reveal"),
     speechLanguage: $("#st-speech-language"),
-    urlInput: $("#st-url-input"),
     ocr: $("#st-opt-ocr"),
     transcribe: $("#st-opt-transcribe"),
     crop: $("#st-opt-crop"),
@@ -311,16 +288,32 @@ export function mount(root, ctx) {
     return result;
   }
 
+  function locationValue() {
+    return String(dom.locationInput?.value || "").trim();
+  }
+
+  /** file, url, path, or "" when nothing usable is chosen. */
+  function currentSource() {
+    if (selectedFile) return "file";
+    const value = locationValue();
+    if (!value) return "";
+    return /^https?:\/\//i.test(value) ? "url" : "path";
+  }
+
   function selectedDisplayName() {
-    if (source === "file") return selectedFile ? selectedFile.name : "";
-    if (source === "path") return nameFromPath(dom.pathInput.value.trim());
-    return nameFromUrl(dom.urlInput.value.trim());
+    const kind = currentSource();
+    if (kind === "file") return selectedFile ? selectedFile.name : "";
+    if (kind === "path") return nameFromPath(locationValue());
+    if (kind === "url") return nameFromUrl(locationValue());
+    return "";
   }
 
   function selectionReady() {
-    if (source === "file") return Boolean(selectedFile);
-    if (source === "path") return Boolean(dom.pathInput.value.trim());
-    return validHttpUrl(dom.urlInput.value.trim());
+    const kind = currentSource();
+    if (kind === "file") return Boolean(selectedFile);
+    if (kind === "path") return Boolean(locationValue());
+    if (kind === "url") return validHttpUrl(locationValue());
+    return false;
   }
 
   function syncSubmit() {
@@ -340,11 +333,14 @@ export function mount(root, ctx) {
     } else if (!ticked) {
       dom.note.textContent = "Confirm the rights note to start.";
     } else if (!ready) {
-      dom.note.textContent = source === "file"
+      const kind = currentSource();
+      dom.note.textContent = kind === "file"
         ? "Choose a video file."
-        : source === "path"
-          ? "Enter a full path."
-          : "Enter a full link starting with http:// or https://.";
+        : kind === "path"
+          ? "Enter a full path to a video on this Mac."
+          : kind === "url"
+            ? "Enter a full link starting with http:// or https://."
+            : "Choose a file, or paste a link or full path.";
     } else {
       dom.note.textContent = needsTick
         ? "Import starts reading the video. Moments unlock when it finishes."
@@ -355,8 +351,8 @@ export function mount(root, ctx) {
   function setBusy(value) {
     busy = value;
     dom.submit.textContent = value ? "Importing…" : "Import video";
-    for (const control of [dom.dropzone, dom.fileInput, dom.fileClear, dom.pathInput, dom.urlInput,
-      dom.ocr, dom.transcribe, dom.crop, dom.track, dom.attest, dom.recentRefresh, ...dom.tabs]) {
+    for (const control of [dom.dropzone, dom.fileInput, dom.fileClear, dom.locationInput,
+      dom.ocr, dom.transcribe, dom.crop, dom.track, dom.attest, dom.recentRefresh]) {
       if (!control) continue;
       if ("disabled" in control && control !== dom.dropzone) control.disabled = value;
       else if (control === dom.dropzone) control.setAttribute("aria-disabled", value ? "true" : "false");
@@ -407,23 +403,6 @@ export function mount(root, ctx) {
     }
   }
 
-  function chooseSource(next) {
-    if (!dom.panels[next] || next === source) return;
-    source = next;
-    for (const tab of dom.tabs) {
-      const active = tab.dataset.source === next;
-      tab.setAttribute("aria-selected", active ? "true" : "false");
-      tab.tabIndex = active ? 0 : -1;
-    }
-    for (const [key, panel] of Object.entries(dom.panels)) {
-      panel.hidden = key !== next;
-    }
-    clearError();
-    syncSubmit();
-    const target = next === "file" ? dom.dropzone : next === "path" ? dom.pathInput : dom.urlInput;
-    target?.focus();
-  }
-
   function setFile(file) {
     if (!file) return;
     if (!looksLikeVideo(file)) {
@@ -431,6 +410,8 @@ export function mount(root, ctx) {
       return;
     }
     selectedFile = file;
+    dom.locationInput.value = "";
+    dom.pathReveal.hidden = true;
     dom.fileName.textContent = file.name;
     dom.fileSize.textContent = formatBytes(file.size);
     dom.fileCard.hidden = false;
@@ -462,9 +443,11 @@ export function mount(root, ctx) {
       return;
     }
     if (!selectionReady()) {
-      showError(source === "file" ? "Choose a video file first."
-        : source === "path" ? "Enter a full path to a video on this Mac."
-        : "Enter a full link starting with http:// or https://.");
+      const kind = currentSource();
+      showError(kind === "file" ? "Choose a video file first."
+        : kind === "path" ? "Enter a full path to a video on this Mac."
+        : kind === "url" ? "Enter a full link starting with http:// or https://."
+        : "Choose a file, or paste a link or full path.");
       return;
     }
 
@@ -474,7 +457,8 @@ export function mount(root, ctx) {
       const options = currentOptions();
       const rights = needsTick ? true : null;
       let created;
-      if (source === "file") {
+      const kind = currentSource();
+      if (kind === "file") {
         dom.progress.hidden = false;
         dom.uploadCancel.hidden = false;
         dom.uploadCancel.disabled = false;
@@ -486,10 +470,10 @@ export function mount(root, ctx) {
           dom.submit.textContent = `Importing… ${percent}%`;
           dom.progressText.textContent = uploadLine(ratio, (Date.now() - started) / 1000);
         }, { rights, signal: upload.signal });
-      } else if (source === "path") {
-        created = await createJobFromPath(dom.pathInput.value.trim(), options, { rights });
+      } else if (kind === "path") {
+        created = await createJobFromPath(locationValue(), options, { rights });
       } else {
-        created = await createJobFromUrl(dom.urlInput.value.trim(), options, null, { rights });
+        created = await createJobFromUrl(locationValue(), options, null, { rights });
       }
 
       if (!created || !created.id) throw new Error("The server did not return a video id.");
@@ -594,23 +578,6 @@ export function mount(root, ctx) {
 
   // ---- events -------------------------------------------------------------
 
-  for (const tab of dom.tabs) {
-    tab.addEventListener("click", () => chooseSource(tab.dataset.source));
-    tab.addEventListener("keydown", (event) => {
-      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-      event.preventDefault();
-      const index = dom.tabs.indexOf(tab);
-      let next = index;
-      if (event.key === "ArrowLeft") next = (index - 1 + dom.tabs.length) % dom.tabs.length;
-      if (event.key === "ArrowRight") next = (index + 1) % dom.tabs.length;
-      if (event.key === "Home") next = 0;
-      if (event.key === "End") next = dom.tabs.length - 1;
-      const target = dom.tabs[next];
-      chooseSource(target.dataset.source);
-      target.focus();
-    });
-  }
-
   dom.dropzone.addEventListener("click", () => dom.fileInput.click());
   dom.dropzone.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -632,12 +599,22 @@ export function mount(root, ctx) {
   });
   dom.fileInput.addEventListener("change", () => setFile(dom.fileInput.files?.[0] || null));
   dom.fileClear.addEventListener("click", clearFile);
-  dom.pathInput.addEventListener("input", syncSubmit);
+  dom.locationInput.addEventListener("input", () => {
+    if (locationValue()) {
+      selectedFile = null;
+      dom.fileInput.value = "";
+      dom.fileCard.hidden = true;
+      dom.dropzone.hidden = false;
+    }
+    dom.pathReveal.hidden = currentSource() !== "path";
+    clearError();
+    syncSubmit();
+  });
   dom.pathReveal.addEventListener("click", async () => {
-    const path = dom.pathInput.value.trim();
+    const path = locationValue();
     if (!path) {
       showError("Type the full path first.");
-      dom.pathInput.focus();
+      dom.locationInput.focus();
       return;
     }
     dom.pathReveal.disabled = true;
@@ -649,14 +626,7 @@ export function mount(root, ctx) {
       if (!disposed) dom.pathReveal.disabled = false;
     }
   });
-  dom.urlInput.addEventListener("input", syncSubmit);
-  dom.urlInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      if (!dom.submit.disabled) startImport();
-    }
-  });
-  dom.pathInput.addEventListener("keydown", (event) => {
+  dom.locationInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       if (!dom.submit.disabled) startImport();
