@@ -166,7 +166,7 @@ _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
 # Custom sequence clips override the story snapshot. Each clip names a source
 # scene and a source-time window. Roles stay hook/beat/payoff so render order
 # and old consumers keep working; beat_kind is editorial only.
-_SEQUENCE_KEYS = frozenset({"scene", "start", "end", "role", "beat_kind"})
+_SEQUENCE_KEYS = frozenset({"kind", "scene", "start", "end", "role", "beat_kind", "color"})
 CLIP_ROLES = ("hook", "beat", "payoff")
 BEAT_KINDS = ("context", "statement", "proof", "broll", "transition")
 _TOP_KEYS = frozenset({
@@ -971,12 +971,17 @@ def normalize_sequence(value: Any) -> list[dict]:
         if not isinstance(raw, dict):
             raise EditError(f"sequence[{index}] must be an object.")
         _unknown(raw, _SEQUENCE_KEYS, f"sequence[{index}]")
-        try:
-            scene = int(raw.get("scene"))
-        except (TypeError, ValueError):
-            raise EditError(f"sequence[{index}].scene must be an integer.") from None
-        if scene < 0:
-            raise EditError(f"sequence[{index}].scene must be zero or greater.")
+        kind = str(raw.get("kind") or "scene").strip().lower()
+        if kind not in ("scene", "blank"):
+            raise EditError(f"sequence[{index}].kind must be scene or blank.")
+        scene = None
+        if kind == "scene":
+            try:
+                scene = int(raw.get("scene"))
+            except (TypeError, ValueError):
+                raise EditError(f"sequence[{index}].scene must be an integer.") from None
+            if scene < 0:
+                raise EditError(f"sequence[{index}].scene must be zero or greater.")
         start = _number(raw.get("start"), f"sequence[{index}].start", minimum=0.0)
         end = _number(raw.get("end"), f"sequence[{index}].end", minimum=0.0)
         if end - start < 0.2:
@@ -992,13 +997,21 @@ def normalize_sequence(value: Any) -> list[dict]:
                 f"sequence[{index}].beat_kind must be one of: "
                 + ", ".join(BEAT_KINDS) + "."
             )
-        clips.append({
-            "scene": scene,
+        item = {
             "start": round(start, 3),
             "end": round(end, 3),
             "role": role,
             **({"beat_kind": beat_kind} if beat_kind else {}),
-        })
+        }
+        if kind == "blank":
+            item["kind"] = "blank"
+            color = str(raw.get("color") or "#000000").strip().lower()
+            if not re.fullmatch(r"#[0-9a-f]{6}", color):
+                raise EditError(f"sequence[{index}].color must be #rrggbb.")
+            item["color"] = color
+        else:
+            item["scene"] = scene
+        clips.append(item)
     return clips
 
 

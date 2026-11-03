@@ -370,7 +370,8 @@ export function mountTimeline(root, options = {}) {
       const scene = Number(clip?.scene);
       const role = String(clip?.role || "beat");
       const beatKind = String(clip?.beat_kind || "");
-      const roleLabel = role === "hook" ? "Hook"
+      const blank = clip?.kind === "blank";
+      const roleLabel = blank ? "Blank" : role === "hook" ? "Hook"
         : role === "payoff" ? "Payoff"
           : beatKind === "broll" ? "B-roll"
             : beatKind === "statement" ? "Statement"

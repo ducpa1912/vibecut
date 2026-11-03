@@ -342,6 +342,18 @@ def prepare_render(plan: dict, meta: dict, audio_plan: dict | None = None) -> di
         if end is None:
             end = start + float(duration_hint or 0.0)
         wanted = max(0.2, float(end) - start)
+        if clip.get("kind") == "blank":
+            frames = max(1, int(round(wanted * OUT_FPS)))
+            clips.append({
+                "kind": "blank",
+                "scene": None,
+                "color": clip.get("color") or "#000000",
+                "role": clip.get("role") or "beat",
+                "start": 0.0,
+                "frames": frames,
+                "duration": frames / OUT_FPS,
+            })
+            continue
         frames = _frames_for(start, wanted, source_duration)
         clips.append({
             "scene": clip["scene"],
@@ -378,6 +390,31 @@ def _filters_hash(filters: list[str] | None) -> str:
     return hashlib.sha1(
         json.dumps([str(item) for item in filters]).encode("utf-8"),
     ).hexdigest()[:20]
+
+
+def _blank_segment(
+    output: Path,
+    frames: int,
+    out_w: int,
+    out_h: int,
+    quality: str,
+    encoder: str,
+    color: str,
+    cancel_event: threading.Event | None = None,
+) -> None:
+    """Write a solid-colour filler clip with the same timing as a beat."""
+    duration = max(1, frames) / OUT_FPS
+    _run([
+        _ffmpeg(), "-y", "-v", "error",
+        "-f", "lavfi",
+        "-i", f"color=c={color}:s={out_w}x{out_h}:r={OUT_FPS}:d={duration:.6f}",
+        "-frames:v", str(max(1, frames)),
+        *_encoder_args(encoder, quality),
+        "-movflags", "+faststart",
+        "-video_track_timescale", "90000",
+        "-avoid_negative_ts", "make_zero",
+        str(output),
+    ], timeout=300, cancel_event=cancel_event)
 
 
 def _segment_cache_key(
@@ -531,11 +568,18 @@ def _audio_track(
 
     cmd = [ffmpeg, "-y", "-v", "error"]
     for clip in clips:
-        cmd += [
-            "-ss", f"{float(clip['start']):.6f}",
-            "-t", f"{float(clip['duration']):.6f}",
-            "-i", source,
-        ]
+        if clip.get("kind") == "blank":
+            cmd += [
+                "-f", "lavfi",
+                "-t", f"{float(clip['duration']):.6f}",
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            ]
+        else:
+            cmd += [
+                "-ss", f"{float(clip['start']):.6f}",
+                "-t", f"{float(clip['duration']):.6f}",
+                "-i", source,
+            ]
 
     graph: list[str] = []
     for index, clip in enumerate(clips):
@@ -1950,6 +1994,24 @@ def render_story_frame(
     tmp = job_dir / "renders" / f"tmp_frame_{uuid.uuid4().hex}"
     tmp.mkdir(parents=True, exist_ok=True)
     try:
+        if segment.get("blank"):
+            from PIL import ImageColor
+            frame_png = tmp / "frame.png"
+            Image.new(
+                "RGB", (out_w, out_h),
+                ImageColor.getrgb(str(segment.get("blank_color") or "#000000")),
+            ).save(frame_png)
+            frame_jpg = tmp / "frame.jpg"
+            _burn_frame(
+                frame_png,
+                compiled.get("overlays") or [],
+                frame_jpg,
+                out_w, out_h,
+                time_at,
+                job_dir.parent.parent / "cache" / "layers",
+                cancel_event=cancel_event,
+            )
+            return frame_jpg.read_bytes()
         segment_path = tmp / "segment.mp4"
         frames = int(segment.get("frames") or 0)
         segment_frames = max(1, frames)
@@ -2245,6 +2307,7 @@ def render_reel(
         layers = list(compiled.get("overlays") or [])
         clips = [
             {
+                "kind": segment.get("kind") or "scene",
                 "scene": segment.get("scene"),
                 "role": segment.get("role") or "beat",
                 "start": float(segment["start"]),
@@ -2392,6 +2455,16 @@ def render_reel(
                         crop_path = _crop_path_for(scene, aspect, clip)
                         pre_filters = []
                         post_filters = []
+                    if compiled_segment is not None and compiled_segment.get("blank"):
+                        futures[pool.submit(
+                            _blank_segment,
+                            segment,
+                            int(compiled_segment.get("frames") or clip["frames"]),
+                            out_w, out_h, quality, encoder,
+                            str(compiled_segment.get("blank_color") or "#000000"),
+                            cancel_event,
+                        )] = index
+                        continue
                     futures[pool.submit(
                         _segment,
                         source, meta, scene,

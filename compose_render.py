@@ -844,14 +844,18 @@ def _clips(clips: Any) -> list[dict]:
             raise ComposeInputError(f"Clip {index + 1} has invalid times.") from exc
         if not math.isfinite(start) or not math.isfinite(end) or end <= start:
             raise ComposeInputError(f"Clip {index + 1} has invalid times.")
-        result.append({
+        item = {
             "index": index,
             "scene": raw.get("scene"),
             "role": str(raw.get("role") or "beat"),
             "start": round(start, 3),
             "end": round(end, 3),
             "duration": round(end - start, 3),
-        })
+        }
+        if raw.get("kind") == "blank":
+            item["kind"] = "blank"
+            item["color"] = str(raw.get("color") or "#000000")
+        result.append(item)
     return result
 
 
@@ -947,6 +951,34 @@ def compile_edit(
         segment_out_start = out_cursor
         segment_out_end = out_cursor + duration
         out_cursor = segment_out_end
+        if clip.get("kind") == "blank":
+            segments.append({
+                "index": clip["index"],
+                "scene": None,
+                "blank": True,
+                "blank_color": str(clip.get("color") or "#000000"),
+                "role": clip.get("role") or "beat",
+                "start": 0.0,
+                "end": duration,
+                "duration": round(duration, 6),
+                "frames": frames,
+                "out_start": round(segment_out_start, 3),
+                "out_end": round(segment_out_end, 3),
+                "crop": {"x": 0, "y": 0, "w": out_w, "h": out_h},
+                "crop_path_ref": None,
+                "clean_ids": [],
+                "fill": None,
+                "motion_ids": [],
+                "motion_engine": "none",
+                "pre_filters": [],
+                "pre_filter": "",
+                "crop_filter": "",
+                "scale_filter": "",
+                "post_filters": [],
+                "post_filter": "",
+                "filter": "",
+            })
+            continue
         scene = scene_map.get(str(clip["scene"]))
         if reframe["mode"] == "center":
             cx = cy = 0.5

@@ -1755,3 +1755,6 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
   cursor: pointer;
 }
 .st-tl-mode.is-on { border-color: var(--st-accent); color: var(--st-accent); background: var(--st-accent-soft); }
+.st-mb-tile.is-blank { background: #141414; border-style: dashed; }
+.st-mb-tile.is-blank .st-mb-role { color: #9a9a9a; }
+.st-mb-add.is-blank { font-size: 8.5px; }

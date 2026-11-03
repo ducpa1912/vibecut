@@ -10,6 +10,7 @@ import { el, formatCount } from "../ui.js";
 import { formatTime } from "./model.js";
 
 function roleLabel(clip) {
+  if (clip?.kind === "blank") return "Blank";
   const role = String(clip?.role || "beat");
   if (role === "hook") return "Hook";
   if (role === "payoff") return "Payoff";
@@ -54,12 +55,13 @@ export function mountMomentBoard(host, ctx) {
   let offset = 0;
   clips.forEach((clip, index) => {
     const scene = sceneFor(job, clip.scene);
+    const blank = clip?.kind === "blank";
     const tile = el("button", {
-      class: "st-mb-tile",
+      class: `st-mb-tile${blank ? " is-blank" : ""}`,
       type: "button",
-      title: `${roleLabel(clip)} · scene ${Number(clip.scene) + 1} · ${formatTime(offset)}`,
+      title: `${roleLabel(clip)} · ${blank ? "blank" : `scene ${Number(clip.scene) + 1}`} · ${formatTime(offset)}`,
     }, [
-      el("img", { src: thumbFor(job, scene), alt: "", loading: "lazy" }),
+      blank ? null : el("img", { src: thumbFor(job, scene), alt: "", loading: "lazy" }),
       el("span", { class: "st-mb-num", text: String(index + 1) }),
       el("span", { class: `st-mb-role is-${String(clip.role || "beat")} ${clip.beat_kind ? `is-${clip.beat_kind}` : ""}`, text: roleLabel(clip) }),
     ]);
@@ -83,6 +85,15 @@ export function mountMomentBoard(host, ctx) {
       strip.append(tile);
     }
   }
+
+  const blank = el("button", {
+    class: "st-mb-add is-blank",
+    type: "button",
+    text: "Blank",
+    title: "Add 0.8s dark filler",
+  });
+  blank.addEventListener("click", () => ctx.appendBlank());
+  strip.append(blank);
 
   const add = el("button", {
     class: `st-mb-add${expanded ? " is-open" : ""}`,

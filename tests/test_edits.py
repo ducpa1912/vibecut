@@ -14,6 +14,7 @@ import audio
 import captions
 import edits
 import history_store
+import render
 import routes_edits
 from fastapi import HTTPException
 
@@ -859,3 +860,41 @@ def test_compile_uses_the_edit_sequence_order(env):
     )
     assert compiled.status_code == 200, compiled.text
     assert [item["scene"] for item in compiled.json()["segments"]] == [1, 0]
+
+
+def test_blank_filler_is_a_valid_sequence_clip_and_compiles_black(env):
+    response = env["client"].post(
+        f"/api/jobs/{env['job_id']}/edits",
+        json={
+            "set_id": "cs_1",
+            "story_id": "s1",
+            "aspect": "9:16",
+            "sequence": [
+                {"kind": "blank", "start": 0, "end": 0.8, "role": "beat", "color": "#000000"},
+                {"scene": 0, "start": 0.0, "end": 2.0, "role": "hook"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    edit = response.json()["edit"]
+    assert edit["sequence"][0]["kind"] == "blank"
+    compiled = env["client"].get(
+        f"/api/jobs/{env['job_id']}/edits/{edit['id']}/compile?include_captions=false",
+    )
+    assert compiled.status_code == 200, compiled.text
+    segments = compiled.json()["segments"]
+    assert segments[0]["blank"] is True
+    assert segments[0]["blank_color"] == "#000000"
+
+
+def test_render_preparation_keeps_blank_duration():
+    prepared = render.prepare_render(
+        {"clips": [
+            {"kind": "blank", "start": 0, "end": 0.8, "role": "beat"},
+            {"scene": 0, "start": 1.0, "end": 3.0, "role": "hook"},
+        ]},
+        {"duration": 10.0},
+    )
+    assert prepared["clips"][0]["kind"] == "blank"
+    assert prepared["clips"][0]["duration"] == pytest.approx(0.8, abs=0.05)
+    assert prepared["clips"][1]["scene"] == 0

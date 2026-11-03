@@ -1542,6 +1542,17 @@ export function mount(root, ctx) {
         renderMomentBoard();
       },
       seek: (time) => seek(time),
+      appendBlank: () => {
+        setSequence([...currentSequence(), {
+          kind: "blank",
+          start: 0,
+          end: 0.8,
+          role: "beat",
+          color: "#000000",
+        }]);
+        notify("0.8s blank filler added.", "ok");
+        renderMomentBoard();
+      },
       appendScene: (scene) => {
         setSequence([...currentSequence(), {
           scene: Number(scene.id),
