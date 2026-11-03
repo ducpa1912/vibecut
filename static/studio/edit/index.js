@@ -63,7 +63,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=0.3.0";
+    link.href = "/static/studio/edit/edit.css?v=20261103-3";
     document.head.append(link);
   }
 }
