@@ -13,7 +13,6 @@ import {
   clone,
   clamp,
   formatSpan,
-  newTextLayer,
   numberOr,
   round,
 } from "../model.js";
@@ -61,7 +60,7 @@ export function mountTextPanel(host, ctx) {
   if (!layers.length) {
     host.append(el("div", { class: "st-layer-empty" }, [
       el("h3", { text: "No text yet" }),
-      el("p", { text: "Add a hook card, a title or an end card. It appears on the preview box and the timeline." }),
+      el("p", { text: "Use Add in Layers, then choose the text kind here. The layer appears on the preview and the timeline." }),
     ]));
   } else {
     const list = el("div", { class: "st-layer-list", role: "list" });
@@ -82,31 +81,6 @@ export function mountTextPanel(host, ctx) {
     }
     host.append(list);
   }
-
-  const addRow = el("div", { class: "st-layer-add" });
-  const kind = el("select", { "aria-label": "New text kind" });
-  for (const [value, preset] of Object.entries(TEXT_KINDS)) {
-    kind.append(el("option", { value, text: preset.label }));
-  }
-  const add = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Add text" });
-  add.addEventListener("click", () => {
-    const next = newTextLayer(kind.value, {
-      duration: ctx.getDuration(),
-      playhead: ctx.getPlayhead(),
-      index: (ctx.getEdit()?.graphics || []).length,
-      hookText: ctx.getStory?.()?.hook?.text || "",
-    });
-    // R2 trim pins: a hook opens the story, so it keeps its offset from time 0
-    // when the first sentence changes. The frozen contract spells the pin
-    // `anchor:"story_start"`; the Edit schema stores it as `pin` and keeps
-    // `anchor` for the layout position, so send the stored spelling.
-    if (next.kind === "hook" && ctx.trimReady?.()) next.pin = "story_start";
-    const graphics = [...(ctx.getEdit()?.graphics || []), next];
-    ctx.setGraphics(graphics);
-    ctx.select("text", next.id);
-  });
-  addRow.append(kind, add);
-  host.append(addRow);
 
   if (!selected) return;
 

@@ -12,7 +12,6 @@
  */
 
 import { el } from "../ui.js";
-import { icon } from "./icons.js";
 import { formatSpan, formatTime, layerSpans, numberOr } from "./model.js";
 import { trimStory } from "../api.js";
 import { receiptSummary } from "../stories.js";
@@ -25,15 +24,6 @@ const LANE_LABELS = {
   effects: "Effects",
   color: "Color",
   audio: "Audio",
-};
-
-const EMPTY_ACTION = {
-  clean: "Add a box",
-  text: "Add text",
-  captions: "Open captions",
-  effects: "Add an effect",
-  color: "Choose a colour",
-  audio: "Add music",
 };
 
 const DRY_RUN_MS = 90;
@@ -482,23 +472,6 @@ export function mountTimeline(root, options = {}) {
         makeTrimHandle("end", view),
       );
     }
-    if (!row.items.length && row.kind !== "sentences" && row.kind !== "scenes") {
-      const action = EMPTY_ACTION[row.kind] || "Add a layer";
-      const empty = el("button", {
-        class: "st-tl-empty",
-        type: "button",
-        title: action,
-      }, [
-        icon("plus", { size: 11 }),
-        el("span", { text: action }),
-      ]);
-      empty.addEventListener("pointerdown", (event) => event.stopPropagation());
-      empty.addEventListener("click", (event) => {
-        event.stopPropagation();
-        handlers.onAdd(row.kind);
-      });
-      track.append(empty);
-    }
     track.addEventListener("pointerdown", (event) => {
       if (event.target.closest(".st-tl-bar, .st-tl-trim")) return;
       seeking = true;
@@ -872,17 +845,6 @@ export function mountTimeline(root, options = {}) {
         row.kind !== "sentences" ? el("small", { text: String(row.items.length) }) : null,
       ]);
       if (row.kind !== "sentences" && row.kind !== "scenes") {
-        const add = el("button", {
-          class: "st-tl-add",
-          type: "button",
-          title: `Add ${row.label || LANE_LABELS[row.kind] || "layer"}`,
-          "aria-label": `Add ${row.label || LANE_LABELS[row.kind] || "layer"}`,
-        }, [icon("plus", { size: 11 })]);
-        add.addEventListener("click", (event) => {
-          event.stopPropagation();
-          handlers.onAdd(row.kind);
-        });
-        label.append(add);
         label.setAttribute("role", "button");
         label.setAttribute("tabindex", "0");
         label.addEventListener("click", () => handlers.onSelect(row.kind, ""));

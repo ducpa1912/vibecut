@@ -17,6 +17,7 @@ MODEL = (STUDIO / "edit" / "model.js").read_text(encoding="utf-8")
 API = (STUDIO / "edit" / "api.js").read_text(encoding="utf-8")
 ICONS = (STUDIO / "edit" / "icons.js").read_text(encoding="utf-8")
 CSS = (STUDIO / "edit" / "edit.css").read_text(encoding="utf-8")
+TEXT = (STUDIO / "edit" / "layers" / "text.js").read_text(encoding="utf-8")
 
 
 @needs_node
@@ -107,14 +108,21 @@ def test_redo_posts_the_version_to_the_restore_route():
     assert json.loads(call["body"]) == {"version": "ed_old"}
 
 
-def test_empty_states_have_a_way_forward_in_layers_and_timeline():
-    assert "st-layer-empty-action" in PANEL
+def test_layers_have_one_add_menu_and_collapsible_groups():
+    assert "st-layers-add" in PANEL
+    assert "st-layers-add-item" in PANEL
     assert "ctx.add(group.kind)" in PANEL
-    for copy in ("Add a text box", "Add text", "Open captions", "Add an effect",
-                 "Choose a colour", "Add music"):
-        assert copy in PANEL
-    assert "st-tl-empty" in TIMELINE
-    assert "handlers.onAdd(row.kind)" in TIMELINE
-    assert "Add a box" in TIMELINE and "Add text" in TIMELINE
-    assert "st-layer-empty-action" in CSS
-    assert "st-tl-empty:hover" in CSS
+    assert "readCollapsed" in PANEL and "saveCollapsed" in PANEL
+    assert 'class: `st-layer-group${isCollapsed ? " is-collapsed" : ""}`' in PANEL
+    assert "st-layer-empty-copy" in PANEL
+    assert "st-layer-group-add" not in PANEL
+    assert "st-layer-empty-action" not in PANEL
+    assert ".st-layer-group.is-collapsed" in CSS
+    assert "st-tl-empty" not in TIMELINE
+    assert "handlers.onAdd(row.kind)" not in TIMELINE
+
+
+def test_text_panel_does_not_repeat_the_add_action():
+    assert "Add text" not in TEXT
+    assert "New text kind" not in TEXT
+    assert "TEXT_KINDS" in TEXT

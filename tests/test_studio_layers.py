@@ -125,7 +125,8 @@ def test_layers_panel_is_in_the_editor_and_grouped_in_timeline_order():
     assert 'kind: "effects", label: "Effects"' in PANEL
     assert 'kind: "color", label: "Colour"' in PANEL
     assert 'kind: "audio", label: "Audio"' in PANEL
-    assert "st-layer-group-add" in PANEL
+    assert "st-layers-add-menu" in PANEL
+    assert "st-layer-caret" in PANEL
     assert "st-layer-eye" in PANEL
     assert "st-layer-warning" in PANEL
 
@@ -154,12 +155,12 @@ def test_delete_removes_the_selected_layer_from_all_three_places():
     assert "renderLayers()" in INDEX
 
 
-def test_timeline_headers_have_add_buttons_and_bars_select_layers():
+def test_timeline_bars_select_layers_and_adding_lives_in_layers():
     assert "onAdd" in TIMELINE
-    assert "st-tl-add" in TIMELINE
-    assert "handlers.onAdd(row.kind)" in TIMELINE
+    assert "st-tl-add" not in TIMELINE
+    assert "handlers.onAdd(row.kind)" not in TIMELINE
     assert 'handlers.onSelect(kind, item.layerId || item.id)' in TIMELINE
-    assert "st-tl-add" in CSS
+    assert "st-layers-add-menu" in PANEL
     assert ".st-layers" in CSS
     assert ".st-preview-tool" in CSS
 

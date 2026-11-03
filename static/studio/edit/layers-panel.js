@@ -21,6 +21,25 @@ import {
 import { boxToFrame, visibleRect } from "./canvas-tools.js";
 import { icon } from "./icons.js";
 
+const COLLAPSE_KEY = "vibecut.studio.layers.collapsed";
+
+function readCollapsed() {
+  try {
+    const value = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]");
+    return new Set(Array.isArray(value) ? value.map(String) : []);
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function saveCollapsed(collapsed) {
+  try {
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed]));
+  } catch (_) {
+    /* The current panel still keeps its state. */
+  }
+}
+
 const GROUPS = [
   { kind: "clean", label: "Remove text", empty: "No text layers", action: "Add a text box", icon: "eraser", colour: LAYER_COLOURS.clean },
   { kind: "text", label: "Text", empty: "No text layers", action: "Add text", icon: "type", colour: LAYER_COLOURS.text },
@@ -150,54 +169,66 @@ export function renderLayersPanel(host, ctx) {
   }));
   const total = groups.reduce((count, group) => count + group.rows.length, 0);
 
+  const collapsed = readCollapsed();
+  const addMenu = el("details", { class: "st-layers-add" }, [
+    el("summary", { class: "st-layers-add-summary", title: "Add a layer" }, [
+      icon("plus", { size: 12 }),
+      el("span", { text: "Add" }),
+    ]),
+    el("div", { class: "st-layers-add-menu", role: "menu" }, GROUPS.map((group) => {
+      const button = el("button", {
+        class: "st-layers-add-item",
+        type: "button",
+        role: "menuitem",
+      }, [
+        icon(group.icon, { size: 13 }),
+        el("span", { text: group.label }),
+      ]);
+      button.addEventListener("click", () => {
+        addMenu.open = false;
+        ctx.add(group.kind);
+      });
+      return button;
+    })),
+  ]);
   const head = el("header", { class: "st-layers-head" }, [
     el("div", { class: "st-layers-heading" }, [
       el("h2", { text: "Layers" }),
       el("span", { class: "st-layers-count", text: String(total) }),
     ]),
+    addMenu,
   ]);
   const body = el("div", { class: "st-layers-scroll" });
 
   for (const group of groups) {
+    const isCollapsed = collapsed.has(group.kind);
     const section = el("section", {
-      class: "st-layer-group",
+      class: `st-layer-group${isCollapsed ? " is-collapsed" : ""}`,
       dataset: { kind: group.kind },
       "aria-label": group.label,
-    });
-    const add = el("button", {
-      class: "st-layer-group-add",
-      type: "button",
-      title: `Add ${group.label.toLowerCase()}`,
-      "aria-label": `Add ${group.label.toLowerCase()}`,
-    }, [icon("plus", { size: 13 })]);
-    add.addEventListener("click", (event) => {
-      event.stopPropagation();
-      ctx.add(group.kind);
     });
     const title = el("button", {
       class: "st-layer-group-title",
       type: "button",
-      title: `Show ${group.label.toLowerCase()} settings`,
+      title: `${isCollapsed ? "Expand" : "Collapse"} ${group.label.toLowerCase()}`,
+      "aria-expanded": isCollapsed ? "false" : "true",
       style: `--layer-colour:${group.colour}`,
     }, [
+      el("span", { class: "st-layer-caret", text: isCollapsed ? "▸" : "▾", "aria-hidden": "true" }),
       icon(group.icon, { size: 13, className: "st-layer-group-icon" }),
       el("span", { text: group.label }),
       el("small", { text: String(group.rows.length) }),
     ]);
-    title.addEventListener("click", () => ctx.select(group.kind, ""));
-    section.append(el("div", { class: "st-layer-group-head" }, [title, add]));
+    title.addEventListener("click", () => {
+      if (collapsed.has(group.kind)) collapsed.delete(group.kind);
+      else collapsed.add(group.kind);
+      saveCollapsed(collapsed);
+      renderLayersPanel(host, ctx);
+    });
+    section.append(el("div", { class: "st-layer-group-head" }, [title]));
 
     if (!group.rows.length) {
-      const empty = el("button", {
-        class: "st-layer-empty-action",
-        type: "button",
-        title: group.action,
-      }, [
-        icon("plus", { size: 12 }),
-        el("span", { text: group.action }),
-      ]);
-      empty.addEventListener("click", () => ctx.add(group.kind));
-      section.append(empty);
+      section.append(el("p", { class: "st-layer-empty-copy", text: group.empty }));
     } else {
       const list = el("div", { class: "st-layer-items", role: "list" });
       for (const row of group.rows) {

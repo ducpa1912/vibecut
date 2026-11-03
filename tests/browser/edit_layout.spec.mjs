@@ -246,7 +246,8 @@ try {
 
         const textRows = page.locator('.st-layer-item[data-kind="text"]');
         const textBefore = await textRows.count();
-        await page.locator('.st-layer-group[data-kind="text"] .st-layer-group-add').click();
+        await page.locator('.st-layers-add summary').click();
+        await page.getByRole('menuitem', { name: 'Text', exact: true }).click();
         await page.waitForFunction(
           (count) => document.querySelectorAll('.st-layer-item[data-kind="text"]').length === count + 1,
           textBefore,
