@@ -6706,9 +6706,9 @@ def _story_edit_for_render(
     if edit is None or edit.get("aspect") != aspect:
         LOGGER.warning("story %s has a missing or mismatched Edit %s", key, edit_id)
         raise _edit_stale_error()
-    if edits.clip_snapshot_hash(story.get("clips") or []) != (
-        edit.get("story_ref") or {}
-    ).get("clip_hash"):
+    if not edit.get("sequence") and edits.clip_snapshot_hash(
+        story.get("clips") or []
+    ) != (edit.get("story_ref") or {}).get("clip_hash"):
         LOGGER.warning("story %s changed since Edit %s", key, edit_id)
         raise _edit_stale_error()
     return edit
@@ -6791,6 +6791,21 @@ def _queue_story_render(
             f"Story renders use the stored story duration ({plan['target']}s); omit target.",
         )
     edit = _story_edit_for_render(job, story, set_id, body.aspect)
+    if edit is not None and edit.get("sequence"):
+        sequence = [
+            {
+                **clip,
+                "dur": round(max(0.0, float(clip.get("end") or 0) - float(clip.get("start") or 0)), 3),
+            }
+            for clip in edit["sequence"]
+        ]
+        plan = {
+            **plan,
+            "clips": sequence,
+            "total": round(sum(clip["dur"] for clip in sequence), 3),
+            "clip_count": len(sequence),
+            "hook_scene": sequence[0]["scene"] if sequence else plan.get("hook_scene"),
+        }
     caption_track = None
     captions_on = False
     edit_audio_plan = None

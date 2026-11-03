@@ -40,6 +40,7 @@ class EditCreateBody(BaseModel):
     set_id: str = Field(min_length=1, max_length=64)
     story_id: str = Field(min_length=1, max_length=64)
     aspect: str = Field(min_length=1, max_length=8)
+    sequence: list[dict] = Field(default_factory=list)
     clean: list[dict] = Field(default_factory=list)
     reframe: dict = Field(default_factory=dict)
     motion: list[dict] = Field(default_factory=list)
@@ -52,6 +53,7 @@ class EditCreateBody(BaseModel):
 class EditPatchBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    sequence: list[dict] = Field(default_factory=list)
     clean: list[dict] = Field(default_factory=list)
     reframe: dict = Field(default_factory=dict)
     motion: list[dict] = Field(default_factory=list)
@@ -78,7 +80,8 @@ class EditRestoreBody(BaseModel):
 router = APIRouter()
 
 _LAYER_FIELDS = (
-    "clean", "reframe", "motion", "color", "graphics", "captions", "audio",
+    "sequence", "clean", "reframe", "motion", "color", "graphics", "captions",
+    "audio",
 )
 
 
@@ -143,6 +146,31 @@ def _story_ref(record: dict, story: dict) -> dict:
         })
     except edits.EditError as exc:
         raise _http(exc) from exc
+
+
+def _edit_clips(edit: dict, story: dict) -> list[dict]:
+    """The clip order this Edit renders. A custom sequence wins."""
+    sequence = edit.get("sequence") or []
+    if not sequence:
+        return story.get("clips") or []
+    clips = []
+    for index, clip in enumerate(sequence):
+        start = float(clip.get("start") or 0.0)
+        end = float(clip.get("end") or start)
+        clips.append({
+            **clip,
+            "index": index,
+            "dur": round(max(0.0, end - start), 3),
+        })
+    return clips
+
+
+def _story_clips_changed(edit: dict, story: dict) -> bool:
+    if edit.get("sequence"):
+        return False
+    return edits.clip_snapshot_hash(story.get("clips") or []) != (
+        edit.get("story_ref") or {}
+    ).get("clip_hash")
 
 
 def _check_fresh(record: dict, job: dict) -> None:
@@ -343,8 +371,7 @@ def _edit_is_stale(job: dict | None, edit: dict) -> bool:
     story = _story_for_edit(job, edit)
     if story is None:
         return True
-    expected = str((edit.get("story_ref") or {}).get("clip_hash") or "")
-    return edits.clip_snapshot_hash(story.get("clips") or []) != expected
+    return _story_clips_changed(edit, story)
 
 
 def _payload(edit: dict, *, changed: bool = False, job: dict | None = None) -> dict:
@@ -500,7 +527,7 @@ def patch_edit(job_id: str, edit_id: str, body: EditPatchBody) -> dict:
         job, edit["story_ref"]["set_id"], edit["story_ref"]["story_id"],
     )
     _check_fresh(record, job)
-    if edits.clip_snapshot_hash(story.get("clips") or []) != edit["story_ref"]["clip_hash"]:
+    if _story_clips_changed(edit, story):
         raise HTTPException(
             409, "Story clips changed since this Edit was created; create a new Edit.",
         )
@@ -647,7 +674,7 @@ def compile_edit(
         job, edit["story_ref"]["set_id"], edit["story_ref"]["story_id"],
     )
     _check_fresh(record, job)
-    if edits.clip_snapshot_hash(story.get("clips") or []) != edit["story_ref"]["clip_hash"]:
+    if _story_clips_changed(edit, story):
         raise HTTPException(
             409, "Story clips changed since this Edit was created; create a new Edit.",
         )
@@ -664,7 +691,7 @@ def compile_edit(
     try:
         compiled = compose_render.compile_edit(
             edit,
-            clips=story.get("clips") or [],
+            clips=_edit_clips(edit, story),
             source=job.get("source") or {},
             scenes=(job.get("analysis") or {}).get("scenes") or [],
             caption_track=caption_track,
@@ -687,7 +714,7 @@ def _fresh_story(
         job, edit["story_ref"]["set_id"], edit["story_ref"]["story_id"],
     )
     _check_fresh(record, job)
-    if edits.clip_snapshot_hash(story.get("clips") or []) != edit["story_ref"]["clip_hash"]:
+    if _story_clips_changed(edit, story):
         raise HTTPException(
             409, "Story clips changed since this Edit was created; create a new Edit.",
         )
@@ -714,7 +741,7 @@ def _compiled_preview(
     try:
         return compose_render.compile_edit(
             edit,
-            clips=story.get("clips") or [],
+            clips=_edit_clips(edit, story),
             source=job.get("source") or {},
             scenes=(job.get("analysis") or {}).get("scenes") or [],
             caption_track=caption_track,
@@ -795,7 +822,7 @@ def edit_proxy(job_id: str, edit_id: str) -> FileResponse:
             str(job["source"]["path"]),
             job["source"],
             _job_dir(job_id),
-            story.get("clips") or [],
+            _edit_clips(edit, story),
             scenes=(job.get("analysis") or {}).get("scenes") or [],
             aspect=edit["aspect"],
         )

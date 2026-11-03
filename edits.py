@@ -163,10 +163,16 @@ _AUDIO_KEYS = frozenset({
 })
 TRANSLATE_MODES = ("literal", "smooth", "viral", "fun", "creative", "sad", "chill")
 _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
+# Custom sequence clips override the story snapshot. Each clip names a source
+# scene and a source-time window. Roles stay hook/beat/payoff so render order
+# and old consumers keep working; beat_kind is editorial only.
+_SEQUENCE_KEYS = frozenset({"scene", "start", "end", "role", "beat_kind"})
+CLIP_ROLES = ("hook", "beat", "payoff")
+BEAT_KINDS = ("context", "statement", "proof", "broll", "transition")
 _TOP_KEYS = frozenset({
     "schema_version", "renderer_version", "id", "version", "parent", "hash",
-    "created", "story_ref", "aspect", "clean", "reframe", "motion", "color",
-    "graphics", "captions", "audio",
+    "created", "story_ref", "aspect", "sequence", "clean", "reframe", "motion",
+    "color", "graphics", "captions", "audio",
 })
 
 
@@ -952,6 +958,50 @@ def normalize_graphics(value: Any) -> list[dict]:
     return layers
 
 
+def normalize_sequence(value: Any) -> list[dict]:
+    """Validate an Edit's custom clip order. Empty means the story snapshot."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise EditError("sequence must be a list.")
+    if len(value) > 240:
+        raise EditError("sequence may hold at most 240 clips.")
+    clips: list[dict] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise EditError(f"sequence[{index}] must be an object.")
+        _unknown(raw, _SEQUENCE_KEYS, f"sequence[{index}]")
+        try:
+            scene = int(raw.get("scene"))
+        except (TypeError, ValueError):
+            raise EditError(f"sequence[{index}].scene must be an integer.") from None
+        if scene < 0:
+            raise EditError(f"sequence[{index}].scene must be zero or greater.")
+        start = _number(raw.get("start"), f"sequence[{index}].start", minimum=0.0)
+        end = _number(raw.get("end"), f"sequence[{index}].end", minimum=0.0)
+        if end - start < 0.2:
+            raise EditError(f"sequence[{index}] must be at least 0.2s long.")
+        role = str(raw.get("role") or "beat").strip().lower()
+        if role not in CLIP_ROLES:
+            raise EditError(
+                f"sequence[{index}].role must be one of: " + ", ".join(CLIP_ROLES) + "."
+            )
+        beat_kind = str(raw.get("beat_kind") or "").strip().lower()
+        if beat_kind and beat_kind not in BEAT_KINDS:
+            raise EditError(
+                f"sequence[{index}].beat_kind must be one of: "
+                + ", ".join(BEAT_KINDS) + "."
+            )
+        clips.append({
+            "scene": scene,
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "role": role,
+            **({"beat_kind": beat_kind} if beat_kind else {}),
+        })
+    return clips
+
+
 def normalize_captions(value: Any) -> dict:
     if value is None:
         value = {}
@@ -1090,6 +1140,7 @@ def build_edit(
     *,
     story_ref: Any,
     aspect: Any,
+    sequence: Any = None,
     clean: Any = None,
     reframe: Any = None,
     motion: Any = None,
@@ -1113,6 +1164,7 @@ def build_edit(
         parent = str(parent)
         if not _EDIT_ID_RE.match(parent):
             raise EditError("parent must be an Edit id.")
+    normalized_sequence = normalize_sequence(sequence)
     content = {
         "schema_version": SCHEMA_VERSION,
         "renderer_version": renderer_version,
@@ -1126,6 +1178,8 @@ def build_edit(
         "captions": normalize_captions(captions),
         "audio": normalize_audio(audio),
     }
+    if normalized_sequence:
+        content["sequence"] = normalized_sequence
     content_hash_value = content_hash(content)
     identifier = edit_id(content_hash_value, version, parent)
     stamp = time.time() if created is None else _number(
@@ -1141,6 +1195,7 @@ def build_edit(
         "created": round(stamp, 3),
         "story_ref": content["story_ref"],
         "aspect": content["aspect"],
+        "sequence": content.get("sequence") or [],
         "clean": content["clean"],
         "reframe": content["reframe"],
         "motion": content["motion"],
@@ -1171,6 +1226,7 @@ def normalize_edit(value: Any) -> dict:
     normalized = build_edit(
         story_ref=value.get("story_ref"),
         aspect=value.get("aspect"),
+        sequence=value.get("sequence"),
         clean=value.get("clean"),
         reframe=value.get("reframe"),
         motion=value.get("motion"),
@@ -1203,6 +1259,7 @@ def restored_edit(target: dict, *, parent_edit: dict, created: float | None = No
     return build_edit(
         story_ref=parent_edit["story_ref"],
         aspect=parent_edit["aspect"],
+        sequence=target.get("sequence") or parent_edit.get("sequence"),
         clean=target["clean"],
         reframe=target["reframe"],
         motion=target["motion"],

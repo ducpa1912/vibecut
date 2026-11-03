@@ -97,6 +97,8 @@ export function mountTimeline(root, options = {}) {
     onSeek: options.onSeek || (() => {}),
     onSelect: options.onSelect || (() => {}),
     onAdd: options.onAdd || (() => {}),
+    onAddMoment: options.onAddMoment || (() => {}),
+    onReorder: options.onReorder || (() => {}),
     onTrim: options.onTrim || (() => {}),
     onConflict: options.onConflict || (() => {}),
     beforeTrim: options.beforeTrim || (() => Promise.resolve(true)),
@@ -136,6 +138,7 @@ export function mountTimeline(root, options = {}) {
           <p class="st-hint">Click a sentence or a layer to jump to it. Drag the story handles to trim at sentence bounds.</p>
         </div>
         <div class="st-timeline-meta">
+          <button id="st-timeline-add" class="st-btn st-btn-ghost st-btn-small" type="button">+ Add clips</button>
           <span id="st-timeline-outside" class="st-chip st-chip-quiet" hidden></span>
           <span id="st-timeline-span" class="st-mono st-timeline-span">0:00.0</span>
           <span id="st-timeline-count" class="st-chip st-chip-quiet">0 layers</span>
@@ -155,6 +158,7 @@ export function mountTimeline(root, options = {}) {
     count: $("#st-timeline-count"),
     outside: $("#st-timeline-outside"),
     status: $("#st-timeline-status"),
+    add: $("#st-timeline-add"),
     scroll: $(".st-timeline-scroll"),
   };
 
@@ -297,6 +301,24 @@ export function mountTimeline(root, options = {}) {
     }, [
       label ? el("span", { text: label }) : null,
     ]);
+    if (kind === "scenes") {
+      button.draggable = true;
+      button.dataset.sceneIndex = String(item.index ?? 0);
+      button.addEventListener("dragstart", (event) => {
+        event.dataTransfer?.setData("text/plain", String(item.index ?? 0));
+        event.dataTransfer.effectAllowed = "move";
+      });
+      button.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      });
+      button.addEventListener("drop", (event) => {
+        event.preventDefault();
+        const from = Number(event.dataTransfer?.getData("text/plain"));
+        const to = Number(item.index ?? 0);
+        if (Number.isFinite(from) && from !== to) handlers.onReorder(from, to);
+      });
+    }
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       if (kind !== "scenes") handlers.onSelect(kind, item.layerId || item.id);
@@ -307,7 +329,10 @@ export function mountTimeline(root, options = {}) {
   }
 
   function sceneRows() {
-    const clips = Array.isArray(state.story?.clips) ? state.story.clips : [];
+    const custom = Array.isArray(state.edit?.sequence) ? state.edit.sequence : [];
+    const clips = custom.length
+      ? custom
+      : (Array.isArray(state.story?.clips) ? state.story.clips : []);
     const rows = [];
     let offset = 0;
     for (const clip of clips) {
@@ -316,6 +341,7 @@ export function mountTimeline(root, options = {}) {
       const role = String(clip?.role || "beat");
       rows.push({
         id: `scene-${clip?.scene}-${offset.toFixed(3)}`,
+        index: rows.length,
         label: `${role === "hook" ? "Hook" : role === "payoff" ? "Payoff" : "Scene"} ${Number.isFinite(scene) ? scene + 1 : ""}`.trim(),
         start: offset,
         end: offset + span,
@@ -892,6 +918,7 @@ export function mountTimeline(root, options = {}) {
     }
   }
 
+  dom.add?.addEventListener("click", () => handlers.onAddMoment());
   dom.scroll.addEventListener("keydown", (event) => {
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {

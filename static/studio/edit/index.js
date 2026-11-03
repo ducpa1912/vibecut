@@ -54,7 +54,7 @@ import {
 const CSS_ID = "vibecut-studio-edit-css";
 const CHOICE_KEY = "vibecut.studio.edit.choice";
 const ALL_MOMENTS = "__all_moments";
-const LAYER_FIELDS = ["clean", "reframe", "motion", "color", "graphics", "captions", "audio"];
+const LAYER_FIELDS = ["sequence", "clean", "reframe", "motion", "color", "graphics", "captions", "audio"];
 
 function ensureStyles() {
   if (!document.getElementById(CSS_ID)) {
@@ -850,6 +850,7 @@ export function mount(root, ctx) {
   function defaultLayers(fork, _jobTrack) {
     if (fork) {
       return {
+        sequence: clone(fork.sequence || []),
         clean: clone(fork.clean || []),
         reframe: clone(fork.reframe || {}),
         motion: clone(fork.motion || []),
@@ -860,6 +861,7 @@ export function mount(root, ctx) {
       };
     }
     return {
+      sequence: [],
       clean: [],
       reframe: {},
       motion: [],
@@ -915,7 +917,7 @@ export function mount(root, ctx) {
       state.edit.captions = clone(fallbackCaptions);
     }
     state.dirty.delete("captions");
-    state.duration = storyDuration(state.story, state.edit);
+    state.duration = sequenceDuration() || storyDuration(state.story, state.edit);
     populateHeader();
     syncPreview();
     scheduleTimeline();
@@ -1166,6 +1168,103 @@ export function mount(root, ctx) {
       timelineRaf = 0;
       syncTimeline();
     });
+  }
+
+
+  function sequenceDuration() {
+    const sequence = state.edit?.sequence || [];
+    if (!sequence.length) return 0;
+    return sequence.reduce((total, clip) => (
+      total + Math.max(0, numberOr(clip.end) - numberOr(clip.start))
+    ), 0);
+  }
+
+  function effectiveDuration() {
+    return sequenceDuration() || state.duration;
+  }
+
+  function currentSequence() {
+    const saved = Array.isArray(state.edit?.sequence) ? state.edit.sequence : [];
+    if (saved.length) return clone(saved);
+    return (state.story?.clips || []).map((clip) => ({
+      scene: Number(clip.scene),
+      start: Number(clip.start),
+      end: Number(clip.end),
+      role: clip.role || "beat",
+    }));
+  }
+
+  function setSequence(sequence) {
+    if (!state.edit) return;
+    state.edit.sequence = sequence;
+    state.duration = sequenceDuration() || state.duration;
+    touch("sequence");
+    renderLayers();
+    preview?.setData({
+      aspect: state.aspect,
+      edit: state.edit,
+      captions: state.captions,
+      duration: state.duration,
+      selected: state.selected,
+      jobId: state.job?.id,
+    });
+    preview?.refresh();
+    scheduleTimeline();
+  }
+
+  function reorderScene(from, to) {
+    const sequence = currentSequence();
+    if (from < 0 || from >= sequence.length || to < 0 || to >= sequence.length) return;
+    const [moved] = sequence.splice(from, 1);
+    sequence.splice(to, 0, moved);
+    setSequence(sequence);
+    notify("Scene order changed. The timeline and render use the new order.", "ok");
+  }
+
+  function appendMomentDialog() {
+    if (!state.set?.id) return;
+    const stories = (state.set.stories || []).filter((story) => story.id !== state.story?.id);
+    const dialog = el("dialog", { class: "st-dialog", "aria-labelledby": "st-append-title" });
+    const close = () => { dialog.close(); dialog.remove(); };
+    const head = el("header", { class: "st-dialog-head" }, [
+      el("h2", { id: "st-append-title", text: "Add clips to this edit" }),
+      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+    ]);
+    head.lastChild.addEventListener("click", close);
+    dialog.append(head);
+    dialog.append(el("p", {
+      class: "st-hint",
+      text: "The selected moments are appended after the current cut. Drag scenes in the timeline to reorder them.",
+    }));
+    if (!stories.length) {
+      dialog.append(el("p", { class: "st-hint", text: "No other moments in this set. Build another moment in Moments first." }));
+    }
+    for (const story of stories) {
+      const row = el("button", { class: "st-layer-row", type: "button" }, [
+        el("span", { class: "st-layer-badge", text: "Moment" }),
+        el("span", { class: "st-layer-name", text: story.title || story.id }),
+        el("span", { class: "st-hint", text: `${story.clips?.length || 0} scenes` }),
+      ]);
+      row.addEventListener("click", () => {
+        const appended = (story.clips || []).map((clip) => ({
+          scene: Number(clip.scene),
+          start: Number(clip.start),
+          end: Number(clip.end),
+          role: "beat",
+          beat_kind: "context",
+        }));
+        if (!appended.length) return;
+        setSequence([...currentSequence(), ...appended]);
+        close();
+        notify(`Added ${appended.length} scene${appended.length === 1 ? "" : "s"} to this edit.`, "ok");
+      });
+      dialog.append(row);
+    }
+    const cancel = el("button", { class: "st-btn st-btn-ghost", type: "button", text: "Cancel" });
+    cancel.addEventListener("click", close);
+    dialog.append(el("div", { class: "st-actions" }, [cancel]));
+    document.body.append(dialog);
+    dialog.showModal();
   }
 
   function renderInspector() {
@@ -1508,7 +1607,7 @@ export function mount(root, ctx) {
         state.edit[field] = clone(saved[field]);
       }
     }
-    state.duration = storyDuration(state.story, state.edit);
+    state.duration = sequenceDuration() || storyDuration(state.story, state.edit);
     if (!state.dirty.size) setSaveStatus("Saved", "ok");
     if (!disposed) {
       syncPreview();
@@ -1540,7 +1639,7 @@ export function mount(root, ctx) {
       aspect: fresh.aspect,
     });
     if (!keep.has("captions")) await resolveCaptionTrack(state.edit);
-    state.duration = storyDuration(state.story, state.edit);
+    state.duration = sequenceDuration() || storyDuration(state.story, state.edit);
     syncPreview();
     syncTimeline();
     setUndoState();
@@ -1799,6 +1898,8 @@ export function mount(root, ctx) {
         onSeek: (time) => seek(time),
         onSelect: (kind, id) => selectLayer(kind, id),
         onAdd: (kind) => addLayer(kind),
+        onAddMoment: () => appendMomentDialog(),
+        onReorder: (from, to) => reorderScene(from, to),
         beforeTrim: () => flushSave(),
         onTrim: (result) => applyTrimResult(result, "Trimmed"),
         onConflict: (error) => { void handleTrimConflict(error); },
@@ -1903,7 +2004,7 @@ export function mount(root, ctx) {
       if (disposed || !result?.edit) return;
       state.redoIds.push(undoneId);
       state.edit = result.edit;
-      state.duration = storyDuration(state.story, state.edit);
+      state.duration = sequenceDuration() || storyDuration(state.story, state.edit);
       state.selected = null;
       state.dirty.clear();
       await resolveCaptionTrack(state.edit);
@@ -1942,7 +2043,7 @@ export function mount(root, ctx) {
       if (disposed || !result?.edit) return;
       state.redoIds.pop();
       state.edit = result.edit;
-      state.duration = storyDuration(state.story, state.edit);
+      state.duration = sequenceDuration() || storyDuration(state.story, state.edit);
       state.selected = null;
       state.dirty.clear();
       await resolveCaptionTrack(state.edit);

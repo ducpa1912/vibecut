@@ -165,6 +165,20 @@ def env(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- model
 
 
+def test_custom_sequence_round_trips_and_keeps_old_hashes():
+    sequence = [
+        {"scene": 1, "start": 10.0, "end": 12.0, "role": "beat", "beat_kind": "broll"},
+        {"scene": 0, "start": 0.0, "end": 2.0, "role": "hook"},
+    ]
+    edit = _build(sequence=sequence)
+    assert edit["sequence"] == sequence
+    assert edits.normalize_edit(edit) == edit
+    # No sequence key means the old hash shape, so existing Edits stay valid.
+    assert _build()["sequence"] == []
+    with pytest.raises(edits.EditError):
+        _build(sequence=[{"scene": 0, "start": 2.0, "end": 1.0}])
+
+
 def test_hash_is_canonical_sha256_of_content():
     edit = _build(
         clean=[{"kind": "plate", "box": {"x": 0.1, "y": 0.7, "w": 0.5, "h": 0.1}}],
@@ -822,3 +836,26 @@ def test_audio_mode_chosen_is_kept_only_when_true():
     assert edits.normalize_audio({"mode": "original"}) == edits.normalize_audio({"mode": "original", "mode_chosen": False})
     with pytest.raises(edits.EditError, match="mode_chosen"):
         edits.normalize_audio({"mode": "original", "mode_chosen": "yes"})
+
+
+def test_compile_uses_the_edit_sequence_order(env):
+    response = env["client"].post(
+        f"/api/jobs/{env['job_id']}/edits",
+        json={
+            "set_id": "cs_1",
+            "story_id": "s1",
+            "aspect": "9:16",
+            "sequence": [
+                {"scene": 1, "start": 10.0, "end": 13.0, "role": "beat"},
+                {"scene": 0, "start": 0.0, "end": 3.0, "role": "hook"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    edit = response.json()["edit"]
+    assert [clip["scene"] for clip in edit["sequence"]] == [1, 0]
+    compiled = env["client"].get(
+        f"/api/jobs/{env['job_id']}/edits/{edit['id']}/compile?include_captions=false",
+    )
+    assert compiled.status_code == 200, compiled.text
+    assert [item["scene"] for item in compiled.json()["segments"]] == [1, 0]
