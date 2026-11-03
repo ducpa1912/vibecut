@@ -313,6 +313,14 @@
     historyLatest: $("#history-latest"),
     historyList: $("#history-list"),
     historyDetail: $("#history-detail"),
+    textScan: $("#text-scan"),
+    textScanStatus: $("#text-scan-status"),
+    textScanBadge: $("#text-scan-badge"),
+    textScanProgress: $("#text-scan-progress"),
+    textScanFill: $("#text-scan-fill"),
+    textScanProgressText: $("#text-scan-progress-text"),
+    textScanStart: $("#text-scan-start"),
+    textScanCancel: $("#text-scan-cancel"),
     drawer: $("#drawer"),
     drawerContent: $("#drawer-content"),
     toast: $("#toast"),
@@ -330,6 +338,7 @@
     urlInspectUrl: "",
     ingestStatus: null,
     job: null,
+    textScan: null,
     plan: null,
     setupSecrets: {},
     target: 30,
@@ -1791,6 +1800,7 @@
     });
     dom.renderAb.addEventListener("click", abHooks);
     bindMixer();
+    bindTextScan();
     dom.exportSrt.addEventListener("click", () => exportCut("srt"));
     dom.exportVtt.addEventListener("click", () => exportCut("vtt"));
     dom.exportEdl.addEventListener("click", () => exportCut("edl"));
@@ -2932,6 +2942,7 @@
     state.job = job;
     cancelAudioScript();
     cancelTranslationWarm();
+    abortTextScan();
     state.translation = null;
     state.meta = {
       width: job.source.width,
@@ -2971,6 +2982,7 @@
     updateAnalyzeState();
     showView("result");
     renderResult();
+    refreshTextScan();
     loadAudioEngines();
     loadAudioMoods();
     loadTranslateCheck();
@@ -7704,7 +7716,253 @@
     dom.ingest.hidden = view !== "ingest";
     dom.progress.hidden = view !== "progress";
     dom.result.hidden = view !== "result";
+    // C0 frame: only the result screen is a fixed three-pane editor, so the
+    // class rides with that view and nothing else. The CSS decides the width.
+    document.body.classList.toggle("editor-frame", view === "result");
+    if (view !== "result") abortTextScan();
     window.scrollTo(0, 0);
+  }
+
+  // ---------------------------------------------------------------- text scan
+  //
+  // C0 scans for text on screen through the shared Check pass rather than a
+  // second Classic-only scan, so the card only reports what that pass says:
+  // queued, running, ready, cancelled or failed. Nothing here claims text was
+  // found unless the report confirms it.
+
+  function textScanFacts(report) {
+    const text = (report && report.text) || {};
+    const tracklets = Array.isArray(report && report.tracklets) ? report.tracklets : [];
+    const counted = Number(text.tracklets);
+    return {
+      regions: Number.isFinite(counted) ? counted : tracklets.length,
+      confirmed: text.confirmed === true,
+      present: text.present === true,
+    };
+  }
+
+  function abortTextScan() {
+    const scan = state.textScan;
+    if (scan && scan.controller) {
+      try { scan.controller.abort(); } catch (_) { /* ignore */ }
+    }
+    state.textScan = null;
+  }
+
+  function paintTextScan() {
+    if (!dom.textScanStatus) return;
+    const scan = state.textScan;
+    const status = (scan && scan.status) || "idle";
+    const report = (scan && scan.report) || null;
+    const facts = textScanFacts(report);
+    const active = status === "queued" || status === "running";
+    const progress = Number(report && report.progress);
+    const pct = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
+
+    dom.textScanProgress.hidden = !active;
+    dom.textScanCancel.hidden = !active;
+    dom.textScanStart.hidden = active;
+    dom.textScanBadge.hidden = active || status === "idle";
+    dom.textScanBadge.className = "text-scan-badge"
+      + (status === "ready" && facts.confirmed ? " is-ready" : "")
+      + (status === "failed" ? " is-failed" : "");
+    if (active) {
+      dom.textScanFill.style.width = `${Math.round(pct * 100)}%`;
+      dom.textScanProgressText.textContent = `${Math.round(pct * 100)}%`;
+    }
+
+    if (status === "queued") {
+      dom.textScanBadge.textContent = "queued";
+      dom.textScanStatus.textContent = "Queued. The scan starts as soon as the Mac is free.";
+      dom.textScanStart.textContent = "Find text on screen";
+    } else if (status === "running") {
+      dom.textScanBadge.textContent = "scanning";
+      dom.textScanStatus.textContent = `Scanning for text on screen… ${Math.round(pct * 100)}%`;
+      dom.textScanStart.textContent = "Find text on screen";
+    } else if (status === "ready") {
+      dom.textScanBadge.textContent = facts.confirmed ? "✓ text found" : "no text";
+      dom.textScanStatus.textContent = facts.confirmed
+        ? `Text on screen: ${facts.regions} ${facts.regions === 1 ? "region" : "regions"} across this cut.`
+        : "Scan finished. No readable text on screen in this cut.";
+      dom.textScanStart.textContent = "Scan again";
+    } else if (status === "cancelled") {
+      dom.textScanBadge.textContent = "cancelled";
+      dom.textScanStatus.textContent = "Scan cancelled. Nothing was written for this cut.";
+      dom.textScanStart.textContent = "Find text on screen";
+    } else if (status === "failed") {
+      const reason = (report && (report.message || report.error)) || "the scan did not finish";
+      dom.textScanBadge.textContent = "failed";
+      dom.textScanStatus.textContent = `Scan failed: ${reason}`;
+      dom.textScanStart.textContent = "Retry scan";
+    } else {
+      dom.textScanStatus.textContent = "Not scanned yet. Find text to look for captions, watermarks and screen UI baked into the cut.";
+      dom.textScanStart.textContent = "Find text on screen";
+    }
+  }
+
+  // 202 is success to `fetch`, so Check's "still running" envelope has to be
+  // read by status code instead of by whether the promise rejected.
+  async function checkRequest(path, options = {}) {
+    const config = { ...options };
+    if (config.body && !config.headers) {
+      config.headers = { "Content-Type": "application/json" };
+    }
+    const token = tokenValue();
+    if (token) {
+      config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+    }
+    const response = await fetch(path, config);
+    let data = null;
+    try { data = await response.json(); } catch (_) { /* ignore */ }
+    return { status: response.status, data };
+  }
+
+  function checkProblem(status, data) {
+    const detail = (data && (data.detail || data.message)) || `Check answered ${status}`;
+    return typeof detail === "string" ? detail : JSON.stringify(detail);
+  }
+
+  async function readTextScan(jobId, signal) {
+    const { status, data } = await checkRequest(
+      `/api/jobs/${encodeURIComponent(jobId)}/check`, { signal },
+    );
+    if (status === 200) return { status: "ready", report: data };
+    if (status === 202) return { status: (data && data.status) || "queued", report: data };
+    if (status === 404) return { status: "idle", report: null };
+    throw new Error(checkProblem(status, data));
+  }
+
+  async function pollTextScan(jobId, controller) {
+    let misses = 0;
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      if (controller.signal.aborted || !state.job || state.job.id !== jobId) return;
+      let next;
+      try {
+        next = await readTextScan(jobId, controller.signal);
+        misses = 0;
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) return;
+        misses += 1;
+        if (misses < 3) continue;
+        state.textScan = { jobId, status: "failed", controller: null, report: { message: error.message } };
+        paintTextScan();
+        return;
+      }
+      if (!state.job || state.job.id !== jobId) return;
+      state.textScan = { jobId, status: next.status, report: next.report, controller };
+      paintTextScan();
+      if (next.status !== "queued" && next.status !== "running") return;
+    }
+  }
+
+  async function refreshTextScan() {
+    const jobId = state.job && state.job.id;
+    if (!jobId || !dom.textScanStatus) return;
+    abortTextScan();
+    const controller = new AbortController();
+    state.textScan = { jobId, status: "idle", report: null, controller };
+    paintTextScan();
+    try {
+      const next = await readTextScan(jobId, controller.signal);
+      if (controller.signal.aborted || !state.job || state.job.id !== jobId) return;
+      state.textScan = { jobId, status: next.status, report: next.report, controller };
+      paintTextScan();
+      if (next.status === "queued" || next.status === "running") {
+        await pollTextScan(jobId, controller);
+      }
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) return;
+      if (!state.job || state.job.id !== jobId) return;
+      state.textScan = { jobId, status: "failed", controller: null, report: { message: error.message } };
+      paintTextScan();
+    }
+  }
+
+  async function startTextScan() {
+    const jobId = state.job && state.job.id;
+    if (!jobId || !dom.textScanStatus) return;
+    const force = Boolean(state.textScan && state.textScan.report);
+    abortTextScan();
+    const controller = new AbortController();
+    state.textScan = { jobId, status: "queued", report: null, controller };
+    paintTextScan();
+    let next;
+    try {
+      const answer = await checkRequest(`/api/jobs/${encodeURIComponent(jobId)}/check`, {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({ force, sample_text: true }),
+      });
+      if (answer.status === 200) {
+        next = { status: "ready", report: answer.data };
+      } else if (answer.status === 202) {
+        next = {
+          status: (answer.data && answer.data.status) || "queued",
+          report: answer.data,
+        };
+      } else {
+        if (controller.signal.aborted || !state.job || state.job.id !== jobId) return;
+        state.textScan = {
+          jobId, status: "failed", controller: null,
+          report: {
+            message: answer.status === 409
+              ? "this cut is still being analysed"
+              : checkProblem(answer.status, answer.data),
+          },
+        };
+        paintTextScan();
+        return;
+      }
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) return;
+      if (!state.job || state.job.id !== jobId) return;
+      state.textScan = { jobId, status: "failed", controller: null, report: { message: error.message } };
+      paintTextScan();
+      return;
+    }
+    if (controller.signal.aborted || !state.job || state.job.id !== jobId) return;
+    state.textScan = { jobId, status: next.status, report: next.report, controller };
+    paintTextScan();
+    if (next.status === "queued" || next.status === "running") {
+      await pollTextScan(jobId, controller);
+    }
+  }
+
+  async function cancelTextScan() {
+    const jobId = state.job && state.job.id;
+    if (!jobId || !dom.textScanStatus) return;
+    abortTextScan();
+    dom.textScanCancel.hidden = true;
+    dom.textScanStart.hidden = true;
+    dom.textScanProgress.hidden = true;
+    dom.textScanStatus.textContent = "Cancelling the scan…";
+    try {
+      const answer = await api(`/api/jobs/${encodeURIComponent(jobId)}/check/cancel`, { method: "POST" });
+      if (!state.job || state.job.id !== jobId) return;
+      // A cut that already had a report keeps it; the route says so by
+      // returning the last one as ready.
+      const kept = answer && answer.status === "ready";
+      state.textScan = {
+        jobId,
+        status: kept ? "ready" : "cancelled",
+        controller: null,
+        report: { status: kept ? "ready" : "cancelled", message: "Cancelled", text: {} },
+      };
+      paintTextScan();
+      if (kept) await refreshTextScan();
+    } catch (error) {
+      if (!state.job || state.job.id !== jobId) return;
+      state.textScan = { jobId, status: "failed", controller: null, report: { message: error.message } };
+      paintTextScan();
+    }
+  }
+
+  function bindTextScan() {
+    if (!dom.textScanStart) return;
+    dom.textScanStart.addEventListener("click", () => { startTextScan(); });
+    dom.textScanCancel.addEventListener("click", () => { cancelTextScan(); });
+    paintTextScan();
   }
 
   function showIngestError(message) {

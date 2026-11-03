@@ -1,6 +1,6 @@
 # Studio features embedded in Classic
 
-Status: plan. Base: `origin/studio` at `8457728`; Classic at `e38004a`.
+Status: plan, C0 built. Base: `origin/studio` at `8457728`; Classic at `193b60e`.
 
 Classic is not an iframe around Studio. The goal is to bring the interaction
 patterns that fixed Studio's editor into Classic, while keeping Classic's page,
@@ -70,6 +70,20 @@ editor.
 **Done when:** at 1280×720 and 1024×680 the preview, timeline and settings are
 visible without page scroll; the founder can start and cancel a text scan from
 Edit.
+
+**Status:** built, not founder-passed. From 1000px up `#result-view` is one
+grid — compact `.result-top`, then `.editor-pane-preview`,
+`.editor-pane-timeline` and `.editor-pane-settings`, each scrolling on its own
+while the page does not. Below 1000px the three wrappers are
+`display: contents`, so a narrow screen keeps the single column it had. The
+scan card sits above Copy/sound/text and drives the shared
+`POST/GET /api/jobs/{id}/check` routes; Classic added no scan route of its own.
+
+Evidence: `tests/test_classic_frame.py` and
+`tests/browser/classic_frame.spec.mjs` run on a fixture job at 1280×720 and
+1024×680 — no page scroll, all three panes visible, scan idle → running →
+cancelled → ready. Check is stubbed in that spec, so a live scan on a real job
+still belongs to the founder pass.
 
 ### C1 — Layers and boxes
 

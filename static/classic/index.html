@@ -238,6 +238,7 @@
         </div>
       </div>
 
+      <div class="editor-pane editor-pane-preview">
       <div id="result-ready" class="result-ready" hidden>
         <span class="ready-dot" aria-hidden="true"></span>
         <span id="result-ready-text" class="ready-text"></span>
@@ -292,6 +293,9 @@
       </div>
 
 
+      </div>
+
+      <div class="editor-pane editor-pane-timeline">
       <section id="moments-section" class="moments-section">
         <div class="section-head moments-head">
           <div class="moments-heading">
@@ -379,6 +383,37 @@
         </details>
 
 
+        </section>
+      </div>
+
+      <div class="editor-pane editor-pane-settings">
+        <section class="edit-section-head" aria-labelledby="edit-section-title">
+          <div>
+            <p class="eyebrow">edit</p>
+            <h3 id="edit-section-title">Edit</h3>
+          </div>
+          <p class="hint">Copy, sound and text are optional. Render and Draft stay at the end.</p>
+        </section>
+
+        <section id="text-scan" class="edit-card text-scan-card" aria-labelledby="text-scan-title">
+          <div class="edit-card-head">
+            <div>
+              <h4 id="text-scan-title">Find text on screen</h4>
+              <p>Scan the cut for baked-in captions, watermarks and screen UI.</p>
+            </div>
+            <span id="text-scan-badge" class="text-scan-badge" hidden></span>
+          </div>
+          <p id="text-scan-status" class="hint text-scan-status" role="status" aria-live="polite">No text scan yet for this cut.</p>
+          <div id="text-scan-progress" class="text-scan-progress" hidden>
+            <div class="text-scan-bar" aria-hidden="true"><i id="text-scan-fill"></i></div>
+            <span id="text-scan-progress-text" class="hint"></span>
+          </div>
+          <div class="text-scan-actions">
+            <button id="text-scan-start" class="ghost small" type="button">Find text on screen</button>
+            <button id="text-scan-cancel" class="ghost small" type="button" hidden>Cancel</button>
+          </div>
+        </section>
+
         <section id="mixer-panel" class="mixer-panel" hidden>
           <div class="mixer-head">
             <span class="label">Automation mixer</span>
@@ -394,14 +429,6 @@
             <span><i class="mixer-swatch sw-voice"></i> voice line</span>
             <span><i class="mixer-swatch sw-bed"></i> music line</span>
           </div>
-        </section>
-
-        <section class="edit-section-head" aria-labelledby="edit-section-title">
-          <div>
-            <p class="eyebrow">edit</p>
-            <h3 id="edit-section-title">Edit</h3>
-          </div>
-          <p class="hint">Copy, sound and text are optional. Render and Draft stay at the end.</p>
         </section>
 
         <details id="audio-panel" class="audio-panel edit-panel" open>
@@ -636,10 +663,7 @@
           </div>
         </details>
 
-      </section>
-
-
-      <details id="history-panel" class="history-panel">
+        <details id="history-panel" class="history-panel">
         <summary>
           <span class="history-title">Activity</span>
           <span id="history-latest" class="history-latest"></span>
@@ -649,6 +673,7 @@
         <div id="history-list" class="history-list"></div>
         <div id="history-detail" class="history-detail" hidden></div>
       </details>
+      </div>
 
     </section>
 

@@ -2989,3 +2989,150 @@ select option:disabled { color: #666; }
 .clip-menu button[role="menuitemradio"]::before { content: ""; display: inline-block; width: 14px; }
 .clip-menu button[aria-checked="true"]::before { content: "✓"; }
 .clip-menu button.active::after { content: ""; }
+
+/* ------------------------------------------------------- C0 · editor frame
+
+   The result screen used to be one long document: preview, then moments, then
+   export, then edit, stacked top to bottom — the video scrolled out of view the
+   moment Edit was reached. From 1000px up the screen becomes a frame instead:
+   a compact top bar, then preview / timeline / settings side by side, each one
+   scrolling on its own so the page never does. Below 1000px the three wrappers
+   drop out of the layout entirely (`display: contents`), so the narrow screen
+   keeps exactly the single column it had before this change. */
+
+.editor-pane { display: contents; }
+
+@media (min-width: 1000px) {
+  body.editor-frame { overflow: hidden; }
+  body.editor-frame .topbar { height: 56px; }
+  /* The footer repeats health the top bar already shows, and 73px of it is
+     exactly what pushed the page past one screen. The frame owns the height. */
+  body.editor-frame footer.footer { display: none; }
+  body.editor-frame main.shell {
+    width: calc(100% - 40px);
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 56px);
+  }
+  body.editor-frame #result-view:not([hidden]) {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.08fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "top top top"
+      "preview timeline settings";
+    column-gap: 20px;
+    overflow: hidden;
+  }
+  body.editor-frame .result-top {
+    grid-area: top;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 2px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  body.editor-frame .result-top h2 { font-size: clamp(18px, 1.5vw, 24px); -webkit-line-clamp: 1; max-width: 46ch; }
+  body.editor-frame .result-top .hint { margin: 2px 0 0; }
+
+  body.editor-frame .editor-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+    min-height: 0;
+    padding: 14px 2px 20px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+  body.editor-frame .editor-pane > * { margin-block: 0; flex: 0 0 auto; }
+  body.editor-frame .editor-pane-preview { grid-area: preview; }
+  body.editor-frame .editor-pane-timeline {
+    grid-area: timeline;
+    padding-inline: 18px;
+    border-inline: 1px solid var(--line);
+  }
+  body.editor-frame .editor-pane-settings { grid-area: settings; }
+
+  /* Preview column: the video, a single-column hook panel, nothing else. */
+  body.editor-frame .hook-panel {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding: 0;
+    border-top: 0;
+  }
+  body.editor-frame .player-wrap {
+    flex-direction: column;
+    gap: 12px;
+    margin: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+  body.editor-frame .phone-frame { width: 100%; max-width: 278px; }
+  body.editor-frame .player-meta { width: 100%; }
+
+  /* Timeline column: moments and Smart Cut share the rail. */
+  body.editor-frame .smart-cut-panel { margin: 0; padding: 16px; }
+  body.editor-frame .moments-section { margin: 0; }
+  /* A column is narrower than the page, so headers wrap instead of clipping. */
+  body.editor-frame .moments-head { flex-wrap: wrap; gap: 10px; }
+  body.editor-frame .moments-head .target-tabs,
+  body.editor-frame .moments-head .sort-tabs { flex-wrap: wrap; }
+
+  /* Settings column: one card per row; there is no room for two. */
+  body.editor-frame .edit-section-head {
+    margin: 0;
+    padding: 0 2px 2px;
+    border-top: 0;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  body.editor-frame .edit-section-head h3 { font-size: 22px; }
+  body.editor-frame .edit-section-head .hint { text-align: left; max-width: none; }
+  body.editor-frame .edit-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "copy"
+      "text"
+      "sound";
+  }
+  body.editor-frame .history-panel { margin: 0; }
+  body.editor-frame .text-scan-card { padding: 14px 16px; }
+  /* Five mode tabs in one row do not fit a column; 3 + 2 does. */
+  body.editor-frame .audio-mode-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  /* Chromium keeps a focused control visible by scrolling its ancestors, which
+     would move the page under the frame. Pane padding gives it room instead. */
+  body.editor-frame .editor-pane { scroll-padding-block: 14px; }
+}
+
+/* --------------------------------------------------- text scan card (C0) */
+
+.text-scan-card { margin: 0; }
+.text-scan-status { margin: 0 0 10px; }
+.text-scan-badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.text-scan-badge.is-ready { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.text-scan-badge.is-failed { color: var(--payoff); border-color: color-mix(in srgb, var(--payoff) 40%, transparent); }
+.text-scan-progress { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.text-scan-bar {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-2);
+  overflow: hidden;
+}
+.text-scan-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 240ms ease; }
+.text-scan-actions { display: flex; align-items: center; gap: 8px; }
