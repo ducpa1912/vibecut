@@ -354,6 +354,20 @@ def prepare_render(plan: dict, meta: dict, audio_plan: dict | None = None) -> di
                 "duration": frames / OUT_FPS,
             })
             continue
+        if clip.get("kind") == "file":
+            frames = max(1, int(round(wanted * OUT_FPS)))
+            clips.append({
+                "kind": "file",
+                "scene": None,
+                "file": clip.get("file"),
+                "asset": dict(clip.get("asset") or {}),
+                "role": clip.get("role") or "beat",
+                "start": start,
+                "frames": frames,
+                "duration": frames / OUT_FPS,
+                "reverse": bool(clip.get("reverse")),
+            })
+            continue
         frames = _frames_for(start, wanted, source_duration)
         clips.append({
             "scene": clip["scene"],
@@ -401,13 +415,14 @@ def _blank_segment(
     encoder: str,
     color: str,
     cancel_event: threading.Event | None = None,
+    fps: int = OUT_FPS,
 ) -> None:
     """Write a solid-colour filler clip with the same timing as a beat."""
-    duration = max(1, frames) / OUT_FPS
+    duration = max(1, frames) / fps
     _run([
         _ffmpeg(), "-y", "-v", "error",
         "-f", "lavfi",
-        "-i", f"color=c={color}:s={out_w}x{out_h}:r={OUT_FPS}:d={duration:.6f}",
+        "-i", f"color=c={color}:s={out_w}x{out_h}:r={fps}:d={duration:.6f}",
         "-frames:v", str(max(1, frames)),
         *_encoder_args(encoder, quality),
         "-movflags", "+faststart",
@@ -435,6 +450,7 @@ def _segment_cache_key(
     fill_key: str | None = None,
     reverse: bool = False,
     freeze: bool = False,
+    fps: int = OUT_FPS,
 ) -> str:
     payload = {
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
@@ -447,6 +463,7 @@ def _segment_cache_key(
         "encoder": encoder,
         "first": first,
         "last": last,
+        "fps": fps,
     }
     if reverse:
         payload["reverse"] = True
@@ -461,6 +478,31 @@ def _segment_cache_key(
     if fill_key:
         payload["fill"] = fill_key
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
+
+
+def _clip_media(
+    job_dir: Path,
+    clip: dict | None,
+    source: str,
+    meta: dict,
+) -> tuple[str, dict]:
+    """Resolve the source file and probe metadata for one clip."""
+    clip = clip or {}
+    file_name = str(clip.get("file") or "")
+    if not file_name:
+        return source, meta
+    asset = clip.get("asset") if isinstance(clip.get("asset"), dict) else {}
+    path = job_dir / file_name
+    if not path.is_file():
+        raise PipelineError(f"Media asset is missing: {file_name}")
+    resolved = {
+        **asset,
+        "path": str(path),
+        "fingerprint": f"{file_name}:{path.stat().st_size}",
+        "duration": float(asset.get("duration") or 0.0),
+        "has_audio": bool(asset.get("has_audio")),
+    }
+    return str(path), resolved
 
 
 def _segment(
@@ -487,6 +529,7 @@ def _segment(
     fill: dict | None = None,
     reverse: bool = False,
     freeze: bool = False,
+    fps: int = OUT_FPS,
 ) -> bool:
     """Render one beat. Return True when the segment came from cache.
 
@@ -496,7 +539,7 @@ def _segment(
     key = _segment_cache_key(
         meta, scene, start, frames, out_w, out_h, quality, encoder, first, last,
         crop, crop_path, pre_filters, post_filters,
-        fill_key=(fill or {}).get("key"), reverse=reverse, freeze=freeze,
+        fill_key=(fill or {}).get("key"), reverse=reverse, freeze=freeze, fps=fps,
     )
     cached = cache_dir / f"{key}.mp4"
     if cached.exists() and cached.stat().st_size > 0:
@@ -517,6 +560,7 @@ def _segment(
         parts.append(",".join(str(item) for item in post_filters))
     if reverse:
         parts.append("reverse")
+    parts.append(f"fps={fps}")
     vf = ",".join(part for part in parts if part)
 
     if first and duration > 0.4:
@@ -564,6 +608,7 @@ def _audio_track(
     total: float,
     cancel_event: threading.Event | None = None,
     fade: dict | None = None,
+    job_dir: Path | None = None,
 ) -> None:
     """Build one continuous PCM bed from each clip's own exact input window.
 
@@ -581,17 +626,24 @@ def _audio_track(
 
     cmd = [ffmpeg, "-y", "-v", "error"]
     for clip in clips:
-        if clip.get("kind") == "blank" or clip.get("freeze"):
+        if (
+            clip.get("kind") == "blank"
+            or clip.get("freeze")
+            or (clip.get("file") and not bool((clip.get("asset") or {}).get("has_audio")))
+        ):
             cmd += [
                 "-f", "lavfi",
                 "-t", f"{float(clip['duration']):.6f}",
                 "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
             ]
         else:
+            clip_source = source
+            if job_dir is not None and clip.get("file"):
+                clip_source = str(job_dir / str(clip["file"]))
             cmd += [
                 "-ss", f"{float(clip['start']):.6f}",
                 "-t", f"{float(clip['duration']):.6f}",
-                "-i", source,
+                "-i", clip_source,
             ]
 
     graph: list[str] = []
@@ -1984,6 +2036,7 @@ def _frame_cache_key(
     out_h: int,
     meta: dict,
     encoder: str,
+    fps: int = OUT_FPS,
 ) -> str:
     layers = [
         {
@@ -2020,6 +2073,7 @@ def render_story_frame(
     aspect: str | None = None,
     encoder: str | None = None,
     cancel_event: threading.Event | None = None,
+    fps: int = OUT_FPS,
 ) -> bytes:
     """Render one frame through the same segment and layer graph as a reel."""
     quality = quality if quality in ("final", "720", "draft") else "final"
@@ -2029,13 +2083,14 @@ def render_story_frame(
     encoder = _choose_encoder(encoder)
     segments = list(compiled.get("segments") or [])
     total = float(segments[-1].get("out_end") or 0.0) if segments else 0.0
-    last_frame = max(0, int(round(total * OUT_FPS)) - 1)
-    frame = max(0, int(round(float(at) * OUT_FPS)))
+    fps = int(fps) if int(fps) in (24, 30, 60) else OUT_FPS
+    last_frame = max(0, int(round(total * fps)) - 1)
+    frame = max(0, int(round(float(at) * fps)))
     frame = min(frame, last_frame)
-    time_at = frame / OUT_FPS
+    time_at = frame / fps
     index, segment = _compiled_segment_at(compiled, time_at)
     cache_dir = _frame_cache_dir(job_dir)
-    key = _frame_cache_key(compiled, frame, quality, out_w, out_h, meta, encoder)
+    key = _frame_cache_key(compiled, frame, quality, out_w, out_h, meta, encoder, fps)
     cached = cache_dir / f"{key}.jpg"
     if cached.is_file() and cached.stat().st_size > 0:
         return cached.read_bytes()
@@ -2064,8 +2119,9 @@ def render_story_frame(
         segment_path = tmp / "segment.mp4"
         frames = int(segment.get("frames") or 0)
         segment_frames = max(1, frames)
+        frame_source, frame_meta = _clip_media(job_dir, segment, source, meta)
         _segment(
-            source, meta, {},
+            frame_source, frame_meta, {},
             float(segment.get("start") or 0.0),
             segment_frames / OUT_FPS, segment_frames,
             segment_path,
@@ -2079,6 +2135,7 @@ def render_story_frame(
             post_filters=segment.get("post_filters") or [],
             reverse=bool(segment.get("reverse")),
             freeze=bool(segment.get("freeze")),
+            fps=fps,
         )
         local = max(0, min(
             segment_frames - 1,
@@ -2148,9 +2205,10 @@ def build_story_proxy(
         for index, clip in enumerate(proxy_clips):
             segment_path = tmp / f"{index:03d}.mp4"
             scene = scene_map.get(str(clip.get("scene"))) or {}
-            crop = _scene_crop(scene, aspect, meta, out_w, out_h)
+            clip_source, clip_meta = _clip_media(job_dir, clip, source, meta)
+            crop = _scene_crop(scene, aspect, clip_meta, out_w, out_h)
             _segment(
-                source, meta, scene,
+                clip_source, clip_meta, scene,
                 float(clip["start"]), float(clip["duration"]), int(clip["frames"]),
                 segment_path, False, False,
                 out_w, out_h, "draft", encoder,
@@ -2162,7 +2220,10 @@ def build_story_proxy(
         master = tmp / "master.mp4"
         _concat_video(tmp, master, segments, "draft", cancel_event)
         audio_path = tmp / "audio.wav"
-        _audio_track(source, meta, proxy_clips, audio_path, total, cancel_event)
+        _audio_track(
+            source, meta, proxy_clips, audio_path, total, cancel_event,
+            job_dir=job_dir,
+        )
         output = tmp / "proxy.mp4"
         _mux(
             master, audio_path, output, "Story proxy", total, "draft",
@@ -2237,6 +2298,7 @@ def _prepare_fills(
     segments: list[dict],
     progress: Callable[[float, str], None],
     cancel_event: threading.Event | None,
+    fps: int = OUT_FPS,
 ) -> list[dict | None]:
     """Run the AI text fill pre-pass: one filled clip per beat that needs it.
 
@@ -2268,7 +2330,7 @@ def _prepare_fills(
                     source=source,
                     meta=meta,
                     start=float(segment["start"]),
-                    duration=int(segment["frames"]) / OUT_FPS,
+                    duration=int(segment["frames"]) / fps,
                     layers=plan.get("layers") or [],
                     method=plan.get("method") or textfill.DEFAULT_METHOD,
                     cache_dir=job_dir / "fill",
@@ -2316,6 +2378,14 @@ def render_reel(
     out_w, out_h = _dims(aspect, quality)
     if output_size is None and isinstance(edit, dict) and isinstance(edit.get("output"), dict):
         output_size = (edit["output"].get("width"), edit["output"].get("height"))
+    output_fps = 30
+    if isinstance(edit, dict) and isinstance(edit.get("output"), dict):
+        try:
+            requested_fps = int(edit["output"].get("fps") or 30)
+        except (TypeError, ValueError):
+            requested_fps = 30
+        if requested_fps in (24, 30, 60):
+            output_fps = requested_fps
     if output_size:
         try:
             width, height = int(output_size[0]), int(output_size[1])
@@ -2363,6 +2433,7 @@ def render_reel(
             size=(out_w, out_h),
             motion_engine=compose_render.EDIT_MOTION_ENGINE,
             beats=edit_beat_grid(job_dir, edit, audio_plan),
+            fps=output_fps,
         )
     edit_segments: list[dict] = []
     layers: list[dict] = []
@@ -2376,9 +2447,10 @@ def render_reel(
                 "role": segment.get("role") or "beat",
                 "start": float(segment["start"]),
                 "frames": int(segment["frames"]),
-                "duration": int(segment["frames"]) / OUT_FPS,
+                "duration": int(segment["frames"]) / output_fps,
                 "reverse": bool(segment.get("reverse")),
                 "freeze": bool(segment.get("freeze")),
+                **({"file": segment["file"], "asset": segment.get("asset")} if segment.get("file") else {}),
             }
             for segment in edit_segments
         ]
@@ -2521,6 +2593,9 @@ def render_reel(
                         crop_path = _crop_path_for(scene, aspect, clip)
                         pre_filters = []
                         post_filters = []
+                    clip_source, clip_meta = _clip_media(
+                        job_dir, compiled_segment or clip, source, meta,
+                    )
                     if compiled_segment is not None and compiled_segment.get("blank"):
                         futures[pool.submit(
                             _blank_segment,
@@ -2529,11 +2604,12 @@ def render_reel(
                             out_w, out_h, quality, encoder,
                             str(compiled_segment.get("blank_color") or "#000000"),
                             cancel_event,
+                            output_fps,
                         )] = index
                         continue
                     futures[pool.submit(
                         _segment,
-                        source, meta, scene,
+                        clip_source, clip_meta, scene,
                         clip["start"], clip["duration"], clip["frames"],
                         segment, index == 0, index == len(clips) - 1,
                         out_w, out_h, quality, encoder, cache_dir, crop, crop_path, cancel_event,
@@ -2541,6 +2617,7 @@ def render_reel(
                         fills[index] if index < len(fills) else None,
                         reverse=bool(clip.get("reverse")),
                         freeze=bool(clip.get("freeze")),
+                        fps=output_fps,
                     )] = index
                 for future in as_completed(futures):
                     if cancel_event is not None and cancel_event.is_set():
@@ -2613,7 +2690,7 @@ def render_reel(
             progress(0.90, "Building the original audio bed")
             _audio_track(
                 source, meta, clips, audio_path, total, cancel_event,
-                fade=(audio_plan or {}).get("fade"),
+                fade=(audio_plan or {}).get("fade"), job_dir=job_dir,
             )
         else:
             audio_path = bed
@@ -2644,6 +2721,7 @@ def render_reel(
         "duration": info["duration"],
         "width": info["width"],
         "height": info["height"],
+        "fps": output_fps,
         "size": info["size"],
         "has_audio": info["has_audio"],
         "path": out.name,

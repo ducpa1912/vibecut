@@ -50,6 +50,7 @@ class EditCreateBody(BaseModel):
     audio: dict = Field(default_factory=dict)
     border: dict = Field(default_factory=dict)
     output: dict = Field(default_factory=dict)
+    assets: list[dict] = Field(default_factory=list)
 
 
 class EditPatchBody(BaseModel):
@@ -65,6 +66,7 @@ class EditPatchBody(BaseModel):
     audio: dict = Field(default_factory=dict)
     border: dict = Field(default_factory=dict)
     output: dict = Field(default_factory=dict)
+    assets: list[dict] = Field(default_factory=list)
     # Studio autosave sets this: a save within COALESCE_S of the head it
     # replaces folds into that version instead of adding one per keystroke.
     coalesce: bool = False
@@ -85,7 +87,7 @@ router = APIRouter()
 
 _LAYER_FIELDS = (
     "sequence", "clean", "reframe", "motion", "color", "graphics", "captions",
-    "audio", "border", "output",
+    "audio", "border", "output", "assets",
 )
 
 
@@ -751,6 +753,7 @@ def _compiled_preview(
             caption_track=caption_track,
             size=size,
             motion_engine=compose_render.EDIT_MOTION_ENGINE,
+            fps=int((edit.get("output") or {}).get("fps") or 30),
         )
     except compose_render.ComposeError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
@@ -790,7 +793,8 @@ def edit_frame(
         )
     # A scrubber sends the story end exactly. render_story_frame already
     # clamps to the last frame; accept that one request instead of 422.
-    if at > total + (1.0 / 30.0):
+    frame_fps = int((edit.get("output") or {}).get("fps") or 30)
+    if at > total + (1.0 / frame_fps):
         raise HTTPException(
             422, f"t must be between 0 and the story duration ({total:.3f}s).",
         )
@@ -804,6 +808,7 @@ def edit_frame(
             at,
             quality=quality,
             aspect=edit["aspect"],
+            fps=frame_fps,
         )
     except render.PipelineError as exc:
         raise HTTPException(500, str(exc)) from exc

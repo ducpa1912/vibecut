@@ -12,7 +12,9 @@ import {
   getTrimState,
   invalidateReadCache,
   listClipSets,
+  listJobs,
   rebindStory,
+  request,
   trimErrorCode,
   trimErrorCurrent,
   undoTrim,
@@ -53,7 +55,7 @@ import {
 
 const CSS_ID = "vibecut-studio-edit-css";
 const CHOICE_KEY = "vibecut.studio.edit.choice";
-const LAYER_FIELDS = ["sequence", "clean", "reframe", "motion", "color", "graphics", "captions", "audio", "border", "output"];
+const LAYER_FIELDS = ["sequence", "clean", "reframe", "motion", "color", "graphics", "captions", "audio", "border", "output", "assets"];
 
 function ensureStyles() {
   if (!document.getElementById(CSS_ID)) {
@@ -876,6 +878,7 @@ export function mount(root, ctx) {
         audio: clone(fork.audio || { mode: "original" }),
         border: clone(fork.border || {}),
         output: clone(fork.output || {}),
+        assets: clone(fork.assets || []),
       };
     }
     return {
@@ -1210,7 +1213,8 @@ export function mount(root, ctx) {
       role: clip?.role || "beat",
     };
     if (clip?.kind) next.kind = String(clip.kind);
-    if (clip?.kind !== "blank") next.scene = Number(clip?.scene);
+    if (clip?.kind === "file") next.asset_id = String(clip.asset_id || "");
+    else if (clip?.kind !== "blank") next.scene = Number(clip?.scene);
     if (clip?.beat_kind) next.beat_kind = String(clip.beat_kind);
     if (clip?.color) next.color = String(clip.color);
     if (clip?.reverse === true) next.reverse = true;
@@ -1447,7 +1451,7 @@ export function mount(root, ctx) {
       },
       reorder: (from, to) => reorderScene(from, to),
       openImport: () => { void leaveTo("import", dom.back); },
-      openDissect: () => { void appendMomentDialog(); },
+      openDissect: () => { openMediaDialog(); },
       setReframe(next) {
         if (!state.edit) return;
         state.edit.reframe = { ...(state.edit.reframe || {}), ...clone(next) };
@@ -1466,6 +1470,11 @@ export function mount(root, ctx) {
           height,
           fps: [24, 30, 60].includes(Number(next.fps)) ? Number(next.fps) : 30,
           hdr: false,
+          ...(next.optical_flow ? { optical_flow: true } : {}),
+          ...(next.stabilize ? { stabilize: true } : {}),
+          ...((next.optical_flow || next.stabilize)
+            ? { strength: Math.max(0, Math.min(1, Number(next.strength ?? 0.5))) }
+            : {}),
         };
         state.output = { ...state.edit.output };
         touch("output");
@@ -1850,6 +1859,9 @@ export function mount(root, ctx) {
       syncTimeline();
       setUndoState();
       setMeta();
+      if (fields.includes("sequence") || fields.includes("assets")) {
+        preview?.rebuildProxy?.();
+      }
     }
     return previousId !== saved.id;
   }
@@ -2365,6 +2377,157 @@ export function mount(root, ctx) {
     addCleanBox(null, "mosaic");
     layersPanel?.setActive("clean");
     notify("Mosaic layer added. Draw the area on the picture.", "ok");
+  }
+
+  function addAsset(asset, label = "Media") {
+    if (!state.edit || !asset?.id) return;
+    const duration = Math.max(0.2, Number(asset.duration) || 2.5);
+    state.edit.assets = [
+      ...(state.edit.assets || []).filter((item) => item.id !== asset.id),
+      {
+        id: asset.id,
+        kind: asset.kind === "photo" ? "photo" : "video",
+        name: asset.name || label,
+        path: asset.path,
+        width: Number(asset.width) || 0,
+        height: Number(asset.height) || 0,
+        duration,
+        has_audio: Boolean(asset.has_audio),
+      },
+    ];
+    state.edit.sequence = [
+      ...currentSequence(),
+      {
+        kind: "file",
+        asset_id: asset.id,
+        start: 0,
+        end: duration,
+        role: "beat",
+      },
+    ];
+    state.duration = sequenceDuration() || state.duration;
+    touch("assets");
+    touch("sequence");
+    renderElements();
+    scheduleTimeline();
+    preview?.rebuildProxy?.();
+    preview?.refresh();
+    notify(`${asset.kind === "photo" ? "Photo" : "Scene"} added to this cut.`, "ok");
+  }
+
+  async function addSceneAsAsset(sourceJobId, scene) {
+    if (!state.job) return;
+    try {
+      const result = await request(`/api/jobs/${encodeURIComponent(state.job.id)}/assets/from-scene`, {
+        method: "POST",
+        body: { source_job_id: sourceJobId, scene: Number(scene.id) },
+      });
+      if (result?.asset) addAsset(result.asset, "Scene");
+    } catch (error) {
+      notify(error?.message || "Could not add that scene.", "bad");
+    }
+  }
+
+  function openMediaDialog() {
+    if (!state.job) return;
+    const dialog = el("dialog", { class: "st-dialog st-media-dialog", "aria-labelledby": "st-media-title" });
+    const close = () => { dialog.close(); dialog.remove(); };
+    const head = el("header", { class: "st-dialog-head" }, [
+      el("h2", { id: "st-media-title", text: "Add media" }),
+      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+    ]);
+    head.lastChild.addEventListener("click", close);
+    const tabs = el("div", { class: "st-media-tabs", role: "tablist" });
+    const body = el("div", { class: "st-media-body" });
+    let active = "this";
+
+    async function renderPanel() {
+      tabs.replaceChildren();
+      for (const [id, label] of [["this", "This video"], ["other", "Other videos"], ["photos", "Photos"]]) {
+        const button = el("button", {
+          class: `st-media-tab${active === id ? " is-active" : ""}`,
+          type: "button", role: "tab", "aria-selected": active === id ? "true" : "false", text: label,
+        });
+        button.addEventListener("click", () => { active = id; void renderPanel(); });
+        tabs.append(button);
+      }
+      body.replaceChildren();
+      if (active === "this") {
+        const scenes = state.job?.analysis?.scenes || [];
+        const grid = el("div", { class: "st-media-grid" });
+        for (const scene of scenes) {
+          const tile = el("button", { class: "st-media-tile", type: "button", title: `Add scene ${Number(scene.id) + 1}` }, [
+            el("img", { src: `/api/jobs/${encodeURIComponent(state.job.id)}/thumb/${Number(scene.id)}`, alt: "", loading: "lazy" }),
+            el("span", { text: `+ ${Number(scene.id) + 1}` }),
+          ]);
+          tile.addEventListener("click", () => { void addSceneAsAsset(state.job.id, scene).then(close); });
+          grid.append(tile);
+        }
+        body.append(grid);
+        return;
+      }
+      if (active === "other") {
+        const grid = el("div", { class: "st-media-jobs" });
+        body.append(el("p", { class: "st-hint", text: "Choose a ready video, then a scene." }));
+        const jobs = await listJobs({ limit: 12 }).catch(() => ({ jobs: [] }));
+        for (const job of jobs.jobs || []) {
+          if (String(job.id) === String(state.job.id) || job.status !== "ready") continue;
+          const button = el("button", { class: "st-media-job", type: "button" }, [
+            el("strong", { text: job.name || job.id }),
+            el("small", { text: "Ready" }),
+          ]);
+          button.addEventListener("click", async () => {
+            body.replaceChildren(el("p", { class: "st-hint", text: "Reading scenes…" }));
+            const full = await getJob(job.id).catch(() => null);
+            const scenes = full?.analysis?.scenes || [];
+            const scenesGrid = el("div", { class: "st-media-grid" });
+            for (const scene of scenes) {
+              const tile = el("button", { class: "st-media-tile", type: "button", title: `Add scene ${Number(scene.id) + 1}` }, [
+                el("img", { src: `/api/jobs/${encodeURIComponent(job.id)}/thumb/${Number(scene.id)}`, alt: "", loading: "lazy" }),
+                el("span", { text: `+ ${Number(scene.id) + 1}` }),
+              ]);
+              tile.addEventListener("click", () => { void addSceneAsAsset(job.id, scene).then(close); });
+              scenesGrid.append(tile);
+            }
+            if (!scenes.length) scenesGrid.append(el("p", { class: "st-hint", text: "This video has no scenes yet." }));
+            body.replaceChildren(scenesGrid);
+          });
+          grid.append(button);
+        }
+        body.append(grid);
+        return;
+      }
+      const input = el("input", { type: "file", accept: "image/*", "aria-label": "Choose a photo" });
+      const upload = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Add photo" });
+      const status = el("p", { class: "st-hint", text: "JPG, PNG, WEBP or HEIC. The photo becomes a 2.5s clip." });
+      upload.addEventListener("click", async () => {
+        const chosen = input.files?.[0];
+        if (!chosen) return;
+        upload.disabled = true;
+        upload.textContent = "Adding…";
+        try {
+          const form = new FormData();
+          form.append("file", chosen, chosen.name);
+          const response = await fetch(`/api/jobs/${encodeURIComponent(state.job.id)}/assets/photo`, {
+            method: "POST", body: form, credentials: "same-origin",
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.detail || "Could not add the photo.");
+          addAsset(payload.asset, "Photo");
+          close();
+        } catch (error) {
+          status.textContent = error?.message || "Could not add the photo.";
+          upload.disabled = false;
+          upload.textContent = "Add photo";
+        }
+      });
+      body.append(input, el("div", { class: "st-media-upload" }, [upload]), status);
+    }
+
+    dialog.append(head, tabs, body);
+    document.body.append(dialog);
+    dialog.showModal();
+    void renderPanel();
   }
 
   function renderEditorParts() {

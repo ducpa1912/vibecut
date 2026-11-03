@@ -416,6 +416,7 @@ def _motion_filter(
     segment_frames: int,
     out_w: int,
     out_h: int,
+    fps: int = OUT_FPS,
 ) -> str | None:
     """Compile one motion layer for one segment, or ``None``."""
     if motion.get("hidden"):
@@ -426,12 +427,12 @@ def _motion_filter(
         return None
     local_start = max(0.0, motion_start - out_start)
     local_end = min(out_end - out_start, motion_end - out_start)
-    first = _clamp_int(int(round(local_start * OUT_FPS)), 0, segment_frames - 1)
-    last = _clamp_int(int(round(local_end * OUT_FPS)), first + 1, segment_frames)
+    first = _clamp_int(int(round(local_start * fps)), 0, segment_frames - 1)
+    last = _clamp_int(int(round(local_end * fps)), first + 1, segment_frames)
     active = max(1, last - first)
     kind = motion["kind"]
     amount = float(motion["amount"])
-    ramp_frames = max(1, int(round(float(motion.get("ramp") or 0.0) * OUT_FPS)))
+    ramp_frames = max(1, int(round(float(motion.get("ramp") or 0.0) * fps)))
     if kind == "shake":
         seed = int(motion.get("seed") or 0)
         phase = (seed % 360) * math.pi / 180.0
@@ -441,15 +442,15 @@ def _motion_filter(
         gate = f"between(on,{first},{last})"
         x_expr = (
             f"(iw-iw/zoom)/2+{dx}*sin(2*PI*{MOTION_SHAKE_HZ:.3f}*on/"
-            f"{OUT_FPS}+{phase:.3f})*{gate}"
+            f"{fps}+{phase:.3f})*{gate}"
         )
         y_expr = (
             f"(ih-ih/zoom)/2+{dy}*cos(2*PI*{MOTION_SHAKE_HZ:.3f}*on/"
-            f"{OUT_FPS}+{phase:.3f})*{gate}"
+            f"{fps}+{phase:.3f})*{gate}"
         )
         return (
             f"zoompan=z='{zoom:.3f}':x='{x_expr}':y='{y_expr}':"
-            f"d=1:s={out_w}x{out_h}:fps={OUT_FPS}"
+            f"d=1:s={out_w}x{out_h}:fps={fps}"
         )
     if kind == "punch_in":
         z_expr = (
@@ -464,14 +465,14 @@ def _motion_filter(
         )
     return (
         f"zoompan=z='{z_expr}':x='iw/2-(iw/zoom/2)':"
-        f"y='ih/2-(ih/zoom/2)':d=1:s={out_w}x{out_h}:fps={OUT_FPS}"
+        f"y='ih/2-(ih/zoom/2)':d=1:s={out_w}x{out_h}:fps={fps}"
     )
 
 
-def _frame_path_expression(points: list[tuple[float, float]]) -> str:
+def _frame_path_expression(points: list[tuple[float, float]], fps: int = OUT_FPS) -> str:
     """Compile a seconds keyframe path for filters that expose ``on`` only."""
     expression = path_expression(points)
-    return re.sub(r"\bt\b", "(on/30)", expression)
+    return re.sub(r"\bt\b", f"(on/{fps})", expression)
 
 
 def _motion_perspective_filter(
@@ -482,6 +483,7 @@ def _motion_perspective_filter(
     segment_frames: int,
     out_w: int,
     out_h: int,
+    fps: int = OUT_FPS,
 ) -> str | None:
     """Compile motion as a subpixel perspective crop window.
 
@@ -497,12 +499,12 @@ def _motion_perspective_filter(
     local_end = min(out_end - out_start, motion_end - out_start)
     if local_end <= local_start + 1e-6:
         return None
-    duration = segment_frames / OUT_FPS
-    first = _clamp_int(int(round(local_start * OUT_FPS)), 0, segment_frames - 1)
-    active = max(1, int(round(local_end * OUT_FPS)) - first)
+    duration = segment_frames / fps
+    first = _clamp_int(int(round(local_start * fps)), 0, segment_frames - 1)
+    active = max(1, int(round(local_end * fps)) - first)
     kind = motion["kind"]
     amount = float(motion["amount"])
-    ramp = max(1, int(round(float(motion.get("ramp") or 0.0) * OUT_FPS)))
+    ramp = max(1, int(round(float(motion.get("ramp") or 0.0) * fps)))
     if kind == "shake":
         seed = int(motion.get("seed") or 0)
         phase = (seed % 360) * math.pi / 180.0
@@ -512,30 +514,30 @@ def _motion_perspective_filter(
         gate = f"between(on,{first},{first + active})"
         z_expr = f"if({gate},{zoom:.4f},1.000)"
         dx_expr = (
-            f"{dx:.3f}*sin(2*PI*{MOTION_SHAKE_HZ:.3f}*on/{OUT_FPS}+"
+            f"{dx:.3f}*sin(2*PI*{MOTION_SHAKE_HZ:.3f}*on/{fps}+"
             f"{phase:.3f})*{gate}"
         )
         dy_expr = (
-            f"{dy:.3f}*cos(2*PI*{MOTION_SHAKE_HZ:.3f}*on/{OUT_FPS}+"
+            f"{dy:.3f}*cos(2*PI*{MOTION_SHAKE_HZ:.3f}*on/{fps}+"
             f"{phase:.3f})*{gate}"
         )
     else:
         if kind == "snap_zoom":
             z_expr = f"if(lt(on,{first}),1.000,{1.0 + amount:.4f})"
         else:
-            start_seconds = first / OUT_FPS
+            start_seconds = first / fps
             points: list[tuple[float, float]] = [
                 (0.0 if start_seconds <= 0.0005 else round(start_seconds, 3), 1.0),
             ]
             end_frame = first + active
             if kind == "punch_in":
                 end_frame = min(first + ramp, first + active)
-            end_seconds = end_frame / OUT_FPS
+            end_seconds = end_frame / fps
             if end_seconds > points[-1][0] + 0.0005:
                 points.append((round(end_seconds, 3), 1.0 + amount))
             if duration > end_seconds + 0.0005:
                 points.append((round(duration, 3), 1.0 + amount))
-            z_expr = _frame_path_expression(points)
+            z_expr = _frame_path_expression(points, fps)
         dx_expr = "0"
         dy_expr = "0"
     center_x = f"((W-W/({z_expr}))/2)"
@@ -797,12 +799,12 @@ def _sticker_asset_path(item: dict, warnings: list[dict]) -> str | None:
 # ---------------------------------------------------------------- layers
 
 
-def _layer_raster(layer: dict, out_w: int, out_h: int) -> dict:
+def _layer_raster(layer: dict, out_w: int, out_h: int, fps: int = OUT_FPS) -> dict:
     """Describe how the renderer caches this layer's pixels."""
     animated = layer["type"] == "fx" and layer["kind"] == "progress_bar"
     duration = max(0.0, float(layer["end"]) - float(layer["start"]))
     frames = (
-        max(1, int(math.ceil(duration * OUT_FPS - 1e-6)))
+        max(1, int(math.ceil(duration * fps - 1e-6)))
         if animated else 1
     )
     payload = {
@@ -816,7 +818,7 @@ def _layer_raster(layer: dict, out_w: int, out_h: int) -> dict:
         "thickness": layer.get("thickness"),
         "opacity": layer.get("opacity", 1.0),
         "out": [int(out_w), int(out_h)],
-        "fps": OUT_FPS,
+        "fps": fps,
         "mode": "sequence" if animated else "static",
         "frames": frames,
     }
@@ -831,7 +833,7 @@ def _layer_raster(layer: dict, out_w: int, out_h: int) -> dict:
     return {
         "mode": "sequence" if animated else "static",
         "frames": frames,
-        "fps": OUT_FPS,
+        "fps": fps,
         "hash": "lyh_" + digest,
     }
 
@@ -870,6 +872,9 @@ def _clips(clips: Any) -> list[dict]:
             item["color"] = str(raw.get("color") or "#000000")
         elif raw.get("kind") == "freeze":
             item["kind"] = "freeze"
+        elif raw.get("kind") == "file":
+            item["kind"] = "file"
+            item["asset"] = dict(raw.get("asset") or {})
         if raw.get("reverse") is True:
             item["reverse"] = True
         result.append(item)
@@ -909,6 +914,7 @@ def compile_edit(
     size: tuple[int, int] | None = None,
     motion_engine: str = "zoompan",
     beats: object = None,
+    fps: int = OUT_FPS,
 ) -> dict:
     """Compile one Edit. Pure: no media access and no ffmpeg call.
 
@@ -929,6 +935,9 @@ def compile_edit(
             "motion": fx.snap_motion(normalized["motion"], beat_list),
             "graphics": fx.snap_graphics(normalized["graphics"], beat_list),
         }
+    fps = int(fps)
+    if fps not in (24, 30, 60):
+        raise ComposeInputError("fps must be 24, 30 or 60.")
     motion_engine = str(motion_engine or "zoompan").strip().lower()
     if motion_engine not in MOTION_ENGINES:
         raise ComposeInputError(
@@ -963,8 +972,8 @@ def compile_edit(
     segments: list[dict] = []
     out_cursor = 0.0
     for clip in story_clips:
-        frames = max(1, int(round(float(clip["duration"]) * OUT_FPS)))
-        duration = frames / OUT_FPS
+        frames = max(1, int(round(float(clip["duration"]) * fps)))
+        duration = frames / fps
         segment_out_start = out_cursor
         segment_out_end = out_cursor + duration
         out_cursor = segment_out_end
@@ -996,7 +1005,10 @@ def compile_edit(
                 "filter": "",
             })
             continue
-        scene = scene_map.get(str(clip["scene"]))
+        asset = clip.get("asset") if clip.get("kind") == "file" else None
+        scene = scene_map.get(str(clip.get("scene")))
+        clip_width = int((asset or {}).get("width") or width)
+        clip_height = int((asset or {}).get("height") or height)
         if reframe["mode"] == "center":
             cx = cy = 0.5
         elif reframe["mode"] == "auto":
@@ -1007,36 +1019,42 @@ def compile_edit(
         cx = float(overrides.get("cx", cx))
         cy = float(overrides.get("cy", cy))
         zoom = float(overrides.get("zoom", reframe["zoom"]))
-        crop = _base_crop(width, height, aspect, cx, cy, zoom, out_w, out_h)
+        crop = _base_crop(clip_width, clip_height, aspect, cx, cy, zoom, out_w, out_h)
         clean_warnings: list[dict] = []
-        for layer in normalized["clean"]:
-            if layer["kind"] != "crop_guard":
-                continue
-            active, _expression = _active_window(
-                layer, clip["start"], clip["end"],
+        clean_filter_list: list[str] = []
+        clean_ids: list[str] = []
+        skipped: list[dict] = []
+        fill_plan = None
+        fill_warnings: list[dict] = []
+        if not asset:
+            for layer in normalized["clean"]:
+                if layer["kind"] != "crop_guard":
+                    continue
+                active, _expression = _active_window(
+                    layer, clip["start"], clip["end"],
+                )
+                if not active:
+                    continue
+                guard = _box_rect(layer["box"], width, height, even=False)
+                shifted = _shift_away(crop, guard, width, height)
+                if shifted is None:
+                    clean_warnings.append({
+                        "code": "crop_guard_unmet",
+                        "message": (
+                            f"Crop cannot clear clean guard {layer['id']} and keep "
+                            f"the {aspect} frame."
+                        ),
+                        "layer_id": layer["id"],
+                        "segment": clip["index"],
+                    })
+                else:
+                    crop = shifted
+            clean_filter_list, clean_ids, skipped = _clean_filters(
+                normalized["clean"], clip["start"], clip["end"], width, height,
             )
-            if not active:
-                continue
-            guard = _box_rect(layer["box"], width, height, even=False)
-            shifted = _shift_away(crop, guard, width, height)
-            if shifted is None:
-                clean_warnings.append({
-                    "code": "crop_guard_unmet",
-                    "message": (
-                        f"Crop cannot clear clean guard {layer['id']} and keep "
-                        f"the {aspect} frame."
-                    ),
-                    "layer_id": layer["id"],
-                    "segment": clip["index"],
-                })
-            else:
-                crop = shifted
-        clean_filter_list, clean_ids, skipped = _clean_filters(
-            normalized["clean"], clip["start"], clip["end"], width, height,
-        )
-        fill_plan, fill_warnings = _fill_plan(
-            normalized["clean"], clip["start"], clip["end"],
-        )
+            fill_plan, fill_warnings = _fill_plan(
+                normalized["clean"], clip["start"], clip["end"],
+            )
         warnings.extend(clean_warnings)
         warnings.extend({
             **item,
@@ -1060,6 +1078,7 @@ def compile_edit(
                 segment_frames=frames,
                 out_w=out_w,
                 out_h=out_h,
+                fps=fps,
             )
             if compiled:
                 motion_filters.append(compiled)
@@ -1070,7 +1089,18 @@ def compile_edit(
         chain = []
         if pre_filter:
             chain.append(pre_filter)
-        chain.extend([crop_filter, scale_filter, "setsar=1", f"fps={OUT_FPS}", "format=yuv420p"])
+        output = normalized.get("output") or {}
+        strength = float(output.get("strength") or 0.5)
+        if output.get("stabilize"):
+            radius = max(4, min(64, int(round(8 + strength * 40))))
+            chain.extend([
+                f"deshake=rx={radius}:ry={radius}:edge=mirror",
+            ])
+        if output.get("optical_flow"):
+            chain.append(
+                f"minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc:vsbmc=1"
+            )
+        chain.extend([crop_filter, scale_filter, "setsar=1", f"fps={fps}", "format=yuv420p"])
         if post_filter:
             chain.append(post_filter)
         segments.append({
@@ -1079,6 +1109,7 @@ def compile_edit(
             "role": clip.get("role") or "beat",
             "reverse": bool(clip.get("reverse")),
             "freeze": bool(clip.get("kind") == "freeze"),
+            **({"file": asset["path"], "asset": asset} if asset else {}),
             "start": clip["start"],
             "end": clip["start"] + duration,
             "duration": round(duration, 6),
@@ -1124,7 +1155,7 @@ def compile_edit(
     ))
     for layer in overlay_layers:
         layer["duration"] = round(float(layer["end"]) - float(layer["start"]), 3)
-        layer["raster"] = _layer_raster(layer, out_w, out_h)
+        layer["raster"] = _layer_raster(layer, out_w, out_h, fps)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1134,7 +1165,7 @@ def compile_edit(
         "edit_version": normalized["version"],
         "aspect": aspect,
         "canvas": {"w": out_w, "h": out_h},
-        "fps": OUT_FPS,
+        "fps": fps,
         "motion_engine": motion_engine,
         "source": {
             "width": width,

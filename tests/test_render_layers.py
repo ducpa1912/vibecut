@@ -940,7 +940,7 @@ def test_real_frame_and_render_burn_a_multiline_caption(real_env):
 def test_custom_output_size_border_and_audio_fade_render(real_env):
     env = real_env
     edit = _save_current(env, _edit(
-        output={"width": 540, "height": 960, "fps": 30},
+        output={"width": 540, "height": 960, "fps": 60},
         border={"width": 8, "color": "#ff0000", "radius": 0},
         audio={"mode": "original", "fade": {"in": 0.4, "out": 0.4}},
     ))
@@ -951,12 +951,14 @@ def test_custom_output_size_border_and_audio_fade_render(real_env):
         audio_plan=audio.plan_from_edit(edit["audio"]),
     )
     assert result["width"] == 540 and result["height"] == 960
+    assert result["fps"] == 60
     final = env["dir"] / "renders" / result["path"]
     assert final.is_file() and final.stat().st_size > 1024
     still = _extract_frame(final, 30, env["data"] / "custom.png")
     pixels = np.asarray(Image.open(still).convert("RGB"))
     red = tuple(int(value) for value in pixels[0, 0])
     assert red[0] > 220 and red[1] < 30 and red[2] < 30
+    assert pipeline.probe(final)["fps"] == pytest.approx(60, abs=1)
 
 
 def test_reverse_and_freeze_clip_intents_compile():
@@ -978,6 +980,20 @@ def test_reverse_and_freeze_clip_intents_compile():
     assert compiled["segments"][1]["freeze"] is True
 
 
+def test_optical_flow_and_stabilize_compile_into_the_filter_chain():
+    edit = _edit(output={
+        "width": 540, "height": 960, "fps": 60,
+        "optical_flow": True, "stabilize": True, "strength": 0.8,
+    })
+    compiled = compose_render.compile_edit(
+        edit, clips=CLIPS, source={"width": 1920, "height": 1080},
+        scenes=SCENES, size=(540, 960), fps=60,
+    )
+    chain = compiled["segments"][0]["filter"]
+    assert "deshake=" in chain
+    assert "minterpolate=" in chain
+
+
 @needs_ffmpeg
 def test_reverse_and_freeze_render(real_env):
     env = real_env
@@ -990,6 +1006,57 @@ def test_reverse_and_freeze_render(real_env):
         str(env["source"]), env["meta"], env["dir"],
         {"target": 3, "clips": clips, "_scenes": list(SCENES)},
         "Reverse", lambda *args: None,
+        quality="draft", aspect="9:16", edit=edit,
+    )
+    assert result["duration"] == pytest.approx(2.0, abs=0.15)
+    assert (env["dir"] / "renders" / result["path"]).is_file()
+
+
+def test_file_clip_compiles_with_its_own_dimensions():
+    asset = {
+        "id": "a1", "kind": "video", "name": "Second", "path": "assets/a1.mp4",
+        "width": 1080, "height": 1920, "duration": 2.0, "has_audio": True,
+    }
+    clips = [{
+        "kind": "file", "asset_id": "a1", "asset": asset,
+        "start": 0.0, "end": 2.0, "role": "beat",
+    }]
+    edit = _edit(
+        assets=[asset],
+        sequence=[{"kind": "file", "asset_id": "a1", "start": 0, "end": 2, "role": "beat"}],
+    )
+    compiled = compose_render.compile_edit(
+        edit, clips=clips, source={"width": 1920, "height": 1080},
+        scenes=SCENES, size=(540, 960),
+    )
+    segment = compiled["segments"][0]
+    assert segment["file"] == "assets/a1.mp4"
+    assert segment["asset"]["width"] == 1080
+
+
+@needs_ffmpeg
+def test_file_clip_renders_from_its_asset(real_env):
+    env = real_env
+    assets = env["dir"] / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(env["source"], assets / "a1.mp4")
+    asset = {
+        "id": "a1", "kind": "video", "name": "Second", "path": "assets/a1.mp4",
+        "width": int(env["meta"]["width"]), "height": int(env["meta"]["height"]),
+        "duration": 2.0, "has_audio": bool(env["meta"].get("has_audio")),
+    }
+    clips = [{
+        "kind": "file", "asset_id": "a1", "asset": asset,
+        "start": 0.0, "end": 2.0, "role": "beat",
+    }]
+    edit = _save_current(env, _edit(
+        assets=[asset],
+        sequence=[{"kind": "file", "asset_id": "a1", "start": 0, "end": 2, "role": "beat"}],
+    ))
+    result = render.render_reel(
+        str(env["source"]), env["meta"], env["dir"],
+        {"target": 4, "clips": clips, "_scenes": list(SCENES)},
+        "File", lambda *args: None,
         quality="draft", aspect="9:16", edit=edit,
     )
     assert result["duration"] == pytest.approx(2.0, abs=0.15)

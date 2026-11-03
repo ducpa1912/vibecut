@@ -22,6 +22,7 @@ const TABS = [
 
 function roleLabel(clip) {
   if (clip?.kind === "blank") return "Blank";
+  if (clip?.kind === "file") return clip?.asset_kind === "photo" ? "Photo" : "Clip";
   const role = String(clip?.role || "beat");
   if (role === "hook") return "Hook";
   if (role === "payoff") return "Payoff";
@@ -44,6 +45,13 @@ function sceneFor(job, id) {
 
 function thumbFor(job, scene) {
   return scene?.thumb_url || `/api/jobs/${encodeURIComponent(job?.id || "")}/thumb/${Number(scene?.id ?? 0)}`;
+}
+
+function clipThumb(job, edit, clip) {
+  if (clip?.kind === "file") {
+    return `/api/jobs/${encodeURIComponent(job?.id || "")}/assets/${encodeURIComponent(clip.asset_id)}/thumb`;
+  }
+  return thumbFor(job, sceneFor(job, clip?.scene));
 }
 
 export function mountElementsPanel(host, ctx) {
@@ -131,7 +139,8 @@ export function mountElementsPanel(host, ctx) {
     const strip = el("div", { class: "st-el-cut" });
     let offset = 0;
     clips.forEach((clip, index) => {
-      const scene = sceneFor(job, clip.scene);
+      const asset = (edit?.assets || []).find((item) => item.id === clip.asset_id);
+      const file = clip?.kind === "file";
       const blank = clip?.kind === "blank";
       const tile = el("button", {
         class: `st-el-clip${blank ? " is-blank" : ""}${selectedClip === index ? " is-selected" : ""}`,
@@ -141,9 +150,9 @@ export function mountElementsPanel(host, ctx) {
         title: `${roleLabel(clip)} · ${blank ? "blank" : `scene ${Number(clip.scene) + 1}`} · ${formatTime(offset)}`,
         dataset: { index: String(index) },
       }, [
-        blank ? null : el("img", { src: thumbFor(job, scene), alt: "", loading: "lazy" }),
+        blank ? null : el("img", { src: clipThumb(job, edit, clip), alt: "", loading: "lazy" }),
         el("span", { class: "st-el-num", text: String(index + 1) }),
-        el("span", { class: `st-el-role is-${String(clip.role || "beat")}`, text: roleLabel(clip) }),
+        el("span", { class: `st-el-role is-${String(clip.role || "beat")}`, text: roleLabel({ ...clip, asset_kind: asset?.kind }) }),
         el("span", { class: "st-el-dur", text: formatTime(clipDuration(clip)) }),
       ]);
       tile.addEventListener("click", () => {

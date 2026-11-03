@@ -166,13 +166,15 @@ _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
 # Custom sequence clips override the story snapshot. Each clip names a source
 # scene and a source-time window. Roles stay hook/beat/payoff so render order
 # and old consumers keep working; beat_kind is editorial only.
-_SEQUENCE_KEYS = frozenset({"kind", "scene", "start", "end", "role", "beat_kind", "color", "reverse"})
+_SEQUENCE_KEYS = frozenset({
+    "kind", "scene", "asset_id", "start", "end", "role", "beat_kind", "color", "reverse",
+})
 CLIP_ROLES = ("hook", "beat", "payoff")
 BEAT_KINDS = ("context", "statement", "proof", "broll", "transition")
 _TOP_KEYS = frozenset({
     "schema_version", "renderer_version", "id", "version", "parent", "hash",
     "created", "story_ref", "aspect", "sequence", "clean", "reframe", "motion",
-    "color", "graphics", "captions", "audio", "border", "output",
+    "color", "graphics", "captions", "audio", "border", "output", "assets",
 })
 
 
@@ -958,6 +960,47 @@ def normalize_graphics(value: Any) -> list[dict]:
     return layers
 
 
+def normalize_assets(value: Any) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise EditError("assets must be a list.")
+    if len(value) > 64:
+        raise EditError("An Edit supports at most 64 media assets.")
+    rows: list[dict] = []
+    used: set[str] = set()
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise EditError(f"assets[{index}] must be an object.")
+        _unknown(raw, frozenset({
+            "id", "kind", "name", "path", "width", "height", "duration", "has_audio",
+        }), f"assets[{index}]")
+        asset_id = _safe_id(raw.get("id"), f"assets[{index}].id")
+        if asset_id in used:
+            raise EditError(f"Duplicate asset id: {asset_id}.")
+        used.add(asset_id)
+        kind = str(raw.get("kind") or "video").strip().lower()
+        if kind not in ("video", "photo"):
+            raise EditError(f"assets[{index}].kind must be video or photo.")
+        path = str(raw.get("path") or "").strip()
+        if not re.fullmatch(r"assets/[A-Za-z0-9_.-]{1,96}\.mp4", path):
+            raise EditError(f"assets[{index}].path must be an assets/*.mp4 file.")
+        width = _integer(raw.get("width", 0), f"assets[{index}].width", minimum=0, maximum=8192)
+        height = _integer(raw.get("height", 0), f"assets[{index}].height", minimum=0, maximum=8192)
+        duration = _number(raw.get("duration", 0.0), f"assets[{index}].duration", minimum=0.0, maximum=3600.0)
+        rows.append({
+            "id": asset_id,
+            "kind": kind,
+            "name": " ".join(str(raw.get("name") or "").split())[:120],
+            "path": path,
+            "width": width,
+            "height": height,
+            "duration": round(duration, 3),
+            "has_audio": _strict_bool(raw.get("has_audio"), False, f"assets[{index}].has_audio"),
+        })
+    return rows
+
+
 def normalize_sequence(value: Any) -> list[dict]:
     """Validate an Edit's custom clip order. Empty means the story snapshot."""
     if value is None:
@@ -972,10 +1015,13 @@ def normalize_sequence(value: Any) -> list[dict]:
             raise EditError(f"sequence[{index}] must be an object.")
         _unknown(raw, _SEQUENCE_KEYS, f"sequence[{index}]")
         kind = str(raw.get("kind") or "scene").strip().lower()
-        if kind not in ("scene", "blank", "freeze"):
-            raise EditError(f"sequence[{index}].kind must be scene, blank or freeze.")
+        if kind not in ("scene", "blank", "freeze", "file"):
+            raise EditError(f"sequence[{index}].kind must be scene, blank, freeze or file.")
         scene = None
-        if kind in ("scene", "freeze"):
+        asset_id = ""
+        if kind == "file":
+            asset_id = _safe_id(raw.get("asset_id"), f"sequence[{index}].asset_id")
+        elif kind in ("scene", "freeze"):
             try:
                 scene = int(raw.get("scene"))
             except (TypeError, ValueError):
@@ -1009,6 +1055,11 @@ def normalize_sequence(value: Any) -> list[dict]:
             if not re.fullmatch(r"#[0-9a-f]{6}", color):
                 raise EditError(f"sequence[{index}].color must be #rrggbb.")
             item["color"] = color
+        elif kind == "file":
+            item["kind"] = "file"
+            item["asset_id"] = asset_id
+            if _strict_bool(raw.get("reverse"), False, f"sequence[{index}].reverse"):
+                item["reverse"] = True
         else:
             if kind == "freeze":
                 item["kind"] = "freeze"
@@ -1169,7 +1220,9 @@ def normalize_output(value: Any) -> dict | None:
         return None
     if not isinstance(value, dict):
         raise EditError("output must be an object.")
-    _unknown(value, frozenset({"width", "height", "fps", "hdr"}), "output")
+    _unknown(value, frozenset({
+        "width", "height", "fps", "hdr", "optical_flow", "stabilize", "strength",
+    }), "output")
     width = _integer(value.get("width", 0), "output.width", minimum=0, maximum=4096)
     height = _integer(value.get("height", 0), "output.height", minimum=0, maximum=4096)
     fps = _integer(value.get("fps", 30), "output.fps", minimum=24, maximum=60)
@@ -1178,13 +1231,23 @@ def normalize_output(value: Any) -> dict | None:
     hdr = _strict_bool(value.get("hdr"), False, "output.hdr")
     if hdr:
         raise EditError("HDR output is not available in this renderer.")
+    optical_flow = _strict_bool(value.get("optical_flow"), False, "output.optical_flow")
+    stabilize = _strict_bool(value.get("stabilize"), False, "output.stabilize")
+    strength = _number(value.get("strength", 0.5), "output.strength", minimum=0.0, maximum=1.0)
     if not width and not height:
         return None
     if width < 240 or height < 240:
         raise EditError("output width and height must be at least 240.")
     if width % 2 or height % 2:
         raise EditError("output width and height must be even.")
-    return {"width": width, "height": height, "fps": fps, "hdr": False}
+    result = {"width": width, "height": height, "fps": fps, "hdr": False}
+    if optical_flow:
+        result["optical_flow"] = True
+    if stabilize:
+        result["stabilize"] = True
+    if optical_flow or stabilize:
+        result["strength"] = round(strength, 3)
+    return result
 
 
 def normalize_border(value: Any) -> dict | None:
@@ -1215,6 +1278,7 @@ def build_edit(
     audio: Any = None,
     border: Any = None,
     output: Any = None,
+    assets: Any = None,
     version: int = 1,
     parent: str | None = None,
     created: float | None = None,
@@ -1251,6 +1315,15 @@ def build_edit(
     normalized_output = normalize_output(output)
     if normalized_output:
         content["output"] = normalized_output
+    normalized_assets = normalize_assets(assets)
+    if normalized_assets:
+        content["assets"] = normalized_assets
+    asset_ids = {item["id"] for item in normalized_assets}
+    for clip in normalized_sequence:
+        if clip.get("kind") == "file" and clip.get("asset_id") not in asset_ids:
+            raise EditError(
+                f"sequence asset_id {clip.get('asset_id')!r} is not in edit.assets."
+            )
     if normalized_sequence:
         content["sequence"] = normalized_sequence
     content_hash_value = content_hash(content)
@@ -1278,6 +1351,7 @@ def build_edit(
         "audio": content["audio"],
         **({"border": content["border"]} if "border" in content else {}),
         **({"output": content["output"]} if "output" in content else {}),
+        **({"assets": content["assets"]} if "assets" in content else {}),
     }
 
 
@@ -1311,6 +1385,7 @@ def normalize_edit(value: Any) -> dict:
         audio=value.get("audio"),
         border=value.get("border"),
         output=value.get("output"),
+        assets=value.get("assets"),
         version=version,
         parent=parent,
         created=value.get("created"),
@@ -1346,6 +1421,7 @@ def restored_edit(target: dict, *, parent_edit: dict, created: float | None = No
         audio=target["audio"],
         border=target.get("border"),
         output=target.get("output"),
+        assets=target.get("assets"),
         version=int(parent_edit["version"]) + 1,
         parent=str(parent_edit["id"]),
         created=created,

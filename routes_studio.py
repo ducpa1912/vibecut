@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 
@@ -801,3 +801,177 @@ def fill_preview(
         "method": "lama",
         "cached": False,
     }
+
+
+# ---------------------------------------------------------------- media assets
+
+
+class SceneAssetBody(BaseModel):
+    source_job_id: str = ""
+    scene: int = 0
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def _asset_root(job_id: str) -> Path:
+    import app
+
+    root = app._job_dir(job_id) / "assets"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _asset_row(root: Path, path: Path, kind: str = "video") -> dict:
+    import pipeline
+
+    try:
+        meta = pipeline.probe(str(path))
+    except Exception:
+        meta = {}
+    return {
+        "id": path.stem,
+        "kind": kind,
+        "name": path.stem,
+        "path": f"assets/{path.name}",
+        "width": int(meta.get("width") or 0),
+        "height": int(meta.get("height") or 0),
+        "duration": round(float(meta.get("duration") or 0.0), 3),
+        "has_audio": bool(meta.get("has_audio")),
+    }
+
+
+def _run_ffmpeg(args: list[str]) -> None:
+    import subprocess
+
+    completed = subprocess.run(args, capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise HTTPException(422, (completed.stderr or completed.stdout or "Media conversion failed.")[-1200:])
+
+
+@router.get("/api/jobs/{job_id}/assets")
+def list_job_assets(job_id: str) -> dict:
+    import app
+
+    app.load_job(job_id)
+    root = _asset_root(job_id)
+    rows = []
+    for path in sorted(root.glob("*.mp4")):
+        rows.append(_asset_row(root, path))
+    return {"assets": rows}
+
+
+@router.post("/api/jobs/{job_id}/assets/from-scene")
+def add_scene_asset(job_id: str, body: SceneAssetBody) -> dict:
+    import shutil
+    import subprocess
+    import uuid
+
+    import app
+
+    app.load_job(job_id)
+    if not body.source_job_id:
+        raise HTTPException(422, "Choose a source video.")
+    source_job = app.load_job(body.source_job_id)
+    app.require_source(source_job)
+    scenes = (source_job.get("analysis") or {}).get("scenes") or []
+    scene = next(
+        (item for item in scenes if int(item.get("id", -1)) == int(body.scene)),
+        None,
+    )
+    if not scene:
+        raise HTTPException(404, "That scene is not in the source video.")
+    start = float(scene.get("start") or 0.0)
+    end = float(scene.get("end") or start)
+    if end - start < 0.2:
+        raise HTTPException(422, "That scene is too short to add.")
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise HTTPException(500, "ffmpeg is not available.")
+    asset_id = f"asset_{uuid.uuid4().hex[:12]}"
+    output = _asset_root(job_id) / f"{asset_id}.mp4"
+    source_path = str((source_job.get("source") or {}).get("path") or "")
+    _run_ffmpeg([
+        ffmpeg, "-y", "-v", "error",
+        "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}",
+        "-i", source_path,
+        "-map", "0:v:0", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+        "-movflags", "+faststart", str(output),
+    ])
+    return {"asset": _asset_row(_asset_root(job_id), output)}
+
+
+@router.post("/api/jobs/{job_id}/assets/photo")
+async def add_photo_asset(job_id: str, file: UploadFile = File(...)) -> dict:
+    import shutil
+    import uuid
+
+    import app
+
+    app.load_job(job_id)
+    suffix = Path(getattr(file, "filename", "") or "photo.jpg").suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}:
+        raise HTTPException(422, "Upload a JPG, PNG, WEBP or HEIC image.")
+    asset_id = f"photo_{uuid.uuid4().hex[:12]}"
+    root = _asset_root(job_id)
+    raw = root / f".{asset_id}{suffix}"
+    output = root / f"{asset_id}.mp4"
+    try:
+        with raw.open("wb") as handle:
+            shutil.copyfileobj(file.file, handle)
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise HTTPException(500, "ffmpeg is not available.")
+        _run_ffmpeg([
+            ffmpeg, "-y", "-v", "error",
+            "-loop", "1", "-i", str(raw), "-t", "2.5",
+            "-vf", "scale=1080:-2:flags=lanczos",
+            "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output),
+        ])
+        row = _asset_row(root, output, kind="photo")
+        row["name"] = Path(getattr(file, "filename", "Photo")).stem[:120] or "Photo"
+        return {"asset": row}
+    finally:
+        try:
+            raw.unlink()
+        except OSError:
+            pass
+
+
+@router.get("/api/jobs/{job_id}/assets/{asset_id}")
+def get_job_asset(job_id: str, asset_id: str):
+    import app
+    from fastapi.responses import FileResponse
+
+    app.load_job(job_id)
+    path = _asset_root(job_id) / f"{asset_id}.mp4"
+    if not path.is_file():
+        raise HTTPException(404, "Asset not found.")
+    return FileResponse(path, media_type="video/mp4")
+
+
+@router.get("/api/jobs/{job_id}/assets/{asset_id}/thumb")
+def get_job_asset_thumb(job_id: str, asset_id: str):
+    import shutil
+    import subprocess
+
+    import app
+    from fastapi.responses import FileResponse
+
+    app.load_job(job_id)
+    root = _asset_root(job_id)
+    path = root / f"{asset_id}.mp4"
+    if not path.is_file():
+        raise HTTPException(404, "Asset not found.")
+    thumb = root / f".{asset_id}.jpg"
+    if not thumb.is_file() or thumb.stat().st_size < 512:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise HTTPException(500, "ffmpeg is not available.")
+        _run_ffmpeg([
+            ffmpeg, "-y", "-v", "error", "-ss", "0.05", "-i", str(path),
+            "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "3", str(thumb),
+        ])
+    return FileResponse(thumb, media_type="image/jpeg")

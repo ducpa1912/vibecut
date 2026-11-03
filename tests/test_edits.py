@@ -902,11 +902,15 @@ def test_render_preparation_keeps_blank_duration():
 
 def test_output_resolution_and_audio_fade_are_valid():
     edit = _build(
-        output={"width": 2160, "height": 3840, "fps": 60},
+        output={
+            "width": 2160, "height": 3840, "fps": 60,
+            "optical_flow": True, "stabilize": True, "strength": 0.7,
+        },
         audio={"mode": "original", "fade": {"in": 1.2, "out": 2.4}},
     )
     assert edit["output"] == {
         "width": 2160, "height": 3840, "fps": 60, "hdr": False,
+        "optical_flow": True, "stabilize": True, "strength": 0.7,
     }
     assert edit["audio"]["fade"] == {"in": 1.2, "out": 2.4}
     plan = audio.plan_from_edit(edit["audio"])
@@ -918,3 +922,22 @@ def test_output_resolution_and_audio_fade_are_valid():
         _build(output={"width": 1000, "height": 1000, "fps": 25})
     with pytest.raises(edits.EditError):
         _build(output={"width": 1000, "height": 1000, "fps": 30, "hdr": True})
+
+
+def test_file_assets_and_file_clips_are_valid():
+    asset = {
+        "id": "a1", "kind": "video", "name": "Second video", "path": "assets/a1.mp4",
+        "width": 1920, "height": 1080, "duration": 2.0, "has_audio": True,
+    }
+    edit = _build(
+        assets=[asset],
+        sequence=[{"kind": "file", "asset_id": "a1", "start": 0, "end": 2, "role": "beat"}],
+    )
+    assert edit["assets"] == [asset]
+    assert edit["sequence"][0]["kind"] == "file"
+    assert edit["sequence"][0]["asset_id"] == "a1"
+
+    with pytest.raises(edits.EditError):
+        _build(assets=[{**asset, "path": "../outside.mp4"}])
+    with pytest.raises(edits.EditError):
+        _build(sequence=[{"kind": "file", "asset_id": "missing", "start": 0, "end": 2}])

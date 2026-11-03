@@ -167,6 +167,13 @@ export function mountPreview(root, options = {}) {
           <input id="st-preview-height" type="number" min="240" max="4096" step="2" aria-label="Custom height" placeholder="Height">
           <button id="st-preview-res-apply" class="st-btn st-btn-ghost st-btn-small" type="button">Use</button>
         </div>
+        <div class="st-preview-quality">
+          <label><input id="st-preview-optical" type="checkbox"> Optical flow</label>
+          <label><input id="st-preview-stabilize" type="checkbox"> Stabilize</label>
+          <label class="st-preview-strength">Strength
+            <input id="st-preview-strength" type="range" min="0" max="1" step="0.1" value="0.5">
+          </label>
+        </div>
       </div>
       <p id="st-preview-note" class="st-preview-note" role="status">Opening the preview…</p>
     </section>
@@ -197,6 +204,9 @@ export function mountPreview(root, options = {}) {
     resApply: $("#st-preview-res-apply"),
     frame: $("#st-preview-frame"),
     fps: $("#st-preview-fps"),
+    optical: $("#st-preview-optical"),
+    stabilize: $("#st-preview-stabilize"),
+    strength: $("#st-preview-strength"),
     tools: Array.from(root.querySelectorAll(".st-preview-tool")),
   };
   const ctx = dom.canvas.getContext("2d");
@@ -1059,6 +1069,9 @@ export function mountPreview(root, options = {}) {
         width: Number(edit.output.width),
         height: Number(edit.output.height),
         fps: Number(edit.output.fps) || 30,
+        optical_flow: Boolean(edit.output.optical_flow),
+        stabilize: Boolean(edit.output.stabilize),
+        strength: Number(edit.output.strength ?? 0.5),
       };
       paintOutput();
     }
@@ -1295,12 +1308,18 @@ export function mountPreview(root, options = {}) {
     };
     return (table[aspect] || table["9:16"])[label] || null;
   }
-  let output = readOutput() || { resolution: "1080p", width: 0, height: 0, fps: 30 };
+  let output = readOutput() || {
+    resolution: "1080p", width: 0, height: 0, fps: 30,
+    optical_flow: false, stabilize: false, strength: 0.5,
+  };
   function paintOutput() {
     if (dom.resolution) dom.resolution.textContent = output.resolution || "1080p";
     if (dom.fps) dom.fps.textContent = String(output.fps || 30);
     if (dom.width) dom.width.value = String(output.width || "");
     if (dom.height) dom.height.value = String(output.height || "");
+    if (dom.optical) dom.optical.checked = Boolean(output.optical_flow);
+    if (dom.stabilize) dom.stabilize.checked = Boolean(output.stabilize);
+    if (dom.strength) dom.strength.value = String(Number(output.strength ?? 0.5));
   }
   paintOutput();
 
@@ -1409,6 +1428,17 @@ export function mountPreview(root, options = {}) {
     writeOutput(output);
     closeMenus();
   });
+  for (const input of [dom.optical, dom.stabilize, dom.strength]) {
+    input?.addEventListener("input", () => {
+      output = {
+        ...output,
+        optical_flow: Boolean(dom.optical?.checked),
+        stabilize: Boolean(dom.stabilize?.checked),
+        strength: Number(dom.strength?.value ?? 0.5),
+      };
+      writeOutput(output);
+    });
+  }
   dom.fps?.addEventListener("click", () => {
     const steps = [15, 24, 30, 60];
     const index = steps.indexOf(Number(output.fps));
@@ -1498,6 +1528,18 @@ export function mountPreview(root, options = {}) {
     },
     toggleFocus,
     captureFrame,
+    rebuildProxy() {
+      clearFrame();
+      resetProxy();
+      frameAvailable = true;
+      frameState = "idle";
+      frameReady = false;
+      if (state.edit) {
+        void loadFrame(state.time);
+        ensureProxy();
+      }
+      draw();
+    },
     seek,
     step,
     play,
