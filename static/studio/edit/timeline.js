@@ -13,6 +13,7 @@
 
 import { el } from "../ui.js";
 import { formatSpan, formatTime, layerSpans, numberOr } from "./model.js";
+import { icon } from "./icons.js";
 import { trimStory } from "../api.js";
 import { receiptSummary } from "../stories.js";
 
@@ -105,6 +106,8 @@ export function mountTimeline(root, options = {}) {
     beforeTrim: options.beforeTrim || (() => Promise.resolve(true)),
   };
   let disposed = false;
+  const laneLocked = new Set();
+  const laneHidden = new Set();
   let jobId = String(options.jobId || "");
   let setId = "";
   let duration = 10;
@@ -297,6 +300,8 @@ export function mountTimeline(root, options = {}) {
         layer: item.layerId || item.id,
         start: String(storyStart === null ? 0 : storyStart),
         outside: outside ? "1" : "0",
+        subgroup: item.subgroup || null,
+        audio: String(item.id || "").startsWith("audio_") ? String(item.id).replace("audio_", "") : null,
       },
     };
     if (kind === "scenes") {
@@ -496,7 +501,7 @@ export function mountTimeline(root, options = {}) {
 
   function makeTrack(row, view, extra = {}) {
     const track = el("div", {
-      class: `st-tl-track st-tl-track-${row.kind}`,
+      class: `st-tl-track st-tl-track-${row.kind} st-tl-track-${row.id}`,
       dataset: { kind: row.kind },
       role: "group",
       "aria-label": `${LANE_LABELS[row.kind] || row.label} track`,
@@ -885,13 +890,13 @@ export function mountTimeline(root, options = {}) {
     pendingFocus = "";
     const sceneRow = {
       id: "scenes",
-      label: "Scenes",
+      label: "Moments",
       kind: "scenes",
       items: sceneRows(),
     };
     const sentenceRow = {
       id: "sentences",
-      label: "Sentences",
+      label: "Transcript",
       kind: "sentences",
       items: sentenceRows(view),
     };
@@ -900,9 +905,25 @@ export function mountTimeline(root, options = {}) {
     dom.grid.replaceChildren();
     dom.grid.append(el("div", { class: "st-tl-corner", text: "Track" }), makeRuler(view));
     for (const row of [sceneRow, sentenceRow, ...layers]) {
-      const label = el("div", { class: `st-tl-label st-tl-label-${row.kind}` }, [
+      const label = el("div", { class: `st-tl-label st-tl-label-${row.kind} st-tl-label-${row.id}` }, [
         el("span", { text: row.label || LANE_LABELS[row.kind] || "Layer" }),
         row.kind !== "sentences" ? el("small", { text: String(row.items.length) }) : null,
+        el("span", { class: "st-tl-lane-tools" }, [
+          el("button", {
+            class: `st-tl-lane-btn${laneLocked.has(row.id) ? " is-on" : ""}`,
+            type: "button",
+            title: laneLocked.has(row.id) ? "Unlock lane" : "Lock lane",
+            "aria-label": laneLocked.has(row.id) ? `Unlock ${row.label}` : `Lock ${row.label}`,
+            "aria-pressed": laneLocked.has(row.id) ? "true" : "false",
+          }, [icon("lock", { size: 10 })]),
+          el("button", {
+            class: `st-tl-lane-btn${laneHidden.has(row.id) ? " is-on" : ""}`,
+            type: "button",
+            title: laneHidden.has(row.id) ? "Show lane" : "Hide lane",
+            "aria-label": laneHidden.has(row.id) ? `Show ${row.label}` : `Hide ${row.label}`,
+            "aria-pressed": laneHidden.has(row.id) ? "true" : "false",
+          }, [icon("eye", { size: 10 })]),
+        ]),
       ]);
       if (row.kind !== "sentences" && row.kind !== "scenes") {
         label.setAttribute("role", "button");
@@ -915,7 +936,24 @@ export function mountTimeline(root, options = {}) {
           }
         });
       }
-      dom.grid.append(label, makeTrack(row, view));
+      const lockBtn = label.querySelectorAll(".st-tl-lane-btn")[0];
+      const eyeBtn = label.querySelectorAll(".st-tl-lane-btn")[1];
+      lockBtn?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (laneLocked.has(row.id)) laneLocked.delete(row.id);
+        else laneLocked.add(row.id);
+        render();
+      });
+      eyeBtn?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (laneHidden.has(row.id)) laneHidden.delete(row.id);
+        else laneHidden.add(row.id);
+        render();
+      });
+      const track = makeTrack(row, view);
+      if (laneLocked.has(row.id)) track.classList.add("is-lane-locked");
+      if (laneHidden.has(row.id)) track.classList.add("is-lane-hidden");
+      dom.grid.append(label, track);
     }
 
     const layerCount = layers.reduce((total, row) => total + row.items.length, 0);

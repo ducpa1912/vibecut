@@ -458,29 +458,19 @@ export function layerSpans(edit, captions, duration) {
       end: Math.max(numberOr(range.start) + 0.1, numberOr(range.end)),
     }));
   }).flat();
-  rows.push({ id: "clean", label: "Remove text", kind: "clean", items: cleanItems });
+  rows.push({ id: "clean", label: "Clean", kind: "clean", items: cleanItems });
 
-  const textItems = (edit?.graphics || [])
-    .filter((layer) => layer.type === "text")
-    .map((layer) => ({
-      id: layer.id,
-      layerId: layer.id,
-      label: layer.text || TEXT_KINDS[layer.kind]?.label || "Text",
-      start: numberOr(layer.start),
-      end: numberOr(layer.end),
-    }));
-  rows.push({ id: "text", label: "Text", kind: "text", items: textItems });
-
-  const cueItems = (captions?.cues || []).map((cue) => ({
-    id: cue.id,
-    layerId: cue.id,
-    label: String(cue.text || "").replace(/\s+/g, " "),
-    start: numberOr(cue.start),
-    end: numberOr(cue.end),
-  }));
-  rows.push({ id: "captions", label: "Captions", kind: "captions", items: cueItems });
-
-  const effectItems = [
+  const textItems = [
+    ...(edit?.graphics || [])
+      .filter((layer) => layer.type === "text")
+      .map((layer) => ({
+        id: layer.id,
+        layerId: layer.id,
+        label: layer.text || TEXT_KINDS[layer.kind]?.label || "Text",
+        start: numberOr(layer.start),
+        end: numberOr(layer.end),
+        subgroup: "text",
+      })),
     ...(edit?.motion || []).map((layer) => ({
       id: layer.id,
       layerId: layer.id,
@@ -500,33 +490,68 @@ export function layerSpans(edit, captions, duration) {
         subgroup: "fx",
       })),
   ];
-  rows.push({ id: "effects", label: "Effects", kind: "effects", items: effectItems });
-
   const preset = edit?.color?.preset || "none";
-  rows.push({
-    id: "color",
-    label: "Colour",
-    kind: "color",
-    items: [{
+  if (preset !== "none") {
+    textItems.push({
       id: "color",
-      label: COLOR_PRESETS[preset]?.label || "Original",
+      layerId: "color",
+      label: COLOR_PRESETS[preset]?.label || preset,
       start: 0,
       end: Math.max(0.1, duration),
-      muted: preset === "none",
-    }],
-  });
+      subgroup: "color",
+    });
+  }
+  rows.push({ id: "text", label: "TextFX", kind: "text", items: textItems });
+
+  const cueItems = (captions?.cues || []).map((cue) => ({
+    id: cue.id,
+    layerId: cue.id,
+    label: String(cue.text || "").replace(/\s+/g, " "),
+    start: numberOr(cue.start),
+    end: numberOr(cue.end),
+  }));
+  rows.push({ id: "captions", label: "Caption", kind: "captions", items: cueItems });
 
   const mode = edit?.audio?.mode || "original";
+  const music = edit?.audio?.music && typeof edit.audio.music === "object"
+    ? edit.audio.music
+    : null;
   rows.push({
-    id: "audio",
-    label: "Audio",
+    id: "audio_original",
+    label: "Original audio",
     kind: "audio",
     items: [{
-      id: "audio",
-      label: AUDIO_LABELS[mode] || "Original sound",
+      id: "audio_original",
+      label: mode === "music_only" ? "Original off" : "Original sound",
       start: 0,
       end: Math.max(0.1, duration),
-      muted: mode === "original",
+      muted: mode === "music_only",
+      dashed: true,
+    }],
+  });
+  rows.push({
+    id: "audio_voice",
+    label: "Voice over",
+    kind: "audio",
+    items: [{
+      id: "audio_voice",
+      label: ["voice_over", "dub"].includes(mode) ? "Voice over" : "No voice over",
+      start: 0,
+      end: Math.max(0.1, duration),
+      muted: !["voice_over", "dub"].includes(mode),
+      dashed: true,
+    }],
+  });
+  rows.push({
+    id: "audio_bgm",
+    label: "BGM",
+    kind: "audio",
+    items: [{
+      id: "audio_bgm",
+      label: music?.name || music?.track || (["original_bed", "music_only"].includes(mode) ? "Music bed" : "No BGM"),
+      start: 0,
+      end: Math.max(0.1, duration),
+      muted: !music && !["original_bed", "music_only"].includes(mode),
       dashed: true,
     }],
   });

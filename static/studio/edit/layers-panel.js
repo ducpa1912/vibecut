@@ -40,6 +40,13 @@ function saveCollapsed(collapsed) {
   }
 }
 
+const TOOL_TABS = [
+  ["clean", "Clean"],
+  ["visual", "TextFX"],
+  ["audio", "Audio"],
+  ["captions", "Caption"],
+];
+
 const GROUPS = [
   { kind: "clean", label: "Remove text", empty: "No text layers", action: "Add a text box", icon: "eraser", colour: LAYER_COLOURS.clean },
   { kind: "text", label: "Text", empty: "No text layers", action: "Add text", icon: "type", colour: LAYER_COLOURS.text },
@@ -191,6 +198,17 @@ export function renderLayersPanel(host, ctx) {
       return button;
     })),
   ]);
+  const activeTab = String(ctx.getActiveTab?.() || "clean");
+  const tools = el("nav", { class: "st-tool-list", "aria-label": "Edit tools" }, TOOL_TABS.map(([id, label]) => {
+    const button = el("button", {
+      class: `st-tool${activeTab === id || (id === "visual" && ["text", "effects", "color"].includes(activeTab)) ? " is-active" : ""}`,
+      type: "button",
+      text: label,
+      "aria-pressed": activeTab === id ? "true" : "false",
+    });
+    button.addEventListener("click", () => ctx.setTab?.(id));
+    return button;
+  }));
   const head = el("header", { class: "st-layers-head" }, [
     el("div", { class: "st-layers-heading" }, [
       el("h2", { text: "Layers" }),
@@ -296,5 +314,5 @@ export function renderLayersPanel(host, ctx) {
     body.append(section);
   }
 
-  host.replaceChildren(el("section", { class: "st-layers-panel" }, [head, body]));
+  host.replaceChildren(el("section", { class: "st-layers-panel" }, [tools, head, body]));
 }

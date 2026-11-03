@@ -89,8 +89,9 @@ def test_toolbar_moves_all_moments_into_the_picker():
 
 
 def test_inspector_tabs_are_plain_and_not_truncated():
-    assert '{ id: "clean", label: "Remove text" }' in INSPECTOR
-    assert '{ id: "visual", label: "Text & effects" }' in INSPECTOR
+    assert '{ id: "clean", label: "Clean" }' in INSPECTOR
+    assert '{ id: "visual", label: "TextFX" }' in INSPECTOR
+    assert '{ id: "captions", label: "Caption" }' in INSPECTOR
     assert "Texts & Effects" not in INSPECTOR
     tab = rule(".st-inspector-tab")
     assert "font-size: 11.5px" in tab

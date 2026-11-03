@@ -23,6 +23,7 @@ import { mountPreview } from "./preview.js";
 import { mountTimeline } from "./timeline.js";
 import { mountInspector } from "./inspector.js";
 import { renderLayersPanel } from "./layers-panel.js";
+import { mountMomentBoard } from "./moment-board.js";
 import { cropAt } from "./canvas-tools.js";
 import { icon } from "./icons.js";
 import { manualLayer } from "./layers/clean.js";
@@ -150,6 +151,7 @@ export function mount(root, ctx) {
   };
 
   const dom = {};
+  let momentScenesOpen = false;
 
   function renderLoading(message) {
     delete root.dataset.editorFrame;
@@ -229,6 +231,7 @@ export function mount(root, ctx) {
         </header>
         <div id="st-edit-receipt" class="st-trim-receipt" role="status" aria-live="polite" hidden></div>
         <div id="st-edit-notice" class="st-edit-notice" role="alert" hidden></div>
+        <section id="st-edit-moments" class="st-moment-board" aria-label="Selected moments"></section>
         <div class="st-edit-stage">
           <aside id="st-edit-layers" class="st-layers" aria-label="Layers"></aside>
           <div id="st-edit-preview"></div>
@@ -284,6 +287,7 @@ export function mount(root, ctx) {
     dom.help = root.querySelector("#st-edit-help");
     dom.shortcuts = root.querySelector("#st-edit-shortcuts");
     dom.shortcutsClose = root.querySelector("#st-edit-shortcuts-close");
+    dom.moments = root.querySelector("#st-edit-moments");
     dom.inspector = root.querySelector("#st-edit-inspector");
     dom.inspectorBody = root.querySelector("#st-edit-inspector-body");
     dom.inspectorToggle = root.querySelector("#st-edit-inspector-toggle");
@@ -1200,6 +1204,7 @@ export function mount(root, ctx) {
     state.duration = sequenceDuration() || state.duration;
     touch("sequence");
     renderLayers();
+    renderMomentBoard();
     preview?.setData({
       aspect: state.aspect,
       edit: state.edit,
@@ -1504,6 +1509,32 @@ export function mount(root, ctx) {
     return `${kind}:${id}`;
   }
 
+  function renderMomentBoard() {
+    if (!dom.moments || !state.edit || !state.story) return;
+    mountMomentBoard(dom.moments, {
+      getJob: () => state.job,
+      getStory: () => state.story,
+      getEdit: () => state.edit,
+      getExpanded: () => momentScenesOpen,
+      toggleExpanded: () => {
+        momentScenesOpen = !momentScenesOpen;
+        renderMomentBoard();
+      },
+      seek: (time) => seek(time),
+      appendScene: (scene) => {
+        setSequence([...currentSequence(), {
+          scene: Number(scene.id),
+          start: Number(scene.start),
+          end: Number(scene.end),
+          role: "beat",
+          beat_kind: "context",
+        }]);
+        notify(`Scene ${Number(scene.id) + 1} added to this cut.`, "ok");
+        renderMomentBoard();
+      },
+    });
+  }
+
   function renderLayers() {
     if (!dom.layers || !state.edit) return;
     renderLayersPanel(dom.layers, {
@@ -1511,6 +1542,8 @@ export function mount(root, ctx) {
       getCaptions: () => state.captions,
       getSelected: () => state.selected,
       getCrop: layerCrop,
+      getActiveTab: () => state.activeTab,
+      setTab: (tab) => setActiveTab(tab),
       isHidden: (kind, id) => state.hiddenLayers.has(layerHiddenKey(kind, id)),
       select: (kind, id) => selectLayer(kind, id),
       add: (kind) => addLayer(kind),
@@ -1964,6 +1997,7 @@ export function mount(root, ctx) {
 
   function renderEditorParts() {
     if (!dom.preview || !dom.timeline) return;
+    renderMomentBoard();
     if (!preview) {
       preview = mountPreview(dom.preview, {
         jobId: state.job.id,

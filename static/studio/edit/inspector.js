@@ -15,27 +15,28 @@ import { mountEffectsPanel } from "./layers/effects.js";
 import { mountAudioPanel } from "./layers/audio.js";
 
 export const TABS = [
-  { id: "clean", label: "Remove text" },
-  { id: "visual", label: "Text & effects" },
+  { id: "clean", label: "Clean" },
+  { id: "visual", label: "TextFX" },
   { id: "audio", label: "Audio" },
+  { id: "captions", label: "Caption" },
 ];
 
 export function tabCounts(edit, captions) {
   return {
     clean: (edit?.clean || []).length,
     visual: (edit?.graphics || []).filter((layer) => layer.type === "text").length
-      + (captions?.cues?.length || 0)
       + (edit?.motion || []).length
       + (edit?.graphics || []).filter((layer) => layer.type === "fx").length
       + (edit?.color?.preset && edit.color.preset !== "none" ? 1 : 0),
     audio: edit?.audio?.mode && edit.audio.mode !== "original" ? 1 : 0,
+    captions: captions?.cues?.length || 0,
   };
 }
 
 export function mountInspector(host, { active = "visual", edit, captions, panelCtx }) {
   host.replaceChildren();
   const counts = tabCounts(edit, captions);
-  const activeTab = ["text", "captions", "effects", "color"].includes(active) ? "visual" : active;
+  const activeTab = ["text", "effects", "color"].includes(active) ? "visual" : active;
 
   const tabs = el("div", { class: "st-inspector-tabs", role: "tablist", "aria-label": "Layers" });
   for (const tab of TABS) {
@@ -87,9 +88,10 @@ export function mountInspector(host, { active = "visual", edit, captions, panelC
       mount(content, panelCtx);
     };
     group("Text", mountTextPanel);
-    group("Captions", mountCaptionsPanel);
     group("Effects", mountEffectsPanel);
     group("Colour", mountColorPanel);
+  } else if (activeTab === "captions") {
+    mountCaptionsPanel(body, panelCtx);
   } else {
     mountAudioPanel(body, panelCtx);
   }
