@@ -99,6 +99,7 @@ export function mountTimeline(root, options = {}) {
     onAdd: options.onAdd || (() => {}),
     onAddMoment: options.onAddMoment || (() => {}),
     onReorder: options.onReorder || (() => {}),
+    onRole: options.onRole || (() => {}),
     onTrim: options.onTrim || (() => {}),
     onConflict: options.onConflict || (() => {}),
     beforeTrim: options.beforeTrim || (() => Promise.resolve(true)),
@@ -286,9 +287,8 @@ export function mountTimeline(root, options = {}) {
       ? "Outside the story range"
       : formatSpan(storyStart, storyEnd ?? storyStart);
     const title = `${label || LANE_LABELS[kind] || "Layer"} · ${span}${outside ? " · outside the trimmed story" : ""}${item.hidden ? " · hidden outside, kept in the Edit" : ""}${item.pinned ? " · pinned to the story start" : ""}`;
-    const button = el("button", {
+    const attrs = {
       class: `st-tl-bar st-tl-bar-${kind}${item.sceneClip ? ` st-tl-role-${item.role || "beat"}` : ""}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
-      type: "button",
       title,
       "aria-label": title,
       style: `left:${geometry.left}%;width:${geometry.width}%`,
@@ -298,12 +298,36 @@ export function mountTimeline(root, options = {}) {
         start: String(storyStart === null ? 0 : storyStart),
         outside: outside ? "1" : "0",
       },
-    }, [
+    };
+    if (kind === "scenes") {
+      attrs.role = "button";
+      attrs.tabindex = "0";
+    } else {
+      attrs.type = "button";
+    }
+    const button = el(kind === "scenes" ? "div" : "button", attrs, [
       label ? el("span", { text: label }) : null,
+      kind === "scenes" ? el("button", {
+        class: "st-tl-role-btn",
+        type: "button",
+        text: "⋯",
+        title: "Change this scene's role",
+        "aria-label": "Change this scene's role",
+      }) : null,
     ]);
     if (kind === "scenes") {
       button.draggable = true;
       button.dataset.sceneIndex = String(item.index ?? 0);
+      button.querySelector(".st-tl-role-btn")?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        handlers.onRole(item.index ?? 0, item);
+      });
+      button.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          handlers.onSeek(Math.max(0, Math.min(duration, storyStart ?? 0)));
+        }
+      });
       button.addEventListener("dragstart", (event) => {
         event.dataTransfer?.setData("text/plain", String(item.index ?? 0));
         event.dataTransfer.effectAllowed = "move";
@@ -339,16 +363,26 @@ export function mountTimeline(root, options = {}) {
       const span = Math.max(0.05, numberOr(clip?.dur, numberOr(clip?.end) - numberOr(clip?.start)));
       const scene = Number(clip?.scene);
       const role = String(clip?.role || "beat");
+      const beatKind = String(clip?.beat_kind || "");
+      const roleLabel = role === "hook" ? "Hook"
+        : role === "payoff" ? "Payoff"
+          : beatKind === "broll" ? "B-roll"
+            : beatKind === "statement" ? "Statement"
+              : beatKind === "proof" ? "Proof"
+                : beatKind === "context" ? "Context"
+                  : "Scene";
       rows.push({
         id: `scene-${clip?.scene}-${offset.toFixed(3)}`,
         index: rows.length,
-        label: `${role === "hook" ? "Hook" : role === "payoff" ? "Payoff" : "Scene"} ${Number.isFinite(scene) ? scene + 1 : ""}`.trim(),
+        label: `${roleLabel} ${Number.isFinite(scene) ? scene + 1 : ""}`.trim(),
         start: offset,
         end: offset + span,
         storyStart: offset,
         storyEnd: offset + span,
         role,
+        beat_kind: beatKind,
         scene,
+        sourceClip: clip,
         sceneClip: true,
       });
       offset += span;

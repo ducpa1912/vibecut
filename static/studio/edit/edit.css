@@ -1324,6 +1324,21 @@ main.st-main[data-editor-frame="fixed"] > .st-edit-panel {
 .st-tl-bar-scenes { border-color: rgba(142, 201, 163, 0.34); background: rgba(142, 201, 163, 0.14); color: #c6e5d0; font-size: 9.5px; }
 .st-tl-bar-scenes.st-tl-role-hook { border-color: rgba(232, 162, 102, 0.6); background: rgba(232, 162, 102, 0.22); color: #f3d3b4; }
 .st-tl-bar-scenes.st-tl-role-payoff { border-color: rgba(142, 201, 163, 0.65); background: rgba(142, 201, 163, 0.24); color: #d6f0df; }
+.st-tl-bar-scenes { gap: 2px; }
+.st-tl-role-btn {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.22);
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.st-tl-role-btn:hover { background: rgba(0, 0, 0, 0.5); color: #fff; }
 .st-tl-bar-clean { border-color: rgba(232, 162, 102, 0.42); background: rgba(232, 162, 102, 0.20); color: #f3d3b4; }
 .st-tl-bar-text { border-color: rgba(123, 155, 184, 0.42); background: rgba(123, 155, 184, 0.20); color: #c7d8e8; }
 .st-tl-bar-captions { border-color: rgba(142, 201, 163, 0.38); background: rgba(142, 201, 163, 0.18); color: #c4e5cf; }

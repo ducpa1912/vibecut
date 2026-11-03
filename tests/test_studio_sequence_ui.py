@@ -28,3 +28,12 @@ def test_edit_schema_accepts_a_sequence_without_breaking_old_edits():
     assert "def normalize_sequence" in EDITS
     assert "if normalized_sequence:" in EDITS
     assert "content.get(\"sequence\") or []" in EDITS
+
+
+def test_scene_role_menu_and_broll_picker():
+    assert "function sceneRoleDialog" in INDEX
+    assert "Bold statement" in INDEX and "B-roll" in INDEX
+    assert "onRole: (index, item) => sceneRoleDialog(index, item)" in INDEX
+    assert "Unused scenes as b-roll" in INDEX
+    assert 'beat_kind: "broll"' in INDEX
+    assert 'class: "st-tl-role-btn"' in TIMELINE

@@ -1221,6 +1221,56 @@ export function mount(root, ctx) {
     notify("Scene order changed. The timeline and render use the new order.", "ok");
   }
 
+
+  function sceneRoleDialog(index, item) {
+    const sequence = currentSequence();
+    const clip = sequence[index];
+    if (!clip) return;
+    const dialog = el("dialog", { class: "st-dialog", "aria-labelledby": "st-role-title" });
+    const close = () => { dialog.close(); dialog.remove(); };
+    const head = el("header", { class: "st-dialog-head" }, [
+      el("h2", { id: "st-role-title", text: "Scene role" }),
+      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+    ]);
+    head.lastChild.addEventListener("click", close);
+    dialog.append(head);
+    dialog.append(el("p", { class: "st-hint", text: "Hook and Payoff open and close the cut. The other roles are editorial labels; B-roll can come from any unused scene." }));
+    for (const [label, role, beatKind] of [
+      ["Hook", "hook", ""],
+      ["Context", "beat", "context"],
+      ["Bold statement", "beat", "statement"],
+      ["Proof", "beat", "proof"],
+      ["B-roll", "beat", "broll"],
+      ["Transition", "beat", "transition"],
+      ["Payoff", "payoff", ""],
+    ]) {
+      const active = (clip.role || "beat") === role
+        && String(clip.beat_kind || "") === beatKind;
+      const button = el("button", {
+        class: `st-layer-row${active ? " is-active" : ""}`,
+        type: "button",
+        "aria-pressed": active ? "true" : "false",
+      }, [
+        el("span", { class: "st-layer-badge", text: label }),
+        el("span", { class: "st-layer-name", text: active ? "Current role" : "Use this role" }),
+      ]);
+      button.addEventListener("click", () => {
+        const next = currentSequence();
+        next[index] = { ...next[index], role, ...(beatKind ? { beat_kind: beatKind } : {}) };
+        if (!beatKind) delete next[index].beat_kind;
+        setSequence(next);
+        close();
+        notify(`Scene ${index + 1} is now ${label}.`, "ok");
+      });
+      dialog.append(button);
+    }
+    const cancel = el("button", { class: "st-btn st-btn-ghost", type: "button", text: "Cancel" });
+    cancel.addEventListener("click", close);
+    dialog.append(el("div", { class: "st-actions" }, [cancel]));
+    document.body.append(dialog);
+    dialog.showModal();
+  }
+
   function appendMomentDialog() {
     if (!state.set?.id) return;
     const stories = (state.set.stories || []).filter((story) => story.id !== state.story?.id);
@@ -1257,6 +1307,41 @@ export function mount(root, ctx) {
         setSequence([...currentSequence(), ...appended]);
         close();
         notify(`Added ${appended.length} scene${appended.length === 1 ? "" : "s"} to this edit.`, "ok");
+      });
+      dialog.append(row);
+    }
+
+    const used = new Set(currentSequence().map((clip) => Number(clip.scene)));
+    const unused = ((state.job?.analysis?.scenes || []).filter((scene) => !used.has(Number(scene.id)))).slice(0, 30);
+    dialog.append(el("div", { class: "st-layer-stage-head", style: "margin-top:14px" }, [
+      el("h3", { text: "Unused scenes as b-roll" }),
+      el("span", { class: "st-hint", text: `${unused.length} available` }),
+    ]));
+    if (!unused.length) {
+      dialog.append(el("p", { class: "st-hint", text: "Every scene is already in this cut." }));
+    }
+    for (const scene of unused) {
+      const text = String(scene.speech || scene.ocr || "").replace(/\s+/g, " ").trim();
+      const row = el("button", { class: "st-layer-row", type: "button" }, [
+        scene.thumb_url ? el("img", {
+          src: scene.thumb_url,
+          alt: "",
+          loading: "lazy",
+          style: "width:44px;height:44px;object-fit:cover;border-radius:5px;flex:0 0 auto",
+        }) : el("span", { class: "st-layer-badge", text: "B-roll" }),
+        el("span", { class: "st-layer-name", text: text || `Scene ${Number(scene.id) + 1}` }),
+        el("span", { class: "st-hint", text: formatTime(scene.start) }),
+      ]);
+      row.addEventListener("click", () => {
+        setSequence([...currentSequence(), {
+          scene: Number(scene.id),
+          start: Number(scene.start),
+          end: Number(scene.end),
+          role: "beat",
+          beat_kind: "broll",
+        }]);
+        close();
+        notify("B-roll added to the end of this edit.", "ok");
       });
       dialog.append(row);
     }
@@ -1900,6 +1985,7 @@ export function mount(root, ctx) {
         onAdd: (kind) => addLayer(kind),
         onAddMoment: () => appendMomentDialog(),
         onReorder: (from, to) => reorderScene(from, to),
+        onRole: (index, item) => sceneRoleDialog(index, item),
         beforeTrim: () => flushSave(),
         onTrim: (result) => applyTrimResult(result, "Trimmed"),
         onConflict: (error) => { void handleTrimConflict(error); },
