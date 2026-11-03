@@ -1,0 +1,20 @@
+# SSH signing keys allowed to sign lane commits.
+#
+# Git only checks SSH signatures when gpg.ssh.allowedSignersFile points at a
+# file like this one. Without it, `git verify-commit` fails on every commit and
+# `git log --show-signature` reports "No signature", even when the commits are
+# signed. scripts/verify-signatures.sh points Git at this file itself, so
+# shipping and tagging do not depend on a global Git setting.
+#
+# Format: <principal> <key type> <base64 key>
+# The principal must equal the committer email on the commit.
+#
+# To add a machine, append its public signing key:
+#   ssh-keygen -lf ~/.ssh/id_ed25519_signing.pub   # check the fingerprint first
+# then run scripts/verify-signatures.sh to confirm the whole range verifies.
+
+# MacBook signing key (SHA256:zoaud/nesPC4bFgVuudDCE6Lb1tT1+AMLEIPqYfjDqQ)
+ducpham1912@gmail.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDsmduMa356rifMgDPJe6ZHthW0Tcbl2q2QODdP19X6N
+
+# Earlier lane signing key (SHA256:XXuAAtpBst6x/ugZnfLqdjeo0/6WbrrCNlpv7b/kGfE)
+ducpham1912@gmail.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEPXH/65L1pndpusQdMz+94/OCi0I/IbSMNimo54GPPz

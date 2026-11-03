@@ -7,6 +7,17 @@ and `docs/classic/**`. It does not import Studio or Voice Room UI state, and it
 does not merge those lanes into itself. Shared backend modules change only when
 the change is additive and tested from Classic.
 
+### Scope of the two admin commits after the old pin
+
+The previous pin was `e38004a`. Two shared admin commits landed afterwards:
+`d064a9d` (workflow routes are the only model source) and `39be317` (include the
+current OpenRouter speech-to-text catalog). **Both are in scope for this beta
+build.** They only make the admin workflow routes the single source for the
+rewrite, TTS, music and STT models that Classic's Setup tests and cost notices
+read; they are additive to shared core, no Classic page or route was reverted,
+and the Classic suite is green with them. The beta pin therefore moves forward
+to the tip that contains them instead of back to `e38004a`.
+
 ## Product decisions
 
 ### Platform capability, not “local only”
@@ -85,10 +96,26 @@ Preserve-pitch is the default for shared TTS. Classic exposes the effective
   `_find_share_render`.
 - [x] CI: run on `classic` pushes and check all `static/**/*.js`.
 - [x] Signatures: verify commits/tags in `ship-lane.sh` and `release.sh`.
+  *(Verification goes through `scripts/verify-signatures.sh`, which supplies the
+  tracked `scripts/allowed_signers` itself. Plain `git verify-commit` fails on a
+  Mac where `gpg.ssh.allowedSignersFile` is unset even though the commits are
+  signed, so the old check could not tell a missing setting from an unsigned
+  commit. Two keys sign this lane's history; both are in the file with the
+  committer principal. `tests/test_signed_commits.py` covers the signed, the
+  unsigned, the recorded-exception and the wrong-key paths.)*
+- [x] Signatures: stop the tag path from depending on a global Git setting.
+  *`release.sh` verifies the range and the new tag through the same script; the
+  recorded pre-signing `732254a` and `8186e2a` stay exceptions.*
 - [x] Fix `README` rewrite-context default (`6000` vs `10000`).
 - [x] Rewrite `docs/classic/testing/classic-beta-pass-2.md` for the current
   labels, Clean confirmation, Vietnamese UI, voice fit and platform copy.
-  *(scan-flow step remains for C0.)*
+  *(Re-checked against the build after the pin moved: Beta pass 2 now uses the
+  real worktree path, describes back **Show all/Show less**, **Dub voice**,
+  **New voice-over**, **New voice + music**, **Use my BGM / Choose BGM**,
+  **Translating… / ✓ Translation ready**, the **Edit** section and
+  **Generate voice sample · ▶**, states that Classic has no media files yet, and
+  carries its own current T1–T6 trust table. The T1–T6 block in pass 1 stays
+  historical at `1652c92`. Scan-flow step remains for C0.)*
 
 ### E. Studio features embedded in Classic
 

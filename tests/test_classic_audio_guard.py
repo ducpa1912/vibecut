@@ -11,7 +11,7 @@ def test_audio_block_reason_covers_unavailable_music_and_voice_engines():
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert (
         "Music generation needs a MiniMax or OpenRouter key. "
-        "Add one in Setup, or choose Use my sound."
+        "Add one in Setup, or choose Use my BGM."
     ) in script
     assert 'state.audioEngines?.music' in script
     assert '["minimax-music", "lyria-clip"]' in script

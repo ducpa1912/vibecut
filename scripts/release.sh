@@ -59,15 +59,13 @@ done
 tag="beta-$day-$n"
 commit=$(git rev-parse --short HEAD)
 
+scripts_dir=$(dirname "${BASH_SOURCE[0]}")
 allow_unsigned="${VIBECUT_ALLOW_UNSIGNED:-0}"
 if [[ "$allow_unsigned" != "1" ]]; then
   base="$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null || true)"
   range="${base:+$base..}HEAD"
-  unsigned="$(git log --format='%H %G?' "$range" | awk '$2 != "G" {print $1}' | grep -v -E '^(732254a|8186e2a)' || true)"
-  if [[ -n "$unsigned" ]]; then
-    echo "Unsigned commits in the release range:" >&2
-    echo "$unsigned" >&2
-    echo "Sign them before tagging. The pre-signing 732254a and 8186e2a are recorded exceptions." >&2
+  if ! "$scripts_dir/verify-signatures.sh" --range "$range"; then
+    echo "Unsigned commits in the release range. Sign them before tagging. The pre-signing 732254a and 8186e2a are recorded exceptions." >&2
     exit 1
   fi
 fi
@@ -80,7 +78,7 @@ if [[ "$allow_unsigned" == "1" ]]; then
   git tag -a "$tag" -m "Beta $tag: classic at $commit. Build with VIBECUT_EDITION=classic and no VIBECUT_FEATURES."
 else
   git tag -s "$tag" -m "Beta $tag: classic at $commit. Build with VIBECUT_EDITION=classic and no VIBECUT_FEATURES."
-  if ! git verify-tag "$tag" >/dev/null 2>&1; then
+  if ! "$scripts_dir/verify-signatures.sh" --tag "$tag"; then
     echo "Tag $tag is not signed. Nothing was pushed." >&2
     exit 1
   fi

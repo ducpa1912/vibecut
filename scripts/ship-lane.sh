@@ -64,8 +64,9 @@ if [[ "$skip_tests" -eq 0 ]]; then
   python3 -m pytest -q -p no:cacheprovider
 fi
 
-if ! git verify-commit HEAD >/dev/null 2>&1; then
-  echo "HEAD is not signed. Sign the commit before shipping." >&2
+echo "-> Checking commit signatures"
+if ! "$(dirname "${BASH_SOURCE[0]}")/verify-signatures.sh"; then
+  echo "Not shipping unsigned commits. Sign them; do not hide it with VIBECUT_ALLOW_UNSIGNED." >&2
   exit 1
 fi
 

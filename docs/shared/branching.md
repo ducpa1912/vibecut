@@ -85,8 +85,7 @@ When the founder test pass on `classic` is clean, run this from the classic work
 scripts/release.sh --founder-passed
 ```
 
-It tags the shipped `classic` as `beta-YYYYMMDD-N` and pushes the tag. It refuses
-when:
+It tags the shipped `classic` as `beta-YYYYMMDD-N` and pushes the tag.It refuses when:
 
 - you are on another lane,
 - there are uncommitted changes,
@@ -94,6 +93,13 @@ when:
 - the release commit is not signed,
 - any commit in the release range is unsigned (except the recorded
   pre-signing `732254a` and `8186e2a`).
+
+Shipping and tagging check signatures through `scripts/verify-signatures.sh`,
+which points Git at the tracked `scripts/allowed_signers`. A plain
+`git verify-commit` fails on a Mac where `gpg.ssh.allowedSignersFile` is unset,
+even when the commit is signed, so it is not used as the check. Run the script
+directly to see the result, and add a new machine's public signing key to that
+file before it ships commits.
 
 Testers build from the tag, with `VIBECUT_EDITION=classic` and no
 `VIBECUT_FEATURES`.

@@ -5441,7 +5441,7 @@
     if (["music", "full"].includes(mode) && musicSourceMode() === "generate" && music) {
       const ready = ["minimax-music", "lyria-clip"].filter((id) => music[id]?.available);
       if (!ready.length) {
-        return "Music generation needs a MiniMax or OpenRouter key. Add one in Setup, or choose Use my sound.";
+        return "Music generation needs a MiniMax or OpenRouter key. Add one in Setup, or choose Use my BGM.";
       }
       const selected = state.audio.music;
       if (selected && music[selected] && music[selected].available === false) {
