@@ -95,6 +95,26 @@ def test_the_verifier_fails_an_unsigned_commit(tmp_path):
 
 
 @needs_ssh
+def test_commit_mode_judges_only_that_commit(tmp_path):
+    repo, signers = _repo(tmp_path)
+
+    env = {"PATH": "/usr/bin:/bin", "VIBECUT_ALLOWED_SIGNERS": str(signers)}
+    signed = _run(["git", "rev-parse", "HEAD~1"], repo).stdout.strip()
+    unsigned = _run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+
+    # `git rev-list <sha>` walks the whole history, so --commit must cap it:
+    # one signed commit stays one signed commit, and the unsigned one after it
+    # is not pulled in by accident.
+    one = _run([str(VERIFY), "--commit", signed], repo, env)
+    assert one.returncode == 0, one.stdout + one.stderr
+    assert "Signed: 1 · exceptions: 0 · failed: 0" in one.stdout
+
+    other = _run([str(VERIFY), "--commit", unsigned], repo, env)
+    assert other.returncode == 1
+    assert "Signed: 0 · exceptions: 0 · failed: 1" in other.stdout
+
+
+@needs_ssh
 def test_a_recorded_exception_is_named_and_skipped(tmp_path):
     repo, signers = _repo(tmp_path)
     short = _run(["git", "rev-parse", "--short", "HEAD"], repo).stdout.strip()

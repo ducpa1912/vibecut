@@ -63,9 +63,13 @@ if [[ -n "$tag" ]]; then
   exit 1
 fi
 
+single=""
 if [[ -z "$range" ]]; then
   if [[ -n "$commit" ]]; then
+    # `git rev-list <sha>` means that commit and everything behind it, so
+    # --commit must cap the walk or it judges the whole history.
     range="$commit"
+    single="--max-count=1"
   else
     branch=$(git rev-parse --abbrev-ref HEAD)
     base=""
@@ -78,7 +82,7 @@ if [[ -z "$range" ]]; then
   fi
 fi
 
-if ! commits=$(git rev-list --reverse "$range" 2>/dev/null); then
+if ! commits=$(git rev-list ${single:-} --reverse "$range" 2>/dev/null); then
   echo "Cannot read the range '$range'." >&2
   exit 1
 fi
