@@ -57,11 +57,27 @@ export function mountTextPanel(host, ctx) {
   const selected = layers.find((layer) => layer.id === selectedId) || layers[0] || null;
 
   host.replaceChildren();
+
+  const presets = el("div", { class: "st-text-presets", role: "group", "aria-label": "Text presets" });
+  for (const [kind, preset] of Object.entries(TEXT_KINDS)) {
+    const button = el("button", {
+      class: `st-text-preset${selected?.kind === kind ? " is-active" : ""}`,
+      type: "button",
+      title: `Add ${preset.label}`,
+      dataset: { kind },
+    }, [
+      el("strong", { text: preset.label }),
+      el("span", { text: preset.sample }),
+    ]);
+    button.addEventListener("click", () => {
+      if (typeof ctx.addText === "function") ctx.addText(kind);
+    });
+    presets.append(button);
+  }
+  host.append(presets);
+
   if (!layers.length) {
-    host.append(el("div", { class: "st-layer-empty" }, [
-      el("h3", { text: "No text yet" }),
-      el("p", { text: "Use Add in Layers, then choose the text kind here. The layer appears on the preview and the timeline." }),
-    ]));
+    host.append(el("p", { class: "st-layer-note", text: "Choose a preset to place text at the playhead." }));
   } else {
     const list = el("div", { class: "st-layer-list", role: "list" });
     for (const layer of layers) {

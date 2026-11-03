@@ -46,6 +46,8 @@ export function mountPreview(root, options = {}) {
     onSelect: options.onSelect || (() => {}),
     onBoxChange: options.onBoxChange || (() => {}),
     onBoxCreate: options.onBoxCreate || (() => {}),
+    onAspect: options.onAspect || (() => {}),
+    onOutput: options.onOutput || (() => {}),
   };
   const state = {
     aspect: "9:16",
@@ -56,6 +58,8 @@ export function mountPreview(root, options = {}) {
     duration: 10,
     time: 0,
     showSafeZones: true,
+    platform: "auto",
+    loop: false,
     selected: null,
     hiddenLayers: new Set(),
     foundText: [],
@@ -97,44 +101,102 @@ export function mountPreview(root, options = {}) {
   root.innerHTML = `
     <section class="st-preview" aria-label="Story preview">
       <div class="st-preview-head">
-        <div class="st-preview-heading">
-          <h2>Preview</h2>
-          <span id="st-preview-aspect" class="st-chip st-chip-quiet">9:16</span>
-        </div>
         <div class="st-preview-tools">
           <div class="st-preview-toolgroup" role="group" aria-label="Canvas tool">
-            <button id="st-preview-tool-select" class="st-preview-tool is-active" type="button" data-tool="select" aria-pressed="true" title="Select and move boxes (V)">Select</button>
-            <button id="st-preview-tool-box" class="st-preview-tool" type="button" data-tool="box" aria-pressed="false" title="Draw a Remove-text box (B)">Draw box</button>
+            <button id="st-preview-tool-select" class="st-preview-tool is-active" type="button" data-tool="select" aria-pressed="true" title="Select and move boxes (V)" aria-label="Select tool"></button>
+            <button id="st-preview-tool-box" class="st-preview-tool" type="button" data-tool="box" aria-pressed="false" title="Draw a Remove-text box (B)" aria-label="Draw box"></button>
           </div>
-          <label class="st-switch">
-            <input id="st-preview-safe" type="checkbox" checked>
-            <span>Safe zones</span>
-          </label>
-          <span id="st-preview-source" class="st-preview-source">Loading preview…</span>
+        </div>
+        <div class="st-preview-scene" aria-live="polite">
+          <span id="st-preview-scene-num" class="st-mono">01</span>
+          <span id="st-preview-scene-role" class="st-preview-role">Scene</span>
+        </div>
+        <div class="st-preview-head-right">
+          <span id="st-preview-source" class="st-visually-hidden" role="status">Loading preview…</span>
+          <button id="st-preview-focus" class="st-icon-btn" type="button" title="Focus the preview (F)" aria-label="Focus the preview" aria-pressed="false"></button>
         </div>
       </div>
       <div class="st-preview-stage">
         <canvas id="st-preview-canvas" class="st-preview-canvas" width="1080" height="1920" aria-label="Story preview with safe zones and editable boxes"></canvas>
       </div>
       <div class="st-preview-transport">
-        <button id="st-preview-play" class="st-icon-btn st-preview-play" type="button" aria-label="Play preview">▶</button>
-        <span id="st-preview-time" class="st-mono st-preview-time">0:00.0 / 0:00.0</span>
-        <input id="st-preview-scrub" class="st-preview-scrub" type="range" min="0" max="10" step="0.01" value="0" aria-label="Preview position">
+        <div class="st-preview-left">
+          <span id="st-preview-time" class="st-mono st-preview-time">0:00.0</span>
+          <label class="st-preview-select">
+            <span class="st-visually-hidden">Safe-zone platform</span>
+            <select id="st-preview-platform" aria-label="Safe-zone platform">
+              <option value="auto">This shape</option>
+              <option value="tiktok">TikTok</option>
+              <option value="rednote">RedNote</option>
+              <option value="facebook">Facebook</option>
+              <option value="youtube">YouTube</option>
+            </select>
+          </label>
+          <button id="st-preview-safe-toggle" class="st-icon-btn is-on" type="button" title="Safe zones" aria-label="Safe zones" aria-pressed="true"></button>
+          <input id="st-preview-safe" type="checkbox" checked class="st-visually-hidden" tabindex="-1">
+        </div>
+        <div class="st-preview-center">
+          <button id="st-preview-back" class="st-icon-btn" type="button" title="Back 1 second (J)" aria-label="Back 1 second"></button>
+          <button id="st-preview-play" class="st-icon-btn st-preview-play" type="button" aria-label="Play preview" title="Play / pause (Space)"></button>
+          <button id="st-preview-forward" class="st-icon-btn" type="button" title="Forward 1 second (L)" aria-label="Forward 1 second"></button>
+        </div>
+        <div class="st-preview-right">
+          <button id="st-preview-aspect" class="st-preview-chip" type="button" title="Aspect ratio" aria-haspopup="menu">9:16</button>
+          <button id="st-preview-resolution" class="st-preview-chip" type="button" title="Output resolution" aria-haspopup="menu">1080p</button>
+          <button id="st-preview-frame" class="st-icon-btn" type="button" title="Save this frame" aria-label="Save this frame"></button>
+          <button id="st-preview-hdr" class="st-preview-chip" type="button" disabled title="HDR output is not available in this build">HDR</button>
+          <button id="st-preview-fps" class="st-preview-chip" type="button" title="Preview and output frame rate">30</button>
+        </div>
+        <input id="st-preview-scrub" class="st-visually-hidden" type="range" min="0" max="10" step="0.01" value="0" aria-label="Preview position" tabindex="-1">
+      </div>
+      <div id="st-preview-aspect-menu" class="st-preview-menu" hidden role="menu" aria-label="Aspect ratio">
+        <button type="button" data-aspect="9:16">9:16</button>
+        <button type="button" data-aspect="4:5">4:5</button>
+        <button type="button" data-aspect="1:1">1:1</button>
+        <button type="button" data-aspect="16:9">16:9</button>
+        <button type="button" data-aspect="16:10">16:10</button>
+      </div>
+      <div id="st-preview-res-menu" class="st-preview-menu is-res" hidden role="menu" aria-label="Output resolution">
+        <button type="button" data-res="720p">720p</button>
+        <button type="button" data-res="1080p">1080p</button>
+        <button type="button" data-res="1440p">1440p</button>
+        <button type="button" data-res="4K">4K</button>
+        <div class="st-preview-custom">
+          <input id="st-preview-width" type="number" min="240" max="4096" step="2" aria-label="Custom width" placeholder="Width">
+          <span>×</span>
+          <input id="st-preview-height" type="number" min="240" max="4096" step="2" aria-label="Custom height" placeholder="Height">
+          <button id="st-preview-res-apply" class="st-btn st-btn-ghost st-btn-small" type="button">Use</button>
+        </div>
       </div>
       <p id="st-preview-note" class="st-preview-note" role="status">Opening the preview…</p>
     </section>
-  `;
+    `;
 
   const $ = (selector) => root.querySelector(selector);
   const dom = {
     canvas: $("#st-preview-canvas"),
     aspect: $("#st-preview-aspect"),
+    aspectMenu: $("#st-preview-aspect-menu"),
     safe: $("#st-preview-safe"),
-    source: $("#st-preview-source"),
+    safeToggle: $("#st-preview-safe-toggle"),
     play: $("#st-preview-play"),
+    back: $("#st-preview-back"),
+    forward: $("#st-preview-forward"),
     time: $("#st-preview-time"),
     scrub: $("#st-preview-scrub"),
     note: $("#st-preview-note"),
+    source: $("#st-preview-source"),
+    sceneNum: $("#st-preview-scene-num"),
+    sceneRole: $("#st-preview-scene-role"),
+    platform: $("#st-preview-platform"),
+    focus: $("#st-preview-focus"),
+    resolution: $("#st-preview-resolution"),
+    resMenu: $("#st-preview-res-menu"),
+    width: $("#st-preview-width"),
+    height: $("#st-preview-height"),
+    resApply: $("#st-preview-res-apply"),
+    frame: $("#st-preview-frame"),
+    fps: $("#st-preview-fps"),
     tools: Array.from(root.querySelectorAll(".st-preview-tool")),
   };
   const ctx = dom.canvas.getContext("2d");
@@ -142,6 +204,11 @@ export function mountPreview(root, options = {}) {
   for (const button of dom.tools) {
     button.prepend(icon(button.dataset.tool === "select" ? "cursor" : "square", { size: 13 }));
   }
+  dom.focus?.prepend(icon("expand", { size: 15 }));
+  dom.back?.append(icon("arrow-left", { size: 15 }));
+  dom.forward?.append(icon("arrow-right", { size: 15 }));
+  dom.safeToggle?.prepend(icon("eye", { size: 14 }));
+  dom.frame?.prepend(icon("scissors", { size: 14 }));
 
   function setNote(message, tone = "") {
     dom.note.textContent = message || "";
@@ -228,7 +295,7 @@ export function mountPreview(root, options = {}) {
 
   function drawSafeZones(width, height) {
     if (!state.showSafeZones) return;
-    const zones = safeZoneRects(state.aspect);
+    const zones = safeZoneRects(state.aspect, state.platform);
     const px = (zone) => ({
       x: zone.x * width, y: zone.y * height, w: zone.w * width, h: zone.h * height,
     });
@@ -602,6 +669,28 @@ export function mountPreview(root, options = {}) {
     drawCleanBoxes(width, height);
     drawSelection(width, height);
     drawDrawPreview(width, height);
+    drawBorder(width, height);
+  }
+
+  function drawBorder(width, height) {
+    const border = state.edit?.border;
+    const size = Math.max(0, Number(border?.width) || 0);
+    if (!size) return;
+    const scale = Math.min(width, height) / 1080;
+    const line = Math.max(1, size * scale);
+    const radius = Math.max(0, (Number(border?.radius) || 0) * scale);
+    ctx.save();
+    ctx.strokeStyle = border?.color || "#f1efe9";
+    ctx.lineWidth = line;
+    const inset = line / 2;
+    if (radius > 0 && ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(inset, inset, width - line, height - line, radius);
+      ctx.stroke();
+    } else {
+      ctx.strokeRect(inset, inset, width - line, height - line);
+    }
+    ctx.restore();
   }
 
   function applyAspect(aspect) {
@@ -612,6 +701,10 @@ export function mountPreview(root, options = {}) {
     dom.canvas.width = size.width;
     dom.canvas.height = size.height;
     dom.aspect.textContent = next;
+    for (const item of root.querySelectorAll("#st-preview-aspect-menu [data-aspect]")) {
+      item.classList.toggle("is-active", item.dataset.aspect === next);
+      item.setAttribute("aria-checked", item.dataset.aspect === next ? "true" : "false");
+    }
     draw();
   }
 
@@ -619,7 +712,7 @@ export function mountPreview(root, options = {}) {
     const duration = Math.max(0.1, numberOr(state.duration, 0.1));
     dom.scrub.max = String(duration);
     dom.scrub.value = String(clamp(state.time, 0, duration));
-    dom.time.textContent = `${formatTime(state.time)} / ${formatTime(duration)}`;
+    dom.time.textContent = formatTime(state.time);
     dom.play.textContent = playing ? "❚❚" : "▶";
     dom.play.setAttribute("aria-label", playing ? "Pause preview" : "Play preview");
   }
@@ -689,6 +782,14 @@ export function mountPreview(root, options = {}) {
       draw();
       callbacks.onTime(state.time);
       if (state.time >= duration - 0.03) {
+        if (state.loop) {
+          state.time = 0;
+          video.currentTime = 0;
+          video.play().catch(() => {});
+          updateTransport();
+          scheduleFrame(0);
+          return;
+        }
         videoPlaying = false;
         playing = false;
         video.pause();
@@ -827,6 +928,12 @@ export function mountPreview(root, options = {}) {
       const duration = Math.max(0.1, numberOr(state.duration, 0.1));
       const next = state.time + delta;
       if (next >= duration) {
+        if (state.loop) {
+          setTime(0, { notify: true });
+          lastTick = now;
+          raf = window.requestAnimationFrame(tick);
+          return;
+        }
         setTime(duration, { notify: true });
         pause();
         return;
@@ -893,15 +1000,21 @@ export function mountPreview(root, options = {}) {
   // The parent owns the duration; an Edit's `story_ref.duration` is only a
   // fallback for direct callers. A trim updates both together.
   function setEdit(edit, { keepTime = false } = {}) {
-    const previousId = state.edit?.id || "";
+    const previous = state.edit;
+    const previousId = previous?.id || "";
     const nextId = edit?.id || "";
+    // A normal autosave returns a new Edit version for the same cut. Keeping
+    // the proxy alive is what lets layers save without stopping playback.
+    const sameCut = Boolean(previousId && nextId)
+      && String(previous?.story_ref?.clip_hash || "") === String(edit?.story_ref?.clip_hash || "")
+      && String(previous?.aspect || "") === String(edit?.aspect || "");
     state.edit = edit || null;
     if (!durationOwned) {
       const fallback = numberOr(edit?.story_ref?.duration);
       if (fallback > 0) state.duration = Math.max(0.1, fallback);
     }
     if (!keepTime) setTime(state.time);
-    if (previousId !== nextId) {
+    if (previousId !== nextId && !sameCut) {
       rebuilding = Boolean(state.edit);
       clearFrame();
       resetProxy();
@@ -1149,11 +1262,141 @@ export function mountPreview(root, options = {}) {
     button.addEventListener("click", () => setTool(button.dataset.tool));
   }
 
+  const OUTPUT_KEY = "vibecut.studio.edit.output";
+  function readOutput() {
+    try {
+      const value = JSON.parse(localStorage.getItem(OUTPUT_KEY) || "null");
+      if (!value || typeof value !== "object") return null;
+      return value;
+    } catch (_) {
+      return null;
+    }
+  }
+  function writeOutput(value) {
+    try { localStorage.setItem(OUTPUT_KEY, JSON.stringify(value)); } catch (_) { /* private window */ }
+    callbacks.onOutput(value);
+  }
+  let output = readOutput() || { resolution: "1080p", width: 0, height: 0, fps: 30 };
+  function paintOutput() {
+    if (dom.resolution) dom.resolution.textContent = output.resolution || "1080p";
+    if (dom.fps) dom.fps.textContent = String(output.fps || 30);
+    if (dom.width) dom.width.value = String(output.width || "");
+    if (dom.height) dom.height.value = String(output.height || "");
+  }
+  paintOutput();
+
+  function closeMenus() {
+    if (dom.aspectMenu) dom.aspectMenu.hidden = true;
+    if (dom.resMenu) dom.resMenu.hidden = true;
+  }
+
+  function toggleFocus() {
+    const target = root.querySelector(".st-preview");
+    if (!target) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+      return;
+    }
+    if (document.fullscreenEnabled && target.requestFullscreen) {
+      target.requestFullscreen().catch(() => {
+        target.classList.add("is-focus");
+        updateFocus();
+      });
+    } else {
+      target.classList.toggle("is-focus");
+      updateFocus();
+    }
+  }
+  function updateFocus() {
+    const on = document.fullscreenElement === root.querySelector(".st-preview")
+      || root.querySelector(".st-preview")?.classList.contains("is-focus");
+    dom.focus?.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function captureFrame() {
+    const canvas = dom.canvas;
+    if (!canvas) return;
+    const stamp = formatTime(state.time).replace(/[:.]/g, "-");
+    const name = `vibecut-frame-${state.jobId || "moment"}-${stamp}.png`;
+    const done = (url) => {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.click();
+      if (String(url).startsWith("blob:")) setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNote(`Frame saved: ${name}`, "ok");
+    };
+    if (canvas.toBlob) canvas.toBlob((blob) => { if (blob) done(URL.createObjectURL(blob)); }, "image/png");
+    else done(canvas.toDataURL("image/png"));
+  }
+
   dom.safe.addEventListener("change", () => {
     state.showSafeZones = Boolean(dom.safe.checked);
+    dom.safeToggle?.classList.toggle("is-on", state.showSafeZones);
+    dom.safeToggle?.setAttribute("aria-pressed", state.showSafeZones ? "true" : "false");
+    draw();
+  });
+  dom.safeToggle?.addEventListener("click", () => {
+    dom.safe.checked = !dom.safe.checked;
+    dom.safe.dispatchEvent(new Event("change"));
+  });
+  dom.platform?.addEventListener("change", () => {
+    state.platform = dom.platform.value || "auto";
     draw();
   });
   dom.play.addEventListener("click", play);
+  dom.back?.addEventListener("click", () => seek(state.time - 1));
+  dom.forward?.addEventListener("click", () => seek(state.time + 1));
+  dom.focus?.addEventListener("click", toggleFocus);
+  dom.frame?.addEventListener("click", captureFrame);
+  dom.aspect?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = dom.aspectMenu?.hidden !== false;
+    closeMenus();
+    if (dom.aspectMenu && open) dom.aspectMenu.hidden = false;
+  });
+  for (const item of root.querySelectorAll("#st-preview-aspect-menu [data-aspect]")) {
+    item.addEventListener("click", () => {
+      callbacks.onAspect(item.dataset.aspect);
+      closeMenus();
+    });
+  }
+  dom.resolution?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = dom.resMenu?.hidden !== false;
+    closeMenus();
+    if (dom.resMenu && open) dom.resMenu.hidden = false;
+  });
+  for (const item of root.querySelectorAll("#st-preview-res-menu [data-res]")) {
+    item.addEventListener("click", () => {
+      output = { ...output, resolution: item.dataset.res, width: 0, height: 0 };
+      paintOutput();
+      writeOutput(output);
+      closeMenus();
+    });
+  }
+  dom.resApply?.addEventListener("click", () => {
+    const width = Math.max(240, Math.min(4096, Number(dom.width?.value) || 0));
+    const height = Math.max(240, Math.min(4096, Number(dom.height?.value) || 0));
+    if (!width || !height) return;
+    output = { ...output, resolution: "Custom", width, height };
+    paintOutput();
+    writeOutput(output);
+    closeMenus();
+  });
+  dom.fps?.addEventListener("click", () => {
+    const steps = [15, 24, 30, 60];
+    const index = steps.indexOf(Number(output.fps));
+    output = { ...output, fps: steps[(index + 1) % steps.length] };
+    paintOutput();
+    writeOutput(output);
+  });
+  document.addEventListener("click", (event) => {
+    if (!root.querySelector(".st-preview")?.contains(event.target)) return;
+    if (event.target.closest("#st-preview-aspect, #st-preview-resolution, .st-preview-menu")) return;
+    closeMenus();
+  });
+  document.addEventListener("fullscreenchange", updateFocus);
   dom.scrub.addEventListener("input", () => {
     pauseClockOnly();
     seek(Number(dom.scrub.value));
@@ -1169,11 +1412,17 @@ export function mountPreview(root, options = {}) {
       && (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName) || target.isContentEditable)) {
       return;
     }
-    if (event.key === "Escape" && (drag || state.tool === "box")) {
-      drag = null;
-      drawPreview = null;
-      setTool("select");
-      draw();
+    if (event.key === "Escape") {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+        return;
+      }
+      if (drag || state.tool === "box") {
+        drag = null;
+        drawPreview = null;
+        setTool("select");
+        draw();
+      }
     }
   };
   window.addEventListener("keydown", keyHandler);
@@ -1205,6 +1454,25 @@ export function mountPreview(root, options = {}) {
       draw();
     },
     setTime,
+    setScene(value, role = "Scene") {
+      if (dom.sceneNum) dom.sceneNum.textContent = String(value || "01").padStart(2, "0");
+      if (dom.sceneRole) dom.sceneRole.textContent = role || "Scene";
+    },
+    setPlatform(value, { safe = true } = {}) {
+      state.platform = value || "auto";
+      if (dom.platform) dom.platform.value = state.platform;
+      dom.safe.checked = Boolean(safe);
+      state.showSafeZones = Boolean(safe);
+      draw();
+    },
+    setLoop(value) {
+      state.loop = Boolean(value);
+    },
+    getOutput() {
+      return { ...output };
+    },
+    toggleFocus,
+    captureFrame,
     seek,
     step,
     play,

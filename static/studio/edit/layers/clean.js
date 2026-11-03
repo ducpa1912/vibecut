@@ -37,7 +37,7 @@ const SCAN_REQUIRED = "Run Scan footage first.";
 // inspector, and the summary must stay visible after that refresh.
 const AUTO_CLEAN_STATE = new Map();
 
-const KIND_ORDER = ["delogo", "fill", "blur", "plate", "mask", "crop_guard"];
+const KIND_ORDER = ["delogo", "fill", "blur", "plate", "mask", "mosaic", "crop_guard"];
 
 const KIND_COPY = {
   delogo: "Remove text",
@@ -45,6 +45,7 @@ const KIND_COPY = {
   plate: "Cover plate",
   blur: "Blur",
   mask: "Mask",
+  mosaic: "Mosaic",
   crop_guard: "Keep out of crop",
 };
 
@@ -1316,6 +1317,7 @@ export function mountCleanPanel(host, ctx) {
           type: "button",
           role: "listitem",
           "aria-pressed": active ? "true" : "false",
+          dataset: { kind: "clean", layer: layer.id, box: JSON.stringify(layer.box || {}) },
         }, [
           el("span", { class: "st-layer-badge", text: CLEAN_LABELS[layer.kind] || KIND_COPY[layer.kind] || "Clean" }),
           el("span", { class: "st-layer-name", text: layer.label || rangeSummary(layer.ranges) }),

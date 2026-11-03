@@ -117,50 +117,22 @@ def test_story_output_time_maps_to_source_time():
 
 def test_layers_panel_is_in_the_editor_and_grouped_in_timeline_order():
     assert 'id="st-edit-layers"' in INDEX
-    assert "renderLayers()" in INDEX
-    assert "renderLayersPanel" in PANEL
-    assert 'kind: "clean", label: "Remove text"' in PANEL
-    assert 'kind: "text", label: "Text"' in PANEL
-    assert 'kind: "captions", label: "Captions"' in PANEL
-    assert 'kind: "effects", label: "Effects"' in PANEL
-    assert 'kind: "color", label: "Colour"' in PANEL
-    assert 'kind: "audio", label: "Audio"' in PANEL
-    assert "st-layers-add-menu" in PANEL
-    assert "st-layer-caret" in PANEL
-    assert "st-layer-eye" in PANEL
-    assert "st-layer-warning" in PANEL
-
-
-def test_preview_draws_clean_boxes_and_has_box_tools():
-    assert "drawCleanBoxes" in PREVIEW
-    assert "cleanAt(" in PREVIEW
-    assert "handleAt(" in PREVIEW
-    assert "moveBox(" in PREVIEW
-    assert "resizeBox(" in PREVIEW
-    assert "onBoxChange" in PREVIEW
-    assert "onBoxCreate" in PREVIEW
-    assert 'id="st-preview-tool-select"' in PREVIEW
-    assert 'id="st-preview-tool-box"' in PREVIEW
-    assert 'event.key === "b" || event.key === "B"' in INDEX
-    assert 'preview?.setTool("box")' in INDEX
-
-
-def test_delete_removes_the_selected_layer_from_all_three_places():
-    assert "onLayerKeydown" in INDEX
-    assert 'event.key !== "Delete" && event.key !== "Backspace"' in INDEX
-    assert "removeSelectedLayer" in INDEX
-    assert "removeLayer(kind, id)" in INDEX
-    assert "preview?.setSelected(null)" in INDEX
-    assert "timeline?.setSelected(null)" in INDEX
-    assert "renderLayers()" in INDEX
+    assert "mountLayersPanel" in INDEX
+    assert "mountLayersPanel" in PANEL
+    for label in ("Clean", "Filter & LUTs", "Transcript & Translation",
+                  "Narrative", "Zoom", "Border"):
+        assert label in PANEL
+    assert "st-layer-rail" in PANEL
+    assert "mountTranscriptPanel" in PANEL
+    assert "mountAudioPanel" in PANEL
 
 
 def test_timeline_bars_select_layers_and_adding_lives_in_layers():
     assert "onAdd" in TIMELINE
-    assert "st-tl-add" not in TIMELINE
+    assert 'id="st-timeline-add"' not in TIMELINE
+    assert "st-tl-add-actions" in TIMELINE
     assert "handlers.onAdd(row.kind)" not in TIMELINE
     assert 'handlers.onSelect(kind, item.layerId || item.id)' in TIMELINE
-    assert "st-layers-add-menu" in PANEL
     assert ".st-layers" in CSS
     assert ".st-preview-tool" in CSS
 

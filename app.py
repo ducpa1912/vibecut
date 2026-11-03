@@ -7324,8 +7324,8 @@ async def upload_voice_audio(job_id: str, file: UploadFile = File(...)) -> dict:
     started = time.time()
     original_name = Path(file.filename or "voice.wav").name
     suffix = Path(original_name).suffix.lower()
-    if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".aif"}:
-        error = "Upload a WAV, MP3, M4A, FLAC, OGG or AIFF file."
+    if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".aif", ".webm"}:
+        error = "Upload a WAV, MP3, M4A, FLAC, OGG, WebM or AIFF file."
         _record_upload_history(
             job_id, "voice", "failed", original_name, error=error,
             latency_ms=round((time.time() - started) * 1000),
@@ -7392,8 +7392,8 @@ async def upload_music_audio(job_id: str, file: UploadFile = File(...)) -> dict:
     started = time.time()
     original_name = Path(file.filename or "music.wav").name
     suffix = Path(original_name).suffix.lower()
-    if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".aif"}:
-        error = "Upload a WAV, MP3, M4A, FLAC, OGG or AIFF file."
+    if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".aif", ".webm"}:
+        error = "Upload a WAV, MP3, M4A, FLAC, OGG, WebM or AIFF file."
         _record_upload_history(
             job_id, "music", "failed", original_name, error=error,
             latency_ms=round((time.time() - started) * 1000),

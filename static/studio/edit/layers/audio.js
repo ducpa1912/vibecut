@@ -331,6 +331,7 @@ export function mountAudioPanel(host, ctx) {
   ensureCheckStyles();
   let disposed = false;
   const transcriptOnly = Boolean(ctx.transcriptOnly);
+  const libraryOnly = Boolean(ctx.libraryOnly);
   const edit = ctx.getEdit();
   let plan = clone(edit?.audio || { mode: "original" });
   if (!AUDIO_LABELS[plan.mode]) plan.mode = "original";
@@ -2236,6 +2237,10 @@ export function mountAudioPanel(host, ctx) {
       host.replaceChildren(transcriptPanel());
       return;
     }
+    if (libraryOnly) {
+      host.replaceChildren(libraryCard());
+      return;
+    }
     host.replaceChildren();
     const blocked = dubBlockReason(plan.mode, targetLang);
     const head = el("div", { class: "st-card st-check-card" }, [
@@ -2274,11 +2279,9 @@ export function mountAudioPanel(host, ctx) {
   }
 
   render();
-  void loadTranscript();
-  if (!transcriptOnly) {
-    void loadEngines();
-    void loadLibrary();
-  }
+  if (!libraryOnly) void loadTranscript();
+  if (!transcriptOnly && !libraryOnly) void loadEngines();
+  if (!transcriptOnly) void loadLibrary();
 
   return () => {
     if (saveTimer) window.clearTimeout(saveTimer);

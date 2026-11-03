@@ -104,6 +104,24 @@ export function mountTimeline(root, options = {}) {
     onAudioBus: options.onAudioBus || (() => {}),
     onTrim: options.onTrim || (() => {}),
     onConflict: options.onConflict || (() => {}),
+    onUndo: options.onUndo || (() => {}),
+    onRedo: options.onRedo || (() => {}),
+    onUndoTrim: options.onUndoTrim || (() => {}),
+    onRecord: options.onRecord || (() => {}),
+    onImportSubtitle: options.onImportSubtitle || (() => {}),
+    onDelete: options.onDelete || (() => {}),
+    onSplit: options.onSplit || (() => {}),
+    onExtractFrame: options.onExtractFrame || (() => {}),
+    onAddMedia: options.onAddMedia || (() => {}),
+    onAddText: options.onAddText || (() => {}),
+    onAddAudio: options.onAddAudio || (() => {}),
+    onEffects: options.onEffects || (() => {}),
+    onMosaic: options.onMosaic || (() => {}),
+    onAutoCaptions: options.onAutoCaptions || (() => {}),
+    onOverlayTrack: options.onOverlayTrack || (() => {}),
+    onReverse: options.onReverse || (() => {}),
+    onDuplicate: options.onDuplicate || (() => {}),
+    onFreeze: options.onFreeze || (() => {}),
     beforeTrim: options.beforeTrim || (() => Promise.resolve(true)),
   };
   let disposed = false;
@@ -136,19 +154,53 @@ export function mountTimeline(root, options = {}) {
   };
 
   root.innerHTML = `
-    <section class="st-timeline" aria-labelledby="st-timeline-title">
-      <header class="st-timeline-head">
-        <div>
-          <h2 id="st-timeline-title">Timeline</h2>
-          <p class="st-hint">Click a sentence or a layer to jump to it. Drag the story handles to trim at sentence bounds.</p>
+    <section class="st-timeline" aria-label="Timeline">
+      <div class="st-tl-toolbar st-tl-global">
+        <div class="st-tl-toolset">
+          <button id="st-timeline-undo-trim" class="st-tl-icon" type="button" title="Undo trim" aria-label="Undo trim"></button>
+          <button id="st-timeline-undo" class="st-tl-icon" type="button" title="Undo" aria-label="Undo"></button>
+          <button id="st-timeline-redo" class="st-tl-icon" type="button" title="Redo" aria-label="Redo"></button>
+          <span class="st-tl-sep" aria-hidden="true"></span>
+          <button id="st-timeline-record" class="st-tl-icon is-record" type="button" title="Record voice-over" aria-label="Record voice-over"></button>
+          <button id="st-timeline-subtitle" class="st-tl-icon" type="button" title="Import subtitle file" aria-label="Import subtitle file"></button>
         </div>
-        <div class="st-timeline-meta">
-          <button id="st-timeline-add" class="st-btn st-btn-ghost st-btn-small" type="button">+ Add clips</button>
+        <div class="st-tl-toolset">
           <span id="st-timeline-outside" class="st-chip st-chip-quiet" hidden></span>
           <span id="st-timeline-span" class="st-mono st-timeline-span">0:00.0</span>
           <span id="st-timeline-count" class="st-chip st-chip-quiet">0 layers</span>
+          <span class="st-tl-sep" aria-hidden="true"></span>
+          <button id="st-timeline-zoom-out" class="st-tl-icon" type="button" title="Zoom out" aria-label="Zoom out"></button>
+          <button id="st-timeline-fit" class="st-tl-icon" type="button" title="Fit timeline" aria-label="Fit timeline"></button>
+          <button id="st-timeline-zoom-in" class="st-tl-icon" type="button" title="Zoom in" aria-label="Zoom in"></button>
+          <button id="st-timeline-collapse" class="st-tl-icon" type="button" title="Collapse timeline" aria-label="Collapse timeline"></button>
         </div>
-      </header>
+      </div>
+      <div id="st-timeline-context" class="st-tl-toolbar st-tl-context" aria-label="Timeline actions">
+        <div class="st-tl-toolset st-tl-add-actions">
+          <button class="st-tl-icon" type="button" data-tl-action="add-media" title="Add media" aria-label="Add media"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="add-text" title="Add text" aria-label="Add text"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="add-audio" title="Add audio" aria-label="Add audio"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="effects" title="Effects" aria-label="Effects"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="mosaic" title="Mosaic layer" aria-label="Mosaic layer"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="captions" title="Auto captions" aria-label="Auto captions"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="overlay" title="Add overlay track" aria-label="Add overlay track"></button>
+        </div>
+        <div class="st-tl-toolset st-tl-edit-actions">
+          <button class="st-tl-icon" type="button" data-tl-action="trim" title="Trim clip" aria-label="Trim clip"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="split" title="Split at playhead" aria-label="Split at playhead"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="duplicate" title="Duplicate scene" aria-label="Duplicate scene"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="reverse" title="Reverse clip" aria-label="Reverse clip"></button>
+          <button class="st-tl-icon" type="button" data-tl-action="delete" title="Delete selected layer" aria-label="Delete selected layer"></button>
+          <span class="st-tl-sep" aria-hidden="true"></span>
+          <button class="st-tl-icon" type="button" data-tl-action="crop" title="Clip crop (output aspect stays in Preview)" aria-label="Clip crop" disabled></button>
+          <button class="st-tl-icon" type="button" data-tl-action="rotate" title="Rotate" aria-label="Rotate" disabled></button>
+          <button class="st-tl-icon" type="button" data-tl-action="mirror" title="Mirror" aria-label="Mirror" disabled></button>
+          <button class="st-tl-icon" type="button" data-tl-action="flip" title="Flip" aria-label="Flip" disabled></button>
+          <span class="st-tl-sep" aria-hidden="true"></span>
+          <button class="st-tl-icon" type="button" data-tl-action="extract-audio" title="Extract audio" aria-label="Extract audio" disabled></button>
+          <button class="st-tl-icon" type="button" data-tl-action="freeze" title="Freeze frame" aria-label="Freeze frame"></button>
+        </div>
+      </div>
       <div class="st-timeline-scroll" tabindex="0" role="group" aria-label="Story timeline">
         <div id="st-timeline-grid" class="st-timeline-grid"></div>
       </div>
@@ -163,9 +215,94 @@ export function mountTimeline(root, options = {}) {
     count: $("#st-timeline-count"),
     outside: $("#st-timeline-outside"),
     status: $("#st-timeline-status"),
-    add: $("#st-timeline-add"),
     scroll: $(".st-timeline-scroll"),
+    context: $("#st-timeline-context"),
+    undoTrim: $("#st-timeline-undo-trim"),
+    undo: $("#st-timeline-undo"),
+    redo: $("#st-timeline-redo"),
+    record: $("#st-timeline-record"),
+    subtitle: $("#st-timeline-subtitle"),
+    zoomOut: $("#st-timeline-zoom-out"),
+    fit: $("#st-timeline-fit"),
+    zoomIn: $("#st-timeline-zoom-in"),
+    collapse: $("#st-timeline-collapse"),
+    actions: Array.from(root.querySelectorAll("[data-tl-action]")),
   };
+  const toolIcons = [
+    [dom.undoTrim, "history"], [dom.undo, "undo"], [dom.redo, "redo"],
+    [dom.record, "mic"], [dom.subtitle, "captions"],
+    [dom.zoomOut, "minus"], [dom.fit, "expand"], [dom.zoomIn, "plus"],
+    [dom.collapse, "chevron-up"],
+  ];
+  for (const [node, name] of toolIcons) {
+    if (node) node.append(icon(name, { size: 15 }));
+  }
+  const actionIcons = {
+    "add-media": "plus", "add-text": "type", "add-audio": "audio-lines",
+    "effects": "sparkles", "mosaic": "mosaic", "captions": "captions",
+    "overlay": "layers", "reverse": "reverse", "trim": "trim", "split": "split",
+    "duplicate": "copy", "delete": "trash", "crop": "crop", "rotate": "rotate-cw",
+    "mirror": "mirror", "flip": "flip", "extract-audio": "audio-lines",
+    "freeze": "freeze",
+  };
+  for (const button of dom.actions) {
+    button.append(icon(actionIcons[button.dataset.tlAction] || "square", { size: 15 }));
+  }
+  let zoom = 1;
+  let loop = false;
+  let collapsed = false;
+
+  function applyZoom() {
+    dom.grid.style.width = `${Math.round(zoom * 100)}%`;
+    dom.grid.style.minWidth = zoom > 1 ? `${Math.round(zoom * 100)}%` : "";
+    dom.scroll.classList.toggle("is-zoomed", zoom > 1);
+  }
+  function setLoop(value) {
+    loop = Boolean(value);
+    dom.actions.find((button) => button.dataset.tlAction === "loop")?.classList.toggle("is-on", loop);
+  }
+  function setHistory({ canUndo = false, canRedo = false, canUndoTrim = false } = {}) {
+    if (dom.undo) dom.undo.disabled = !canUndo;
+    if (dom.redo) dom.redo.disabled = !canRedo;
+    if (dom.undoTrim) dom.undoTrim.disabled = !canUndoTrim;
+  }
+  function updateContext() {
+    if (!dom.context) return;
+    dom.context.classList.toggle("has-selection", Boolean(selected));
+  }
+  dom.undoTrim?.addEventListener("click", () => handlers.onUndoTrim());
+  dom.undo?.addEventListener("click", () => handlers.onUndo());
+  dom.redo?.addEventListener("click", () => handlers.onRedo());
+  dom.record?.addEventListener("click", () => handlers.onRecord());
+  dom.subtitle?.addEventListener("click", () => handlers.onImportSubtitle());
+  dom.zoomOut?.addEventListener("click", () => { zoom = Math.max(1, zoom - 0.25); applyZoom(); });
+  dom.zoomIn?.addEventListener("click", () => { zoom = Math.min(4, zoom + 0.25); applyZoom(); });
+  dom.fit?.addEventListener("click", () => { zoom = 1; applyZoom(); });
+  dom.collapse?.addEventListener("click", () => {
+    collapsed = !collapsed;
+    root.classList.toggle("is-collapsed", collapsed);
+    dom.collapse.setAttribute("aria-pressed", collapsed ? "true" : "false");
+    dom.collapse.title = collapsed ? "Expand timeline" : "Collapse timeline";
+  });
+  for (const button of dom.actions) {
+    button.addEventListener("click", () => {
+      const action = button.dataset.tlAction;
+      if (action === "trim") {
+        dom.grid.querySelector('.st-tl-trim[data-edge="start"]')?.focus();
+        return;
+      }
+      const map = {
+        "add-media": "onAddMedia", "add-text": "onAddText", "add-audio": "onAddAudio",
+        "effects": "onEffects", "mosaic": "onMosaic", "captions": "onAutoCaptions",
+        "overlay": "onOverlayTrack", "reverse": "onReverse", "split": "onSplit",
+        "duplicate": "onDuplicate", "delete": "onDelete", "freeze": "onFreeze",
+      };
+      const handler = map[action];
+      if (handler) handlers[handler]();
+    });
+  }
+  applyZoom();
+  updateContext();
 
   function setStatus(message, tone = "") {
     dom.status.textContent = message || "";
@@ -210,11 +347,24 @@ export function mountTimeline(root, options = {}) {
     }
     const leading = sumDurations(rows.slice(0, working.startIndex));
     const estimate = sumDurations(rows.slice(working.startIndex, working.endIndex + 1));
-    const storyDuration = Math.max(
-      0.1,
-      drag ? numberOr(dry?.duration, estimate || duration) : duration,
-    );
+    const storyDuration = drag
+      ? Math.max(0.1, numberOr(drag.storyDuration, duration))
+      : duration;
     const trailing = sumDurations(rows.slice(working.endIndex + 1));
+    // The timeline shows the story, not the whole sentence pool. The pool
+    // still drives trim bounds; it is not drawn as empty time. During a drag
+    // the view stays fixed so the pointer keeps one stable time axis.
+    return {
+      rows,
+      working,
+      leading: 0,
+      poolLeading: drag ? numberOr(drag.poolLeading) : leading,
+      storyDuration,
+      trailing: 0,
+      axis: drag ? Math.max(0.1, drag.axis) : Math.max(0.1, storyDuration),
+      hasPool: true,
+      poolHidden: true,
+    };
     return {
       rows,
       working,
@@ -298,7 +448,7 @@ export function mountTimeline(root, options = {}) {
       style: `left:${geometry.left}%;width:${geometry.width}%`,
       dataset: {
         kind,
-        layer: item.layerId || item.id,
+        layer: kind === "scenes" ? String(item.index ?? "") : (item.layerId || item.id),
         start: String(storyStart === null ? 0 : storyStart),
         outside: outside ? "1" : "0",
         subgroup: item.subgroup || null,
@@ -351,7 +501,8 @@ export function mountTimeline(root, options = {}) {
     }
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (kind !== "scenes") handlers.onSelect(kind, item.layerId || item.id);
+      if (kind === "scenes") handlers.onSelect("scenes", String(item.index ?? 0));
+      else handlers.onSelect(kind, item.layerId || item.id);
       const seekTo = storyStart ?? (numberOr(item.start) < view.leading ? 0 : duration);
       handlers.onSeek(Math.max(0, Math.min(duration, seekTo)));
     });
@@ -381,7 +532,7 @@ export function mountTimeline(root, options = {}) {
       rows.push({
         id: `scene-${clip?.scene}-${offset.toFixed(3)}`,
         index: rows.length,
-        label: `${roleLabel} ${Number.isFinite(scene) ? scene + 1 : ""}`.trim(),
+        label: `${rows.length + 1} ${roleLabel}`.trim(),
         start: offset,
         end: offset + span,
         storyStart: offset,
@@ -398,6 +549,24 @@ export function mountTimeline(root, options = {}) {
   }
 
   function sentenceRows(view) {
+    if (view.poolHidden) {
+      const rows = [];
+      let cursor = 0;
+      for (const row of view.rows.slice(view.working.startIndex, view.working.endIndex + 1)) {
+        const span = Math.max(0.05, Number(row.duration) || 0.05);
+        rows.push({
+          id: row.id,
+          label: row.text || "Sentence",
+          start: cursor,
+          end: cursor + span,
+          storyStart: cursor,
+          storyEnd: cursor + span,
+          sentence: true,
+        });
+        cursor += span;
+      }
+      return rows;
+    }
     if (!view.hasPool) {
       // Before the trim route answers, draw the current story as it is.
       const rows = [];
@@ -703,7 +872,9 @@ export function mountTimeline(root, options = {}) {
       if (!box?.width) return;
       const ratio = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
       const viewNow = model();
-      const indexNow = nearestPoolIndex(viewNow, edge, ratio * viewNow.axis);
+      const indexNow = nearestPoolIndex(
+        viewNow, edge, ratio * viewNow.axis + numberOr(viewNow.poolLeading),
+      );
       if (indexNow === null) return;
       if (edge === "start") drag.startIndex = indexNow;
       else drag.endIndex = indexNow;
@@ -764,6 +935,9 @@ export function mountTimeline(root, options = {}) {
         edge,
         startIndex: viewNow.working.startIndex,
         endIndex: viewNow.working.endIndex,
+        axis: viewNow.axis,
+        poolLeading: numberOr(viewNow.poolLeading),
+        storyDuration: viewNow.storyDuration,
       };
       pendingFocus = edge;
       statusHold = null;
@@ -1015,9 +1189,9 @@ export function mountTimeline(root, options = {}) {
         && bar.dataset.layer === selected.id;
       bar.classList.toggle("is-selected", Boolean(match));
     }
+    updateContext();
   }
 
-  dom.add?.addEventListener("click", () => handlers.onAddMoment());
   dom.scroll.addEventListener("keydown", (event) => {
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
@@ -1037,6 +1211,8 @@ export function mountTimeline(root, options = {}) {
   });
 
   return {
+    setLoop,
+    setHistory,
     setData({ edit, captions, story, duration: nextDuration, aspect, trim, setId: nextSetId, jobId: nextJobId } = {}) {
       if (nextJobId) jobId = String(nextJobId);
       if (nextSetId) setId = String(nextSetId);

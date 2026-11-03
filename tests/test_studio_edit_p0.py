@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STUDIO = ROOT / "static" / "studio"
 CSS = (STUDIO / "edit" / "edit.css").read_text(encoding="utf-8")
 INDEX = (STUDIO / "edit" / "index.js").read_text(encoding="utf-8")
+ELEMENTS = (STUDIO / "edit" / "elements-panel.js").read_text(encoding="utf-8")
 SHELL = (STUDIO / "shell.js").read_text(encoding="utf-8")
 CLEAN = (STUDIO / "edit" / "layers" / "clean.js").read_text(encoding="utf-8")
 INSPECTOR = (STUDIO / "edit" / "inspector.js").read_text(encoding="utf-8")
@@ -44,9 +45,9 @@ def test_edit_frame_is_fixed_and_the_page_does_not_scroll():
     stage = rule(".st-edit-stage")
     assert "min-height: 0" in stage
     assert "flex: 1 1 auto" in stage
-    # Two rows: a shrinking preview and a timeline that never leaves the screen.
-    assert "grid-template-rows: minmax(0, 1fr) clamp(" in stage
-    assert '"tools preview transcript"' in stage
+    # Two rows: the three panels and a timeline that never leaves the screen.
+    assert "grid-template-rows: minmax(0, 1fr) 214px" in stage
+    assert '"elements preview layers"' in stage
     assert '"timeline timeline timeline"' in stage
 
 
@@ -78,14 +79,15 @@ def test_tools_transcript_and_preview_keep_their_columns_at_desktop():
     assert "@media (max-width: 1023px)" in CSS
     assert "@media (max-width: 1040px)" not in CSS
     desktop = CSS.split("@media (max-width: 1023px)")[0]
-    assert "grid-template-columns: clamp(230px, 18vw, 260px) minmax(0, 1fr) clamp(340px, 27vw, 390px)" in desktop
+    assert "grid-template-columns: 288px minmax(0, 1fr) 344px" in CSS
 
 
-def test_toolbar_moves_all_moments_into_the_picker():
-    assert 'const ALL_MOMENTS = "__all_moments";' in INDEX
-    assert 'text: "All moments…"' in INDEX
-    assert 'id="st-edit-all"' not in INDEX
-    assert 'dom.all' not in INDEX
+def test_toolbar_moves_moment_switching_into_the_picker():
+    assert 'id="st-edit-moment-btn"' in INDEX
+    assert 'id="st-edit-moment-menu"' in INDEX
+    assert 'id="st-edit-story"' not in INDEX
+    assert 'text: "All moments…"' not in INDEX
+    assert "switchStory" in INDEX
 
 
 def test_inspector_tabs_are_plain_and_not_truncated():
@@ -99,11 +101,12 @@ def test_inspector_tabs_are_plain_and_not_truncated():
     assert "display: flex" in tabs
 
 
-def test_text_and_effects_tab_is_selectable():
-    # The inspector tab id is "visual"; setActiveTab must accept it or the tab
-    # silently does nothing while Audio still opens.
-    assert '"visual"' in INDEX
-    assert 'if (!["clean", "visual", "text", "captions", "effects", "color", "audio"].includes(tab)) return;' in INDEX
+def test_elements_tabs_are_selectable():
+    assert '["moments", "Moments"' in INDEX or "mountElementsPanel" in INDEX
+    assert '["elements", "Elements"' in ELEMENTS
+    assert '["text", "Text"' in ELEMENTS
+    assert '["audio", "Audio"' in ELEMENTS
+    assert '["moments", "elements", "text", "audio"]' in INDEX
 
 
 def test_new_edits_start_without_captions():

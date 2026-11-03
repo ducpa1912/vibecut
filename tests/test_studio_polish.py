@@ -31,7 +31,7 @@ def test_the_layer_palette_is_shared_by_layers_preview_and_timeline():
         "color": "#f4c169",
         "audio": "#5fb7b0",
     }
-    assert "LAYER_COLOURS" in PANEL and "LAYER_COLOURS" in PREVIEW
+    assert "LAYER_COLOURS" in PREVIEW
     assert "rgba(232, 162, 102, 0.42)" in CSS  # Remove text
     assert "rgba(123, 155, 184, 0.42)" in CSS  # Text
     assert "rgba(142, 201, 163, 0.38)" in CSS  # Captions
@@ -108,16 +108,14 @@ def test_redo_posts_the_version_to_the_restore_route():
     assert json.loads(call["body"]) == {"version": "ed_old"}
 
 
-def test_layers_have_one_add_menu_and_collapsible_groups():
-    assert "st-layers-add" in PANEL
-    assert "st-layers-add-item" in PANEL
-    assert "ctx.add(group.kind)" in PANEL
-    assert "readCollapsed" in PANEL and "saveCollapsed" in PANEL
-    assert 'class: `st-layer-group${isCollapsed ? " is-collapsed" : ""}`' in PANEL
-    assert "st-layer-empty-copy" in PANEL
-    assert "st-layer-group-add" not in PANEL
-    assert "st-layer-empty-action" not in PANEL
-    assert ".st-layer-group.is-collapsed" in CSS
+def test_layers_have_one_rail_and_live_controls():
+    assert "st-layer-rail" in PANEL
+    assert "st-layer-rail-btn" in PANEL
+    assert "setActive(id)" in PANEL
+    assert "mountAudioPanel" in PANEL
+    assert "st-audio-fade" in PANEL
+    assert "st-border-grid" in PANEL
+    assert ".st-layer-rail" in CSS
     assert "st-tl-empty" not in TIMELINE
     assert "handlers.onAdd(row.kind)" not in TIMELINE
 

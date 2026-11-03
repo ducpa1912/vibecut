@@ -104,10 +104,14 @@ def test_edit_has_a_fixed_toolbar_with_back_and_next_beside_save_state():
     assert "Back to Moments" in source
     assert "Next: Finish" in source
     assert "st-edit-toolbar" in source
+    assert 'id="st-edit-moment-btn"' in source
+    shell = (STUDIO / "shell.js").read_text(encoding="utf-8")
+    assert 'id="st-edit-ready"' in shell
+    assert 'id="st-edit-shortcuts-open"' in shell
     assert "st-edit-stepnav" not in source
     assert "position: sticky" not in source
     # Both step buttons flush the autosave before leaving.
-    assert source.count("leaveTo(\"moments\"") >= 2
+    assert source.count("leaveTo(\"moments\"") >= 1
     assert "leaveTo(\"finish\"" in source
     assert "const saved = await flushSave();" in source
 

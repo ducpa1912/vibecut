@@ -75,8 +75,9 @@ try {
         const toolbar = document.querySelector(".st-edit-toolbar");
         const preview = document.querySelector(".st-preview");
         const timeline = document.querySelector(".st-timeline");
-        const inspector = document.querySelector(".st-inspector");
-        const body = document.querySelector(".st-inspector-body");
+        const elements = document.querySelector("#st-edit-elements");
+        const layers = document.querySelector("#st-edit-layers");
+        const body = document.querySelector(".st-layer-scroll");
         const rect = (node) => {
           const box = node.getBoundingClientRect();
           return {
@@ -91,12 +92,12 @@ try {
           scrollHeight: main.scrollHeight,
           clientHeight: main.clientHeight,
           toolbarPosition: getComputedStyle(toolbar).position,
-          inspectorDisplay: getComputedStyle(inspector).display,
+          layersDisplay: getComputedStyle(layers).display,
           bodyOverflowY: getComputedStyle(body).overflowY,
           preview: rect(preview),
           timeline: rect(timeline),
-          inspector: rect(inspector),
-          transcript: rect(document.querySelector("#st-edit-transcript")),
+          elements: rect(elements),
+          layers: rect(layers),
           toolbar: rect(toolbar),
         };
       });
@@ -124,22 +125,29 @@ try {
         `${where}: timeline leaves the viewport (${layout.timeline.bottom} > ${layout.height})`,
       );
       assert(layout.timeline.height >= 120, `${where}: timeline is too small`);
-      assert(layout.inspectorDisplay !== "none", `${where}: settings panel is hidden`);
+      assert(layout.layersDisplay !== "none", `${where}: layers panel is hidden`);
       assert(
-        layout.inspector.top >= 0 && layout.inspector.bottom <= layout.height + 1,
-        `${where}: settings panel leaves the viewport`,
+        layout.layers.top >= 0 && layout.layers.bottom <= layout.height + 1,
+        `${where}: layers panel leaves the viewport`,
       );
       assert(
-        layout.inspector.left <= layout.preview.left,
-        `${where}: tool panel is not left of the preview`,
+        layout.elements.right <= layout.preview.left + 1,
+        `${where}: Elements is not left of the preview`,
       );
       assert(
-        layout.transcript.left >= layout.preview.right - 1,
-        `${where}: transcript is not to the right of the preview`,
+        layout.layers.left >= layout.preview.right - 1,
+        `${where}: Layers is not to the right of the preview`,
       );
-      assert(layout.bodyOverflowY === "auto", `${where}: settings panel lost its own scroll`);
+      assert(layout.bodyOverflowY === "auto", `${where}: layers panel lost its own scroll`);
+      assert(
+        await page.locator("#st-edit-moments").count() === 0,
+        `${where}: the old moment bar is still mounted`,
+      );
+      assert(
+        await page.locator("#st-edit-transcript").count() === 0,
+        `${where}: the old transcript panel is still mounted`,
+      );
 
-      await page.locator('.st-tool', { hasText: 'Clean' }).click();
       const scanButton = page.locator(".st-clean-scan-start").first();
       await scanButton.waitFor({ state: "visible", timeout: 15000 });
       const scanLabel = (await scanButton.textContent())?.trim() || "";
@@ -161,7 +169,7 @@ try {
         await page.mouse.move(end.x, end.y, { steps: 8 });
         await page.mouse.up();
 
-        const cleanRow = page.locator('.st-layer-item[data-kind="clean"]').first();
+        const cleanRow = page.locator('.st-layer-row[data-kind="clean"]').first();
         await cleanRow.waitFor({ state: "attached", timeout: 10000 });
         const before = JSON.parse(await cleanRow.getAttribute("data-box"));
         assert(before.w > 0.01 && before.h > 0.01, `${where}: drawn box has no size`);
@@ -194,11 +202,11 @@ try {
           `${where}: dragging the handle did not resize the box`,
         );
 
+        const cleanCount = await page.locator('.st-layer-row[data-kind="clean"]').count();
         await page.keyboard.press("Delete");
-        await cleanRow.waitFor({ state: "detached", timeout: 10000 });
         await page.waitForFunction(
-          () => !document.querySelector(".st-tl-bar-clean"),
-          null,
+          (count) => document.querySelectorAll('.st-layer-row[data-kind="clean"]').length === count - 1,
+          cleanCount,
           { timeout: 10000 },
         );
 
@@ -249,24 +257,24 @@ try {
           { timeout: 5000 },
         );
 
-        const textRows = page.locator('.st-layer-item[data-kind="text"]');
+        await page.locator('.st-el-tab', { hasText: 'Text' }).click();
+        const textRows = page.locator('.st-layer-row');
         const textBefore = await textRows.count();
-        await page.locator('.st-layers-add summary').click();
-        await page.getByRole('menuitem', { name: 'Text', exact: true }).click();
+        await page.locator('.st-text-preset').first().click();
         await page.waitForFunction(
-          (count) => document.querySelectorAll('.st-layer-item[data-kind="text"]').length === count + 1,
+          (count) => document.querySelectorAll('.st-layer-row').length === count + 1,
           textBefore,
           { timeout: 15000 },
         );
         await page.keyboard.press("Meta+z");
         await page.waitForFunction(
-          (count) => document.querySelectorAll('.st-layer-item[data-kind="text"]').length === count,
+          (count) => document.querySelectorAll('.st-layer-row').length === count,
           textBefore,
           { timeout: 15000 },
         );
         await page.keyboard.press("Meta+Shift+z");
         await page.waitForFunction(
-          (count) => document.querySelectorAll('.st-layer-item[data-kind="text"]').length === count + 1,
+          (count) => document.querySelectorAll('.st-layer-row').length === count + 1,
           textBefore,
           { timeout: 15000 },
         );

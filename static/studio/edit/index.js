@@ -21,13 +21,11 @@ import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
 import { mountPreview } from "./preview.js";
 import { mountTimeline } from "./timeline.js";
-import { mountInspector } from "./inspector.js";
-import { renderLayersPanel } from "./layers-panel.js";
-import { mountMomentBoard } from "./moment-board.js";
-import { mountTranscriptPanel } from "./layers/audio.js";
+import { mountLayersPanel } from "./layers-panel.js";
+import { mountElementsPanel } from "./elements-panel.js";
 import { cropAt } from "./canvas-tools.js";
 import { icon } from "./icons.js";
-import { manualLayer } from "./layers/clean.js";
+import { manualLayer, setLayerKind } from "./layers/clean.js";
 import {
   ASPECTS,
   aspectLabel,
@@ -55,15 +53,14 @@ import {
 
 const CSS_ID = "vibecut-studio-edit-css";
 const CHOICE_KEY = "vibecut.studio.edit.choice";
-const ALL_MOMENTS = "__all_moments";
-const LAYER_FIELDS = ["sequence", "clean", "reframe", "motion", "color", "graphics", "captions", "audio"];
+const LAYER_FIELDS = ["sequence", "clean", "reframe", "motion", "color", "graphics", "captions", "audio", "border"];
 
 function ensureStyles() {
   if (!document.getElementById(CSS_ID)) {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261103-3";
+    link.href = "/static/studio/edit/edit.css?v=20261103-10";
     document.head.append(link);
   }
 }
@@ -118,7 +115,10 @@ export function mount(root, ctx) {
     captions: null,
     duration: 10,
     playhead: 0,
-    activeTab: "clean",
+    activeTab: "moments",
+    activeLayer: "clean",
+    loop: false,
+    output: { resolution: "1080p", fps: 30 },
     selected: null,
     // Preview-only hide toggles. Clean layers have no `hidden` field on the
     // server, and hiding a layer in the editor should never change the render.
@@ -201,53 +201,36 @@ export function mount(root, ctx) {
     root.innerHTML = `
       <section class="st-panel st-edit-panel" aria-labelledby="st-edit-title">
         <h1 id="st-edit-title" class="st-visually-hidden">Edit this moment</h1>
-        <header class="st-edit-toolbar" aria-label="Edit toolbar">
-          <div class="st-edit-toolbar-start">
+        <header class="st-edit-toolbar st-edit-command" aria-label="Edit commands">
+          <div class="st-edit-command-start">
             <button id="st-edit-back" class="st-btn st-btn-ghost st-btn-small st-edit-back" type="button" aria-label="Back to Moments" title="Back to Moments">← Moments</button>
-            <label class="st-field st-field-inline st-edit-moment">
-              <span>Moment</span>
-              <select id="st-edit-story" aria-label="Moment"></select>
-            </label>
-            <div class="st-aspect-group" role="group" aria-label="Moment shape">
-              <button class="st-aspect" type="button" data-aspect="9:16" aria-pressed="true">9:16</button>
-              <button class="st-aspect" type="button" data-aspect="4:5" aria-pressed="false">4:5</button>
-              <button class="st-aspect" type="button" data-aspect="1:1" aria-pressed="false">1:1</button>
-              <button class="st-aspect" type="button" data-aspect="16:9" aria-pressed="false">16:9</button>
-              <button class="st-aspect" type="button" data-aspect="16:10" aria-pressed="false">16:10</button>
-            </div>
-            <button id="st-edit-repair" class="st-btn st-btn-small st-trim-repair" type="button" hidden>Repair shape</button>
-            <div class="st-edit-history" role="group" aria-label="Undo and redo">
-              <button id="st-edit-undo-trim" class="st-btn st-btn-ghost st-btn-small" type="button" disabled>Undo trim</button>
-              <button id="st-edit-undo" class="st-btn st-btn-ghost st-btn-small" type="button" aria-label="Undo" title="Undo (⌘Z)" disabled><span class="st-btn-label">Undo</span></button>
-              <button id="st-edit-redo" class="st-btn st-btn-ghost st-btn-small" type="button" aria-label="Redo" title="Redo (⇧⌘Z)" disabled><span class="st-btn-label">Redo</span></button>
+            <div class="st-moment-picker">
+              <button id="st-edit-moment-btn" class="st-moment-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Switch moment">
+                <span id="st-edit-moment-num" class="st-mono">01</span>
+                <span class="st-moment-caret" aria-hidden="true">▾</span>
+              </button>
+              <div id="st-edit-moment-menu" class="st-moment-menu" role="menu" hidden></div>
             </div>
           </div>
-          <div class="st-edit-toolbar-end">
-            <span id="st-edit-meta" class="st-hint st-edit-meta"></span>
-            <span id="st-edit-save" class="st-edit-save" role="status" aria-live="polite">Opening…</span>
-            <button id="st-edit-focus" class="st-btn st-btn-ghost st-btn-small" type="button" aria-pressed="false" title="Focus the preview (F)">Focus</button>
-            <button id="st-edit-help" class="st-btn st-btn-ghost st-btn-small st-edit-help" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"></button>
-            <button id="st-edit-inspector-toggle" class="st-btn st-btn-ghost st-btn-small st-edit-inspector-toggle" type="button" aria-controls="st-edit-inspector" aria-expanded="false">Adjust</button>
+          <nav class="st-mobile-panels" aria-label="Editor panels">
+            <button type="button" data-panel="elements" title="Elements" aria-label="Elements"></button>
+            <button type="button" data-panel="preview" class="is-active" title="Preview" aria-label="Preview"></button>
+            <button type="button" data-panel="layers" title="Layers" aria-label="Layers"></button>
+          </nav>
+          <div class="st-edit-command-end">
+            <button id="st-edit-repair" class="st-btn st-btn-ghost st-btn-small st-trim-repair" type="button" hidden>Repair shape</button>
+            <span id="st-edit-meta" class="st-visually-hidden"></span>
             <button id="st-edit-next" class="st-btn st-btn-primary st-btn-small" type="button" aria-label="Next: Finish" title="Next: Finish" disabled>Finish →</button>
           </div>
         </header>
         <div id="st-edit-receipt" class="st-trim-receipt" role="status" aria-live="polite" hidden></div>
         <div id="st-edit-notice" class="st-edit-notice" role="alert" hidden></div>
-        <section id="st-edit-moments" class="st-moment-board" aria-label="Selected moments"></section>
         <div class="st-edit-stage">
-          <aside id="st-edit-layers" class="st-layers" aria-label="Tools and layers"></aside>
+          <aside id="st-edit-elements" class="st-elements" aria-label="Elements"></aside>
           <div id="st-edit-preview"></div>
-          <aside id="st-edit-transcript" class="st-transcript-panel" aria-label="Transcript and translation"></aside>
+          <aside id="st-edit-layers" class="st-layers" aria-label="Layers"></aside>
           <div id="st-edit-timeline"></div>
-          <aside id="st-edit-inspector" class="st-inspector" aria-label="Tool controls">
-            <div class="st-inspector-sheet-head">
-              <strong>Adjust this moment</strong>
-              <button id="st-edit-inspector-close" class="st-btn st-btn-ghost st-btn-small" type="button">Done</button>
-            </div>
-            <div id="st-edit-inspector-body"></div>
-          </aside>
         </div>
-        <div id="st-edit-inspector-scrim" class="st-inspector-scrim" hidden></div>
         <dialog id="st-edit-shortcuts" class="st-shortcuts" aria-labelledby="st-edit-shortcuts-title">
           <header class="st-shortcuts-head">
             <h2 id="st-edit-shortcuts-title">Keyboard shortcuts</h2>
@@ -273,73 +256,65 @@ export function mount(root, ctx) {
         </dialog>
       </section>
     `;
-    dom.story = root.querySelector("#st-edit-story");
-    dom.aspect = Array.from(root.querySelectorAll(".st-aspect"));
-    dom.undo = root.querySelector("#st-edit-undo");
-    dom.redo = root.querySelector("#st-edit-redo");
-    dom.undoTrim = root.querySelector("#st-edit-undo-trim");
+    dom.momentBtn = root.querySelector("#st-edit-moment-btn");
+    dom.momentMenu = root.querySelector("#st-edit-moment-menu");
+    dom.momentNum = root.querySelector("#st-edit-moment-num");
     dom.repair = root.querySelector("#st-edit-repair");
     dom.receipt = root.querySelector("#st-edit-receipt");
-    dom.save = root.querySelector("#st-edit-save");
+    dom.save = document.querySelector("#st-edit-ready");
     dom.meta = root.querySelector("#st-edit-meta");
     dom.back = root.querySelector("#st-edit-back");
     dom.next = root.querySelector("#st-edit-next");
     dom.notice = root.querySelector("#st-edit-notice");
+    dom.elements = root.querySelector("#st-edit-elements");
     dom.layers = root.querySelector("#st-edit-layers");
     dom.preview = root.querySelector("#st-edit-preview");
-    dom.help = root.querySelector("#st-edit-help");
+    dom.help = document.querySelector("#st-edit-shortcuts-open");
     dom.shortcuts = root.querySelector("#st-edit-shortcuts");
     dom.shortcutsClose = root.querySelector("#st-edit-shortcuts-close");
-    dom.moments = root.querySelector("#st-edit-moments");
-    dom.transcript = root.querySelector("#st-edit-transcript");
-    dom.focus = root.querySelector("#st-edit-focus");
-    dom.inspector = root.querySelector("#st-edit-inspector");
-    dom.layers.append(dom.inspector);
-    dom.inspectorBody = root.querySelector("#st-edit-inspector-body");
-    dom.inspectorToggle = root.querySelector("#st-edit-inspector-toggle");
-    dom.inspectorClose = root.querySelector("#st-edit-inspector-close");
-    dom.inspectorScrim = root.querySelector("#st-edit-inspector-scrim");
     dom.timeline = root.querySelector("#st-edit-timeline");
+    dom.stage = root.querySelector(".st-edit-stage");
+    dom.mobilePanels = Array.from(root.querySelectorAll(".st-mobile-panels [data-panel]"));
 
-    dom.story.addEventListener("change", () => {
-      if (dom.story.value === ALL_MOMENTS) {
-        dom.story.value = state.story?.id || "";
-        void leaveTo("moments", dom.back);
-        return;
-      }
-      void switchStory(dom.story.value);
+    if (dom.momentBtn) dom.momentBtn.prepend(icon("layers", { size: 12 }));
+    if (dom.save) {
+      dom.save.hidden = false;
+      dom.save.textContent = "Ready";
+      dom.save.dataset.tone = "quiet";
+    }
+    if (dom.help) dom.help.hidden = false;
+
+    dom.momentBtn?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const open = dom.momentMenu?.hidden !== false;
+      if (dom.momentMenu) dom.momentMenu.hidden = !open;
+      dom.momentBtn.setAttribute("aria-expanded", open ? "true" : "false");
     });
-    for (const button of dom.aspect) {
-      button.addEventListener("click", () => { void switchAspect(button.dataset.aspect); });
+    document.addEventListener("click", (event) => {
+      if (!root.querySelector(".st-moment-picker")?.contains(event.target)) {
+        if (dom.momentMenu) dom.momentMenu.hidden = true;
+        dom.momentBtn?.setAttribute("aria-expanded", "false");
+      }
+    });
+    for (const button of dom.mobilePanels) {
+      const iconName = button.dataset.panel === "elements" ? "layers" : button.dataset.panel === "layers" ? "settings" : "expand";
+      button.append(icon(iconName, { size: 14 }));
+      button.addEventListener("click", () => {
+        dom.stage.dataset.panel = button.dataset.panel;
+        for (const item of dom.mobilePanels) item.classList.toggle("is-active", item === button);
+      });
     }
     dom.back.addEventListener("click", () => { void leaveTo("moments", dom.back); });
     dom.next.addEventListener("click", () => { void leaveTo("finish", dom.next); });
-    dom.undo.addEventListener("click", () => { void undoLastChange(); });
-    dom.redo.addEventListener("click", () => { void redoLastChange(); });
-    dom.undoTrim.addEventListener("click", () => { void undoTrimChange(); });
     dom.help?.addEventListener("click", openShortcuts);
     dom.shortcutsClose?.addEventListener("click", closeShortcuts);
     dom.shortcuts?.addEventListener("click", (event) => {
       if (event.target === dom.shortcuts) closeShortcuts();
     });
-    for (const [node, name] of [
-      [dom.undo, "undo"],
-      [dom.redo, "redo"],
-      [dom.help, "keyboard"],
-    ]) {
-      if (node) node.prepend(icon(name, { size: 13 }));
-    }
     dom.repair.addEventListener("click", () => { void repairAspects(); });
-    dom.inspectorToggle?.addEventListener("click", () => {
-      if (dom.inspector?.classList.contains("is-open")) closeInspector();
-      else openInspector();
-    });
-    dom.inspectorClose?.addEventListener("click", closeInspector);
-    dom.focus?.addEventListener("click", toggleFocusMode);
-    dom.inspectorScrim?.addEventListener("click", closeInspector);
-    document.addEventListener("keydown", onInspectorKeydown);
     document.addEventListener("keydown", onLayerKeydown);
     document.addEventListener("keydown", onEditorKeydown);
+
   }
 
   function openInspector() {
@@ -423,7 +398,7 @@ export function mount(root, ctx) {
     }
     if (event.key === "f" || event.key === "F") {
       event.preventDefault();
-      toggleFocusMode();
+      preview?.toggleFocus();
       return;
     }
     if (event.key === "?" || (event.key === "/" && event.shiftKey)) {
@@ -476,7 +451,9 @@ export function mount(root, ctx) {
 
   function setSaveStatus(message, tone = "") {
     if (!dom.save) return;
-    dom.save.textContent = message;
+    const text = message === "Saved" ? "Ready" : message;
+    dom.save.hidden = false;
+    dom.save.textContent = text;
     dom.save.dataset.tone = tone;
   }
 
@@ -496,15 +473,15 @@ export function mount(root, ctx) {
   }
 
   function setUndoState() {
-    if (dom.undo) dom.undo.disabled = saving || !state.edit?.parent;
-    if (dom.redo) dom.redo.disabled = saving || !state.redoIds.length;
+    timeline?.setHistory({
+      canUndo: !saving && Boolean(state.edit?.parent),
+      canRedo: !saving && Boolean(state.redoIds.length),
+      canUndoTrim: !saving && !state.trimBusy && Boolean(state.undoToken),
+    });
     updateTrimChrome();
   }
 
   function updateTrimChrome() {
-    if (dom.undoTrim) {
-      dom.undoTrim.disabled = saving || state.trimBusy || !state.undoToken;
-    }
     if (dom.repair) {
       const stale = state.staleAspects || [];
       dom.repair.hidden = stale.length === 0;
@@ -838,36 +815,43 @@ export function mount(root, ctx) {
   }
 
   function renderStoryOptions() {
-    if (!dom.story || !state.set) return;
-    dom.story.replaceChildren();
-    (state.set.stories || []).forEach((story, index) => {
-      dom.story.append(el("option", {
-        value: story.id,
-        text: storyTitle(story, index),
-        selected: story.id === state.story?.id,
-      }));
+    if (!state.set) return;
+    const stories = state.set.stories || [];
+    const index = Math.max(0, stories.findIndex((story) => story.id === state.story?.id));
+    if (dom.momentNum) dom.momentNum.textContent = String(index + 1).padStart(2, "0");
+    if (dom.momentBtn) dom.momentBtn.title = state.story ? storyTitle(state.story, index) : "Switch moment";
+    if (!dom.momentMenu) return;
+    dom.momentMenu.replaceChildren();
+    stories.forEach((story, storyIndex) => {
+      const active = story.id === state.story?.id;
+      const button = el("button", {
+        class: `st-moment-item${active ? " is-active" : ""}`,
+        type: "button",
+        role: "menuitemradio",
+        "aria-checked": active ? "true" : "false",
+      }, [
+        el("span", { class: "st-mono", text: String(storyIndex + 1).padStart(2, "0") }),
+        el("span", { class: "st-moment-item-copy" }, [
+          el("strong", { text: String(story.title || story.hook?.text || `Moment ${storyIndex + 1}`).slice(0, 70) }),
+          el("small", { text: formatTime(story.dur || story.duration || 0) }),
+        ]),
+      ]);
+      button.addEventListener("click", () => {
+        dom.momentMenu.hidden = true;
+        dom.momentBtn?.setAttribute("aria-expanded", "false");
+        if (story.id !== state.story?.id) void switchStory(story.id);
+      });
+      dom.momentMenu.append(button);
     });
-    dom.story.append(el("option", { value: ALL_MOMENTS, text: "All moments…" }));
-    dom.story.value = state.story?.id || "";
   }
 
   function updateAspectButtons() {
+    // Aspect now lives inside the preview. Keep the repair state on the
+    // command bar only; the preview owns the ratio selector.
     const stale = new Set(state.staleAspects || []);
-    for (const button of dom.aspect || []) {
-      const aspect = button.dataset.aspect;
-      const active = aspect === state.aspect;
-      const needsRepair = stale.has(aspect);
-      button.setAttribute("aria-pressed", active ? "true" : "false");
-      button.classList.toggle("is-active", active);
-      button.classList.toggle("is-stale", needsRepair);
-      button.dataset.stale = needsRepair ? "true" : "false";
-      button.title = needsRepair
-        ? "This shape's Edit was made before the moment changed. Press Repair."
-        : "";
-      button.setAttribute(
-        "aria-label",
-        `${aspect}${needsRepair ? ", needs repair" : ""}`,
-      );
+    if (dom.repair) {
+      dom.repair.hidden = stale.length === 0;
+      dom.repair.textContent = stale.length === 1 ? `Repair ${stale[0]}` : `Repair ${stale.length} shapes`;
     }
   }
 
@@ -890,6 +874,7 @@ export function mount(root, ctx) {
         graphics: clone(fork.graphics || []),
         captions: clone(fork.captions || {}),
         audio: clone(fork.audio || { mode: "original" }),
+        border: clone(fork.border || {}),
       };
     }
     return {
@@ -903,6 +888,7 @@ export function mount(root, ctx) {
       // The creator adds them from the Captions tool or Auto subtitles.
       captions: { enabled: false },
       audio: { mode: "original" },
+      border: {},
     };
   }
 
@@ -1144,7 +1130,7 @@ export function mount(root, ctx) {
 
   function renderAutoSubs() {
     if (disposed) return;
-    renderInspector();
+    renderLayers();
   }
 
   async function resolveCaptionTrack(edit) {
@@ -1215,10 +1201,24 @@ export function mount(root, ctx) {
     return sequenceDuration() || state.duration;
   }
 
+  function cleanClip(clip) {
+    const next = {
+      start: Number(clip?.start) || 0,
+      end: Number(clip?.end) || 0,
+      role: clip?.role || "beat",
+    };
+    if (clip?.kind) next.kind = String(clip.kind);
+    if (clip?.kind !== "blank") next.scene = Number(clip?.scene);
+    if (clip?.beat_kind) next.beat_kind = String(clip.beat_kind);
+    if (clip?.color) next.color = String(clip.color);
+    if (clip?.reverse === true) next.reverse = true;
+    return next;
+  }
+
   function currentSequence() {
     const saved = Array.isArray(state.edit?.sequence) ? state.edit.sequence : [];
-    if (saved.length) return clone(saved);
-    return (state.story?.clips || []).map((clip) => ({
+    if (saved.length) return saved.map(cleanClip);
+    return (state.story?.clips || []).map((clip) => cleanClip({
       scene: Number(clip.scene),
       start: Number(clip.start),
       end: Number(clip.end),
@@ -1228,7 +1228,7 @@ export function mount(root, ctx) {
 
   function setSequence(sequence) {
     if (!state.edit) return;
-    state.edit.sequence = sequence;
+    state.edit.sequence = sequence.map(cleanClip);
     state.duration = sequenceDuration() || state.duration;
     touch("sequence");
     renderLayers();
@@ -1385,13 +1385,15 @@ export function mount(root, ctx) {
     dialog.showModal();
   }
 
+  let layerPanelCtx = null;
+
   function renderInspector() {
-    if (!dom.inspectorBody) return;
-    const scrollTop = dom.inspectorBody.scrollTop;
     const panelCtx = {
       getEdit: () => state.edit,
       getCaptions: () => state.captions,
       getStory: () => state.story,
+      getJob: () => state.job,
+      getSelected: () => state.selected,
       getDuration: () => state.duration,
       getPlayhead: () => state.playhead,
       save: () => saveNow(),
@@ -1407,7 +1409,68 @@ export function mount(root, ctx) {
       setTab: (tab) => setActiveTab(tab),
       refresh: () => {
         renderLayers();
-        renderInspector();
+        renderElements();
+      },
+      getActiveLayer: () => state.activeLayer,
+      setActiveLayer: (id) => { state.activeLayer = String(id || "clean"); },
+      getTab: () => state.activeTab,
+      getExpanded: () => momentScenesOpen,
+      toggleExpanded: () => {
+        momentScenesOpen = !momentScenesOpen;
+        renderElements();
+      },
+      appendBlank: () => {
+        setSequence([...currentSequence(), {
+          kind: "blank",
+          start: 0,
+          end: 0.8,
+          role: "beat",
+          color: "#000000",
+        }]);
+        notify("0.8s blank filler added.", "ok");
+        renderElements();
+        scheduleTimeline();
+      },
+      appendScene: (scene) => {
+        setSequence([...currentSequence(), {
+          scene: Number(scene.id),
+          start: Number(scene.start),
+          end: Number(scene.end),
+          role: "beat",
+          beat_kind: "context",
+        }]);
+        notify(`Scene ${Number(scene.id) + 1} added to this cut.`, "ok");
+        renderElements();
+        scheduleTimeline();
+      },
+      reorder: (from, to) => reorderScene(from, to),
+      openImport: () => { void leaveTo("import", dom.back); },
+      openDissect: () => { void appendMomentDialog(); },
+      setReframe(next) {
+        if (!state.edit) return;
+        state.edit.reframe = { ...(state.edit.reframe || {}), ...clone(next) };
+        touch("reframe");
+        renderLayers();
+        preview?.refresh();
+        scheduleTimeline();
+      },
+      setAudioFade(next) {
+        if (!state.edit) return;
+        state.edit.audio = { ...(state.edit.audio || {}), fade: clone(next) };
+        touch("audio");
+        scheduleTimeline();
+      },
+      setBorder(next) {
+        if (!state.edit) return;
+        state.edit.border = clone(next);
+        touch("border");
+        renderLayers();
+        preview?.refresh();
+        scheduleTimeline();
+      },
+      startAreaFocus: () => {
+        preview?.setTool("box");
+        notify("Draw the area to keep, then set the zoom in Layers.", "ok");
       },
       seek: (time) => seek(time),
       notify,
@@ -1419,6 +1482,23 @@ export function mount(root, ctx) {
       autoSubtitlesStoryCount: () => (state.set?.stories || []).length,
       canAutoSubtitles: () => Boolean(state.job?.id && state.set?.id && state.story?.id),
       autoSubtitles: (scope) => runAutoSubtitles(scope),
+      addText(kind = "lower_third") {
+        if (!state.edit) return null;
+        const graphics = (state.edit.graphics || []).slice();
+        const layer = newTextLayer(kind, {
+          duration: state.duration,
+          playhead: state.playhead,
+          index: graphics.length,
+        });
+        graphics.push(layer);
+        state.edit.graphics = graphics;
+        touch("graphics");
+        selectLayer("text", layer.id);
+        renderElements();
+        scheduleTimeline();
+        preview?.refresh();
+        return layer;
+      },
       setGraphics(next) {
         if (!state.edit) return;
         state.edit.graphics = clone(next);
@@ -1514,13 +1594,7 @@ export function mount(root, ctx) {
         }
       },
     };
-    mountInspector(dom.inspectorBody, {
-      active: state.activeTab,
-      edit: state.edit,
-      captions: state.captions,
-      panelCtx,
-    });
-    dom.inspectorBody.scrollTop = scrollTop;
+    layerPanelCtx = panelCtx;
   }
 
   function layerCrop() {
@@ -1537,84 +1611,38 @@ export function mount(root, ctx) {
     return `${kind}:${id}`;
   }
 
-  let transcriptPanel = null;
+  function renderTranscriptPanel() {}
 
-  function renderTranscriptPanel() {
-    if (!dom.transcript || !state.edit) return;
-    if (transcriptPanel) {
-      transcriptPanel();
-      transcriptPanel = null;
-    }
-    transcriptPanel = mountTranscriptPanel(dom.transcript, {
-      getEdit: () => state.edit,
-      getStory: () => state.story,
-      getDuration: () => state.duration,
-      getPlayhead: () => state.playhead,
-      seek: (time) => seek(time),
-      notify,
-    });
-  }
+  function renderMomentBoard() {}
 
-  function renderMomentBoard() {
-    if (!dom.moments || !state.edit || !state.story) return;
-    mountMomentBoard(dom.moments, {
-      getJob: () => state.job,
-      getStory: () => state.story,
-      getEdit: () => state.edit,
-      getExpanded: () => momentScenesOpen,
-      toggleExpanded: () => {
-        momentScenesOpen = !momentScenesOpen;
-        renderMomentBoard();
-      },
-      seek: (time) => seek(time),
-      appendBlank: () => {
-        setSequence([...currentSequence(), {
-          kind: "blank",
-          start: 0,
-          end: 0.8,
-          role: "beat",
-          color: "#000000",
-        }]);
-        notify("0.8s blank filler added.", "ok");
-        renderMomentBoard();
-      },
-      appendScene: (scene) => {
-        setSequence([...currentSequence(), {
-          scene: Number(scene.id),
-          start: Number(scene.start),
-          end: Number(scene.end),
-          role: "beat",
-          beat_kind: "context",
-        }]);
-        notify(`Scene ${Number(scene.id) + 1} added to this cut.`, "ok");
-        renderMomentBoard();
-      },
-    });
-  }
+  let layersPanel = null;
+  let elementsPanel = null;
 
   function renderLayers() {
     if (!dom.layers || !state.edit) return;
-    renderLayersPanel(dom.layers, {
-      getEdit: () => state.edit,
-      getCaptions: () => state.captions,
-      getSelected: () => state.selected,
-      getCrop: layerCrop,
-      getActiveTab: () => state.activeTab,
-      setTab: (tab) => setActiveTab(tab),
-      isHidden: (kind, id) => state.hiddenLayers.has(layerHiddenKey(kind, id)),
-      select: (kind, id) => selectLayer(kind, id),
-      add: (kind) => addLayer(kind),
-      toggleHidden: (kind, id) => toggleLayerHidden(kind, id),
-      remove: (kind, id) => removeLayer(kind, id),
-    });
-    // The tool list re-renders on selection; keep the tool controls attached.
-    if (dom.inspector) dom.layers.append(dom.inspector);
+    if (!layerPanelCtx) renderInspector();
+    if (!layersPanel) {
+      layersPanel = mountLayersPanel(dom.layers, layerPanelCtx);
+    } else {
+      layersPanel.refresh();
+    }
   }
 
-  function addCleanBox(box = null) {
+  function renderElements() {
+    if (!dom.elements || !state.edit) return;
+    if (!layerPanelCtx) renderInspector();
+    if (!elementsPanel) {
+      elementsPanel = mountElementsPanel(dom.elements, layerPanelCtx);
+    } else {
+      elementsPanel.refresh();
+    }
+  }
+
+  function addCleanBox(box = null, kind = "") {
     if (!state.edit) return;
     const layers = (state.edit.clean || []).slice();
     const layer = manualLayer(layers.length, box);
+    if (kind) setLayerKind(layer, kind);
     layers.push(layer);
     state.edit.clean = layers;
     touch("clean");
@@ -1735,29 +1763,43 @@ export function mount(root, ctx) {
 
   function removeSelectedLayer() {
     if (!state.selected) return;
+    if (state.selected.kind === "scenes") {
+      const index = Number(state.selected.id);
+      const sequence = currentSequence();
+      if (!Number.isInteger(index) || index < 0 || index >= sequence.length) return;
+      sequence.splice(index, 1);
+      state.selected = null;
+      setSequence(sequence);
+      preview?.setSelected(null);
+      timeline?.setSelected(null);
+      notify("Scene removed from this cut.", "ok");
+      return;
+    }
     removeLayer(state.selected.kind, state.selected.id);
   }
 
   function selectLayer(kind, id) {
-    const tab = kind === "sentences" ? state.activeTab : kind;
-    if (tab) state.activeTab = tab;
     if (kind === "sentences") return;
     state.selected = id ? { kind, id } : null;
+    if (kind === "clean") state.activeLayer = "clean";
+    else if (kind === "captions") state.activeLayer = "transcript";
+    else if (kind === "audio") state.activeLayer = "narrative";
+    else if (kind === "color") state.activeLayer = "filter";
+    else if (kind === "text" || kind === "effects") state.activeTab = "elements";
     preview?.setSelected(
       ["clean", "text", "captions"].includes(kind) ? state.selected : null,
     );
     timeline?.setSelected(state.selected);
     renderLayers();
-    renderInspector();
+    renderElements();
   }
 
   function setActiveTab(tab) {
-    // "visual" is the inspector's grouped Text, Effects and Colour tab. The
-    // older per-kind ids still select it when a layer is chosen.
-    if (!["clean", "visual", "text", "captions", "effects", "color", "audio"].includes(tab)) return;
-    state.activeTab = tab;
-    renderLayers();
-    renderInspector();
+    const next = ["moments", "elements", "text", "audio"].includes(tab)
+      ? tab
+      : tab === "clean" ? "moments" : tab === "captions" ? "audio" : "elements";
+    state.activeTab = next;
+    elementsPanel?.setActive(next);
   }
 
   function touch(field) {
@@ -2029,6 +2071,7 @@ export function mount(root, ctx) {
       }
     } catch (error) {
       if (disposed || seq !== loadSeq) return;
+      console.error("Edit load failed", error);
       setSaveStatus("Could not open", "bad");
       notify(
         error?.status === 409
@@ -2055,21 +2098,275 @@ export function mount(root, ctx) {
     if (dom.next) dom.next.disabled = !state.edit;
   }
 
+  function activeSceneAt(time) {
+    const clips = (Array.isArray(state.edit?.sequence) && state.edit.sequence.length)
+      ? state.edit.sequence
+      : (state.story?.clips || []);
+    let offset = 0;
+    for (let index = 0; index < clips.length; index += 1) {
+      const clip = clips[index];
+      const start = offset;
+      const end = offset + Math.max(0, Number(clip.end) - Number(clip.start));
+      if (time < end || index === clips.length - 1) {
+        return {
+          num: String(index + 1).padStart(2, "0"),
+          role: clip?.kind === "blank" ? "Blank" : String(clip?.role === "hook" ? "Hook" : clip?.role === "payoff" ? "Payoff" : "Scene"),
+          start,
+          end,
+          clip,
+          index,
+        };
+      }
+      offset = end;
+    }
+    return { num: "01", role: "Scene", start: 0, end: 0, clip: null, index: 0 };
+  }
+
+  function paintSceneTag() {
+    const tag = activeSceneAt(state.playhead);
+    preview?.setScene(tag.num, tag.role);
+  }
+
+  function openRecordDialog() {
+    if (!state.job || !state.edit) return;
+    const dialog = el("dialog", { class: "st-dialog st-record-dialog", "aria-labelledby": "st-record-title" });
+    const close = () => {
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+      stream?.getTracks().forEach((track) => track.stop());
+      if (timer) window.clearInterval(timer);
+      dialog.close();
+      dialog.remove();
+    };
+    const head = el("header", { class: "st-dialog-head" }, [
+      el("h2", { id: "st-record-title", text: "Record voice-over" }),
+      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+    ]);
+    head.lastChild.addEventListener("click", close);
+    const status = el("p", { class: "st-hint", text: "Press record, speak, then save the take." });
+    const time = el("p", { class: "st-mono st-record-time", text: "0:00" });
+    const start = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Record" });
+    const stop = el("button", { class: "st-btn st-btn-ghost", type: "button", text: "Stop", disabled: true });
+    const save = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Save take", disabled: true });
+    let stream = null;
+    let recorder = null;
+    let chunks = [];
+    let timer = 0;
+    let seconds = 0;
+    let blob = null;
+    const audio = el("audio", { controls: true, hidden: true });
+
+    start.addEventListener("click", async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        chunks = [];
+        blob = null;
+        audio.hidden = true;
+        seconds = 0;
+        time.textContent = "0:00";
+        recorder.addEventListener("dataavailable", (event) => { if (event.data.size) chunks.push(event.data); });
+        recorder.addEventListener("stop", () => {
+          blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+          audio.src = URL.createObjectURL(blob);
+          audio.hidden = false;
+          save.disabled = false;
+          status.textContent = "Take ready. Listen, then save.";
+        });
+        recorder.start();
+        start.disabled = true;
+        stop.disabled = false;
+        status.textContent = "Recording…";
+        timer = window.setInterval(() => {
+          seconds += 1;
+          time.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+        }, 1000);
+      } catch (error) {
+        status.textContent = error?.message || "Microphone permission was refused.";
+      }
+    });
+    stop.addEventListener("click", () => {
+      if (timer) window.clearInterval(timer);
+      timer = 0;
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+      stream?.getTracks().forEach((track) => track.stop());
+      start.disabled = false;
+      stop.disabled = true;
+      status.textContent = "Saving take…";
+    });
+    save.addEventListener("click", async () => {
+      if (!blob || !state.job) return;
+      save.disabled = true;
+      save.textContent = "Saving…";
+      try {
+        const form = new FormData();
+        form.append("file", blob, "voice-over.webm");
+        const response = await fetch(`/api/jobs/${encodeURIComponent(state.job.id)}/audio/voice-upload`, {
+          method: "POST", body: form, credentials: "same-origin",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || payload.error || "The voice take could not be saved.");
+        state.edit.audio = {
+          ...(state.edit.audio || {}),
+          mode: "voice_over",
+          mode_chosen: true,
+          voice: {
+            ...(state.edit.audio?.voice || {}),
+            recorded: {
+              path: payload.path,
+              name: payload.name || "Voice-over",
+              duration: payload.duration || seconds,
+            },
+          },
+        };
+        touch("audio");
+        await saveNow();
+        notify("Voice-over take saved to this moment.", "ok");
+        close();
+      } catch (error) {
+        save.disabled = false;
+        save.textContent = "Save take";
+        status.textContent = error?.message || "The take could not be saved.";
+      }
+    });
+
+    dialog.append(head, status, time, audio, el("div", { class: "st-actions" }, [start, stop, save]));
+    document.body.append(dialog);
+    dialog.showModal();
+  }
+
+  function parseSubtitle(text) {
+    const rows = String(text || "").replace(/\r/g, "").split(/\n{2,}/);
+    const cues = [];
+    for (const row of rows) {
+      const lines = row.split("\n").map((line) => line.trim()).filter(Boolean);
+      const timeLine = lines.find((line) => line.includes("-->"));
+      if (!timeLine) continue;
+      const [from, to] = timeLine.split("-->").map((part) => part.trim().split(" ")[0]);
+      const seconds = (value) => {
+        const parts = String(value).replace(",", ".").split(":").map(Number);
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        return Number(value) || 0;
+      };
+      const start = seconds(from);
+      const end = Math.max(start + 0.2, seconds(to));
+      const body = lines.slice(lines.indexOf(timeLine) + 1).join(" ").replace(/<[^>]+>/g, "").trim();
+      if (body) cues.push({ start: round(start, 2), end: round(end, 2), text: body });
+    }
+    return cues;
+  }
+
+  function openSubtitleDialog() {
+    if (!state.job || !state.edit) return;
+    const dialog = el("dialog", { class: "st-dialog", "aria-labelledby": "st-subtitle-title" });
+    const close = () => { dialog.close(); dialog.remove(); };
+    const head = el("header", { class: "st-dialog-head" }, [
+      el("h2", { id: "st-subtitle-title", text: "Import subtitles" }),
+      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+    ]);
+    head.lastChild.addEventListener("click", close);
+    const file = el("input", { type: "file", accept: ".srt,.vtt,text/plain", "aria-label": "Subtitle file" });
+    const status = el("p", { class: "st-hint", text: "Choose an SRT or VTT file." });
+    const importButton = el("button", { class: "st-btn st-btn-primary", type: "button", text: "Import", disabled: true });
+    let cues = [];
+    file.addEventListener("change", async () => {
+      const chosen = file.files?.[0];
+      if (!chosen) return;
+      cues = parseSubtitle(await chosen.text());
+      status.textContent = cues.length ? `${cues.length} lines ready.` : "No timed lines found in that file.";
+      importButton.disabled = !cues.length;
+    });
+    importButton.addEventListener("click", async () => {
+      importButton.disabled = true;
+      importButton.textContent = "Importing…";
+      try {
+        let track = state.captions;
+        if (!track?.id) {
+          const result = await buildCaptionTrack(state.job.id, {
+            setId: state.set.id, storyId: state.story.id, styleId: "clean",
+          });
+          track = result?.track || result;
+        }
+        if (!track?.id) throw new Error("Build captions once before importing a file.");
+        const result = await patchCaptionTrack(state.job.id, track.id, { cues });
+        state.captions = result?.track || result;
+        state.edit.captions = {
+          ...(state.edit.captions || {}),
+          track_id: state.captions.id,
+          style_id: state.captions.style_id || "clean",
+          enabled: true,
+        };
+        touch("captions");
+        await saveNow();
+        notify(`Imported ${cues.length} subtitle lines.`, "ok");
+        close();
+      } catch (error) {
+        status.textContent = error?.message || "The subtitles could not be imported.";
+        importButton.disabled = false;
+        importButton.textContent = "Import";
+      }
+    });
+    dialog.append(head, file, status, el("div", { class: "st-actions" }, [importButton]));
+    document.body.append(dialog);
+    dialog.showModal();
+  }
+
+  function duplicateSceneAtPlayhead() {
+    const tag = activeSceneAt(state.playhead);
+    if (!tag.clip) return;
+    const sequence = currentSequence();
+    sequence.splice(tag.index + 1, 0, cleanClip(tag.clip));
+    setSequence(sequence);
+    notify("Scene duplicated.", "ok");
+  }
+
+  function reverseSceneAtPlayhead() {
+    const tag = activeSceneAt(state.playhead);
+    if (!tag.clip || tag.clip.kind === "blank") return;
+    const sequence = currentSequence();
+    sequence[tag.index] = { ...sequence[tag.index], reverse: !sequence[tag.index].reverse };
+    setSequence(sequence);
+    notify(sequence[tag.index].reverse ? "Clip will play in reverse." : "Reverse removed.", "ok");
+  }
+
+  function freezeAtPlayhead() {
+    const tag = activeSceneAt(state.playhead);
+    if (!tag.clip || tag.clip.kind === "blank") return;
+    const sequence = currentSequence();
+    sequence.splice(tag.index + 1, 0, {
+      kind: "freeze",
+      scene: Number(tag.clip.scene),
+      start: Number(tag.clip.start) + Math.max(0, state.playhead - tag.start),
+      end: Number(tag.clip.start) + Math.max(0, state.playhead - tag.start) + 1.5,
+      role: "beat",
+    });
+    setSequence(sequence);
+    notify("Freeze frame added for 1.5s.", "ok");
+  }
+
+  function addMosaicLayer() {
+    addCleanBox(null, "mosaic");
+    layersPanel?.setActive("clean");
+    notify("Mosaic layer added. Draw the area on the picture.", "ok");
+  }
+
   function renderEditorParts() {
     if (!dom.preview || !dom.timeline) return;
-    renderMomentBoard();
-    renderTranscriptPanel();
     if (!preview) {
       preview = mountPreview(dom.preview, {
         jobId: state.job.id,
         onTime: (time) => {
           state.playhead = time;
           timeline?.setTime(time);
+          paintSceneTag();
         },
         onStale: () => { void handleStalePreview(); },
         onSelect: (kind, id) => selectLayer(kind, id),
         onBoxChange: (id, box, options) => updateCleanBox(id, box, options),
         onBoxCreate: (box) => createCleanBox(box),
+        onAspect: (value) => { void switchAspect(value); },
+        onOutput: (value) => { state.output = value || state.output; },
       });
     }
     if (!timeline) {
@@ -2086,10 +2383,30 @@ export function mount(root, ctx) {
           state.edit.audio = { ...(state.edit.audio || {}), mode, mode_chosen: true };
           touch("audio");
           renderLayers();
-          renderInspector();
           preview?.refresh();
           scheduleTimeline();
         },
+        onUndo: () => { void undoLastChange(); },
+        onRedo: () => { void redoLastChange(); },
+        onUndoTrim: () => { void undoTrimChange(); },
+        onDelete: () => { removeSelectedLayer(); },
+        onExtractFrame: () => { preview?.captureFrame(); },
+        onAddMedia: () => { void leaveTo("import", dom.back); },
+        onAddText: () => { elementsPanel?.setActive("text"); },
+        onAddAudio: () => { elementsPanel?.setActive("audio"); },
+        onEffects: () => { elementsPanel?.setActive("elements"); },
+        onMosaic: () => { addMosaicLayer(); },
+        onAutoCaptions: () => {
+          layersPanel?.setActive("transcript");
+          void runAutoSubtitles("story");
+        },
+        onOverlayTrack: () => { elementsPanel?.setActive("text"); },
+        onReverse: () => { reverseSceneAtPlayhead(); },
+        onDuplicate: () => { duplicateSceneAtPlayhead(); },
+        onFreeze: () => { freezeAtPlayhead(); },
+        onRecord: () => { openRecordDialog(); },
+        onImportSubtitle: () => { openSubtitleDialog(); },
+        onSplit: () => { notify("Split is applied by trimming the clip at the playhead.", ""); },
         beforeTrim: () => flushSave(),
         onTrim: (result) => applyTrimResult(result, "Trimmed"),
         onConflict: (error) => { void handleTrimConflict(error); },
@@ -2102,6 +2419,8 @@ export function mount(root, ctx) {
       duration: state.duration,
       selected: state.selected,
       jobId: state.job.id,
+      story: state.story,
+      job: state.job,
     });
     preview.setTime(state.playhead);
     timeline.setData({
@@ -2116,6 +2435,8 @@ export function mount(root, ctx) {
     });
     timeline.setTime(state.playhead);
     timeline.setSelected(state.selected);
+    paintSceneTag();
+    renderElements();
     renderLayers();
     renderInspector();
   }
@@ -2124,6 +2445,7 @@ export function mount(root, ctx) {
     state.playhead = clamp(numberOr(time), 0, Math.max(0.1, state.duration));
     preview?.seek(state.playhead);
     timeline?.setTime(state.playhead);
+    paintSceneTag();
   }
 
   async function handleStalePreview() {
@@ -2187,7 +2509,7 @@ export function mount(root, ctx) {
     const saved = await flushSave();
     if (!saved) return;
     if (!state.edit?.parent) return;
-    dom.undo.disabled = true;
+    if (dom.undo) dom.undo.disabled = true;
     const undoneId = state.edit.id;
     try {
       const result = await undoEdit(state.job.id, state.edit.id);
@@ -2227,7 +2549,7 @@ export function mount(root, ctx) {
     const saved = await flushSave();
     if (!saved) return;
     const target = state.redoIds[state.redoIds.length - 1];
-    dom.redo.disabled = true;
+    if (dom.redo) dom.redo.disabled = true;
     try {
       const result = await restoreEdit(state.job.id, state.edit.id, target);
       if (disposed || !result?.edit) return;
@@ -2355,6 +2677,8 @@ export function mount(root, ctx) {
     document.removeEventListener("keydown", onInspectorKeydown);
     document.removeEventListener("keydown", onLayerKeydown);
     document.removeEventListener("keydown", onEditorKeydown);
+    if (dom.save) { dom.save.hidden = true; dom.save.textContent = "Ready"; }
+    if (dom.help) dom.help.hidden = true;
     delete root.dataset.editorFrame;
     root.replaceChildren();
   };

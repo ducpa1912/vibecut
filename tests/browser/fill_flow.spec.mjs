@@ -167,7 +167,6 @@ try {
 
   await page.goto(`${base}/#/edit`, { waitUntil: "domcontentloaded" });
   await page.locator(".st-edit-panel").waitFor({ state: "visible", timeout: 30000 });
-  await page.locator('.st-tool', { hasText: 'Clean' }).click();
   await page.waitForFunction(
     () => document.querySelectorAll(".st-found-row").length === 3,
     null,

@@ -48,6 +48,7 @@ class EditCreateBody(BaseModel):
     graphics: list[dict] = Field(default_factory=list)
     captions: dict = Field(default_factory=dict)
     audio: dict = Field(default_factory=dict)
+    border: dict = Field(default_factory=dict)
 
 
 class EditPatchBody(BaseModel):
@@ -61,6 +62,7 @@ class EditPatchBody(BaseModel):
     graphics: list[dict] = Field(default_factory=list)
     captions: dict = Field(default_factory=dict)
     audio: dict = Field(default_factory=dict)
+    border: dict = Field(default_factory=dict)
     # Studio autosave sets this: a save within COALESCE_S of the head it
     # replaces folds into that version instead of adding one per keystroke.
     coalesce: bool = False
@@ -81,7 +83,7 @@ router = APIRouter()
 
 _LAYER_FIELDS = (
     "sequence", "clean", "reframe", "motion", "color", "graphics", "captions",
-    "audio",
+    "audio", "border",
 )
 
 
@@ -303,7 +305,7 @@ def _current(job: dict, edit: dict) -> str:
 
 
 def _merge_layers(base: dict, values: dict) -> dict:
-    merged = {key: base[key] for key in _LAYER_FIELDS}
+    merged = {key: base.get(key) for key in _LAYER_FIELDS}
     for key in _LAYER_FIELDS:
         if key in values:
             merged[key] = values[key]

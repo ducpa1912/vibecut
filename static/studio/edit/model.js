@@ -21,6 +21,7 @@ export const SAFE_ZONE_PRESETS = {
   auto: { label: "This shape", safe_zone: { top: 0.08, right: 0.08, bottom: 0.16, left: 0.08 } },
   instagram: { label: "Instagram Reels", safe_zone: { top: 0.12, right: 0.06, bottom: 0.20, left: 0.06 } },
   tiktok: { label: "TikTok", safe_zone: { top: 0.10, right: 0.14, bottom: 0.22, left: 0.06 } },
+  rednote: { label: "RedNote", safe_zone: { top: 0.10, right: 0.14, bottom: 0.20, left: 0.06 } },
   youtube: { label: "YouTube Shorts", safe_zone: { top: 0.08, right: 0.12, bottom: 0.18, left: 0.05 } },
   facebook: { label: "Facebook Reels", safe_zone: { top: 0.12, right: 0.06, bottom: 0.20, left: 0.06 } },
 };
@@ -151,6 +152,12 @@ export const TEXT_KINDS = {
     anchor: "center",
     box: { w: 0.60, h: 0.12 },
     sample: "Key word",
+  },
+  memo: {
+    label: "Memo",
+    anchor: "top-center",
+    box: { w: 0.72, h: 0.20 },
+    sample: "A note for the viewer",
   },
 };
 
@@ -604,7 +611,13 @@ export function newTextLayer(kind, { duration = 5, playhead = 0, index = 0, hook
     anchor: preset.anchor,
     box: { ...preset.box },
     z: 10 + index,
-    style: { ...TEXT_STYLE_DEFAULTS, ...(chosen === "hook" ? HOOK_STYLE : {}) },
+    style: {
+      ...TEXT_STYLE_DEFAULTS,
+      ...(chosen === "hook" ? HOOK_STYLE : {}),
+      ...(chosen === "memo"
+        ? { background: "#f4ecd8", color: "#1a1712", stroke: "none", shadow: true, align: "left" }
+        : {}),
+    },
     safe_zone: true,
     opacity: 1,
   };

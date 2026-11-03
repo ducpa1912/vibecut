@@ -51,7 +51,7 @@ MAX_TEXT_LENGTH = 400
 MAX_ID = 64
 
 ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
-CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "delogo", "fill")
+CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "mosaic", "delogo", "fill")
 # AI text fill engines for kind "fill" (see textfill/). STTN is the default.
 FILL_METHODS = ("sttn", "lama")
 MOTION_KINDS = ("punch_in", "snap_zoom", "push", "shake")
@@ -159,20 +159,20 @@ STORY_PINS = ("source", "story_start", "story_end")
 _CAPTIONS_KEYS = frozenset({"track_id", "style_id", "enabled"})
 _AUDIO_KEYS = frozenset({
     "mode", "duck_db", "loudness", "music", "voice", "translate",
-    "script_overrides", "mode_chosen",
+    "script_overrides", "mode_chosen", "fade",
 })
 TRANSLATE_MODES = ("literal", "smooth", "viral", "fun", "creative", "sad", "chill")
 _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
 # Custom sequence clips override the story snapshot. Each clip names a source
 # scene and a source-time window. Roles stay hook/beat/payoff so render order
 # and old consumers keep working; beat_kind is editorial only.
-_SEQUENCE_KEYS = frozenset({"kind", "scene", "start", "end", "role", "beat_kind", "color"})
+_SEQUENCE_KEYS = frozenset({"kind", "scene", "start", "end", "role", "beat_kind", "color", "reverse"})
 CLIP_ROLES = ("hook", "beat", "payoff")
 BEAT_KINDS = ("context", "statement", "proof", "broll", "transition")
 _TOP_KEYS = frozenset({
     "schema_version", "renderer_version", "id", "version", "parent", "hash",
     "created", "story_ref", "aspect", "sequence", "clean", "reframe", "motion",
-    "color", "graphics", "captions", "audio",
+    "color", "graphics", "captions", "audio", "border",
 })
 
 
@@ -972,10 +972,10 @@ def normalize_sequence(value: Any) -> list[dict]:
             raise EditError(f"sequence[{index}] must be an object.")
         _unknown(raw, _SEQUENCE_KEYS, f"sequence[{index}]")
         kind = str(raw.get("kind") or "scene").strip().lower()
-        if kind not in ("scene", "blank"):
-            raise EditError(f"sequence[{index}].kind must be scene or blank.")
+        if kind not in ("scene", "blank", "freeze"):
+            raise EditError(f"sequence[{index}].kind must be scene, blank or freeze.")
         scene = None
-        if kind == "scene":
+        if kind in ("scene", "freeze"):
             try:
                 scene = int(raw.get("scene"))
             except (TypeError, ValueError):
@@ -1010,7 +1010,13 @@ def normalize_sequence(value: Any) -> list[dict]:
                 raise EditError(f"sequence[{index}].color must be #rrggbb.")
             item["color"] = color
         else:
+            if kind == "freeze":
+                item["kind"] = "freeze"
             item["scene"] = scene
+            if kind == "scene" and _strict_bool(
+                raw.get("reverse"), False, f"sequence[{index}].reverse"
+            ):
+                item["reverse"] = True
         clips.append(item)
     return clips
 
@@ -1070,6 +1076,15 @@ def normalize_audio(value: Any) -> dict:
         "duck_db": round(duck_db, 3),
         "loudness": {"lufs": round(lufs, 3), "true_peak": round(true_peak, 3)},
     }
+    if value.get("fade") is not None:
+        raw = value["fade"]
+        if not isinstance(raw, dict):
+            raise EditError("audio.fade must be an object.")
+        _unknown(raw, frozenset({"in", "out"}), "audio.fade")
+        fade_in = _number(raw.get("in", 0.0), "audio.fade.in", minimum=0.0, maximum=10.0)
+        fade_out = _number(raw.get("out", 0.0), "audio.fade.out", minimum=0.0, maximum=10.0)
+        if fade_in or fade_out:
+            result["fade"] = {"in": round(fade_in, 3), "out": round(fade_out, 3)}
     for key in ("music", "voice"):
         if key in value and value[key] is not None:
             raw = value[key]
@@ -1149,6 +1164,20 @@ def _check_hash(value: Any, label: str) -> str:
 # ---------------------------------------------------------------- document
 
 
+def normalize_border(value: Any) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise EditError("border must be an object.")
+    _unknown(value, frozenset({"width", "color", "radius"}), "border")
+    width = _integer(value.get("width", 0), "border.width", minimum=0, maximum=64)
+    radius = _integer(value.get("radius", 0), "border.radius", minimum=0, maximum=64)
+    color = overlays.normalize_color(value.get("color", "#f1efe9"))
+    if width <= 0 and radius <= 0:
+        return None
+    return {"width": width, "color": color, "radius": radius}
+
+
 def build_edit(
     *,
     story_ref: Any,
@@ -1161,6 +1190,7 @@ def build_edit(
     graphics: Any = None,
     captions: Any = None,
     audio: Any = None,
+    border: Any = None,
     version: int = 1,
     parent: str | None = None,
     created: float | None = None,
@@ -1191,6 +1221,9 @@ def build_edit(
         "captions": normalize_captions(captions),
         "audio": normalize_audio(audio),
     }
+    normalized_border = normalize_border(border)
+    if normalized_border:
+        content["border"] = normalized_border
     if normalized_sequence:
         content["sequence"] = normalized_sequence
     content_hash_value = content_hash(content)
@@ -1216,6 +1249,7 @@ def build_edit(
         "graphics": content["graphics"],
         "captions": content["captions"],
         "audio": content["audio"],
+        **({"border": content["border"]} if "border" in content else {}),
     }
 
 
@@ -1247,6 +1281,7 @@ def normalize_edit(value: Any) -> dict:
         graphics=value.get("graphics"),
         captions=value.get("captions"),
         audio=value.get("audio"),
+        border=value.get("border"),
         version=version,
         parent=parent,
         created=value.get("created"),
@@ -1280,6 +1315,7 @@ def restored_edit(target: dict, *, parent_edit: dict, created: float | None = No
         graphics=target["graphics"],
         captions=target["captions"],
         audio=target["audio"],
+        border=target.get("border"),
         version=int(parent_edit["version"]) + 1,
         parent=str(parent_edit["id"]),
         created=created,

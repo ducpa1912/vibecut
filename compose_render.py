@@ -302,6 +302,19 @@ def _clean_filters(
                 f"{_enable_suffix(expression)}"
             )
             applied.append(layer["id"])
+        elif kind == "mosaic":
+            label = f"cl{index}"
+            cell_w = max(2, rect["w"] // 12)
+            cell_h = max(2, rect["h"] // 12)
+            filters.append(
+                f"split=2[{label}a][{label}b];"
+                f"[{label}b]crop={rect['w']}:{rect['h']}:{rect['x']}:{rect['y']},"
+                f"scale=w='max(1,trunc(iw/{cell_w}))':h='max(1,trunc(ih/{cell_h}))':flags=neighbor,"
+                f"scale=w=iw*{cell_w}:h=ih*{cell_h}:flags=neighbor[{label}c];"
+                f"[{label}a][{label}c]overlay={rect['x']}:{rect['y']}"
+                f"{_enable_suffix(expression)}"
+            )
+            applied.append(layer["id"])
         elif kind == "blur":
             label = f"cl{index}"
             # boxblur refuses a radius above half the plane's short side, and

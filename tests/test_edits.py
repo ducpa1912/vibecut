@@ -630,7 +630,7 @@ def test_stale_head_is_refused_instead_of_forking(env):
     base = edits.load_edit(env["dir"], first["id"])
     built_from_first = edits.build_edit(
         story_ref=base["story_ref"], aspect="9:16", version=2, parent=base["id"],
-        **{key: base[key] for key in routes_edits._LAYER_FIELDS if key != "motion"},
+        **{key: base.get(key) for key in routes_edits._LAYER_FIELDS if key != "motion"},
         motion=[{"kind": "punch_in", "start": 0.0, "end": 1.0, "amount": 0.1}],
     )
     with pytest.raises(HTTPException) as caught:

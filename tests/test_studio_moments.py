@@ -134,7 +134,7 @@ def test_platform_safe_zones_and_new_shapes():
         };
     """, prelude=NO_PAGE)
     assert "1:1" in out["shapes"] and "16:10" in out["shapes"]
-    assert out["platforms"] == ["auto", "instagram", "tiktok", "youtube", "facebook"]
+    assert out["platforms"] == ["auto", "instagram", "tiktok", "rednote", "youtube", "facebook"]
     assert out["tiktok"]["x"] == 0.06 and out["tiktok"]["y"] == 0.10
     assert out["wide"] == {"width": 1920, "height": 1200, "label": "16:10 wide"}
 

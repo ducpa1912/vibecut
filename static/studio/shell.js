@@ -10,7 +10,7 @@
 
 import { mount as mountImport } from "./import.js";
 import { mount as mountMoments } from "./stories.js";
-import { mount as mountEdit } from "./edit.js?v=20261103-3";
+import { mount as mountEdit } from "./edit.js?v=20261103-10";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountLibrary } from "./library.js";
 import { SOURCES_TAB } from "./library.js";
@@ -180,6 +180,8 @@ export function startStudio() {
                 <span id="st-current-status" class="st-top-status" hidden></span>
               </div>
               <div class="st-top-actions">
+                <span id="st-edit-ready" class="st-top-status st-edit-ready" role="status" aria-live="polite" hidden>Ready</span>
+                <button id="st-edit-shortcuts-open" class="st-btn st-btn-ghost st-btn-small st-edit-shortcuts-open" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" hidden>⌘</button>
                 <button id="st-menu-open" class="st-btn st-btn-ghost st-btn-small st-menu-open" type="button" aria-haspopup="dialog" aria-controls="st-menu-dialog">Menu</button>
               </div>
             </div>
@@ -251,6 +253,8 @@ export function startStudio() {
     setupHost: root.querySelector("#st-setup-host"),
     currentName: root.querySelector("#st-current-name"),
     currentStatus: root.querySelector("#st-current-status"),
+    editReady: root.querySelector("#st-edit-ready"),
+    editShortcuts: root.querySelector("#st-edit-shortcuts-open"),
     dialogJob: root.querySelector("#st-dialog-job"),
     forget: root.querySelector("#st-forget-video"),
     change: root.querySelector("#st-change-video"),
@@ -278,14 +282,14 @@ export function startStudio() {
     dom.currentName.textContent = name || "No video open";
     dom.currentName.title = currentJob?.id || "";
     const status = statusWord(currentJob?.status);
-    dom.currentStatus.hidden = !status;
+    dom.currentStatus.hidden = activeStep === "edit" || !status;
     dom.currentStatus.textContent = status;
     dom.currentStatus.dataset.tone = currentJob?.status === "ready" ? "ok"
       : currentJob?.status === "failed" ? "bad" : "quiet";
     dom.currentStatus.title = "";
     if (currentJob && jobState.jobId === currentJob.id && jobState.sourceMissing) {
       // Said where the creator looks first, not only on a locked step.
-      dom.currentStatus.hidden = false;
+      dom.currentStatus.hidden = activeStep === "edit" ? true : false;
       dom.currentStatus.textContent = "Original file missing";
       dom.currentStatus.dataset.tone = "bad";
       dom.currentStatus.title = jobState.sourceMissing;
@@ -583,6 +587,8 @@ export function startStudio() {
     }
     const step = STEPS.find((item) => item.id === stepId);
     document.title = `${step?.label || "Studio"} · VibeCut Studio`;
+    if (dom.editReady) dom.editReady.hidden = stepId !== "edit";
+    if (dom.editShortcuts) dom.editShortcuts.hidden = stepId !== "edit";
     renderJob();
   }
 
