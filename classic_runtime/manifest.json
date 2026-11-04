@@ -1,0 +1,455 @@
+{
+ "baseline_commit": "2f385a2",
+ "copies": [
+  {
+   "path": "admin/__init__.py",
+   "source": "classic 2f385a2",
+   "sha256": "b73aaee7e5412820a0e9fb0bbf206a5ca2675b9c6bfa1e4a83e4d57811fbe0a5",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "admin/catalog.py",
+   "source": "classic 2f385a2",
+   "sha256": "4718596aede1fd70160b04b6f6ed238e0efc4f53cd71dec21704f5952d6d3fed",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "admin/routes.py",
+   "source": "classic 2f385a2",
+   "sha256": "d0f061fb59df8046ee1aa909c57978a9ec42ba597c3a5c500fb43859b47b2137",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "admin/store.py",
+   "source": "classic 2f385a2",
+   "sha256": "6cf6117b2e8ae7e7f960501fe3ba3c0fde12071b19c7917a6aa8eb104f52fa07",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "admin_cli.py",
+   "source": "classic 2f385a2",
+   "sha256": "3e17b4504646c635146ffeaae75c5f773d2fca9c938791ed85f4062319aca872",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "app.py",
+   "source": "classic 2f385a2",
+   "sha256": "81e2563013ad0996cfd270595883a8c21bc6f6779f9c6c936968854974922842",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "artifacts.py",
+   "source": "classic 2f385a2",
+   "sha256": "c964470c2687a23872c4176ef572e65a8e7c779b8447d8c9cf3aed67c19b1e3b",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "audio.py",
+   "source": "classic 2f385a2",
+   "sha256": "942c013d2edf38b83a1fb5bf7c292ae0af43bf04b2ca6799d1e67448c22d716d",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "batch.py",
+   "source": "classic 2f385a2",
+   "sha256": "0e80c6c6f6b3fc57c11dc9a4331dffff740b909ef7ec034800cb0f23e904a1c5",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "caption_reflow.py",
+   "source": "classic 2f385a2",
+   "sha256": "a6251b0dc8193c526fe9c5daf6d81f5a7ddbe34a66282587b98499c0e1d5ef0f",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "captions.py",
+   "source": "classic 2f385a2",
+   "sha256": "d8a0d16d4adab7a594b11039c523efa690ac0373d2bc9fb6cc230588b6506111",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "cleanup.py",
+   "source": "classic 2f385a2",
+   "sha256": "34e4039cdeda3ab254987795f9273f721080a6e54da514484ea9ad3c6d66d383",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "cli.py",
+   "source": "classic 2f385a2",
+   "sha256": "b6dcf69418336d992e5734223bb2761d7be5494ad7a24362d5abdf05f2226585",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "clipset.py",
+   "source": "classic 2f385a2",
+   "sha256": "11a5a022c50be598efc25c69e2b2c1f3fef428ca0844fd31891b822f635f0f6b",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "color.py",
+   "source": "classic 2f385a2",
+   "sha256": "a87ab6af268c3eb0567b09a4d9cf38f21d7225de4feeadda01bcdf5bd142f3d1",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "compose_render.py",
+   "source": "classic 2f385a2",
+   "sha256": "ea2757fd0116ba3d628a7af712f513a8310e47dbfae58f7391e902bb8eeb094d",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "detect.py",
+   "source": "classic 2f385a2",
+   "sha256": "c3b47f8fbda305ef22b6245d9d22fc5200f8202630a063b65d6e4e2468f81971",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "disk.py",
+   "source": "classic 2f385a2",
+   "sha256": "4edf12a58268a6ce6d0ac2c38cb1544e83af2e4f66a0a8763ce65e4ee227813e",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "editions.py",
+   "source": "classic 2f385a2",
+   "sha256": "8a6c701494e523b3df2160567caae5c2f12a8657a5101de4504889226d4b12a9",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "edits.py",
+   "source": "classic 2f385a2",
+   "sha256": "df04f223c348b4285ab8a130a9efdf7ecb327a8d0e036de3d79ab45b75f79b5f",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "exports.py",
+   "source": "classic 2f385a2",
+   "sha256": "ef262429a512cb67500ed1500a50854f7cf0504dcd147b9ceb6387596643c4fd",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "fx.py",
+   "source": "classic 2f385a2",
+   "sha256": "5b70b90900ce9de57487e25b3d7584396a7ee838b049d50b35df288422529425",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "history_store.py",
+   "source": "classic 2f385a2",
+   "sha256": "aa686f96b585f463db16e9b0b196c2fc857f8bf2c3d3dae1ef2d6621a721b08e",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "job_queue.py",
+   "source": "classic 2f385a2",
+   "sha256": "a103399b03291cdc8ef3f1296b8a07842ebd12666abb28e5a25ebfd846b43cd4",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "matrix.py",
+   "source": "classic 2f385a2",
+   "sha256": "f55ac9fe3ebf6b3024c83d771ebfdd39bf53afd52d4a1cf0e8de0cd849776444",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "migrations.py",
+   "source": "classic 2f385a2",
+   "sha256": "db18a2068275074dcb2906b3a73300b40652b68f7f81441dbf3b99e1584ba953",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "music.py",
+   "source": "classic 2f385a2",
+   "sha256": "4b4b947adcaefe8f838636d39e7d8bcaab1a2705e6bd845ad9e0bd1b00a4867a",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "overlays.py",
+   "source": "classic 2f385a2",
+   "sha256": "a77b3fd924707d653b9fa050762477f0cb1611a63bd6e35de193f258427e2290",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "packet.py",
+   "source": "classic 2f385a2",
+   "sha256": "a1f743f40ad075e64860f6d1557d669a1defcf9de986538d1d24631be0ca0d41",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "packs.py",
+   "source": "classic 2f385a2",
+   "sha256": "de3562d94c5185ec03898b6e8f1af84de5c10cf21dd60c1dbefb82709f71a1c4",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "pipeline.py",
+   "source": "classic 2f385a2",
+   "sha256": "b2e9e9bacdb566b7959d0bc9af650a070eda0c402632b5ac42b5d6a2ca8b8668",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "preflight.py",
+   "source": "classic 2f385a2",
+   "sha256": "eab34058c15cbe3037ce6b021634b94bc938cd96f3dade9248a4e4eaba48f14c",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "render.py",
+   "source": "classic 2f385a2",
+   "sha256": "01d73f8c72c7db6bdd972b61e9df9366858f6eb4938654a60263ec0e3684787b",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "requirements-optional.txt",
+   "source": "classic 2f385a2",
+   "sha256": "c8d0afef59af90a33daac822d9783131e1c83e092cbe3e58d77e4457eade0e46",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "requirements.txt",
+   "source": "classic 2f385a2",
+   "sha256": "152161c2cf912dc034afdb0bbf31dd7792ff36830eb47787458755df08dd2fcb",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "rights.py",
+   "source": "classic 2f385a2",
+   "sha256": "e5bcf5e22cc857af37198236b8d75d1dff7bee46cae9f06032532e01e2204b9e",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_batches.py",
+   "source": "classic 2f385a2",
+   "sha256": "0fb8aa0c6150559c780734ba2734be238b033016255432077d56293527e4ea85",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_check.py",
+   "source": "classic 2f385a2",
+   "sha256": "2181341ea0d7c2666641f1b5b86bd6c4bdea28c3ee39f8dbf9b6130fbdfe6c3f",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_cleanup.py",
+   "source": "classic 2f385a2",
+   "sha256": "98249416b2bacfa2be1002c302a73c78d415a9b25bbc72c2d656f132bd9fd3da",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_edits.py",
+   "source": "classic 2f385a2",
+   "sha256": "b50f719f3ace123becb76ee44ef5773b0335df8df72bdedf2a42e6b521a0856e",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_library.py",
+   "source": "classic 2f385a2",
+   "sha256": "9f6109df7246655136cbc058920910673768c77868c1903a6821d5f21d7df287",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_overlays.py",
+   "source": "classic 2f385a2",
+   "sha256": "045f73e4fc16bca502b1826a211477b4b58045a9415ab643d5617b4429e99972",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_studio.py",
+   "source": "classic 2f385a2",
+   "sha256": "6b7ee400cde1e942f9c7b88e7cb6a6fd854b187e211f3755f7d9b3d4759389c6",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_trim.py",
+   "source": "classic 2f385a2",
+   "sha256": "8f37b58c7bffb82111309291e10ef0c8b61071678a603a2a965592ba9ad3375c",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "routes_voice_clone.py",
+   "source": "classic 2f385a2",
+   "sha256": "74dd425ac033cfd81c5236124c794d878b2510a064bbf0e1503b07605e0f1c30",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "selection.py",
+   "source": "classic 2f385a2",
+   "sha256": "4619e350b0fc7238a19488963b9172a9ff53e2367898bb6997ebe949020c3b01",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "settings_store.py",
+   "source": "classic 2f385a2",
+   "sha256": "2060dc46a23cd8aa48caacfecf49dd81fe01b3a17f644d87df7f10b3544a27f2",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "shares.py",
+   "source": "classic 2f385a2",
+   "sha256": "7c0f98fa5bfc102932df0e26e098c764bb203bf2718944b07149017f4ffe1a76",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "silent_script.py",
+   "source": "classic 2f385a2",
+   "sha256": "bc450953b0446c227719fddae87e372448e79198de6a3ee22bf7f67487d84d11",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "story_queue.py",
+   "source": "classic 2f385a2",
+   "sha256": "9e7b0c359c06e84e6049f989f9ff0148bb96ef28573d65790c32c300875b3682",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "stt.py",
+   "source": "classic 2f385a2",
+   "sha256": "f0417b71ad7eb72d26f5a2c9a0340c0d33dbedc10620c5c225404206cd07c38d",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "textfill/__init__.py",
+   "source": "studio 7ce8dcf, verbatim",
+   "sha256": "b747b833d21831735880a5c7311ac72d8375ee0b7e3ddd2d7c4c30fdc59c2044",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "textfill/lama.py",
+   "source": "studio 7ce8dcf, verbatim",
+   "sha256": "a5cf6bc75c62435224dbd43b069a5c2baff0806fa4f5028bd4ea8728517eef5c",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "textfill/mask.py",
+   "source": "studio 7ce8dcf, verbatim",
+   "sha256": "531ed85a4433b0560b08bb546c927b7919be816f89a6619f7ea989d4f28664b1",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "textfill/sttn.py",
+   "source": "studio 7ce8dcf, verbatim",
+   "sha256": "a9cada5f5aac95fbed27796d4e2809f471f94eacaf4c27261f69ad459c611da9",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "tighten.py",
+   "source": "classic 2f385a2",
+   "sha256": "44759a4194dc2cef6d4b14fe07fbdd0c5ba8fdb0987756c772bb7afd838ce3c0",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "tools/transcribe_apple.swift",
+   "source": "classic 2f385a2",
+   "sha256": "f78773e55ab21e837d579ef052414f110c52bb50b4894c57735251619f43c324",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "tools/translate_apple.swift",
+   "source": "classic 2f385a2",
+   "sha256": "b598199641d030dfb0269800442082c61a9082045703b62360580dce42df086e",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "tools/tts_kokoro.py",
+   "source": "classic 2f385a2",
+   "sha256": "4d532dadd9bf69dd9f11ddff946cc469abb432d1ac3c82b70374606915a86d62",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "tools/vision_probe.swift",
+   "source": "classic 2f385a2",
+   "sha256": "366b7cec21d5e79d715bafbca79b1e1f556695bcf44ea18268b36cee52fe8070",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "trim.py",
+   "source": "classic 2f385a2",
+   "sha256": "536189b717190eabbe94d547197b831c0bbb4207ca7d1953b2fea6a719bf4407",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "tts.py",
+   "source": "classic 2f385a2",
+   "sha256": "9fd84e711172d026d7884f728c1a948d053baaaa9212e31996bcb5b0473eac66",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "url_ingest/__init__.py",
+   "source": "classic 2f385a2",
+   "sha256": "fd2e465da9f7e1efc9d38e75672834be080611ef097cd9f1c006458a40bfe4d8",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "url_ingest/base.py",
+   "source": "classic 2f385a2",
+   "sha256": "38c96b1df12e4801d99f54cf75d5bdb1a02d9f6b0ff9e2f3695e9f87c9bea5c9",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "url_ingest/fallback.py",
+   "source": "classic 2f385a2",
+   "sha256": "c5e22ab84d5a1a4139b24c6f0782b6f53b88200462ec0b334dae3c47e373e66e",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "url_ingest/rednote.py",
+   "source": "classic 2f385a2",
+   "sha256": "e6cfd918a26aec92c4949839bc22fe7f438d90be360264e56ef21fa76d64bcd5",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "url_ingest/registry.py",
+   "source": "classic 2f385a2",
+   "sha256": "6314c39873031391540bd534edd81109f2f6b7b7a5ccc40da09f16e7e569b8d5",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "url_ingest/xhs.py",
+   "source": "classic 2f385a2",
+   "sha256": "e7f3d1dcd4bd448e1f635c6deeb19847c8479ae21a46b6ef8848b8d8d0720714",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "url_ingest/ytdlp.py",
+   "source": "classic 2f385a2",
+   "sha256": "73ee0f893ab3a949d318f6f2dac39bd561fab43c9caa9a3e7ca3c112bb60d7ce",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "usage_store.py",
+   "source": "classic 2f385a2",
+   "sha256": "1c1590f023ae38aa4265134c6cac4693617a97b8cfeed8bd6e501f5f36c3bd3f",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "vision.py",
+   "source": "classic 2f385a2",
+   "sha256": "2c417e639fe1a9ada5d2b94d7e2d0569a0c366489759292e71300b850aba43a0",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "voice_clone.py",
+   "source": "classic 2f385a2",
+   "sha256": "28af3bd4d71f1fa0f8bdde200845cc0d88cc3a2e5798751ae21795303d81a4db",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "voice_extract.py",
+   "source": "classic 2f385a2",
+   "sha256": "0182170b10419d5724c512bcfbf41d59a918a18446a6f99423269068c2df1454",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "voice_fit.py",
+   "source": "classic 2f385a2",
+   "sha256": "b0bcd232f74032991787b4e3f28948dffa750643eab89c1e66cb78bfb850fe49",
+   "feature_version": "1.0.0"
+  },
+  {
+   "path": "workflow_config.py",
+   "source": "classic 2f385a2",
+   "sha256": "49a29e80cde0852919f4bef3f93cca9e91db589b60602d4f2c34bd15e3f02293",
+   "feature_version": "1.0.0"
+  }
+ ]
+}
