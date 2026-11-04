@@ -2,7 +2,7 @@
 
 Date: 2026-11-04. Code reviewed: `studio` at `e274b45`.
 
-Status: revision 5. M0 and R0 built; R1 to R5 not started.
+Status: revision 5. M0, R0 and R1 built; R2 to R5 not started.
 
 **Rule for this work:** audit from code and tests. Do not open the founder's projects to see what they did unless they say so. Layers found in a project may just be the founder testing, so they are not bug reports.
 
@@ -152,6 +152,16 @@ This is the largest quality gain, and also cuts render time.
 The text mask is an untested idea. Build it behind a setting, compare it on the founder's clips, and drop it if it leaves halos.
 
 **Test gate:** the founder compares old and new on the same moment. Pass marks: no smeared objects, no text ghosts.
+
+**R1 log (2026-11-04), built, not run on real video:**
+
+- Scan layers without a brush stroke now narrow to the text on each frame: contrast against the local average, in any colour channel, then grown to cover outlines. Each hole also covers 2 frames either side, so fades are caught and the mask stays steady.
+- Frames with no text are left untouched, and a chunk with no text skips the model. A very busy box, or faint structure that may be faint text, fills the whole box instead.
+- Drawn boxes and brush strokes are not narrowed, because they mean exactly that area.
+- Top and bottom text cost separate strips, not the space between them. A strip with no text in a chunk skips the model.
+- Beat selection uses the same 1 s margin as the fill. The margin size is unchanged.
+- Setting: `VIBECUT_FILL_TEXT_MASK=off` fills whole boxes as before. On by default. Both are cached separately.
+- **Unknown:** thresholds were set from reasoning and in-memory test arrays only. Halos, missed low-contrast text on busy backgrounds and real time saved are all unmeasured.
 
 ### R2: honest time and preview
 

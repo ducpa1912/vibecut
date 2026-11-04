@@ -28,7 +28,7 @@ from . import mask as masks
 
 METHODS = ("sttn", "lama")
 DEFAULT_METHOD = "sttn"
-VERSION = 2
+VERSION = 3
 MODEL_FILES = {"sttn": "sttn_infer_model.pth", "lama": "lama_fp32.onnx"}
 MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime"}
 METHOD_COPY = {"sttn": "STTN (video)", "lama": "LaMa (per frame)"}
@@ -85,6 +85,12 @@ def method_problem(method: str, directory: Path) -> str | None:
     return None
 
 
+def text_mask_enabled() -> bool:
+    """Narrow scan layers to the text itself. Set off to fill the whole box."""
+    value = os.environ.get("VIBECUT_FILL_TEXT_MASK", "on").strip().lower()
+    return value not in {"0", "off", "false", "no"}
+
+
 def _model_stamp(path: Path) -> str:
     stat = path.stat()
     return f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
@@ -104,7 +110,7 @@ def model_signature(methods: Iterable[str], directory: Path | str) -> str:
         path = model_path(method, directory)
         present = path.is_file() and path.stat().st_size > 0
         parts.append([method, _model_stamp(path) if present else "missing"])
-    payload = {"version": VERSION, "models": parts}
+    payload = {"version": VERSION, "models": parts, "text_mask": text_mask_enabled()}
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -126,6 +132,7 @@ def span_key(
         "duration": round(float(duration), 6),
         "method": method,
         "model": model_stamp,
+        "text_mask": text_mask_enabled(),
         "layers": [
             {
                 "box": layer.get("box"),
@@ -251,19 +258,28 @@ def _local(rects: list[masks.Rect], x0: int, y0: int, x1: int, y1: int) -> list[
     return out
 
 
-def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None):
-    """Yield filled frames. ``rects_for(index)`` gives that frame's rects."""
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None):
+    """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
+
+    ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
+    is the rects themselves.
+    """
     x0, y0, x1, y1 = area
     previous: np.ndarray | None = None
     for index, frame in enumerate(frames):
         _check_cancel(cancelled)
         local = _local(rects_for(index), x0, y0, x1, y1)
-        if not local:
+        hole = None
+        if local:
+            hole = (
+                hole_for(index, x0, y0, x1, y1) if hole_for
+                else masks.rasterize(local, x1 - x0, y1 - y0)
+            )
+        if hole is None or not hole.any():
             previous = None
             yield frame
         else:
             work = frame[y0:y1, x0:x1]
-            hole = masks.rasterize(local, x1 - x0, y1 - y0)
             _check_cancel(cancelled)
             filled = filler.fill(work, hole)
             if previous is not None:
@@ -280,15 +296,30 @@ def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelle
             on_frame(index)
 
 
-def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_frame=None, cancelled=None):
+def _blend_strips(old, fresh, weight: float):
+    """Cross-fade strip lists; a strip with no model output keeps the other."""
+    out = []
+    for before, after in zip(old, fresh):
+        if before is None or after is None:
+            out.append(after if before is None else before)
+            continue
+        out.append(np.clip(
+            before.astype(np.float32) * (1 - weight) + after.astype(np.float32) * weight, 0, 255,
+        ).astype(np.uint8))
+    return out
+
+
+def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_frame=None, cancelled=None, hole_for=None):
     """Yield filled frames, running the model on overlapping chunks.
 
-    Frames in an overlap get both chunks' strips, cross-faded linearly.
+    Frames in an overlap get both chunks' strips, cross-faded linearly. A strip
+    with no text in a chunk skips the model for that chunk. ``hole_for`` narrows
+    the hole, as in :func:`fill_frames_lama`.
     """
     width = None
     iterator = iter(frames)
     buffer: list[tuple[int, np.ndarray]] = []
-    carry: dict[int, list[np.ndarray]] = {}
+    carry: dict[int, list] = {}
     next_index = 0
     lookahead = next(iterator, None)
     while True:
@@ -302,25 +333,22 @@ def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_fr
         if not buffer:
             return
         width = buffer[0][1].shape[1]
-        indexes = [index for index, _ in buffer]
-        active = any(rects_for(index) for index in indexes)
+        wanted = [rects_for(index) for index, _ in buffer]
         outputs = None
-        if active:
-            _check_cancel(cancelled)
-            outputs = [
-                filler.fill([frame[y0:y1] for _, frame in buffer])
-                for y0, y1 in strips
-            ]
+        if any(wanted):
+            outputs = []
+            for y0, y1 in strips:
+                if any(_local(rects, 0, y0, width, y1) for rects in wanted):
+                    _check_cancel(cancelled)
+                    outputs.append(filler.fill([frame[y0:y1] for _, frame in buffer]))
+                else:
+                    outputs.append(None)
         final = len(buffer) if eof else len(buffer) - overlap
         for k, (index, frame) in enumerate(buffer):
-            fresh = [out[k] for out in outputs] if outputs else None
+            fresh = [None if out is None else out[k] for out in outputs] if outputs else None
             old = carry.pop(index, None)
             if old is not None and fresh is not None:
-                weight = (k + 1) / (overlap + 1)
-                fresh = [
-                    np.clip(o.astype(np.float32) * (1 - weight) + f.astype(np.float32) * weight, 0, 255).astype(np.uint8)
-                    for o, f in zip(old, fresh)
-                ]
+                fresh = _blend_strips(old, fresh, (k + 1) / (overlap + 1))
             elif fresh is None:
                 fresh = old
             if k < final:
@@ -330,8 +358,11 @@ def fill_frames_sttn(frames, rects_for, filler, strips, *, chunk, overlap, on_fr
                     out = frame.copy()
                     for (y0, y1), strip in zip(strips, fresh):
                         local = _local(rects, 0, y0, width, y1)
-                        if local:
-                            hole = masks.rasterize(local, width, y1 - y0)
+                        if local and strip is not None:
+                            hole = (
+                                hole_for(index, 0, y0, width, y1) if hole_for
+                                else masks.rasterize(local, width, y1 - y0)
+                            )
                             out[y0:y1] = masks.paste(out[y0:y1], strip, masks.feather(hole))
                 yield out
                 if on_frame:
@@ -349,8 +380,12 @@ def fill_frame(
     *,
     data_root: Path | str,
     method: str = "lama",
+    tight_rects: Iterable[masks.Rect] = (),
 ) -> np.ndarray:
     """Fill one RGB frame in place of a sequence.
+
+    Rects also in ``tight_rects`` narrow to the text found in them, as in the
+    render, so the preview shows the same hole.
 
     The single-frame preview uses LaMa: it is the per-frame engine, so one
     frame is a supported input. STTN needs neighbouring frames and is left to
@@ -372,7 +407,16 @@ def fill_frame(
     if not local:
         return frame.copy()
     work = frame[y0:y1, x0:x1]
-    hole = masks.rasterize(local, x1 - x0, y1 - y0)
+    tight = [rect for rect in tight_rects if rect in local_rects] if text_mask_enabled() else []
+    if tight:
+        exact = [rect for rect in local_rects if rect not in tight]
+        finder = masks.TextMasks([tight], [exact], width, height)
+        finder._measure(0, frame)
+        hole = finder.hole(0, x0, y0, x1, y1)
+        if not hole.any():
+            return frame.copy()
+    else:
+        hole = masks.rasterize(local, x1 - x0, y1 - y0)
     # One model at a time on this Mac: a preview never loads beside a render.
     if not _LOCK.acquire(blocking=False):
         raise FillError("AI fill is busy with a render. Try the preview when it finishes.")
@@ -437,14 +481,33 @@ def prepare_span(
     cache_dir.mkdir(parents=True, exist_ok=True)
     part = cache_dir / f".{key}.part.mp4"
 
+    finder = None
+    if text_mask_enabled():
+        tight_layers = [layer for layer in layers if masks.uses_text_mask(layer, width, height)]
+        if tight_layers:
+            exact_layers = [layer for layer in layers if layer not in tight_layers]
+            size = {"start": start, "fps": fps, "frames": len(rect_table), "width": width, "height": height}
+            finder = masks.TextMasks(
+                masks.frame_rects(tight_layers, **size),
+                masks.frame_rects(exact_layers, **size),
+                width, height,
+            )
+
     def rects_for(index: int) -> list[masks.Rect]:
+        if finder is not None:
+            return finder.rects_for(index)
         return rect_table[min(index, len(rect_table) - 1)]
+
+    def hole_for(index: int, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+        return finder.hole(index, x0, y0, x1, y1)
 
     def cancelled() -> bool:
         return cancel_event is not None and cancel_event.is_set()
 
     def on_frame(index: int) -> None:
         _check_cancel(cancelled)
+        if finder is not None:
+            finder.forget_before(index)
         if progress and index % 10 == 0:
             progress(min(1.0, (index + 1) / expected), f"{METHOD_COPY[method]} {index + 1}/{expected}")
 
@@ -467,19 +530,21 @@ def prepare_span(
                     return
                 yield frame
 
+        source_frames = finder.wrap(frames()) if finder is not None else frames()
+        extra = {"hole_for": hole_for} if finder is not None else {}
         if method == "lama":
             area = masks.lama_area(span_rects, width, height)
             stream = fill_frames_lama(
-                frames(), rects_for, filler, area,
-                on_frame=on_frame, cancelled=cancelled,
+                source_frames, rects_for, filler, area,
+                on_frame=on_frame, cancelled=cancelled, **extra,
             )
         else:
             from .sttn import CHUNK, OVERLAP
             strips = masks.sttn_strips(span_rects, width, height)
             stream = fill_frames_sttn(
-                frames(), rects_for, filler, strips,
+                source_frames, rects_for, filler, strips,
                 chunk=CHUNK, overlap=OVERLAP,
-                on_frame=on_frame, cancelled=cancelled,
+                on_frame=on_frame, cancelled=cancelled, **extra,
             )
         written = 0
         for frame in stream:

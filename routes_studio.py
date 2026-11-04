@@ -817,8 +817,20 @@ def fill_preview(
 
     frame_rgb = _read_source_frame(source_path, width, height, source_time)
     try:
+        tight_rects = textfill.masks.frame_rects(
+            [
+                layer for layer in fill_layers
+                if textfill.masks.uses_text_mask(layer, width, height)
+            ],
+            start=source_time - (0.5 / max(1.0, fps)),
+            fps=fps,
+            frames=1,
+            width=width,
+            height=height,
+        )[0]
         filled_rgb = textfill.fill_frame(
             frame_rgb, rects, data_root=job_dir.parent.parent, method="lama",
+            tight_rects=tight_rects,
         )
     except textfill.FillError as exc:
         raise HTTPException(409, str(exc)) from exc

@@ -247,3 +247,5 @@ At these speeds a 15 s moment (450 frames) takes about 30 minutes with STTN
 and about 2 hours with LaMa. Measure again on the founder's first real render
 with other apps closed. If it stays slow, the next steps are LaMa on CoreML or
 fp16, and STTN on fewer frames (text-only frames, lower strip count).
+
+Knob added 2026-11-04: `VIBECUT_FILL_TEXT_MASK` (`on` by default, `off` fills whole scan boxes). See `clean-fill-revision-plan.md`, R1.

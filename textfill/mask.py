@@ -25,6 +25,16 @@ FEATHER_PX = 3
 # Context a LaMa work area keeps around the text.
 CONTEXT_MIN_PX = 32
 CONTEXT_RATIO = 0.5
+# Finding the text inside a scanned box, per frame. Contrast is in 8-bit levels
+# against the local average; shares are of the box.
+TEXT_CONTRAST = 36.0
+TEXT_CONTRAST_MEDIAN = 2.5
+TEXT_WEAK_CONTRAST = 14.0
+TEXT_MIN_SHARE = 0.002
+TEXT_WEAK_SHARE = 0.01
+TEXT_MAX_SHARE = 0.5
+TEXT_GROW_RATIO = 0.006
+TEXT_GROW_MIN_PX = 3
 
 Rect = tuple[int, int, int, int]  # x0, y0, x1, y1; x1 and y1 exclusive
 
@@ -188,27 +198,35 @@ def lama_area(rects: Iterable[Rect], width: int, height: int) -> Rect | None:
 def sttn_strips(
     rects: Iterable[Rect], width: int, height: int, ratio: float = 3 / 16,
 ) -> list[tuple[int, int]]:
-    """Full-width horizontal strips (y0, y1) that cover the text union.
+    """Full-width horizontal strips (y0, y1) that cover the text.
 
     The STTN subtitle model reads a 16:3 strip, so each strip is
-    ``width * ratio`` tall. Taller text gets more strips; the last one is
-    pulled up so no strip leaves the frame.
+    ``width * ratio`` tall. Text far apart gets separate strips: the empty
+    space between a title and a subtitle costs nothing. Taller text gets more
+    strips; the last one is pulled up so no strip leaves the frame.
     """
-    box = union(rects)
-    if box is None:
+    spans = sorted({(rect[1], rect[3]) for rect in rects})
+    if not spans:
         return []
     strip = min(height, max(2, int(round(width * ratio))))
-    top, bottom = box[1], box[3]
-    if bottom - top <= strip:
-        middle = (top + bottom) // 2
-        y0 = min(max(0, middle - strip // 2), height - strip)
-        return [(y0, y0 + strip)]
-    strips = []
-    y0 = top
-    while y0 < bottom:
-        start = min(y0, height - strip)
-        strips.append((start, start + strip))
-        y0 += strip
+    groups: list[list[int]] = []
+    for top, bottom in spans:
+        if groups and top - groups[-1][1] < strip:
+            groups[-1][1] = max(groups[-1][1], bottom)
+        else:
+            groups.append([top, bottom])
+    strips: list[tuple[int, int]] = []
+    for top, bottom in groups:
+        if bottom - top <= strip:
+            middle = (top + bottom) // 2
+            y0 = min(max(0, middle - strip // 2), height - strip)
+            strips.append((y0, y0 + strip))
+            continue
+        y0 = top
+        while y0 < bottom:
+            start = min(y0, height - strip)
+            strips.append((start, start + strip))
+            y0 += strip
     return strips
 
 
@@ -257,3 +275,127 @@ def paste(original: np.ndarray, filled: np.ndarray, alpha: np.ndarray) -> np.nda
     keep = alpha <= 0.0
     out[keep] = original[keep]
     return out
+
+
+def uses_text_mask(layer: dict, width: int, height: int) -> bool:
+    """Only a scan layer without a brush stroke narrows to the text it found.
+
+    A drawn box means "remove this area", and a brush stroke is exact.
+    """
+    if not layer.get("tracklet_id"):
+        return False
+    return layer_rects(layer, width, height) == [layer_rect(layer, width, height)]
+
+
+def _local_mean(values: np.ndarray, radius: int) -> np.ndarray:
+    """Mean over a square around each pixel; edges repeat, so they stay flat."""
+    padded = np.pad(values, ((radius + 1, radius), (radius + 1, radius), (0, 0)), mode="edge")
+    total = padded.cumsum(axis=0).cumsum(axis=1)
+    size = 2 * radius + 1
+    return (
+        total[size:, size:] - total[:-size, size:] - total[size:, :-size] + total[:-size, :-size]
+    ) / (size * size)
+
+
+def text_in_region(region: np.ndarray, grow: int) -> np.ndarray | None:
+    """Text pixels of one RGB box, or None when the whole box must be filled.
+
+    Burned-in text stands out from what is around it in brightness or colour.
+    Returns an all-False mask when the box plainly has no text on this frame.
+    When it cannot tell (a very busy box, or faint structure that might be
+    faint text) it returns None, because leaving text behind is the worse error.
+    """
+    height, width = region.shape[:2]
+    if height < 3 or width < 3:
+        return None
+    values = region.astype(np.float32)
+    radius = max(4, min(height, width) // 2)
+    contrast = np.abs(values - _local_mean(values, radius)).max(axis=2)
+    limit = max(TEXT_CONTRAST, TEXT_CONTRAST_MEDIAN * float(np.median(contrast)))
+    strong = contrast > limit
+    # A lone speck is noise; a stroke has neighbours.
+    strong &= _box_mean(_box_mean(strong.astype(np.float32), 1, 0), 1, 1) >= 3 / 9
+    share = float(strong.mean())
+    if share > TEXT_MAX_SHARE:
+        return None
+    if share < TEXT_MIN_SHARE:
+        if float((contrast > TEXT_WEAK_CONTRAST).mean()) > TEXT_WEAK_SHARE:
+            return None
+        return np.zeros((height, width), dtype=bool)
+    grown = _box_mean(_box_mean(strong.astype(np.float32), grow, 0), grow, 1) > 1e-6
+    return grown | strong
+
+
+class TextMasks:
+    """Per-frame holes for a span: found text, plus painted or drawn areas.
+
+    A hole also covers the frames just before and after, so text fading in or
+    out is caught and the mask does not flicker. ``wrap`` must read the frames,
+    because the masks come from them.
+    """
+
+    WINDOW = 2
+
+    def __init__(self, tight: list[list[Rect]], exact: list[list[Rect]], width: int, height: int):
+        self.tight = tight
+        self.exact = exact
+        self.width = width
+        self.height = height
+        self.grow = max(TEXT_GROW_MIN_PX, int(round(width * TEXT_GROW_RATIO)))
+        self.found: dict[int, list[tuple[Rect, np.ndarray]]] = {}
+
+    def _measure(self, index: int, frame: np.ndarray) -> None:
+        rows = []
+        for rect in set(self.tight[min(index, len(self.tight) - 1)]):
+            x0, y0, x1, y1 = rect
+            text = text_in_region(frame[y0:y1, x0:x1], self.grow)
+            if text is None:
+                text = np.ones((y1 - y0, x1 - x0), dtype=bool)
+            if text.any():
+                rows.append((rect, text))
+        self.found[index] = rows
+
+    def wrap(self, frames: Iterable[np.ndarray]):
+        """Yield frames unchanged, having read ``WINDOW`` frames ahead of each."""
+        pending: list[np.ndarray] = []
+        index = 0
+        for frame in frames:
+            self._measure(index + len(pending), frame)
+            pending.append(frame)
+            if len(pending) > self.WINDOW:
+                yield pending.pop(0)
+                index += 1
+        for frame in pending:
+            yield frame
+
+    def _exact_at(self, index: int) -> list[Rect]:
+        return self.exact[min(index, len(self.exact) - 1)]
+
+    def _window(self, index: int):
+        for at in range(index - self.WINDOW, index + self.WINDOW + 1):
+            yield from self.found.get(at, ())
+
+    def has_fill(self, index: int) -> bool:
+        return bool(self._exact_at(index)) or any(True for _ in self._window(index))
+
+    def rects_for(self, index: int) -> list[Rect]:
+        """The rects worth filling on this frame; none when it has no text."""
+        tight = self.tight[min(index, len(self.tight) - 1)]
+        if not self.has_fill(index):
+            return []
+        return [*self._exact_at(index), *tight]
+
+    def hole(self, index: int, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+        """The hole on frame ``index`` within an area, in that area's pixels."""
+        out = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+        for left, top, right, bottom in self._exact_at(index):
+            out[max(top, y0) - y0:max(bottom - y0, 0), max(left, x0) - x0:max(right - x0, 0)] = True
+        for (left, top, right, bottom), text in self._window(index):
+            cx0, cy0, cx1, cy1 = max(left, x0), max(top, y0), min(right, x1), min(bottom, y1)
+            if cx1 > cx0 and cy1 > cy0:
+                out[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0] |= text[cy0 - top:cy1 - top, cx0 - left:cx1 - left]
+        return out
+
+    def forget_before(self, index: int) -> None:
+        for at in [key for key in self.found if key < index - self.WINDOW]:
+            del self.found[at]

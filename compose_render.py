@@ -25,6 +25,7 @@ from typing import Any, Iterable
 import edits
 import fx
 import overlays
+from textfill import mask as textfill_mask
 
 SCHEMA_VERSION = 1
 OUT_FPS = 30
@@ -390,11 +391,21 @@ def _fill_plan(
             crop,
         )
 
+    def on_beat(layer: dict) -> bool:
+        # The same time margin the fill uses (textfill.mask.layer_windows), so
+        # text just outside a detected range is also caught on the next beat.
+        margin = textfill_mask.DETECTED_TIME_MARGIN if layer.get("tracklet_id") else 0.0
+        ranges = [
+            {"start": float(item["start"]) - margin, "end": float(item["end"]) + margin}
+            for item in layer.get("ranges") or []
+        ]
+        return _active_window({**layer, "ranges": ranges}, start, end)[0]
+
     active = sorted(
         (
             layer for layer in clean
             if layer["kind"] == "fill"
-            and _active_window(layer, start, end)[0]
+            and on_beat(layer)
             and visible(layer)
         ),
         key=lambda layer: (int(layer.get("z") or 0), str(layer.get("id") or "")),
