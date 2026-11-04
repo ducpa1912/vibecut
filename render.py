@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -2317,16 +2318,34 @@ def _prepare_fills(
     if not planned:
         return results
     data_root = job_dir.parent.parent
+    started = time.monotonic()
+    # Frames still to run. A beat found in the cache comes off this total.
+    work_left = sum(int(segment["frames"]) for _index, segment in planned)
+    work_done = 0
     try:
         for position, (index, segment) in enumerate(planned):
             plan = segment["fill"]
             low = 0.02 + 0.43 * position / len(planned)
             high = 0.02 + 0.43 * (position + 1) / len(planned)
+            beat_frames = int(segment["frames"])
 
-            def report(fraction: float, message: str, low=low, high=high) -> None:
+            def report(
+                fraction: float,
+                message: str,
+                low=low,
+                high=high,
+                beat_frames=beat_frames,
+            ) -> None:
+                done = work_done + beat_frames * max(0.0, min(1.0, fraction))
+                remaining = ""
+                elapsed = time.monotonic() - started
+                if done >= 10 and elapsed >= 20 and work_left > done:
+                    remaining = (
+                        f" · {textfill.duration_text(elapsed / done * (work_left - done))} left"
+                    )
                 progress(
                     low + (high - low) * max(0.0, min(1.0, fraction)),
-                    f"Filling text, beat {position + 1}/{len(planned)} · {message}",
+                    f"Filling text, beat {position + 1}/{len(planned)} · {message}{remaining}",
                 )
 
             try:
@@ -2347,6 +2366,10 @@ def _prepare_fills(
                 raise RenderCancelled("Render cancelled.") from exc
             except textfill.FillError as exc:
                 raise PipelineError(str(exc)) from exc
+            if results[index] is None or results[index].get("cached"):
+                work_left -= beat_frames
+            else:
+                work_done += beat_frames
     finally:
         # Model sessions are large; a finished or failed pre-pass must not
         # hold STTN or LaMa memory for the rest of the app's life.

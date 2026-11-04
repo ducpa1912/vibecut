@@ -659,6 +659,294 @@ def auto_clean(
     }
 
 
+def _draft_edit(
+    edit: dict,
+    clean: list[dict] | None,
+    layer_ids: list[str] | None,
+) -> tuple[dict, str]:
+    """The Edit with unsaved Clean layers, scoped to some ids. Nothing is saved.
+
+    Returns (edit, tag); the tag tells a draft's cached results apart.
+    """
+    import hashlib
+    import json
+
+    import edits as edits_module
+
+    scoped_ids = {str(item) for item in (layer_ids or []) if str(item)}
+    if clean is None and not scoped_ids:
+        return edit, ""
+    try:
+        layers = (
+            edits_module.normalize_clean(clean)
+            if clean is not None
+            else list(edit.get("clean") or [])
+        )
+    except edits_module.EditError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if scoped_ids:
+        layers = [layer for layer in layers if str(layer.get("id")) in scoped_ids]
+        if not layers:
+            raise HTTPException(
+                422, "Select a Clean layer that is part of this Edit.",
+            )
+    try:
+        drafted = edits_module.build_edit(
+            story_ref=edit.get("story_ref"),
+            aspect=edit.get("aspect"),
+            sequence=edit.get("sequence"),
+            clean=layers,
+            reframe=edit.get("reframe"),
+            motion=edit.get("motion"),
+            color=edit.get("color"),
+            graphics=edit.get("graphics"),
+            captions=edit.get("captions"),
+            audio=edit.get("audio"),
+            border=edit.get("border"),
+            output=edit.get("output"),
+            assets=edit.get("assets"),
+            version=edit.get("version") or 1,
+            parent=edit.get("parent"),
+            created=edit.get("created"),
+            renderer_version=edit.get("renderer_version"),
+        )
+    except edits_module.EditError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    tag = hashlib.sha1(
+        json.dumps(
+            {"clean": layers, "ids": sorted(scoped_ids)},
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8"),
+    ).hexdigest()[:12]
+    return drafted, tag
+
+
+def _edit_fill_rows(job_id: str, job: dict, edit: dict, story: dict) -> list[dict]:
+    """One cost row per beat of this Edit that has an AI fill."""
+    import app
+    import render
+    import routes_edits
+    import textfill
+
+    out_w, out_h = render._dims(edit["aspect"], "draft")
+    compiled = routes_edits._compiled_preview(job_id, job, edit, story, size=(out_w, out_h))
+    fps = int((edit.get("output") or {}).get("fps") or render.OUT_FPS)
+    job_dir = app._job_dir(job_id)
+    rows = []
+    for segment in compiled.get("segments") or []:
+        plan = segment.get("fill")
+        if not plan:
+            continue
+        rows.append(textfill.estimate_span(
+            meta=job.get("source") or {},
+            start=float(segment["start"]),
+            duration=int(segment["frames"]) / fps,
+            layers=plan.get("layers") or [],
+            method=plan.get("method") or textfill.DEFAULT_METHOD,
+            cache_dir=job_dir / "fill",
+            data_root=job_dir.parent.parent,
+        ))
+    return rows
+
+
+class FillEstimateBody(BaseModel):
+    clean: list[dict] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post("/api/jobs/{job_id}/edits/{edit_id}/fill-estimate")
+def fill_estimate(
+    job_id: str,
+    edit_id: str,
+    request: Request,
+    body: FillEstimateBody | None = None,
+) -> dict:
+    """How long AI fill will add to this Edit's render. Runs nothing."""
+    import app
+    import routes_edits
+    import textfill
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    body = body or FillEstimateBody()
+    job, edit, story = routes_edits._fresh_story(job_id, edit_id)
+    edit, _tag = _draft_edit(edit, body.clean, None)
+    return textfill.estimate_summary(
+        _edit_fill_rows(job_id, job, edit, story), app.DATA,
+    )
+
+
+@router.get("/api/jobs/{job_id}/fill-estimate")
+def job_fill_estimate(job_id: str, set_id: str, aspect: str) -> dict:
+    """The same figure for every saved Edit of a clip set in one shape."""
+    import app
+    import routes_edits
+    import textfill
+
+    job = app.load_job(job_id)
+    rows: list[dict] = []
+    for key, edit_id in (job.get("story_edits") or {}).items():
+        if not (str(key).startswith(f"{set_id}:") and str(key).endswith(f":{aspect}")):
+            continue
+        try:
+            fresh_job, edit, story = routes_edits._fresh_story(job_id, str(edit_id))
+        except HTTPException:
+            # A stale Edit cannot render; Finish says so on its own row.
+            continue
+        rows.extend(_edit_fill_rows(job_id, fresh_job, edit, story))
+    return textfill.estimate_summary(rows, app.DATA)
+
+
+class FillSampleBody(BaseModel):
+    t: float = 0.0
+    seconds: float = 1.0
+    clean: list[dict] | None = None
+    layer_ids: list[str] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+# One running sample per job, so Cancel can reach it.
+_SAMPLE_CANCELS: dict[str, threading.Event] = {}
+
+
+@router.post("/api/jobs/{job_id}/edits/{edit_id}/fill-sample")
+def fill_sample(
+    job_id: str,
+    edit_id: str,
+    request: Request,
+    body: FillSampleBody | None = None,
+) -> dict:
+    """Run the layer's real engine on about a second at the playhead.
+
+    The one-frame preview always uses LaMa. This shows what the render's own
+    engine does, in motion. Nothing is saved, and the clip is cached.
+    """
+    import base64
+    import math
+    import shutil
+    import uuid
+
+    from PIL import Image
+
+    import app
+    import render
+    import routes_edits
+    import textfill
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    body = body or FillSampleBody()
+    if not math.isfinite(float(body.t)) or not math.isfinite(float(body.seconds)):
+        raise HTTPException(422, "t and seconds must be finite numbers.")
+    if textfill.busy():
+        raise HTTPException(409, "AI fill is busy with a render. Try again when it finishes.")
+    job, edit, story = routes_edits._fresh_story(job_id, edit_id)
+    edit, _tag = _draft_edit(edit, body.clean, body.layer_ids)
+    source = job.get("source") or {}
+    source_path = Path(str(source.get("path") or ""))
+    width = int(source.get("width") or 0)
+    height = int(source.get("height") or 0)
+    if not source_path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    out_w, out_h = render._dims(edit["aspect"], "draft")
+    compiled = routes_edits._compiled_preview(job_id, job, edit, story, size=(out_w, out_h))
+    segments = compiled.get("segments") or []
+    if not segments:
+        raise HTTPException(422, "This Edit has no frames to preview.")
+    at = max(0.0, min(float(body.t), float(segments[-1].get("out_end") or 0.0) - 0.01))
+    try:
+        _index, segment = render._compiled_segment_at(compiled, at)
+    except render.PipelineError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    plan = segment.get("fill") or {}
+    if not plan.get("layers"):
+        raise HTTPException(422, "This frame has no AI fill layer.")
+    method = plan.get("method") or textfill.DEFAULT_METHOD
+    fps = float(source.get("fps") or render.OUT_FPS)
+    begin = float(segment.get("start") or 0.0) + max(0.0, at - float(segment.get("out_start") or 0.0))
+    beat_end = float(segment.get("start") or 0.0) + float(segment.get("out_end") or 0.0) - float(segment.get("out_start") or 0.0)
+    span = max(0.2, min(float(body.seconds), 2.0, beat_end - begin))
+    job_dir = app._job_dir(job_id)
+    cancel = threading.Event()
+    _SAMPLE_CANCELS[job_id] = cancel
+    try:
+        clip = textfill.prepare_span(
+            source=str(source_path),
+            meta=source,
+            start=begin,
+            duration=span,
+            layers=plan["layers"],
+            method=method,
+            cache_dir=job_dir / "fill" / "sample",
+            data_root=job_dir.parent.parent,
+            ffmpeg=render._ffmpeg(),
+            cancel_event=cancel,
+        )
+    except textfill.FillCancelled as exc:
+        raise HTTPException(409, "Test cancelled.") from exc
+    except textfill.FillError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    finally:
+        _SAMPLE_CANCELS.pop(job_id, None)
+        textfill.release_fillers()
+    if clip is None:
+        raise HTTPException(422, "No AI fill region is active at this frame.")
+    chain = _preview_filter_chain(segment, out_w, out_h)
+    tmp = job_dir / "renders" / f"tmp_fill_sample_{uuid.uuid4().hex}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    try:
+        middle = span / 2
+        pictures = {
+            "before": _read_source_frame(source_path, width, height, begin + middle),
+            "after": _read_source_frame(Path(clip["path"]), width, height, middle),
+        }
+        urls = {}
+        for name, picture in pictures.items():
+            png = tmp / f"{name}.png"
+            jpg = tmp / f"{name}.jpg"
+            final = tmp / f"{name}_final.jpg"
+            Image.fromarray(picture).save(png)
+            _render_preview_jpeg(png, jpg, chain)
+            render._burn_frame(
+                jpg, compiled.get("overlays") or [], final,
+                out_w, out_h, at + middle, job_dir.parent.parent / "cache" / "layers",
+            )
+            urls[name] = _data_url(final)
+        movie = tmp / "sample.mp4"
+        _run_ffmpeg([
+            render._ffmpeg(), "-y", "-v", "error", "-i", str(clip["path"]),
+            "-vf", chain, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(movie),
+        ])
+        video = "data:video/mp4;base64," + base64.b64encode(movie.read_bytes()).decode("ascii")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {
+        **urls,
+        "video": video,
+        "method": method,
+        "label": textfill.METHOD_COPY.get(method, method),
+        "seconds": round(span, 2),
+        "frames": int(round(span * fps)),
+        "cached": bool(clip.get("cached")),
+        "time": round(at, 3),
+    }
+
+
+@router.post("/api/jobs/{job_id}/edits/{edit_id}/fill-sample/cancel")
+def cancel_fill_sample(job_id: str, edit_id: str, request: Request) -> dict:
+    import app
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    event = _SAMPLE_CANCELS.get(job_id)
+    if event is not None:
+        event.set()
+    return {"cancelled": event is not None}
+
+
 @router.post("/api/jobs/{job_id}/edits/{edit_id}/fill-preview")
 def fill_preview(
     job_id: str,
@@ -674,7 +962,6 @@ def fill_preview(
     frame and model stamp.
     """
     import hashlib
-    import json
     import math
     import shutil
     import uuid
@@ -682,7 +969,6 @@ def fill_preview(
     from PIL import Image
 
     import app
-    import edits as edits_module
     import render
     import routes_edits
     import textfill
@@ -696,52 +982,7 @@ def fill_preview(
     if not math.isfinite(float(body.t)):
         raise HTTPException(422, "t must be a finite time in seconds.")
     job, edit, story = routes_edits._fresh_story(job_id, edit_id)
-    draft_tag = ""
-    scoped_ids = {str(item) for item in (body.layer_ids or []) if str(item)}
-    if body.clean is not None or scoped_ids:
-        draft = dict(edit)
-        try:
-            clean = (
-                edits_module.normalize_clean(body.clean)
-                if body.clean is not None
-                else list(edit.get("clean") or [])
-            )
-        except edits_module.EditError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        if scoped_ids:
-            clean = [layer for layer in clean if str(layer.get("id")) in scoped_ids]
-            if not clean:
-                raise HTTPException(
-                    422, "Select a Clean layer that is part of this Edit.",
-                )
-        try:
-            edit = edits_module.build_edit(
-                story_ref=edit.get("story_ref"),
-                aspect=edit.get("aspect"),
-                sequence=edit.get("sequence"),
-                clean=clean,
-                reframe=edit.get("reframe"),
-                motion=edit.get("motion"),
-                color=edit.get("color"),
-                graphics=edit.get("graphics"),
-                captions=edit.get("captions"),
-                audio=edit.get("audio"),
-                border=edit.get("border"),
-                output=edit.get("output"),
-                assets=edit.get("assets"),
-                version=edit.get("version") or 1,
-                parent=edit.get("parent"),
-                created=edit.get("created"),
-                renderer_version=edit.get("renderer_version"),
-            )
-        except edits_module.EditError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        draft_tag = hashlib.sha1(
-            json.dumps(
-                {"clean": clean, "ids": sorted(scoped_ids)},
-                sort_keys=True, separators=(",", ":"),
-            ).encode("utf-8"),
-        ).hexdigest()[:12]
+    edit, draft_tag = _draft_edit(edit, body.clean, body.layer_ids)
     source = job.get("source") or {}
     source_path = Path(str(source.get("path") or ""))
     width = int(source.get("width") or 0)

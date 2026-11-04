@@ -650,3 +650,124 @@ def test_video_url_asset_uses_the_downloader(env, monkeypatch):
     asset = response.json()["asset"]
     assert asset["kind"] == "video"
     assert asset["name"] == "Linked"
+
+
+def _fill_env(env, tmp_path, *, ranges=None):
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is needed for the fill routes")
+    source = tmp_path / "fill-source.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-y", "-v", "error", "-f", "lavfi",
+            "-i", "color=c=blue:s=540x960:d=8:r=10",
+            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+            str(source),
+        ],
+        check=True, timeout=60,
+    )
+    job = _job_record()
+    job["source"].update({
+        "path": str(source), "width": 540, "height": 960,
+        "duration": 8.0, "fps": 10.0,
+    })
+    _write_job(env.jobs, job)
+    models = env.data / "models" / "fill"
+    models.mkdir(parents=True, exist_ok=True)
+    (models / "sttn_infer_model.pth").write_bytes(b"model")
+    edit = _save_edit(
+        env.directory,
+        clean=[{
+            "id": "cl_fill",
+            "kind": "fill",
+            "method": "sttn",
+            "box": {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09},
+            "ranges": ranges if ranges is not None else [{"start": 0.0, "end": 8.0}],
+            "z": 0,
+            "color": "#000000",
+            "opacity": 1,
+            "radius": 12,
+            "label": "Remove text",
+        }],
+        version=2,
+        parent=env.edit["id"],
+    )
+    return edit, source
+
+
+def test_fill_estimate_says_how_long_and_saves_nothing(env, tmp_path):
+    edit, _source = _fill_env(env, tmp_path)
+    before = edits.edit_path(env.directory, edit["id"]).read_bytes()
+    response = env.client.post(f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-estimate", json={})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["frames"] > 0 and body["seconds"] > 0
+    assert "AI fill adds up to" in body["text"] and "first guess" in body["text"]
+    assert edits.edit_path(env.directory, edit["id"]).read_bytes() == before
+
+
+def test_fill_estimate_reads_unsaved_layers(env, tmp_path):
+    edit, _source = _fill_env(env, tmp_path)
+    response = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-estimate", json={"clean": []},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["text"] == "" and response.json()["frames"] == 0
+
+
+def test_fill_sample_runs_the_layers_engine_and_returns_a_clip(env, tmp_path, monkeypatch):
+    edit, source = _fill_env(env, tmp_path)
+    seen = {}
+
+    def fake_span(**kwargs):
+        seen.update(kwargs)
+        return {"path": str(source), "key": "k", "cached": False, "method": kwargs["method"]}
+
+    monkeypatch.setattr(textfill, "prepare_span", fake_span)
+    response = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-sample",
+        json={"t": 0.5, "seconds": 1.0},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert seen["method"] == "sttn" and seen["duration"] == pytest.approx(1.0)
+    assert body["method"] == "sttn" and body["frames"] == 10
+    assert body["before"].startswith("data:image/jpeg")
+    assert body["after"].startswith("data:image/jpeg")
+    assert body["video"].startswith("data:video/mp4")
+
+
+def test_fill_sample_refuses_during_a_render(env, tmp_path):
+    edit, _source = _fill_env(env, tmp_path)
+    with textfill._LOCK:
+        response = env.client.post(
+            f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-sample", json={"t": 0.5},
+        )
+    assert response.status_code == 409
+    assert "busy" in response.json()["detail"]
+
+
+def test_fill_sample_can_be_cancelled(env, tmp_path, monkeypatch):
+    edit, _source = _fill_env(env, tmp_path)
+
+    def cancelled(**_kwargs):
+        raise textfill.FillCancelled("stop")
+
+    monkeypatch.setattr(textfill, "prepare_span", cancelled)
+    response = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-sample", json={"t": 0.5},
+    )
+    assert response.status_code == 409 and "cancelled" in response.json()["detail"].lower()
+    idle = env.client.post(f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-sample/cancel", json={})
+    assert idle.status_code == 200 and idle.json()["cancelled"] is False
+
+
+def test_fill_sample_needs_a_fill_layer_at_the_playhead(env, tmp_path):
+    edit, _source = _fill_env(env, tmp_path, ranges=[{"start": 7.5, "end": 8.0}])
+    response = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-sample", json={"t": 0.0, "clean": []},
+    )
+    assert response.status_code == 422

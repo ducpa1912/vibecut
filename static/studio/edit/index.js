@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261104-1";
+import { mountPreview } from "./preview.js?v=20261104-2";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -74,7 +74,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261104-1";
+    link.href = "/static/studio/edit/edit.css?v=20261104-2";
     document.head.append(link);
   }
 }
@@ -1477,6 +1477,8 @@ export function mount(root, ctx) {
       setCleanMethod: (layerId, kind) => setCleanMethod(layerId, kind),
       isHiddenByCrop: (layer) => isHiddenByCrop(layer),
       compareLayer: (layerId) => { void compareCleanLayer(layerId); },
+      testLayer: (layerId) => { void testCleanLayer(layerId); },
+      isFillTesting: () => Boolean(state.fillTesting),
       seekSource: (sourceTime) => {
         const storyTime = sourceToStory(sourceTime);
         if (storyTime === null) return false;
@@ -1798,6 +1800,44 @@ export function mount(root, ctx) {
     scheduleTimeline();
   }
 
+  /** The layer's real engine on about a second. A second click cancels. */
+  async function testCleanLayer(layerId) {
+    if (!state.job?.id || !state.edit?.id || !layerId) {
+      notify("Open an Edit and select a Clean layer first.", "bad");
+      return;
+    }
+    const root = `/api/jobs/${encodeURIComponent(state.job.id)}/edits/${encodeURIComponent(state.edit.id)}/fill-sample`;
+    if (state.fillTesting) {
+      void request(`${root}/cancel`, { method: "POST", body: {} }).catch(() => {});
+      return;
+    }
+    state.fillTesting = true;
+    renderLayers();
+    notify("Testing 1 second with the real engine. This can take a few minutes. Click again to cancel.", "ok");
+    try {
+      const result = await request(root, {
+        method: "POST",
+        body: {
+          t: state.playhead,
+          seconds: 1,
+          clean: clone(state.edit.clean || []),
+          layer_ids: [String(layerId)],
+        },
+      });
+      preview?.showCompare?.({
+        ...result,
+        title: `${result.label} · ${result.seconds} s`,
+        note: "Press Play to see it move. Nothing was saved.",
+      });
+      notify(`Tested ${result.seconds} s with ${result.label}. Nothing was saved.`, "ok");
+    } catch (error) {
+      notify(error?.message || "Could not test this Clean layer.", "bad");
+    } finally {
+      state.fillTesting = false;
+      renderLayers();
+    }
+  }
+
   async function compareCleanLayer(layerId) {
     if (!state.job?.id || !state.edit?.id || !layerId) {
       notify("Open an Edit and select a Clean layer first.", "bad");
@@ -1816,7 +1856,11 @@ export function mount(root, ctx) {
           },
         },
       );
-      preview?.showCompare?.(result);
+      preview?.showCompare?.({
+        ...result,
+        title: "LaMa preview · one frame",
+        note: "The render uses this layer's own engine. Nothing was saved.",
+      });
       notify("Before / After on this frame. Nothing was saved.", "ok");
     } catch (error) {
       notify(error?.message || "Could not preview this Clean layer.", "bad");

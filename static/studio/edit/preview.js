@@ -162,9 +162,11 @@ export function mountPreview(root, options = {}) {
           <img class="st-compare-before" alt="Before the Clean layer">
           <img class="st-compare-after" alt="After the Clean layer">
           <i class="st-compare-divider" aria-hidden="true"></i>
+          <video class="st-compare-video" loop muted playsinline hidden></video>
           <div class="st-compare-head">
-            <strong>Before / After</strong>
-            <span>Selected Clean layer · this scene</span>
+            <strong id="st-compare-title">Before / After</strong>
+            <span id="st-compare-note">Selected Clean layer · this scene</span>
+            <button id="st-compare-play" class="st-btn st-btn-ghost st-btn-small" type="button" hidden>Play</button>
             <button id="st-compare-close" class="st-icon-btn" type="button" title="Close comparison" aria-label="Close comparison">×</button>
           </div>
           <input id="st-compare-slider" class="st-compare-slider" type="range" min="0" max="100" value="50" aria-label="Compare before and after the Clean layer">
@@ -257,6 +259,10 @@ export function mountPreview(root, options = {}) {
     compare: $("#st-preview-compare"),
     compareBefore: $("#st-preview-compare .st-compare-before"),
     compareAfter: $("#st-preview-compare .st-compare-after"),
+    compareVideo: $("#st-preview-compare .st-compare-video"),
+    compareTitle: $("#st-compare-title"),
+    compareNote: $("#st-compare-note"),
+    comparePlay: $("#st-compare-play"),
     compareSlider: $("#st-compare-slider"),
     compareClose: $("#st-compare-close"),
     sceneNum: $("#st-preview-scene-num"),
@@ -1319,8 +1325,25 @@ export function mountPreview(root, options = {}) {
     if (divider) divider.style.left = `${position}%`;
   }
 
+  function stopCompareVideo() {
+    if (!dom.compareVideo) return;
+    dom.compareVideo.pause();
+    dom.compareVideo.removeAttribute("src");
+    dom.compareVideo.hidden = true;
+    if (dom.comparePlay) dom.comparePlay.textContent = "Play";
+  }
+
+  dom.comparePlay?.addEventListener("click", () => {
+    const video = dom.compareVideo;
+    if (!video) return;
+    video.hidden = !video.hidden;
+    if (video.hidden) video.pause();
+    else void video.play().catch(() => {});
+    dom.comparePlay.textContent = video.hidden ? "Play" : "Compare";
+  });
   dom.compareSlider?.addEventListener("input", () => applyCompare(dom.compareSlider.value));
   dom.compareClose?.addEventListener("click", () => {
+    stopCompareVideo();
     dom.compare.hidden = true;
     dom.compareBefore.removeAttribute("src");
     dom.compareAfter.removeAttribute("src");
@@ -1843,10 +1866,16 @@ export function mountPreview(root, options = {}) {
       if (!data?.before || !data?.after) return;
       dom.compareBefore.src = String(data.before);
       dom.compareAfter.src = String(data.after);
+      stopCompareVideo();
+      if (dom.compareTitle) dom.compareTitle.textContent = data.title || "Before / After";
+      if (dom.compareNote) dom.compareNote.textContent = data.note || "Selected Clean layer · this scene";
+      if (dom.comparePlay) dom.comparePlay.hidden = !data.video;
+      if (data.video && dom.compareVideo) dom.compareVideo.src = String(data.video);
       dom.compare.hidden = false;
       applyCompare(dom.compareSlider?.value ?? 50);
     },
     hideCompare() {
+      stopCompareVideo();
       dom.compare.hidden = true;
       dom.compareBefore.removeAttribute("src");
       dom.compareAfter.removeAttribute("src");

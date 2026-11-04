@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -34,6 +35,12 @@ MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime"}
 METHOD_COPY = {"sttn": "STTN (video)", "lama": "LaMa (per frame)"}
 # Share of the previous frame's fill kept on LaMa output, to calm flicker.
 LAMA_CARRY = 0.3
+# Seconds per unit before this machine has its own reading. A unit is one
+# strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
+# render on an M1 8 GB Mac under swap. LaMa has no real-video reading yet.
+SEED_RATES = {"sttn": 4.6}
+RATE_MIN_FRAMES = 60
+RATES_FILE = "fill_rates.json"
 
 Progress = Callable[[float, str], None]
 
@@ -89,6 +96,141 @@ def text_mask_enabled() -> bool:
     """Narrow scan layers to the text itself. Set off to fill the whole box."""
     value = os.environ.get("VIBECUT_FILL_TEXT_MASK", "on").strip().lower()
     return value not in {"0", "off", "false", "no"}
+
+
+def fill_rate(data_root: Path | str, method: str) -> dict:
+    """Seconds per unit for an engine: this machine's own, else the seed."""
+    try:
+        stored = json.loads((Path(data_root) / RATES_FILE).read_text(encoding="utf-8"))
+        seconds = float(stored[method]["seconds"])
+        if seconds > 0:
+            return {"seconds": seconds, "measured": True}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return {"seconds": SEED_RATES.get(method), "measured": False}
+
+
+def record_rate(data_root: Path | str, method: str, units: int, seconds: float) -> None:
+    """Remember how fast a finished fill ran. Short runs are mostly model load."""
+    if units <= 0 or seconds <= 0:
+        return
+    path = Path(data_root) / RATES_FILE
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(stored, dict):
+            stored = {}
+    except (OSError, ValueError):
+        stored = {}
+    rate = seconds / units
+    previous = stored.get(method) if isinstance(stored.get(method), dict) else {}
+    old = previous.get("seconds")
+    stored[method] = {
+        "seconds": round(rate if not old else float(old) * 0.5 + rate * 0.5, 4),
+        "runs": int(previous.get("runs") or 0) + 1,
+    }
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(stored), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+
+
+def _span_units(rect_table: list, frames: int, width: int, height: int, method: str) -> tuple[int, int]:
+    """(frames with something to fill, model units) for a span."""
+    active = [rects for rects in rect_table[:frames] if rects]
+    if method != "sttn":
+        return len(active), len(active)
+    every = [rect for rects in active for rect in rects]
+    return len(active), len(active) * len(masks.sttn_strips(every, width, height))
+
+
+def estimate_span(
+    *,
+    meta: dict,
+    start: float,
+    duration: float,
+    layers: list[dict],
+    method: str,
+    cache_dir: Path,
+    data_root: Path,
+) -> dict:
+    """What one beat's fill will cost, without running anything.
+
+    This is an upper figure: frames and strips with no text skip the model.
+    """
+    method = method if method in METHODS else DEFAULT_METHOD
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    fps = float(meta.get("fps") or 0.0)
+    row = {"method": method, "frames": 0, "units": 0, "cached": False}
+    if width < 2 or height < 2 or fps <= 0:
+        return row
+    expected = max(1, int(round(duration * fps)))
+    table = masks.frame_rects(layers, start=start, fps=fps, frames=expected, width=width, height=height)
+    row["frames"], row["units"] = _span_units(table, expected, width, height, method)
+    directory = models_dir(data_root)
+    if not missing_model(method, directory):
+        key = span_key(
+            meta=meta, start=start, duration=duration, layers=layers,
+            method=method, model_stamp=_model_stamp(model_path(method, directory)),
+        )
+        output = Path(cache_dir) / f"{key}.mp4"
+        row["cached"] = output.is_file() and output.stat().st_size > 1024
+    return row
+
+
+def duration_text(seconds: float) -> str:
+    """Rough, because the figure is rough: "about 40 min"."""
+    minutes = int(round(float(seconds) / 60.0))
+    if minutes < 1:
+        return "under a minute"
+    if minutes < 60:
+        return f"about {minutes} min"
+    hours, rest = divmod(minutes, 60)
+    return f"about {hours} h {rest} min" if rest else f"about {hours} h"
+
+
+def estimate_summary(rows: list[dict], data_root: Path | str) -> dict:
+    """Add up beat estimates into one honest sentence for the panel."""
+    planned = [row for row in rows if row.get("frames")]
+    to_run = [row for row in planned if not row.get("cached")]
+    seconds = 0.0
+    unknown = []
+    measured = True
+    for method in METHODS:
+        units = sum(row["units"] for row in to_run if row["method"] == method)
+        if not units:
+            continue
+        rate = fill_rate(data_root, method)
+        if rate["seconds"] is None:
+            unknown.append(METHOD_COPY[method])
+            continue
+        seconds += units * rate["seconds"]
+        measured = measured and rate["measured"]
+    frames = sum(row["frames"] for row in to_run)
+    if not planned:
+        text = ""
+    elif not to_run:
+        text = "AI fill is already done for this. It adds no time."
+    else:
+        parts = []
+        if seconds:
+            parts.append(f"AI fill adds up to {duration_text(seconds)} on this Mac ({frames} frames).")
+            if not measured:
+                parts.append("That is a first guess until a render finishes here.")
+        if unknown:
+            parts.append(f"{' and '.join(unknown)} time is not measured yet, and it may be slower.")
+        text = " ".join(parts)
+    return {
+        "beats": len(planned),
+        "beats_cached": len(planned) - len(to_run),
+        "frames": frames,
+        "seconds": round(seconds, 1),
+        "measured": measured,
+        "unmeasured": unknown,
+        "text": text,
+    }
 
 
 def _model_stamp(path: Path) -> str:
@@ -165,6 +307,11 @@ def _filler(method: str, path: Path):
                 ) from exc
             _FILLERS[key] = filler
         return filler
+
+
+def busy() -> bool:
+    """True while a fill is running on this machine."""
+    return _LOCK.locked()
 
 
 def release_fillers() -> None:
@@ -516,8 +663,13 @@ def prepare_span(
     while not _LOCK.acquire(timeout=0.2):
         _check_cancel(cancelled)
     reader = writer = None
+    started = time.monotonic()
     try:
         _check_cancel(cancelled)
+        # This lock is the only fill running, so any .part here was orphaned
+        # by a killed server.
+        for stale in cache_dir.glob(".*.part.mp4"):
+            stale.unlink(missing_ok=True)
         filler = _filler(method, path)
         reader = _Reader(ffmpeg, source, start, duration, fps, width, height)
         writer = _Writer(ffmpeg, part, fps, width, height)
@@ -557,6 +709,9 @@ def prepare_span(
             detail = writer.proc.stderr.read().decode("utf-8", "replace").strip()[-400:]
             raise FillError(f"AI fill could not write the clip. {detail}".strip())
         os.replace(part, output)
+        if written >= RATE_MIN_FRAMES:
+            _frames, units = _span_units(rect_table, expected, width, height, method)
+            record_rate(data_root, method, units, time.monotonic() - started)
     except BaseException:
         _stop(reader.proc if reader is not None else None)
         _stop(writer.proc if writer is not None else None)

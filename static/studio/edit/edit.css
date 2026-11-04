@@ -2584,3 +2584,10 @@ body:has(.st-preview.is-focus) { overflow: hidden; }
 .st-clean-row .st-layer-row { flex: 1 1 auto; min-width: 0; }
 .st-clean-row .st-method-switch { flex: 0 0 auto; }
 .st-layer-hidden-note { flex: 0 0 auto; margin-left: auto; color: var(--st-dim); font-size: 11px; }
+
+/* Testing the real engine on a second */
+.st-compare-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #050506; }
+.st-compare-video[hidden] { display: none; }
+#st-compare-play { margin-left: auto; }
+#st-compare-play + .st-icon-btn { margin-left: 0; }
+.st-clean-test { margin-left: 6px; }

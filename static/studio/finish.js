@@ -539,6 +539,7 @@ export function mount(root, ctx) {
     voice: true,
   };
   const sessionLinks = [];
+  let fillEstimate = { key: "", text: "" };
   let shareExpiry = "30";
   let shareLabel = "";
 
@@ -608,6 +609,29 @@ export function mount(root, ctx) {
 
   function activeSet() {
     return sets.find((item) => item.id === activeSetId) || sets[0] || null;
+  }
+
+  /** How long AI fill adds to these renders. Asks once per set, shape and visit. */
+  async function loadFillEstimate() {
+    const set = activeSet();
+    const jobId = ctx.getJobId();
+    if (!set?.id || !jobId) return;
+    const key = `${jobId}:${set.id}:${aspect}`;
+    if (fillEstimate.key === key) return;
+    fillEstimate = { key, text: "" };
+    try {
+      const query = new URLSearchParams({ set_id: set.id, aspect });
+      const result = await request(`${jobRoot(jobId)}/fill-estimate?${query}`);
+      if (disposed || fillEstimate.key !== key) return;
+      fillEstimate.text = String(result?.text || "");
+    } catch (_) {
+      return;
+    }
+    const node = dom.body.querySelector(".st-finish-fill-note");
+    if (node) {
+      node.textContent = fillEstimate.text;
+      node.hidden = !fillEstimate.text;
+    }
   }
 
   function stories() {
@@ -1197,6 +1221,9 @@ export function mount(root, ctx) {
       setPicker(),
     ]);
     card.append(head);
+    const fillNote = el("p", { class: "st-hint st-finish-fill-note", text: fillEstimate.text, hidden: !fillEstimate.text });
+    card.append(fillNote);
+    void loadFillEstimate();
 
     const bar = el("div", { class: "st-finish-bar" });
     const shapeLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Shape" })]);

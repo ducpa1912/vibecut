@@ -522,6 +522,9 @@ export function mountCleanPanel(host, ctx) {
   let removeMethod = "blur";
   let fillMethod = "sttn";
   let methodTouched = false;
+  let fillEstimateText = "";
+  let fillEstimateFor = "";
+  let fillEstimateTimer = 0;
   if (!FOUND_TICKS.has(jobId)) FOUND_TICKS.set(jobId, new Map());
   const foundTicks = FOUND_TICKS.get(jobId);
 
@@ -1413,6 +1416,9 @@ export function mountCleanPanel(host, ctx) {
     });
     addRow.append(kind, add);
     card.append(addRow);
+    const cost = el("p", { class: "st-field-hint st-fill-estimate", text: fillEstimateText, hidden: !fillEstimateText });
+    card.append(cost);
+    scheduleFillEstimate(cost);
     if (!canClean()) {
       card.append(el("p", {
         class: "st-hint",
@@ -1422,6 +1428,33 @@ export function mountCleanPanel(host, ctx) {
       }));
     }
     return card;
+  }
+
+  /** How long the render will take for these layers. Asks only when they change. */
+  function scheduleFillEstimate(node) {
+    const current = ctx.getEdit();
+    if (!current?.id || !jobId) return;
+    const clean = current.clean || [];
+    const signature = JSON.stringify([current.id, clean]);
+    if (signature === fillEstimateFor) return;
+    fillEstimateFor = signature;
+    window.clearTimeout(fillEstimateTimer);
+    fillEstimateTimer = window.setTimeout(async () => {
+      try {
+        const result = await request(
+          `/api/jobs/${encodeURIComponent(jobId)}/edits/${encodeURIComponent(current.id)}/fill-estimate`,
+          { method: "POST", body: { clean } },
+        );
+        if (disposed || signature !== fillEstimateFor) return;
+        fillEstimateText = String(result?.text || "");
+      } catch (_) {
+        if (disposed || signature !== fillEstimateFor) return;
+        fillEstimateText = "";
+      }
+      const live = host.querySelector(".st-fill-estimate") || node;
+      live.textContent = fillEstimateText;
+      live.hidden = !fillEstimateText;
+    }, 500);
   }
 
   /** AI fill or Blur for this box only. */
@@ -1586,11 +1619,21 @@ export function mountCleanPanel(host, ctx) {
       const compare = el("button", {
         class: "st-btn st-btn-ghost st-btn-small st-clean-compare",
         type: "button",
-        text: "Before / After",
-        title: "Run the engine on this frame without saving",
+        text: "Before / After (LaMa)",
+        title: "One frame with LaMa, without saving. The render uses this layer's own engine.",
       });
       compare.addEventListener("click", () => ctx.compareLayer?.(layer.id));
       stage.append(compare);
+      const testing = ctx.isFillTesting?.() === true;
+      const test = el("button", {
+        class: "st-btn st-btn-ghost st-btn-small st-clean-test",
+        type: "button",
+        text: testing ? "Cancel test" : "Test 1 second",
+        "aria-busy": testing ? "true" : "false",
+        title: "Run this layer's real engine on about a second, without saving. It can take a few minutes.",
+      });
+      test.addEventListener("click", () => ctx.testLayer?.(layer.id));
+      stage.append(test);
     }
 
     if (layer.kind === "plate" || layer.kind === "mask") {
@@ -1630,11 +1673,11 @@ export function mountCleanPanel(host, ctx) {
         commit();
       });
       stage.append(el("div", { class: "st-control-grid" }, [
-        field("Engine", method, "Runs on this Mac when you render. It can take minutes per beat."),
+        field("Engine", method, "Runs on this Mac when you render. The time it adds is shown under Clean layers."),
       ]));
       stage.append(el("p", {
         class: "st-field-hint",
-        text: "The preview shows the box only. The filled picture appears in the render.",
+        text: "The picture here shows the box only. Use Test 1 second to see the real result, or render.",
       }));
     }
 

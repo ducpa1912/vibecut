@@ -2,7 +2,7 @@
 
 Date: 2026-11-04. Code reviewed: `studio` at `e274b45`.
 
-Status: revision 5. M0, R0 and R1 built; R2 to R5 not started.
+Status: revision 5. M0, R0, R1 and R2 built; R3 to R5 not started.
 
 **Rule for this work:** audit from code and tests. Do not open the founder's projects to see what they did unless they say so. Layers found in a project may just be the founder testing, so they are not bug reports.
 
@@ -171,6 +171,14 @@ The text mask is an untested idea. Build it behind a setting, compare it on the 
 - **Interrupted work (18):** sweep stale `.part` files at the next fill. Consider saving finished chunks so a 35 minute beat is not lost on Cancel.
 
 **Test gate:** the estimate is within about 30% on a real render.
+
+**R2 log (2026-11-04), built, not run on real video:**
+
+- Clean layers and the Finish Render card show how long AI fill adds, per engine. It is an upper figure, because frames and strips with no text skip the model. It starts from the 4.6 s reading, then uses this machine's own rate from finished runs of 60 frames or more (`fill_rates.json` in the data folder). LaMa says it is not measured until it has a reading.
+- "Test 1 second" runs the layer's real engine at the playhead and shows Before/After plus a moving clip. Nothing is saved. A second click cancels, and it refuses while a render is filling.
+- Before/After is labelled as a LaMa preview.
+- Render progress shows the time left for the fill.
+- Stale `.part` files are swept at the next fill. Saving finished chunks was not built, so Cancel still loses the beat in progress.
 
 ### R3: a layer list that can be read
 
