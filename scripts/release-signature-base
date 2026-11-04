@@ -1,0 +1,4 @@
+94dfb4792d201fe8272cb202a7bc9531a8dc6767
+# The beta release checks signatures from this commit to HEAD. It is fixed on
+# purpose and never follows main. Everything after it is signed, except the
+# recorded exceptions in scripts/verify-signatures.sh.

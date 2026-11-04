@@ -97,7 +97,9 @@ excepted=0
 failed=()
 
 for sha in $commits; do
-  short=$(git rev-parse --short "$sha")
+  # Fixed length: the exceptions are 7 characters, and git's default --short
+  # grows with the repository.
+  short=$(git rev-parse --short=7 "$sha")
   if [[ "$exceptions" == *" $short "* ]]; then
     excepted=$((excepted + 1))
     continue

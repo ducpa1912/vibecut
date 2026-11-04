@@ -39,10 +39,12 @@ def _repo(tmp_path, branch="classic"):
     return work, remote
 
 
-def _release(work, *args, allow_unsigned=True):
+def _release(work, *args, allow_unsigned=True, sign_base=None):
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "HOME": str(work)}
     if allow_unsigned:
         env["VIBECUT_ALLOW_UNSIGNED"] = "1"
+    if sign_base:
+        env["VIBECUT_RELEASE_SIGN_BASE"] = sign_base
     return subprocess.run(["bash", str(SCRIPT), *args], cwd=work, capture_output=True, text=True, env=env)
 
 
@@ -63,11 +65,49 @@ def test_refuses_other_lanes_and_unshipped_commits(tmp_path):
     assert "not what GitHub has" in _release(work2, "--founder-passed").stderr
 
 
+def _shipped_second_commit(work):
+    base = _git(work, "rev-parse", "HEAD")
+    (work / "b.txt").write_text("b")
+    _git(work, "add", "b.txt")
+    _git(work, "commit", "-q", "-m", "b")
+    _git(work, "push", "-q", "origin", "classic:classic")
+    return base
+
+
 def test_refuses_an_unsigned_release_commit(tmp_path):
+    work, _remote = _repo(tmp_path)
+    base = _shipped_second_commit(work)
+    result = _release(work, "--founder-passed", allow_unsigned=False, sign_base=base)
+    assert result.returncode != 0
+    assert "Unsigned commits" in result.stderr
+    assert f"Range: {base}..HEAD" in result.stdout
+
+
+def test_the_signature_range_does_not_follow_main(tmp_path):
+    work, _remote = _repo(tmp_path)
+    base = _shipped_second_commit(work)
+    # main moved past classic: a merge-base would now hide the unsigned commit.
+    _git(work, "update-ref", "refs/remotes/origin/main", "HEAD")
+    result = _release(work, "--founder-passed", allow_unsigned=False, sign_base=base)
+    assert "Unsigned commits" in result.stderr
+    assert f"Range: {base}..HEAD" in result.stdout
+
+
+def test_an_unknown_signature_base_fails_closed(tmp_path):
     work, _remote = _repo(tmp_path)
     result = _release(work, "--founder-passed", allow_unsigned=False)
     assert result.returncode != 0
-    assert "Unsigned commits" in result.stderr
+    assert "signature base" in result.stderr
+    assert "Range:" not in result.stdout
+    assert not _git(work, "tag")
+
+
+def test_the_tracked_signature_base_is_behind_classic():
+    root = SCRIPT.parent.parent
+    first = (root / "scripts" / "release-signature-base").read_text().splitlines()[0]
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", first, "HEAD"], cwd=root, check=True,
+    )
 
 
 def test_tags_and_pushes_the_shipped_classic(tmp_path):

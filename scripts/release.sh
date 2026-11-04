@@ -62,8 +62,14 @@ commit=$(git rev-parse --short HEAD)
 scripts_dir=$(dirname "${BASH_SOURCE[0]}")
 allow_unsigned="${VIBECUT_ALLOW_UNSIGNED:-0}"
 if [[ "$allow_unsigned" != "1" ]]; then
-  base="$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null || true)"
-  range="${base:+$base..}HEAD"
+  # A fixed commit, not a merge-base with main: main moves with Studio, and if
+  # it were rewritten or went missing the range would widen to all history.
+  base="${VIBECUT_RELEASE_SIGN_BASE:-$(sed -n '/^[0-9a-f]/{p;q;}' "$scripts_dir/release-signature-base" 2>/dev/null || true)}"
+  if [[ -z "$base" ]] || ! git merge-base --is-ancestor "$base" HEAD 2>/dev/null; then
+    echo "The signature base '${base:-none}' is not behind this classic. Restore scripts/release-signature-base. Nothing was tagged." >&2
+    exit 1
+  fi
+  range="$base..HEAD"
   if ! "$scripts_dir/verify-signatures.sh" --range "$range"; then
     echo "Unsigned commits in the release range. Sign them before tagging. The pre-signing 732254a and 8186e2a are recorded exceptions." >&2
     exit 1
