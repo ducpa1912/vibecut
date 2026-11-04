@@ -1,7 +1,9 @@
 # Voice Room lane
 
 The Voice Room is its own lane, with its own port, data folder, media library
-and recordings. It shares no runtime file with Classic or Studio.
+and recordings. It runs on its own pinned copy of the shared backend. See
+`docs/voice/runtime.md` for the pin rule and for what is still shared on this
+Mac, such as the system Python and the Whisper weights.
 
 | Item | Value |
 |---|---|
