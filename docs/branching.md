@@ -7,9 +7,9 @@ That rule failed in practice: the lanes used each other's files, env, notes and 
 
 | Lane | Role | Worktree | Port | Data | Build |
 |---|---|---|---|---|---|
-| `studio` | Project main and integration lane. Studio embeds Classic and Voice Room. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-studio` | **8795** | `~/vibecut-lanes/studio` | `VIBECUT_EDITION=all`, `VIBECUT_FEATURES=voice_room` |
-| `classic` | Beta focus: the Classic view. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic` | **8796** | `~/vibecut-lanes/classic` | `VIBECUT_EDITION=classic` |
-| `voice-room` | Hidden voice features: voice library, clone, extraction. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room` | **8797** | `~/vibecut-lanes/voice` | `VIBECUT_EDITION=classic`, `VIBECUT_FEATURES=voice_room` |
+| `studio` | Studio product and integration lane. Owns its page, voice client and releases. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-studio` | **8795** | `~/vibecut-lanes/studio` | `VIBECUT_APP=studio`, `VIBECUT_EDITION=studio`, `VIBECUT_FEATURES=voice_room` |
+| `classic` | Second supported product: Classic page and release. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic` | **8796** | `~/vibecut-lanes/classic` | `VIBECUT_APP=classic`, `VIBECUT_EDITION=classic` |
+| `voice-room` | Hidden voice feature lane, still independent. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room` | **8797** | `~/vibecut-lanes/voice` | `VIBECUT_APP=classic`, `VIBECUT_EDITION=classic`, `VIBECUT_FEATURES=voice_room` |
 | `main` | Archive. Only studio moves it. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut` | none | none | none |
 
 - Port 8787 is the founder's own app. No lane uses it.
@@ -32,31 +32,35 @@ Each lane has its own:
 | Script | Who | What |
 |---|---|---|
 | `scripts/lane-env.sh [lane]` | every lane | Prints the lane's environment: port, build, data, media and recordings. With no lane it reads this checkout's branch. |
-| `scripts/serve.sh` | every lane | Starts this checkout's lane server; Ctrl-C stops it. It refuses a port already in use. The first time, it moves an old `<worktree>/data` into `~/vibecut-lanes/<lane>`. |
+| `scripts/serve-studio.sh` | Studio | Starts `studio_app.py`; port/data defaults live in the entrypoint (8795 / Application Support lane folder). |
+| `scripts/serve-classic.sh` | Classic | Starts `classic_app.py`; port/data defaults live in the entrypoint (8796 / Application Support lane folder). |
+| `scripts/serve.sh` | legacy lane helper | Kept for the old lane workflow; new work uses the per-app scripts. |
 | `scripts/record.sh` | the founder | Opens a recorded browser on the running lane. It saves `trace.zip`, `network.har` and `storage.json`. |
 | `scripts/ship-lane.sh` | classic, voice-room | Takes in its own branch from GitHub, runs the checks, and pushes that branch. It never moves `main`. |
 | `scripts/ship.sh` | studio | Same checks, pushes studio, then fast-forwards and pushes `main`. |
-| `scripts/integrate.sh` | studio | Merges `origin/classic` and `origin/voice-room` into studio, runs their guards, then ships studio. |
 | `scripts/release.sh --founder-passed` | classic | Tags a beta (below). |
 
 The classic and voice-room branches still carry older copies of `ship.sh` that move `main`. They must not use them. They take this set at their next merge from studio.
 
-## Merging: classic and voice-room flow into studio
+## Merging: separate products, shared backend
+
+`classic` and `studio` are separate **products**, not page toggles. Each ships
+from its own entrypoint and tag. `scripts/integrate.sh` is removed: Classic no
+longer merges into Studio at release.
 
 ```
-classic ──ship-lane──► origin/classic ──┐
-                                        ├─► studio merges ─► origin/studio ─► main
-voice-room ─ship-lane─► origin/voice-room ┘
+classic ──ship-lane──► origin/classic ──► beta tag + Classic artifact
+studio  ──ship───────► origin/studio  ──► main + Studio artifact
+voice-room ──ship-lane► origin/voice-room (hidden feature lane)
 ```
 
-1. **classic and voice-room** finish each change with `scripts/ship-lane.sh`. They never merge `main` or `studio` in, so the Classic beta never gets unfinished Studio work.
-2. **studio** first finishes and ships its own latest change. When the founder says to merge, studio runs `scripts/integrate.sh` once:
-   - it merges `origin/classic` and `origin/voice-room`;
-   - it runs the Classic guard, edition, lane and Voice Room tests, then the full suite;
-   - it pushes studio and moves `main`.
+Shared backend changes still need an explicit port or cherry-pick. Do not
+assume a release merge carries them. If Classic needs a Studio backend change,
+ask the Studio owner for the commit and port it into the Classic lane with
+Classic tests. If Studio needs a Classic fix, do the same in reverse.
 
-   If a merge conflicts, studio resolves it by hand, keeping both lanes working, then ships. The merge is manual, never on a timer or after every lane ship, so requests cannot stack and stall the lanes.
-3. **Every studio edit is checked against Classic and Voice Room,** because both run inside studio (`/?classic=1`, `/classic`, `/voices`). Fix a break on studio. Never fix it by changing a classic or voice-room file from the studio lane; ask that lane.
+Every Studio edit is checked against its own tree. Classic is no longer mounted
+inside Studio; do not test it through `/?classic=1`.
 
 ## Who owns what
 
@@ -71,10 +75,10 @@ New HTTP routes go in the lane's route module, never in `app.py` (`tests/test_la
 
 ## Hiding features: switches, not branches
 
-- `VIBECUT_EDITION=classic|studio|all` picks the pages a build serves:
-  - `classic`: `/` is the Classic page.
-  - `studio`: `/` is the Studio page, and `/classic` is a 404.
-  - `all`: `/` is Studio, and `/?classic=1` or `/classic` is Classic. A saved Classic choice on `/` goes to `/?classic=1`.
+- `studio_app.py` owns the Studio page. `classic_app.py` owns the Classic page.
+  They set their own app, edition, port and data defaults; the old
+  `VIBECUT_EDITION=all` page toggle is a legacy lane helper, not the product
+  split.
 - `VIBECUT_FEATURES=voice_room` turns on the Voice Room. When it is off, `/voices` and the voice clone routes answer 404, and no link or clone control shows.
 
 Never delete a feature to hide it. Deleting code on one lane deletes it everywhere at the next merge.
@@ -83,7 +87,7 @@ Never delete a feature to hide it. Deleting code on one lane deletes it everywhe
 
 - Only the founder tests the app. Claude and OpenCode never generate test videos, sounds or files. If media is needed, ask the founder.
 - The founder records a real run:
-  1. Run `scripts/serve.sh` in the lane's worktree, if the lane is not already running.
+  1. Run `scripts/serve-studio.sh` or `scripts/serve-classic.sh` in its worktree, if that product is not already running.
   2. Run `scripts/record.sh` in the founder's own Terminal.
   3. Do the flow.
   4. Press Ctrl-C there, or close the app tab, and **wait until it prints "Saved …"** before closing anything else.
@@ -106,7 +110,8 @@ When the founder's test pass on `classic` is clean, run `scripts/release.sh --fo
 
 ## Studio plan
 
-The current Studio plan and open items are in `docs/handoff/r3-review.md` ("Studio plan (revised 2026-11-01)").
+The current Studio plan and open items are in `docs/handoff/r3-review.md` ("Studio plan (revised 2026-11-01)"). Lane split decisions and the Classic/Studio matrix are in
+`docs/handoff/lane-split-decisions.md` and `docs/handoff/classic-studio-matrix.md`.
 
 ## History
 
