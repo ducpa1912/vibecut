@@ -29,6 +29,7 @@ import captions as caption_engine
 import compose_render
 import edits
 import fx
+import textfill
 from compose_render import path_expression as _path_expression
 from compose_render import path_value as _path_value
 from pipeline import PipelineError, crop_center, probe
@@ -384,6 +385,7 @@ def _segment_cache_key(
     crop_path: list[dict] | None = None,
     pre_filters: list[str] | None = None,
     post_filters: list[str] | None = None,
+    fill_key: str | None = None,
 ) -> str:
     payload = {
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
@@ -403,6 +405,8 @@ def _segment_cache_key(
         payload["pre_filters"] = pre_hash
     if post_hash:
         payload["post_filters"] = post_hash
+    if fill_key:
+        payload["fill"] = fill_key
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
 
 
@@ -427,11 +431,17 @@ def _segment(
     pre_filters: list[str] | None = None,
     post_filters: list[str] | None = None,
     decode_threads: int | None = None,
+    fill: dict | None = None,
 ) -> bool:
-    """Render one beat. Return True when the segment came from cache."""
+    """Render one beat. Return True when the segment came from cache.
+
+    ``fill`` is a ``textfill.prepare_span`` result: the beat then reads that
+    filled clip from its start instead of the source at ``start``.
+    """
     key = _segment_cache_key(
         meta, scene, start, frames, out_w, out_h, quality, encoder, first, last,
         crop, crop_path, pre_filters, post_filters,
+        fill_key=(fill or {}).get("key"),
     )
     cached = cache_dir / f"{key}.mp4"
     if cached.exists() and cached.stat().st_size > 0:
@@ -458,10 +468,15 @@ def _segment(
     part = output.parent / f".{output.stem}.part.mp4"
     if part.exists():
         part.unlink()
-    cmd = [
-        ffmpeg, "-y", "-v", "error",
+    input_args = [
         *_decoder_args(meta, decode_threads),
         "-ss", f"{start:.3f}", "-t", f"{duration:.6f}", "-i", source,
+    ]
+    if fill:
+        input_args = ["-t", f"{duration:.6f}", "-i", str(fill["path"])]
+    cmd = [
+        ffmpeg, "-y", "-v", "error",
+        *input_args,
         "-frames:v", str(frames),
         "-vf", vf,
         "-an",
@@ -2092,6 +2107,65 @@ def edit_beat_grid(
     return grid
 
 
+def _prepare_fills(
+    source: str,
+    meta: dict,
+    job_dir: Path,
+    segments: list[dict],
+    progress: Callable[[float, str], None],
+    cancel_event: threading.Event | None,
+    fps: int = OUT_FPS,
+) -> list[dict | None]:
+    """Run the AI text fill pre-pass: one filled clip per beat that needs it.
+
+    Progress runs from 0.02 to 0.45. Clips are cached by source, span, layers,
+    engine and model, so a draft and the final share them.
+    """
+    planned = [
+        (index, segment) for index, segment in enumerate(segments)
+        if segment.get("fill")
+    ]
+    results: list[dict | None] = [None] * len(segments)
+    if not planned:
+        return results
+    data_root = job_dir.parent.parent
+    try:
+        for position, (index, segment) in enumerate(planned):
+            plan = segment["fill"]
+            low = 0.02 + 0.43 * position / len(planned)
+            high = 0.02 + 0.43 * (position + 1) / len(planned)
+
+            def report(fraction: float, message: str, low=low, high=high) -> None:
+                progress(
+                    low + (high - low) * max(0.0, min(1.0, fraction)),
+                    f"Filling text, beat {position + 1}/{len(planned)} · {message}",
+                )
+
+            try:
+                results[index] = textfill.prepare_span(
+                    source=source,
+                    meta=meta,
+                    start=float(segment["start"]),
+                    duration=int(segment["frames"]) / fps,
+                    layers=plan.get("layers") or [],
+                    method=plan.get("method") or textfill.DEFAULT_METHOD,
+                    cache_dir=job_dir / "fill",
+                    data_root=data_root,
+                    ffmpeg=_ffmpeg(),
+                    progress=report,
+                    cancel_event=cancel_event,
+                )
+            except textfill.FillCancelled as exc:
+                raise RenderCancelled("Render cancelled.") from exc
+            except textfill.FillError as exc:
+                raise PipelineError(str(exc)) from exc
+    finally:
+        # Model sessions are large; a finished or failed pre-pass must not
+        # hold STTN or LaMa memory for the rest of the app's life.
+        textfill.release_fillers()
+    return results
+
+
 def render_reel(
     source: str,
     meta: dict,
@@ -2227,6 +2301,15 @@ def render_reel(
         ], sort_keys=True).encode()).hexdigest()[:16]
         if layers else ""
     )
+    fill_methods = sorted({
+        str((segment.get("fill") or {}).get("method") or "")
+        for segment in edit_segments
+        if (segment.get("fill") or {}).get("method")
+    })
+    fill_sig = (
+        textfill.model_signature(fill_methods, textfill.models_dir(job_dir.parent.parent))
+        if fill_methods else ""
+    )
     master_key = hashlib.sha1(json.dumps({
         "target": target,
         "clips": [
@@ -2245,6 +2328,9 @@ def render_reel(
         "encoder": encoder,
         "edit": compiled.get("edit_hash") if compiled is not None else None,
         "layers": layer_sig,
+        # Fill model files: replacing a checkpoint must not reuse a master
+        # whose beats were built from the old model.
+        "fill_models": fill_sig,
         # Text raster version: a font change must not reuse an old master.
         "text_skin": LAYER_CACHE_VERSION,
     }, sort_keys=True).encode()).hexdigest()[:16]
@@ -2269,6 +2355,12 @@ def render_reel(
                         1, (os.cpu_count() or workers) // max(1, workers),
                     )
             progress(0.01, f"Preparing {len(clips)} beats · {quality} · {encoder}")
+            fills = _prepare_fills(
+                source, meta, job_dir,
+                edit_segments if compiled is not None else [],
+                progress, cancel_event,
+            )
+            cut_from = 0.45 if any(fills) else 0.02
             done = 0
             segments: list[Path] = []
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vibecut-seg") as pool:
@@ -2299,6 +2391,7 @@ def render_reel(
                         segment, index == 0, index == len(clips) - 1,
                         out_w, out_h, quality, encoder, cache_dir, crop, crop_path, cancel_event,
                         pre_filters, post_filters, decode_threads,
+                        fills[index] if index < len(fills) else None,
                     )] = index
                 for future in as_completed(futures):
                     if cancel_event is not None and cancel_event.is_set():
@@ -2309,7 +2402,7 @@ def render_reel(
                         cached_count += 1
                     done += 1
                     progress(
-                        0.02 + 0.78 * (done / max(1, len(clips))),
+                        cut_from + (0.80 - cut_from) * (done / max(1, len(clips))),
                         f"Cutting beat {done} / {len(clips)}"
                         + (f" · {cached_count} cached" if cached_count else ""),
                     )

@@ -1,5 +1,7 @@
-# Optional high-quality voice-fit backend.
-# Signalsmith Stretch via the MIT python-stretch binding.
+# Optional AI text fill backend for Clean.
 # Install with: .venv/bin/python -m pip install -r requirements-optional.txt
-# VibeCut falls back to FFmpeg atempo when this is absent.
-python-stretch>=0.3.1
+# VibeCut runs without these: Clean's Blur, Cover and Crop always work, and
+# AI fill reports the missing package instead of failing a render by surprise.
+# The model files are separate downloads; see THIRD_PARTY_NOTICES.md.
+torch>=2.2
+onnxruntime>=1.17

@@ -16,12 +16,30 @@ Resolve exact versions and full license texts from the release environment; see
 | Pillow | MIT-CMU (HPND) | https://python-pillow.org |
 | yt-dlp | Unlicense | https://github.com/yt-dlp/yt-dlp |
 | python-stretch (optional) | MIT | https://github.com/gregogiudici/python-stretch |
+| torch (optional, AI fill) | BSD-3-Clause | https://github.com/pytorch/pytorch |
+| onnxruntime (optional, AI fill) | MIT | https://github.com/microsoft/onnxruntime |
 | Signalsmith Stretch (optional, via python-stretch) | MIT | https://github.com/Signalsmith-Audio/signalsmith-stretch |
 
 yt-dlp is the default URL downloader and is used through its public Python API.
 A copy of the Unlicense text must be included in release artifacts. No
 attribution is required by the Unlicense, but the inventory should still list
 the installed version.
+
+## Fill model weights
+
+Clean's AI text fill (`textfill/`) reads two model files that are not in the
+repository and are not downloaded automatically. Without them the method is
+refused with the missing file names.
+
+| Component | License | Source | SHA-256 |
+|---|---|---|---|
+| STTN subtitle fill (`sttn_infer_model.pth`) | Apache-2.0 weights; MIT code | YaoFANGUK/video-subtitle-remover (Apache-2.0), researchmm/STTN (MIT) | `c8408c9dd1300bd7000ea3a81b8236db89d9c0f185837781e38283c1e464675b` |
+| LaMa ONNX (`lama_fp32.onnx`) | Apache-2.0 | Carve/LaMa-ONNX, port of big-lama | `1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6` |
+
+Model weights are separate works. If a build bundles or hosts these files,
+include the Apache-2.0 text, the upstream URL, the model name and the hash. Do
+not list only the Python package license. The STTN notice needs both the MIT
+code notice and the Apache-2.0 weight notice.
 
 ## System dependencies
 

@@ -290,7 +290,8 @@ def _clean_filters(
         if not active:
             continue
         kind = layer["kind"]
-        if kind == "crop_guard":
+        if kind in {"crop_guard", "fill"}:
+            # A fill layer is not an ffmpeg filter: see _fill_plan.
             continue
         rect = _box_rect(layer["box"], width, height, even=True)
         if kind in {"plate", "mask"}:
@@ -327,6 +328,107 @@ def _clean_filters(
 
 
 # ---------------------------------------------------------------- motion
+
+
+def _fill_plan(
+    clean: list[dict],
+    start: float,
+    end: float,
+    *,
+    crop: dict | None = None,
+    source_width: int | None = None,
+    source_height: int | None = None,
+    aspect: str = "",
+) -> tuple[dict | None, list[dict]]:
+    """Active AI fill layers of one segment, for the render's pre-pass.
+
+    One method runs per segment: the topmost active layer's. The list is
+    ordered by ``z`` (then id), so a mixed beat still has one deterministic
+    engine and the layer the viewer sees on top decides it. Returns
+    (plan, warnings).
+    """
+    active = sorted(
+        (
+            layer for layer in clean
+            if layer["kind"] == "fill" and _active_window(layer, start, end)[0]
+        ),
+        key=lambda layer: (int(layer.get("z") or 0), str(layer.get("id") or "")),
+    )
+    if not active:
+        return None, []
+    method = active[-1].get("method") or edits.FILL_METHODS[0]
+    warnings = []
+    if any((layer.get("method") or method) != method for layer in active):
+        warnings.append({
+            "code": "fill_method_mixed",
+            "message": (
+                "Fill layers on one beat use different engines; "
+                f"{method.upper()} fills them all."
+            ),
+        })
+
+    def source_mask(layer: dict) -> dict | None:
+        # Classic is box-only, so this stays unused until a painter mask is
+        # stored. It is kept so the plan shape and the mask conversion match
+        # Studio's, and so the shared file merges cleanly.
+        mask = layer.get("mask")
+        if not mask or not crop or not source_width or not source_height:
+            return None
+        if isinstance(mask, dict):
+            mask_aspect = str(mask.get("aspect") or "").strip()
+            if mask_aspect and mask_aspect != str(aspect or ""):
+                # The mask was painted for another crop; using it would fill
+                # pixels the user never painted. Fall back to the box.
+                return None
+            strokes = mask.get("strokes") or []
+            space = str(mask.get("space") or "output")
+        else:
+            strokes = [{"r": 0.025, "points": mask}]
+            space = "output"
+        out_strokes = []
+        for stroke in strokes:
+            try:
+                radius = float((stroke or {}).get("r", 0.02))
+            except (TypeError, ValueError):
+                radius = 0.02
+            points = []
+            for point in (stroke or {}).get("points") or []:
+                try:
+                    x = float(point.get("x", 0.0))
+                    y = float(point.get("y", 0.0))
+                except (TypeError, ValueError):
+                    continue
+                if space == "output":
+                    sx = (float(crop["x"]) + x * float(crop["w"])) / source_width
+                    sy = (float(crop["y"]) + y * float(crop["h"])) / source_height
+                    sr = radius * float(crop["w"]) / source_width
+                else:
+                    sx, sy, sr = x, y, radius
+                if sx < 0.0 or sx > 1.0 or sy < 0.0 or sy > 1.0:
+                    continue
+                points.append({"x": sx, "y": sy})
+            if points:
+                out_strokes.append({
+                    "id": f"st{len(out_strokes) + 1}",
+                    "r": max(0.002, min(0.2, sr)),
+                    "points": points,
+                })
+        return {"space": "source", "strokes": out_strokes} if out_strokes else None
+
+    return {
+        "method": method,
+        "ids": [layer["id"] for layer in active],
+        "layers": [
+            {
+                "id": layer["id"],
+                "box": dict(layer["box"]),
+                "ranges": [dict(item) for item in layer.get("ranges") or []],
+                **({"mask": source_mask(layer)} if source_mask(layer) else {}),
+                **({"tracklet_id": layer["tracklet_id"]} if layer.get("tracklet_id") else {}),
+            }
+            for layer in active
+        ],
+    }, warnings
 
 
 def _motion_filter(
@@ -919,11 +1021,16 @@ def compile_edit(
         clean_filter_list, clean_ids, skipped = _clean_filters(
             normalized["clean"], clip["start"], clip["end"], width, height,
         )
+        fill_plan, fill_warnings = _fill_plan(
+            normalized["clean"], clip["start"], clip["end"],
+            crop=crop, source_width=width, source_height=height,
+            aspect=str(normalized.get("aspect") or ""),
+        )
         warnings.extend(clean_warnings)
         warnings.extend({
             **item,
             "segment": clip["index"],
-        } for item in skipped)
+        } for item in skipped + fill_warnings)
 
         pre_filter = ",".join(clean_filter_list)
         crop_filter = f"crop={crop['w']}:{crop['h']}:{crop['x']}:{crop['y']}"
@@ -968,6 +1075,7 @@ def compile_edit(
             "crop": crop,
             "crop_path_ref": reframe.get("crop_path_ref"),
             "clean_ids": clean_ids,
+            "fill": fill_plan,
             "motion_ids": motion_ids,
             "motion_engine": motion_engine if motion_filters else "none",
             "pre_filters": clean_filter_list,
