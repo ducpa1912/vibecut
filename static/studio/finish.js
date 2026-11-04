@@ -21,6 +21,7 @@ import {
   request,
   trimErrorCode,
 } from "./api.js";
+import { artifactIsStale, STALE_RENDER_TEXT } from "./trust.js";
 import {
   clear,
   el,
@@ -858,6 +859,16 @@ export function mount(root, ctx) {
     return String(editPointers[storyKey(activeSetId, String(storyId || ""), shape)] || "");
   }
 
+  function currentEditHash(storyId = selectedStory()?.id, shape = aspect) {
+    const head = editHead(storyId, shape);
+    if (!head) return "";
+    return String(edits.find((row) => String(row.id) === head)?.hash || "");
+  }
+
+  function artifactStale(item, storyId = selectedStory()?.id, shape = aspect) {
+    return artifactIsStale(item, currentEditHash(storyId, shape));
+  }
+
   async function loadJob() {
     const jobId = ctx.getJobId();
     if (!jobId) return false;
@@ -1124,6 +1135,9 @@ export function mount(root, ctx) {
     for (const warning of renderWarnings(item)) {
       card.append(el("p", { class: "st-warning st-finish-review-warning", text: warning }));
     }
+    if (artifactStale(item)) {
+      card.append(el("p", { class: "st-warning st-finish-review-warning", text: STALE_RENDER_TEXT }));
+    }
     return card;
   }
 
@@ -1380,6 +1394,10 @@ export function mount(root, ctx) {
           el("h2", { id: "st-finish-queue-title", text: "Queue" }),
           el("p", { class: "st-hint", text: "One story at a time. A finished queue stays in this list; a paused queue never restarts by itself." }),
           el("p", { class: "st-hint st-finish-queue-summary", text: summary.text }),
+          el("p", {
+            class: "st-field-hint",
+            text: "If a moment uses a cloud voice or music provider, Render calls it and may cost credits. Check that moment's Audio panel first.",
+          }),
         ]),
       ]),
       queueBody(),
@@ -1483,17 +1501,19 @@ export function mount(root, ctx) {
       for (const item of rows) {
         const ready = artifactReady(item);
         const active = item.artifact_id === selectedArtifactId;
-        const row = el("div", { class: `st-finish-version${active ? " is-active" : ""}` }, [
+        const stale = artifactStale(item);
+        const row = el("div", { class: `st-finish-version${active ? " is-active" : ""}${stale ? " is-stale" : ""}` }, [
           el("span", {
             class: `st-chip ${ready ? "st-chip-ok" : item.status === "failed" ? "st-chip-bad" : "st-chip-busy"}`,
-            text: ready ? (item.versions?.label || `v${item.version || "?"}`) : statusText(item.status),
+            text: ready ? (stale ? "Changed since render" : (item.versions?.label || `v${item.version || "?"}`)) : statusText(item.status),
           }),
           el("span", { class: "st-finish-version-copy" }, [
             el("strong", { text: artifactLabel(item).replace(" · current", "") }),
             el("small", {
               text: [
-                item.pinned ? "Pinned" : "",
-                item.cue_count ? formatCount(item.cue_count, "caption") : "",
+                stale ? STALE_RENDER_TEXT : "",
+                !stale && item.pinned ? "Pinned" : "",
+                !stale && item.cue_count ? formatCount(item.cue_count, "caption") : "",
               ].filter(Boolean).join(" · ") || "Ready to share",
             }),
           ]),

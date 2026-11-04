@@ -8,8 +8,9 @@
 #   python3 app.py
 #
 # Ports: Studio 8795, Classic 8796, Voice Room 8797. Port 8787 is the founder's
-# own app and is never a lane's. Studio embeds Classic and Voice Room, so its
-# build shows both views and the voice_room feature.
+# own app and is never a lane's. Studio and Classic are separate products; the
+# app entrypoints carry their own defaults, while this helper remains for the
+# legacy lane workflow.
 set -euo pipefail
 
 lane=${1:-}
@@ -25,7 +26,7 @@ if [[ -z "$lane" ]]; then
   esac
 fi
 case "$lane" in
-  studio)  port=8795; edition=all;     features="voice_room"; folder=studio;  media=studio ;;
+  studio)  port=8795; edition=studio;  features="voice_room"; folder=studio;  media=studio ;;
   classic) port=8796; edition=classic; features="";           folder=classic; media=classic ;;
   voice|voice-room)
            port=8797; edition=classic; features="voice_room"; folder=voice;   media=voiceroom; lane=voice ;;

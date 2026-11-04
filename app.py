@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import platform
 import re
 import shutil
 import signal
@@ -3485,23 +3486,39 @@ def url_ingest_docs() -> FileResponse:
     return FileResponse(path, media_type="text/markdown; charset=utf-8")
 
 
+def _platform_capabilities() -> dict:
+    """What this machine can do without a cloud route."""
+    import stt as stt_engine
+
+    native_stt = bool(stt_engine._whisper_command()) or (
+        (ROOT / "bin" / "transcribe_apple").is_file()
+    )
+    native_tts = audio.say_available() or audio.kokoro_available()
+    native_vision = vision.available()
+    return {
+        "system": sys.platform,
+        "machine": platform.machine(),
+        "apple_silicon": sys.platform == "darwin" and platform.machine() == "arm64",
+        "native_stt": native_stt,
+        "native_transcript": native_stt,
+        "native_tts": native_tts,
+        "native_vision": native_vision,
+        "native_ai": bool(native_stt and native_tts and native_vision),
+    }
+
+
 @app.get("/api/health")
 def health() -> dict:
+    platform_caps = _platform_capabilities()
     return {
         "ok": True,
         "ffmpeg": ffmpeg_version(),
-        "vision": vision.available(),
-        "whisper": bool(shutil.which("mlx_whisper"))
-        or (
-            sys.platform == "darwin"
-            and (
-                (ROOT / "bin" / "transcribe_apple").is_file()
-                or bool(shutil.which("swiftc"))
-            )
-        ),
+        "vision": platform_caps["native_vision"],
+        "whisper": platform_caps["native_stt"],
         "data": str(DATA),
         "encoder": render._choose_encoder(),
         "opencode": audio.opencode_available(),
+        "platform": platform_caps,
         "version": 2,
     }
 

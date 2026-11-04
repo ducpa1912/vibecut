@@ -124,3 +124,25 @@ print("studio-ok")
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "studio-ok" in result.stdout
+
+
+def test_studio_page_does_not_boot_from_editions():
+    page = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    assert "vibecut:edition" not in page
+    assert "VIBECUT_EDITION" not in page
+    assert 'data-features="voice_room"' in page
+    assert 'data-views="studio"' in page
+
+
+def test_separate_app_entrypoints_and_scripts_exist():
+    classic = (ROOT / "classic_app.py").read_text(encoding="utf-8")
+    assert 'VIBECUT_APP"] = "classic"' in classic
+    assert 'VIBECUT_EDITION"] = "classic"' in classic
+    assert 'VIBECUT_PORT", "8796"' in classic
+    assert 'vibecut-lanes" / "classic"' in classic
+    studio = (ROOT / "studio_app.py").read_text(encoding="utf-8")
+    assert 'VIBECUT_PORT", "8795"' in studio
+    assert 'vibecut-lanes" / "studio"' in studio
+    assert (ROOT / "scripts" / "serve-studio.sh").is_file()
+    assert (ROOT / "scripts" / "serve-classic.sh").is_file()
+    assert not (ROOT / "scripts" / "integrate.sh").exists()

@@ -23,7 +23,7 @@ def _env(*args, root="/lanes"):
 def test_each_lane_has_its_own_port_data_and_switches():
     lanes = {name: _env(name)[1] for name in ("studio", "classic", "voice")}
     assert lanes["studio"]["VIBECUT_PORT"] == "8795"
-    assert (lanes["studio"]["VIBECUT_EDITION"], lanes["studio"]["VIBECUT_FEATURES"]) == ("all", "voice_room")
+    assert (lanes["studio"]["VIBECUT_EDITION"], lanes["studio"]["VIBECUT_FEATURES"]) == ("studio", "voice_room")
     assert lanes["classic"]["VIBECUT_PORT"] == "8796"
     assert (lanes["classic"]["VIBECUT_EDITION"], lanes["classic"]["VIBECUT_FEATURES"]) == ("classic", "")
     assert lanes["voice"]["VIBECUT_PORT"] == "8797"
@@ -53,21 +53,23 @@ def test_the_branch_names_the_lane_when_no_lane_is_given():
 
 def test_one_set_of_scripts():
     assert not (SCRIPTS / "lane.sh").exists()
-    for name in ("serve.sh", "record.sh", "integrate.sh"):
+    for name in ("serve.sh", "record.sh"):
         text = (SCRIPTS / name).read_text()
-        assert "lane-env.sh" in text or name == "integrate.sh", name
+        assert "lane-env.sh" in text, name
         assert "source scripts/lane.sh" not in text, name
+    for name in ("serve-studio.sh", "serve-classic.sh"):
+        assert (SCRIPTS / name).is_file(), name
     serve = (SCRIPTS / "serve.sh").read_text()
     assert 'legacy="$PWD/data"' in serve and 'mv "$legacy" "$VIBECUT_DATA"' in serve
     assert "VIBECUT_LANE_RECORDINGS" in (SCRIPTS / "record.sh").read_text()
 
 
-def test_only_studio_moves_main_and_integrates():
+def test_only_studio_moves_main_and_products_do_not_merge_at_release():
     ship = (SCRIPTS / "ship.sh").read_text()
     assert 'if [[ "$branch" != "studio" ]]' in ship and "merge --ff-only studio" in ship
     assert "origin/main" not in ship
     lane = (SCRIPTS / "ship-lane.sh").read_text()
     assert "refs/heads/main" not in lane and "merge --ff-only" not in lane
-    integrate = (SCRIPTS / "integrate.sh").read_text()
-    assert "origin/classic" in integrate and "origin/voice-room" in integrate
-    assert "Only the studio lane integrates" in integrate
+    assert not (SCRIPTS / "integrate.sh").exists()
+    assert 'exec python3 studio_app.py' in (SCRIPTS / "serve-studio.sh").read_text()
+    assert 'exec python3 classic_app.py' in (SCRIPTS / "serve-classic.sh").read_text()

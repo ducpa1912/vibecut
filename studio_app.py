@@ -16,10 +16,15 @@ its voice features (clone, speech) inside Setup and Edit.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ["VIBECUT_APP"] = "studio"
 os.environ.setdefault("VIBECUT_EDITION", "studio")
 os.environ.setdefault("VIBECUT_FEATURES", "voice_room")
+os.environ.setdefault("VIBECUT_PORT", "8795")
+os.environ.setdefault(
+    "VIBECUT_DATA", str(Path.home() / "vibecut-lanes" / "studio"),
+)
 
 from app import HOST, PORT, app  # noqa: E402  (configured before app imports)
 

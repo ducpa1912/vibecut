@@ -19,6 +19,7 @@
 import { request } from "./api.js";
 import { el, formatBytes } from "./ui.js";
 import { createMyVoicePanel } from "./voice/voiceclone.js";
+import { capabilityDetail, capabilityLabel, CLOUD_VOICE_ENGINES } from "./trust.js";
 
 const KEY_ROWS = [
   {
@@ -124,6 +125,7 @@ export function mount(host, ctx = {}) {
   let settings = null;
   let engines = null;
   let policy = null;
+  let platform = null;
   let loading = true;
   let error = "";
   let notice = "";
@@ -162,6 +164,9 @@ export function mount(host, ctx = {}) {
         isHeyGen ? el("span", { class: "st-chip st-chip-busy", text: "Free until 30 Nov 2026" }) : null,
       ]),
       el("p", { class: "st-hint", text: item.install || "Cloud voice." }),
+      CLOUD_VOICE_ENGINES.includes(id)
+        ? el("p", { class: "st-field-hint", text: "Cloud call · sends the selected script sample · may cost credits." })
+        : null,
     ]);
     return card;
   }
@@ -176,6 +181,26 @@ export function mount(host, ctx = {}) {
       if (engines?.voices?.[id]) card.append(engineCard(id));
     }
     return card;
+  }
+
+  function capabilityCard() {
+    const cloud = KEY_ROWS.some((row) => Boolean(settings?.secrets?.[row.id]));
+    const label = capabilityLabel({ platform, cloud });
+    const detail = capabilityDetail({ platform, cloud });
+    return el("div", { class: "st-setup-section st-setup-capability" }, [
+      el("div", { class: "st-setup-section-head" }, [
+        el("h3", { text: "This Mac" }),
+        el("span", {
+          class: `st-chip ${cloud ? "st-chip-busy" : "st-chip-ok"}`,
+          text: label,
+        }),
+      ]),
+      el("p", { class: "st-hint", text: detail }),
+      el("p", {
+        class: "st-field-hint",
+        text: "Saving a cloud key does not call the provider. Preview, clone, generate and render do.",
+      }),
+    ]);
   }
 
   function rightsCard() {
@@ -250,6 +275,7 @@ export function mount(host, ctx = {}) {
           el("span", { class: `st-chip ${status.has ? "st-chip-ok" : ""}`, text: status.source }),
         ]),
         el("p", { class: "st-hint", text: row.copy }),
+        el("p", { class: "st-field-hint", text: "Saving this key does not call the provider. Preview, clone, generate and render do." }),
         el("div", { class: "st-setup-key-form" }, [
           input,
           el("div", { class: "st-setup-key-actions" }, [save, clear]),
@@ -398,7 +424,7 @@ export function mount(host, ctx = {}) {
       wrap.append(line);
     }
     myVoice.render();
-    wrap.append(rightsCard(), enginesCard(), keysCard(), myVoice.node, packsCard());
+    wrap.append(capabilityCard(), rightsCard(), enginesCard(), keysCard(), myVoice.node, packsCard());
     host.append(wrap);
   }
 
@@ -411,15 +437,17 @@ export function mount(host, ctx = {}) {
     }
     render();
     try {
-      const [state, engineState, rightsPolicy] = await Promise.all([
+      const [state, engineState, rightsPolicy, health] = await Promise.all([
         request("/api/settings"),
         request("/api/audio/engines"),
         request("/api/rights/policy").catch(() => null),
+        request("/api/health").catch(() => null),
       ]);
       if (disposed) return;
       settings = state;
       engines = engineState;
       policy = rightsPolicy;
+      platform = health?.platform || null;
     } catch (cause) {
       if (disposed) return;
       error = cause?.message || "Could not read setup.";

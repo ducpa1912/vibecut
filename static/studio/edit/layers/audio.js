@@ -12,6 +12,7 @@
  */
 
 import { request } from "../../api.js";
+import { costNotice } from "../../trust.js";
 import { ensureCheckStyles } from "../../check.js";
 import { el, formatDuration } from "../../ui.js";
 import {
@@ -1203,6 +1204,10 @@ export function mountAudioPanel(host, ctx) {
     });
     find.addEventListener("click", () => { void findClips(); });
     block.append(el("div", { class: "st-layer-add" }, [find]));
+    block.append(el("p", {
+      class: "st-field-hint",
+      text: "Cleaning is local. Cloning sends the chosen clip to HeyGen through OpenRouter · may cost credits.",
+    }));
 
     const stageCopy = cloneStageCopy(cloneTask);
     if (stageCopy) {
@@ -1562,6 +1567,7 @@ export function mountAudioPanel(host, ctx) {
     });
     generate.addEventListener("click", () => { void generateCandidates(); });
     card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [generate]));
+    card.append(el("p", { class: "st-field-hint", text: "Cloud generation sends the brief to the selected provider · may cost credits." }));
     card.append(candidateRows());
     return card;
   }
@@ -1810,6 +1816,12 @@ export function mountAudioPanel(host, ctx) {
       });
       preview.addEventListener("click", () => { void previewVoice(); });
       card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [preview]));
+      if (["heygen", "minimax", "elevenlabs", "fish", "gemini"].includes(selectedEngine)) {
+        card.append(el("p", {
+          class: "st-field-hint",
+          text: costNotice({ provider: ENGINE_LABELS[selectedEngine] || selectedEngine, what: "the sample line" }),
+        }));
+      }
       card.append(el("p", { class: "st-field-hint", text: "The sample speaks the story hook, or a short test line when the hook is empty." }));
     }
     if (engines && voiceRoomOn()) {

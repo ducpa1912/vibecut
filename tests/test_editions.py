@@ -53,21 +53,17 @@ def test_unknown_values_fall_back_safely(switches):
     assert editions.features() == frozenset()
 
 
-def test_index_page_carries_the_edition_before_the_boot_block(switches):
-    import app
+def test_classic_page_carries_the_edition_and_studio_page_does_not(switches):
+    from pathlib import Path
 
-    api = TestClient(app.app)
-    switches(edition="classic")
-    html = api.get("/").text
-    assert _boot(html)["views"] == ["classic"]
-    assert html.index("window.VIBECUT_EDITION") < html.index("Choose the workspace before first paint")
-    assert "<!-- vibecut:edition -->" not in html
-
-    switches(edition="studio")
-    html = api.get("/").text
-    assert _boot(html)["views"] == ["studio"]
-    assert html.index("window.VIBECUT_EDITION") < html.index("Studio is the only workspace here")
-    assert "<!-- vibecut:edition -->" not in html
+    static = Path(__file__).resolve().parents[1] / "static"
+    classic = (static / "classic" / "index.html").read_text()
+    studio = (static / "index.html").read_text()
+    assert "<!-- vibecut:edition -->" in classic
+    assert "Choose the workspace before first paint" in classic
+    assert "<!-- vibecut:edition -->" not in studio
+    assert "VIBECUT_EDITION" not in studio
+    assert 'data-views="studio"' in studio
 
 
 def test_voice_room_is_404_when_the_feature_is_off(switches):
@@ -97,15 +93,12 @@ def test_settings_report_the_edition_and_heygen_clone_follows_the_feature(switch
     assert tts.voice_engine_status()["heygen"]["clone"] is False
 
 
-def test_index_page_carries_voice_room_only_when_the_feature_is_on(switches):
-    import app
+def test_studio_page_has_static_feature_attributes(switches):
+    from pathlib import Path
 
-    api = TestClient(app.app)
-    assert _boot(api.get("/").text)["features"] == ["voice_room"]
-    switches(features="")
-    assert _boot(api.get("/").text)["features"] == []
-    switches(edition="classic")
-    assert _boot(api.get("/").text)["features"] == []
+    studio = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text()
+    assert 'data-features="voice_room"' in studio
+    assert "VIBECUT_FEATURES" not in studio
 
 
 def test_boot_block_hides_links_for_views_and_features_the_build_lacks():
@@ -128,5 +121,5 @@ def test_boot_block_hides_links_for_views_and_features_the_build_lacks():
         "localStorage.getItem(\"vibecut.editor\")",
     ):
         assert gone not in studio, gone
-    assert 'root.dataset.editor = "studio"' in studio
+    assert 'data-editor="studio"' in studio
     assert "allowed(requested)" in classic and "allowed(stored)" in classic

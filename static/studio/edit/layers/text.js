@@ -6,6 +6,7 @@
  */
 
 import { el } from "../../ui.js";
+import { graphicsCapNotice } from "../../trust.js";
 import {
   TEXT_ANCHORS,
   TEXT_KINDS,
@@ -75,6 +76,8 @@ export function mountTextPanel(host, ctx) {
     presets.append(button);
   }
   host.append(presets);
+  const capNote = graphicsCapNotice({ count: (edit?.graphics || []).length });
+  if (capNote) host.append(el("p", { class: "st-warning", text: capNote }));
 
   if (!layers.length) {
     host.append(el("p", { class: "st-layer-note", text: "Choose a preset to place text at the playhead." }));

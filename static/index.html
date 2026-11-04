@@ -1,31 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-editor="studio" data-views="studio" data-features="voice_room">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — Studio</title>
-  <link rel="stylesheet" href="/static/studio/studio.css?v=0.6.0">
-  <!-- vibecut:edition -->
-  <style>
-    /* Studio owns this page. The edition block only tells the shell which
-       optional voice features this build ships; there is no second view. */
-    html:not([data-features~="voice_room"]) .st-voice-clone-form,
-    html:not([data-features~="voice_room"]) .st-voice-clone-list { display: none !important; }
-  </style>
-  <script>
-    /* Studio is the only workspace here. */
-    (function () {
-      var edition = window.VIBECUT_EDITION || {
-        views: ["studio"], default_view: "studio", features: ["voice_room"]
-      };
-      var root = document.documentElement;
-      root.dataset.editor = "studio";
-      root.dataset.views = "studio";
-      root.dataset.features = (edition.features || []).join(" ");
-    })();
-  </script>
-  <script type="module" src="/static/studio/shell.js?v=20261104-2"></script>
+  <link rel="stylesheet" href="/static/studio/studio.css?v=0.6.1">
+  <script type="module" src="/static/studio/shell.js?v=20261104-3"></script>
 </head>
 <body>
   <div id="studio-root"></div>

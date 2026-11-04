@@ -1860,3 +1860,6 @@ main.st-main[data-step="finish"] > .st-finish-panel {
   .st-finish-head-actions { padding-top: 0; }
   .st-finish-head .st-lede { display: none; }
 }
+.st-finish-version.is-stale { border-color: rgba(226, 138, 124, 0.42); }
+.st-finish-version.is-stale .st-chip { color: #e28a7c; }
+.st-setup-capability { border-color: rgba(232, 162, 102, 0.28); }
