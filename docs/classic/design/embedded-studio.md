@@ -160,13 +160,14 @@ Cover and the rights gate refuses watermarks and screen UI.
 
 **Status:** built, not founder-passed. The found-text list reads Check's own
 `clean_prefill`: thumbnail from the nearest scene still cropped by CSS to the
-found box, kind, server reason, a method picker, and an Add button. Watermark
-and screen-UI rows are greyed with the server's reason and cannot be ticked.
-Scan ranges are source time and boxes are cut time, so a range is translated
-clip by clip; text no clip carries says "not in this cut" instead of becoming a
-box that never appears. The rights gate is enforced on the server as well:
-`PUT /api/classic/jobs/{id}/text` refuses a blocked kind with `409`, and the
-rights lock refuses any box until the import carries the own-footage tick.
+found box, kind and server reason. Rows are ticked, then one "Remove ticked"
+removes them all with one method (Blur, Cover, or AI fill once C2b is
+installed), in one undo step. Watermark and screen-UI rows are greyed with the
+server's reason and have no tick. Scan ranges are source time and boxes are
+translated clip by clip; text no clip carries says "not in this cut" instead of
+becoming a box that never appears. The rights gate is enforced on the server as
+well: `PUT /api/classic/jobs/{id}/text` refuses a blocked kind with `409`, and
+the rights lock refuses any box until the import carries the own-footage tick.
 Proven in `tests/test_classic_clean.py::test_the_server_refuses_a_box_the_policy_blocks`
 and `test_the_rights_lock_refuses_clean_without_the_tick`.
 
@@ -185,14 +186,29 @@ and `test_the_rights_lock_refuses_clean_without_the_tick`.
 preview, and the full render fills every frame. Until then, C2 stays at Blur
 and Cover.
 
-**Status:** not built, by design. The model pack is absent, so no fill code
-ships. `GET /api/classic/fill` reports what is installed and what is missing
-(`lama_fp32.onnx`, `sttn_infer_model.pth` under the data folder's
-`models/fill`, overridable with `VIBECUT_FILL_MODELS`), and
-`POST /api/classic/jobs/{id}/fill/preview` answers `409 model_missing` with that
-reason. The panel shows a locked row naming both files with their licenses, and
-Blur/Cover/Crop stay usable. Nothing claims to fill. When the pack lands, the
-preview route is the single place that starts doing work.
+**Status:** built, not installed and not founder-passed. The model pack is not
+on this Mac, so the founder cannot use it yet and nothing pretends otherwise.
+`textfill/` is a byte-identical copy of Studio `7ce8dcf`; the Edit schema
+accepts `kind: "fill"` with `method: "sttn"|"lama"`; the render holds
+`render.FILL_LOCK`, fills each segment with a fill plan before encoding and
+releases the models afterwards; the cache key carries the model stamp and the
+layer signature. Classic keeps its own `method` (blur/cover/crop/fill) and adds
+`engine` on fill layers only.
+
+`GET /api/classic/fill` answers per engine, not one flag: `ready` means the
+model file **and** its runtime package (`torch` for STTN, `onnxruntime` for
+LaMa) are present, and each engine carries its own reason. STTN installed
+without LaMa still fills subtitles; only the one-frame preview needs LaMa,
+because STTN needs neighbouring frames. `POST /api/classic/jobs/{id}/fill/
+preview` compiles the unsaved boxes, reads the source frame at the right
+source time, fills it with LaMa, burns overlays and returns before/after JPEGs
+cached by edit, frame and model; it answers `409 fill_running` while a render
+holds the fill lock. The panel shows what is ready and what is missing, the
+cost per engine, an engine picker per fill layer, and only enables Preview
+when LaMa is ready. The render progress already reads server progress, so a
+fill render says `Filling text, beat i/n` and the existing Cancel stops it. No
+real fill has run on this Mac: that needs the founder's approval to install
+torch/onnxruntime and copy the model pack.
 
 ### C3 — Polish
 

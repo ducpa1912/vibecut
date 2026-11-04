@@ -83,18 +83,33 @@ Studio's final shape for one fill layer:
 }
 ```
 
-Classic should adopt `kind: "fill"` + `method: "sttn"|"lama"` first. A painter
-mask (`mask.strokes`) is a later Studio feature; box-only fill is enough for
-C2b. Do not invent a new mask shape in Classic.
+What Classic actually shipped, and why it differs:
 
-Coordinate contract:
-- Classic boxes are drawn on the cut/preview frame.
-- `compose_render` clean boxes are source-space.
-- Verify the current Classic box convention before porting. If Classic stores
-  cut-space boxes, convert through the crop/clip mapping before `textfill`;
-  otherwise the fill lands on the wrong part of the source.
-- Ranges are source time. Translate scan ranges clip by clip, as C2a already
-  does. A range outside every clip is “not in this cut”, not a box.
+- Classic's own `method` already means `blur | cover | crop | fill` for every
+  box. It cannot also mean the engine. A fill layer therefore stores
+  `method: "fill"` **and** `engine: "sttn" | "lama"`. `engine` is present only
+  on fill layers; a non-fill layer has none.
+- `routes_classic._classic_clean_edit` translates a Classic fill layer into an
+  Edit layer with `kind: "fill"` and `method: <engine>`, because that is the
+  name `edits.normalize_clean` and `textfill` use. The translation happens at
+  the boundary; the Edit document is never stored by Classic.
+- The engine is validated only for fill layers: an unknown engine is an error,
+  and an engine whose model or runtime is missing is refused on its own. STTN
+  installed without LaMa still fills subtitles.
+- A painter mask (`mask.strokes`) is a later Studio feature; box-only fill is
+  enough for C2b. Do not invent a new mask shape in Classic.
+
+Coordinate contract (as built in C2a):
+- Classic stores every box **source-normalized**, not cut-space. Drawing and
+  dragging convert with the crop the frame route returns in `X-VibeCut-Crop`;
+  `X-VibeCut-Segment` names the segment that crop belongs to.
+- A drawn box gets its clip's cut window as ranges; a scan box gets the scan's
+  source ranges translated to cut ranges. `_cut_ranges_to_source` translates
+  back for the Edit document, because `compose_render._active_window` compares
+  source time.
+- A range outside every clip is “not in this cut”, not a box.
+- Stored boxes from before C2a are version 1 and are dropped on load with a
+  `clean_reset` count, never reinterpreted.
 
 ## 5. Engine choice
 
@@ -118,12 +133,14 @@ Do not run both engines on the same span.
    The cache key must include the model stamp and the fill layer signature.
 3. **Compiler.** Ensure `compose_render` emits the fill plan for Classic cuts.
    If the shared compiler already has it, only pass the engine through.
-4. **Schema.** Change `CLASSIC_CLEAN_KINDS["fill"] = "fill"`; carry `method`,
-   `tracklet_id`, `tracklet_kind`; validate through `edits.normalize_clean`.
+4. **Schema.** Change `CLASSIC_CLEAN_KINDS["fill"] = "fill"`; carry `engine`,
+   `tracklet_id`, `tracklet_kind`; validate through `edits.normalize_clean` by
+   passing the engine as its `method` for fill layers only.
 5. **Status.** Keep `GET /api/classic/fill`; add package/runtime checks so
    “installed” means model + torch/onnxruntime, not just a file on disk.
 6. **Preview.** Replace the `501` stub with one LaMa frame:
-   - body: clips, box, time, aspect, method
+   - body: clips, clean layers, overlays, effects, t, aspect (the unsaved box
+     arrives inside `clean`; there is no separate `box` field)
    - compile the current cut with the box as a fill layer
    - extract the source frame, run `textfill.fill_frame`, return before/after
    - no save before preview; cache by edit hash + frame + model stamp
@@ -162,12 +179,15 @@ These were real Studio bugs or review findings; do not repeat them:
 - Full render: a subtitle box changes pixels inside the box and leaves pixels
   outside it unchanged on a real fixture frame.
 - Preview: before/after differs only inside the fill box; no save request.
-- Subtitle and manual overlay: STTN default for subtitle, LaMa for manual.
+- Engine defaults: a scan subtitle tick gets STTN, a manual overlay gets LaMa,
+  and each falls back to the other engine when only that one is ready.
 - Ranges: a fill active only in one clip does not touch another clip.
-- Reload/undo: fill method and engine survive save/reload; undo restores prior
-  layer.
-- Cache: changing engine or box invalidates the fill clip.
-- Rights: watermark/screen UI still refused; fill does not bypass the gate.
+- Reload/undo: `method: "fill"` and `engine` survive save/reload; the Edit
+  layer it compiles to carries `kind: "fill"` and `method: <engine>`; undo
+  restores the prior layer.
+- Cache: changing the engine, the box or the model file invalidates the fill.
+- Rights: a watermark or screen-UI box still refuses AI fill, and the rights
+  lock refuses a fill box without the attestation tick.
 - License: About/notices show STTN Apache-2.0, LaMa Apache-2.0 and MIT code.
 
 ## 9. What not to port

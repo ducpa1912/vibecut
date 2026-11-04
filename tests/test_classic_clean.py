@@ -129,7 +129,8 @@ def test_a_clean_box_is_validated_by_the_edit_rules():
 def test_ai_fill_is_refused_while_its_models_are_missing():
     with pytest.raises(routes_classic.ClassicTextError) as error:
         routes_classic.normalize_classic_clean([_box(method="fill")], 10.0)
-    assert "Blur or Cover" in str(error.value)
+    # The refusal names the file that is actually missing, not a generic lock.
+    assert "sttn_infer_model.pth" in str(error.value)
 
 
 # ------------------------------------------------------------------ the render
@@ -470,22 +471,73 @@ def test_fill_status_names_the_missing_models_and_never_lies(classic, monkeypatc
     client, tmp_path = classic
     status = client.get("/api/classic/fill").json()
     assert status["available"] is False
-    assert status["missing"] == ["LaMa", "STTN"]
+    assert status["missing"] == ["STTN", "LaMa"]
     assert all(not item["installed"] for item in status["files"])
     assert "model pack" in status["note"]
+    assert status["engines"]["sttn"]["ready"] is False
+    assert "sttn_infer_model.pth" in status["engines"]["sttn"]["reason"]
+    assert status["preview"] is None
 
     preview = client.post(
         "/api/classic/jobs/classic-clean/fill/preview",
-        json={"clips": _clips(), "box": _box()["box"], "t": 1.0},
+        json={"clips": _clips(), "clean": [_box(method="fill")], "t": 1.0},
     )
-    assert preview.status_code == 409
+    assert preview.status_code == 409, preview.text
     assert preview.json()["error"] == "model_missing"
 
+
+# A model file without its runtime package is not a ready engine.
+def test_a_model_without_its_package_is_not_ready(classic, monkeypatch):
+    client, tmp_path = classic
     models = tmp_path / "fill"
     models.mkdir()
-    (models / routes_classic.FILL_MODELS["LaMa"]).write_bytes(b"x")
+    for filename in routes_classic.FILL_MODELS.values():
+        (models / filename).write_bytes(b"x")
+    monkeypatch.setenv("VIBECUT_FILL_MODELS", str(models))
+    monkeypatch.setattr(
+        routes_classic, "_classic_runtime_installed",
+        lambda engine: (False, f"AI fill with {engine.upper()} needs the package."),
+    )
+    status = client.get("/api/classic/fill").json()
+    assert status["available"] is False
+    assert status["missing"] == []
+    assert status["engines"]["sttn"]["model"] is True
+    assert "needs the package" in status["engines"]["sttn"]["reason"]
+    with pytest.raises(routes_classic.ClassicTextError) as error:
+        routes_classic.normalize_classic_clean([_box(method="fill")], 10.0)
+    assert "needs the package" in str(error.value)
+
+
+# Only the engine that is missing is refused; the other one still works.
+def test_one_ready_engine_is_enough(classic, monkeypatch):
+    client, tmp_path = classic
+    models = tmp_path / "fill"
+    models.mkdir()
     (models / routes_classic.FILL_MODELS["STTN"]).write_bytes(b"x")
     monkeypatch.setenv("VIBECUT_FILL_MODELS", str(models))
-    ready = client.get("/api/classic/fill").json()
-    assert ready["available"] is True
-    assert ready["missing"] == []
+    monkeypatch.setattr(
+        routes_classic, "_classic_runtime_installed",
+        lambda engine: (engine == "sttn", "AI fill with LAMA needs onnxruntime."),
+    )
+    status = client.get("/api/classic/fill").json()
+    assert status["available"] is True
+    assert status["default"] == "sttn"
+    assert status["engines"]["lama"]["ready"] is False
+    # No LaMa means no one-frame preview, even though the render can fill.
+    assert status["preview"] is None
+    assert "lama" not in status["methods"] and "sttn" in status["methods"]
+
+    layers = routes_classic.normalize_classic_clean(
+        [_box(method="fill")], 10.0,
+    )
+    assert layers[0]["method"] == "fill"
+    assert layers[0]["engine"] == "sttn"
+    edit = routes_classic._classic_clean_edit(layers, _clips())
+    assert edit[0]["kind"] == "fill"
+    assert edit[0]["method"] == "sttn"
+
+    with pytest.raises(routes_classic.ClassicTextError) as error:
+        routes_classic.normalize_classic_clean(
+            [_box(method="fill", engine="lama")], 10.0,
+        )
+    assert "LaMa" in str(error.value)

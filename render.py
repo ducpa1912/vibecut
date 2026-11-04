@@ -72,6 +72,12 @@ class RenderCancelled(RuntimeError):
     pass
 
 
+# One fill runs at a time: two model sessions on an 8 GB Mac is how a render
+# starts swapping. The pre-pass holds this, and a single-frame preview that
+# finds it taken answers "a fill is running" instead of loading a second copy.
+FILL_LOCK = threading.Lock()
+
+
 def _ffmpeg() -> str:
     path = shutil.which("ffmpeg")
     if not path:
@@ -2129,6 +2135,7 @@ def _prepare_fills(
     if not planned:
         return results
     data_root = job_dir.parent.parent
+    FILL_LOCK.acquire()
     try:
         for position, (index, segment) in enumerate(planned):
             plan = segment["fill"]
@@ -2163,6 +2170,7 @@ def _prepare_fills(
         # Model sessions are large; a finished or failed pre-pass must not
         # hold STTN or LaMa memory for the rest of the app's life.
         textfill.release_fillers()
+        FILL_LOCK.release()
     return results
 
 

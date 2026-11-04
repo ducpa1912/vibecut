@@ -268,44 +268,57 @@ async function run(viewport) {
     const rows = [...document.querySelectorAll("#clean-found .clean-found-row")];
     return rows.map((row) => ({
       blocked: row.classList.contains("is-blocked"),
+      added: row.classList.contains("is-added"),
       badge: row.querySelector(".clean-found-blocked")?.textContent || "",
-      hasAdd: Boolean(row.querySelector("[data-found-add]")),
-      addLabel: (row.querySelector("[data-found-add]")?.textContent || "").trim(),
+      tick: Boolean(row.querySelector("[data-found-tick]")),
       reason: row.querySelector(".clean-found-reason")?.textContent || "",
       thumb: Boolean(row.querySelector(".clean-found-thumb")?.style.backgroundImage),
     }));
   });
-  assert(found[0].hasAdd && !found[0].blocked, `${label}: the subtitle cannot be added`);
+  assert(found[0].tick && !found[0].blocked, `${label}: the subtitle cannot be ticked`);
   assert(found[0].thumb, `${label}: the found row has no thumbnail`);
-  assert(found[1].blocked && !found[1].hasAdd, `${label}: the watermark is addable`);
+  assert(found[1].blocked && !found[1].tick, `${label}: the watermark is tickable`);
   assert(found[1].badge === "locked", `${label}: the watermark does not say locked`);
   assert(/watermark/i.test(found[1].reason), `${label}: the watermark reason is missing`);
 
-  // The other viewport already added this subtitle, so the row says Added and
-  // there is nothing left to add; both paths keep the count honest.
-  const scanAlready = found[0].addLabel === "Added";
+  // The other viewport already removed this subtitle; Remove ticked then says
+  // so instead of adding a second box on the same text.
+  const scanAlready = found[0].added;
   const afterScan = start + (scanAlready ? 1 : 2);
   if (!scanAlready) {
-    await page.locator("[data-found-add]").first().click();
+    await page.locator("[data-found-tick]").first().click();
+    await page.waitForFunction(() => {
+      const apply = document.querySelector("[data-found-apply]");
+      return apply && !apply.disabled && /Remove ticked \(1\)/.test(apply.textContent || "");
+    }, null, { timeout: 10000 });
+    await page.locator("[data-found-apply]").click();
     await page.waitForFunction((n) => document.querySelectorAll("#clean-overlay .clean-box").length === n,
       afterScan, { timeout: 20000 });
   }
-  const scanBox = await page.evaluate(() => {
-    const boxes = [...document.querySelectorAll("#clean-overlay .clean-box")];
-    const last = boxes[boxes.length - 1];
-    return { method: last.dataset.method };
-  });
-  assert(scanBox.method === "cover", `${label}: the found subtitle defaulted to ${scanBox.method}`);
+  if (!scanAlready) {
+    const scanBox = await page.evaluate(() => {
+      const boxes = [...document.querySelectorAll("#clean-overlay .clean-box")];
+      const last = boxes[boxes.length - 1];
+      return { method: last.dataset.method };
+    });
+    // AI fill is not installed here, so the bulk method falls back to Blur.
+    assert(scanBox.method === "blur", `${label}: the ticked subtitle used ${scanBox.method}`);
+  } else {
+    // The scan prefilled this subtitle; nothing new may be added on the same text.
+    assert(found[0].added, `${label}: the prefilled subtitle row lost its tick`);
+  }
 
   // AI fill is locked with the missing model names, not a dead button.
   await page.waitForFunction(() => {
     const fill = document.querySelector("#clean-fill");
-    return fill && !fill.hidden && /AI fill is locked/.test(fill.textContent || "");
+    return fill && !fill.hidden && /AI fill is not ready/.test(fill.textContent || "");
   }, null, { timeout: 15000 });
   const fillText = await page.locator("#clean-fill").textContent();
   assert(/lama_fp32\.onnx/.test(fillText), `${label}: the fill row hides the missing LaMa file`);
   assert(/sttn_infer_model\.pth/.test(fillText), `${label}: the fill row hides the missing STTN file`);
   assert(!(await page.locator("#clean-fill-preview").count()), `${label}: a ready fill button exists`);
+  assert(!(await page.locator("[data-found-method] option[value=fill]").count()),
+    `${label}: the bulk method offers locked AI fill`);
 
   // Delete removes the box and its row.
   await page.locator(`${row} [data-clean-delete]`).click();

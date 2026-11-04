@@ -150,16 +150,20 @@ CLASSIC_CLEAN_KINDS = {
     "blur": "blur",
     "cover": "plate",
     "crop": "crop_guard",
-    "fill": "blur",
+    "fill": "fill",
 }
 MAX_CLASSIC_CLEAN = 24
 CLASSIC_CLEAN_DEFAULT_COLOR = "#0b0d12"
-# AI fill is real but optional: without the model pack the method is refused
-# with the missing file names, and Blur and Cover stay available.
+# A Classic box's `method` is what the founder picked (blur, cover, crop or
+# fill); a fill box also carries `engine` (which model runs). `edits` calls the
+# engine "method" inside the Edit, so the two names must not be confused.
+CLASSIC_FILL_ENGINES = ("sttn", "lama")
 FILL_MODELS = {"LaMa": "lama_fp32.onnx", "STTN": "sttn_infer_model.pth"}
+FILL_ENGINE_MODEL = {"sttn": "STTN", "lama": "LaMa"}
+FILL_RUNTIME = {"sttn": "torch", "lama": "onnxruntime"}
 FILL_LICENSES = {
-    "LaMa": "Apache-2.0 · github.com/advimman/lama",
-    "STTN": "MIT · github.com/researchmm/STTN",
+    "LaMa": "Apache-2.0 · github.com/Carve/LaMa-ONNX",
+    "STTN": "Apache-2.0 weights · MIT code · researchmm/STTN",
 }
 FILL_LOCK = threading.Lock()
 FILL_LOCKS: dict[str, threading.Lock] = {}
@@ -222,7 +226,9 @@ class ClassicFillBody(BaseModel):
     model_config = {"extra": "forbid"}
 
     clips: list[dict]
-    box: dict
+    clean: list[dict] = []
+    overlays: list[dict] = []
+    effects: list[dict] = []
     t: float = 0.0
     aspect: str = "9:16"
 
@@ -413,6 +419,7 @@ def _classic_effect_layers(
 
 def normalize_classic_layers(
     overlays_value, effects_value, total: float, clean_value=None,
+    *, require_ready_fill: bool = True,
 ) -> dict:
     """Normalize Classic layers through the Studio Edit validators."""
     graphics_raw = _classic_overlay_layers(overlays_value, total)
@@ -426,7 +433,9 @@ def normalize_classic_layers(
         "overlays": [layer for layer in graphics if layer["type"] == "text"],
         "graphics": [layer for layer in graphics if layer["type"] == "fx"],
         "motion": motion,
-        "clean": normalize_classic_clean(clean_value, total),
+        "clean": normalize_classic_clean(
+            clean_value, total, require_ready=require_ready_fill,
+        ),
     }
 
 
@@ -568,9 +577,11 @@ def _classic_clean_edit(layers: list[dict], clips: list[dict]) -> list[dict]:
         if layer.get("hidden"):
             continue
         method = str(layer.get("method") or "blur")
+        kind = CLASSIC_CLEAN_KINDS.get(method, "blur")
         entry = {
             "id": layer["id"],
-            "kind": CLASSIC_CLEAN_KINDS.get(method, "blur"),
+            "kind": kind,
+            **({"method": str(layer.get("engine") or "sttn")} if kind == "fill" else {}),
             "box": dict(layer["box"]),
             "ranges": _cut_ranges_to_source(layer.get("ranges"), clips),
             "label": str(layer.get("label") or ""),
@@ -586,13 +597,20 @@ def _classic_clean_edit(layers: list[dict], clips: list[dict]) -> list[dict]:
     return edit_layers
 
 
-def normalize_classic_clean(value, total: float) -> list[dict]:
+def normalize_classic_clean(
+    value, total: float, *, require_ready: bool = True,
+) -> list[dict]:
     """Validate Clean boxes with the Edit validator, then keep Classic fields.
 
     ``edits.normalize_clean`` owns the box, range, colour and kind rules, so a
     Classic box can never be a shape the renderer does not understand. Classic
     adds only what the editor needs to draw and name it: the method the founder
     picked, the scan tracklet it came from, and an eye toggle.
+
+    ``require_ready=False`` is for the frame preview: a cut saved on a Mac with
+    the model pack must still show its box, with its range, on a Mac without
+    it. The box is drawn, never filled, so the picture does not lie; the save
+    and the render stay strict and say which engine is missing.
     """
     if value is None:
         return []
@@ -610,12 +628,24 @@ def normalize_classic_clean(value, total: float) -> list[dict]:
         method = str(raw.get("method") or "blur").strip().lower()
         if method not in CLASSIC_CLEAN_METHODS:
             raise ClassicTextError(
-                "A Clean box method must be blur, cover or crop."
+                "A Clean box method must be blur, cover, crop or AI fill."
             )
-        if method == "fill" and not classic_fill_status()["available"]:
-            raise ClassicTextError(
-                "AI fill needs its model pack. Use Blur or Cover."
-            )
+        engine = ""
+        if method == "fill":
+            # Only the engine that was asked for is refused, so a machine with
+            # STTN installed can still fill subtitles while LaMa is missing.
+            engine = str(raw.get("engine") or "sttn").strip().lower()
+            if engine not in CLASSIC_FILL_ENGINES:
+                raise ClassicTextError(
+                    "An AI fill box engine must be STTN or LaMa."
+                )
+            status = classic_fill_status() if require_ready else {}
+            ready = (status.get("engines") or {}).get(engine) or {}
+            if require_ready and not ready.get("ready"):
+                raise ClassicTextError(
+                    ready.get("reason")
+                    or "AI fill needs its model pack. Use Blur or Cover."
+                )
         layer_id = str(raw.get("id") or f"cl{index + 1:02d}").strip()
         # `kind` on a Classic box is the label the panel shows ("subtitle",
         # "manual"). Only a check kind may reach the Edit validator.
@@ -626,6 +656,9 @@ def normalize_classic_clean(value, total: float) -> list[dict]:
         raw_layers.append({
             "id": layer_id,
             "kind": CLASSIC_CLEAN_KINDS[method],
+            # `edits` calls the engine "method"; Classic's own method is stored
+            # beside it after validation, which would overwrite this key.
+            **({"method": engine} if method == "fill" else {}),
             "box": raw.get("box"),
             "ranges": raw.get("ranges"),
             "label": raw.get("label"),
@@ -638,6 +671,7 @@ def normalize_classic_clean(value, total: float) -> list[dict]:
         })
         extras[layer_id] = {
             "method": method,
+            "engine": engine,
             "hidden": bool(raw.get("hidden")),
             "source": "scan" if raw.get("source") == "scan" else "manual",
             "tracklet_kind": tracklet_kind,
@@ -660,6 +694,7 @@ def normalize_classic_clean(value, total: float) -> list[dict]:
             **layer,
             "ranges": ranges,
             "method": extra.get("method", "blur"),
+            "engine": extra.get("engine", ""),
             "hidden": bool(extra.get("hidden")),
             "source": extra.get("source", "manual"),
             "kind": str(extra.get("tracklet_kind") or layer.get("tracklet_kind") or "manual"),
@@ -667,37 +702,93 @@ def normalize_classic_clean(value, total: float) -> list[dict]:
     return layers
 
 
+def _classic_runtime_installed(engine: str) -> tuple[bool, str]:
+    """A model file without its runtime package is not ready."""
+    import importlib.util
+
+    package = FILL_RUNTIME.get(engine, "")
+    if not package:
+        return True, ""
+    try:
+        found = importlib.util.find_spec(package) is not None
+    except (ImportError, ValueError):
+        found = False
+    if found:
+        return True, ""
+    return False, (
+        f"AI fill with {engine.upper()} needs the {package} package on this Mac."
+    )
+
+
 def classic_fill_status() -> dict:
-    """Whether the AI-fill model pack is installed, and what is missing."""
+    """Which AI-fill engines are usable, and why the others are not.
+
+    Ready means the model file *and* its runtime package are both present. An
+    engine is refused on its own: STTN installed without LaMa still fills
+    subtitles, and the other way round.
+    """
     import app
 
     override = (os.environ.get("VIBECUT_FILL_MODELS") or "").strip()
     directory = Path(override) if override else Path(app.DATA) / "models" / "fill"
-    missing = [
-        name for name, filename in FILL_MODELS.items()
-        if not (directory / filename).is_file()
-    ]
+    engines: dict[str, dict] = {}
     files = []
-    for name, filename in FILL_MODELS.items():
+    missing = []
+    for engine in CLASSIC_FILL_ENGINES:
+        name = FILL_ENGINE_MODEL[engine]
+        filename = FILL_MODELS[name]
         path = directory / filename
+        installed = path.is_file() and path.stat().st_size > 0
+        if not installed:
+            missing.append(name)
+        runtime_ok, runtime_reason = _classic_runtime_installed(engine)
+        reason = ""
+        if not installed:
+            reason = (
+                f"AI fill with {name} is missing {filename}. "
+                f"Put it in {directory}."
+            )
+        elif not runtime_ok:
+            reason = runtime_reason
+        engines[engine] = {
+            "id": engine,
+            "label": name,
+            "ready": installed and runtime_ok,
+            "reason": reason,
+            "model": installed,
+            "runtime": FILL_RUNTIME.get(engine, ""),
+            "runtime_installed": runtime_ok,
+        }
         files.append({
             "name": name,
+            "engine": engine,
             "file": filename,
             "license": FILL_LICENSES.get(name, ""),
-            "installed": path.is_file(),
+            "installed": installed,
             "bytes": path.stat().st_size if path.is_file() else 0,
         })
+    default = next(
+        (engine for engine in CLASSIC_FILL_ENGINES if engines[engine]["ready"]),
+        None,
+    )
+    ready_names = [FILL_ENGINE_MODEL[item] for item in CLASSIC_FILL_ENGINES
+                   if engines[item]["ready"]]
     return {
-        "available": not missing,
+        "available": default is not None,
         "path": str(directory),
         "missing": missing,
         "files": files,
-        "methods": ["blur", "cover", "crop"],
+        "engines": engines,
+        "default": default,
+        # The single-frame preview is LaMa's job: STTN needs neighbouring
+        # frames, so it cannot answer for one frame.
+        "preview": "lama" if engines["lama"]["ready"] else None,
+        "methods": ["blur", "cover", "crop"] + ([default] if default else []),
         "note": (
-            "AI fill is ready. It repairs text regions with the installed models."
-            if not missing
-            else "AI fill needs the model pack in " + str(directory)
-            + ". Until it is installed, Blur and Cover stay available."
+            "AI fill is ready with " + " and ".join(ready_names) + "."
+            if default is not None
+            else "AI fill needs its model pack in " + str(directory)
+            + ". Until it is installed, Blur, Cover and Crop stay available."
         ),
     }
 
@@ -1382,6 +1473,7 @@ def classic_frame(job_id: str, body: ClassicFrameBody):
         total = _classic_total(clips)
         layers = normalize_classic_layers(
             body.overlays, body.effects, total, body.clean,
+            require_ready_fill=False,
         )
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
@@ -1447,6 +1539,11 @@ def classic_frame(job_id: str, body: ClassicFrameBody):
     if crop:
         headers["X-VibeCut-Segment"] = str(index)
         headers["X-VibeCut-Crop"] = ",".join(f"{value:.6f}" for value in crop)
+    # A fill box is invisible in this picture on purpose: the fill happens in
+    # the render. The client uses this count to say so instead of looking broken.
+    headers["X-VibeCut-Fill"] = str(
+        len((segment.get("fill") or {}).get("ids") or [])
+    )
     return Response(content=payload, media_type="image/jpeg", headers=headers)
 
 
@@ -1456,32 +1553,276 @@ def classic_fill() -> dict:
     return classic_fill_status()
 
 
-@router.post("/api/classic/jobs/{job_id}/fill/preview")
-def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
-    """Explain the missing model pack instead of pretending to fill."""
-    import app
-
-    app.load_job(job_id)
-    status = classic_fill_status()
-    if not status["available"]:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "error": "model_missing",
-                "message": status["note"],
-                "fill": status,
-            },
-            headers={"Cache-Control": "no-store"},
-        )
+def _fill_http_error(status_code: int, code: str, message: str, **extra) -> JSONResponse:
     return JSONResponse(
-        status_code=501,
-        content={
-            "error": "not_implemented",
-            "message": (
-                "The fill preview runs only when the model pack and the fill "
-                "pre-pass ship together. Use Blur or Cover on this cut."
-            ),
-            "fill": status,
-        },
+        status_code=status_code,
+        content={"error": code, "message": message, **extra},
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _data_url(path: Path) -> str:
+    import base64
+
+    return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+def _read_source_frame(path: Path, width: int, height: int, at: float):
+    """One RGB frame from the source at ``at`` seconds."""
+    import subprocess
+
+    import numpy as np
+
+    command = [
+        render._ffmpeg(), "-v", "error", "-nostdin",
+        "-ss", f"{max(0.0, float(at)):.6f}", "-i", str(path),
+        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24",
+        "-s", f"{int(width)}x{int(height)}", "pipe:1",
+    ]
+    completed = subprocess.run(command, capture_output=True, timeout=60, check=False)
+    expected = int(width) * int(height) * 3
+    if completed.returncode != 0 or len(completed.stdout) < expected:
+        tail = (completed.stderr or b"")[-800:].decode("utf-8", "replace")
+        raise HTTPException(500, f"Could not read the preview frame. {tail}".strip())
+    return np.frombuffer(
+        completed.stdout[:expected], dtype=np.uint8,
+    ).reshape((int(height), int(width), 3)).copy()
+
+
+def _preview_filter_chain(segment: dict, out_w: int, out_h: int) -> str:
+    """The source-side clean, crop, scale and colour chain for one frame."""
+    parts = [str(item) for item in segment.get("pre_filters") or []]
+    crop = segment.get("crop") or {}
+    try:
+        crop_w = int(crop.get("w") or 0)
+        crop_h = int(crop.get("h") or 0)
+        crop_x = int(crop.get("x") or 0)
+        crop_y = int(crop.get("y") or 0)
+    except (TypeError, ValueError):
+        crop_w = crop_h = 0
+    if crop_w > 1 and crop_h > 1:
+        parts.append(f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}")
+    parts.extend([f"scale={out_w}:{out_h}:flags=lanczos", "setsar=1"])
+    parts.extend(str(item) for item in segment.get("post_filters") or [])
+    return ",".join(part for part in parts if part)
+
+
+def _render_preview_jpeg(png: Path, output: Path, chain: str) -> None:
+    """Encode one PNG through the same crop/colour chain as the beat."""
+    import subprocess
+
+    command = [
+        render._ffmpeg(), "-y", "-v", "error", "-i", str(png),
+        "-vf", chain, "-frames:v", "1", "-q:v", "2", str(output),
+    ]
+    completed = subprocess.run(command, capture_output=True, timeout=90, check=False)
+    if completed.returncode != 0 or not output.is_file():
+        tail = (completed.stderr or b"")[-1200:].decode("utf-8", "replace")
+        raise HTTPException(500, f"Could not prepare the fill preview. {tail}".strip())
+
+
+@router.post("/api/classic/jobs/{job_id}/fill/preview")
+def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
+    """Before/after JPEGs of one frame, with LaMa filling the AI-fill boxes.
+
+    One frame, not a render. Both pictures go through the same crop, colour
+    and overlay pass, so the comparison is only the fill. The boxes come from
+    the request, unsaved, exactly like the frame route.
+    """
+    import hashlib
+    import shutil
+    import uuid
+
+    from PIL import Image
+
+    import app
+    import compose_render
+    import textfill
+
+    job = app.load_job(job_id)
+    app.require_source(job)
+    status = classic_fill_status()
+    if not status["available"]:
+        return _fill_http_error(
+            409, "model_missing", status["note"], fill=status,
+        )
+    if status.get("preview") != "lama":
+        reason = ((status.get("engines") or {}).get("lama") or {}).get("reason")
+        return _fill_http_error(
+            409,
+            "preview_unavailable",
+            reason or (
+                "The one-frame preview needs the LaMa model. The render can "
+                "still use STTN."
+            ),
+            fill=status,
+        )
+    try:
+        clips = _classic_clips(body.clips)
+        total = _classic_total(clips)
+        layers = normalize_classic_layers(
+            body.overlays, body.effects, total, body.clean,
+        )
+    except ClassicTextError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    aspect = str(body.aspect or "9:16").strip()
+    if aspect not in CLASSIC_EDIT_ASPECTS:
+        raise HTTPException(
+            422,
+            "The preview renders on 9:16 and 4:5 only. Switch the shape.",
+        )
+    try:
+        at = float(body.t)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "t must be a finite time in seconds.") from exc
+    if not math.isfinite(at) or at < 0.0 or at > total + (1.0 / 30.0):
+        raise HTTPException(
+            422, f"t must be between 0 and the cut duration ({total:.3f}s).",
+        )
+    at = min(at, total)
+    source = job.get("source") or {}
+    source_path = Path(str(source.get("path") or ""))
+    if not source_path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    width = int(source.get("width") or 0)
+    height = int(source.get("height") or 0)
+    if width < 2 or height < 2:
+        raise HTTPException(409, "The source size is not available for a fill preview.")
+    edit = _build_classic_edit(clips, aspect, layers)
+    out_w, out_h = render._dims(aspect, "draft")
+    try:
+        compiled = compose_render.compile_edit(
+            edit,
+            clips=clips,
+            source=source,
+            scenes=(job.get("analysis") or {}).get("scenes") or [],
+            size=(out_w, out_h),
+            motion_engine=compose_render.EDIT_MOTION_ENGINE,
+        )
+    except compose_render.ComposeError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    segments = compiled.get("segments") or []
+    if not segments:
+        raise HTTPException(422, "This cut has no frames to preview.")
+    last_frame = max(0, int(round(float(segments[-1].get("out_end") or 0.0)
+                                  * render.OUT_FPS)) - 1)
+    frame_index = min(max(0, int(round(at * render.OUT_FPS))), last_frame)
+    at = frame_index / render.OUT_FPS
+    try:
+        index, segment = render._compiled_segment_at(compiled, at)
+    except render.PipelineError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    fill_plan = segment.get("fill") or {}
+    fill_layers = [item for item in fill_plan.get("layers") or []
+                   if isinstance(item, dict)]
+    if not fill_layers:
+        raise HTTPException(
+            422,
+            "No AI fill box is active at this frame. Choose AI fill for a box "
+            "and put the playhead inside its range.",
+        )
+    fps = float(source.get("fps") or render.OUT_FPS) or render.OUT_FPS
+    source_time = float(segment.get("start") or 0.0) + max(
+        0.0, at - float(segment.get("out_start") or 0.0),
+    )
+    rects = textfill.masks.frame_rects(
+        fill_layers,
+        start=source_time - (0.5 / max(1.0, fps)),
+        fps=fps,
+        frames=1,
+        width=width,
+        height=height,
+    )[0]
+    if not rects:
+        raise HTTPException(422, "No AI fill region is active at this frame.")
+
+    directory = textfill.models_dir(app.DATA)
+    problem = textfill.missing_model("lama", directory)
+    if problem:
+        return _fill_http_error(409, "model_missing", problem, fill=status)
+    model_path = textfill.model_path("lama", directory)
+    stamp = model_path.stat()
+    key = hashlib.sha1(
+        (
+            f"{compiled.get('edit_hash')}:{frame_index}:{out_w}x{out_h}:lama:"
+            f"{stamp.st_size}:{stamp.st_mtime_ns}:"
+            f"{source.get('fingerprint')}"
+        ).encode("utf-8"),
+    ).hexdigest()[:20]
+    job_dir = app._job_dir(job_id)
+    cache_dir = job_dir / "fill" / "preview"
+    before_jpg = cache_dir / f"{key}_before.jpg"
+    after_jpg = cache_dir / f"{key}_after.jpg"
+    if before_jpg.is_file() and after_jpg.is_file():
+        return {
+            "before": _data_url(before_jpg),
+            "after": _data_url(after_jpg),
+            "width": out_w,
+            "height": out_h,
+            "time": round(at, 3),
+            "method": "lama",
+            "render_method": fill_plan.get("method") or "sttn",
+            "cached": True,
+        }
+
+    # A render that is filling already holds this lock; a preview must not load
+    # a second 208 MB model beside it on an 8 GB Mac.
+    if not render.FILL_LOCK.acquire(blocking=False):
+        return _fill_http_error(
+            409,
+            "fill_running",
+            "A fill is already running. Wait for the render to finish, then "
+            "preview. Cancel the render if you want to compare now.",
+        )
+    try:
+        frame_rgb = _read_source_frame(source_path, width, height, source_time)
+        try:
+            filled_rgb = textfill.fill_frame(
+                frame_rgb, rects, data_root=job_dir.parent.parent, method="lama",
+            )
+        except textfill.FillError as exc:
+            return _fill_http_error(409, "fill_failed", str(exc))
+        tmp = job_dir / "renders" / f"tmp_fill_preview_{uuid.uuid4().hex}"
+        tmp.mkdir(parents=True, exist_ok=True)
+        try:
+            before_png = tmp / "before.png"
+            after_png = tmp / "after.png"
+            Image.fromarray(frame_rgb).save(before_png)
+            Image.fromarray(filled_rgb).save(after_png)
+            chain = _preview_filter_chain(segment, out_w, out_h)
+            before_raw = tmp / "before_raw.jpg"
+            after_raw = tmp / "after_raw.jpg"
+            _render_preview_jpeg(before_png, before_raw, chain)
+            _render_preview_jpeg(after_png, after_raw, chain)
+            before_final = tmp / "before_final.jpg"
+            after_final = tmp / "after_final.jpg"
+            layer_cache = job_dir.parent.parent / "cache" / "layers"
+            render._burn_frame(
+                before_raw, compiled.get("overlays") or [], before_final,
+                out_w, out_h, at, layer_cache,
+            )
+            render._burn_frame(
+                after_raw, compiled.get("overlays") or [], after_final,
+                out_w, out_h, at, layer_cache,
+            )
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(before_final, before_jpg)
+            shutil.copyfile(after_final, after_jpg)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    finally:
+        # The preview is one frame: keeping LaMa loaded would cost a render's
+        # worth of memory for nothing.
+        textfill.release_fillers()
+        render.FILL_LOCK.release()
+    return {
+        "before": _data_url(before_jpg),
+        "after": _data_url(after_jpg),
+        "width": out_w,
+        "height": out_h,
+        "time": round(at, 3),
+        "method": "lama",
+        "render_method": fill_plan.get("method") or "sttn",
+        "cached": False,
+    }
+

@@ -340,6 +340,7 @@
     cleanLayers: $("#clean-layers"),
     cleanEmpty: $("#clean-empty"),
     cleanStatus: $("#clean-status"),
+    cleanFillNote: $("#clean-fill-note"),
     cleanFill: $("#clean-fill"),
     cleanHelp: $("#clean-help"),
     finishCut: $("#finish-cut"),
@@ -375,6 +376,12 @@
       redo: [],
       frameTimer: null,
       frame: { url: "", key: "", busy: false, error: "", seq: 0, controller: null },
+      // Ticks live in the panel, not the cut: they are a working choice for
+      // "Remove ticked" and are cleared when the scan changes.
+      foundTicks: new Set(),
+      foundMethod: "fill",
+      foundEngine: "",
+      fillPreview: null,
       // The frame is cropped; boxes are stored in source space. The server
       // sends each segment's crop with its frame, keyed by segment position.
       crops: {},
@@ -6875,6 +6882,16 @@
     crop: { label: "Crop", note: "Keeps the frame inside the safe area." },
     fill: { label: "AI fill", note: "Repairs the region with the fill models." },
   };
+  // Honest numbers, measured once on this Mac. The point is that the founder
+  // chooses AI fill knowing a 30 s subtitle run is not a coffee break.
+  const CLEAN_FILL_COST = {
+    sttn: "About 5 s per frame on this Mac. A 4 s subtitle run takes a few minutes.",
+    lama: "About 16 s per frame on this Mac. Use it for one still overlay, not a subtitle.",
+  };
+  const CLEAN_FILL_ENGINE_LABEL = {
+    sttn: "STTN · video, best on subtitles",
+    lama: "LaMa · per frame, best on still backgrounds",
+  };
   const CLEAN_SCAN_METHOD = { plate: "cover", crop_guard: "crop", mask: "blur", blur: "blur" };
   const CLEAN_MIN_BOX = 0.02;
   const CLASSIC_UNDO_LIMIT = 40;
@@ -6974,6 +6991,7 @@
       radius: layer.radius,
       hidden: Boolean(layer.hidden),
       source: layer.source || "manual",
+      ...(cleanMethodKey(layer) === "fill" ? { engine: layer.engine || "sttn" } : {}),
     }));
   }
 
@@ -7015,62 +7033,120 @@
       return;
     }
     dom.cleanFill.hidden = false;
+    const engines = fill.engines || {};
+    const rows = Object.keys(CLEAN_FILL_ENGINE_LABEL).map((key) => {
+      const engine = engines[key] || {};
+      const ready = Boolean(engine.ready);
+      return `
+        <li class="clean-engine-row${ready ? " is-ready" : ""}">
+          <span class="clean-file-name">${esc(CLEAN_FILL_ENGINE_LABEL[key])}</span>
+          <span class="clean-file-state">${ready ? "ready" : "missing"}</span>
+          <span class="clean-file-meta">${esc(ready ? CLEAN_FILL_COST[key] : (engine.reason || "Not installed."))}</span>
+        </li>`;
+    }).join("");
     if (!fill.available) {
-      const missing = (fill.missing || []).join(", ") || "the model pack";
-      const files = (fill.files || []).map((item) => (
-        `<li><span class="clean-file-name">${esc(item.file)}</span>`
-        + `<span class="clean-file-meta">${esc(item.name)} · ${esc(item.license)}</span>`
-        + `<span class="clean-file-state">${item.installed ? "installed" : "missing"}</span></li>`
-      )).join("");
       dom.cleanFill.innerHTML = `
         <div class="clean-fill-locked">
           <span class="clean-fill-lock" aria-hidden="true">🔒</span>
           <div>
-            <p class="clean-fill-title">AI fill is locked — ${esc(missing)} not installed</p>
+            <p class="clean-fill-title">AI fill is not ready on this Mac</p>
             <p class="hint">${esc(fill.note)}</p>
-            <ul class="clean-file-list">${files}</ul>
-            <p class="hint">Blur and Cover stay available on this cut. Nothing here pretends to fill yet.</p>
+            <ul class="clean-file-list">${rows}</ul>
+            <p class="hint">Blur and Cover do the same job on this cut, now.</p>
           </div>
         </div>`;
       return;
     }
+    const hasFill = classicCleanLayers().some((layer) => cleanMethodKey(layer) === "fill");
+    const previewReady = fill.preview === "lama";
+    const previewHint = previewReady
+      ? (hasFill
+        ? "Compare the frame before and after. The render uses the box's engine."
+        : "Draw a box, choose AI fill, then compare one frame here.")
+      : (engines.lama?.reason || "The one-frame preview needs LaMa. The render can still use STTN.");
+    const preview = state.classicText.fillPreview;
+    const result = preview
+      ? `<div class="clean-fill-compare">
+           <figure><img src="${esc(preview.before)}" alt="The frame before the fill"><figcaption>Before</figcaption></figure>
+           <figure><img src="${esc(preview.after)}" alt="The same frame after the fill"><figcaption>After</figcaption></figure>
+         </div>
+         <p class="hint">Preview uses LaMa. The render uses ${esc(String(preview.render_method || "sttn").toUpperCase())} and may look different.</p>`
+      : "";
     dom.cleanFill.innerHTML = `
       <div class="clean-fill-ready">
         <span class="clean-fill-dot" aria-hidden="true"></span>
         <div>
-          <p class="clean-fill-title">AI fill is installed</p>
-          <p class="hint">${esc(fill.note)}</p>
+          <p class="clean-fill-title">AI fill is ready</p>
+          <ul class="clean-file-list">${rows}</ul>
+          <p class="hint">${esc(previewHint)}</p>
         </div>
-        <button id="clean-fill-preview" class="ghost small" type="button">Preview fill</button>
-      </div>`;
+        <button id="clean-fill-preview" class="ghost small" type="button"${previewReady && hasFill ? "" : " disabled"}${previewReady ? "" : ` title="${esc(previewHint)}"`}>Preview one frame</button>
+      </div>
+      ${result}`;
   }
 
   async function previewFill() {
     if (!state.job) return;
-    const layer = classicCleanLayers().find((item) => item.id === state.classicText.selection)
-      || classicCleanLayers()[0];
-    if (!layer) {
-      setCleanStatus("Draw or select a box first.");
-      return;
+    const bodies = () => ({
+      clips: classicPlanClips(),
+      clean: cleanPayloadLayers(),
+      overlays: state.classicText.overlays.map((layer) => ({ ...layer })),
+      effects: state.classicText.effects.map((effect) => ({
+        id: effect.id, kind: effect.kind,
+        start: Number(effect.start) || 0, end: Number(effect.end) || 0,
+      })),
+      t: round2(currentCleanTime()),
+      aspect: state.aspect,
+    });
+    const button = dom.cleanFill?.querySelector("#clean-fill-preview");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Filling one frame…";
     }
+    setCleanStatus("Filling one frame with LaMa. The first one loads the model, so it takes a moment.");
     try {
-      await api(`/api/classic/jobs/${state.job.id}/fill/preview`, {
+      const payload = await api(`/api/classic/jobs/${state.job.id}/fill/preview`, {
         method: "POST",
-        body: JSON.stringify({
-          clips: classicPlanClips(),
-          box: layer.box,
-          t: currentCleanTime(),
-          aspect: state.aspect,
-        }),
+        body: JSON.stringify(bodies()),
       });
-      setCleanStatus("Fill preview answered.");
+      state.classicText.fillPreview = payload;
+      setCleanStatus(payload.render_method && payload.render_method !== "lama"
+        ? `One frame filled with LaMa at ${Number(payload.time).toFixed(2)}s. The render uses ${String(payload.render_method).toUpperCase()}.`
+        : `One frame filled at ${Number(payload.time).toFixed(2)}s.`);
     } catch (error) {
-      setCleanStatus(error.message);
+      setCleanStatus(fillPreviewError(error));
+    } finally {
+      if (button && button.isConnected) {
+        button.disabled = false;
+        button.textContent = "Preview one frame";
+      }
+      renderCleanFill();
     }
+  }
+
+  function fillPreviewError(error) {
+    const message = String(error && error.message || "The preview failed.");
+    if (/fill_running/i.test(message) || /already running/i.test(message)) {
+      return "A fill is already running. Wait for the render, or cancel it, then preview.";
+    }
+    if (/No AI fill box/i.test(message)) {
+      return "No AI fill box is active at this second. Move the playhead inside its range.";
+    }
+    return message;
   }
 
   function setCleanStatus(message) {
     if (dom.cleanStatus) dom.cleanStatus.textContent = message || "";
+  }
+
+  // The stage frame is the real render minus the fill, which happens in the
+  // render. Say that, or an AI fill box looks like a box that does nothing.
+  function setCleanFillNote(count) {
+    if (!dom.cleanFillNote) return;
+    dom.cleanFillNote.hidden = !count;
+    dom.cleanFillNote.textContent = count
+      ? "The preview shows the box only. The filled picture appears in the render."
+      : "";
   }
 
   // ------------------------------------------------------------ the frame
@@ -7333,6 +7409,7 @@
         state.classicText.crops[crop.index] = crop.box;
         paintCleanBoxes();
       }
+      setCleanFillNote(Number(response.headers.get("X-VibeCut-Fill")) || 0);
       const blob = await response.blob();
       if (seq !== state.classicText.frame.seq) return;
       const url = URL.createObjectURL(blob);
@@ -7459,6 +7536,16 @@
       return;
     }
     panel.hidden = false;
+    const ticks = state.classicText.foundTicks;
+    const tickable = (entry, index) => (
+      !entry.blocked && cleanCutRanges(entry.ranges).length > 0
+      || (!entry.blocked && !(entry.ranges || []).length)
+    );
+    // A tick for a row that the current scan no longer has would remove a box
+    // the founder never saw; drop it rather than act on stale intent.
+    for (const index of Array.from(ticks)) {
+      if (!entries[index]) ticks.delete(index);
+    }
     const rows = entries.map((entry, index) => {
       const blocked = Boolean(entry.blocked);
       const scene = cleanEntryScene(entry);
@@ -7467,47 +7554,77 @@
       const cutRanges = cleanCutRanges(entry.ranges);
       const outside = (Array.isArray(entry.ranges) ? entry.ranges.length : 0) > 0
         && cutRanges.length === 0;
-      const action = String(entry.action || "blur");
-      const suggested = CLEAN_SCAN_METHOD[action] || "blur";
-      const methodOptions = Object.entries(CLEAN_METHODS)
-        .filter(([key]) => key !== "fill")
-        .map(([key, item]) => (
-          `<option value="${key}"${key === suggested ? " selected" : ""}>${item.label}</option>`
-        )).join("");
+      const selectable = !blocked && !outside;
+      const ticked = selectable && ticks.has(index);
       const preview = thumb
         ? `<span class="clean-found-thumb" style="background-image:url('${esc(thumb)}');${cleanThumbStyle(entry.box)}" aria-hidden="true"></span>`
         : '<span class="clean-found-thumb is-empty" aria-hidden="true"></span>';
       return `
-        <div class="clean-found-row${blocked ? " is-blocked" : ""}${added ? " is-added" : ""}" role="listitem" data-found-index="${index}">
+        <div class="clean-found-row${blocked ? " is-blocked" : ""}${added ? " is-added" : ""}${ticked ? " is-ticked" : ""}" role="listitem" data-found-index="${index}">
+          ${selectable
+            ? `<input type="checkbox" class="clean-found-tick" data-found-tick="${index}"${ticked ? " checked" : ""} aria-label="Tick ${esc(entry.kind || "text")} for removal">`
+            : '<span class="clean-found-tick-space" aria-hidden="true"></span>'}
           ${preview}
           <div class="clean-found-copy">
             <span class="clean-found-kind">${esc(entry.kind || "text")}</span>
-            <span class="clean-found-reason">${esc(blocked ? entry.reason : (entry.reason || CLEAN_METHODS[suggested].note))}</span>
+            <span class="clean-found-reason">${esc(blocked ? entry.reason : (entry.reason || "Burned-in text"))}</span>
           </div>
+          ${added ? '<span class="clean-found-blocked is-added">ticked</span>' : ""}
           ${blocked || outside
             ? `<span class="clean-found-blocked">${blocked ? "locked" : "not in this cut"}</span>`
-            : `<select class="clean-method-select" data-found-method="${index}" aria-label="Method for ${esc(entry.kind || "box")}">${methodOptions}</select>
-               <button class="ghost small" type="button" data-found-add="${index}"${added ? " disabled" : ""}>${added ? "Added" : "Add"}</button>`}
+            : ""}
         </div>`;
     }).join("");
+    const fill = state.fill || {};
+    const methods = [["fill", "AI fill"], ["blur", "Blur"], ["cover", "Cover"]]
+      .filter(([key]) => key !== "fill" || fill.available);
+    const wanted = state.classicText.foundMethod || "fill";
+    // A method that is not on offer (AI fill without its pack) must not stay
+    // selected invisibly: the button would then refuse with no visible reason.
+    const method = methods.some(([key]) => key === wanted) ? wanted : "blur";
+    const methodOptions = methods
+      .map(([key, label]) => `<option value="${key}"${key === method ? " selected" : ""}>${label}</option>`)
+      .join("");
+    const engine = state.classicText.foundEngine
+      || fill.default || "sttn";
+    const engineOptions = Object.keys(CLEAN_FILL_ENGINE_LABEL).map((key) => {
+      const ready = Boolean(fill.engines?.[key]?.ready);
+      return `<option value="${key}"${key === engine ? " selected" : ""}${ready ? "" : " disabled"}>${esc(CLEAN_FILL_ENGINE_LABEL[key])}</option>`;
+    }).join("");
+    const tickCount = Array.from(ticks).filter((index) => entries[index]).length;
+    const readyText = fill.available
+      ? `AI fill ready${fill.default ? ` · ${esc(String(fill.default).toUpperCase())} by default` : ""}`
+      : "AI fill needs its model pack · Blur and Cover work now";
     panel.innerHTML = `
       <div class="clean-found-head">
         <span class="clean-found-title">Text on screen</span>
-        <span class="hint">${entries.length} found · tick the ones to clean</span>
+        <span class="hint">${entries.length} found · tick the ones to remove</span>
       </div>
-      <div class="clean-found-list" role="list">${rows}</div>`;
+      <div class="clean-found-list" role="list">${rows}</div>
+      <div class="clean-found-actions">
+        <button class="ghost small" type="button" data-found-all>Select all</button>
+        <button class="ghost small" type="button" data-found-none${tickCount ? "" : " disabled"}>Clear</button>
+        <select id="clean-found-method" class="clean-method-select" aria-label="Method for ticked text">${methodOptions}</select>
+        <select id="clean-found-engine" class="clean-method-select" aria-label="AI fill engine"${method === "fill" && fill.available ? "" : " hidden"}>${engineOptions}</select>
+        <button class="primary small" type="button" data-found-apply${tickCount ? "" : " disabled"}>Remove ticked${tickCount ? ` (${tickCount})` : ""}</button>
+      </div>
+      <p class="hint clean-found-note">${readyText}</p>`;
   }
 
-  function addCleanFromScan(entry, method) {
+  function addCleanFromScan(entry, method, engine) {
     if (!entry) return;
     const ranges = cleanCutRanges(entry.ranges);
     if ((entry.ranges || []).length && !ranges.length) {
       setCleanStatus("That text is not inside this cut, so there is nothing to clean here.");
       return;
     }
+    const wanted = method || CLEAN_SCAN_METHOD[entry.action] || "blur";
     addCleanBox({
       box: entry.box,
-      method: method || CLEAN_SCAN_METHOD[entry.action] || "blur",
+      method: wanted,
+      ...(wanted === "fill"
+        ? { engine: engine || defaultFillEngine(entry.kind) }
+        : {}),
       label: entry.kind || "text",
       kind: entry.kind || "manual",
       tracklet_id: entry.tracklet_id,
@@ -7515,6 +7632,46 @@
       ranges,
       source: "scan",
     });
+  }
+
+  function applyFoundTicks() {
+    const entries = cleanScanEntries();
+    const ticks = Array.from(state.classicText.foundTicks)
+      .filter((index) => entries[index] && !entries[index].blocked)
+      .sort((a, b) => a - b);
+    if (!ticks.length) {
+      setCleanStatus("Tick the text you want removed first.");
+      return;
+    }
+    let method = state.classicText.foundMethod || "fill";
+    if (method === "fill" && !(state.fill && state.fill.available)) method = "blur";
+    const engine = state.classicText.foundEngine
+      || state.fill?.default || "sttn";
+    if (method === "fill" && !state.fill?.engines?.[engine]?.ready) {
+      setCleanStatus(state.fill?.engines?.[engine]?.reason || "That engine is not installed.");
+      return;
+    }
+    let added = 0;
+    let outside = 0;
+    // One undo step for the whole tick, not one per row.
+    pushClassicUndo();
+    for (const index of ticks) {
+      const entry = entries[index];
+      if ((entry.ranges || []).length && !cleanCutRanges(entry.ranges).length) {
+        outside += 1;
+        continue;
+      }
+      addCleanFromScan(entry, method, engine);
+      added += 1;
+    }
+    state.classicText.foundTicks = new Set();
+    saveClassicText();
+    paintCleanStage();
+    scheduleCleanFrame();
+    const skipped = outside ? ` ${outside} not in this cut.` : "";
+    setCleanStatus(added
+      ? `Removed text from ${added} ticked spot${added === 1 ? "" : "s"} with ${CLEAN_METHODS[method].label}.${skipped}`
+      : `Nothing was inside this cut.${skipped}`);
   }
 
   function renderCleanLayers() {
@@ -7532,11 +7689,21 @@
       const ranges = (layer.ranges || []).length
         ? `${(layer.ranges || []).length} range${(layer.ranges || []).length === 1 ? "" : "s"}`
         : "whole cut";
+      const fillReady = Boolean(state.fill && state.fill.available);
       const chips = Object.entries(CLEAN_METHODS)
-        .filter(([key]) => key !== "fill")
+        .filter(([key]) => key !== "fill" || fillReady)
         .map(([key, item]) => (
           `<button type="button" class="clean-chip${key === method ? " active" : ""}" data-clean-method="${key}" data-clean-target="${esc(layer.id)}" title="${esc(item.note)}">${item.label}</button>`
         )).join("");
+      const enginePicker = method === "fill"
+        ? `<select class="clean-engine" data-clean-engine="${esc(layer.id)}" aria-label="Fill engine">${
+          Object.keys(CLEAN_FILL_ENGINE_LABEL).map((key) => {
+            const engine = (state.fill?.engines || {})[key] || {};
+            const label = CLEAN_FILL_ENGINE_LABEL[key];
+            const current = (layer.engine || "sttn") === key;
+            return `<option value="${key}"${current ? " selected" : ""}${engine.ready ? "" : " disabled"} title="${esc(engine.reason || label)}">${esc(label)}</option>`;
+          }).join("")}</select>`
+        : "";
       return `
         <div class="clean-row${selected ? " is-selected" : ""}${layer.hidden ? " is-off" : ""}" role="listitem" data-clean-row="${esc(layer.id)}">
           <button class="clean-eye" type="button" data-clean-eye="${esc(layer.id)}" aria-pressed="${layer.hidden ? "false" : "true"}" title="${layer.hidden ? "Show" : "Hide"} this box">${layer.hidden ? "◌" : "◉"}</button>
@@ -7544,7 +7711,7 @@
             <span class="clean-row-label">${esc(layer.label || layer.kind || "Box")} <span class="clean-row-src">${esc(layer.source === "scan" ? "scan" : "manual")}</span></span>
             <span class="clean-row-meta">${esc(ranges)} · ${(layer.box.w * 100).toFixed(0)}×${(layer.box.h * 100).toFixed(0)}%${out ? ` · ${esc(out)}` : ""}</span>
           </div>
-          <div class="clean-row-methods" role="group" aria-label="Method">${chips}</div>
+          <div class="clean-row-methods" role="group" aria-label="Method">${chips}${enginePicker}</div>
           <button class="clean-row-del" type="button" data-clean-delete="${esc(layer.id)}" title="Delete box" aria-label="Delete box">✕</button>
         </div>`;
     };
@@ -7645,6 +7812,16 @@
     scheduleCleanFrame();
   }
 
+  // STTN sees motion, so it is the subtitle default; LaMa is per frame and
+  // only wins on a still overlay.
+  function defaultFillEngine(kind) {
+    const ready = (key) => Boolean(state.fill?.engines?.[key]?.ready);
+    const wants = String(kind || "").toLowerCase() === "subtitle" || kind === "mask"
+      ? "sttn" : "lama";
+    if (ready(wants)) return wants;
+    return Object.keys(CLEAN_FILL_ENGINE_LABEL).find(ready) || "sttn";
+  }
+
   function setCleanMethod(id, method) {
     const layer = classicCleanLayers().find((item) => item.id === id);
     if (!layer || !CLEAN_METHODS[method]) return;
@@ -7654,7 +7831,35 @@
     }
     pushClassicUndo();
     layer.method = method;
-    setCleanStatus(`${CLEAN_METHODS[method].note}`);
+    if (method === "fill") {
+      const engine = defaultFillEngine(layer.kind || layer.tracklet_kind);
+      layer.engine = engine;
+      if (!state.fill?.engines?.[engine]?.ready && state.fill?.available) {
+        setCleanStatus(`AI fill is not ready on this Mac. ${state.fill?.engines?.[engine]?.reason || ""}`.trim());
+        return;
+      }
+      setCleanStatus(`AI fill with ${CLEAN_FILL_ENGINE_LABEL[engine]}. ${CLEAN_FILL_COST[engine]}`);
+    } else {
+      setCleanStatus(`${CLEAN_METHODS[method].note}`);
+    }
+    saveClassicText();
+    paintCleanStage();
+    scheduleCleanFrame();
+  }
+
+  function setCleanEngine(id, engine) {
+    const layer = classicCleanLayers().find((item) => item.id === id);
+    if (!layer || cleanMethodKey(layer) !== "fill") return;
+    if (!CLEAN_FILL_ENGINE_LABEL[engine]) return;
+    if (!state.fill?.engines?.[engine]?.ready) {
+      const reason = state.fill?.engines?.[engine]?.reason || "That engine is not installed.";
+      setCleanStatus(reason);
+      renderCleanLayers();
+      return;
+    }
+    pushClassicUndo();
+    layer.engine = engine;
+    setCleanStatus(`AI fill with ${CLEAN_FILL_ENGINE_LABEL[engine]}. ${CLEAN_FILL_COST[engine]}`);
     saveClassicText();
     paintCleanStage();
     scheduleCleanFrame();
@@ -7915,14 +8120,55 @@
       const row = event.target.closest("[data-clean-row]");
       if (row) selectClean(row.dataset.cleanRow);
     });
+    dom.cleanLayers?.addEventListener("change", (event) => {
+      const picker = event.target.closest("[data-clean-engine]");
+      if (picker) setCleanEngine(picker.dataset.cleanEngine, picker.value);
+    });
     dom.cleanFound?.addEventListener("click", (event) => {
-      const add = event.target.closest("[data-found-add]");
-      if (!add) return;
-      const index = Number(add.dataset.foundAdd);
-      const entry = cleanScanEntries()[index];
-      if (!entry) return;
-      const select = dom.cleanFound.querySelector(`[data-found-method="${index}"]`);
-      addCleanFromScan(entry, select ? select.value : "");
+      if (event.target.closest("[data-found-all]")) {
+        const entries = cleanScanEntries();
+        state.classicText.foundTicks = new Set(
+          entries.map((entry, index) => (entry.blocked ? -1 : index)).filter((index) => index >= 0),
+        );
+        renderCleanFound();
+        return;
+      }
+      if (event.target.closest("[data-found-none]")) {
+        state.classicText.foundTicks = new Set();
+        renderCleanFound();
+        return;
+      }
+      if (event.target.closest("[data-found-apply]")) {
+        applyFoundTicks();
+        renderCleanFound();
+        return;
+      }
+      const row = event.target.closest("[data-found-index]");
+      if (row && !event.target.closest("input")) {
+        const index = Number(row.dataset.foundIndex);
+        const ticks = state.classicText.foundTicks;
+        if (ticks.has(index)) ticks.delete(index);
+        else ticks.add(index);
+        renderCleanFound();
+      }
+    });
+    dom.cleanFound?.addEventListener("change", (event) => {
+      const tick = event.target.closest("[data-found-tick]");
+      if (tick) {
+        const index = Number(tick.dataset.foundTick);
+        if (tick.checked) state.classicText.foundTicks.add(index);
+        else state.classicText.foundTicks.delete(index);
+        renderCleanFound();
+        return;
+      }
+      if (event.target.id === "clean-found-method") {
+        state.classicText.foundMethod = event.target.value;
+        renderCleanFound();
+        return;
+      }
+      if (event.target.id === "clean-found-engine") {
+        state.classicText.foundEngine = event.target.value;
+      }
     });
     dom.cleanFill?.addEventListener("click", (event) => {
       const button = event.target.closest("#clean-fill-preview");
