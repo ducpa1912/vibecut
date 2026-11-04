@@ -134,13 +134,17 @@ def export_edited_cut(job_id: str, kind: str, body: ExportCutBody):
 # second layer format.
 
 CLASSIC_EDIT_ASPECTS = ("9:16", "4:5")
-CLASSIC_TEXT_VERSION = 1
+# 2: Clean boxes are source-normalized and their ranges are cut time, which the
+# server translates to the clips' source time. Version 1 boxes were drawn in
+# frame space, so they are dropped with a count instead of being reinterpreted.
+CLASSIC_TEXT_VERSION = 2
 MAX_CLASSIC_OVERLAYS = 12
 MAX_CLASSIC_EFFECTS = 6
 MAX_CLASSIC_CUTS = 40
-# Clean boxes are the C1/C2 layer: a rectangle on the cut, optionally limited
-# to some time ranges. The method picks the Edit kind, so Classic never invents
-# a second clean format.
+# Clean boxes are the C1/C2 layer: a rectangle on the source frame, optionally
+# limited to some time ranges (cut time, translated per clip at build time).
+# The method picks the Edit kind, so Classic never invents a second clean
+# format.
 CLASSIC_CLEAN_METHODS = ("blur", "cover", "crop", "fill")
 CLASSIC_CLEAN_KINDS = {
     "blur": "blur",
@@ -452,7 +456,15 @@ def _classic_effects_payload(layers: dict) -> list[dict]:
     return effects
 
 
-def _classic_cut_payload(row) -> dict | None:
+def _classic_store_version(job: dict) -> int:
+    store = job.get("classic_text")
+    try:
+        return int((store or {}).get("version") or 0)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def _classic_cut_payload(row, version: int = CLASSIC_TEXT_VERSION) -> dict | None:
     if not isinstance(row, dict):
         return None
     layers = {
@@ -463,14 +475,22 @@ def _classic_cut_payload(row) -> dict | None:
         "motion": [dict(layer) for layer in row.get("motion") or []
                    if isinstance(layer, dict)],
     }
+    clean = [dict(item) for item in row.get("clean") or []
+             if isinstance(item, dict)]
+    reset = 0
+    if clean and version < 2:
+        reset = len(clean)
+        clean = []
     return {
         "clips_hash": row.get("clips_hash"),
         "clip_count": int(row.get("clip_count") or 0),
         "duration": float(row.get("duration") or 0.0),
         "overlays": layers["overlays"],
         "effects": _classic_effects_payload(layers),
-        "clean": [dict(item) for item in row.get("clean") or []
-                  if isinstance(item, dict)],
+        "clean": clean,
+        # Boxes drawn before version 2 used frame coordinates; they are reported
+        # and dropped rather than drawn somewhere the founder never put them.
+        "clean_reset": reset,
         "updated": row.get("updated"),
     }
 
@@ -481,8 +501,68 @@ def _classic_cuts(job: dict) -> dict:
     return cuts if isinstance(cuts, dict) else {}
 
 
-def _classic_clean_edit(layers: list[dict]) -> list[dict]:
-    """Map Classic boxes onto the Edit's clean kinds."""
+def _classic_windows(clips: list[dict]) -> list[tuple[float, float, float, float]]:
+    """Each clip's place in the cut: (cut_start, cut_end, source_start, source_end)."""
+    windows: list[tuple[float, float, float, float]] = []
+    cursor = 0.0
+    for clip in clips:
+        start = float(clip.get("start") or 0.0)
+        end = float(clip.get("end") or start)
+        span = max(0.0, end - start)
+        windows.append((cursor, cursor + span, start, end))
+        cursor += span
+    return windows
+
+
+def _cut_ranges_to_source(ranges, clips: list[dict]) -> list[dict]:
+    """Translate cut-time ranges into the source time the renderer compares.
+
+    Classic stores ranges in cut time because that is what the editor scrubs,
+    but `compose_render._active_window` compares them with `clip["start"]` and
+    `clip["end"]`, which are source times. A range that covers several clips
+    becomes one source range per clip, and the part of a clip the cut does not
+    carry never produces a range at all.
+    """
+    items = [item for item in (ranges or []) if isinstance(item, dict)]
+    if not items:
+        return []
+    windows = _classic_windows(clips)
+    out: list[dict] = []
+    for item in items:
+        try:
+            low = float(item.get("start") or 0.0)
+            high = float(item.get("end") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        for cut_start, cut_end, source_start, _source_end in windows:
+            from_cut = max(low, cut_start)
+            to_cut = min(high, cut_end)
+            if to_cut - from_cut <= 1e-6:
+                continue
+            out.append({
+                "start": round(source_start + (from_cut - cut_start), 3),
+                "end": round(source_start + (to_cut - cut_start), 3),
+            })
+    out.sort(key=lambda entry: (entry["start"], entry["end"]))
+    merged: list[dict] = []
+    for entry in out:
+        if merged and entry["start"] <= merged[-1]["end"] + 1e-6:
+            merged[-1]["end"] = max(merged[-1]["end"], entry["end"])
+        else:
+            merged.append(dict(entry))
+    if len(merged) > 64:
+        raise ClassicTextError(
+            "This box covers too many separate moments. Trim it to fewer ranges."
+        )
+    return merged
+
+
+def _classic_clean_edit(layers: list[dict], clips: list[dict]) -> list[dict]:
+    """Map Classic boxes onto the Edit's clean kinds, in source space.
+
+    Boxes are already source-normalized; ranges are cut time and become source
+    ranges here, where the clips are known.
+    """
     edit_layers: list[dict] = []
     for layer in layers:
         if layer.get("hidden"):
@@ -492,7 +572,7 @@ def _classic_clean_edit(layers: list[dict]) -> list[dict]:
             "id": layer["id"],
             "kind": CLASSIC_CLEAN_KINDS.get(method, "blur"),
             "box": dict(layer["box"]),
-            "ranges": [dict(item) for item in layer.get("ranges") or []],
+            "ranges": _cut_ranges_to_source(layer.get("ranges"), clips),
             "label": str(layer.get("label") or ""),
             "color": layer.get("color") or CLASSIC_CLEAN_DEFAULT_COLOR,
             "opacity": layer.get("opacity", 1.0),
@@ -683,7 +763,7 @@ def _build_classic_edit(
                 "clip_count": len(clips),
             },
             aspect=aspect,
-            clean=_classic_clean_edit(layers.get("clean") or []),
+            clean=_classic_clean_edit(layers.get("clean") or [], clips),
             motion=layers.get("motion") or [],
             graphics=(layers.get("overlays") or []) + (layers.get("graphics") or []),
             captions=captions,
@@ -764,7 +844,7 @@ def classic_text_lookup(job_id: str, body: ClassicTextLookupBody) -> dict:
     key = edits.clip_snapshot_hash(clips)
     row = _classic_cuts(job).get(key)
     return {
-        "cut": _classic_cut_payload(row),
+        "cut": _classic_cut_payload(row, _classic_store_version(job)),
         "aspects": list(CLASSIC_EDIT_ASPECTS),
     }
 
@@ -1266,6 +1346,26 @@ def _frame_lock(job_id: str) -> threading.Lock:
         return FRAME_LOCKS.setdefault(job_id, threading.Lock())
 
 
+def _classic_crop_box(segment: dict, source: dict) -> tuple[float, float, float, float] | None:
+    """The segment's crop as fractions of the source frame."""
+    crop = segment.get("crop") if isinstance(segment, dict) else None
+    if not isinstance(crop, dict):
+        return None
+    try:
+        width = float(source.get("width") or 0.0)
+        height = float(source.get("height") or 0.0)
+        if width <= 0.0 or height <= 0.0:
+            return None
+        return (
+            round(float(crop["x"]) / width, 6),
+            round(float(crop["y"]) / height, 6),
+            round(float(crop["w"]) / width, 6),
+            round(float(crop["h"]) / height, 6),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 @router.post(
     "/api/classic/jobs/{job_id}/frame",
     responses={200: {"content": {"image/jpeg": {}}}},
@@ -1329,17 +1429,25 @@ def classic_frame(job_id: str, body: ClassicFrameBody):
             )
         except render.PipelineError as exc:
             raise HTTPException(500, str(exc)) from exc
-    return Response(
-        content=payload,
-        media_type="image/jpeg",
-        headers={
-            "Cache-Control": "no-store",
-            "X-VibeCut-Frame": f"{at:.3f}",
-            "X-VibeCut-Clean": str(
-                (compiled.get("counts") or {}).get("clean") or 0
-            ),
-        },
-    )
+    # The frame is cropped, the boxes are source-normalized, so the browser
+    # needs this segment's crop to draw and drag them in the right place. The
+    # crop changes per clip, hence both the crop and the segment it belongs to.
+    headers = {
+        "Cache-Control": "no-store",
+        "X-VibeCut-Frame": f"{at:.3f}",
+        "X-VibeCut-Clean": str(
+            (compiled.get("counts") or {}).get("clean") or 0
+        ),
+    }
+    try:
+        index, segment = render._compiled_segment_at(compiled, at)
+    except render.PipelineError:
+        index, segment = 0, {}
+    crop = _classic_crop_box(segment, compiled.get("source") or {})
+    if crop:
+        headers["X-VibeCut-Segment"] = str(index)
+        headers["X-VibeCut-Crop"] = ",".join(f"{value:.6f}" for value in crop)
+    return Response(content=payload, media_type="image/jpeg", headers=headers)
 
 
 @router.get("/api/classic/fill")

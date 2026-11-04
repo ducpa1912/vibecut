@@ -77,11 +77,14 @@ def requirements(need_ffmpeg: bool = True) -> tuple[str, Path]:
     return node, module
 
 
-def write_source_video(path: Path, seconds: float) -> None:
+def write_source_video(
+    path: Path, seconds: float, size: tuple[int, int] = (1080, 1920),
+) -> None:
+    width, height = size
     subprocess.run(
         [
             "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", f"color=c=0x1f2a36:s=1080x1920:d={seconds:g}:r=10",
+            "-i", f"color=c=0x1f2a36:s={width}x{height}:d={seconds:g}:r=10",
             "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
             "-movflags", "+faststart", str(path),
         ],
@@ -90,7 +93,10 @@ def write_source_video(path: Path, seconds: float) -> None:
     )
 
 
-def _thumbs(job_dir: Path, source: Path, scene_seconds: float) -> None:
+def _thumbs(
+    job_dir: Path, source: Path, scene_seconds: float,
+    size: tuple[int, int] = (180, 320),
+) -> None:
     folder = job_dir / "thumbs"
     folder.mkdir(parents=True, exist_ok=True)
     for index in range(SCENES):
@@ -98,7 +104,8 @@ def _thumbs(job_dir: Path, source: Path, scene_seconds: float) -> None:
             [
                 "ffmpeg", "-y", "-v", "error",
                 "-ss", f"{index * scene_seconds + 1:g}",
-                "-i", str(source), "-frames:v", "1", "-vf", "scale=180:320",
+                "-i", str(source), "-frames:v", "1",
+                "-vf", f"scale={size[0]}:{size[1]}",
                 str(folder / f"{index:05d}.jpg"),
             ],
             check=True,
@@ -106,8 +113,15 @@ def _thumbs(job_dir: Path, source: Path, scene_seconds: float) -> None:
         )
 
 
-def build_job(data: Path, source: Path, job_id: str = "j1") -> str:
-    """The smallest job the Classic editor can actually render."""
+def build_job(
+    data: Path, source: Path, job_id: str = "j1",
+    size: tuple[int, int] = (1080, 1920),
+) -> str:
+    """The smallest job the Classic editor can actually render.
+
+    ``size`` must match the video that was written, because clean geometry is
+    computed in source pixels and a mismatch hides crop mistakes.
+    """
     import pipeline
     import trim_fixture
 
@@ -115,10 +129,9 @@ def build_job(data: Path, source: Path, job_id: str = "j1") -> str:
     duration = SCENES * scene_seconds
     scenes = [trim_fixture.make_scene(index) for index in range(SCENES)]
     job = trim_fixture.make_job(job_id, source_path=str(source))
-    # The fixture meta says 1920x1080; the file written above is portrait. Clean
-    # geometry is computed in source pixels, so the record must match the file.
-    job["source"]["width"] = 1080
-    job["source"]["height"] = 1920
+    # The fixture meta says 1920x1080. Clean geometry is computed in source
+    # pixels, so the record must match the file that was actually written.
+    job["source"]["width"], job["source"]["height"] = size
     job["source"]["duration"] = duration
     job["analysis"].update({
         "scenes": scenes,
@@ -131,7 +144,11 @@ def build_job(data: Path, source: Path, job_id: str = "j1") -> str:
         "engine": {},
     })
     job_dir = data / "jobs" / job_id
-    _thumbs(job_dir, source, scene_seconds)
+    thumb_width = 180
+    _thumbs(
+        job_dir, source, scene_seconds,
+        (thumb_width, max(1, round(thumb_width * size[1] / max(1, size[0])))),
+    )
     (job_dir / "transcript").mkdir(parents=True, exist_ok=True)
     (job_dir / "job.json").write_text(json.dumps(job), encoding="utf-8")
     (job_dir / "transcript" / "transcript.json").write_text(
@@ -170,7 +187,10 @@ def _stop(process: subprocess.Popen) -> None:
         process.wait(timeout=10)
 
 
-def run_spec(spec: Path, data: Path, job_id: str, tmp_path: Path, timeout: int = 240) -> str:
+def run_spec(
+    spec: Path, data: Path, job_id: str, tmp_path: Path, timeout: int = 240,
+    extra_env: dict[str, str] | None = None,
+) -> str:
     """Serve the fixture on a free port, run one spec, return its output."""
     node, module = requirements()
     port = free_port()
@@ -203,6 +223,7 @@ def run_spec(spec: Path, data: Path, job_id: str, tmp_path: Path, timeout: int =
                 "CLASSIC_JOB_ID": job_id,
                 "CLASSIC_SHOT_DIR": str(tmp_path / "shots"),
                 "PLAYWRIGHT_MODULE": module.as_uri(),
+                **(extra_env or {}),
             }
             completed = subprocess.run(
                 [node, str(spec)],

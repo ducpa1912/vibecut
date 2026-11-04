@@ -375,6 +375,9 @@
       redo: [],
       frameTimer: null,
       frame: { url: "", key: "", busy: false, error: "", seq: 0, controller: null },
+      // The frame is cropped; boxes are stored in source space. The server
+      // sends each segment's crop with its frame, keyed by segment position.
+      crops: {},
     };
   }
 
@@ -6671,6 +6674,11 @@
     state.classicText.overlays = Array.isArray(cut?.overlays) ? cut.overlays : [];
     state.classicText.effects = Array.isArray(cut?.effects) ? cut.effects : [];
     state.classicText.clean = Array.isArray(cut?.clean) ? cut.clean : [];
+    if (cut && cut.clean_reset) {
+      // Boxes saved before boxes were stored in source space would land in the
+      // wrong place, so the server drops them. Say so instead of going quiet.
+      setCleanStatus(`${cut.clean_reset} old box${cut.clean_reset === 1 ? "" : "es"} were drawn before this fix and were cleared. Draw them again.`);
+    }
     if (!state.classicText.clean.some((layer) => layer.id === state.classicText.selection)) {
       state.classicText.selection = "";
     }
@@ -7168,25 +7176,106 @@
     paintClassicUndo();
   }
 
+  // ------------------------------------------------- boxes: source ↔ frame
+  //
+  // The server renders the cropped output frame, and `compose_render` reads
+  // boxes as fractions of the *source* frame (it applies them before the
+  // crop). Every stored box is source space; the canvas converts on the way in
+  // and out, using the crop the frame route returns with each picture.
+
+  const CLEAN_FULL_CROP = { x: 0, y: 0, w: 1, h: 1 };
+
+  function cleanSegmentAt(t) {
+    const clips = state.plan?.clips || [];
+    let cursor = 0;
+    for (let index = 0; index < clips.length; index += 1) {
+      const span = Math.max(0, Number(clips[index].end) - Number(clips[index].start));
+      if (t < cursor + span + 1e-6) return index;
+      cursor += span;
+    }
+    return Math.max(0, clips.length - 1);
+  }
+
+  function cleanCropAt(t) {
+    const crops = state.classicText.crops || {};
+    const index = cleanSegmentAt(t);
+    const own = crops[index];
+    if (own) return own;
+    const known = Object.keys(crops).length
+      ? crops[Object.keys(crops)[Object.keys(crops).length - 1]]
+      : null;
+    return known || CLEAN_FULL_CROP;
+  }
+
+  function cleanClipWindowAt(t) {
+    const clips = state.plan?.clips || [];
+    const index = cleanSegmentAt(t);
+    let cursor = 0;
+    for (let position = 0; position < clips.length; position += 1) {
+      const span = Math.max(0, Number(clips[position].end) - Number(clips[position].start));
+      if (position === index) return { start: round2(cursor), end: round2(cursor + span) };
+      cursor += span;
+    }
+    return null;
+  }
+
+  function cleanFrameBox(box, crop) {
+    const area = crop || CLEAN_FULL_CROP;
+    const x = clamp((Number(box.x) - area.x) / Math.max(1e-6, area.w), 0, 1);
+    const y = clamp((Number(box.y) - area.y) / Math.max(1e-6, area.h), 0, 1);
+    const w = clamp(Number(box.w) / Math.max(1e-6, area.w), 0, 1 - x);
+    const h = clamp(Number(box.h) / Math.max(1e-6, area.h), 0, 1 - y);
+    return { x, y, w, h };
+  }
+
+  function cleanSourceBox(box, crop) {
+    const area = crop || CLEAN_FULL_CROP;
+    const minX = CLEAN_MIN_BOX * area.w;
+    const minY = CLEAN_MIN_BOX * area.h;
+    const x = clamp(area.x + clamp(Number(box.x) || 0, 0, 1) * area.w, 0, 1 - minX);
+    const y = clamp(area.y + clamp(Number(box.y) || 0, 0, 1) * area.h, 0, 1 - minY);
+    return {
+      x,
+      y,
+      w: clamp((Number(box.w) || minX) * area.w, minX, 1 - x),
+      h: clamp((Number(box.h) || minY) * area.h, minY, 1 - y),
+    };
+  }
+
+  function cleanBoxOnFrame(box, crop) {
+    const area = crop || CLEAN_FULL_CROP;
+    const left = Math.max(Number(box.x) || 0, area.x);
+    const top = Math.max(Number(box.y) || 0, area.y);
+    const right = Math.min((Number(box.x) || 0) + (Number(box.w) || 0), area.x + area.w);
+    const bottom = Math.min((Number(box.y) || 0) + (Number(box.h) || 0), area.y + area.h);
+    return right - left > 1e-4 && bottom - top > 1e-4;
+  }
+
   function paintCleanBoxes() {
     const overlay = dom.cleanOverlay;
     if (!overlay) return;
     const t = currentCleanTime();
+    const crop = cleanCropAt(t);
     const layers = classicCleanLayers();
     overlay.innerHTML = layers.map((layer) => {
       const active = cleanVisibleAt(layer, t);
       const selected = layer.id === state.classicText.selection;
       const hidden = Boolean(layer.hidden) || !active;
       const method = cleanMethodKey(layer);
-      const box = layer.box;
+      const box = cleanFrameBox(layer.box, crop);
+      const offFrame = !cleanBoxOnFrame(layer.box, crop);
+      const src = [layer.box.x, layer.box.y, layer.box.w, layer.box.h]
+        .map((value) => Number(value).toFixed(4)).join(",");
       return `
         <div class="clean-box${selected ? " is-selected" : ""}${hidden ? " is-off" : ""}"
              data-clean-id="${esc(layer.id)}"
              data-method="${esc(method)}"
+             data-src-box="${esc(src)}"
+             data-src-ranges="${esc(JSON.stringify(layer.ranges || []))}"
              style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"
              role="button" tabindex="0"
              aria-label="${esc(cleanMethodLabel(layer))} box ${esc(layer.label || layer.id)}">
-          <span class="clean-box-tag">${esc(cleanMethodLabel(layer))}${layer.hidden ? " · off" : ""}${active ? "" : " · not here"}</span>
+          <span class="clean-box-tag">${esc(cleanMethodLabel(layer))}${layer.hidden ? " · off" : ""}${active ? "" : " · not here"}${offFrame ? " · off frame" : ""}</span>
           <span class="clean-handle" data-clean-handle="nw"></span>
           <span class="clean-handle" data-clean-handle="ne"></span>
           <span class="clean-handle" data-clean-handle="sw"></span>
@@ -7239,6 +7328,11 @@
         } catch (_) { /* ignore */ }
         throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
       }
+      const crop = cleanCropHeader(response);
+      if (crop) {
+        state.classicText.crops[crop.index] = crop.box;
+        paintCleanBoxes();
+      }
       const blob = await response.blob();
       if (seq !== state.classicText.frame.seq) return;
       const url = URL.createObjectURL(blob);
@@ -7258,6 +7352,19 @@
         paintCleanBoxes();
       }
     }
+  }
+
+  // The crop belongs to the segment the server picked for this time; trusting
+  // our own arithmetic here is what put boxes in the wrong place before.
+  function cleanCropHeader(response) {
+    const index = Number(response.headers.get("X-VibeCut-Segment"));
+    const raw = response.headers.get("X-VibeCut-Crop");
+    if (!Number.isFinite(index) || !raw) return null;
+    const parts = String(raw).split(",").map((value) => Number(value));
+    if (parts.length !== 4 || !parts.every((value) => Number.isFinite(value))) return null;
+    const [x, y, w, h] = parts;
+    if (w <= 0 || h <= 0) return null;
+    return { index, box: { x, y, w, h } };
   }
 
   // An ffmpeg tail is diagnostic, not a caption: one line on the frame, the
@@ -7304,10 +7411,11 @@
     return scenes.find((scene) => at >= scene.start && at < scene.end) || scenes[0] || null;
   }
 
-  // A scan box lives on the source timeline, the cut on its own. Ranges are
-  // stored in cut time because that is what the renderer reads, so a source
-  // range is translated clip by clip. Text that no clip carries stays out of
-  // the list instead of becoming a box that never appears.
+  // A scan box lives on the source timeline, the cut on its own. Classic stores
+  // ranges in cut time because that is what the editor scrubs; the server
+  // translates them back to source time per clip before the render, which is
+  // what `compose_render` actually compares. Text that no clip carries stays
+  // out of the list instead of becoming a box that never appears.
   function cleanCutRanges(ranges) {
     const list = Array.isArray(ranges) ? ranges : [];
     if (!list.length) return [];
@@ -7628,17 +7736,19 @@
       if (!layer) return;
       const dx = point.x - drag.origin.x;
       const dy = point.y - drag.origin.y;
+      // The gesture happens in frame space; the box lives in source space.
+      const startBox = cleanFrameBox(drag.startBox, drag.crop);
       if (drag.kind === "move") {
-        updateCleanBox(drag.id, {
-          x: clamp(drag.startBox.x + dx, 0, 1 - drag.startBox.w),
-          y: clamp(drag.startBox.y + dy, 0, 1 - drag.startBox.h),
-          w: drag.startBox.w,
-          h: drag.startBox.h,
-        });
+        updateCleanBox(drag.id, cleanSourceBox({
+          x: clamp(startBox.x + dx, 0, 1 - startBox.w),
+          y: clamp(startBox.y + dy, 0, 1 - startBox.h),
+          w: startBox.w,
+          h: startBox.h,
+        }, drag.crop));
         return;
       }
       // resize from one corner, the opposite corner stays put
-      const box = drag.startBox;
+      const box = startBox;
       let x = box.x;
       let y = box.y;
       let w = box.w;
@@ -7655,7 +7765,7 @@
         h = box.h + (box.y - nextY);
         y = nextY;
       }
-      updateCleanBox(drag.id, { x, y, w, h });
+      updateCleanBox(drag.id, cleanSourceBox({ x, y, w, h }, drag.crop));
     };
     const onUp = () => {
       if (!drag) return;
@@ -7668,7 +7778,16 @@
         finished.preview.remove();
         const box = finished.last;
         if (box && box.w >= CLEAN_MIN_BOX + 0.005 && box.h >= CLEAN_MIN_BOX + 0.005) {
-          addCleanBox({ box, method: finished.method, label: "Drawn box" });
+          // A box drawn here belongs to the clip it was drawn on: without
+          // ranges it would apply at the same source time in every clip, and
+          // the crop of another clip can put it somewhere else entirely.
+          const window = finished.window;
+          addCleanBox({
+            box: cleanSourceBox(box, finished.crop),
+            ranges: window ? [window] : [],
+            method: finished.method,
+            label: "Drawn box",
+          });
         } else {
           setCleanStatus("A box needs a little more room. Drag a wider area.");
         }
@@ -7698,6 +7817,7 @@
           id: layer.id,
           origin: cleanLocalPoint(event),
           startBox: { ...layer.box },
+          crop: cleanCropAt(currentCleanTime()),
           pointerId: event.pointerId,
         };
         canvas.setPointerCapture?.(event.pointerId);
@@ -7716,6 +7836,7 @@
           id: layer.id,
           origin: cleanLocalPoint(event),
           startBox: { ...layer.box },
+          crop: cleanCropAt(currentCleanTime()),
           pointerId: event.pointerId,
         };
         canvas.setPointerCapture?.(event.pointerId);
@@ -7740,6 +7861,8 @@
         origin,
         last: { x: origin.x, y: origin.y, w: 0, h: 0 },
         preview,
+        crop: cleanCropAt(currentCleanTime()),
+        window: cleanClipWindowAt(currentCleanTime()),
         method: state.classicText.drawMethod || "blur",
         pointerId: event.pointerId,
       };

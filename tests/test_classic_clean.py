@@ -94,6 +94,7 @@ def _box(**overrides) -> dict:
 
 
 def test_a_clean_box_keeps_the_method_and_maps_to_an_edit_kind():
+    clips = _clips()
     layers = routes_classic.normalize_classic_clean(
         [
             _box(id="a", method="blur"),
@@ -103,9 +104,10 @@ def test_a_clean_box_keeps_the_method_and_maps_to_an_edit_kind():
         10.0,
     )
     assert [layer["method"] for layer in layers] == ["blur", "cover", "crop"]
-    assert [routes_classic._classic_clean_edit([layer])[0]["kind"] for layer in layers] == [
-        "blur", "plate", "crop_guard",
-    ]
+    assert [
+        routes_classic._classic_clean_edit([layer], clips)[0]["kind"]
+        for layer in layers
+    ] == ["blur", "plate", "crop_guard"]
     assert layers[0]["source"] == "scan"
     assert layers[0]["hidden"] is False
     assert layers[0]["ranges"] == []
@@ -175,13 +177,133 @@ def test_a_hidden_box_is_kept_in_the_editor_and_left_out_of_the_render():
     )
     assert len(layers["clean"]) == 1
     assert layers["clean"][0]["hidden"] is True
-    assert routes_classic._classic_clean_edit(layers["clean"]) == []
+    assert routes_classic._classic_clean_edit(layers["clean"], clips) == []
     compiled = compose_render.compile_edit(
         routes_classic._build_classic_edit(clips, "9:16", layers),
         clips=clips, source={"width": 1920, "height": 1080},
         scenes=[], motion_engine="perspective",
     )
     assert compiled["counts"]["clean"] == 0
+
+
+# ------------------------------------------------- ranges: cut time to source
+
+
+def _compile(clips: list[dict], layers: list[dict]) -> dict:
+    return compose_render.compile_edit(
+        routes_classic._build_classic_edit(clips, "9:16", layers),
+        clips=clips,
+        source={"width": 1920, "height": 1080},
+        scenes=[],
+        motion_engine="perspective",
+    )
+
+
+def test_a_range_is_translated_to_the_clips_source_time():
+    """Cut time 1-2 s on a clip at source 40 s is source 41-42 s, not 1-2 s."""
+    clips = routes_classic._classic_clips([
+        {"scene": 0, "role": "hook", "start": 40.0, "end": 44.0, "dur": 4.0},
+    ])
+    layers = routes_classic.normalize_classic_layers(
+        [], [], 4.0, [_box(ranges=[{"start": 1.0, "end": 2.0}])],
+    )
+    assert routes_classic._classic_clean_edit(layers["clean"], clips)[0]["ranges"] == [
+        {"start": 41.0, "end": 42.0},
+    ]
+    segment = _compile(clips, layers)["segments"][0]
+    assert segment["clean_ids"] == ["cl01"]
+    assert "between(t,1.000,2.000)" in segment["pre_filter"]
+
+
+def test_a_range_across_two_clips_becomes_one_source_range_each():
+    clips = routes_classic._classic_clips([
+        {"scene": 0, "role": "hook", "start": 40.0, "end": 44.0, "dur": 4.0},
+        {"scene": 1, "role": "beat", "start": 100.0, "end": 104.0, "dur": 4.0},
+    ])
+    layers = routes_classic.normalize_classic_layers(
+        [], [], 8.0, [_box(ranges=[{"start": 3.0, "end": 5.0}])],
+    )
+    assert routes_classic._classic_clean_edit(layers["clean"], clips)[0]["ranges"] == [
+        {"start": 43.0, "end": 44.0},
+        {"start": 100.0, "end": 101.0},
+    ]
+    compiled = _compile(clips, layers)
+    first, second = compiled["segments"]
+    assert first["clean_ids"] == ["cl01"] and second["clean_ids"] == ["cl01"]
+    assert "between(t,3.000,4.000)" in first["pre_filter"]
+    assert "between(t,0.000,1.000)" in second["pre_filter"]
+
+
+def test_a_part_of_the_clip_the_cut_dropped_never_comes_back():
+    # 4 s of source used for 2 s: source 42-44 never plays, so a range reaching
+    # past the cut end must stop at 2 s of cut time, not at the clip's end.
+    clips = routes_classic._classic_clips([
+        {"scene": 0, "role": "hook", "start": 40.0, "end": 42.0, "dur": 2.0},
+    ])
+    layers = routes_classic.normalize_classic_layers(
+        [], [], 2.0, [_box(ranges=[{"start": 1.0, "end": 2.0}])],
+    )
+    assert routes_classic._classic_clean_edit(layers["clean"], clips)[0]["ranges"] == [
+        {"start": 41.0, "end": 42.0},
+    ]
+
+
+def test_a_box_without_ranges_applies_at_the_same_source_time_in_every_clip():
+    """Why the editor ties a drawn box to the clip it was drawn on.
+
+    No ranges means "the whole clip", and the box is source space, so the same
+    rectangle lands on whatever those clips show at that source time. The
+    browser now adds the clip's window; this test pins the server behaviour it
+    is working around, so a change here is deliberate.
+    """
+    clips = routes_classic._classic_clips([
+        {"scene": 0, "role": "hook", "start": 10.0, "end": 14.0, "dur": 4.0},
+        {"scene": 1, "role": "beat", "start": 50.0, "end": 54.0, "dur": 4.0},
+    ])
+    layers = routes_classic.normalize_classic_layers([], [], 8.0, [_box()])
+    compiled = _compile(clips, layers)
+    assert [segment["clean_ids"] for segment in compiled["segments"]] == [
+        ["cl01"], ["cl01"],
+    ]
+
+
+def test_a_box_drawn_on_a_16_9_frame_lands_inside_the_crop():
+    """Frame coordinates converted through the crop cover the right pixels."""
+    clips = _clips()
+    compiled = _compile(clips, {})
+    crop = routes_classic._classic_crop_box(
+        compiled["segments"][0], compiled["source"],
+    )
+    assert crop is not None
+    cx, cy, cw, ch = crop
+    # The browser draws at 45-55% of the visible frame and converts the same way
+    # the editor does: source = crop.origin + frame * crop.size.
+    frame_box = {"x": 0.45, "y": 0.45, "w": 0.1, "h": 0.1}
+    source_box = {
+        "x": round(cx + frame_box["x"] * cw, 6),
+        "y": round(cy + frame_box["y"] * ch, 6),
+        "w": round(frame_box["w"] * cw, 6),
+        "h": round(frame_box["h"] * ch, 6),
+    }
+    layers = routes_classic.normalize_classic_layers(
+        [], [], 8.0, [_box(method="cover", box=source_box)],
+    )
+    filters = _compile(clips, layers)["segments"][0]["pre_filters"]
+    drawbox = next(item for item in filters if "drawbox" in item)
+    geometry = drawbox.split(":color=")[0].removeprefix("drawbox=")
+    rect = {
+        key: int(value)
+        for key, value in (part.split("=", 1) for part in geometry.split(":"))
+    }
+    crop_px = (
+        int(round(cx * 1920)), int(round(cy * 1080)),
+        int(round(cw * 1920)), int(round(ch * 1080)),
+    )
+    left, top, width, height = crop_px
+    assert rect["x"] >= left - 2, drawbox
+    assert rect["x"] + rect["w"] <= left + width + 2, drawbox
+    assert rect["y"] >= top - 2, drawbox
+    assert rect["y"] + rect["h"] <= top + height + 2, drawbox
 
 
 # ------------------------------------------------------------------ the routes
@@ -277,6 +399,10 @@ def test_the_frame_route_renders_the_cut_on_screen(classic, monkeypatch):
     assert response.status_code == 200, response.text
     assert response.headers["content-type"] == "image/jpeg"
     assert int(response.headers["x-vibecut-clean"]) >= 1
+    # The browser draws boxes from this crop, so it must come from the server.
+    assert response.headers["x-vibecut-segment"] == "0"
+    crop = [float(value) for value in response.headers["x-vibecut-crop"].split(",")]
+    assert crop == pytest.approx([656 / 1920, 0.0, 608 / 1920, 1.0], abs=1e-6)
     assert calls["at"] == 1.5
     assert calls["compiled"]["counts"]["clean"] >= 1
     assert calls["compiled"]["segments"][0]["clean_ids"] == ["cl01"]
@@ -298,6 +424,46 @@ def test_the_frame_route_refuses_times_outside_the_cut(classic, monkeypatch):
         json={"clips": _clips(), "t": 1.0, "aspect": "1:1"},
     )
     assert shape.status_code == 422
+
+
+def test_boxes_saved_in_frame_space_are_dropped_and_counted(classic):
+    """Version 1 boxes were drawn on the cropped frame. Do not reinterpret them."""
+    client, _ = classic
+    clips = _clips()
+    job = app.load_job("classic-clean")
+    hash_key = routes_classic.edits.clip_snapshot_hash(clips)
+    job["classic_text"] = {
+        "version": 1,
+        "cuts": {
+            hash_key: {
+                "clips_hash": hash_key,
+                "clip_count": len(clips),
+                "duration": 8.0,
+                "overlays": [],
+                "effects": [],
+                "clean": [_box()],
+                "updated": 1.0,
+            },
+        },
+    }
+    path = app._job_dir("classic-clean") / "job.json"
+    path.write_text(json.dumps(job), encoding="utf-8")
+
+    looked_up = client.post(
+        "/api/classic/jobs/classic-clean/text", json={"clips": clips},
+    )
+    assert looked_up.status_code == 200, looked_up.text
+    cut = looked_up.json()["cut"]
+    assert cut["clean"] == []
+    assert cut["clean_reset"] == 1
+
+    saved = client.put(
+        "/api/classic/jobs/classic-clean/text",
+        json={"clips": clips, "clean": [_box()]},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["cut"]["clean"][0]["id"] == "cl01"
+    assert saved.json()["cut"]["clean_reset"] == 0
 
 
 def test_fill_status_names_the_missing_models_and_never_lies(classic, monkeypatch):

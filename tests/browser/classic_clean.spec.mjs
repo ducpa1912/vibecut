@@ -20,6 +20,11 @@ const base = String(process.env.CLASSIC_BASE_URL || "").replace(/\/$/, "");
 const jobId = String(process.env.CLASSIC_JOB_ID || "j1");
 const moduleUrl = process.env.PLAYWRIGHT_MODULE || "";
 const shotDir = process.env.CLASSIC_SHOT_DIR || "";
+// When set, the box drawn at frame x=0.12 must be stored at this source x.
+// It is 0.12 on a source whose crop is the whole frame, and larger on a 16:9
+// source cropped to 9:16 — because boxes are stored in source space.
+const expectedSrcX = Number(process.env.CLASSIC_EXPECT_SRC_X || "");
+const expectedSrcW = Number(process.env.CLASSIC_EXPECT_SRC_W || "");
 
 function skip(message) {
   console.error(`SKIP: ${message}`);
@@ -162,6 +167,41 @@ async function run(viewport) {
     `${label}: the drawn box has no layers row`);
   assert((await page.locator("#clean-status").textContent()).includes("added"),
     `${label}: the panel did not confirm the box`);
+
+  // The box is drawn where the founder dragged it, and stored in source space:
+  // the frame is cropped, the renderer is not.
+  const drawn = await page.evaluate(() => {
+    const boxes = [...document.querySelectorAll("#clean-overlay .clean-box")];
+    const box = boxes[boxes.length - 1];
+    const src = (box.dataset.srcBox || "").split(",").map(Number);
+    const style = box.style;
+    return {
+      left: parseFloat(style.left) / 100,
+      top: parseFloat(style.top) / 100,
+      width: parseFloat(style.width) / 100,
+      srcX: src[0],
+      srcW: src[2],
+      ranges: JSON.parse(box.dataset.srcRanges || "null"),
+    };
+  });
+  assert(Math.abs(drawn.left - 0.12) < 0.02 && Math.abs(drawn.top - 0.72) < 0.02,
+    `${label}: the drawn box is not where it was drawn (${drawn.left}, ${drawn.top})`);
+  assert(Math.abs(drawn.width - 0.76) < 0.03,
+    `${label}: the drawn box is not as wide as the drag (${drawn.width})`);
+  if (Number.isFinite(expectedSrcX)) {
+    assert(Math.abs(drawn.srcX - expectedSrcX) < 0.02,
+      `${label}: the box is stored at source x ${drawn.srcX}, not ${expectedSrcX}`);
+  }
+  if (Number.isFinite(expectedSrcW)) {
+    assert(Math.abs(drawn.srcW - expectedSrcW) < 0.03,
+      `${label}: the box is stored ${drawn.srcW} wide in source, not ${expectedSrcW}`);
+  }
+  // A drawn box is tied to the clip it was drawn on; without ranges it would
+  // apply at one source time in every clip, where the crop can differ.
+  assert(Array.isArray(drawn.ranges) && drawn.ranges.length === 1,
+    `${label}: the drawn box has ${JSON.stringify(drawn.ranges)} ranges`);
+  assert(drawn.ranges[0].start === 0 && drawn.ranges[0].end > 0,
+    `${label}: the drawn box is not limited to its clip (${JSON.stringify(drawn.ranges)})`);
 
   // Move it: the box follows the drag.
   const before = await page.evaluate(() => {
