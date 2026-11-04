@@ -25,6 +25,10 @@ import {
   cropAt,
   frameToBox,
   layerFrameRect,
+  clipAt,
+  motionZoomAt,
+  stuckPosition,
+  zoomedCrop,
   handleAt,
   insideRect,
   layerActive,
@@ -39,6 +43,8 @@ import { icon } from "./icons.js";
 
 const FADE_IN_SKIP = 0.15;
 
+const DRAWN_BOX_COLOUR = "#7fb7e8";
+
 export function mountPreview(root, options = {}) {
   const callbacks = {
     onTime: options.onTime || (() => {}),
@@ -46,6 +52,7 @@ export function mountPreview(root, options = {}) {
     onStale: options.onStale || (() => {}),
     onSelect: options.onSelect || (() => {}),
     onBoxChange: options.onBoxChange || (() => {}),
+    onTextBox: options.onTextBox || (() => {}),
     onBoxCreate: options.onBoxCreate || (() => {}),
     onAspect: options.onAspect || (() => {}),
     onOutput: options.onOutput || (() => {}),
@@ -140,9 +147,9 @@ export function mountPreview(root, options = {}) {
         <div class="st-preview-head-right">
           <span id="st-preview-source" class="st-visually-hidden" role="status">Loading preview…</span>
           <div class="st-preview-viewgroup" role="group" aria-label="Preview zoom">
-            <button id="st-preview-zoom-out" class="st-preview-chip" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+            <button id="st-preview-zoom-out" class="st-preview-chip" type="button" title="Magnify the view less. The video is not changed." aria-label="Zoom out">−</button>
             <button id="st-preview-zoom-level" class="st-preview-chip" type="button" title="Fit the preview" aria-label="Fit the preview">100%</button>
-            <button id="st-preview-zoom-in" class="st-preview-chip" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+            <button id="st-preview-zoom-in" class="st-preview-chip" type="button" title="Magnify the view. The video is not changed." aria-label="Zoom in">+</button>
           </div>
           <div class="st-preview-spangroup" role="group" aria-label="Span">
             <button id="st-preview-span-in" class="st-preview-chip" type="button" title="Set span in at the playhead" aria-label="Set span in">In</button>
@@ -465,14 +472,50 @@ export function mountPreview(root, options = {}) {
     return { ...captions, cues };
   }
 
+  /** What the picture shows now: the crop, with this beat's motion on it. */
   function currentCrop() {
-    return cropAt({
+    const crop = cropAt({
       edit: state.edit,
       job: state.job,
       story: state.story,
       time: state.time,
       aspect: state.aspect,
     });
+    const beat = clipAt(state.story, state.time);
+    return zoomedCrop(crop, motionZoomAt(
+      state.edit, state.time, beat.offset, beat.offset + beat.duration,
+    ));
+  }
+
+  /** The crop the fast preview was built with: the scene's, with no zoom. */
+  function proxyCrop() {
+    return cropAt({
+      edit: { reframe: { mode: "auto", cx: 0.5, cy: 0.5, zoom: 1 } },
+      job: state.job,
+      story: state.story,
+      time: state.time,
+      aspect: state.aspect,
+    });
+  }
+
+  /**
+   * The fast preview is built once, so zoom, crop moves and motion are drawn
+   * here, and playing matches the exact frame.
+   */
+  function drawProxy(source, width, height) {
+    const shown = currentCrop();
+    const built = proxyCrop();
+    if (!(shown?.w > 0) || !(shown?.h > 0) || !(built?.w > 0) || !(built?.h > 0)) {
+      drawCover(source, width, height);
+      return;
+    }
+    ctx.drawImage(
+      source,
+      ((built.x - shown.x) / shown.w) * width,
+      ((built.y - shown.y) / shown.h) * height,
+      (built.w / shown.w) * width,
+      (built.h / shown.h) * height,
+    );
   }
 
   function cleanLayers() {
@@ -612,7 +655,8 @@ export function mountPreview(root, options = {}) {
         continue;
       }
       const rect = pxRect(clipped, width, height);
-      const colour = LAYER_COLOURS.clean;
+      // A drawn box is blue, so it reads apart from what the scan found.
+      const colour = String(item.layer?.tracklet_id || "").trim() ? LAYER_COLOURS.clean : DRAWN_BOX_COLOUR;
       ctx.save();
       ctx.globalAlpha = item.active ? 1 : 0.34;
       ctx.strokeStyle = colour;
@@ -780,7 +824,8 @@ export function mountPreview(root, options = {}) {
           ? "none"
           : colorFilter(state.edit?.color);
       }
-      drawCover(source, width, height);
+      if (source === proxyVideo) drawProxy(source, width, height);
+      else drawCover(source, width, height);
       ctx.restore();
       // The proxy is the raw story range; the exact frame already has every
       // layer burned in, so only the proxy gets the live overlay.
@@ -1401,6 +1446,23 @@ export function mountPreview(root, options = {}) {
     return null;
   }
 
+  /** Dragging a Text layer places it on the video; a plain click changes nothing. */
+  function beginTextDrag(layer, frame, crop, event) {
+    pauseClockOnly();
+    const rect = layerFrameRect(layer, crop);
+    const edgeSize = 0.02;
+    drag = {
+      mode: handleAt(rect, frame, edgeSize) ? "text-resize" : "text-move",
+      handle: handleAt(rect, frame, edgeSize),
+      id: layer.id,
+      crop,
+      startFrame: frame,
+      startBox: { ...(layer.video?.box || stuckPosition(rect, crop).box) },
+    };
+    dom.canvas.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  }
+
   function dragRect(start, current) {
     const left = clamp(Math.min(start.x, current.x), 0, 1);
     const top = clamp(Math.min(start.y, current.y), 0, 1);
@@ -1432,6 +1494,11 @@ export function mountPreview(root, options = {}) {
       dom.canvas.setPointerCapture?.(event.pointerId);
       draw();
       event.preventDefault();
+      return;
+    }
+    const selectedText = state.selected?.kind === "text" ? textAt(frame) : null;
+    if (selectedText && selectedText.id === state.selected.id) {
+      beginTextDrag(selectedText, frame, crop, event);
       return;
     }
     const selected = selectedClean();
@@ -1474,6 +1541,7 @@ export function mountPreview(root, options = {}) {
     const text = textAt(frame);
     if (text) {
       callbacks.onSelect("text", text.id);
+      beginTextDrag(text, frame, crop, event);
       return;
     }
     if (state.viewZoom > 1.001) {
@@ -1522,6 +1590,16 @@ export function mountPreview(root, options = {}) {
     }
     const dx = (frame.x - drag.startFrame.x) * drag.crop.w;
     const dy = (frame.y - drag.startFrame.y) * drag.crop.h;
+    if (drag.mode === "text-move" || drag.mode === "text-resize") {
+      const box = drag.mode === "text-move"
+        ? moveBox(drag.startBox, dx, dy)
+        : resizeBox(drag.startBox, drag.handle, dx, dy, 0.02);
+      drag.textBox = box;
+      callbacks.onTextBox?.(drag.id, box, { commit: false });
+      draw();
+      event.preventDefault();
+      return;
+    }
     const box = drag.mode === "move"
       ? moveBox(drag.startBox, dx, dy)
       : resizeBox(drag.startBox, drag.handle, dx, dy);
@@ -1554,6 +1632,8 @@ export function mountPreview(root, options = {}) {
         callbacks.onBoxCreate(frameToBox(rect, current.crop));
       }
       setTool("select");
+    } else if (current.textBox) {
+      callbacks.onTextBox?.(current.id, current.textBox, { commit: true });
     } else if (current.box) {
       callbacks.onBoxChange(current.id, current.box, { commit: true });
     }

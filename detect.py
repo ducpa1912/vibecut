@@ -746,6 +746,41 @@ def _stable_tracklet_id(item: dict, used: set[str]) -> str:
     return candidate
 
 
+def _keep_text_outside_scope(report: dict, previous: dict | None, start: float, end: float) -> None:
+    """A scene scan adds to the last report, so it does not lose the rest."""
+    if not isinstance(previous, dict) or previous.get("status") != "ready":
+        return
+
+    def outside(ranges: Any) -> bool:
+        spans = ranges if isinstance(ranges, list) else []
+        return bool(spans) and all(
+            _number(item.get("end"), 0.0) <= start or _number(item.get("start"), 0.0) >= end
+            for item in spans if isinstance(item, dict)
+        )
+
+    kept = [item for item in previous.get("tracklets") or [] if outside(item.get("ranges"))]
+    if not kept:
+        return
+    report["tracklets"] = sorted(
+        [*kept, *(report.get("tracklets") or [])],
+        key=lambda item: (
+            _number((item.get("ranges") or [{}])[0].get("start"), 0.0), str(item.get("id") or ""),
+        ),
+    )
+    known = {str(item.get("id")) for item in report["tracklets"]}
+    seen = {str(entry.get("tracklet_id")) for entry in report.get("clean_prefill") or []}
+    report["clean_prefill"] = [
+        *(report.get("clean_prefill") or []),
+        *(
+            entry for entry in previous.get("clean_prefill") or []
+            if str(entry.get("tracklet_id")) in known and str(entry.get("tracklet_id")) not in seen
+        ),
+    ]
+    # The whole video was read, so this stays a whole-video report.
+    if not previous.get("scope"):
+        report.pop("scope", None)
+
+
 def build_tracklets(
     observations: Iterable[dict],
     duration: float,
@@ -1866,6 +1901,8 @@ def run_check(
     )
     report["timings"] = {"total": round(time.time() - started, 3)}
     report["progress"] = 1.0
+    if scoped:
+        _keep_text_outside_scope(report, load_report(job_dir), window_start, window_end)
     write_report(job_dir, report)
     if progress:
         progress(1.0, "Check complete")

@@ -258,6 +258,16 @@ Recommendation: A, because sharp text matters most, unless matching motion prove
 - **Not built:** dragging on the canvas, stickers, effects, captions, converting saved layers, and a "Hidden by crop" label on the row. Option B was not built, because A has not failed.
 - **Checked:** unit tests, and ffmpeg accepts the filter graph (a parser check with no file written). **Unknown:** whether the layer and the video line up in real pixels. Only a real clip can answer that, and it decides between A and B.
 
+**Round 1 fixes after the founder's first real test (2026-11-04):**
+
+- **Cause of the missing box:** Clean bars were drawn at source time on a story-time timeline, so a box in a later part of the video had no visible bar. They now sit at story time, one per clip.
+- **Dragging:** Clean, Text and motion bars change length and time by dragging. Dragging text on the preview places it on the video, and sets `video`.
+- **Preview:** the fast preview now draws crop, zoom and motion, and boxes follow Motion zoom on the exact frame. This closes the R0 "not done" line.
+- **Test 1 second and Before/After:** jump to the layer first. Refusals name the reason, in the message and the log.
+- **Check:** "Check this scene" only filters a whole-video scan, and a scene scan keeps text found elsewhere. The founder's "super buggy" has not been described, so other faults may remain.
+- **Moments:** Delete moment, Clear all moments, and a search that finds nothing keeps what is there. The Finish review card has a button to add the moment to the queue.
+- **Not changed:** the timeline icons, and zooming out to fit a border. Neither has been built or decided.
+
 **Test gate:** on a clip of the founder's choice, with Text, a sticker, an effect and captions on it:
 
 1. Zoom, and all of them scale with the video.

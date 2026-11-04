@@ -19,7 +19,7 @@ const LAYERS = [
   ["filter", "Filter & LUTs", "palette"],
   ["transcript", "Transcript & Translation", "captions"],
   ["narrative", "Narrative", "mic"],
-  ["zoom", "Zoom", "search"],
+  ["zoom", "Video zoom", "search"],
   ["border", "Border", "square"],
 ];
 
@@ -219,7 +219,8 @@ function mountZoomLayer(host, ctx) {
   host.append(
     el("div", { class: "st-zoom-row" }, [minus, slider, plus, readout]),
     el("div", { class: "st-layer-actions" }, [area, reset]),
-    el("p", { class: "st-layer-note", text: "Area focus crops this moment around the box you draw on the preview." }),
+    el("p", { class: "st-layer-note", text: "Zooms the video itself, in the preview and the render. It can only zoom in, so the video always fills the frame. The + and − under the preview only magnify your view." }),
+    el("p", { class: "st-layer-note", text: "Area focus: draw a box on the preview, and this moment is cropped to it." }),
   );
 }
 

@@ -158,7 +158,7 @@ def test_auto_clean_404_asks_for_a_scan_and_keeps_other_errors_readable():
 def test_clean_panel_has_one_quiet_remove_all_action():
     clean = source("edit/layers/clean.js")
 
-    assert "Remove all found text" in clean
+    assert "Clean all found text" in clean
     assert "st-btn st-btn-ghost st-btn-small st-auto-clean-run" in clean
     assert "disabled: running || !editId" in clean
     # The header action stays secondary.

@@ -273,6 +273,11 @@ export function mountTextPanel(host, ctx) {
     commit();
   });
 
+  const stuckNote = el("p", {
+    class: "st-field-hint",
+    text: "Drag the text on the preview to move it, or drag its edge to resize. It then stays on that spot of the video. Drag its bar on the timeline to change when it shows.",
+  });
+
   const opacity = el("input", {
     type: "range",
     min: "0",
@@ -288,7 +293,7 @@ export function mountTextPanel(host, ctx) {
     commit();
   });
 
-  stage.append(el("div", { class: "st-check-row" }, [upper.wrapper, shadow.wrapper, safe.wrapper, stuck.wrapper]));
+  stage.append(el("div", { class: "st-check-row" }, [upper.wrapper, shadow.wrapper, safe.wrapper, stuck.wrapper]), stuckNote);
   stage.append(el("div", { class: "st-range-row" }, [
     el("span", { class: "st-field-label", text: "Opacity" }),
     opacity,

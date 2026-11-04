@@ -448,7 +448,79 @@ export function storyDuration(story, edit) {
  * One entry per timeline lane. Every item is in story/output seconds, so the
  * timeline can place it with a percentage and stay responsive.
  */
-export function layerSpans(edit, captions, duration) {
+/**
+ * A source-time range on the story timeline: one span per clip it touches.
+ * Clean layers save source seconds, and the timeline shows story seconds.
+ */
+export function storySpans(clips, start, end) {
+  const spans = [];
+  let offset = 0;
+  (Array.isArray(clips) ? clips : []).forEach((clip, clipIndex) => {
+    const from = numberOr(clip?.start);
+    const length = Math.max(0, numberOr(clip?.dur, numberOr(clip?.end) - from));
+    if (clip?.kind !== "blank" && clip?.kind !== "file") {
+      const low = Math.max(from, numberOr(start));
+      const high = Math.min(from + length, numberOr(end));
+      if (high > low + 1e-3) {
+        spans.push({
+          start: offset + low - from,
+          end: offset + high - from,
+          sourceStart: low,
+          sourceEnd: high,
+          clipIndex,
+          clipStart: offset,
+          clipEnd: offset + length,
+          clipSource: from,
+        });
+      }
+    }
+    offset += length;
+  });
+  return spans;
+}
+
+/** A story-time span as source ranges, one per clip it crosses. */
+export function storyToSourceRanges(clips, start, end) {
+  const ranges = [];
+  let offset = 0;
+  for (const clip of Array.isArray(clips) ? clips : []) {
+    const from = numberOr(clip?.start);
+    const length = Math.max(0, numberOr(clip?.dur, numberOr(clip?.end) - from));
+    if (clip?.kind !== "blank" && clip?.kind !== "file") {
+      const low = Math.max(offset, numberOr(start));
+      const high = Math.min(offset + length, numberOr(end));
+      if (high > low + 1e-3) {
+        ranges.push({ start: round(from + low - offset, 3), end: round(from + high - offset, 3) });
+      }
+    }
+    offset += length;
+  }
+  return ranges;
+}
+
+/** A Clean range after one of its timeline spans moved to a new story span. */
+export function movedCleanRanges(ranges, rangeIndex, span, start, end) {
+  const out = [];
+  (Array.isArray(ranges) ? ranges : []).forEach((range, index) => {
+    if (index !== rangeIndex) {
+      out.push({ start: numberOr(range.start), end: numberOr(range.end) });
+      return;
+    }
+    if (numberOr(range.start) < span.sourceStart - 1e-3) {
+      out.push({ start: numberOr(range.start), end: span.sourceStart });
+    }
+    out.push({
+      start: round(span.clipSource + start - span.clipStart, 3),
+      end: round(span.clipSource + end - span.clipStart, 3),
+    });
+    if (numberOr(range.end) > span.sourceEnd + 1e-3) {
+      out.push({ start: span.sourceEnd, end: numberOr(range.end) });
+    }
+  });
+  return out.sort((a, b) => a.start - b.start);
+}
+
+export function layerSpans(edit, captions, duration, clips = null) {
   const span = { start: 0, end: Math.max(0.1, duration) };
   const rows = [];
 
@@ -457,10 +529,27 @@ export function layerSpans(edit, captions, duration) {
       ? layer.ranges
       : [span];
     const label = layer.label || CLEAN_LABELS[layer.kind] || `Clean ${index + 1}`;
+    const drawn = !String(layer.tracklet_id || "").trim();
+    if (clips && Array.isArray(layer.ranges) && layer.ranges.length) {
+      return layer.ranges.flatMap((range, rangeIndex) => (
+        storySpans(clips, range.start, range.end).map((span, spanIndex) => ({
+          id: `${layer.id}-${rangeIndex}-${spanIndex}`,
+          layerId: layer.id,
+          label,
+          drawn,
+          rangeIndex,
+          span,
+          start: span.start,
+          end: span.end,
+        }))
+      ));
+    }
     return ranges.map((range, rangeIndex) => ({
       id: `${layer.id}-${rangeIndex}`,
       layerId: layer.id,
       label,
+      drawn,
+      rangeIndex: Array.isArray(layer.ranges) && layer.ranges.length ? rangeIndex : -1,
       start: numberOr(range.start),
       end: Math.max(numberOr(range.start) + 0.1, numberOr(range.end)),
     }));

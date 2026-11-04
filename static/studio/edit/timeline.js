@@ -28,6 +28,10 @@ const LANE_LABELS = {
 };
 
 const DRY_RUN_MS = 90;
+const MAX_LANE_LEVELS = 4;
+const MIN_LAYER_SPAN = 0.2;
+// The default timeline height, where lanes are at their base size.
+const BASE_TIMELINE_H = 220;
 
 function niceStep(duration) {
   const target = Math.max(0.5, duration / 6);
@@ -96,6 +100,7 @@ function trimMessage(error) {
 export function mountTimeline(root, options = {}) {
   const handlers = {
     onSeek: options.onSeek || (() => {}),
+    onLayerTime: options.onLayerTime || (() => {}),
     onSelect: options.onSelect || (() => {}),
     onAdd: options.onAdd || (() => {}),
     onAddMoment: options.onAddMoment || (() => {}),
@@ -270,8 +275,14 @@ export function mountTimeline(root, options = {}) {
   function applyTimelineHeight(value) {
     const stage = root.closest(".st-edit-stage");
     if (!stage) return;
-    if (value) stage.style.setProperty("--st-timeline-h", `${Math.round(value)}px`);
-    else stage.style.removeProperty("--st-timeline-h");
+    if (value) {
+      stage.style.setProperty("--st-timeline-h", `${Math.round(value)}px`);
+      // A taller timeline makes its lanes taller, not only its empty space.
+      stage.style.setProperty("--st-tl-scale", String(Math.max(1, Math.min(2.4, value / BASE_TIMELINE_H))));
+    } else {
+      stage.style.removeProperty("--st-timeline-h");
+      stage.style.removeProperty("--st-tl-scale");
+    }
   }
   function saveTimelineHeight(value) {
     try {
@@ -520,10 +531,10 @@ export function mountTimeline(root, options = {}) {
       : formatSpan(storyStart, storyEnd ?? storyStart);
     const title = `${label || LANE_LABELS[kind] || "Layer"} · ${span}${outside ? " · outside the trimmed story" : ""}${item.hidden ? " · hidden outside, kept in the Edit" : ""}${item.pinned ? " · pinned to the story start" : ""}`;
     const attrs = {
-      class: `st-tl-bar st-tl-bar-${kind}${item.found ? " is-found" : ""}${item.sceneClip ? ` st-tl-role-${item.role || "beat"}` : ""}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
+      class: `st-tl-bar st-tl-bar-${kind}${item.found ? " is-found" : ""}${item.drawn ? " is-drawn" : ""}${item.sceneClip ? ` st-tl-role-${item.role || "beat"}` : ""}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
       title,
       "aria-label": title,
-      style: `left:${geometry.left}%;width:${geometry.width}%`,
+      style: `left:${geometry.left}%;width:${geometry.width}%${item.level ? `;--st-tl-level:${item.level}` : ""}`,
       dataset: {
         kind,
         layer: kind === "scenes" ? String(item.index ?? "") : (item.layerId || item.id),
@@ -578,8 +589,21 @@ export function mountTimeline(root, options = {}) {
         if (Number.isFinite(from) && from !== to) handlers.onReorder(from, to);
       });
     }
+    const timed = (kind === "clean" || kind === "text" || kind === "effects")
+      && !item.found && !outside && storyStart !== null;
+    if (timed) {
+      button.classList.add("is-timed");
+      for (const edge of ["start", "end"]) {
+        button.append(el("i", { class: `st-tl-edge st-tl-edge-${edge}`, dataset: { edge }, "aria-hidden": "true" }));
+      }
+      button.addEventListener("pointerdown", (event) => beginLayerDrag(event, button, item, kind, view));
+    }
     button.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (button.dataset.dragged === "1") {
+        delete button.dataset.dragged;
+        return;
+      }
       if (item.found) {
         handlers.onFound(item.trackletId);
         return;
@@ -590,6 +614,62 @@ export function mountTimeline(root, options = {}) {
       handlers.onSeek(Math.max(0, Math.min(duration, seekTo)));
     });
     return button;
+  }
+
+  let layerDragging = false;
+
+  /** Drag a bar's edge to change its length, or its body to move it in time. */
+  function beginLayerDrag(event, button, item, kind, view) {
+    if (event.button !== 0) return;
+    const track = button.parentElement;
+    const width = track?.getBoundingClientRect().width || 0;
+    if (!width) return;
+    const edge = event.target?.dataset?.edge || "move";
+    const startX = event.clientX;
+    const from = numberOr(item.storyStart);
+    const to = numberOr(item.storyEnd);
+    const low = item.span ? numberOr(item.span.clipStart) : 0;
+    const high = item.span ? numberOr(item.span.clipEnd) : duration;
+    let next = { start: from, end: to };
+    let moved = false;
+    const move = (moveEvent) => {
+      const delta = ((moveEvent.clientX - startX) / width) * view.axis;
+      if (!moved && Math.abs(moveEvent.clientX - startX) < 3) return;
+      moved = true;
+      layerDragging = true;
+      if (edge === "start") {
+        next = { start: Math.max(low, Math.min(to - MIN_LAYER_SPAN, from + delta)), end: to };
+      } else if (edge === "end") {
+        next = { start: from, end: Math.min(high, Math.max(from + MIN_LAYER_SPAN, to + delta)) };
+      } else {
+        const shift = Math.max(low - from, Math.min(high - to, delta));
+        next = { start: from + shift, end: to + shift };
+      }
+      const geometry = position({ start: view.leading + next.start, end: view.leading + next.end }, view);
+      button.style.left = `${geometry.left}%`;
+      button.style.width = `${geometry.width}%`;
+      setStatus(`${formatTime(next.start)} → ${formatTime(next.end)}`, "");
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      layerDragging = false;
+      if (!moved) return;
+      button.dataset.dragged = "1";
+      handlers.onLayerTime?.({
+        kind,
+        layerId: item.layerId || item.id,
+        rangeIndex: item.rangeIndex,
+        span: item.span || null,
+        start: next.start,
+        end: next.end,
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    event.stopPropagation();
   }
 
   function sceneRows() {
@@ -718,8 +798,30 @@ export function mountTimeline(root, options = {}) {
     return rows;
   }
 
+  function storyClips() {
+    const custom = Array.isArray(state.edit?.sequence) ? state.edit.sequence : [];
+    return custom.length ? custom : (Array.isArray(state.story?.clips) ? state.story.clips : []);
+  }
+
+  /** Overlapping bars take their own row in the lane, so each can be picked. */
+  function stackLevels(items) {
+    const ends = [];
+    const ordered = items
+      .slice()
+      .sort((left, right) => left.start - right.start || left.end - right.end);
+    for (const item of ordered) {
+      let level = ends.findIndex((end) => end <= item.start + 1e-3);
+      if (level < 0) {
+        level = Math.min(ends.length, MAX_LANE_LEVELS - 1);
+      }
+      ends[level] = Math.max(ends[level] ?? 0, item.end);
+      item.level = level;
+    }
+    return Math.max(1, ends.length);
+  }
+
   function layerRows(view) {
-    const rows = layerSpans(state.edit, state.captions, duration);
+    const rows = layerSpans(state.edit, state.captions, duration, storyClips());
     const hiddenIds = new Set((state.edit?.graphics || [])
       .filter((layer) => layer?.hidden)
       .map((layer) => String(layer.id)));
@@ -735,6 +837,8 @@ export function mountTimeline(root, options = {}) {
         const start = numberOr(found.storyStart, NaN);
         const end = numberOr(found.storyEnd, NaN);
         if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        // Text that already has a layer shows as that layer's bar.
+        if (numberOr(found.layerCount, 0) > 0) continue;
         cleanRow.items.push({
           id: `found:${found.id}`,
           label: found.text || "Found text",
@@ -768,6 +872,7 @@ export function mountTimeline(root, options = {}) {
           pinned: pinned.has(String(item.layerId)) || pinnedEdit.has(String(item.layerId)),
         };
       });
+      if (row.kind === "clean" || row.kind === "text") row.levels = stackLevels(row.items);
     }
     return { rows, outsideCount };
   }
@@ -779,6 +884,10 @@ export function mountTimeline(root, options = {}) {
       role: "group",
       "aria-label": `${LANE_LABELS[row.kind] || row.label} track`,
     });
+    if (row.levels > 1) {
+      track.classList.add("has-levels");
+      track.style.setProperty("--st-tl-levels", String(row.levels));
+    }
     track.append(makePlayhead());
     const left = view.hasPool ? axisPosition(view.leading, view) : 0;
     const right = view.hasPool ? axisPosition(view.leading + view.storyDuration, view) : 100;
@@ -1162,6 +1271,8 @@ export function mountTimeline(root, options = {}) {
   }
 
   function render() {
+    // A redraw would replace the bar under the pointer; it waits for the drop.
+    if (layerDragging) return;
     if (disposed) return;
     const view = model();
     const focused = document.activeElement?.dataset?.edge || pendingFocus || "";

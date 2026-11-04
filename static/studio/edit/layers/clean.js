@@ -459,7 +459,7 @@ export function manualLayer(index, box = null) {
     color: "#000000",
     opacity: 1,
     radius: 12,
-    label: "Remove text",
+    label: "Drawn box",
   };
   return setLayerKind(layer, drawKind());
 }
@@ -522,6 +522,11 @@ const FOUND_TICKS = new Map();
 const OPEN_CLEAN_GROUPS = new Set();
 let outsideOpen = false;
 
+// The panel is rebuilt often; the estimate is only asked for when layers change.
+let fillEstimateText = "";
+let fillEstimateFor = "";
+let foundAddedOpen = false;
+
 export function mountCleanPanel(host, ctx) {
   ensureCheckStyles();
   const jobId = currentJobId();
@@ -547,8 +552,6 @@ export function mountCleanPanel(host, ctx) {
   let removeMethod = "blur";
   let fillMethod = "sttn";
   let methodTouched = false;
-  let fillEstimateText = "";
-  let fillEstimateFor = "";
   let fillEstimateTimer = 0;
   if (!FOUND_TICKS.has(jobId)) FOUND_TICKS.set(jobId, new Map());
   const foundTicks = FOUND_TICKS.get(jobId);
@@ -1007,17 +1010,19 @@ export function mountCleanPanel(host, ctx) {
     });
     thisScene.addEventListener("click", () => {
       sceneOnly = true;
-      if (reportMatchesScene(ctx.getSceneRange?.())) { render(); return; }
+      // A whole-video scan already covers this scene, so only filter it.
+      if (!report?.scope || reportMatchesScene(ctx.getSceneRange?.())) { render(); return; }
       void startTextScan({ scene: true });
     });
     const video = el("button", {
       class: `st-btn st-btn-small${sceneOnly ? " st-btn-quiet" : " st-btn-ghost"} st-clean-scope-video`,
       type: "button",
-      text: "Scan video",
+      text: !report?.scope && !sceneOnly ? "Scan video again" : "Scan video",
     });
     video.addEventListener("click", () => {
+      // From the scene view of a whole-video scan this only widens the list.
+      if (!report?.scope && sceneOnly) { sceneOnly = false; render(); return; }
       sceneOnly = false;
-      if (!report?.scope) { render(); return; }
       void startTextScan();
     });
     wrap.append(scope, el("div", { class: "st-clean-scope" }, [thisScene, video]));
@@ -1052,7 +1057,7 @@ export function mountCleanPanel(host, ctx) {
     });
     const controls = [
       el("label", { class: "st-found-method-wrap" }, [
-        el("span", { text: "Remove with" }),
+        el("span", { text: "Clean with" }),
         method,
       ]),
     ];
@@ -1080,14 +1085,14 @@ export function mountCleanPanel(host, ctx) {
     const button = el("button", {
       class: "st-btn st-btn-ghost st-btn-small st-auto-clean-run",
       type: "button",
-      text: running ? "Removing found text…" : "Remove all found text",
+      text: running ? "Cleaning found text…" : "Clean all found text",
       disabled: running || !editId || !ticked.length,
       "aria-busy": running ? "true" : "false",
       title: !editId
         ? "Open an Edit to remove detected text."
         : !ticked.length
           ? "Tick at least one found text region first."
-          : `Remove ${ticked.length} ticked ${ticked.length === 1 ? "region" : "regions"} with ${removeMethod === "ai" ? "AI fill" : removeMethod}.`,
+          : `Clean ${ticked.length} ticked ${ticked.length === 1 ? "region" : "regions"} with ${removeMethod === "ai" ? "AI fill" : removeMethod}.`,
     });
     button.addEventListener("click", () => { void runAutoClean(); });
     controls.push(button);
@@ -1213,7 +1218,7 @@ export function mountCleanPanel(host, ctx) {
       checked: row.ticked,
       disabled: !row.allowed,
       "aria-label": row.allowed
-        ? `Remove ${row.text}`
+        ? `Clean ${row.text}`
         : `${row.text} is not removed`,
     });
     checkbox.addEventListener("change", () => {
@@ -1359,10 +1364,23 @@ export function mountCleanPanel(host, ctx) {
       toggle,
     ]));
     const list = el("div", { class: "st-found-list", role: "list" });
-    for (const row of rows.slice(0, 40)) list.append(foundRowNode(row));
-    card.append(list);
-    if (rows.length > 40) {
-      card.append(el("p", { class: "st-hint", text: `Showing 40 of ${rows.length} found regions.` }));
+    // Text that already has a layer folds away, so the list holds what is left.
+    const waiting = rows.filter((row) => !row.added);
+    const added = rows.filter((row) => row.added);
+    for (const row of waiting.slice(0, 40)) list.append(foundRowNode(row));
+    if (waiting.length) card.append(list);
+    if (added.length) {
+      const fold = el("details", { class: "st-found-added", open: foundAddedOpen }, [
+        el("summary", { text: `${formatCount(added.length, "text region")} already added` }),
+      ]);
+      fold.addEventListener("toggle", () => { foundAddedOpen = fold.open; });
+      const addedList = el("div", { class: "st-found-list", role: "list" });
+      for (const row of added.slice(0, 40)) addedList.append(foundRowNode(row));
+      fold.append(addedList);
+      card.append(fold);
+    }
+    if (waiting.length > 40) {
+      card.append(el("p", { class: "st-hint", text: `Showing 40 of ${waiting.length} found regions.` }));
     }
     card.append(autoCleanToolbar());
     const status = autoCleanStatusNode();
@@ -1815,7 +1833,7 @@ export function mountCleanPanel(host, ctx) {
       const remove = el("button", {
         class: "st-icon-btn st-icon-small",
         type: "button",
-        "aria-label": "Remove time range",
+        "aria-label": "Delete time range",
         text: "×",
         disabled: !canClean(),
       });
@@ -1846,7 +1864,7 @@ export function mountCleanPanel(host, ctx) {
     rangeBox.append(el("p", { class: "st-field-hint", text: "Times are from the original video, not the cut." }));
     details.append(rangeBox);
 
-    const remove = el("button", { class: "st-btn st-btn-quiet st-btn-small st-danger", type: "button", text: "Remove layer" });
+    const remove = el("button", { class: "st-btn st-btn-quiet st-btn-small st-danger", type: "button", text: "Delete layer" });
     remove.addEventListener("click", () => {
       const layers = (ctx.getEdit()?.clean || []).filter((item) => item.id !== layer.id);
       ctx.setClean(layers);

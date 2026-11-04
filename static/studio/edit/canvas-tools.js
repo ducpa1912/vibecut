@@ -41,6 +41,45 @@ export function sourceTimeAt(story, time) {
   return clipAt(story, time).sourceTime;
 }
 
+/**
+ * Motion's zoom at output time `t`, for the beat that holds it. Mirrors
+ * `compose_render._motion_perspective_filter`: a zoom holds to the beat's end.
+ * Shake is left out, since it barely changes the picture's scale.
+ */
+export function motionZoomAt(edit, time, beatStart = 0, beatEnd = Infinity) {
+  let zoom = 1;
+  for (const motion of edit?.motion || []) {
+    if (!motion || motion.hidden) continue;
+    const from = numberOr(motion.start);
+    const to = numberOr(motion.end);
+    if (to <= beatStart + 1e-6 || from >= beatEnd - 1e-6) continue;
+    const start = Math.max(from, beatStart);
+    const end = Math.min(to, beatEnd);
+    const amount = numberOr(motion.amount);
+    if (time < start) continue;
+    if (motion.kind === "snap_zoom") {
+      zoom *= 1 + amount;
+    } else if (motion.kind === "punch_in") {
+      zoom *= 1 + amount * Math.min(1, (time - start) / Math.max(1 / 30, numberOr(motion.ramp)));
+    } else if (motion.kind === "push") {
+      zoom *= 1 + amount * Math.min(1, (time - start) / Math.max(1 / 30, end - start));
+    }
+  }
+  return zoom;
+}
+
+/** The part of a crop that shows at a centre zoom. */
+export function zoomedCrop(crop, zoom) {
+  const factor = Math.max(1, numberOr(zoom, 1));
+  if (factor === 1) return crop;
+  return {
+    x: numberOr(crop?.x) + (numberOr(crop?.w, 1) * (1 - 1 / factor)) / 2,
+    y: numberOr(crop?.y) + (numberOr(crop?.h, 1) * (1 - 1 / factor)) / 2,
+    w: numberOr(crop?.w, 1) / factor,
+    h: numberOr(crop?.h, 1) / factor,
+  };
+}
+
 const SCENE_MAPS = new WeakMap();
 
 function sceneMap(job) {

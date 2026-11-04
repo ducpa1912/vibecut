@@ -19,6 +19,7 @@ import {
   createClipSet,
   createStoryQueue,
   deleteClipSet,
+  deleteStory,
   getCheckReport,
   getJob,
   getJobStatus,
@@ -598,6 +599,71 @@ export function mount(root, ctx) {
     return card;
   }
 
+  /** A button that asks once more before it deletes. */
+  function confirmButton(text, again, action) {
+    const button = el("button", { class: "st-btn st-btn-quiet st-btn-small st-story-danger", type: "button", text });
+    let armed = false;
+    button.addEventListener("click", async () => {
+      if (!armed) {
+        armed = true;
+        button.textContent = again;
+        return;
+      }
+      button.disabled = true;
+      try {
+        await action();
+      } catch (error) {
+        showError(error.message || "Could not delete that.");
+        button.disabled = false;
+      }
+    });
+    button.addEventListener("blur", () => {
+      armed = false;
+      button.textContent = text;
+    });
+    return button;
+  }
+
+  /** Earlier searches, and clearing every moment. */
+  function momentTools(set) {
+    const bar = el("div", { class: "st-story-foot" });
+    if (sets.length > 1) {
+      const picker = el("select", { "aria-label": "Moment search" });
+      sets.forEach((item, index) => {
+        picker.append(el("option", {
+          value: item.id,
+          text: `Search ${sets.length - index} · ${formatCount((item.stories || []).length, "moment")}`,
+          selected: item.id === set.id,
+        }));
+      });
+      picker.addEventListener("change", () => {
+        activeSetId = picker.value;
+        renderStories();
+      });
+      bar.append(picker);
+    }
+    bar.append(confirmButton("Clear all moments", "Click again to clear all", async () => {
+      for (const item of sets) await deleteClipSet(job.id, item.id);
+      sets = [];
+      activeSetId = "";
+      ctx.refreshSteps?.();
+      renderStories();
+      showStatus("Moments cleared. Their edits and renders are kept.", "ok");
+    }));
+    return bar;
+  }
+
+  function deleteMomentButton(story) {
+    return confirmButton("Delete moment", "Click again to delete", async () => {
+      const set = sets.find((item) => item.id === activeSetId) || sets[0];
+      const result = await deleteStory(job.id, set.id, story.id);
+      sets = sets.map((item) => (item.id === set.id ? result.clip_set : item));
+      ctx.refreshSteps?.();
+      renderStories();
+      showStatus("Moment deleted. Its edits and renders are kept.", "ok");
+    });
+  }
+
   function storyCard(story, index) {
     const hook = story.hook?.text || story.title || `Moment ${index + 1}`;
     const payoff = story.payoff?.text || "";
@@ -673,6 +739,7 @@ export function mount(root, ctx) {
     card.append(head);
     const frame = momentFrame(story, index);
     if (frame) card.append(frame);
+    foot.append(deleteMomentButton(story));
     card.append(meta, quotes, trim, foot, note);
     return card;
   }
@@ -1192,6 +1259,7 @@ export function mount(root, ctx) {
     bar.append(aspectLabel, qualityLabel, all);
     dom.body.append(bar);
 
+    dom.body.append(momentTools(set));
     const list = el("div", { class: "st-story-list" });
     stories.forEach((story, index) => {
       list.append(storyCard(story, index));
@@ -1268,6 +1336,13 @@ export function mount(root, ctx) {
       ctx.refreshSteps?.();
       if (disposed) return;
       const record = result?.clip_set;
+      if (record?.id && !(record.stories || []).length) {
+        // Nothing new: keep the moments already here.
+        await deleteClipSet(job.id, record.id).catch(() => {});
+        showStatus("No new moments found. Your moments are unchanged.", "");
+        renderStories();
+        return;
+      }
       if (record?.id) {
         sets = [record, ...sets.filter((item) => item.id !== record.id)];
         activeSetId = record.id;

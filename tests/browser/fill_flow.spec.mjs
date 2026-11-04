@@ -195,6 +195,8 @@ try {
     "the default fill engine should come from /api/fill/status");
 
   await page.locator(".st-auto-clean-run").click();
+  // Text that has a layer folds away, so the list holds only what is left.
+  await page.locator(".st-found-added > summary").click({ timeout: 30000 });
   await page.locator(".st-found-row.is-added").waitFor({ state: "visible", timeout: 30000 });
   assert(captured.autoBody?.method === "ai", "Remove all sent the wrong method");
   assert(captured.autoBody?.fill_method === "lama", "Remove all sent the wrong engine");
@@ -306,6 +308,104 @@ try {
   await page.waitForFunction(() => (
     document.querySelector('#st-box-method button[data-kind="blur"]')?.classList.contains("is-active")
   ));
+
+  // A taller timeline makes its lanes taller, not only its empty space.
+  const rectOf = (selector) => page.evaluate((query) => {
+    const node = document.querySelector(query);
+    if (!node) return null;
+    node.scrollIntoView({ block: "nearest" });
+    const { x, y, width, height } = node.getBoundingClientRect();
+    return { x, y, width, height };
+  }, selector);
+  const laneBefore = (await rectOf(".st-tl-track-sentences")).height;
+  const edge = await rectOf(".st-timeline-resize");
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(edge.x + edge.width / 2, edge.y - 200, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  const laneAfter = (await rectOf(".st-tl-track-sentences")).height;
+  assert(laneAfter > laneBefore, `the lanes did not grow: ${laneBefore} to ${laneAfter}`);
+  await page.mouse.dblclick(edge.x + edge.width / 2, (await rectOf(".st-timeline-resize")).y + 2);
+  await page.waitForTimeout(100);
+
+  // Clean bars sit at story time, and dragging an edge changes the saved range.
+  const savedEdit = async () => {
+    await page.waitForTimeout(900);
+    return page.evaluate(async (id) => {
+      const sets = await (await fetch(`/api/jobs/${encodeURIComponent(id)}/clip-sets`)).json();
+      const set = (sets.clip_sets || [])[0];
+      const story = (set?.stories || [])[0];
+      const current = await (await fetch(
+        `/api/jobs/${encodeURIComponent(id)}/edits/current?set_id=${encodeURIComponent(set.id)}`
+        + `&story_id=${encodeURIComponent(story.id)}&aspect=9%3A16`,
+      )).json();
+      return current.edit || current;
+    }, jobId);
+  };
+  const barEnd = async (selector) => {
+    await page.waitForTimeout(250);
+    const box = await rectOf(selector);
+    assert(box, `${selector} is not on the timeline`);
+    return box;
+  };
+  const dragTo = async (fromX, fromY, toX, toY) => {
+    await page.mouse.move(fromX, fromY);
+    await page.mouse.down();
+    await page.mouse.move((fromX + toX) / 2, (fromY + toY) / 2, { steps: 4 });
+    await page.mouse.move(toX, toY, { steps: 4 });
+    await page.mouse.up();
+  };
+  const cleanBar = await barEnd(".st-tl-bar-clean.is-timed");
+  const stacked = await page.evaluate(() => {
+    const bars = [...document.querySelectorAll(".st-tl-track-clean .st-tl-bar")];
+    const box = (bar) => bar.getBoundingClientRect();
+    return bars.filter((bar) => bar.classList.contains("is-found")).every((found) => (
+      bars.filter((bar) => !bar.classList.contains("is-found")).every((layer) => (
+        box(found).top >= box(layer).bottom - 1 || box(found).bottom <= box(layer).top + 1
+      ))
+    ));
+  });
+  assert(stacked, "found text still covers a layer's bar");
+  assert(cleanBar.width > 8, "the Clean bar is too thin to drag");
+  await dragTo(
+    cleanBar.x + cleanBar.width - 2, cleanBar.y + cleanBar.height / 2,
+    cleanBar.x + cleanBar.width * 0.6, cleanBar.y + cleanBar.height / 2,
+  );
+  const shorter = await barEnd(".st-tl-bar-clean.is-timed");
+  assert(shorter.width < cleanBar.width - 4, "dragging the Clean bar's edge did not shorten it");
+  const afterClean = await savedEdit();
+  const savedRange = afterClean.clean?.[0]?.ranges?.[0];
+  assert(savedRange && savedRange.end < 24, `the Clean range was not saved: ${JSON.stringify(savedRange)}`);
+
+  // A Text layer drags on the video, and its bar changes how long it shows.
+  await page.locator('[aria-label="Text"], [title="Text"]').first().click();
+  await page.locator('.st-text-preset[data-kind="hook"]').click();
+  await page.waitForTimeout(300);
+  const textBar = await barEnd(".st-tl-bar-text.is-timed");
+  await dragTo(
+    textBar.x + textBar.width - 2, textBar.y + textBar.height / 2,
+    textBar.x + textBar.width * 0.7, textBar.y + textBar.height / 2,
+  );
+  const textShorter = await barEnd(".st-tl-bar-text.is-timed");
+  assert(textShorter.width < textBar.width - 2, "dragging the text bar's edge did not shorten it");
+  const afterBar = await savedEdit();
+  const savedText = (afterBar.graphics || []).find((layer) => layer.id === "prefix");
+  assert(savedText && savedText.end < 2.5, `the text time was not saved: ${JSON.stringify(savedText)}`);
+  assert(!savedText.video, "changing the text's time placed it on the video");
+
+  await page.locator(".st-tl-bar-text.is-timed").first().click();
+  await page.waitForTimeout(300);
+  const canvas = await rectOf("#st-preview-canvas");
+  assert(canvas, "the preview is not measurable");
+  const middle = { x: canvas.x + canvas.width * 0.5, y: canvas.y + canvas.height * 0.12 };
+  await page.mouse.click(middle.x, middle.y);
+  await page.waitForTimeout(200);
+  assert(!(await savedEdit()).graphics.some((layer) => layer.video), "a click placed the text on the video");
+  await dragTo(middle.x, middle.y, middle.x + canvas.width * 0.12, middle.y + canvas.height * 0.2);
+  const placed = (await savedEdit()).graphics.find((layer) => layer.video);
+  assert(placed?.video?.box, "dragging the text did not place it on the video");
+  console.log("Timeline and text drags passed.");
   console.log("Found-text list, Remove all and painter mask passed.");
 } finally {
   await browser.close();

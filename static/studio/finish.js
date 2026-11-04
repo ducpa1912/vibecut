@@ -1119,6 +1119,14 @@ export function mount(root, ctx) {
     if (edit) edit.addEventListener("click", () => openEdit(story.id, aspect));
     card.append(head);
     if (!item) {
+      const queueNow = el("button", {
+        class: "st-btn st-btn-primary",
+        type: "button",
+        text: `Add this moment to queue · ${aspect}`,
+        disabled: busy,
+      });
+      queueNow.addEventListener("click", () => { void queueStories([story], queueNow); });
+      card.append(queueNow);
       card.append(el("p", { class: "st-hint", text: "No finished cut for this moment and shape yet. Queue it in Render, then review it here." }));
       return card;
     }
@@ -1276,7 +1284,7 @@ export function mount(root, ctx) {
     const queueAll = el("button", {
       class: "st-btn st-btn-primary",
       type: "button",
-      text: `Queue all stories · ${aspect}`,
+      text: `Add all to queue · ${aspect}`,
       disabled: busy || staleIds.size > 0,
       title: staleIds.size
         ? "Repair every stale shape before queueing. A stale Edit never renders."
@@ -1351,7 +1359,7 @@ export function mount(root, ctx) {
       const queueOne = el("button", {
         class: "st-btn st-btn-ghost st-btn-small",
         type: "button",
-        text: `Queue ${aspect}`,
+        text: `Add to queue · ${aspect}`,
         disabled: busy || stale,
         title: stale ? "Repair this shape first; a stale Edit never renders." : "",
       });

@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261104-4";
+import { mountPreview } from "./preview.js?v=20261104-5";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -44,6 +44,9 @@ import {
   aspectLabel,
   captionPreset,
   clone,
+  movedCleanRanges,
+  storySpans,
+  storyToSourceRanges,
   clamp,
   formatTime,
   newTextLayer,
@@ -74,7 +77,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261104-4";
+    link.href = "/static/studio/edit/edit.css?v=20261104-5";
     document.head.append(link);
   }
 }
@@ -1838,6 +1841,7 @@ export function mount(root, ctx) {
       void request(`${root}/cancel`, { method: "POST", body: {} }).catch(() => {});
       return;
     }
+    if (!seekToCleanLayer(layerId)) return;
     state.fillTesting = true;
     renderLayers();
     notify("Testing 1 second with the real engine. This can take a few minutes. Click again to cancel.", "ok");
@@ -1870,6 +1874,7 @@ export function mount(root, ctx) {
       notify("Open an Edit and select a Clean layer first.", "bad");
       return;
     }
+    if (!seekToCleanLayer(layerId)) return;
     try {
       const result = await request(
         `/api/jobs/${encodeURIComponent(state.job.id)}/edits/${encodeURIComponent(state.edit.id)}/fill-preview`,
@@ -2029,6 +2034,71 @@ export function mount(root, ctx) {
       touch("clean");
       renderLayers();
     }
+  }
+
+  /** A dragged Text layer sits on the video from then on. */
+  function placeTextOnVideo(id, box, { commit = false } = {}) {
+    const layer = (state.edit?.graphics || []).find((item) => item.id === id);
+    if (!layer) return;
+    layer.video = { box: { ...box }, crop_h: layer.video?.crop_h ?? round(layerCrop().h, 6) };
+    if (commit) {
+      touch("graphics");
+      renderElements();
+      preview?.refresh();
+    }
+  }
+
+  /** A timeline bar was dragged to a new story span. */
+  function setLayerTime({ kind, layerId, rangeIndex, span, start, end }) {
+    if (!state.edit) return;
+    if (kind === "clean") {
+      const clean = clone(state.edit.clean || []);
+      const layer = clean.find((item) => item.id === layerId);
+      if (!layer) return;
+      layer.ranges = span
+        ? movedCleanRanges(layer.ranges, rangeIndex, span, start, end)
+        : storyToSourceRanges(currentSequence(), start, end);
+      state.edit.clean = clean;
+      touch("clean");
+      renderLayers();
+    } else {
+      const layer = [...(state.edit.graphics || []), ...(state.edit.motion || [])]
+        .find((item) => item.id === layerId);
+      if (!layer) return;
+      layer.start = round(start, 2);
+      layer.end = round(end, 2);
+      touch((state.edit.motion || []).includes(layer) ? "motion" : "graphics");
+      renderElements();
+    }
+    preview?.refresh();
+  }
+
+  /**
+   * Where to test a Clean layer: here if it is on screen, else its first time
+   * in this moment. Returns null when it is not in this moment at all.
+   */
+  function cleanLayerTime(layer) {
+    const ranges = Array.isArray(layer?.ranges) ? layer.ranges : [];
+    if (!ranges.length) return state.playhead;
+    const spans = ranges.flatMap((range) => storySpans(currentSequence(), range.start, range.end));
+    if (spans.some((span) => state.playhead >= span.start && state.playhead < span.end)) {
+      return state.playhead;
+    }
+    if (!spans.length) return null;
+    const first = spans.reduce((best, span) => (span.start < best.start ? span : best));
+    return Math.min(first.end - 0.01, first.start + Math.min(0.1, (first.end - first.start) / 2));
+  }
+
+  /** Moves the playhead onto the layer. False, with a message, if it cannot. */
+  function seekToCleanLayer(layerId) {
+    const layer = (state.edit?.clean || []).find((item) => item.id === layerId);
+    const at = cleanLayerTime(layer);
+    if (at === null) {
+      notify("This layer is outside this moment, so there is nothing to test.", "bad");
+      return false;
+    }
+    if (Math.abs(at - state.playhead) > 1e-3) seek(at);
+    return true;
   }
 
   function createCleanBox(box) {
@@ -3170,6 +3240,7 @@ export function mount(root, ctx) {
         onSelect: (kind, id) => selectLayer(kind, id),
         onBoxChange: (id, box, options) => updateCleanBox(id, box, options),
         onBoxCreate: (box) => createCleanBox(box),
+        onTextBox: (id, box, options) => placeTextOnVideo(id, box, options),
         onPaint: (layerId, points, crop) => appendPaintPoints(layerId, points, crop),
         onPaintEnd: () => dropUnpaintedLayers(),
         onCleanMethod: (layerId, kind) => setCleanMethod(layerId, kind),
@@ -3198,6 +3269,7 @@ export function mount(root, ctx) {
       timeline = mountTimeline(dom.timeline, {
         jobId: state.job.id,
         onSeek: (time) => seek(time),
+        onLayerTime: (change) => setLayerTime(change),
         onSelect: (kind, id) => selectLayer(kind, id),
         onAdd: (kind) => addLayer(kind),
         onAddMoment: () => appendMomentDialog(),

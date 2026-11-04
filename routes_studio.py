@@ -11,12 +11,20 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+import logging
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 
 router = APIRouter()
+LOGGER = logging.getLogger("vibecut.studio")
+
+
+def _fill_refused(message: str, *, job_id: str, at: float) -> HTTPException:
+    """A refused fill test, with its reason in the server log as well."""
+    LOGGER.warning("Fill test refused for %s at %.2f s: %s", job_id, at, message)
+    return HTTPException(422, message)
 
 
 class SpeechRetryBody(BaseModel):
@@ -461,6 +469,27 @@ def add_story(job_id: str, set_id: str, body: AddStoryBody) -> dict:
     return {"clip_set": record, "story": story}
 
 
+@router.delete("/api/jobs/{job_id}/clip-sets/{set_id}/stories/{story_id}")
+def delete_story(job_id: str, set_id: str, story_id: str, request: Request) -> dict:
+    """Remove one moment from a set. Its Edits and renders keep their own files."""
+    import app
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = app._clipset_job(job_id)
+    record = app._clip_set_in_job(job, set_id)
+    stories = list(record.get("stories") or [])
+    kept = [story for story in stories if str(story.get("id")) != story_id]
+    if len(kept) == len(stories):
+        raise HTTPException(404, "Moment not found.")
+    record["stories"] = kept
+    record["available"] = len(kept)
+    record["note"] = None
+    record["updated"] = app.time.time()
+    app._store_clip_set(job_id, record)
+    return {"clip_set": record}
+
+
 @router.delete("/api/jobs/{job_id}/clip-sets/{set_id}")
 def delete_clip_set(job_id: str, set_id: str, request: Request) -> dict:
     """Remove one Studio moment set. Edits and renders keep their own files."""
@@ -862,7 +891,10 @@ def fill_sample(
         raise HTTPException(422, str(exc)) from exc
     plan = segment.get("fill") or {}
     if not plan.get("layers"):
-        raise HTTPException(422, "This frame has no AI fill layer.")
+        raise _fill_refused(
+            "This layer is not AI fill here: it may be Blur, off this beat, or outside the crop.",
+            job_id=job_id, at=at,
+        )
     method = plan.get("method") or textfill.DEFAULT_METHOD
     fps = float(source.get("fps") or render.OUT_FPS)
     begin = float(segment.get("start") or 0.0) + max(0.0, at - float(segment.get("out_start") or 0.0))
@@ -892,7 +924,10 @@ def fill_sample(
         _SAMPLE_CANCELS.pop(job_id, None)
         textfill.release_fillers()
     if clip is None:
-        raise HTTPException(422, "No AI fill region is active at this frame.")
+        raise _fill_refused(
+            "This layer has no text to fill in the next second. Move to where its text shows.",
+            job_id=job_id, at=at,
+        )
     chain = _preview_filter_chain(segment, out_w, out_h)
     tmp = job_dir / "renders" / f"tmp_fill_sample_{uuid.uuid4().hex}"
     tmp.mkdir(parents=True, exist_ok=True)

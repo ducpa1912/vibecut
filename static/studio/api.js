@@ -532,6 +532,12 @@ export function revealPath(path) {
 }
 
 /** Remove a moment set that has no stories left. */
+export function deleteStory(jobId, setId, storyId) {
+  return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}/stories/${encodeURIComponent(storyId)}`), {
+    method: "DELETE",
+  });
+}
+
 export function deleteClipSet(jobId, setId) {
   return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}`), {
     method: "DELETE",
