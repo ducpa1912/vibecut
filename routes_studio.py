@@ -226,7 +226,7 @@ def fill_status() -> dict:
     separately.
     """
     import app
-    import textfill
+    from features import ai_fill as textfill
 
     directory = textfill.models_dir(app.DATA)
     methods = {}
@@ -578,7 +578,7 @@ def auto_clean(
     import cleanup
     import detect
     import edits
-    import textfill
+    from features import ai_fill as textfill
 
     if not app._setup_origin_ok(request):
         raise HTTPException(403, "Cross-site writes are blocked.")
@@ -726,7 +726,7 @@ def _edit_fill_rows(job_id: str, job: dict, edit: dict, story: dict) -> list[dic
     import app
     import render
     import routes_edits
-    import textfill
+    from features import ai_fill as textfill
 
     out_w, out_h = render._dims(edit["aspect"], "draft")
     compiled = routes_edits._compiled_preview(job_id, job, edit, story, size=(out_w, out_h))
@@ -765,7 +765,7 @@ def fill_estimate(
     """How long AI fill will add to this Edit's render. Runs nothing."""
     import app
     import routes_edits
-    import textfill
+    from features import ai_fill as textfill
 
     if not app._setup_origin_ok(request):
         raise HTTPException(403, "Cross-site writes are blocked.")
@@ -782,7 +782,7 @@ def job_fill_estimate(job_id: str, set_id: str, aspect: str) -> dict:
     """The same figure for every saved Edit of a clip set in one shape."""
     import app
     import routes_edits
-    import textfill
+    from features import ai_fill as textfill
 
     job = app.load_job(job_id)
     rows: list[dict] = []
@@ -833,7 +833,7 @@ def fill_sample(
     import app
     import render
     import routes_edits
-    import textfill
+    from features import ai_fill as textfill
 
     if not app._setup_origin_ok(request):
         raise HTTPException(403, "Cross-site writes are blocked.")
@@ -971,7 +971,7 @@ def fill_preview(
     import app
     import render
     import routes_edits
-    import textfill
+    from features import ai_fill as textfill
 
     if not app._setup_origin_ok(request):
         raise HTTPException(403, "Cross-site writes are blocked.")

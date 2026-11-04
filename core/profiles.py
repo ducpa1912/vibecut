@@ -28,6 +28,7 @@ class AppProfile:
     page: str
     features: frozenset[str]
     routers: frozenset[str]
+    modules: frozenset[str] = frozenset({"ai_fill", "captions", "voice_clone", "url_ingest"})
     core_version: str = CORE_VERSION
     contract_version: int = CONTRACT_VERSION
 
@@ -53,6 +54,7 @@ STUDIO = AppProfile(
         "studio_edit", "voice_clone", "library", "check", "cleanup",
         "batches", "music", "auto_subs", "packet", "preflight",
     }),
+    modules=frozenset({"ai_fill", "captions", "voice_clone", "url_ingest"}),
 )
 
 CLASSIC = AppProfile(
@@ -70,6 +72,7 @@ CLASSIC = AppProfile(
         "classic_page", "voice_clone", "check", "cleanup", "batches",
         "music", "auto_subs", "packet", "preflight",
     }),
+    modules=frozenset({"ai_fill", "captions", "voice_clone", "url_ingest"}),
 )
 
 LEGACY = AppProfile(
@@ -88,6 +91,7 @@ LEGACY = AppProfile(
         "studio_edit", "classic_page", "voice_clone", "library", "check",
         "cleanup", "batches", "music", "auto_subs", "packet", "preflight",
     }),
+    modules=frozenset({"ai_fill", "captions", "voice_clone", "url_ingest"}),
 )
 
 PROFILES = {"studio": STUDIO, "classic": CLASSIC, "legacy": LEGACY}

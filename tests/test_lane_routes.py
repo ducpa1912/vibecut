@@ -28,5 +28,6 @@ def test_lane_modules_are_registered():
     import routes_voice_clone
 
     text = (ROOT / "app.py").read_text(encoding="utf-8")
-    for module in (routes_classic, routes_studio, routes_voice_clone):
-        assert f"app.include_router({module.__name__}.router)" in text
+    assert "app.include_router(routes_classic.router)" in text
+    assert "app.include_router(routes_studio.router)" in text
+    assert "app.include_router(voice_clone_router)" in text

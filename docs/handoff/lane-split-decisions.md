@@ -31,10 +31,10 @@ Matrix: [classic-studio-matrix.md](classic-studio-matrix.md)
 | 2 | Per-app scripts | ✅ `serve-studio.sh`, `serve-classic.sh`; legacy `serve.sh` kept |
 | 2 | Remove integrate.sh from Studio release | ✅ removed; docs updated |
 | 2 | Main/archive | ✅ main tracks Studio, not retired |
-| 3 | Extract shared backend core | ✅ `core/` contract package: `CORE_VERSION=1.0.0`, `CONTRACT_VERSION=1` |
-| 3 | Extract feature modules | ✅ feature routers compose through `AppProfile.routers`; physical module move stays deferred |
-| 3 | Apps compose pinned features | ✅ `studio_app.py` / `classic_app.py` call `configure(STUDIO/CLASSIC)`; `app.py` includes profile routers |
-| 3 | Pin core versions | ✅ health reports `core_version` and `profile_version` |
+| 3 | Extract shared backend core | ✅ `core/` package: version, contracts, profiles, feature verification |
+| 3 | Extract feature modules | ✅ `features/ai_fill`, `features/captions`, `features/voice_clone`, `features/url_ingest` |
+| 3 | Apps compose pinned features | ✅ profiles list feature modules and router sets; `app.py` verifies features before mounting routers |
+| 3 | Pin core versions | ✅ feature contracts require `>=1.0,<2.0`; health reports core/profile/feature versions |
 | 4 | Separate CI | ⏳ |
 | 4 | Separate release artifacts | ⏳ |
 | 4 | Separate repositories | ❌ rejected for this pass |
@@ -44,7 +44,17 @@ Matrix: [classic-studio-matrix.md](classic-studio-matrix.md)
 - Studio worktree currently has unrelated uncommitted Clean work. Do not mix
   port work into it.
 - Classic worktree currently has uncommitted AI-fill work. Do not overwrite it.
-- `core/` is the version/profile contract. Backend modules remain at the root
-  until a later physical extraction.
-- Existing shared backend modules stay; profile router composition is the
-  phase-3 boundary.
+- `core/` is the stable contract. Root modules remain the implementation
+  bodies behind `features/*`; a physical move can happen later without changing
+  the app contracts.
+- A core version change that violates a feature's `requires_core` range fails
+  startup instead of silently shipping a broken Classic build.
+
+## Feature contracts
+
+| Feature | Version | Core range | Public API |
+|---|---|---|---|
+| `ai_fill` | 1.0.0 | `>=1.0,<2.0` | models, status, span prep/fill, mask |
+| `captions` | 1.0.0 | `>=1.0,<2.0` | tracks, styles, cue build/load/save |
+| `voice_clone` | 1.0.0 | `>=1.0,<2.0` | clone routes, clean voice, candidates |
+| `url_ingest` | 1.0.0 | `>=1.0,<2.0` | providers, options, validation, download |

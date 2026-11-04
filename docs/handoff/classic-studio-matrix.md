@@ -2,8 +2,8 @@
 
 Date: 2026-11-04
 Decision context: Classic is a **second supported product**, Studio is the
-integration/product lane, monorepo with separate apps and a pinned `core/`
-profile contract.
+integration/product lane, monorepo with separate apps, a pinned `core/`
+contract and four versioned feature packages.
 
 Branches compared: `studio` at `78e960a` and `classic` at `6c6e3ec`.
 This matrix is about **user-facing capability**, not raw branch divergence.

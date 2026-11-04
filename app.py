@@ -36,10 +36,12 @@ from pydantic import BaseModel, Field
 
 # App entrypoints configure this profile before importing the module. The
 # default keeps the legacy shared app for old scripts and tests.
+from core.features import verify_profile  # noqa: E402
 from core.profiles import PROFILE_VERSION, active_profile  # noqa: E402
 from core.version import CORE_VERSION  # noqa: E402
 
 PROFILE = active_profile()
+FEATURE_VERSIONS = verify_profile(PROFILE)
 STUDIO_APP = PROFILE.id == "studio"
 CLASSIC_APP = PROFILE.id == "classic"
 
@@ -76,7 +78,8 @@ import routes_edits
 import routes_library
 import routes_overlays
 import routes_studio
-import routes_voice_clone
+from features.voice_clone import forget_job as forget_voice_clone  # noqa: E402
+from features.voice_clone import router as voice_clone_router  # noqa: E402
 import selection
 import settings_store
 import shares
@@ -87,9 +90,9 @@ import usage_store
 import vision
 import voice_fit
 import workflow_config
-from url_ingest import fallback as ingest_fallback
-from url_ingest import registry
-from url_ingest.base import IngestError, IngestOptions
+from features.url_ingest import IngestError, IngestOptions
+from features.url_ingest import fallback as ingest_fallback
+from features.url_ingest import registry
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -3198,7 +3201,7 @@ app.include_router(routes_batches.router)
 app.include_router(routes_check.router)
 app.include_router(routes_cleanup.router)
 app.include_router(routes_cleanup.rights_router)
-app.include_router(routes_voice_clone.router)
+app.include_router(voice_clone_router)
 app.include_router(routes_auto_subs.router)
 app.include_router(music.router)
 app.include_router(packet.router)
@@ -3529,6 +3532,8 @@ def health() -> dict:
         "app": PROFILE.id,
         "core_version": CORE_VERSION,
         "profile_version": PROFILE_VERSION,
+        "features": sorted(PROFILE.modules),
+        "feature_versions": FEATURE_VERSIONS,
         "version": 2,
     }
 
@@ -8900,7 +8905,7 @@ def delete_job(job_id: str) -> dict:
         if protected:
             raise HTTPException(409, "Unpin artifacts and revoke review links before deleting this job.")
         shutil.rmtree(_job_dir(job_id), ignore_errors=True)
-    routes_voice_clone.forget_job(job_id)
+    forget_voice_clone(job_id)
     return {"deleted": job_id}
 
 
