@@ -274,7 +274,32 @@ try {
 
   if (screenshot) await page.screenshot({ path: screenshot, fullPage: false });
   assert(pageErrors.length === 0, `page errors: ${pageErrors.join(" | ")}`);
-  // Each box has its own method, on the box itself.
+  // Clean and the timeline stay readable, and the Clean lane is in view.
+  const tiny = await page.evaluate(() => {
+    const out = [];
+    for (const scope of document.querySelectorAll(".st-layer-scroll, .st-timeline")) {
+      for (const node of scope.querySelectorAll("*")) {
+        if (node.children.length || !node.textContent.trim() || !node.getClientRects().length) continue;
+        const size = parseFloat(getComputedStyle(node).fontSize);
+        if (size < 11) out.push(`${node.className || node.tagName}:${size}`);
+      }
+    }
+    return [...new Set(out)];
+  });
+  assert(tiny.length === 0, `text under 11 px: ${tiny.join(", ")}`);
+  const lane = await page.evaluate(() => {
+    const label = document.querySelector(".st-tl-label-clean");
+    const scroll = document.querySelector(".st-timeline-scroll");
+    if (!label || !scroll) return null;
+    const a = label.getBoundingClientRect();
+    const b = scroll.getBoundingClientRect();
+    return { inView: a.top >= b.top && a.bottom <= b.bottom };
+  });
+  assert(lane?.inView, "the Clean lane is not in view with Clean open");
+
+  // Each box has its own method, on the box itself. It waits while comparing.
+  assert(await page.locator("#st-box-method").isHidden(), "the box switch covers the comparison");
+  await page.locator("#st-compare-close").click();
   const onBox = page.locator('#st-box-method button[data-kind="blur"]');
   assert(await onBox.isVisible(), "the selected box has no method switch");
   await onBox.click();

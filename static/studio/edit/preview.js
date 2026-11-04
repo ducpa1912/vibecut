@@ -1345,6 +1345,7 @@ export function mountPreview(root, options = {}) {
   dom.compareClose?.addEventListener("click", () => {
     stopCompareVideo();
     dom.compare.hidden = true;
+    placeMethodSwitch();
     dom.compareBefore.removeAttribute("src");
     dom.compareAfter.removeAttribute("src");
   });
@@ -1355,7 +1356,7 @@ export function mountPreview(root, options = {}) {
     if (!node) return;
     const item = cleanRects().find((row) => row.selected && !row.hidden);
     const clipped = item ? visibleRect(item.frame) : null;
-    if (!clipped || !dom.canvas.width) {
+    if (!clipped || !dom.canvas.width || !dom.compare.hidden) {
       node.hidden = true;
       return;
     }
@@ -1872,6 +1873,7 @@ export function mountPreview(root, options = {}) {
       if (dom.comparePlay) dom.comparePlay.hidden = !data.video;
       if (data.video && dom.compareVideo) dom.compareVideo.src = String(data.video);
       dom.compare.hidden = false;
+      if (dom.boxMethod) dom.boxMethod.hidden = true;
       applyCompare(dom.compareSlider?.value ?? 50);
     },
     hideCompare() {

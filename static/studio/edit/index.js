@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261104-2";
+import { mountPreview } from "./preview.js?v=20261104-3";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -74,7 +74,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261104-2";
+    link.href = "/static/studio/edit/edit.css?v=20261104-3";
     document.head.append(link);
   }
 }
@@ -418,9 +418,19 @@ export function mount(root, ctx) {
       && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) {
       return;
     }
-    if (!state.selected || saving) return;
+    if (!state.selected) return;
     event.preventDefault();
-    removeSelectedLayer();
+    // A key press during an autosave still counts: run it when the save ends.
+    const chosen = state.selected;
+    const attempt = (tries) => {
+      if (disposed || state.selected !== chosen) return;
+      if (saving && tries > 0) {
+        window.setTimeout(() => attempt(tries - 1), 100);
+        return;
+      }
+      removeSelectedLayer();
+    };
+    attempt(50);
   }
 
   function setSaveStatus(message, tone = "") {
@@ -1385,7 +1395,10 @@ export function mount(root, ctx) {
         renderElements();
       },
       getActiveLayer: () => state.activeLayer,
-      setActiveLayer: (id) => { state.activeLayer = String(id || "clean"); },
+      setActiveLayer: (id) => {
+        state.activeLayer = String(id || "clean");
+        if (state.activeLayer === "clean") timeline?.focusLane?.("clean");
+      },
       getTab: () => state.activeTab,
       getExpanded: () => momentScenesOpen,
       toggleExpanded: () => {
@@ -1476,6 +1489,7 @@ export function mount(root, ctx) {
       },
       setCleanMethod: (layerId, kind) => setCleanMethod(layerId, kind),
       isHiddenByCrop: (layer) => isHiddenByCrop(layer),
+      isOutsideStory: (layer) => isOutsideStory(layer),
       compareLayer: (layerId) => { void compareCleanLayer(layerId); },
       testLayer: (layerId) => { void testCleanLayer(layerId); },
       isFillTesting: () => Boolean(state.fillTesting),
@@ -1774,6 +1788,16 @@ export function mount(root, ctx) {
         })),
       };
     }
+  }
+
+  /** Every range of this layer falls outside the clips of this moment. */
+  function isOutsideStory(layer) {
+    const ranges = Array.isArray(layer?.ranges) ? layer.ranges : [];
+    if (!ranges.length) return false;
+    const clips = currentSequence().filter((clip) => clip?.kind !== "blank" && clip?.kind !== "file");
+    return !ranges.some((range) => clips.some((clip) => (
+      Number(range.start) < Number(clip.end) && Number(range.end) > Number(clip.start)
+    )));
   }
 
   function isHiddenByCrop(layer) {
@@ -2093,7 +2117,10 @@ export function mount(root, ctx) {
   function selectLayer(kind, id) {
     if (kind === "sentences") return;
     state.selected = id ? { kind, id } : null;
-    if (kind === "clean") state.activeLayer = "clean";
+    if (kind === "clean") {
+      state.activeLayer = "clean";
+      timeline?.focusLane?.("clean");
+    }
     else if (kind === "captions") state.activeLayer = "transcript";
     else if (kind === "audio") state.activeLayer = "narrative";
     else if (kind === "color") state.activeLayer = "filter";

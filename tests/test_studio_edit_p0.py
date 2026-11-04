@@ -47,13 +47,15 @@ def test_edit_frame_is_fixed_and_the_page_does_not_scroll():
     assert "min-height: 0" in stage
     assert "flex: 1 1 auto" in stage
     # Two rows: the three panels and a timeline that never leaves the screen.
-    assert "grid-template-rows: minmax(0, 1fr) 214px" in stage
+    assert "grid-template-rows: minmax(0, 1fr) var(--st-timeline-h, 214px)" in stage
     assert '"elements preview layers"' in stage
     assert '"timeline timeline timeline"' in stage
 
 
 def test_toolbar_is_not_sticky():
-    assert "position: sticky" not in CSS
+    # Only the timeline's ruler stays pinned, inside its own scrolling area.
+    assert CSS.count("position: sticky") == 1
+    assert ".st-tl-ruler { position: sticky" in CSS
     assert "st-edit-stepnav" not in CSS
     toolbar = rule(".st-edit-toolbar")
     assert "display: flex" in toolbar

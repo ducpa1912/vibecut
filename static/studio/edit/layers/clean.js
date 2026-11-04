@@ -206,6 +206,28 @@ export function sameScanText(layer, other) {
 }
 
 /**
+ * One group per found text. Layers saved before scans were deduplicated can
+ * hold the same text many times; they read as one row with its pieces inside.
+ * Drawn boxes stay on their own rows.
+ */
+export function cleanGroups(layers) {
+  const groups = [];
+  for (const layer of Array.isArray(layers) ? layers : []) {
+    const scanned = String(layer?.tracklet_id || "").trim();
+    const home = scanned && groups.find((group) => {
+      const first = group.layers[0];
+      if (!String(first?.tracklet_id || "").trim() || !sameArea(first.box, layer.box)) return false;
+      return first.tracklet_id === layer.tracklet_id
+        || (first.label && first.label === layer.label)
+        || sameScanText(first, layer);
+    });
+    if (home) home.layers.push(layer);
+    else groups.push({ key: String(layer?.id || groups.length), layers: [layer] });
+  }
+  return groups;
+}
+
+/**
  * Merge generated layers into the current Edit without touching what is there.
  *
  * The server already dedupes against the saved Edit, but this panel can hold
@@ -496,6 +518,9 @@ function rangeSummary(ranges) {
 }
 
 const FOUND_TICKS = new Map();
+// Open rows outlive a panel remount, which happens on every selection.
+const OPEN_CLEAN_GROUPS = new Set();
+let outsideOpen = false;
 
 export function mountCleanPanel(host, ctx) {
   ensureCheckStyles();
@@ -1355,25 +1380,21 @@ export function mountCleanPanel(host, ctx) {
     if (!layers.length) {
       card.append(el("p", { class: "st-hint", text: "Nothing is covered yet. Add a Check region, or place a box by hand." }));
     } else {
+      const inside = layers.filter((layer) => ctx.isOutsideStory?.(layer) !== true);
+      const outside = layers.filter((layer) => ctx.isOutsideStory?.(layer) === true);
       const list = el("div", { class: "st-layer-list", role: "list", style: "margin-top:8px" });
-      for (const layer of layers) {
-        const active = selectedId === layer.id;
-        const hiddenByCrop = ctx.isHiddenByCrop?.(layer) === true;
-        const row = el("button", {
-          class: `st-layer-row${active ? " is-active" : ""}`,
-          type: "button",
-          role: "listitem",
-          "aria-pressed": active ? "true" : "false",
-          dataset: { kind: "clean", layer: layer.id, box: JSON.stringify(layer.box || {}) },
-        }, [
-          el("span", { class: "st-layer-badge", text: CLEAN_LABELS[layer.kind] || KIND_COPY[layer.kind] || "Clean" }),
-          el("span", { class: "st-layer-name", text: layer.label || rangeSummary(layer.ranges) }),
-          hiddenByCrop ? el("span", { class: "st-layer-hidden-note", text: "Hidden by crop" }) : null,
-        ]);
-        row.addEventListener("click", () => ctx.select("clean", layer.id));
-        list.append(el("div", { class: "st-clean-row" }, [row, methodSwitch(layer)]));
-      }
+      for (const group of cleanGroups(inside)) list.append(groupRow(group, selectedId));
       card.append(list);
+      if (outside.length) {
+        const fold = el("details", { class: "st-clean-outside", open: outsideOpen }, [
+          el("summary", { text: `${formatCount(outside.length, "layer")} outside this moment. Kept, not deleted.` }),
+        ]);
+        fold.addEventListener("toggle", () => { outsideOpen = fold.open; });
+        const hidden = el("div", { class: "st-layer-list", role: "list" });
+        for (const group of cleanGroups(outside)) hidden.append(groupRow(group, selectedId));
+        fold.append(hidden);
+        card.append(fold);
+      }
       const covers = layers.filter((layer) => (
         FILL_KINDS.has(layer.kind) && String(layer.tracklet_id || "").trim()
       )).length;
@@ -1457,24 +1478,102 @@ export function mountCleanPanel(host, ctx) {
     }, 500);
   }
 
-  /** AI fill or Blur for this box only. */
-  function methodSwitch(layer) {
+  /** AI fill or Blur for this box, or for every piece of a grouped row. */
+  function methodSwitch(target) {
+    const layers = Array.isArray(target) ? target : [target];
     const wrap = el("div", { class: "st-method-switch", role: "group", "aria-label": "Clean method for this box" });
     for (const value of KIND_ORDER) {
       const locked = value === "fill" && !isFillAvailable();
+      const on = layers.every((layer) => layer.kind === value);
       const button = el("button", {
-        class: `st-method-option${layer.kind === value ? " is-active" : ""}`,
+        class: `st-method-option${on ? " is-active" : ""}`,
         type: "button",
         text: KIND_COPY[value],
-        "aria-pressed": layer.kind === value ? "true" : "false",
+        "aria-pressed": on ? "true" : "false",
         disabled: !canClean() || locked,
         title: locked ? (fillStatusError || "AI fill needs its model in the fill models folder.") : "",
       });
       button.addEventListener("click", (event) => {
         event.stopPropagation();
-        ctx.setCleanMethod?.(layer.id, value);
+        for (const layer of layers) ctx.setCleanMethod?.(layer.id, value);
       });
       wrap.append(button);
+    }
+    return wrap;
+  }
+
+  function layerRow(layer, selectedId, name) {
+    const active = selectedId === layer.id;
+    const hiddenByCrop = ctx.isHiddenByCrop?.(layer) === true;
+    const row = el("button", {
+      class: `st-layer-row${active ? " is-active" : ""}`,
+      type: "button",
+      role: "listitem",
+      "aria-pressed": active ? "true" : "false",
+      dataset: { kind: "clean", layer: layer.id, box: JSON.stringify(layer.box || {}) },
+    }, [
+      // The switch beside the row already says AI fill or Blur.
+      KIND_ORDER.includes(layer.kind)
+        ? null
+        : el("span", { class: "st-layer-badge", text: `${CLEAN_LABELS[layer.kind] || KIND_COPY[layer.kind] || "Clean"} (old)` }),
+      el("span", { class: "st-layer-name", text: name || layer.label || rangeSummary(layer.ranges) }),
+      hiddenByCrop ? el("span", { class: "st-layer-hidden-note", text: "Hidden by crop" }) : null,
+    ]);
+    row.addEventListener("click", () => ctx.select("clean", layer.id));
+    return row;
+  }
+
+  /** One found text: a row, with its time pieces folded inside. */
+  function groupRow(group, selectedId) {
+    const first = group.layers[0];
+    const pieces = group.layers.flatMap((layer) => (
+      (Array.isArray(layer.ranges) ? layer.ranges : []).map((range) => ({ layer, range }))
+    ));
+    const wrap = el("div", { class: "st-clean-group" });
+    const head = el("div", { class: "st-clean-row" });
+    const hasInside = group.layers.length > 1 || pieces.length > 1;
+    const hasSelected = group.layers.some((layer) => layer.id === selectedId);
+    const open = hasInside && (OPEN_CLEAN_GROUPS.has(group.key) || (hasSelected && group.layers.length > 1));
+    if (hasInside) {
+      const toggle = el("button", {
+        class: "st-clean-group-toggle",
+        type: "button",
+        text: open ? "▾" : "▸",
+        title: open ? "Fold the pieces" : "Show the pieces",
+        "aria-label": `${open ? "Fold" : "Show"} the pieces of ${first.label || "this text"}`,
+        "aria-expanded": open ? "true" : "false",
+      });
+      toggle.addEventListener("click", () => {
+        if (OPEN_CLEAN_GROUPS.has(group.key)) OPEN_CLEAN_GROUPS.delete(group.key);
+        else OPEN_CLEAN_GROUPS.add(group.key);
+        render();
+      });
+      head.append(toggle);
+    }
+    head.append(layerRow(first, selectedId));
+    if (pieces.length > 1 || group.layers.length > 1) {
+      head.append(el("span", { class: "st-clean-group-count", text: `${Math.max(pieces.length, group.layers.length)}×` }));
+    }
+    head.append(methodSwitch(group.layers));
+    wrap.append(head);
+    if (open) {
+      const inside = el("div", { class: "st-clean-pieces" });
+      for (const layer of group.layers.length > 1 ? group.layers : []) {
+        inside.append(layerRow(layer, selectedId, rangeSummary(layer.ranges) || "Whole moment"));
+      }
+      if (group.layers.length === 1) {
+        for (const { range } of pieces) {
+          const piece = el("button", {
+            class: "st-clean-piece",
+            type: "button",
+            text: rangeSummary([range]),
+            title: "Go to this time",
+          });
+          piece.addEventListener("click", () => { ctx.seekSource?.(Number(range.start)); });
+          inside.append(piece);
+        }
+      }
+      wrap.append(inside);
     }
     return wrap;
   }

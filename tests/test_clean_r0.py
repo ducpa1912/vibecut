@@ -243,7 +243,7 @@ def test_clean_offers_ai_fill_and_blur_only():
 def test_each_box_has_its_own_switch():
     assert 'id="st-box-method"' in PREVIEW
     assert "onCleanMethod" in PREVIEW
-    assert "function methodSwitch(layer)" in CLEAN
+    assert "function methodSwitch(target)" in CLEAN
     assert "function setCleanMethod(layerId, kind)" in INDEX
     assert "Hidden by crop" in CLEAN
 

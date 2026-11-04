@@ -201,6 +201,7 @@ export function mountTimeline(root, options = {}) {
           <button class="st-tl-icon" type="button" data-tl-action="freeze" title="Freeze frame" aria-label="Freeze frame"></button>
         </div>
       </div>
+      <div class="st-timeline-resize" role="separator" aria-orientation="horizontal" aria-label="Resize the timeline" title="Drag to resize the timeline. Double-click to reset." tabindex="0"></div>
       <div class="st-timeline-scroll" tabindex="0" role="group" aria-label="Story timeline">
         <div id="st-timeline-grid" class="st-timeline-grid"></div>
       </div>
@@ -251,6 +252,83 @@ export function mountTimeline(root, options = {}) {
   let zoom = 1;
   let loop = false;
   let collapsed = false;
+  let pendingLane = "";
+
+  /** Bring a lane to the top of the scrolling area, under the ruler. */
+  function showLane(id) {
+    const label = dom.grid.querySelector(`.st-tl-label-${id}`);
+    if (!label || !dom.scroll) return false;
+    const corner = dom.grid.querySelector(".st-tl-corner");
+    const offset = label.getBoundingClientRect().top - dom.scroll.getBoundingClientRect().top;
+    dom.scroll.scrollTop += offset - (corner ? corner.getBoundingClientRect().height : 0);
+    return true;
+  }
+
+  // The height survives reloads, and the CSS variable leaves the focus and
+  // narrow-window layouts in charge when they hide the timeline.
+  const TIMELINE_HEIGHT_KEY = "vibecut.studio.timelineHeight";
+  function applyTimelineHeight(value) {
+    const stage = root.closest(".st-edit-stage");
+    if (!stage) return;
+    if (value) stage.style.setProperty("--st-timeline-h", `${Math.round(value)}px`);
+    else stage.style.removeProperty("--st-timeline-h");
+  }
+  function saveTimelineHeight(value) {
+    try {
+      if (value) localStorage.setItem(TIMELINE_HEIGHT_KEY, String(Math.round(value)));
+      else localStorage.removeItem(TIMELINE_HEIGHT_KEY);
+    } catch (_) {
+      // A private window keeps the height for this visit only.
+    }
+  }
+  function timelineLimits() {
+    return { min: 110, max: Math.max(160, Math.round(window.innerHeight * 0.65)) };
+  }
+  try {
+    const saved = Number(localStorage.getItem(TIMELINE_HEIGHT_KEY));
+    if (saved > 0) {
+      const { min, max } = timelineLimits();
+      applyTimelineHeight(Math.min(max, Math.max(min, saved)));
+    }
+  } catch (_) {
+    // No stored height: the layout's own default applies.
+  }
+  const resizer = $(".st-timeline-resize");
+  resizer?.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = root.getBoundingClientRect().height;
+    const { min, max } = timelineLimits();
+    let height = startHeight;
+    resizer.setPointerCapture?.(event.pointerId);
+    const move = (next) => {
+      height = Math.min(max, Math.max(min, startHeight + startY - next.clientY));
+      applyTimelineHeight(height);
+    };
+    const up = () => {
+      resizer.removeEventListener("pointermove", move);
+      saveTimelineHeight(height);
+    };
+    resizer.addEventListener("pointermove", move);
+    resizer.addEventListener("pointerup", up, { once: true });
+    resizer.addEventListener("pointercancel", up, { once: true });
+  });
+  resizer?.addEventListener("dblclick", () => {
+    applyTimelineHeight(0);
+    saveTimelineHeight(0);
+  });
+  resizer?.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const { min, max } = timelineLimits();
+    const height = Math.min(max, Math.max(
+      min,
+      root.getBoundingClientRect().height + (event.key === "ArrowUp" ? 20 : -20),
+    ));
+    applyTimelineHeight(height);
+    saveTimelineHeight(height);
+  });
 
   function applyZoom() {
     dom.grid.style.width = `${Math.round(zoom * 100)}%`;
@@ -1198,6 +1276,7 @@ export function mountTimeline(root, options = {}) {
       handle?.focus?.({ preventScroll: true });
     }
     paintTrimStatus();
+    if (pendingLane && showLane(pendingLane)) pendingLane = "";
   }
 
   function updateTime(time) {
@@ -1237,6 +1316,9 @@ export function mountTimeline(root, options = {}) {
   return {
     setLoop,
     setHistory,
+    focusLane(id) {
+      if (!showLane(id)) pendingLane = String(id || "");
+    },
     setData({ edit, captions, story, duration: nextDuration, aspect, trim, setId: nextSetId, jobId: nextJobId, foundText } = {}) {
       if (nextJobId) jobId = String(nextJobId);
       if (nextSetId) setId = String(nextSetId);

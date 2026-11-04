@@ -2,7 +2,7 @@
 
 Date: 2026-11-04. Code reviewed: `studio` at `e274b45`.
 
-Status: revision 5. M0, R0, R1 and R2 built; R3 to R5 not started.
+Status: revision 5. M0, R0, R1, R2 and R3 built; R4 and R5 not started.
 
 **Rule for this work:** audit from code and tests. Do not open the founder's projects to see what they did unless they say so. Layers found in a project may just be the founder testing, so they are not bug reports.
 
@@ -187,6 +187,13 @@ The text mask is an untested idea. Build it behind a setting, compare it on the 
 - **Text size (15):** minimum 11 px across Clean and the timeline. Other panels follow in their own deep dives in `ui-revamp-plan.md`.
 
 **Test gate:** the founder finds, selects and removes one subtitle without scrolling the timeline.
+
+**R3 log (2026-11-04), built:**
+
+- One row per found text, with its time pieces folded inside. Clicking a time goes there. Old duplicate layers of one text read as one row, and its switch changes them all. Drawn boxes keep their own rows.
+- Layers outside this moment fold into one line.
+- Opening Clean or selecting a Clean layer scrolls the timeline to the Clean lane. The timeline resizes by its top edge or with the arrow keys, double-click resets, and the height is remembered.
+- Text in Clean and the timeline is at least 11 px. Other Edit panels keep their sizes until their own deep dives.
 
 ### R4: tests that look at the picture
 
