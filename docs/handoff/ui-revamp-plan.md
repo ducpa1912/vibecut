@@ -55,3 +55,9 @@ Status: P0/P1 built. Look deferred.
 - Full suite: **2054 passed, 11 skipped**.
 - Browser: Edit layout + scene stepping + Import mini + Add scenes modal; fill flow still passes.
 - `Check this scene` now runs a source-time scoped OCR pass (`start`/`end` on `/check`); `Scan video` runs the full pass. Report scope is reused, so pressing the same scope twice does not re-run.
+
+## Clean revision (2026-11-04)
+`clean-fill-revision-plan.md` changes the Clean lines above:
+- Clean offers AI fill and Blur only, set per box. Cover and Mosaic are gone.
+- Found text and layers read as one row per text, with its time pieces inside. Layers outside the moment fold into one line.
+- Opening Clean brings the Clean lane into view. The timeline resizes by its top edge, and Clean and timeline text is at least 11 px.

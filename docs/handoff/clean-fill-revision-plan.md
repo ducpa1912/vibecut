@@ -2,7 +2,7 @@
 
 Date: 2026-11-04. Code reviewed: `studio` at `e274b45`.
 
-Status: revision 5. M0, R0, R1, R2 and R3 built; R4 and R5 not started.
+Status: revision 5. M0, R0, R1, R2, R3 and R4 built; R5 not started.
 
 **Rule for this work:** audit from code and tests. Do not open the founder's projects to see what they did unless they say so. Layers found in a project may just be the founder testing, so they are not bug reports.
 
@@ -202,6 +202,13 @@ The text mask is an untested idea. Build it behind a setting, compare it on the 
 - **Docs:** update `text-fill-test-plan.md`, the `deep-open-items-plan.md` log, and `ui-revamp-plan.md`.
 
 The audit script supports the founder's review and does not replace it. It runs only on clips the founder names.
+
+**R4 log (2026-11-04), built, not run on real video:**
+
+- `scripts/fill_audit.py` compares one clip from `jobs/<id>/fill/` with its source, frame by frame. It reports changes outside the text and outside the boxes, flicker beyond what the background moves, text left unfilled or as a ghost with its source times, and colour drift. It writes nothing. It finds the clip's time in the source from the picture, or takes `--start`, and it refuses a cropped render.
+- Lines marked "look" are worth checking by eye, and there is no pass or fail. Use `VIBECUT_FILL_TEXT_MASK=off` to get a whole-box clip of the same moment for comparison.
+- Unit tests now run the code for draw defaults, the brush finding its layer again, and margin parity across beats. One-point masks and strip grouping were already covered (`tests/test_clean_r0.py`, `tests/test_clean_r1.py`).
+- **Unknown:** every threshold in the script comes from reasoning and in-memory arrays. The ffmpeg reader has never run on a real file, because no clip has been named yet. Expect to adjust the thresholds on the first real clip.
 
 ### R5: all other layers stick to the video
 

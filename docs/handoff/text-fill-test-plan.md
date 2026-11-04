@@ -249,3 +249,25 @@ with other apps closed. If it stays slow, the next steps are LaMa on CoreML or
 fp16, and STTN on fewer frames (text-only frames, lower strip count).
 
 Knob added 2026-11-04: `VIBECUT_FILL_TEXT_MASK` (`on` by default, `off` fills whole scan boxes). See `clean-fill-revision-plan.md`, R1.
+
+## 8. Audit script (2026-11-04)
+
+`scripts/fill_audit.py` adds numbers to the pass marks in Part 4 for a clip the founder names. It only reads the clip and its source, and it does not replace watching the clip.
+
+```bash
+python3 scripts/fill_audit.py CLIP SOURCE --box 0.1,0.8,0.8,0.05
+```
+
+`CLIP` is a file from `jobs/<id>/fill/`. Give `--layers <edit.json>` instead of `--box` to use the layers' strokes and times, and `--start <seconds>` if the picture is too still to find the clip's place. `--json` prints the full report.
+
+| Report line | What it measures | Marked "look" at |
+|---|---|---|
+| Outside the boxes | Share of all changed pixels outside the boxes and their feathered edge | over 2% |
+| Outside the text | Share of changed pixels in the boxes that are not text | over 25% |
+| Frames with no text changed | Frames with nothing to remove that were altered anyway | any |
+| Flicker | How much the fill moves per frame, beyond what the background moves. Scene cuts are skipped | a frame over 6 levels |
+| Left unfilled | Frames whose text is still there (text kept 0.8 or more) | any |
+| Ghost | Frames with a faint copy of the text (text kept 0.15 to 0.8) | any |
+| Colour | Fill against its surroundings, and the clip against the source outside the boxes | over 6 levels |
+
+A pixel counts as changed past 16 levels, so re-encoding noise is ignored. Boxes too busy to read are counted and left out of the text figures. These marks have not yet been set against a real clip, so adjust them on the first one.

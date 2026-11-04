@@ -139,6 +139,8 @@ Log:
 - 2026-11-03: QC: painter mask round-trip (flat + stroke), scoped fill preview, found-list browser flow, compare overlay, and compact Clean UI tests pass.
 - 2026-11-03: Review fixes: found rows now carry tracklet ranges so row click seeks; the miss notice survives render; Space/Enter on the tick does not activate the row. Clean tab teardown no longer clears timeline markers. Playhead-to-source mapping sets paint layer ranges after a trim. Cancelled paint strokes clear ghost dots and a stale paint target is dropped when another layer is selected. Duplicate found-marker seek removed.
 - 2026-11-03: Render fixes: `textfill.span_key` now hashes the mask, so painting more or clearing a mask cannot reuse an old filled clip. Mask radius is round on both axes. Saved `mask.aspect` must match the Edit aspect or the box is used. Mask points outside the crop are dropped, and more than 20 strokes is a clear save error.
+- 2026-11-04: The "output-space mask" lock is replaced. Masks now save on the source video and old ones convert when opened. Founder decision: all layers stick to and scale with the video, and hide at the crop edge. See `clean-fill-revision-plan.md`, R0.
+- 2026-11-04: Clean revision built through R4: AI fill and Blur only, text-shaped masks, time estimates, one row per found text, and `scripts/fill_audit.py`. No part of it has run on real video since R0. R5 (Text, stickers, effects and captions) has not started.
 
 ## Phase 2 — cross-video audio under Voice-over/Dub
 
