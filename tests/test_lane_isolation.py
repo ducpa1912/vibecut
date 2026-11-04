@@ -82,6 +82,28 @@ def test_lane_env_ports_and_data_are_distinct():
     ).stdout
 
 
+def test_classic_keeps_its_packs_and_its_own_launcher():
+    out = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "lane-env.sh"), "classic"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "VIBECUT_PACKS_DIR=" in out
+    assert "/vibecut-lanes/classic/packs" in out
+    other = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "lane-env.sh"), "studio"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "VIBECUT_PACKS_DIR" not in other
+
+    launcher = ROOT / "scripts" / "serve-classic.sh"
+    subprocess.run(["bash", "-n", str(launcher)], check=True)
+    text = launcher.read_text(encoding="utf-8")
+    assert "lane-env.sh classic" in text
+    assert "app.py" in text
+    assert "classic_app" not in text
+    assert "vibecut-studio" not in text
+
+
 def test_ship_lane_never_moves_main():
     script = (ROOT / "scripts" / "ship-lane.sh").read_text(encoding="utf-8")
     assert "refs/heads/main" not in script

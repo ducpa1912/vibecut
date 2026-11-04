@@ -27,3 +27,9 @@ printf 'export VIBECUT_DATA=%s\n' "$root/$lane"
 printf 'export VIBECUT_FEATURES=%s\n' "$features"
 printf 'export VIBECUT_LANE=%s\n' "$lane"
 printf 'export VIBECUT_LANE_MEDIA=%s\n' "$root/media/$lane"
+# Classic's optional model packs stay in its own folder, not the shared
+# Application Support one. Whisper and Python packages are still machine-level;
+# see docs/classic/shared-runtime.md.
+if [[ "$lane" == "classic" ]]; then
+  printf 'export VIBECUT_PACKS_DIR=%s\n' "$root/$lane/packs"
+fi
