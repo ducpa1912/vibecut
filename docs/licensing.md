@@ -35,6 +35,7 @@ unmodified, separate process that VibeCut only calls over HTTP.
 | pillow | `>=10.0` | Thumbnails/images | MIT-CMU (HPND) | |
 | yt-dlp | `>=2025.10.22` | Default URL ingest | Unlicense | Public Python API only. Keep current; extractors change often. |
 | python-stretch (optional) | `>=0.3.1` | Signalsmith Stretch binding | MIT | Optional voice-fit backend; `requirements-optional.txt`. |
+| Lucide icon paths | editor UI | Inline SVG icons | ISC | `LICENSES/Lucide-ISC.txt`; no npm runtime. |
 | Signalsmith Stretch (optional) | via python-stretch | Pitch/time stretch | MIT | Vendored inside the python-stretch wheel; keep the MIT notice. |
 
 All direct requirements above are permissive or public-domain dedications; none
@@ -196,7 +197,10 @@ Additional rules:
 - Docker images distribute the base image and apt packages. Generate a package
   list (`dpkg-query -W`) and include Debian/ffmpeg/font notices.
 - Model weights are separate works. List the model license and source, not
-  just the Python package license.
+  just the Python package license. STTN and LaMa are Apache-2.0; their hashes
+  and sources are in `THIRD_PARTY_NOTICES.md`.
+- Frontend icon paths are Lucide ISC. Keep the notice with the app even though
+  no npm package is shipped.
 - Show the yt-dlp version in Setup or About so support can correlate extractor
   failures with a version.
 

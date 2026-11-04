@@ -3,7 +3,8 @@
 VibeCut is proprietary software. The components below remain under their own
 licenses. This file is a release checklist entry point, not legal advice.
 Resolve exact versions and full license texts from the release environment; see
-[docs/licensing.md](docs/licensing.md).
+[docs/licensing.md](docs/licensing.md), [the license audit](docs/licensing-audit.md)
+and [the distribution plan](docs/distribution-plan.md).
 
 ## Runtime Python packages
 
@@ -75,3 +76,36 @@ must not ship until their model authors grant written permission.
 
 Mel-Band RoFormer and Demucs weights are downloaded on first use or supplied by
 an installed pack. No model weights are stored in the VibeCut repository.
+
+
+## Frontend assets
+
+| Component | License | Upstream |
+|---|---|---|
+| Lucide icon paths (`static/studio/edit/icons.js`) | ISC | https://github.com/lucide-icons/lucide |
+| Sticker PNGs (`assets/stickers`) | In-house | Drawn for VibeCut |
+| Colour LUTs (`assets/luts`) | In-house | Generated from VibeCut colour presets |
+| Bundled music | None | Both music folders are empty; user uploads are not redistributed |
+
+Lucide notice text: `LICENSES/Lucide-ISC.txt`. The source comment in
+`icons.js` must stay in sync with this license.
+
+## Fill model weights
+
+| Component | License | Source | SHA-256 |
+|---|---|---|---|
+| STTN subtitle fill (`sttn_infer_model.pth`) | Apache-2.0 weights; MIT code | YaoFANGUK/video-subtitle-remover (Apache-2.0), researchmm/STTN (MIT) | `c8408c9dd1300bd7000ea3a81b8236db89d9c0f185837781e38283c1e464675b` |
+| LaMa ONNX (`lama_fp32.onnx`) | Apache-2.0 | Carve/LaMa-ONNX, port of big-lama | `1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6` |
+
+Model weights are separate works. If a build bundles or hosts these files,
+include the Apache-2.0 text, the upstream URL, the model name and the hash.
+Do not list only the Python package license.
+
+## Release-blocking third-party components
+
+- **ffmpeg** — the current Homebrew build is GPL-3.0-or-later. See the audit and
+  distribution plan before bundling it or shipping a customer-hosted image.
+- **Demucs weights** — code MIT, weights not covered by that grant. Exclude from
+  paid/cloud artifacts until written permission exists.
+- **Piper, phonemizer, espeak-ng, minisbd** — GPL/AGPL optional engines. Exclude
+  from release environments.
