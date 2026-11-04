@@ -172,6 +172,8 @@ and `test_the_rights_lock_refuses_clean_without_the_tick`.
 
 ### C2b — AI fill
 
+**Port notes:** [ai-fill-clean-learnings.md](ai-fill-clean-learnings.md).
+
 **Goal:** add AI fill to C2a.
 
 - Engine status and missing-model note.
