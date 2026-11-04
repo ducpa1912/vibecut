@@ -1,14 +1,13 @@
 """Clean voice reference extraction.
 
-Synthetic tones and noise only. Model binaries and ffmpeg are faked, so the
-file runs without Demucs, DeepFilterNet or pyannote. One opt-in test at the
-bottom needs a real ffmpeg.
+Sound comes from the founder's real files in data/media. Model binaries and
+ffmpeg are faked, so the file runs without Demucs, DeepFilterNet or pyannote.
+One test at the bottom needs a real ffmpeg.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import os
 import shutil
 import sys
@@ -18,8 +17,9 @@ import types
 import wave
 from pathlib import Path
 
-import numpy as np
 import pytest
+
+from real_media import real_wav
 
 import audio
 import settings_store
@@ -32,37 +32,9 @@ def isolated_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(audio, "CACHE", tmp_path / "cache")
 
 
-def _speech_wav(
-    path: Path,
-    *,
-    seconds: float = 6.0,
-    rate: int = 48000,
-    spans: list[tuple[float, float]] | None = None,
-    amplitude: float = 0.3,
-    noise: float = 0.002,
-    clipped: bool = False,
-) -> Path:
-    """Tone bursts in the speech band with a low noise floor between them."""
-    spans = spans if spans is not None else [(0.5, 2.0), (3.0, 4.5)]
-    total = max(1, int(seconds * rate))
-    rng = np.random.default_rng(7)
-    values = rng.normal(0.0, noise, total).astype(np.float32)
-    for start, end in spans:
-        left, right = int(start * rate), min(total, int(end * rate))
-        index = np.arange(max(0, right - left), dtype=np.float32)
-        tone = amplitude * np.sin(2 * math.pi * 440.0 * index / rate)
-        values[left:right] += tone
-    if clipped:
-        values[::50] = 1.0
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        handle.writeframes(
-            (np.clip(values, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-        )
-    return path
+def _speech_wav(path: Path, seconds: float = 6.0, *, gain_db: float | None = None) -> Path:
+    """The founder's real voice as 48 kHz mono PCM; ``gain_db`` overdrives a take."""
+    return real_wav("voice-clean", path, seconds=seconds, gain_db=gain_db)
 
 
 def _stub_pipeline(monkeypatch, *, speech: Path | None = None, clipped: bool = False):
@@ -75,7 +47,7 @@ def _stub_pipeline(monkeypatch, *, speech: Path | None = None, clipped: bool = F
         if speech is not None and speech.is_file():
             shutil.copyfile(speech, output)
         else:
-            _speech_wav(output, clipped=clipped)
+            _speech_wav(output, gain_db=40.0 if clipped else None)
         return output
 
     def fake_normalize(path, output, *, target_lufs, sample_rate, cancel_event=None):
@@ -151,7 +123,7 @@ def test_extract_reports_source_clipping(tmp_path, monkeypatch):
 
 
 def test_extract_fails_plainly_when_there_is_no_speech(tmp_path, monkeypatch):
-    silent = _speech_wav(tmp_path / "silent.wav", spans=[], noise=0.0)
+    silent = real_wav("room-silence", tmp_path / "silent.wav", seconds=6.0)
     _stub_pipeline(monkeypatch, speech=silent)
     source = tmp_path / "silent.mp4"
     source.write_bytes(b"x")
@@ -299,7 +271,7 @@ def test_normalize_clamps_gain_to_true_peak_headroom(tmp_path, monkeypatch):
 
 
 def test_splice_removes_gaps_and_writes_pcm(tmp_path):
-    source = _speech_wav(tmp_path / "in.wav", seconds=6.0, spans=[(0.5, 2.0), (4.0, 5.5)])
+    source = _speech_wav(tmp_path / "in.wav", seconds=6.0)
     spans = voice_extract._select_spans(
         audio.speech_spans(source, threshold_db=-30.0, min_speech=0.2, min_silence=0.2),
         None,
@@ -478,8 +450,8 @@ def test_roformer_stage_runs_audio_separator(tmp_path, monkeypatch):
 
 
 def test_denoise_compare_keeps_the_cleaner_variant(tmp_path, monkeypatch):
-    noisy = _speech_wav(tmp_path / "noisy.wav", seconds=4.0, spans=[(0.5, 3.5)], noise=0.15)
-    clean = _speech_wav(tmp_path / "clean.wav", seconds=4.0, spans=[(0.5, 3.5)], noise=0.0005)
+    noisy = real_wav("voice-noisy", tmp_path / "noisy.wav", seconds=4.0)
+    clean = _speech_wav(tmp_path / "clean.wav", seconds=4.0)
 
     def fake_denoise(path, work, cancel_event, mode="auto"):
         work.mkdir(parents=True, exist_ok=True)
@@ -503,7 +475,7 @@ def test_denoise_compare_keeps_the_cleaner_variant(tmp_path, monkeypatch):
 
 
 def test_denoise_compare_flags_a_close_call(tmp_path, monkeypatch):
-    same = _speech_wav(tmp_path / "same.wav", seconds=4.0, spans=[(0.5, 3.5)], noise=0.01)
+    same = _speech_wav(tmp_path / "same.wav", seconds=4.0)
 
     def fake_denoise(path, work, cancel_event, mode="auto"):
         work.mkdir(parents=True, exist_ok=True)
@@ -523,8 +495,7 @@ def test_denoise_compare_flags_a_close_call(tmp_path, monkeypatch):
 
 
 def _long_speech(path: Path) -> Path:
-    spans = [(index * 10.0 + 0.5, index * 10.0 + 6.0) for index in range(9)]
-    return _speech_wav(path, seconds=90.0, spans=spans, noise=0.001)
+    return _speech_wav(path, seconds=90.0)
 
 
 def test_find_candidates_returns_three_to_five_batches(tmp_path, monkeypatch):
@@ -619,7 +590,7 @@ def test_separate_voice_keeps_the_vocal_stem_and_separate_vocals_keeps_the_bed(
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
 def test_ffmpeg_denoise_and_export_smoke(tmp_path):
-    source = _speech_wav(tmp_path / "in.wav", seconds=4.0, spans=[(0.5, 3.5)])
+    source = _speech_wav(tmp_path / "in.wav", seconds=4.0)
     denoised, name, _warnings = voice_extract._denoise_stage(source, tmp_path, None)
     assert name == "afftdn"
     assert denoised.is_file() and denoised.stat().st_size > 1024

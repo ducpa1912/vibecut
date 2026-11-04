@@ -23,6 +23,8 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+
+from real_media import real_file
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -167,6 +169,7 @@ def test_rename_a_clone(tmp_path, monkeypatch):
     import voice_clone
 
     monkeypatch.setattr(settings_store, "DATA", tmp_path)
+    monkeypatch.setenv("VR_REAL_VOICE", str(real_file("voice-clean")))
     sample = voice_room_server.tone(tmp_path / "s.wav", 1.0)
     record = voice_clone.create_clone(sample, name="Old", source="me", consent=True)
     api = TestClient(app.app)
@@ -245,6 +248,8 @@ def run_spec(tmp_path: Path, spec: str, extra_env: dict | None = None) -> dict:
     data = tmp_path / "data"
     job_dir = data / "jobs" / "vr-job"
     job_dir.mkdir(parents=True)
+    voice = str(real_file("voice-clean"))
+    os.environ["VR_REAL_VOICE"] = voice
     source = voice_room_server.tone(tmp_path / "talk.wav", 12.0)
     (job_dir / "job.json").write_text(json.dumps({
         "id": "vr-job", "created": time.time(), "status": "ready",
@@ -278,6 +283,7 @@ def run_spec(tmp_path: Path, spec: str, extra_env: dict | None = None) -> dict:
                     "VR_BASE_URL": base,
                     "VR_JOB_ID": "vr-job",
                     "VR_UPLOAD": str(upload),
+                    "VR_REAL_VOICE": voice,
                     "VR_SCREENSHOT": str(tmp_path / "voice_room.png"),
                     "PLAYWRIGHT_MODULE": module.as_uri(),
                 },

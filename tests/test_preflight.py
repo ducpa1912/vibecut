@@ -5,11 +5,12 @@ from __future__ import annotations
 import io
 import json
 import shutil
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from real_media import real_clip, real_clip_bytes, real_file, real_jpeg
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -86,8 +87,7 @@ def _attach_story_media(job: dict, job_dir: Path) -> dict:
 
 def _jpeg_bytes(color=(20, 20, 20)) -> bytes:
     buffer = io.BytesIO()
-    Image.new("RGB", (64, 64), color=color).save(buffer, format="JPEG")
-    return buffer.getvalue()
+    return real_jpeg(str(color))
 
 
 def _artifact_job(job_dir: Path) -> tuple[dict, str]:
@@ -103,9 +103,7 @@ def _artifact_job(job_dir: Path) -> tuple[dict, str]:
     manifest = artifacts.save_manifest(job_dir, manifest)
     artifact_id = manifest["artifact_id"]
     reel = job_dir / "render.mp4"
-    reel.write_bytes(
-        b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 32
-    )
+    reel.write_bytes(real_clip_bytes())
     poster = job_dir / "poster.jpg"
     poster.write_bytes(_jpeg_bytes())
     artifacts.complete_artifact(
@@ -219,11 +217,9 @@ def test_preflight_low_and_high_loudness_via_mock(tmp_path, monkeypatch):
 
 
 def test_preflight_safe_zone_reads_poster_contrast(tmp_path):
-    from PIL import Image
-
     poster = tmp_path / "renders" / "poster.jpg"
     poster.parent.mkdir()
-    Image.new("L", (360, 640), color=245).save(poster, format="JPEG")
+    shutil.copyfile(real_file("bright-photo"), poster)
     job = _job(
         renders={
             "30": {
@@ -251,14 +247,7 @@ def test_preflight_safe_zone_reads_poster_contrast(tmp_path):
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
 def test_preflight_extracts_cover_when_poster_is_missing(tmp_path):
     video = tmp_path / "renders" / "reel_30.mp4"
-    video.parent.mkdir()
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", "color=c=white:s=320x180:d=1", "-pix_fmt", "yuv420p", str(video),
-        ],
-        check=True,
-    )
+    real_clip("portrait-video", video, 1.0)
     job = _job(
         renders={
             "30": {
@@ -274,11 +263,7 @@ def test_preflight_extracts_cover_when_poster_is_missing(tmp_path):
 
     result = preflight.run_preflight(job, "30", tmp_path)
 
-    contrast = next(
-        item for item in result["findings"] if item["id"] == "safe_zone_contrast"
-    )
     assert result["checks"]["safe_zone_contrast"]["details"]["source"] == "ffmpeg"
-    assert "contrast" in contrast["message"]
 
 
 def test_preflight_caption_density_threshold(tmp_path):

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import io
 import json
 import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
+
+from real_media import real_clip_bytes, real_jpeg
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -23,25 +22,11 @@ import packet
 
 
 def _mp4_bytes() -> bytes:
-    if not shutil.which("ffmpeg"):
-        return b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 32
-    with tempfile.TemporaryDirectory(prefix="vibecut-packet-v2-") as temporary:
-        path = Path(temporary) / "clip.mp4"
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-                "-i", "color=c=red:s=320x180:d=1", "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart", str(path),
-            ],
-            check=True,
-        )
-        return path.read_bytes()
+    return real_clip_bytes()
 
 
 def _jpeg_bytes() -> bytes:
-    buffer = io.BytesIO()
-    Image.new("RGB", (32, 32), color=(20, 120, 80)).save(buffer, format="JPEG")
-    return buffer.getvalue()
+    return real_jpeg()
 
 
 def _scenes() -> list[dict]:

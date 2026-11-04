@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from real_media import real_clip
+
 pytest.importorskip("routes_trim")
 pytest.importorskip("caption_reflow")
 
@@ -92,19 +94,6 @@ def _stop(process: subprocess.Popen) -> None:
         process.wait(timeout=10)
 
 
-def _source_video(path: Path) -> None:
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", "color=c=red:s=1080x1920:d=26:r=10",
-            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
-            "-movflags", "+faststart", str(path),
-        ],
-        check=True,
-        timeout=60,
-    )
-
-
 def test_studio_trim_drag_in_chromium(tmp_path):
     node = shutil.which("node")
     if not node:
@@ -116,7 +105,7 @@ def test_studio_trim_drag_in_chromium(tmp_path):
         pytest.skip("ffmpeg is needed for a stable preview")
 
     source = tmp_path / "source.mp4"
-    _source_video(source)
+    real_clip("portrait-video", source, 26.0)
     data = tmp_path / "data"
     (data / "jobs").mkdir(parents=True)
     fixture = trim_fixture.build_browser_job(

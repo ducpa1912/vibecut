@@ -1,14 +1,14 @@
 import io
 import json
-import math
 import os
 import stat
 import time
 import types
 import urllib.error
-import wave
 
 import pytest
+
+from real_media import PLACEHOLDER_WAV, real_wav
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -839,15 +839,8 @@ def test_snap_clips_guard_and_apply():
 
 
 def test_beat_grid_click_track(tmp_path):
-    import subprocess
-
     pytest.importorskip("librosa")
-    path = tmp_path / "click.wav"
-    subprocess.run([
-        "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-        "-i", "aevalsrc='0.6*gt(mod(t\\,0.5)\\,0.45)':d=8:s=48000",
-        "-ac", "2", str(path),
-    ], check=True)
+    path = real_wav("metronome-120bpm", tmp_path / "click.wav", channels=2)
     grid = audio.beat_grid(path)
     assert grid and grid["beats"]
     spacing = grid["beats"][1] - grid["beats"][0]
@@ -1213,12 +1206,8 @@ def test_opencode_leads_rewrite_candidates(monkeypatch):
     assert audio._rewrite_candidates()[0] == "opencode"
 
 
-def _write_silent_wav(path, seconds=1.0):
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(16000)
-        handle.writeframes(b"\0\0" * int(16000 * seconds))
+def _write_silent_wav(path):
+    path.write_bytes(PLACEHOLDER_WAV)
 
 
 def test_cloud_stt_groq_parses_segments(tmp_path, monkeypatch):

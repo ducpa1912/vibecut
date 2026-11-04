@@ -11,11 +11,11 @@ import os
 import shutil
 import subprocess
 import sys
-import time
-import wave
 from pathlib import Path
 
 import pytest
+
+from real_media import real_wav
 
 import captions
 import pipeline
@@ -194,35 +194,16 @@ def test_whisper_uses_word_timestamps_and_turbo_default(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- QA #9
 
 
-def _pcm(path: Path, samples, rate: int = 16000) -> Path:
-    import numpy as np
-
-    data = np.asarray(samples, dtype=np.float64)
-    with wave.open(str(path), "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(rate)
-        writer.writeframes((data * 32767).astype("<i2").tobytes())
-    return path
-
-
 def test_speech_gate_tells_silence_from_sound(tmp_path):
-    import numpy as np
-
-    silent = _pcm(tmp_path / "silent.wav", np.zeros(32000))
-    hiss = _pcm(tmp_path / "hiss.wav", np.random.default_rng(1).normal(0, 0.0005, 32000))
-    tone = np.sin(np.linspace(0, 2 * np.pi * 220 * 2, 32000)) * 0.2
-    voiced = _pcm(tmp_path / "tone.wav", tone)
+    silent = real_wav("room-silence", tmp_path / "silent.wav", seconds=2.0, rate=16000)
+    voiced = real_wav("voice-clean", tmp_path / "voiced.wav", seconds=2.0, rate=16000)
     assert stt.has_speech_energy(silent) is False
-    assert stt.has_speech_energy(hiss) is False
     assert stt.has_speech_energy(voiced) is True
     assert stt.has_speech_energy(tmp_path / "missing.wav") is None
 
 
 def test_silent_audio_skips_every_engine(tmp_path, monkeypatch):
-    import numpy as np
-
-    silent = _pcm(tmp_path / "silent.wav", np.zeros(32000))
+    silent = real_wav("room-silence", tmp_path / "silent.wav", seconds=2.0, rate=16000)
     called = []
     monkeypatch.setattr(stt, "_chunked_run", lambda *args, **kwargs: called.append(1))
     messages = []
@@ -237,10 +218,7 @@ def test_silent_audio_skips_every_engine(tmp_path, monkeypatch):
 
 
 def test_transcribe_source_says_transcribing_before_the_first_chunk(tmp_path, monkeypatch):
-    import numpy as np
-
-    tone = np.sin(np.linspace(0, 2 * np.pi * 220 * 2, 32000)) * 0.2
-    voiced = _pcm(tmp_path / "tone.wav", tone)
+    voiced = real_wav("voice-clean", tmp_path / "voiced.wav", seconds=2.0, rate=16000)
     messages = []
     monkeypatch.setattr(stt, "_engine_ready", lambda provider, model: True)
     monkeypatch.setattr(

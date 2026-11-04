@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import shutil
 import wave
 from pathlib import Path
@@ -10,25 +9,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from real_media import PLACEHOLDER_WAV, real_wav
+
 import settings_store
 import voice_fit
 
 HAS_FFMPEG = bool(shutil.which("ffmpeg"))
 
 
-def _tone(path: Path, seconds: float = 2.0, frequency: float = 220.0) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    rate = 48000
-    frames = bytearray()
-    for index in range(int(seconds * rate)):
-        value = int(12000 * math.sin(2 * math.pi * frequency * index / rate))
-        frames += value.to_bytes(2, "little", signed=True) * 2
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(2)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        handle.writeframes(bytes(frames))
-    return path
+def _tone(path: Path) -> Path:
+    """Two seconds of the founder's steady hum, in the format the fit expects."""
+    return real_wav("voice-hum", path, seconds=2.0, channels=2)
 
 
 def _duration(path: Path) -> float:
@@ -62,7 +53,7 @@ def test_preserve_pitch_keeps_f0_and_shortens(tmp_path):
     assert result.backend == "ffmpeg"
     assert result.pitch_shift == 0.0
     assert _duration(output) == pytest.approx(1.6, abs=0.06)
-    assert _f0(output) == pytest.approx(220.0, abs=5.0)
+    assert _f0(output) == pytest.approx(_f0(source), abs=5.0)
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg is not installed")
@@ -75,7 +66,7 @@ def test_chipmunk_raises_pitch_on_purpose(tmp_path):
     assert result.backend == "ffmpeg-resample"
     assert result.pitch_shift == 1.25
     assert result.warning
-    assert _f0(output) == pytest.approx(275.0, abs=7.0)
+    assert _f0(output) == pytest.approx(_f0(source) * 1.25, abs=7.0)
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg is not installed")
@@ -100,7 +91,7 @@ def test_signalsmith_backend_keeps_pitch(tmp_path):
     )
     assert result.backend == "signalsmith"
     assert _duration(output) == pytest.approx(1.6, abs=0.08)
-    assert _f0(output) == pytest.approx(220.0, abs=6.0)
+    assert _f0(output) == pytest.approx(_f0(source), abs=6.0)
 
 
 def test_voice_fit_settings_are_normalized():
@@ -138,7 +129,8 @@ def test_provider_synthesis_is_normalized_and_fit_once(monkeypatch, tmp_path):
     import tts
     import types
 
-    source = _tone(tmp_path / "raw.wav")
+    source = tmp_path / "raw.wav"
+    source.write_bytes(PLACEHOLDER_WAV)
     seen = {"say": None, "fit": []}
 
     def fake_say(text, voice, rate, output):
@@ -191,4 +183,4 @@ def test_slow_chipmunk_mode_keeps_pitch(tmp_path):
     )
     assert result.backend == "ffmpeg-slow"
     assert result.pitch_shift == 0.0
-    assert _f0(output) == pytest.approx(220.0, abs=6.0)
+    assert _f0(output) == pytest.approx(_f0(source), abs=6.0)

@@ -7,14 +7,14 @@ mapping helpers and the caption-track predicate T2 owns.
 
 from __future__ import annotations
 
-import io
 import json
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from real_media import real_clip_bytes, real_jpeg
 from fastapi.testclient import TestClient
 
 pytest.importorskip("routes_trim")
@@ -542,14 +542,7 @@ def test_packet_carries_the_trimmed_cues(client, quiet_submit, tmp_path, monkeyp
     assert manifest is not None
 
     reel = tmp_path / "tiny.mp4"
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", "color=c=red:s=320x180:d=1", "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart", str(reel),
-        ],
-        check=True,
-    )
+    reel.write_bytes(real_clip_bytes())
     artifacts.store_media(job_dir, artifact_id, reel, None)
     cue_rows = [cue.to_dict() for cue in track.cues]
     artifacts.write_captions(
@@ -575,14 +568,7 @@ def test_packet_carries_the_trimmed_cues(client, quiet_submit, tmp_path, monkeyp
     }
     app.save_job(job)
 
-    def jpeg() -> bytes:
-        from PIL import Image
-
-        buffer = io.BytesIO()
-        Image.new("RGB", (32, 32), (20, 120, 80)).save(buffer, format="JPEG")
-        return buffer.getvalue()
-
-    monkeypatch.setattr(packet, "_frame_cover", lambda *args, **kwargs: jpeg())
+    monkeypatch.setattr(packet, "_frame_cover", lambda *args, **kwargs: real_jpeg())
     request = packet.PacketRequest(
         story_id=ids["story_id"],
         artifact_ids=[artifact_id],

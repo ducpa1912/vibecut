@@ -1,6 +1,8 @@
 import os
+import re
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -77,3 +79,19 @@ def sources_present(monkeypatch):
 
     monkeypatch.setattr(app, "_source_exists", lambda path: True)
     yield
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Say how many tests wait on each real file, so none pass silently."""
+    waiting: Counter[str] = Counter()
+    for report in terminalreporter.stats.get("skipped", []):
+        reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
+        found = re.search(r"REAL MEDIA NEEDED: (\S+)", reason)
+        if found:
+            waiting[found.group(1)] += 1
+    if not waiting:
+        return
+    terminalreporter.section("real media needed")
+    for name, count in sorted(waiting.items()):
+        terminalreporter.write_line(f"{count:4d} tests wait on {name}")
+    terminalreporter.write_line(f"{sum(waiting.values()):4d} tests in all did not run")

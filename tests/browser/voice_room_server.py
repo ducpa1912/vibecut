@@ -14,13 +14,11 @@ before it returns, so the spec can press Cancel while it runs.
 
 from __future__ import annotations
 
-import math
 import os
 import shutil
-import struct
+import subprocess
 import sys
 import time
-import wave
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,18 +31,16 @@ import voice_clone  # noqa: E402
 import voice_extract  # noqa: E402
 
 
-def tone(path: Path, seconds: float, freq: float = 220.0) -> Path:
-    rate = 16000
+def tone(path: Path, seconds: float, _freq: float = 220.0) -> Path:
+    """A cut of the founder's real voice file, named by the test in VR_REAL_VOICE."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        frames = b"".join(
-            struct.pack("<h", int(8000 * math.sin(2 * math.pi * freq * n / rate)))
-            for n in range(int(seconds * rate))
-        )
-        handle.writeframes(frames)
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error", "-i", os.environ["VR_REAL_VOICE"],
+            "-t", f"{seconds:g}", "-vn", "-ac", "1", "-ar", "16000", str(path),
+        ],
+        check=True, timeout=120,
+    )
     return path
 
 

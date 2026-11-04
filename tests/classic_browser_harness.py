@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from real_media import real_clip
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "trim_job"
 if str(FIXTURE_DIR) not in sys.path:
@@ -80,17 +82,8 @@ def requirements(need_ffmpeg: bool = True) -> tuple[str, Path]:
 def write_source_video(
     path: Path, seconds: float, size: tuple[int, int] = (1080, 1920),
 ) -> None:
-    width, height = size
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", f"color=c=0x1f2a36:s={width}x{height}:d={seconds:g}:r=10",
-            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
-            "-movflags", "+faststart", str(path),
-        ],
-        check=True,
-        timeout=60,
-    )
+    """Cut the founder's real video of this shape; it skips when the file is missing."""
+    real_clip("wide-video" if size[0] > size[1] else "portrait-video", path, seconds)
 
 
 def _thumbs(

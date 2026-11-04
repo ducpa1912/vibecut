@@ -2,12 +2,12 @@
 
 import base64
 import json
-import wave
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from real_media import PLACEHOLDER_WAV
 import settings_store
 import stt
 import workflow_config
@@ -27,12 +27,8 @@ class Reply:
         return self.body
 
 
-def _wav(path: Path, seconds: float = 1.0) -> Path:
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(16000)
-        handle.writeframes(b"\x00\x00" * int(16000 * seconds))
+def _wav(path: Path) -> Path:
+    path.write_bytes(PLACEHOLDER_WAV)
     return path
 
 

@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from real_media import real_clip
+
 pytest.importorskip("pipeline")
 pytest.importorskip("clipset")
 
@@ -100,19 +102,6 @@ def _stop(process: subprocess.Popen) -> None:
         process.wait(timeout=10)
 
 
-def _source_video(path: Path) -> None:
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", f"color=c=0x1f2a36:s=1080x1920:d={DURATION:g}:r=10",
-            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
-            "-movflags", "+faststart", str(path),
-        ],
-        check=True,
-        timeout=60,
-    )
-
-
 def _thumbs(job_dir: Path, source: Path) -> None:
     """One still per scene; the hook panel and moment cards show real frames."""
     folder = job_dir / "thumbs"
@@ -171,7 +160,7 @@ def test_classic_result_screen_is_a_frame_in_chromium(tmp_path):
         pytest.skip("ffmpeg is needed for the fixture video")
 
     source = tmp_path / "source.mp4"
-    _source_video(source)
+    real_clip("portrait-video", source, DURATION)
     data = tmp_path / "data"
     (data / "jobs").mkdir(parents=True)
     job_id = _build_job(data, source)

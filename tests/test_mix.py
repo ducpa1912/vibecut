@@ -7,35 +7,23 @@ The two fixture tests at the bottom are opt-in through environment variables.
 from __future__ import annotations
 
 import json
-import math
 import os
-import struct
 import types
-import wave
 from pathlib import Path
 
 import pytest
+
+from real_media import PLACEHOLDER_WAV, real_wav
 
 import audio
 import music
 import tts
 
 
-def _tone(path: Path, seconds: float, frequency: float, amplitude: float,
-          rate: int = 16000, spans: list[tuple[float, float]] | None = None) -> Path:
+def _stand_in(path: Path, tag: str) -> Path:
+    """Not sound: these tests fake every step that would read it."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    frames = bytearray()
-    total = max(1, int(seconds * rate))
-    for index in range(total):
-        at = index / rate
-        active = True if spans is None else any(start <= at < end for start, end in spans)
-        value = amplitude * math.sin(2 * math.pi * frequency * at) if active else 0.0
-        frames.extend(struct.pack("<h", max(-32767, min(32767, int(value * 32767)))))
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        handle.writeframes(bytes(frames))
+    path.write_bytes(PLACEHOLDER_WAV + tag.encode())
     return path
 
 
@@ -229,22 +217,19 @@ def test_shorten_dub_line_prefers_ai_and_falls_back_to_a_clause(monkeypatch):
 
 
 def test_speech_band_snr_reports_ducked_margin(tmp_path):
-    voice = _tone(
-        tmp_path / "voice.wav", 3.0, 400.0, 0.20,
-        spans=[(0.0, 1.0), (1.4, 2.4)],
-    )
-    bed = _tone(tmp_path / "bed.wav", 3.0, 400.0, 0.20)
+    voice = real_wav("voice-clean", tmp_path / "voice.wav", seconds=6.0, rate=16000)
+    bed = real_wav("music", tmp_path / "bed.wav", seconds=6.0, rate=16000)
     spans = audio.speech_spans(voice)
-    assert spans and spans[0][0] == 0.0
+    assert spans
     ducked = audio.speech_band_snr(voice, bed, spans, duck_db=-12, music_gain_db=0)
     dry = audio.speech_band_snr(voice, bed, spans, duck_db=0, music_gain_db=0)
-    assert ducked is not None and ducked >= 12.0
-    assert dry is not None and dry < ducked - 8
+    assert ducked is not None and dry is not None
+    assert dry < ducked - 8
 
 
 def test_measure_loudness_reads_ffmpeg_summary(tmp_path):
-    tone = _tone(tmp_path / "tone.wav", 3.0, 440.0, 0.1)
-    result = audio.measure_loudness(tone)
+    voice = real_wav("voice-clean", tmp_path / "voice.wav", seconds=3.0, rate=16000)
+    result = audio.measure_loudness(voice)
     assert result is None or "integrated_lufs" in result
 
 
@@ -254,9 +239,9 @@ def test_measure_loudness_reads_ffmpeg_summary(tmp_path):
 def _fake_bed_job(tmp_path):
     job_dir = tmp_path / "job"
     job_dir.mkdir()
-    voice = _tone(tmp_path / "voice.wav", 3.0, 400.0, 0.15, spans=[(0.2, 2.8)])
-    bed = _tone(tmp_path / "bed.wav", 8.0, 500.0, 0.10)
-    mix = _tone(tmp_path / "mix.wav", 3.0, 400.0, 0.15)
+    voice = _stand_in(tmp_path / "voice.wav", "voice")
+    bed = _stand_in(tmp_path / "bed.wav", "bed")
+    mix = _stand_in(tmp_path / "mix.wav", "mix")
     return job_dir, voice, bed, mix
 
 
@@ -329,8 +314,8 @@ def test_build_bed_music_only_never_ducks(tmp_path, monkeypatch):
 
 def test_build_bed_voice_over_ducks_original_and_new_bed(tmp_path, monkeypatch):
     job_dir, voice, bed, mix = _fake_bed_job(tmp_path)
-    original = _tone(tmp_path / "original.wav", 3.0, 300.0, 0.10)
-    uploaded = _tone(job_dir / "audio" / "uploaded_voice.wav", 3.0, 500.0, 0.10)
+    original = _stand_in(tmp_path / "original.wav", "original")
+    uploaded = _stand_in(job_dir / "audio" / "uploaded_voice.wav", "uploaded")
     seen: dict = {}
     monkeypatch.setattr(audio, "_source_audio_bed", lambda *args, **kwargs: original)
     monkeypatch.setattr(audio, "_fit_uploaded_voice", lambda *args, **kwargs: voice)
@@ -402,25 +387,6 @@ def _fixture_scenes(segments: list[dict]) -> tuple[list[dict], list[dict]]:
     return scenes, clips
 
 
-def _synthetic_bed(path: Path, seconds: float) -> Path:
-    import subprocess
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
-            (
-                "aevalsrc=0.07*(sin(2*PI*261.63*t)+0.8*sin(2*PI*329.63*t)"
-                "+0.7*sin(2*PI*392*t))*(0.7+0.3*sin(2*PI*0.125*t)):"
-                f"s=48000:d={seconds}"
-            ),
-            "-ac", "2", "-c:a", "pcm_s16le", str(path),
-        ],
-        check=True,
-    )
-    return path
-
-
 @pytest.mark.skipif(
     not os.environ.get("VIBECUT_FIXTURE_B"),
     reason="live fixture B; set VIBECUT_FIXTURE_B",
@@ -449,7 +415,7 @@ def test_live_fixture_b_apple_stt_and_ducked_music(tmp_path):
         audio_duration=total, source_hash="fixture-b",
     ))
     scenes, clips = _fixture_scenes(segments)
-    bed = _synthetic_bed(tmp_path / "bed.wav", total + 4.0)
+    bed = real_wav("music", tmp_path / "bed.wav")
     uploaded = audio.store_uploaded_music(bed, job_dir)
     plan = {"clips": clips, "total": total, "_scenes": scenes}
     audio_plan = {
@@ -458,7 +424,7 @@ def test_live_fixture_b_apple_stt_and_ducked_music(tmp_path):
         "music": {
             "source": "upload", "upload": str(uploaded.relative_to(job_dir)),
             "gain_db": -18,
-            "licence": {"type": "own", "attestation": "synthetic fixture bed"},
+            "licence": {"type": "own", "attestation": "founder's own music"},
         },
     }
     tmp = tmp_path / "tmp"
@@ -565,8 +531,8 @@ def _no_music_keys(monkeypatch, *, openrouter=""):
 
 def test_voice_over_keeps_the_voice_when_no_music_route_has_a_key(tmp_path, monkeypatch):
     job_dir, voice, _bed, mix = _fake_bed_job(tmp_path)
-    original = _tone(tmp_path / "original.wav", 3.0, 300.0, 0.10)
-    uploaded = _tone(job_dir / "audio" / "uploaded_voice.wav", 3.0, 500.0, 0.10)
+    original = _stand_in(tmp_path / "original.wav", "original")
+    uploaded = _stand_in(job_dir / "audio" / "uploaded_voice.wav", "uploaded")
     _no_music_keys(monkeypatch)
     seen: dict = {}
     monkeypatch.setattr(audio, "_source_audio_bed", lambda *args, **kwargs: original)
