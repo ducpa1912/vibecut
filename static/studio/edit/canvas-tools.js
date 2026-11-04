@@ -7,7 +7,7 @@
  * `compose_render._base_crop` and `_scene_crop`.
  */
 
-import { CANVAS, clamp, numberOr } from "./model.js";
+import { CANVAS, clamp, graphicRect, numberOr } from "./model.js";
 
 export function sourceDimensions(source, aspect = "9:16") {
   const fallback = CANVAS[aspect] || CANVAS["9:16"];
@@ -172,6 +172,33 @@ export function frameToBox(rect, crop) {
     w: clamp(w, 0.004, 1 - left),
     h: clamp(h, 0.004, 1 - top),
   };
+}
+
+/**
+ * A layer's place on the video, from where it shows in this crop. Unlike
+ * `frameToBox` it is not clamped, so the layer keeps its size at the frame edge.
+ */
+export function stuckPosition(rect, crop) {
+  const round = (value) => Math.round(value * 1e6) / 1e6;
+  return {
+    box: {
+      x: round(numberOr(rect?.x) * numberOr(crop?.w, 1) + numberOr(crop?.x)),
+      y: round(numberOr(rect?.y) * numberOr(crop?.h, 1) + numberOr(crop?.y)),
+      w: round(numberOr(rect?.w) * numberOr(crop?.w, 1)),
+      h: round(numberOr(rect?.h) * numberOr(crop?.h, 1)),
+    },
+    crop_h: round(numberOr(crop?.h, 1)),
+  };
+}
+
+/** How much bigger a stuck layer is in this crop. Mirrors `compose_render`. */
+export function stuckScale(layer, crop) {
+  return numberOr(layer?.video?.crop_h, 1) / Math.max(1e-6, numberOr(crop?.h, 1));
+}
+
+/** Where a graphic layer shows in this crop: on the video, or on the screen. */
+export function layerFrameRect(layer, crop) {
+  return layer?.video && crop ? boxToFrame(layer.video.box, crop) : graphicRect(layer);
 }
 
 /** Clean ranges are source seconds; no ranges means the whole story. */

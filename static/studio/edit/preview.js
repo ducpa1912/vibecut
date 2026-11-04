@@ -16,7 +16,6 @@ import {
   clamp,
   colorFilter,
   formatTime,
-  graphicRect,
   numberOr,
   round,
   safeZoneRects,
@@ -25,6 +24,7 @@ import {
   boxToFrame,
   cropAt,
   frameToBox,
+  layerFrameRect,
   handleAt,
   insideRect,
   layerActive,
@@ -711,7 +711,7 @@ export function mountPreview(root, options = {}) {
       const layer = (state.edit.graphics || [])
         .find((item) => item.id === state.selected.id && !item.hidden);
       if (!layer) return;
-      rect = graphicRect(layer);
+      rect = layerFrameRect(layer, currentCrop());
       label = layer.text || "Text";
     } else if (state.selected.kind === "captions") {
       const style = state.captions?.style || {};
@@ -787,7 +787,7 @@ export function mountPreview(root, options = {}) {
       if (source === proxyVideo) {
         drawOverlay(
           ctx, visibleEdit(state.edit), visibleCaptions(state.captions),
-          state.time, width, height,
+          state.time, width, height, currentCrop(),
         );
       }
     } else {
@@ -1396,7 +1396,7 @@ export function mountPreview(root, options = {}) {
       .filter((layer) => !state.hiddenLayers.has(`text:${layer.id}`))
       .filter((layer) => state.time >= numberOr(layer.start, 0) && state.time < numberOr(layer.end, 0));
     for (let index = layers.length - 1; index >= 0; index -= 1) {
-      if (insideRect(graphicRect(layers[index]), frame)) return layers[index];
+      if (insideRect(layerFrameRect(layers[index], currentCrop()), frame)) return layers[index];
     }
     return null;
   }

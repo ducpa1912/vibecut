@@ -146,7 +146,7 @@ _COLOR_KEYS = frozenset({
 })
 _GRAPHIC_TEXT_KEYS = frozenset({
     "id", "type", "kind", "text", "start", "end", "anchor", "box", "z",
-    "style", "safe_zone", "opacity", "pin", "hidden",
+    "style", "safe_zone", "opacity", "pin", "hidden", "video",
 })
 _GRAPHIC_FX_KEYS = frozenset({
     "id", "type", "kind", "start", "end", "anchor", "box", "z", "color",
@@ -846,6 +846,31 @@ def _graphic_times(raw: dict, index: int) -> tuple[float, float]:
     return round(start, 3), round(end, 3)
 
 
+def _normalize_stuck_position(value: Any, label: str) -> dict:
+    """Where a layer sits on the video: a source box, and the crop it was sized in.
+
+    The box may reach past the frame, because the layer is hidden at the crop
+    edge rather than moved. ``crop_h`` is the crop height, as a share of the
+    source, at which the layer has its stored text size.
+    """
+    if not isinstance(value, dict):
+        raise EditError(f"{label} must be an object.")
+    _unknown(value, frozenset({"box", "crop_h"}), label)
+    box = value.get("box")
+    if not isinstance(box, dict):
+        raise EditError(f"{label}.box must be an object.")
+    _unknown(box, frozenset({"x", "y", "w", "h"}), f"{label}.box")
+    return {
+        "box": {
+            key: round(_number(box.get(key), f"{label}.box.{key}", minimum=low, maximum=high), 6)
+            for key, low, high in (
+                ("x", -1.0, 2.0), ("y", -1.0, 2.0), ("w", 0.001, 2.0), ("h", 0.001, 2.0),
+            )
+        },
+        "crop_h": round(_number(value.get("crop_h"), f"{label}.crop_h", minimum=0.001, maximum=1.0), 6),
+    }
+
+
 def normalize_graphics(value: Any) -> list[dict]:
     if value is None:
         return []
@@ -945,6 +970,10 @@ def normalize_graphics(value: Any) -> list[dict]:
             if "hidden" in raw:
                 layer["hidden"] = _strict_bool(
                     raw.get("hidden"), False, f"graphics[{index}].hidden",
+                )
+            if raw.get("video") is not None:
+                layer["video"] = _normalize_stuck_position(
+                    raw["video"], f"graphics[{index}].video",
                 )
             layers.append(layer)
             text_index += 1

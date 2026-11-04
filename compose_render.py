@@ -818,6 +818,7 @@ def _graphic_layers(edit: dict, warnings: list[dict]) -> list[dict]:
                 "style": dict(item["style"]),
                 "opacity": item["opacity"],
                 "safe_zone": item["safe_zone"],
+                **({"video": dict(item["video"])} if item.get("video") else {}),
             })
         else:
             value = {
@@ -843,6 +844,109 @@ def _graphic_layers(edit: dict, warnings: list[dict]) -> list[dict]:
                     value["asset_path"] = resolved
             layers.append(value)
     return layers
+
+
+def _stuck_rect(video: dict, crop: dict, width: int, height: int) -> dict:
+    """A layer's source box in one beat's output frame. It may leave the frame."""
+    box = video["box"]
+    crop_w = max(1.0, float(crop["w"]))
+    crop_h = max(1.0, float(crop["h"]))
+    return {
+        "x": round((float(box["x"]) * width - float(crop["x"])) / crop_w, 6),
+        "y": round((float(box["y"]) * height - float(crop["y"])) / crop_h, 6),
+        "w": round(float(box["w"]) * width / crop_w, 6),
+        "h": round(float(box["h"]) * height / crop_h, 6),
+    }
+
+
+def _stuck_style(style: dict, scale: float) -> dict:
+    """The layer's text style at this beat's zoom."""
+    out = dict(style)
+    for key in ("size", "stroke_width"):
+        if isinstance(out.get(key), (int, float)):
+            out[key] = round(float(out[key]) * scale, 3)
+    return out
+
+
+def _stuck_pieces(layer: dict, beats: list[dict], warnings: list[dict]) -> list[dict]:
+    """One timed piece of a layer per beat, placed on that beat's video.
+
+    The output picture clips each piece, so nothing is cut or rewrapped at the
+    crop edge. A piece on a beat with motion carries that beat's own motion
+    filters, so it moves exactly as the video does. Beats with the same crop and
+    no motion share a piece, so the layer is not redrawn at each cut.
+    """
+    video = layer["video"]
+    base = {key: value for key, value in layer.items() if key != "video"}
+    pieces: list[dict] = []
+    hidden = 0
+    for beat in beats:
+        start = max(float(layer["start"]), beat["start"])
+        end = min(float(layer["end"]), beat["end"])
+        if end <= start + 1e-6:
+            continue
+        crop = beat["crop"]
+        if crop is None:
+            # A blank card has no video to stick to.
+            rect, style = dict(layer["rect"]), dict(layer["style"])
+        else:
+            rect = _stuck_rect(video, crop, beat["width"], beat["height"])
+            if (
+                rect["x"] + rect["w"] <= 0 or rect["y"] + rect["h"] <= 0
+                or rect["x"] >= 1 or rect["y"] >= 1
+            ):
+                hidden += 1
+                continue
+            scale = float(video["crop_h"]) / (float(crop["h"]) / beat["height"])
+            style = _stuck_style(layer["style"], scale)
+        previous = pieces[-1] if pieces else None
+        if (
+            previous is not None and not beat["motion"] and "motion" not in previous
+            and previous["rect"] == rect and previous["style"] == style
+            and abs(previous["end"] - start) < 1e-6
+        ):
+            previous["end"] = round(end, 6)
+            continue
+        piece = {
+            **base,
+            "id": f"{layer['id']}~{len(pieces) + 1}",
+            "parent_id": layer["id"],
+            "start": round(start, 6),
+            "end": round(end, 6),
+            "box": {"w": rect["w"], "h": rect["h"]},
+            "rect": rect,
+            "style": style,
+            "stuck": True,
+        }
+        if beat["motion"]:
+            piece["motion"] = {
+                "filters": list(beat["motion"]),
+                "start": round(beat["start"], 6),
+                "frames": beat["frames"],
+            }
+        pieces.append(piece)
+    if hidden:
+        warnings.append({
+            "code": "layer_hidden_by_crop",
+            "message": (
+                f"Text {layer['id']} sits outside the crop on {hidden} beat(s). "
+                "It stays in the Edit and is hidden there."
+            ),
+            "layer_id": layer["id"],
+        })
+    return pieces
+
+
+def _stick_to_beats(layers: list[dict], beats: list[dict], warnings: list[dict]) -> list[dict]:
+    if not any(layer.get("video") for layer in layers):
+        return layers
+    out: list[dict] = []
+    for layer in layers:
+        if layer.get("video"):
+            out.extend(_stuck_pieces(layer, beats, warnings))
+        else:
+            out.append(layer)
+    return out
 
 
 def _sticker_asset_path(item: dict, warnings: list[dict]) -> str | None:
@@ -1046,6 +1150,7 @@ def compile_edit(
     reframe = normalized["reframe"]
     overrides = reframe.get("overrides") or {}
     segments: list[dict] = []
+    stick_beats: list[dict] = []
     out_cursor = 0.0
     for clip in story_clips:
         frames = max(1, int(round(float(clip["duration"]) * fps)))
@@ -1079,6 +1184,10 @@ def compile_edit(
                 "post_filters": [],
                 "post_filter": "",
                 "filter": "",
+            })
+            stick_beats.append({
+                "start": segment_out_start, "end": segment_out_end, "crop": None,
+                "width": out_w, "height": out_h, "motion": [], "frames": frames,
             })
             continue
         asset = clip.get("asset") if clip.get("kind") == "file" else None
@@ -1209,8 +1318,18 @@ def compile_edit(
             "post_filter": post_filter,
             "filter": ",".join(chain),
         })
+        stick_beats.append({
+            "start": segment_out_start, "end": segment_out_end, "crop": crop,
+            "width": clip_width, "height": clip_height,
+            # A zoompan chain changes the stream it runs on, so only the
+            # perspective engine can be repeated on a layer.
+            "motion": motion_filters if motion_engine == "perspective" else [],
+            "frames": frames,
+        })
 
-    graphic_layers = _graphic_layers(normalized, warnings)
+    graphic_layers = _stick_to_beats(
+        _graphic_layers(normalized, warnings), stick_beats, warnings,
+    )
     if include_captions:
         caption_layers, caption_metadata = _caption_layers(
             normalized, caption_track, warnings,

@@ -9,6 +9,7 @@
  * approximation: the exact frame stays the source of truth.
  */
 
+import { layerFrameRect, stuckScale } from "./canvas-tools.js";
 import { clamp, graphicRect, numberOr } from "./model.js";
 
 /** Mirrors `overlays.DEFAULT_BOX["caption"]` and `ANCHOR_MARGIN`. */
@@ -51,21 +52,24 @@ export function captionOverlayStyle(trackStyle = {}) {
  * Everything to draw at story time `t`, lowest z first. Pure data, so it is
  * testable without a canvas.
  */
-export function overlayLayers(edit, captions, t) {
+export function overlayLayers(edit, captions, t, crop = null) {
   const time = numberOr(t, 0);
   const rows = [];
   for (const item of edit?.graphics || []) {
     if (!item || !active(item.start, item.end, time)) continue;
-    const rect = graphicRect(item);
+    const rect = layerFrameRect(item, crop);
     const opacity = clamp(numberOr(item.opacity, 1), 0, 1);
     const z = numberOr(item.z, 10);
     if (item.type === "text") {
       const text = String(item.text || "");
       if (!text.trim()) continue;
-      rows.push({
-        type: "text", kind: item.kind, text, rect, opacity, z,
-        style: { ...TEXT_DEFAULTS, ...(item.style || {}) },
-      });
+      const style = { ...TEXT_DEFAULTS, ...(item.style || {}) };
+      if (item.video && crop) {
+        const scale = stuckScale(item, crop);
+        style.size = numberOr(style.size, TEXT_DEFAULTS.size) * scale;
+        if (style.stroke_width !== undefined) style.stroke_width = numberOr(style.stroke_width) * scale;
+      }
+      rows.push({ type: "text", kind: item.kind, text, rect, opacity, z, style });
     } else if (["progress_bar", "underline", "arrow", "circle"].includes(item.kind)) {
       const span = Math.max(1e-6, numberOr(item.end, 0) - numberOr(item.start, 0));
       rows.push({
@@ -233,8 +237,8 @@ function drawFx(ctx, layer, width, height) {
 }
 
 /** Draw the overlay for story time `t` onto a canvas of `width`×`height`. */
-export function drawOverlay(ctx, edit, captions, t, width, height) {
-  for (const layer of overlayLayers(edit, captions, t)) {
+export function drawOverlay(ctx, edit, captions, t, width, height, crop = null) {
+  for (const layer of overlayLayers(edit, captions, t, crop)) {
     if (layer.type === "text") drawText(ctx, layer, width, height);
     else drawFx(ctx, layer, width, height);
   }

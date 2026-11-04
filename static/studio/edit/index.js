@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261104-3";
+import { mountPreview } from "./preview.js?v=20261104-4";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -74,7 +74,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261104-3";
+    link.href = "/static/studio/edit/edit.css?v=20261104-4";
     document.head.append(link);
   }
 }
@@ -1374,6 +1374,9 @@ export function mount(root, ctx) {
       getCaptions: () => state.captions,
       getStory: () => state.story,
       getAspect: () => state.aspect,
+      getCropAt: (time) => cropAt({
+        edit: state.edit, job: state.job, story: state.story, time, aspect: state.aspect,
+      }),
       getJob: () => state.job,
       getSelected: () => state.selected,
       getDuration: () => state.duration,

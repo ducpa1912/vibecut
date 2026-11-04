@@ -7,6 +7,7 @@
 
 import { el } from "../../ui.js";
 import { graphicsCapNotice } from "../../trust.js";
+import { stuckPosition } from "../canvas-tools.js";
 import {
   TEXT_ANCHORS,
   TEXT_KINDS,
@@ -14,6 +15,7 @@ import {
   clone,
   clamp,
   formatSpan,
+  graphicRect,
   numberOr,
   round,
 } from "../model.js";
@@ -133,6 +135,7 @@ export function mountTextPanel(host, ctx) {
     const preset = TEXT_KINDS[layer.kind];
     layer.anchor = preset.anchor;
     layer.box = { ...preset.box };
+    if (layer.video) placeOnVideo();
     commit();
     ctx.refresh();
   });
@@ -156,6 +159,7 @@ export function mountTextPanel(host, ctx) {
   }
   anchor.addEventListener("change", () => {
     layer.anchor = anchor.value;
+    if (layer.video) placeOnVideo();
     commit();
   });
 
@@ -163,10 +167,12 @@ export function mountTextPanel(host, ctx) {
   const height = numberInput(Math.round(numberOr(layer.box?.h, 0.16) * 100), { min: 2, max: 100, step: 1 });
   width.addEventListener("input", () => {
     layer.box = { ...(layer.box || {}), w: clamp(numberOr(width.value) / 100, 0.02, 1) };
+    if (layer.video) placeOnVideo();
     commit();
   });
   height.addEventListener("input", () => {
     layer.box = { ...(layer.box || {}), h: clamp(numberOr(height.value) / 100, 0.02, 1) };
+    if (layer.video) placeOnVideo();
     commit();
   });
 
@@ -255,6 +261,12 @@ export function mountTextPanel(host, ctx) {
     style.shadow = shadow.input.checked;
     writeStyle();
   });
+  const stuck = checkbox("Stick to the video", Boolean(layer.video));
+  stuck.input.addEventListener("change", () => {
+    if (stuck.input.checked) placeOnVideo();
+    else delete layer.video;
+    commit();
+  });
   const safe = checkbox("Keep inside safe area", layer.safe_zone !== false);
   safe.input.addEventListener("change", () => {
     layer.safe_zone = safe.input.checked;
@@ -276,7 +288,7 @@ export function mountTextPanel(host, ctx) {
     commit();
   });
 
-  stage.append(el("div", { class: "st-check-row" }, [upper.wrapper, shadow.wrapper, safe.wrapper]));
+  stage.append(el("div", { class: "st-check-row" }, [upper.wrapper, shadow.wrapper, safe.wrapper, stuck.wrapper]));
   stage.append(el("div", { class: "st-range-row" }, [
     el("span", { class: "st-field-label", text: "Opacity" }),
     opacity,
@@ -295,6 +307,11 @@ export function mountTextPanel(host, ctx) {
   function writeStyle() {
     layer.style = { ...style };
     commit();
+  }
+
+  /** Keeps the layer where it shows now, in the crop at its first frame. */
+  function placeOnVideo() {
+    layer.video = stuckPosition(graphicRect(layer), ctx.getCropAt(numberOr(layer.start, 0)));
   }
 
   function commit() {

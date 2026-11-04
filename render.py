@@ -1268,6 +1268,19 @@ def _layer_rect(layer: dict, out_w: int, out_h: int) -> tuple[int, int, int, int
     return x, y, w, h
 
 
+def _layer_place(layer: dict, out_w: int, out_h: int) -> tuple[int, int, int, int]:
+    """Where a layer goes. One stuck to the video keeps its size past the frame."""
+    if not layer.get("stuck"):
+        return _layer_rect(layer, out_w, out_h)
+    rect = layer.get("rect") or {}
+    return (
+        int(round(float(rect.get("x") or 0.0) * out_w)),
+        int(round(float(rect.get("y") or 0.0) * out_h)),
+        max(1, int(round(float(rect.get("w") or 0.0) * out_w))),
+        max(1, int(round(float(rect.get("h") or 0.0) * out_h))),
+    )
+
+
 def _layer_font_size(style: dict, out_h: int) -> int:
     try:
         size = float(style.get("size") or 44)
@@ -1324,7 +1337,7 @@ def _layer_is_sequence(layer: dict) -> bool:
 
 
 def _render_text_layer(layer: dict, out_w: int, out_h: int) -> Image.Image:
-    x, y, w, h = _layer_rect(layer, out_w, out_h)
+    x, y, w, h = _layer_place(layer, out_w, out_h)
     image = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     style = layer.get("style") or {}
@@ -1522,6 +1535,35 @@ def _layer_png(
     return path
 
 
+def _layer_canvas_png(layer: dict, png: Path, out_w: int, out_h: int) -> Path:
+    """The layer on a transparent whole frame, for a beat's motion to act on."""
+    path = png.with_name(f"{png.stem}_canvas_{int(out_w)}x{int(out_h)}.png")
+    if path.is_file() and path.stat().st_size > 0:
+        return path
+    x, y, _w, _h = _layer_place(layer, out_w, out_h)
+    canvas = Image.new("RGBA", (int(out_w), int(out_h)), (0, 0, 0, 0))
+    with Image.open(png) as image:
+        rgba = image.convert("RGBA")
+        canvas.paste(rgba, (x, y), rgba)
+    tmp = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        canvas.save(tmp, format="PNG")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return path
+
+
+def _stuck_enable(layer: dict, fps: int) -> str:
+    """When a stuck piece shows. Pieces meet at a beat cut, so exactly one owns
+    each frame: the edges sit a quarter frame early, between two frames."""
+    early = 0.25 / fps
+    start = float(layer.get("start") or 0.0) - early
+    end = float(layer.get("end") or 0.0) - early
+    return f"gte(t,{start:.6f})*lt(t,{end:.6f})"
+
+
 def _layer_sequence(
     layer: dict,
     out_w: int,
@@ -1647,9 +1689,12 @@ def _burn_layers(
         else:
             png = _layer_png(layer, out_w, out_h, layer_cache, fps=fps)
             if png is not None:
+                motion = layer.get("motion")
                 prepared.append({
-                    "layer": layer, "path": png, "track": False,
-                    "sequence": False, "count": 1,
+                    "layer": layer,
+                    "path": _layer_canvas_png(layer, png, out_w, out_h) if motion else png,
+                    "track": False, "sequence": False, "count": 1,
+                    **({"motion": motion} if motion else {}),
                 })
         index += 1
     if not prepared:
@@ -1662,6 +1707,12 @@ def _burn_layers(
         elif entry["sequence"]:
             cmd += [
                 "-framerate", str(fps), "-start_number", "1",
+                "-i", str(entry["path"]),
+            ]
+        elif entry.get("motion"):
+            cmd += [
+                "-loop", "1", "-framerate", str(fps),
+                "-t", f"{int(entry['motion']['frames']) / fps:.6f}",
                 "-i", str(entry["path"]),
             ]
         else:
@@ -1680,16 +1731,30 @@ def _burn_layers(
             continue
         start = max(0.0, min(total, float(layer.get("start") or 0.0)))
         end = max(start + 0.01, min(total, float(layer.get("end") or 0.0)))
-        x, y, _w, _h = _layer_rect(layer, out_w, out_h)
+        x, y, _w, _h = _layer_place(layer, out_w, out_h)
         source = f"{index}:v"
         if entry["sequence"]:
             graph.append(
                 f"[{index}:v]setpts=PTS-STARTPTS+{start:.3f}/TB[l{index}]"
             )
             source = f"l{index}"
+        enable = f"between(t,{start:.3f},{end:.3f})"
+        if layer.get("stuck"):
+            enable = _stuck_enable(layer, fps)
+        if entry.get("motion"):
+            # The same filters as the beat, counting from the beat's first
+            # frame, so the layer and the video move as one.
+            motion = entry["motion"]
+            first = int(round(float(motion["start"]) * fps))
+            graph.append(
+                f"[{index}:v]format=yuva444p,{','.join(motion['filters'])},"
+                f"settb=1/{fps},setpts=PTS-STARTPTS+{first}[l{index}]"
+            )
+            source = f"l{index}"
+            x = y = 0
         graph.append(
             f"[{last}][{source}]overlay=x={x}:y={y}:"
-            f"enable='between(t,{start:.3f},{end:.3f})':eof_action=pass[{out}]"
+            f"enable='{enable}':eof_action=pass[{out}]"
         )
         last = out
     cmd += [
@@ -1721,7 +1786,11 @@ def _burn_frame(
     for layer in layers:
         start = float(layer.get("start") or 0.0)
         end = float(layer.get("end") or 0.0)
-        if not (start <= at <= end):
+        if layer.get("stuck"):
+            early = 0.25 / fps
+            if not (start - early <= at < end - early):
+                continue
+        elif not (start <= at <= end):
             continue
         if _layer_is_sequence(layer):
             frames = _layer_frames(layer, fps)
@@ -1735,14 +1804,27 @@ def _burn_frame(
         if png is not None:
             active.append((layer, png))
     cmd = [_ffmpeg(), "-y", "-v", "error", "-i", str(frame)]
-    for _layer, png in active:
-        cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(png)]
     graph: list[str] = []
     last = "0:v"
-    for index, (layer, _png) in enumerate(active, 1):
-        x, y, _w, _h = _layer_rect(layer, out_w, out_h)
+    for index, (layer, png) in enumerate(active, 1):
+        x, y, _w, _h = _layer_place(layer, out_w, out_h)
         out = f"v{index}"
-        graph.append(f"[{last}][{index}:v]overlay=x={x}:y={y}[{out}]")
+        motion = layer.get("motion")
+        if motion:
+            # The exact frame shows the beat's motion, so the layer must too.
+            local = max(0, int(round((at - float(motion["start"])) * fps)))
+            cmd += [
+                "-loop", "1", "-framerate", str(fps), "-t", f"{(local + 1) / fps:.6f}",
+                "-i", str(_layer_canvas_png(layer, png, out_w, out_h)),
+            ]
+            graph.append(
+                f"[{index}:v]format=yuva444p,{','.join(motion['filters'])},"
+                f"trim=start_frame={local},setpts=PTS-STARTPTS[l{index}]"
+            )
+            graph.append(f"[{last}][l{index}]overlay=x=0:y=0[{out}]")
+        else:
+            cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(png)]
+            graph.append(f"[{last}][{index}:v]overlay=x={x}:y={y}[{out}]")
         last = out
     if active:
         cmd += ["-filter_complex", ";".join(graph)]

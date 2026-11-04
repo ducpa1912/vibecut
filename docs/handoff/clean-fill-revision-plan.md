@@ -2,7 +2,7 @@
 
 Date: 2026-11-04. Code reviewed: `studio` at `e274b45`.
 
-Status: revision 5. M0, R0, R1, R2, R3 and R4 built; R5 not started.
+Status: revision 5. M0, R0, R1, R2, R3 and R4 built; R5 spike built on one Text layer, the rest of R5 not started.
 
 **Rule for this work:** audit from code and tests. Do not open the founder's projects to see what they did unless they say so. Layers found in a project may just be the founder testing, so they are not bug reports.
 
@@ -244,6 +244,19 @@ Recommendation: A, because sharp text matters most, unless matching motion prove
 2. **Captions can be cut off.** A zoomed caption can overflow the crop edge, and a moved crop can hide all of it, so captions may go unreadable. The layer row warns; nothing moves it back automatically.
 3. **Text size follows zoom.** Zoom 2x makes text twice as big on screen.
 4. **Time is unchanged.** Layers keep their current start and end times. This rule is about position and size only.
+
+**R5 spike log (2026-11-04), option A built on Text only, not run on real video:**
+
+- A Text layer has a "Stick to the video" tick. It saves `video: {box, crop_h}` on the layer: the place on the source, and the crop height where the stored text size applies. Layers without it compile and burn exactly as before, so Classic is unchanged.
+- The compile splits a stuck layer into one piece per beat, with that beat's position and text size. Beats with the same crop and no motion share a piece. A beat that hides the layer drops the piece and adds a `layer_hidden_by_crop` warning. A blank card keeps the layer at its old screen place.
+- The output picture clips each piece, so text is not cut or rewrapped at the crop edge. Exactly one piece owns each frame at a cut.
+- **Motion:** a piece on a moving beat is drawn on a transparent whole frame, then runs that beat's own `perspective` filters from the beat's first frame. It is the same filter string and the same frame count, so nothing is matched by hand. The exact-frame preview does the same at that frame.
+- **Option A's cost:**
+  - Text is sharp under crop zoom, because it is redrawn at that size. Under Motion zoom it is resampled, so it softens as the zoom grows.
+  - Each moving beat adds one whole-frame input to the burn, and a layer crossing many beats adds one input per beat. Render time has not been measured.
+  - `deshake` (Stabilize) moves the video before the crop, and the layer does not follow it.
+- **Not built:** dragging on the canvas, stickers, effects, captions, converting saved layers, and a "Hidden by crop" label on the row. Option B was not built, because A has not failed.
+- **Checked:** unit tests, and ffmpeg accepts the filter graph (a parser check with no file written). **Unknown:** whether the layer and the video line up in real pixels. Only a real clip can answer that, and it decides between A and B.
 
 **Test gate:** on a clip of the founder's choice, with Text, a sticker, an effect and captions on it:
 
