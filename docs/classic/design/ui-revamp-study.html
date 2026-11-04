@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Classic revamp · study</title>
+<style>
+  /* ------------------------------------------------------------------
+     Study for docs/classic/design/ui-revamp.md
+     Static markup: no app code, no data, no network.
+     Tokens below are the proposal, not the shipped :root.
+  ------------------------------------------------------------------ */
+  :root {
+    --bg: #0b0b0c;
+    --panel: #121214;
+    --panel-2: #171719;
+    --panel-3: #1c1c1f;
+    --line: #27272b;
+    --line-2: #35353a;
+    --text: #ece9e2;
+    --text-2: #b9b6ae;
+    --text-3: #8f8d86;
+    --accent: #e8a266;
+    --accent-ink: #1a1206;
+    --ok: #8fbc8b;
+    --danger: #df7d6e;
+    --fs-display: 44px;
+    --fs-quote: 22px;
+    --fs-title: 15px;
+    --fs-body: 13px;
+    --fs-label: 12px;
+    --fs-meta: 11px;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px;
+    --space-4: 16px; --space-5: 24px; --space-6: 32px;
+    --radius-sm: 8px; --radius: 12px; --radius-lg: 16px;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 400 var(--fs-body)/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  button, select, input { font: inherit; color: inherit; }
+  img { display: block; }
+  h1, h2, h3, h4, p { margin: 0; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: var(--fs-meta); }
+  .meta { color: var(--text-3); font-size: var(--fs-label); }
+
+  .study-note {
+    max-width: 1180px; margin: 0 auto; padding: 18px 20px 0;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+    color: var(--text-3); font-size: var(--fs-label);
+  }
+  .study-note strong { color: var(--text); font-weight: 600; }
+
+  /* ---------- the frame (1440×900 reference, fluid inside) ---------- */
+  .frame {
+    width: min(1440px, calc(100vw - 40px));
+    height: min(900px, calc(100vh - 90px));
+    min-height: 640px;
+    margin: 10px auto 24px;
+    display: flex; flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background:
+      radial-gradient(700px 380px at 88% -10%, rgba(232,162,102,0.06), transparent 62%),
+      var(--bg);
+    overflow: hidden;
+  }
+
+  /* view switching: Cut / Finish, and Finish's empty state — pure CSS */
+  .view-pick { position: absolute; opacity: 0; pointer-events: none; }
+  .finish-frame { display: none; }
+  .finish-empty { display: none; }
+  #v-finish:checked ~ .frame .pane-story,
+  #v-finish:checked ~ .frame .pane-inspector { display: none; }
+  #v-finish:checked ~ .frame .pane-preview { border-right: 0; }
+  #v-finish:checked ~ .frame .cut-only { display: none; }
+  #v-finish:checked ~ .frame .finish-frame { display: flex; }
+  #v-empty:checked ~ .frame .finish-player-wrap { opacity: 0.3; filter: saturate(0.35); }
+  #v-empty:checked ~ .frame .finish-ready { display: none; }
+  #v-empty:checked ~ .frame .finish-empty { display: flex; }
+
+  /* ---------- top bar ---------- */
+  .bar {
+    flex: 0 0 auto;
+    height: 52px;
+    display: flex; align-items: center; gap: var(--space-4);
+    padding: 0 var(--space-4) 0 var(--space-5);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 620; letter-spacing: -0.01em; }
+  .brand i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .cut-id { color: var(--text-3); font-family: var(--mono); font-size: var(--fs-meta); letter-spacing: 0.06em; text-transform: uppercase; }
+  .cut-title {
+    min-width: 0; flex: 1 1 auto;
+    font-family: var(--serif); font-size: 17px; letter-spacing: -0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cut-title span { font-family: var(--sans); font-size: var(--fs-label); color: var(--text-3); margin-left: 10px; letter-spacing: 0; }
+  .bar-right { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+
+  .btn {
+    height: 32px; padding: 0 12px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: 1px solid transparent; border-radius: var(--radius-sm);
+    background: transparent; color: var(--text-2);
+    font-size: var(--fs-label); font-weight: 500; cursor: pointer;
+  }
+  .btn:hover { color: var(--text); }
+  .btn.secondary { border-color: var(--line-2); color: var(--text); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; height: 36px; padding: 0 16px; }
+  .btn.primary:hover { background: #f0b078; color: var(--accent-ink); }
+  .btn.danger { color: var(--danger); }
+  .btn.icon { width: 32px; padding: 0; color: var(--text-2); font-size: 15px; }
+  .btn.sm { height: 28px; padding: 0 10px; }
+
+  .bar-seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+  .bar-seg label { height: 28px; padding: 0 14px; display: grid; place-items: center; border-radius: 6px; color: var(--text-3); font-size: var(--fs-label); cursor: pointer; }
+  .bar-seg label:hover { color: var(--text-2); }
+  #v-cut:checked ~ .frame .bar-seg label[for="v-cut"],
+  #v-finish:checked ~ .frame .bar-seg label[for="v-finish"],
+  #v-empty:checked ~ .frame .bar-seg label[for="v-finish"] { background: var(--panel-3); color: var(--text); }
+
+  /* ---------- panes ---------- */
+  .body { flex: 1 1 auto; min-height: 0; display: flex; }
+  .pane { min-height: 0; display: flex; flex-direction: column; }
+  .pane-preview { flex: 0 0 33%; min-width: 340px; border-right: 1px solid var(--line); }
+  .pane-story { flex: 1 1 auto; min-width: 0; border-right: 1px solid var(--line); }
+  .pane-inspector { flex: 0 0 30%; min-width: 320px; }
+  .pane-head {
+    flex: 0 0 auto; height: 40px; display: flex; align-items: center; justify-content: space-between;
+    gap: var(--space-2); padding: 0 var(--space-5);
+  }
+  .pane-head h2 { font-size: var(--fs-title); font-weight: 600; letter-spacing: 0; }
+  .pane-head .meta { font-variant-numeric: tabular-nums; }
+  .pane-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 var(--space-5) var(--space-4); }
+
+  /* ---------- preview ---------- */
+  .stage { flex: 1 1 auto; min-height: 0; display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-5) 0; }
+  .tool-rail { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; padding-top: 2px; }
+  .tool {
+    width: 44px; padding: 7px 0 6px;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    border: 1px solid transparent; border-radius: var(--radius-sm);
+    background: transparent; color: var(--text-3); cursor: pointer;
+    font-size: 10px; letter-spacing: 0;
+  }
+  .tool b { font-size: 15px; font-weight: 400; line-height: 1; color: var(--text-2); }
+  .tool:hover { background: var(--panel); color: var(--text-2); }
+  .tool[aria-pressed="true"] { background: rgba(232,162,102,0.12); border-color: rgba(232,162,102,0.4); color: var(--accent); }
+  .tool[aria-pressed="true"] b { color: var(--accent); }
+  .tool:disabled { opacity: 0.4; cursor: default; }
+
+  .frame-wrap { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: center; }
+  .phone {
+    position: relative; aspect-ratio: 9 / 16; height: 100%; max-height: 100%;
+    max-width: 100%;
+    border-radius: var(--radius); overflow: hidden;
+    background: linear-gradient(150deg, #24313d 0%, #1b242c 58%, #151b21 100%);
+    border: 1px solid var(--line-2);
+  }
+  .phone .subject {
+    position: absolute; inset: 18% 12% 34%;
+    border-radius: 50% 50% 42% 42% / 44% 44% 56% 56%;
+    background: radial-gradient(60% 60% at 42% 36%, rgba(232,162,102,0.22), rgba(232,162,102,0.02) 70%);
+  }
+  .caption-band {
+    position: absolute; left: 10%; right: 10%; bottom: 12%;
+    padding: 7px 8px; border-radius: 6px; text-align: center;
+    background: rgba(10,10,12,0.55); border: 1px dashed rgba(232,162,102,0.75);
+    color: #f4efe6; font-size: 12px; line-height: 1.3;
+  }
+  .caption-band span { display: block; font-family: var(--mono); font-size: 9px; color: var(--accent); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 3px; }
+  .box-tag {
+    position: absolute; top: 8px; left: 8px;
+    padding: 2px 6px; border-radius: 5px; background: rgba(232,162,102,0.16);
+    border: 1px solid rgba(232,162,102,0.45); color: var(--accent);
+    font-family: var(--mono); font-size: 10px;
+  }
+
+  .transport {
+    flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-3) var(--space-5) var(--space-2);
+  }
+  .play { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel); color: var(--text); display: grid; place-items: center; cursor: pointer; font-size: 12px; }
+  .play:hover { border-color: var(--accent); }
+  .playtime { flex: 0 0 auto; color: var(--text-2); }
+  .playtime b { color: var(--text); font-weight: 500; }
+  .scrub { position: relative; flex: 1 1 auto; height: 20px; cursor: pointer; }
+  .scrub .track { position: absolute; left: 0; right: 0; top: 8px; height: 3px; border-radius: 2px; background: var(--line-2); }
+  .scrub .fill { position: absolute; left: 0; top: 0; width: 38%; height: 100%; background: var(--accent); border-radius: 2px; }
+  .scrub .tick { position: absolute; top: -3px; width: 1px; height: 9px; background: var(--line-2); }
+  .scrub .knob { position: absolute; left: 38%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 3px rgba(11,11,12,0.9); }
+  .stage-foot { flex: 0 0 auto; display: flex; justify-content: space-between; gap: var(--space-3); padding: 0 var(--space-5) var(--space-4); color: var(--text-3); font-size: var(--fs-label); }
+
+  /* ---------- story ---------- */
+  .moment-row { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: var(--space-2); scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+  .moment-row::-webkit-scrollbar { height: 6px; }
+  .moment-row::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
+  .moment-row::-webkit-scrollbar-track { background: transparent; }
+  .moment {
+    flex: 0 0 84px; position: relative; padding: 0;
+    border: 1px solid var(--line); border-radius: var(--radius-sm);
+    background: var(--panel); overflow: hidden; cursor: pointer; text-align: left;
+  }
+  .moment .thumb { display: block; aspect-ratio: 9 / 12; background: linear-gradient(150deg, #263441, #1a222a); }
+  .moment .time { display: block; padding: 4px 6px; font-family: var(--mono); font-size: 10px; color: var(--text-2); }
+  .moment .score {
+    position: absolute; top: 5px; left: 5px; width: 22px; height: 22px; border-radius: 50%;
+    display: grid; place-items: center; background: rgba(11,11,12,0.72);
+    border: 1px solid rgba(232,162,102,0.5); color: var(--accent);
+    font-family: var(--mono); font-size: 10px;
+  }
+  .moment[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(232,162,102,0.35); }
+  .moment .role {
+    position: absolute; top: 5px; right: 5px; padding: 1px 4px; border-radius: 4px;
+    background: rgba(11,11,12,0.72); color: var(--text-2);
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
+  }
+
+  .card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+  .cut-card { margin-top: var(--space-3); padding: var(--space-4); }
+  .cut-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+  .seg button { height: 26px; padding: 0 11px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); font-size: var(--fs-label); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--panel-3); color: var(--text); }
+  .cut-line { margin-top: var(--space-3); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); color: var(--text-2); font-size: var(--fs-label); }
+  .cut-line .dot { color: var(--line-2); }
+  .chip { padding: 2px 7px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--text-3); font-size: 11px; }
+  .timeline-list { margin-top: var(--space-3); display: flex; flex-direction: column; gap: 6px; }
+  .clip-row {
+    display: grid; grid-template-columns: 44px 1fr 46px; align-items: center; gap: var(--space-3);
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2);
+  }
+  .clip-row.is-hook { border-color: rgba(232,162,102,0.5); background: rgba(232,162,102,0.07); }
+  .clip-role { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+  .clip-bar { height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+  .clip-bar i { display: block; height: 100%; width: 78%; background: linear-gradient(90deg, rgba(232,162,102,0.75), rgba(232,162,102,0.35)); }
+  .clip-time { font-family: var(--mono); font-size: 10px; color: var(--text-3); text-align: right; }
+
+  /* ---------- inspector ---------- */
+  .tabs { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 var(--space-4); border-bottom: 1px solid var(--line); }
+  .tab {
+    height: 28px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px;
+    border: 0; border-radius: 6px; background: transparent; color: var(--text-3);
+    font-size: var(--fs-label); cursor: pointer;
+  }
+  .tab:hover { color: var(--text-2); }
+  .tab[aria-selected="true"] { background: var(--panel-3); color: var(--text); }
+  .tab i { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--text-3); }
+  .tab[aria-selected="true"] i { color: var(--accent); }
+
+  .inspector-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+  .inspector-foot { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); background: var(--panel); }
+  .inspector-foot .note { flex: 1 1 auto; min-width: 0; color: var(--text-3); font-size: 11px; }
+
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 12px 14px 0; }
+  .card-head h3 { font-size: var(--fs-title); font-weight: 600; }
+  .card-body { padding: 10px 14px 14px; }
+
+  .found { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+  .found-row { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 10px; padding: 9px 10px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+  .found-row:last-child { border-bottom: 0; }
+  .found-row input { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+  .found-row.locked { color: var(--text-3); }
+  .found-row strong { display: block; font-size: var(--fs-body); font-weight: 500; }
+  .found-row small { display: block; color: var(--text-3); font-size: var(--fs-label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lock-chip { padding: 1px 6px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 10px; color: var(--text-3); font-family: var(--mono); }
+
+  .bulk { display: flex; align-items: center; gap: var(--space-2); margin-top: 10px; }
+  .bulk .seg { flex: 1 1 auto; }
+  .bulk .seg button { flex: 1 1 auto; }
+  .bulk-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line); }
+  .bulk-sub .spacer { flex: 1 1 auto; }
+  .engine-select { height: 28px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--panel); color: var(--text); font-size: var(--fs-label); }
+
+  .engine { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-label); color: var(--text-2); }
+  .engine .state { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  .engine.off { color: var(--text-3); }
+  .engine.off .state { background: var(--line-2); }
+  .linkbtn { border: 0; background: transparent; color: var(--text-3); font-size: 11px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  .linkbtn:hover { color: var(--text); }
+
+  .empty { padding: 14px; border: 1px dashed var(--line-2); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  .empty p { color: var(--text-3); font-size: var(--fs-label); max-width: 30ch; }
+
+  /* ---------- finish ---------- */
+  .finish-frame { flex: 1 1 auto; min-height: 0; display: none; gap: 48px; padding: var(--space-5); justify-content: center; align-items: center; }
+  #v-finish:checked ~ .frame .finish-frame { display: flex; }
+  .finish-player { flex: 0 0 320px; width: 320px; display: flex; align-items: center; justify-content: center; transition: opacity 160ms ease; }
+  .finish-player .phone { width: 320px; height: auto; }
+  .finish-player .phone { max-height: 100%; height: 100%; width: auto; }
+  .finish-side { flex: 0 0 320px; display: flex; flex-direction: column; gap: var(--space-3); }
+  .finish-side h2 { font-size: var(--fs-title); font-weight: 600; }
+  .file-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); color: var(--text-2); font-size: var(--fs-label); }
+  .file-row b { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text); font-weight: 500; }
+  .format-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .finish-empty { flex-direction: column; gap: var(--space-3); align-items: flex-start; justify-content: center; padding: var(--space-5); border: 1px dashed var(--line-2); border-radius: var(--radius); background: var(--panel); }
+  .finish-actions { display: flex; flex-direction: column; gap: 10px; }
+  .finish-toggle label { cursor: pointer; }
+  .finish-toggle label:last-child { display: none; }
+  #v-empty:checked ~ .frame .finish-toggle label:first-child { display: none; }
+  #v-empty:checked ~ .frame .finish-toggle label:last-child { display: inline; }
+  .finish-empty h3 { font-family: var(--serif); font-size: var(--fs-quote); font-weight: 400; }
+  .finish-empty p { color: var(--text-3); font-size: var(--fs-body); max-width: 34ch; }
+
+  .study-foot { max-width: 1180px; margin: 0 auto 40px; padding: 0 20px; color: var(--text-3); font-size: var(--fs-label); display: flex; gap: 18px; flex-wrap: wrap; }
+  .study-foot b { color: var(--text-2); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div class="study-note">
+  <div><strong>Classic revamp — visual study</strong> · static proposal, not the shipped app</div>
+  <div>tokens: 6 type sizes · 3 radii · amber primary · 1440×900 reference</div>
+</div>
+
+<input class="view-pick" type="radio" name="view" id="v-cut" checked>
+<input class="view-pick" type="radio" name="view" id="v-finish">
+<input class="view-pick" type="radio" name="state" id="v-full" checked>
+<input class="view-pick" type="radio" name="state" id="v-empty">
+
+<div class="frame">
+  <header class="bar">
+    <span class="brand"><i aria-hidden="true"></i>VibeCut</span>
+    <span class="cut-id">03 · cut</span>
+    <p class="cut-title">“Sentence 5 says the build shipped on time.”<span>24.0s source · 6 beats · 9:16</span></p>
+    <div class="bar-right">
+      <div class="bar-seg" role="group" aria-label="Frame">
+        <label for="v-cut">Cut</label>
+        <label for="v-finish">Finish</label>
+      </div>
+      <button class="btn icon" type="button" aria-label="Keyboard shortcuts">?</button>
+      <button class="btn icon" type="button" aria-label="More actions">⋯</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- preview -->
+    <section class="pane pane-preview cut-only" aria-label="Frame">
+      <div class="pane-head">
+        <h2>Frame</h2>
+        <span class="meta" id="frame-meta"><b>0:01.2</b> · clip 4/6 · beat</span>
+      </div>
+      <div class="stage">
+        <div class="tool-rail" role="toolbar" aria-label="Box tools">
+          <button class="tool" type="button" aria-pressed="true"><b>＋</b>Box</button>
+          <button class="tool" type="button" disabled><b>↶</b>Undo</button>
+          <button class="tool" type="button" disabled><b>↷</b>Redo</button>
+          <button class="tool" type="button"><b>↻</b>Refresh</button>
+        </div>
+        <div class="frame-wrap">
+          <div class="phone">
+            <div class="subject" aria-hidden="true"></div>
+            <span class="box-tag">box · subtitle</span>
+            <div class="caption-band"><span>burned-in text</span>the build shipped on time</div>
+          </div>
+        </div>
+      </div>
+      <div class="transport">
+        <button class="play" type="button" aria-label="Play">▶</button>
+        <span class="playtime mono"><b>0:01.2</b> / 0:23.0</span>
+        <div class="scrub" role="slider" aria-label="Frame time" aria-valuemin="0" aria-valuemax="23" aria-valuenow="1.2" tabindex="0">
+          <div class="track"><div class="fill"></div><i class="tick" style="left:18%"></i><i class="tick" style="left:34%"></i><i class="tick" style="left:52%"></i><i class="tick" style="left:70%"></i><i class="tick" style="left:86%"></i><div class="knob"></div></div>
+        </div>
+        <span class="mono" style="color:var(--text-3)">23.0s</span>
+      </div>
+      <div class="stage-foot">
+        <span>Drag a box to move it · pull a corner to resize</span>
+        <span>fill preview: LaMa</span>
+      </div>
+    </section>
+
+    <!-- story -->
+    <section class="pane pane-story cut-only" aria-label="Story">
+      <div class="pane-head">
+        <h2>Story</h2>
+        <span class="meta">6 moments · best first</span>
+      </div>
+      <div class="pane-scroll">
+        <div class="moment-row">
+          <button class="moment" type="button" aria-pressed="true"><span class="thumb"></span><span class="score">45</span><span class="role">hook</span><span class="time">0:20</span></button>
+          <button class="moment" type="button" aria-pressed="true"><span class="thumb"></span><span class="score">44</span><span class="time">0:16</span></button>
+          <button class="moment" type="button" aria-pressed="true"><span class="thumb"></span><span class="score">43</span><span class="time">0:12</span></button>
+          <button class="moment" type="button" aria-pressed="true"><span class="thumb"></span><span class="score">42</span><span class="time">0:08</span></button>
+          <button class="moment" type="button" aria-pressed="true"><span class="thumb"></span><span class="score">41</span><span class="role">payoff</span><span class="time">0:04</span></button>
+          <button class="moment" type="button"><span class="thumb"></span><span class="score">38</span><span class="time">0:24</span></button>
+        </div>
+
+        <div class="card cut-card">
+          <div class="cut-card-head">
+            <h3 style="font-size:var(--fs-title);font-weight:600">Smart Cut</h3>
+            <div class="seg" role="group" aria-label="Reel length">
+              <button type="button">15s</button>
+              <button type="button" aria-pressed="true">30s</button>
+              <button type="button">60s</button>
+            </div>
+          </div>
+          <div class="cut-line">
+            <span><b class="mono" style="color:var(--text)">23.0s</b> · 6 beats</span>
+            <span class="dot">·</span>
+            <span class="chip">custom hook</span>
+            <span class="dot">·</span>
+            <span>Shape <b style="color:var(--text)">9:16</b></span>
+            <span class="dot">·</span>
+            <button class="linkbtn" type="button">Why this cut</button>
+          </div>
+          <div class="timeline-list">
+            <div class="clip-row is-hook"><span class="clip-role">hook</span><span class="clip-bar"><i></i></span><span class="clip-time">0:20</span></div>
+            <div class="clip-row"><span class="clip-role">beat</span><span class="clip-bar"><i style="width:64%"></i></span><span class="clip-time">0:16</span></div>
+            <div class="clip-row"><span class="clip-role">beat</span><span class="clip-bar"><i style="width:71%"></i></span><span class="clip-time">0:12</span></div>
+            <div class="clip-row"><span class="clip-role">beat</span><span class="clip-bar"><i style="width:58%"></i></span><span class="clip-time">0:08</span></div>
+            <div class="clip-row"><span class="clip-role">payoff</span><span class="clip-bar"><i style="width:44%"></i></span><span class="clip-time">0:04</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- inspector -->
+    <section class="pane pane-inspector cut-only" aria-label="Edit">
+      <div class="tabs" role="tablist" aria-label="Inspector">
+        <button class="tab" role="tab" aria-selected="true" type="button">Clean <i>1</i></button>
+        <button class="tab" role="tab" aria-selected="false" type="button">Text</button>
+        <button class="tab" role="tab" aria-selected="false" type="button">Sound</button>
+      </div>
+      <div class="inspector-body">
+        <div class="card">
+          <div class="card-head">
+            <h3>Clean</h3>
+            <span style="display:flex;align-items:center;gap:10px"><span class="meta">1 ticked · 2 found</span><button class="linkbtn" type="button">Scan text</button></span>
+          </div>
+          <div class="card-body">
+            <div class="found" role="list">
+              <label class="found-row" role="listitem">
+                <input type="checkbox" checked>
+                <span><strong>Subtitle</strong><small>Burned into the caption zone · 0:00–0:08</small></span>
+                <span class="lock-chip">sub</span>
+              </label>
+              <label class="found-row locked" role="listitem">
+                <input type="checkbox" disabled>
+                <span><strong>Watermark</strong><small>Use your original file — it has no watermark</small></span>
+                <span class="lock-chip">locked</span>
+              </label>
+            </div>
+            <div class="bulk">
+              <div class="seg" role="group" aria-label="Method">
+                <button type="button">Blur</button>
+                <button type="button">Cover</button>
+                <button type="button" aria-pressed="true">AI fill</button>
+              </div>
+              <button class="btn primary sm" type="button">Remove 1</button>
+            </div>
+            <div class="bulk-sub">
+              <span class="engine"><i class="state"></i>STTN ready</span>
+              <select class="engine-select" aria-label="Fill engine"><option>STTN</option><option>LaMa</option></select>
+              <span class="engine off"><i class="state"></i>LaMa not installed</span>
+              <span class="spacer"></span>
+              <button class="linkbtn" type="button">Details</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Boxes</h3><span class="meta">1</span></div>
+          <div class="card-body" style="padding-top:6px">
+            <div class="found-row" style="border:1px solid var(--line);border-radius:8px">
+              <input type="checkbox" checked aria-label="Show box">
+              <span><strong>cl01 · Subtitle</strong><small>AI fill · STTN · 0:00–0:08</small></span>
+              <button class="btn icon sm" type="button" aria-label="Delete box">⋯</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="empty">
+          <p><b style="color:var(--text);font-weight:500">Nothing else on this cut.</b> Text, voice and music are optional.</p>
+          <button class="btn secondary sm" type="button">Add a text overlay</button>
+        </div>
+      </div>
+      <div class="inspector-foot">
+        <span class="note">Renders 23.0s · 9:16 · about 40s</span>
+        <button class="btn secondary" type="button">Draft</button>
+        <button class="btn primary" type="button">Render 30s reel ↗</button>
+      </div>
+    </section>
+
+    <!-- finish -->
+    <div class="finish-frame">
+      <div class="finish-player finish-player-wrap">
+        <div class="phone" style="max-width:320px;height:auto;aspect-ratio:9/16;width:min(100%,320px)">
+          <div class="subject" aria-hidden="true"></div>
+          <div class="caption-band"><span>caption</span>the build shipped on time</div>
+        </div>
+      </div>
+      <div class="finish-side">
+        <h2>Review</h2>
+        <div>
+          <div class="file-row"><span>Duration</span><b>23.0s</b></div>
+          <div class="file-row"><span>Shape</span><b>9:16 · 1080×1920</b></div>
+          <div class="file-row finish-ready"><span>File</span><b>reel-30s.mp4 · 14.2 MB</b></div>
+        </div>
+        <div class="finish-ready finish-actions">
+          <button class="btn primary" type="button" style="width:100%">Download ↓</button>
+          <div class="format-row">
+            <button class="btn secondary sm" type="button">SRT</button>
+            <button class="btn secondary sm" type="button">VTT</button>
+            <button class="btn secondary sm" type="button">EDL</button>
+            <button class="btn secondary sm" type="button">XML</button>
+            <button class="btn secondary sm" type="button">Review link</button>
+          </div>
+          <p class="meta">Changed since this render? Render again from Cut.</p>
+        </div>
+        <div class="finish-empty">
+          <h3>Nothing rendered yet</h3>
+          <p>This cut is ready to render. The reel, formats and download appear here once it finishes.</p>
+          <button class="btn primary" type="button">Render 23s reel ↗</button>
+          <label class="linkbtn" for="v-cut" style="cursor:pointer">Back to Cut</label>
+        </div>
+        <div class="finish-toggle">
+          <label class="linkbtn" for="v-empty">Show the empty state</label>
+          <label class="linkbtn" for="v-full">Show a rendered reel</label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="study-foot">
+  <span><b>Toggle</b> Cut / Finish in the top bar</span>
+  <span><b>Empty state</b> shown when no render exists — Finish never goes blank</span>
+  <span><b>Note</b> the frame is a static mock; motion and real media are not shown</span>
+</footer>
+
+</body>
+</html>
