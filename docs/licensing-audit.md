@@ -306,7 +306,7 @@ Safe choices:
 | DeepFilterNet 3 | Speech denoise | `deep-filter` subprocess | Not installed | MIT/Apache-2.0 | Optional; include notice |
 | Silero VAD | Speech/silence windows | Imported in `voice_extract` | Not installed | MIT | Optional; include notice |
 | pyannote 3.1 / Community-1 | Speaker diarization | Imported in `voice_extract` | Not installed | Code/pipeline MIT; Community-1 CC-BY-4.0 | Optional; attribution + gated download |
-| Kokoro-82M | Local TTS | `tools/tts_kokoro.py` + ONNX | Not installed | Apache-2.0 | Optional Voice Pack; include notice |
+| Kokoro-82M | Local TTS | `tools/tts_kokoro.py` + ONNX; loads `libespeak-ng` for phonemes | Not installed | Apache-2.0 weights/package; **espeak-ng GPL-3.0 runtime** | Optional Voice Pack; cloud safe, Mac bundle needs GPL review or a non-espeak phonemizer |
 | Whisper large-v3-turbo | Local STT | `mlx_whisper` subprocess | Installed | MIT | Optional Speech Pack; include notice |
 | Apple Vision OCR/faces | On-device vision | `bin/vision_probe` | Available on macOS 26 | Apple OS/SDK terms | macOS only; not in cloud |
 | Apple Speech | On-device STT | `bin/transcribe_apple` | Available on macOS 26 | Apple OS/SDK terms | macOS only; not in cloud |
@@ -416,3 +416,103 @@ The neural/media engines are plugins around it.
 - Do not ship Demucs weights or GPL/AGPL engines.
 - Developer ID sign/notarize; do not target the Mac App Store while GPLv3
   ffmpeg or GPL/AGPL engines are present.
+
+## 6.9 Transcription vs voice-reference extraction
+
+These are different pipelines. Demucs does **not** transcribe and Whisper does
+**not** remove music for a clone.
+
+| Job | Pipeline | Engines | Output |
+|---|---|---|---|
+| Transcript / captions | decode → Apple Speech or Whisper | `bin/transcribe_apple`, `mlx_whisper`; cloud STT optional | timed text |
+| Voice-clone reference | decode → separation → denoise → VAD → optional speaker filter → score/splice → loudness | RoFormer or Demucs, DeepFilterNet or `afftdn`, Silero or energy, pyannote if requested | clean mono WAV for the clone provider |
+| Instrumental bed | source decode → vocal removal | Currently `audio.separate_vocals` uses Demucs only | music/SFX stem for a dub/voice mix |
+
+Voice-clone flow:
+
+```text
+video/audio
+  -> ffmpeg decode (48 kHz mono PCM)
+  -> separation: RoFormer if installed, else htdemucs_ft, else htdemucs
+  -> denoise: DeepFilterNet 3 if installed, else ffmpeg afftdn
+  -> VAD: Silero if installed, else energy RMS
+  -> optional pyannote speaker filter
+  -> select/splice speech, loudness-normalise
+  -> clean_voice.wav or candidate clips
+  -> ElevenLabs / HeyGen / MiniMax / Fish / Gemini / local clone
+```
+
+`find_voice_candidates` and the upload/manual-range clone routes call this
+pipeline. The provider receives the cleaned WAV; Demucs is only the cleaning
+step before it.
+
+### Separation quality
+
+Secondary benchmark figures recorded in `docs/voice-extraction-research.md`
+(vocals SDR on MUSDB-style material; not measured on this app's media):
+
+| Engine | Approx. vocals SDR | Character |
+|---|---:|---|
+| Demucs `htdemucs` | ~8.1 dB | older/smaller, fastest fallback |
+| Demucs `htdemucs_ft` | ~8.9 dB | strong general music separator, mature, MPS |
+| BS-RoFormer | ~9.8 dB | newer transformer, better vocal isolation |
+| Mel-Band RoFormer | ~+0.5 dB over BS-RoFormer | best vocal clarity in the recorded benchmarks; heavier |
+
+Practical ranking for **voice cloning**: Mel-Band RoFormer > Demucs
+`htdemucs_ft` > Demucs `htdemucs` > no separation. RoFormer generally leaves
+less music bleed and preserves vocal detail; Demucs is more mature and simpler
+to run. For an **instrumental bed**, Demucs is still the only wired path in
+`audio.separate_vocals`; replacing it with RoFormer requires a new instrumental
+output path.
+
+### Denoise choice
+
+| Engine | Strength | Weakness | Role |
+|---|---|---|---|
+| DeepFilterNet 3 | non-stationary noise, reverb, speech preservation | optional binary/model; slower | preferred when installed |
+| ffmpeg `afftdn` | stationary hiss/hum; zero model; always available | dulls consonants; weak on music/babble; musical noise | fallback |
+| RNNoise | tiny, fast, steady background noise | artifacts; no advantage here | not used; docs say skip |
+
+`denoise="compare"` runs DeepFilterNet and `afftdn`, measures SNR/noise floor,
+and keeps the better one; within 0.5 dB it warns the user to listen.
+
+### VAD choice
+
+| Engine | What it does | Strength | Weakness |
+|---|---|---|---|
+| Silero VAD v5 | neural speech/non-speech timestamps | robust with music/noise; avoids cutting quiet consonants | optional dependency/model |
+| Energy RMS | amplitude threshold (`-38 dB`, min speech/silence) | zero dependency, fast | mistakes music/noise for speech; trims quiet speech |
+
+VAD runs after denoise, before speaker filtering and candidate selection. It
+does not produce the transcript and does not drive Whisper.
+
+### pyannote speaker filter
+
+Diarization answers “who spoke when”. It is used only when a caller passes
+`speaker` (`auto`, a 1-based rank, or a label):
+
+- keep the chosen speaker's turns
+- warn about overlapping speech
+- reject a clip with no speech from that speaker
+
+Current product routes call `find_voice_candidates` and `extract_clean_voice`
+**without** `speaker`, so pyannote is not active today even if installed. It is
+an optional API capability for multi-speaker sources, not transcript
+diarization. Community-1 weights need CC-BY-4.0 attribution; 3.1 is MIT.
+
+### Other installed packages
+
+| Package | Actual role | Current status |
+|---|---|---|
+| Piper | removed TTS engine | installed in dev, no product route |
+| phonemizer | text-to-phoneme library used by Piper-style TTS | not imported; no role |
+| espeak-ng | GPL phoneme engine loaded by Kokoro worker | not used unless Kokoro is enabled |
+| minisbd | sentence-boundary detection package | not imported; not in requirements; no role |
+| Stable Audio | removed music generation | not imported; no role |
+| MusicGen | removed music generation | not imported; no role |
+
+**Kokoro caveat:** Kokoro package/weights are Apache-2.0, but
+`tools/tts_kokoro.py` loads `libespeak-ng` for phonemes. espeak-ng is
+GPL-3.0. Kokoro is cloud-safe server-side; a Mac app that bundles Kokoro plus
+espeak-ng needs GPL review or a non-espeak phonemizer. Apple `say` and cloud TTS
+avoid that dependency.

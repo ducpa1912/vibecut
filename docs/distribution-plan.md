@@ -30,6 +30,9 @@ terms ship with the image/SBOM:
 - STTN + LaMa (Apache-2.0 weights)
 - PyTorch, ONNX Runtime
 - Kokoro, Whisper, DeepFilterNet, Silero, Mel-Band RoFormer (permissive)
+  - Kokoro package/weights are Apache-2.0, but the current worker loads
+    **espeak-ng (GPL-3.0)** for phonemes. That is safe only while espeak-ng
+    stays server-side; do not infer that Kokoro itself makes espeak GPL-free.
 - pyannote 3.1 with MIT notice; Community-1 only with CC-BY-4.0 attribution
 - In-house stickers/LUTs; Lucide ISC notice
 
@@ -56,8 +59,10 @@ terms ship with the image/SBOM:
 - Python, FastAPI stack, yt-dlp, NumPy, Pillow
 - STTN + LaMa weights (Apache-2.0, with notices and hashes)
 - PyTorch/ONNX Runtime
-- Kokoro (Apache), Whisper (MIT), DeepFilterNet (MIT/Apache), Silero (MIT),
+- Whisper (MIT), DeepFilterNet (MIT/Apache), Silero (MIT),
   Mel-Band RoFormer (MIT)
+- Kokoro (Apache weights) only if its phonemizer is not GPL espeak-ng, or the
+  GPL question is reviewed.
 - In-house stickers/LUTs, Lucide ISC
 - Native Swift helpers built from this repo
 
@@ -66,7 +71,7 @@ terms ship with the image/SBOM:
 | Hard stop | Why | Fix |
 |---|---|---|
 | Bundling the current Homebrew ffmpeg | GPL-3.0-or-later, libx264/x265 | Ship LGPL ffmpeg + VideoToolbox, require user-installed ffmpeg, or accept GPL compliance (no App Store) |
-| Bundling Piper/phonemizer/espeak | GPL-3.0-or-later | Exclude; use Kokoro, Apple `say`, or cloud TTS |
+| Bundling Piper/phonemizer/espeak | GPL-3.0-or-later | Exclude; use Apple `say` or cloud TTS. Kokoro in this build loads espeak-ng, so Kokoro + bundled espeak is also a GPL review item. |
 | Bundling minisbd | AGPL-3.0 | Exclude entirely |
 | Bundling Demucs weights | Weights not covered by MIT; research/MUSDB terms | Ship RoFormer only, get written permission, or omit separation |
 | Bundling MusicGen / Stable Audio | Non-commercial / threshold license | Remove; use licensed/CC0 music or a commercial API |
