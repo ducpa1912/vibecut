@@ -507,6 +507,46 @@ def test_fill_preview_returns_before_and_after_and_caches(env, tmp_path, monkeyp
     assert cached["before"] == body["before"]
     assert cached["after"] == body["after"]
 
+    draft_layer = {
+        "id": "cl_draft",
+        "kind": "fill",
+        "method": "lama",
+        "box": {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09},
+        "ranges": [{"start": 0.0, "end": 8.0}],
+        "mask": {
+            "space": "output",
+            "strokes": [{
+                "id": "st_a",
+                "r": 0.03,
+                "points": [{"x": 0.5, "y": 0.8}],
+            }],
+        },
+        "z": 0,
+        "color": "#000000",
+        "opacity": 1,
+        "radius": 12,
+        "label": "Draft paint",
+    }
+    draft = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-preview",
+        json={
+            "t": 0.1, "method": "lama",
+            "clean": [draft_layer], "layer_ids": ["cl_draft"],
+        },
+    )
+    assert draft.status_code == 200, draft.text
+    assert draft.json()["cached"] is False
+    assert draft.json()["after"] != body["after"]
+    scoped_out = env.client.post(
+        f"/api/jobs/{JOB_ID}/edits/{edit['id']}/fill-preview",
+        json={
+            "t": 0.1, "method": "lama",
+            "clean": [draft_layer], "layer_ids": ["cl_missing"],
+        },
+    )
+    assert scoped_out.status_code == 422
+    assert "Select a Clean layer" in scoped_out.json()["detail"]
+
 
 def test_fill_preview_needs_an_active_fill_layer(env):
     response = env.client.post(
@@ -550,3 +590,53 @@ def test_tracklet_thumbnail_crops_the_source_frame(env, tmp_path):
     assert response.headers["content-type"] == "image/jpeg"
     assert response.content.startswith(b"\xff\xd8")
     assert "max-age" in response.headers.get("cache-control", "")
+
+
+def test_full_video_asset_attaches_from_a_local_path(env, tmp_path):
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is needed for a video asset")
+    source = tmp_path / "full.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-y", "-v", "error", "-f", "lavfi",
+            "-i", "color=c=blue:s=360x640:d=2:r=10",
+            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+            str(source),
+        ],
+        check=True, timeout=60,
+    )
+    response = env.client.post(
+        f"/api/jobs/{JOB_ID}/assets/video-path",
+        json={"path": str(source), "name": "Full clip"},
+    )
+    assert response.status_code == 200, response.text
+    asset = response.json()["asset"]
+    assert asset["kind"] == "video"
+    assert asset["duration"] > 1.5
+    assert asset["name"] == "Full clip"
+
+
+def test_video_url_asset_uses_the_downloader(env, monkeypatch):
+    import app
+
+    class FakeChain:
+        def download(self, url, destination, options, progress, cancel_event):
+            destination.write_bytes(b"fake video")
+            return SimpleNamespace(path=destination, title="Linked clip")
+
+    monkeypatch.setattr(app, "_validate_remote_ingest_url", lambda url: url)
+    monkeypatch.setattr(app, "_ingest_provider_settings", lambda: {})
+    monkeypatch.setattr(app, "_ingest_provider_order", lambda *args: ["ytdlp"])
+    monkeypatch.setattr(app, "_ingest_provider_chain", lambda *args: FakeChain())
+    response = env.client.post(
+        f"/api/jobs/{JOB_ID}/assets/video-url",
+        json={"url": "https://example.com/video", "name": "Linked"},
+    )
+    assert response.status_code == 200, response.text
+    asset = response.json()["asset"]
+    assert asset["kind"] == "video"
+    assert asset["name"] == "Linked"

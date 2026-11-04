@@ -67,4 +67,6 @@ def test_no_argument_reader_uses_the_page_then_the_html_feature_string():
 
 def test_edit_gates_the_clone_block_behind_the_feature():
     audio = (STUDIO / "edit" / "layers" / "audio.js").read_text(encoding="utf-8")
-    assert "if (engines && voiceRoomOn()) card.append(cloneBlock());" in audio
+    assert "if (engines && voiceRoomOn()) {" in audio
+    assert 'text: "Clone a voice (advanced)"' in audio
+    assert "cloneBlock()" in audio

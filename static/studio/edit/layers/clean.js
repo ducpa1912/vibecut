@@ -19,6 +19,7 @@ import {
 } from "../../import.js";
 import { ensureCheckStyles } from "../../check.js";
 import { el, formatCount } from "../../ui.js";
+import { icon } from "../icons.js";
 import {
   CLEAN_LABELS,
   clamp,
@@ -357,6 +358,26 @@ function layerFromEntry(entry, tracklet, index, source) {
   };
 }
 
+export function maskStrokes(layer) {
+  const mask = layer?.mask;
+  if (!mask) return [];
+  if (Array.isArray(mask)) {
+    const points = mask.filter(Boolean);
+    return points.length
+      ? [{ id: "st_legacy", r: Number(points[0]?.r) || 0.025, points }]
+      : [];
+  }
+  return Array.isArray(mask.strokes) ? mask.strokes.filter(Boolean) : [];
+}
+
+export function maskPointCount(layer) {
+  return maskStrokes(layer).reduce((sum, stroke) => sum + (stroke.points || []).length, 0);
+}
+
+export function emptyMask(aspect = "9:16") {
+  return { space: "output", aspect, strokes: [] };
+}
+
 export function manualLayer(index, box = null) {
   return {
     id: `cl_manual_${Date.now().toString(36)}`,
@@ -424,6 +445,8 @@ function rangeSummary(ranges) {
   return parts.join(" · ");
 }
 
+const FOUND_TICKS = new Map();
+
 export function mountCleanPanel(host, ctx) {
   ensureCheckStyles();
   const jobId = currentJobId();
@@ -439,6 +462,9 @@ export function mountCleanPanel(host, ctx) {
   let policyError = "";
   let rightsBusy = false;
   let handleTicked = false;
+  let focusedFound = "";
+  let seekMissFound = "";
+  let sceneOnly = true;
   const autoState = autoCleanStateFor(jobId);
   // P2 found-text list and AI fill preview.
   let fillStatus = null;
@@ -446,11 +472,8 @@ export function mountCleanPanel(host, ctx) {
   let removeMethod = "blur";
   let fillMethod = "sttn";
   let methodTouched = false;
-  let previewBusy = false;
-  let previewError = "";
-  let previewData = null;
-  let previewController = null;
-  const foundTicks = new Map();
+  if (!FOUND_TICKS.has(jobId)) FOUND_TICKS.set(jobId, new Map());
+  const foundTicks = FOUND_TICKS.get(jobId);
 
   host.replaceChildren(el("p", { class: "st-hint", text: "Reading Check findings…" }));
 
@@ -612,6 +635,7 @@ export function mountCleanPanel(host, ctx) {
         entry,
         box: tracklet?.box && typeof tracklet.box === "object" ? tracklet.box : null,
         text: String(tracklet?.text_sample || "").trim() || "No words read",
+        ranges: Array.isArray(tracklet?.ranges) ? tracklet.ranges : [],
         time: rangeSummary(tracklet?.ranges),
         reason,
         blocked: blocked || skipped,
@@ -762,15 +786,22 @@ export function mountCleanPanel(host, ctx) {
     return Math.max(0, Math.min(100, Math.round(numberOr(report?.progress, 0) * 100)));
   }
 
-  async function startTextScan() {
+  async function startTextScan({ scene = false } = {}) {
     if (!jobId || scanBusy || pending) return;
+    const range = scene ? ctx.getSceneRange?.() : null;
+    const scoped = Boolean(range && Number(range.end) > Number(range.start));
     scanBusy = true;
     loadError = "";
+    sceneOnly = scoped ? true : scene ? false : false;
     render();
     try {
       const next = await request(`/api/jobs/${encodeURIComponent(jobId)}/check`, {
         method: "POST",
-        body: { force: true, sample_text: true },
+        body: {
+          force: true,
+          sample_text: true,
+          ...(scoped ? { start: Number(range.start), end: Number(range.end) } : {}),
+        },
       });
       if (disposed) return;
       const status = String(next?.status || "").toLowerCase();
@@ -859,10 +890,21 @@ export function mountCleanPanel(host, ctx) {
     if (state === "failed" && report?.error) {
       row.append(el("p", { class: "st-error", text: String(report.error) }));
     }
-    row.append(el("div", { class: "st-clean-scan-actions" }, [
-      scanButton(state === "empty" ? "Scan again" : "Find text on screen"),
-      el("a", { class: "st-btn st-btn-quiet st-btn-small", href: "#/check", text: "Open Check" }),
-    ]));
+    const scanScene = el("button", {
+      class: "st-btn st-btn-primary st-btn-small st-clean-scan-start",
+      type: "button",
+      text: "Check this scene",
+      disabled: scanBusy || pending,
+    });
+    scanScene.addEventListener("click", () => { void startTextScan({ scene: true }); });
+    const scanVideo = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small st-clean-scan-start",
+      type: "button",
+      text: "Scan video",
+      disabled: scanBusy || pending,
+    });
+    scanVideo.addEventListener("click", () => { void startTextScan(); });
+    row.append(el("div", { class: "st-clean-scan-actions" }, [scanScene, scanVideo]));
     return row;
   }
 
@@ -873,16 +915,39 @@ export function mountCleanPanel(host, ctx) {
       return scanPrompt(status);
     }
     if (!(report?.tracklets || []).length) return scanPrompt("empty");
-    return el("p", {
+    const wrap = el("div", { class: "st-clean-scan-tools" });
+    const scope = el("p", {
       class: "st-hint",
-      text: `${formatCount(report.tracklets.length, "text region")} found. Review and tick them below.`,
+      text: `${formatCount(sceneFiltered(foundRows()).length, "text region")} in this ${sceneOnly ? "scene" : "video"}. Tick to remove. AI fill rebuilds the background.`,
     });
+    const thisScene = el("button", {
+      class: `st-btn st-btn-small${sceneOnly ? " st-btn-ghost" : " st-btn-quiet"} st-clean-scope-scene`,
+      type: "button",
+      text: "Check this scene",
+    });
+    thisScene.addEventListener("click", () => {
+      sceneOnly = true;
+      if (reportMatchesScene(ctx.getSceneRange?.())) { render(); return; }
+      void startTextScan({ scene: true });
+    });
+    const video = el("button", {
+      class: `st-btn st-btn-small${sceneOnly ? " st-btn-quiet" : " st-btn-ghost"} st-clean-scope-video`,
+      type: "button",
+      text: "Scan video",
+    });
+    video.addEventListener("click", () => {
+      sceneOnly = false;
+      if (!report?.scope) { render(); return; }
+      void startTextScan();
+    });
+    wrap.append(scope, el("div", { class: "st-clean-scope" }, [thisScene, video]));
+    return wrap;
   }
 
   function autoCleanToolbar() {
     const running = Boolean(autoState.busy);
     const editId = ctx.getEdit()?.id || "";
-    const rows = foundRows();
+    const rows = sceneFiltered(foundRows());
     const ticked = rows.filter((row) => row.allowed && row.ticked);
     const aiReady = Boolean(firstFillMethod());
     const method = el("select", {
@@ -904,8 +969,6 @@ export function mountCleanPanel(host, ctx) {
     method.addEventListener("change", () => {
       methodTouched = true;
       removeMethod = ["ai", "blur", "cover"].includes(method.value) ? method.value : "blur";
-      previewData = null;
-      previewError = "";
       render();
     });
     const controls = [
@@ -928,8 +991,6 @@ export function mountCleanPanel(host, ctx) {
         })));
       engine.addEventListener("change", () => {
         fillMethod = engine.value;
-        previewData = null;
-        previewError = "";
         render();
       });
       controls.push(el("label", { class: "st-found-method-wrap" }, [
@@ -988,148 +1049,6 @@ export function mountCleanPanel(host, ctx) {
     return row;
   }
 
-  function cancelFillPreview() {
-    if (previewController) previewController.abort();
-    previewController = null;
-    previewBusy = false;
-    render();
-  }
-
-  async function startFillPreview() {
-    if (previewBusy) {
-      cancelFillPreview();
-      return;
-    }
-    const currentEdit = ctx.getEdit();
-    if (!jobId || !currentEdit?.id) {
-      previewError = "Open an Edit before previewing the fill.";
-      render();
-      return;
-    }
-    const controller = new AbortController();
-    previewController = controller;
-    previewBusy = true;
-    previewError = "";
-    previewData = null;
-    render();
-    try {
-      if (ctx.save) await ctx.save();
-      const result = await request(
-        `/api/jobs/${encodeURIComponent(jobId)}/edits/${encodeURIComponent(currentEdit.id)}/fill-preview`,
-        {
-          method: "POST",
-          body: { t: ctx.getPlayhead(), method: "lama" },
-          signal: controller.signal,
-        },
-      );
-      if (disposed || controller.signal.aborted) return;
-      previewData = result && typeof result === "object" ? result : null;
-    } catch (error) {
-      if (!disposed && !controller.signal.aborted) {
-        previewError = error?.message || "Could not preview this frame.";
-      }
-    } finally {
-      if (previewController === controller) previewController = null;
-      previewBusy = false;
-      if (!disposed) render();
-    }
-  }
-
-  function fillCompare(data) {
-    const stage = el("div", { class: "st-fill-compare-stage" });
-    const before = el("img", {
-      class: "st-fill-before",
-      src: data.before,
-      alt: "Before the AI fill",
-    });
-    const after = el("img", {
-      class: "st-fill-after",
-      src: data.after,
-      alt: "After the AI fill",
-    });
-    const divider = el("i", { class: "st-fill-divider", "aria-hidden": "true" });
-    stage.append(before, after, divider);
-    const slider = el("input", {
-      class: "st-fill-slider",
-      type: "range",
-      min: "0",
-      max: "100",
-      value: "50",
-      "aria-label": "Compare before and after the AI fill",
-    });
-    const apply = (value) => {
-      const position = Math.max(0, Math.min(100, Number(value) || 0));
-      after.style.clipPath = `inset(0 0 0 ${position}%)`;
-      divider.style.left = `${position}%`;
-    };
-    slider.addEventListener("input", () => apply(slider.value));
-    apply(50);
-    return el("div", { class: "st-fill-compare" }, [
-      el("div", { class: "st-fill-compare-head" }, [
-        el("span", { class: "st-fill-badge", text: "Before" }),
-        el("span", { class: "st-hint", text: "LaMa · one frame" }),
-        el("span", { class: "st-fill-badge st-fill-badge-after", text: "After" }),
-      ]),
-      stage,
-      slider,
-      el("p", {
-        class: "st-hint",
-        text: data.time !== undefined
-          ? `One frame at ${formatTime(data.time)}. The full render fills every frame.`
-          : "One frame. The full render fills every frame.",
-      }),
-    ]);
-  }
-
-  function fillPreviewSection() {
-    if (removeMethod !== "ai") return null;
-    const fills = (ctx.getEdit()?.clean || []).filter((layer) => layer?.kind === "fill");
-    const wrap = el("div", { class: "st-fill-preview" });
-    const head = el("div", { class: "st-fill-preview-head" }, [
-      el("strong", { text: "Preview this frame" }),
-      el("span", { class: "st-hint", text: fillStatus?.preview ? "LaMa · one frame" : "LaMa model needed" }),
-    ]);
-    const button = el("button", {
-      class: `st-btn st-btn-small ${previewBusy ? "st-btn-ghost" : "st-btn-ghost"} st-fill-preview-run`,
-      type: "button",
-      text: previewBusy ? "Cancel preview" : previewData ? "Preview again" : "Preview this frame",
-      disabled: !previewBusy && (!fillStatus?.preview || !fills.length),
-      title: !fills.length
-        ? "Remove ticked text with AI fill first."
-        : !fillStatus?.preview
-          ? "Put the LaMa fill model on this Mac to preview a frame."
-          : "Fill the current frame with LaMa and compare before and after.",
-    });
-    button.addEventListener("click", () => { void startFillPreview(); });
-    head.append(button);
-    wrap.append(head);
-    if (!fills.length) {
-      wrap.append(el("p", {
-        class: "st-hint",
-        text: "Remove the ticked text with AI fill first, then preview one frame here.",
-      }));
-    }
-    if (previewBusy) {
-      wrap.append(el("p", { class: "st-hint", text: "Filling one frame with LaMa… this can take a few seconds." }));
-    }
-    if (previewError) wrap.append(el("p", { class: "st-error", text: previewError }));
-    if (previewData) {
-      wrap.append(fillCompare(previewData));
-      const close = el("button", {
-        class: "st-btn st-btn-quiet st-btn-small",
-        type: "button",
-        text: "Close preview",
-      });
-      close.addEventListener("click", () => {
-        previewData = null;
-        previewError = "";
-        render();
-      });
-      wrap.append(close);
-    }
-    return wrap;
-  }
-
   function renderRights() {
     const card = el("div", { class: "st-card st-check-card" });
     card.append(el("h3", { text: "Rights" }));
@@ -1154,12 +1073,8 @@ export function mountCleanPanel(host, ctx) {
       }
       return card;
     }
-    if (policy.attested) {
-      card.append(el("p", {
-        class: "st-hint",
-        text: "Own-footage rights note is recorded for this video. Cleaning is available.",
-      }));
-      return card;
+    if (policy.attested && !(hasHandles() && handleNeedsTick())) {
+      return null;
     }
     card.append(el("p", {
       class: "st-hint",
@@ -1195,19 +1110,15 @@ export function mountCleanPanel(host, ctx) {
     if (midFrame) {
       warnings.push({
         severity: "warning",
-        message: "Burned-in text crosses the middle of the frame. A blur or plate can leave a visible patch; check the rendered frame at 1×.",
+        message: "Burned-in text crosses the middle of the frame. Check the rendered patch at 1×.",
       });
     }
     if (!warnings.length) return null;
-    const card = el("div", { class: "st-card st-check-card" });
-    card.append(el("h3", { text: "Quality warnings" }));
-    const list = el("div", { style: "margin-top:9px" });
-    for (const warning of warnings.slice(0, 6)) list.append(warningNode(warning));
-    if (warnings.length > 6) {
-      list.append(el("p", { class: "st-hint", text: `+${warnings.length - 6} more in Check.` }));
-    }
-    card.append(list);
-    return card;
+    return el("p", {
+      class: "st-clean-alert",
+      text: warnings.length === 1 ? warnings[0].message : `${warnings.length} quality warnings`,
+      title: warnings.map((item) => item.message).filter(Boolean).join("\n"),
+    });
   }
 
   function foundRowNode(row) {
@@ -1223,52 +1134,130 @@ export function mountCleanPanel(host, ctx) {
     checkbox.addEventListener("change", () => {
       setFoundTicked(row.id, checkbox.checked);
     });
-    const thumb = el("img", {
-      class: "st-found-thumb",
-      src: `/api/jobs/${encodeURIComponent(jobId)}/check/tracklets/${encodeURIComponent(row.id)}/thumb?ts=${encodeURIComponent(String(report?.created || report?.generated || ""))}`,
-      alt: "",
-      loading: "lazy",
-    });
-    thumb.addEventListener("error", () => thumb.classList.add("is-missing"));
-    const chip = row.added
-      ? "Added"
+    const status = row.added
+      ? "Done"
       : row.blocked
-        ? "Never removed"
+        ? row.kind === "watermark"
+          ? "Watermark · not removed"
+          : row.kind === "screen_text"
+            ? "Screen UI · not cleaned"
+            : "Not removed"
         : TRACKLET_LABELS[row.kind] || "Text";
     const copy = el("div", { class: "st-found-copy" }, [
       el("div", { class: "st-found-line" }, [
         el("strong", { text: row.text }),
-        el("span", {
-          class: `st-found-chip${row.blocked ? " is-never" : row.added ? " is-added" : ""}`,
-          text: chip,
-        }),
       ]),
-      el("small", { text: row.time }),
-      row.reason ? el("small", { class: "st-found-reason", text: row.reason }) : null,
+      el("small", {
+        class: "st-found-meta",
+        text: seekMissFound === String(row.id) ? "Not in this cut" : `${row.time} · ${status}`,
+      }),
     ]);
-    const node = el("div", {
-      class: `st-found-row${row.ticked ? " is-ticked" : ""}${row.added ? " is-added" : ""}${row.blocked ? " is-blocked" : ""}`,
-      role: "listitem",
-      dataset: { id: row.id, kind: row.kind, reason: row.reason || "" },
-    }, [checkbox, thumb, copy]);
-    if (row.allowed) {
-      node.addEventListener("click", (event) => {
-        if (event.target.closest("input")) return;
-        setFoundTicked(row.id, !row.ticked);
+    const painted = (ctx.getEdit()?.clean || []).some((layer) => (
+      String(layer.tracklet_id || "") === String(row.id) && maskPointCount(layer) > 0
+    ));
+    const paint = (row.allowed || row.added) ? el("button", {
+      class: `st-found-paint${painted ? " is-painted" : ""}`,
+      type: "button",
+      text: "",
+      title: painted
+        ? "Paint layer ready — use Paint more in the layer editor"
+        : "Paint a freehand AI-fill mask (Shift-click adds another layer)",
+      "aria-label": painted ? "Paint layer ready" : "Paint mask",
+      disabled: painted,
+    }) : null;
+    if (paint) {
+      paint.append(icon("brush", { size: 13 }));
+      paint.addEventListener("click", (event) => {
+        event.stopPropagation();
+        startPaintRow(row, event.shiftKey || event.altKey);
       });
     }
+    const node = el("div", {
+      class: `st-found-row${row.ticked ? " is-ticked" : ""}${row.added ? " is-added" : ""}${row.blocked ? " is-blocked" : ""}${painted ? " is-painted" : ""}`,
+      role: "listitem",
+      tabindex: "0",
+      dataset: { id: row.id, kind: row.kind, reason: row.reason || "" },
+    }, [checkbox, copy, paint]);
+    const activate = () => {
+      const at = row.ranges?.[0]?.start ?? row.tracklet?.ranges?.[0]?.start;
+      const seek = typeof ctx.seekSource === "function" ? ctx.seekSource(at) : false;
+      seekMissFound = seek === false ? row.id : "";
+      ctx.focusFound?.(row.id);
+      render();
+    };
+    node.addEventListener("click", (event) => {
+      if (event.target.closest("input, .st-found-paint")) return;
+      activate();
+    });
+    node.addEventListener("keydown", (event) => {
+      if (event.target.closest("input, .st-found-paint")) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate();
+      }
+    });
     return node;
+  }
+
+  function startPaintRow(row, fresh = false) {
+    if (!row || (!row.allowed && !row.added)) return;
+    const layers = (ctx.getEdit()?.clean || []).slice();
+    let layer = !fresh && layers.find((item) => (
+      String(item.tracklet_id || "") === String(row.id)
+      && item.kind === "fill"
+      && maskPointCount(item) > 0
+    ));
+    if (!layer) {
+      layer = layerFromEntry(
+        { box: row.box, ranges: row.ranges },
+        row.tracklet,
+        layers.length,
+        report?.source,
+      );
+      layer.id = `cl_paint_${safeId(row.id)}_${Date.now().toString(36)}`;
+      layer.tracklet_id = row.id;
+      layer.tracklet_kind = row.kind;
+      layer.kind = "fill";
+      layer.method = FILL_METHODS[0][0];
+      layer.mask = emptyMask(ctx.getAspect?.() || "9:16");
+      layer.label = safeLabel(row.text, KIND_COPY.fill);
+      layers.push(layer);
+      ctx.setClean(layers);
+      render();
+    }
+    ctx.select("clean", layer.id);
+    ctx.startPaint?.(layer.id);
+  }
+
+  function reportMatchesScene(range) {
+    const scope = report?.scope;
+    if (!range || !scope) return false;
+    return Math.abs(Number(scope.start) - Number(range.start)) < 0.05
+      && Math.abs(Number(scope.end) - Number(range.end)) < 0.05;
+  }
+
+  function sceneFiltered(rows) {
+    if (!sceneOnly) return rows;
+    const range = ctx.getSceneRange?.();
+    if (!range) return rows;
+    return rows.filter((row) => {
+      const ranges = Array.isArray(row.ranges) && row.ranges.length
+        ? row.ranges
+        : (row.tracklet?.ranges || []);
+      if (!ranges.length) return true;
+      return ranges.some((item) => Number(item.end) > range.start && Number(item.start) < range.end);
+    });
   }
 
   function suggestionsCard() {
     const scan = scanState();
-    const rows = scan === "ready" ? foundRows() : [];
+    const rows = scan === "ready" ? sceneFiltered(foundRows()) : [];
     pushFoundToPreview(rows);
     if (scan !== "ready" || !rows.length) return null;
     const allowed = rows.filter((row) => row.allowed);
     const ticked = rows.filter((row) => row.allowed && row.ticked);
     const allTicked = allowed.length > 0 && allowed.every((row) => row.ticked);
-    const card = el("div", { class: "st-card st-check-card st-found-card" });
+    const card = el("div", { class: "st-found-card" });
     const toggle = allowed.length ? el("button", {
       class: "st-btn st-btn-quiet st-btn-small st-found-select-all",
       type: "button",
@@ -1279,15 +1268,11 @@ export function mountCleanPanel(host, ctx) {
     }
     card.append(el("div", { class: "st-found-head" }, [
       el("div", { class: "st-found-heading" }, [
-        el("h3", { text: "Found on screen" }),
-        el("span", { class: "st-chip st-chip-quiet", text: `${rows.length}` }),
+        el("strong", { text: "Found on screen" }),
+        el("span", { text: `${rows.length} · ${ticked.length} ticked` }),
       ]),
       toggle,
     ]));
-    card.append(el("p", {
-      class: "st-hint",
-      text: `${formatCount(ticked.length, "region")} ticked. AI fill rebuilds the background; Blur and Cover hide the text.`,
-    }));
     const list = el("div", { class: "st-found-list", role: "list" });
     for (const row of rows.slice(0, 40)) list.append(foundRowNode(row));
     card.append(list);
@@ -1297,15 +1282,16 @@ export function mountCleanPanel(host, ctx) {
     card.append(autoCleanToolbar());
     const status = autoCleanStatusNode();
     if (status) card.append(status);
-    const preview = fillPreviewSection();
-    if (preview) card.append(preview);
     return card;
   }
 
   function existingCard(selectedId) {
     const layers = ctx.getEdit()?.clean || [];
-    const card = el("div", { class: "st-card st-check-card" });
-    card.append(el("h3", { text: `Clean layers · ${layers.length}` }));
+    const card = el("div", { class: "st-clean-layers" });
+    card.append(el("div", { class: "st-clean-layers-head" }, [
+      el("strong", { text: "Clean layers" }),
+      el("span", { text: String(layers.length) }),
+    ]));
     if (!layers.length) {
       card.append(el("p", { class: "st-hint", text: "Nothing is covered yet. Add a Check region, or place a box by hand." }));
     } else {
@@ -1449,6 +1435,9 @@ export function mountCleanPanel(host, ctx) {
       });
     }
 
+    const details = el("details", { class: "st-clean-details" }, [
+      el("summary", { text: "Box and timing" }),
+    ]);
     const grid = el("div", { class: "st-control-grid" }, [
       field("Kind", kindSelect),
       field("Label", labelInput),
@@ -1457,8 +1446,51 @@ export function mountCleanPanel(host, ctx) {
       field("Box width (%)", wInput),
       field("Box height (%)", hInput),
     ]);
-    stage.append(grid);
-    stage.append(el("p", { class: "st-field-hint", text: "Boxes are measured on the original frame, before the 9:16 crop." }));
+    details.append(grid);
+    details.append(el("p", { class: "st-field-hint", text: "Boxes are measured on the original frame, before the 9:16 crop." }));
+    stage.append(details);
+
+    const maskPoints = maskStrokes(layer);
+    if (layer.kind === "fill") {
+      const paintRow = el("div", { class: "st-layer-add" }, [
+        el("button", {
+          class: "st-btn st-btn-ghost st-btn-small",
+          type: "button",
+          text: maskPoints.length ? `Paint more (${maskPointCount(layer)})` : "Paint mask",
+          disabled: !canClean(),
+        }),
+        maskPoints.length ? el("button", {
+          class: "st-btn st-btn-quiet st-btn-small",
+          type: "button",
+          text: "Clear mask",
+          disabled: !canClean(),
+        }) : null,
+      ]);
+      const [paintButton, clearButton] = paintRow.querySelectorAll("button");
+      paintButton.addEventListener("click", () => {
+        ctx.startPaint?.(layer.id);
+      });
+      clearButton?.addEventListener("click", () => {
+        layer.mask = emptyMask(ctx.getAspect?.() || "9:16");
+        commit();
+        ctx.refresh();
+      });
+      stage.append(paintRow);
+      if (maskPoints.length) {
+        stage.append(el("p", {
+          class: "st-field-hint",
+          text: "Freehand mask. The detected box stays as a fallback and as the layer bounds.",
+        }));
+      }
+      const compare = el("button", {
+        class: "st-btn st-btn-ghost st-btn-small st-clean-compare",
+        type: "button",
+        text: "Before / After",
+        title: "Run the engine on this frame without saving",
+      });
+      compare.addEventListener("click", () => ctx.compareLayer?.(layer.id));
+      stage.append(compare);
+    }
 
     if (layer.kind === "plate" || layer.kind === "mask") {
       const color = colorInput(layer.color);
@@ -1569,7 +1601,7 @@ export function mountCleanPanel(host, ctx) {
     });
     rangeBox.append(addRange);
     rangeBox.append(el("p", { class: "st-field-hint", text: "Times are from the original video, not the cut." }));
-    stage.append(rangeBox);
+    details.append(rangeBox);
 
     const remove = el("button", { class: "st-btn st-btn-quiet st-btn-small st-danger", type: "button", text: "Remove layer" });
     remove.addEventListener("click", () => {
@@ -1596,17 +1628,14 @@ export function mountCleanPanel(host, ctx) {
     const layers = ctx.getEdit()?.clean || [];
     const selected = layers.find((layer) => layer.id === selectedId) || null;
 
-    const head = el("div", { class: "st-card st-check-card" }, [
-      el("h3", { text: "Remove text on screen" }),
-      el("p", { class: "st-hint", text: "Remove text burned into the video. AI fill rebuilds the background; Blur and Cover hide it. Check the result before you post." }),
-    ]);
+    const head = el("div", { class: "st-clean-status" });
     head.append(scanToolbar());
-    head.append(renderRights());
+    const rights = renderRights();
+    if (rights) head.append(rights);
+    const warnings = renderWarnings();
+    if (warnings) head.append(warnings);
     if (loadError) head.append(el("p", { class: "st-error", text: loadError }));
     host.append(head);
-
-    const warnings = renderWarnings();
-    if (warnings) host.append(warnings);
 
     const found = suggestionsCard();
     if (found) host.append(found);
@@ -1616,9 +1645,9 @@ export function mountCleanPanel(host, ctx) {
 
     if (!canClean() && report) {
       host.append(el("p", {
-        class: "st-hint",
+        class: "st-layer-note",
         text: policy
-          ? "Clean is locked by the server rights policy. You can still open Stories and Edit to compose new text over the source."
+          ? "Clean is locked by the server rights policy."
           : (policyError || "Reading the rights policy…"),
       }));
     }
@@ -1705,7 +1734,5 @@ export function mountCleanPanel(host, ctx) {
   return () => {
     disposed = true;
     stopPoll();
-    if (previewController) previewController.abort();
-    if (ctx.setFoundText) ctx.setFoundText([]);
   };
 }

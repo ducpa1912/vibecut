@@ -1367,6 +1367,7 @@ def build_report(
     created: float | None = None,
     sampled_error: str | None = None,
     settings: dict | None = None,
+    scope: dict | None = None,
 ) -> dict:
     """Assemble the SourceReport from job evidence and text observations."""
     job = job or {}
@@ -1575,6 +1576,7 @@ def build_report(
         "recommendation": recommendation,
         "recommendation_reasons": reasons,
         "clean_prefill": prefill,
+        **({"scope": dict(scope)} if scope else {}),
         "policy": policy,
         "rights": {
             "attested": bool(attested),
@@ -1700,6 +1702,8 @@ def run_check(
     fps: float = DEFAULT_SAMPLE_FPS,
     max_frames: int = DEFAULT_MAX_FRAMES,
     progress: Callable[[float, str], None] | None = None,
+    start: float = 0.0,
+    end: float | None = None,
 ) -> dict:
     """Run one Check pass and persist its SourceReport.
 
@@ -1725,6 +1729,15 @@ def run_check(
             last_value[0] = value
             original_progress(value, message)
 
+    window_start = max(0.0, min(duration, float(start or 0.0)))
+    window_end = duration if end is None else max(window_start, min(duration, float(end)))
+    scoped = window_start > 0.001 or window_end < duration - 0.001
+    if scoped:
+        scenes = [
+            scene for scene in scenes
+            if _number(scene.get("end"), 0.0) > window_start
+            and _number(scene.get("start"), 0.0) < window_end
+        ]
     observations = observations_from_scenes(scenes)
     sampled: dict = {"ran": False, "frames": 0, "vision": False}
     sampled_error: str | None = None
@@ -1732,6 +1745,9 @@ def run_check(
         if progress:
             progress(0.05, f"Sampling text at {fps:g} frames a second")
         kwargs = {"fps": fps, "max_frames": max_frames}
+        if scoped:
+            kwargs["start"] = window_start
+            kwargs["end"] = window_end
         if progress and _accepts_progress(sampler):
             # Frame-level progress maps into Check's 5-65% sampling band.
             kwargs["progress"] = lambda fraction, message: progress(
@@ -1793,6 +1809,10 @@ def run_check(
         attestation=attestation,
         engine=engine,
         sampled_error=sampled_error,
+        scope=(
+            {"start": round(window_start, 3), "end": round(window_end, 3)}
+            if scoped else None
+        ),
     )
     report["timings"] = {"total": round(time.time() - started, 3)}
     report["progress"] = 1.0

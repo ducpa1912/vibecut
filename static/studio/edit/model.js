@@ -566,6 +566,25 @@ export function layerSpans(edit, captions, duration) {
   return rows;
 }
 
+export function sceneBounds(edit, story) {
+  const clips = (Array.isArray(edit?.sequence) && edit.sequence.length)
+    ? edit.sequence
+    : (story?.clips || []);
+  const rows = [];
+  let offset = 0;
+  for (const clip of clips) {
+    const span = Math.max(0, Number(clip.end) - Number(clip.start));
+    rows.push({
+      start: offset,
+      end: offset + span,
+      role: String(clip?.role || "beat"),
+      index: rows.length,
+    });
+    offset += span;
+  }
+  return rows;
+}
+
 export function colorFilter(color) {
   const exposure = numberOr(color?.exposure);
   const contrast = numberOr(color?.contrast);

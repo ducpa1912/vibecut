@@ -1873,6 +1873,8 @@ def _concat_video(
     segments: list[Path],
     quality: str,
     cancel_event: threading.Event | None = None,
+    *,
+    encoder: str = "libx264",
 ) -> None:
     """Join cached video segments without audio. Stays a copy when possible."""
     ffmpeg = _ffmpeg()
@@ -1899,7 +1901,7 @@ def _concat_video(
         pass
     fallback = base + [
         "-map", "0:v:0", "-an",
-        *_encoder_args("libx264", quality),
+        *_encoder_args(encoder, quality),
         "-movflags", "+faststart",
         "-map_metadata", "-1",
         str(target_mp4),
@@ -1917,6 +1919,8 @@ def _mux(
     normalize: bool,
     cancel_event: threading.Event | None = None,
     border: dict | None = None,
+    *,
+    encoder: str = "libx264",
 ) -> None:
     """Attach one audio bed to the cached video master. Video is copied
     unless a border needs a re-encode."""
@@ -1964,7 +1968,7 @@ def _mux(
     fallback = base + [
         "-map", "0:v:0", "-map", "1:a:0",
         *( ["-vf", border_filter] if border_filter else [] ),
-        *_encoder_args("libx264", quality),
+        *_encoder_args(encoder, quality),
         *audio_filters,
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
         "-t", f"{total:.6f}",
@@ -2218,7 +2222,7 @@ def build_story_proxy(
             )
             segments.append(segment_path)
         master = tmp / "master.mp4"
-        _concat_video(tmp, master, segments, "draft", cancel_event)
+        _concat_video(tmp, master, segments, "draft", cancel_event, encoder=encoder)
         audio_path = tmp / "audio.wav"
         _audio_track(
             source, meta, proxy_clips, audio_path, total, cancel_event,
@@ -2227,7 +2231,7 @@ def build_story_proxy(
         output = tmp / "proxy.mp4"
         _mux(
             master, audio_path, output, "Story proxy", total, "draft",
-            False, cancel_event,
+            False, cancel_event, encoder=encoder,
         )
         proxies.mkdir(parents=True, exist_ok=True)
         os.replace(output, target)
@@ -2634,7 +2638,7 @@ def render_reel(
                     )
             progress(0.82, "Joining the cut")
             master_tmp = tmp / "master.mp4"
-            _concat_video(tmp, master_tmp, segments, quality, cancel_event)
+            _concat_video(tmp, master_tmp, segments, quality, cancel_event, encoder=encoder)
             if layers:
                 progress(0.87, "Burning layers")
                 layered = tmp / "layers.mp4"
@@ -2701,6 +2705,7 @@ def render_reel(
             not (audio_plan and str(audio_plan.get("mode") or "keep") != "keep"),
             cancel_event,
             border=(edit or {}).get("border"),
+            encoder=encoder,
         )
 
         info = probe(out_tmp)

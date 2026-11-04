@@ -366,6 +366,11 @@ def _fill_plan(
     clean: list[dict],
     start: float,
     end: float,
+    *,
+    crop: dict | None = None,
+    source_width: int | None = None,
+    source_height: int | None = None,
+    aspect: str = "",
 ) -> tuple[dict | None, list[dict]]:
     """Active AI fill layers of one segment, for the render's pre-pass.
 
@@ -393,6 +398,51 @@ def _fill_plan(
                 f"{method.upper()} fills them all."
             ),
         })
+    def source_mask(layer: dict) -> dict | None:
+        mask = layer.get("mask")
+        if not mask or not crop or not source_width or not source_height:
+            return None
+        if isinstance(mask, dict):
+            mask_aspect = str(mask.get("aspect") or "").strip()
+            if mask_aspect and mask_aspect != str(aspect or ""):
+                # The mask was painted for another crop; using it would fill
+                # pixels the user never painted. Fall back to the box.
+                return None
+            strokes = mask.get("strokes") or []
+            space = str(mask.get("space") or "output")
+        else:
+            strokes = [{"r": 0.025, "points": mask}]
+            space = "output"
+        out_strokes = []
+        for stroke in strokes:
+            try:
+                radius = float((stroke or {}).get("r", 0.02))
+            except (TypeError, ValueError):
+                radius = 0.02
+            points = []
+            for point in (stroke or {}).get("points") or []:
+                try:
+                    x = float(point.get("x", 0.0))
+                    y = float(point.get("y", 0.0))
+                except (TypeError, ValueError):
+                    continue
+                if space == "output":
+                    sx = (float(crop["x"]) + x * float(crop["w"])) / source_width
+                    sy = (float(crop["y"]) + y * float(crop["h"])) / source_height
+                    sr = radius * float(crop["w"]) / source_width
+                else:
+                    sx, sy, sr = x, y, radius
+                if sx < 0.0 or sx > 1.0 or sy < 0.0 or sy > 1.0:
+                    continue
+                points.append({"x": sx, "y": sy})
+            if points:
+                out_strokes.append({
+                    "id": f"st{len(out_strokes) + 1}",
+                    "r": max(0.002, min(0.2, sr)),
+                    "points": points,
+                })
+        return {"space": "source", "strokes": out_strokes} if out_strokes else None
+
     return {
         "method": method,
         "ids": [layer["id"] for layer in active],
@@ -401,6 +451,7 @@ def _fill_plan(
                 "id": layer["id"],
                 "box": dict(layer["box"]),
                 "ranges": [dict(item) for item in layer.get("ranges") or []],
+                **({"mask": source_mask(layer)} if source_mask(layer) else {}),
                 **({"tracklet_id": layer["tracklet_id"]} if layer.get("tracklet_id") else {}),
             }
             for layer in active
@@ -1054,6 +1105,8 @@ def compile_edit(
             )
             fill_plan, fill_warnings = _fill_plan(
                 normalized["clean"], clip["start"], clip["end"],
+                crop=crop, source_width=width, source_height=height,
+                aspect=str(normalized.get("aspect") or ""),
             )
         warnings.extend(clean_warnings)
         warnings.extend({

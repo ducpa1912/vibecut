@@ -10,7 +10,7 @@
 
 import { mount as mountImport } from "./import.js";
 import { mount as mountMoments } from "./stories.js";
-import { mount as mountEdit } from "./edit.js?v=20261103-11";
+import { mount as mountEdit } from "./edit.js?v=20261103-20";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountLibrary } from "./library.js";
 import { SOURCES_TAB } from "./library.js";
@@ -623,8 +623,14 @@ export function startStudio() {
     }
   }
 
-  function go(stepId, options = {}) {
+  let leaveGuard = null;
+
+  async function go(stepId, options = {}) {
     if (!STEP_IDS.has(stepId)) return;
+    if (activeStep === "edit" && stepId !== "edit" && leaveGuard) {
+      const allowed = await leaveGuard();
+      if (!allowed) return;
+    }
     const gate = stepGate(stepId);
     if (gate && !options.force) {
       showNotice(gate);
@@ -637,6 +643,7 @@ export function startStudio() {
   }
 
   const ctx = {
+    setLeaveGuard: (fn) => { leaveGuard = typeof fn === "function" ? fn : null; },
     getJobId: () => currentJob?.id || "",
     getJob: () => (currentJob ? { ...currentJob } : null),
     openJob: (id, meta = {}) => {

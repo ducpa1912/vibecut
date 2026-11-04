@@ -54,6 +54,10 @@ class AutoCleanBody(BaseModel):
 class FillPreviewBody(BaseModel):
     t: float = 0.0
     method: str = "lama"
+    # Draft Clean layers for a preview before saving. None means the saved Edit.
+    clean: list[dict] | None = None
+    # Only these Clean layer ids take part in the comparison.
+    layer_ids: list[str] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -664,6 +668,7 @@ def fill_preview(
     frame and model stamp.
     """
     import hashlib
+    import json
     import math
     import shutil
     import uuid
@@ -671,6 +676,7 @@ def fill_preview(
     from PIL import Image
 
     import app
+    import edits as edits_module
     import render
     import routes_edits
     import textfill
@@ -684,6 +690,52 @@ def fill_preview(
     if not math.isfinite(float(body.t)):
         raise HTTPException(422, "t must be a finite time in seconds.")
     job, edit, story = routes_edits._fresh_story(job_id, edit_id)
+    draft_tag = ""
+    scoped_ids = {str(item) for item in (body.layer_ids or []) if str(item)}
+    if body.clean is not None or scoped_ids:
+        draft = dict(edit)
+        try:
+            clean = (
+                edits_module.normalize_clean(body.clean)
+                if body.clean is not None
+                else list(edit.get("clean") or [])
+            )
+        except edits_module.EditError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if scoped_ids:
+            clean = [layer for layer in clean if str(layer.get("id")) in scoped_ids]
+            if not clean:
+                raise HTTPException(
+                    422, "Select a Clean layer that is part of this Edit.",
+                )
+        try:
+            edit = edits_module.build_edit(
+                story_ref=edit.get("story_ref"),
+                aspect=edit.get("aspect"),
+                sequence=edit.get("sequence"),
+                clean=clean,
+                reframe=edit.get("reframe"),
+                motion=edit.get("motion"),
+                color=edit.get("color"),
+                graphics=edit.get("graphics"),
+                captions=edit.get("captions"),
+                audio=edit.get("audio"),
+                border=edit.get("border"),
+                output=edit.get("output"),
+                assets=edit.get("assets"),
+                version=edit.get("version") or 1,
+                parent=edit.get("parent"),
+                created=edit.get("created"),
+                renderer_version=edit.get("renderer_version"),
+            )
+        except edits_module.EditError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        draft_tag = hashlib.sha1(
+            json.dumps(
+                {"clean": clean, "ids": sorted(scoped_ids)},
+                sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8"),
+        ).hexdigest()[:12]
     source = job.get("source") or {}
     source_path = Path(str(source.get("path") or ""))
     width = int(source.get("width") or 0)
@@ -738,7 +790,7 @@ def fill_preview(
     stamp = model_path.stat()
     key = hashlib.sha1(
         (
-            f"{edit['hash']}:{frame}:{out_w}x{out_h}:lama:"
+            f"{edit['hash']}:{draft_tag}:{frame}:{out_w}x{out_h}:lama:"
             f"{stamp.st_size}:{stamp.st_mtime_ns}:{source.get('fingerprint')}"
         ).encode("utf-8"),
     ).hexdigest()[:20]
@@ -809,6 +861,21 @@ def fill_preview(
 class SceneAssetBody(BaseModel):
     source_job_id: str = ""
     scene: int = 0
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VideoPathBody(BaseModel):
+    path: str = ""
+    name: str = ""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VideoUrlBody(BaseModel):
+    url: str = ""
+    name: str = ""
+    rights: bool | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -900,6 +967,118 @@ def add_scene_asset(job_id: str, body: SceneAssetBody) -> dict:
         "-movflags", "+faststart", str(output),
     ])
     return {"asset": _asset_row(_asset_root(job_id), output)}
+
+
+
+
+def _attach_video_asset(job_id: str, source_path: str, name: str = "") -> dict:
+    """Copy or remux one full video into the job's asset folder."""
+    import shutil
+    import uuid
+
+    import app
+
+    app.load_job(job_id)
+    source = Path(source_path).expanduser()
+    if not source.is_file():
+        raise HTTPException(404, "That video file is not on this Mac.")
+    root = _asset_root(job_id)
+    asset_id = f"video_{uuid.uuid4().hex[:12]}"
+    output = root / f"{asset_id}.mp4"
+    if source.suffix.lower() == ".mp4":
+        shutil.copyfile(source, output)
+    else:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise HTTPException(500, "ffmpeg is not available.")
+        _run_ffmpeg([
+            ffmpeg, "-y", "-v", "error", "-i", str(source),
+            "-map", "0:v:0", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+            "-movflags", "+faststart", str(output),
+        ])
+    row = _asset_row(root, output)
+    row["name"] = (name or source.stem)[:120] or "Full video"
+    return {"asset": row}
+
+
+@router.post("/api/jobs/{job_id}/assets/video")
+async def add_video_asset(job_id: str, file: UploadFile = File(...)) -> dict:
+    import shutil
+    import tempfile
+
+    import app
+
+    app.load_job(job_id)
+    suffix = Path(getattr(file, "filename", "") or "video.mp4").suffix.lower()
+    if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}:
+        raise HTTPException(422, "Upload an MP4, MOV, MKV, WEBM, M4V or AVI video.")
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        with handle as target:
+            shutil.copyfileobj(file.file, target)
+        return _attach_video_asset(
+            job_id, handle.name, Path(getattr(file, "filename", "") or "Full video").stem,
+        )
+    finally:
+        try:
+            Path(handle.name).unlink()
+        except OSError:
+            pass
+
+
+@router.post("/api/jobs/{job_id}/assets/video-path")
+def add_video_path_asset(job_id: str, body: VideoPathBody) -> dict:
+    import app
+
+    app.load_job(job_id)
+    if not str(body.path or "").strip():
+        raise HTTPException(422, "Choose a video file or enter a full path.")
+    return _attach_video_asset(job_id, body.path, body.name)
+
+
+
+
+@router.post("/api/jobs/{job_id}/assets/video-url")
+def add_video_url_asset(job_id: str, body: VideoUrlBody) -> dict:
+    """Download a public video link into this job as one asset."""
+    import threading
+    import uuid
+
+    from url_ingest import registry
+
+    import app
+
+    app.load_job(job_id)
+    app._require_import_rights(body.rights)
+    try:
+        url = app._validate_remote_ingest_url(body.url)
+        provider_settings = app._ingest_provider_settings()
+        order = app._ingest_provider_order(url, None, provider_settings)
+        chain = app._ingest_provider_chain(provider_settings, order)
+        options = registry.options_from_settings(provider_settings)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+    root = _asset_root(job_id)
+    asset_id = f"video_{uuid.uuid4().hex[:12]}"
+    destination = root / f"{asset_id}.mp4"
+    try:
+        result = chain.download(
+            url, destination, options, lambda *_args, **_kwargs: None,
+            threading.Event(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+    downloaded = Path(getattr(result, "path", destination))
+    if downloaded != destination and downloaded.is_file():
+        import shutil
+        shutil.move(str(downloaded), destination)
+    if not destination.is_file():
+        raise HTTPException(502, "The downloader did not produce a video file.")
+    row = _asset_row(root, destination)
+    row["name"] = (body.name or getattr(result, "title", "") or url)[:120] or "Linked video"
+    return {"asset": row}
 
 
 @router.post("/api/jobs/{job_id}/assets/photo")

@@ -79,6 +79,10 @@ export function mountColorPanel(host, ctx) {
     el("span", { class: "st-hint", text: COLOR_PRESETS[color.preset]?.label || "Original" }),
   ]));
   host.append(grid);
+  host.append(el("p", {
+    class: "st-hint",
+    text: "Look is due a full grading and filter revamp: LUTs, before/after and per-scene looks. Presets below are the temporary controls.",
+  }));
 
   const controls = el("div", { class: "st-color-controls" });
   const sliders = {};
@@ -95,9 +99,12 @@ export function mountColorPanel(host, ctx) {
       readout,
     ]));
   }
-  host.append(controls);
+  host.append(el("details", { class: "st-caption-fold" }, [
+    el("summary", { text: "Fine tune" }),
+    controls,
+  ]));
 
-  const note = el("p", { class: "st-hint", text: "Values are saved as part of this story. Other stories keep their own look." });
+  const note = el("p", { class: "st-hint", text: "Values save with this moment. The full Look revamp is queued." });
   const reset = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Reset this look" });
   reset.addEventListener("click", () => {
     const preset = COLOR_PRESETS[color.preset] || COLOR_PRESETS.none;

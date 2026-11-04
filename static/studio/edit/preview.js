@@ -18,6 +18,7 @@ import {
   formatTime,
   graphicRect,
   numberOr,
+  round,
   safeZoneRects,
 } from "./model.js";
 import {
@@ -48,6 +49,11 @@ export function mountPreview(root, options = {}) {
     onBoxCreate: options.onBoxCreate || (() => {}),
     onAspect: options.onAspect || (() => {}),
     onOutput: options.onOutput || (() => {}),
+    onPaint: options.onPaint || (() => {}),
+    onPaintRequest: options.onPaintRequest || (() => ""),
+    onStory: options.onStory || (() => {}),
+    onSceneStep: options.onSceneStep || (() => {}),
+    onSpan: options.onSpan || (() => {}),
   };
   const state = {
     aspect: "9:16",
@@ -63,7 +69,13 @@ export function mountPreview(root, options = {}) {
     selected: null,
     hiddenLayers: new Set(),
     foundText: [],
+    foundFocus: "",
     tool: "select",
+    paintLayerId: "",
+    paintRadius: 0.025,
+    paintPoints: [],
+    viewZoom: 1,
+    viewPan: { x: 0, y: 0 },
     jobId: options.jobId || "",
   };
 
@@ -101,10 +113,21 @@ export function mountPreview(root, options = {}) {
   root.innerHTML = `
     <section class="st-preview" aria-label="Story preview">
       <div class="st-preview-head">
-        <div class="st-preview-tools">
-          <div class="st-preview-toolgroup" role="group" aria-label="Canvas tool">
-            <button id="st-preview-tool-select" class="st-preview-tool is-active" type="button" data-tool="select" aria-pressed="true" title="Select and move boxes (V)" aria-label="Select tool"></button>
-            <button id="st-preview-tool-box" class="st-preview-tool" type="button" data-tool="box" aria-pressed="false" title="Draw a Remove-text box (B)" aria-label="Draw box"></button>
+        <div class="st-preview-head-left">
+          <div class="st-preview-story">
+            <button id="st-preview-story-btn" class="st-preview-story-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Switch moment">
+              <span id="st-preview-story-num" class="st-mono">01</span>
+              <span id="st-preview-story-title">Moment</span>
+              <span class="st-moment-caret" aria-hidden="true">▾</span>
+            </button>
+            <div id="st-preview-story-menu" class="st-preview-story-menu" role="menu" hidden></div>
+          </div>
+          <div class="st-preview-tools">
+            <div class="st-preview-toolgroup" role="group" aria-label="Canvas tool">
+              <button id="st-preview-tool-select" class="st-preview-tool is-active" type="button" data-tool="select" aria-pressed="true" title="Select and move boxes (V)" aria-label="Select tool"></button>
+              <button id="st-preview-tool-box" class="st-preview-tool" type="button" data-tool="box" aria-pressed="false" title="Draw a Remove-text box (B)" aria-label="Draw box"></button>
+              <button id="st-preview-tool-paint" class="st-preview-tool" type="button" data-tool="paint" aria-pressed="false" title="Paint a cleanup mask" aria-label="Paint mask"></button>
+            </div>
           </div>
         </div>
         <div class="st-preview-scene" aria-live="polite">
@@ -113,11 +136,32 @@ export function mountPreview(root, options = {}) {
         </div>
         <div class="st-preview-head-right">
           <span id="st-preview-source" class="st-visually-hidden" role="status">Loading preview…</span>
+          <div class="st-preview-viewgroup" role="group" aria-label="Preview zoom">
+            <button id="st-preview-zoom-out" class="st-preview-chip" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+            <button id="st-preview-zoom-level" class="st-preview-chip" type="button" title="Fit the preview" aria-label="Fit the preview">100%</button>
+            <button id="st-preview-zoom-in" class="st-preview-chip" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+          </div>
+          <div class="st-preview-spangroup" role="group" aria-label="Span">
+            <button id="st-preview-span-in" class="st-preview-chip" type="button" title="Set span in at the playhead" aria-label="Set span in">In</button>
+            <button id="st-preview-span-out" class="st-preview-chip" type="button" title="Set span out at the playhead" aria-label="Set span out">Out</button>
+            <span id="st-preview-span" class="st-mono st-preview-span">Full</span>
+          </div>
           <button id="st-preview-focus" class="st-icon-btn" type="button" title="Focus the preview (F)" aria-label="Focus the preview" aria-pressed="false"></button>
         </div>
       </div>
       <div class="st-preview-stage">
         <canvas id="st-preview-canvas" class="st-preview-canvas" width="1080" height="1920" aria-label="Story preview with safe zones and editable boxes"></canvas>
+        <div id="st-preview-compare" class="st-preview-compare" hidden>
+          <img class="st-compare-before" alt="Before the Clean layer">
+          <img class="st-compare-after" alt="After the Clean layer">
+          <i class="st-compare-divider" aria-hidden="true"></i>
+          <div class="st-compare-head">
+            <strong>Before / After</strong>
+            <span>Selected Clean layer · this scene</span>
+            <button id="st-compare-close" class="st-icon-btn" type="button" title="Close comparison" aria-label="Close comparison">×</button>
+          </div>
+          <input id="st-compare-slider" class="st-compare-slider" type="range" min="0" max="100" value="50" aria-label="Compare before and after the Clean layer">
+        </div>
       </div>
       <div class="st-preview-transport">
         <div class="st-preview-left">
@@ -193,6 +237,21 @@ export function mountPreview(root, options = {}) {
     scrub: $("#st-preview-scrub"),
     note: $("#st-preview-note"),
     source: $("#st-preview-source"),
+    storyBtn: $("#st-preview-story-btn"),
+    storyMenu: $("#st-preview-story-menu"),
+    storyNum: $("#st-preview-story-num"),
+    storyTitle: $("#st-preview-story-title"),
+    zoomOut: $("#st-preview-zoom-out"),
+    zoomIn: $("#st-preview-zoom-in"),
+    zoomLevel: $("#st-preview-zoom-level"),
+    spanIn: $("#st-preview-span-in"),
+    spanOut: $("#st-preview-span-out"),
+    spanText: $("#st-preview-span"),
+    compare: $("#st-preview-compare"),
+    compareBefore: $("#st-preview-compare .st-compare-before"),
+    compareAfter: $("#st-preview-compare .st-compare-after"),
+    compareSlider: $("#st-compare-slider"),
+    compareClose: $("#st-compare-close"),
     sceneNum: $("#st-preview-scene-num"),
     sceneRole: $("#st-preview-scene-role"),
     platform: $("#st-preview-platform"),
@@ -212,7 +271,11 @@ export function mountPreview(root, options = {}) {
   const ctx = dom.canvas.getContext("2d");
 
   for (const button of dom.tools) {
-    button.prepend(icon(button.dataset.tool === "select" ? "cursor" : "square", { size: 13 }));
+    button.prepend(icon(
+      button.dataset.tool === "select" ? "cursor"
+        : button.dataset.tool === "paint" ? "brush" : "square",
+      { size: 13 },
+    ));
   }
   dom.focus?.prepend(icon("expand", { size: 15 }));
   dom.back?.append(icon("arrow-left", { size: 15 }));
@@ -502,9 +565,10 @@ export function mountPreview(root, options = {}) {
         ? "#77777f"
         : item.row.ticked ? "#e8a266" : "#7b9bb8";
       ctx.save();
-      ctx.globalAlpha = item.row.blocked ? 0.5 : item.row.ticked ? 0.95 : 0.7;
+      const focused = String(item.row.id || "") === String(state.foundFocus || "");
+      ctx.globalAlpha = focused ? 1 : item.row.blocked ? 0.5 : item.row.ticked ? 0.95 : 0.7;
       ctx.strokeStyle = colour;
-      ctx.lineWidth = Math.max(2, width * 0.0024);
+      ctx.lineWidth = focused ? Math.max(4, width * 0.004) : Math.max(2, width * 0.0024);
       ctx.setLineDash([Math.max(5, width * 0.007), Math.max(4, width * 0.005)]);
       ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
       if (item.row.ticked && !item.row.blocked) {
@@ -541,6 +605,27 @@ export function mountPreview(root, options = {}) {
       ctx.lineWidth = item.selected ? Math.max(3, width * 0.004) : Math.max(2, width * 0.0022);
       ctx.setLineDash(item.selected ? [] : [Math.max(6, width * 0.008), Math.max(4, width * 0.006)]);
       ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      const mask = item.layer?.mask;
+      const strokes = mask && !Array.isArray(mask) ? (mask.strokes || []) : (mask ? [{ r: mask[0]?.r || 0.025, points: mask }] : []);
+      const points = strokes.flatMap((stroke) => (
+        (stroke.points || []).map((point) => ({ ...point, r: stroke.r || 0.025 }))
+      ));
+      if (points.length) {
+        ctx.globalAlpha = item.active ? 0.5 : 0.22;
+        ctx.fillStyle = colour;
+        for (const point of points) {
+          ctx.beginPath();
+          ctx.arc(
+            point.x * width,
+            point.y * height,
+            Math.max(2, point.r * width),
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+        }
+        ctx.globalAlpha = item.active ? 1 : 0.34;
+      }
       if (item.selected) {
         const points = [
           [rect.x, rect.y], [rect.x + rect.w / 2, rect.y], [rect.x + rect.w, rect.y],
@@ -679,7 +764,21 @@ export function mountPreview(root, options = {}) {
     drawCleanBoxes(width, height);
     drawSelection(width, height);
     drawDrawPreview(width, height);
+    drawPaintPreview(width, height);
     drawBorder(width, height);
+  }
+
+  function drawPaintPreview(width, height) {
+    if (!state.paintPoints.length) return;
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = LAYER_COLOURS.clean;
+    for (const point of state.paintPoints) {
+      ctx.beginPath();
+      ctx.arc(point.x * width, point.y * height, Math.max(2, point.r * width), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   function drawBorder(width, height) {
@@ -1145,15 +1244,68 @@ export function mountPreview(root, options = {}) {
     return { x: point.x / dom.canvas.width, y: point.y / dom.canvas.height };
   }
 
+  function applyViewTransform() {
+    const zoom = state.viewZoom || 1;
+    if (zoom <= 1.001) {
+      state.viewPan = { x: 0, y: 0 };
+      dom.canvas.style.transform = "";
+    } else {
+      dom.canvas.style.transform = `translate(${state.viewPan.x}px, ${state.viewPan.y}px) scale(${zoom})`;
+    }
+    if (dom.zoomLevel) dom.zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
+    dom.canvas.style.cursor = zoom > 1.001 ? "grab" : "";
+  }
+
+  function applyViewZoom(value) {
+    state.viewZoom = Math.max(1, Math.min(3, Number(value) || 1));
+    const limit = Math.max(0, (state.viewZoom - 1) * (dom.canvas.clientWidth || 300) * 0.5);
+    state.viewPan = {
+      x: Math.max(-limit, Math.min(limit, state.viewPan.x || 0)),
+      y: Math.max(-limit, Math.min(limit, state.viewPan.y || 0)),
+    };
+    applyViewTransform();
+  }
+
+  dom.zoomOut?.addEventListener("click", () => applyViewZoom((state.viewZoom || 1) - 0.1));
+  dom.zoomIn?.addEventListener("click", () => applyViewZoom((state.viewZoom || 1) + 0.1));
+  dom.zoomLevel?.addEventListener("click", () => applyViewZoom(1));
+
+  dom.storyBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = dom.storyMenu?.hidden !== false;
+    if (dom.storyMenu) dom.storyMenu.hidden = !open;
+    dom.storyBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  dom.storyMenu?.addEventListener("click", (event) => event.stopPropagation());
+  document.addEventListener("click", () => {
+    if (dom.storyMenu) dom.storyMenu.hidden = true;
+    dom.storyBtn?.setAttribute("aria-expanded", "false");
+  });
+
+  function applyCompare(value) {
+    const position = Math.max(0, Math.min(100, Number(value) || 0));
+    if (dom.compareAfter) dom.compareAfter.style.clipPath = `inset(0 0 0 ${position}%)`;
+    const divider = dom.compare?.querySelector(".st-compare-divider");
+    if (divider) divider.style.left = `${position}%`;
+  }
+
+  dom.compareSlider?.addEventListener("input", () => applyCompare(dom.compareSlider.value));
+  dom.compareClose?.addEventListener("click", () => {
+    dom.compare.hidden = true;
+    dom.compareBefore.removeAttribute("src");
+    dom.compareAfter.removeAttribute("src");
+  });
+
   function setTool(tool) {
-    state.tool = tool === "box" ? "box" : "select";
+    state.tool = ["box", "paint"].includes(tool) ? tool : "select";
+    if (state.tool !== "paint") state.paintPoints = [];
     for (const button of dom.tools) {
       const active = button.dataset.tool === state.tool;
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", active ? "true" : "false");
     }
     dom.canvas.dataset.tool = state.tool;
-    dom.canvas.style.cursor = state.tool === "box" ? "crosshair" : "default";
+    dom.canvas.style.cursor = ["box", "paint"].includes(state.tool) ? "crosshair" : "default";
   }
 
   function textAt(frame) {
@@ -1180,6 +1332,17 @@ export function mountPreview(root, options = {}) {
     const point = canvasPoint(event);
     const frame = framePoint(event);
     const crop = currentCrop();
+    if (state.tool === "paint" && state.paintLayerId) {
+      pauseClockOnly();
+      state.paintPoints = [{
+        x: round(frame.x, 4), y: round(frame.y, 4), r: state.paintRadius,
+      }];
+      drag = { mode: "paint", layerId: state.paintLayerId, last: frame };
+      dom.canvas.setPointerCapture?.(event.pointerId);
+      draw();
+      event.preventDefault();
+      return;
+    }
     if (state.tool === "box") {
       pauseClockOnly();
       drag = { mode: "draw", crop, startFrame: frame };
@@ -1227,12 +1390,48 @@ export function mountPreview(root, options = {}) {
       return;
     }
     const text = textAt(frame);
-    if (text) callbacks.onSelect("text", text.id);
+    if (text) {
+      callbacks.onSelect("text", text.id);
+      return;
+    }
+    if (state.viewZoom > 1.001) {
+      drag = {
+        mode: "pan",
+        clientX: event.clientX,
+        clientY: event.clientY,
+        startPan: { ...state.viewPan },
+      };
+      dom.canvas.setPointerCapture?.(event.pointerId);
+      dom.canvas.style.cursor = "grabbing";
+      event.preventDefault();
+    }
   }
 
   function movePointer(event) {
     if (!drag) return;
+    if (drag.mode === "pan") {
+      const limit = Math.max(0, (state.viewZoom - 1) * (dom.canvas.clientWidth || 300) * 0.5);
+      state.viewPan = {
+        x: Math.max(-limit, Math.min(limit, drag.startPan.x + event.clientX - drag.clientX)),
+        y: Math.max(-limit, Math.min(limit, drag.startPan.y + event.clientY - drag.clientY)),
+      };
+      applyViewTransform();
+      event.preventDefault();
+      return;
+    }
     const frame = framePoint(event);
+    if (drag.mode === "paint") {
+      const last = drag.last || frame;
+      if (Math.hypot(frame.x - last.x, frame.y - last.y) >= 0.008) {
+        state.paintPoints.push({
+          x: round(frame.x, 4), y: round(frame.y, 4), r: state.paintRadius,
+        });
+        drag.last = frame;
+      }
+      draw();
+      event.preventDefault();
+      return;
+    }
     if (drag.mode === "draw") {
       drawPreview = dragRect(drag.startFrame, frame);
       draw();
@@ -1252,9 +1451,21 @@ export function mountPreview(root, options = {}) {
 
   function endPointer(event) {
     if (!drag) return;
+    if (drag.mode === "pan") {
+      drag = null;
+      dom.canvas.style.cursor = "";
+      dom.canvas.releasePointerCapture?.(event.pointerId);
+      event.preventDefault();
+      return;
+    }
     const current = drag;
     drag = null;
-    if (current.mode === "draw") {
+    if (current.mode === "paint") {
+      const points = state.paintPoints.slice(0, 120);
+      state.paintPoints = [];
+      callbacks.onPaint(current.layerId, points);
+      setTool("select");
+    } else if (current.mode === "draw") {
       const rect = drawPreview;
       drawPreview = null;
       if (rect && rect.w * current.crop.w > 0.006 && rect.h * current.crop.h > 0.006) {
@@ -1272,6 +1483,7 @@ export function mountPreview(root, options = {}) {
   function cancelPointer(event) {
     drag = null;
     drawPreview = null;
+    state.paintPoints = [];
     dom.canvas.releasePointerCapture?.(event.pointerId);
     draw();
   }
@@ -1281,7 +1493,13 @@ export function mountPreview(root, options = {}) {
   dom.canvas.addEventListener("pointerup", endPointer);
   dom.canvas.addEventListener("pointercancel", cancelPointer);
   for (const button of dom.tools) {
-    button.addEventListener("click", () => setTool(button.dataset.tool));
+    button.addEventListener("click", () => {
+      if (button.dataset.tool === "paint" && !state.paintLayerId) {
+        const id = callbacks.onPaintRequest?.();
+        if (id) state.paintLayerId = String(id);
+      }
+      setTool(button.dataset.tool);
+    });
   }
 
   const OUTPUT_KEY = "vibecut.studio.edit.output";
@@ -1383,8 +1601,10 @@ export function mountPreview(root, options = {}) {
     draw();
   });
   dom.play.addEventListener("click", play);
-  dom.back?.addEventListener("click", () => seek(state.time - 1));
-  dom.forward?.addEventListener("click", () => seek(state.time + 1));
+  dom.back?.addEventListener("click", () => callbacks.onSceneStep(-1));
+  dom.forward?.addEventListener("click", () => callbacks.onSceneStep(1));
+  dom.spanIn?.addEventListener("click", () => callbacks.onSpan("in"));
+  dom.spanOut?.addEventListener("click", () => callbacks.onSpan("out"));
   dom.focus?.addEventListener("click", toggleFocus);
   dom.frame?.addEventListener("click", captureFrame);
   dom.aspect?.addEventListener("click", (event) => {
@@ -1497,9 +1717,17 @@ export function mountPreview(root, options = {}) {
     },
     setSelected(selected) {
       state.selected = selected;
+      if (selected?.kind !== "clean" || String(selected.id || "") !== state.paintLayerId) {
+        state.paintLayerId = "";
+      }
       draw();
     },
     setTool,
+    startPaint(layerId, radius = 0.025) {
+      state.paintLayerId = String(layerId || "");
+      state.paintRadius = Math.max(0.005, Math.min(0.2, Number(radius) || 0.025));
+      setTool("paint");
+    },
     setHiddenLayers(hidden) {
       state.hiddenLayers = hidden instanceof Set ? hidden : new Set(hidden || []);
       draw();
@@ -1507,6 +1735,57 @@ export function mountPreview(root, options = {}) {
     setFoundText(found) {
       state.foundText = Array.isArray(found) ? found : [];
       draw();
+    },
+    setStories(stories, currentId) {
+      const rows = Array.isArray(stories) ? stories : [];
+      const current = rows.find((row) => String(row.id) === String(currentId));
+      if (dom.storyNum) dom.storyNum.textContent = String(current?.num || "01").padStart(2, "0");
+      if (dom.storyTitle) dom.storyTitle.textContent = String(current?.title || "Moment");
+      if (!dom.storyMenu) return;
+      dom.storyMenu.replaceChildren();
+      for (const row of rows) {
+        const active = String(row.id) === String(currentId);
+        const button = el("button", {
+          class: `st-moment-item${active ? " is-active" : ""}`,
+          type: "button",
+          role: "menuitemradio",
+          "aria-checked": active ? "true" : "false",
+        }, [
+          el("span", { class: "st-mono", text: String(row.num || "").padStart(2, "0") }),
+          el("span", { class: "st-moment-item-copy" }, [
+            el("strong", { text: String(row.title || "Moment").slice(0, 70) }),
+            el("small", { text: String(row.time || "") }),
+          ]),
+        ]);
+        button.addEventListener("click", () => {
+          dom.storyMenu.hidden = true;
+          dom.storyBtn?.setAttribute("aria-expanded", "false");
+          if (!active) callbacks.onStory(row.id);
+        });
+        dom.storyMenu.append(button);
+      }
+    },
+    setSpan(text) {
+      if (dom.spanText) dom.spanText.textContent = String(text || "Full");
+    },
+    setViewZoom(value) {
+      applyViewZoom(value);
+    },
+    setFoundFocus(id) {
+      state.foundFocus = String(id || "");
+      draw();
+    },
+    showCompare(data) {
+      if (!data?.before || !data?.after) return;
+      dom.compareBefore.src = String(data.before);
+      dom.compareAfter.src = String(data.after);
+      dom.compare.hidden = false;
+      applyCompare(dom.compareSlider?.value ?? 50);
+    },
+    hideCompare() {
+      dom.compare.hidden = true;
+      dom.compareBefore.removeAttribute("src");
+      dom.compareAfter.removeAttribute("src");
     },
     setTime,
     setScene(value, role = "Scene") {

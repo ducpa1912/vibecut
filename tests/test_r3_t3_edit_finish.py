@@ -99,20 +99,20 @@ def env(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- Edit navigation
 
 
-def test_edit_has_a_fixed_toolbar_with_back_and_next_beside_save_state():
+def test_edit_keeps_save_state_and_story_switch_without_the_moment_bar():
     source = (STUDIO / "edit" / "index.js").read_text(encoding="utf-8")
-    assert "Back to Moments" in source
-    assert "Next: Finish" in source
-    assert "st-edit-toolbar" in source
-    assert 'id="st-edit-moment-btn"' in source
+    preview = (STUDIO / "edit" / "preview.js").read_text(encoding="utf-8")
+    assert "Back to Moments" not in source
+    assert "st-edit-toolbar" not in source
+    assert 'id="st-edit-moment-btn"' not in source
+    assert 'id="st-preview-story-btn"' in preview
     shell = (STUDIO / "shell.js").read_text(encoding="utf-8")
     assert 'id="st-edit-ready"' in shell
     assert 'id="st-edit-shortcuts-open"' in shell
     assert "st-edit-stepnav" not in source
     assert "position: sticky" not in source
-    # Both step buttons flush the autosave before leaving.
-    assert source.count("leaveTo(\"moments\"") >= 1
-    assert "leaveTo(\"finish\"" in source
+    # The app-bar step rail flushes the autosave before leaving Edit.
+    assert "setLeaveGuard" in shell and "setLeaveGuard" in source
     assert "const saved = await flushSave();" in source
 
 

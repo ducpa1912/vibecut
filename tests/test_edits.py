@@ -941,3 +941,65 @@ def test_file_assets_and_file_clips_are_valid():
         _build(assets=[{**asset, "path": "../outside.mp4"}])
     with pytest.raises(edits.EditError):
         _build(sequence=[{"kind": "file", "asset_id": "missing", "start": 0, "end": 2}])
+
+
+def test_clean_painter_mask_round_trips():
+    mask = [{"x": 0.25, "y": 0.4, "r": 0.03}, {"x": 0.5, "y": 0.4, "r": 0.03}]
+    edit = _build(clean=[{
+        "kind": "fill", "method": "sttn",
+        "box": {"x": 0.2, "y": 0.35, "w": 0.4, "h": 0.1},
+        "ranges": [{"start": 0, "end": 2}],
+        "mask": mask,
+    }])
+    expected = {
+        "space": "output",
+        "strokes": [{
+            "id": "st_1",
+            "r": 0.03,
+            "points": [{"x": 0.25, "y": 0.4}, {"x": 0.5, "y": 0.4}],
+        }],
+    }
+    assert edit["clean"][0]["mask"] == expected
+    assert edits.normalize_edit(edit)["clean"][0]["mask"] == expected
+    with pytest.raises(edits.EditError):
+        _build(clean=[{
+            "kind": "fill",
+            "box": {"x": 0.2, "y": 0.35, "w": 0.4, "h": 0.1},
+            "mask": [{"x": 2, "y": 0.4, "r": 0.03}],
+        }])
+
+
+def test_clean_painter_stroke_mask_round_trips():
+    mask = {
+        "space": "output",
+        "aspect": "9:16",
+        "strokes": [
+            {"id": "st_a", "r": 0.03, "points": [{"x": 0.3, "y": 0.6}]},
+            {"id": "st_b", "r": 0.04, "points": [{"x": 0.5, "y": 0.6}, {"x": 0.6, "y": 0.6}]},
+        ],
+    }
+    edit = _build(clean=[{
+        "kind": "fill", "method": "sttn",
+        "box": {"x": 0.2, "y": 0.35, "w": 0.4, "h": 0.1},
+        "mask": mask,
+    }])
+    assert edit["clean"][0]["mask"] == mask
+    assert edits.normalize_edit(edit)["clean"][0]["mask"] == mask
+    with pytest.raises(edits.EditError):
+        _build(clean=[{
+            "kind": "fill",
+            "box": {"x": 0.2, "y": 0.35, "w": 0.4, "h": 0.1},
+            "mask": {"space": "output", "strokes": [{
+                "id": "bad id!",
+                "points": [{"x": 0.3, "y": 0.4}],
+            }]},
+        }])
+    with pytest.raises(edits.EditError, match="at most 20 strokes"):
+        _build(clean=[{
+            "kind": "fill",
+            "box": {"x": 0.2, "y": 0.35, "w": 0.4, "h": 0.1},
+            "mask": {"space": "output", "strokes": [
+                {"id": f"st_{index}", "points": [{"x": 0.3, "y": 0.4}]}
+                for index in range(21)
+            ]},
+        }])

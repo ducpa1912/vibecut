@@ -1,7 +1,7 @@
 /**
  * One inline icon set for the editor.
  *
- * Paths are adapted from Lucide (MIT). Icons inherit `currentColor`, so the
+ * Paths are adapted from Lucide (ISC License). Icons inherit `currentColor`, so the
  * layer palette can colour them without a second stylesheet.
  */
 
@@ -146,6 +146,10 @@ const ICONS = {
     ["rect", { x: "8", y: "8", width: "13", height: "13", rx: "2" }],
     ["path", { d: "M5 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1" }],
   ],
+  brush: [
+    ["path", { d: "m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08" }],
+    ["path", { d: "M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z" }],
+  ],
   mosaic: [
     ["rect", { x: "3", y: "3", width: "7", height: "7", rx: "1" }],
     ["rect", { x: "14", y: "3", width: "7", height: "7", rx: "1" }],
@@ -187,6 +191,13 @@ const ICONS = {
     ["path", { d: "M2 6h14a2 2 0 0 1 2 2v14" }],
   ],
   "chevron-up": [["path", { d: "m18 15-6-6-6 6" }]],
+  library: [
+    ["rect", { x: "3", y: "4", width: "18", height: "16", rx: "2" }],
+    ["path", { d: "M7 4v16" }],
+    ["path", { d: "M11 8h5" }],
+    ["path", { d: "M11 12h5" }],
+    ["path", { d: "M11 16h3" }],
+  ],
   layers: [
     ["path", { d: "m12 2 9 5-9 5-9-5 9-5Z" }],
     ["path", { d: "m3 12 9 5 9-5" }],

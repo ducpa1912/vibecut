@@ -336,6 +336,18 @@ def test_span_key_changes_with_engine_box_and_span():
     assert textfill.span_key(**{**base, "start": 1.5}) != key
     moved = _layer(box={"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.1})
     assert textfill.span_key(**{**base, "layers": [moved]}) != key
+    painted = _layer(mask={
+        "space": "source",
+        "strokes": [{"id": "st_a", "r": 0.03, "points": [{"x": 0.4, "y": 0.7}]}],
+    })
+    painted_key = textfill.span_key(**{**base, "layers": [painted]})
+    more = _layer(mask={
+        "space": "source",
+        "strokes": [{"id": "st_a", "r": 0.03, "points": [
+            {"x": 0.4, "y": 0.7}, {"x": 0.5, "y": 0.7},
+        ]}],
+    })
+    assert textfill.span_key(**{**base, "layers": [more]}) != painted_key
 
 
 def test_model_signature_changes_with_the_file_and_names_missing_models(tmp_path):

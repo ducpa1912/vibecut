@@ -122,6 +122,7 @@ export function mountTimeline(root, options = {}) {
     onReverse: options.onReverse || (() => {}),
     onDuplicate: options.onDuplicate || (() => {}),
     onFreeze: options.onFreeze || (() => {}),
+    onFound: options.onFound || (() => {}),
     beforeTrim: options.beforeTrim || (() => Promise.resolve(true)),
   };
   let disposed = false;
@@ -150,6 +151,7 @@ export function mountTimeline(root, options = {}) {
     story: null,
     aspect: "9:16",
     trim: null,
+    foundText: [],
     time: 0,
   };
 
@@ -442,7 +444,7 @@ export function mountTimeline(root, options = {}) {
       : formatSpan(storyStart, storyEnd ?? storyStart);
     const title = `${label || LANE_LABELS[kind] || "Layer"} · ${span}${outside ? " · outside the trimmed story" : ""}${item.hidden ? " · hidden outside, kept in the Edit" : ""}${item.pinned ? " · pinned to the story start" : ""}`;
     const attrs = {
-      class: `st-tl-bar st-tl-bar-${kind}${item.sceneClip ? ` st-tl-role-${item.role || "beat"}` : ""}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
+      class: `st-tl-bar st-tl-bar-${kind}${item.found ? " is-found" : ""}${item.sceneClip ? ` st-tl-role-${item.role || "beat"}` : ""}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
       title,
       "aria-label": title,
       style: `left:${geometry.left}%;width:${geometry.width}%`,
@@ -453,6 +455,7 @@ export function mountTimeline(root, options = {}) {
         outside: outside ? "1" : "0",
         subgroup: item.subgroup || null,
         audio: String(item.id || "").startsWith("audio_") ? String(item.id).replace("audio_", "") : null,
+        found: item.found ? String(item.trackletId || "") : null,
       },
     };
     if (kind === "scenes") {
@@ -501,6 +504,10 @@ export function mountTimeline(root, options = {}) {
     }
     button.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (item.found) {
+        handlers.onFound(item.trackletId);
+        return;
+      }
       if (kind === "scenes") handlers.onSelect("scenes", String(item.index ?? 0));
       else handlers.onSelect(kind, item.layerId || item.id);
       const seekTo = storyStart ?? (numberOr(item.start) < view.leading ? 0 : duration);
@@ -646,6 +653,25 @@ export function mountTimeline(root, options = {}) {
     const receiptOutside = outsideIds(view);
     const pinned = pinnedIds();
     let outsideCount = 0;
+    const cleanRow = rows.find((row) => row.kind === "clean");
+    if (cleanRow && state.foundText.length) {
+      for (const found of state.foundText) {
+        const start = numberOr(found.storyStart, NaN);
+        const end = numberOr(found.storyEnd, NaN);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        cleanRow.items.push({
+          id: `found:${found.id}`,
+          label: found.text || "Found text",
+          start,
+          end: Math.max(start + 0.08, end),
+          storyStart: start,
+          storyEnd: Math.max(start + 0.08, end),
+          found: true,
+          trackletId: found.id,
+          layerCount: numberOr(found.layerCount, 0),
+        });
+      }
+    }
     for (const row of rows) {
       row.items = row.items.map((item) => {
         const storyStart = numberOr(item.start);
@@ -1213,7 +1239,7 @@ export function mountTimeline(root, options = {}) {
   return {
     setLoop,
     setHistory,
-    setData({ edit, captions, story, duration: nextDuration, aspect, trim, setId: nextSetId, jobId: nextJobId } = {}) {
+    setData({ edit, captions, story, duration: nextDuration, aspect, trim, setId: nextSetId, jobId: nextJobId, foundText } = {}) {
       if (nextJobId) jobId = String(nextJobId);
       if (nextSetId) setId = String(nextSetId);
       const storyId = String(story?.id ?? state.story?.id ?? "");
@@ -1232,6 +1258,7 @@ export function mountTimeline(root, options = {}) {
         story: story === undefined ? state.story : story,
         aspect: aspect || state.aspect,
         trim: trim === undefined ? state.trim : trim,
+        foundText: Array.isArray(foundText) ? foundText : state.foundText,
         time: state.time,
       };
       if (typeof nextDuration === "number" && Number.isFinite(nextDuration)) {

@@ -19,13 +19,15 @@ TEXTFILL = (ROOT / "textfill" / "__init__.py").read_text(encoding="utf-8")
 def test_found_list_has_thumbnails_ticks_select_all_and_reasons():
     assert "Found on screen" in CLEAN
     assert "st-found-row" in CLEAN
-    assert "st-found-thumb" in CLEAN
-    assert "/check/tracklets/" in CLEAN and "/thumb" in CLEAN
+    assert "st-found-thumb" not in CLEAN
     assert "st-found-tick" in CLEAN
+    assert "FOUND_TICKS" in CLEAN
+    assert "FOUND_TICKS.get(jobId)" in CLEAN
     assert "Select all" in CLEAN and "Clear ticks" in CLEAN
-    assert "Never removed" in CLEAN
+    assert '"Watermark · not removed"' in CLEAN or "Watermark · not removed" in CLEAN
+    assert "Screen UI · not cleaned" in CLEAN
     assert "Already added to this moment." in CLEAN
-    assert "st-found-chip" in CSS
+    assert "st-found-reason" in CSS
 
 
 def test_remove_all_sends_the_ticks_and_the_chosen_method():
@@ -54,16 +56,18 @@ def test_fill_for_all_only_converts_detected_tracklets():
     assert out[1] == {"id": "b", "kind": "blur", "z": 1}
 
 
-def test_fill_preview_runs_one_frame_and_shows_a_before_after_slider():
-    assert "/fill-preview" in CLEAN
-    assert 'method: "lama"' in CLEAN
-    assert "AbortController" in CLEAN
-    assert "Cancel preview" in CLEAN
-    assert "st-fill-compare-stage" in CLEAN
-    assert "st-fill-slider" in CLEAN
-    assert "clipPath" in CLEAN
-    assert "LaMa · one frame" in CLEAN
-    assert "st-fill-preview-run" in CLEAN
+def test_engine_preview_is_scoped_and_never_saves_first():
+    assert "Preview this frame" not in CLEAN
+    assert "st-fill-preview-run" not in CLEAN
+    assert "compareLayer" in CLEAN
+    assert "st-clean-compare" in CLEAN
+    assert "compareCleanLayer" in INDEX
+    assert 'layer_ids: [String(layerId)]' in INDEX
+    assert "clean: clone(state.edit.clean || [])" in INDEX
+    assert "showCompare" in PREVIEW and "hideCompare" in PREVIEW
+    assert "st-preview-compare" in PREVIEW
+    assert "clipPath" in PREVIEW
+    assert "st-preview-compare" in CSS
 
 
 def test_found_boxes_reach_the_preview_before_they_become_layers():

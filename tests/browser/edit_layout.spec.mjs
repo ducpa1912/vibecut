@@ -72,7 +72,6 @@ try {
 
       const layout = await page.evaluate(() => {
         const main = document.querySelector("main.st-main");
-        const toolbar = document.querySelector(".st-edit-toolbar");
         const preview = document.querySelector(".st-preview");
         const timeline = document.querySelector(".st-timeline");
         const elements = document.querySelector("#st-edit-elements");
@@ -91,14 +90,12 @@ try {
           overflowY: getComputedStyle(main).overflowY,
           scrollHeight: main.scrollHeight,
           clientHeight: main.clientHeight,
-          toolbarPosition: getComputedStyle(toolbar).position,
           layersDisplay: getComputedStyle(layers).display,
           bodyOverflowY: getComputedStyle(body).overflowY,
           preview: rect(preview),
           timeline: rect(timeline),
           elements: rect(elements),
           layers: rect(layers),
-          toolbar: rect(toolbar),
         };
       });
 
@@ -108,8 +105,7 @@ try {
         layout.scrollHeight <= layout.clientHeight + 2,
         `${where}: editor content is taller than the frame (${layout.scrollHeight} > ${layout.clientHeight})`,
       );
-      assert(layout.toolbarPosition !== "sticky", `${where}: toolbar is still sticky`);
-      assert(layout.toolbar.top >= 0, `${where}: toolbar starts above the viewport`);
+      assert(layout.preview.top >= 0, `${where}: preview starts above the viewport`);
       assert(layout.preview.top >= 0, `${where}: preview starts above the viewport`);
       assert(layout.preview.height > 120, `${where}: preview is too small (${layout.preview.height})`);
       assert(
@@ -152,9 +148,65 @@ try {
       await scanButton.waitFor({ state: "visible", timeout: 15000 });
       const scanLabel = (await scanButton.textContent())?.trim() || "";
       assert(
-        scanLabel.includes("Find text on screen"),
-        `${where}: Edit does not offer the text scan (${scanLabel})`,
+        scanLabel.includes("Check this scene"),
+        `${where}: Edit does not offer the scene text scan (${scanLabel})`,
       );
+
+      if (viewport.width === 1280) {
+        await page.locator("#st-preview-forward").click();
+        await page.waitForFunction(
+          () => Number(document.querySelector("#st-preview-scrub")?.value) > 3.9,
+          null,
+          { timeout: 5000 },
+        );
+        await page.locator("#st-preview-back").click();
+        await page.waitForFunction(
+          () => Number(document.querySelector("#st-preview-scrub")?.value) < 0.05,
+          null,
+          { timeout: 5000 },
+        );
+        await page.locator('.st-el-tab[data-tab="moments"]').click();
+        await page.locator('.st-el-action', { hasText: 'Import' }).click();
+        await page.locator('.st-import-mini').waitFor({ state: 'visible', timeout: 5000 });
+        assert(
+          await page.locator('.st-import-mini .st-media-tab').count() === 2,
+          `${where}: Import mini is missing Photo / Full video tabs`,
+        );
+        if (screenshotPrefix) {
+          await page.screenshot({ path: `${screenshotPrefix}-import-mini-${viewport.width}.png` });
+        }
+        await page.locator('.st-import-mini .st-icon-btn').first().click();
+        await page.locator('.st-el-action', { hasText: 'Add scenes' }).click();
+        await page.locator('.st-scene-picker').waitFor({ state: 'visible', timeout: 5000 });
+        assert(
+          (await page.locator('.st-scene-picker .st-media-tab').allTextContents()).join('|').includes('This Project'),
+          `${where}: Add scenes has no This Project tab`,
+        );
+        const groups = await page.locator('.st-scene-picker .st-scene-group').count();
+        assert(groups > 0, `${where}: Add scenes shows no video groups`);
+        if (screenshotPrefix) {
+          await page.screenshot({ path: `${screenshotPrefix}-add-scenes-${viewport.width}.png` });
+        }
+        await page.locator('.st-scene-picker .st-icon-btn').first().click();
+        await page.locator('.st-el-tab[data-tab="audio"]').click();
+        await page.locator('.st-music-hub').waitFor({ state: 'visible', timeout: 10000 });
+        assert(
+          await page.locator('.st-music-hub .st-media-tab').count() === 3,
+          `${where}: Audio is missing Library / Upload / GenAI`,
+        );
+        await page.locator('.st-layer-rail-btn[data-layer="narrative"]').click();
+        await page.locator('.st-audio-mode-tabs').waitFor({ state: 'visible', timeout: 10000 });
+        assert(
+          (await page.locator('.st-audio-mode-tab').allTextContents()).join('|').includes('Voice-Over'),
+          `${where}: Narrative mode tabs are missing`,
+        );
+        assert(
+          await page.locator('.st-narrative-layer .st-music-hub').count() === 0,
+          `${where}: Narrative still owns the music hub`,
+        );
+        await page.locator('.st-layer-rail-btn[data-layer="clean"]').click();
+        await page.locator('.st-el-tab[data-tab="text"]').click();
+      }
 
       // P1: draw, move and delete a Remove-text box without a number field.
       if (viewport.width === 1280) {
@@ -289,12 +341,7 @@ try {
 
       // P4: Finish keeps the same one-screen frame as Edit.
       if (viewport.width === 1280) {
-        await page.waitForFunction(
-          () => !document.querySelector("#st-edit-next")?.disabled,
-          null,
-          { timeout: 15000 },
-        );
-        await page.locator("#st-edit-next").click();
+        await page.locator('.st-step[data-step="finish"]').click();
         await page.locator(".st-finish-panel").waitFor({ state: "visible", timeout: 30000 });
         const finish = await page.evaluate(() => {
           const main = document.querySelector("main.st-main");

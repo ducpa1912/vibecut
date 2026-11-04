@@ -14,6 +14,7 @@ STUDIO = ROOT / "static" / "studio"
 CSS = (STUDIO / "edit" / "edit.css").read_text(encoding="utf-8")
 INDEX = (STUDIO / "edit" / "index.js").read_text(encoding="utf-8")
 ELEMENTS = (STUDIO / "edit" / "elements-panel.js").read_text(encoding="utf-8")
+PREVIEW = (STUDIO / "edit" / "preview.js").read_text(encoding="utf-8")
 SHELL = (STUDIO / "shell.js").read_text(encoding="utf-8")
 CLEAN = (STUDIO / "edit" / "layers" / "clean.js").read_text(encoding="utf-8")
 INSPECTOR = (STUDIO / "edit" / "inspector.js").read_text(encoding="utf-8")
@@ -83,11 +84,12 @@ def test_tools_transcript_and_preview_keep_their_columns_at_desktop():
 
 
 def test_toolbar_moves_moment_switching_into_the_picker():
-    assert 'id="st-edit-moment-btn"' in INDEX
-    assert 'id="st-edit-moment-menu"' in INDEX
-    assert 'id="st-edit-story"' not in INDEX
-    assert 'text: "All moments…"' not in INDEX
+    assert 'id="st-edit-moment-btn"' not in INDEX
+    assert 'id="st-edit-moment-menu"' not in INDEX
+    assert 'id="st-preview-story-btn"' in PREVIEW
+    assert 'id="st-preview-story-menu"' in PREVIEW
     assert "switchStory" in INDEX
+    assert "onStory" in INDEX
 
 
 def test_inspector_tabs_are_plain_and_not_truncated():
@@ -103,7 +105,7 @@ def test_inspector_tabs_are_plain_and_not_truncated():
 
 def test_elements_tabs_are_selectable():
     assert '["moments", "Moments"' in INDEX or "mountElementsPanel" in INDEX
-    assert '["elements", "Elements"' in ELEMENTS
+    assert '["elements", "Element"' in ELEMENTS
     assert '["text", "Text"' in ELEMENTS
     assert '["audio", "Audio"' in ELEMENTS
     assert '["moments", "elements", "text", "audio"]' in INDEX
@@ -118,7 +120,7 @@ def test_new_edits_start_without_captions():
 def test_clean_copy_is_true_and_scan_is_a_task_in_edit():
     assert "Nothing invents missing pixels" not in CLEAN
     assert "AI fill rebuilds the background" in CLEAN
-    assert "Find text on screen" in CLEAN
+    assert "Check this scene" in CLEAN and "Scan video" in CLEAN
     assert "/check/cancel" in CLEAN
     assert "scanProgressRow" in CLEAN
     assert "scanPrompt" in CLEAN

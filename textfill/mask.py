@@ -44,6 +44,44 @@ def layer_rect(layer: dict, width: int, height: int) -> Rect:
     return x0, y0, max(x0, x1), max(y0, y1)
 
 
+def layer_rects(layer: dict, width: int, height: int) -> list[Rect]:
+    """Every pixel rectangle a layer covers on the source frame.
+
+    A freehand painter mask is a stroke object (or a legacy flat point list).
+    A box layer keeps the original padded rectangle.
+    """
+    mask = layer.get("mask")
+    if not mask:
+        rect = layer_rect(layer, width, height)
+        return [rect]
+    rects: list[Rect] = []
+    if isinstance(mask, dict):
+        strokes = mask.get("strokes") or []
+    else:
+        strokes = [{"r": 0.025, "points": mask}]
+    for stroke in strokes:
+        try:
+            radius = float((stroke or {}).get("r", 0.02))
+        except (TypeError, ValueError):
+            radius = 0.02
+        for point in (stroke or {}).get("points") or []:
+            try:
+                cx = float(point.get("x", 0.0)) * width
+                cy = float(point.get("y", 0.0)) * height
+            except (TypeError, ValueError):
+                continue
+            rx = max(2.0, radius * width)
+            ry = rx
+            pad = max(PAD_MIN_PX, PAD_RATIO * rx * 2)
+            x0 = max(0, int(math.floor(cx - rx - pad)))
+            y0 = max(0, int(math.floor(cy - ry - pad)))
+            x1 = min(width, int(math.ceil(cx + rx + pad)))
+            y1 = min(height, int(math.ceil(cy + ry + pad)))
+            if x1 > x0 and y1 > y0:
+                rects.append((x0, y0, x1, y1))
+    return rects
+
+
 def layer_windows(layer: dict) -> list[tuple[float, float]] | None:
     """Active source-time windows, or None when the layer is always on."""
     ranges = layer.get("ranges") or []
@@ -68,18 +106,19 @@ def frame_rects(
     """Rectangles to fill on each frame of a span that starts at ``start``."""
     prepared = []
     for layer in layers:
-        rect = layer_rect(layer, width, height)
-        if rect[2] <= rect[0] or rect[3] <= rect[1]:
+        rects = layer_rects(layer, width, height)
+        if not rects:
             continue
-        prepared.append((rect, layer_windows(layer)))
+        prepared.append((rects, layer_windows(layer)))
     out: list[list[Rect]] = []
     step = 1.0 / float(fps)
     for index in range(int(frames)):
         # Frame centre time, so a window edge between frames is not ambiguous.
         at = float(start) + (index + 0.5) * step
         rects = [
-            rect for rect, windows in prepared
+            rect for group, windows in prepared
             if windows is None or any(lo <= at < hi for lo, hi in windows)
+            for rect in group
         ]
         out.append(rects)
     return out

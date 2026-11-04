@@ -118,6 +118,7 @@ def span_key(
                 "box": layer.get("box"),
                 "ranges": layer.get("ranges") or [],
                 "tracklet": layer.get("tracklet_id"),
+                "mask": layer.get("mask"),
             }
             for layer in layers
         ],

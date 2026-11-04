@@ -102,6 +102,11 @@ try {
   }, { id: jobId });
   page = await context.newPage();
   page.on("pageerror", (error) => pageErrors.push(String(error?.message || error)));
+  page.on("request", (req) => {
+    if (req.method() === "PATCH" && req.url().includes("/edits/")) {
+      captured.patches = (captured.patches || 0) + 1;
+    }
+  });
 
   await page.route(new RegExp(`/api/jobs/${jobId}/check$`), (route) => (
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(report) })
@@ -175,18 +180,17 @@ try {
 
   const blocked = page.locator(".st-found-row.is-blocked");
   assert(await blocked.count() === 2, "watermark and screen UI should be blocked");
-  assert(
-    (await page.locator(".st-found-row.is-blocked .st-found-chip").first().textContent())?.includes("Never removed"),
-    "blocked rows must say they are never removed",
-  );
-  const thumbOk = await page.locator(".st-found-thumb").first().evaluate(
-    (img) => img.complete && img.naturalWidth > 0,
-  );
-  assert(thumbOk, "the found-text thumbnail did not load");
+  const blockedText = await page.locator(".st-found-row.is-blocked .st-found-meta").first().textContent();
+  assert(/Watermark|Screen UI/.test(blockedText || ""), "blocked rows need a plain reason");
   assert(await page.locator(".st-found-tick:checked").count() === 1,
     "only the allowed subtitle should start ticked");
   assert(await page.locator(".st-found-method").inputValue() === "ai",
     "AI fill should be the default method when its model is ready");
+  await page.locator(".st-found-row .st-found-copy").first().click();
+  assert(
+    !(await page.locator(".st-found-row .st-found-meta").first().textContent())?.includes("Not in this cut"),
+    "row seek with real tracklet ranges must find the cut",
+  );
   assert(await page.locator(".st-found-engine").inputValue() === "lama",
     "the default fill engine should come from /api/fill/status");
 
@@ -199,30 +203,76 @@ try {
     "Remove all sent the wrong tracklets",
   );
 
-  const previewButton = page.locator(".st-fill-preview-run");
-  await previewButton.waitFor({ state: "visible", timeout: 15000 });
-  await page.waitForFunction(
-    () => {
-      const button = document.querySelector(".st-fill-preview-run");
-      return button && !button.disabled;
-    },
-    null,
-    { timeout: 30000 },
+  // Painter QA: create a mask on the detected subtitle and confirm it saves.
+  await page.locator(".st-found-paint").first().click();
+  const paintCanvas = page.locator("#st-preview-canvas");
+  const paintBox = await paintCanvas.boundingBox();
+  assert(paintBox && paintBox.width > 100, "preview is not measurable for painting");
+  await page.mouse.move(
+    paintBox.x + paintBox.width * 0.35,
+    paintBox.y + paintBox.height * 0.78,
   );
-  await previewButton.click();
-  await page.locator(".st-fill-compare-stage").waitFor({ state: "visible", timeout: 30000 });
-  assert(captured.previewBody?.method === "lama", "the preview did not ask for LaMa");
-  const slider = page.locator(".st-fill-slider");
-  await slider.evaluate((input) => {
-    input.value = "25";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  const clip = await page.locator(".st-fill-after").evaluate((img) => img.style.clipPath);
-  assert(clip.includes("25%"), `the before/after slider did not move (${clip})`);
+  await page.mouse.down();
+  await page.mouse.move(
+    paintBox.x + paintBox.width * 0.65,
+    paintBox.y + paintBox.height * 0.80,
+    { steps: 12 },
+  );
+  await page.mouse.up();
+  await page.waitForTimeout(1600);
+  const painter = await page.evaluate(async (id) => {
+    const sets = await (await fetch(`/api/jobs/${encodeURIComponent(id)}/clip-sets`)).json();
+    const set = (sets.clip_sets || [])[0];
+    const story = (set?.stories || [])[0];
+    if (!set || !story) return { error: "no story" };
+    const current = await (await fetch(
+      `/api/jobs/${encodeURIComponent(id)}/edits/current?set_id=${encodeURIComponent(set.id)}`
+      + `&story_id=${encodeURIComponent(story.id)}&aspect=9%3A16`,
+    )).json();
+    const edit = current.edit || current;
+    const pointCount = (layer) => {
+      const mask = layer.mask;
+      if (!mask) return 0;
+      if (Array.isArray(mask)) return mask.length;
+      return (mask.strokes || []).reduce((sum, stroke) => sum + (stroke.points || []).length, 0);
+    };
+    return {
+      layers: (edit.clean || []).length,
+      masks: (edit.clean || []).filter((layer) => pointCount(layer) > 0).length,
+      points: (edit.clean || []).reduce((sum, layer) => sum + pointCount(layer), 0),
+      ids: (edit.clean || []).map((layer) => layer.id),
+    };
+  }, jobId);
+  assert(painter.layers > 0, "painter did not create a clean layer");
+  assert(painter.masks > 0, "painter mask did not save");
+  assert(painter.points >= 2, `painter saved too few points (${painter.points})`);
+
+  assert(
+    await page.locator(".st-found-row.is-painted .st-found-paint:disabled").count() === 1,
+    "the painted detected row must disable its brush",
+  );
+  const paintLayerId = painter.ids.find((id) => String(id).startsWith("cl_paint_")) || "";
+  assert(paintLayerId, "paint layer id is missing");
+  const patchesBefore = captured.patches || 0;
+  await page.locator(".st-clean-compare").click();
+  await page.locator("#st-preview-compare").waitFor({ state: "visible", timeout: 30000 });
+  assert(
+    JSON.stringify(captured.previewBody?.layer_ids) === JSON.stringify([paintLayerId]),
+    `comparison must scope to the selected layer (${JSON.stringify(captured.previewBody?.layer_ids)})`,
+  );
+  assert(
+    Array.isArray(captured.previewBody?.clean) && captured.previewBody.clean.length > 0,
+    "comparison must send the draft Clean layers without saving",
+  );
+  assert((captured.patches || 0) === patchesBefore, "comparison saved the Edit before previewing");
+  assert(
+    await page.locator(".st-compare-before").evaluate((img) => img.complete && img.naturalWidth > 0),
+    "the before image did not load",
+  );
 
   if (screenshot) await page.screenshot({ path: screenshot, fullPage: false });
   assert(pageErrors.length === 0, `page errors: ${pageErrors.join(" | ")}`);
-  console.log("Found-text list, Remove all and the AI-fill preview passed.");
+  console.log("Found-text list, Remove all and painter mask passed.");
 } finally {
   await browser.close();
 }

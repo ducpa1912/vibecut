@@ -10,6 +10,7 @@ INDEX = (STUDIO / "index.js").read_text(encoding="utf-8")
 ELEMENTS = (STUDIO / "elements-panel.js").read_text(encoding="utf-8")
 LAYERS = (STUDIO / "layers-panel.js").read_text(encoding="utf-8")
 PREVIEW = (STUDIO / "preview.js").read_text(encoding="utf-8")
+CLEAN = (STUDIO / "layers" / "clean.js").read_text(encoding="utf-8")
 TIMELINE = (STUDIO / "timeline.js").read_text(encoding="utf-8")
 CSS = (STUDIO / "edit.css").read_text(encoding="utf-8")
 
@@ -17,12 +18,13 @@ CSS = (STUDIO / "edit.css").read_text(encoding="utf-8")
 def test_elements_panel_owns_moments_effects_text_and_audio():
     assert "mountElementsPanel" in INDEX
     assert '["moments", "Moments"' in ELEMENTS
-    assert '["elements", "Elements"' in ELEMENTS
+    assert '["elements", "Element"' in ELEMENTS
     assert '["text", "Text"' in ELEMENTS
     assert '["audio", "Audio"' in ELEMENTS
-    assert "Gallery" in ELEMENTS
-    assert "appendScene" in ELEMENTS and "appendBlank" in ELEMENTS
-    assert "openImport" in ELEMENTS and "openDissect" in ELEMENTS
+    assert "Gallery" not in ELEMENTS
+    assert "appendBlank" in ELEMENTS
+    assert "openImport" in ELEMENTS and "openScenePicker" in ELEMENTS
+    assert ".st-el-tab svg { display: block" in CSS
     assert 'id="st-edit-moments"' not in INDEX
 
 
@@ -109,3 +111,85 @@ def test_audio_rows_split_into_original_voice_and_bgm():
     labels = {row["id"]: row["label"] for row in rows}
     assert labels["text"] == "TextFX"
     assert labels["captions"] == "Caption · cues"
+
+
+def test_painter_mask_is_on_the_detected_text_layer():
+    clean = (STUDIO / "layers" / "clean.js").read_text(encoding="utf-8")
+    preview = (STUDIO / "preview.js").read_text(encoding="utf-8")
+    assert "startPaintRow" in clean
+    assert "st-found-paint" in clean
+    assert "mask" in clean and "Clear mask" in clean
+    assert "startPaint(layerId" in preview
+    assert "onPaint" in preview
+    assert "paintPoints" in preview
+    assert "appendPaintPoints" in INDEX
+    assert "startPaint: (layerId)" in INDEX
+
+
+def test_found_text_marks_share_the_existing_clean_lane():
+    timeline = (STUDIO / "timeline.js").read_text(encoding="utf-8")
+    assert 'ranges: Array.isArray(tracklet?.ranges)' in CLEAN
+    assert 'seekMissFound' in CLEAN
+    assert 'ctx.setFoundText([])' not in CLEAN
+    assert 'cleanRow.items.push' in timeline
+    assert 'found: true' in timeline
+    assert 'handlers.onFound(item.trackletId)' in timeline
+    assert 'foundText: foundForTimeline()' in INDEX
+    assert 'is-found' in (STUDIO / "edit.css").read_text(encoding="utf-8")
+
+
+@needs_node
+def test_scene_bounds_step_between_scene_starts():
+    rows = run_module(
+        "edit/model.js",
+        """return m.sceneBounds(
+          {sequence: [
+            {start: 10, end: 14, role: "hook"},
+            {start: 20, end: 25, role: "beat"},
+            {start: 30, end: 33, role: "payoff"},
+          ]},
+          null,
+        );""",
+    )
+    assert [row["start"] for row in rows] == [0, 4, 9]
+    assert [row["end"] for row in rows] == [4, 9, 12]
+    assert rows[0]["role"] == "hook"
+
+
+def test_preview_has_story_selector_scene_steps_zoom_and_span():
+    assert "st-preview-story-btn" in PREVIEW
+    assert "onSceneStep" in PREVIEW and "onSceneStep(-1)" in PREVIEW
+    assert "onSpan" in PREVIEW and "st-preview-span-in" in PREVIEW
+    assert "st-preview-zoom-in" in PREVIEW and "applyViewZoom" in PREVIEW
+    assert "viewPan" in PREVIEW and "translate(${state.viewPan.x}px" in PREVIEW
+    assert "st-preview-stage { border:" in CSS
+
+
+def test_moments_import_and_scene_picker_modals_exist():
+    assert "openImportModal" in INDEX and "st-import-mini" in INDEX
+    assert "openScenePicker" in INDEX and "st-scene-picker" in INDEX
+    assert '"This Project"' in INDEX and '"Library"' in INDEX
+    assert "Cut another video" in INDEX
+    assert "st-scene-video" in INDEX and "is-selected" in INDEX
+    assert "assets/video" in INDEX
+    assert "video-url" in INDEX and "video-path" in INDEX
+    assert "const linked = /^https?" in INDEX
+
+
+def test_audio_is_split_music_hub_and_narrative_voice_only():
+    audio = (STUDIO / "layers" / "audio.js").read_text(encoding="utf-8")
+    assert "musicOnly" in audio and "musicHub" in audio
+    assert '"Library"' in audio and '"Upload"' in audio and '"GenAI"' in audio
+    assert "narrativeOnly" in audio
+    assert "st-audio-mode-tab" in audio
+    assert '["original", "Original"], ["voice_over", "Voice-Over"], ["dub", "Dub"]' in audio
+    assert "narrativeOnly: true" in LAYERS
+
+
+def test_captions_and_look_start_folded_and_look_has_note():
+    captions = (STUDIO / "layers" / "captions.js").read_text(encoding="utf-8")
+    assert '"Style"' in captions and '`Lines · ${cueDraft.length}`' in captions
+    assert "st-cue-time-fold" in captions
+    color = (STUDIO / "layers" / "color.js").read_text(encoding="utf-8")
+    assert "full grading and filter revamp" in color
+    assert "Fine tune" in color

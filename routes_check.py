@@ -53,6 +53,9 @@ class CheckBody(BaseModel):
     attestation: bool | str | None = None
     sample_text: bool = True
     fps: float = Field(default=detect.DEFAULT_SAMPLE_FPS, ge=0.1, le=2.0)
+    # Optional source-time window for a scene-scoped pass.
+    start: float | None = Field(default=None, ge=0.0)
+    end: float | None = Field(default=None, ge=0.0)
 
 
 router = APIRouter()
@@ -146,6 +149,8 @@ def run_check_job(job_id: str, options: dict) -> dict:
             audio_extractor=pipeline.extract_audio,
             sample_text=bool(options.get("sample_text", True)),
             fps=float(options.get("fps") or detect.DEFAULT_SAMPLE_FPS),
+            start=float(options.get("start") or 0.0),
+            end=(None if options.get("end") is None else float(options.get("end"))),
             progress=progress,
         )
         recommendation = report.get("recommendation")
@@ -208,6 +213,8 @@ def start_check(job_id: str, body: CheckBody | None = None):
     options = {
         "sample_text": body.sample_text,
         "fps": body.fps,
+        "start": body.start,
+        "end": body.end,
     }
     CHECK_CANCELS[job_id] = threading.Event()
     _set_check(

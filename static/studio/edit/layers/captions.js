@@ -169,7 +169,7 @@ export function mountCaptionsPanel(host, ctx) {
     el("label", { class: "st-switch" }, [enabled, el("span", { text: "Show captions" })]),
   ]);
   host.append(head);
-  host.append(el("p", { class: "st-hint", text: `${track.cues?.length || 0} lines · style ${track.style_id || "clean"} · version ${track.version || 1}` }));
+  host.append(el("p", { class: "st-hint", text: `${track.cues?.length || 0} lines · ${track.style_id || "clean"}` }));
   host.append(autoSubtitlesBlock(ctx));
 
   const preset = el("select", { "aria-label": "Caption preset" });
@@ -316,7 +316,10 @@ export function mountCaptionsPanel(host, ctx) {
     ]),
     el("div", { class: "st-layer-foot" }, [apply]),
   ]);
-  host.append(styleBlock);
+  host.append(el("details", { class: "st-caption-fold" }, [
+    el("summary", { text: "Style" }),
+    styleBlock,
+  ]));
 
   const cueDraft = (track.cues || []).map((cue) => ({ ...cue }));
   const cueDirty = el("span", { class: "st-chip st-chip-busy", text: "Not saved", hidden: true });
@@ -356,9 +359,12 @@ export function mountCaptionsPanel(host, ctx) {
     cueList.append(el("div", { class: "st-cue" }, [
       label,
       text,
-      el("div", { class: "st-cue-times" }, [
-        field("Start", start),
-        field("End", end),
+      el("details", { class: "st-cue-time-fold" }, [
+        el("summary", { text: "Time" }),
+        el("div", { class: "st-cue-times" }, [
+          field("Start", start),
+          field("End", end),
+        ]),
       ]),
     ]));
   });
@@ -395,7 +401,10 @@ export function mountCaptionsPanel(host, ctx) {
     cueList,
     el("div", { class: "st-layer-foot" }, [saveCues]),
   ]);
-  host.append(cueBlock);
+  host.append(el("details", { class: "st-caption-fold" }, [
+    el("summary", { text: `Lines · ${cueDraft.length}` }),
+    cueBlock,
+  ]));
 
   for (const warning of track.warnings || []) {
     host.append(el("p", { class: "st-warning", text: String(warning) }));

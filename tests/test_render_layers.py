@@ -1061,3 +1061,77 @@ def test_file_clip_renders_from_its_asset(real_env):
     )
     assert result["duration"] == pytest.approx(2.0, abs=0.15)
     assert (env["dir"] / "renders" / result["path"]).is_file()
+
+
+def test_painter_mask_compiles_to_source_space_and_rects():
+    edit = _edit(clean=[{
+        "kind": "fill",
+        "method": "sttn",
+        "box": {"x": 0.3, "y": 0.4, "w": 0.2, "h": 0.1},
+        "ranges": [{"start": 0.0, "end": 2.0}],
+        "mask": [
+            {"x": 0.25, "y": 0.5, "r": 0.04},
+            {"x": 0.75, "y": 0.5, "r": 0.04},
+        ],
+    }])
+    compiled = compose_render.compile_edit(
+        edit, clips=CLIPS, source={"width": 1920, "height": 1080},
+        scenes=SCENES, size=(540, 960),
+    )
+    mask = compiled["segments"][0]["fill"]["layers"][0]["mask"]
+    assert mask["space"] == "source"
+    points = mask["strokes"][0]["points"]
+    assert len(points) == 2
+    assert 0.40 < points[0]["x"] < 0.44
+    assert 0.55 < points[1]["x"] < 0.60
+
+    from textfill import mask as mask_tools
+    rects = mask_tools.layer_rects(
+        {"mask": {"space": "source", "strokes": [{
+            "id": "st_a", "r": 0.04, "points": [{"x": 0.25, "y": 0.5}],
+        }]}}, 1920, 1080,
+    )
+    assert len(rects) == 1
+    x0, y0, x1, y1 = rects[0]
+    assert x1 > x0 and y1 > y0
+    assert abs((x1 - x0) - (y1 - y0)) <= 4
+
+    stale = _edit(clean=[{
+        "kind": "fill",
+        "method": "sttn",
+        "box": {"x": 0.3, "y": 0.4, "w": 0.2, "h": 0.1},
+        "ranges": [{"start": 0.0, "end": 2.0}],
+        "mask": {
+            "space": "output",
+            "aspect": "16:9",
+            "strokes": [{
+                "id": "st_a", "r": 0.04,
+                "points": [{"x": 0.25, "y": 0.5}],
+            }],
+        },
+    }])
+    compiled_stale = compose_render.compile_edit(
+        stale, clips=CLIPS, source={"width": 1920, "height": 1080},
+        scenes=SCENES, size=(540, 960),
+    )
+    assert "mask" not in compiled_stale["segments"][0]["fill"]["layers"][0]
+
+
+def test_concat_fallback_uses_the_selected_encoder(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            raise render.PipelineError("copy failed")
+
+    monkeypatch.setattr(render, "_run", fake_run)
+    segment = tmp_path / "segment.mp4"
+    segment.write_bytes(b"x")
+    render._concat_video(
+        tmp_path, tmp_path / "master.mp4", [segment], "draft",
+        encoder="videotoolbox",
+    )
+    assert len(calls) == 2
+    assert "h264_videotoolbox" in calls[1]
+    assert "libx264" not in calls[1]

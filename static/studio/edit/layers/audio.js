@@ -332,6 +332,8 @@ export function mountAudioPanel(host, ctx) {
   let disposed = false;
   const transcriptOnly = Boolean(ctx.transcriptOnly);
   const libraryOnly = Boolean(ctx.libraryOnly);
+  const musicOnly = Boolean(ctx.musicOnly);
+  const narrativeOnly = Boolean(ctx.narrativeOnly);
   const edit = ctx.getEdit();
   let plan = clone(edit?.audio || { mode: "original" });
   if (!AUDIO_LABELS[plan.mode]) plan.mode = "original";
@@ -1383,30 +1385,39 @@ export function mountAudioPanel(host, ctx) {
   }
 
   function modeCard() {
-    const select = el("select", { "aria-label": "Audio mode" });
-    for (const [value, label] of Object.entries(AUDIO_LABELS)) {
-      select.append(el("option", { value, text: label, selected: value === (plan.mode || "original") }));
+    const current = ["original", "original_bed", "music_only"].includes(plan.mode)
+      ? "original"
+      : plan.mode;
+    const card = el("div", { class: "st-card st-check-card st-audio-mode" });
+    card.append(el("h3", { text: "Narrative mode" }));
+    const tabs = el("div", { class: "st-audio-mode-tabs", role: "tablist", "aria-label": "Narrative mode" });
+    for (const [value, label] of [["original", "Original"], ["voice_over", "Voice-Over"], ["dub", "Dub"]]) {
+      const active = current === value;
+      const button = el("button", {
+        class: `st-audio-mode-tab${active ? " is-active" : ""}`,
+        type: "button",
+        role: "tab",
+        "aria-selected": active ? "true" : "false",
+        text: label,
+      });
+      button.addEventListener("click", () => {
+        if (active) return;
+        const previous = plan.mode;
+        plan.mode = value;
+        plan.mode_chosen = true;
+        if ((previous === "dub") !== (plan.mode === "dub")) {
+          initialOverrides = {};
+          scriptSaved = new Set();
+          scriptValues = {};
+          scriptTouched = new Set();
+        }
+        scheduleSave();
+        render();
+      });
+      tabs.append(button);
     }
-    select.addEventListener("change", () => {
-      const previous = plan.mode;
-      plan.mode = select.value;
-      plan.mode_chosen = true;
-      // A script written for one mode is the wrong language for the other:
-      // Voice-over lines are source-language, Dub lines are translated.
-      if ((previous === "dub") !== (plan.mode === "dub")) {
-        initialOverrides = {};
-        scriptSaved = new Set();
-        scriptValues = {};
-        scriptTouched = new Set();
-      }
-      scheduleSave();
-      render();
-    });
-    const card = el("div", { class: "st-card st-check-card" }, [
-      el("h3", { text: "Sound" }),
-      field("Mode", select),
-      el("p", { class: "st-hint", text: MODE_HELP[plan.mode] || MODE_HELP.original }),
-    ]);
+    card.append(tabs);
+    card.append(el("p", { class: "st-hint", text: MODE_HELP[current] || MODE_HELP.original }));
     return card;
   }
 
@@ -1658,6 +1669,66 @@ export function mountAudioPanel(host, ctx) {
     return card;
   }
 
+  function uploadOnlyCard() {
+    const card = el("div", { class: "st-card st-check-card" });
+    card.append(el("h3", { text: "Upload music" }));
+    card.append(el("p", { class: "st-hint", text: "Your own track is copied into this job and always works offline." }));
+    const file = el("input", { type: "file", accept: "audio/*,.wav,.mp3,.m4a,.aac,.flac,.ogg,.opus,.aiff,.aif", "aria-label": "Upload music" });
+    file.style.minWidth = "0";
+    file.style.flex = "1 1 auto";
+    const upload = el("button", {
+      class: "st-btn st-btn-primary st-btn-small",
+      type: "button",
+      text: uploadLoading ? "Uploading…" : "Upload",
+      disabled: uploadLoading,
+    });
+    upload.addEventListener("click", () => {
+      const chosen = file.files && file.files[0];
+      if (!chosen) {
+        setNotice("Choose an audio file first.", "bad");
+        render();
+        return;
+      }
+      void uploadMusic(chosen);
+    });
+    card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [file, upload]));
+    card.append(el("p", { class: "st-field-hint", text: "WAV, MP3, M4A, AAC, FLAC, OGG or AIFF." }));
+    return card;
+  }
+
+  function musicHub() {
+    const host = el("div", { class: "st-music-hub" });
+    const tabs = el("div", { class: "st-media-tabs", role: "tablist", "aria-label": "Music source" });
+    let active = "library";
+    const body = el("div");
+    const renderTab = () => {
+      tabs.replaceChildren();
+      for (const [id, label] of [["library", "Library"], ["upload", "Upload"], ["genai", "GenAI"]]) {
+        const button = el("button", {
+          class: `st-media-tab${active === id ? " is-active" : ""}`,
+          type: "button", role: "tab", "aria-selected": active === id ? "true" : "false", text: label,
+        });
+        button.addEventListener("click", () => { active = id; renderTab(); });
+        tabs.append(button);
+      }
+      body.replaceChildren();
+      if (active === "library") body.append(libraryCard());
+      else if (active === "upload") body.append(uploadOnlyCard());
+      else {
+        body.append(briefCard());
+        body.append(cloudCard());
+        body.append(lockedCard());
+      }
+    };
+    renderTab();
+    host.append(el("div", { class: "st-card st-check-card" }, [
+      el("h3", { text: "Music" }),
+      el("p", { class: "st-hint", text: "Library, upload or generate a bed. Locking copies it into this job." }),
+    ]));
+    host.append(tabs, body);
+    return host;
+  }
+
   function musicCard() {
     const card = el("div", { class: "st-card st-check-card" });
     card.append(el("h3", { text: "Music bed" }));
@@ -1741,7 +1812,12 @@ export function mountAudioPanel(host, ctx) {
       card.append(el("div", { class: "st-layer-add", style: "margin-top:9px" }, [preview]));
       card.append(el("p", { class: "st-field-hint", text: "The sample speaks the story hook, or a short test line when the hook is empty." }));
     }
-    if (engines && voiceRoomOn()) card.append(cloneBlock());
+    if (engines && voiceRoomOn()) {
+      card.append(el("details", { class: "st-caption-fold" }, [
+        el("summary", { text: "Clone a voice (advanced)" }),
+        cloneBlock(),
+      ]));
+    }
     return card;
   }
 
@@ -2241,6 +2317,10 @@ export function mountAudioPanel(host, ctx) {
       host.replaceChildren(libraryCard());
       return;
     }
+    if (musicOnly) {
+      host.replaceChildren(musicHub());
+      return;
+    }
     host.replaceChildren();
     const blocked = dubBlockReason(plan.mode, targetLang);
     const head = el("div", { class: "st-card st-check-card" }, [
@@ -2273,14 +2353,14 @@ export function mountAudioPanel(host, ctx) {
     host.append(voiceCard());
     if (plan.mode === "dub") host.append(dubCard());
     if (plan.mode === "dub" || plan.mode === "voice_over") host.append(scriptCard());
-    host.append(musicCard());
+    if (!narrativeOnly) host.append(musicCard());
     host.append(mixCard());
     host.append(el("p", { class: "st-hint", text: "The mix is stored in this edit. Voice and music are rendered by the audio build; nothing is sent to a cloud service unless you press Preview on a cloud voice." }));
   }
 
   render();
   if (!libraryOnly) void loadTranscript();
-  if (!transcriptOnly && !libraryOnly) void loadEngines();
+  if (!transcriptOnly && !libraryOnly && !musicOnly) void loadEngines();
   if (!transcriptOnly) void loadLibrary();
 
   return () => {

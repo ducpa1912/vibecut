@@ -183,8 +183,11 @@ def test_clean_panel_shows_scan_guidance_with_an_open_check_action():
     assert 'const SCAN_REQUIRED = "Run Scan footage first."' in clean
     assert "autoCleanFailure(error)" in clean
     assert "st-auto-clean-status" in clean
-    assert 'text: "Open Check"' in clean
-    assert 'href: "#/check"' in clean
+    assert "Check this scene" in clean
+    assert "Scan video" in clean
+    assert "startTextScan({ scene = false }" in clean
+    assert "start: Number(range.start)" in clean
+    assert "reportMatchesScene" in clean
 
 
 def test_clean_panel_keeps_the_rights_gate_and_manual_add_box():

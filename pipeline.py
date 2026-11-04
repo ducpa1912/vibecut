@@ -841,6 +841,8 @@ def extract_text_frames(
     max_frames: int = CHECK_SAMPLE_MAX_FRAMES,
     out_dir: Path | None = None,
     progress: Callable[[float, str], None] | None = None,
+    start: float = 0.0,
+    end: float | None = None,
 ) -> list[dict]:
     """Extract evenly spaced stills for the Check text pass.
 
@@ -851,9 +853,14 @@ def extract_text_frames(
     duration = max(0.0, float(duration or 0.0))
     if duration <= 0:
         return []
+    window_start = max(0.0, min(duration, float(start or 0.0)))
+    window_end = duration if end is None else max(window_start, min(duration, float(end)))
+    span = max(0.0, window_end - window_start)
+    if span <= 0:
+        return []
     cadence = min(max(float(fps or CHECK_SAMPLE_FPS), 0.05), 4.0)
-    if duration * cadence > max_frames:
-        cadence = max(0.05, max_frames / duration)
+    if span * cadence > max_frames:
+        cadence = max(0.05, max_frames / span)
     directory = Path(out_dir) if out_dir else job_dir / "check" / "frames"
     if directory.exists():
         shutil.rmtree(directory, ignore_errors=True)
@@ -862,6 +869,7 @@ def extract_text_frames(
         _ffmpeg(), "-y", "-v", "error", *(
             ["-progress", "pipe:1", "-nostats"] if progress is not None else []
         ),
+        "-ss", f"{window_start:.3f}", "-t", f"{span:.3f}",
         "-i", path,
         "-vf", f"fps={cadence:.4f},scale={CHECK_FRAME_WIDTH}:-2",
         "-q:v", "4", str(directory / "%06d.jpg"),
@@ -871,8 +879,8 @@ def extract_text_frames(
     else:
         _run_progress(
             cmd,
-            duration=duration,
-            timeout=max(300, int(duration * 1.5)),
+            duration=span,
+            timeout=max(300, int(span * 1.5)),
             progress=progress,
             label="Reading the source",
         )
@@ -886,9 +894,9 @@ def extract_text_frames(
         {
             "index": index,
             "file": frame.name,
-            "t": round(index * window, 3),
-            "start": round(index * window, 3),
-            "end": round(min(duration, (index + 1) * window), 3),
+            "t": round(window_start + index * window, 3),
+            "start": round(window_start + index * window, 3),
+            "end": round(min(window_end, window_start + (index + 1) * window), 3),
             "ocr_available": True,
         }
         for index, frame in enumerate(files)
@@ -904,6 +912,8 @@ def read_text_samples(
     max_frames: int = CHECK_SAMPLE_MAX_FRAMES,
     keep: bool | None = None,
     progress: Callable[[float, str], None] | None = None,
+    start: float = 0.0,
+    end: float | None = None,
 ) -> dict:
     """Run the 0.5 fps text pass and return OCR lines with geometry.
 
@@ -921,6 +931,7 @@ def read_text_samples(
         progress(0.0, "Pulling frames to read text")
     frames = extract_text_frames(
         path, job_dir, duration, fps=fps, max_frames=max_frames, out_dir=directory,
+        start=start, end=end,
         progress=(
             (lambda fraction, message: progress(0.08 * fraction, message))
             if progress is not None else None

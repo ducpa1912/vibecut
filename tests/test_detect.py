@@ -272,6 +272,17 @@ def test_extract_text_frames_lowers_cadence_for_long_sources(monkeypatch, tmp_pa
     assert frames[1]["start"] == pytest.approx(5.0)
 
 
+def test_extract_text_frames_offsets_a_scene_window(monkeypatch, tmp_path):
+    calls = _fake_extract(monkeypatch, 20.0, create=2)
+    frames = pipeline.extract_text_frames(
+        "/tmp/source.mp4", tmp_path, 20.0, start=4.0, end=8.0,
+    )
+    assert frames[0]["start"] == 4.0
+    assert frames[-1]["end"] == 8.0
+    assert calls["cmd"][calls["cmd"].index("-ss") + 1] == "4.000"
+    assert calls["cmd"][calls["cmd"].index("-t") + 1] == "4.000"
+
+
 def test_extract_text_frames_returns_empty_for_zero_duration(monkeypatch, tmp_path):
     _fake_extract(monkeypatch, 0.0)
     assert pipeline.extract_text_frames("/tmp/source.mp4", tmp_path, 0.0) == []
@@ -808,6 +819,24 @@ def test_run_check_samples_text_and_persists(tmp_path):
     stored = detect.load_report(tmp_path)
     assert stored == report
     assert report["engine"]["sampled_pass"] is True
+
+
+def test_run_check_passes_a_scene_window_to_the_sampler(tmp_path):
+    job = job_record()
+    calls = {}
+
+    def sampler(path, job_dir, duration, *, fps, max_frames, **kwargs):
+        calls.update({"duration": duration, **kwargs})
+        return sample_payload(subtitle_rows(2, start=5.0))
+
+    report = detect.run_check(
+        "job1", job, tmp_path, sampler=sampler, audio_extractor=None,
+        start=4.0, end=8.0,
+    )
+    assert calls["duration"] == 20.0
+    assert calls["start"] == 4.0 and calls["end"] == 8.0
+    assert report["scope"] == {"start": 4.0, "end": 8.0}
+    assert report["status"] == "ready"
 
 
 def test_run_check_survives_a_sampler_failure(tmp_path):

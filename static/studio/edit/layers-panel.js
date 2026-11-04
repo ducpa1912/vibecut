@@ -150,11 +150,8 @@ function mountTranscriptLayer(host, ctx) {
   mountTranscriptPanel(transcriptHost, ctx);
 
   if (enabled) {
-    const details = el("details", { class: "st-caption-style-fold" });
-    details.append(el("summary", { text: "Caption style" }));
     const captionHost = el("div", { class: "st-caption-layer" });
-    details.append(captionHost);
-    host.append(details);
+    host.append(captionHost);
     mountCaptionsPanel(captionHost, ctx);
   }
 }
@@ -173,7 +170,7 @@ function mountNarrativeLayer(host, ctx) {
   fadeIn.addEventListener("input", commit);
   fadeOut.addEventListener("input", commit);
   const fadeBlock = el("div", { class: "st-audio-fade" }, [
-    el("span", { class: "st-layer-note", text: "Sound fade" }),
+    el("span", { class: "st-layer-note", text: "Original sound fade" }),
     el("div", { class: "st-control-grid" }, [
       el("label", { class: "st-field" }, [el("span", { text: "In (s)" }), fadeIn]),
       el("label", { class: "st-field" }, [el("span", { text: "Out (s)" }), fadeOut]),
@@ -182,7 +179,7 @@ function mountNarrativeLayer(host, ctx) {
   host.append(fadeBlock);
   const audioHost = el("div", { class: "st-narrative-layer" });
   host.append(audioHost);
-  mountAudioPanel(audioHost, ctx);
+  mountAudioPanel(audioHost, { ...ctx, narrativeOnly: true });
 }
 
 function mountZoomLayer(host, ctx) {

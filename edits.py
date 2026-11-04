@@ -126,7 +126,7 @@ _STORY_REF_KEYS = frozenset({
 })
 _CLEAN_KEYS = frozenset({
     "id", "kind", "box", "ranges", "z", "color", "opacity", "radius", "label",
-    "tracklet_id", "tracklet_kind", "method",
+    "tracklet_id", "tracklet_kind", "method", "mask",
 })
 # Detected Check kinds an optional Clean layer may name. The layer's own
 # ``kind`` remains the cleanup method; ``tracklet_kind`` carries provenance
@@ -521,10 +521,70 @@ def normalize_clean(value: Any) -> list[dict]:
             minimum=2, maximum=64,
         )
         z = _integer(raw.get("z", 0), f"clean[{index}].z", minimum=0, maximum=99)
+        mask = None
+        if raw.get("mask") is not None:
+            raw_mask = raw["mask"]
+            strokes = []
+            if isinstance(raw_mask, (list, tuple)):
+                points = []
+                stroke_radius = 0.025
+                for point in raw_mask:
+                    if not isinstance(point, dict):
+                        raise EditError(f"clean[{index}].mask points must be objects.")
+                    _unknown(point, frozenset({"x", "y", "r"}), f"clean[{index}].mask")
+                    if not points and point.get("r") is not None:
+                        stroke_radius = _number(point.get("r"), f"clean[{index}].mask.r", minimum=0.002, maximum=0.2)
+                    points.append({
+                        "x": round(_number(point.get("x"), f"clean[{index}].mask.x", minimum=0.0, maximum=1.0), 4),
+                        "y": round(_number(point.get("y"), f"clean[{index}].mask.y", minimum=0.0, maximum=1.0), 4),
+                    })
+                if points:
+                    strokes.append({"id": "st_1", "r": round(stroke_radius, 4), "points": points[:120]})
+                space = "output"
+                aspect = None
+            elif isinstance(raw_mask, dict):
+                _unknown(raw_mask, frozenset({"space", "aspect", "strokes"}), f"clean[{index}].mask")
+                space = str(raw_mask.get("space") or "output").strip().lower()
+                if space not in ("output", "source"):
+                    raise EditError(f"clean[{index}].mask.space must be output or source.")
+                aspect = str(raw_mask.get("aspect") or "").strip() or None
+                raw_strokes = raw_mask.get("strokes") or []
+                if not isinstance(raw_strokes, (list, tuple)):
+                    raise EditError(f"clean[{index}].mask.strokes must be a list.")
+                if len(raw_strokes) > 20:
+                    raise EditError(f"clean[{index}].mask supports at most 20 strokes.")
+                total = 0
+                for stroke_index, stroke in enumerate(raw_strokes):
+                    if not isinstance(stroke, dict):
+                        raise EditError(f"clean[{index}].mask.strokes must be objects.")
+                    _unknown(stroke, frozenset({"id", "r", "points"}), f"clean[{index}].mask.strokes")
+                    stroke_radius = _number(stroke.get("r", 0.025), f"clean[{index}].mask.strokes[{stroke_index}].r", minimum=0.002, maximum=0.2)
+                    points = []
+                    for point in stroke.get("points") or []:
+                        if not isinstance(point, dict):
+                            raise EditError(f"clean[{index}].mask points must be objects.")
+                        _unknown(point, frozenset({"x", "y"}), f"clean[{index}].mask.points")
+                        points.append({
+                            "x": round(_number(point.get("x"), f"clean[{index}].mask.x", minimum=0.0, maximum=1.0), 4),
+                            "y": round(_number(point.get("y"), f"clean[{index}].mask.y", minimum=0.0, maximum=1.0), 4),
+                        })
+                        total += 1
+                        if total > 120:
+                            raise EditError(f"clean[{index}].mask supports at most 120 points.")
+                    if points:
+                        stroke_id = _safe_id(stroke.get("id") or f"st_{stroke_index + 1}", f"clean[{index}].mask.strokes[{stroke_index}].id")
+                        strokes.append({"id": stroke_id, "r": round(stroke_radius, 4), "points": points})
+            else:
+                raise EditError(f"clean[{index}].mask must be a list or object.")
+            if strokes:
+                mask = {"space": space, "strokes": strokes}
+                if aspect:
+                    mask["aspect"] = aspect
         layer = {
             "id": layer_id,
             "kind": kind,
             "box": normalize_source_box(raw.get("box"), f"clean[{index}].box"),
+            **({"mask": mask} if mask else {}),
             "ranges": _normalize_ranges(raw.get("ranges"), f"clean[{index}].ranges"),
             "z": z,
             "color": color,

@@ -178,9 +178,19 @@ try {
 
   // 3. Focus and widen the start again; the same handle keeps focus.
   const startHandle = page.locator(".st-tl-trim-start").first();
+  await page.waitForFunction(
+    () => document.querySelector(".st-tl-trim-start")?.getAttribute("aria-disabled") === "false",
+    null,
+    { timeout: 15000 },
+  );
   await startHandle.focus();
-  assert(await startHandle.evaluate(
-    (node) => document.activeElement === node,
+  await page.waitForFunction(
+    () => document.activeElement?.dataset?.edge === "start",
+    null,
+    { timeout: 5000 },
+  );
+  assert(await page.evaluate(
+    () => document.activeElement?.dataset?.edge === "start",
   ), "start handle did not take focus");
   await page.keyboard.press("ArrowLeft");
   const afterWiden = await durationChanged(afterEnd, 1);
@@ -190,9 +200,9 @@ try {
     () => document.activeElement?.dataset?.edge === "start",
     null,
     { timeout: 5000 },
-  ).catch(() => {});
-  assert(await startHandle.evaluate(
-    (node) => document.activeElement === node,
+  );
+  assert(await page.evaluate(
+    () => document.activeElement?.dataset?.edge === "start",
   ), "start handle lost focus after the keyboard trim");
 
   // One duration source: the header and the timeline span agree.
