@@ -64,7 +64,8 @@ class CloneError(Exception):
 
 
 def voices_dir() -> Path:
-    return settings_store.DATA / "voices"
+    override = (os.environ.get("VIBECUT_VOICES_DIR") or "").strip()
+    return Path(override).expanduser() if override else settings_store.DATA / "voices"
 
 
 def store_path() -> Path:

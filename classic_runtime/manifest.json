@@ -45,9 +45,9 @@
   },
   {
    "path": "audio.py",
-   "source": "classic 2f385a2",
-   "sha256": "942c013d2edf38b83a1fb5bf7c292ae0af43bf04b2ca6799d1e67448c22d716d",
-   "feature_version": "1.0.0"
+   "source": "classic: lane-owned voices and music folders",
+   "sha256": "27cdb16978ab318dd013a5c49fa89d5af974649ebd43422b4f476923b395e2cf",
+   "feature_version": "1.0.1"
   },
   {
    "path": "batch.py",
@@ -429,9 +429,9 @@
   },
   {
    "path": "voice_clone.py",
-   "source": "classic 2f385a2",
-   "sha256": "28af3bd4d71f1fa0f8bdde200845cc0d88cc3a2e5798751ae21795303d81a4db",
-   "feature_version": "1.0.0"
+   "source": "classic: lane-owned voices and music folders",
+   "sha256": "687a767b442f97b6c3498e91ba8f8a02c3fc430eafb3d80ae26e3e1b45bd7ff4",
+   "feature_version": "1.0.1"
   },
   {
    "path": "voice_extract.py",

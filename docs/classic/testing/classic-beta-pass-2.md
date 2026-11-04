@@ -19,7 +19,7 @@ python3 app.py
 
 Then open `http://127.0.0.1:8796` in your browser. The first run creates `~/vibecut-lanes/classic`; your normal VibeCut data is untouched.
 
-**Videos to use.** Classic has no media files yet on this Mac: `~/vibecut-lanes/media/classic/` does not exist, and the lane's data folder holds 0 jobs. Create that folder if you like, or keep your clips anywhere, and pick them by role. Nothing in this pass generates media, and no clip is copied into the project.
+**Videos to use.** Classic's media folder is `data/media/` in the Classic checkout (gitignored). Keep your clips there and pick them by role. Nothing in this pass generates media, and no clip is copied into the project.
 
 | Role | What it must be | Used by |
 |---|---|---|

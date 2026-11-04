@@ -22,7 +22,10 @@ eval "$(scripts/lane-env.sh classic)"   # or studio / voice
 python3 app.py
 ```
 
-Media for a lane lives in `~/vibecut-lanes/media/<lane>`. Tests get their own
+Classic keeps its own files inside its checkout, in the gitignored `data/` folder:
+`data/media` (real videos for tests), `data/recordings` (test recordings),
+`data/voices` (cloned voices) and `data/music` (music library). Python, packages,
+models and Playwright stay shared on the machine for development. Tests get their own
 settings and secrets files per test, so a saved key or rights lock cannot leak
 into the next test.
 

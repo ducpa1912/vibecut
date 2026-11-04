@@ -56,9 +56,9 @@ Terminal 2:
 A browser opens at `http://127.0.0.1:8796/`. Stop with **Ctrl-C** in Terminal 2,
 or just close the browser. Either way the recorder saves:
 
-- `~/vibecut-lanes/recordings/classic/<timestamp>-classic-ui-pass/trace.zip`
-- `~/vibecut-lanes/recordings/classic/<timestamp>-classic-ui-pass/video/*.webm`
-- `~/vibecut-lanes/recordings/classic/<timestamp>-classic-ui-pass/session.log` (clicks, changes, console errors)
+- `data/recordings/<timestamp>-classic-ui-pass/trace.zip`
+- `data/recordings/<timestamp>-classic-ui-pass/video/*.webm`
+- `data/recordings/<timestamp>-classic-ui-pass/session.log` (clicks, changes, console errors)
 
 The recorder masks password/key/token/cookie values. Do not paste a key while
 recording unless you accept it in the video.

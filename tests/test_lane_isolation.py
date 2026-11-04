@@ -6,7 +6,9 @@ A shared page or a shared port is how one lane breaks another during a merge.
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -102,6 +104,60 @@ def test_classic_keeps_its_packs_and_its_own_launcher():
     assert "app.py" in text
     assert "classic_app" not in text
     assert "vibecut-studio" not in text
+
+
+def _classic_env() -> dict[str, str]:
+    out = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "lane-env.sh"), "classic"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    rows = [line.removeprefix("export ").split("=", 1) for line in out.splitlines()]
+    return {name: value for name, value in rows}
+
+
+def test_classic_keeps_its_own_files_in_the_gitignored_data_folder():
+    env = _classic_env()
+    assert env["VIBECUT_LANE_MEDIA"] == str(ROOT / "data" / "media")
+    assert env["VIBECUT_LANE_RECORDINGS"] == str(ROOT / "data" / "recordings")
+    assert env["VIBECUT_VOICES_DIR"] == str(ROOT / "data" / "voices")
+    assert env["VIBECUT_MUSIC_DIR"] == str(ROOT / "data" / "music")
+    tracked = subprocess.run(
+        ["git", "ls-files", "data"], cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout
+    assert tracked == ""
+    assert "data/" in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+
+
+def test_other_lanes_get_no_paths_from_classics_checkout():
+    out = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "lane-env.sh"), "studio"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert str(ROOT) not in out
+    assert "VIBECUT_LANE_MEDIA" not in out
+
+
+def test_classic_loads_fill_models_from_the_shared_cache_only():
+    fill = Path(_classic_env()["VIBECUT_FILL_MODELS"])
+    assert fill == Path.home() / ".cache" / "vibecut" / "models" / "fill"
+    assert "vibecut-lanes" not in str(fill)
+
+
+def test_the_app_really_uses_the_voices_and_music_folders(tmp_path, monkeypatch):
+    import voice_clone
+
+    monkeypatch.setenv("VIBECUT_VOICES_DIR", str(tmp_path / "voices"))
+    assert voice_clone.voices_dir() == tmp_path / "voices"
+    assert voice_clone.store_path() == tmp_path / "voices" / "clones.json"
+    monkeypatch.delenv("VIBECUT_VOICES_DIR")
+    assert voice_clone.voices_dir() == voice_clone.settings_store.DATA / "voices"
+
+    code = "import audio; print(audio.MUSIC_DIRS['library'])"
+    out = subprocess.run(
+        [sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, check=True,
+        env={**os.environ, "VIBECUT_MUSIC_DIR": str(tmp_path / "music")},
+    ).stdout
+    assert out.strip().splitlines()[-1] == str(tmp_path / "music")
 
 
 def test_ship_lane_never_moves_main():

@@ -36,7 +36,11 @@ import workflow_config
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 MUSIC_DIRS = {
-    "library": ASSETS / "music" / "library",
+    "library": (
+        Path(os.environ["VIBECUT_MUSIC_DIR"]).expanduser()
+        if (os.environ.get("VIBECUT_MUSIC_DIR") or "").strip()
+        else ASSETS / "music" / "library"
+    ),
     "generated": ASSETS / "music" / "generated",
 }
 VOICE_DIRS = {

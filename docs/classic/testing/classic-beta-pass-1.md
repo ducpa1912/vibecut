@@ -4,7 +4,7 @@
 and Vietnamese copy. Use `classic-beta-pass-2.md` for the current build.
 
 This file replaces the earlier draft. Every step below comes from the founder's
-own recordings in `~/vibecut-lanes/recordings/classic-pass-1`, `-2` and `-3`
+own recordings `classic-pass-1`, `-2` and `-3`, since removed on purpose
 (`actions.spec.js` for the clicks, `session.har` for the requests and results).
 A step that the recorder did not capture says so. Nothing here is invented.
 
@@ -18,7 +18,7 @@ python3 app.py
 
 Open `http://127.0.0.1:8796`. Never use 8787.
 
-**Media** (names only, from `~/vibecut-lanes/media/classic/`):
+**Media** (names only; put your files in `data/media/` in the Classic checkout):
 `cn-1min29s-720x1280-voice-subtiltle.mp4`,
 `en-53s-1080x1920-subtitle.mp4`,
 `en-5mins-640x360-voice-text-overlay.mp4`.
