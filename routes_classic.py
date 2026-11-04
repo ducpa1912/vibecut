@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import threading
 import time
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 import edits
@@ -137,6 +138,29 @@ CLASSIC_TEXT_VERSION = 1
 MAX_CLASSIC_OVERLAYS = 12
 MAX_CLASSIC_EFFECTS = 6
 MAX_CLASSIC_CUTS = 40
+# Clean boxes are the C1/C2 layer: a rectangle on the cut, optionally limited
+# to some time ranges. The method picks the Edit kind, so Classic never invents
+# a second clean format.
+CLASSIC_CLEAN_METHODS = ("blur", "cover", "crop", "fill")
+CLASSIC_CLEAN_KINDS = {
+    "blur": "blur",
+    "cover": "plate",
+    "crop": "crop_guard",
+    "fill": "blur",
+}
+MAX_CLASSIC_CLEAN = 24
+CLASSIC_CLEAN_DEFAULT_COLOR = "#0b0d12"
+# AI fill is real but optional: without the model pack the method is refused
+# with the missing file names, and Blur and Cover stay available.
+FILL_MODELS = {"LaMa": "lama_fp32.onnx", "STTN": "sttn_infer_model.pth"}
+FILL_LICENSES = {
+    "LaMa": "Apache-2.0 · github.com/advimman/lama",
+    "STTN": "MIT · github.com/researchmm/STTN",
+}
+FILL_LOCK = threading.Lock()
+FILL_LOCKS: dict[str, threading.Lock] = {}
+FRAME_LOCK = threading.Lock()
+FRAME_LOCKS: dict[str, threading.Lock] = {}
 
 # Classic offers three positions; each maps to the Studio anchor and text
 # kind whose default box and margins already fit that edge.
@@ -173,6 +197,30 @@ class ClassicTextBody(BaseModel):
     clips: list[dict]
     overlays: list[dict] = []
     effects: list[dict] = []
+    clean: list[dict] = []
+
+
+class ClassicFrameBody(BaseModel):
+    """The cut on screen, including unsaved boxes, at one time."""
+
+    model_config = {"extra": "forbid"}
+
+    clips: list[dict]
+    clean: list[dict] = []
+    overlays: list[dict] = []
+    effects: list[dict] = []
+    t: float = 0.0
+    aspect: str = "9:16"
+    quality: str = "draft"
+
+
+class ClassicFillBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    clips: list[dict]
+    box: dict
+    t: float = 0.0
+    aspect: str = "9:16"
 
 
 class ClassicTextLookupBody(BaseModel):
@@ -360,7 +408,7 @@ def _classic_effect_layers(
 
 
 def normalize_classic_layers(
-    overlays_value, effects_value, total: float,
+    overlays_value, effects_value, total: float, clean_value=None,
 ) -> dict:
     """Normalize Classic layers through the Studio Edit validators."""
     graphics_raw = _classic_overlay_layers(overlays_value, total)
@@ -374,6 +422,7 @@ def normalize_classic_layers(
         "overlays": [layer for layer in graphics if layer["type"] == "text"],
         "graphics": [layer for layer in graphics if layer["type"] == "fx"],
         "motion": motion,
+        "clean": normalize_classic_clean(clean_value, total),
     }
 
 
@@ -420,6 +469,8 @@ def _classic_cut_payload(row) -> dict | None:
         "duration": float(row.get("duration") or 0.0),
         "overlays": layers["overlays"],
         "effects": _classic_effects_payload(layers),
+        "clean": [dict(item) for item in row.get("clean") or []
+                  if isinstance(item, dict)],
         "updated": row.get("updated"),
     }
 
@@ -428,6 +479,147 @@ def _classic_cuts(job: dict) -> dict:
     store = job.get("classic_text")
     cuts = store.get("cuts") if isinstance(store, dict) else None
     return cuts if isinstance(cuts, dict) else {}
+
+
+def _classic_clean_edit(layers: list[dict]) -> list[dict]:
+    """Map Classic boxes onto the Edit's clean kinds."""
+    edit_layers: list[dict] = []
+    for layer in layers:
+        if layer.get("hidden"):
+            continue
+        method = str(layer.get("method") or "blur")
+        entry = {
+            "id": layer["id"],
+            "kind": CLASSIC_CLEAN_KINDS.get(method, "blur"),
+            "box": dict(layer["box"]),
+            "ranges": [dict(item) for item in layer.get("ranges") or []],
+            "label": str(layer.get("label") or ""),
+            "color": layer.get("color") or CLASSIC_CLEAN_DEFAULT_COLOR,
+            "opacity": layer.get("opacity", 1.0),
+            "radius": layer.get("radius", 24),
+            "z": layer.get("z", 0),
+        }
+        for key in ("tracklet_id", "tracklet_kind"):
+            if layer.get(key):
+                entry[key] = layer[key]
+        edit_layers.append(entry)
+    return edit_layers
+
+
+def normalize_classic_clean(value, total: float) -> list[dict]:
+    """Validate Clean boxes with the Edit validator, then keep Classic fields.
+
+    ``edits.normalize_clean`` owns the box, range, colour and kind rules, so a
+    Classic box can never be a shape the renderer does not understand. Classic
+    adds only what the editor needs to draw and name it: the method the founder
+    picked, the scan tracklet it came from, and an eye toggle.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ClassicTextError("clean must be a list of boxes.")
+    if len(value) > MAX_CLASSIC_CLEAN:
+        raise ClassicTextError(
+            f"A cut supports at most {MAX_CLASSIC_CLEAN} Clean boxes."
+        )
+    raw_layers: list[dict] = []
+    extras: dict[str, dict] = {}
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise ClassicTextError(f"clean[{index}] must be an object.")
+        method = str(raw.get("method") or "blur").strip().lower()
+        if method not in CLASSIC_CLEAN_METHODS:
+            raise ClassicTextError(
+                "A Clean box method must be blur, cover or crop."
+            )
+        if method == "fill" and not classic_fill_status()["available"]:
+            raise ClassicTextError(
+                "AI fill needs its model pack. Use Blur or Cover."
+            )
+        layer_id = str(raw.get("id") or f"cl{index + 1:02d}").strip()
+        # `kind` on a Classic box is the label the panel shows ("subtitle",
+        # "manual"). Only a check kind may reach the Edit validator.
+        tracklet_kind = raw.get("tracklet_kind")
+        if not tracklet_kind:
+            candidate = str(raw.get("kind") or "").strip().lower()
+            tracklet_kind = candidate if candidate in edits.TRACKLET_KINDS else None
+        raw_layers.append({
+            "id": layer_id,
+            "kind": CLASSIC_CLEAN_KINDS[method],
+            "box": raw.get("box"),
+            "ranges": raw.get("ranges"),
+            "label": raw.get("label"),
+            "color": raw.get("color") or CLASSIC_CLEAN_DEFAULT_COLOR,
+            "opacity": raw.get("opacity", 1.0),
+            "radius": raw.get("radius", 24),
+            "z": raw.get("z", index),
+            "tracklet_id": raw.get("tracklet_id"),
+            "tracklet_kind": tracklet_kind,
+        })
+        extras[layer_id] = {
+            "method": method,
+            "hidden": bool(raw.get("hidden")),
+            "source": "scan" if raw.get("source") == "scan" else "manual",
+            "tracklet_kind": tracklet_kind,
+        }
+    try:
+        normalized = edits.normalize_clean(raw_layers)
+    except edits.EditError as exc:
+        raise ClassicTextError(str(exc)) from exc
+    total = max(0.0, float(total or 0.0))
+    layers: list[dict] = []
+    for layer in normalized:
+        extra = extras.get(layer["id"], {})
+        ranges = layer.get("ranges") or []
+        if total > 0.0:
+            ranges = [
+                item for item in ranges
+                if float(item.get("start") or 0.0) < total - 1e-6
+            ]
+        layers.append({
+            **layer,
+            "ranges": ranges,
+            "method": extra.get("method", "blur"),
+            "hidden": bool(extra.get("hidden")),
+            "source": extra.get("source", "manual"),
+            "kind": str(extra.get("tracklet_kind") or layer.get("tracklet_kind") or "manual"),
+        })
+    return layers
+
+
+def classic_fill_status() -> dict:
+    """Whether the AI-fill model pack is installed, and what is missing."""
+    import app
+
+    override = (os.environ.get("VIBECUT_FILL_MODELS") or "").strip()
+    directory = Path(override) if override else Path(app.DATA) / "models" / "fill"
+    missing = [
+        name for name, filename in FILL_MODELS.items()
+        if not (directory / filename).is_file()
+    ]
+    files = []
+    for name, filename in FILL_MODELS.items():
+        path = directory / filename
+        files.append({
+            "name": name,
+            "file": filename,
+            "license": FILL_LICENSES.get(name, ""),
+            "installed": path.is_file(),
+            "bytes": path.stat().st_size if path.is_file() else 0,
+        })
+    return {
+        "available": not missing,
+        "path": str(directory),
+        "missing": missing,
+        "files": files,
+        "methods": ["blur", "cover", "crop"],
+        "note": (
+            "AI fill is ready. It repairs text regions with the installed models."
+            if not missing
+            else "AI fill needs the model pack in " + str(directory)
+            + ". Until it is installed, Blur and Cover stay available."
+        ),
+    }
 
 
 def store_classic_cut(
@@ -444,6 +636,7 @@ def store_classic_cut(
         "overlays": list(layers.get("overlays") or []),
         "graphics": list(layers.get("graphics") or []),
         "motion": list(layers.get("motion") or []),
+        "clean": list(layers.get("clean") or []),
         "updated": round(time.time(), 3),
     }
 
@@ -490,6 +683,7 @@ def _build_classic_edit(
                 "clip_count": len(clips),
             },
             aspect=aspect,
+            clean=_classic_clean_edit(layers.get("clean") or []),
             motion=layers.get("motion") or [],
             graphics=(layers.get("overlays") or []) + (layers.get("graphics") or []),
             captions=captions,
@@ -525,11 +719,13 @@ def prepare_classic_render(
             payload.get("overlays") or [],
             payload.get("effects") or [],
             total,
+            payload.get("clean") or [],
         )
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     # An empty payload is no Edit at all, so any shape may render it.
-    if not (layers["overlays"] or layers["graphics"] or layers["motion"]):
+    if not (layers["overlays"] or layers["graphics"] or layers["motion"]
+            or layers["clean"]):
         return None, None
     if aspect not in CLASSIC_EDIT_ASPECTS:
         raise HTTPException(
@@ -573,18 +769,45 @@ def classic_text_lookup(job_id: str, body: ClassicTextLookupBody) -> dict:
     }
 
 
+def _check_clean_rights(job: dict, layers: list[dict]) -> None:
+    """Refuse a Clean box the rights policy does not allow.
+
+    The stored job record is the only evidence: a watermark or screen-recording
+    UI box is always refused, and with the rights lock on every box needs the
+    own-footage tick.
+    """
+    import detect
+    import rights
+
+    attested = rights.job_attested(job)
+    if rights.lock_enabled() and not attested and layers:
+        raise HTTPException(409, detect.RIGHTS_MESSAGE)
+    for layer in layers:
+        kind = str(layer.get("tracklet_kind") or "").strip().casefold()
+        if kind == "watermark":
+            raise HTTPException(409, detect.WATERMARK_MESSAGE)
+        if kind == "screen_text":
+            raise HTTPException(409, detect.SCREEN_TEXT_MESSAGE)
+        reason = rights.clean_block_reason(kind, job=job) if kind else None
+        if reason == "attestation_required":
+            raise HTTPException(409, detect.RIGHTS_MESSAGE)
+
+
 @router.put("/api/classic/jobs/{job_id}/text")
 def classic_text_save(job_id: str, body: ClassicTextBody) -> dict:
-    """Save Studio-shaped text layers and effects for this cut."""
+    """Save Studio-shaped text layers, effects and Clean boxes for this cut."""
     import app
 
-    app.load_job(job_id)
+    job = app.load_job(job_id)
     try:
         clips = _classic_clips(body.clips)
         total = _classic_total(clips)
-        layers = normalize_classic_layers(body.overlays, body.effects, total)
+        layers = normalize_classic_layers(
+            body.overlays, body.effects, total, body.clean,
+        )
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    _check_clean_rights(job, layers["clean"])
     row = store_classic_cut(job_id, clips, layers)
     return {
         "cut": _classic_cut_payload(row),
@@ -1026,4 +1249,131 @@ def classic_music_preview(job_id: str, body: MusicPreviewBody) -> FileResponse:
             "Cache-Control": "private, max-age=3600",
             "X-VibeCut-Preview": cache_state,
         },
+    )
+
+
+# ---------------------------------------------------------------- clean preview
+#
+# The founder edits boxes against the frame the renderer will actually produce.
+# This route compiles the cut on screen — including boxes that are not saved
+# yet — through the same `compose_render` graph the final render uses, so the
+# picture in the preview and the picture in the reel cannot drift apart. No
+# job state is written; `render_story_frame` caches by compiled hash.
+
+
+def _frame_lock(job_id: str) -> threading.Lock:
+    with FRAME_LOCK:
+        return FRAME_LOCKS.setdefault(job_id, threading.Lock())
+
+
+@router.post(
+    "/api/classic/jobs/{job_id}/frame",
+    responses={200: {"content": {"image/jpeg": {}}}},
+)
+def classic_frame(job_id: str, body: ClassicFrameBody):
+    """One JPEG of the current Classic cut at ``t``, boxes included."""
+    import app
+    import compose_render
+
+    job = app.load_job(job_id)
+    app.require_source(job)
+    try:
+        clips = _classic_clips(body.clips)
+        total = _classic_total(clips)
+        layers = normalize_classic_layers(
+            body.overlays, body.effects, total, body.clean,
+        )
+    except ClassicTextError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    aspect = str(body.aspect or "9:16").strip()
+    if aspect not in CLASSIC_EDIT_ASPECTS:
+        raise HTTPException(
+            422,
+            "The preview renders on 9:16 and 4:5 only. Switch the shape.",
+        )
+    quality = str(body.quality or "draft").strip().lower()
+    if quality not in {"draft", "final"}:
+        raise HTTPException(422, "quality must be draft or final.")
+    try:
+        at = float(body.t)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "t must be a finite time in seconds.") from exc
+    if not math.isfinite(at) or at < 0.0 or at > total + (1.0 / 30.0):
+        raise HTTPException(
+            422, f"t must be between 0 and the cut duration ({total:.3f}s).",
+        )
+    at = min(at, total)
+    edit = _build_classic_edit(clips, aspect, layers)
+    out_w, out_h = render._dims(aspect, quality)
+    try:
+        compiled = compose_render.compile_edit(
+            edit,
+            clips=clips,
+            source=job.get("source") or {},
+            scenes=(job.get("analysis") or {}).get("scenes") or [],
+            size=(out_w, out_h),
+            motion_engine=compose_render.EDIT_MOTION_ENGINE,
+        )
+    except compose_render.ComposeError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    with _frame_lock(job_id):
+        try:
+            payload = render.render_story_frame(
+                str(job["source"]["path"]),
+                job["source"],
+                app._job_dir(job_id),
+                compiled,
+                at,
+                quality=quality,
+                aspect=aspect,
+            )
+        except render.PipelineError as exc:
+            raise HTTPException(500, str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store",
+            "X-VibeCut-Frame": f"{at:.3f}",
+            "X-VibeCut-Clean": str(
+                (compiled.get("counts") or {}).get("clean") or 0
+            ),
+        },
+    )
+
+
+@router.get("/api/classic/fill")
+def classic_fill() -> dict:
+    """AI-fill engine status. Never a fake ready state."""
+    return classic_fill_status()
+
+
+@router.post("/api/classic/jobs/{job_id}/fill/preview")
+def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
+    """Explain the missing model pack instead of pretending to fill."""
+    import app
+
+    app.load_job(job_id)
+    status = classic_fill_status()
+    if not status["available"]:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "model_missing",
+                "message": status["note"],
+                "fill": status,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+    return JSONResponse(
+        status_code=501,
+        content={
+            "error": "not_implemented",
+            "message": (
+                "The fill preview runs only when the model pack and the fill "
+                "pre-pass ship together. Use Blur or Cover on this cut."
+            ),
+            "fill": status,
+        },
+        headers={"Cache-Control": "no-store"},
     )

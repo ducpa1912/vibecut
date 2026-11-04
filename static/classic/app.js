@@ -321,10 +321,62 @@
     textScanProgressText: $("#text-scan-progress-text"),
     textScanStart: $("#text-scan-start"),
     textScanCancel: $("#text-scan-cancel"),
+    cleanStage: $("#clean-stage"),
+    cleanCanvas: $("#clean-canvas"),
+    cleanFrame: $("#clean-frame"),
+    cleanOverlay: $("#clean-overlay"),
+    cleanFrameState: $("#clean-frame-state"),
+    cleanStageTime: $("#clean-stage-time"),
+    cleanStageClip: $("#clean-stage-clip"),
+    cleanScrub: $("#clean-scrub"),
+    cleanScrubReadout: $("#clean-scrub-readout"),
+    cleanDraw: $("#clean-draw"),
+    cleanUndo: $("#clean-undo"),
+    cleanRedo: $("#clean-redo"),
+    cleanRefresh: $("#clean-refresh"),
+    cleanPanel: $("#clean-panel"),
+    cleanCount: $("#clean-count"),
+    cleanFound: $("#clean-found"),
+    cleanLayers: $("#clean-layers"),
+    cleanEmpty: $("#clean-empty"),
+    cleanStatus: $("#clean-status"),
+    cleanFill: $("#clean-fill"),
+    cleanHelp: $("#clean-help"),
+    finishCut: $("#finish-cut"),
+    shortcutsOpen: $("#shortcuts-open"),
+    shortcutsSheet: $("#shortcuts-sheet"),
+    shortcutsClose: $("#shortcuts-close"),
+    momentsScan: $("#moments-scan"),
+    rightsTick: $("#rights-tick"),
+    rightsOwn: $("#rights-own"),
     drawer: $("#drawer"),
     drawerContent: $("#drawer-content"),
     toast: $("#toast"),
   };
+
+  // One shape for the cut's text/effect/clean state, so a reset cannot drop a
+  // field the editor reads back (the frame cache and undo stack live here).
+  function freshClassicText() {
+    return {
+      loadedKey: "",
+      dataKey: "",
+      clipsHash: "",
+      overlays: [],
+      effects: [],
+      clean: [],
+      seq: 0,
+      rev: 0,
+      saveTimer: null,
+      selection: "",
+      drawMode: false,
+      drawMethod: "blur",
+      t: 0,
+      undo: [],
+      redo: [],
+      frameTimer: null,
+      frame: { url: "", key: "", busy: false, error: "", seq: 0, controller: null },
+    };
+  }
 
   const state = {
     health: null,
@@ -344,16 +396,8 @@
     target: 30,
     aspect: "9:16",
     captions: false,
-    classicText: {
-      loadedKey: "",
-      dataKey: "",
-      clipsHash: "",
-      overlays: [],
-      effects: [],
-      seq: 0,
-      rev: 0,
-      saveTimer: null,
-    },
+    classicText: freshClassicText(),
+    fill: null,
     audio: {
       mode: "keep",
       source: "generate",
@@ -406,6 +450,7 @@
     audioMoods: [],
     audioPromptAuto: "",
     overrideHook: null,
+    rightsPolicy: null,
     editMode: false,
     editIndex: null,
     edited: false,
@@ -1329,16 +1374,39 @@
 
   // The rights lock is a Setup setting. While it is on, the server refuses an
   // import without the own-footage tick, so Classic asks for it first.
-  async function importRights() {
-    let policy = null;
+  // C4: the tick lives beside Start instead of a blocking dialog. It appears
+  // only when the Setup rights lock asks for one, and a start that forgets it
+  // points at the tick rather than cancelling silently.
+  async function rightsPolicy(force = false) {
+    if (state.rightsPolicy && !force) return state.rightsPolicy;
     try {
-      policy = await api("/api/rights/policy");
+      state.rightsPolicy = await api("/api/rights/policy");
     } catch (_) {
       return null;
     }
-    if (!policy || !policy.needs_import_tick) return null;
-    if (window.confirm("The rights lock is on.\n\nI own this footage or have the rights to it.")) return true;
-    throw new Error("Import cancelled. Confirm you own this footage or have the rights to it.");
+    return state.rightsPolicy;
+  }
+
+  async function syncRightsTick() {
+    const policy = await rightsPolicy();
+    if (!dom.rightsTick) return;
+    dom.rightsTick.hidden = !(policy && policy.needs_import_tick);
+    if (dom.rightsTick.hidden) dom.rightsTick.classList.remove("is-required");
+  }
+
+  async function importRights() {
+    const policy = await rightsPolicy();
+    if (!policy || !policy.needs_import_tick) {
+      if (dom.rightsTick) dom.rightsTick.hidden = true;
+      return null;
+    }
+    if (dom.rightsTick) dom.rightsTick.hidden = false;
+    if (dom.rightsOwn && dom.rightsOwn.checked) return true;
+    if (dom.rightsTick) {
+      dom.rightsTick.classList.add("is-required");
+      dom.rightsOwn?.focus();
+    }
+    throw new Error("Tick \u201cI own this footage\u201d beside Dissect video, then start again.");
   }
 
   function uploadFile(file, options, onProgress, rights = null) {
@@ -1812,7 +1880,13 @@
     });
     bindAudio();
     bindClassicText();
+    bindClean();
+    bindChrome();
     updateTextAvailability();
+    document.addEventListener("keydown", (event) => {
+      if (dom.result.hidden || !state.plan) return;
+      cleanShortcut(event);
+    });
     bindSetup();
 
     dom.timeline.addEventListener("contextmenu", (event) => {
@@ -2891,16 +2965,10 @@
         state.historyEntry = null;
         state.timelineScroll = 0;
         if (state.classicText.saveTimer) clearTimeout(state.classicText.saveTimer);
-        state.classicText = {
-          loadedKey: "",
-          dataKey: "",
-          clipsHash: "",
-          overlays: [],
-          effects: [],
-          seq: 0,
-          rev: 0,
-          saveTimer: null,
-        };
+        if (state.classicText.frameTimer) clearTimeout(state.classicText.frameTimer);
+        try { state.classicText.frame.controller?.abort(); } catch (_) { /* ignore */ }
+        if (state.classicText.frame.url) URL.revokeObjectURL(state.classicText.frame.url);
+        state.classicText = freshClassicText();
         renderClassicText();
         if (dom.historyList) dom.historyList.innerHTML = "";
         if (dom.historyDetail) {
@@ -2983,6 +3051,9 @@
     showView("result");
     renderResult();
     refreshTextScan();
+    loadFillStatus();
+    paintCleanStage();
+    scheduleCleanFrame();
     loadAudioEngines();
     loadAudioMoods();
     loadTranslateCheck();
@@ -6599,7 +6670,13 @@
     state.classicText.clipsHash = cut?.clips_hash || "";
     state.classicText.overlays = Array.isArray(cut?.overlays) ? cut.overlays : [];
     state.classicText.effects = Array.isArray(cut?.effects) ? cut.effects : [];
+    state.classicText.clean = Array.isArray(cut?.clean) ? cut.clean : [];
+    if (!state.classicText.clean.some((layer) => layer.id === state.classicText.selection)) {
+      state.classicText.selection = "";
+    }
     renderClassicText();
+    paintCleanStage();
+    scheduleCleanFrame();
   }
 
   async function refreshClassicText(force = false) {
@@ -6635,6 +6712,7 @@
           clips,
           overlays: state.classicText.overlays,
           effects: state.classicText.effects,
+          clean: cleanPayloadLayers(),
         }),
       });
     } catch (error) {
@@ -6749,8 +6827,10 @@
       start: Number(effect.start) || 0,
       end: Number(effect.end) || 0,
     }));
-    if (!overlays.length && !effects.length) return null;
-    return { overlays, effects };
+    // Clean boxes ride with the same Edit, so the reel and the preview agree.
+    const clean = cleanPayloadLayers();
+    if (!overlays.length && !effects.length && !clean.length) return null;
+    return { overlays, effects, clean };
   }
 
   function bindClassicText() {
@@ -6770,6 +6850,1121 @@
       const button = event.target.closest("[data-effect-delete]");
       if (button) deleteClassicEffect(button.dataset.effectDelete);
     });
+  }
+
+  // ---------------------------------------------------------------- clean boxes
+  //
+  // C1/C2: the Clean layer is a box on the cut. The frame beside it is not a
+  // CSS approximation — it is the frame the renderer builds from the same
+  // layers the reel renders, so a box cannot look right here and wrong in the
+  // export. Boxes are stored with the cut (overlays/effects/clean share one
+  // save) and the final render reads the same record through
+  // `prepare_classic_render`.
+
+  const CLEAN_METHODS = {
+    blur: { label: "Blur", note: "Smears the region. Works on any clip." },
+    cover: { label: "Cover", note: "Draws a solid plate over the region." },
+    crop: { label: "Crop", note: "Keeps the frame inside the safe area." },
+    fill: { label: "AI fill", note: "Repairs the region with the fill models." },
+  };
+  const CLEAN_SCAN_METHOD = { plate: "cover", crop_guard: "crop", mask: "blur", blur: "blur" };
+  const CLEAN_MIN_BOX = 0.02;
+  const CLASSIC_UNDO_LIMIT = 40;
+
+  function classicCleanLayers() {
+    return state.classicText.clean;
+  }
+
+  function cleanId() {
+    const taken = new Set(classicCleanLayers().map((layer) => layer.id));
+    let index = 1;
+    while (taken.has(`cl${String(index).padStart(2, "0")}`)) index += 1;
+    return `cl${String(index).padStart(2, "0")}`;
+  }
+
+  function cleanSnapshot() {
+    return JSON.stringify({
+      overlays: state.classicText.overlays,
+      effects: state.classicText.effects,
+      clean: state.classicText.clean,
+    });
+  }
+
+  function pushClassicUndo() {
+    const stack = state.classicText.undo;
+    const snapshot = cleanSnapshot();
+    if (stack[stack.length - 1] === snapshot) return;
+    stack.push(snapshot);
+    if (stack.length > CLASSIC_UNDO_LIMIT) stack.shift();
+    state.classicText.redo.length = 0;
+    paintClassicUndo();
+  }
+
+  function restoreClassicSnapshot(snapshot) {
+    if (!snapshot) return;
+    let parsed = null;
+    try { parsed = JSON.parse(snapshot); } catch (_) { return; }
+    state.classicText.overlays = Array.isArray(parsed.overlays) ? parsed.overlays : [];
+    state.classicText.effects = Array.isArray(parsed.effects) ? parsed.effects : [];
+    state.classicText.clean = Array.isArray(parsed.clean) ? parsed.clean : [];
+    if (!classicCleanLayers().some((layer) => layer.id === state.classicText.selection)) {
+      state.classicText.selection = "";
+    }
+    renderClassicText();
+    paintCleanStage();
+    saveClassicText();
+    scheduleCleanFrame();
+  }
+
+  function undoClassic() {
+    const stack = state.classicText.undo;
+    if (!stack.length) return;
+    const snapshot = stack.pop();
+    state.classicText.redo.push(cleanSnapshot());
+    restoreClassicSnapshot(snapshot);
+    paintClassicUndo();
+  }
+
+  function redoClassic() {
+    const stack = state.classicText.redo;
+    if (!stack.length) return;
+    const snapshot = stack.pop();
+    state.classicText.undo.push(cleanSnapshot());
+    restoreClassicSnapshot(snapshot);
+    paintClassicUndo();
+  }
+
+  function paintClassicUndo() {
+    if (dom.cleanUndo) dom.cleanUndo.disabled = !state.classicText.undo.length;
+    if (dom.cleanRedo) dom.cleanRedo.disabled = !state.classicText.redo.length;
+  }
+
+  function cleanMethodKey(layer) {
+    const method = String(layer && layer.method || "").toLowerCase();
+    return CLEAN_METHODS[method] ? method : "blur";
+  }
+
+  function cleanMethodLabel(layer) {
+    return CLEAN_METHODS[cleanMethodKey(layer)].label;
+  }
+
+  function cleanPayloadLayers() {
+    return classicCleanLayers().map((layer) => ({
+      id: layer.id,
+      method: cleanMethodKey(layer),
+      box: { x: layer.box.x, y: layer.box.y, w: layer.box.w, h: layer.box.h },
+      ranges: (layer.ranges || []).map((item) => ({
+        start: Number(item.start) || 0,
+        end: Number(item.end) || 0,
+      })),
+      label: layer.label || "",
+      kind: layer.kind || layer.tracklet_kind || "manual",
+      tracklet_id: layer.tracklet_id || undefined,
+      tracklet_kind: layer.tracklet_kind || undefined,
+      color: layer.color || undefined,
+      opacity: layer.opacity,
+      radius: layer.radius,
+      hidden: Boolean(layer.hidden),
+      source: layer.source || "manual",
+    }));
+  }
+
+  function cleanCutTotal() {
+    return Math.max(0, Number(state.plan?.total) || 0);
+  }
+
+  function currentCleanTime() {
+    return clamp(Number(state.classicText.t) || 0, 0, Math.max(0.01, cleanCutTotal()));
+  }
+
+  function cleanBoxAt(box, start, end) {
+    const ranges = Array.isArray(box.ranges) ? box.ranges : [];
+    if (!ranges.length) return true;
+    return ranges.some((item) => start < Number(item.end) && end > Number(item.start));
+  }
+
+  function cleanVisibleAt(layer, t) {
+    if (!cleanBoxAt(layer, t, t + 1 / 30)) return false;
+    return true;
+  }
+
+  async function loadFillStatus(force = false) {
+    if (state.fill && !force) return state.fill;
+    try {
+      state.fill = await api("/api/classic/fill");
+    } catch (_) {
+      state.fill = { available: false, missing: [], files: [], note: "AI fill status is unavailable." };
+    }
+    renderCleanFill();
+    return state.fill;
+  }
+
+  function renderCleanFill() {
+    if (!dom.cleanFill) return;
+    const fill = state.fill;
+    if (!fill) {
+      dom.cleanFill.hidden = true;
+      return;
+    }
+    dom.cleanFill.hidden = false;
+    if (!fill.available) {
+      const missing = (fill.missing || []).join(", ") || "the model pack";
+      const files = (fill.files || []).map((item) => (
+        `<li><span class="clean-file-name">${esc(item.file)}</span>`
+        + `<span class="clean-file-meta">${esc(item.name)} · ${esc(item.license)}</span>`
+        + `<span class="clean-file-state">${item.installed ? "installed" : "missing"}</span></li>`
+      )).join("");
+      dom.cleanFill.innerHTML = `
+        <div class="clean-fill-locked">
+          <span class="clean-fill-lock" aria-hidden="true">🔒</span>
+          <div>
+            <p class="clean-fill-title">AI fill is locked — ${esc(missing)} not installed</p>
+            <p class="hint">${esc(fill.note)}</p>
+            <ul class="clean-file-list">${files}</ul>
+            <p class="hint">Blur and Cover stay available on this cut. Nothing here pretends to fill yet.</p>
+          </div>
+        </div>`;
+      return;
+    }
+    dom.cleanFill.innerHTML = `
+      <div class="clean-fill-ready">
+        <span class="clean-fill-dot" aria-hidden="true"></span>
+        <div>
+          <p class="clean-fill-title">AI fill is installed</p>
+          <p class="hint">${esc(fill.note)}</p>
+        </div>
+        <button id="clean-fill-preview" class="ghost small" type="button">Preview fill</button>
+      </div>`;
+  }
+
+  async function previewFill() {
+    if (!state.job) return;
+    const layer = classicCleanLayers().find((item) => item.id === state.classicText.selection)
+      || classicCleanLayers()[0];
+    if (!layer) {
+      setCleanStatus("Draw or select a box first.");
+      return;
+    }
+    try {
+      await api(`/api/classic/jobs/${state.job.id}/fill/preview`, {
+        method: "POST",
+        body: JSON.stringify({
+          clips: classicPlanClips(),
+          box: layer.box,
+          t: currentCleanTime(),
+          aspect: state.aspect,
+        }),
+      });
+      setCleanStatus("Fill preview answered.");
+    } catch (error) {
+      setCleanStatus(error.message);
+    }
+  }
+
+  function setCleanStatus(message) {
+    if (dom.cleanStatus) dom.cleanStatus.textContent = message || "";
+  }
+
+  // ------------------------------------------------------------ the frame
+
+  function cleanFrameBody() {
+    return {
+      clips: classicPlanClips(),
+      clean: cleanPayloadLayers(),
+      overlays: state.classicText.overlays.map((layer) => ({ ...layer })),
+      effects: state.classicText.effects.map((effect) => ({
+        id: effect.id,
+        kind: effect.kind,
+        start: Number(effect.start) || 0,
+        end: Number(effect.end) || 0,
+      })),
+      t: round2(currentCleanTime()),
+      aspect: classicTextSupported() ? state.aspect : "9:16",
+      quality: "draft",
+    };
+  }
+
+  function cleanFrameKey(body) {
+    return JSON.stringify(body);
+  }
+
+  // Short by design: the bar has one row, and the frame already shows the
+  // picture the line would describe.
+  function cleanClipLabel(t) {
+    const clips = state.plan?.clips || [];
+    let cursor = 0;
+    for (const clip of clips) {
+      const span = Math.max(0, Number(clip.end) - Number(clip.start));
+      if (t < cursor + span + 1e-6) {
+        const number = clips.findIndex((item) => item === clip) + 1;
+        return `clip ${number}/${clips.length} · ${clip.role || "beat"}`;
+      }
+      cursor += span;
+    }
+    return clips.length ? `clip ${clips.length}/${clips.length}` : "";
+  }
+
+  function cleanClipTitle(t) {
+    const clips = state.plan?.clips || [];
+    let cursor = 0;
+    for (const clip of clips) {
+      const span = Math.max(0, Number(clip.end) - Number(clip.start));
+      if (t < cursor + span + 1e-6) {
+        const scene = sceneById(clip.scene);
+        return scene ? clipText(sceneLine(scene), 90) : "";
+      }
+      cursor += span;
+    }
+    return "";
+  }
+
+  // The preview pane is the real constraint: a 9:16 frame has to fit inside it,
+  // not inside the window, or its own corner handles sit below the fold.
+  function sizeCleanCanvas() {
+    const stage = dom.cleanStage;
+    if (!stage || stage.hidden) return;
+    const pane = stage.closest(".editor-pane");
+    const height = pane && pane.clientHeight
+      ? pane.clientHeight
+      : window.innerHeight;
+    // The toolbar, the scrub row and the stage gaps take the rest.
+    const bar = stage.querySelector(".clean-stage-bar");
+    const foot = stage.querySelector(".clean-stage-foot");
+    const chrome = (bar?.offsetHeight || 0) + (foot?.offsetHeight || 0) + 20;
+    const room = Math.max(190, Math.round(height - chrome));
+    stage.style.setProperty("--clean-frame-h", `${room}px`);
+  }
+
+  function paintCleanStage() {
+    const stage = dom.cleanStage;
+    if (!stage) return;
+    const supported = classicTextSupported();
+    stage.hidden = !state.job || !state.plan;
+    if (!stage.hidden) {
+      sizeCleanCanvas();
+      const canvas = dom.cleanCanvas;
+      const aspect = supported ? state.aspect : "9:16";
+      canvas.dataset.aspect = aspect;
+      canvas.classList.toggle("is-unsupported", !supported);
+      const total = Math.max(0.1, cleanCutTotal());
+      if (dom.cleanScrub) {
+        dom.cleanScrub.max = total.toFixed(2);
+        dom.cleanScrub.value = String(Math.min(total, currentCleanTime()));
+      }
+      if (dom.cleanStageTime) dom.cleanStageTime.textContent = `${currentCleanTime().toFixed(1)}s`;
+      if (dom.cleanScrubReadout) dom.cleanScrubReadout.textContent = `${currentCleanTime().toFixed(1)} / ${total.toFixed(1)}s`;
+      if (dom.cleanStageClip) {
+        dom.cleanStageClip.textContent = cleanClipLabel(currentCleanTime());
+        dom.cleanStageClip.title = cleanClipTitle(currentCleanTime());
+      }
+      if (dom.cleanDraw) {
+        dom.cleanDraw.classList.toggle("active", state.classicText.drawMode);
+        dom.cleanDraw.setAttribute("aria-pressed", state.classicText.drawMode ? "true" : "false");
+      }
+      dom.cleanCanvas.classList.toggle("is-drawing", state.classicText.drawMode);
+    }
+    paintCleanBoxes();
+    paintCleanPanel();
+    paintClassicUndo();
+  }
+
+  function paintCleanBoxes() {
+    const overlay = dom.cleanOverlay;
+    if (!overlay) return;
+    const t = currentCleanTime();
+    const layers = classicCleanLayers();
+    overlay.innerHTML = layers.map((layer) => {
+      const active = cleanVisibleAt(layer, t);
+      const selected = layer.id === state.classicText.selection;
+      const hidden = Boolean(layer.hidden) || !active;
+      const method = cleanMethodKey(layer);
+      const box = layer.box;
+      return `
+        <div class="clean-box${selected ? " is-selected" : ""}${hidden ? " is-off" : ""}"
+             data-clean-id="${esc(layer.id)}"
+             data-method="${esc(method)}"
+             style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"
+             role="button" tabindex="0"
+             aria-label="${esc(cleanMethodLabel(layer))} box ${esc(layer.label || layer.id)}">
+          <span class="clean-box-tag">${esc(cleanMethodLabel(layer))}${layer.hidden ? " · off" : ""}${active ? "" : " · not here"}</span>
+          <span class="clean-handle" data-clean-handle="nw"></span>
+          <span class="clean-handle" data-clean-handle="ne"></span>
+          <span class="clean-handle" data-clean-handle="sw"></span>
+          <span class="clean-handle" data-clean-handle="se"></span>
+        </div>`;
+    }).join("");
+    if (dom.cleanFrameState) {
+      const frame = state.classicText.frame;
+      let message = "";
+      if (state.classicText.drawMode) message = "Drag on the frame to draw a box.";
+      else if (frame.busy) message = "Rendering this frame…";
+      else if (frame.error) message = cleanShortError(frame.error);
+      dom.cleanFrameState.textContent = message;
+      dom.cleanFrameState.title = frame.error || "";
+      dom.cleanFrameState.hidden = !message;
+    }
+    if (dom.cleanFrame) dom.cleanFrame.hidden = !state.classicText.frame.url;
+  }
+
+  async function refreshCleanFrame(force = false) {
+    if (!state.job || !state.plan) return;
+    const clips = state.plan.clips || [];
+    if (!clips.length) return;
+    const body = cleanFrameBody();
+    const key = cleanFrameKey(body);
+    if (!force && key === state.classicText.frame.key && state.classicText.frame.url) return;
+    const seq = ++state.classicText.frame.seq;
+    state.classicText.frame.busy = true;
+    if (state.classicText.frame.controller) {
+      try { state.classicText.frame.controller.abort(); } catch (_) { /* ignore */ }
+    }
+    const controller = new AbortController();
+    state.classicText.frame.controller = controller;
+    paintCleanBoxes();
+    try {
+      const config = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      };
+      const token = tokenValue();
+      if (token) config.headers.Authorization = `Bearer ${token}`;
+      const response = await fetch(`/api/classic/jobs/${encodeURIComponent(state.job.id)}/frame`, config);
+      if (!response.ok) {
+        let detail = `Frame answered ${response.status}`;
+        try {
+          const payload = await response.json();
+          detail = payload.detail || payload.message || detail;
+        } catch (_) { /* ignore */ }
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      const blob = await response.blob();
+      if (seq !== state.classicText.frame.seq) return;
+      const url = URL.createObjectURL(blob);
+      if (state.classicText.frame.url) URL.revokeObjectURL(state.classicText.frame.url);
+      state.classicText.frame.url = url;
+      state.classicText.frame.key = key;
+      state.classicText.frame.error = "";
+      if (dom.cleanFrame) dom.cleanFrame.src = url;
+    } catch (error) {
+      if (error && (error.name === "AbortError" || controller.signal.aborted)) return;
+      if (seq !== state.classicText.frame.seq) return;
+      state.classicText.frame.key = "";
+      state.classicText.frame.error = `Frame failed: ${error.message}`;
+    } finally {
+      if (seq === state.classicText.frame.seq) {
+        state.classicText.frame.busy = false;
+        paintCleanBoxes();
+      }
+    }
+  }
+
+  // An ffmpeg tail is diagnostic, not a caption: one line on the frame, the
+  // whole tail in the tooltip so nothing is hidden from the founder.
+  function cleanShortError(message) {
+    const lines = String(message || "").split("\n").map((line) => line.trim()).filter(Boolean);
+    const first = lines[0] || "The frame did not render.";
+    const more = lines.length > 1 ? ` (${lines.length - 1} more lines)` : "";
+    return first.length > 140 ? `${first.slice(0, 137)}…${more}` : `${first}${more}`;
+  }
+
+  function scheduleCleanFrame(force = false) {
+    if (state.classicText.frameTimer) clearTimeout(state.classicText.frameTimer);
+    state.classicText.frameTimer = setTimeout(() => {
+      state.classicText.frameTimer = null;
+      refreshCleanFrame(force);
+    }, 220);
+  }
+
+  // ------------------------------------------------------------ the panel
+
+  function cleanScanEntries() {
+    const report = state.textScan && state.textScan.report;
+    const entries = report && Array.isArray(report.clean_prefill) ? report.clean_prefill : [];
+    return entries;
+  }
+
+  function cleanThumbStyle(box) {
+    const w = Math.max(0.05, Number(box && box.w) || 0.2);
+    const h = Math.max(0.05, Number(box && box.h) || 0.2);
+    const x = clamp(Number(box && box.x) || 0, 0, 1);
+    const y = clamp(Number(box && box.y) || 0, 0, 1);
+    const size = 100 / w;
+    const posX = w >= 1 ? 0 : (x / (1 - w)) * 100;
+    const posY = h >= 1 ? 0 : (y / (1 - h)) * 100;
+    return `background-size:${size.toFixed(1)}% ${(100 / h).toFixed(1)}%;`
+      + `background-position:${posX.toFixed(1)}% ${posY.toFixed(1)}%`;
+  }
+
+  function cleanEntryScene(entry) {
+    const scenes = state.job?.analysis?.scenes || [];
+    const ranges = Array.isArray(entry.ranges) ? entry.ranges : [];
+    const at = Number(ranges[0] && ranges[0].start) || 0;
+    return scenes.find((scene) => at >= scene.start && at < scene.end) || scenes[0] || null;
+  }
+
+  // A scan box lives on the source timeline, the cut on its own. Ranges are
+  // stored in cut time because that is what the renderer reads, so a source
+  // range is translated clip by clip. Text that no clip carries stays out of
+  // the list instead of becoming a box that never appears.
+  function cleanCutRanges(ranges) {
+    const list = Array.isArray(ranges) ? ranges : [];
+    if (!list.length) return [];
+    const clips = state.plan?.clips || [];
+    const out = [];
+    let cursor = 0;
+    for (const clip of clips) {
+      const start = Number(clip.start) || 0;
+      const end = Number(clip.end) || 0;
+      const span = Math.max(0, end - start);
+      for (const range of list) {
+        const from = Math.max(start, Number(range.start) || 0);
+        const to = Math.min(end, Number(range.end) || 0);
+        if (to - from > 0.01) {
+          out.push({
+            start: round2(cursor + (from - start)),
+            end: round2(cursor + (to - start)),
+          });
+        }
+      }
+      cursor += span;
+    }
+    out.sort((a, b) => a.start - b.start);
+    return out;
+  }
+
+  function cleanEntryAdded(entry) {
+    return classicCleanLayers().some((layer) => (
+      (entry.tracklet_id && layer.tracklet_id === entry.tracklet_id)
+      || (layer.label && layer.label === entry.tracklet_id)
+    ));
+  }
+
+  function renderCleanFound() {
+    const panel = dom.cleanFound;
+    if (!panel) return;
+    const entries = cleanScanEntries();
+    if (!entries.length) {
+      panel.hidden = true;
+      panel.innerHTML = "";
+      return;
+    }
+    panel.hidden = false;
+    const rows = entries.map((entry, index) => {
+      const blocked = Boolean(entry.blocked);
+      const scene = cleanEntryScene(entry);
+      const thumb = scene ? thumbUrl(scene) : "";
+      const added = cleanEntryAdded(entry);
+      const cutRanges = cleanCutRanges(entry.ranges);
+      const outside = (Array.isArray(entry.ranges) ? entry.ranges.length : 0) > 0
+        && cutRanges.length === 0;
+      const action = String(entry.action || "blur");
+      const suggested = CLEAN_SCAN_METHOD[action] || "blur";
+      const methodOptions = Object.entries(CLEAN_METHODS)
+        .filter(([key]) => key !== "fill")
+        .map(([key, item]) => (
+          `<option value="${key}"${key === suggested ? " selected" : ""}>${item.label}</option>`
+        )).join("");
+      const preview = thumb
+        ? `<span class="clean-found-thumb" style="background-image:url('${esc(thumb)}');${cleanThumbStyle(entry.box)}" aria-hidden="true"></span>`
+        : '<span class="clean-found-thumb is-empty" aria-hidden="true"></span>';
+      return `
+        <div class="clean-found-row${blocked ? " is-blocked" : ""}${added ? " is-added" : ""}" role="listitem" data-found-index="${index}">
+          ${preview}
+          <div class="clean-found-copy">
+            <span class="clean-found-kind">${esc(entry.kind || "text")}</span>
+            <span class="clean-found-reason">${esc(blocked ? entry.reason : (entry.reason || CLEAN_METHODS[suggested].note))}</span>
+          </div>
+          ${blocked || outside
+            ? `<span class="clean-found-blocked">${blocked ? "locked" : "not in this cut"}</span>`
+            : `<select class="clean-method-select" data-found-method="${index}" aria-label="Method for ${esc(entry.kind || "box")}">${methodOptions}</select>
+               <button class="ghost small" type="button" data-found-add="${index}"${added ? " disabled" : ""}>${added ? "Added" : "Add"}</button>`}
+        </div>`;
+    }).join("");
+    panel.innerHTML = `
+      <div class="clean-found-head">
+        <span class="clean-found-title">Text on screen</span>
+        <span class="hint">${entries.length} found · tick the ones to clean</span>
+      </div>
+      <div class="clean-found-list" role="list">${rows}</div>`;
+  }
+
+  function addCleanFromScan(entry, method) {
+    if (!entry) return;
+    const ranges = cleanCutRanges(entry.ranges);
+    if ((entry.ranges || []).length && !ranges.length) {
+      setCleanStatus("That text is not inside this cut, so there is nothing to clean here.");
+      return;
+    }
+    addCleanBox({
+      box: entry.box,
+      method: method || CLEAN_SCAN_METHOD[entry.action] || "blur",
+      label: entry.kind || "text",
+      kind: entry.kind || "manual",
+      tracklet_id: entry.tracklet_id,
+      tracklet_kind: entry.kind,
+      ranges,
+      source: "scan",
+    });
+  }
+
+  function renderCleanLayers() {
+    const list = dom.cleanLayers;
+    if (!list) return;
+    const layers = classicCleanLayers();
+    if (!layers.length) {
+      list.innerHTML = "";
+      return;
+    }
+    const row = (layer) => {
+      const method = cleanMethodKey(layer);
+      const selected = layer.id === state.classicText.selection;
+      const out = cleanOutsideCut(layer);
+      const ranges = (layer.ranges || []).length
+        ? `${(layer.ranges || []).length} range${(layer.ranges || []).length === 1 ? "" : "s"}`
+        : "whole cut";
+      const chips = Object.entries(CLEAN_METHODS)
+        .filter(([key]) => key !== "fill")
+        .map(([key, item]) => (
+          `<button type="button" class="clean-chip${key === method ? " active" : ""}" data-clean-method="${key}" data-clean-target="${esc(layer.id)}" title="${esc(item.note)}">${item.label}</button>`
+        )).join("");
+      return `
+        <div class="clean-row${selected ? " is-selected" : ""}${layer.hidden ? " is-off" : ""}" role="listitem" data-clean-row="${esc(layer.id)}">
+          <button class="clean-eye" type="button" data-clean-eye="${esc(layer.id)}" aria-pressed="${layer.hidden ? "false" : "true"}" title="${layer.hidden ? "Show" : "Hide"} this box">${layer.hidden ? "◌" : "◉"}</button>
+          <div class="clean-row-copy">
+            <span class="clean-row-label">${esc(layer.label || layer.kind || "Box")} <span class="clean-row-src">${esc(layer.source === "scan" ? "scan" : "manual")}</span></span>
+            <span class="clean-row-meta">${esc(ranges)} · ${(layer.box.w * 100).toFixed(0)}×${(layer.box.h * 100).toFixed(0)}%${out ? ` · ${esc(out)}` : ""}</span>
+          </div>
+          <div class="clean-row-methods" role="group" aria-label="Method">${chips}</div>
+          <button class="clean-row-del" type="button" data-clean-delete="${esc(layer.id)}" title="Delete box" aria-label="Delete box">✕</button>
+        </div>`;
+    };
+    list.innerHTML = layers.map(row).join("");
+  }
+
+  function cleanOutsideCut(layer) {
+    const box = layer.box;
+    if (!box) return "";
+    if (box.w > 0.96 && box.h > 0.96) return "covers the frame";
+    if (box.x + box.w > 1.001 || box.y + box.h > 1.001) return "outside the frame";
+    return "";
+  }
+
+  function paintCleanPanel() {
+    const layers = classicCleanLayers();
+    renderCleanLayers();
+    renderCleanFound();
+    renderCleanFill();
+    if (dom.cleanCount) {
+      dom.cleanCount.hidden = !layers.length;
+      dom.cleanCount.textContent = `${layers.length} box${layers.length === 1 ? "" : "es"}`;
+      dom.cleanCount.className = "text-scan-badge" + (layers.length ? " is-ready" : "");
+    }
+    if (dom.cleanEmpty) dom.cleanEmpty.hidden = layers.length > 0;
+    paintCleanBoxes();
+  }
+
+  // ------------------------------------------------------------ box actions
+
+  function selectClean(id) {
+    state.classicText.selection = id || "";
+    paintCleanStage();
+  }
+
+  function addCleanBox(options = {}) {
+    if (!classicTextSupported()) {
+      toast("Clean boxes render on 9:16 and 4:5 only.");
+      return null;
+    }
+    const box = options.box || { x: 0.2, y: 0.35, w: 0.6, h: 0.2 };
+    if (options.replaceId) {
+      const index = classicCleanLayers().findIndex((layer) => layer.id === options.replaceId);
+      if (index >= 0) {
+        pushClassicUndo();
+        classicCleanLayers()[index] = {
+          ...classicCleanLayers()[index],
+          ...options,
+          id: options.replaceId,
+        };
+        saveClassicText();
+        paintCleanStage();
+        return classicCleanLayers()[index];
+      }
+    }
+    if (classicCleanLayers().length >= 24) {
+      toast("A cut supports at most 24 Clean boxes.");
+      return null;
+    }
+    pushClassicUndo();
+    const layer = {
+      id: cleanId(),
+      method: options.method || "blur",
+      box: {
+        x: clamp(Number(box.x) || 0, 0, 1),
+        y: clamp(Number(box.y) || 0, 0, 1),
+        w: clamp(Number(box.w) || 0.3, CLEAN_MIN_BOX, 1),
+        h: clamp(Number(box.h) || 0.15, CLEAN_MIN_BOX, 1),
+      },
+      ranges: Array.isArray(options.ranges) ? options.ranges.map((item) => ({
+        start: round2(Number(item.start) || 0),
+        end: round2(Number(item.end) || 0),
+      })) : [],
+      label: options.label || "",
+      kind: options.kind || "manual",
+      tracklet_id: options.tracklet_id || "",
+      tracklet_kind: options.tracklet_kind || "",
+      source: options.source === "scan" ? "scan" : "manual",
+      hidden: false,
+    };
+    classicCleanLayers().push(layer);
+    state.classicText.selection = layer.id;
+    setCleanStatus(`${CLEAN_METHODS[cleanMethodKey(layer)].label} box added. It saves with the cut.`);
+    saveClassicText();
+    paintCleanStage();
+    scheduleCleanFrame();
+    return layer;
+  }
+
+  function deleteCleanBox(id) {
+    const before = classicCleanLayers().length;
+    if (!before) return;
+    pushClassicUndo();
+    state.classicText.clean = classicCleanLayers().filter((layer) => layer.id !== id);
+    if (state.classicText.selection === id) state.classicText.selection = "";
+    saveClassicText();
+    paintCleanStage();
+    scheduleCleanFrame();
+  }
+
+  function setCleanMethod(id, method) {
+    const layer = classicCleanLayers().find((item) => item.id === id);
+    if (!layer || !CLEAN_METHODS[method]) return;
+    if (method === "fill" && !(state.fill && state.fill.available)) {
+      setCleanStatus("AI fill needs its model pack. Blur and Cover work now.");
+      return;
+    }
+    pushClassicUndo();
+    layer.method = method;
+    setCleanStatus(`${CLEAN_METHODS[method].note}`);
+    saveClassicText();
+    paintCleanStage();
+    scheduleCleanFrame();
+  }
+
+  function toggleCleanHidden(id) {
+    const layer = classicCleanLayers().find((item) => item.id === id);
+    if (!layer) return;
+    pushClassicUndo();
+    layer.hidden = !layer.hidden;
+    saveClassicText();
+    paintCleanStage();
+    scheduleCleanFrame();
+  }
+
+  function updateCleanBox(id, patch) {
+    const layer = classicCleanLayers().find((item) => item.id === id);
+    if (!layer) return;
+    layer.box = {
+      x: clamp(Number(patch.x), 0, 1 - CLEAN_MIN_BOX),
+      y: clamp(Number(patch.y), 0, 1 - CLEAN_MIN_BOX),
+      w: clamp(Number(patch.w), CLEAN_MIN_BOX, 1 - clamp(Number(patch.x), 0, 1)),
+      h: clamp(Number(patch.h), CLEAN_MIN_BOX, 1 - clamp(Number(patch.y), 0, 1)),
+    };
+    saveClassicText();
+    paintCleanBoxes();
+  }
+
+  function nudgeClean(id, dx, dy) {
+    const layer = classicCleanLayers().find((item) => item.id === id);
+    if (!layer) return;
+    updateCleanBox(id, {
+      x: layer.box.x + dx,
+      y: layer.box.y + dy,
+      w: layer.box.w,
+      h: layer.box.h,
+    });
+    scheduleCleanFrame();
+  }
+
+  function cleanPointToBox(point) {
+    return {
+      x: clamp(point.x, 0, 1),
+      y: clamp(point.y, 0, 1),
+    };
+  }
+
+  function cleanLocalPoint(event) {
+    const canvas = dom.cleanCanvas;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) / Math.max(1, rect.width),
+      y: (event.clientY - rect.top) / Math.max(1, rect.height),
+    };
+  }
+
+  function bindCleanStageDrag() {
+    const canvas = dom.cleanCanvas;
+    if (!canvas) return;
+    let drag = null;
+    const onMove = (event) => {
+      if (!drag) return;
+      const point = cleanLocalPoint(event);
+      if (drag.kind === "draw") {
+        const x = Math.min(drag.origin.x, point.x);
+        const y = Math.min(drag.origin.y, point.y);
+        drag.last = {
+          x, y,
+          w: Math.abs(point.x - drag.origin.x),
+          h: Math.abs(point.y - drag.origin.y),
+        };
+        drag.preview.style.left = `${(drag.last.x * 100).toFixed(2)}%`;
+        drag.preview.style.top = `${(drag.last.y * 100).toFixed(2)}%`;
+        drag.preview.style.width = `${(drag.last.w * 100).toFixed(2)}%`;
+        drag.preview.style.height = `${(drag.last.h * 100).toFixed(2)}%`;
+        return;
+      }
+      const layer = classicCleanLayers().find((item) => item.id === drag.id);
+      if (!layer) return;
+      const dx = point.x - drag.origin.x;
+      const dy = point.y - drag.origin.y;
+      if (drag.kind === "move") {
+        updateCleanBox(drag.id, {
+          x: clamp(drag.startBox.x + dx, 0, 1 - drag.startBox.w),
+          y: clamp(drag.startBox.y + dy, 0, 1 - drag.startBox.h),
+          w: drag.startBox.w,
+          h: drag.startBox.h,
+        });
+        return;
+      }
+      // resize from one corner, the opposite corner stays put
+      const box = drag.startBox;
+      let x = box.x;
+      let y = box.y;
+      let w = box.w;
+      let h = box.h;
+      if (drag.corner.includes("e")) w = clamp(box.w + dx, CLEAN_MIN_BOX, 1 - box.x);
+      if (drag.corner.includes("s")) h = clamp(box.h + dy, CLEAN_MIN_BOX, 1 - box.y);
+      if (drag.corner.includes("w")) {
+        const nextX = clamp(box.x + dx, 0, box.x + box.w - CLEAN_MIN_BOX);
+        w = box.w + (box.x - nextX);
+        x = nextX;
+      }
+      if (drag.corner.includes("n")) {
+        const nextY = clamp(box.y + dy, 0, box.y + box.h - CLEAN_MIN_BOX);
+        h = box.h + (box.y - nextY);
+        y = nextY;
+      }
+      updateCleanBox(drag.id, { x, y, w, h });
+    };
+    const onUp = () => {
+      if (!drag) return;
+      canvas.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      canvas.releasePointerCapture?.(drag.pointerId);
+      const finished = drag;
+      drag = null;
+      if (finished.kind === "draw") {
+        finished.preview.remove();
+        const box = finished.last;
+        if (box && box.w >= CLEAN_MIN_BOX + 0.005 && box.h >= CLEAN_MIN_BOX + 0.005) {
+          addCleanBox({ box, method: finished.method, label: "Drawn box" });
+        } else {
+          setCleanStatus("A box needs a little more room. Drag a wider area.");
+        }
+        return;
+      }
+      pushClassicUndo();
+      saveClassicText();
+      scheduleCleanFrame();
+    };
+    canvas.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      if (!classicTextSupported()) {
+        setCleanStatus("Clean boxes render on 9:16 and 4:5. Switch the shape first.");
+        return;
+      }
+      const handle = event.target.closest("[data-clean-handle]");
+      const boxNode = event.target.closest("[data-clean-id]");
+      if (handle && boxNode) {
+        const layer = classicCleanLayers().find((item) => item.id === boxNode.dataset.cleanId);
+        if (!layer) return;
+        event.preventDefault();
+        selectClean(layer.id);
+        pushClassicUndo();
+        drag = {
+          kind: "resize",
+          corner: handle.dataset.cleanHandle,
+          id: layer.id,
+          origin: cleanLocalPoint(event),
+          startBox: { ...layer.box },
+          pointerId: event.pointerId,
+        };
+        canvas.setPointerCapture?.(event.pointerId);
+        canvas.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp, { once: true });
+        return;
+      }
+      if (boxNode) {
+        const layer = classicCleanLayers().find((item) => item.id === boxNode.dataset.cleanId);
+        if (!layer) return;
+        event.preventDefault();
+        selectClean(layer.id);
+        pushClassicUndo();
+        drag = {
+          kind: "move",
+          id: layer.id,
+          origin: cleanLocalPoint(event),
+          startBox: { ...layer.box },
+          pointerId: event.pointerId,
+        };
+        canvas.setPointerCapture?.(event.pointerId);
+        canvas.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp, { once: true });
+        return;
+      }
+      if (!state.classicText.drawMode) {
+        selectClean("");
+        return;
+      }
+      const origin = cleanLocalPoint(event);
+      const preview = document.createElement("div");
+      preview.className = "clean-box is-new";
+      preview.style.left = `${(origin.x * 100).toFixed(2)}%`;
+      preview.style.top = `${(origin.y * 100).toFixed(2)}%`;
+      preview.style.width = "0%";
+      preview.style.height = "0%";
+      (dom.cleanOverlay || canvas).appendChild(preview);
+      drag = {
+        kind: "draw",
+        origin,
+        last: { x: origin.x, y: origin.y, w: 0, h: 0 },
+        preview,
+        method: state.classicText.drawMethod || "blur",
+        pointerId: event.pointerId,
+      };
+      state.classicText.drawMode = false;
+      paintCleanStage();
+      canvas.setPointerCapture?.(event.pointerId);
+      canvas.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp, { once: true });
+    });
+  }
+
+  function toggleCleanDraw() {
+    state.classicText.drawMode = !state.classicText.drawMode;
+    setCleanStatus(state.classicText.drawMode
+      ? "Drag on the frame to draw the box."
+      : "");
+    paintCleanStage();
+  }
+
+  function bindClean() {
+    dom.cleanDraw?.addEventListener("click", toggleCleanDraw);
+    dom.cleanUndo?.addEventListener("click", undoClassic);
+    dom.cleanRedo?.addEventListener("click", redoClassic);
+    dom.cleanRefresh?.addEventListener("click", () => {
+      setCleanStatus("Rendering this frame again…");
+      refreshCleanFrame(true);
+    });
+    dom.cleanScrub?.addEventListener("input", () => {
+      state.classicText.t = Number(dom.cleanScrub.value) || 0;
+      paintCleanStage();
+      scheduleCleanFrame();
+    });
+    bindCleanStageDrag();
+    dom.cleanLayers?.addEventListener("click", (event) => {
+      const eye = event.target.closest("[data-clean-eye]");
+      if (eye) {
+        toggleCleanHidden(eye.dataset.cleanEye);
+        return;
+      }
+      const del = event.target.closest("[data-clean-delete]");
+      if (del) {
+        deleteCleanBox(del.dataset.cleanDelete);
+        return;
+      }
+      const chip = event.target.closest("[data-clean-method]");
+      if (chip) {
+        setCleanMethod(chip.dataset.cleanTarget, chip.dataset.cleanMethod);
+        return;
+      }
+      const row = event.target.closest("[data-clean-row]");
+      if (row) selectClean(row.dataset.cleanRow);
+    });
+    dom.cleanFound?.addEventListener("click", (event) => {
+      const add = event.target.closest("[data-found-add]");
+      if (!add) return;
+      const index = Number(add.dataset.foundAdd);
+      const entry = cleanScanEntries()[index];
+      if (!entry) return;
+      const select = dom.cleanFound.querySelector(`[data-found-method="${index}"]`);
+      addCleanFromScan(entry, select ? select.value : "");
+    });
+    dom.cleanFill?.addEventListener("click", (event) => {
+      const button = event.target.closest("#clean-fill-preview");
+      if (button) previewFill();
+    });
+    paintClassicUndo();
+  }
+
+  function cleanShortcut(event) {
+    const target = event.target;
+    const typing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA"
+      || target.tagName === "SELECT" || target.isContentEditable);
+    // Chromium on macOS reports Shift+/ as "/", so both forms open the sheet.
+    const wantsSheet = event.key === "?" || (event.key === "/" && event.shiftKey);
+    if (wantsSheet && !typing) {
+      event.preventDefault();
+      openShortcuts();
+      return true;
+    }
+    if (event.key === "Escape" && dom.shortcutsSheet && !dom.shortcutsSheet.hidden) {
+      event.preventDefault();
+      closeShortcuts();
+      return true;
+    }
+    if (typing) return false;
+    const meta = event.metaKey || event.ctrlKey;
+    if (meta && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redoClassic();
+      else undoClassic();
+      return true;
+    }
+    if (!state.job || !state.plan) return false;
+    if (event.key === "b" || event.key === "B") {
+      event.preventDefault();
+      toggleCleanDraw();
+      return true;
+    }
+    if ((event.key === "Backspace" || event.key === "Delete") && state.classicText.selection) {
+      event.preventDefault();
+      deleteCleanBox(state.classicText.selection);
+      return true;
+    }
+    if (event.key === "Escape") {
+      if (state.classicText.drawMode) {
+        state.classicText.drawMode = false;
+        paintCleanStage();
+      } else {
+        selectClean("");
+      }
+      return true;
+    }
+    if (state.classicText.selection && event.key.startsWith("Arrow")) {
+      const step = event.shiftKey ? 0.02 : 0.005;
+      const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+      const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+      if (dx || dy) {
+        event.preventDefault();
+        nudgeClean(state.classicText.selection, dx, dy);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ------------------------------------------------------------ finish mode
+  //
+  // C4: one fixed Finish frame. The editor panes step aside so the player and
+  // Render/Download have the page; Back to edit returns to the same cut with
+  // its boxes intact.
+
+  function setFinishMode(on) {
+    const enabled = Boolean(on) && Boolean(state.job) && !dom.result.hidden;
+    document.body.classList.toggle("finish-frame", enabled);
+    if (dom.finishCut) {
+      dom.finishCut.textContent = enabled ? "Back to edit" : "Finish";
+      dom.finishCut.setAttribute("aria-pressed", enabled ? "true" : "false");
+    }
+    if (enabled) {
+      state.classicText.drawMode = false;
+      paintCleanStage();
+      updateRenderPanel();
+    }
+  }
+
+  function toggleFinishMode() {
+    const enabled = !document.body.classList.contains("finish-frame");
+    if (enabled && !state.job) {
+      toast("Open a cut first.");
+      return;
+    }
+    setFinishMode(enabled);
+  }
+
+  // ------------------------------------------------------------ scan state
+
+  function paintMomentsScan() {
+    const chip = dom.momentsScan;
+    if (!chip) return;
+    const scan = state.textScan;
+    const status = (scan && scan.status) || "idle";
+    if (!state.job) {
+      chip.hidden = true;
+      return;
+    }
+    chip.hidden = false;
+    const facts = textScanFacts(scan && scan.report);
+    const labels = {
+      idle: "Find text on screen ›",
+      queued: "text scan queued",
+      running: "scanning text…",
+      ready: facts.confirmed ? "text scanned ✓" : "scanned · no text",
+      cancelled: "text scan cancelled",
+      failed: "text scan failed",
+    };
+    chip.textContent = labels[status] || labels.idle;
+    chip.dataset.status = status;
+    chip.classList.toggle("is-live", status === "queued" || status === "running");
+    chip.classList.toggle("is-ready", status === "ready");
+    chip.classList.toggle("is-failed", status === "failed");
+  }
+
+  function momentsScanAction() {
+    if (!state.job) return;
+    const status = (state.textScan && state.textScan.status) || "idle";
+    if (status === "idle" || status === "cancelled" || status === "failed") {
+      startTextScan();
+      return;
+    }
+    if (dom.cleanPanel) dom.cleanPanel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  // ------------------------------------------------------------ shortcut sheet
+
+  function openShortcuts() {
+    if (!dom.shortcutsSheet) return;
+    dom.shortcutsSheet.hidden = false;
+    dom.shortcutsClose?.focus();
+  }
+
+  function closeShortcuts() {
+    if (!dom.shortcutsSheet || dom.shortcutsSheet.hidden) return;
+    dom.shortcutsSheet.hidden = true;
+  }
+
+  function bindChrome() {
+    dom.finishCut?.addEventListener("click", toggleFinishMode);
+    dom.shortcutsOpen?.addEventListener("click", openShortcuts);
+    dom.cleanHelp?.addEventListener("click", openShortcuts);
+    dom.shortcutsClose?.addEventListener("click", closeShortcuts);
+    dom.shortcutsSheet?.addEventListener("click", (event) => {
+      if (event.target.closest("[data-shortcuts-close]")) closeShortcuts();
+    });
+    dom.momentsScan?.addEventListener("click", momentsScanAction);
+    const pane = dom.cleanStage?.closest(".editor-pane");
+    if (pane && typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(() => sizeCleanCanvas());
+      observer.observe(pane);
+    }
+    window.addEventListener("resize", sizeCleanCanvas);
+    dom.rightsOwn?.addEventListener("change", () => {
+      if (dom.rightsOwn.checked) dom.rightsTick?.classList.remove("is-required");
+    });
+    syncRightsTick();
+    paintMomentsScan();
   }
 
   // ---------------------------------------------------------------- render reel
@@ -7719,6 +8914,7 @@
     // C0 frame: only the result screen is a fixed three-pane editor, so the
     // class rides with that view and nothing else. The CSS decides the width.
     document.body.classList.toggle("editor-frame", view === "result");
+    if (view !== "result") setFinishMode(false);
     if (view !== "result") abortTextScan();
     window.scrollTo(0, 0);
   }
@@ -7798,6 +8994,8 @@
       dom.textScanStatus.textContent = "Not scanned yet. Find text to look for captions, watermarks and screen UI baked into the cut.";
       dom.textScanStart.textContent = "Find text on screen";
     }
+    renderCleanFound();
+    paintMomentsScan();
   }
 
   // 202 is success to `fetch`, so Check's "still running" envelope has to be

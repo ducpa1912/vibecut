@@ -150,6 +150,11 @@
           </div>
 
           <div class="action-row">
+            <label id="rights-tick" class="check rights-tick" hidden>
+              <input id="rights-own" type="checkbox">
+              <span class="check-box"></span>
+              <span class="check-copy"><strong>I own this footage</strong><small>or have the rights to it</small></span>
+            </label>
             <button id="analyze" class="primary" disabled>Dissect video <span class="arrow">↗</span></button>
             <span class="hint" id="ingest-note">ffmpeg cuts first. Analysis follows.</span>
           </div>
@@ -227,6 +232,8 @@
           <p id="usage-readout" class="hint"></p>
         </div>
         <div class="result-actions">
+          <button id="finish-cut" class="ghost" type="button" aria-pressed="false">Finish</button>
+          <button id="shortcuts-open" class="ghost" type="button" aria-haspopup="dialog" title="Keyboard shortcuts (?)">?</button>
           <button id="new-video" class="ghost">New video</button>
           <select id="clean-profile" class="clean-profile" aria-label="Clean profile" title="What Clean removes">
             <option value="workfiles" selected>Work files</option>
@@ -239,6 +246,35 @@
       </div>
 
       <div class="editor-pane editor-pane-preview">
+      <section id="clean-stage" class="clean-stage" hidden aria-label="Cut frame">
+        <div class="clean-stage-bar">
+          <div class="clean-stage-title">
+            <span class="stage-kicker">frame</span>
+            <span id="clean-stage-time" class="mono">0.0s</span>
+            <span id="clean-stage-clip" class="hint"></span>
+          </div>
+          <div class="clean-stage-tools">
+            <button id="clean-draw" class="ghost small" type="button" aria-pressed="false" title="Draw a box (B)"><span class="clean-tool-glyph" aria-hidden="true">＋</span><span class="clean-tool-label">Box</span></button>
+            <button id="clean-undo" class="ghost small" type="button" title="Undo (⌘Z)" aria-label="Undo" disabled><span class="clean-tool-glyph" aria-hidden="true">↶</span><span class="clean-tool-label">Undo</span></button>
+            <button id="clean-redo" class="ghost small" type="button" title="Redo (⇧⌘Z)" aria-label="Redo" disabled><span class="clean-tool-glyph" aria-hidden="true">↷</span><span class="clean-tool-label">Redo</span></button>
+            <button id="clean-refresh" class="ghost small" type="button" title="Render this frame again" aria-label="Refresh frame"><span class="clean-tool-glyph" aria-hidden="true">↻</span><span class="clean-tool-label">Refresh</span></button>
+            <button id="clean-help" class="ghost small" type="button" title="Keyboard shortcuts (?)" aria-haspopup="dialog">?</button>
+          </div>
+        </div>
+        <div class="clean-stage-body">
+          <div id="clean-canvas" class="clean-canvas" data-aspect="9:16">
+            <img id="clean-frame" class="clean-frame" alt="Frame of the cut" hidden>
+            <div id="clean-overlay" class="clean-overlay"></div>
+            <div id="clean-frame-state" class="clean-frame-state" role="status" aria-live="polite"></div>
+          </div>
+        </div>
+        <div class="clean-stage-foot">
+          <input id="clean-scrub" class="clean-scrub" type="range" min="0" max="30" step="0.05" value="0" aria-label="Frame time">
+          <span id="clean-scrub-readout" class="hint mono"></span>
+          <span id="clean-stage-hint" class="hint">Drag a box to move it, pull a corner to resize.</span>
+        </div>
+      </section>
+
       <div id="result-ready" class="result-ready" hidden>
         <span class="ready-dot" aria-hidden="true"></span>
         <span id="result-ready-text" class="ready-text"></span>
@@ -302,6 +338,7 @@
             <p class="eyebrow">moments</p>
             <h3>Moments</h3>
             <span id="scene-count" class="moments-count"></span>
+            <button id="moments-scan" class="moment-scan" type="button" hidden></button>
           </div>
           <div class="scene-tools">
             <div class="sort-tabs" id="sort-tabs">
@@ -393,6 +430,21 @@
             <h3 id="edit-section-title">Edit</h3>
           </div>
           <p class="hint">Copy, sound and text are optional. Render and Draft stay at the end.</p>
+        </section>
+
+        <section id="clean-panel" class="edit-card clean-panel" aria-labelledby="clean-panel-title">
+          <div class="edit-card-head">
+            <div>
+              <h4 id="clean-panel-title">Clean</h4>
+              <p>Cover what should not be in the cut. The frame on the left is the real render.</p>
+            </div>
+            <span id="clean-count" class="text-scan-badge" hidden></span>
+          </div>
+          <div id="clean-found" class="clean-found" hidden></div>
+          <div id="clean-layers" class="clean-layers" role="list"></div>
+          <p id="clean-empty" class="hint clean-empty">No boxes yet. Scan for text on screen, or draw a box on the frame.</p>
+          <p id="clean-status" class="hint clean-status" role="status" aria-live="polite"></p>
+          <div id="clean-fill" class="clean-fill" hidden></div>
         </section>
 
         <section id="text-scan" class="edit-card text-scan-card" aria-labelledby="text-scan-title">
@@ -1039,6 +1091,7 @@
           </div>
         </section>
       </div>
+
     </section>
   </main>
 
@@ -1356,6 +1409,27 @@
         <button id="setup-save" class="primary small" type="button">Save setup</button>
       </footer>
     </section>
+  </div>
+
+  <div id="shortcuts-sheet" class="shortcuts-sheet" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" hidden>
+    <div class="shortcuts-backdrop" data-shortcuts-close></div>
+    <div class="shortcuts-panel">
+      <div class="shortcuts-head">
+        <h3 id="shortcuts-title">Keys</h3>
+        <button id="shortcuts-close" class="ghost small" type="button" aria-label="Close shortcuts">✕</button>
+      </div>
+      <dl class="shortcuts-list">
+        <div><dt>B</dt><dd>Draw a Clean box</dd></div>
+        <div><dt>Drag</dt><dd>Move a box · corner pulls resize it</dd></div>
+        <div><dt>← → ↑ ↓</dt><dd>Nudge the selected box (Shift = bigger step)</dd></div>
+        <div><dt>Del</dt><dd>Delete the selected box</dd></div>
+        <div><dt>Esc</dt><dd>Leave draw mode, then clear the selection</dd></div>
+        <div><dt>⌘Z</dt><dd>Undo · ⇧⌘Z redo</dd></div>
+        <div><dt>Space</dt><dd>Play the draft in the player</dd></div>
+        <div><dt>?</dt><dd>This sheet</dd></div>
+      </dl>
+      <p class="hint">Nothing here renders on its own. The frame on the left is the render; the reel follows it.</p>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden></div>
