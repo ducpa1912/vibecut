@@ -74,7 +74,6 @@ def test_timeline_has_global_and_contextual_toolbars():
     assert 'data-tl-action="duplicate"' in TIMELINE
     assert 'data-tl-action="reverse"' in TIMELINE
     assert 'data-tl-action="freeze"' in TIMELINE
-    assert 'data-tl-action="mosaic"' in TIMELINE
     assert 'id="st-timeline-title"' not in TIMELINE
 
 
@@ -123,7 +122,7 @@ def test_painter_mask_is_on_the_detected_text_layer():
     assert "onPaint" in preview
     assert "paintPoints" in preview
     assert "appendPaintPoints" in INDEX
-    assert "startPaint: (layerId)" in INDEX
+    assert "startPaint: (layerId" in INDEX
 
 
 def test_found_text_marks_share_the_existing_clean_lane():

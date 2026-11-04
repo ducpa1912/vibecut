@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 import app
 import detect
 import edits
+import textfill
 import settings_store
 
 JOB_ID = "auto-clean-job"
@@ -174,7 +175,8 @@ def _call(env, edit_id: str | None = None, **body):
     )
 
 
-def test_report_regions_become_delogo_layers_without_saving_the_edit(env):
+def test_report_regions_become_clean_layers_without_saving_the_edit(env, monkeypatch):
+    monkeypatch.setattr(textfill, "method_problem", lambda *_args: "no models here")
     detect.write_report(env.directory, _report([
         _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
         _tracklet("trk_title", "title", {"x": 0.1, "y": 0.2, "w": 0.8, "h": 0.18}),
@@ -186,9 +188,9 @@ def test_report_regions_become_delogo_layers_without_saving_the_edit(env):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert set(body) == {"layers", "added", "skipped", "warnings"}
+    assert set(body) == {"layers", "updated", "added", "skipped", "warnings"}
     assert body["added"] == 3
-    assert [layer["kind"] for layer in body["layers"]] == ["delogo"] * 3
+    assert [layer["kind"] for layer in body["layers"]] == ["blur"] * 3
     assert {layer["tracklet_id"] for layer in body["layers"]} == {
         "trk_sub", "trk_title", "trk_credit",
     }
@@ -296,7 +298,7 @@ def test_handles_need_the_opt_in(env):
     opt_in = _call(env, include_handles=True)
     assert opt_in.status_code == 200, opt_in.text
     assert opt_in.json()["added"] == 1
-    assert opt_in.json()["layers"][0]["kind"] == "crop_guard"
+    assert opt_in.json()["layers"][0]["kind"] in {"fill", "blur"}
 
 
 def test_missing_report_is_a_404(env):
@@ -392,7 +394,7 @@ def test_remove_all_uses_only_the_ticked_tracklets(env):
     assert body["added"] == 1
 
 
-def test_remove_all_can_choose_ai_fill_blur_or_cover(env):
+def test_remove_all_can_choose_ai_fill_or_blur_but_not_cover(env):
     detect.write_report(env.directory, _report([
         _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
     ]))
@@ -404,8 +406,16 @@ def test_remove_all_can_choose_ai_fill_blur_or_cover(env):
     blur = _call(env, method="blur").json()["layers"][0]
     assert blur["kind"] == "blur"
 
-    cover = _call(env, method="cover").json()["layers"][0]
-    assert cover["kind"] == "plate"
+    assert _call(env, method="cover").status_code == 422
+
+
+def test_auto_picks_ai_fill_when_an_engine_is_ready(env, monkeypatch):
+    detect.write_report(env.directory, _report([
+        _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
+    ]))
+    monkeypatch.setattr(textfill, "method_problem", lambda method, _dir: None if method == "lama" else "no")
+    layer = _call(env).json()["layers"][0]
+    assert layer["kind"] == "fill" and layer["method"] == "lama"
 
 
 def test_an_unknown_clean_method_is_rejected(env):
@@ -518,7 +528,7 @@ def test_fill_preview_returns_before_and_after_and_caches(env, tmp_path, monkeyp
             "strokes": [{
                 "id": "st_a",
                 "r": 0.03,
-                "points": [{"x": 0.5, "y": 0.8}],
+                "points": [{"x": 0.3, "y": 0.8}, {"x": 0.5, "y": 0.8}],
             }],
         },
         "z": 0,

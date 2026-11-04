@@ -2567,3 +2567,20 @@ body:has(.st-preview.is-focus) { overflow: hidden; }
 .st-caption-fold + .st-caption-fold { margin-top: 4px; }
 .st-cue-time-fold > summary { color: var(--st-dim); font-size: 10px; cursor: pointer; }
 .st-cue-time-fold[open] > summary { color: var(--st-muted); }
+
+/* AI fill or Blur, per box */
+.st-preview-stage { position: relative; }
+.st-box-method,
+.st-method-switch { display: inline-flex; gap: 1px; border: 1px solid var(--st-line, rgba(255, 255, 255, 0.16)); border-radius: 5px; overflow: hidden; background: rgba(10, 10, 12, 0.9); }
+.st-box-method { position: absolute; z-index: 5; }
+.st-box-method[hidden] { display: none; }
+.st-box-method button,
+.st-method-option { border: 0; padding: 3px 8px; font: inherit; font-size: 11px; line-height: 1.4; color: var(--st-dim); background: transparent; cursor: pointer; }
+.st-box-method button.is-active,
+.st-method-option.is-active { color: #0a0a0c; background: #e8a266; }
+.st-box-method button:disabled,
+.st-method-option:disabled { opacity: 0.45; cursor: not-allowed; }
+.st-clean-row { display: flex; align-items: center; gap: 4px; }
+.st-clean-row .st-layer-row { flex: 1 1 auto; min-width: 0; }
+.st-clean-row .st-method-switch { flex: 0 0 auto; }
+.st-layer-hidden-note { flex: 0 0 auto; margin-left: auto; color: var(--st-dim); font-size: 11px; }

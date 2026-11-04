@@ -371,18 +371,31 @@ def _fill_plan(
     source_width: int | None = None,
     source_height: int | None = None,
     aspect: str = "",
+    skip_hidden: bool = False,
 ) -> tuple[dict | None, list[dict]]:
     """Active AI fill layers of one segment, for the render's pre-pass.
 
     One method runs per segment: the topmost active layer's. The list is
     ordered by ``z`` (then id), so a mixed beat still has one deterministic
-    engine and the layer the viewer sees on top decides it. Returns
+    engine and the layer the viewer sees on top decides it. With
+    ``skip_hidden``, a layer fully outside the crop is left out: nobody would
+    see the fill, and the layer itself stays in the Edit. Returns
     (plan, warnings).
     """
+    def visible(layer: dict) -> bool:
+        if not skip_hidden or not crop or not source_width or not source_height:
+            return True
+        return _intersects(
+            _box_rect(layer["box"], source_width, source_height, even=False),
+            crop,
+        )
+
     active = sorted(
         (
             layer for layer in clean
-            if layer["kind"] == "fill" and _active_window(layer, start, end)[0]
+            if layer["kind"] == "fill"
+            and _active_window(layer, start, end)[0]
+            and visible(layer)
         ),
         key=lambda layer: (int(layer.get("z") or 0), str(layer.get("id") or "")),
     )
@@ -403,13 +416,14 @@ def _fill_plan(
         if not mask or not crop or not source_width or not source_height:
             return None
         if isinstance(mask, dict):
-            mask_aspect = str(mask.get("aspect") or "").strip()
-            if mask_aspect and mask_aspect != str(aspect or ""):
-                # The mask was painted for another crop; using it would fill
-                # pixels the user never painted. Fall back to the box.
-                return None
             strokes = mask.get("strokes") or []
             space = str(mask.get("space") or "output")
+            mask_aspect = str(mask.get("aspect") or "").strip()
+            if space != "source" and mask_aspect and mask_aspect != str(aspect or ""):
+                # An old mask saved on the cropped picture of another shape;
+                # using it would fill the wrong pixels. Fall back to the box.
+                # Source-space masks stay on the video whatever the crop.
+                return None
         else:
             strokes = [{"r": 0.025, "points": mask}]
             space = "output"
@@ -1107,6 +1121,7 @@ def compile_edit(
                 normalized["clean"], clip["start"], clip["end"],
                 crop=crop, source_width=width, source_height=height,
                 aspect=str(normalized.get("aspect") or ""),
+                skip_hidden=not reframe.get("crop_path_ref"),
             )
         warnings.extend(clean_warnings)
         warnings.extend({

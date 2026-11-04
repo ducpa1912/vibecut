@@ -46,7 +46,7 @@ Goal: confirm the remaining gaps and lock the behaviour of each item.
 
 - Painter result: **AI fill / inpaint**.
 - Painter engine: **Auto / STTN default**.
-- Painter shape: **freehand output-space mask**, not a box.
+- Painter shape: **freehand mask**, not a box. Replaced 2026-11-04: saved on the original video so it stays on the text when the crop moves (`clean-fill-revision-plan.md`).
 - Painter home: **on the detected text layer**. Each detected text can stay as-is or switch to a paint-brush mask for less-impact inpainting.
 - Painter timing: **one clean layer with start/end**. Default start at the playhead.
 - Painter is non-destructive: it writes a layer and timestamp; it does not touch video or clips during edit.

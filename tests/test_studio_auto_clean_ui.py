@@ -59,13 +59,13 @@ def test_auto_clean_posts_an_empty_body_to_the_edit_route():
 def test_auto_clean_merge_keeps_layers_and_guards_by_tracklet_id():
     out = run_module("edit/layers/clean.js", """
         const existing = [
-          { id: "cl_trk_a", tracklet_id: "trk_a", kind: "delogo" },
-          { id: "cl_manual_1", kind: "delogo" },
+          { id: "cl_trk_a", tracklet_id: "trk_a", kind: "delogo", box: { x: 0.1, y: 0.8, w: 0.8, h: 0.05 } },
+          { id: "cl_manual_1", kind: "delogo", box: { x: 0.1, y: 0.8, w: 0.8, h: 0.05 } },
         ];
         const generated = [
-          { id: "cl_trk_a_2", tracklet_id: "trk_a", kind: "delogo" },
-          { id: "cl_manual_1", tracklet_id: "trk_b", kind: "delogo" },
-          { id: "cl_trk_c", tracklet_id: "trk_c", kind: "delogo" },
+          { id: "cl_trk_a_2", tracklet_id: "trk_new_id", kind: "delogo", box: { x: 0.1, y: 0.802, w: 0.8, h: 0.05 } },
+          { id: "cl_manual_1", tracklet_id: "trk_b", kind: "delogo", box: { x: 0.1, y: 0.2, w: 0.8, h: 0.05 } },
+          { id: "cl_trk_c", tracklet_id: "trk_a", kind: "delogo", box: { x: 0.1, y: 0.4, w: 0.8, h: 0.05 } },
         ];
         const merged = m.mergeAutoCleanLayers(existing, generated);
         return {
@@ -80,8 +80,8 @@ def test_auto_clean_merge_keeps_layers_and_guards_by_tracklet_id():
     assert out["added"] == ["cl_trk_c"]
     assert out["existing"] == ["cl_trk_a", "cl_manual_1"]
     assert len(out["skipped"]) == 2
-    assert out["skipped"][0]["tracklet_id"] == "trk_a"
-    assert "tracklet" in out["skipped"][0]["reason"].lower()
+    assert out["skipped"][0]["tracklet_id"] == "trk_new_id"
+    assert "text" in out["skipped"][0]["reason"].lower()
     assert "identical" in out["skipped"][1]["reason"].lower()
 
 
@@ -169,12 +169,12 @@ def test_clean_panel_has_one_quiet_remove_all_action():
 def test_clean_panel_merges_through_set_clean_and_selects_the_first_new_layer():
     clean = source("edit/layers/clean.js")
 
-    assert "mergeAutoCleanLayers(ctx.getEdit()?.clean || [], result?.layers)" in clean
-    assert "if (merged.added.length) ctx.setClean(merged.layers)" in clean
+    assert "mergeAutoCleanLayers(widened, result?.layers)" in clean
+    assert "if (merged.added.length || result?.updated?.length) ctx.setClean(merged.layers)" in clean
     assert 'if (first) ctx.select("clean", first)' in clean
-    # The client-side guard mirrors the server's tracklet identity.
-    assert "tracklets.has(trackletId)" in clean
-    assert "This tracklet already has a Clean layer in the Edit." in clean
+    # The client-side guard mirrors the server's text-and-area identity.
+    assert "layers.some((item) => sameScanText(item, layer))" in clean
+    assert "This text already has a Clean layer in the Edit." in clean
 
 
 def test_clean_panel_shows_scan_guidance_with_an_open_check_action():

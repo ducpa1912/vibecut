@@ -372,7 +372,7 @@ def test_tracklet_contract_fields_and_ranges():
     assert set(tracklet) >= {
         "id", "kind", "box", "ranges", "text_sample", "confidence",
     }
-    assert tracklet["id"] == "trk_0001"
+    assert tracklet["id"].startswith("trk_")
     assert tracklet["kind"] == "subtitle"
     assert tracklet["ranges"] == [{"start": 10.0, "end": 20.0}]
     assert tracklet["box"] == box(0.1, 0.8, 0.8, 0.08)
@@ -390,7 +390,7 @@ def test_tracklet_ids_are_deterministic_by_time():
     bottom = (0.0, [line("caption", 0.1, 0.8, 0.8, 0.08)])
     first = detect.build_tracklets(observations([bottom, top]), 20.0)
     second = detect.build_tracklets(observations([top, bottom]), 20.0)
-    assert [item["id"] for item in first] == ["trk_0001", "trk_0002"]
+    assert [item["id"] for item in first] == [item["id"] for item in second]
     assert [item["text_sample"] for item in first] == [
         item["text_sample"] for item in second
     ]
@@ -627,7 +627,7 @@ def test_watermark_is_refused_and_never_prefilled():
     job = job_record()
     rows = [{"text": "TikTok", "box": box(0.84, 0.05, 0.13, 0.05), "confidence": 0.9}]
     report = report_for(job, [(index * 2.0, rows) for index in range(4)])
-    assert report["policy"]["watermark_refused"] == ["trk_0001"]
+    assert report["policy"]["watermark_refused"] == [report["tracklets"][0]["id"]]
     assert report["policy"]["refusals"][0]["message"] == detect.WATERMARK_MESSAGE
     assert report["clean_prefill"][0]["action"] == "refused"
     assert report["clean_prefill"][0]["enabled"] is False

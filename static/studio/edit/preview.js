@@ -51,6 +51,9 @@ export function mountPreview(root, options = {}) {
     onOutput: options.onOutput || (() => {}),
     onPaint: options.onPaint || (() => {}),
     onPaintRequest: options.onPaintRequest || (() => ""),
+    onPaintEnd: options.onPaintEnd || (() => {}),
+    onCleanMethod: options.onCleanMethod || (() => {}),
+    fillAvailable: options.fillAvailable || (() => false),
     onStory: options.onStory || (() => {}),
     onSceneStep: options.onSceneStep || (() => {}),
     onSpan: options.onSpan || (() => {}),
@@ -151,6 +154,10 @@ export function mountPreview(root, options = {}) {
       </div>
       <div class="st-preview-stage">
         <canvas id="st-preview-canvas" class="st-preview-canvas" width="1080" height="1920" aria-label="Story preview with safe zones and editable boxes"></canvas>
+        <div id="st-box-method" class="st-box-method" role="group" aria-label="Clean method for this box" hidden>
+          <button type="button" data-kind="fill">AI fill</button>
+          <button type="button" data-kind="blur">Blur</button>
+        </div>
         <div id="st-preview-compare" class="st-preview-compare" hidden>
           <img class="st-compare-before" alt="Before the Clean layer">
           <img class="st-compare-after" alt="After the Clean layer">
@@ -267,6 +274,7 @@ export function mountPreview(root, options = {}) {
     stabilize: $("#st-preview-stabilize"),
     strength: $("#st-preview-strength"),
     tools: Array.from(root.querySelectorAll(".st-preview-tool")),
+    boxMethod: root.querySelector("#st-box-method"),
   };
   const ctx = dom.canvas.getContext("2d");
 
@@ -607,8 +615,16 @@ export function mountPreview(root, options = {}) {
       ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
       const mask = item.layer?.mask;
       const strokes = mask && !Array.isArray(mask) ? (mask.strokes || []) : (mask ? [{ r: mask[0]?.r || 0.025, points: mask }] : []);
+      const onVideo = mask && !Array.isArray(mask) && mask.space === "source";
+      const crop = currentCrop();
       const points = strokes.flatMap((stroke) => (
-        (stroke.points || []).map((point) => ({ ...point, r: stroke.r || 0.025 }))
+        (stroke.points || []).map((point) => (onVideo
+          ? {
+            x: (point.x - crop.x) / crop.w,
+            y: (point.y - crop.y) / crop.h,
+            r: (stroke.r || 0.025) / crop.w,
+          }
+          : { ...point, r: stroke.r || 0.025 }))
       ));
       if (points.length) {
         ctx.globalAlpha = item.active ? 0.5 : 0.22;
@@ -625,6 +641,19 @@ export function mountPreview(root, options = {}) {
           ctx.fill();
         }
         ctx.globalAlpha = item.active ? 1 : 0.34;
+      }
+      if (item.active) {
+        const tag = item.layer.kind === "fill" ? "AI fill" : item.layer.kind === "blur" ? "Blur" : "Old";
+        const size = Math.max(16, Math.round(width * 0.02));
+        ctx.setLineDash([]);
+        ctx.font = `600 ${size}px ui-sans-serif, -apple-system, sans-serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        const tagWidth = ctx.measureText(tag).width + size;
+        ctx.fillStyle = "rgba(10, 10, 12, 0.82)";
+        ctx.fillRect(rect.x, rect.y, tagWidth, size * 1.5);
+        ctx.fillStyle = colour;
+        ctx.fillText(tag, rect.x + size / 2, rect.y + size * 0.25);
       }
       if (item.selected) {
         const points = [
@@ -762,6 +791,7 @@ export function mountPreview(root, options = {}) {
     drawSafeZones(width, height);
     drawFoundBoxes(width, height);
     drawCleanBoxes(width, height);
+    placeMethodSwitch();
     drawSelection(width, height);
     drawDrawPreview(width, height);
     drawPaintPreview(width, height);
@@ -1296,9 +1326,37 @@ export function mountPreview(root, options = {}) {
     dom.compareAfter.removeAttribute("src");
   });
 
+  /** The AI fill or Blur switch sits on the selected box. */
+  function placeMethodSwitch() {
+    const node = dom.boxMethod;
+    if (!node) return;
+    const item = cleanRects().find((row) => row.selected && !row.hidden);
+    const clipped = item ? visibleRect(item.frame) : null;
+    if (!clipped || !dom.canvas.width) {
+      node.hidden = true;
+      return;
+    }
+    const canvas = dom.canvas.getBoundingClientRect();
+    const stage = node.parentElement.getBoundingClientRect();
+    const rect = pxRect(clipped, dom.canvas.width, dom.canvas.height);
+    const scale = canvas.width / dom.canvas.width;
+    node.hidden = false;
+    node.style.left = `${Math.max(0, canvas.left - stage.left + rect.x * scale)}px`;
+    node.style.top = `${Math.max(0, canvas.top - stage.top + (rect.y + rect.h) * scale + 4)}px`;
+    for (const button of node.querySelectorAll("button")) {
+      const active = button.dataset.kind === item.layer.kind;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+      button.disabled = button.dataset.kind === "fill" && !callbacks.fillAvailable();
+    }
+    node.dataset.layer = item.layer.id;
+  }
+
   function setTool(tool) {
+    const wasPaint = state.tool === "paint";
     state.tool = ["box", "paint"].includes(tool) ? tool : "select";
     if (state.tool !== "paint") state.paintPoints = [];
+    if (wasPaint && state.tool !== "paint") callbacks.onPaintEnd();
     for (const button of dom.tools) {
       const active = button.dataset.tool === state.tool;
       button.classList.toggle("is-active", active);
@@ -1463,7 +1521,7 @@ export function mountPreview(root, options = {}) {
     if (current.mode === "paint") {
       const points = state.paintPoints.slice(0, 120);
       state.paintPoints = [];
-      callbacks.onPaint(current.layerId, points);
+      callbacks.onPaint(current.layerId, points, currentCrop());
       setTool("select");
     } else if (current.mode === "draw") {
       const rect = drawPreview;
@@ -1488,6 +1546,12 @@ export function mountPreview(root, options = {}) {
     draw();
   }
 
+  dom.boxMethod?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-kind]");
+    if (button && !button.disabled && dom.boxMethod.dataset.layer) {
+      callbacks.onCleanMethod(dom.boxMethod.dataset.layer, button.dataset.kind);
+    }
+  });
   dom.canvas.addEventListener("pointerdown", beginPointer);
   dom.canvas.addEventListener("pointermove", movePointer);
   dom.canvas.addEventListener("pointerup", endPointer);

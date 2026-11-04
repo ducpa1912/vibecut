@@ -38,7 +38,9 @@ const SCAN_REQUIRED = "Run Scan footage first.";
 // inspector, and the summary must stay visible after that refresh.
 const AUTO_CLEAN_STATE = new Map();
 
-const KIND_ORDER = ["delogo", "fill", "blur", "plate", "mask", "mosaic", "crop_guard"];
+// Clean has two methods. The other kinds stay in the Edit format so saved
+// layers still render, and show their old name with a switch to these two.
+const KIND_ORDER = ["fill", "blur"];
 
 const KIND_COPY = {
   delogo: "Remove text",
@@ -56,6 +58,28 @@ const FILL_METHODS = [
   ["lama", "LaMa · per frame, best on still backgrounds"],
 ];
 const FILL_KINDS = new Set(["delogo", "blur", "plate", "mask"]);
+
+// Drawn boxes start with the last method used; the first is AI fill when an
+// engine is ready, else Blur.
+let fillAvailable = false;
+let lastDrawKind = "";
+
+export function setFillAvailable(value) {
+  fillAvailable = Boolean(value);
+}
+
+export function isFillAvailable() {
+  return fillAvailable;
+}
+
+export function rememberDrawKind(kind) {
+  if (KIND_ORDER.includes(kind)) lastDrawKind = kind;
+}
+
+export function drawKind() {
+  if (lastDrawKind === "fill" && !fillAvailable) return "blur";
+  return lastDrawKind || (fillAvailable ? "fill" : "blur");
+}
 
 /** Set a layer's kind, adding or dropping the fill engine to match. */
 export function setLayerKind(layer, kind) {
@@ -149,12 +173,44 @@ function autoCleanStateFor(jobId) {
   return state;
 }
 
+function sameArea(first, second) {
+  if (!first || !second) return false;
+  const left = Math.max(numberOr(first.x), numberOr(second.x));
+  const top = Math.max(numberOr(first.y), numberOr(second.y));
+  const right = Math.min(numberOr(first.x) + numberOr(first.w), numberOr(second.x) + numberOr(second.w));
+  const bottom = Math.min(numberOr(first.y) + numberOr(first.h), numberOr(second.y) + numberOr(second.h));
+  if (right > left && bottom > top) {
+    const shared = (right - left) * (bottom - top);
+    const union = numberOr(first.w) * numberOr(first.h) + numberOr(second.w) * numberOr(second.h) - shared;
+    if (union > 0 && shared / union >= 0.3) return true;
+  }
+  const dx = Math.abs(numberOr(first.x) + numberOr(first.w) / 2 - numberOr(second.x) - numberOr(second.w) / 2);
+  const dy = Math.abs(numberOr(first.y) + numberOr(first.h) / 2 - numberOr(second.y) - numberOr(second.h) / 2);
+  return dx <= 0.04 && dy <= 0.03;
+}
+
+/**
+ * The same text in the same area, mirroring `cleanup._same_scan_text`.
+ * Overlapping different text is allowed. Drawn boxes never match.
+ */
+export function sameScanText(layer, other) {
+  if (!String(layer?.tracklet_id || "").trim()) return false;
+  if (!sameArea(layer?.box, other?.box)) return false;
+  if (layer?.text_key && layer.text_key === other?.text_key) return true;
+  const first = Array.isArray(layer?.ranges) ? layer.ranges : [];
+  const second = Array.isArray(other?.ranges) ? other.ranges : [];
+  if (!first.length || !second.length) return true;
+  return first.some((a) => second.some((b) => (
+    Number(a.start) < Number(b.end) && Number(b.start) < Number(a.end)
+  )));
+}
+
 /**
  * Merge generated layers into the current Edit without touching what is there.
  *
  * The server already dedupes against the saved Edit, but this panel can hold
- * unsaved layers. A tracklet_id is the primary identity; an existing id is a
- * second guard for older layers that do not carry a tracklet_id.
+ * unsaved layers. The same text in the same area is one layer, and an existing
+ * id is a second guard for older layers.
  */
 export function mergeAutoCleanLayers(existing, generated, limit = MAX_CLEAN) {
   const current = Array.isArray(existing)
@@ -162,12 +218,9 @@ export function mergeAutoCleanLayers(existing, generated, limit = MAX_CLEAN) {
     : [];
   const layers = current.map((layer) => clone(layer));
   const ids = new Set();
-  const tracklets = new Set();
   for (const layer of layers) {
     const id = String(layer?.id || "").trim();
     if (id) ids.add(id);
-    const trackletId = String(layer?.tracklet_id || "").trim();
-    if (trackletId) tracklets.add(trackletId);
   }
 
   const cap = Math.max(0, Math.trunc(numberOr(limit, MAX_CLEAN)));
@@ -179,10 +232,10 @@ export function mergeAutoCleanLayers(existing, generated, limit = MAX_CLEAN) {
     if (!layer || typeof layer !== "object") continue;
     const trackletId = String(layer.tracklet_id || "").trim();
     const layerId = String(layer.id || "").trim();
-    if (trackletId && tracklets.has(trackletId)) {
+    if (trackletId && layers.some((item) => sameScanText(item, layer))) {
       skipped.push({
         tracklet_id: trackletId,
-        reason: "This tracklet already has a Clean layer in the Edit.",
+        reason: "This text already has a Clean layer in the Edit.",
       });
       continue;
     }
@@ -206,7 +259,6 @@ export function mergeAutoCleanLayers(existing, generated, limit = MAX_CLEAN) {
     layers.push(next);
     added.push(next);
     if (next.id) ids.add(String(next.id));
-    if (trackletId) tracklets.add(trackletId);
   }
 
   if (overflow) {
@@ -312,25 +364,7 @@ function safeLabel(value, fallback) {
   return cleaned || fallback;
 }
 
-function layersFromEntry(entry, tracklet, index, source) {
-  const base = layerFromEntry(entry, tracklet, index * 2, source);
-  const layers = [base];
-  if (base.kind === "blur" && entry?.quality_warning) {
-    layers.push({
-      ...clone(base),
-      id: `${base.id}_plate`,
-      kind: "plate",
-      z: index * 2 + 1,
-      color: "#000000",
-      opacity: 1,
-      radius: 12,
-      label: "Cover plate",
-    });
-  }
-  return layers;
-}
-
-function safeRadius(box, source) {
+export function safeRadius(box, source) {
   const width = Math.max(1, numberOr(source?.width, 1920));
   const height = Math.max(1, numberOr(source?.height, 1080));
   const minPixels = Math.min(
@@ -375,14 +409,29 @@ export function maskPointCount(layer) {
 }
 
 export function emptyMask(aspect = "9:16") {
-  return { space: "output", aspect, strokes: [] };
+  return { space: "source", aspect, strokes: [] };
+}
+
+/** Move a brush mask with its box, so the strokes stay where they were drawn. */
+export function remapMask(layer, from, to) {
+  const strokes = maskStrokes(layer);
+  if (!strokes.length || !from || !to) return;
+  if (!Array.isArray(layer.mask) && layer.mask.space !== "source") return;
+  const scaleX = numberOr(to.w, 1) / Math.max(1e-6, numberOr(from.w, 1));
+  const scaleY = numberOr(to.h, 1) / Math.max(1e-6, numberOr(from.h, 1));
+  for (const stroke of strokes) {
+    stroke.points = (stroke.points || []).map((point) => ({
+      x: round(clamp(numberOr(to.x) + (numberOr(point.x) - numberOr(from.x)) * scaleX, 0, 1), 4),
+      y: round(clamp(numberOr(to.y) + (numberOr(point.y) - numberOr(from.y)) * scaleY, 0, 1), 4),
+    }));
+  }
 }
 
 export function manualLayer(index, box = null) {
-  return {
+  const layer = {
     id: `cl_manual_${Date.now().toString(36)}`,
-    kind: "delogo",
-    box: paddedBox(box, "delogo"),
+    kind: "blur",
+    box: paddedBox(box, "blur"),
     ranges: [],
     z: index,
     color: "#000000",
@@ -390,6 +439,7 @@ export function manualLayer(index, box = null) {
     radius: 12,
     label: "Remove text",
   };
+  return setLayerKind(layer, drawKind());
 }
 
 function storySourceSpan(story, fallback = 0) {
@@ -597,9 +647,6 @@ export function mountCleanPanel(host, ctx) {
 
   function foundRows() {
     const current = ctx.getEdit()?.clean || [];
-    const addedIds = new Set(
-      current.map((layer) => String(layer?.tracklet_id || "")).filter(Boolean),
-    );
     const prefill = prefillByTracklet();
     const full = current.length >= MAX_CLEAN;
     const rows = [];
@@ -615,7 +662,7 @@ export function mountCleanPanel(host, ctx) {
         || entry?.action === "none"
         || entry?.blocked === "screen_text";
       const locked = !blocked && !skipped && Boolean(reasonCode);
-      const added = addedIds.has(id);
+      const added = current.some((layer) => sameScanText(layer, tracklet));
       let reason = reasonText(kind, entry);
       if (added) reason = "Already added to this moment.";
       else if (full && !blocked && !skipped) {
@@ -722,7 +769,7 @@ export function mountCleanPanel(host, ctx) {
     }
     if (removeMethod === "ai" && !fillReady(fillMethod)) {
       autoState.notice = {
-        text: fillStatusError || "The AI fill model is not available. Choose Blur or Cover.",
+        text: fillStatusError || "The AI fill model is not available. Choose Blur.",
         tone: "bad",
         scan: false,
       };
@@ -743,12 +790,17 @@ export function mountCleanPanel(host, ctx) {
         autoState.busy = false;
         return;
       }
-      const merged = mergeAutoCleanLayers(ctx.getEdit()?.clean || [], result?.layers);
+      const widened = clone(ctx.getEdit()?.clean || []);
+      for (const change of Array.isArray(result?.updated) ? result.updated : []) {
+        const layer = widened.find((item) => item.id === change.id);
+        if (layer) layer.ranges = change.ranges;
+      }
+      const merged = mergeAutoCleanLayers(widened, result?.layers);
       const first = merged.added[0]?.id || "";
       for (const layer of merged.added) {
         if (layer.tracklet_id) foundTicks.delete(String(layer.tracklet_id));
       }
-      if (merged.added.length) ctx.setClean(merged.layers);
+      if (merged.added.length || result?.updated?.length) ctx.setClean(merged.layers);
       const summary = autoCleanSummary({
         ...(result && typeof result === "object" ? result : {}),
         added: merged.added.length,
@@ -964,11 +1016,10 @@ export function mountCleanPanel(host, ctx) {
         disabled: !aiReady,
       }),
       el("option", { value: "blur", text: "Blur", selected: removeMethod === "blur" }),
-      el("option", { value: "cover", text: "Cover", selected: removeMethod === "cover" }),
     ]);
     method.addEventListener("change", () => {
       methodTouched = true;
-      removeMethod = ["ai", "blur", "cover"].includes(method.value) ? method.value : "blur";
+      removeMethod = method.value === "ai" ? "ai" : "blur";
       render();
     });
     const controls = [
@@ -1016,7 +1067,13 @@ export function mountCleanPanel(host, ctx) {
     if (removeMethod === "ai" && !aiReady) {
       wrap.append(el("p", {
         class: "st-found-note",
-        text: fillStatusError || "AI fill needs its model in the fill models folder. Blur and Cover work without it.",
+        text: fillStatusError || "AI fill needs its model in the fill models folder. Blur works without it.",
+      }));
+    }
+    if (removeMethod === "blur" && ticked.some((row) => row.entry?.quality_warning)) {
+      wrap.append(el("p", {
+        class: "st-found-note",
+        text: "Some of this text crosses the middle of the frame. Blur may leave it readable; AI fill removes it.",
       }));
     }
     return wrap;
@@ -1202,11 +1259,11 @@ export function mountCleanPanel(host, ctx) {
   function startPaintRow(row, fresh = false) {
     if (!row || (!row.allowed && !row.added)) return;
     const layers = (ctx.getEdit()?.clean || []).slice();
+    // One layer per found text: clicking again reuses it, painted or not.
     let layer = !fresh && layers.find((item) => (
-      String(item.tracklet_id || "") === String(row.id)
-      && item.kind === "fill"
-      && maskPointCount(item) > 0
+      item.kind === "fill" && sameScanText(item, row.tracklet)
     ));
+    const created = !layer;
     if (!layer) {
       layer = layerFromEntry(
         { box: row.box, ranges: row.ranges },
@@ -1226,7 +1283,7 @@ export function mountCleanPanel(host, ctx) {
       render();
     }
     ctx.select("clean", layer.id);
-    ctx.startPaint?.(layer.id);
+    ctx.startPaint?.(layer.id, { created });
   }
 
   function reportMatchesScene(range) {
@@ -1298,6 +1355,7 @@ export function mountCleanPanel(host, ctx) {
       const list = el("div", { class: "st-layer-list", role: "list", style: "margin-top:8px" });
       for (const layer of layers) {
         const active = selectedId === layer.id;
+        const hiddenByCrop = ctx.isHiddenByCrop?.(layer) === true;
         const row = el("button", {
           class: `st-layer-row${active ? " is-active" : ""}`,
           type: "button",
@@ -1307,9 +1365,10 @@ export function mountCleanPanel(host, ctx) {
         }, [
           el("span", { class: "st-layer-badge", text: CLEAN_LABELS[layer.kind] || KIND_COPY[layer.kind] || "Clean" }),
           el("span", { class: "st-layer-name", text: layer.label || rangeSummary(layer.ranges) }),
+          hiddenByCrop ? el("span", { class: "st-layer-hidden-note", text: "Hidden by crop" }) : null,
         ]);
         row.addEventListener("click", () => ctx.select("clean", layer.id));
-        list.append(row);
+        list.append(el("div", { class: "st-clean-row" }, [row, methodSwitch(layer)]));
       }
       card.append(list);
       const covers = layers.filter((layer) => (
@@ -1334,7 +1393,12 @@ export function mountCleanPanel(host, ctx) {
     const addRow = el("div", { class: "st-layer-add", style: "margin-top:9px" });
     const kind = el("select", { "aria-label": "New Clean kind", disabled: !canClean() });
     for (const value of KIND_ORDER) {
-      kind.append(el("option", { value, text: KIND_COPY[value] }));
+      kind.append(el("option", {
+        value,
+        text: KIND_COPY[value],
+        selected: value === drawKind(),
+        disabled: value === "fill" && !isFillAvailable(),
+      }));
     }
     const add = el("button", {
       class: "st-btn st-btn-ghost st-btn-small",
@@ -1344,13 +1408,8 @@ export function mountCleanPanel(host, ctx) {
       title: layers.length >= MAX_CLEAN ? `A story supports ${MAX_CLEAN} clean layers.` : "",
     });
     add.addEventListener("click", () => {
-      const layers = (ctx.getEdit()?.clean || []).slice();
-      const layer = manualLayer(layers.length);
-      setLayerKind(layer, kind.value);
-      if (layer.kind === "crop_guard") layer.box = { x: 0.08, y: 0.72, w: 0.84, h: 0.16 };
-      layers.push(layer);
-      ctx.setClean(layers);
-      ctx.select("clean", layer.id);
+      rememberDrawKind(kind.value);
+      ctx.addBox?.(kind.value);
     });
     addRow.append(kind, add);
     card.append(addRow);
@@ -1365,6 +1424,28 @@ export function mountCleanPanel(host, ctx) {
     return card;
   }
 
+  /** AI fill or Blur for this box only. */
+  function methodSwitch(layer) {
+    const wrap = el("div", { class: "st-method-switch", role: "group", "aria-label": "Clean method for this box" });
+    for (const value of KIND_ORDER) {
+      const locked = value === "fill" && !isFillAvailable();
+      const button = el("button", {
+        class: `st-method-option${layer.kind === value ? " is-active" : ""}`,
+        type: "button",
+        text: KIND_COPY[value],
+        "aria-pressed": layer.kind === value ? "true" : "false",
+        disabled: !canClean() || locked,
+        title: locked ? (fillStatusError || "AI fill needs its model in the fill models folder.") : "",
+      });
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        ctx.setCleanMethod?.(layer.id, value);
+      });
+      wrap.append(button);
+    }
+    return wrap;
+  }
+
   function editorCard(selected, selectedId) {
     if (!selected) return null;
     const layer = clone(selected);
@@ -1376,12 +1457,25 @@ export function mountCleanPanel(host, ctx) {
 
     const kindSelect = el("select", { "aria-label": "Clean kind", disabled: !canClean() });
     for (const value of KIND_ORDER) {
-      kindSelect.append(el("option", { value, text: KIND_COPY[value], selected: value === layer.kind }));
+      kindSelect.append(el("option", {
+        value,
+        text: KIND_COPY[value],
+        selected: value === layer.kind,
+        disabled: value === "fill" && !isFillAvailable(),
+      }));
+    }
+    if (!KIND_ORDER.includes(layer.kind)) {
+      // A saved layer from before Clean had two methods: it renders as it was
+      // until it is switched.
+      kindSelect.prepend(el("option", {
+        value: layer.kind,
+        text: `${KIND_COPY[layer.kind] || layer.kind} (old)`,
+        selected: true,
+        disabled: true,
+      }));
     }
     kindSelect.addEventListener("change", () => {
-      setLayerKind(layer, kindSelect.value);
-      commit();
-      ctx.refresh();
+      ctx.setCleanMethod?.(layer.id, kindSelect.value);
     });
 
     const labelInput = el("input", {
@@ -1447,8 +1541,15 @@ export function mountCleanPanel(host, ctx) {
       field("Box height (%)", hInput),
     ]);
     details.append(grid);
-    details.append(el("p", { class: "st-field-hint", text: "Boxes are measured on the original frame, before the 9:16 crop." }));
+    details.append(el("p", { class: "st-field-hint", text: "Boxes stay on the original video: they move and scale with it, and the crop only hides them." }));
+    stage.append(methodSwitch(layer));
     stage.append(details);
+    if (layer.kind === "delogo" && numberOr(layer.box?.w) * numberOr(layer.box?.h) > 0.1) {
+      stage.append(el("p", {
+        class: "st-found-note",
+        text: "This old Remove box is large and smears the picture. Switch it to AI fill or Blur.",
+      }));
+    }
 
     const maskPoints = maskStrokes(layer);
     if (layer.kind === "fill") {
@@ -1479,7 +1580,7 @@ export function mountCleanPanel(host, ctx) {
       if (maskPoints.length) {
         stage.append(el("p", {
           class: "st-field-hint",
-          text: "Freehand mask. The detected box stays as a fallback and as the layer bounds.",
+          text: "Only the painted part is filled, and only inside the box. A single click is ignored.",
         }));
       }
       const compare = el("button", {
@@ -1671,6 +1772,7 @@ export function mountCleanPanel(host, ctx) {
       fillStatus = status && typeof status === "object" ? status : null;
       fillStatusError = "";
       const first = firstFillMethod();
+      setFillAvailable(Boolean(first));
       if (!methodTouched) removeMethod = first ? "ai" : "blur";
       if (removeMethod === "ai" && !first) removeMethod = "blur";
       if (first && (!methodTouched || !fillReady(fillMethod))) fillMethod = first;

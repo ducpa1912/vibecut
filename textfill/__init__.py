@@ -14,6 +14,7 @@ never downloaded here: a missing model is a clear error.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -27,8 +28,9 @@ from . import mask as masks
 
 METHODS = ("sttn", "lama")
 DEFAULT_METHOD = "sttn"
-VERSION = 1
+VERSION = 2
 MODEL_FILES = {"sttn": "sttn_infer_model.pth", "lama": "lama_fp32.onnx"}
+MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime"}
 METHOD_COPY = {"sttn": "STTN (video)", "lama": "LaMa (per frame)"}
 # Share of the previous frame's fill kept on LaMa output, to calm flicker.
 LAMA_CARRY = 0.3
@@ -70,6 +72,17 @@ def missing_model(method: str, directory: Path) -> str | None:
         f"The {METHOD_COPY.get(method, method)} fill model is missing. "
         f"Put {MODEL_FILES[method]} in {directory}."
     )
+
+
+def method_problem(method: str, directory: Path) -> str | None:
+    """Why an engine cannot run here, or None. Ready needs model and package."""
+    problem = missing_model(method, directory)
+    if problem:
+        return problem
+    package = MODEL_PACKAGES[method]
+    if importlib.util.find_spec(package) is None:
+        return f"{METHOD_COPY.get(method, method)} fill needs the {package} package on this Mac."
+    return None
 
 
 def _model_stamp(path: Path) -> str:
@@ -360,7 +373,14 @@ def fill_frame(
         return frame.copy()
     work = frame[y0:y1, x0:x1]
     hole = masks.rasterize(local, x1 - x0, y1 - y0)
-    filled = _filler(method, model_path(method, directory)).fill(work, hole)
+    # One model at a time on this Mac: a preview never loads beside a render.
+    if not _LOCK.acquire(blocking=False):
+        raise FillError("AI fill is busy with a render. Try the preview when it finishes.")
+    try:
+        filled = _filler(method, model_path(method, directory)).fill(work, hole)
+    finally:
+        release_fillers()
+        _LOCK.release()
     out = frame.copy()
     out[y0:y1, x0:x1] = masks.paste(work, filled, masks.feather(hole))
     return out

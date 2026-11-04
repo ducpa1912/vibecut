@@ -142,5 +142,5 @@ def test_drawn_box_uses_the_same_manual_clean_shape():
 
     clean = (STUDIO / "edit" / "layers" / "clean.js").read_text(encoding="utf-8")
     assert "export function manualLayer(index, box = null)" in clean
-    assert "box: paddedBox(box, \"delogo\")" in clean
+    assert "box: paddedBox(box, \"blur\")" in clean
     assert re.search(r"manualLayer\(layers\.length, box\)", INDEX)

@@ -3,3 +3,8 @@
 # Install with: .venv/bin/python -m pip install -r requirements-optional.txt
 # VibeCut falls back to FFmpeg atempo when this is absent.
 python-stretch>=0.3.1
+
+# Optional AI text fill (textfill/). STTN needs torch, LaMa needs onnxruntime.
+# Model files are separate: see docs/handoff/text-fill-test-plan.md.
+torch>=2.2
+onnxruntime>=1.17

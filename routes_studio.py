@@ -43,8 +43,8 @@ class AutoCleanBody(BaseModel):
     # None keeps the old "all allowed regions" behaviour. An explicit list is
     # the found-text list's ticks, so Remove all only touches what was ticked.
     tracklet_ids: list[str] | None = None
-    # auto keeps Check's own action; ai turns every tick into an AI fill;
-    # blur and cover are the two explicit cover methods.
+    # Clean has two methods. auto picks AI fill when an engine is ready, else
+    # Blur; ai and blur are explicit.
     method: str = "auto"
     fill_method: str = "sttn"
 
@@ -103,25 +103,21 @@ def _apply_clean_method(
 ) -> list[dict]:
     """Turn Check's default layers into the method chosen in Edit.
 
-    ``auto`` keeps Check's own action. ``ai`` makes every allowed region an AI
-    fill; ``blur`` and ``cover`` use the two simple hides. The mid-frame cover
-    companion is only useful for blur, so AI/cover drop it rather than adding
-    a second layer on the same box.
+    Clean has two methods, AI fill and Blur. Check's mid-frame cover companion
+    is dropped for both: a cover is an effect the creator adds, not a Clean
+    method.
     """
-    if method == "auto":
-        return layers
     out: list[dict] = []
     for layer in layers:
-        if method != "blur" and str(layer.get("label") or "") == "Mid-frame caption cover":
+        if str(layer.get("label") or "") == "Mid-frame caption cover":
             continue
         item = dict(layer)
         if method == "ai":
             item["kind"] = "fill"
             item["method"] = fill_method
-        elif method == "blur":
-            item["kind"] = "blur"
         else:
-            item["kind"] = "plate"
+            item["kind"] = "blur"
+            item.pop("method", None)
         out.append(item)
     return out
 
@@ -225,8 +221,9 @@ def _layers_in_story(layers: list[dict], story: dict) -> tuple[list[dict], list[
 def fill_status() -> dict:
     """Which text-fill engines are usable on this machine.
 
-    The UI only offers AI fill when a model file is present. The single-frame
-    preview always uses LaMa, so it reports that separately.
+    The UI only offers AI fill when an engine's model and package are both
+    present. The single-frame preview always uses LaMa, so it reports that
+    separately.
     """
     import app
     import textfill
@@ -234,7 +231,7 @@ def fill_status() -> dict:
     directory = textfill.models_dir(app.DATA)
     methods = {}
     for method in textfill.METHODS:
-        problem = textfill.missing_model(method, directory)
+        problem = textfill.method_problem(method, directory)
         methods[method] = {
             "id": method,
             "label": textfill.METHOD_COPY.get(method, method),
@@ -587,11 +584,19 @@ def auto_clean(
         raise HTTPException(403, "Cross-site writes are blocked.")
     body = body or AutoCleanBody()
     method = str(body.method or "auto").strip().lower()
-    if method not in {"auto", "ai", "blur", "cover"}:
-        raise HTTPException(422, "method must be auto, ai, blur or cover.")
+    if method not in {"auto", "ai", "blur"}:
+        raise HTTPException(422, "method must be auto, ai or blur.")
     fill_method = str(body.fill_method or "sttn").strip().lower()
     if fill_method not in textfill.METHODS:
         raise HTTPException(422, "fill_method must be sttn or lama.")
+    if method == "auto":
+        ready = [
+            item for item in (fill_method, *textfill.METHODS)
+            if textfill.method_problem(item, textfill.models_dir(app.DATA)) is None
+        ]
+        method = "ai" if ready else "blur"
+        if ready:
+            fill_method = ready[0]
     job = app.load_job(job_id)
     job_dir = app._job_dir(job_id)
     try:
@@ -647,6 +652,7 @@ def auto_clean(
         )
     return {
         "layers": merged["layers"],
+        "updated": merged["updated"],
         "added": len(merged["layers"]),
         "skipped": skipped,
         "warnings": warnings,

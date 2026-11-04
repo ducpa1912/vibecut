@@ -35,7 +35,7 @@ def test_remove_all_sends_the_ticks_and_the_chosen_method():
     assert "tracklet_ids:" in CLEAN
     assert "method: removeMethod" in CLEAN
     assert "fill_method: fillMethod" in CLEAN
-    assert 'value: "ai"' in CLEAN and 'value: "blur"' in CLEAN and 'value: "cover"' in CLEAN
+    assert 'value: "ai"' in CLEAN and 'value: "blur"' in CLEAN
     assert "AI fill (model missing)" in CLEAN
     assert "/api/fill/status" in CLEAN
     assert "st-found-method" in CLEAN and "st-found-engine" in CLEAN

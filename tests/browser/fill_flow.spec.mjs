@@ -251,8 +251,10 @@ try {
     await page.locator(".st-found-row.is-painted .st-found-paint:disabled").count() === 1,
     "the painted detected row must disable its brush",
   );
-  const paintLayerId = painter.ids.find((id) => String(id).startsWith("cl_paint_")) || "";
-  assert(paintLayerId, "paint layer id is missing");
+  // The row already had a layer from Remove all, so the brush reuses it.
+  const paintLayerId = painter.ids.find((id) => id === "cl_trk_sub") || "";
+  assert(paintLayerId, "the brush did not reuse the found text's layer");
+  assert(painter.ids.filter((id) => String(id).startsWith("cl_paint_")).length === 0, "the brush added a second layer");
   const patchesBefore = captured.patches || 0;
   await page.locator(".st-clean-compare").click();
   await page.locator("#st-preview-compare").waitFor({ state: "visible", timeout: 30000 });
@@ -272,6 +274,13 @@ try {
 
   if (screenshot) await page.screenshot({ path: screenshot, fullPage: false });
   assert(pageErrors.length === 0, `page errors: ${pageErrors.join(" | ")}`);
+  // Each box has its own method, on the box itself.
+  const onBox = page.locator('#st-box-method button[data-kind="blur"]');
+  assert(await onBox.isVisible(), "the selected box has no method switch");
+  await onBox.click();
+  await page.waitForFunction(() => (
+    document.querySelector('#st-box-method button[data-kind="blur"]')?.classList.contains("is-active")
+  ));
   console.log("Found-text list, Remove all and painter mask passed.");
 } finally {
   await browser.close();

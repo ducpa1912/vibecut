@@ -2,8 +2,9 @@
 
 Flow 1 cleans a finished video that already has baked-in text. The supported
 operations are deliberately boring: crop away edge text, cover a region, or
-blur a region. There is no inpainting, generative repair, temporal
-reconstruction, logo repair, or watermark removal.
+blur a region. This kit itself does no inpainting, generative repair, temporal
+reconstruction or logo repair, and nothing in VibeCut removes watermarks. AI
+text fill is separate: see ``textfill/``, which Studio runs at render.
 
 Everything here is pure data. Building a plan never invokes ffmpeg, never
 writes to a job, and never calls the network. ``filter_chain`` is a declarative
@@ -12,6 +13,7 @@ description for a future renderer, not an executable command.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from typing import Any, Iterable
@@ -333,6 +335,7 @@ def tracklet_clean_layers(
     warnings: list[str] = []
     used: set[str] = set()
     z_cursor = 0
+    samples = {str(item.get("id") or ""): item.get("text_sample") for item in items}
     for entry in entries:
         tracklet_id = entry["tracklet_id"]
         if wanted is not None and tracklet_id not in wanted:
@@ -408,6 +411,9 @@ def tracklet_clean_layers(
             "tracklet_id": tracklet_id,
             "tracklet_kind": kind,
         }
+        text_key = _text_key(samples.get(tracklet_id))
+        if text_key:
+            base_layer["text_key"] = text_key
         layers.append(base_layer)
         z_cursor += 1
         if kind == "subtitle" and action == "blur" and entry.get("quality_warning"):
@@ -455,23 +461,62 @@ def _clean_region_key(layer: dict) -> tuple:
     )
 
 
+def _text_key(text: Any) -> str:
+    """A short hash of what a scan read, comparable across scans."""
+    words = re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+    return hashlib.sha1(words.encode("utf-8")).hexdigest()[:12] if words else ""
+
+
+def _same_scan_text(first: dict, second: dict) -> bool:
+    """The same text in the same area. Overlapping different text is allowed.
+
+    Areas must match, and then the words match or the times overlap. Ids alone
+    are not trusted: older reports numbered them, so an id can name other text.
+    """
+    box_a, box_b = first.get("box"), second.get("box")
+    if not isinstance(box_a, dict) or not isinstance(box_b, dict):
+        return False
+    try:
+        if detect._similar(box_a, box_b) < 0.3:
+            return False
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return False
+    key_a, key_b = first.get("text_key"), second.get("text_key")
+    if key_a and key_b and key_a == key_b:
+        return True
+    ranges_a, ranges_b = _layer_ranges(first), _layer_ranges(second)
+    if not ranges_a or not ranges_b:
+        return True
+    return any(
+        a["start"] < b["end"] and b["start"] < a["end"]
+        for a in ranges_a for b in ranges_b
+    )
+
+
+def _joined_ranges(first: list[dict], second: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    for item in sorted([*first, *second], key=lambda value: value["start"]):
+        if merged and item["start"] <= merged[-1]["end"]:
+            merged[-1]["end"] = max(merged[-1]["end"], item["end"])
+        else:
+            merged.append({"start": item["start"], "end": item["end"]})
+    return merged
+
+
 def merge_auto_clean_layers(
     existing: Iterable[dict] | None,
     generated: Iterable[dict] | None,
 ) -> dict:
     """Return generated Clean layers that an Edit does not already contain.
 
-    The existing layers are never changed. A ``tracklet_id`` is the primary
-    identity; without one, the same kind, box and merged ranges mean the same
-    region. A generated id that collides with an existing id gets a numeric
-    suffix, so the frontend can still save the merged Edit.
+    Existing layers are not changed here. When new times belong to a scan
+    layer already in the Edit, ``updated`` carries its id and joined ranges for
+    the frontend to apply. Drawn boxes have no tracklet and are never matched,
+    except an identical region. A generated id that collides with an existing
+    id gets a numeric suffix, so the frontend can still save the merged Edit.
     """
     current = [item for item in existing or [] if isinstance(item, dict)]
-    tracklet_ids = {
-        str(item.get("tracklet_id") or "").strip()
-        for item in current
-        if str(item.get("tracklet_id") or "").strip()
-    }
+    scanned = [dict(item) for item in current if str(item.get("tracklet_id") or "").strip()]
     regions = {_clean_region_key(item) for item in current}
     used = {
         str(item.get("id") or "")
@@ -480,18 +525,28 @@ def merge_auto_clean_layers(
     }
     layers: list[dict] = []
     skipped: list[dict] = []
+    updated: dict[str, list[dict]] = {}
     for item in generated or []:
         if not isinstance(item, dict):
             continue
         tracklet_id = str(item.get("tracklet_id") or "").strip()
         kind = str(item.get("tracklet_kind") or item.get("kind") or "").strip().lower()
         region = _clean_region_key(item)
-        if tracklet_id and tracklet_id in tracklet_ids:
+        match = next((row for row in [*scanned, *layers] if _same_scan_text(row, item)), None) if tracklet_id else None
+        if match is not None:
             regions.add(region)
+            have = _layer_ranges(match)
+            incoming = _layer_ranges(item)
+            if have and incoming:
+                joined = _joined_ranges(have, incoming)
+                if joined != have:
+                    match["ranges"] = joined
+                    if match in scanned:
+                        updated[str(match.get("id") or "")] = joined
             skipped.append({
                 "tracklet_id": tracklet_id,
                 "kind": kind,
-                "reason": "This tracklet already has a Clean layer in the Edit.",
+                "reason": "This text already has a Clean layer in the Edit.",
             })
             continue
         if region in regions:
@@ -509,9 +564,11 @@ def merge_auto_clean_layers(
         layer["id"] = _unique_layer_id(safe, used)
         layers.append(layer)
         regions.add(region)
-        if tracklet_id:
-            tracklet_ids.add(tracklet_id)
-    return {"layers": layers, "skipped": skipped}
+    return {
+        "layers": layers,
+        "skipped": skipped,
+        "updated": [{"id": key, "ranges": value} for key, value in updated.items()],
+    }
 
 
 def normalize_range(value: Any, span: dict | None) -> dict:

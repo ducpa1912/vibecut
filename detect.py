@@ -23,6 +23,7 @@ frame reader and audio extractor are injected by ``routes_check``.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import math
@@ -697,6 +698,54 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
     return "lower_third" if y >= 0.5 else "title", 0.45
 
 
+def _track_box(track: dict) -> dict:
+    values = track["observations"]
+    box = dict(values[0]["box"])
+    for value in values[1:]:
+        box = _union(box, value["box"])
+    return box
+
+
+def _join_returning_text(tracks: list[dict]) -> list[dict]:
+    """One track per text and area, however long the text was off screen."""
+    joined: list[dict] = []
+    for track in tracks:
+        words = {_normalized_text(item["text"]) for item in track["observations"]} - {""}
+        box = _track_box(track)
+        match = next(
+            (
+                other for other in joined
+                if words & other["_words"] and _similar(box, other["_box"]) >= 0.3
+            ),
+            None,
+        )
+        if match is None:
+            joined.append({**track, "_words": words, "_box": box})
+            continue
+        match["observations"].extend(track["observations"])
+        match["_words"] |= words
+        match["_box"] = _union(match["_box"], box)
+    return joined
+
+
+def _stable_tracklet_id(item: dict, used: set[str]) -> str:
+    """An id from the text and area, so a rescan keeps it for the same text."""
+    cx, cy = _center(item["box"])
+    text = _normalized_text(item.get("text_sample"))
+    seed = f"{text}|{round(cx / 0.05)}|{round(cy / 0.05)}"
+    if not text:
+        ranges = item.get("ranges") or [{}]
+        seed += f"|{round(float(ranges[0].get('start') or 0.0), 1)}"
+    base = f"trk_{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:10]}"
+    candidate = base
+    suffix = 2
+    while candidate in used:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
 def build_tracklets(
     observations: Iterable[dict],
     duration: float,
@@ -705,7 +754,7 @@ def build_tracklets(
     max_tracklets: int = MAX_TRACKLETS,
 ) -> list[dict]:
     """Cluster observations and attach the public tracklet fields."""
-    tracks = cluster_observations(observations, max_gap=max_gap)
+    tracks = _join_returning_text(cluster_observations(observations, max_gap=max_gap))
     duration = max(0.0, float(duration or 0.0))
     items: list[dict] = []
     for track in tracks:
@@ -753,8 +802,9 @@ def build_tracklets(
         value["box"]["y"], value["box"]["x"],
     ))
     limit = max(0, int(max_tracklets))
-    for index, item in enumerate(items[:limit], start=1):
-        item["id"] = f"trk_{index:04d}"
+    used_ids: set[str] = set()
+    for item in items[:limit]:
+        item["id"] = _stable_tracklet_id(item, used_ids)
     result = []
     for item in items[:limit]:
         item.pop("_texts", None)

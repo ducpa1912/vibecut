@@ -116,7 +116,6 @@ export function mountTimeline(root, options = {}) {
     onAddText: options.onAddText || (() => {}),
     onAddAudio: options.onAddAudio || (() => {}),
     onEffects: options.onEffects || (() => {}),
-    onMosaic: options.onMosaic || (() => {}),
     onAutoCaptions: options.onAutoCaptions || (() => {}),
     onOverlayTrack: options.onOverlayTrack || (() => {}),
     onReverse: options.onReverse || (() => {}),
@@ -183,7 +182,6 @@ export function mountTimeline(root, options = {}) {
           <button class="st-tl-icon" type="button" data-tl-action="add-text" title="Add text" aria-label="Add text"></button>
           <button class="st-tl-icon" type="button" data-tl-action="add-audio" title="Add audio" aria-label="Add audio"></button>
           <button class="st-tl-icon" type="button" data-tl-action="effects" title="Effects" aria-label="Effects"></button>
-          <button class="st-tl-icon" type="button" data-tl-action="mosaic" title="Mosaic layer" aria-label="Mosaic layer"></button>
           <button class="st-tl-icon" type="button" data-tl-action="captions" title="Auto captions" aria-label="Auto captions"></button>
           <button class="st-tl-icon" type="button" data-tl-action="overlay" title="Add overlay track" aria-label="Add overlay track"></button>
         </div>
@@ -241,7 +239,7 @@ export function mountTimeline(root, options = {}) {
   }
   const actionIcons = {
     "add-media": "plus", "add-text": "type", "add-audio": "audio-lines",
-    "effects": "sparkles", "mosaic": "mosaic", "captions": "captions",
+    "effects": "sparkles", "captions": "captions",
     "overlay": "layers", "reverse": "reverse", "trim": "trim", "split": "split",
     "duplicate": "copy", "delete": "trash", "crop": "crop", "rotate": "rotate-cw",
     "mirror": "mirror", "flip": "flip", "extract-audio": "audio-lines",
@@ -295,7 +293,7 @@ export function mountTimeline(root, options = {}) {
       }
       const map = {
         "add-media": "onAddMedia", "add-text": "onAddText", "add-audio": "onAddAudio",
-        "effects": "onEffects", "mosaic": "onMosaic", "captions": "onAutoCaptions",
+        "effects": "onEffects", "captions": "onAutoCaptions",
         "overlay": "onOverlayTrack", "reverse": "onReverse", "split": "onSplit",
         "duplicate": "onDuplicate", "delete": "onDelete", "freeze": "onFreeze",
       };

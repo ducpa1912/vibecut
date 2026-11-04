@@ -22,13 +22,23 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261103-20";
+import { mountPreview } from "./preview.js?v=20261104-1";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
-import { cropAt } from "./canvas-tools.js";
+import { boxToFrame, cropAt, visibleRect } from "./canvas-tools.js";
 import { icon } from "./icons.js";
-import { manualLayer, setLayerKind } from "./layers/clean.js";
+import {
+  isFillAvailable,
+  manualLayer,
+  maskPointCount,
+  maskStrokes,
+  rememberDrawKind,
+  remapMask,
+  safeRadius,
+  setFillAvailable,
+  setLayerKind,
+} from "./layers/clean.js";
 import {
   ASPECTS,
   aspectLabel,
@@ -64,7 +74,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261103-20";
+    link.href = "/static/studio/edit/edit.css?v=20261104-1";
     document.head.append(link);
   }
 }
@@ -110,6 +120,7 @@ export function mount(root, ctx) {
   let noticeTimer = 0;
 
   const state = {
+    paintPending: new Set(),
     job: null,
     sets: [],
     set: null,
@@ -1454,10 +1465,17 @@ export function mount(root, ctx) {
         preview?.setTool("box");
         notify("Draw the area to keep, then set the zoom in Layers.", "ok");
       },
-      startPaint: (layerId) => {
+      startPaint: (layerId, { created = false } = {}) => {
+        if (created) state.paintPending.add(layerId);
         preview?.startPaint?.(layerId);
-        notify("Paint over the text. The mask is applied only at render.", "ok");
+        notify("Drag over the text. The mask is applied only at render.", "ok");
       },
+      addBox: (kind) => {
+        addCleanBox(null, kind);
+        preview?.refresh();
+      },
+      setCleanMethod: (layerId, kind) => setCleanMethod(layerId, kind),
+      isHiddenByCrop: (layer) => isHiddenByCrop(layer),
       compareLayer: (layerId) => { void compareCleanLayer(layerId); },
       seekSource: (sourceTime) => {
         const storyTime = sourceToStory(sourceTime);
@@ -1686,7 +1704,7 @@ export function mount(root, ctx) {
         continue;
       }
       if (time >= offset && time <= offset + span) {
-        return { time: start + Math.max(0, time - offset), end };
+        return { time: start + Math.max(0, time - offset), start, end };
       }
       offset += span;
     }
@@ -1700,7 +1718,7 @@ export function mount(root, ctx) {
     layer.id = `cl_paint_manual_${Date.now().toString(36)}`;
     layer.kind = "fill";
     layer.method = "sttn";
-    layer.mask = { space: "output", aspect: state.aspect, strokes: [] };
+    layer.mask = { space: "source", aspect: state.aspect, strokes: [] };
     const at = storyToSource(state.playhead);
     layer.ranges = at ? [{
       start: round(at.time, 2),
@@ -1712,7 +1730,72 @@ export function mount(root, ctx) {
     touch("clean");
     selectLayer("clean", layer.id);
     renderLayers();
+    state.paintPending.add(layer.id);
     return layer.id;
+  }
+
+  /** A paint layer that never got a stroke is removed, not left as a fill. */
+  function dropUnpaintedLayers() {
+    if (!state.edit || !state.paintPending.size) return;
+    const pending = state.paintPending;
+    state.paintPending = new Set();
+    const clean = state.edit.clean || [];
+    const next = clean.filter((layer) => !(pending.has(layer.id) && maskPointCount(layer) === 0));
+    if (next.length === clean.length) return;
+    state.edit.clean = next;
+    touch("clean");
+    renderLayers();
+    preview?.refresh();
+    scheduleTimeline();
+  }
+
+  /** Old masks were saved on the cropped picture; keep them on the video. */
+  function upgradeMasks(edit) {
+    for (const layer of edit?.clean || []) {
+      const mask = layer?.mask;
+      if (!mask || (!Array.isArray(mask) && mask.space === "source")) continue;
+      if (!Array.isArray(mask) && mask.aspect && mask.aspect !== state.aspect) continue;
+      const at = sourceToStory(Number(layer.ranges?.[0]?.start));
+      const crop = cropAt({
+        edit, job: state.job, story: state.story, time: at ?? 0, aspect: state.aspect,
+      });
+      layer.mask = {
+        space: "source",
+        aspect: state.aspect,
+        strokes: maskStrokes(layer).map((stroke, index) => ({
+          id: stroke.id || `st_${index + 1}`,
+          r: round(clamp(numberOr(stroke.r, 0.025) * crop.w, 0.002, 0.2), 4),
+          points: (stroke.points || []).map((point) => ({
+            x: round(clamp(crop.x + numberOr(point.x) * crop.w, 0, 1), 4),
+            y: round(clamp(crop.y + numberOr(point.y) * crop.h, 0, 1), 4),
+          })),
+        })),
+      };
+    }
+  }
+
+  function isHiddenByCrop(layer) {
+    if (!layer?.box) return false;
+    const crop = cropAt({
+      edit: state.edit, job: state.job, story: state.story, time: state.playhead, aspect: state.aspect,
+    });
+    return !visibleRect(boxToFrame(layer.box, crop));
+  }
+
+  function setCleanMethod(layerId, kind) {
+    const layer = (state.edit?.clean || []).find((item) => item.id === layerId);
+    if (!layer || !["fill", "blur"].includes(kind)) return;
+    if (kind === "fill" && !isFillAvailable()) {
+      notify("AI fill needs its model in the fill models folder.", "bad");
+      return;
+    }
+    setLayerKind(layer, kind);
+    if (kind === "blur") layer.radius = safeRadius(layer.box, state.job?.source);
+    rememberDrawKind(kind);
+    touch("clean");
+    renderLayers();
+    preview?.refresh();
+    scheduleTimeline();
   }
 
   async function compareCleanLayer(layerId) {
@@ -1740,8 +1823,13 @@ export function mount(root, ctx) {
     }
   }
 
-  function appendPaintPoints(layerId, points) {
+  function appendPaintPoints(layerId, points, crop) {
     if (!state.edit || !layerId || !Array.isArray(points) || !points.length) return;
+    if (points.length < 2) {
+      notify("Drag across the text to paint. A single click does nothing.", "bad");
+      return;
+    }
+    const frame = crop || { x: 0, y: 0, w: 1, h: 1 };
     const clean = clone(state.edit.clean || []);
     const layer = clean.find((item) => item.id === layerId);
     if (!layer) {
@@ -1750,14 +1838,15 @@ export function mount(root, ctx) {
     }
     const mask = layer.mask && !Array.isArray(layer.mask)
       ? clone(layer.mask)
-      : { space: "output", aspect: state.aspect, strokes: [] };
+      : { space: "source", aspect: state.aspect, strokes: [] };
     if (!Array.isArray(mask.strokes)) mask.strokes = [];
     if (mask.strokes.length >= 20) {
       notify("This layer has 20 paint strokes, the most it can hold. Clear the mask or start another paint layer.", "bad");
       return;
     }
     const existing = mask.strokes.reduce((sum, stroke) => sum + (stroke.points || []).length, 0);
-    const radius = Number(points[0]?.r) || 0.025;
+    // The brush draws on the cropped picture; the mark is kept on the video.
+    const radius = (Number(points[0]?.r) || 0.025) * frame.w;
     const strokePoints = [];
     for (const point of points) {
       if (existing + strokePoints.length >= 120) break;
@@ -1765,23 +1854,42 @@ export function mount(root, ctx) {
       const y = Number(point?.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       strokePoints.push({
-        x: round(clamp(x, 0, 1), 4),
-        y: round(clamp(y, 0, 1), 4),
+        x: round(clamp(frame.x + x * frame.w, 0, 1), 4),
+        y: round(clamp(frame.y + y * frame.h, 0, 1), 4),
       });
     }
     if (!strokePoints.length) {
       notify("Mask is full (120 points). Clear it or start a new paint layer.", "bad");
       return;
     }
-    mask.space = mask.space || "output";
-    mask.aspect = mask.aspect || state.aspect;
+    mask.space = "source";
+    mask.aspect = state.aspect;
     mask.strokes.push({
       id: `st_${Date.now().toString(36)}`,
       r: round(clamp(radius, 0.002, 0.2), 4),
       points: strokePoints,
     });
     layer.mask = mask;
+    if (!String(layer.tracklet_id || "").trim()) {
+      // A hand-painted layer has no found box, so its box follows the strokes.
+      const source = state.job?.source || {};
+      const pad = (stroke) => numberOr(stroke.r, 0.025);
+      const padY = (stroke) => pad(stroke) * numberOr(source.width, 1) / Math.max(1, numberOr(source.height, 1));
+      const left = Math.min(...mask.strokes.flatMap((item) => item.points.map((point) => point.x - pad(item))));
+      const top = Math.min(...mask.strokes.flatMap((item) => item.points.map((point) => point.y - padY(item))));
+      const right = Math.max(...mask.strokes.flatMap((item) => item.points.map((point) => point.x + pad(item))));
+      const bottom = Math.max(...mask.strokes.flatMap((item) => item.points.map((point) => point.y + padY(item))));
+      const x = round(clamp(left, 0, 1), 4);
+      const y = round(clamp(top, 0, 1), 4);
+      layer.box = {
+        x,
+        y,
+        w: round(clamp(right - x, 0.004, 1 - x), 4),
+        h: round(clamp(bottom - y, 0.004, 1 - y), 4),
+      };
+    }
     state.edit.clean = clean;
+    state.paintPending.delete(layerId);
     selectLayer("clean", layerId);
     touch("clean");
     renderLayers();
@@ -1795,6 +1903,11 @@ export function mount(root, ctx) {
     const layers = (state.edit.clean || []).slice();
     const layer = manualLayer(layers.length, box);
     if (kind) setLayerKind(layer, kind);
+    if (layer.kind === "blur") layer.radius = safeRadius(layer.box, state.job?.source);
+    // A box starts on the current beat and can be widened. Never the whole
+    // story unless someone chooses that.
+    const at = storyToSource(state.playhead);
+    if (at) layer.ranges = [{ start: round(at.start, 2), end: round(at.end, 2) }];
     layers.push(layer);
     state.edit.clean = layers;
     touch("clean");
@@ -1806,7 +1919,7 @@ export function mount(root, ctx) {
     if (!state.edit) return;
     if (kind === "clean") {
       addCleanBox();
-      notify("Remove-text box added. Drag it on the picture or use Exact position.", "ok");
+      notify("Box added on this beat. Drag it on the picture, and choose AI fill or Blur.", "ok");
       return;
     }
     if (kind === "text") {
@@ -1831,6 +1944,7 @@ export function mount(root, ctx) {
     if (!state.edit || !id) return;
     const layer = (state.edit.clean || []).find((item) => item.id === id);
     if (!layer) return;
+    const before = layer.box;
     const x = round(clamp(numberOr(box?.x), 0, 1), 4);
     const y = round(clamp(numberOr(box?.y), 0, 1), 4);
     layer.box = {
@@ -1839,6 +1953,7 @@ export function mount(root, ctx) {
       w: round(clamp(numberOr(box?.w, 0.004), 0.004, 1 - x), 4),
       h: round(clamp(numberOr(box?.h, 0.004), 0.004, 1 - y), 4),
     };
+    remapMask(layer, before, layer.box);
     if (commit) {
       touch("clean");
       renderLayers();
@@ -1847,7 +1962,8 @@ export function mount(root, ctx) {
 
   function createCleanBox(box) {
     addCleanBox(box);
-    notify("Remove-text box drawn.", "ok");
+    const kind = (state.edit?.clean || []).at(-1)?.kind;
+    notify(`Box drawn: ${kind === "fill" ? "AI fill" : "Blur"}. Change it with the switch on the box.`, "ok");
   }
 
   function toggleLayerHidden(kind, id) {
@@ -2192,6 +2308,7 @@ export function mount(root, ctx) {
       }
 
       state.edit = edit;
+      upgradeMasks(state.edit);
       // The trim route's story `dur` is the same number the server will
       // render. Use it as the one duration source when it is present.
       const trim = await refreshTrimState({ authoritative: true, fresh: true });
@@ -2561,12 +2678,6 @@ export function mount(root, ctx) {
     });
     setSequence(sequence);
     notify("Freeze frame added for 1.5s.", "ok");
-  }
-
-  function addMosaicLayer() {
-    addCleanBox(null, "mosaic");
-    layersPanel?.setActive("clean");
-    notify("Mosaic layer added. Draw the area on the picture.", "ok");
   }
 
   function addAsset(asset, label = "Media") {
@@ -2970,6 +3081,10 @@ export function mount(root, ctx) {
   function renderEditorParts() {
     if (!dom.preview || !dom.timeline) return;
     if (!preview) {
+      void request("/api/fill/status").then((status) => {
+        setFillAvailable(Boolean(status?.default));
+        preview?.refresh();
+      }).catch(() => {});
       preview = mountPreview(dom.preview, {
         jobId: state.job.id,
         onTime: (time) => {
@@ -2981,7 +3096,10 @@ export function mount(root, ctx) {
         onSelect: (kind, id) => selectLayer(kind, id),
         onBoxChange: (id, box, options) => updateCleanBox(id, box, options),
         onBoxCreate: (box) => createCleanBox(box),
-        onPaint: (layerId, points) => appendPaintPoints(layerId, points),
+        onPaint: (layerId, points, crop) => appendPaintPoints(layerId, points, crop),
+        onPaintEnd: () => dropUnpaintedLayers(),
+        onCleanMethod: (layerId, kind) => setCleanMethod(layerId, kind),
+        fillAvailable: () => isFillAvailable(),
         onPaintRequest: () => createPaintLayer(),
         onStory: (storyId) => { void switchStory(storyId); },
         onSceneStep: (direction) => sceneStep(direction),
@@ -3028,7 +3146,6 @@ export function mount(root, ctx) {
         onAddText: () => { elementsPanel?.setActive("text"); },
         onAddAudio: () => { elementsPanel?.setActive("audio"); },
         onEffects: () => { elementsPanel?.setActive("elements"); },
-        onMosaic: () => { addMosaicLayer(); },
         onAutoCaptions: () => {
           layersPanel?.setActive("transcript");
           void runAutoSubtitles("story");

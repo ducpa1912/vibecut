@@ -44,42 +44,73 @@ def layer_rect(layer: dict, width: int, height: int) -> Rect:
     return x0, y0, max(x0, x1), max(y0, y1)
 
 
+def _round_stamp(cx: float, cy: float, radius: float) -> list[Rect]:
+    """A filled circle as three overlapping rectangles."""
+    stamps = []
+    for across, down in ((1.0, 0.38), (0.75, 0.75), (0.38, 1.0)):
+        stamps.append((
+            int(math.floor(cx - radius * across)),
+            int(math.floor(cy - radius * down)),
+            int(math.ceil(cx + radius * across)),
+            int(math.ceil(cy + radius * down)),
+        ))
+    return stamps
+
+
 def layer_rects(layer: dict, width: int, height: int) -> list[Rect]:
     """Every pixel rectangle a layer covers on the source frame.
 
-    A freehand painter mask is a stroke object (or a legacy flat point list).
-    A box layer keeps the original padded rectangle.
+    A brush mask narrows the layer's box: strokes are joined, kept round and
+    clipped to the box. A mask too small to be a stroke (one click) is treated
+    as a slip, so the whole box is filled rather than one dot of it.
     """
+    bounds = layer_rect(layer, width, height)
     mask = layer.get("mask")
     if not mask:
-        rect = layer_rect(layer, width, height)
-        return [rect]
-    rects: list[Rect] = []
+        return [bounds]
     if isinstance(mask, dict):
         strokes = mask.get("strokes") or []
     else:
         strokes = [{"r": 0.025, "points": mask}]
+    prepared: list[tuple[float, list[tuple[float, float]]]] = []
     for stroke in strokes:
         try:
             radius = float((stroke or {}).get("r", 0.02))
         except (TypeError, ValueError):
             radius = 0.02
+        points = []
         for point in (stroke or {}).get("points") or []:
             try:
-                cx = float(point.get("x", 0.0)) * width
-                cy = float(point.get("y", 0.0)) * height
+                points.append((float(point.get("x", 0.0)) * width, float(point.get("y", 0.0)) * height))
             except (TypeError, ValueError):
                 continue
-            rx = max(2.0, radius * width)
-            ry = rx
-            pad = max(PAD_MIN_PX, PAD_RATIO * rx * 2)
-            x0 = max(0, int(math.floor(cx - rx - pad)))
-            y0 = max(0, int(math.floor(cy - ry - pad)))
-            x1 = min(width, int(math.ceil(cx + rx + pad)))
-            y1 = min(height, int(math.ceil(cy + ry + pad)))
-            if x1 > x0 and y1 > y0:
-                rects.append((x0, y0, x1, y1))
-    return rects
+        if points:
+            prepared.append((max(2.0, radius * width), points))
+    every = [point for _radius, points in prepared for point in points]
+    if len(every) < 2:
+        return [bounds]
+    reach = max(radius for radius, _points in prepared)
+    span = (max(p[0] for p in every) - min(p[0] for p in every)) + (max(p[1] for p in every) - min(p[1] for p in every))
+    if span < reach:
+        return [bounds]
+    x0, y0, x1, y1 = bounds
+    rects: list[Rect] = []
+    for radius, points in prepared:
+        pad = max(PAD_MIN_PX, PAD_RATIO * radius * 2)
+        centres = [points[0]]
+        for (ax, ay), (bx, by) in zip(points, points[1:]):
+            # Fast drags leave gaps between samples; walk across them.
+            steps = max(1, int(math.ceil(math.hypot(bx - ax, by - ay) / max(1.0, radius * 0.75))))
+            centres.extend(
+                (ax + (bx - ax) * step / steps, ay + (by - ay) * step / steps)
+                for step in range(1, steps + 1)
+            )
+        for cx, cy in centres:
+            for left, top, right, bottom in _round_stamp(cx, cy, radius + pad):
+                clipped = (max(x0, left), max(y0, top), min(x1, right), min(y1, bottom))
+                if clipped[2] > clipped[0] and clipped[3] > clipped[1]:
+                    rects.append(clipped)
+    return rects or [bounds]
 
 
 def layer_windows(layer: dict) -> list[tuple[float, float]] | None:
