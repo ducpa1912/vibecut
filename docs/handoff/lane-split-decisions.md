@@ -9,7 +9,7 @@ Matrix: [classic-studio-matrix.md](classic-studio-matrix.md)
 |---|---|---|
 | Classic role | **Second supported product** | Classic keeps its own roadmap, beta tag and release gate. Studio does not absorb it. |
 | Port scope | **Matrix first, then high-value** | Use `classic-studio-matrix.md`; no blind parity port. |
-| Code structure | **Monorepo, separate apps, no core extraction** | Two app entrypoints and isolated page trees; shared `app.py` core stays for now. |
+| Code structure | **Monorepo, separate apps, core contract + pinned profiles** | Phase 3 adds `core/` version/profile composition; backend modules stay at root until a later physical move. |
 | Main/release | **Main tracks Studio; Classic keeps its own beta tag** | Studio remains integration/product branch; Classic releases from `classic` tags. |
 
 ## Phase status after decisions
@@ -17,7 +17,7 @@ Matrix: [classic-studio-matrix.md](classic-studio-matrix.md)
 | Phase | Item | Status |
 |---|---|---|
 | 0 | Build feature matrix | ✅ done — `classic-studio-matrix.md` |
-| 0 | Decide Classic-only features to port | 🟡 recommended set ready; awaiting approval |
+| 0 | Decide Classic-only features to port | ✅ trust/clarity four approved; Vietnamese and preview lock deferred |
 | 0 | Port wanted Classic work into Studio | ✅ approved trust/clarity set built: capability summary, cost/data notices, stale-render marker, 32-slot cap warning |
 | 0 | Decide Classic role | ✅ second supported product |
 | 1 | Remove Studio Voice Room import | ✅ done |
@@ -44,5 +44,7 @@ Matrix: [classic-studio-matrix.md](classic-studio-matrix.md)
 - Studio worktree currently has unrelated uncommitted Clean work. Do not mix
   port work into it.
 - Classic worktree currently has uncommitted AI-fill work. Do not overwrite it.
-- Do not create a `core/` package in this pass.
-- Existing shared backend imports stay; isolate entrypoints and page trees.
+- `core/` is the version/profile contract. Backend modules remain at the root
+  until a later physical extraction.
+- Existing shared backend modules stay; profile router composition is the
+  phase-3 boundary.

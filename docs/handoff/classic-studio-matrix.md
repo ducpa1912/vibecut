@@ -2,10 +2,10 @@
 
 Date: 2026-11-04
 Decision context: Classic is a **second supported product**, Studio is the
-integration/product lane, monorepo with separate apps, no shared-core package
-extraction for this pass.
+integration/product lane, monorepo with separate apps and a pinned `core/`
+profile contract.
 
-Branches compared: `studio` at `0da6efb` and `classic` at `6c6e3ec`.
+Branches compared: `studio` at `78e960a` and `classic` at `6c6e3ec`.
 This matrix is about **user-facing capability**, not raw branch divergence.
 
 ## Summary
@@ -44,14 +44,14 @@ This matrix is about **user-facing capability**, not raw branch divergence.
 | 12 | Cobalt removal and XHS limits | `8186e2a` | Studio uses yt-dlp; no Cobalt UI | Covered | Low | No port |
 | 13 | Signed commits, beta tag, lane scripts | Classic lane tooling | Studio ship/main flow | Operational | Not user-facing | No port |
 
-## Recommended high-value port set
+## Approved port set
 
-1. Vietnamese interface for the Studio shell, Import, Moments, Edit and Finish.
-2. Capability summary in Studio Setup.
-3. Paid-action cost/data notices shared across Setup, Edit audio and Finish.
-4. Stale-render baseline marker in Finish.
-5. Real 32-slot text/effect cap warning in Edit. Classic's 9:16/4:5 limit does not apply to Studio.
-6. Check and port the AI-music preview lock if Studio lacks it.
+1. Capability summary in Studio Setup.
+2. Paid-action cost/data notices shared across Setup, Edit audio and Finish.
+3. Stale-render baseline marker in Finish.
+4. Real 32-slot text/effect cap warning in Edit. Classic's 9:16/4:5 limit does not apply to Studio.
+
+Deferred: Vietnamese interface, AI-music preview lock.
 
 ## Explicitly not ported
 
