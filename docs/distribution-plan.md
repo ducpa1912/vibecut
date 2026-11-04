@@ -16,6 +16,69 @@ third-party.** Every artifact ships an EULA, `THIRD_PARTY_NOTICES.md`,
 
 ---
 
+# 0. Quick classification
+
+## Cloud-safe (hosted service)
+
+These are safe to run in a hosted cloud service, provided notices and model
+terms ship with the image/SBOM:
+
+- Python, FastAPI, Uvicorn, python-multipart
+- NumPy, Pillow
+- yt-dlp (Unlicense; keep the optional GPL `mutagen` extra out)
+- ffmpeg **server-side only**, when users never receive the binary
+- STTN + LaMa (Apache-2.0 weights)
+- PyTorch, ONNX Runtime
+- Kokoro, Whisper, DeepFilterNet, Silero, Mel-Band RoFormer (permissive)
+- pyannote 3.1 with MIT notice; Community-1 only with CC-BY-4.0 attribution
+- In-house stickers/LUTs; Lucide ISC notice
+
+## Cloud-conditional
+
+- **ffmpeg in a customer-hosted image/VM:** binary distribution. Comply with
+  GPL or ship LGPL-only.
+- **Stable Audio Open weights:** Stability Community License; commercial
+  threshold applies.
+- **Demucs:** code MIT, weights unresolved. Do not host/bundle in a paid
+  service until cleared.
+- **xhs_get:** separate GPL process only; never inside the main image.
+
+## Cloud hard stops
+
+- **MusicGen weights** — CC-BY-NC-4.0. Not for commercial cloud.
+- **Piper/phonemizer/espeak/minisbd** — GPL/AGPL; do not put them in a
+  customer-distributed image. AGPL (`minisbd`) is also a network-service risk.
+- **GPL ffmpeg in a distributed image** without source/offer.
+- **xhs_get copied into the main image** instead of a separate service.
+
+## Mac app: safe to bundle
+
+- Python, FastAPI stack, yt-dlp, NumPy, Pillow
+- STTN + LaMa weights (Apache-2.0, with notices and hashes)
+- PyTorch/ONNX Runtime
+- Kokoro (Apache), Whisper (MIT), DeepFilterNet (MIT/Apache), Silero (MIT),
+  Mel-Band RoFormer (MIT)
+- In-house stickers/LUTs, Lucide ISC
+- Native Swift helpers built from this repo
+
+## Mac app: hard stops
+
+| Hard stop | Why | Fix |
+|---|---|---|
+| Bundling the current Homebrew ffmpeg | GPL-3.0-or-later, libx264/x265 | Ship LGPL ffmpeg + VideoToolbox, require user-installed ffmpeg, or accept GPL compliance (no App Store) |
+| Bundling Piper/phonemizer/espeak | GPL-3.0-or-later | Exclude; use Kokoro, Apple `say`, or cloud TTS |
+| Bundling minisbd | AGPL-3.0 | Exclude entirely |
+| Bundling Demucs weights | Weights not covered by MIT; research/MUSDB terms | Ship RoFormer only, get written permission, or omit separation |
+| Bundling MusicGen / Stable Audio | Non-commercial / threshold license | Remove; use licensed/CC0 music or a commercial API |
+| Bundling xhs_get inside `.app` | GPL-3.0 | Separate artifact/process, or omit |
+| Mac App Store with GPLv3/GPL/AGPL | Apple DRM/terms conflict | Direct Developer ID + notarized DMG; or remove all GPL/AGPL first |
+| Data written inside the `.app` | Read-only signed bundle | Set `VIBECUT_DATA` to Application Support |
+
+PyInstaller is **not** a hard stop: it is GPL-2.0-or-later with a bootloader
+exception. py2app is MIT/PSF and simpler for a Mac-only bundle.
+
+---
+
 # 1. Cloud deployment
 
 Architecture, storage, scaling and a single-VM runbook:
