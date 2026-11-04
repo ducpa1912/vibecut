@@ -86,3 +86,8 @@ def test_health_exposes_platform_capabilities():
     assert isinstance(caps["native_vision"], bool)
     assert isinstance(caps["apple_silicon"], bool)
     assert caps["native_transcript"] == caps["native_stt"]
+    from fastapi.testclient import TestClient
+    health = TestClient(app.app).get("/api/health").json()
+    assert health["core_version"] == "1.0.0"
+    assert health["profile_version"] == 1
+    assert health["app"] in {"legacy", "studio", "classic"}

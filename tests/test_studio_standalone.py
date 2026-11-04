@@ -136,13 +136,12 @@ def test_studio_page_does_not_boot_from_editions():
 
 def test_separate_app_entrypoints_and_scripts_exist():
     classic = (ROOT / "classic_app.py").read_text(encoding="utf-8")
-    assert 'VIBECUT_APP"] = "classic"' in classic
-    assert 'VIBECUT_EDITION"] = "classic"' in classic
-    assert 'VIBECUT_PORT", "8796"' in classic
-    assert 'vibecut-lanes" / "classic"' in classic
+    assert "configure(CLASSIC)" in classic
     studio = (ROOT / "studio_app.py").read_text(encoding="utf-8")
-    assert 'VIBECUT_PORT", "8795"' in studio
-    assert 'vibecut-lanes" / "studio"' in studio
+    assert "configure(STUDIO)" in studio
+    from core.profiles import CLASSIC, STUDIO
+    assert CLASSIC.port == 8796 and STUDIO.port == 8795
+    assert CLASSIC.data_folder == "classic" and STUDIO.data_folder == "studio"
     assert (ROOT / "scripts" / "serve-studio.sh").is_file()
     assert (ROOT / "scripts" / "serve-classic.sh").is_file()
     assert not (ROOT / "scripts" / "integrate.sh").exists()

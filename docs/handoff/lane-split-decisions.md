@@ -31,7 +31,10 @@ Matrix: [classic-studio-matrix.md](classic-studio-matrix.md)
 | 2 | Per-app scripts | ✅ `serve-studio.sh`, `serve-classic.sh`; legacy `serve.sh` kept |
 | 2 | Remove integrate.sh from Studio release | ✅ removed; docs updated |
 | 2 | Main/archive | ✅ main tracks Studio, not retired |
-| 3 | Shared core package | ❌ rejected for this pass |
+| 3 | Extract shared backend core | ✅ `core/` contract package: `CORE_VERSION=1.0.0`, `CONTRACT_VERSION=1` |
+| 3 | Extract feature modules | ✅ feature routers compose through `AppProfile.routers`; physical module move stays deferred |
+| 3 | Apps compose pinned features | ✅ `studio_app.py` / `classic_app.py` call `configure(STUDIO/CLASSIC)`; `app.py` includes profile routers |
+| 3 | Pin core versions | ✅ health reports `core_version` and `profile_version` |
 | 4 | Separate CI | ⏳ |
 | 4 | Separate release artifacts | ⏳ |
 | 4 | Separate repositories | ❌ rejected for this pass |

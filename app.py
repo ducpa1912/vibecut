@@ -34,10 +34,15 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-# ``studio_app.py`` sets this before importing the module. Studio's build owns
-# its page and does not import Classic's router, so the Classic tree can be
-# absent without breaking boot. The default keeps the shared app as it was.
-STUDIO_APP = os.environ.get("VIBECUT_APP", "").strip().lower() == "studio"
+# App entrypoints configure this profile before importing the module. The
+# default keeps the legacy shared app for old scripts and tests.
+from core.profiles import PROFILE_VERSION, active_profile  # noqa: E402
+from core.version import CORE_VERSION  # noqa: E402
+
+PROFILE = active_profile()
+STUDIO_APP = PROFILE.id == "studio"
+CLASSIC_APP = PROFILE.id == "classic"
+
 
 import artifacts
 import audio
@@ -64,7 +69,7 @@ import rights
 import routes_auto_subs
 import routes_batches
 import routes_check
-if not STUDIO_APP:
+if PROFILE.router("classic_page"):
     import routes_classic
 import routes_cleanup
 import routes_edits
@@ -3193,19 +3198,19 @@ app.include_router(routes_batches.router)
 app.include_router(routes_check.router)
 app.include_router(routes_cleanup.router)
 app.include_router(routes_cleanup.rights_router)
-app.include_router(routes_edits.router)
-app.include_router(__import__("routes_trim", fromlist=["router"]).router)
-app.include_router(routes_overlays.router)
 app.include_router(routes_voice_clone.router)
-# Studio owns its page, so its build skips the Classic router entirely.
-if not STUDIO_APP:
-    app.include_router(routes_classic.router)
-# Lane modules: new routes go here, not into app.py (docs/branching.md).
 app.include_router(routes_auto_subs.router)
-app.include_router(routes_studio.router)
 app.include_router(music.router)
-routes_library.install(app, JOBS)
 app.include_router(packet.router)
+if PROFILE.router("studio_edit"):
+    app.include_router(routes_edits.router)
+    app.include_router(__import__("routes_trim", fromlist=["router"]).router)
+    app.include_router(routes_overlays.router)
+    app.include_router(routes_studio.router)
+if PROFILE.router("classic_page"):
+    app.include_router(routes_classic.router)
+if PROFILE.router("library"):
+    routes_library.install(app, JOBS)
 app.include_router(preflight.router)
 
 
@@ -3435,8 +3440,10 @@ def page_file(request: Request) -> Path:
     Edition ``all`` keeps the old ``?classic=1`` / ``?studio=1`` switch without
     loading the other lane's markup.
     """
-    if STUDIO_APP:
+    if PROFILE.page == "studio":
         return STATIC / "index.html"
+    if PROFILE.page == "classic":
+        return STATIC / "classic" / "index.html"
     if editions.edition() == "classic":
         return STATIC / "classic" / "index.html"
     if editions.edition() == "all" and request.query_params.get("classic") == "1":
@@ -3459,7 +3466,7 @@ def voice_room(request: Request) -> FileResponse:
 
 # The Voice Room page belongs to its own lane. Studio ships the voice features
 # inside Setup and Edit, not this page, so a Studio build does not register it.
-if not STUDIO_APP:
+if PROFILE.feature("voice_room_page"):
     app.add_api_route("/voices", voice_room, methods=["GET"])
 
 
@@ -3519,6 +3526,9 @@ def health() -> dict:
         "encoder": render._choose_encoder(),
         "opencode": audio.opencode_available(),
         "platform": platform_caps,
+        "app": PROFILE.id,
+        "core_version": CORE_VERSION,
+        "profile_version": PROFILE_VERSION,
         "version": 2,
     }
 

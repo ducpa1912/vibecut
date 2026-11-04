@@ -10,16 +10,9 @@ it does not boot through Studio's entrypoint or page.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+from core.profiles import CLASSIC, configure
 
-os.environ["VIBECUT_APP"] = "classic"
-os.environ["VIBECUT_EDITION"] = "classic"
-os.environ["VIBECUT_FEATURES"] = ""
-os.environ.setdefault("VIBECUT_PORT", "8796")
-os.environ.setdefault(
-    "VIBECUT_DATA", str(Path.home() / "vibecut-lanes" / "classic"),
-)
+configure(CLASSIC)
 
 from app import HOST, PORT, app  # noqa: E402  (configured before app imports)
 
