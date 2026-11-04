@@ -8,7 +8,7 @@
 # http://127.0.0.1:8797/voices (or VOICE_PATH). Click the real flow, then press
 # the floating "Finish recording" button, close the browser, or press Ctrl-C
 # here. The trace is saved under
-# ~/vibecut-lanes/recordings/voiceroom/<date-time>/trace.zip.
+# data/recordings/<date-time>/trace.zip in this worktree.
 #
 # The trace stays on this Mac and out of the repo.
 set -euo pipefail
@@ -42,7 +42,7 @@ if [[ -z "$module" || ! -f "$module" ]]; then
   exit 1
 fi
 
-out="${VIBECUT_RECORDINGS:-$HOME/vibecut-lanes/recordings/voiceroom}/$(date +%Y-%m-%d-%H%M%S)"
+out="$VIBECUT_RECORDINGS/$(date +%Y-%m-%d-%H%M%S)"
 path="${VOICE_PATH:-/voices}"
 [[ "$path" == /* ]] || path="/$path"
 mkdir -p "$out"

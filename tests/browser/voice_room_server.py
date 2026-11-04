@@ -1,7 +1,7 @@
 """Start VibeCut for the Voice Room browser spec, with the slow parts faked.
 
 The clean-clip search and the upload cleaning would run separation and
-denoise models; here they write short tone WAVs instead, so the spec drives
+denoise models; here they copy stretches of the real speech file from data/media instead, so the spec drives
 the real page and the real routes in seconds. Cloning is marked available
 without an OpenRouter key; nothing in the spec speaks a cloned voice, so no
 request leaves this machine.
@@ -15,38 +15,26 @@ spec can press Cancel while they run.
 
 from __future__ import annotations
 
-import math
 import os
 import shutil
-import struct
 import sys
 import time
-import wave
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 
 import uvicorn  # noqa: E402
 
 import audio  # noqa: E402
+import real_media  # noqa: E402
 import voice_clone  # noqa: E402
 import voice_extract  # noqa: E402
 
 
 def tone(path: Path, seconds: float, freq: float = 220.0) -> Path:
-    rate = 16000
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        frames = b"".join(
-            struct.pack("<h", int(8000 * math.sin(2 * math.pi * freq * n / rate)))
-            for n in range(int(seconds * rate))
-        )
-        handle.writeframes(frames)
-    return path
+    return real_media.clip("speech.wav", path, seconds)
 
 
 def _wait(variable: str, cancel_event) -> None:

@@ -57,9 +57,15 @@
     {
       "path": "audio.py",
       "baseline": "a3da0b1",
-      "sha256": "98b43316f2a55d7c3d405783464f2a1d4025ee9dda7b6a308fb23480eb66f27e",
-      "lane_version": "1.0.0",
-      "changes": []
+      "sha256": "b5f9bcd6baad8a574a2912518b4efd0daab37ebc02fd801a410bdb372045a915",
+      "lane_version": "1.0.1",
+      "changes": [
+        {
+          "date": "2026-11-05",
+          "from_commit": "b139ab6",
+          "note": "Read the music library from this lane's data/music"
+        }
+      ]
     },
     {
       "path": "batch.py",
@@ -302,9 +308,15 @@
     {
       "path": "scripts/lane-env.sh",
       "baseline": "a3da0b1",
-      "sha256": "b4eb22538771410097fb087f31d537f7a856d94ddf4bfffd2b3ce23158c86e9c",
-      "lane_version": "1.0.0",
-      "changes": []
+      "sha256": "1b0a8dc9e7a80569cab3bbbdfcb24ae28ffda9212c825f2aa138ce77ac405161",
+      "lane_version": "1.0.1",
+      "changes": [
+        {
+          "date": "2026-11-05",
+          "from_commit": "b139ab6",
+          "note": "Voice lane keeps its files in this worktree's data folder"
+        }
+      ]
     },
     {
       "path": "scripts/ship-lane.sh",

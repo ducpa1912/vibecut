@@ -136,6 +136,25 @@ def test_lane_env_names_only_the_voice_lane():
         env={"HOME": "/home/founder", "PATH": "/usr/bin:/bin"}, text=True,
     )
     assert "VIBECUT_PORT=8797" in output
-    assert "VIBECUT_DATA=/home/founder/vibecut-lanes/voice" in output
+    assert f"VIBECUT_DATA={ROOT}/data" in output
+    assert f"VIBECUT_LANE_MEDIA={ROOT}/data/media" in output
+    assert f"VIBECUT_RECORDINGS={ROOT}/data/recordings" in output
+    assert "vibecut-lanes" not in output
     assert "VIBECUT_FEATURES=voice_room" in output
     assert "VIBECUT_EDITION=voice" in output
+
+
+def test_voices_and_music_are_read_from_the_lanes_data_folder():
+    import audio
+    import settings_store
+    import voice_clone
+
+    assert voice_clone.voices_dir() == settings_store.DATA / "voices"
+    assert audio.MUSIC_DIRS["library"] == settings_store.DATA / "music"
+
+
+def test_nothing_in_the_data_folder_is_tracked():
+    tracked = subprocess.check_output(["git", "ls-files", "data"], cwd=ROOT, text=True)
+    assert tracked == ""
+    for name in ("media", "recordings", "voices", "music"):
+        subprocess.check_call(["git", "check-ignore", "-q", f"data/{name}/x"], cwd=ROOT)

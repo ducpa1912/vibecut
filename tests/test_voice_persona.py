@@ -8,13 +8,11 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import math
-import struct
-import wave
 import zipfile
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import audio
@@ -28,16 +26,7 @@ VOICE = ROOT / "static" / "voice"
 
 
 def tone(path: Path, seconds: float = 1.0, rate: int = 16000) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        frames = bytearray()
-        for index in range(int(rate * seconds)):
-            frames += struct.pack("<h", int(9000 * math.sin(2 * math.pi * 220 * index / rate)))
-        handle.writeframes(bytes(frames))
-    return path
+    return real_media.clip("speech.wav", path, seconds, rate=rate)
 
 
 @pytest.fixture(autouse=True)

@@ -35,7 +35,7 @@ import workflow_config
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 MUSIC_DIRS = {
-    "library": ASSETS / "music" / "library",
+    "library": settings_store.DATA / "music",
     "generated": ASSETS / "music" / "generated",
 }
 VOICE_DIRS = {
@@ -511,7 +511,7 @@ def engine_status() -> dict:
     voices = tts.voice_engine_status()
     music = {
         "library": {"available": True, "size_mb": 0,
-                    "install": "Drop your own tracks in assets/music/library."},
+                    "install": "Drop your own tracks in data/music."},
         "minimax-music": {"available": bool(minimax_key()), "size_mb": 0,
                           "install": "Set MINIMAX_API_KEY. MiniMax Music, instrumental."},
         "lyria-clip": {"available": openrouter_media_available(), "size_mb": 0,

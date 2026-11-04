@@ -7,35 +7,18 @@ The two fixture tests at the bottom are opt-in through environment variables.
 from __future__ import annotations
 
 import json
-import math
 import os
-import struct
-import wave
 from pathlib import Path
 
 import pytest
+import real_media
 
 import audio
 import music
 import tts
 
 
-def _tone(path: Path, seconds: float, frequency: float, amplitude: float,
-          rate: int = 16000, spans: list[tuple[float, float]] | None = None) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frames = bytearray()
-    total = max(1, int(seconds * rate))
-    for index in range(total):
-        at = index / rate
-        active = True if spans is None else any(start <= at < end for start, end in spans)
-        value = amplitude * math.sin(2 * math.pi * frequency * at) if active else 0.0
-        frames.extend(struct.pack("<h", max(-32767, min(32767, int(value * 32767)))))
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        handle.writeframes(bytes(frames))
-    return path
+
 
 
 # ---------------------------------------------------------------- AudioPlan modes
@@ -218,12 +201,10 @@ def test_shorten_dub_line_prefers_ai_and_falls_back_to_a_clause(monkeypatch):
 # ---------------------------------------------------------------- SNR
 
 
+@real_media.needs("speech.wav", "music.wav")
 def test_speech_band_snr_reports_ducked_margin(tmp_path):
-    voice = _tone(
-        tmp_path / "voice.wav", 3.0, 400.0, 0.20,
-        spans=[(0.0, 1.0), (1.4, 2.4)],
-    )
-    bed = _tone(tmp_path / "bed.wav", 3.0, 400.0, 0.20)
+    voice = real_media.clip("speech.wav", tmp_path / "voice.wav", 3.0)
+    bed = real_media.clip("music.wav", tmp_path / "bed.wav", 3.0)
     spans = audio.speech_spans(voice)
     assert spans and spans[0][0] == 0.0
     ducked = audio.speech_band_snr(voice, bed, spans, duck_db=-12, music_gain_db=0)
@@ -233,7 +214,7 @@ def test_speech_band_snr_reports_ducked_margin(tmp_path):
 
 
 def test_measure_loudness_reads_ffmpeg_summary(tmp_path):
-    tone = _tone(tmp_path / "tone.wav", 3.0, 440.0, 0.1)
+    tone = real_media.clip("speech.wav", tmp_path / "tone.wav", 3.0)
     result = audio.measure_loudness(tone)
     assert result is None or "integrated_lufs" in result
 
@@ -244,12 +225,13 @@ def test_measure_loudness_reads_ffmpeg_summary(tmp_path):
 def _fake_bed_job(tmp_path):
     job_dir = tmp_path / "job"
     job_dir.mkdir()
-    voice = _tone(tmp_path / "voice.wav", 3.0, 400.0, 0.15, spans=[(0.2, 2.8)])
-    bed = _tone(tmp_path / "bed.wav", 8.0, 500.0, 0.10)
-    mix = _tone(tmp_path / "mix.wav", 3.0, 400.0, 0.15)
+    voice = real_media.clip("speech.wav", tmp_path / "voice.wav", 3.0)
+    bed = real_media.clip("music.wav", tmp_path / "bed.wav", 8.0)
+    mix = real_media.clip("speech.wav", tmp_path / "mix.wav", 3.0)
     return job_dir, voice, bed, mix
 
 
+@real_media.needs("speech.wav", "music.wav")
 def test_build_bed_original_bed_mixes_ducked_bed_and_writes_music_json(
     tmp_path, monkeypatch,
 ):
@@ -293,6 +275,7 @@ def test_build_bed_original_bed_mixes_ducked_bed_and_writes_music_json(
     assert plan["_music_meta"]["duck"]["enabled"] is True
 
 
+@real_media.needs("speech.wav", "music.wav")
 def test_build_bed_music_only_never_ducks(tmp_path, monkeypatch):
     job_dir, _voice, bed, mix = _fake_bed_job(tmp_path)
     seen: dict = {}
@@ -317,10 +300,11 @@ def test_build_bed_music_only_never_ducks(tmp_path, monkeypatch):
     assert seen["args"][4] is False
 
 
+@real_media.needs("speech.wav", "music.wav")
 def test_build_bed_voice_over_ducks_original_and_new_bed(tmp_path, monkeypatch):
     job_dir, voice, bed, mix = _fake_bed_job(tmp_path)
-    original = _tone(tmp_path / "original.wav", 3.0, 300.0, 0.10)
-    uploaded = _tone(job_dir / "audio" / "uploaded_voice.wav", 3.0, 500.0, 0.10)
+    original = real_media.clip("speech.wav", tmp_path / "original.wav", 3.0)
+    uploaded = real_media.clip("speech.wav", job_dir / "audio" / "uploaded_voice.wav", 3.0)
     seen: dict = {}
     monkeypatch.setattr(audio, "_source_audio_bed", lambda *args, **kwargs: original)
     monkeypatch.setattr(audio, "_fit_uploaded_voice", lambda *args, **kwargs: voice)
@@ -392,23 +376,8 @@ def _fixture_scenes(segments: list[dict]) -> tuple[list[dict], list[dict]]:
     return scenes, clips
 
 
-def _synthetic_bed(path: Path, seconds: float) -> Path:
-    import subprocess
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
-            (
-                "aevalsrc=0.07*(sin(2*PI*261.63*t)+0.8*sin(2*PI*329.63*t)"
-                "+0.7*sin(2*PI*392*t))*(0.7+0.3*sin(2*PI*0.125*t)):"
-                f"s=48000:d={seconds}"
-            ),
-            "-ac", "2", "-c:a", "pcm_s16le", str(path),
-        ],
-        check=True,
-    )
-    return path
+def _real_bed(path: Path, seconds: float) -> Path:
+    return real_media.clip("music.wav", path, seconds, rate=48000, channels=2)
 
 
 @pytest.mark.skipif(
@@ -439,7 +408,7 @@ def test_live_fixture_b_apple_stt_and_ducked_music(tmp_path):
         audio_duration=total, source_hash="fixture-b",
     ))
     scenes, clips = _fixture_scenes(segments)
-    bed = _synthetic_bed(tmp_path / "bed.wav", total + 4.0)
+    bed = _real_bed(tmp_path / "bed.wav", total + 4.0)
     uploaded = audio.store_uploaded_music(bed, job_dir)
     plan = {"clips": clips, "total": total, "_scenes": scenes}
     audio_plan = {
@@ -553,10 +522,11 @@ def _no_music_keys(monkeypatch, *, openrouter=""):
     ])
 
 
+@real_media.needs("speech.wav", "music.wav")
 def test_voice_over_keeps_the_voice_when_no_music_route_has_a_key(tmp_path, monkeypatch):
     job_dir, voice, _bed, mix = _fake_bed_job(tmp_path)
-    original = _tone(tmp_path / "original.wav", 3.0, 300.0, 0.10)
-    uploaded = _tone(job_dir / "audio" / "uploaded_voice.wav", 3.0, 500.0, 0.10)
+    original = real_media.clip("speech.wav", tmp_path / "original.wav", 3.0)
+    uploaded = real_media.clip("speech.wav", job_dir / "audio" / "uploaded_voice.wav", 3.0)
     _no_music_keys(monkeypatch)
     seen: dict = {}
     monkeypatch.setattr(audio, "_source_audio_bed", lambda *args, **kwargs: original)
@@ -581,6 +551,7 @@ def test_voice_over_keeps_the_voice_when_no_music_route_has_a_key(tmp_path, monk
     assert any("Music bed skipped" in item for item in plan["_warnings"])
 
 
+@real_media.needs("speech.wav", "music.wav")
 def test_music_only_still_fails_when_no_music_route_has_a_key(tmp_path, monkeypatch):
     job_dir, _voice, _bed, _mix = _fake_bed_job(tmp_path)
     _no_music_keys(monkeypatch)
@@ -592,6 +563,7 @@ def test_music_only_still_fails_when_no_music_route_has_a_key(tmp_path, monkeypa
         )
 
 
+@real_media.needs("speech.wav", "music.wav")
 def test_minimax_only_music_route_falls_back_to_openrouter_lyria(tmp_path, monkeypatch):
     job_dir, _voice, bed, mix = _fake_bed_job(tmp_path)
     _no_music_keys(monkeypatch, openrouter="sk-or")

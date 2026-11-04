@@ -1,17 +1,22 @@
 # Voice Room lane
 
-The Voice Room is its own lane, with its own port, data folder, media library
-and recordings. It runs on its own pinned copy of the shared backend. See
-`docs/voice/runtime.md` for the pin rule and for what is still shared on this
-Mac, such as the system Python and the Whisper weights.
+The Voice Room is its own lane, with its own port and its own files in this
+worktree's git-ignored `data/` folder. It runs on its own pinned copy of the
+shared backend. See `docs/voice/runtime.md` for the pin rule and for what the
+founder keeps shared for development: Python, models and Playwright.
 
 | Item | Value |
 |---|---|
 | Branch | `voice-room` |
 | Port | `8797` |
-| Data | `~/vibecut-lanes/voice` |
-| Media | `~/vibecut-lanes/media/voiceroom` |
-| Recordings | `~/vibecut-lanes/recordings/voiceroom` |
+| Data (jobs, settings, keys, logs) | `data/` |
+| Media, including real test files | `data/media` |
+| Recordings | `data/recordings` |
+| Cloned voices | `data/voices` |
+| Music library | `data/music` |
+
+`data/` is never committed. It is also the only copy: `git clean -X` or removing
+this worktree deletes the jobs, keys, clones and media with it.
 
 Port `8787` and the founder's data are never used.
 
@@ -22,7 +27,7 @@ scripts/voice-serve.sh
 ```
 
 It refuses a busy port and writes the server PID to
-`~/vibecut-lanes/voice/server.pid`. Stop only that PID. Do not `pkill` by
+`data/server.pid`. Stop only that PID. Do not `pkill` by
 pattern.
 
 Stay on port `8797`. Do not start this lane, a smoke check or a test run on an
@@ -46,8 +51,7 @@ Rail → **Settings** in `/voices`, one Setup for the app.
 - **Library** backup and restore, and a portable `.vcutvoice` import.
 
 Saving a key here overrides the environment key for this app only. It does not
-change Studio or Classic. Cloned voices are read from this app's `voices/`
-folder even when OpenRouter is unavailable.
+change Studio or Classic. Cloned voices are read from `data/voices` even when OpenRouter is unavailable.
 
 ## Record a real flow
 
@@ -58,7 +62,7 @@ scripts/voice-record.sh
 The browser opens on `http://127.0.0.1:8797/voices`. Click the real flow; press
 the floating **Finish recording** button, close the browser, or press Ctrl-C.
 Wait for `Saved …`. The Playwright trace lands in
-`~/vibecut-lanes/recordings/voiceroom/<date-time>/trace.zip`.
+`data/recordings/<date-time>/trace.zip`.
 
 In Finder, double-click **scripts/Record Voice Room.command** after the server
 is running.
@@ -78,9 +82,9 @@ and `static/voice/next.js`.
 
 ## Media library
 
-The lane keeps no media by default. `~/vibecut-lanes/media/voiceroom` is empty
-after the input copies were removed to save space. Copy a source video there
-only when a test needs it. Keep media out of the repo.
+`data/media` holds the founder's real files, including the ones the tests read
+(`docs/testing/real-media.md`). Music tracks go in `data/music`. Keep media out of
+the repo.
 
 ## Voice extraction
 

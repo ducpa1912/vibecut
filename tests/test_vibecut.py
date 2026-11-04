@@ -1,13 +1,12 @@
 import io
 import json
-import math
 import os
 import stat
 import time
 import urllib.error
-import wave
 
 import pytest
+import real_media
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -837,16 +836,9 @@ def test_snap_clips_guard_and_apply():
     assert unchanged[0]["duration"] == 5.0
 
 
-def test_beat_grid_click_track(tmp_path):
-    import subprocess
-
+def test_beat_grid_steady_track(tmp_path):
     pytest.importorskip("librosa")
-    path = tmp_path / "click.wav"
-    subprocess.run([
-        "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-        "-i", "aevalsrc='0.6*gt(mod(t\\,0.5)\\,0.45)':d=8:s=48000",
-        "-ac", "2", str(path),
-    ], check=True)
+    path = real_media.clip("music-120bpm.wav", tmp_path / "beat.wav", 8.0, rate=48000, channels=2)
     grid = audio.beat_grid(path)
     assert grid and grid["beats"]
     spacing = grid["beats"][1] - grid["beats"][0]
@@ -1213,11 +1205,7 @@ def test_opencode_leads_rewrite_candidates(monkeypatch):
 
 
 def _write_silent_wav(path, seconds=1.0):
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(16000)
-        handle.writeframes(b"\0\0" * int(16000 * seconds))
+    real_media.clip("silence.wav", path, seconds)
 
 
 def test_cloud_stt_groq_parses_segments(tmp_path, monkeypatch):

@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -252,13 +253,7 @@ def test_preflight_safe_zone_reads_poster_contrast(tmp_path):
 def test_preflight_extracts_cover_when_poster_is_missing(tmp_path):
     video = tmp_path / "renders" / "reel_30.mp4"
     video.parent.mkdir()
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", "color=c=white:s=320x180:d=1", "-pix_fmt", "yuv420p", str(video),
-        ],
-        check=True,
-    )
+    real_media.clip("talking-video.mp4", video, 1.0, scale="320:180")
     job = _job(
         renders={
             "30": {

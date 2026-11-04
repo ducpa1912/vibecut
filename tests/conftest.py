@@ -77,3 +77,45 @@ def sources_present(monkeypatch):
 
     monkeypatch.setattr(app, "_source_exists", lambda path: True)
     yield
+
+
+_waiting: dict[str, set[str]] = {}
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """A test that wanted a missing file never counts as passed."""
+    import real_media
+
+    outcome = yield
+    report = outcome.get_result()
+    if call.when != "call":
+        return
+    if report.passed and real_media.asked:
+        report.outcome = "failed"
+        report.longrepr = (
+            f"Passed without the real files it asked for: {real_media.asked}. "
+            "A worker thread lost the skip; add @real_media.needs(...) to this test."
+        )
+    real_media.asked.clear()
+
+
+def pytest_runtest_logreport(report):
+    if report.skipped and isinstance(report.longrepr, tuple):
+        import real_media
+
+        for name in real_media.waiting_on(str(report.longrepr[2])):
+            _waiting.setdefault(name, set()).add(report.nodeid)
+
+
+def pytest_terminal_summary(terminalreporter):
+    if not _waiting:
+        return
+    tests = set().union(*_waiting.values())
+    terminalreporter.section("tests waiting on real media", sep="=", yellow=True)
+    terminalreporter.write_line(
+        f"{len(tests)} tests did not run. Put these real files in data/media "
+        "(docs/testing/real-media.md):"
+    )
+    for name, waiting in sorted(_waiting.items(), key=lambda row: -len(row[1])):
+        terminalreporter.write_line(f"  {len(waiting):4d}  {name}")

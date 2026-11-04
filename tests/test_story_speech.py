@@ -2,10 +2,10 @@
 
 import base64
 import json
-import wave
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import settings_store
@@ -28,12 +28,7 @@ class Reply:
 
 
 def _wav(path: Path, seconds: float = 1.0) -> Path:
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(16000)
-        handle.writeframes(b"\x00\x00" * int(16000 * seconds))
-    return path
+    return real_media.clip("silence.wav", path, seconds)
 
 
 def test_openrouter_stt_request_and_parse(tmp_path, monkeypatch):
@@ -157,6 +152,7 @@ def test_transcribe_route_refuses_a_video_without_sound(tmp_path):
     assert response.status_code == 400 and "no sound track" in response.json()["detail"]
 
 
+@real_media.needs("silence.wav")
 def test_transcribe_route_reads_speech_and_attaches_it(tmp_path, monkeypatch):
     import app
 
@@ -224,6 +220,7 @@ def _slow_transcribe(app, monkeypatch, tmp_path, release):
     monkeypatch.setattr(app, "VOICE_TASK_WAIT_S", 0.05)
 
 
+@real_media.needs("silence.wav")
 def test_slow_transcribe_answers_running_then_the_poll_returns_the_result(tmp_path, monkeypatch):
     import threading
     import time
@@ -250,6 +247,7 @@ def test_slow_transcribe_answers_running_then_the_poll_returns_the_result(tmp_pa
     assert app.load_job("slowread0001")["analysis"]["transcript"]["segments"] == 1
 
 
+@real_media.needs("silence.wav")
 def test_cancelled_transcribe_never_updates_the_job(tmp_path, monkeypatch):
     import threading
     import time

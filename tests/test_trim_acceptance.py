@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 pytest.importorskip("routes_trim")
@@ -541,15 +542,7 @@ def test_packet_carries_the_trimmed_cues(client, quiet_submit, tmp_path, monkeyp
     manifest = artifacts.load_manifest(job_dir, artifact_id)
     assert manifest is not None
 
-    reel = tmp_path / "tiny.mp4"
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", "color=c=red:s=320x180:d=1", "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart", str(reel),
-        ],
-        check=True,
-    )
+    reel = real_media.clip("talking-video.mp4", tmp_path / "tiny.mp4", 1.0, scale="320:180")
     artifacts.store_media(job_dir, artifact_id, reel, None)
     cue_rows = [cue.to_dict() for cue in track.cues]
     artifacts.write_captions(

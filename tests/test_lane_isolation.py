@@ -76,19 +76,20 @@ def test_lane_env_ports_and_data_are_distinct():
     assert "VIBECUT_EDITION=classic" in result.stdout
     assert "/vibecut-lanes/classic" in result.stdout
 
-    for lane, port in (("studio", "8795"), ("voice", "8797")):
-        out = subprocess.run(
-            ["bash", str(ROOT / "scripts" / "lane-env.sh"), lane],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-        assert f"VIBECUT_PORT={port}" in out, lane
-        assert f"/vibecut-lanes/{lane}" in out, lane
+    out = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "lane-env.sh"), "studio"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "VIBECUT_PORT=8795" in out
+    assert "/vibecut-lanes/studio" in out
     voice = subprocess.run(
         ["bash", str(ROOT / "scripts" / "lane-env.sh"), "voice"],
         capture_output=True, text=True, check=True,
     ).stdout
+    assert "VIBECUT_PORT=8797" in voice
+    assert f"VIBECUT_DATA={ROOT}/data" in voice
     assert "VIBECUT_EDITION=voice" in voice
     assert "VIBECUT_FEATURES=voice_room" in voice
 

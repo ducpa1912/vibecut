@@ -5,13 +5,11 @@ The speech and the transcript are faked; the take and its audio are real.
 
 from __future__ import annotations
 
-import math
 import shutil
-import struct
-import wave
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import audio
@@ -25,16 +23,7 @@ needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is 
 
 
 def tone(path: Path, seconds: float = 0.5, rate: int = 16000) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        frames = bytearray()
-        for index in range(int(rate * seconds)):
-            frames += struct.pack("<h", int(9000 * math.sin(2 * math.pi * 220 * index / rate)))
-        handle.writeframes(bytes(frames))
-    return path
+    return real_media.clip("speech.wav", path, seconds, rate=rate)
 
 
 @pytest.fixture(autouse=True)
@@ -67,6 +56,7 @@ def line_number(job_dir: Path) -> int:
 
 
 @needs_ffmpeg
+@real_media.needs("speech.wav")
 def test_one_drifted_line_is_flagged_with_what_whisper_heard(api, monkeypatch):
     heard = {
         1: "First line here.",
@@ -108,6 +98,7 @@ def test_one_drifted_line_is_flagged_with_what_whisper_heard(api, monkeypatch):
 
 
 @needs_ffmpeg
+@real_media.needs("speech.wav")
 def test_matching_lines_report_all_clear(api, monkeypatch):
     monkeypatch.setattr(
         stt, "transcribe",
@@ -127,6 +118,7 @@ def test_matching_lines_report_all_clear(api, monkeypatch):
 
 
 @needs_ffmpeg
+@real_media.needs("speech.wav")
 def test_whisper_hearing_nothing_flags_every_line(api, monkeypatch):
     monkeypatch.setattr(
         stt, "transcribe",

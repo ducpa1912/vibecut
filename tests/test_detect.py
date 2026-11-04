@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import math
-import wave
 from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import app
@@ -521,23 +520,11 @@ def test_music_from_scenes_silence_is_not_music():
     assert signal["present"] is False
 
 
-def _write_wav(path: Path, seconds: float, amplitude: float, frequency: float = 440.0) -> Path:
-    rate = 16000
-    frames = int(rate * seconds)
-    with wave.open(str(path), "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(rate)
-        values = []
-        for index in range(frames):
-            value = int(amplitude * 32767 * math.sin(2 * math.pi * frequency * index / rate))
-            values.append(value.to_bytes(2, "little", signed=True))
-        writer.writeframes(b"".join(values))
-    return path
 
 
-def test_music_from_wav_detects_a_steady_tone(tmp_path):
-    path = _write_wav(tmp_path / "tone.wav", 6.0, 0.25)
+
+def test_music_from_wav_detects_music(tmp_path):
+    path = real_media.clip("music.wav", tmp_path / "music.wav", 6.0)
     signal = detect.music_from_wav(path)
     assert signal["available"] is True
     assert signal["present"] is True
@@ -545,14 +532,14 @@ def test_music_from_wav_detects_a_steady_tone(tmp_path):
 
 
 def test_music_from_wav_ignores_silence(tmp_path):
-    path = _write_wav(tmp_path / "silence.wav", 6.0, 0.0)
+    path = real_media.clip("silence.wav", tmp_path / "silence.wav", 6.0)
     signal = detect.music_from_wav(path)
     assert signal["available"] is True
     assert signal["present"] is False
 
 
 def test_music_from_wav_excludes_speech_spans(tmp_path):
-    path = _write_wav(tmp_path / "speech.wav", 6.0, 0.3)
+    path = real_media.clip("speech.wav", tmp_path / "speech.wav", 6.0)
     signal = detect.music_from_wav(path, [{"start": 0.0, "end": 6.0}])
     assert signal["available"] is False
 
@@ -840,7 +827,7 @@ def test_run_check_uses_audio_when_available(tmp_path):
     job = job_record()
     for item in job["analysis"]["scenes"]:
         item["speech"] = ""
-    wav = _write_wav(tmp_path / "bed.wav", 6.0, 0.2)
+    wav = real_media.clip("music.wav", tmp_path / "bed.wav", 6.0)
     calls = []
 
     def extractor(path, has_audio, job_dir):

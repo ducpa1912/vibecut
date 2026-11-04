@@ -3,7 +3,8 @@
 #
 #   scripts/voice-serve.sh    # Ctrl-C stops it
 #
-# Port 8797, data ~/vibecut-lanes/voice, media ~/vibecut-lanes/media/voiceroom.
+# Port 8797. Everything the lane owns is in this worktree's git-ignored data/:
+# data/media, data/recordings, data/voices and data/music.
 # Never port 8787 and never the founder's data.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -20,12 +21,15 @@ if lsof -nP -iTCP:"$VIBECUT_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "$VIBECUT_DATA" "$VIBECUT_DATA/logs"
+mkdir -p "$VIBECUT_DATA/logs" "$VIBECUT_LANE_MEDIA" "$VIBECUT_RECORDINGS" \
+  "$VIBECUT_DATA/voices" "$VIBECUT_DATA/music"
 log="$VIBECUT_DATA/logs/server.log"
 pidfile="$VIBECUT_DATA/server.pid"
 echo "VibeCut Voice: http://127.0.0.1:$VIBECUT_PORT/"
 echo "Data:       $VIBECUT_DATA"
 echo "Media:      $VIBECUT_LANE_MEDIA"
+echo "Voices:     $VIBECUT_DATA/voices"
+echo "Music:      $VIBECUT_DATA/music"
 echo "Log:        $log"
 
 # Finder's Terminal does not activate the project venv, so use it when present.

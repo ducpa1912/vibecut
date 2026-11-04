@@ -21,20 +21,24 @@ python3 scripts/voice_runtime_pin.py --add new_module.py --note "Needed by the Y
 python3 scripts/voice_runtime_pin.py --check
 ```
 
-## What the lane still reaches outside its worktree
+## What stays shared
+
+The founder decided on 2026-11-05 that Python, packages, Whisper, other models and Playwright stay shared on this machine for development. No lane makes its own copy. The code pin above is a separate matter: it protects this lane from Studio's code move.
+
+## What the lane reaches outside its worktree
 
 | Item | Where it is now | Size | Shared with other lanes? | State |
 |---|---|---|---|---|
-| Python 3.11.7 and all packages | `/opt/homebrew/bin/python3`, `/opt/homebrew/lib/python3.11/site-packages`. This worktree has no `.venv`. | 2.6 GB | Yes | Versions recorded in `docs/voice/runtime-lock.txt`. Own copy waits for the founder. |
+| Python 3.11.7 and all packages | `/opt/homebrew/bin/python3`, `/opt/homebrew/lib/python3.11/site-packages`. This worktree has no `.venv`. | 2.6 GB | Yes | Shared by the founder's decision. Versions recorded in `docs/voice/runtime-lock.txt`. |
 | ffmpeg, ffprobe 9.0.2 | `/opt/homebrew/bin` | system tool | Yes | Reported, not copied |
 | demucs 4.1.0 | `/opt/homebrew/bin/demucs` | in site-packages | Yes | Reported. Weights not on this Mac (`~/.cache/torch` absent), so first use downloads them. |
 | mlx_whisper 0.4.3 | `/opt/homebrew/bin/mlx_whisper` | in site-packages | Yes | Reported |
-| Whisper weights (`mlx-community/whisper-large-v3-turbo`) | `~/.cache/huggingface/hub` (`stt.py`, honours `HF_HOME` and `HF_HUB_CACHE`) | 1.5 GB | Yes | Own copy waits for the founder |
+| Whisper weights (`mlx-community/whisper-large-v3-turbo`) | `~/.cache/huggingface/hub` (`stt.py`, honours `HF_HOME` and `HF_HUB_CACHE`) | 1.5 GB | Yes | Shared by the founder's decision |
 | yt-dlp 2026.10.21 | `/opt/homebrew/bin/yt-dlp` | system tool | Yes | Reported |
 | `deep-filter`, `audio-separator`, RoFormer model | Not installed on this Mac | none | n/a | Optional. Search falls back. |
 | Packs | `~/Library/Application Support/VibeCut` (`packs.py`, `VIBECUT_PACKS_DIR`): absent on this Mac | none | Would be | Nothing to copy. Set `VIBECUT_PACKS_DIR` if packs arrive. |
 | Kokoro models | `<worktree>/data/models/kokoro` or a pack: absent | none | No | Kokoro shows as not installed |
-| Playwright for recordings | `~/.npm/_npx/*/node_modules/playwright`, `~/Library/Caches/ms-playwright` | 668 MB + 206 MB | Yes | Own copy waits for the founder |
+| Playwright for recordings | `~/.npm/_npx/*/node_modules/playwright`, `~/Library/Caches/ms-playwright` | 668 MB + 206 MB | Yes | Shared by the founder's decision |
 | OpenCode | `~/.opencode/bin/opencode` | 171 MB | Yes | Tool for the lane's builds. The voice Setup no longer offers it. |
 | Apple `say`, `swiftc` | `/usr/bin` | system | Yes | Part of macOS |
 | `OPENROUTER_API_KEY` | The shell environment | none | Yes | Used until a key is saved in this app's Setup |
@@ -43,4 +47,12 @@ python3 scripts/voice_runtime_pin.py --check
 
 ## Data, media and recordings
 
-`~/vibecut-lanes/voice`, `~/vibecut-lanes/media/voiceroom` and `~/vibecut-lanes/recordings/voiceroom` **do not exist on this Mac** (seen 2026-11-04). `voice-serve.sh` creates an empty data folder on its next start, so the clones and saved keys recorded earlier will not appear until they are restored.
+Each lane stores its own files, git-ignored. The old `~/vibecut-lanes/voice`, `~/vibecut-lanes/media/voiceroom` and `~/vibecut-lanes/recordings/voiceroom` folders were removed on purpose by the founder and are not restored.
+
+| What | Where |
+|---|---|
+| Jobs, settings, keys, logs, `server.pid` | `data/` |
+| Media and real test files | `data/media` |
+| Recordings | `data/recordings` |
+| Cloned voices | `data/voices` (`voice_clone.py`) |
+| Music library | `data/music` (`audio.MUSIC_DIRS`) |

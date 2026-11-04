@@ -8,7 +8,6 @@ bottom needs a real ffmpeg.
 from __future__ import annotations
 
 import json
-import math
 import os
 import shutil
 import sys
@@ -18,8 +17,8 @@ import types
 import wave
 from pathlib import Path
 
-import numpy as np
 import pytest
+import real_media
 
 import audio
 import settings_store
@@ -38,31 +37,19 @@ def _speech_wav(
     seconds: float = 6.0,
     rate: int = 48000,
     spans: list[tuple[float, float]] | None = None,
-    amplitude: float = 0.3,
     noise: float = 0.002,
     clipped: bool = False,
 ) -> Path:
-    """Tone bursts in the speech band with a low noise floor between them."""
-    spans = spans if spans is not None else [(0.5, 2.0), (3.0, 4.5)]
-    total = max(1, int(seconds * rate))
-    rng = np.random.default_rng(7)
-    values = rng.normal(0.0, noise, total).astype(np.float32)
-    for start, end in spans:
-        left, right = int(start * rate), min(total, int(end * rate))
-        index = np.arange(max(0, right - left), dtype=np.float32)
-        tone = amplitude * np.sin(2 * math.pi * 440.0 * index / rate)
-        values[left:right] += tone
+    """A real file of the kind the test describes."""
     if clipped:
-        values[::50] = 1.0
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        handle.writeframes(
-            (np.clip(values, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-        )
-    return path
+        name = "clipped-speech.wav"
+    elif spans == []:
+        name = "silence.wav"
+    elif noise >= 0.1:
+        name = "noisy-speech.wav"
+    else:
+        name = "speech.wav"
+    return real_media.clip(name, path, seconds, rate=rate)
 
 
 def _stub_pipeline(monkeypatch, *, speech: Path | None = None, clipped: bool = False):
@@ -477,6 +464,7 @@ def test_roformer_stage_runs_audio_separator(tmp_path, monkeypatch):
     assert path.is_file()
 
 
+@real_media.needs("noisy-speech.wav", "speech.wav")
 def test_denoise_compare_keeps_the_cleaner_variant(tmp_path, monkeypatch):
     noisy = _speech_wav(tmp_path / "noisy.wav", seconds=4.0, spans=[(0.5, 3.5)], noise=0.15)
     clean = _speech_wav(tmp_path / "clean.wav", seconds=4.0, spans=[(0.5, 3.5)], noise=0.0005)
@@ -523,8 +511,7 @@ def test_denoise_compare_flags_a_close_call(tmp_path, monkeypatch):
 
 
 def _long_speech(path: Path) -> Path:
-    spans = [(index * 10.0 + 0.5, index * 10.0 + 6.0) for index in range(9)]
-    return _speech_wav(path, seconds=90.0, spans=spans, noise=0.001)
+    return _speech_wav(path, seconds=90.0)
 
 
 def test_find_candidates_returns_three_to_five_batches(tmp_path, monkeypatch):

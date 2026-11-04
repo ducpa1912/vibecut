@@ -12,10 +12,10 @@ import shutil
 import subprocess
 import sys
 import time
-import wave
 from pathlib import Path
 
 import pytest
+import real_media
 
 import captions
 import pipeline
@@ -194,25 +194,14 @@ def test_whisper_uses_word_timestamps_and_turbo_default(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- QA #9
 
 
-def _pcm(path: Path, samples, rate: int = 16000) -> Path:
-    import numpy as np
-
-    data = np.asarray(samples, dtype=np.float64)
-    with wave.open(str(path), "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(rate)
-        writer.writeframes((data * 32767).astype("<i2").tobytes())
-    return path
 
 
+
+@real_media.needs("silence.wav", "hiss.wav", "speech.wav")
 def test_speech_gate_tells_silence_from_sound(tmp_path):
-    import numpy as np
-
-    silent = _pcm(tmp_path / "silent.wav", np.zeros(32000))
-    hiss = _pcm(tmp_path / "hiss.wav", np.random.default_rng(1).normal(0, 0.0005, 32000))
-    tone = np.sin(np.linspace(0, 2 * np.pi * 220 * 2, 32000)) * 0.2
-    voiced = _pcm(tmp_path / "tone.wav", tone)
+    silent = real_media.clip("silence.wav", tmp_path / "silent.wav", 2.0)
+    hiss = real_media.clip("hiss.wav", tmp_path / "hiss.wav", 2.0)
+    voiced = real_media.clip("speech.wav", tmp_path / "voiced.wav", 2.0)
     assert stt.has_speech_energy(silent) is False
     assert stt.has_speech_energy(hiss) is False
     assert stt.has_speech_energy(voiced) is True
@@ -220,9 +209,7 @@ def test_speech_gate_tells_silence_from_sound(tmp_path):
 
 
 def test_silent_audio_skips_every_engine(tmp_path, monkeypatch):
-    import numpy as np
-
-    silent = _pcm(tmp_path / "silent.wav", np.zeros(32000))
+    silent = real_media.clip("silence.wav", tmp_path / "silent.wav", 2.0)
     called = []
     monkeypatch.setattr(stt, "_chunked_run", lambda *args, **kwargs: called.append(1))
     messages = []
@@ -237,10 +224,7 @@ def test_silent_audio_skips_every_engine(tmp_path, monkeypatch):
 
 
 def test_transcribe_source_says_transcribing_before_the_first_chunk(tmp_path, monkeypatch):
-    import numpy as np
-
-    tone = np.sin(np.linspace(0, 2 * np.pi * 220 * 2, 32000)) * 0.2
-    voiced = _pcm(tmp_path / "tone.wav", tone)
+    voiced = real_media.clip("speech.wav", tmp_path / "voiced.wav", 2.0)
     messages = []
     monkeypatch.setattr(stt, "_engine_ready", lambda provider, model: True)
     monkeypatch.setattr(
@@ -725,14 +709,7 @@ def test_legacy_transcript_still_uses_interpolation(tmp_path):
 )
 def test_live_apple_helper_emits_word_timings(tmp_path):
     """Builds the real -O helper. Guards the optimized-async crash in run walking."""
-    say = shutil.which("say")
-    ffmpeg = shutil.which("ffmpeg")
-    if not say or not ffmpeg:
-        pytest.skip("say/ffmpeg unavailable")
-    aiff = tmp_path / "s.aiff"
-    wav = tmp_path / "s.wav"
-    subprocess.run([say, "-o", str(aiff), "VibeCut finds the stories."], check=True)
-    subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(aiff), "-ar", "16000", "-ac", "1", str(wav)], check=True)
+    wav = real_media.clip("speech.wav", tmp_path / "s.wav", 10.0)
     result = stt.transcribe_apple(wav, tmp_path / "job", "en")
     assert result and len(result["words"]) >= 3
     assert all(word["end"] >= word["start"] for word in result["words"])

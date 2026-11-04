@@ -1,6 +1,6 @@
 # Voice Room plan (revised 2026-11-01)
 
-The Voice Room is the `voice-room` lane: port `8797`, data `~/vibecut-lanes/voice`, hidden behind `VIBECUT_FEATURES=voice_room`. See `docs/voice/lane.md` for running it.
+The Voice Room is the `voice-room` lane: port `8797`, data in this worktree's `data/`, hidden behind `VIBECUT_FEATURES=voice_room`. See `docs/voice/lane.md` for running it.
 
 ## Built
 
@@ -27,10 +27,10 @@ The Voice Room is the `voice-room` lane: port `8797`, data `~/vibecut-lanes/voic
    - `docs/testing/voice-room-pass-1.md` (current UI, from the 09:22 recording). Its labels still match, but the Compare and Recent panels now sit between sections 02 and 03, and its step 4.1 (the new rate on a clone) only works since `24c2176`.
    - A **new recording of the standalone app** (`Record Voice Room.command`).
    - A recording of what pass 1 did not cover: cloning from a recording or upload, the clip finder, Rename and Delete, Cancel, backup and restore, language detection.
-   - The damaged first recording `~/vibecut-lanes/recordings/voiceroom/2026-10-29-085746` needs redoing.
+   - The damaged first recording from 2026-10-29 needs redoing. The old recordings folder was removed on purpose; new ones land in `data/recordings`.
 2. **Live OpenRouter check** of one clone (`scripts/voice_live_check.py`): waits for the founder's explicit OK.
 3. **One UI.** `/voices` serves only the standalone app now; the old `voiceroom.js` page and the `?ui=new` switch are retired. The dead files can be deleted after a merge.
-4. **Tests that follow the founder's recordings.** The Chromium spec covers the old page only and builds tone files in a temp folder. Under the founder-only testing rule, decide whether automated tests may keep using synthetic audio. If not, replace them with fixtures the founder provides.
+4. **Tests that follow the founder's recordings.** The Chromium spec covers the old page only. Tests no longer make audio or video; they wait on the real files in `docs/testing/real-media.md`.
 5. **Clip finder defaults.** Studio's Edit panel calls the same search without options, so it now searches only the first 2:00 of a longer video (with separation, not the fast path). Studio should say so, or pass `full`.
 6. **Signatures and history.** Many lane commits from 2026-10-29/30 are unsigned, and `caa6758` merged `classic` into the lane on 2026-10-29 19:51. Both are in the pushed history and stay there (no force-push); studio integration sees them.
 

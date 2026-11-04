@@ -10,7 +10,7 @@ ships through `main`.
 | `classic` | Beta launch focus: the Classic view. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic` | 8796 | `~/vibecut-lanes/classic` |
 | `classic-prv` | Previous Classic version, kept for rollback. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic-prv` | — | — |
 | `studio` | Work in progress: the Studio view (Import → Check → Stories → Edit → Finish). Owns `main`. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-studio` | 8795 | `~/vibecut-lanes/studio` |
-| `voice-room` | Hidden, independent voice features: Voice Room page, voice clone, voice library, voice extraction. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room` | 8797 | `~/vibecut-lanes/voice` |
+| `voice-room` | Hidden, independent voice features: Voice Room page, voice clone, voice library, voice extraction. | `/Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room` | 8797 | `data/` in its worktree |
 
 Port 8787 is the founder's server. No lane uses it.
 
@@ -24,7 +24,8 @@ eval "$(scripts/lane-env.sh classic)"   # or studio / voice
 python3 app.py
 ```
 
-Media for a lane lives in `~/vibecut-lanes/media/<lane>`. Tests get their own
+Media for the Voice Room lives in its worktree: `data/media`, `data/recordings`,
+`data/voices` and `data/music`, all git-ignored. Tests get their own
 settings and secrets files per test, so a saved key or rights lock cannot leak
 into the next test.
 

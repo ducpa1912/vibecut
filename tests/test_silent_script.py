@@ -5,6 +5,7 @@ import shutil
 import subprocess
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import audio
@@ -159,12 +160,7 @@ def test_script_route_refuses_a_video_with_real_speech(tmp_path):
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
 def test_audio_bed_is_silence_for_a_source_without_sound(tmp_path):
-    video = tmp_path / "silent.mp4"
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=2",
-         "-c:v", "libx264", str(video)],
-        check=True,
-    )
+    video = real_media.clip("silent-video.mp4", tmp_path / "silent.mp4", 2.0)
     assert audio._has_audio_stream(str(video)) is False
     bed = audio._source_audio_bed(str(video), tmp_path)
     assert bed.is_file() and audio.media_duration(bed) == pytest.approx(2.0, abs=0.1)

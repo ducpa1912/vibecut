@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -460,17 +461,7 @@ def media(tmp_path_factory):
         pytest.skip("ffmpeg is not installed")
     root = tmp_path_factory.mktemp("t1-media")
     source = root / "source.mp4"
-    subprocess.run([
-        "ffmpeg", "-y", "-v", "error",
-        "-f", "lavfi", "-i", "color=c=0x203040:s=1920x1080:r=30:d=2",
-        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
-        "-vf", (
-            "drawbox=x=100:y=100:w=300:h=300:c=red:t=fill,"
-            "drawbox=x=1500:y=700:w=200:h=200:c=blue:t=fill"
-        ),
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(source),
-    ], check=True)
+    real_media.clip("talking-video.mp4", source, 2.0)
     return source, pipeline.probe(source)
 
 
@@ -693,14 +684,7 @@ def test_real_edit_render_and_frame_endpoint_match(real_env):
 
 @needs_ffmpeg
 def test_perspective_motion_is_smoother_than_zoompan(tmp_path):
-    source = tmp_path / "dot.mp4"
-    subprocess.run([
-        "ffmpeg", "-y", "-v", "error",
-        "-f", "lavfi", "-i", "color=c=black:s=1920x1080:r=30:d=2",
-        "-vf", "drawbox=x=1050:y=480:w=20:h=20:c=white:t=fill",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12",
-        "-pix_fmt", "yuv420p", str(source),
-    ], check=True)
+    source = real_media.clip("bright-dot-video.mp4", tmp_path / "dot.mp4", 2.0)
     meta = pipeline.probe(source)
     edit = _edit(motion=[{"kind": "push", "start": 0.0, "end": 2.0}])
     centroids = {}

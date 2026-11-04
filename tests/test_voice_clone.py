@@ -10,6 +10,7 @@ import urllib.error
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import audio
@@ -177,13 +178,7 @@ def test_clone_failure_raises_and_never_calls_heygen_directly(monkeypatch, tmp_p
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
 def test_prepare_sample_cuts_a_small_mono_mp3(tmp_path):
-    source = tmp_path / "talk.mp4"
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=30",
-         "-f", "lavfi", "-i", "color=c=black:s=320x240:d=30", "-shortest",
-         "-c:v", "libx264", "-c:a", "aac", str(source)],
-        check=True,
-    )
+    source = real_media.clip("talking-video.mp4", tmp_path / "talk.mp4", 30.0)
     out = tmp_path / "sample.mp3"
     seconds = voice_clone.prepare_sample(source, out, windows=[(2.0, 12.0), (15.0, 25.0)])
     assert seconds == pytest.approx(20, abs=0.5)
@@ -535,12 +530,7 @@ def test_live_clone_and_stock_voices_pass_the_guard(tmp_path):
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
 def test_clone_sample_is_a_real_mp3_whatever_the_name(tmp_path):
-    source = tmp_path / "tone.m4a"
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=12",
-         "-c:a", "aac", str(source)],
-        check=True,
-    )
+    source = real_media.clip("speech.wav", tmp_path / "talk.m4a", 12.0)
     out = tmp_path / "sample.wav"
     voice_clone.prepare_sample(source, out)
     assert out.read_bytes()[:4] != b"RIFF"

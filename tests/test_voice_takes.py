@@ -7,14 +7,12 @@ Nothing is sent anywhere, and no media is downloaded.
 from __future__ import annotations
 
 import json
-import math
 import shutil
-import struct
 import time
-import wave
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import audio
@@ -28,18 +26,7 @@ needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is 
 
 
 def tone(path: Path, seconds: float = 0.5, rate: int = 16000) -> Path:
-    """A small 16-bit mono WAV the analysis can actually read."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        frames = bytearray()
-        for index in range(int(rate * seconds)):
-            value = int(8000 * math.sin(2 * math.pi * 220 * index / rate))
-            frames += struct.pack("<h", value)
-        handle.writeframes(bytes(frames))
-    return path
+    return real_media.clip("speech.wav", path, seconds, rate=rate)
 
 
 @pytest.fixture(autouse=True)
@@ -78,6 +65,7 @@ def _clone(tmp_path: Path) -> dict:
 
 
 @needs_ffmpeg
+@real_media.needs("speech.wav")
 def test_three_previews_and_the_starred_one_comes_first(api, tmp_path):
     for line in ("first line", "second line", "third line"):
         reply = api.post("/api/voices/sample", json={
@@ -119,6 +107,7 @@ def test_clone_preview_keeps_the_clone_name_and_a_saved_voice(api, tmp_path):
 
 
 @needs_ffmpeg
+@real_media.needs("speech.wav")
 def test_a_stock_take_cannot_become_a_voice(api):
     api.post("/api/voices/sample", json={"engine": "say", "voice": "Samantha", "text": "hi"})
     take = api.get("/api/voices/takes").json()["takes"][0]
@@ -198,6 +187,7 @@ def test_compare_line_flags_drift_but_tolerates_punctuation():
 
 
 @needs_ffmpeg
+@real_media.needs("speech.wav")
 def test_voiceover_is_one_take_with_lines_and_no_whisper(api, monkeypatch):
     import stt
 

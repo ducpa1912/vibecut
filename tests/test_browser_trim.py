@@ -19,6 +19,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+import real_media
 
 pytest.importorskip("routes_trim")
 pytest.importorskip("caption_reflow")
@@ -93,16 +94,7 @@ def _stop(process: subprocess.Popen) -> None:
 
 
 def _source_video(path: Path) -> None:
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", "color=c=red:s=1080x1920:d=26:r=10",
-            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
-            "-movflags", "+faststart", str(path),
-        ],
-        check=True,
-        timeout=60,
-    )
+    real_media.clip("vertical-video.mp4", path, 26.0)
 
 
 def test_studio_trim_drag_in_chromium(tmp_path):

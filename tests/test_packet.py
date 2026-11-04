@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -48,19 +49,9 @@ def _plan() -> dict:
 
 @functools.lru_cache(maxsize=1)
 def _mp4_bytes() -> bytes:
-    if not shutil.which("ffmpeg"):
-        return b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 32
     with tempfile.TemporaryDirectory(prefix="vibecut-packet-test-") as temporary:
         path = Path(temporary) / "clip.mp4"
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-                "-i", "color=c=red:s=320x180:d=1", "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart", str(path),
-            ],
-            check=True,
-        )
-        return path.read_bytes()
+        return real_media.clip("talking-video.mp4", path, 1.0, scale="320:180").read_bytes()
 
 
 def _jpeg_bytes(color=(180, 40, 40)) -> bytes:
@@ -228,13 +219,7 @@ def test_packet_zip_contents(tmp_path):
 def test_packet_extracts_covers_from_staged_media_when_no_poster(tmp_path, monkeypatch):
     job, job_dir = _job(tmp_path)
     video = job_dir / "renders" / "reel_30.mp4"
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", "color=c=red:s=320x180:d=1", "-pix_fmt", "yuv420p", str(video),
-        ],
-        check=True,
-    )
+    real_media.clip("talking-video.mp4", video, 1.0, scale="320:180")
     (job_dir / "renders" / "reel_30.jpg").unlink()
     job["renders"]["30"].pop("poster")
     seen: list[Path] = []

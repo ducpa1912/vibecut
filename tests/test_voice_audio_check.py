@@ -7,13 +7,11 @@ never changes or refuses the audio. Test sounds are written locally.
 from __future__ import annotations
 
 import hashlib
-import math
 import shutil
-import struct
-import wave
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import audio
@@ -28,20 +26,18 @@ needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is 
 
 def wav(path: Path, seconds: float = 1.0, amplitude: int = 9000, rate: int = 16000,
         square: bool = False) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        frames = bytearray()
-        for index in range(int(rate * seconds)):
-            if square:
-                value = amplitude if (index // (rate // 100)) % 2 == 0 else -amplitude
-            else:
-                value = int(amplitude * math.sin(2 * math.pi * 220 * index / rate))
-            frames += struct.pack("<h", value)
-        handle.writeframes(bytes(frames))
-    return path
+    """A real file of the kind the test describes."""
+    if square:
+        name = "clipped-speech.wav"
+    elif amplitude == 0:
+        name = "silence.wav"
+    elif amplitude < 1000:
+        name = "quiet-speech.wav"
+    elif amplitude >= 30000:
+        name = "loud-speech.wav"
+    else:
+        name = "speech.wav"
+    return real_media.clip(name, path, seconds, rate=rate)
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +64,7 @@ def api(monkeypatch, tmp_path):
 
 
 @needs_ffmpeg
+@real_media.needs("silence.wav", "quiet-speech.wav", "loud-speech.wav", "clipped-speech.wav")
 def test_silence_quiet_loud_and_clipping_are_named(tmp_path):
     silent = voice_audio.analyse(wav(tmp_path / "silent.wav", 2.0, 0))
     assert silent["silent"] is True
@@ -107,6 +104,7 @@ def test_advice_is_written_for_made_audio_not_recordings():
 
 
 @needs_ffmpeg
+@real_media.needs("silence.wav")
 def test_a_silent_take_is_kept_and_flagged_as_advice(api, monkeypatch, tmp_path):
     import app
 
@@ -129,6 +127,7 @@ def test_a_silent_take_is_kept_and_flagged_as_advice(api, monkeypatch, tmp_path)
 
 
 @needs_ffmpeg
+@real_media.needs("speech.wav")
 def test_a_voiceover_also_carries_the_check(api, monkeypatch):
     import app  # noqa: F401 - the app builds the routers
 

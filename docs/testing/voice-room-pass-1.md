@@ -11,7 +11,7 @@ scripts/voice-serve.sh
 
 Then open `http://127.0.0.1:8797/voices`.
 
-**Data:** `~/vibecut-lanes/voice`. **Media folder:** `~/vibecut-lanes/media/voiceroom/`. This recording did not select a media file; it used the two clones already in the Voice data, `Andy-VN` and `Andy-EN`.
+**Data:** `data/` in this worktree. **Media folder:** `data/media/`. The recording did not select a media file; it used two clones, `Andy-VN` and `Andy-EN`. The founder removed those clones on 2026-11-05, so make a clone from a real recording first (`data/voices` starts empty).
 
 **What this recording covers:** `/voices`, the Setup panel, the OpenRouter key save, the voice catalog, and three previews of the same clone. The run took 2m25s. The first and third previews took 14.0 s and 14.9 s; the second was cached and answered in 36 ms.
 
@@ -57,7 +57,7 @@ First the dry run. It sends nothing:
 
 ```bash
 cd /Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room
-VIBECUT_DATA="$HOME/vibecut-lanes/voice" python3 scripts/voice_live_check.py
+VIBECUT_DATA="$PWD/data" python3 scripts/voice_live_check.py
 ```
 
 Expected: exit `2` and **Dry run: nothing was sent.** with the voice name, a sample near 10 s, and one request line.
@@ -65,7 +65,7 @@ Expected: exit `2` and **Dry run: nothing was sent.** with the voice name, a sam
 The real run sends one request and is allowed only with the founder's explicit OK:
 
 ```bash
-VIBECUT_DATA="$HOME/vibecut-lanes/voice" python3 scripts/voice_live_check.py --yes-send-to-openrouter
+VIBECUT_DATA="$PWD/data" python3 scripts/voice_live_check.py --yes-send-to-openrouter
 ```
 
 ## Not covered by this recording

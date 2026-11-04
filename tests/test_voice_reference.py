@@ -1,20 +1,18 @@
 """The 15 s reference guard and the trimmer's server side.
 
-A 60 s tone is written by the test. Cleaning is faked to copy the cut, so no
+A 60 s stretch of real speech comes from data/media. Cleaning is faked to copy the cut, so no
 model runs; the cloud is never called.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import shutil
-import struct
 import subprocess
-import wave
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import audio
@@ -28,27 +26,12 @@ VOICE = ROOT / "static" / "voice"
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
 
 
-def tone(path: Path, seconds: float = 60.0, rate: int = 16000, amplitude: int = 9000) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        frames = bytearray()
-        for index in range(int(rate * seconds)):
-            frames += struct.pack("<h", int(amplitude * math.sin(2 * math.pi * 220 * index / rate)))
-        handle.writeframes(bytes(frames))
-    return path
+def tone(path: Path, seconds: float = 60.0, rate: int = 16000) -> Path:
+    return real_media.clip("speech.wav", path, seconds, rate=rate)
 
 
 def silent(path: Path, seconds: float = 20.0, rate: int = 16000) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        handle.writeframes(b"\x00\x00" * int(rate * seconds))
-    return path
+    return real_media.clip("silence.wav", path, seconds, rate=rate)
 
 
 @pytest.fixture(autouse=True)

@@ -6,12 +6,10 @@ faked to fail, so the raw file reaches the silence check; no cloud is called.
 
 from __future__ import annotations
 
-import math
-import struct
-import wave
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 
 import audio
@@ -21,26 +19,11 @@ import voice_extract
 
 
 def silent(path: Path, seconds: float = 9.0, rate: int = 16000) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        handle.writeframes(b"\x00\x00" * int(rate * seconds))
-    return path
+    return real_media.clip("silence.wav", path, seconds, rate=rate)
 
 
 def tone(path: Path, seconds: float = 9.0, rate: int = 16000) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(rate)
-        frames = bytearray()
-        for index in range(int(rate * seconds)):
-            frames += struct.pack("<h", int(9000 * math.sin(2 * math.pi * 220 * index / rate)))
-        handle.writeframes(bytes(frames))
-    return path
+    return real_media.clip("speech.wav", path, seconds, rate=rate)
 
 
 @pytest.fixture(autouse=True)

@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import real_media
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -23,19 +24,9 @@ import packet
 
 
 def _mp4_bytes() -> bytes:
-    if not shutil.which("ffmpeg"):
-        return b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 32
-    with tempfile.TemporaryDirectory(prefix="vibecut-packet-v2-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="vibecut-packet-test-") as temporary:
         path = Path(temporary) / "clip.mp4"
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-                "-i", "color=c=red:s=320x180:d=1", "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart", str(path),
-            ],
-            check=True,
-        )
-        return path.read_bytes()
+        return real_media.clip("talking-video.mp4", path, 1.0, scale="320:180").read_bytes()
 
 
 def _jpeg_bytes() -> bytes:
