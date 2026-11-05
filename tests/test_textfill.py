@@ -565,3 +565,81 @@ def test_fill_frame_names_the_missing_lama_model(tmp_path, monkeypatch):
     frame = np.zeros((40, 40, 3), dtype=np.uint8)
     with pytest.raises(textfill.FillError, match="LaMa"):
         textfill.fill_frame(frame, [(5, 20, 30, 30)], data_root=tmp_path)
+
+
+# --- LaMa key frames ------------------------------------------------------
+
+class _CountingFiller:
+    def __init__(self):
+        self.calls = 0
+        self.holes = []
+
+    def fill(self, area, hole):
+        self.calls += 1
+        self.holes.append(hole.copy())
+        return np.full(area.shape, self.calls * 10 % 256, dtype=np.uint8)
+
+
+def _keyed(frames, rects, step=6):
+    filler = _CountingFiller()
+    rects_at = rects if callable(rects) else (lambda index: rects)
+    out = list(textfill.fill_frames_lama(
+        iter(frames), rects_at, filler, (0, 0, 40, 40), step=step,
+    ))
+    return out, filler
+
+
+def test_a_still_picture_runs_the_model_on_key_frames_only():
+    frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(30)]
+    out, filler = _keyed(frames, [(5, 5, 20, 20)])
+    assert len(out) == 30
+    # One fill starts the first run, then one fill ends each run of six.
+    assert filler.calls <= 6
+    # Outside the hole and its feather, every pixel is the source's.
+    assert all((frame[30:, 30:] == 100).all() for frame in out)
+
+
+def test_a_moving_picture_runs_the_model_on_every_frame():
+    frames = [np.full((40, 40, 3), (index * 40) % 256, dtype=np.uint8) for index in range(12)]
+    _, filler = _keyed(frames, [(5, 5, 20, 20)])
+    assert filler.calls == 12
+
+
+def test_a_key_fill_covers_every_hole_in_its_run():
+    frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(6)]
+    def rects(index):
+        return [(5, 5, 10, 10)] if index < 3 else [(5, 5, 20, 10)]
+    _, filler = _keyed(frames, rects)
+    assert filler.holes[0][6, 18]
+
+
+def test_frames_without_text_never_reach_the_model():
+    frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(12)]
+    out, filler = _keyed(frames, lambda index: [(5, 5, 20, 20)] if 4 <= index < 8 else [])
+    assert len(out) == 12
+    assert (out[0] == 100).all() and (out[11] == 100).all()
+    assert filler.calls <= 2
+
+
+def test_blended_frames_change_gradually_between_two_fills():
+    frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(6)]
+    out, _ = _keyed(frames, [(5, 5, 20, 20)])
+    middle = [int(frame[10, 10, 0]) for frame in out]
+    assert middle[0] != middle[-1]
+    assert middle in (sorted(middle), sorted(middle, reverse=True))
+
+
+def test_key_rate_follows_the_frame_rate_and_can_be_turned_off(monkeypatch):
+    assert textfill.lama_step(30.0) == 6
+    assert textfill.lama_step(60.0) == 12
+    monkeypatch.setenv("VIBECUT_FILL_LAMA_KEYS", "0")
+    assert textfill.lama_step(30.0) == 1
+
+
+def test_the_key_rate_is_part_of_a_lama_clip_only(monkeypatch):
+    base = dict(meta=META, start=1.0, duration=2.0, layers=[_layer()], model_stamp="m")
+    lama = textfill.span_key(method="lama", **base)
+    sttn = textfill.span_key(method="sttn", **base)
+    monkeypatch.setenv("VIBECUT_FILL_LAMA_KEYS", "0")
+    assert textfill.span_key(method="lama", **base) != lama
+    assert textfill.span_key(method="sttn", **base) == sttn

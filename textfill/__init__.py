@@ -35,6 +35,11 @@ MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime"}
 METHOD_COPY = {"sttn": "STTN (video)", "lama": "LaMa (per frame)"}
 # Share of the previous frame's fill kept on LaMa output, to calm flicker.
 LAMA_CARRY = 0.3
+# LaMa fills about this many frames a second of video. The frames between blend
+# two fills, since text sits still over a slow background. 0 fills every frame.
+LAMA_KEYS_PER_SECOND = 5.0
+# Mean change around the text (0..255) that stops a blend: the picture moved.
+LAMA_MOTION_LIMIT = 8.0
 # Seconds per unit before this machine has its own reading. A unit is one
 # strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
 # render on an M1 8 GB Mac under swap. LaMa has no real-video reading yet.
@@ -267,6 +272,7 @@ def span_key(
 ) -> str:
     payload = {
         "version": VERSION,
+        "lama_keys": lama_keys_per_second() if method == "lama" else None,
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
         "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
         "fps": round(float(meta.get("fps") or 0.0), 6),
@@ -405,12 +411,135 @@ def _local(rects: list[masks.Rect], x0: int, y0: int, x1: int, y1: int) -> list[
     return out
 
 
-def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None):
+def lama_keys_per_second() -> float:
+    """``VIBECUT_FILL_LAMA_KEYS`` overrides it; 0 runs the model on every frame."""
+    try:
+        value = float(os.environ.get("VIBECUT_FILL_LAMA_KEYS", LAMA_KEYS_PER_SECOND))
+    except ValueError:
+        return LAMA_KEYS_PER_SECOND
+    return max(0.0, value)
+
+
+def lama_step(fps: float) -> int:
+    """Frames from one LaMa fill to the next at this frame rate."""
+    keys = lama_keys_per_second()
+    if keys <= 0 or fps <= 0:
+        return 1
+    return max(1, int(round(float(fps) / keys)))
+
+
+def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray) -> bool:
+    """Whether the picture around the text changed too much to blend across."""
+    around = ~hole[::4, ::4]
+    if not around.any():
+        return False
+    change = np.abs(first[::4, ::4].astype(np.int16) - second[::4, ::4].astype(np.int16))
+    return float(change[around].mean()) > LAMA_MOTION_LIMIT
+
+
+def _fill_frames_lama_keyed(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for):
+    """Run LaMa on key frames and blend the frames between them.
+
+    A run ends at the step, when the text leaves, or when the picture moves.
+    Its last frame is filled with a hole covering the whole run, so the blend
+    never shows text. The next run starts from that fill when it still covers
+    the next run's hole, which is what saves the model calls.
+    """
+    x0, y0, x1, y1 = area
+    source = enumerate(frames)
+    waiting = None
+    start_fill: np.ndarray | None = None
+    start_hole: np.ndarray | None = None
+
+    def next_frame():
+        nonlocal waiting
+        if waiting is not None:
+            item, waiting = waiting, None
+            return item
+        pair = next(source, None)
+        if pair is None:
+            return None
+        index, frame = pair
+        local = _local(rects_for(index), x0, y0, x1, y1)
+        hole = None
+        if local:
+            hole = (
+                hole_for(index, x0, y0, x1, y1) if hole_for
+                else masks.rasterize(local, x1 - x0, y1 - y0)
+            )
+            if not hole.any():
+                hole = None
+        return index, frame, hole
+
+    while True:
+        _check_cancel(cancelled)
+        first = next_frame()
+        if first is None:
+            return
+        if first[2] is None:
+            start_fill = start_hole = None
+            yield first[1]
+            if on_frame:
+                on_frame(first[0])
+            continue
+        run = [first]
+        while len(run) < step:
+            item = next_frame()
+            if item is None:
+                break
+            if item[2] is None or _picture_moved(
+                first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], first[2],
+            ):
+                waiting = item
+                break
+            run.append(item)
+        union = np.logical_or.reduce([item[2] for item in run])
+        _check_cancel(cancelled)
+        last_work = run[-1][1][y0:y1, x0:x1]
+        end_fill = filler.fill(last_work, union)
+        covered = start_hole is not None and not (union & ~start_hole).any()
+        begin = start_fill if covered else None
+        if begin is None and len(run) > 1:
+            _check_cancel(cancelled)
+            begin = filler.fill(first[1][y0:y1, x0:x1], union)
+        if begin is not None and len(run) == 1:
+            # A frame on its own has nothing to blend, so calm it with the last.
+            end_fill = np.clip(
+                end_fill.astype(np.float32) * (1 - LAMA_CARRY)
+                + begin.astype(np.float32) * LAMA_CARRY,
+                0, 255,
+            ).astype(np.uint8)
+        for position, (index, frame, hole) in enumerate(run):
+            if begin is None or position == len(run) - 1:
+                filled = end_fill
+            else:
+                # Runs that share a fill hand over on its frame, without a jump.
+                share = (position + (1 if covered else 0)) / (len(run) - (0 if covered else 1))
+                filled = np.clip(
+                    begin.astype(np.float32) * (1 - share) + end_fill.astype(np.float32) * share,
+                    0, 255,
+                ).astype(np.uint8)
+            work = frame[y0:y1, x0:x1]
+            out = frame.copy()
+            out[y0:y1, x0:x1] = masks.paste(work, filled, masks.feather(hole))
+            yield out
+            if on_frame:
+                on_frame(index)
+        start_fill, start_hole = end_fill, union
+
+
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1):
     """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
 
     ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
-    is the rects themselves.
+    is the rects themselves. A ``step`` above 1 runs the model on key frames.
     """
+    if step > 1:
+        yield from _fill_frames_lama_keyed(
+            frames, rects_for, filler, area, step,
+            on_frame=on_frame, cancelled=cancelled, hole_for=hole_for,
+        )
+        return
     x0, y0, x1, y1 = area
     previous: np.ndarray | None = None
     for index, frame in enumerate(frames):
@@ -688,7 +817,7 @@ def prepare_span(
             area = masks.lama_area(span_rects, width, height)
             stream = fill_frames_lama(
                 source_frames, rects_for, filler, area,
-                on_frame=on_frame, cancelled=cancelled, **extra,
+                on_frame=on_frame, cancelled=cancelled, step=lama_step(fps), **extra,
             )
         else:
             from .sttn import CHUNK, OVERLAP
