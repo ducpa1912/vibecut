@@ -69,7 +69,7 @@ def test_audio_and_finish_show_cost_and_stale_notices():
     assert "Cloud generation sends the brief" in AUDIO
     assert "artifactIsStale" in FINISH
     assert "STALE_RENDER_TEXT" in FINISH and "artifactStale" in FINISH
-    assert "Render calls it and may cost credits" in FINISH
+    assert "Cloud voices and music call providers and may cost credits" in FINISH
 
 
 def test_text_panel_warns_before_the_graphics_cap():

@@ -403,7 +403,7 @@ def test_finish_summary_counts_every_story_and_both_shapes():
     assert out["stories"] == 2
     assert out["total"] == 4
     assert out["shapes"] == {"9:16": 2, "4:5": 2}
-    assert "2 stories" in out["text"]
+    assert "2 moments" in out["text"]
     assert "4 renders" in out["text"]
     assert "2 in 9:16" in out["text"] and "2 in 4:5" in out["text"]
     assert "1 running" in out["text"] and "2 waiting" in out["text"] and "1 done" in out["text"]

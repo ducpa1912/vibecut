@@ -184,7 +184,7 @@ def test_the_wording_does_not_say_remove():
 
 def test_render_is_one_click_from_review():
     assert "Add this moment to queue" in FINISH
-    assert "Add to queue · ${aspect}" in FINISH
+    assert 'text: "Queue"' in FINISH
 
 
 def test_moments_can_be_cleared_and_a_search_with_none_keeps_them():

@@ -290,7 +290,7 @@ export function queueSummary(queues, filter = {}) {
   ].filter(Boolean).join(", ");
   let text = "Nothing is queued yet.";
   if (total) {
-    const storyWord = stories.size === 1 ? "story" : "stories";
+    const storyWord = stories.size === 1 ? "moment" : "moments";
     const renderWord = total === 1 ? "render" : "renders";
     text = [
       `${stories.size} ${storyWord}`,
@@ -1076,10 +1076,6 @@ export function mount(root, ctx) {
     clear(dom.body);
     const wrap = el("div", { class: "st-finish-skeleton", role: "status", "aria-live": "polite" });
     wrap.append(
-      el("div", { class: "st-finish-skeleton-head" }, [
-        el("span", { class: "st-finish-skeleton-dot", "aria-hidden": "true" }),
-        el("span", { text: "Reading renders and versions…" }),
-      ]),
       el("div", { class: "st-finish-skeleton-stage" }),
       el("div", { class: "st-finish-skeleton-lines" }, [
         el("i", {}), el("i", {}), el("i", {}),
@@ -1131,14 +1127,16 @@ export function mount(root, ctx) {
     card.append(head);
     if (!item) {
       const queueNow = el("button", {
-        class: "st-btn st-btn-primary",
+        class: "st-btn st-btn-ghost",
         type: "button",
         text: `Add this moment to queue · ${aspect}`,
         disabled: busy,
       });
       queueNow.addEventListener("click", () => { void queueStories([story], queueNow); });
-      card.append(queueNow);
-      card.append(el("p", { class: "st-hint", text: "No finished cut for this moment and shape yet. Queue it in Render, then review it here." }));
+      card.append(el("div", { class: "st-finish-review-empty" }, [
+        queueNow,
+        el("p", { class: "st-hint", text: "No finished cut for this moment and shape yet. Queue it in Render, then review it here." }),
+      ]));
       return card;
     }
     const box = el("figure", { class: "st-finish-review-video" });
@@ -1173,6 +1171,31 @@ export function mount(root, ctx) {
     ]);
   }
 
+  /** A compact segmented picker for the render setup row. */
+  function segmented(label, options, value, onPick) {
+    const group = el("div", { class: "st-seg-group" }, [
+      el("span", { class: "st-label", text: label }),
+    ]);
+    const row = el("div", {
+      class: "st-seg",
+      role: "group",
+      "aria-label": label,
+    });
+    for (const option of options) {
+      const button = el("button", {
+        class: "st-seg-btn",
+        type: "button",
+        text: option.label,
+        title: option.title || option.label,
+        "aria-pressed": option.value === value ? "true" : "false",
+      });
+      button.addEventListener("click", () => onPick(option.value));
+      row.append(button);
+    }
+    group.append(row);
+    return group;
+  }
+
   function advancedCard() {
     const details = el("details", { class: "st-finish-advanced" });
     details.append(
@@ -1199,7 +1222,7 @@ export function mount(root, ctx) {
     }
     dom.body.append(
       stage("01", "Review", "Watch the finished cut and read its notes before rendering another version.", reviewCard(), checksCard()),
-      stage("02", "Render", "One shape and quality for this set. Queue one moment or all of them; every render is a new version.", storyCard(), queueCard()),
+      stage("02", "Render", "One shape and quality for this set. Queue one moment or all of them; every render is a new version.", storyCard()),
       stage("03", "Publish", "Build the kit for a ready cut, then share one exact version with a private link.", packetCard(), shareCard()),
       advancedCard(),
     );
@@ -1245,74 +1268,100 @@ export function mount(root, ctx) {
   function storyCard() {
     const card = el("section", { class: "st-card st-finish-card st-finish-render", "aria-labelledby": "st-finish-render-title" });
     const set = activeSet();
+    const queueHistoryOpen = dom.body.querySelector(".st-finish-queue-history")?.open === true;
     const head = el("div", { class: "st-card-head" }, [
       el("div", {}, [
         el("h2", { id: "st-finish-render-title", text: "Render" }),
         el("p", {
           class: "st-hint",
-          text: `${formatCount(stories().length, "story", "stories")} from this set. Every render is a new version; nothing is overwritten.`,
+          text: `${formatCount(stories().length, "moment")} in this set. Every render is a new version; nothing is overwritten.`,
         }),
       ]),
       setPicker(),
     ]);
     card.append(head);
     const fillNote = el("p", { class: "st-hint st-finish-fill-note", text: fillEstimate.text, hidden: !fillEstimate.text });
-    card.append(fillNote);
     void loadFillEstimate();
 
-    const bar = el("div", { class: "st-finish-bar" });
-    const shapeLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Shape" })]);
-    const shape = el("select", { "aria-label": "Render shape" });
-    for (const value of ASPECTS) {
-      shape.append(el("option", {
-        value,
-        text: ASPECT_LABELS[value] || value,
-        selected: value === aspect,
-      }));
-    }
-    shape.addEventListener("change", () => {
-      aspect = shape.value;
-      selectedArtifactId = "";
-      packetArtifactId = "";
-      shareArtifactId = "";
-      compareA = "";
-      compareB = "";
-      clearRepair();
-      keepArtifactSelection();
-      void refreshChecks();
-      renderAll();
-      void loadTrimHealth({ shape: aspect }).then(() => { if (!disposed) renderAll(); });
-    });
-    shapeLabel.append(shape);
-
-    const qualityLabel = el("label", { class: "st-field st-field-inline" }, [el("span", { text: "Quality" })]);
-    const qualitySelect = el("select", { "aria-label": "Render quality" });
-    qualitySelect.append(el("option", { value: "final", text: "1080p final", selected: quality === "final" }));
-    qualitySelect.append(el("option", { value: "720", text: "720p", selected: quality === "720" }));
-    qualitySelect.append(el("option", { value: "draft", text: "540p draft", selected: quality === "draft" }));
-    qualitySelect.addEventListener("change", () => { quality = qualitySelect.value; });
-    qualityLabel.append(qualitySelect);
-
     const staleIds = new Set(staleStoryIds(aspect));
+    const setup = el("div", { class: "st-finish-setup" });
+    const fields = el("div", { class: "st-finish-setup-fields" });
+
+    fields.append(segmented(
+      "Shape",
+      ASPECTS.map((value) => ({
+        value,
+        label: value,
+        title: ASPECT_LABELS[value] || value,
+      })),
+      aspect,
+      (value) => {
+        aspect = value;
+        selectedArtifactId = "";
+        packetArtifactId = "";
+        shareArtifactId = "";
+        compareA = "";
+        compareB = "";
+        clearRepair();
+        keepArtifactSelection();
+        void refreshChecks();
+        renderAll();
+        void loadTrimHealth({ shape: aspect }).then(() => { if (!disposed) renderAll(); });
+      },
+    ));
+
+    fields.append(segmented(
+      "Quality",
+      [
+        { value: "draft", label: "540", title: "540p draft" },
+        { value: "720", label: "720", title: "720p" },
+        { value: "final", label: "1080", title: "1080p final" },
+      ],
+      quality,
+      (value) => {
+        quality = value;
+        renderStoryCard();
+      },
+    ));
+
+    const liveCount = stories().filter((story) => (
+      liveQueueItem(String(story.id || ""), aspect)
+    )).length;
+    const allLive = stories().length > 0 && liveCount === stories().length;
     const queueAll = el("button", {
       class: "st-btn st-btn-primary",
       type: "button",
-      text: `Add all to queue · ${aspect}`,
-      disabled: busy || staleIds.size > 0,
+      text: allLive ? "All queued" : `Queue ${formatCount(stories().length, "moment")}`,
+      disabled: busy || staleIds.size > 0 || allLive,
       title: staleIds.size
         ? "Repair every stale shape before queueing. A stale Edit never renders."
-        : "",
+        : allLive
+          ? `Every moment is already queued in ${aspect}.`
+          : `Queue every moment in ${ASPECT_LABELS[aspect] || aspect} at ${quality === "final" ? "1080p final" : quality === "720" ? "720p" : "540p draft"}.`,
     });
     queueAll.addEventListener("click", () => { void queueStories(stories(), queueAll); });
-    bar.append(shapeLabel, qualityLabel, queueAll);
+    setup.append(fields, queueAll);
+    card.append(setup);
+
+    card.append(el("p", { class: "st-finish-render-summary" }, [
+      el("span", { text: formatCount(stories().length, "moment") }),
+      el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
+      el("span", { text: ASPECT_LABELS[aspect] || aspect }),
+      el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
+      el("span", { text: quality === "final" ? "1080p final" : quality === "720" ? "720p" : "540p draft" }),
+    ]));
+    card.append(fillNote);
+    card.append(el("p", {
+      class: "st-finish-cost-note",
+      text: "Cloud voices and music call providers and may cost credits. Check the moment's Audio panel before queueing.",
+    }));
     if (staleIds.size) {
-      bar.append(el("p", {
+      card.append(el("p", {
         class: "st-trim-stale-inline",
         text: `${formatCount(staleIds.size, "story", "stories")} changed after its Edit. Repair before queueing; a stale Edit never renders.`,
       }));
     }
-    if (set?.note) bar.append(el("p", { class: "st-hint", text: set.note }));
-    card.append(bar);
+    if (set?.note) card.append(el("p", { class: "st-hint", text: set.note }));
 
     const list = el("div", { class: "st-finish-story-list" });
     stories().forEach((story, index) => {
@@ -1340,11 +1389,14 @@ export function mount(root, ctx) {
         void refreshChecks();
         renderAll();
       });
-      const shapeChips = ASPECTS.map((shapeValue) => {
+      const shapeChips = ASPECTS.flatMap((shapeValue) => {
         const rows = allArtifactsFor(storyId, shapeValue);
         const ready = rows.find(artifactReady) || null;
         const latestShape = ready || rows[0] || null;
         const live = liveQueueItem(storyId, shapeValue);
+        // Keep the selected shape always, and any shape that has real work.
+        // Five "Not rendered" chips on every row is noise.
+        if (shapeValue !== aspect && !live && !latestShape) return [];
         let text;
         if (live) {
           text = `${shapeValue} · ${statusText(live.state)}`;
@@ -1360,7 +1412,7 @@ export function mount(root, ctx) {
           : latestShape?.status === "ready" ? "st-chip-ok"
             : latestShape?.status === "failed" ? "st-chip-bad"
               : latestShape?.status ? "st-chip-busy" : "";
-        return el("span", { class: `st-chip ${tone}`.trim(), text });
+        return [el("span", { class: `st-chip ${tone}`.trim(), text })];
       });
       const meta = el("div", { class: "st-finish-story-meta" }, [
         el("span", { class: "st-mono st-hint", text: formatDuration(storyDuration(story)) }),
@@ -1369,15 +1421,27 @@ export function mount(root, ctx) {
         stale ? el("span", { class: "st-chip st-chip-bad", text: "Edit stale" }) : null,
       ]);
       const actions = el("div", { class: "st-finish-story-actions" });
-      const queueOne = el("button", {
-        class: "st-btn st-btn-ghost st-btn-small",
-        type: "button",
-        text: `Add to queue · ${aspect}`,
-        disabled: busy || stale,
-        title: stale ? "Repair this shape first; a stale Edit never renders." : "",
-      });
-      queueOne.addEventListener("click", () => { void queueStories([story], queueOne); });
-      actions.append(queueOne);
+      const live = liveQueueItem(storyId, aspect);
+      const queueOne = live
+        ? el("span", {
+          class: "st-chip st-chip-busy",
+          text: statusText(live.state),
+          title: `This moment is already ${statusText(live.state).toLowerCase()} in ${aspect}.`,
+        })
+        : el("button", {
+          class: "st-btn st-btn-quiet st-btn-small st-finish-queue-one",
+          type: "button",
+          text: "Queue",
+          "aria-label": `Queue ${storyName(story, index)} in ${aspect}`,
+          disabled: busy || stale,
+          title: stale
+            ? "Repair this shape first; a stale Edit never renders."
+            : `Queue this moment in ${aspect}.`,
+        });
+      if (!live) {
+        queueOne.addEventListener("click", () => { void queueStories([story], queueOne); });
+        actions.append(queueOne);
+      }
       if (stale) {
         const repair = el("button", {
           class: "st-btn st-btn-primary st-btn-small",
@@ -1391,7 +1455,16 @@ export function mount(root, ctx) {
       row.append(title, meta, actions);
       list.append(row);
     });
-    card.append(list);
+    const divider = () => el("div", { class: "st-finish-divider", "aria-hidden": "true" });
+    const hasQueues = queues.length > 0;
+    // Live work first: with twenty moments, progress must not sit below the fold.
+    if (hasQueues) {
+      card.append(divider(), queueCard(queueHistoryOpen));
+    }
+    card.append(el("h3", { class: "st-finish-list-title", text: "Moments" }), list);
+    if (!hasQueues) {
+      card.append(divider(), queueCard(queueHistoryOpen));
+    }
     return card;
   }
 
@@ -1407,80 +1480,134 @@ export function mount(root, ctx) {
     renderReviewCard();
   }
 
-  function queueCard() {
+  function queueCard(openHistory = false) {
     const summary = queueSummary(queues, { jobId: job?.id || "", setId: activeSetId });
-    return el("section", { class: "st-card st-finish-card st-finish-queue-card", "aria-labelledby": "st-finish-queue-title" }, [
-      el("div", { class: "st-card-head" }, [
+    return el("section", {
+      class: "st-finish-queue-section st-finish-queue-card",
+      "aria-labelledby": "st-finish-queue-title",
+    }, [
+      el("div", { class: "st-finish-queue-header" }, [
         el("div", {}, [
           el("h2", { id: "st-finish-queue-title", text: "Queue" }),
-          el("p", { class: "st-hint", text: "One story at a time. A finished queue stays in this list; a paused queue never restarts by itself." }),
           el("p", { class: "st-hint st-finish-queue-summary", text: summary.text }),
-          el("p", {
-            class: "st-field-hint",
-            text: "If a moment uses a cloud voice or music provider, Render calls it and may cost credits. Check that moment's Audio panel first.",
-          }),
         ]),
       ]),
-      queueBody(),
+      queueBody(openHistory),
     ]);
   }
 
-  function queueBody() {
+  function queueRow(queue, liveBlock) {
+    const status = String(queue.status || "queued");
+    const items = Array.isArray(queue.items) ? queue.items : [];
+    const running = items.find((item) => String(item.state) === "running")
+      || items.find((item) => String(item.state) === "queued")
+      || null;
+    const failed = items.filter((item) => String(item.state) === "failed");
+    const done = items.filter((item) => String(item.state) === "done").length;
+    const progress = Math.max(0, Math.min(1, Number(queue.progress) || 0));
+    const title = running?.title || queue.message || statusText(status);
+    const shape = running?.aspect || items[0]?.aspect || "";
+    // One moment: its own honest estimate. Several: the queue total, which
+    // already includes what is waiting.
+    const eta = Number(items.length > 1 ? queue.eta : (running?.eta ?? queue.eta));
+    const hasEta = Number.isFinite(eta) && eta > 0;
+    const active = ACTIVE_QUEUE.has(status);
+    const percent = Math.round(progress * 100);
+
+    const row = el("div", { class: `st-finish-queue-row${liveBlock ? " is-live" : ""}` });
+    const top = el("div", { class: "st-finish-queue-top" }, [
+      el("span", { class: `st-chip st-chip-${statusTone(status)}`, text: statusText(status) }),
+      el("strong", { class: "st-finish-queue-title", text: title }),
+      shape ? el("span", { class: "st-mono st-finish-queue-shape", text: shape }) : null,
+      el("span", { class: "st-mono st-finish-queue-percent", text: `${percent}%` }),
+    ]);
+    const track = el("div", {
+      class: "st-progress-bar",
+      role: "progressbar",
+      "aria-valuemin": "0",
+      "aria-valuemax": "100",
+      "aria-valuenow": String(percent),
+    });
+    track.append(el("i", { style: `width:${percent}%` }));
+
+    const foot = el("div", { class: "st-finish-queue-foot" });
+    const facts = [];
+    if (items.length > 1) facts.push(`${done} of ${items.length} done`);
+    if (active && hasEta) facts.push(`about ${etaText(eta)} left`);
+    if (!active && queue.created) facts.push(shortDate(queue.created));
+    foot.append(el("span", { class: "st-hint", text: facts.join(" · ") }));
+
+    const actions = el("div", { class: "st-finish-queue-actions" });
+    if (active) {
+      const pause = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Pause" });
+      pause.addEventListener("click", () => { void queueAction(queue.id, "pause", pause); });
+      const cancel = el("button", { class: "st-btn st-btn-quiet st-btn-small st-finish-cancel", type: "button", text: "Cancel" });
+      cancel.addEventListener("click", () => { void queueAction(queue.id, "cancel", cancel); });
+      actions.append(pause, cancel);
+    } else if (queue.needs_resume || status === "paused") {
+      const resume = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Resume" });
+      resume.addEventListener("click", () => { void queueAction(queue.id, "resume", resume); });
+      actions.append(resume);
+    }
+    foot.append(actions);
+
+    let list = null;
+    if (items.length > 1) {
+      list = el("div", { class: "st-finish-queue-items" });
+      for (const item of items) {
+        const itemState = String(item.state || "queued");
+        list.append(el("div", { class: `st-finish-queue-item is-${itemState}` }, [
+          el("span", {
+            class: "st-finish-queue-dot",
+            "aria-hidden": "true",
+            title: statusText(itemState),
+          }),
+          el("span", { class: "st-finish-queue-name", text: item.title || item.story_id }),
+          el("span", { class: "st-mono st-hint", text: item.aspect || "9:16" }),
+          el("span", {
+            class: "st-mono st-hint",
+            text: itemState === "running" ? itemProgressText(item) : statusText(itemState),
+          }),
+        ]));
+      }
+    }
+
+    row.append(top, track);
+    if (list) row.append(list);
+    for (const item of failed) {
+      row.append(el("p", { class: "st-finish-queue-error", text: failureReason(item) }));
+    }
+    if (!failed.length && queue.error) {
+      row.append(el("p", { class: "st-finish-queue-error", text: failureReason(queue) }));
+    }
+    row.append(foot);
+    return row;
+  }
+
+  function queueBody(openHistory = false) {
     const wrap = el("div", { class: "st-finish-queue" });
     const rows = queues.slice(0, 8);
     if (!rows.length) {
-      wrap.append(el("p", { class: "st-hint", text: "Nothing is queued. Queued stories appear here with their progress." }));
+      wrap.append(el("p", {
+        class: "st-hint st-finish-queue-empty",
+        text: "Add a moment above; it renders here with live progress.",
+      }));
       return wrap;
     }
-    for (const queue of rows) {
+    const activeRows = rows.filter((queue) => {
       const status = String(queue.status || "queued");
-      const active = ACTIVE_QUEUE.has(status);
-      const progress = Math.max(0, Math.min(1, Number(queue.progress) || 0));
-      const card = el("div", { class: "st-finish-queue-row" });
-      const head = el("div", { class: "st-finish-queue-head" }, [
-        el("strong", { text: queue.message || statusText(status) }),
-        el("span", { class: `st-chip st-chip-${statusTone(status)}`, text: statusText(status) }),
-        el("span", { class: "st-mono st-hint", text: queueProgressText(queue) }),
-        queue.created ? el("span", { class: "st-hint", text: shortDate(queue.created) }) : null,
-      ]);
-      const track = el("div", {
-        class: "st-progress-bar",
-        role: "progressbar",
-        "aria-valuemin": "0",
-        "aria-valuemax": "100",
-        "aria-valuenow": String(Math.round(progress * 100)),
-      });
-      track.append(el("i", { style: `width:${Math.round(progress * 100)}%` }));
-      const items = el("div", { class: "st-finish-queue-items" });
-      for (const item of queue.items || []) {
-        const itemState = String(item.state || "queued");
-        const name = item.title || item.story_id;
-        const itemRow = el("div", { class: "st-finish-queue-item" }, [
-          el("span", {
-            class: `st-chip ${itemState === "done" ? "st-chip-ok" : itemState === "failed" ? "st-chip-bad" : itemState === "running" ? "st-chip-busy" : ""}`,
-            text: statusText(itemState),
-          }),
-          el("span", { class: "st-finish-queue-name", text: name }),
-          el("span", { class: "st-mono st-hint", text: item.aspect || "9:16" }),
-          itemState === "running" ? el("span", { class: "st-mono st-hint", text: itemProgressText(item) }) : null,
-        ]);
-        items.append(itemRow);
-        if (item.error) items.append(el("p", { class: "st-error", text: String(item.error).slice(0, 300) }));
-      }
-      const actions = el("div", { class: "st-layer-add" });
-      if (active) {
-        const pause = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Pause" });
-        pause.addEventListener("click", () => { void queueAction(queue.id, "pause", pause); });
-        const cancel = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Cancel" });
-        cancel.addEventListener("click", () => { void queueAction(queue.id, "cancel", cancel); });
-        actions.append(pause, cancel);
-      } else if (queue.needs_resume || status === "paused") {
-        const resume = el("button", { class: "st-btn st-btn-primary st-btn-small", type: "button", text: "Resume" });
-        resume.addEventListener("click", () => { void queueAction(queue.id, "resume", resume); });
-        actions.append(resume);
-      }
-      card.append(head, track, items, actions);
-      wrap.append(card);
+      return ACTIVE_QUEUE.has(status) || queue.needs_resume || status === "paused";
+    });
+    const historyRows = rows.filter((queue) => !activeRows.includes(queue));
+    for (const queue of activeRows) wrap.append(queueRow(queue, true));
+    if (historyRows.length) {
+      const details = el("details", { class: "st-finish-queue-history", open: openHistory });
+      details.append(el("summary", {}, [
+        el("span", { text: "Finished and cancelled" }),
+        el("small", { text: formatCount(historyRows.length, "queue") }),
+      ]));
+      for (const queue of historyRows) details.append(queueRow(queue, false));
+      wrap.append(details);
     }
     return wrap;
   }
@@ -1488,7 +1615,8 @@ export function mount(root, ctx) {
   function renderQueueCard() {
     const card = dom.body.querySelector(".st-finish-queue-card");
     if (!card) return;
-    card.replaceWith(queueCard());
+    const openHistory = card.querySelector(".st-finish-queue-history")?.open === true;
+    card.replaceWith(queueCard(openHistory));
   }
 
   function versionsCard() {
