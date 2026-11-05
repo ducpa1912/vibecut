@@ -10,6 +10,7 @@
 import { el } from "../ui.js";
 import {
   CANVAS,
+  SAFE_ZONE_PRESETS,
   CLEAN_LABELS,
   LAYER_COLOURS,
   TEXT_KINDS,
@@ -26,6 +27,8 @@ import {
   frameToBox,
   layerFrameRect,
   clipAt,
+  framingAt,
+  framingNeedsWholePicture,
   motionZoomAt,
   stuckPosition,
   zoomedCrop,
@@ -39,7 +42,7 @@ import {
 } from "./canvas-tools.js";
 import { fetchFrame, framePath, proxyPath, syncMediaCookie } from "./api.js";
 import { drawOverlay } from "./overlay.js";
-import { icon } from "./icons.js";
+import { icon, paintIcons } from "./icons.js";
 
 const FADE_IN_SKIP = 0.15;
 
@@ -53,6 +56,8 @@ export function mountPreview(root, options = {}) {
     onSelect: options.onSelect || (() => {}),
     onBoxChange: options.onBoxChange || (() => {}),
     onTextBox: options.onTextBox || (() => {}),
+    onFraming: options.onFraming || (() => {}),
+    onAreaFocus: options.onAreaFocus || (() => {}),
     onBoxCreate: options.onBoxCreate || (() => {}),
     onAspect: options.onAspect || (() => {}),
     onOutput: options.onOutput || (() => {}),
@@ -101,6 +106,10 @@ export function mountPreview(root, options = {}) {
   let proxyReady = false;
   let proxyFailed = false;
   let proxyRequested = false;
+  // "whole" keeps the full picture; "scene" is the lighter copy cut to the scene crop.
+  let proxyKind = "scene";
+  // The crop the current exact frame was rendered with.
+  let frameCrop = null;
   // The Edit id changed (a trim or a rebind). The proxy and the exact frame
   // still show the previous cut until the server answers, so say so.
   let rebuilding = false;
@@ -128,15 +137,18 @@ export function mountPreview(root, options = {}) {
             <button id="st-preview-story-btn" class="st-preview-story-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Switch moment">
               <span id="st-preview-story-num" class="st-mono">01</span>
               <span id="st-preview-story-title">Moment</span>
-              <span class="st-moment-caret" aria-hidden="true">▾</span>
+              <span class="st-moment-caret" data-icon="chevron-down" data-icon-size="12" aria-hidden="true"></span>
             </button>
             <div id="st-preview-story-menu" class="st-preview-story-menu" role="menu" hidden></div>
           </div>
           <div class="st-preview-tools">
             <div class="st-preview-toolgroup" role="group" aria-label="Canvas tool">
-              <button id="st-preview-tool-select" class="st-preview-tool is-active" type="button" data-tool="select" aria-pressed="true" title="Select and move boxes (V)" aria-label="Select tool"></button>
-              <button id="st-preview-tool-box" class="st-preview-tool" type="button" data-tool="box" aria-pressed="false" title="Draw a Remove-text box (B)" aria-label="Draw box"></button>
-              <button id="st-preview-tool-paint" class="st-preview-tool" type="button" data-tool="paint" aria-pressed="false" title="Paint a cleanup mask" aria-label="Paint mask"></button>
+              <button id="st-preview-tool-select" class="st-preview-tool is-active" type="button" data-tool="select" data-icon="cursor" aria-pressed="true" title="Select and move text and boxes (V)" aria-label="Select tool"></button>
+              <button id="st-preview-tool-move" class="st-preview-tool" type="button" data-tool="move" data-icon="move" aria-pressed="false" title="Move this scene inside the frame (M)" aria-label="Move scene"></button>
+              <button id="st-preview-tool-area" class="st-preview-tool" type="button" data-tool="area" data-icon="focus" aria-pressed="false" title="Area focus: draw the part of the scene to fill the frame" aria-label="Area focus"></button>
+              <span class="st-preview-tool-sep" aria-hidden="true"></span>
+              <button id="st-preview-tool-box" class="st-preview-tool" type="button" data-tool="box" data-icon="box" aria-pressed="false" title="Draw a Clean box (B)" aria-label="Draw box"></button>
+              <button id="st-preview-tool-paint" class="st-preview-tool" type="button" data-tool="paint" data-icon="brush" aria-pressed="false" title="Paint a Clean mask" aria-label="Paint mask"></button>
             </div>
           </div>
         </div>
@@ -147,19 +159,20 @@ export function mountPreview(root, options = {}) {
         <div class="st-preview-head-right">
           <span id="st-preview-source" class="st-visually-hidden" role="status">Loading preview…</span>
           <div class="st-preview-viewgroup" role="group" aria-label="Preview zoom">
-            <button id="st-preview-zoom-out" class="st-preview-chip" type="button" title="Magnify the view less. The video is not changed." aria-label="Zoom out">−</button>
-            <button id="st-preview-zoom-level" class="st-preview-chip" type="button" title="Fit the preview" aria-label="Fit the preview">100%</button>
-            <button id="st-preview-zoom-in" class="st-preview-chip" type="button" title="Magnify the view. The video is not changed." aria-label="Zoom in">+</button>
+            <button id="st-preview-zoom-out" class="st-preview-view-btn" type="button" data-icon="zoom-out" title="Shrink the view. The video is not changed." aria-label="Shrink the view"></button>
+            <button id="st-preview-zoom-level" class="st-preview-chip" type="button" title="Back to 100%" aria-label="Back to 100%">100%</button>
+            <button id="st-preview-zoom-in" class="st-preview-view-btn" type="button" data-icon="zoom-in" title="Magnify the view. The video is not changed." aria-label="Magnify the view"></button>
           </div>
           <div class="st-preview-spangroup" role="group" aria-label="Span">
             <button id="st-preview-span-in" class="st-preview-chip" type="button" title="Set span in at the playhead" aria-label="Set span in">In</button>
             <button id="st-preview-span-out" class="st-preview-chip" type="button" title="Set span out at the playhead" aria-label="Set span out">Out</button>
             <span id="st-preview-span" class="st-mono st-preview-span">Full</span>
           </div>
-          <button id="st-preview-focus" class="st-icon-btn" type="button" title="Focus the preview (F)" aria-label="Focus the preview" aria-pressed="false"></button>
+          <button id="st-preview-focus" class="st-icon-btn" type="button" data-icon="maximize" title="Focus the preview (F)" aria-label="Focus the preview" aria-pressed="false"></button>
         </div>
       </div>
       <div class="st-preview-stage">
+        <span id="st-preview-frame-size" class="st-preview-frame-size st-mono" title="The frame's size in the render. Anything past its border is cut."></span>
         <canvas id="st-preview-canvas" class="st-preview-canvas" width="1080" height="1920" aria-label="Story preview with safe zones and editable boxes"></canvas>
         <div id="st-box-method" class="st-box-method" role="group" aria-label="Clean method for this box" hidden>
           <button type="button" data-kind="fill">AI fill</button>
@@ -174,7 +187,7 @@ export function mountPreview(root, options = {}) {
             <strong id="st-compare-title">Before / After</strong>
             <span id="st-compare-note">Selected Clean layer · this scene</span>
             <button id="st-compare-play" class="st-btn st-btn-ghost st-btn-small" type="button" hidden>Play</button>
-            <button id="st-compare-close" class="st-icon-btn" type="button" title="Close comparison" aria-label="Close comparison">×</button>
+            <button id="st-compare-close" class="st-icon-btn" type="button" data-icon="x" title="Close comparison" aria-label="Close comparison"></button>
           </div>
           <input id="st-compare-slider" class="st-compare-slider" type="range" min="0" max="100" value="50" aria-label="Compare before and after the Clean layer">
         </div>
@@ -187,23 +200,24 @@ export function mountPreview(root, options = {}) {
             <select id="st-preview-platform" aria-label="Safe-zone platform">
               <option value="auto">This shape</option>
               <option value="tiktok">TikTok</option>
+              <option value="instagram">Instagram Reels</option>
               <option value="rednote">RedNote</option>
-              <option value="facebook">Facebook</option>
-              <option value="youtube">YouTube</option>
+              <option value="facebook">Facebook Reels</option>
+              <option value="youtube">YouTube Shorts</option>
             </select>
           </label>
-          <button id="st-preview-safe-toggle" class="st-icon-btn is-on" type="button" title="Safe zones" aria-label="Safe zones" aria-pressed="true"></button>
+          <button id="st-preview-safe-toggle" class="st-icon-btn is-on" type="button" data-icon="safe-area" title="Show this network's safe area" aria-label="Safe area" aria-pressed="true"></button>
           <input id="st-preview-safe" type="checkbox" checked class="st-visually-hidden" tabindex="-1">
         </div>
         <div class="st-preview-center">
-          <button id="st-preview-back" class="st-icon-btn" type="button" title="Back 1 second (J)" aria-label="Back 1 second"></button>
+          <button id="st-preview-back" class="st-icon-btn" type="button" data-icon="step-back" title="Back 1 second (J)" aria-label="Back 1 second"></button>
           <button id="st-preview-play" class="st-icon-btn st-preview-play" type="button" aria-label="Play preview" title="Play / pause (Space)"></button>
-          <button id="st-preview-forward" class="st-icon-btn" type="button" title="Forward 1 second (L)" aria-label="Forward 1 second"></button>
+          <button id="st-preview-forward" class="st-icon-btn" type="button" data-icon="step-forward" title="Forward 1 second (L)" aria-label="Forward 1 second"></button>
         </div>
         <div class="st-preview-right">
           <button id="st-preview-aspect" class="st-preview-chip" type="button" title="Aspect ratio" aria-haspopup="menu">9:16</button>
           <button id="st-preview-resolution" class="st-preview-chip" type="button" title="Output resolution" aria-haspopup="menu">1080p</button>
-          <button id="st-preview-frame" class="st-icon-btn" type="button" title="Save this frame" aria-label="Save this frame"></button>
+          <button id="st-preview-frame" class="st-icon-btn" type="button" data-icon="camera" title="Save this frame" aria-label="Save this frame"></button>
           <button id="st-preview-hdr" class="st-preview-chip" type="button" disabled title="HDR output is not available in this build">HDR</button>
           <button id="st-preview-fps" class="st-preview-chip" type="button" title="Preview frame rate">30</button>
         </div>
@@ -288,21 +302,11 @@ export function mountPreview(root, options = {}) {
     strength: $("#st-preview-strength"),
     tools: Array.from(root.querySelectorAll(".st-preview-tool")),
     boxMethod: root.querySelector("#st-box-method"),
+    frameSize: $("#st-preview-frame-size"),
   };
   const ctx = dom.canvas.getContext("2d");
 
-  for (const button of dom.tools) {
-    button.prepend(icon(
-      button.dataset.tool === "select" ? "cursor"
-        : button.dataset.tool === "paint" ? "brush" : "square",
-      { size: 13 },
-    ));
-  }
-  dom.focus?.prepend(icon("expand", { size: 15 }));
-  dom.back?.append(icon("arrow-left", { size: 15 }));
-  dom.forward?.append(icon("arrow-right", { size: 15 }));
-  dom.safeToggle?.prepend(icon("eye", { size: 14 }));
-  dom.frame?.prepend(icon("scissors", { size: 14 }));
+  paintIcons(root);
 
   function setNote(message, tone = "") {
     dom.note.textContent = message || "";
@@ -420,7 +424,8 @@ export function mountPreview(root, options = {}) {
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
     ctx.fillStyle = "rgba(241, 239, 233, 0.78)";
-    ctx.fillText("Text safe area", safe.x + 16, safe.y + 14);
+    const network = state.platform === "auto" ? "Text" : SAFE_ZONE_PRESETS[state.platform]?.label || "Text";
+    ctx.fillText(`${network} safe area`, safe.x + 16, safe.y + 14);
     const buttons = zones.reserved.find((zone) => zone.name === "Buttons");
     if (buttons) {
       const area = px(buttons);
@@ -487,6 +492,8 @@ export function mountPreview(root, options = {}) {
     ));
   }
 
+  const WHOLE_PICTURE = { x: 0, y: 0, w: 1, h: 1 };
+
   /** The crop the fast preview was built with: the scene's, with no zoom. */
   function proxyCrop() {
     return cropAt({
@@ -503,8 +510,21 @@ export function mountPreview(root, options = {}) {
    * here, and playing matches the exact frame.
    */
   function drawProxy(source, width, height) {
+    drawFromCrop(source, proxyKind === "whole" ? WHOLE_PICTURE : proxyCrop(), width, height);
+  }
+
+  /**
+   * An exact frame is out of date as soon as the framing moves, so until the new
+   * one arrives the old frame is moved with it. The pointer gets an answer at once.
+   */
+  function drawExactFrame(source, width, height) {
+    if (frameCrop) drawFromCrop(source, frameCrop, width, height);
+    else drawCover(source, width, height);
+  }
+
+  /** Draw a picture that shows the `built` part of the media in this frame. */
+  function drawFromCrop(source, built, width, height) {
     const shown = currentCrop();
-    const built = proxyCrop();
     if (!(shown?.w > 0) || !(shown?.h > 0) || !(built?.w > 0) || !(built?.h > 0)) {
       drawCover(source, width, height);
       return;
@@ -825,7 +845,7 @@ export function mountPreview(root, options = {}) {
           : colorFilter(state.edit?.color);
       }
       if (source === proxyVideo) drawProxy(source, width, height);
-      else drawCover(source, width, height);
+      else drawExactFrame(source, width, height);
       ctx.restore();
       // The proxy is the raw story range; the exact frame already has every
       // layer burned in, so only the proxy gets the live overlay.
@@ -903,7 +923,11 @@ export function mountPreview(root, options = {}) {
     dom.scrub.max = String(duration);
     dom.scrub.value = String(clamp(state.time, 0, duration));
     dom.time.textContent = formatTime(state.time);
-    dom.play.textContent = playing ? "❚❚" : "▶";
+    const glyph = playing ? "pause" : "play";
+    if (dom.play.dataset.glyph !== glyph) {
+      dom.play.dataset.glyph = glyph;
+      dom.play.replaceChildren(icon(glyph, { size: 16 }));
+    }
     dom.play.setAttribute("aria-label", playing ? "Pause preview" : "Play preview");
   }
 
@@ -938,16 +962,29 @@ export function mountPreview(root, options = {}) {
     videoPlaying = false;
   }
 
+  /** Panning or zooming out needs the fast preview with the whole picture. */
+  function syncProxyKind() {
+    const wanted = framingNeedsWholePicture(state.edit) ? "whole" : "scene";
+    if (wanted === proxyKind) return;
+    proxyKind = wanted;
+    if (!proxyRequested) return;
+    if (playing) pause();
+    resetProxy();
+    ensureProxy();
+    updateSource();
+  }
+
   function ensureProxy() {
     if (disposed || !state.edit || !state.jobId || proxyRequested) return;
     proxyRequested = true;
+    proxyKind = framingNeedsWholePicture(state.edit) ? "whole" : "scene";
     const video = document.createElement("video");
     // Sound on: the creator judges music, voice and ducking here.
     video.muted = false;
     video.volume = 1;
     video.playsInline = true;
     video.preload = "auto";
-    video.src = proxyPath(state.jobId, state.edit.id);
+    video.src = proxyPath(state.jobId, state.edit.id, { whole: proxyKind === "whole" });
     video.addEventListener("loadedmetadata", () => {
       if (disposed) return;
       proxyReady = true;
@@ -1026,6 +1063,7 @@ export function mountPreview(root, options = {}) {
     const controller = new AbortController();
     frameController = controller;
     frameState = "loading";
+    const requestedCrop = currentCrop();
     updateSource();
     try {
       const response = await fetchFrame(
@@ -1048,6 +1086,7 @@ export function mountPreview(root, options = {}) {
             URL.revokeObjectURL(frameImage.src);
           }
           frameImage = image;
+          frameCrop = requestedCrop;
           frameReady = true;
           frameAvailable = true;
           frameState = "ready";
@@ -1257,6 +1296,7 @@ export function mountPreview(root, options = {}) {
     }
     if (job !== undefined) state.job = job;
     if (story !== undefined) state.story = story;
+    paintFrameSize();
     if (hiddenLayers !== undefined) {
       state.hiddenLayers = hiddenLayers instanceof Set ? hiddenLayers : new Set(hiddenLayers || []);
     }
@@ -1327,9 +1367,12 @@ export function mountPreview(root, options = {}) {
 
   function applyViewTransform() {
     const zoom = state.viewZoom || 1;
-    if (zoom <= 1.001) {
+    if (Math.abs(zoom - 1) < 0.001) {
       state.viewPan = { x: 0, y: 0 };
       dom.canvas.style.transform = "";
+    } else if (zoom < 1) {
+      state.viewPan = { x: 0, y: 0 };
+      dom.canvas.style.transform = `scale(${zoom})`;
     } else {
       dom.canvas.style.transform = `translate(${state.viewPan.x}px, ${state.viewPan.y}px) scale(${zoom})`;
     }
@@ -1338,7 +1381,7 @@ export function mountPreview(root, options = {}) {
   }
 
   function applyViewZoom(value) {
-    state.viewZoom = Math.max(1, Math.min(3, Number(value) || 1));
+    state.viewZoom = Math.max(0.25, Math.min(3, Number(value) || 1));
     const limit = Math.max(0, (state.viewZoom - 1) * (dom.canvas.clientWidth || 300) * 0.5);
     state.viewPan = {
       x: Math.max(-limit, Math.min(limit, state.viewPan.x || 0)),
@@ -1347,8 +1390,8 @@ export function mountPreview(root, options = {}) {
     applyViewTransform();
   }
 
-  dom.zoomOut?.addEventListener("click", () => applyViewZoom((state.viewZoom || 1) - 0.1));
-  dom.zoomIn?.addEventListener("click", () => applyViewZoom((state.viewZoom || 1) + 0.1));
+  dom.zoomOut?.addEventListener("click", () => applyViewZoom((state.viewZoom || 1) - 0.25));
+  dom.zoomIn?.addEventListener("click", () => applyViewZoom((state.viewZoom || 1) + 0.25));
   dom.zoomLevel?.addEventListener("click", () => applyViewZoom(1));
 
   dom.storyBtn?.addEventListener("click", (event) => {
@@ -1423,7 +1466,7 @@ export function mountPreview(root, options = {}) {
 
   function setTool(tool) {
     const wasPaint = state.tool === "paint";
-    state.tool = ["box", "paint"].includes(tool) ? tool : "select";
+    state.tool = ["box", "paint", "move", "area"].includes(tool) ? tool : "select";
     if (state.tool !== "paint") state.paintPoints = [];
     if (wasPaint && state.tool !== "paint") callbacks.onPaintEnd();
     for (const button of dom.tools) {
@@ -1432,7 +1475,9 @@ export function mountPreview(root, options = {}) {
       button.setAttribute("aria-pressed", active ? "true" : "false");
     }
     dom.canvas.dataset.tool = state.tool;
-    dom.canvas.style.cursor = ["box", "paint"].includes(state.tool) ? "crosshair" : "default";
+    dom.canvas.style.cursor = state.tool === "move"
+      ? "move"
+      : ["box", "paint", "area"].includes(state.tool) ? "crosshair" : "default";
   }
 
   function textAt(frame) {
@@ -1487,9 +1532,33 @@ export function mountPreview(root, options = {}) {
       event.preventDefault();
       return;
     }
-    if (state.tool === "box") {
+    if (state.tool === "move") {
+      const framing = framingAt({
+        edit: state.edit, job: state.job, story: state.story, time: state.time, aspect: state.aspect,
+      });
+      if (!framing.key) {
+        setNote("A blank card has no picture to move.", "quiet");
+        return;
+      }
       pauseClockOnly();
-      drag = { mode: "draw", crop, startFrame: frame };
+      const window = cropAt({
+        edit: state.edit, job: state.job, story: state.story, time: state.time, aspect: state.aspect,
+      });
+      drag = {
+        mode: "media",
+        key: framing.key,
+        startFrame: frame,
+        crop: window,
+        startCx: window.x + window.w / 2,
+        startCy: window.y + window.h / 2,
+      };
+      dom.canvas.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+    if (state.tool === "box" || state.tool === "area") {
+      pauseClockOnly();
+      drag = { mode: "draw", area: state.tool === "area", crop, startFrame: frame };
       drawPreview = { x: frame.x, y: frame.y, w: 0, h: 0 };
       dom.canvas.setPointerCapture?.(event.pointerId);
       draw();
@@ -1590,6 +1659,16 @@ export function mountPreview(root, options = {}) {
     }
     const dx = (frame.x - drag.startFrame.x) * drag.crop.w;
     const dy = (frame.y - drag.startFrame.y) * drag.crop.h;
+    if (drag.mode === "media") {
+      drag.framing = {
+        cx: round(clamp(drag.startCx - dx, 0, 1), 4),
+        cy: round(clamp(drag.startCy - dy, 0, 1), 4),
+      };
+      callbacks.onFraming?.(drag.key, drag.framing, { commit: false });
+      draw();
+      event.preventDefault();
+      return;
+    }
     if (drag.mode === "text-move" || drag.mode === "text-resize") {
       const box = drag.mode === "text-move"
         ? moveBox(drag.startBox, dx, dy)
@@ -1629,9 +1708,12 @@ export function mountPreview(root, options = {}) {
       const rect = drawPreview;
       drawPreview = null;
       if (rect && rect.w * current.crop.w > 0.006 && rect.h * current.crop.h > 0.006) {
-        callbacks.onBoxCreate(frameToBox(rect, current.crop));
+        if (current.area) callbacks.onAreaFocus?.(rect);
+        else callbacks.onBoxCreate(frameToBox(rect, current.crop));
       }
       setTool("select");
+    } else if (current.mode === "media") {
+      if (current.framing) callbacks.onFraming?.(current.key, current.framing, { commit: true });
     } else if (current.textBox) {
       callbacks.onTextBox?.(current.id, current.textBox, { commit: true });
     } else if (current.box) {
@@ -1698,7 +1780,17 @@ export function mountPreview(root, options = {}) {
     resolution: "1080p", width: 0, height: 0, fps: 30,
     optical_flow: false, stabilize: false, strength: 0.5,
   };
+  /** The render's real size, on the frame's border. */
+  function paintFrameSize() {
+    if (!dom.frameSize) return;
+    const size = output.width && output.height
+      ? [output.width, output.height]
+      : resolutionSize(state.aspect, output.resolution || "1080p")
+        || [CANVAS[state.aspect]?.width || 1080, CANVAS[state.aspect]?.height || 1920];
+    dom.frameSize.textContent = `Frame ${size[0]}×${size[1]}`;
+  }
   function paintOutput() {
+    paintFrameSize();
     if (dom.resolution) dom.resolution.textContent = output.resolution || "1080p";
     if (dom.fps) dom.fps.textContent = String(output.fps || 30);
     if (dom.width) dom.width.value = String(output.width || "");
@@ -2000,7 +2092,10 @@ export function mountPreview(root, options = {}) {
     pause,
     togglePlay,
     invalidate,
-    refresh: draw,
+    refresh() {
+      syncProxyKind();
+      draw();
+    },
     destroy() {
       disposed = true;
       if (keyHandler) window.removeEventListener("keydown", keyHandler);

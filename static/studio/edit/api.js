@@ -44,8 +44,8 @@ export function framePath(jobId, editId, time, quality = "draft") {
   return `${editRoot(jobId, editId)}/frame?t=${encodeURIComponent(t)}&quality=${encodeURIComponent(quality)}`;
 }
 
-export function proxyPath(jobId, editId) {
-  return `${editRoot(jobId, editId)}/proxy`;
+export function proxyPath(jobId, editId, { whole = false } = {}) {
+  return `${editRoot(jobId, editId)}/proxy${whole ? "?whole=1" : ""}`;
 }
 
 /** `GET /api/jobs/{id}/edits/current`. Returns null for 404. */

@@ -10,12 +10,13 @@
 
 import { mount as mountImport } from "./import.js";
 import { mount as mountMoments } from "./stories.js";
-import { mount as mountEdit } from "./edit.js?v=20261104-5";
+import { mount as mountEdit } from "./edit.js?v=20261105-1";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountLibrary } from "./library.js";
 import { SOURCES_TAB } from "./library.js";
 import { mount as mountSetup } from "./setup.js";
 import { cachedJobStamp, getJob, getJobStatus, invalidateReadCache, listClipSets, request } from "./api.js";
+import { paintIcons } from "./edit/icons.js";
 import { el, statusText } from "./ui.js";
 
 const JOB_KEY = "vibecut.studio.job";
@@ -201,7 +202,7 @@ export function startStudio() {
     <dialog id="st-menu-dialog" class="st-dialog st-menu-dialog" aria-labelledby="st-menu-title">
       <div class="st-dialog-head">
         <h2 id="st-menu-title">Studio menu</h2>
-        <button class="st-icon-btn" type="button" data-menu-close aria-label="Close menu">×</button>
+        <button class="st-icon-btn" type="button" data-menu-close data-icon="x" aria-label="Close menu"></button>
       </div>
       <div class="st-menu-workspace" aria-label="Workspace">
         <button id="st-change-video" class="st-btn st-btn-ghost st-btn-small" type="button">Change video</button>
@@ -229,7 +230,7 @@ export function startStudio() {
     <dialog id="st-library-dialog" class="st-dialog st-library-dialog" aria-labelledby="st-library-title">
       <div class="st-dialog-head">
         <h2 id="st-library-title">Your videos</h2>
-        <button class="st-icon-btn" type="button" data-library-close aria-label="Close video list">×</button>
+        <button class="st-icon-btn" type="button" data-library-close data-icon="x" aria-label="Close video list"></button>
       </div>
       <div class="st-dialog-body">
         <div id="st-library-host" class="st-library-host" style="display:grid;gap:12px"></div>
@@ -240,6 +241,7 @@ export function startStudio() {
       </div>
     </dialog>
   `;
+  paintIcons(root);
 
   const dom = {
     main: root.querySelector("#st-main"),

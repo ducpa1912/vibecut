@@ -13,6 +13,7 @@
  * a policy source.
  */
 
+import { paintIcons } from "./edit/icons.js";
 import {
   createJobFromPath,
   createJobFromUrl,
@@ -136,15 +137,15 @@ export function mount(root, ctx) {
       <div class="st-import-grid">
         <div class="st-card st-import-card">
           <div id="st-dropzone" class="st-dropzone" role="button" tabindex="0" aria-label="Choose a video file">
-            <span class="st-drop-icon" aria-hidden="true">↓</span>
+            <span class="st-drop-icon" data-icon="upload" data-icon-size="22" aria-hidden="true"></span>
             <strong>Drop a video here</strong>
             <span>or choose a file from this Mac</span>
             <input id="st-file-input" type="file" accept="video/*,.mkv,.avi,.mpg,.mpeg" aria-label="Choose a video file" hidden>
           </div>
           <div id="st-file-card" class="st-file-card" hidden>
-            <span class="st-file-glyph" aria-hidden="true">▶</span>
+            <span class="st-file-glyph" data-icon="film" aria-hidden="true"></span>
             <span class="st-file-copy"><strong id="st-file-name"></strong><span id="st-file-size"></span></span>
-            <button id="st-file-clear" class="st-icon-btn" type="button" aria-label="Remove chosen file">×</button>
+            <button id="st-file-clear" class="st-icon-btn" type="button" data-icon="x" aria-label="Remove chosen file"></button>
           </div>
 
           <label class="st-field" for="st-location-input" style="margin-top:18px">
@@ -229,6 +230,7 @@ export function mount(root, ctx) {
       </div>
     </section>
   `;
+  paintIcons(root);
 
   const $ = (selector) => root.querySelector(selector);
   const dom = {

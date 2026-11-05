@@ -141,6 +141,9 @@ def _base_crop(
     zoom: float,
     out_w: int,
     out_h: int,
+    *,
+    set_x: bool = True,
+    set_y: bool = True,
 ) -> dict:
     target_ar = out_w / out_h
     source_ar = width / max(1, height)
@@ -150,6 +153,10 @@ def _base_crop(
     else:
         crop_w = _even(width)
         crop_h = min(_even(crop_w / target_ar), _even(height))
+    if zoom < 1.0:
+        return _zoomed_out_crop(
+            width, height, crop_w / zoom, crop_h / zoom, cx, cy, set_x, set_y,
+        )
     if zoom > 1.0:
         crop_w = min(crop_w, _even(crop_w / zoom))
         crop_h = min(crop_h, _even(crop_h / zoom))
@@ -163,6 +170,81 @@ def _base_crop(
         "w": crop_w,
         "h": crop_h,
     }
+
+
+def _zoomed_out_crop(
+    width: int,
+    height: int,
+    window_w: float,
+    window_h: float,
+    cx: float,
+    cy: float,
+    set_x: bool,
+    set_y: bool,
+) -> dict:
+    """A frame window bigger than the media, so the media sits inside the frame.
+
+    The picture is centred on an axis it no longer fills, unless the creator
+    moved it there. ``crop`` is the part of the media in the frame, ``place`` is
+    where that part sits as fractions of the frame, and ``window`` is the whole
+    frame in source pixels, which layers stuck to the video are placed against.
+    Media past the frame edge is cut by the crop.
+    """
+    if window_w > width and not set_x:
+        cx = 0.5
+    if window_h > height and not set_y:
+        cy = 0.5
+    left = cx * width - window_w / 2.0
+    top = cy * height - window_h / 2.0
+    if window_w <= width:
+        left = max(0.0, min(width - window_w, left))
+    if window_h <= height:
+        top = max(0.0, min(height - window_h, top))
+    x0 = max(0.0, left)
+    y0 = max(0.0, top)
+    x1 = min(float(width), left + window_w)
+    y1 = min(float(height), top + window_h)
+    crop_w = _clamp_int(_even(x1 - x0), 2, width if width % 2 == 0 else width - 1)
+    crop_h = _clamp_int(_even(y1 - y0), 2, height if height % 2 == 0 else height - 1)
+    return {
+        "x": _even_int(int(round(x0)), 0, width - crop_w),
+        "y": _even_int(int(round(y0)), 0, height - crop_h),
+        "w": crop_w,
+        "h": crop_h,
+        "place": {
+            "x": round((x0 - left) / window_w, 6),
+            "y": round((y0 - top) / window_h, 6),
+            "w": round((x1 - x0) / window_w, 6),
+            "h": round((y1 - y0) / window_h, 6),
+        },
+        "window": {
+            "x": round(left, 3),
+            "y": round(top, 3),
+            "w": round(window_w, 3),
+            "h": round(window_h, 3),
+        },
+    }
+
+
+def placed_scale_filter(place: dict | None, out_w: int, out_h: int) -> str:
+    """Scale the cropped media to the output, or to its place inside the frame."""
+    if not place:
+        return f"scale={out_w}:{out_h}:flags=lanczos"
+    width = min(out_w, _even(float(place["w"]) * out_w))
+    height = min(out_h, _even(float(place["h"]) * out_h))
+    x = _even_int(int(round(float(place["x"]) * out_w)), 0, out_w - width)
+    y = _even_int(int(round(float(place["y"]) * out_h)), 0, out_h - height)
+    return (
+        f"scale={width}:{height}:flags=lanczos,"
+        f"pad={out_w}:{out_h}:{x}:{y}:color=black"
+    )
+
+
+def scene_framing_key(clip: dict) -> str:
+    """The key of a clip's own framing in ``reframe.scenes``."""
+    if clip.get("kind") == "file":
+        return f"asset:{clip.get('asset_id') or (clip.get('asset') or {}).get('id') or ''}"
+    return str(clip.get("scene"))
 
 
 def _box_rect(box: dict, width: int, height: int, *, even: bool) -> dict:
@@ -849,6 +931,7 @@ def _graphic_layers(edit: dict, warnings: list[dict]) -> list[dict]:
 def _stuck_rect(video: dict, crop: dict, width: int, height: int) -> dict:
     """A layer's source box in one beat's output frame. It may leave the frame."""
     box = video["box"]
+    crop = crop.get("window") or crop
     crop_w = max(1.0, float(crop["w"]))
     crop_h = max(1.0, float(crop["h"]))
     return {
@@ -897,7 +980,8 @@ def _stuck_pieces(layer: dict, beats: list[dict], warnings: list[dict]) -> list[
             ):
                 hidden += 1
                 continue
-            scale = float(video["crop_h"]) / (float(crop["h"]) / beat["height"])
+            shown_h = float((crop.get("window") or crop)["h"])
+            scale = float(video["crop_h"]) / (shown_h / beat["height"])
             style = _stuck_style(layer["style"], scale)
         previous = pieces[-1] if pieces else None
         if (
@@ -1201,10 +1285,15 @@ def compile_edit(
             cx, cy = scene_crop if scene_crop else (reframe["cx"], reframe["cy"])
         else:
             cx, cy = reframe["cx"], reframe["cy"]
-        cx = float(overrides.get("cx", cx))
-        cy = float(overrides.get("cy", cy))
-        zoom = float(overrides.get("zoom", reframe["zoom"]))
-        crop = _base_crop(clip_width, clip_height, aspect, cx, cy, zoom, out_w, out_h)
+        framing = (reframe.get("scenes") or {}).get(scene_framing_key(clip)) or {}
+        cx = float(overrides.get("cx", framing.get("cx", cx)))
+        cy = float(overrides.get("cy", framing.get("cy", cy)))
+        zoom = float(overrides.get("zoom", framing.get("zoom", reframe["zoom"])))
+        crop = _base_crop(
+            clip_width, clip_height, aspect, cx, cy, zoom, out_w, out_h,
+            set_x=reframe["mode"] == "manual" or "cx" in overrides or "cx" in framing,
+            set_y=reframe["mode"] == "manual" or "cy" in overrides or "cy" in framing,
+        )
         clean_warnings: list[dict] = []
         clean_filter_list: list[str] = []
         clean_ids: list[str] = []
@@ -1221,7 +1310,8 @@ def compile_edit(
                 if not active:
                     continue
                 guard = _box_rect(layer["box"], width, height, even=False)
-                shifted = _shift_away(crop, guard, width, height)
+                # A zoomed-out scene has no spare picture to shift the crop into.
+                shifted = None if "place" in crop else _shift_away(crop, guard, width, height)
                 if shifted is None:
                     clean_warnings.append({
                         "code": "crop_guard_unmet",
@@ -1272,7 +1362,7 @@ def compile_edit(
                 motion_filters.append(compiled)
                 motion_ids.append(motion["id"])
         color_filters = _color_filters(normalized["color"])
-        scale_filter = f"scale={out_w}:{out_h}:flags=lanczos"
+        scale_filter = placed_scale_filter(crop.get("place"), out_w, out_h)
         post_filter = ",".join(motion_filters + color_filters)
         chain = []
         if pre_filter:

@@ -258,6 +258,16 @@ Recommendation: A, because sharp text matters most, unless matching motion prove
 - **Not built:** dragging on the canvas, stickers, effects, captions, converting saved layers, and a "Hidden by crop" label on the row. Option B was not built, because A has not failed.
 - **Checked:** unit tests, and ffmpeg accepts the filter graph (a parser check with no file written). **Unknown:** whether the layer and the video line up in real pixels. Only a real clip can answer that, and it decides between A and B.
 
+**Frame, framing and icons, the founder's model (2026-11-05):**
+
+- The preview shows the frame's border at the render's size, and a safe area per network. Network margins come from published creator guides, not from the networks.
+- Three zooms stay separate. The view zoom is screen only. Scene framing (`reframe.scenes`, keyed by scene id or `asset:<id>`) is a zoom of 0.1× to 3× and a pan, per scene. Motion stays timed.
+- Below 1× the frame's window is bigger than the media: `crop` is the part in the frame, `place` is where it sits, and `window` is what stuck layers are placed against. The render pads with black. Media past the frame is cut by the crop. Audio is never touched.
+- The scene-cropped proxy has no picture to pan into, so an Edit that pans or zooms out asks for a whole-picture proxy (`/proxy?whole=1`).
+- Area focus was never real: it opened the Clean box tool. It now sets this scene's framing.
+- Icons come from one generated set, `static/studio/edit/icons.js` (lucide-static 1.68.0), with one size and state rule. No typed glyph stands in for an icon button.
+- Not built: sticking stickers, effects and captions to the video. That waits for option A or B.
+
 **Round 1 fixes after the founder's first real test (2026-11-04):**
 
 - **Cause of the missing box:** Clean bars were drawn at source time on a story-time timeline, so a box in a later part of the video had no visible bar. They now sit at story time, one per clip.

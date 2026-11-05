@@ -1869,11 +1869,16 @@ button.st-transcript-line:focus-visible { outline: 2px solid var(--st-accent); o
 }
 .st-visual-group > summary.st-visual-group-title::-webkit-details-marker { display: none; }
 .st-visual-group > summary.st-visual-group-title::before {
-  content: "▸";
-  color: var(--st-dim);
-  font-size: 9px;
+  content: "";
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  background: var(--st-dim);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform .12s ease-out;
 }
-.st-visual-group[open] > summary.st-visual-group-title::before { content: "▾"; }
+.st-visual-group[open] > summary.st-visual-group-title::before { transform: rotate(90deg); }
 .st-visual-group:not([open]) { padding-bottom: 8px; margin-bottom: 8px; }
 .st-visual-group-body { padding-top: 3px; }
 
@@ -2646,3 +2651,121 @@ body:has(.st-preview.is-focus) { overflow: hidden; }
 .st-story-danger { color: var(--st-dim); }
 .st-story-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
 .st-fill-estimate { color: var(--st-text); font-size: 12px; font-weight: 600; }
+
+/* ==========================================================================
+   Icon controls. One size, one stroke and one set of states across the editor:
+   quiet at rest, panel tint on hover, accent tint when on, accent ring on focus.
+   ========================================================================== */
+#studio-root .st-icon-btn,
+#studio-root .st-tl-icon,
+#studio-root .st-preview-tool,
+#studio-root .st-preview-view-btn,
+#studio-root .st-layer-rail-btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--st-muted);
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color .12s ease-out, color .12s ease-out;
+}
+#studio-root .st-layer-rail-btn { width: 34px; height: 34px; }
+#studio-root .st-icon-btn:hover:not(:disabled),
+#studio-root .st-tl-icon:hover:not(:disabled),
+#studio-root .st-preview-tool:hover:not(:disabled),
+#studio-root .st-preview-view-btn:hover:not(:disabled),
+#studio-root .st-layer-rail-btn:hover:not(:disabled) { background: var(--st-panel-2); color: var(--st-text); }
+#studio-root .st-icon-btn:active:not(:disabled),
+#studio-root .st-tl-icon:active:not(:disabled),
+#studio-root .st-preview-tool:active:not(:disabled),
+#studio-root .st-preview-view-btn:active:not(:disabled) { background: var(--st-panel-3); }
+#studio-root .st-icon-btn:focus-visible,
+#studio-root .st-tl-icon:focus-visible,
+#studio-root .st-preview-tool:focus-visible,
+#studio-root .st-preview-view-btn:focus-visible,
+#studio-root .st-layer-rail-btn:focus-visible { outline: 2px solid var(--st-accent); outline-offset: 1px; }
+#studio-root .st-icon-btn:disabled,
+#studio-root .st-tl-icon:disabled,
+#studio-root .st-preview-tool:disabled { opacity: .32; cursor: not-allowed; }
+#studio-root .st-icon-btn.is-on,
+#studio-root .st-icon-btn[aria-pressed="true"],
+#studio-root .st-tl-icon.is-on,
+#studio-root .st-preview-tool.is-active,
+#studio-root .st-layer-rail-btn.is-active { background: var(--st-accent-soft); color: var(--st-accent); }
+#studio-root .st-layer-rail-btn.is-active { box-shadow: inset -2px 0 0 var(--st-accent); }
+#studio-root .st-tl-icon.is-recording { background: transparent; color: var(--st-bad); }
+#studio-root .st-icon-small { width: 24px; height: 24px; }
+
+/* Play is the one filled control: the transport's anchor. */
+#studio-root .st-preview-play {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--st-accent);
+  color: var(--st-accent-ink);
+}
+#studio-root .st-preview-play:hover:not(:disabled) { background: #f0b27c; color: var(--st-accent-ink); }
+#studio-root .st-preview-play:active:not(:disabled) { background: var(--st-accent); }
+
+.st-preview-toolgroup { align-items: center; }
+.st-preview-tool-sep { width: 1px; height: 16px; margin: 0 2px; background: var(--st-line); }
+.st-moment-caret { display: inline-flex; }
+.st-clean-group-toggle { display: inline-flex; align-items: center; justify-content: center; }
+
+/* The frame: the render's exact edge. Past it, media is cut. */
+.st-preview-stage { position: relative; }
+#studio-root .st-preview-canvas {
+  border-radius: 0;
+  outline: 1px solid rgba(241, 239, 233, 0.72);
+  outline-offset: 0;
+}
+.st-preview-frame-size {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  left: 8px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(8, 8, 10, 0.78);
+  color: var(--st-muted);
+  font-size: 10px;
+  pointer-events: none;
+}
+.st-framing-title { margin: 0 0 8px; color: var(--st-text); font-size: 12px; font-weight: 600; }
+.st-framing-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.st-framing-actions .st-btn { flex: 1 1 calc(50% - 4px); min-width: 0; padding-inline: 6px; white-space: nowrap; }
+
+/* The preview head holds a lot at 1280 wide: only the moment title gives way. */
+#studio-root .st-preview-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#studio-root .st-preview-head-left { flex: 1 1 auto; min-width: 0; }
+#studio-root .st-preview-story { flex: 0 1 170px; min-width: 64px; }
+#studio-root .st-preview-tools { flex: 0 0 auto; flex-wrap: nowrap; }
+#studio-root .st-preview-toolgroup { flex-wrap: nowrap; }
+#studio-root .st-preview-scene { flex: 0 0 auto; }
+#studio-root .st-preview-head-right { flex: 0 0 auto; }
+#studio-root .st-preview-span { min-width: 0; }
+#studio-root .st-preview-select select { min-width: 112px; }
+#studio-root .st-preview-view-btn { width: 24px; height: 24px; }
+#studio-root .st-preview-head { flex-wrap: nowrap; }
+#studio-root .st-preview-story-btn { width: 100%; max-width: 100%; }
+#studio-root .st-preview-story-btn #st-preview-story-title { min-width: 0; flex: 1 1 auto; }
+#studio-root .st-framing-actions .st-btn { min-height: 28px; padding: 3px 6px; font-size: 11.5px; gap: 5px; }
+
+/* `#studio-root button { font: inherit }` was overriding the chips' small type. */
+#studio-root .st-preview-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 2px 6px;
+  font: 500 11px/1 var(--st-mono);
+}
+#studio-root .st-preview-select select { font-size: 11px; }

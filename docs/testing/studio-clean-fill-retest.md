@@ -8,9 +8,11 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 
 ## What the controls do
 
-- **Video zoom** (Layers panel): zooms the video itself, in the preview and the render. It only zooms in, so the video always fills the frame. There is no zoom out to fit inside a border yet.
-- **+ and − under the preview:** only magnify your view. The render does not change.
-- **Area focus:** draw a box on the preview, and this moment is cropped to it.
+- **White line around the preview:** the frame, at the render's exact size. Its size is written top left. Anything past it is cut in the render.
+- **Network list and phone button, left of Play:** the safe area for that network. It never shows in the render.
+- **Zoom buttons above the preview:** only change your view, from 25% to 300%. The render does not change.
+- **Framing** (crop icon on the right rail; it replaces Video zoom): the zoom and place of the scene under the playhead, in the render too. 1× fills the frame. **Fit scene** shows the whole picture, with black around it.
+- **Move button on the preview toolbar:** drag the scene inside the frame. **Area focus:** draw a box, and that part fills the frame.
 - **Add motion** (Elements → Effects): a timed zoom. Punch in eases in, Snap zoom jumps, and Push grows slowly.
 - **Blue box or bar:** one you drew. **Orange:** one the scan found. **Dashed bar:** found text with no layer yet.
 
@@ -30,11 +32,21 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 10 | Find the bold line under **Add box** in Clean | It says about how long AI fill adds | |
 | 11 | Elements → Text: add a Hook card, then drag it on the preview | It moves, and stays on that spot of the video. A plain click does not move it | |
 | 12 | Drag the Hook card's bar edge on the timeline, then type a new End in its panel | Its time changes both ways | |
-| 13 | Layers → **Video zoom**: raise to 1.5×, then press Play | The video and the Hook card grow together, playing and paused | |
+| 13 | **Framing**: raise to 1.5×, then press Play | The video and the Hook card grow together, playing and paused | |
 | 14 | Elements → Effects: **Add motion** → Punch in, then Play across it | The video zooms in with the text, playing and paused | |
 | 15 | Moments: **Delete moment** (click twice), then **Clear all moments** (click twice) on a test set | They go. Find moments that finds nothing leaves your moments alone | |
 | 16 | Finish, on a moment with no render: **Add this moment to queue**, on a 10 to 20 second moment | It joins the queue. Note the estimate and the real time | |
 | 17 | Watch the result | AI fill and Blur boxes each got their own method, and the Hook card stays locked to the video during zoom. **This decides option A or B** | |
+| 18 | Look at the preview, then change the shape to 16:9 and back | A white line marks the frame, with its size written top left. The size follows the shape | |
+| 19 | Pick each network in the list left of Play | The safe area changes and names the network. Instagram Reels is there | |
+| 20 | Press the shrink button above the preview, then click the percent to go back | The frame gets smaller on screen, then returns. The video does not change | |
+| 21 | **Framing** → **Fit scene** on a wide video in 9:16 | The whole picture shows, centred, with black above and below. Paused it is exact within a few seconds | |
+| 22 | Press Play on that scene | It takes a moment the first time, then plays with the same framing and normal sound | |
+| 23 | Move button on the preview: drag the scene past the frame edge | It moves as you drag. The part past the white line is gone | |
+| 24 | **Area focus**: draw a box on a face | That part fills the frame | |
+| 25 | Go to another scene | Framing names that scene, at its own zoom. **Use on all** copies a framing to every scene | |
+| 26 | Render a 10 to 20 second moment with a zoomed-out and a moved scene | The render matches the preview: same place, black in the empty frame, the cut part gone, and sound unchanged | |
+| 27 | Look at every toolbar: preview, timeline, right rail | One icon style. Each icon's tooltip matches what it does. Tell me any icon you cannot read | |
 
 ## Tell me too
 

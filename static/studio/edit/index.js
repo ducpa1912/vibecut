@@ -22,12 +22,12 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261104-5";
+import { mountPreview } from "./preview.js?v=20261105-1";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
-import { boxToFrame, cropAt, visibleRect } from "./canvas-tools.js";
-import { icon } from "./icons.js";
+import { boxToFrame, cropAt, framingAt, sceneFramingKey, visibleRect } from "./canvas-tools.js";
+import { icon, paintIcons } from "./icons.js";
 import {
   isFillAvailable,
   manualLayer,
@@ -77,7 +77,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261104-5";
+    link.href = "/static/studio/edit/edit.css?v=20261105-1";
     document.head.append(link);
   }
 }
@@ -231,7 +231,7 @@ export function mount(root, ctx) {
         <dialog id="st-edit-shortcuts" class="st-shortcuts" aria-labelledby="st-edit-shortcuts-title">
           <header class="st-shortcuts-head">
             <h2 id="st-edit-shortcuts-title">Keyboard shortcuts</h2>
-            <button id="st-edit-shortcuts-close" class="st-icon-btn" type="button" aria-label="Close shortcuts">×</button>
+            <button id="st-edit-shortcuts-close" class="st-icon-btn" type="button" data-icon="x" aria-label="Close shortcuts"></button>
           </header>
           <div class="st-shortcuts-body">
             <dl class="st-shortcuts-list">
@@ -242,6 +242,7 @@ export function mount(root, ctx) {
               <div><dt>One frame back / forward</dt><dd><kbd>←</kbd> <kbd>→</kbd></dd></div>
               <div><dt>One second back / forward</dt><dd><kbd>Shift</kbd> + <kbd>←</kbd> / <kbd>→</kbd></dd></div>
               <div><dt>Select tool</dt><dd><kbd>V</kbd></dd></div>
+              <div><dt>Move the scene inside the frame</dt><dd><kbd>M</kbd></dd></div>
               <div><dt>Draw a Remove-text box</dt><dd><kbd>B</kbd></dd></div>
               <div><dt>Remove the selected layer</dt><dd><kbd>Delete</kbd></dd></div>
               <div><dt>Undo / redo</dt><dd><kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd></dd></div>
@@ -266,6 +267,7 @@ export function mount(root, ctx) {
     dom.shortcutsClose = root.querySelector("#st-edit-shortcuts-close");
     dom.timeline = root.querySelector("#st-edit-timeline");
     dom.stage = root.querySelector(".st-edit-stage");
+    paintIcons(root);
     dom.mobilePanels = Array.from(root.querySelectorAll(".st-mobile-panels [data-panel]"));
 
     if (dom.save) {
@@ -276,8 +278,8 @@ export function mount(root, ctx) {
     if (dom.help) dom.help.hidden = false;
 
     for (const button of dom.mobilePanels) {
-      const iconName = button.dataset.panel === "elements" ? "layers" : button.dataset.panel === "layers" ? "settings" : "expand";
-      button.append(icon(iconName, { size: 14 }));
+      const iconName = button.dataset.panel === "elements" ? "layers" : button.dataset.panel === "layers" ? "settings" : "maximize";
+      button.append(icon(iconName, { size: 16 }));
       button.addEventListener("click", () => {
         dom.stage.dataset.panel = button.dataset.panel;
         for (const item of dom.mobilePanels) item.classList.toggle("is-active", item === button);
@@ -411,6 +413,9 @@ export function mount(root, ctx) {
     } else if (event.key === "b" || event.key === "B") {
       event.preventDefault();
       preview?.setTool("box");
+    } else if (event.key === "m" || event.key === "M") {
+      event.preventDefault();
+      preview?.setTool("move");
     }
   }
 
@@ -1247,7 +1252,7 @@ export function mount(root, ctx) {
     const close = () => { dialog.close(); dialog.remove(); };
     const head = el("header", { class: "st-dialog-head" }, [
       el("h2", { id: "st-role-title", text: "Scene role" }),
-      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+      el("button", { class: "st-icon-btn", type: "button", "aria-label": "Close" }, [icon("x")]),
     ]);
     head.lastChild.addEventListener("click", close);
     dialog.append(head);
@@ -1295,7 +1300,7 @@ export function mount(root, ctx) {
     const close = () => { dialog.close(); dialog.remove(); };
     const head = el("header", { class: "st-dialog-head" }, [
       el("h2", { id: "st-append-title", text: "Add clips to this edit" }),
-      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+      el("button", { class: "st-icon-btn", type: "button", "aria-label": "Close" }, [icon("x")]),
     ]);
     head.lastChild.addEventListener("click", close);
     dialog.append(head);
@@ -1480,9 +1485,17 @@ export function mount(root, ctx) {
         preview?.refresh();
         scheduleTimeline();
       },
+      getFraming: () => currentFraming(),
+      setFraming: (key, change, options) => setFraming(key, change, options),
+      resetFraming: (key) => resetFraming(key),
+      framingToAllScenes: (key) => framingToAllScenes(key),
+      startMoveScene: () => {
+        preview?.setTool("move");
+        notify("Drag on the preview to move this scene inside the frame.", "ok");
+      },
       startAreaFocus: () => {
-        preview?.setTool("box");
-        notify("Draw the area to keep, then set the zoom in Layers.", "ok");
+        preview?.setTool("area");
+        notify("Draw the part of this scene that should fill the frame.", "ok");
       },
       startPaint: (layerId, { created = false } = {}) => {
         if (created) state.paintPending.add(layerId);
@@ -1656,6 +1669,7 @@ export function mount(root, ctx) {
   function renderMomentBoard() {}
 
   let layersPanel = null;
+  let framingPanelKey = "";
   let elementsPanel = null;
 
   function renderLayers() {
@@ -2034,6 +2048,75 @@ export function mount(root, ctx) {
       touch("clean");
       renderLayers();
     }
+  }
+
+  function currentFraming() {
+    if (!state.edit) return null;
+    const framing = framingAt({
+      edit: state.edit, job: state.job, story: state.story, time: state.playhead, aspect: state.aspect,
+    });
+    const tag = activeSceneAt(state.playhead);
+    return { ...framing, label: `${tag.role} ${tag.num}` };
+  }
+
+  /** One scene's own pan and zoom. A drag saves only when it ends. */
+  function setFraming(key, change, { commit = true } = {}) {
+    if (!state.edit || !key) return;
+    const reframe = state.edit.reframe || {};
+    const scenes = { ...(reframe.scenes || {}) };
+    scenes[key] = { ...(scenes[key] || {}), ...change };
+    state.edit.reframe = { ...reframe, scenes };
+    if (commit) {
+      touch("reframe");
+      layersPanel?.refresh();
+    }
+    preview?.refresh();
+  }
+
+  function resetFraming(key) {
+    if (!state.edit) return;
+    const reframe = state.edit.reframe || {};
+    const scenes = { ...(reframe.scenes || {}) };
+    delete scenes[key];
+    state.edit.reframe = { ...reframe, mode: "auto", cx: 0.5, cy: 0.5, zoom: 1, scenes };
+    touch("reframe");
+    layersPanel?.refresh();
+    preview?.refresh();
+  }
+
+  function framingToAllScenes(key) {
+    if (!state.edit) return;
+    const reframe = state.edit.reframe || {};
+    const entry = reframe.scenes?.[key];
+    if (!entry) {
+      notify("Set this scene's zoom or position first.", "quiet");
+      return;
+    }
+    const scenes = {};
+    for (const clip of state.story?.clips || []) {
+      const other = sceneFramingKey(clip);
+      if (other) scenes[other] = { ...entry };
+    }
+    state.edit.reframe = { ...reframe, scenes };
+    touch("reframe");
+    layersPanel?.refresh();
+    preview?.refresh();
+    notify(`Used on ${Object.keys(scenes).length} scenes.`, "ok");
+  }
+
+  /** The drawn part of the frame becomes the whole frame. */
+  function focusFramingOn(rect) {
+    const framing = currentFraming();
+    if (!framing?.key) return;
+    const window = cropAt({
+      edit: state.edit, job: state.job, story: state.story, time: state.playhead, aspect: state.aspect,
+    });
+    const share = Math.max(rect.w, rect.h, 0.02);
+    setFraming(framing.key, {
+      zoom: Math.round(Math.max(0.1, Math.min(3, framing.zoom / share)) * 1000) / 1000,
+      cx: Math.round(Math.max(0, Math.min(1, window.x + (rect.x + rect.w / 2) * window.w)) * 10000) / 10000,
+      cy: Math.round(Math.max(0, Math.min(1, window.y + (rect.y + rect.h / 2) * window.h)) * 10000) / 10000,
+    });
   }
 
   /** A dragged Text layer sits on the video from then on. */
@@ -2541,6 +2624,14 @@ export function mount(root, ctx) {
   function paintSceneTag() {
     const tag = activeSceneAt(state.playhead);
     preview?.setScene(tag.num, tag.role);
+    // Framing belongs to one scene, so its panel follows the playhead.
+    if (layersPanel?.getActive?.() === "zoom") {
+      const key = sceneFramingKey(tag.clip);
+      if (key !== framingPanelKey) {
+        framingPanelKey = key;
+        layersPanel.refresh();
+      }
+    }
   }
 
   function sceneBounds() {
@@ -2618,7 +2709,7 @@ export function mount(root, ctx) {
     };
     const head = el("header", { class: "st-dialog-head" }, [
       el("h2", { id: "st-record-title", text: "Record voice-over" }),
-      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+      el("button", { class: "st-icon-btn", type: "button", "aria-label": "Close" }, [icon("x")]),
     ]);
     head.lastChild.addEventListener("click", close);
     const status = el("p", { class: "st-hint", text: "Press record, speak, then save the take." });
@@ -2742,7 +2833,7 @@ export function mount(root, ctx) {
     const close = () => { dialog.close(); dialog.remove(); };
     const head = el("header", { class: "st-dialog-head" }, [
       el("h2", { id: "st-subtitle-title", text: "Import subtitles" }),
-      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+      el("button", { class: "st-icon-btn", type: "button", "aria-label": "Close" }, [icon("x")]),
     ]);
     head.lastChild.addEventListener("click", close);
     const file = el("input", { type: "file", accept: ".srt,.vtt,text/plain", "aria-label": "Subtitle file" });
@@ -2880,7 +2971,7 @@ export function mount(root, ctx) {
     const close = () => { dialog.close(); dialog.remove(); };
     const head = el("header", { class: "st-dialog-head" }, [
       el("h2", { id: "st-import-mini-title", text: "Import" }),
-      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+      el("button", { class: "st-icon-btn", type: "button", "aria-label": "Close" }, [icon("x")]),
     ]);
     head.lastChild.addEventListener("click", close);
     const tabs = el("div", { class: "st-media-tabs", role: "tablist" });
@@ -3001,7 +3092,7 @@ export function mount(root, ctx) {
     const close = () => { dialog.close(); dialog.remove(); };
     const head = el("header", { class: "st-dialog-head" }, [
       el("h2", { id: "st-scene-picker-title", text: "Add scenes" }),
-      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+      el("button", { class: "st-icon-btn", type: "button", "aria-label": "Close" }, [icon("x")]),
     ]);
     head.lastChild.addEventListener("click", close);
     const tabs = el("div", { class: "st-media-tabs", role: "tablist" });
@@ -3126,7 +3217,7 @@ export function mount(root, ctx) {
     const close = () => { dialog.close(); dialog.remove(); };
     const head = el("header", { class: "st-dialog-head" }, [
       el("h2", { id: "st-media-title", text: "Add media" }),
-      el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close" }),
+      el("button", { class: "st-icon-btn", type: "button", "aria-label": "Close" }, [icon("x")]),
     ]);
     head.lastChild.addEventListener("click", close);
     const tabs = el("div", { class: "st-media-tabs", role: "tablist" });
@@ -3241,6 +3332,8 @@ export function mount(root, ctx) {
         onBoxChange: (id, box, options) => updateCleanBox(id, box, options),
         onBoxCreate: (box) => createCleanBox(box),
         onTextBox: (id, box, options) => placeTextOnVideo(id, box, options),
+        onFraming: (key, change, options) => setFraming(key, change, options),
+        onAreaFocus: (rect) => focusFramingOn(rect),
         onPaint: (layerId, points, crop) => appendPaintPoints(layerId, points, crop),
         onPaintEnd: () => dropUnpaintedLayers(),
         onCleanMethod: (layerId, kind) => setCleanMethod(layerId, kind),

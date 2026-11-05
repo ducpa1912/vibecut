@@ -236,23 +236,23 @@ export function mountTimeline(root, options = {}) {
   };
   const toolIcons = [
     [dom.undoTrim, "history"], [dom.undo, "undo"], [dom.redo, "redo"],
-    [dom.record, "mic"], [dom.subtitle, "captions"],
-    [dom.zoomOut, "minus"], [dom.fit, "expand"], [dom.zoomIn, "plus"],
+    [dom.record, "mic"], [dom.subtitle, "subtitles"],
+    [dom.zoomOut, "zoom-out"], [dom.fit, "fit-width"], [dom.zoomIn, "zoom-in"],
     [dom.collapse, "chevron-up"],
   ];
   for (const [node, name] of toolIcons) {
-    if (node) node.append(icon(name, { size: 15 }));
+    if (node) node.append(icon(name, { size: 16 }));
   }
   const actionIcons = {
-    "add-media": "plus", "add-text": "type", "add-audio": "audio-lines",
+    "add-media": "image-plus", "add-text": "type", "add-audio": "music",
     "effects": "sparkles", "captions": "captions",
-    "overlay": "layers", "reverse": "reverse", "trim": "trim", "split": "split",
-    "duplicate": "copy", "delete": "trash", "crop": "crop", "rotate": "rotate-cw",
-    "mirror": "mirror", "flip": "flip", "extract-audio": "audio-lines",
+    "overlay": "layers-plus", "reverse": "reverse", "trim": "trim", "split": "split",
+    "duplicate": "copy", "delete": "trash", "crop": "crop", "rotate": "rotate",
+    "mirror": "mirror", "flip": "flip", "extract-audio": "waveform",
     "freeze": "freeze",
   };
   for (const button of dom.actions) {
-    button.append(icon(actionIcons[button.dataset.tlAction] || "square", { size: 15 }));
+    button.append(icon(actionIcons[button.dataset.tlAction] || "square", { size: 16 }));
   }
   let zoom = 1;
   let loop = false;

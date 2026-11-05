@@ -16,14 +16,18 @@ export const CANVAS = {
   "16:10": { width: 1920, height: 1200, label: "16:10 wide" },
 };
 
-/** Platform safe zones. Values are fractions of the output frame. */
+/**
+ * Platform safe zones, as fractions of the output frame. Top, right and bottom
+ * follow published 1080×1920 creator guides, since the networks change their
+ * overlays often. The left margin stays smaller: the button rail is on the right.
+ */
 export const SAFE_ZONE_PRESETS = {
   auto: { label: "This shape", safe_zone: { top: 0.08, right: 0.08, bottom: 0.16, left: 0.08 } },
-  instagram: { label: "Instagram Reels", safe_zone: { top: 0.12, right: 0.06, bottom: 0.20, left: 0.06 } },
-  tiktok: { label: "TikTok", safe_zone: { top: 0.10, right: 0.14, bottom: 0.22, left: 0.06 } },
+  instagram: { label: "Instagram Reels", safe_zone: { top: 0.115, right: 0.12, bottom: 0.224, left: 0.06 } },
+  tiktok: { label: "TikTok", safe_zone: { top: 0.068, right: 0.13, bottom: 0.252, left: 0.06 } },
   rednote: { label: "RedNote", safe_zone: { top: 0.10, right: 0.14, bottom: 0.20, left: 0.06 } },
-  youtube: { label: "YouTube Shorts", safe_zone: { top: 0.08, right: 0.12, bottom: 0.18, left: 0.05 } },
-  facebook: { label: "Facebook Reels", safe_zone: { top: 0.12, right: 0.06, bottom: 0.20, left: 0.06 } },
+  youtube: { label: "YouTube Shorts", safe_zone: { top: 0.057, right: 0.13, bottom: 0.219, left: 0.05 } },
+  facebook: { label: "Facebook Reels", safe_zone: { top: 0.115, right: 0.12, bottom: 0.224, left: 0.06 } },
 };
 
 /** Mirrors the colour presets in `edits.COLOR_PRESETS`. */

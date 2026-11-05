@@ -42,6 +42,7 @@ import {
   statusText,
   statusTone,
 } from "./ui.js";
+import { icon } from "./edit/icons.js";
 import { sentenceSegments } from "./edit/model.js";
 
 const POLL_MS = 1600;
@@ -934,7 +935,7 @@ export function mount(root, ctx) {
     dialog.append(
       el("div", { class: "st-dialog-head" }, [
         el("h2", { id: "st-moment-builder-title", text: "Add a moment" }),
-        el("button", { class: "st-icon-btn", type: "button", text: "×", "aria-label": "Close moment builder", onclick: () => dialog.close() }),
+        el("button", { class: "st-icon-btn", type: "button", "aria-label": "Close moment builder", onclick: () => dialog.close() }, [icon("x")]),
       ]),
       body,
       el("div", { class: "st-dialog-foot" }, [total, cancel, build]),

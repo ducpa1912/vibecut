@@ -136,7 +136,7 @@ TRACKLET_KINDS = (
     "credit", "screen_text",
 )
 _REFRAME_KEYS = frozenset({
-    "mode", "cx", "cy", "zoom", "crop_path_ref", "overrides",
+    "mode", "cx", "cy", "zoom", "crop_path_ref", "overrides", "scenes",
 })
 _MOTION_KEYS = frozenset({
     "id", "kind", "start", "end", "amount", "ramp", "seed", "hidden",
@@ -166,6 +166,9 @@ _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
 # Custom sequence clips override the story snapshot. Each clip names a source
 # scene and a source-time window. Roles stay hook/beat/payoff so render order
 # and old consumers keep working; beat_kind is editorial only.
+FRAMING_ZOOM_MIN = 0.1
+FRAMING_ZOOM_MAX = 3.0
+_SCENE_FRAMING_KEY_RE = re.compile(r"^(?:\d{1,9}|asset:[A-Za-z0-9_-]{1,80})$")
 _SEQUENCE_KEYS = frozenset({
     "kind", "scene", "asset_id", "start", "end", "role", "beat_kind", "color", "reverse",
 })
@@ -624,6 +627,38 @@ def normalize_clean(value: Any) -> list[dict]:
     return layers
 
 
+def _normalize_scene_framing(value: Any) -> dict:
+    """One scene's own pan and zoom, keyed by scene id or ``asset:<id>``."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise EditError("reframe.scenes must be an object.")
+    if len(value) > 240:
+        raise EditError("reframe.scenes may hold at most 240 scenes.")
+    clean: dict[str, dict] = {}
+    for key, raw in value.items():
+        key = str(key)
+        if not _SCENE_FRAMING_KEY_RE.match(key):
+            raise EditError("reframe.scenes keys must be a scene id or asset:<id>.")
+        if not isinstance(raw, dict):
+            raise EditError(f"reframe.scenes[{key}] must be an object.")
+        _unknown(raw, frozenset({"cx", "cy", "zoom"}), f"reframe.scenes[{key}]")
+        entry: dict[str, float] = {}
+        for field in ("cx", "cy"):
+            if field in raw:
+                entry[field] = round(_number(
+                    raw[field], f"reframe.scenes[{key}].{field}", minimum=0.0, maximum=1.0,
+                ), 4)
+        if "zoom" in raw:
+            entry["zoom"] = round(_number(
+                raw["zoom"], f"reframe.scenes[{key}].zoom",
+                minimum=FRAMING_ZOOM_MIN, maximum=FRAMING_ZOOM_MAX,
+            ), 4)
+        if entry:
+            clean[key] = entry
+    return clean
+
+
 def normalize_reframe(value: Any) -> dict:
     if value is None:
         value = {}
@@ -635,7 +670,9 @@ def normalize_reframe(value: Any) -> dict:
         raise EditError("reframe.mode must be auto, center or manual.")
     cx = _number(value.get("cx", 0.5), "reframe.cx", minimum=0.0, maximum=1.0)
     cy = _number(value.get("cy", 0.5), "reframe.cy", minimum=0.0, maximum=1.0)
-    zoom = _number(value.get("zoom", 1.0), "reframe.zoom", minimum=1.0, maximum=2.0)
+    zoom = _number(
+        value.get("zoom", 1.0), "reframe.zoom", minimum=FRAMING_ZOOM_MIN, maximum=FRAMING_ZOOM_MAX,
+    )
     ref = value.get("crop_path_ref")
     crop_path_ref = None
     if ref is not None:
@@ -663,9 +700,9 @@ def normalize_reframe(value: Any) -> dict:
     if "zoom" in overrides:
         clean_overrides["zoom"] = round(_number(
             overrides["zoom"], "reframe.overrides.zoom",
-            minimum=1.0, maximum=2.0,
+            minimum=FRAMING_ZOOM_MIN, maximum=FRAMING_ZOOM_MAX,
         ), 4)
-    return {
+    clean = {
         "mode": mode,
         "cx": round(cx, 4),
         "cy": round(cy, 4),
@@ -673,6 +710,11 @@ def normalize_reframe(value: Any) -> dict:
         "crop_path_ref": crop_path_ref,
         "overrides": clean_overrides,
     }
+    scenes = _normalize_scene_framing(value.get("scenes"))
+    # Left out when empty, so an Edit saved before scene framing keeps its hash.
+    if scenes:
+        clean["scenes"] = scenes
+    return clean
 
 
 _MOTION_DEFAULTS = {
@@ -850,8 +892,9 @@ def _normalize_stuck_position(value: Any, label: str) -> dict:
     """Where a layer sits on the video: a source box, and the crop it was sized in.
 
     The box may reach past the frame, because the layer is hidden at the crop
-    edge rather than moved. ``crop_h`` is the crop height, as a share of the
-    source, at which the layer has its stored text size.
+    edge rather than moved. ``crop_h`` is the frame height, as a share of the
+    source, at which the layer has its stored text size. It passes 1 when the
+    scene is zoomed out and the frame is taller than the media.
     """
     if not isinstance(value, dict):
         raise EditError(f"{label} must be an object.")
@@ -867,7 +910,7 @@ def _normalize_stuck_position(value: Any, label: str) -> dict:
                 ("x", -1.0, 2.0), ("y", -1.0, 2.0), ("w", 0.001, 2.0), ("h", 0.001, 2.0),
             )
         },
-        "crop_h": round(_number(value.get("crop_h"), f"{label}.crop_h", minimum=0.001, maximum=1.0), 6),
+        "crop_h": round(_number(value.get("crop_h"), f"{label}.crop_h", minimum=0.001, maximum=10.0), 6),
     }
 
 

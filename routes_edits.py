@@ -823,8 +823,11 @@ def edit_frame(
     "/api/jobs/{job_id}/edits/{edit_id}/proxy",
     responses={200: {"content": {"video/mp4": {}}}},
 )
-def edit_proxy(job_id: str, edit_id: str) -> FileResponse:
-    """540-wide H.264 proxy of the story range, built once and reused."""
+def edit_proxy(job_id: str, edit_id: str, whole: bool = False) -> FileResponse:
+    """H.264 proxy of the story range, built once and reused.
+
+    ``whole`` keeps the full picture, for an Edit that pans or zooms out.
+    """
     job, edit, story = _fresh_story(job_id, edit_id)
     try:
         path = render.build_story_proxy(
@@ -834,6 +837,7 @@ def edit_proxy(job_id: str, edit_id: str) -> FileResponse:
             _edit_clips(edit, story),
             scenes=(job.get("analysis") or {}).get("scenes") or [],
             aspect=edit["aspect"],
+            whole=whole,
         )
     except render.PipelineError as exc:
         raise HTTPException(500, str(exc)) from exc

@@ -406,6 +406,53 @@ try {
   const placed = (await savedEdit()).graphics.find((layer) => layer.video);
   assert(placed?.video?.box, "dragging the text did not place it on the video");
   console.log("Timeline and text drags passed.");
+
+  // Icons: no typed glyph stands in for one, and every icon control draws an SVG.
+  const iconFaults = await page.evaluate(() => {
+    const controls = [...document.querySelectorAll(
+      "#studio-root .st-icon-btn, #studio-root .st-tl-icon, #studio-root .st-preview-tool, #studio-root .st-layer-rail-btn",
+    )];
+    return controls
+      .filter((node) => !node.querySelector("svg.st-icon") || !node.getAttribute("aria-label"))
+      .map((node) => node.id || node.outerHTML.slice(0, 80));
+  });
+  assert(!iconFaults.length, `icon controls without an icon or name: ${iconFaults.join(", ")}`);
+  const playGlyph = await page.locator("#st-preview-play svg.st-icon").count();
+  assert(playGlyph === 1, "Play does not draw its icon");
+
+  // The frame: real size on its border, and a network's safe area to choose.
+  const frameText = await page.locator("#st-preview-frame-size").textContent();
+  assert(/^Frame \d+×\d+$/.test(frameText.trim()), `frame size label: ${frameText}`);
+  assert(await page.locator('#st-preview-platform option[value="instagram"]').count() === 1, "no Instagram safe area");
+  await page.selectOption("#st-preview-platform", "tiktok");
+
+  // The view zooms out past 100%, and that is not an edit.
+  await page.locator("#st-preview-zoom-out").click();
+  assert((await page.locator("#st-preview-zoom-level").textContent()).trim() === "75%", "the view did not shrink");
+  await page.locator("#st-preview-zoom-level").click();
+
+  // A scene zooms out to fit the frame, moves inside it, and saves on that scene.
+  await page.locator('.st-layer-rail-btn[data-layer="zoom"]').click();
+  await page.locator(".st-framing-actions button", { hasText: "Fit scene" }).click();
+  await page.waitForTimeout(900);
+  const fitted = (await savedEdit()).reframe;
+  const fittedScenes = Object.values(fitted.scenes || {});
+  assert(fittedScenes.length === 1 && fittedScenes[0].zoom < 1, `Fit was not saved: ${JSON.stringify(fitted)}`);
+  await page.locator(".st-framing-actions button", { hasText: "Move scene" }).click();
+  const framed = await rectOf("#st-preview-canvas");
+  await dragTo(
+    framed.x + framed.width * 0.5, framed.y + framed.height * 0.5,
+    framed.x + framed.width * 0.7, framed.y + framed.height * 0.6,
+  );
+  await page.waitForTimeout(900);
+  const moved = Object.values((await savedEdit()).reframe.scenes)[0];
+  assert(moved.cx < 0.5 && moved.cy < 0.5, `moving the scene was not saved: ${JSON.stringify(moved)}`);
+  await page.locator('.st-preview-tool[data-tool="select"]').click();
+  if (screenshot) {
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: screenshot.replace(/\.png$/, "_framing.png"), fullPage: false });
+  }
+  console.log("Frame, safe area, framing and icons passed.");
   console.log("Found-text list, Remove all and painter mask passed.");
 } finally {
   await browser.close();

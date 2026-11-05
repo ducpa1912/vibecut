@@ -1556,11 +1556,10 @@ export function mountCleanPanel(host, ctx) {
       const toggle = el("button", {
         class: "st-clean-group-toggle",
         type: "button",
-        text: open ? "▾" : "▸",
         title: open ? "Fold the pieces" : "Show the pieces",
         "aria-label": `${open ? "Fold" : "Show"} the pieces of ${first.label || "this text"}`,
         "aria-expanded": open ? "true" : "false",
-      });
+      }, [icon(open ? "chevron-down" : "chevron-right", { size: 14 })]);
       toggle.addEventListener("click", () => {
         if (OPEN_CLEAN_GROUPS.has(group.key)) OPEN_CLEAN_GROUPS.delete(group.key);
         else OPEN_CLEAN_GROUPS.add(group.key);
@@ -1834,9 +1833,8 @@ export function mountCleanPanel(host, ctx) {
         class: "st-icon-btn st-icon-small",
         type: "button",
         "aria-label": "Delete time range",
-        text: "×",
         disabled: !canClean(),
-      });
+      }, [icon("x", { size: 14 })]);
       remove.addEventListener("click", () => {
         layer.ranges = ranges.filter((item) => item !== range);
         commit();

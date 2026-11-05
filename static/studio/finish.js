@@ -15,6 +15,7 @@
  * Nothing outside this Mac is contacted.
  */
 
+import { paintIcons } from "./edit/icons.js";
 import {
   getTrimState,
   rebindStory,
@@ -553,7 +554,7 @@ export function mount(root, ctx) {
           <p class="st-lede">Render every moment in any of the five shapes. Keep every version. Review the cut, then hand off a publish kit and a review link.</p>
         </div>
         <div class="st-finish-head-actions">
-          <button id="st-finish-back" class="st-btn st-btn-ghost st-btn-small" type="button">← Edit</button>
+          <button id="st-finish-back" class="st-btn st-btn-ghost st-btn-small" type="button" data-icon="arrow-left">Edit</button>
         </div>
       </header>
       <p id="st-finish-status" class="st-status" role="status" aria-live="polite" hidden></p>
@@ -562,6 +563,7 @@ export function mount(root, ctx) {
       <div id="st-finish-body" class="st-finish-body"></div>
     </section>
   `;
+  paintIcons(root);
 
   const dom = {
     back: root.querySelector("#st-finish-back"),

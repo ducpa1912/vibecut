@@ -19,8 +19,8 @@ const LAYERS = [
   ["filter", "Filter & LUTs", "palette"],
   ["transcript", "Transcript & Translation", "captions"],
   ["narrative", "Narrative", "mic"],
-  ["zoom", "Video zoom", "search"],
-  ["border", "Border", "square"],
+  ["zoom", "Framing: scene zoom and position", "framing"],
+  ["border", "Border around the render", "square"],
 ];
 
 function countFor(id, edit, captions) {
@@ -28,14 +28,17 @@ function countFor(id, edit, captions) {
   if (id === "filter") return edit?.color?.preset && edit.color.preset !== "none" ? 1 : 0;
   if (id === "transcript") return (captions?.cues || []).length;
   if (id === "narrative") return edit?.audio?.mode && edit.audio.mode !== "original" ? 1 : 0;
-  if (id === "zoom") return Number(edit?.reframe?.zoom || 1) > 1.001 ? 1 : 0;
+  if (id === "zoom") {
+    const reframe = edit?.reframe || {};
+    const global = Math.abs(Number(reframe.zoom ?? 1) - 1) > 0.001 ? 1 : 0;
+    return global + Object.keys(reframe.scenes || {}).length;
+  }
   if (id === "border") return Number(edit?.border?.width || 0) > 0 ? 1 : 0;
   return 0;
 }
 
 function statusFor(id, edit, captions) {
   const count = countFor(id, edit, captions);
-  if (id === "zoom") return `${Number(edit?.reframe?.zoom || 1).toFixed(1)}×`;
   if (id === "border") {
     const width = Number(edit?.border?.width || 0);
     return width > 0 ? `${width}px` : "";
@@ -104,7 +107,7 @@ export function mountLayersPanel(host, ctx) {
     } else if (active === "narrative") {
       mountNarrativeLayer(body, ctx);
     } else if (active === "zoom") {
-      mountZoomLayer(body, ctx);
+      mountFramingLayer(body, ctx);
     } else {
       mountBorderLayer(body, ctx);
     }
@@ -182,45 +185,65 @@ function mountNarrativeLayer(host, ctx) {
   mountAudioPanel(audioHost, { ...ctx, narrativeOnly: true });
 }
 
-function mountZoomLayer(host, ctx) {
-  const edit = ctx.getEdit();
-  const reframe = { mode: "auto", cx: 0.5, cy: 0.5, zoom: 1, ...(edit?.reframe || {}) };
-  let zoom = Math.max(1, Math.min(2, Number(reframe.zoom) || 1));
+function iconButton(iconName, label, onClick, className = "st-btn st-btn-ghost st-btn-small") {
+  const button = el("button", { class: className, type: "button" }, [
+    icon(iconName, { size: 15 }),
+    el("span", { text: label }),
+  ]);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+/** One scene's zoom and place inside the frame. Layers and audio have their own. */
+function mountFramingLayer(host, ctx) {
+  const framing = ctx.getFraming?.();
+  if (!framing?.key) {
+    host.append(el("p", { class: "st-layer-note", text: "Move the playhead onto a video or photo scene to frame it. A blank card has no picture." }));
+    return;
+  }
+  const min = Math.max(0.1, framing.fit * 0.5);
+  let zoom = Math.max(min, Math.min(3, framing.zoom));
 
   const readout = el("span", { class: "st-mono st-zoom-readout", text: `${zoom.toFixed(2)}×` });
   const slider = el("input", {
-    type: "range", min: "1", max: "2", step: "0.01", value: String(zoom),
-    "aria-label": "Zoom",
+    type: "range", min: min.toFixed(3), max: "3", step: "0.01", value: String(zoom),
+    "aria-label": "Scene zoom",
   });
-  const minus = el("button", { class: "st-icon-btn", type: "button", title: "Zoom out", "aria-label": "Zoom out" }, [icon("minus", { size: 14 })]);
-  const plus = el("button", { class: "st-icon-btn", type: "button", title: "Zoom in", "aria-label": "Zoom in" }, [icon("plus", { size: 14 })]);
-  const area = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Area focus" });
-  const reset = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Reset" });
-
-  function commit() {
+  const paint = () => {
     readout.textContent = `${zoom.toFixed(2)}×`;
     slider.value = String(zoom);
-    ctx.setReframe?.({
-      ...reframe,
-      mode: reframe.mode === "auto" ? "manual" : reframe.mode,
-      zoom,
-    });
-  }
-  minus.addEventListener("click", () => { zoom = Math.max(1, zoom - 0.05); commit(); });
-  plus.addEventListener("click", () => { zoom = Math.min(2, zoom + 0.05); commit(); });
-  slider.addEventListener("input", () => { zoom = Number(slider.value); commit(); });
-  area.addEventListener("click", () => ctx.startAreaFocus?.());
-  reset.addEventListener("click", () => {
-    zoom = 1;
-    ctx.setReframe?.({ mode: "auto", cx: 0.5, cy: 0.5, zoom: 1 });
-    ctx.refresh?.();
-  });
+  };
+  const setZoom = (value, commit = true) => {
+    zoom = Math.max(min, Math.min(3, value));
+    paint();
+    ctx.setFraming?.(framing.key, { zoom: Math.round(zoom * 1000) / 1000 }, { commit });
+  };
+  const smaller = el("button", { class: "st-icon-btn", type: "button", title: "Make the scene smaller", "aria-label": "Make the scene smaller" }, [icon("zoom-out")]);
+  const bigger = el("button", { class: "st-icon-btn", type: "button", title: "Make the scene bigger", "aria-label": "Make the scene bigger" }, [icon("zoom-in")]);
+  smaller.addEventListener("click", () => setZoom(zoom - 0.05));
+  bigger.addEventListener("click", () => setZoom(zoom + 0.05));
+  slider.addEventListener("input", () => setZoom(Number(slider.value), false));
+  slider.addEventListener("change", () => setZoom(Number(slider.value)));
 
   host.append(
-    el("div", { class: "st-zoom-row" }, [minus, slider, plus, readout]),
-    el("div", { class: "st-layer-actions" }, [area, reset]),
-    el("p", { class: "st-layer-note", text: "Zooms the video itself, in the preview and the render. It can only zoom in, so the video always fills the frame. The + and − under the preview only magnify your view." }),
-    el("p", { class: "st-layer-note", text: "Area focus: draw a box on the preview, and this moment is cropped to it." }),
+    el("h3", { class: "st-framing-title", text: framing.label }),
+    el("div", { class: "st-zoom-row" }, [smaller, slider, bigger, readout]),
+    el("div", { class: "st-framing-actions" }, [
+      iconButton("shrink", "Fit scene", () => {
+        ctx.setFraming?.(framing.key, { zoom: framing.fit, cx: 0.5, cy: 0.5 });
+      }),
+      iconButton("expand", "Fill frame", () => {
+        ctx.setFraming?.(framing.key, { zoom: 1 });
+      }),
+      iconButton("move", "Move scene", () => ctx.startMoveScene?.()),
+      iconButton("focus", "Area focus", () => ctx.startAreaFocus?.()),
+    ]),
+    el("div", { class: "st-framing-actions" }, [
+      iconButton("copy", "Use on all", () => ctx.framingToAllScenes?.(framing.key), "st-btn st-btn-quiet st-btn-small"),
+      iconButton("history", "Reset scene", () => ctx.resetFraming?.(framing.key), "st-btn st-btn-quiet st-btn-small"),
+    ]),
+    el("p", { class: "st-layer-note", text: "1× fills the frame. Below 1× the whole scene can fit, and black fills the rest. Anything past the frame border is cut in the render." }),
+    el("p", { class: "st-layer-note", text: "This changes only the picture of this scene. Sound stays on the timeline. The zoom buttons above the preview only change your view." }),
   );
 }
 

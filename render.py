@@ -267,11 +267,12 @@ def _crop_filter(
         source_fps = float(meta.get("fps") or 0)
     except (TypeError, ValueError):
         source_fps = 0.0
+    scale = compose_render.placed_scale_filter(crop.get("place"), out_w, out_h)
     if source_fps > OUT_FPS + 0.01:
         filters.append(f"fps={OUT_FPS}")
-        filters.append(f"scale={out_w}:{out_h}:flags=lanczos")
+        filters.append(scale)
     else:
-        filters.append(f"scale={out_w}:{out_h}:flags=lanczos")
+        filters.append(scale)
         filters.append(f"fps={OUT_FPS}")
     filters.extend(["setsar=1", "format=yuv420p"])
     return ",".join(filters)
@@ -2256,6 +2257,20 @@ def render_story_frame(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+WHOLE_PROXY_LONG_EDGE = 1280
+
+
+def _whole_proxy_size(meta: dict) -> tuple[int, int]:
+    """The source's own shape, even-sized, with no upscale."""
+    width = max(2, int(meta.get("width") or 1920))
+    height = max(2, int(meta.get("height") or 1080))
+    scale = min(1.0, WHOLE_PROXY_LONG_EDGE / max(width, height))
+    return (
+        max(2, int(round(width * scale / 2.0)) * 2),
+        max(2, int(round(height * scale / 2.0)) * 2),
+    )
+
+
 def build_story_proxy(
     source: str,
     meta: dict,
@@ -2265,14 +2280,23 @@ def build_story_proxy(
     aspect: str = "9:16",
     encoder: str | None = None,
     cancel_event: threading.Event | None = None,
+    whole: bool = False,
 ) -> Path:
-    """Build (or reuse) the 540-wide proxy for one story range."""
+    """Build (or reuse) the 540-wide proxy for one story range.
+
+    ``whole`` keeps every clip's full picture instead of the scene crop, so the
+    preview can pan and zoom out without a rebuild. All clips share one size for
+    the concat. The preview maps each clip back through its own fractions, so a
+    file clip of another shape comes out with its true proportions.
+    """
     aspect = aspect if aspect in ASPECTS else "9:16"
-    out_w, out_h = _dims(aspect, "draft")
+    out_w, out_h = _whole_proxy_size(meta) if whole else _dims(aspect, "draft")
     digest = edits.clip_snapshot_hash(clips)
     proxies = job_dir / "proxies"
     target = proxies / (
-        f"{digest}_{aspect.replace(':', 'x')}_{out_w}x{out_h}.mp4"
+        f"{digest}_whole_{out_w}x{out_h}.mp4"
+        if whole
+        else f"{digest}_{aspect.replace(':', 'x')}_{out_w}x{out_h}.mp4"
     )
     if target.is_file() and target.stat().st_size > 1024:
         return target
@@ -2293,7 +2317,15 @@ def build_story_proxy(
             segment_path = tmp / f"{index:03d}.mp4"
             scene = scene_map.get(str(clip.get("scene"))) or {}
             clip_source, clip_meta = _clip_media(job_dir, clip, source, meta)
-            crop = _scene_crop(scene, aspect, clip_meta, out_w, out_h)
+            crop = (
+                {
+                    "x": 0, "y": 0,
+                    "w": int(clip_meta.get("width") or meta["width"]),
+                    "h": int(clip_meta.get("height") or meta["height"]),
+                }
+                if whole
+                else _scene_crop(scene, aspect, clip_meta, out_w, out_h)
+            )
             _segment(
                 clip_source, clip_meta, scene,
                 float(clip["start"]), float(clip["duration"]), int(clip["frames"]),

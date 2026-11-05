@@ -118,19 +118,48 @@ function sceneCrop(job, clip, aspect) {
   return { cx: clamp(cx, 0, 1), cy: clamp(cy, 0, 1) };
 }
 
-function baseCrop(width, height, aspect, cx, cy, zoom) {
+const FRAMING_ZOOM_MIN = 0.1;
+const FRAMING_ZOOM_MAX = 3;
+
+function coverSize(width, height, aspect) {
   const canvas = CANVAS[aspect] || CANVAS["9:16"];
   const targetAr = canvas.width / canvas.height;
-  const sourceAr = width / Math.max(1, height);
-  let cropW;
-  let cropH;
-  if (sourceAr > targetAr) {
-    cropH = height;
-    cropW = Math.min(height * targetAr, width);
-  } else {
-    cropW = width;
-    cropH = Math.min(width / targetAr, height);
+  if (width / Math.max(1, height) > targetAr) {
+    return { w: Math.min(height * targetAr, width), h: height };
   }
+  return { w: width, h: Math.min(width / targetAr, height) };
+}
+
+/** The zoom at which the whole picture just fits inside the frame. */
+export function fitZoom(width, height, aspect) {
+  const cover = coverSize(width, height, aspect);
+  return clamp(
+    Math.min(cover.w / Math.max(1, width), cover.h / Math.max(1, height)),
+    FRAMING_ZOOM_MIN,
+    1,
+  );
+}
+
+/**
+ * The frame's window on the media, as fractions of the media. Below 1× it is
+ * bigger than the media, so x and y go negative and the frame shows empty space.
+ * Mirrors `compose_render._base_crop` and `_zoomed_out_crop`.
+ */
+function baseCrop(width, height, aspect, cx, cy, zoom, setX = true, setY = true) {
+  const cover = coverSize(width, height, aspect);
+  if (zoom < 1) {
+    const windowW = cover.w / zoom;
+    const windowH = cover.h / zoom;
+    const centreX = windowW > width && !setX ? 0.5 : cx;
+    const centreY = windowH > height && !setY ? 0.5 : cy;
+    let left = centreX * width - windowW / 2;
+    let top = centreY * height - windowH / 2;
+    if (windowW <= width) left = clamp(left, 0, width - windowW);
+    if (windowH <= height) top = clamp(top, 0, height - windowH);
+    return { x: left / width, y: top / height, w: windowW / width, h: windowH / height };
+  }
+  let cropW = cover.w;
+  let cropH = cover.h;
   if (zoom > 1) {
     cropW = Math.min(cropW, cropW / zoom);
     cropH = Math.min(cropH, cropH / zoom);
@@ -145,16 +174,31 @@ function baseCrop(width, height, aspect, cx, cy, zoom) {
   };
 }
 
+/** A clip's key in `reframe.scenes`. Mirrors `compose_render.scene_framing_key`. */
+export function sceneFramingKey(clip) {
+  if (!clip || clip.kind === "blank") return "";
+  if (clip.kind === "file") return clip.asset_id ? `asset:${clip.asset_id}` : "";
+  return clip.scene === undefined || clip.scene === null ? "" : String(clip.scene);
+}
+
+function clipDimensions(edit, job, clip, aspect) {
+  if (clip?.kind === "file") {
+    const asset = (edit?.assets || []).find((item) => item?.id === clip.asset_id);
+    if (asset?.width && asset?.height) return sourceDimensions(asset, aspect);
+  }
+  return sourceDimensions(job?.source, aspect);
+}
+
 /**
- * The crop window at output time `t`, as fractions of the source frame.
- * Mirrors `compose_render`: center mode ignores scenes, auto mode prefers the
- * scene crop, and the Edit's overrides win over both.
+ * The framing in force at output time `t`: the crop centre and zoom, whether the
+ * creator set each axis, and the zoom that fits this clip inside the frame.
  */
-export function cropAt({ edit, job, story, time = 0, aspect = "9:16" } = {}) {
-  const { width, height } = sourceDimensions(job?.source, aspect);
+export function framingAt({ edit, job, story, time = 0, aspect = "9:16" } = {}) {
   const reframe = edit?.reframe || {};
   const mode = String(reframe.mode || "auto").toLowerCase();
   const active = clipAt(story, time);
+  const key = sceneFramingKey(active.clip);
+  const { width, height } = clipDimensions(edit, job, active.clip, aspect);
   let cx = numberOr(reframe.cx, 0.5);
   let cy = numberOr(reframe.cy, 0.5);
   if (mode === "center") {
@@ -170,10 +214,48 @@ export function cropAt({ edit, job, story, time = 0, aspect = "9:16" } = {}) {
   const overrides = reframe.overrides && typeof reframe.overrides === "object"
     ? reframe.overrides
     : {};
-  cx = numberOr(overrides.cx, cx);
-  cy = numberOr(overrides.cy, cy);
-  const zoom = clamp(numberOr(overrides.zoom, reframe.zoom ?? 1), 1, 2);
-  return baseCrop(width, height, aspect, clamp(cx, 0, 1), clamp(cy, 0, 1), zoom);
+  const entry = (key && reframe.scenes?.[key]) || {};
+  const setBy = (field) => mode === "manual" || field in overrides || field in entry;
+  return {
+    key,
+    width,
+    height,
+    entry,
+    setX: setBy("cx"),
+    setY: setBy("cy"),
+    cx: clamp(numberOr(overrides.cx, numberOr(entry.cx, cx)), 0, 1),
+    cy: clamp(numberOr(overrides.cy, numberOr(entry.cy, cy)), 0, 1),
+    zoom: clamp(
+      numberOr(overrides.zoom, numberOr(entry.zoom, numberOr(reframe.zoom, 1))),
+      FRAMING_ZOOM_MIN,
+      FRAMING_ZOOM_MAX,
+    ),
+    fit: fitZoom(width, height, aspect),
+  };
+}
+
+/**
+ * The crop window at output time `t`, as fractions of the source frame.
+ * Mirrors `compose_render`: center mode ignores scenes, auto mode prefers the
+ * scene crop, and a scene's own framing and the Edit's overrides win over both.
+ */
+export function cropAt({ edit, job, story, time = 0, aspect = "9:16" } = {}) {
+  const framing = framingAt({ edit, job, story, time, aspect });
+  return baseCrop(
+    framing.width, framing.height, aspect, framing.cx, framing.cy, framing.zoom,
+    framing.setX, framing.setY,
+  );
+}
+
+/** Panning or zooming out shows picture the scene-cropped fast preview left out. */
+export function framingNeedsWholePicture(edit) {
+  const reframe = edit?.reframe || {};
+  if (String(reframe.mode || "auto").toLowerCase() !== "auto") return true;
+  if (numberOr(reframe.zoom, 1) < 1 || numberOr(reframe.overrides?.zoom, 1) < 1) return true;
+  if ("cx" in (reframe.overrides || {}) || "cy" in (reframe.overrides || {})) return true;
+  return Object.values(reframe.scenes || {}).some((entry) => (
+    numberOr(entry?.zoom, 1) < 1 || "cx" in (entry || {}) || "cy" in (entry || {})
+  ));
 }
 
 function validBox(box) {
