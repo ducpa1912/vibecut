@@ -529,7 +529,6 @@ export function mount(root, ctx) {
     }
   })();
   let quality = "final";
-  let fillReuse = false;
   // R2 trim health: per story, the current story revision and whether the
   // chosen shape's Edit still matches the range. A stale Edit is never queued.
   const trimHealth = new Map();
@@ -1549,19 +1548,6 @@ export function mount(root, ctx) {
         renderStoryCard();
       },
     ));
-
-    const reuseInput = el("input", { type: "checkbox", class: "st-finish-reuse", checked: fillReuse });
-    reuseInput.addEventListener("change", () => {
-      fillReuse = reuseInput.checked;
-      renderStoryCard();
-    });
-    fields.append(el("label", {
-      class: "st-finish-reuse-option",
-      title: "LaMa only. A new render; your existing renders stay.",
-    }, [
-      reuseInput,
-      el("span", { text: "Reuse one AI fill for a whole line on very still shots" }),
-    ]));
 
     const liveCount = stories().filter((story) => (
       liveQueueItem(String(story.id || ""), aspect)
@@ -2965,7 +2951,6 @@ export function mount(root, ctx) {
         story_id: story.id,
         aspect: shape,
         quality,
-        fill_reuse: fillReuse,
         title: storyName(story, stories().indexOf(story)),
       }));
       const result = await request("/api/story-queues", { method: "POST", body: { items } });

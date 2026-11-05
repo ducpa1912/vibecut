@@ -30,7 +30,8 @@ def _estimate(tmp_path, layers, method="sttn"):
 def test_sttn_cost_counts_strips_and_lama_counts_frames(tmp_path):
     assert _estimate(tmp_path, [BOTTOM])["units"] == 60
     assert _estimate(tmp_path, [BOTTOM, TOP])["units"] == 120
-    assert _estimate(tmp_path, [BOTTOM, TOP], "lama")["units"] == 60
+    # LaMa counts model runs on its crop, from the plan, not frames.
+    assert 0 < _estimate(tmp_path, [BOTTOM, TOP], "lama")["units"] < 60
 
 
 def test_frames_outside_the_ranges_cost_nothing(tmp_path):
@@ -75,10 +76,10 @@ def test_no_fill_means_no_sentence(tmp_path):
 
 def test_this_machines_rate_replaces_the_seed(tmp_path):
     assert textfill.fill_rate(tmp_path, "sttn") == {"seconds": 4.6, "measured": False}
-    assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 0.6, "measured": False}
+    assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 4.0, "measured": False}
     # A figure saved before key frames and tight areas is not used.
     (tmp_path / textfill.RATES_FILE).write_text('{"lama": {"seconds": 8.3, "runs": 9}}', encoding="utf-8")
-    assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 0.6, "measured": False}
+    assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 4.0, "measured": False}
     textfill.record_rate(tmp_path, "lama", 10, 20.0)
     assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 2.0, "measured": True}
     (tmp_path / textfill.RATES_FILE).unlink()

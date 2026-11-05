@@ -126,6 +126,31 @@ def layer_rects(layer: dict, width: int, height: int) -> list[Rect]:
     return rects or [bounds]
 
 
+def frame_keys(
+    layers: Iterable[dict],
+    *,
+    start: float,
+    fps: float,
+    frames: int,
+) -> list[float | None]:
+    """AI fills per second the plan asks for on each frame of a span.
+
+    The busiest line on a frame sets it. None means a layer on that frame has no
+    plan, such as a drawn box, so the render uses its own default.
+    """
+    timed = [(layer, layer_windows(layer)) for layer in layers]
+    out: list[float | None] = []
+    for index in range(frames):
+        at = start + (index + 0.5) / fps
+        active = [
+            layer for layer, windows in timed
+            if windows is None or any(low <= at <= high for low, high in windows)
+        ]
+        plans = [layer.get("fill_keys") for layer in active]
+        out.append(None if not plans or any(plan is None for plan in plans) else float(max(plans)))
+    return out
+
+
 def layer_windows(layer: dict) -> list[tuple[float, float]] | None:
     """Active source-time windows, or None when the layer is always on."""
     ranges = layer.get("ranges") or []

@@ -9,6 +9,7 @@ from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -1121,3 +1122,54 @@ def test_check_body_validates_fps(check_env, inline_check):
         f"/api/jobs/{check_env.job_id}/check", json={"fps": 30},
     )
     assert response.status_code == 422
+
+
+def _motion_for(values, shape=(64, 36)):
+    return {"maps": [None, *[np.full(shape, value * 4, dtype=np.uint8) for value in values]], "scale": 4.0}
+
+
+def _plan_frames(count):
+    return [{"start": index * 0.5} for index in range(count)]
+
+
+def _plan_tracklet():
+    return {
+        "box": box(0.2, 0.8, 0.6, 0.03),
+        "ranges": [{"start": 0.0, "end": 10.0}],
+    }
+
+
+def test_a_still_line_is_planned_as_one_fill():
+    tracklet = _plan_tracklet()
+    detect.plan_fills([tracklet], _plan_frames(5), _motion_for([0.5, 0.5, 0.5, 0.5]), {"width": 1080, "height": 1920})
+    assert tracklet["fill_plan"]["keys"] == 0.0
+
+
+def test_a_moving_line_gets_more_fills_up_to_the_most():
+    middle, busy = _plan_tracklet(), _plan_tracklet()
+    source = {"width": 1080, "height": 1920}
+    quiet = np.zeros((64, 36), dtype=np.uint8)
+
+    def around(value):
+        change = np.full((64, 36), value * 4, dtype=np.uint8)
+        change[:5, :] = 0
+        return {"maps": [None, quiet, change, change, change], "scale": 4.0}
+
+    detect.plan_fills([middle], _plan_frames(5), around(6), source)
+    detect.plan_fills([busy], _plan_frames(5), around(40), source)
+    assert 0 < middle["fill_plan"]["keys"] < busy["fill_plan"]["keys"]
+    assert busy["fill_plan"]["keys"] == detect.MOTION_MOST_KEYS
+
+
+def test_grain_alone_does_not_count_as_motion():
+    tracklet = _plan_tracklet()
+    # Everywhere changes by the same small amount, so it is this video's noise.
+    detect.plan_fills([tracklet], _plan_frames(5), _motion_for([3, 3, 3, 3]), {"width": 1080, "height": 1920})
+    assert tracklet["fill_plan"]["keys"] == 0.0
+
+
+def test_no_motion_reading_leaves_no_plan():
+    tracklet = _plan_tracklet()
+    detect.plan_fills([tracklet], _plan_frames(2), None, {"width": 1080, "height": 1920})
+    assert "fill_plan" not in tracklet
+

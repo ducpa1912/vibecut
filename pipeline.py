@@ -784,6 +784,9 @@ CHECK_SAMPLE_MAX_FRAMES = 3600
 CHECK_OCR_BATCH = 24
 # Thin captions over a busy picture read at full size and not at 960.
 CHECK_FRAME_WIDTH = 1280
+# The size motion is compared at, and the cell it is averaged over, in pixels.
+MOTION_WIDTH = 144
+MOTION_CELL = 4
 
 
 def _run_progress(
@@ -904,6 +907,45 @@ def extract_text_frames(
     ]
 
 
+def motion_between_frames(directory: Path, files: list[Path]) -> dict | None:
+    """How much each part of the picture changes from one sampled frame to the next.
+
+    Small greyscale copies, compared cell by cell, so a long video stays a few
+    megabytes. The scan uses this to plan the AI fill for each line of text.
+    """
+    from PIL import Image
+
+    previous = None
+    maps: list[np.ndarray] = []
+    for name in files:
+        try:
+            with Image.open(Path(directory) / Path(name).name) as image:
+                image.draft("L", (MOTION_WIDTH, MOTION_WIDTH * 4))
+                width, height = image.size
+                small = image.convert("L").resize(
+                    (MOTION_WIDTH, max(MOTION_CELL, round(MOTION_WIDTH * height / width))),
+                )
+        except OSError:
+            previous = None
+            maps.append(None)
+            continue
+        current = np.asarray(small, dtype=np.int16)
+        if previous is None or previous.shape != current.shape:
+            maps.append(None)
+        else:
+            change = np.abs(current - previous).astype(np.float32)
+            rows = change.shape[0] // MOTION_CELL
+            cols = change.shape[1] // MOTION_CELL
+            cells = change[:rows * MOTION_CELL, :cols * MOTION_CELL]
+            cells = cells.reshape(rows, MOTION_CELL, cols, MOTION_CELL).mean(axis=(1, 3))
+            maps.append(np.clip(cells * 4, 0, 255).astype(np.uint8))
+        previous = current
+    shapes = {item.shape for item in maps if item is not None}
+    if len(shapes) != 1:
+        return None
+    return {"maps": maps, "scale": 4.0}
+
+
 def read_text_samples(
     path: str,
     job_dir: Path,
@@ -964,10 +1006,12 @@ def read_text_samples(
             "width": int(record.get("width") or 0) or None,
             "height": int(record.get("height") or 0) or None,
         })
+    motion = motion_between_frames(directory, [str(frame["file"]) for frame in frames])
     if not keep:
         shutil.rmtree(directory, ignore_errors=True)
     return {
         "frames": samples,
+        "motion": motion,
         "vision": bool(available and records),
         "fps": round(len(samples) / duration, 4) if duration else fps,
         "duration": round(duration, 3),

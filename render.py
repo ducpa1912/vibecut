@@ -2489,7 +2489,6 @@ def _prepare_fills(
     cancel_event: threading.Event | None,
     fps: int = OUT_FPS,
     on_eta: Callable[[float], None] | None = None,
-    reuse_still: bool = False,
 ) -> list[dict | None]:
     """Run the AI text fill pre-pass: one filled clip per beat that needs it.
 
@@ -2550,7 +2549,6 @@ def _prepare_fills(
                     ffmpeg=_ffmpeg(),
                     progress=report,
                     cancel_event=cancel_event,
-                    reuse_still=reuse_still,
                 )
             except textfill.FillCancelled as exc:
                 raise RenderCancelled("Render cancelled.") from exc
@@ -2766,7 +2764,6 @@ def render_reel(
         # Fill model files: replacing a checkpoint must not reuse a master
         # whose beats were built from the old model.
         "fill_models": fill_sig,
-        **({"fill_reuse": True} if plan.get("_fill_reuse") else {}),
         # Text raster version: a font change must not reuse an old master.
         "text_skin": LAYER_CACHE_VERSION,
     }, sort_keys=True).encode()).hexdigest()[:16]
@@ -2795,7 +2792,6 @@ def render_reel(
                 fills = _prepare_fills(
                     source, meta, job_dir, edit_segments if compiled is not None else [],
                     progress, cancel_event, on_eta=fill_eta,
-                    reuse_still=bool(plan.get("_fill_reuse")),
                 )
             cut_from = 0.45 if any(fills) else 0.02
             done = 0

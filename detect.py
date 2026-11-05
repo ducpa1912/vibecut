@@ -54,6 +54,12 @@ MAX_TRACKLETS = 1000
 # Two readings are one line when this much of the words match; OCR misreads a
 # few characters from frame to frame.
 LINE_MATCH = 0.6
+# Fill planning, as multiples of the video's own noise. Picture change around a
+# line up to the first is still; the second sets how fast fills rise with motion.
+MOTION_NOISE_FLOOR = 0.5
+MOTION_STILL_TIMES = 4.0
+MOTION_KEY_TIMES = 4.0
+MOTION_MOST_KEYS = 6.0
 MAX_RANGES = 200
 
 KINDS = rights.KINDS
@@ -992,6 +998,58 @@ def _mark_minor(items: list[dict]) -> None:
         )
         if places >= 2 or item["box"]["h"] < 0.6 * usual:
             item["minor"] = True
+
+
+def plan_fills(tracklets: list[dict], frames: list[dict], motion: dict | None, source: dict) -> None:
+    """Give each line a fill plan from how the picture moves around it, in this video.
+
+    ``fill_plan.keys`` is AI fills per second: 0 means one for the whole line. It
+    is read against this video's own quietest parts, its noise, so a grainy video
+    is not treated as a moving one. Lines with no reading keep no plan.
+    """
+    maps = (motion or {}).get("maps") or []
+    usable = [item for item in maps if item is not None]
+    if not usable or len(maps) != len(frames):
+        return
+    scale = float((motion or {}).get("scale") or 1.0)
+    noise = max(MOTION_NOISE_FLOOR, float(np.percentile(np.stack(usable), 5)) / scale)
+    rows, cols = usable[0].shape
+    aspect = float(source.get("height") or 16) / float(source.get("width") or 9)
+    for tracklet in tracklets:
+        box = tracklet["box"]
+        margin_y = max(float(box["h"]), 0.01)
+        margin_x = margin_y * aspect
+        ring = np.zeros((rows, cols), dtype=bool)
+        ring[
+            int(max(0.0, box["y"] - margin_y) * rows):int(np.ceil(min(1.0, box["y"] + box["h"] + margin_y) * rows)),
+            int(max(0.0, box["x"] - margin_x) * cols):int(np.ceil(min(1.0, box["x"] + box["w"] + margin_x) * cols)),
+        ] = True
+        ring[
+            int(box["y"] * rows):int(np.ceil((box["y"] + box["h"]) * rows)),
+            int(box["x"] * cols):int(np.ceil((box["x"] + box["w"]) * cols)),
+        ] = False
+        if not ring.any():
+            continue
+        readings = [
+            float(change[ring].mean()) / scale
+            for frame, change in zip(frames, maps)
+            if change is not None and any(
+                float(span["start"]) <= float(frame["start"]) <= float(span["end"])
+                for span in tracklet.get("ranges") or []
+            )
+        ]
+        if not readings:
+            continue
+        # The middle reading: one jump, such as a cut, is not how the line moves.
+        moved = float(np.median(readings))
+        keys = 0.0
+        if moved > MOTION_STILL_TIMES * noise:
+            keys = min(MOTION_MOST_KEYS, 1.0 + moved / (MOTION_KEY_TIMES * noise))
+        tracklet["fill_plan"] = {
+            "motion": round(moved, 2),
+            "noise": round(noise, 2),
+            "keys": round(keys, 1),
+        }
 
 
 def build_tracklets(
@@ -2016,6 +2074,8 @@ def run_check(
     observations = observations_from_scenes(scenes)
     sampled: dict = {"ran": False, "frames": 0, "vision": False}
     sampled_error: str | None = None
+    sample_frames: list[dict] = []
+    motion_maps: dict | None = None
     if sample_text and sampler is not None and path:
         if progress:
             progress(0.05, f"Sampling text at {fps:g} frames a second")
@@ -2034,6 +2094,8 @@ def run_check(
             sampled_error = str(exc)[:300]
             payload = None
         frames, vision, count, used_fps = _sampler_payload(payload)
+        sample_frames = frames
+        motion_maps = payload.get("motion") if isinstance(payload, dict) else None
         # Scene readings are one still with a four-second window. Once the timed
         # pass has read the frames they only stretch the text's time and box.
         if vision and count:
@@ -2095,6 +2157,7 @@ def run_check(
     )
     report["timings"] = {"total": round(time.time() - started, 3)}
     report["progress"] = 1.0
+    plan_fills(report.get("tracklets") or [], sample_frames, motion_maps, report.get("source") or {})
     if scoped:
         _keep_text_outside_scope(report, load_report(job_dir), window_start, window_end)
     write_report(job_dir, report)
