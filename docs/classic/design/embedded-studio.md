@@ -1,7 +1,7 @@
 # Studio features embedded in Classic
 
-Status: C0–C4 built, none founder-passed. Base: `origin/studio` at `8457728`;
-Classic at `193b60e`.
+Status: C0–C4 and AI fill built, none founder-passed. Base: `origin/studio`
+at `8457728`; Classic at `18b46ac`.
 
 Classic is not an iframe around Studio. The goal is to bring the interaction
 patterns that fixed Studio's editor into Classic, while keeping Classic's page,
@@ -161,8 +161,7 @@ Cover and the rights gate refuses watermarks and screen UI.
 **Status:** built, not founder-passed. The found-text list reads Check's own
 `clean_prefill`: thumbnail from the nearest scene still cropped by CSS to the
 found box, kind and server reason. Rows are ticked, then one "Remove ticked"
-removes them all with one method (Blur, Cover, or AI fill once C2b is
-installed), in one undo step. Watermark and screen-UI rows are greyed with the
+removes them all with one method (Blur, Cover, or AI fill), in one undo step. Watermark and screen-UI rows are greyed with the
 server's reason and have no tick. Scan ranges are source time and boxes are
 translated clip by clip; text no clip carries says "not in this cut" instead of
 becoming a box that never appears. The rights gate is enforced on the server as
@@ -186,8 +185,12 @@ and `test_the_rights_lock_refuses_clean_without_the_tick`.
 preview, and the full render fills every frame. Until then, C2 stays at Blur
 and Cover.
 
-**Status:** built, not installed and not founder-passed. The model pack is not
-on this Mac, so the founder cannot use it yet and nothing pretends otherwise.
+**Status:** built, models available, not founder-passed. The shared model
+cache at `~/.cache/vibecut/models/fill` has both `sttn_infer_model.pth` and
+`lama_fp32.onnx`; `lane-env.sh` points `VIBECUT_FILL_MODELS` there. The two
+files match the hashes in the Studio fill test plan. The runtime packages
+(`torch` for STTN, `onnxruntime` for LaMa) are present on the machine.
+
 `textfill/` is a byte-identical copy of Studio `7ce8dcf`; the Edit schema
 accepts `kind: "fill"` with `method: "sttn"|"lama"`; the render holds
 `render.FILL_LOCK`, fills each segment with a fill plan before encoding and
@@ -196,19 +199,20 @@ layer signature. Classic keeps its own `method` (blur/cover/crop/fill) and adds
 `engine` on fill layers only.
 
 `GET /api/classic/fill` answers per engine, not one flag: `ready` means the
-model file **and** its runtime package (`torch` for STTN, `onnxruntime` for
-LaMa) are present, and each engine carries its own reason. STTN installed
-without LaMa still fills subtitles; only the one-frame preview needs LaMa,
-because STTN needs neighbouring frames. `POST /api/classic/jobs/{id}/fill/
-preview` compiles the unsaved boxes, reads the source frame at the right
-source time, fills it with LaMa, burns overlays and returns before/after JPEGs
-cached by edit, frame and model; it answers `409 fill_running` while a render
-holds the fill lock. The panel shows what is ready and what is missing, the
-cost per engine, an engine picker per fill layer, and only enables Preview
-when LaMa is ready. The render progress already reads server progress, so a
-fill render says `Filling text, beat i/n` and the existing Cancel stops it. No
-real fill has run on this Mac: that needs the founder's approval to install
-torch/onnxruntime and copy the model pack.
+model file **and** its runtime package are present, and each engine carries its
+own reason. STTN installed without LaMa still fills subtitles; only the
+one-frame preview needs LaMa, because STTN needs neighbouring frames.
+`POST /api/classic/jobs/{id}/fill/preview` compiles the unsaved boxes, reads
+the source frame at the right source time, fills it with LaMa, burns overlays
+and returns before/after JPEGs cached by edit, frame and model; it answers
+`409 fill_running` while a render holds the fill lock. The preview now runs
+the same rights gate as save/render, so a watermark or un-attested box is
+refused before any pixels change. The panel shows what is ready and what is
+missing, the cost per engine, an engine picker per fill layer, and only enables
+Preview when LaMa is ready. The render progress already reads server progress,
+so a fill render says `Filling text, beat i/n` and the existing Cancel stops
+it. No real full fill render has been verified in Classic yet; that is the
+founder's test.
 
 ### C3 — Polish
 
