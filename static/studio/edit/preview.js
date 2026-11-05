@@ -550,20 +550,25 @@ export function mountPreview(root, options = {}) {
     return sourceTimeAt(state.story, state.time);
   }
 
+  /**
+   * The boxes and brush marks on at the playhead. A layer being painted stays,
+   * since its strokes must show while they are drawn.
+   */
   function cleanRects() {
     const crop = currentCrop();
     const time = sourceTime();
     const selected = state.selected?.kind === "clean" ? state.selected.id : "";
-    return cleanLayers().map((layer) => {
-      const frame = boxToFrame(layer.box, crop);
-      return {
+    return cleanLayers()
+      .filter((layer) => (
+        layerActive(layer, time) || (state.tool === "paint" && layer.id === state.paintLayerId)
+      ))
+      .map((layer) => ({
         layer,
-        frame,
-        active: layerActive(layer, time),
+        frame: boxToFrame(layer.box, crop),
+        active: true,
         selected: layer.id === selected,
         hidden: state.hiddenLayers.has(hiddenKey("clean", layer.id)),
-      };
-    });
+      }));
   }
 
   function pxRect(frame, width, height) {

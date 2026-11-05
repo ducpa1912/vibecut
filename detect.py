@@ -751,15 +751,39 @@ def _keep_text_outside_scope(report: dict, previous: dict | None, start: float, 
     if not isinstance(previous, dict) or previous.get("status") != "ready":
         return
 
-    def outside(ranges: Any) -> bool:
-        spans = ranges if isinstance(ranges, list) else []
-        return bool(spans) and all(
-            _number(item.get("end"), 0.0) <= start or _number(item.get("start"), 0.0) >= end
-            for item in spans if isinstance(item, dict)
-        )
+    def outside(ranges: Any) -> list[dict]:
+        pieces: list[dict] = []
+        for item in ranges if isinstance(ranges, list) else []:
+            if not isinstance(item, dict):
+                continue
+            low, high = _number(item.get("start"), 0.0), _number(item.get("end"), 0.0)
+            if low < start:
+                pieces.append({"start": low, "end": min(high, start)})
+            if high > end:
+                pieces.append({"start": max(low, end), "end": high})
+        return [piece for piece in pieces if piece["end"] > piece["start"]]
 
-    kept = [item for item in previous.get("tracklets") or [] if outside(item.get("ranges"))]
-    if not kept:
+    # The id comes from the words and the area, so text seen again in this scan
+    # has the same id. It joins its old row instead of listing twice.
+    current = {str(item.get("id")): item for item in report.get("tracklets") or []}
+    kept: list[dict] = []
+    for item in previous.get("tracklets") or []:
+        rest = outside(item.get("ranges"))
+        if not rest:
+            continue
+        match = current.get(str(item.get("id")))
+        if match is None:
+            kept.append({**item, "ranges": rest})
+            continue
+        match["ranges"] = _merge_ranges(
+            sorted([*(match.get("ranges") or []), *rest], key=lambda value: value["start"]),
+            0.0,
+        )
+        if isinstance(match.get("box"), dict) and isinstance(item.get("box"), dict):
+            match["box"] = _union(match["box"], item["box"])
+    if not kept and not any(
+        outside(item.get("ranges")) for item in previous.get("tracklets") or []
+    ):
         return
     report["tracklets"] = sorted(
         [*kept, *(report.get("tracklets") or [])],

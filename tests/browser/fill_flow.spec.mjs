@@ -378,6 +378,18 @@ try {
   const savedRange = afterClean.clean?.[0]?.ranges?.[0];
   assert(savedRange && savedRange.end < 24, `the Clean range was not saved: ${JSON.stringify(savedRange)}`);
 
+  // A box shows only at its own time on the timeline.
+  await page.locator(".st-tl-bar-clean.is-timed").first().click();
+  await page.waitForTimeout(250);
+  assert(await page.locator("#st-box-method").isVisible(), "the selected box is not on the preview at its time");
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("End");
+  await page.waitForTimeout(250);
+  assert(!(await page.locator("#st-box-method").isVisible()), "the box still shows past its time");
+  await page.locator(".st-tl-bar-clean.is-timed").first().click();
+  await page.waitForTimeout(250);
+  assert(await page.locator("#st-box-method").isVisible(), "selecting the layer did not go to its time");
+
   // A Text layer drags on the video, and its bar changes how long it shows.
   await page.locator('[aria-label="Text"], [title="Text"]').first().click();
   await page.locator('.st-text-preset[data-kind="hook"]').click();

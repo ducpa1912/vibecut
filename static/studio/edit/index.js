@@ -22,11 +22,11 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261105-1";
+import { mountPreview } from "./preview.js?v=20261105-2";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
-import { boxToFrame, cropAt, framingAt, sceneFramingKey, visibleRect } from "./canvas-tools.js";
+import { boxToFrame, cropAt, framingAt, layerActive, sceneFramingKey, sourceTimeAt, visibleRect } from "./canvas-tools.js";
 import { icon, paintIcons } from "./icons.js";
 import {
   isFillAvailable,
@@ -46,6 +46,7 @@ import {
   clone,
   movedCleanRanges,
   storySpans,
+  replacedCleanSpans,
   storyToSourceRanges,
   clamp,
   formatTime,
@@ -77,7 +78,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261105-1";
+    link.href = "/static/studio/edit/edit.css?v=20261105-2";
     document.head.append(link);
   }
 }
@@ -2132,15 +2133,15 @@ export function mount(root, ctx) {
   }
 
   /** A timeline bar was dragged to a new story span. */
-  function setLayerTime({ kind, layerId, rangeIndex, span, start, end }) {
+  function setLayerTime({ kind, layerId, rangeIndex, span, pieces, start, end }) {
     if (!state.edit) return;
     if (kind === "clean") {
       const clean = clone(state.edit.clean || []);
       const layer = clean.find((item) => item.id === layerId);
       if (!layer) return;
-      layer.ranges = span
-        ? movedCleanRanges(layer.ranges, rangeIndex, span, start, end)
-        : storyToSourceRanges(currentSequence(), start, end);
+      if (pieces) layer.ranges = replacedCleanSpans(layer.ranges, pieces, currentSequence(), start, end);
+      else if (span) layer.ranges = movedCleanRanges(layer.ranges, rangeIndex, span, start, end);
+      else layer.ranges = storyToSourceRanges(currentSequence(), start, end);
       state.edit.clean = clean;
       touch("clean");
       renderLayers();
@@ -2276,6 +2277,12 @@ export function mount(root, ctx) {
     if (kind === "clean") {
       state.activeLayer = "clean";
       timeline?.focusLane?.("clean");
+      // The preview shows only what is on at the playhead, so go to the layer.
+      const layer = (state.edit?.clean || []).find((item) => item.id === id);
+      if (layer && !layerActive(layer, sourceTimeAt(state.story, state.playhead))) {
+        const at = cleanLayerTime(layer);
+        if (at !== null) seek(at);
+      }
     }
     else if (kind === "captions") state.activeLayer = "transcript";
     else if (kind === "audio") state.activeLayer = "narrative";

@@ -205,6 +205,54 @@ export function sameScanText(layer, other) {
   )));
 }
 
+function foundTextKey(tracklet) {
+  return String(tracklet?.text_sample || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function sameFoundText(first, second) {
+  if (first === second) return true;
+  // The scan can misread a line ("Hello worl") or catch part of it.
+  return Math.min(first.length, second.length) >= 4
+    && (first.includes(second) || second.includes(first));
+}
+
+/**
+ * One row per text. The scan can read the same words in the same area as
+ * separate tracklets, so they join: `ids` carries them all to Clean, and the
+ * longest reading names the row.
+ */
+export function mergeFoundTracklets(tracklets) {
+  const rows = [];
+  for (const tracklet of Array.isArray(tracklets) ? tracklets : []) {
+    const id = String(tracklet?.id || "");
+    if (!id) continue;
+    const key = foundTextKey(tracklet);
+    const home = rows.find((row) => row.ids.includes(id))
+      || (key && rows.find((row) => (
+        row.kind === tracklet.kind && sameArea(row.box, tracklet.box)
+        && sameFoundText(foundTextKey(row), key)
+      )));
+    if (!home) {
+      rows.push({ ...tracklet, ids: [id], ranges: [...(tracklet.ranges || [])] });
+      continue;
+    }
+    if (!home.ids.includes(id)) home.ids.push(id);
+    if (key.length > foundTextKey(home).length) home.text_sample = tracklet.text_sample;
+    const sorted = [...home.ranges, ...(tracklet.ranges || [])]
+      .sort((a, b) => numberOr(a.start) - numberOr(b.start));
+    home.ranges = sorted.reduce((joined, range) => {
+      const last = joined.at(-1);
+      if (last && numberOr(range.start) <= numberOr(last.end)) {
+        last.end = Math.max(numberOr(last.end), numberOr(range.end));
+      } else {
+        joined.push({ ...range });
+      }
+      return joined;
+    }, []);
+  }
+  return rows;
+}
+
 /**
  * One group per found text. Layers saved before scans were deduplicated can
  * hold the same text many times; they read as one row with its pieces inside.
@@ -681,9 +729,8 @@ export function mountCleanPanel(host, ctx) {
     const prefill = prefillByTracklet();
     const full = current.length >= MAX_CLEAN;
     const rows = [];
-    for (const tracklet of report?.tracklets || []) {
-      const id = String(tracklet?.id || "");
-      if (!id) continue;
+    for (const tracklet of mergeFoundTracklets(report?.tracklets)) {
+      const id = String(tracklet.id);
       const kind = String(tracklet?.kind || "");
       const entry = prefill.get(id) || null;
       const reasonCode = kindReason(kind);
@@ -813,7 +860,7 @@ export function mountCleanPanel(host, ctx) {
     try {
       const result = await autoCleanRequest(activeJob, currentEdit.id, {
         include_handles: false,
-        tracklet_ids: ticked.map((row) => row.id),
+        tracklet_ids: ticked.flatMap((row) => row.tracklet.ids),
         method: removeMethod,
         fill_method: fillMethod,
       });

@@ -524,6 +524,68 @@ export function movedCleanRanges(ranges, rangeIndex, span, start, end) {
   return out.sort((a, b) => a.start - b.start);
 }
 
+/**
+ * A dragged bar that crosses several cuts: its old pieces of the source come
+ * out of the layer's ranges, and the new span goes in. Other bars stay.
+ */
+export function replacedCleanSpans(ranges, pieces, clips, start, end) {
+  let rest = (Array.isArray(ranges) ? ranges : [])
+    .map((range) => ({ start: numberOr(range.start), end: numberOr(range.end) }));
+  for (const { span } of pieces) {
+    rest = rest.flatMap((range) => {
+      if (span.sourceEnd <= range.start || span.sourceStart >= range.end) return [range];
+      return [
+        { start: range.start, end: Math.min(range.end, span.sourceStart) },
+        { start: Math.max(range.start, span.sourceEnd), end: range.end },
+      ].filter((part) => part.end > part.start + 1e-3);
+    });
+  }
+  const sorted = [...rest, ...storyToSourceRanges(clips, start, end)]
+    .sort((a, b) => a.start - b.start);
+  const joined = [];
+  for (const range of sorted) {
+    const last = joined.at(-1);
+    if (last && range.start <= last.end + 1e-3) last.end = Math.max(last.end, range.end);
+    else joined.push({ ...range });
+  }
+  return joined;
+}
+
+/** One bar per stretch of story: a cut in the video does not split a layer's bar. */
+function cleanBars(layer, ranges, clips, label, drawn) {
+  const pieces = ranges
+    .flatMap((range, rangeIndex) => (
+      storySpans(clips, range.start, range.end).map((span) => ({ rangeIndex, span }))
+    ))
+    .sort((a, b) => a.span.start - b.span.start);
+  const bars = [];
+  for (const piece of pieces) {
+    const last = bars.at(-1);
+    if (last && piece.span.start <= last.end + 0.05) {
+      last.end = Math.max(last.end, piece.span.end);
+      last.pieces.push(piece);
+    } else {
+      bars.push({ start: piece.span.start, end: piece.span.end, pieces: [piece] });
+    }
+  }
+  return bars.map((bar, index) => {
+    const single = bar.pieces.length === 1 ? bar.pieces[0] : null;
+    return {
+      id: `${layer.id}-${index}`,
+      layerId: layer.id,
+      label,
+      // The name shows once. The layer's other bars carry it in their tooltip.
+      repeat: index > 0,
+      drawn,
+      rangeIndex: single ? single.rangeIndex : -1,
+      span: single ? single.span : null,
+      pieces: single ? null : bar.pieces,
+      start: bar.start,
+      end: bar.end,
+    };
+  });
+}
+
 export function layerSpans(edit, captions, duration, clips = null) {
   const span = { start: 0, end: Math.max(0.1, duration) };
   const rows = [];
@@ -535,18 +597,7 @@ export function layerSpans(edit, captions, duration, clips = null) {
     const label = layer.label || CLEAN_LABELS[layer.kind] || `Clean ${index + 1}`;
     const drawn = !String(layer.tracklet_id || "").trim();
     if (clips && Array.isArray(layer.ranges) && layer.ranges.length) {
-      return layer.ranges.flatMap((range, rangeIndex) => (
-        storySpans(clips, range.start, range.end).map((span, spanIndex) => ({
-          id: `${layer.id}-${rangeIndex}-${spanIndex}`,
-          layerId: layer.id,
-          label,
-          drawn,
-          rangeIndex,
-          span,
-          start: span.start,
-          end: span.end,
-        }))
-      ));
+      return cleanBars(layer, layer.ranges, clips, label, drawn);
     }
     return ranges.map((range, rangeIndex) => ({
       id: `${layer.id}-${rangeIndex}`,

@@ -552,7 +552,7 @@ export function mountTimeline(root, options = {}) {
       attrs.type = "button";
     }
     const button = el(kind === "scenes" ? "div" : "button", attrs, [
-      label ? el("span", { text: label }) : null,
+      label && !item.repeat ? el("span", { text: label }) : null,
       kind === "scenes" ? el("button", {
         class: "st-tl-role-btn",
         type: "button",
@@ -662,6 +662,7 @@ export function mountTimeline(root, options = {}) {
         layerId: item.layerId || item.id,
         rangeIndex: item.rangeIndex,
         span: item.span || null,
+        pieces: item.pieces || null,
         start: next.start,
         end: next.end,
       });

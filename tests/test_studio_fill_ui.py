@@ -31,7 +31,7 @@ def test_found_list_has_thumbnails_ticks_select_all_and_reasons():
 
 
 def test_remove_all_sends_the_ticks_and_the_chosen_method():
-    assert "ticked.map((row) => row.id)" in CLEAN
+    assert "ticked.flatMap((row) => row.tracklet.ids)" in CLEAN
     assert "tracklet_ids:" in CLEAN
     assert "method: removeMethod" in CLEAN
     assert "fill_method: fillMethod" in CLEAN
