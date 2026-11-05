@@ -236,8 +236,8 @@ def _padded_box(box: dict) -> dict:
     small, bounded pad keeps the Clean layer over the whole visible word
     without covering much of the frame.
     """
-    pad_x = min(0.02, max(0.005, float(box["w"]) * 0.05))
-    pad_y = min(0.04, max(0.008, float(box["h"]) * 0.35))
+    pad_x = min(0.012, max(0.004, float(box["w"]) * 0.03))
+    pad_y = min(0.012, max(0.006, float(box["h"]) * 0.25))
     x = max(0.0, float(box["x"]) - pad_x)
     y = max(0.0, float(box["y"]) - pad_y)
     right = min(1.0, float(box["x"]) + float(box["w"]) + pad_x)

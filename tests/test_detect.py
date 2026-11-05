@@ -340,7 +340,7 @@ def test_read_text_samples_maps_records_to_frames(monkeypatch, tmp_path):
 # ---------------------------------------------------------------- tracklets
 
 
-def test_merge_lines_joins_two_caption_lines():
+def test_merge_lines_keeps_stacked_lines_apart():
     merged = detect.merge_lines(
         [
             line("first line of the caption", 0.15, 0.76, 0.7, 0.06),
@@ -348,9 +348,77 @@ def test_merge_lines_joins_two_caption_lines():
         ],
         start=0.0, end=2.0, source="sample",
     )
+    assert [item["box"] for item in merged] == [
+        box(0.15, 0.76, 0.7, 0.06), box(0.2, 0.83, 0.6, 0.06),
+    ]
+
+
+def test_merge_lines_joins_pieces_of_one_line():
+    merged = detect.merge_lines(
+        [
+            line("first piece", 0.12, 0.78, 0.39, 0.03),
+            line("second piece", 0.53, 0.78, 0.33, 0.03),
+        ],
+        start=0.0, end=2.0, source="sample",
+    )
     assert len(merged) == 1
-    assert merged[0]["box"] == box(0.15, 0.76, 0.7, 0.13)
-    assert "second line" in merged[0]["text"]
+    assert merged[0]["box"]["x"] == 0.12
+
+
+def _sample(start, *lines):
+    return {"start": start, "end": start + 0.5, "text": list(lines)}
+
+
+def _weak(text, x=0.3, y=0.78, w=0.3, h=0.03):
+    return {**line(text, x, y, w, h), "confidence": 0.3}
+
+
+def test_an_unsure_read_counts_when_the_next_frame_agrees():
+    rows = [_sample(9.0, _weak("wash and play 5")), _sample(9.5, _weak("wash and play x"))]
+    tracklets = detect.build_tracklets(detect.observations_from_samples(rows), 30.0)
+    assert len(tracklets) == 1
+    assert tracklets[0]["ranges"] == [{"start": 8.75, "end": 9.75}]
+
+
+def test_an_unsure_read_alone_is_noise():
+    rows = [_sample(9.0, _weak("zzq kk")), _sample(9.5), _sample(10.0, _weak("pmw rr", 0.6, 0.2))]
+    assert detect.build_tracklets(detect.observations_from_samples(rows), 30.0) == []
+
+
+def test_a_line_typing_on_is_one_tracklet():
+    words = "liking the taste of coffee, try this one"
+    rows = [
+        _sample(38.0, line("liking the taste", 0.07, 0.78, 0.35, 0.03)),
+        _sample(38.5, line(words, 0.07, 0.78, 0.83, 0.03)),
+        _sample(39.0, line(words, 0.07, 0.78, 0.83, 0.03)),
+    ]
+    tracklets = detect.build_tracklets(detect.observations_from_samples(rows), 60.0)
+    assert len(tracklets) == 1
+    assert tracklets[0]["text_sample"] == words
+    assert tracklets[0]["ranges"] == [{"start": 37.75, "end": 39.25}]
+
+
+def test_a_logo_above_a_caption_gets_its_own_box():
+    rows = [_sample(
+        40.0 + step * 0.5,
+        line("Coffee", 0.62, 0.72, 0.08, 0.02),
+        line("every cup tastes of summer", 0.21, 0.78, 0.67, 0.03),
+    ) for step in range(4)]
+    tracklets = detect.build_tracklets(detect.observations_from_samples(rows), 60.0)
+    assert sorted(item["box"]["h"] for item in tracklets) == [0.02, 0.03]
+
+
+def test_words_seen_in_many_places_are_marked_minor():
+    words = "luckin coffee"
+    rows = [
+        _sample(float(index * 5), line(words, x, y, 0.12, 0.02))
+        for index, (x, y) in enumerate(((0.25, 0.84), (0.48, 0.67), (0.66, 0.61)))
+    ]
+    rows.append(_sample(30.0, line("a real subtitle line", 0.2, 0.78, 0.6, 0.03)))
+    tracklets = detect.build_tracklets(detect.observations_from_samples(rows), 60.0)
+    minor = {item["text_sample"]: bool(item.get("minor")) for item in tracklets}
+    assert minor[words] is True
+    assert minor["a real subtitle line"] is False
 
 
 def test_merge_lines_keeps_far_apart_elements_separate():

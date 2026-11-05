@@ -782,7 +782,8 @@ def extract_tracking_frames(
 CHECK_SAMPLE_FPS = 2.0
 CHECK_SAMPLE_MAX_FRAMES = 3600
 CHECK_OCR_BATCH = 24
-CHECK_FRAME_WIDTH = 960
+# Thin captions over a busy picture read at full size and not at 960.
+CHECK_FRAME_WIDTH = 1280
 
 
 def _run_progress(
@@ -871,7 +872,7 @@ def extract_text_frames(
         ),
         "-ss", f"{window_start:.3f}", "-t", f"{span:.3f}",
         "-i", path,
-        "-vf", f"fps={cadence:.4f},scale={CHECK_FRAME_WIDTH}:-2",
+        "-vf", f"fps={cadence:.4f},scale='min({CHECK_FRAME_WIDTH},iw)':-2",
         "-q:v", "4", str(directory / "%06d.jpg"),
     ]
     if progress is None:

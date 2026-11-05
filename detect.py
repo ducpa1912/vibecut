@@ -254,6 +254,12 @@ def _observation(
 # junk ("^9UM.", "OII8C", "4HIH}") that inflated "regions need cleaning".
 OCR_MIN_CONFIDENCE = 0.4
 OCR_NOISY_CONFIDENCE = 0.7
+# A read this unsure counts only when the frames around it read the same words:
+# thin text over leaves reads badly, and noise does not repeat.
+OCR_WEAK_CONFIDENCE = 0.25
+# Two pieces on one line further apart than this (share of frame width) are
+# separate text.
+LINE_PIECE_GAP = 0.04
 _OCR_CLEAN_TOKEN = re.compile(r"^[\"'(\[]?[^\W\d_]+(?:['’-][^\W\d_]+)*[.,!?:;)\]\"'…]*$|^\d+(?:[.,:]\d+)*[%.,!?]?$")
 
 
@@ -290,8 +296,14 @@ def merge_lines(
     end: float,
     source: str,
     approximate: bool = False,
+    keep_weak: bool = False,
 ) -> list[dict]:
-    """Merge spatially adjacent OCR lines from one frame into text blocks."""
+    """Join pieces of one OCR line from a frame, so each box holds one line.
+
+    Stacked lines stay apart: joined, a caption and a logo above it make one
+    box over everything between them. ``keep_weak`` keeps unsure reads, marked,
+    for :func:`_rescue_weak_reads` to judge against the frames around them.
+    """
     items = []
     for line in lines or []:
         if not isinstance(line, dict):
@@ -301,12 +313,14 @@ def merge_lines(
         if not text or box is None:
             continue
         confidence = _clamp(_number(line.get("confidence"), 0.5))
-        if ocr_line_is_junk(text, confidence):
+        weak = ocr_line_is_junk(text, confidence)
+        if weak and not (keep_weak and confidence >= OCR_WEAK_CONFIDENCE):
             continue
         items.append({
             "text": text,
             "box": box,
             "confidence": confidence,
+            "weak": weak,
         })
     items.sort(key=lambda item: (item["box"]["y"], item["box"]["x"]))
     merged: list[dict] = []
@@ -314,18 +328,13 @@ def merge_lines(
         target = None
         for block in merged:
             box = block["box"]
-            vertical_gap = max(box["y"], item["box"]["y"]) - min(
-                box["y"] + box["h"], item["box"]["y"] + item["box"]["h"],
+            shared_height = min(box["y"] + box["h"], item["box"]["y"] + item["box"]["h"]) - max(
+                box["y"], item["box"]["y"],
             )
-            horizontal_overlap = max(
-                0.0,
-                min(box["x"] + box["w"], item["box"]["x"] + item["box"]["w"])
-                - max(box["x"], item["box"]["x"]),
+            across = max(box["x"], item["box"]["x"]) - min(
+                box["x"] + box["w"], item["box"]["x"] + item["box"]["w"],
             )
-            narrow = min(box["w"], item["box"]["w"])
-            if vertical_gap <= 0.6 * max(box["h"], item["box"]["h"]) and (
-                horizontal_overlap >= 0.45 * narrow or _iou(box, item["box"]) > 0.2
-            ):
+            if shared_height >= 0.5 * min(box["h"], item["box"]["h"]) and across <= LINE_PIECE_GAP:
                 target = block
                 break
         if target is None:
@@ -334,6 +343,7 @@ def merge_lines(
                 "box": dict(item["box"]),
                 "confidence": item["confidence"],
                 "lines": 1,
+                "weak": item["weak"],
             })
             continue
         total = target["lines"] + 1
@@ -343,12 +353,16 @@ def merge_lines(
         target["text"] = f"{target['text']} {item['text']}".strip()
         target["box"] = _union(target["box"], item["box"])
         target["lines"] = total
+        target["weak"] = target["weak"] and item["weak"]
     return [
-        _observation(
-            start=start, end=end, text=block["text"], box=block["box"],
-            confidence=block["confidence"], source=source,
-            approximate=approximate,
-        )
+        {
+            **_observation(
+                start=start, end=end, text=block["text"], box=block["box"],
+                confidence=block["confidence"], source=source,
+                approximate=approximate,
+            ),
+            **({"weak": True} if block["weak"] else {}),
+        }
         for block in merged
     ]
 
@@ -421,7 +435,7 @@ def observations_from_samples(samples: Iterable[dict]) -> list[dict]:
             end = start + 1e-3
         lines = sample.get("text") or []
         blocks = merge_lines(
-            lines, start=start, end=end, source="sample",
+            lines, start=start, end=end, source="sample", keep_weak=True,
         )
         _mark_screen_frame(blocks, len(lines))
         observations.extend(blocks)
@@ -817,6 +831,9 @@ def _same_line(first: str, second: str) -> bool:
     a, b = _normalized_text(first), _normalized_text(second)
     if not a or not b or a == b:
         return True
+    # Text typing itself on, or a read that caught part of the line.
+    if min(len(a), len(b)) >= 4 and (a in b or b in a):
+        return True
     return SequenceMatcher(None, a, b, autojunk=False).ratio() >= LINE_MATCH
 
 
@@ -884,7 +901,7 @@ def _line_tracklets(item: dict, values: list[dict], duration: float) -> list[dic
         box = dict(seen[0]["box"])
         for value in seen[1:]:
             box = _union(box, value["box"])
-        spans = [_run_range(run, duration) for run in line]
+        spans = _merge_ranges([_run_range(run, duration) for run in line], 0.0)
         out.append({
             **item,
             "box": box,
@@ -897,6 +914,86 @@ def _line_tracklets(item: dict, values: list[dict], duration: float) -> list[dic
     return out
 
 
+def _rescue_weak_reads(observations: list[dict]) -> list[dict]:
+    """Keep an unsure read only when a neighbouring frame read the same words."""
+    ordered = sorted(observations, key=lambda value: value["start"])
+    kept = []
+    for index, item in enumerate(ordered):
+        if not item.get("weak"):
+            kept.append(item)
+            continue
+        window = 1.5 * max(0.001, float(item["end"]) - float(item["start"]))
+        for other in (*ordered[max(0, index - 40):index], *ordered[index + 1:index + 41]):
+            if (
+                abs(float(other["start"]) - float(item["start"])) <= window
+                and float(other["start"]) != float(item["start"])
+                and _similar(item["box"], other["box"]) > 0
+                and _same_line(item["text"], other["text"])
+            ):
+                kept.append(item)
+                break
+    return kept
+
+
+def _inside_share(inner: dict, outer: dict) -> float:
+    """How much of ``inner`` sits inside ``outer``."""
+    width = min(inner["x"] + inner["w"], outer["x"] + outer["w"]) - max(inner["x"], outer["x"])
+    height = min(inner["y"] + inner["h"], outer["y"] + outer["h"]) - max(inner["y"], outer["y"])
+    if width <= 0 or height <= 0:
+        return 0.0
+    return width * height / max(1e-9, _area(inner))
+
+
+def _same_text_at_same_time(first: dict, second: dict) -> bool:
+    """Two readings of one piece of text, near each other in time and place."""
+    close_in_time = any(
+        min(a["end"], b["end"]) - max(a["start"], b["start"]) > -0.6
+        for a in first["ranges"] for b in second["ranges"]
+    )
+    return (
+        close_in_time
+        and _inside_share(second["box"], first["box"]) >= 0.6
+        and _same_line(first["text_sample"], second["text_sample"])
+    )
+
+
+def _without_repeats(items: list[dict]) -> list[dict]:
+    """One tracklet per text. Separate areas can read the same line twice."""
+    kept: list[dict] = []
+    for item in sorted(items, key=lambda value: -_area(value["box"])):
+        home = next((other for other in kept if _same_text_at_same_time(other, item)), None)
+        if home is None:
+            kept.append(item)
+            continue
+        home["ranges"] = _merge_ranges([*home["ranges"], *item["ranges"]], 0.0)
+        home["box"] = _union(home["box"], item["box"])
+        home["duration"] = round(sum(span["end"] - span["start"] for span in home["ranges"]), 3)
+        home["samples"] = int(home.get("samples") or 0) + int(item.get("samples") or 0)
+        if len(_normalized_text(item["text_sample"])) > len(_normalized_text(home["text_sample"])):
+            home["text_sample"] = item["text_sample"]
+        if item["kind"] == "subtitle":
+            home["kind"] = "subtitle"
+    return kept
+
+
+def _mark_minor(items: list[dict]) -> None:
+    """Flag what is likely in the scene, not on top of it: Clean leaves it unticked.
+
+    Words on a product show up in many places, and small print sits far below
+    the size of the video's main text. They stay listed and can be ticked.
+    """
+    heights = sorted(item["box"]["h"] for item in items)
+    usual = heights[len(heights) // 2] if heights else 0.0
+    for item in items:
+        places = sum(
+            1 for other in items
+            if not (_similar(item["box"], other["box"]) > 0)
+            and _same_line(item["text_sample"], other["text_sample"])
+        )
+        if places >= 2 or item["box"]["h"] < 0.6 * usual:
+            item["minor"] = True
+
+
 def build_tracklets(
     observations: Iterable[dict],
     duration: float,
@@ -905,7 +1002,10 @@ def build_tracklets(
     max_tracklets: int = MAX_TRACKLETS,
 ) -> list[dict]:
     """Cluster observations and attach the public tracklet fields."""
-    tracks = _join_returning_text(cluster_observations(observations, max_gap=max_gap))
+    observed = _rescue_weak_reads([
+        value for value in observations or [] if isinstance(value, dict)
+    ])
+    tracks = _join_returning_text(cluster_observations(observed, max_gap=max_gap))
     duration = max(0.0, float(duration or 0.0))
     items: list[dict] = []
     for track in tracks:
@@ -950,6 +1050,8 @@ def build_tracklets(
             + (0.05 if len(values) >= 3 else 0.0),
         ), 3)
         items.extend(_line_tracklets(item, values, duration))
+    items = _without_repeats(items)
+    _mark_minor(items)
     items.sort(key=lambda value: (
         value["ranges"][0]["start"] if value["ranges"] else 0.0,
         value["box"]["y"], value["box"]["x"],

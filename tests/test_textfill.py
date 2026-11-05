@@ -630,8 +630,8 @@ def test_blended_frames_change_gradually_between_two_fills():
 
 
 def test_key_rate_follows_the_frame_rate_and_can_be_turned_off(monkeypatch):
-    assert textfill.lama_step(30.0) == 6
-    assert textfill.lama_step(60.0) == 12
+    assert textfill.lama_step(30.0) == 10
+    assert textfill.lama_step(60.0) == 20
     monkeypatch.setenv("VIBECUT_FILL_LAMA_KEYS", "0")
     assert textfill.lama_step(30.0) == 1
 

@@ -753,7 +753,9 @@ export function mountCleanPanel(host, ctx) {
         && !added
         && !full
         && canCleanKind(kind);
-      const ticked = foundTicks.has(id) ? Boolean(foundTicks.get(id)) : allowed;
+      // Text likely in the scene, like a logo on a cup, starts unticked.
+      const minor = tracklet.members.every((member) => member?.minor);
+      const ticked = foundTicks.has(id) ? Boolean(foundTicks.get(id)) : allowed && !minor;
       rows.push({
         id,
         tracklet,

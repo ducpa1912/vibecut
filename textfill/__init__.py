@@ -37,9 +37,9 @@ METHOD_COPY = {"sttn": "STTN (video)", "lama": "LaMa (per frame)"}
 LAMA_CARRY = 0.3
 # LaMa fills about this many frames a second of video. The frames between blend
 # two fills, since text sits still over a slow background. 0 fills every frame.
-LAMA_KEYS_PER_SECOND = 5.0
+LAMA_KEYS_PER_SECOND = 3.0
 # Mean change around the text (0..255) that stops a blend: the picture moved.
-LAMA_MOTION_LIMIT = 8.0
+LAMA_MOTION_LIMIT = 6.0
 # Seconds per unit before this machine has its own reading. A unit is one
 # strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
 # render on an M1 8 GB Mac under swap. LaMa has no real-video reading yet.

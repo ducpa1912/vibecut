@@ -71,6 +71,8 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 49 | Read the Clean panel from the top | One **Remove with** choice, **Add box** and **Paint**, the found list with one **Clean N** button, then the layers. Tell me anything you miss or cannot find | |
 | 50 | Find text labelled watermark, screen UI, title or card | Every row can be ticked and cleaned with AI fill or Blur | |
 | 51 | New video: press **Edit full video** without finding moments, then **Finish** | Finish opens on the full video, and it can be queued and rendered | |
+| 52 | **Scan again**, then read Found on screen and look at the boxes | Each line has its own box, with no second box over the same words. Logos on objects, like a cup, are listed but start unticked. Tell me any repeat or any box bigger than its text | |
+| 53 | Render a 10 to 20 second moment with AI fill, on a still shot and a moving shot | It is much faster than one frame at a time. Tell me the time for each, and if the filled area smears on the moving shot | |
 
 ## Tell me too
 
