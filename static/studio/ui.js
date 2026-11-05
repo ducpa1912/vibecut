@@ -1,5 +1,7 @@
 /** Small DOM and formatting helpers shared by Studio panels. */
 
+import { icon } from "./edit/icons.js";
+
 /**
  * Create an element.
  * @param {string} tag
@@ -105,4 +107,45 @@ export function shortDate(epochSeconds) {
   } catch (_) {
     return "";
   }
+}
+
+/**
+ * A bin button that asks once more before it deletes. The second click runs
+ * `onDelete`; moving away resets it. Failures go to `onError`.
+ */
+export function deleteVideoButton({ name, onDelete, onError }) {
+  const label = `Delete ${name}`;
+  const button = el("button", {
+    class: "st-icon-btn st-delete-video",
+    type: "button",
+    title: "Delete this video and its edits and renders",
+    "aria-label": label,
+  }, [icon("trash")]);
+  let armed = false;
+  const reset = () => {
+    armed = false;
+    button.classList.remove("is-armed");
+    button.setAttribute("aria-label", label);
+    button.replaceChildren(icon("trash"));
+  };
+  button.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (!armed) {
+      armed = true;
+      button.classList.add("is-armed");
+      button.setAttribute("aria-label", `Click again to delete ${name} for good`);
+      button.replaceChildren(document.createTextNode("Delete?"));
+      return;
+    }
+    button.disabled = true;
+    try {
+      await onDelete();
+    } catch (error) {
+      button.disabled = false;
+      reset();
+      onError?.(error);
+    }
+  });
+  button.addEventListener("blur", reset);
+  return button;
 }

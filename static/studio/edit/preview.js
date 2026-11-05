@@ -415,27 +415,35 @@ export function mountPreview(root, options = {}) {
       if (right > x && bottom > y) ctx.fillRect(x, y, right - x, bottom - y);
     }
 
-    ctx.setLineDash([18, 12]);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = "rgba(241, 239, 233, 0.55)";
+    // Sized for the screen, not the canvas: the frame can be shown small. A dark
+    // line under a light one stays visible on any picture.
+    const unit = width / Math.max(1, dom.canvas.clientWidth || width);
+    ctx.setLineDash([6 * unit, 4 * unit]);
+    ctx.lineWidth = 3 * unit;
+    ctx.strokeStyle = "rgba(5, 5, 6, 0.6)";
+    ctx.strokeRect(safe.x, safe.y, safe.w, safe.h);
+    ctx.lineWidth = 1.5 * unit;
+    ctx.strokeStyle = "rgba(241, 239, 233, 0.95)";
     ctx.strokeRect(safe.x, safe.y, safe.w, safe.h);
     ctx.setLineDash([]);
 
-    ctx.font = "600 42px ui-sans-serif, -apple-system, sans-serif";
-    ctx.textBaseline = "top";
-    ctx.textAlign = "left";
-    ctx.fillStyle = "rgba(241, 239, 233, 0.78)";
+    const label = (text, x, y, align = "left") => {
+      ctx.font = `600 ${11 * unit}px ui-sans-serif, -apple-system, sans-serif`;
+      ctx.textBaseline = "top";
+      ctx.textAlign = align;
+      const textWidth = ctx.measureText(text).width;
+      ctx.fillStyle = "rgba(5, 5, 6, 0.72)";
+      ctx.fillRect(
+        (align === "right" ? x - textWidth : x) - 3 * unit, y - 2 * unit,
+        textWidth + 6 * unit, 15 * unit,
+      );
+      ctx.fillStyle = "rgba(241, 239, 233, 0.95)";
+      ctx.fillText(text, x, y);
+    };
     const network = state.platform === "auto" ? "Text" : SAFE_ZONE_PRESETS[state.platform]?.label || "Text";
-    ctx.fillText(`${network} safe area`, safe.x + 16, safe.y + 14);
+    label(`${network} safe area`, safe.x + 5 * unit, safe.y + 5 * unit);
     const buttons = zones.reserved.find((zone) => zone.name === "Buttons");
-    if (buttons) {
-      const area = px(buttons);
-      ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(241, 239, 233, 0.6)";
-      ctx.font = "600 30px ui-sans-serif, -apple-system, sans-serif";
-      ctx.fillText("App", width - 12, area.y + 14);
-      ctx.fillText("buttons", width - 12, area.y + 50);
-    }
+    if (buttons) label("App buttons", width - 4 * unit, px(buttons).y + 5 * unit, "right");
     ctx.restore();
   }
 
@@ -890,26 +898,35 @@ export function mountPreview(root, options = {}) {
     else if (frameReady && frameImage?.complete) source = frameImage;
     else if (proxyReady && proxyVideo && proxyVideo.readyState >= 2) source = proxyVideo;
 
-    if (source) {
-      ctx.save();
-      if (source === proxyVideo) {
-        ctx.filter = state.hiddenLayers.has("color:color")
-          ? "none"
-          : colorFilter(state.edit?.color);
+    // A picture that cannot draw must not take the frame's guides with it.
+    const depth = { saved: false };
+    try {
+      if (source) {
+        ctx.save();
+        depth.saved = true;
+        if (source === proxyVideo) {
+          ctx.filter = state.hiddenLayers.has("color:color")
+            ? "none"
+            : colorFilter(state.edit?.color);
+        }
+        if (source === proxyVideo) drawProxy(source, width, height);
+        else drawExactFrame(source, width, height);
+        ctx.restore();
+        depth.saved = false;
+        // The proxy is the raw story range; the exact frame already has every
+        // layer burned in, so only the proxy gets the live overlay.
+        if (source === proxyVideo) {
+          drawOverlay(
+            ctx, visibleEdit(state.edit), visibleCaptions(state.captions),
+            state.time, width, height, currentCrop(),
+          );
+        }
+      } else {
+        drawPlaceholder(width, height);
       }
-      if (source === proxyVideo) drawProxy(source, width, height);
-      else drawExactFrame(source, width, height);
-      ctx.restore();
-      // The proxy is the raw story range; the exact frame already has every
-      // layer burned in, so only the proxy gets the live overlay.
-      if (source === proxyVideo) {
-        drawOverlay(
-          ctx, visibleEdit(state.edit), visibleCaptions(state.captions),
-          state.time, width, height, currentCrop(),
-        );
-      }
-    } else {
-      drawPlaceholder(width, height);
+    } catch (error) {
+      if (depth.saved) ctx.restore();
+      console.error("Preview picture failed to draw", error);
     }
 
     drawSafeZones(width, height);
@@ -1431,6 +1448,7 @@ export function mountPreview(root, options = {}) {
       dom.canvas.style.transform = `translate(${state.viewPan.x}px, ${state.viewPan.y}px) scale(${zoom})`;
     }
     if (dom.zoomLevel) dom.zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
+    placeFrameSize();
     dom.canvas.style.cursor = zoom > 1.001 ? "grab" : "";
   }
 
@@ -1882,6 +1900,22 @@ export function mountPreview(root, options = {}) {
       : resolutionSize(state.aspect, output.resolution || "1080p")
         || [CANVAS[state.aspect]?.width || 1080, CANVAS[state.aspect]?.height || 1920];
     dom.frameSize.textContent = `Frame ${size[0]}×${size[1]}`;
+    placeFrameSize();
+  }
+
+  // The stage changes size with the panels and the timeline, which moves the frame.
+  if (typeof ResizeObserver === "function" && dom.frameSize?.parentElement) {
+    new ResizeObserver(() => placeFrameSize()).observe(dom.frameSize.parentElement);
+  }
+
+  /** The size sits on the frame's top edge, wherever the frame is on the stage. */
+  function placeFrameSize() {
+    const stage = dom.frameSize?.parentElement;
+    if (!stage) return;
+    const canvas = dom.canvas.getBoundingClientRect();
+    const box = stage.getBoundingClientRect();
+    dom.frameSize.style.left = `${canvas.left - box.left}px`;
+    dom.frameSize.style.top = `${Math.max(0, canvas.top - box.top - dom.frameSize.offsetHeight)}px`;
   }
   function paintOutput() {
     paintFrameSize();
@@ -1940,18 +1974,45 @@ export function mountPreview(root, options = {}) {
     else done(canvas.toDataURL("image/png"));
   }
 
-  dom.safe.addEventListener("change", () => {
-    state.showSafeZones = Boolean(dom.safe.checked);
+  const GUIDES_KEY = "vibecut.studio.edit.guides";
+  function paintGuides() {
+    dom.safe.checked = state.showSafeZones;
+    if (dom.platform) dom.platform.value = state.platform;
     dom.safeToggle?.classList.toggle("is-on", state.showSafeZones);
     dom.safeToggle?.setAttribute("aria-pressed", state.showSafeZones ? "true" : "false");
+  }
+  function saveGuides() {
+    try {
+      localStorage.setItem(GUIDES_KEY, JSON.stringify({
+        on: state.showSafeZones, platform: state.platform,
+      }));
+    } catch (_) { /* private window */ }
+  }
+  // The network chosen stays when the editor reopens on another step or moment.
+  try {
+    const saved = JSON.parse(localStorage.getItem(GUIDES_KEY) || "null");
+    if (saved && typeof saved === "object") {
+      state.showSafeZones = saved.on !== false;
+      if (SAFE_ZONE_PRESETS[saved.platform]) state.platform = saved.platform;
+    }
+  } catch (_) { /* private window */ }
+  paintGuides();
+  dom.safe.addEventListener("change", () => {
+    state.showSafeZones = Boolean(dom.safe.checked);
+    paintGuides();
+    saveGuides();
     draw();
   });
   dom.safeToggle?.addEventListener("click", () => {
     dom.safe.checked = !dom.safe.checked;
     dom.safe.dispatchEvent(new Event("change"));
+    // Left focused, the next Space (Play) would press this button and hide them.
+    dom.safeToggle.blur();
   });
   dom.platform?.addEventListener("change", () => {
     state.platform = dom.platform.value || "auto";
+    saveGuides();
+    dom.platform.blur();
     draw();
   });
   dom.play.addEventListener("click", play);

@@ -1904,3 +1904,12 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 }
 .st-options-details[open] summary::before,
 .st-finish-advanced[open] > summary::before { transform: rotate(90deg); }
+
+/* Deleting a video from Import and the library. */
+.st-recent-actions { display: inline-flex; gap: 2px; }
+.st-recent-row, .st-library-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.st-recent-row .st-recent-item, .st-library-row .st-library-item { flex: 1 1 auto; min-width: 0; }
+.st-icon-btn.st-delete-video:hover:not(:disabled) { color: var(--st-bad); }
+.st-icon-btn.st-delete-video.is-armed { width: auto; padding-inline: 8px; background: var(--st-bad); color: #fff; font-size: 12px; font-weight: 600; }
+#st-edit-finish { display: inline-flex; align-items: center; gap: 5px; }
+#st-edit-finish[hidden] { display: none; }

@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261105-6";
+import { mountPreview } from "./preview.js?v=20261105-7";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -79,7 +79,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261105-6";
+    link.href = "/static/studio/edit/edit.css?v=20261105-7";
     document.head.append(link);
   }
 }
@@ -259,6 +259,8 @@ export function mount(root, ctx) {
     dom.repair = root.querySelector("#st-edit-repair");
     dom.receipt = root.querySelector("#st-edit-receipt");
     dom.save = document.querySelector("#st-edit-ready");
+    dom.finish = document.querySelector("#st-edit-finish");
+    if (dom.finish) dom.finish.onclick = () => { void leaveTo("finish", dom.finish); };
     dom.meta = root.querySelector("#st-edit-meta");
     dom.notice = root.querySelector("#st-edit-notice");
     dom.elements = root.querySelector("#st-edit-elements");

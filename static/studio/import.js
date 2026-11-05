@@ -17,12 +17,14 @@ import { paintIcons } from "./edit/icons.js";
 import {
   createJobFromPath,
   createJobFromUrl,
+  deleteJob,
   listJobs,
   request,
   revealPath,
   uploadVideo,
 } from "./api.js";
 import {
+  deleteVideoButton,
   el,
   formatBytes,
   formatDuration,
@@ -220,7 +222,10 @@ export function mount(root, ctx) {
         <aside class="st-card st-recent-card" aria-labelledby="st-recent-title">
           <div class="st-card-head">
             <h2 id="st-recent-title">Recent videos</h2>
-            <button id="st-recent-refresh" class="st-btn st-btn-quiet" type="button">Refresh</button>
+            <span class="st-recent-actions">
+              <button id="st-recent-all" class="st-btn st-btn-quiet" type="button">All videos</button>
+              <button id="st-recent-refresh" class="st-btn st-btn-quiet" type="button">Refresh</button>
+            </span>
           </div>
           <div id="st-recent-list" class="st-recent-list">
             <p class="st-hint">Loading recent videos…</p>
@@ -263,6 +268,7 @@ export function mount(root, ctx) {
     status: $("#st-import-status"),
     error: $("#st-import-error"),
     recentList: $("#st-recent-list"),
+    recentAll: $("#st-recent-all"),
     recentError: $("#st-recent-error"),
     recentRefresh: $("#st-recent-refresh"),
   };
@@ -492,6 +498,8 @@ export function mount(root, ctx) {
     }
   }
 
+  dom.recentAll?.addEventListener("click", () => ctx.openLibrary?.());
+
   function renderRecent(jobs) {
     root.querySelector(".st-import-grid")?.classList.toggle("has-recent", jobs.length > 0);
     dom.recentList.replaceChildren();
@@ -516,7 +524,18 @@ export function mount(root, ctx) {
         // Reopen where the work stopped: reading, Moments, Edit or Finish.
         ctx.openJobAndContinue(job.id, { name: job.name || "", status: job.status || "" });
       });
-      dom.recentList.append(button);
+      dom.recentList.append(el("div", { class: "st-recent-row" }, [
+        button,
+        deleteVideoButton({
+          name: job.name || job.title || job.id,
+          onDelete: async () => {
+            await deleteJob(job.id);
+            ctx.jobDeleted?.(job.id);
+            await loadRecent({ quiet: true });
+          },
+          onError: (error) => setStatus(dom.recentError, error.message || "Could not delete that video.", "bad"),
+        }),
+      ]));
     }
   }
 

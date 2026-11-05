@@ -10,7 +10,7 @@
 
 import { mount as mountImport } from "./import.js";
 import { mount as mountMoments } from "./stories.js";
-import { mount as mountEdit } from "./edit.js?v=20261105-6";
+import { mount as mountEdit } from "./edit.js?v=20261105-7";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountLibrary } from "./library.js";
 import { SOURCES_TAB } from "./library.js";
@@ -181,6 +181,7 @@ export function startStudio() {
                 <span id="st-current-status" class="st-top-status" hidden></span>
               </div>
               <div class="st-top-actions">
+                <button id="st-edit-finish" class="st-btn st-btn-primary st-btn-small" type="button" hidden>Finish<span data-icon="arrow-right" aria-hidden="true"></span></button>
                 <span id="st-edit-ready" class="st-top-status st-edit-ready" role="status" aria-live="polite" hidden>Ready</span>
                 <button id="st-edit-shortcuts-open" class="st-btn st-btn-ghost st-btn-small st-edit-shortcuts-open" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" hidden>⌘</button>
                 <button id="st-menu-open" class="st-btn st-btn-ghost st-btn-small st-menu-open" type="button" aria-haspopup="dialog" aria-controls="st-menu-dialog">Menu</button>
@@ -256,6 +257,7 @@ export function startStudio() {
     currentName: root.querySelector("#st-current-name"),
     currentStatus: root.querySelector("#st-current-status"),
     editReady: root.querySelector("#st-edit-ready"),
+    editFinish: root.querySelector("#st-edit-finish"),
     editShortcuts: root.querySelector("#st-edit-shortcuts-open"),
     dialogJob: root.querySelector("#st-dialog-job"),
     forget: root.querySelector("#st-forget-video"),
@@ -590,6 +592,7 @@ export function startStudio() {
     const step = STEPS.find((item) => item.id === stepId);
     document.title = `${step?.label || "Studio"} · VibeCut Studio`;
     if (dom.editReady) dom.editReady.hidden = stepId !== "edit";
+    if (dom.editFinish) dom.editFinish.hidden = stepId !== "edit";
     if (dom.editShortcuts) dom.editShortcuts.hidden = stepId !== "edit";
     renderJob();
   }
@@ -684,6 +687,11 @@ export function startStudio() {
     clearJob: () => {
       setJob(null);
       go("import");
+    },
+    openLibrary: () => openLibrary(),
+    // A deleted video may be the open one, and then it is gone from every step.
+    jobDeleted: (id) => {
+      if (currentJob?.id === id) ctx.clearJob();
     },
     go: (stepId, options) => go(stepId, options),
   };

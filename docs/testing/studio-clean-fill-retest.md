@@ -60,6 +60,9 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 38 | In it, press Play across several cuts, listen, and split then delete a scene on the timeline | Sound runs with no tick at the cuts. The scene goes and the rest closes up | |
 | 39 | Back to Moments, press **Edit full video** again | The same edit opens with your changes. Your found moments are untouched | |
 | 40 | Finish → pick Full video in the list, add to queue, and render a short video | The whole video renders and downloads. Tell me how long it took and how long the video was | |
+| 41 | Pick a network, then shrink and magnify the view, change the shape, press Play, go to Finish and back | The safe area and frame size stay on the white line throughout, and the network stays chosen | |
+| 42 | Press the top right **Finish** in Edit | It saves and opens Finish on this moment | |
+| 43 | Import: press the bin on an old video, then **Delete?**. Then **All videos** and do the same there | The video goes from both lists. A video still working, or with a pinned render or review link, says why it cannot go | |
 
 ## Tell me too
 

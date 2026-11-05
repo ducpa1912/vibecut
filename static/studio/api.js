@@ -532,6 +532,11 @@ export function revealPath(path) {
 }
 
 /** Remove a moment set that has no stories left. */
+/** Delete a video with its edits and renders. The server refuses a busy one. */
+export function deleteJob(jobId) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+}
+
 /** The whole video as one moment, every scene in time order. */
 export function openFullVideo(jobId) {
   return request(`/api/jobs/${encodeURIComponent(jobId)}/full-video`, { method: "POST" });

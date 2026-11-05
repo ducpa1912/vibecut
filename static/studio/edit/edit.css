@@ -2771,3 +2771,6 @@ body:has(.st-preview.is-focus) { overflow: hidden; }
 #studio-root .st-preview-select select { font-size: 11px; }
 
 .st-clean-layers-head .st-clean-delete-all { margin-left: auto; min-height: 24px; padding: 2px 6px; font-size: 11px; }
+
+/* The frame's label follows it at once, so the view has no easing to wait for. */
+#studio-root .st-preview-canvas { transition: none; }

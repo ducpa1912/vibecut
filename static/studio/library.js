@@ -10,8 +10,8 @@
  * Nothing is deleted, renamed or uploaded.
  */
 
-import { listJobs, request } from "./api.js";
-import { el, formatBytes, formatDuration, shortDate, statusText, statusTone } from "./ui.js";
+import { deleteJob, listJobs, request } from "./api.js";
+import { deleteVideoButton, el, formatBytes, formatDuration, shortDate, statusText, statusTone } from "./ui.js";
 
 export const FINISHED_TAB = "finished";
 export const SOURCES_TAB = "sources";
@@ -228,7 +228,18 @@ export function mount(root, ctx = {}) {
       closeDialog();
       void ctx.openJobAndContinue?.(job.id, { name: job.name || "", status: job.status || "" });
     });
-    return row;
+    return el("div", { class: "st-library-row" }, [
+      row,
+      deleteVideoButton({
+        name: sourceTitle(job),
+        onDelete: async () => {
+          await deleteJob(job.id);
+          ctx.jobDeleted?.(job.id);
+          await refresh();
+        },
+        onError: (error) => window.alert(error.message || "Could not delete that video."),
+      }),
+    ]);
   }
 
   function playRow(row, artifact, button) {

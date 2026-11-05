@@ -516,6 +516,96 @@ try {
   assert(await page.locator(".st-tl-trim").count() === 0, "the full video shows trim handles");
   assert(await page.locator(".st-tl-bar-scenes").count() > 1, "the full video has no scenes on the timeline");
   console.log("Full video passed.");
+
+  // The safe area stays on the frame through everything done in the preview.
+  const safeAreaShows = async (step) => {
+    const toggle = page.locator("#st-preview-safe-toggle");
+    const pixels = () => page.evaluate(() => {
+      const canvas = document.querySelector("#st-preview-canvas");
+      const small = document.createElement("canvas");
+      small.width = 96; small.height = 96;
+      small.getContext("2d").drawImage(canvas, 0, 0, 96, 96);
+      return Array.from(small.getContext("2d").getImageData(0, 0, 96, 96).data);
+    });
+    const on = await pixels();
+    await toggle.click();
+    await page.waitForTimeout(60);
+    const off = await pixels();
+    await toggle.click();
+    await page.waitForTimeout(60);
+    const changed = on.reduce((sum, value, index) => sum + (Math.abs(value - off[index]) > 6 ? 1 : 0), 0);
+    assert(changed > 40, `the safe area is gone after: ${step} (${changed})`);
+    const inside = await page.evaluate(() => {
+      const canvas = document.querySelector("#st-preview-canvas").getBoundingClientRect();
+      const label = document.querySelector("#st-preview-frame-size").getBoundingClientRect();
+      return Math.abs(label.left - canvas.left) < 2 && Math.abs(label.bottom - canvas.top) < 24;
+    });
+    assert(inside, `the frame size left the frame after: ${step}`);
+  };
+  await page.selectOption("#st-preview-platform", "tiktok");
+  await safeAreaShows("opening the full video");
+  for (const network of ["auto", "instagram", "youtube", "facebook", "rednote", "tiktok"]) {
+    await page.selectOption("#st-preview-platform", network);
+    await safeAreaShows(`choosing ${network}`);
+  }
+  await page.locator("#st-preview-zoom-out").click();
+  await safeAreaShows("shrinking the view");
+  await page.locator("#st-preview-zoom-in").click();
+  await page.locator("#st-preview-zoom-in").click();
+  await safeAreaShows("magnifying the view");
+  await page.locator("#st-preview-zoom-level").click();
+  await page.locator("#st-preview-play").click();
+  await page.waitForTimeout(1500);
+  await safeAreaShows("playing");
+  await page.locator("#st-preview-play").click();
+  await page.waitForTimeout(500);
+  await safeAreaShows("pausing");
+  for (const shape of ["9:16", "1:1", "4:5", "16:10", "16:9"]) {
+    await page.locator("#st-preview-aspect").click();
+    await page.locator(`#st-preview-aspect-menu [data-aspect="${shape}"]`).click();
+    await page.waitForTimeout(1500);
+    await safeAreaShows(`changing the shape to ${shape}`);
+    if (screenshot) {
+      await page.screenshot({ path: screenshot.replace(/\.png$/, `_shape_${shape.replace(":", "x")}.png`), fullPage: false });
+    }
+  }
+  console.log("Safe area passed.");
+
+  // Space after using the toggle plays, and does not hide the guides.
+  await page.locator("#st-preview-safe-toggle").click();
+  await page.locator("#st-preview-safe-toggle").click();
+  assert(
+    await page.evaluate(() => document.activeElement?.id !== "st-preview-safe-toggle"),
+    "the safe area button keeps focus, so Space would hide the guides",
+  );
+
+  // Edit has a Finish button, and the chosen network comes back on return.
+  const finishButton = page.locator("#st-edit-finish");
+  assert(await finishButton.isVisible(), "Edit has no Finish button");
+  await finishButton.click();
+  await page.waitForFunction(() => window.location.hash.includes("finish"));
+  assert(!(await finishButton.isVisible()), "Finish still shows on the Finish step");
+  await page.evaluate(() => { window.location.hash = "#/edit"; });
+  await page.waitForSelector("#st-preview-platform");
+  await page.waitForTimeout(600);
+  assert(await page.locator("#st-preview-platform").inputValue() === "tiktok", "the network was lost");
+  await safeAreaShows("coming back to Edit");
+
+  // Import lists old videos with a delete that asks once more, and the library.
+  await page.evaluate(() => { window.location.hash = "#/import"; });
+  await page.waitForSelector("#st-recent-all");
+  await page.waitForSelector(".st-recent-row .st-delete-video");
+  await page.locator("#st-recent-all").click();
+  await page.waitForSelector(".st-library-row .st-delete-video");
+  await page.locator("#st-library-dialog [data-library-close]").first().click();
+  const removeVideo = page.locator(".st-recent-row .st-delete-video").first();
+  await removeVideo.click();
+  assert((await removeVideo.textContent()).includes("Delete?"), "delete did not ask once more");
+  await removeVideo.click();
+  await page.waitForFunction(() => !document.querySelector(".st-recent-row"));
+  const gone = await page.evaluate(async (id) => (await fetch(`/api/jobs/${id}`)).status, jobId);
+  assert(gone === 404, `the video was not deleted: ${gone}`);
+  console.log("Finish button and delete video passed.");
   console.log("Found-text list, Remove all and painter mask passed.");
 } finally {
   await browser.close();
