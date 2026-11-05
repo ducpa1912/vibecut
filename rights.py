@@ -62,7 +62,15 @@ def _normalize_lock(value: Any, default: bool = DEFAULT_LOCK) -> bool:
 
 
 def lock_enabled(settings: dict | None = None) -> bool:
-    """Return ``rights.lock``; true when the setting is absent or malformed."""
+    """Return ``rights.lock``; true when the setting is absent or malformed.
+
+    Classic is a second supported product with no attestation step. Its Clean
+    and import paths never read this gate; Studio keeps the setting.
+    """
+    import editions
+
+    if editions.edition() == "classic":
+        return False
     if settings is None:
         settings = settings_store.load_settings()
     if not isinstance(settings, dict):

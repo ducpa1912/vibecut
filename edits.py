@@ -126,7 +126,7 @@ _STORY_REF_KEYS = frozenset({
 })
 _CLEAN_KEYS = frozenset({
     "id", "kind", "box", "ranges", "z", "color", "opacity", "radius", "label",
-    "tracklet_id", "tracklet_kind", "method",
+    "tracklet_id", "tracklet_kind", "method", "mask", "text_key",
 })
 # Detected Check kinds an optional Clean layer may name. The layer's own
 # ``kind`` remains the cleanup method; ``tracklet_kind`` carries provenance
@@ -475,6 +475,50 @@ def _normalize_ranges(value: Any, label: str) -> list[dict]:
     return merged
 
 
+def normalize_clean_mask(value: Any) -> dict | None:
+    """A brush mask is a small set of normalized strokes, not an image.
+
+    Points use source-frame coordinates (0..1, top-left origin). A legacy flat
+    point list is accepted as one stroke. Nothing here reads or writes pixels;
+    the renderer turns the strokes into a union of small rectangles.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        strokes = value.get("strokes")
+        if not isinstance(strokes, (list, tuple)):
+            raise EditError("clean mask must contain a strokes list.")
+    elif isinstance(value, (list, tuple)):
+        strokes = [{"r": 0.025, "points": value}]
+    else:
+        raise EditError("clean mask must be an object or a point list.")
+    if len(strokes) > 64:
+        raise EditError("A clean mask supports at most 64 strokes.")
+    clean: list[dict] = []
+    for index, raw in enumerate(strokes):
+        if not isinstance(raw, dict):
+            raise EditError(f"clean mask stroke {index} must be an object.")
+        radius = _number(
+            raw.get("r", 0.025), f"clean mask stroke {index}.r",
+            minimum=0.002, maximum=0.25,
+        )
+        points = raw.get("points")
+        if not isinstance(points, (list, tuple)):
+            raise EditError(f"clean mask stroke {index} needs points.")
+        if len(points) > 512:
+            raise EditError(f"clean mask stroke {index} has too many points.")
+        clean_points: list[dict] = []
+        for point in points:
+            if not isinstance(point, dict):
+                raise EditError(f"clean mask stroke {index} point must be an object.")
+            x = _number(point.get("x"), f"clean mask stroke {index} x", minimum=0.0, maximum=1.0)
+            y = _number(point.get("y"), f"clean mask stroke {index} y", minimum=0.0, maximum=1.0)
+            clean_points.append({"x": round(x, 6), "y": round(y, 6)})
+        if clean_points:
+            clean.append({"r": round(radius, 4), "points": clean_points})
+    return {"strokes": clean} if clean else None
+
+
 def normalize_clean(value: Any) -> list[dict]:
     if value is None:
         return []
@@ -524,6 +568,12 @@ def normalize_clean(value: Any) -> list[dict]:
             "radius": radius,
             "label": label,
         }
+        mask = normalize_clean_mask(raw.get("mask"))
+        if mask:
+            layer["mask"] = mask
+        text_key = " ".join(str(raw.get("text_key") or "").split())[:120]
+        if text_key:
+            layer["text_key"] = text_key
         if kind == "fill":
             # Only a fill layer names an engine; a blur box that happens to
             # carry one is an error rather than a silently ignored field.

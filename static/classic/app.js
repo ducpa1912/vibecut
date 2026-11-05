@@ -331,6 +331,7 @@
     cleanScrub: $("#clean-scrub"),
     cleanScrubReadout: $("#clean-scrub-readout"),
     cleanDraw: $("#clean-draw"),
+    cleanBrush: $("#clean-brush"),
     cleanUndo: $("#clean-undo"),
     cleanRedo: $("#clean-redo"),
     cleanRefresh: $("#clean-refresh"),
@@ -342,6 +343,18 @@
     cleanStatus: $("#clean-status"),
     cleanFillNote: $("#clean-fill-note"),
     cleanFill: $("#clean-fill"),
+    cleanPreviewTime: $("#clean-preview-time"),
+    cleanPreviewMoment: $("#clean-preview-moment"),
+    cleanPreviewEngine: $("#clean-preview-engine"),
+    cleanPreviewEta: $("#clean-preview-eta"),
+    cleanPreviewBefore: $("#clean-preview-before"),
+    cleanPreviewAfter: $("#clean-preview-after"),
+    cleanPreviewPlay: $("#clean-preview-play"),
+    cleanPreviewAi: $("#clean-preview-ai"),
+    cleanPreviewBlur: $("#clean-preview-blur"),
+    cleanPreviewExclude: $("#clean-preview-exclude"),
+    cleanEmptyScanThis: $("#clean-empty-scan-this"),
+    cleanEmptyScanVideo: $("#clean-empty-scan-video"),
     cleanHelp: $("#clean-help"),
     finishCut: $("#finish-cut"),
     shortcutsOpen: $("#shortcuts-open"),
@@ -954,7 +967,7 @@
             language: dom.setupSttLanguage.value,
           },
           rights: {
-            lock: dom.setupRightsLock ? dom.setupRightsLock.checked : true,
+            lock: false,
           },
           voice_fit: {
             preserve_pitch: dom.setupVoicePreserve ? dom.setupVoicePreserve.checked : true,
@@ -1387,36 +1400,15 @@
   // C4: the tick lives beside Start instead of a blocking dialog. It appears
   // only when the Setup rights lock asks for one, and a start that forgets it
   // points at the tick rather than cancelling silently.
-  async function rightsPolicy(force = false) {
-    if (state.rightsPolicy && !force) return state.rightsPolicy;
-    try {
-      state.rightsPolicy = await api("/api/rights/policy");
-    } catch (_) {
-      return null;
-    }
-    return state.rightsPolicy;
+  async function importRights() {
+    // Classic has no attestation step. The founder is responsible for the
+    // footage; the server does not gate the import.
+    if (dom.rightsTick) dom.rightsTick.hidden = true;
+    return null;
   }
 
   async function syncRightsTick() {
-    const policy = await rightsPolicy();
-    if (!dom.rightsTick) return;
-    dom.rightsTick.hidden = !(policy && policy.needs_import_tick);
-    if (dom.rightsTick.hidden) dom.rightsTick.classList.remove("is-required");
-  }
-
-  async function importRights() {
-    const policy = await rightsPolicy();
-    if (!policy || !policy.needs_import_tick) {
-      if (dom.rightsTick) dom.rightsTick.hidden = true;
-      return null;
-    }
-    if (dom.rightsTick) dom.rightsTick.hidden = false;
-    if (dom.rightsOwn && dom.rightsOwn.checked) return true;
-    if (dom.rightsTick) {
-      dom.rightsTick.classList.add("is-required");
-      dom.rightsOwn?.focus();
-    }
-    throw new Error("Tick \u201cI own this footage\u201d beside Dissect video, then start again.");
+    if (dom.rightsTick) dom.rightsTick.hidden = true;
   }
 
   function uploadFile(file, options, onProgress, rights = null) {
@@ -6878,8 +6870,7 @@
 
   const CLEAN_METHODS = {
     blur: { label: "Blur", note: "Smears the region. Works on any clip." },
-    cover: { label: "Cover", note: "Draws a solid plate over the region." },
-    crop: { label: "Crop", note: "Keeps the frame inside the safe area." },
+    crop: { label: "Crop guard", note: "Keeps the frame inside the safe area." },
     fill: { label: "AI fill", note: "Repairs the region with the fill models." },
   };
   // Honest numbers, measured once on this Mac. The point is that the founder
@@ -6892,7 +6883,7 @@
     sttn: "STTN · video, best on subtitles",
     lama: "LaMa · per frame, best on still backgrounds",
   };
-  const CLEAN_SCAN_METHOD = { plate: "cover", crop_guard: "crop", mask: "blur", blur: "blur" };
+  const CLEAN_SCAN_METHOD = { plate: "blur", crop_guard: "crop", mask: "blur", blur: "blur" };
   const CLEAN_MIN_BOX = 0.02;
   const CLASSIC_UNDO_LIMIT = 40;
 
@@ -6991,7 +6982,9 @@
       radius: layer.radius,
       hidden: Boolean(layer.hidden),
       source: layer.source || "manual",
-      ...(cleanMethodKey(layer) === "fill" ? { engine: layer.engine || "sttn" } : {}),
+      ...(cleanMethodKey(layer) === "fill" ? { engine: layer.engine || "lama" } : {}),
+      ...(layer.mask ? { mask: layer.mask } : {}),
+      ...(layer.text_key ? { text_key: layer.text_key } : {}),
     }));
   }
 
@@ -7052,25 +7045,29 @@
             <p class="clean-fill-title">AI fill is not ready on this Mac</p>
             <p class="hint">${esc(fill.note)}</p>
             <ul class="clean-file-list">${rows}</ul>
-            <p class="hint">Blur and Cover do the same job on this cut, now.</p>
+            <p class="hint">Blur and Crop guard work on this cut now.</p>
           </div>
         </div>`;
       return;
     }
     const hasFill = classicCleanLayers().some((layer) => cleanMethodKey(layer) === "fill");
-    const previewReady = fill.preview === "lama";
+    const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
+    const fillLayer = selected && cleanMethodKey(selected) === "fill" ? selected : null;
+    const previewEngine = fillLayer?.engine || fill.default || "lama";
+    const previewReady = Boolean(engines[previewEngine]?.ready);
     const previewHint = previewReady
       ? (hasFill
-        ? "Compare the frame before and after. The render uses the box's engine."
+        ? `Compare the frame before and after with ${String(previewEngine).toUpperCase()}. The render uses the same engine.`
         : "Draw a box, choose AI fill, then compare one frame here.")
-      : (engines.lama?.reason || "The one-frame preview needs LaMa. The render can still use STTN.");
+      : (engines[previewEngine]?.reason || "That engine is not ready on this Mac.");
     const preview = state.classicText.fillPreview;
+    const side = state.classicText.previewSide === "before" ? "before" : "after";
     const result = preview
-      ? `<div class="clean-fill-compare">
-           <figure><img src="${esc(preview.before)}" alt="The frame before the fill"><figcaption>Before</figcaption></figure>
-           <figure><img src="${esc(preview.after)}" alt="The same frame after the fill"><figcaption>After</figcaption></figure>
+      ? `<div class="clean-fill-compare is-${side}">
+           <figure class="is-before"><img src="${esc(preview.before)}" alt="The frame before the fill"><figcaption>Before</figcaption></figure>
+           <figure class="is-after"><img src="${esc(preview.after)}" alt="The same frame after the fill"><figcaption>After</figcaption></figure>
          </div>
-         <p class="hint">Preview uses LaMa. The render uses ${esc(String(preview.render_method || "sttn").toUpperCase())} and may look different.</p>`
+         <p class="hint">Preview uses ${esc(String(preview.method || preview.render_method || "lama").toUpperCase())}. The render uses the same engine; model memory is released after this frame.</p>`
       : "";
     dom.cleanFill.innerHTML = `
       <div class="clean-fill-ready">
@@ -7139,6 +7136,48 @@
     if (dom.cleanStatus) dom.cleanStatus.textContent = message || "";
   }
 
+  function cleanSourceTimeAt(t) {
+    const clips = state.plan?.clips || [];
+    let cursor = 0;
+    for (const clip of clips) {
+      const span = Math.max(0, Number(clip.end) - Number(clip.start));
+      if (t <= cursor + span + 1e-6) {
+        return Number(clip.start) + Math.max(0, Math.min(span, t - cursor));
+      }
+      cursor += span;
+    }
+    return Number(clips[clips.length - 1]?.end) || 0;
+  }
+
+  function updateCleanPreviewMeta() {
+    const t = currentCleanTime();
+    if (dom.cleanPreviewTime) dom.cleanPreviewTime.textContent = `Source ${fmtTime(cleanSourceTimeAt(t), 2)}`;
+    if (dom.cleanPreviewMoment) dom.cleanPreviewMoment.textContent = cleanClipTitle(t) || cleanClipLabel(t) || "No moment";
+    const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
+    const fillLayer = selected && cleanMethodKey(selected) === "fill"
+      ? selected
+      : classicCleanLayers().find((layer) => cleanMethodKey(layer) === "fill");
+    const engine = fillLayer?.engine || state.fill?.default || "lama";
+    if (dom.cleanPreviewEngine) {
+      dom.cleanPreviewEngine.textContent = fillLayer
+        ? `Engine ${String(engine).toUpperCase()}`
+        : "Clean preview";
+    }
+    if (dom.cleanPreviewEta) {
+      if (!fillLayer) {
+        dom.cleanPreviewEta.textContent = "No fill yet";
+      } else {
+        const ranges = fillLayer.ranges || [];
+        const seconds = ranges.reduce((total, item) => (
+          total + Math.max(0, Number(item.end) - Number(item.start))
+        ), 0) || cleanCutTotal();
+        const perFrame = engine === "lama" ? 16 : 5;
+        const estimate = Math.round(seconds * 30 * perFrame);
+        dom.cleanPreviewEta.textContent = `Est. ${estimate < 60 ? `${estimate}s` : `${Math.ceil(estimate / 60)} min`}`;
+      }
+    }
+  }
+
   // The stage frame is the real render minus the fill, which happens in the
   // render. Say that, or an AI fill box looks like a box that does nothing.
   function setCleanFillNote(count) {
@@ -7152,16 +7191,13 @@
   // ------------------------------------------------------------ the frame
 
   function cleanFrameBody() {
+    // Clean's preview is pixels only: no captions, text overlays, effects or
+    // graphics. The render still applies those after the clean stage.
     return {
       clips: classicPlanClips(),
       clean: cleanPayloadLayers(),
-      overlays: state.classicText.overlays.map((layer) => ({ ...layer })),
-      effects: state.classicText.effects.map((effect) => ({
-        id: effect.id,
-        kind: effect.kind,
-        start: Number(effect.start) || 0,
-        end: Number(effect.end) || 0,
-      })),
+      overlays: [],
+      effects: [],
       t: round2(currentCleanTime()),
       aspect: classicTextSupported() ? state.aspect : "9:16",
       quality: "draft",
@@ -7318,6 +7354,14 @@
     };
   }
 
+  function cleanSourcePoint(point, crop) {
+    const area = crop || CLEAN_FULL_CROP;
+    return {
+      x: clamp(area.x + clamp(Number(point.x) || 0, 0, 1) * area.w, 0, 1),
+      y: clamp(area.y + clamp(Number(point.y) || 0, 0, 1) * area.h, 0, 1),
+    };
+  }
+
   function cleanBoxOnFrame(box, crop) {
     const area = crop || CLEAN_FULL_CROP;
     const left = Math.max(Number(box.x) || 0, area.x);
@@ -7358,6 +7402,12 @@
           <span class="clean-handle" data-clean-handle="se"></span>
         </div>`;
     }).join("");
+    const focus = state.classicText.focusBox;
+    if (focus) {
+      const crop = cleanCropAt(t);
+      const box = cleanFrameBox(focus, crop);
+      overlay.insertAdjacentHTML("beforeend", `<div class="clean-focus-box" style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%" aria-hidden="true"></div>`);
+    }
     if (dom.cleanFrameState) {
       const frame = state.classicText.frame;
       let message = "";
@@ -7369,6 +7419,7 @@
       dom.cleanFrameState.hidden = !message;
     }
     if (dom.cleanFrame) dom.cleanFrame.hidden = !state.classicText.frame.url;
+    updateCleanPreviewMeta();
   }
 
   async function refreshCleanFrame(force = false) {
@@ -7469,144 +7520,225 @@
     return entries;
   }
 
-  function cleanThumbStyle(box) {
-    const w = Math.max(0.05, Number(box && box.w) || 0.2);
-    const h = Math.max(0.05, Number(box && box.h) || 0.2);
-    const x = clamp(Number(box && box.x) || 0, 0, 1);
-    const y = clamp(Number(box && box.y) || 0, 0, 1);
-    const size = 100 / w;
-    const posX = w >= 1 ? 0 : (x / (1 - w)) * 100;
-    const posY = h >= 1 ? 0 : (y / (1 - h)) * 100;
-    return `background-size:${size.toFixed(1)}% ${(100 / h).toFixed(1)}%;`
-      + `background-position:${posX.toFixed(1)}% ${posY.toFixed(1)}%`;
+  function cleanTextKey(value) {
+    return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
   }
 
-  function cleanEntryScene(entry) {
-    const scenes = state.job?.analysis?.scenes || [];
-    const ranges = Array.isArray(entry.ranges) ? entry.ranges : [];
-    const at = Number(ranges[0] && ranges[0].start) || 0;
-    return scenes.find((scene) => at >= scene.start && at < scene.end) || scenes[0] || null;
+  function cleanBoxesMeet(a, b) {
+    if (!a || !b) return false;
+    const ax = Number(a.x) || 0;
+    const ay = Number(a.y) || 0;
+    const aw = Number(a.w) || 0;
+    const ah = Number(a.h) || 0;
+    const bx = Number(b.x) || 0;
+    const by = Number(b.y) || 0;
+    const bw = Number(b.w) || 0;
+    const bh = Number(b.h) || 0;
+    const left = Math.max(ax, bx);
+    const top = Math.max(ay, by);
+    const right = Math.min(ax + aw, bx + bw);
+    const bottom = Math.min(ay + ah, by + bh);
+    if (right > left && bottom > top) {
+      const overlap = (right - left) * (bottom - top);
+      const area = Math.max(1e-6, Math.min(aw * ah, bw * bh));
+      if (overlap / area >= 0.25) return true;
+    }
+    const cx = Math.abs((ax + aw / 2) - (bx + bw / 2));
+    const cy = Math.abs((ay + ah / 2) - (by + bh / 2));
+    return cx <= 0.045 && cy <= 0.045;
   }
 
-  // A scan box lives on the source timeline, the cut on its own. Classic stores
-  // ranges in cut time because that is what the editor scrubs; the server
-  // translates them back to source time per clip before the render, which is
-  // what `compose_render` actually compares. Text that no clip carries stays
-  // out of the list instead of becoming a box that never appears.
-  function cleanCutRanges(ranges) {
-    const list = Array.isArray(ranges) ? ranges : [];
-    if (!list.length) return [];
-    const clips = state.plan?.clips || [];
+  function cleanRowRanges(rows) {
     const out = [];
-    let cursor = 0;
-    for (const clip of clips) {
-      const start = Number(clip.start) || 0;
-      const end = Number(clip.end) || 0;
-      const span = Math.max(0, end - start);
-      for (const range of list) {
-        const from = Math.max(start, Number(range.start) || 0);
-        const to = Math.min(end, Number(range.end) || 0);
-        if (to - from > 0.01) {
-          out.push({
-            start: round2(cursor + (from - start)),
-            end: round2(cursor + (to - start)),
-          });
-        }
+    for (const row of rows || []) {
+      for (const range of row.ranges || []) {
+        const start = Number(range.start) || 0;
+        const end = Number(range.end) || 0;
+        if (end > start) out.push({ start, end });
       }
-      cursor += span;
     }
     out.sort((a, b) => a.start - b.start);
-    return out;
+    const merged = [];
+    for (const item of out) {
+      if (merged.length && item.start <= merged[merged.length - 1].end + 1e-6) {
+        merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, item.end);
+      } else {
+        merged.push({ ...item });
+      }
+    }
+    return merged;
   }
 
-  function cleanEntryAdded(entry) {
-    return classicCleanLayers().some((layer) => (
-      (entry.tracklet_id && layer.tracklet_id === entry.tracklet_id)
-      || (layer.label && layer.label === entry.tracklet_id)
-    ));
+  // One row per distinct text. Same text in the same area merges across
+  // detection frames; a different area stays a separate row. Rows are packed
+  // into lanes so two rows that overlap in time never sit on top of each
+  // other. Drawn boxes are rows too.
+  function cleanScanRows() {
+    const rows = [];
+    for (const entry of cleanScanEntries()) {
+      const text = String(entry.text || entry.text_key || entry.kind || "Text").trim();
+      const key = cleanTextKey(entry.text_key || entry.text || text);
+      const existing = rows.find((row) => row.key === key && cleanBoxesMeet(row.box, entry.box));
+      if (existing) {
+        existing.ranges = cleanRowRanges([
+          { ranges: existing.ranges },
+          { ranges: entry.ranges || [] },
+        ]);
+        existing.entryRows.push(entry);
+        continue;
+      }
+      rows.push({
+        key,
+        text: text || "Text",
+        box: entry.box,
+        kind: entry.kind || "text",
+        ranges: cleanRowRanges([{ ranges: entry.ranges || [] }]),
+        entryRows: [entry],
+        entry,
+        method: state.classicText.foundMethod || "fill",
+        manual: false,
+      });
+    }
+    for (const layer of classicCleanLayers()) {
+      if (layer.source !== "manual") continue;
+      rows.push({
+        key: `manual:${layer.id}`,
+        text: layer.label || "Drawn box",
+        box: layer.box,
+        kind: layer.kind || "manual",
+        ranges: cleanRowRanges([{ ranges: layer.ranges || [] }]),
+        entryRows: [],
+        entry: null,
+        method: cleanMethodKey(layer),
+        manual: true,
+        layer_id: layer.id,
+      });
+    }
+    rows.sort((a, b) => {
+      const at = a.ranges[0]?.start ?? Number.MAX_SAFE_INTEGER;
+      const bt = b.ranges[0]?.start ?? Number.MAX_SAFE_INTEGER;
+      if (at !== bt) return at - bt;
+      return String(a.kind).localeCompare(String(b.kind));
+    });
+    const lanes = [];
+    for (const row of rows) {
+      const start = row.ranges[0]?.start ?? Number.MAX_SAFE_INTEGER;
+      const end = row.ranges[row.ranges.length - 1]?.end ?? start;
+      let lane = 0;
+      while (lane < lanes.length && lanes[lane] > start + 1e-6) lane += 1;
+      lanes[lane] = end;
+      row.lane = lane;
+    }
+    return rows;
+  }
+
+  function cleanRowMethod(row) {
+    return CLEAN_METHODS[row.method] ? row.method : (state.classicText.foundMethod || "fill");
+  }
+
+  function cleanRowCutStart(row) {
+    if (!row.ranges.length) return 0;
+    const mapped = cleanCutRanges(row.ranges);
+    return mapped.length ? mapped[0].start : null;
+  }
+
+  function cleanSourceScene(at) {
+    const scenes = state.job?.analysis?.scenes || [];
+    return scenes.find((scene) => at >= scene.start && at < scene.end) || null;
+  }
+
+  function focusCleanRow(row) {
+    if (!row) return;
+    const sourceStart = Number(row.ranges[0]?.start) || 0;
+    const cutStart = cleanRowCutStart(row);
+    if (cutStart === null) {
+      setCleanStatus("Not in this cut. Add the moment to Smart Cut first.");
+      return;
+    }
+    const scene = cleanSourceScene(sourceStart);
+    if (scene) openDrawer(scene.id);
+    state.classicText.t = Math.max(0, cutStart - 0.5);
+    state.classicText.focusBox = row.box;
+    if (row.layer_id && classicCleanLayers().some((layer) => layer.id === row.layer_id)) {
+      state.classicText.selection = row.layer_id;
+    }
+    if (dom.cleanScrub) dom.cleanScrub.value = String(state.classicText.t);
+    paintCleanStage();
+    scheduleCleanFrame();
+    dom.cleanStage?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    setCleanStatus(scene
+      ? `Moment ${scene.id + 1} · ${fmtTime(scene.start, 1)} · ${row.kind}`
+      : `Source ${fmtTime(sourceStart, 1)} · ${row.kind}`);
   }
 
   function renderCleanFound() {
     const panel = dom.cleanFound;
     if (!panel) return;
-    const entries = cleanScanEntries();
-    if (!entries.length) {
+    const rows = cleanScanRows();
+    if (!rows.length) {
       panel.hidden = true;
       panel.innerHTML = "";
       return;
     }
     panel.hidden = false;
     const ticks = state.classicText.foundTicks;
-    const tickable = (entry, index) => (
-      !entry.blocked && cleanCutRanges(entry.ranges).length > 0
-      || (!entry.blocked && !(entry.ranges || []).length)
-    );
-    // A tick for a row that the current scan no longer has would remove a box
-    // the founder never saw; drop it rather than act on stale intent.
     for (const index of Array.from(ticks)) {
-      if (!entries[index]) ticks.delete(index);
+      if (!rows[index] || rows[index].manual) ticks.delete(index);
     }
-    const rows = entries.map((entry, index) => {
-      const blocked = Boolean(entry.blocked);
-      const scene = cleanEntryScene(entry);
-      const thumb = scene ? thumbUrl(scene) : "";
-      const added = cleanEntryAdded(entry);
-      const cutRanges = cleanCutRanges(entry.ranges);
-      const outside = (Array.isArray(entry.ranges) ? entry.ranges.length : 0) > 0
-        && cutRanges.length === 0;
-      const selectable = !blocked && !outside;
-      const ticked = selectable && ticks.has(index);
-      const preview = thumb
-        ? `<span class="clean-found-thumb" style="background-image:url('${esc(thumb)}');${cleanThumbStyle(entry.box)}" aria-hidden="true"></span>`
-        : '<span class="clean-found-thumb is-empty" aria-hidden="true"></span>';
-      return `
-        <div class="clean-found-row${blocked ? " is-blocked" : ""}${added ? " is-added" : ""}${ticked ? " is-ticked" : ""}" role="listitem" data-found-index="${index}">
-          ${selectable
-            ? `<input type="checkbox" class="clean-found-tick" data-found-tick="${index}"${ticked ? " checked" : ""} aria-label="Tick ${esc(entry.kind || "text")} for removal">`
-            : '<span class="clean-found-tick-space" aria-hidden="true"></span>'}
-          ${preview}
-          <div class="clean-found-copy">
-            <span class="clean-found-kind">${esc(entry.kind || "text")}</span>
-            <span class="clean-found-reason">${esc(blocked ? entry.reason : (entry.reason || "Burned-in text"))}</span>
-          </div>
-          ${added ? '<span class="clean-found-blocked is-added">ticked</span>' : ""}
-          ${blocked || outside
-            ? `<span class="clean-found-blocked">${blocked ? "locked" : "not in this cut"}</span>`
-            : ""}
-        </div>`;
-    }).join("");
     const fill = state.fill || {};
-    const methods = [["fill", "AI fill"], ["blur", "Blur"], ["cover", "Cover"]]
+    const methods = [["fill", "AI fill"], ["blur", "Blur"], ["crop", "Crop guard"]]
       .filter(([key]) => key !== "fill" || fill.available);
     const wanted = state.classicText.foundMethod || "fill";
-    // A method that is not on offer (AI fill without its pack) must not stay
-    // selected invisibly: the button would then refuse with no visible reason.
     const method = methods.some(([key]) => key === wanted) ? wanted : "blur";
     const methodOptions = methods
       .map(([key, label]) => `<option value="${key}"${key === method ? " selected" : ""}>${label}</option>`)
       .join("");
-    const engine = state.classicText.foundEngine
-      || fill.default || "sttn";
+    const engine = state.classicText.foundEngine || fill.default || "lama";
     const engineOptions = Object.keys(CLEAN_FILL_ENGINE_LABEL).map((key) => {
       const ready = Boolean(fill.engines?.[key]?.ready);
       return `<option value="${key}"${key === engine ? " selected" : ""}${ready ? "" : " disabled"}>${esc(CLEAN_FILL_ENGINE_LABEL[key])}</option>`;
     }).join("");
-    const tickCount = Array.from(ticks).filter((index) => entries[index]).length;
+    const rowsHtml = rows.map((row, index) => {
+      const cutStart = cleanRowCutStart(row);
+      const outside = cutStart === null;
+      const ticked = !row.manual && ticks.has(index);
+      const scene = cleanSourceScene(Number(row.ranges[0]?.start) || 0);
+      const thumb = scene ? thumbUrl(scene) : "";
+      const time = row.ranges.length
+        ? `${fmtTime(row.ranges[0].start, 1)} – ${fmtTime(row.ranges[row.ranges.length - 1].end, 1)}`
+        : "whole cut";
+      return `
+        <div class="clean-found-row clean-lane-${Math.min(3, row.lane || 0)}${ticked ? " is-ticked" : ""}${outside ? " is-outside" : ""}" role="listitem" data-found-index="${index}">
+          ${row.manual
+            ? '<span class="clean-found-tick-space" aria-hidden="true"></span>'
+            : `<input type="checkbox" class="clean-found-tick" data-found-tick="${index}"${ticked ? " checked" : ""} aria-label="Include ${esc(row.text)}">`}
+          ${thumb ? `<span class="clean-found-thumb" style="background-image:url('${esc(thumb)}');${cleanThumbStyle(row.box)}" aria-hidden="true"></span>` : '<span class="clean-found-thumb is-empty" aria-hidden="true"></span>'}
+          <div class="clean-found-copy">
+            <span class="clean-found-time mono">${esc(time)}</span>
+            <span class="clean-found-kind">${esc(row.kind)}</span>
+            <span class="clean-found-sample">${esc(row.text)}</span>
+            <span class="clean-found-method">${esc(CLEAN_METHODS[cleanRowMethod(row)].label)} · lane ${Number(row.lane) + 1}</span>
+          </div>
+          ${outside ? '<span class="clean-found-blocked">Not in this cut</span>' : ""}
+          ${row.manual ? '<span class="clean-found-blocked is-added">drawn</span>' : ""}
+        </div>`;
+    }).join("");
+    const tickCount = Array.from(ticks).filter((index) => rows[index] && !rows[index].manual).length;
     const readyText = fill.available
       ? `AI fill ready${fill.default ? ` · ${esc(String(fill.default).toUpperCase())} by default` : ""}`
-      : "AI fill needs its model pack · Blur and Cover work now";
+      : "AI fill needs its model pack · Blur and Crop guard work now";
     panel.innerHTML = `
       <div class="clean-found-head">
-        <span class="clean-found-title">Text on screen</span>
-        <span class="hint">${entries.length} found · tick the ones to remove</span>
+        <span class="clean-found-title">Found text</span>
+        <span class="hint">${rows.length} row${rows.length === 1 ? "" : "s"} · click a row to open its moment</span>
       </div>
-      <div class="clean-found-list" role="list">${rows}</div>
+      <div class="clean-found-list" role="list">${rowsHtml}</div>
       <div class="clean-found-actions">
         <button class="ghost small" type="button" data-found-all>Select all</button>
         <button class="ghost small" type="button" data-found-none${tickCount ? "" : " disabled"}>Clear</button>
         <select id="clean-found-method" class="clean-method-select" aria-label="Method for ticked text">${methodOptions}</select>
         <select id="clean-found-engine" class="clean-method-select" aria-label="AI fill engine"${method === "fill" && fill.available ? "" : " hidden"}>${engineOptions}</select>
-        <button class="primary small" type="button" data-found-apply${tickCount ? "" : " disabled"}>Remove ticked${tickCount ? ` (${tickCount})` : ""}</button>
+        <button class="primary small" type="button" data-found-apply${tickCount ? "" : " disabled"}>Remove ticked (${tickCount})</button>
       </div>
       <p class="hint clean-found-note">${readyText}</p>`;
   }
@@ -7629,15 +7761,16 @@
       kind: entry.kind || "manual",
       tracklet_id: entry.tracklet_id,
       tracklet_kind: entry.kind,
+      text_key: entry.text_key || entry.text || "",
       ranges,
       source: "scan",
     });
   }
 
   function applyFoundTicks() {
-    const entries = cleanScanEntries();
+    const rows = cleanScanRows();
     const ticks = Array.from(state.classicText.foundTicks)
-      .filter((index) => entries[index] && !entries[index].blocked)
+      .filter((index) => rows[index] && !rows[index].manual)
       .sort((a, b) => a - b);
     if (!ticks.length) {
       setCleanStatus("Tick the text you want removed first.");
@@ -7646,7 +7779,7 @@
     let method = state.classicText.foundMethod || "fill";
     if (method === "fill" && !(state.fill && state.fill.available)) method = "blur";
     const engine = state.classicText.foundEngine
-      || state.fill?.default || "sttn";
+      || state.fill?.default || "lama";
     if (method === "fill" && !state.fill?.engines?.[engine]?.ready) {
       setCleanStatus(state.fill?.engines?.[engine]?.reason || "That engine is not installed.");
       return;
@@ -7656,7 +7789,13 @@
     // One undo step for the whole tick, not one per row.
     pushClassicUndo();
     for (const index of ticks) {
-      const entry = entries[index];
+      const row = rows[index];
+      const entry = row.entry || {
+        ...row,
+        ranges: row.ranges,
+        box: row.box,
+        tracklet_id: row.entryRows?.[0]?.tracklet_id,
+      };
       if ((entry.ranges || []).length && !cleanCutRanges(entry.ranges).length) {
         outside += 1;
         continue;
@@ -7789,6 +7928,8 @@
       kind: options.kind || "manual",
       tracklet_id: options.tracklet_id || "",
       tracklet_kind: options.tracklet_kind || "",
+      text_key: options.text_key || "",
+      mask: options.mask || null,
       source: options.source === "scan" ? "scan" : "manual",
       hidden: false,
     };
@@ -7814,19 +7955,18 @@
 
   // STTN sees motion, so it is the subtitle default; LaMa is per frame and
   // only wins on a still overlay.
-  function defaultFillEngine(kind) {
+  function defaultFillEngine(_kind) {
     const ready = (key) => Boolean(state.fill?.engines?.[key]?.ready);
-    const wants = String(kind || "").toLowerCase() === "subtitle" || kind === "mask"
-      ? "sttn" : "lama";
-    if (ready(wants)) return wants;
-    return Object.keys(CLEAN_FILL_ENGINE_LABEL).find(ready) || "sttn";
+    // LaMa is the Classic default: per-frame and safe on a still overlay.
+    if (ready("lama")) return "lama";
+    return Object.keys(CLEAN_FILL_ENGINE_LABEL).find(ready) || "lama";
   }
 
   function setCleanMethod(id, method) {
     const layer = classicCleanLayers().find((item) => item.id === id);
     if (!layer || !CLEAN_METHODS[method]) return;
     if (method === "fill" && !(state.fill && state.fill.available)) {
-      setCleanStatus("AI fill needs its model pack. Blur and Cover work now.");
+      setCleanStatus("AI fill needs its model pack. Blur and Crop guard work now.")
       return;
     }
     pushClassicUndo();
@@ -8049,6 +8189,43 @@
         window.addEventListener("pointerup", onUp, { once: true });
         return;
       }
+      if (state.classicText.brushMode) {
+        const source = cleanSourcePoint(cleanLocalPoint(event), cleanCropAt(currentCleanTime()));
+        let target = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
+        if (!target) {
+          target = addCleanBox({
+            box: { x: Math.max(0, source.x - 0.02), y: Math.max(0, source.y - 0.02), w: 0.04, h: 0.04 },
+            method: state.classicText.drawMethod || "blur",
+            label: "Brush stroke",
+          });
+        }
+        if (!target) return;
+        const points = [{ x: source.x, y: source.y }];
+        target.mask = { strokes: [{ r: 0.02, points }] };
+        state.classicText.selection = target.id;
+        state.classicText.brushMode = false;
+        pushClassicUndo();
+        paintCleanStage();
+        const brushMove = (moveEvent) => {
+          const next = cleanSourcePoint(cleanLocalPoint(moveEvent), cleanCropAt(currentCleanTime()));
+          const last = points[points.length - 1];
+          if (Math.hypot(next.x - last.x, next.y - last.y) < 0.004) return;
+          points.push(next);
+          target.mask = { strokes: [{ r: 0.02, points: [...points] }] };
+          paintCleanBoxes();
+        };
+        const brushUp = () => {
+          canvas.removeEventListener("pointermove", brushMove);
+          window.removeEventListener("pointerup", brushUp);
+          saveClassicText();
+          scheduleCleanFrame();
+          setCleanStatus("Brush mask added. AI fill keeps the box and the stroke.");
+        };
+        canvas.addEventListener("pointermove", brushMove);
+        window.addEventListener("pointerup", brushUp, { once: true });
+        event.preventDefault();
+        return;
+      }
       if (!state.classicText.drawMode) {
         selectClean("");
         return;
@@ -8089,6 +8266,15 @@
 
   function bindClean() {
     dom.cleanDraw?.addEventListener("click", toggleCleanDraw);
+    dom.cleanBrush?.addEventListener("click", () => {
+      state.classicText.brushMode = !state.classicText.brushMode;
+      state.classicText.drawMode = false;
+      if (dom.cleanBrush) dom.cleanBrush.setAttribute("aria-pressed", state.classicText.brushMode ? "true" : "false");
+      setCleanStatus(state.classicText.brushMode
+        ? "Drag on the frame to brush a mask. The box stays."
+        : "");
+      paintCleanStage();
+    });
     dom.cleanUndo?.addEventListener("click", undoClassic);
     dom.cleanRedo?.addEventListener("click", redoClassic);
     dom.cleanRefresh?.addEventListener("click", () => {
@@ -8126,9 +8312,10 @@
     });
     dom.cleanFound?.addEventListener("click", (event) => {
       if (event.target.closest("[data-found-all]")) {
-        const entries = cleanScanEntries();
+        const rows = cleanScanRows();
         state.classicText.foundTicks = new Set(
-          entries.map((entry, index) => (entry.blocked ? -1 : index)).filter((index) => index >= 0),
+          rows.map((row, index) => (row.manual || cleanRowCutStart(row) === null ? -1 : index))
+            .filter((index) => index >= 0),
         );
         renderCleanFound();
         return;
@@ -8144,12 +8331,8 @@
         return;
       }
       const row = event.target.closest("[data-found-index]");
-      if (row && !event.target.closest("input")) {
-        const index = Number(row.dataset.foundIndex);
-        const ticks = state.classicText.foundTicks;
-        if (ticks.has(index)) ticks.delete(index);
-        else ticks.add(index);
-        renderCleanFound();
+      if (row && !event.target.closest("input, select, button")) {
+        focusCleanRow(cleanScanRows()[Number(row.dataset.foundIndex)]);
       }
     });
     dom.cleanFound?.addEventListener("change", (event) => {
@@ -8173,6 +8356,58 @@
     dom.cleanFill?.addEventListener("click", (event) => {
       const button = event.target.closest("#clean-fill-preview");
       if (button) previewFill();
+    });
+    dom.cleanPreviewBefore?.addEventListener("click", () => {
+      state.classicText.previewSide = "before";
+      renderCleanFill();
+    });
+    dom.cleanPreviewAfter?.addEventListener("click", () => {
+      state.classicText.previewSide = "after";
+      renderCleanFill();
+    });
+    dom.cleanPreviewPlay?.addEventListener("click", () => {
+      const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
+      const row = cleanScanRows().find((item) => item.layer_id === state.classicText.selection)
+        || cleanScanRows().find((item) => item.method === "fill");
+      if (row) focusCleanRow(row);
+      else if (selected) {
+        const cut = cleanCutRanges(selected.ranges);
+        state.classicText.t = Math.max(0, (cut[0]?.start || 0) - 0.5);
+        paintCleanStage();
+        scheduleCleanFrame();
+      } else {
+        setCleanStatus("Select a text row or box first.");
+      }
+    });
+    dom.cleanPreviewExclude?.addEventListener("click", () => {
+      const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
+      if (!selected) {
+        setCleanStatus("Select a box to exclude it.");
+        return;
+      }
+      toggleCleanHidden(selected.id);
+      setCleanStatus(selected.hidden ? "Box hidden again." : "Box excluded.");
+    });
+    dom.cleanPreviewAi?.addEventListener("click", () => {
+      const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
+      if (selected) setCleanMethod(selected.id, "fill");
+      else applyFoundTicks();
+    });
+    dom.cleanPreviewBlur?.addEventListener("click", () => {
+      const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
+      if (selected) setCleanMethod(selected.id, "blur");
+      else setCleanStatus("Select a box first.");
+    });
+    dom.cleanEmptyScanThis?.addEventListener("click", () => startTextScan());
+    dom.cleanEmptyScanVideo?.addEventListener("click", () => startTextScan());
+    dom.cleanFound?.addEventListener("dblclick", (event) => {
+      const row = event.target.closest("[data-found-index]");
+      if (!row) return;
+      const item = cleanScanRows()[Number(row.dataset.foundIndex)];
+      if (item) {
+        focusCleanRow(item);
+        setCleanStatus(`${item.kind} · ${item.text} · ${item.ranges.length ? `${fmtTime(item.ranges[0].start, 1)}–${fmtTime(item.ranges[item.ranges.length - 1].end, 1)}` : "whole cut"}`);
+      }
     });
     paintClassicUndo();
   }

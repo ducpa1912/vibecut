@@ -12,7 +12,7 @@ import settings_store
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_classic_setup_has_keys_engines_packs_and_the_rights_lock(monkeypatch):
+def test_classic_setup_has_keys_engines_and_packs(monkeypatch):
     monkeypatch.setenv("VIBECUT_EDITION", "classic")
     monkeypatch.delenv("VIBECUT_FEATURES", raising=False)
     html = TestClient(app.app).get("/").text
@@ -23,7 +23,6 @@ def test_classic_setup_has_keys_engines_packs_and_the_rights_lock(monkeypatch):
         'id="setup-voice-engines"',
         'id="setup-packs"',
         'id="setup-packs-refresh"',
-        'id="setup-rights-lock"',
     ):
         assert needed in html, needed
     assert '"views":["classic"]' in html

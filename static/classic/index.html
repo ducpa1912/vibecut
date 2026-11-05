@@ -150,14 +150,10 @@
           </div>
 
           <div class="action-row">
-            <label id="rights-tick" class="check rights-tick" hidden>
-              <input id="rights-own" type="checkbox">
-              <span class="check-box"></span>
-              <span class="check-copy"><strong>I own this footage</strong><small>or have the rights to it</small></span>
-            </label>
             <button id="analyze" class="primary" disabled>Dissect video <span class="arrow">↗</span></button>
             <span class="hint" id="ingest-note">ffmpeg cuts first. Analysis follows.</span>
           </div>
+          <p class="hint clean-responsibility">You are responsible for having permission to edit this footage.</p>
           <div id="ingest-error" class="error" hidden></div>
         </div>
 
@@ -255,6 +251,7 @@
           </div>
           <div class="clean-stage-tools">
             <button id="clean-draw" class="ghost small" type="button" aria-pressed="false" title="Draw a box (B)"><span class="clean-tool-glyph" aria-hidden="true">＋</span><span class="clean-tool-label">Box</span></button>
+            <button id="clean-brush" class="ghost small" type="button" aria-pressed="false" title="Brush a mask (M)"><span class="clean-tool-glyph" aria-hidden="true">✎</span><span class="clean-tool-label">Brush</span></button>
             <button id="clean-undo" class="ghost small" type="button" title="Undo (⌘Z)" aria-label="Undo" disabled><span class="clean-tool-glyph" aria-hidden="true">↶</span><span class="clean-tool-label">Undo</span></button>
             <button id="clean-redo" class="ghost small" type="button" title="Redo (⇧⌘Z)" aria-label="Redo" disabled><span class="clean-tool-glyph" aria-hidden="true">↷</span><span class="clean-tool-label">Redo</span></button>
             <button id="clean-refresh" class="ghost small" type="button" title="Render this frame again" aria-label="Refresh frame"><span class="clean-tool-glyph" aria-hidden="true">↻</span><span class="clean-tool-label">Refresh</span></button>
@@ -273,6 +270,18 @@
           <span id="clean-scrub-readout" class="hint mono"></span>
           <span id="clean-stage-hint" class="hint">Drag a box to move it, pull a corner to resize.</span>
           <span id="clean-fill-note" class="hint clean-fill-note" hidden></span>
+        </div>
+        <div id="clean-preview-controls" class="clean-preview-controls">
+          <span class="hint" id="clean-preview-time">—</span>
+          <span class="hint" id="clean-preview-moment">—</span>
+          <span class="hint" id="clean-preview-engine">—</span>
+          <span class="hint" id="clean-preview-eta">—</span>
+          <button id="clean-preview-before" class="ghost small" type="button">Before</button>
+          <button id="clean-preview-after" class="ghost small" type="button">After</button>
+          <button id="clean-preview-play" class="ghost small" type="button">Play this text</button>
+          <button id="clean-preview-ai" class="ghost small" type="button">AI fill</button>
+          <button id="clean-preview-blur" class="ghost small" type="button">Blur</button>
+          <button id="clean-preview-exclude" class="ghost small" type="button">Exclude</button>
         </div>
       </section>
 
@@ -437,13 +446,19 @@
           <div class="edit-card-head">
             <div>
               <h4 id="clean-panel-title">Clean</h4>
-              <p>Cover what should not be in the cut. The frame on the left is the real render.</p>
+              <p>Remove what should not be in the cut. The frame is the real render.</p>
             </div>
             <span id="clean-count" class="text-scan-badge" hidden></span>
           </div>
           <div id="clean-found" class="clean-found" hidden></div>
           <div id="clean-layers" class="clean-layers" role="list"></div>
-          <p id="clean-empty" class="hint clean-empty">No boxes yet. Scan for text on screen, or draw a box on the frame.</p>
+          <div id="clean-empty" class="clean-empty">
+            <p class="hint">No clean boxes yet. Find text, or draw a box on the frame.</p>
+            <div class="clean-empty-actions">
+              <button id="clean-empty-scan-this" class="ghost small" type="button">Scan this moment</button>
+              <button id="clean-empty-scan-video" class="ghost small" type="button">Scan video</button>
+            </div>
+          </div>
           <p id="clean-status" class="hint clean-status" role="status" aria-live="polite"></p>
           <div id="clean-fill" class="clean-fill" hidden></div>
         </section>
@@ -817,7 +832,6 @@
                 </label>
                 <button id="batch-create" class="primary small" type="submit">Create batch</button>
               </div>
-              <label class="creator-check"><input id="batch-rights" type="checkbox"> I own these videos or have the rights to them</label>
               <p class="hint">The server checks free disk before it starts. Batch analyzes sources and renders only the targets you select. Packets stay manual.</p>
               <div id="batch-error" class="error" role="alert" hidden></div>
             </form>
@@ -1396,14 +1410,6 @@
           </div>
         </section>
 
-        <section class="setup-section">
-          <div class="setup-title">
-            <h3>Rights lock</h3>
-            <span class="setup-badge">own footage</span>
-          </div>
-          <label class="setup-check"><input id="setup-rights-lock" type="checkbox" checked> Require the own-footage tick before import and Clean</label>
-          <p class="setup-hint">When the lock is on, Classic asks <strong>I own this footage or have the rights to it</strong> before any import. Turning it off is for your own private test footage only.</p>
-        </section>
       </div>
       <footer class="setup-foot">
         <span id="setup-status" class="hint"></span>

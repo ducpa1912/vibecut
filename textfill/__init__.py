@@ -119,6 +119,7 @@ def span_key(
                 "ranges": layer.get("ranges") or [],
                 "tracklet": layer.get("tracklet_id"),
                 "mask": layer.get("mask"),
+                "text_key": layer.get("text_key"),
             }
             for layer in layers
         ],
@@ -339,18 +340,28 @@ def fill_frame(
 ) -> np.ndarray:
     """Fill one RGB frame in place of a sequence.
 
-    The single-frame preview uses LaMa: it is the per-frame engine, so one
-    frame is a supported input. STTN needs neighbouring frames and is left to
-    the full render.
+    LaMa is the natural per-frame engine. STTN is allowed for a preview by
+    feeding it a one-frame chunk; the caller should prefer a short real span
+    when it needs temporal neighbours. The selected render engine is kept.
     """
-    if method != "lama":
-        raise FillError("The single-frame fill preview uses the LaMa model.")
+    if method not in METHODS:
+        raise FillError(f"Unknown fill method: {method}.")
     directory = models_dir(data_root)
     problem = missing_model(method, directory)
     if problem:
         raise FillError(problem)
     local_rects = [rect for rect in rects if rect[2] > rect[0] and rect[3] > rect[1]]
     height, width = frame.shape[:2]
+    if method == "sttn":
+        strips = masks.sttn_strips(local_rects, width, height)
+        if not strips:
+            return frame.copy()
+        filler = _filler("sttn", model_path("sttn", directory))
+        stream = fill_frames_sttn(
+            iter([frame]), lambda _index: local_rects, filler, strips,
+            chunk=1, overlap=0,
+        )
+        return next(stream, frame.copy())
     area = masks.lama_area(local_rects, width, height)
     if area is None:
         return frame.copy()

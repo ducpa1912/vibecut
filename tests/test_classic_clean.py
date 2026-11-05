@@ -98,16 +98,15 @@ def test_a_clean_box_keeps_the_method_and_maps_to_an_edit_kind():
     layers = routes_classic.normalize_classic_clean(
         [
             _box(id="a", method="blur"),
-            _box(id="b", method="cover", box={"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.1}),
             _box(id="c", method="crop", box={"x": 0.0, "y": 0.0, "w": 0.9, "h": 0.1}),
         ],
         10.0,
     )
-    assert [layer["method"] for layer in layers] == ["blur", "cover", "crop"]
+    assert [layer["method"] for layer in layers] == ["blur", "crop"]
     assert [
         routes_classic._classic_clean_edit([layer], clips)[0]["kind"]
         for layer in layers
-    ] == ["blur", "plate", "crop_guard"]
+    ] == ["blur", "crop_guard"]
     assert layers[0]["source"] == "scan"
     assert layers[0]["hidden"] is False
     assert layers[0]["ranges"] == []
@@ -129,8 +128,8 @@ def test_a_clean_box_is_validated_by_the_edit_rules():
 def test_ai_fill_is_refused_while_its_models_are_missing():
     with pytest.raises(routes_classic.ClassicTextError) as error:
         routes_classic.normalize_classic_clean([_box(method="fill")], 10.0)
-    # The refusal names the file that is actually missing, not a generic lock.
-    assert "sttn_infer_model.pth" in str(error.value)
+    # LaMa is the default engine; a missing model names its file.
+    assert "lama_fp32.onnx" in str(error.value)
 
 
 # ------------------------------------------------------------------ the render
@@ -154,20 +153,6 @@ def test_a_classic_box_compiles_to_the_same_clean_filter_the_reel_uses():
     segment = compiled["segments"][0]
     assert segment["clean_ids"] == ["cl01"]
     assert any("boxblur" in item for item in segment["pre_filters"])
-
-
-def test_a_cover_box_draws_an_opaque_plate():
-    clips = _clips()
-    layers = routes_classic.normalize_classic_layers(
-        [], [], routes_classic._classic_total(clips), [_box(method="cover")],
-    )
-    edit = routes_classic._build_classic_edit(clips, "9:16", layers)
-    compiled = compose_render.compile_edit(
-        edit, clips=clips, source={"width": 1920, "height": 1080},
-        scenes=[], motion_engine="perspective",
-    )
-    filters = compiled["segments"][0]["pre_filters"]
-    assert any("drawbox" in item for item in filters)
 
 
 def test_a_hidden_box_is_kept_in_the_editor_and_left_out_of_the_render():
@@ -268,45 +253,6 @@ def test_a_box_without_ranges_applies_at_the_same_source_time_in_every_clip():
     ]
 
 
-def test_a_box_drawn_on_a_16_9_frame_lands_inside_the_crop():
-    """Frame coordinates converted through the crop cover the right pixels."""
-    clips = _clips()
-    compiled = _compile(clips, {})
-    crop = routes_classic._classic_crop_box(
-        compiled["segments"][0], compiled["source"],
-    )
-    assert crop is not None
-    cx, cy, cw, ch = crop
-    # The browser draws at 45-55% of the visible frame and converts the same way
-    # the editor does: source = crop.origin + frame * crop.size.
-    frame_box = {"x": 0.45, "y": 0.45, "w": 0.1, "h": 0.1}
-    source_box = {
-        "x": round(cx + frame_box["x"] * cw, 6),
-        "y": round(cy + frame_box["y"] * ch, 6),
-        "w": round(frame_box["w"] * cw, 6),
-        "h": round(frame_box["h"] * ch, 6),
-    }
-    layers = routes_classic.normalize_classic_layers(
-        [], [], 8.0, [_box(method="cover", box=source_box)],
-    )
-    filters = _compile(clips, layers)["segments"][0]["pre_filters"]
-    drawbox = next(item for item in filters if "drawbox" in item)
-    geometry = drawbox.split(":color=")[0].removeprefix("drawbox=")
-    rect = {
-        key: int(value)
-        for key, value in (part.split("=", 1) for part in geometry.split(":"))
-    }
-    crop_px = (
-        int(round(cx * 1920)), int(round(cy * 1080)),
-        int(round(cw * 1920)), int(round(ch * 1080)),
-    )
-    left, top, width, height = crop_px
-    assert rect["x"] >= left - 2, drawbox
-    assert rect["x"] + rect["w"] <= left + width + 2, drawbox
-    assert rect["y"] >= top - 2, drawbox
-    assert rect["y"] + rect["h"] <= top + height + 2, drawbox
-
-
 # ------------------------------------------------------------------ the routes
 
 
@@ -336,16 +282,15 @@ def test_a_drawn_box_saves_without_a_check_kind(classic):
     assert response.json()["cut"]["clean"][0]["kind"] == "manual"
 
 
-@pytest.mark.parametrize("kind", ["watermark", "screen_text"])
-def test_the_server_refuses_a_box_the_policy_blocks(classic, kind):
+@pytest.mark.parametrize("kind", ["watermark", "screen_text", "handle_or_logo"])
+def test_every_check_kind_can_be_saved(classic, kind):
     client, _ = classic
     response = client.put(
         "/api/classic/jobs/classic-clean/text",
         json={"clips": _clips(), "clean": [_box(kind=kind)]},
     )
-    message = response.json()["detail"].lower()
-    assert response.status_code == 409
-    assert "watermark" in message or "screen" in message
+    assert response.status_code == 200, response.text
+    assert response.json()["cut"]["clean"][0]["kind"] == kind
 
 
 def _unticked_job(client) -> None:
@@ -356,7 +301,7 @@ def _unticked_job(client) -> None:
     path.write_text(json.dumps(job), encoding="utf-8")
 
 
-def test_the_rights_lock_refuses_clean_without_the_tick(classic):
+def test_clean_has_no_attestation_step(classic):
     import settings_store
 
     client, _ = classic
@@ -366,19 +311,7 @@ def test_the_rights_lock_refuses_clean_without_the_tick(classic):
         "/api/classic/jobs/classic-clean/text",
         json={"clips": _clips(), "clean": [_box()]},
     )
-    assert response.status_code == 409
-    assert "attestation" in response.text
-
-    ticked = client.post(
-        "/api/jobs/classic-clean/rights",
-        json={"attested": True, "source": "import"},
-    )
-    assert ticked.status_code == 200, ticked.text
-    allowed = client.put(
-        "/api/classic/jobs/classic-clean/text",
-        json={"clips": _clips(), "clean": [_box()]},
-    )
-    assert allowed.status_code == 200, allowed.text
+    assert response.status_code == 200, response.text
 
 
 def test_the_frame_route_renders_the_cut_on_screen(classic, monkeypatch):
@@ -471,7 +404,7 @@ def test_fill_status_names_the_missing_models_and_never_lies(classic, monkeypatc
     client, tmp_path = classic
     status = client.get("/api/classic/fill").json()
     assert status["available"] is False
-    assert status["missing"] == ["STTN", "LaMa"]
+    assert status["missing"] == ["LaMa", "STTN"]
     assert all(not item["installed"] for item in status["files"])
     assert "model pack" in status["note"]
     assert status["engines"]["sttn"]["ready"] is False
@@ -523,12 +456,12 @@ def test_one_ready_engine_is_enough(classic, monkeypatch):
     assert status["available"] is True
     assert status["default"] == "sttn"
     assert status["engines"]["lama"]["ready"] is False
-    # No LaMa means no one-frame preview, even though the render can fill.
-    assert status["preview"] is None
-    assert "lama" not in status["methods"] and "sttn" in status["methods"]
+    # The preview follows the only ready engine.
+    assert status["preview"] == "sttn"
+    assert "sttn" in status["methods"]
 
     layers = routes_classic.normalize_classic_clean(
-        [_box(method="fill")], 10.0,
+        [_box(method="fill", engine="sttn")], 10.0,
     )
     assert layers[0]["method"] == "fill"
     assert layers[0]["engine"] == "sttn"

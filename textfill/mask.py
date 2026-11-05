@@ -50,11 +50,10 @@ def layer_rects(layer: dict, width: int, height: int) -> list[Rect]:
     A freehand painter mask is a stroke object (or a legacy flat point list).
     A box layer keeps the original padded rectangle.
     """
+    rects: list[Rect] = [layer_rect(layer, width, height)]
     mask = layer.get("mask")
     if not mask:
-        rect = layer_rect(layer, width, height)
-        return [rect]
-    rects: list[Rect] = []
+        return rects
     if isinstance(mask, dict):
         strokes = mask.get("strokes") or []
     else:
@@ -163,22 +162,40 @@ def sttn_strips(
     ``width * ratio`` tall. Taller text gets more strips; the last one is
     pulled up so no strip leaves the frame.
     """
-    box = union(rects)
-    if box is None:
+    items = [rect for rect in rects if rect[3] > rect[1]]
+    if not items:
         return []
     strip = min(height, max(2, int(round(width * ratio))))
-    top, bottom = box[1], box[3]
-    if bottom - top <= strip:
-        middle = (top + bottom) // 2
-        y0 = min(max(0, middle - strip // 2), height - strip)
-        return [(y0, y0 + strip)]
-    strips = []
-    y0 = top
-    while y0 < bottom:
-        start = min(y0, height - strip)
-        strips.append((start, start + strip))
-        y0 += strip
-    return strips
+    # A top caption and a bottom credit must not share one strip pass: the
+    # model would repaint the whole band between them. Cluster vertically
+    # separated boxes and make the strip list per cluster.
+    items.sort(key=lambda item: (item[1], item[3]))
+    clusters: list[list[Rect]] = []
+    for rect in items:
+        if clusters and rect[1] <= clusters[-1][0][3] + strip:
+            clusters[-1].append(rect)
+        else:
+            clusters.append([rect])
+    strips: list[tuple[int, int]] = []
+    for cluster in clusters:
+        top = min(rect[1] for rect in cluster)
+        bottom = max(rect[3] for rect in cluster)
+        if bottom - top <= strip:
+            middle = (top + bottom) // 2
+            y0 = min(max(0, middle - strip // 2), max(0, height - strip))
+            strips.append((y0, y0 + strip))
+            continue
+        y0 = top
+        while y0 < bottom:
+            start = min(max(0, y0), max(0, height - strip))
+            strips.append((start, start + strip))
+            y0 += strip
+    # Drop duplicate strips while keeping order.
+    unique: list[tuple[int, int]] = []
+    for item in strips:
+        if item not in unique:
+            unique.append(item)
+    return unique
 
 
 def rasterize(rects: Iterable[Rect], width: int, height: int) -> np.ndarray:

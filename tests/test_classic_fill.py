@@ -297,3 +297,25 @@ def test_a_fill_failure_is_a_render_error_with_its_reason(tmp_path, monkeypatch)
             lambda *args: None, threading.Event(),
         )
     assert "model is missing" in str(error.value)
+
+
+def test_a_clean_mask_is_schema_data_and_keeps_the_box():
+    layer = edits.normalize_clean([{
+        "id": "a", "kind": "fill", "method": "lama",
+        "box": {"x": 0.1, "y": 0.2, "w": 0.4, "h": 0.1},
+        "mask": {"strokes": [{"r": 0.02, "points": [{"x": 0.2, "y": 0.25}]}]},
+        "text_key": "same text",
+    }])[0]
+    assert layer["method"] == "lama"
+    assert layer["text_key"] == "same text"
+    assert layer["mask"]["strokes"][0]["points"] == [{"x": 0.2, "y": 0.25}]
+    # The box is still there; a brush extends it rather than replacing it.
+    rects = textfill.masks.layer_rects(layer, 1000, 1000)
+    assert len(rects) >= 2
+
+
+def test_top_and_bottom_text_do_not_share_one_sttn_strip():
+    rects = [(100, 900, 900, 980), (100, 40, 900, 120)]
+    strips = textfill.masks.sttn_strips(rects, 1000, 1000)
+    assert len(strips) >= 2
+    assert not any(a <= 500 <= b for a, b in strips)

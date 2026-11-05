@@ -1209,8 +1209,6 @@
             name: dom.batchName.value.trim(),
             items,
             max,
-            // The own-footage tick; the server refuses the batch without it while the rights lock is on.
-            rights: Boolean(dom.batchRights?.checked),
           }),
         });
         toast(`Batch ${batch.name || batch.id} started.`);

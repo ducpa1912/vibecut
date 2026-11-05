@@ -10,6 +10,7 @@ module level would be circular.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import threading
@@ -21,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
+import detect
 import edits
 import render
 
@@ -145,19 +147,19 @@ MAX_CLASSIC_CUTS = 40
 # limited to some time ranges (cut time, translated per clip at build time).
 # The method picks the Edit kind, so Classic never invents a second clean
 # format.
-CLASSIC_CLEAN_METHODS = ("blur", "cover", "crop", "fill")
+CLASSIC_CLEAN_METHODS = ("blur", "crop", "fill")
 CLASSIC_CLEAN_KINDS = {
     "blur": "blur",
-    "cover": "plate",
     "crop": "crop_guard",
     "fill": "fill",
 }
 MAX_CLASSIC_CLEAN = 24
 CLASSIC_CLEAN_DEFAULT_COLOR = "#0b0d12"
-# A Classic box's `method` is what the founder picked (blur, cover, crop or
-# fill); a fill box also carries `engine` (which model runs). `edits` calls the
+# A Classic box's `method` is what the founder picked (blur, crop or fill); a fill box also carries `engine` (which model runs). `edits` calls the
 # engine "method" inside the Edit, so the two names must not be confused.
-CLASSIC_FILL_ENGINES = ("sttn", "lama")
+# Classic's default is LaMa: it is the per-frame engine and works on a still
+# overlay without the temporal window STTN needs. STTN remains selectable.
+CLASSIC_FILL_ENGINES = ("lama", "sttn")
 FILL_MODELS = {"LaMa": "lama_fp32.onnx", "STTN": "sttn_infer_model.pth"}
 FILL_ENGINE_MODEL = {"sttn": "STTN", "lama": "LaMa"}
 FILL_RUNTIME = {"sttn": "torch", "lama": "onnxruntime"}
@@ -231,6 +233,20 @@ class ClassicFillBody(BaseModel):
     effects: list[dict] = []
     t: float = 0.0
     aspect: str = "9:16"
+
+
+class ClassicFillEstimateBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    clips: list[dict]
+    clean: list[dict] = []
+    aspect: str = "9:16"
+
+
+class ClassicCleanLayersBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    clips: list[dict]
 
 
 class ClassicTextLookupBody(BaseModel):
@@ -581,7 +597,7 @@ def _classic_clean_edit(layers: list[dict], clips: list[dict]) -> list[dict]:
         entry = {
             "id": layer["id"],
             "kind": kind,
-            **({"method": str(layer.get("engine") or "sttn")} if kind == "fill" else {}),
+            **({"method": str(layer.get("engine") or "lama")} if kind == "fill" else {}),
             "box": dict(layer["box"]),
             "ranges": _cut_ranges_to_source(layer.get("ranges"), clips),
             "label": str(layer.get("label") or ""),
@@ -590,7 +606,7 @@ def _classic_clean_edit(layers: list[dict], clips: list[dict]) -> list[dict]:
             "radius": layer.get("radius", 24),
             "z": layer.get("z", 0),
         }
-        for key in ("tracklet_id", "tracklet_kind"):
+        for key in ("tracklet_id", "tracklet_kind", "mask", "text_key"):
             if layer.get(key):
                 entry[key] = layer[key]
         edit_layers.append(entry)
@@ -628,13 +644,13 @@ def normalize_classic_clean(
         method = str(raw.get("method") or "blur").strip().lower()
         if method not in CLASSIC_CLEAN_METHODS:
             raise ClassicTextError(
-                "A Clean box method must be blur, cover, crop or AI fill."
+                "A Clean box method must be blur, crop or AI fill."
             )
         engine = ""
         if method == "fill":
             # Only the engine that was asked for is refused, so a machine with
             # STTN installed can still fill subtitles while LaMa is missing.
-            engine = str(raw.get("engine") or "sttn").strip().lower()
+            engine = str(raw.get("engine") or "lama").strip().lower()
             if engine not in CLASSIC_FILL_ENGINES:
                 raise ClassicTextError(
                     "An AI fill box engine must be STTN or LaMa."
@@ -644,7 +660,7 @@ def normalize_classic_clean(
             if require_ready and not ready.get("ready"):
                 raise ClassicTextError(
                     ready.get("reason")
-                    or "AI fill needs its model pack. Use Blur or Cover."
+                    or "AI fill needs its model pack. Use Blur or Crop."
                 )
         layer_id = str(raw.get("id") or f"cl{index + 1:02d}").strip()
         # `kind` on a Classic box is the label the panel shows ("subtitle",
@@ -668,6 +684,8 @@ def normalize_classic_clean(
             "z": raw.get("z", index),
             "tracklet_id": raw.get("tracklet_id"),
             "tracklet_kind": tracklet_kind,
+            "mask": raw.get("mask"),
+            "text_key": raw.get("text_key"),
         })
         extras[layer_id] = {
             "method": method,
@@ -780,15 +798,15 @@ def classic_fill_status() -> dict:
         "files": files,
         "engines": engines,
         "default": default,
-        # The single-frame preview is LaMa's job: STTN needs neighbouring
-        # frames, so it cannot answer for one frame.
-        "preview": "lama" if engines["lama"]["ready"] else None,
-        "methods": ["blur", "cover", "crop"] + ([default] if default else []),
+        # The preview follows the selected render engine. LaMa is the default;
+        # STTN previews with a one-frame chunk.
+        "preview": default,
+        "methods": ["blur", "crop"] + ([default] if default else []),
         "note": (
             "AI fill is ready with " + " and ".join(ready_names) + "."
             if default is not None
             else "AI fill needs its model pack in " + str(directory)
-            + ". Until it is installed, Blur, Cover and Crop stay available."
+            + ". Until it is installed, Blur and Crop stay available."
         ),
     }
 
@@ -940,30 +958,6 @@ def classic_text_lookup(job_id: str, body: ClassicTextLookupBody) -> dict:
     }
 
 
-def _check_clean_rights(job: dict, layers: list[dict]) -> None:
-    """Refuse a Clean box the rights policy does not allow.
-
-    The stored job record is the only evidence: a watermark or screen-recording
-    UI box is always refused, and with the rights lock on every box needs the
-    own-footage tick.
-    """
-    import detect
-    import rights
-
-    attested = rights.job_attested(job)
-    if rights.lock_enabled() and not attested and layers:
-        raise HTTPException(409, detect.RIGHTS_MESSAGE)
-    for layer in layers:
-        kind = str(layer.get("tracklet_kind") or "").strip().casefold()
-        if kind == "watermark":
-            raise HTTPException(409, detect.WATERMARK_MESSAGE)
-        if kind == "screen_text":
-            raise HTTPException(409, detect.SCREEN_TEXT_MESSAGE)
-        reason = rights.clean_block_reason(kind, job=job) if kind else None
-        if reason == "attestation_required":
-            raise HTTPException(409, detect.RIGHTS_MESSAGE)
-
-
 @router.put("/api/classic/jobs/{job_id}/text")
 def classic_text_save(job_id: str, body: ClassicTextBody) -> dict:
     """Save Studio-shaped text layers, effects and Clean boxes for this cut."""
@@ -978,7 +972,6 @@ def classic_text_save(job_id: str, body: ClassicTextBody) -> dict:
         )
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    _check_clean_rights(job, layers["clean"])
     row = store_classic_cut(job_id, clips, layers)
     return {
         "cut": _classic_cut_payload(row),
@@ -1547,6 +1540,141 @@ def classic_frame(job_id: str, body: ClassicFrameBody):
     return Response(content=payload, media_type="image/jpeg", headers=headers)
 
 
+@router.post("/api/classic/jobs/{job_id}/fill/estimate")
+def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
+    """Estimate the fill time before a render starts.
+
+    The rates are measured on this Mac and intentionally conservative; the
+    real render reports its own progress and timings.
+    """
+    import app
+    import compose_render
+
+    job = app.load_job(job_id)
+    try:
+        clips = _classic_clips(body.clips)
+        total = _classic_total(clips)
+        layers = normalize_classic_layers([], [], total, body.clean)
+    except ClassicTextError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    aspect = str(body.aspect or "9:16").strip()
+    if aspect not in CLASSIC_EDIT_ASPECTS:
+        raise HTTPException(422, "The preview renders on 9:16 and 4:5 only.")
+    edit = _build_classic_edit(clips, aspect, layers)
+    try:
+        compiled = compose_render.compile_edit(
+            edit, clips=clips, source=job.get("source") or {},
+            scenes=(job.get("analysis") or {}).get("scenes") or [],
+            size=render._dims(aspect, "draft"),
+            motion_engine=compose_render.EDIT_MOTION_ENGINE,
+        )
+    except compose_render.ComposeError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    rate = {"lama": 16.0, "sttn": 5.0}
+    seconds = 0.0
+    frames = 0
+    methods: set[str] = set()
+    for segment in compiled.get("segments") or []:
+        fill = segment.get("fill") or {}
+        if not fill:
+            continue
+        method = str(fill.get("method") or "lama").lower()
+        methods.add(method)
+        span = max(0.0, float(segment.get("out_end") or 0.0) - float(segment.get("out_start") or 0.0))
+        count = max(1, int(round(span * render.OUT_FPS)))
+        frames += count
+        seconds += count * rate.get(method, 16.0)
+    return {
+        "method": next(iter(methods), None),
+        "methods": sorted(methods),
+        "frames": frames,
+        "seconds": round(seconds, 1),
+        "estimate_seconds": int(round(seconds)),
+        "per_frame": rate,
+    }
+
+
+@router.post("/api/classic/jobs/{job_id}/fill/sample")
+def classic_fill_sample(job_id: str, body: ClassicFillBody) -> dict:
+    """Alias for the single-frame before/after sample."""
+    return classic_fill_preview(job_id, body)
+
+
+@router.post("/api/classic/jobs/{job_id}/fill/cancel")
+def classic_fill_cancel(job_id: str) -> dict:
+    """The fill pre-pass is cancelled through the render cancel route.
+
+    A preview owns the fill lock only for one frame, so there is no separate
+    long-running preview job to cancel. Say that instead of pretending.
+    """
+    import app
+
+    app.load_job(job_id)
+    return {
+        "cancelled": False,
+        "message": "No standalone fill job is running. Cancel the render instead.",
+    }
+
+
+@router.post("/api/classic/jobs/{job_id}/clean/layers")
+def classic_clean_layers(job_id: str, body: ClassicCleanLayersBody) -> dict:
+    """Return the saved Clean layers for the current cut."""
+    import app
+
+    job = app.load_job(job_id)
+    try:
+        clips = _classic_clips(body.clips)
+        key = edits.clip_snapshot_hash(clips)
+    except ClassicTextError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    row = _classic_cuts(job).get(key) or {}
+    return {"clips_hash": key, "clean": list(row.get("clean") or [])}
+
+
+@router.post("/api/classic/jobs/{job_id}/clean/plan")
+def classic_clean_plan(job_id: str, body: ClassicCleanLayersBody) -> dict:
+    """Return the Check rows and the current cut's Clean layers in one plan."""
+    import app
+
+    job = app.load_job(job_id)
+    try:
+        clips = _classic_clips(body.clips)
+        key = edits.clip_snapshot_hash(clips)
+    except ClassicTextError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    report_path = app._job_dir(job_id) / "check" / detect.REPORT_FILE
+    report = {}
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        report = {}
+    row = _classic_cuts(job).get(key) or {}
+    return {
+        "clips_hash": key,
+        "rows": list(report.get("clean_prefill") or []),
+        "layers": list(row.get("clean") or []),
+        "note": "Rows are Check output; the browser joins them to this cut.",
+    }
+
+
+@router.post("/api/classic/jobs/{job_id}/clean/residual")
+def classic_clean_residual(job_id: str, body: ClassicCleanLayersBody) -> dict:
+    """Residual OCR is not a separate render in Classic; report honestly."""
+    import app
+
+    job = app.load_job(job_id)
+    try:
+        _classic_clips(body.clips)
+    except ClassicTextError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    return {
+        "residual": [],
+        "residual_pct": 0.0,
+        "frames": 0,
+        "note": "Classic does not run a separate residual OCR pass.",
+    }
+
+
 @router.get("/api/classic/fill")
 def classic_fill() -> dict:
     """AI-fill engine status. Never a fake ready state."""
@@ -1646,17 +1774,6 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
         return _fill_http_error(
             409, "model_missing", status["note"], fill=status,
         )
-    if status.get("preview") != "lama":
-        reason = ((status.get("engines") or {}).get("lama") or {}).get("reason")
-        return _fill_http_error(
-            409,
-            "preview_unavailable",
-            reason or (
-                "The one-frame preview needs the LaMa model. The render can "
-                "still use STTN."
-            ),
-            fill=status,
-        )
     try:
         clips = _classic_clips(body.clips)
         total = _classic_total(clips)
@@ -1665,10 +1782,6 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
         )
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    # The preview runs the real fill, so the same rights gate as the save and
-    # render paths must run before any pixels are changed. An unsaved request
-    # body is not evidence that the box is allowed.
-    _check_clean_rights(job, layers["clean"])
     aspect = str(body.aspect or "9:16").strip()
     if aspect not in CLASSIC_EDIT_ASPECTS:
         raise HTTPException(
@@ -1725,6 +1838,17 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
             "No AI fill box is active at this frame. Choose AI fill for a box "
             "and put the playhead inside its range.",
         )
+    engine = str(fill_plan.get("method") or "lama").strip().lower()
+    if engine not in CLASSIC_FILL_ENGINES:
+        engine = "lama"
+    engine_status = (status.get("engines") or {}).get(engine) or {}
+    if not engine_status.get("ready"):
+        return _fill_http_error(
+            409,
+            "model_missing",
+            engine_status.get("reason") or status["note"],
+            fill=status,
+        )
     fps = float(source.get("fps") or render.OUT_FPS) or render.OUT_FPS
     source_time = float(segment.get("start") or 0.0) + max(
         0.0, at - float(segment.get("out_start") or 0.0),
@@ -1741,14 +1865,14 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
         raise HTTPException(422, "No AI fill region is active at this frame.")
 
     directory = textfill.models_dir(app.DATA)
-    problem = textfill.missing_model("lama", directory)
+    problem = textfill.missing_model(engine, directory)
     if problem:
         return _fill_http_error(409, "model_missing", problem, fill=status)
-    model_path = textfill.model_path("lama", directory)
+    model_path = textfill.model_path(engine, directory)
     stamp = model_path.stat()
     key = hashlib.sha1(
         (
-            f"{compiled.get('edit_hash')}:{frame_index}:{out_w}x{out_h}:lama:"
+            f"{compiled.get('edit_hash')}:{frame_index}:{out_w}x{out_h}:{engine}:"
             f"{stamp.st_size}:{stamp.st_mtime_ns}:"
             f"{source.get('fingerprint')}"
         ).encode("utf-8"),
@@ -1764,8 +1888,8 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
             "width": out_w,
             "height": out_h,
             "time": round(at, 3),
-            "method": "lama",
-            "render_method": fill_plan.get("method") or "sttn",
+            "method": engine,
+            "render_method": engine,
             "cached": True,
         }
 
@@ -1782,7 +1906,7 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
         frame_rgb = _read_source_frame(source_path, width, height, source_time)
         try:
             filled_rgb = textfill.fill_frame(
-                frame_rgb, rects, data_root=job_dir.parent.parent, method="lama",
+                frame_rgb, rects, data_root=job_dir.parent.parent, method=engine,
             )
         except textfill.FillError as exc:
             return _fill_http_error(409, "fill_failed", str(exc))
@@ -1825,8 +1949,8 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
         "width": out_w,
         "height": out_h,
         "time": round(at, 3),
-        "method": "lama",
-        "render_method": fill_plan.get("method") or "sttn",
+        "method": engine,
+        "render_method": engine,
         "cached": False,
     }
 

@@ -1083,6 +1083,8 @@ def _tracklet_ref(tracklet: dict) -> dict:
         "kind": tracklet["kind"],
         "box": dict(tracklet["box"]),
         "ranges": [dict(item) for item in tracklet["ranges"]],
+        "text": str(tracklet.get("text") or ""),
+        "text_key": " ".join(str(tracklet.get("text") or "").split())[:120],
     }
 
 

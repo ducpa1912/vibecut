@@ -82,9 +82,9 @@ def _ready(**overrides) -> dict:
             "sttn": {"id": "sttn", "ready": True, "reason": "", "model": True},
             "lama": {"id": "lama", "ready": True, "reason": "", "model": True},
         },
-        "default": "sttn",
+        "default": "lama",
         "preview": "lama",
-        "methods": ["blur", "cover", "crop", "sttn"],
+        "methods": ["blur", "crop", "lama"],
         "note": "AI fill is ready with STTN and LaMa.",
     }
     status.update(overrides)
@@ -102,7 +102,7 @@ def _fill_box(**overrides) -> dict:
     box = {
         "id": "cl01",
         "method": "fill",
-        "engine": "sttn",
+        "engine": "lama",
         "box": {"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.16},
         "ranges": [{"start": 0.0, "end": 4.0}],
         "label": "Remove subtitle",
@@ -151,41 +151,25 @@ def test_a_fill_box_compiles_to_a_fill_segment(classic, monkeypatch):
     assert response.status_code == 200, response.text
     segment = rendered["compiled"]["segments"][0]
     assert segment["clean_ids"] == []
-    assert segment["fill"]["method"] == "sttn"
+    assert segment["fill"]["method"] == "lama"
     # Cut time 0-4 s on a clip at source 40 s is source 40-44 s.
     assert segment["fill"]["layers"][0]["ranges"] == [{"start": 40.0, "end": 44.0}]
     # The picture on the frame is not filled: say so where the client can read.
     assert response.headers["x-vibecut-fill"] == "1"
 
 
-def test_a_fill_box_on_a_watermark_is_refused(classic, monkeypatch):
+def test_a_fill_box_on_a_watermark_can_be_saved(classic, monkeypatch):
     client, _ = classic
     monkeypatch.setattr(routes_classic, "classic_fill_status", lambda: _ready())
     response = client.put(
         "/api/classic/jobs/classic-fill/text",
         json={"clips": _clips(), "clean": [_fill_box(kind="watermark")]},
     )
-    assert response.status_code == 409, response.text
-    assert "watermark" in response.text.lower()
+    assert response.status_code == 200, response.text
+    assert response.json()["cut"]["clean"][0]["kind"] == "watermark"
 
 
-def test_the_fill_preview_refuses_a_watermark_box(classic, monkeypatch):
-    client, _ = classic
-    monkeypatch.setattr(routes_classic, "classic_fill_status", lambda: _ready())
-    response = client.post(
-        "/api/classic/jobs/classic-fill/fill/preview",
-        json={
-            "clips": _clips(),
-            "clean": [_fill_box(kind="watermark")],
-            "t": 1.0,
-            "aspect": "9:16",
-        },
-    )
-    assert response.status_code == 409, response.text
-    assert "watermark" in response.text.lower()
-
-
-def test_the_rights_lock_refuses_fill_without_the_tick(classic, monkeypatch):
+def test_fill_has_no_attestation_step(classic, monkeypatch):
     import settings_store
 
     client, _ = classic
@@ -200,8 +184,7 @@ def test_the_rights_lock_refuses_fill_without_the_tick(classic, monkeypatch):
         "/api/classic/jobs/classic-fill/text",
         json={"clips": _clips(), "clean": [_fill_box()]},
     )
-    assert response.status_code == 409
-    assert "attestation" in response.text
+    assert response.status_code == 200, response.text
 
 
 # ------------------------------------------------------------------ the preview
@@ -259,7 +242,7 @@ def test_the_preview_fills_unsaved_boxes_at_the_right_source_time(preview_env):
     assert payload["after"].startswith("data:image/jpeg;base64,")
     assert payload["method"] == "lama"
     # The render will use the box's engine; say which, so the copy can too.
-    assert payload["render_method"] == "sttn"
+    assert payload["render_method"] == "lama"
     assert payload["cached"] is False
     # t=1.0 on a clip that starts at source 40 s reads source 41 s.
     assert calls["read"] == [41.0]
@@ -319,3 +302,17 @@ def test_the_preview_says_which_frame_has_no_fill_box(preview_env):
     )
     assert response.status_code == 422
     assert "No AI fill box" in response.json()["detail"]
+
+
+def test_the_fill_estimate_names_frames_and_time(classic, monkeypatch):
+    client, _ = classic
+    monkeypatch.setattr(routes_classic, "classic_fill_status", lambda: _ready())
+    response = client.post(
+        "/api/classic/jobs/classic-fill/fill/estimate",
+        json={"clips": _clips(), "clean": [_fill_box()], "aspect": "9:16"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["frames"] > 0
+    assert body["estimate_seconds"] > 0
+    assert body["method"] == "lama"
