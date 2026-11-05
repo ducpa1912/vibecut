@@ -885,7 +885,9 @@ export function mount(root, ctx) {
     if (!jobId) return;
     const data = await request(`${jobRoot(jobId)}/clip-sets`).catch(() => ({ clip_sets: [] }));
     sets = Array.isArray(data?.clip_sets) ? data.clip_sets : [];
-    if (!sets.some((item) => item.id === activeSetId)) activeSetId = sets[0]?.id || "";
+    if (!sets.some((item) => item.id === activeSetId)) {
+      activeSetId = (sets.find((item) => item.kind !== "full_video") || sets[0])?.id || "";
+    }
     const pick = finishFocusPick(focus, sets);
     focus = null;
     if (pick) {
@@ -1208,7 +1210,9 @@ export function mount(root, ctx) {
         : set.id;
       select.append(el("option", {
         value: set.id,
-        text: `${stamp} · ${formatCount(set.stories?.length, "story", "stories")}`,
+        text: set.kind === "full_video"
+          ? "Full video"
+          : `${stamp} · ${formatCount(set.stories?.length, "story", "stories")}`,
         selected: set.id === activeSetId,
       }));
     }

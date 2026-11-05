@@ -56,6 +56,10 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 34 | **Framing** on the right rail, then drag a corner of the orange outline on the preview in and out | The scene shrinks and grows, with black in the empty frame | |
 | 35 | Scroll on the preview, then drag the middle of the scene past the white line | Scrolling zooms. The scene moves, and the part past the line is cut | |
 | 36 | Elements → Effects: **Zoom out over time** and **Zoom in over time**, **Add motion**, stretch the bar, Play | The scene zooms over the bar's length, and it runs across cuts | |
+| 37 | Moments → **Edit full video** | Edit opens with every scene in time order, on a wide shape for a wide video. Its total time matches the whole video | |
+| 38 | In it, press Play across several cuts, listen, and split then delete a scene on the timeline | Sound runs with no tick at the cuts. The scene goes and the rest closes up | |
+| 39 | Back to Moments, press **Edit full video** again | The same edit opens with your changes. Your found moments are untouched | |
+| 40 | Finish → pick Full video in the list, add to queue, and render a short video | The whole video renders and downloads. Tell me how long it took and how long the video was | |
 
 ## Tell me too
 

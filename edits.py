@@ -47,6 +47,8 @@ MAX_CLEAN = 32
 MAX_MOTION = 8
 MAX_GRAPHICS = 32
 MAX_TIMELINE = 4 * 3600.0
+# A full video is one clip per scene, and a long one has thousands.
+MAX_SEQUENCE = 4000
 MAX_TEXT_LENGTH = 400
 MAX_ID = 64
 
@@ -1145,8 +1147,8 @@ def normalize_sequence(value: Any) -> list[dict]:
         return []
     if not isinstance(value, list):
         raise EditError("sequence must be a list.")
-    if len(value) > 240:
-        raise EditError("sequence may hold at most 240 clips.")
+    if len(value) > MAX_SEQUENCE:
+        raise EditError(f"sequence may hold at most {MAX_SEQUENCE} clips.")
     clips: list[dict] = []
     for index, raw in enumerate(value):
         if not isinstance(raw, dict):

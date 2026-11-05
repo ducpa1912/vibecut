@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261105-4";
+import { mountPreview } from "./preview.js?v=20261105-5";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -79,7 +79,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261105-4";
+    link.href = "/static/studio/edit/edit.css?v=20261105-5";
     document.head.append(link);
   }
 }
@@ -3626,7 +3626,9 @@ export function mount(root, ctx) {
         return;
       }
       const choice = readChoice();
-      state.set = usable.find((set) => set.id === choice.setId) || usable[0];
+      state.set = usable.find((set) => set.id === choice.setId)
+        || usable.find((set) => set.kind !== "full_video")
+        || usable[0];
       const choices = state.set.stories || [];
       state.story = choices.find((story) => story.id === choice.storyId) || choices[0];
       state.aspect = ASPECTS.includes(choice.aspect) ? choice.aspect : "9:16";

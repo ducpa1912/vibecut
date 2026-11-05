@@ -916,7 +916,8 @@ export function mountTimeline(root, options = {}) {
       }));
     }
     for (const item of row.items) track.append(makeBar(item, row.kind, view));
-    if (row.kind === "sentences") {
+    // Trim keeps whole sentences, so it does not apply to the full video.
+    if (row.kind === "sentences" && !state.story?.full_video) {
       track.append(
         makeTrimHandle("start", view),
         makeTrimHandle("end", view),

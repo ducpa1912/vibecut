@@ -502,6 +502,20 @@ try {
   }
   await page.locator('.st-preview-tool[data-tool="select"]').click();
   console.log("Frame, safe area, framing and icons passed.");
+
+  // Moments: the whole video opens in Edit, every scene in time order, with no trim.
+  await page.evaluate(() => { window.location.hash = "#/moments"; });
+  await page.waitForTimeout(600);
+  await page.locator("button", { hasText: "Edit full video" }).click();
+  await page.waitForFunction(() => window.location.hash.includes("edit"));
+  await page.waitForSelector("#st-preview-canvas");
+  await page.waitForTimeout(1500);
+  const opened = await page.evaluate(() => JSON.parse(localStorage.getItem("vibecut.studio.edit.choice") || "{}"));
+  assert(opened.storyId === "st_full_video", `the full video did not open: ${JSON.stringify(opened)}`);
+  assert(opened.aspect === "16:9", `a wide video did not open wide: ${JSON.stringify(opened)}`);
+  assert(await page.locator(".st-tl-trim").count() === 0, "the full video shows trim handles");
+  assert(await page.locator(".st-tl-bar-scenes").count() > 1, "the full video has no scenes on the timeline");
+  console.log("Full video passed.");
   console.log("Found-text list, Remove all and painter mask passed.");
 } finally {
   await browser.close();

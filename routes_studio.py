@@ -469,6 +469,48 @@ def add_story(job_id: str, set_id: str, body: AddStoryBody) -> dict:
     return {"clip_set": record, "story": story}
 
 
+@router.post("/api/jobs/{job_id}/full-video")
+def full_video(job_id: str, request: Request) -> dict:
+    """The whole video as one moment, every scene in time order. Picks nothing.
+
+    One per job: opening it again returns the same moment and its Edits. If the
+    transcript changed, the moment is rebuilt under the same id, and Edit offers
+    its usual repair.
+    """
+    import app
+    import clipset
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = app._clipset_job(job_id)
+    existing = next(
+        (
+            record for record in app._clip_set_records(job)
+            if record.get("kind") == clipset.FULL_VIDEO_KIND
+        ),
+        None,
+    )
+    sentences, scenes, _transcript = app._clipset_sentences(job)
+    fingerprint = clipset.source_fingerprint(sentences)
+    if existing and str(existing.get("source_fingerprint") or "") == fingerprint:
+        return {"clip_set": existing, "story": existing["stories"][0]}
+    try:
+        document = clipset.build_full_video_set(
+            scenes, sentences, float((job.get("source") or {}).get("duration") or 0.0),
+        )
+    except clipset.ClipSetError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    now = round(app.time.time(), 3)
+    document.update({
+        "id": str(existing["id"]) if existing else "cs_" + app.uuid.uuid4().hex[:12],
+        "job_id": job["id"],
+        "created": existing.get("created", now) if existing else now,
+        "updated": now,
+    })
+    app._store_clip_set(job_id, document)
+    return {"clip_set": document, "story": document["stories"][0]}
+
+
 @router.delete("/api/jobs/{job_id}/clip-sets/{set_id}/stories/{story_id}")
 def delete_story(job_id: str, set_id: str, story_id: str, request: Request) -> dict:
     """Remove one moment from a set. Its Edits and renders keep their own files."""

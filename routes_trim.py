@@ -613,6 +613,13 @@ def get_trim(job_id: str, set_id: str, story_id: str) -> dict:
     app = _app()
     with app.LOCK:
         job, record, story = _resolve(job_id, set_id, story_id)
+        if story.get("full_video"):
+            # Trim keeps whole sentences, which would drop every silent part.
+            raise _http(
+                409, "full_video",
+                "The full video has no trim. Split or delete scenes on the timeline.",
+                None,
+            )
         return _get_payload(job, record, story)
 
 

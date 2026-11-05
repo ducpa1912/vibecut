@@ -602,6 +602,39 @@ def _segment(
     return False
 
 
+def _audio_inputs(clips: list[dict]) -> list[dict]:
+    """Join clips that run on in the source into one read of it.
+
+    A full video is hundreds of touching clips. One input per clip can run out
+    of open files, and its fade at every cut would tick all the way through. A
+    join stops once it drifts a frame's fraction from the video's own cut.
+    """
+    joined: list[dict] = []
+    for clip in clips:
+        last = joined[-1] if joined else None
+        if (
+            last is not None
+            and _plain_audio(last) and _plain_audio(clip)
+            and abs(float(last["start"]) + float(last["duration"]) - float(clip["start"])) < 0.02
+        ):
+            last["duration"] = float(last["duration"]) + float(clip["duration"])
+        else:
+            joined.append(dict(clip))
+    return joined
+
+
+def _plain_audio(clip: dict) -> bool:
+    return not (
+        clip.get("kind") == "blank" or clip.get("freeze")
+        or clip.get("file") or clip.get("reverse")
+    )
+
+
+def _long_step(total: float, floor: int) -> int:
+    """Time for a step that reads the whole output, which can run for hours."""
+    return max(floor, int(float(total or 0.0) * 8))
+
+
 def _audio_track(
     source: str,
     meta: dict,
@@ -626,6 +659,7 @@ def _audio_track(
         ], timeout=120, cancel_event=cancel_event)
         return
 
+    clips = _audio_inputs(clips)
     cmd = [ffmpeg, "-y", "-v", "error"]
     for clip in clips:
         if (
@@ -697,7 +731,7 @@ def _audio_track(
         "-c:a", "pcm_s16le",
         str(output),
     ]
-    _run(cmd, timeout=900, cancel_event=cancel_event)
+    _run(cmd, timeout=_long_step(total, 900), cancel_event=cancel_event)
 
 
 def _caption_text(scene: dict) -> str:
@@ -1767,7 +1801,7 @@ def _burn_layers(
         "-map_metadata", "-1",
         str(output),
     ]
-    _run(cmd, timeout=900, cancel_event=cancel_event)
+    _run(cmd, timeout=_long_step(total, 900), cancel_event=cancel_event)
     return sum(int(entry["count"]) for entry in prepared)
 
 
@@ -1948,7 +1982,7 @@ def _burn_captions(
         "-map_metadata", "-1",
         str(output),
     ]
-    _run(cmd, timeout=900, cancel_event=cancel_event)
+    _run(cmd, timeout=_long_step(total, 900), cancel_event=cancel_event)
 
 
 def _concat_video(
@@ -1977,7 +2011,7 @@ def _concat_video(
         str(target_mp4),
     ]
     try:
-        _run(final, timeout=600, cwd=tmp, cancel_event=cancel_event)
+        _run(final, timeout=max(600, 30 * len(segments)), cwd=tmp, cancel_event=cancel_event)
         return
     except RenderCancelled:
         raise
@@ -1990,7 +2024,7 @@ def _concat_video(
         "-map_metadata", "-1",
         str(target_mp4),
     ]
-    _run(fallback, timeout=900, cwd=tmp, cancel_event=cancel_event)
+    _run(fallback, timeout=max(900, 120 * len(segments)), cwd=tmp, cancel_event=cancel_event)
 
 
 def _mux(
@@ -2043,7 +2077,7 @@ def _mux(
         ]
     if final:
         try:
-            _run(final, timeout=900, cancel_event=cancel_event)
+            _run(final, timeout=_long_step(total, 900), cancel_event=cancel_event)
             return
         except RenderCancelled:
             raise
@@ -2060,7 +2094,7 @@ def _mux(
         "-metadata", f"title={job_title}",
         str(output),
     ]
-    _run(fallback, timeout=1200, cancel_event=cancel_event)
+    _run(fallback, timeout=_long_step(total, 1200), cancel_event=cancel_event)
 
 
 def _caption_cache_signature(

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 import batch
 import disk
+import edits
 import rights
 
 LOGGER = logging.getLogger("vibecut.routes.batches")
@@ -504,9 +505,9 @@ def _retry_renders(app, job: dict) -> int:
             target = int(record.get("target") or 0)
         except (TypeError, ValueError):
             continue
-        # Story renders use their stored duration (1-180s), not only the
-        # legacy 15/30/60 presets.
-        if target < 1 or target > 180:
+        # Story renders use their stored duration, not only the legacy
+        # 15/30/60 presets. A full-video story can run for hours.
+        if target < 1 or target > int(edits.MAX_TIMELINE):
             continue
         if record.get("recoverable") is False:
             raise HTTPException(

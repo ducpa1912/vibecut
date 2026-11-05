@@ -6955,7 +6955,17 @@ class StoryRenderBackend:
             fixed = 0.0
         if fixed > 0:
             return fixed
-        return 1800.0
+        # Each ffmpeg step has its own limit, so this only has to outlast a long
+        # full video with AI fill, which runs far slower than real time.
+        try:
+            job = load_job(str(item.get("job_id")))
+            story = next(
+                row for row in _clip_set_in_job(job, str(item.get("set_id"))).get("stories") or []
+                if str(row.get("id")) == str(item.get("story_id"))
+            )
+            return max(1800.0, float(story.get("dur") or 0.0) * 200.0)
+        except Exception:  # noqa: BLE001 - a missing story is the runner's error to report
+            return 1800.0
 
 
 _STORY_QUEUES: dict[str, story_queue.StoryQueueManager] = {}

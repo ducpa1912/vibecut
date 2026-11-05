@@ -532,6 +532,11 @@ export function revealPath(path) {
 }
 
 /** Remove a moment set that has no stories left. */
+/** The whole video as one moment, every scene in time order. */
+export function openFullVideo(jobId) {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}/full-video`, { method: "POST" });
+}
+
 export function deleteStory(jobId, setId, storyId) {
   return request(jobPath(jobId, `/clip-sets/${encodeURIComponent(setId)}/stories/${encodeURIComponent(storyId)}`), {
     method: "DELETE",

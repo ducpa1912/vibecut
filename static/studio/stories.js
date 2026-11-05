@@ -18,6 +18,7 @@ import {
   addStory,
   createClipSet,
   createStoryQueue,
+  openFullVideo,
   deleteClipSet,
   deleteStory,
   getCheckReport,
@@ -349,6 +350,29 @@ export function mount(root, ctx) {
       localStorage.setItem(SHAPE_KEY, JSON.stringify(setShapes));
     } catch (_) {
       /* The current screen still holds the choice. */
+    }
+  }
+
+  /** A wide video opens wide. The shape can still be changed in Edit. */
+  function sourceShape() {
+    const width = Number(job?.source?.width) || 0;
+    const height = Number(job?.source?.height) || 0;
+    return width > height ? "16:9" : "9:16";
+  }
+
+  async function editFullVideo(button) {
+    button.disabled = true;
+    try {
+      const result = await openFullVideo(job.id);
+      localStorage.setItem(EDIT_CHOICE_KEY, JSON.stringify({
+        setId: result.clip_set.id,
+        storyId: result.story.id,
+        aspect: sourceShape(),
+      }));
+      ctx.go("edit", { force: true });
+    } catch (error) {
+      showError(error.message || "Could not open the full video.");
+      button.disabled = false;
     }
   }
 
@@ -1035,7 +1059,13 @@ export function mount(root, ctx) {
       title: "Choose scenes and build one moment yourself",
     });
     own.addEventListener("click", () => { openBuilder(card); });
-    actions.append(countLabel, lengthLabel, build, own);
+    const whole = el("button", {
+      class: "st-btn st-btn-ghost",
+      type: "button",
+      title: "Bring every scene into Edit in time order. No moments are picked.",
+    }, [icon("film"), el("span", { text: "Edit full video" })]);
+    whole.addEventListener("click", () => { void editFullVideo(whole); });
+    actions.append(countLabel, lengthLabel, build, own, whole);
     card.append(actions, custom);
 
     const speech = speechCard();
@@ -1368,7 +1398,9 @@ export function mount(root, ctx) {
     try {
       const data = await listClipSets(job.id);
       if (disposed) return;
-      sets = Array.isArray(data?.clip_sets) ? data.clip_sets : [];
+      // The full video is not a search result, so it stays out of this list.
+      sets = (Array.isArray(data?.clip_sets) ? data.clip_sets : [])
+        .filter((item) => item.kind !== "full_video");
       const usable = sets.filter((item) => Array.isArray(item.stories) && item.stories.length);
       if (!usable.some((item) => item.id === activeSetId)) {
         activeSetId = usable[0]?.id || sets[0]?.id || "";

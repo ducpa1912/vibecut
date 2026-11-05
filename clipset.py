@@ -1651,6 +1651,112 @@ def build_clipset(
     }
 
 
+FULL_VIDEO_KIND = "full_video"
+FULL_VIDEO_STORY_ID = "st_full_video"
+_MIN_FULL_VIDEO_CLIP_S = 0.2
+
+
+def _full_video_clips(scenes: list[dict], source_duration: float) -> list[dict]:
+    """One clip per scene, in time order, leaving no second of the video out."""
+    ordered = sorted(
+        (
+            scene for scene in scenes
+            if scene.get("id") is not None
+            and _safe_float(scene.get("end")) > _safe_float(scene.get("start"))
+        ),
+        key=lambda scene: _safe_float(scene.get("start")),
+    )
+    clips: list[dict] = []
+    for index, scene in enumerate(ordered):
+        start = 0.0 if index == 0 else clips[-1]["end"] if clips else _safe_float(scene.get("start"))
+        end = (
+            _safe_float(ordered[index + 1].get("start"))
+            if index + 1 < len(ordered)
+            else max(_safe_float(scene.get("end")), source_duration)
+        )
+        if end - start < _MIN_FULL_VIDEO_CLIP_S:
+            # Too short to stand alone. It joins the clip before it.
+            if clips:
+                clips[-1]["end"] = round(end, 3)
+                clips[-1]["dur"] = round(end - clips[-1]["start"], 3)
+            continue
+        clips.append({
+            "scene": int(scene["id"]),
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "dur": round(end - start, 3),
+            "role": "beat",
+            "why": "Full video",
+        })
+    return clips
+
+
+def build_full_video_set(
+    scenes: list[dict],
+    sentences: list[dict],
+    source_duration: float,
+) -> dict:
+    """A clip set holding the whole video as one story, with no moments picked.
+
+    Trim works on sentences, which would drop the parts nobody speaks in, so a
+    full-video story is cut with scene edits in Edit instead.
+    """
+    duration = _safe_float(source_duration)
+    clips = _full_video_clips(list(scenes or []), duration)
+    if not clips:
+        raise ClipSetError("This video has no scenes to edit yet.")
+    total = round(sum(clip["dur"] for clip in clips), 3)
+    title = "Full video"
+    ordered = list(sentences or [])
+    empty = {"text": title, "start": clips[0]["start"], "end": clips[-1]["end"]}
+    story = {
+        "id": FULL_VIDEO_STORY_ID,
+        "full_video": True,
+        "title": title,
+        "start": clips[0]["start"],
+        "end": clips[-1]["end"],
+        "dur": total,
+        "clips": clips,
+        "sentences": ordered,
+        "hook": dict(ordered[0]) if ordered else empty,
+        "payoff": dict(ordered[-1]) if ordered else empty,
+        "payoff_closing": False,
+        "evidence": [],
+        "score_breakdown": {},
+        "score": 0.0,
+        "scenes": [clip["scene"] for clip in clips],
+    }
+    return {
+        "kind": FULL_VIDEO_KIND,
+        "requested": 1,
+        "min_s": total,
+        "max_s": total,
+        "order": "source",
+        "locks": [],
+        "ban_scenes": [],
+        "excluded_sentences": [],
+        "stories": [story],
+        "available": 1,
+        "complete": True,
+        "candidate_count": 1,
+        "candidate_total": 1,
+        "candidate_scored": 1,
+        "sentence_count": len(ordered),
+        "source_fingerprint": source_fingerprint(ordered),
+        "sentence_timing": "words",
+        "source": {
+            "transcript": bool(ordered),
+            "scene_text": False,
+            "fallback": "transcript" if ordered else "none",
+            "partial_scene_fallback": 0,
+            "sentence_total": len(ordered),
+            "truncated": False,
+        },
+        "note": None,
+        "warnings": [],
+    }
+
+
 def _parse_sentence_ids(value) -> list[int] | None:
     if value is None:
         return None
