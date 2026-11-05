@@ -341,6 +341,22 @@ def test_check_runs_on_source_ready_without_analysis(
     assert app.load_job(job["id"])["check"]["status"] == "ready"
 
 
+def test_check_get_is_idle_on_source_ready_without_report(
+    classic, source_file,
+):
+    client, _tmp, _data = classic
+    video, _meta = source_file
+    job = _path_job(client, video)
+    response = client.get(f"/api/jobs/{job['id']}/check")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "idle"
+    assert body["report"] is None
+    assert body["text"]["confirmed"] is False
+    assert body["tracklets"] == [] and body["clean_prefill"] == []
+    assert app.load_job(job["id"])["analysis"] is None
+
+
 def test_check_message_pluralizes_and_keeps_recommendation_field(
     classic, source_file, monkeypatch,
 ):

@@ -3689,3 +3689,149 @@ body.editor-frame.finish-frame .speech-notice { width: min(100%, 680px); }
 }
 .clean-fill-compare.is-before .is-after,
 .clean-fill-compare.is-after .is-before { display: none; }
+
+/* ------------------------------------------- source clean (Phase 2)
+   Clean video opens the same result frame with the Clean rail, no moments and
+   no timeline. One sticky action owns the whole pipeline. The frame keeps the
+   source aspect; the rail sits beside it on a wide screen and below it under
+   1100 px. */
+
+.result-heading { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.result-heading > div { min-width: 0; }
+.source-back { flex: 0 0 auto; align-self: flex-start; }
+
+body.source-mode .result-actions { display: none !important; }
+body.source-mode .hook-panel,
+body.source-mode .player-wrap,
+body.source-mode .result-ready,
+body.source-mode .speech-notice,
+body.source-mode #render-stale,
+body.source-mode #text-scan { display: none !important; }
+body.source-mode .editor-pane-timeline { display: none !important; }
+body.source-mode .editor-pane-settings > *:not(#clean-panel) { display: none !important; }
+body.source-mode .editor-pane-settings { border-inline: 0; }
+body.source-mode .editor-pane-preview { justify-content: flex-start; }
+
+.source-clean-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 10px 0 2px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.source-clean-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-clean-meta { margin: 0; font-size: 11px; }
+
+.source-clean-action {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px -2px -2px;
+  padding: 10px 2px 2px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(to bottom, transparent, var(--panel) 18%);
+}
+.source-clean-summary { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.source-clean-progress { display: flex; align-items: center; gap: 8px; }
+.source-clean-bar {
+  flex: 1 1 auto;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line-2);
+}
+.source-clean-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 240ms ease; }
+.source-clean-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.source-clean-buttons .primary { flex: 1 1 auto; }
+.source-clean-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.source-clean-output { margin: 0; font-size: 11px; line-height: 1.45; }
+.source-clean-result-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.clean-found-row.is-low { border-left: 2px solid var(--payoff); }
+.clean-found-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.clean-found-confidence {
+  display: inline-block;
+  margin-left: 4px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.clean-detail {
+  margin: 8px 0 0;
+  padding: 9px 10px;
+  border-left: 2px solid var(--accent);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.clean-detail strong { color: var(--text); }
+.clean-detail button {
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+@media (min-width: 1000px) {
+  body.editor-frame.source-mode #result-view:not([hidden]) {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+    grid-template-areas:
+      "top top"
+      "preview settings";
+  }
+  body.editor-frame.source-mode .editor-pane-preview { padding-inline: 2px; }
+  body.editor-frame.source-mode .editor-pane-settings {
+    padding-inline: 16px;
+    border-left: 1px solid var(--line);
+  }
+}
+
+@media (min-width: 1000px) and (max-width: 1099px) {
+  body.editor-frame.source-mode #result-view:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1.1fr) minmax(0, 0.9fr);
+    grid-template-areas:
+      "top"
+      "preview"
+      "settings";
+    overflow-y: auto;
+  }
+  body.editor-frame.source-mode .editor-pane-settings {
+    overflow: visible;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 999px) {
+  body.source-mode .editor-pane-settings { padding: 0 2px; }
+  body.source-mode .source-back { margin-bottom: 8px; }
+  body.source-mode .result-top { flex-direction: column; }
+  body.source-mode .source-clean-action { position: static; }
+}

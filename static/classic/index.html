@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — Classic</title>
-  <link rel="stylesheet" href="/static/classic/style.css?v=0.16.0">
+  <link rel="stylesheet" href="/static/classic/style.css?v=0.18.1">
   <link rel="stylesheet" href="/static/classic/creator.css?v=0.15.0">
   <!-- vibecut:edition -->
   <style>
@@ -48,8 +48,8 @@
     })();
   </script>
   <script src="/static/classic/trust.js?v=0.1.0" defer></script>
-  <script src="/static/classic/i18n.js?v=0.2.0" defer></script>
-  <script src="/static/classic/app.js?v=0.16.0" defer></script>
+  <script src="/static/classic/i18n.js?v=0.3.2" defer></script>
+  <script src="/static/classic/app.js?v=0.18.3" defer></script>
   <script src="/static/classic/creator.js?v=0.15.0" defer></script>
 </head>
 <body>
@@ -150,8 +150,9 @@
           </div>
 
           <div class="action-row">
-            <button id="analyze" class="primary" disabled>Dissect video <span class="arrow">↗</span></button>
-            <span class="hint" id="ingest-note">ffmpeg cuts first. Analysis follows.</span>
+            <button id="clean-video" class="primary" disabled>Clean video <span class="arrow">↗</span></button>
+            <button id="analyze" class="ghost" disabled>Dissect video <span class="arrow">↗</span></button>
+            <span class="hint" id="ingest-note">Clean removes text from the whole video. Dissect cuts a reel.</span>
           </div>
           <p class="hint clean-responsibility">You are responsible for having permission to edit this footage.</p>
           <div id="ingest-error" class="error" hidden></div>
@@ -213,6 +214,7 @@
         <div id="progress-error" class="error" hidden></div>
         <div class="progress-actions">
           <button id="progress-cancel-url" class="ghost" hidden>Cancel download</button>
+          <button id="progress-source" class="ghost" hidden>Back to source clean</button>
           <button id="progress-back" class="ghost" hidden>Back to ingest</button>
         </div>
       </div>
@@ -221,11 +223,14 @@
     <!-- 03 / result -->
     <section id="result-view" hidden>
       <div class="result-top">
-        <div>
-          <p class="eyebrow"><span>03</span> cut</p>
-          <h2 id="result-title">—</h2>
-          <p id="result-meta" class="result-meta"></p>
-          <p id="usage-readout" class="hint"></p>
+        <div class="result-heading">
+          <button id="source-back" class="ghost small source-back" type="button" hidden>← Back to ingest</button>
+          <div>
+            <p class="eyebrow" id="result-eyebrow"><span>03</span> cut</p>
+            <h2 id="result-title">—</h2>
+            <p id="result-meta" class="result-meta"></p>
+            <p id="usage-readout" class="hint"></p>
+          </div>
         </div>
         <div class="result-actions">
           <button id="finish-cut" class="ghost" type="button" aria-pressed="false">Finish</button>
@@ -446,11 +451,16 @@
           <div class="edit-card-head">
             <div>
               <h4 id="clean-panel-title">Clean</h4>
-              <p>Remove what should not be in the cut. The frame is the real render.</p>
+              <p id="clean-panel-copy">Remove what should not be in the cut. The frame is the real render.</p>
             </div>
             <span id="clean-count" class="text-scan-badge" hidden></span>
           </div>
+          <div id="source-clean-head" class="source-clean-head" hidden>
+            <span id="source-clean-name" class="source-clean-name">—</span>
+            <span id="source-clean-meta" class="hint source-clean-meta"></span>
+          </div>
           <div id="clean-found" class="clean-found" hidden></div>
+          <div id="clean-detail" class="clean-detail" hidden></div>
           <div id="clean-layers" class="clean-layers" role="list"></div>
           <div id="clean-empty" class="clean-empty">
             <p class="hint">No clean boxes yet. Find text, or draw a box on the frame.</p>
@@ -461,6 +471,25 @@
           </div>
           <p id="clean-status" class="hint clean-status" role="status" aria-live="polite"></p>
           <div id="clean-fill" class="clean-fill" hidden></div>
+          <div id="source-clean-result" class="source-clean-result" hidden>
+            <p id="source-clean-output" class="hint source-clean-output" role="status" aria-live="polite"></p>
+          </div>
+          <div id="source-clean-action" class="source-clean-action" hidden>
+            <p id="source-clean-summary" class="source-clean-summary" role="status" aria-live="polite"></p>
+            <div id="source-clean-progress" class="source-clean-progress" hidden>
+              <div class="source-clean-bar" aria-hidden="true"><i id="source-clean-progress-fill"></i></div>
+              <span id="source-clean-stage" class="hint">Finding text</span>
+            </div>
+            <div id="source-clean-buttons" class="source-clean-buttons">
+              <button id="source-clean-run" class="primary" type="button">Find text &amp; clean</button>
+              <button id="source-clean-cancel" class="ghost" type="button" hidden>Cancel</button>
+            </div>
+            <div id="source-clean-result-actions" class="source-clean-result-actions" hidden>
+              <a id="source-clean-download" class="primary small" download hidden>Download <span class="arrow">↓</span></a>
+              <button id="source-clean-reel" class="ghost small" type="button">Make a reel</button>
+              <button id="source-clean-again" class="ghost small" type="button">Clean again</button>
+            </div>
+          </div>
         </section>
 
         <section id="text-scan" class="edit-card text-scan-card" aria-labelledby="text-scan-title">

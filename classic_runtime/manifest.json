@@ -231,9 +231,9 @@
   },
   {
    "path": "routes_check.py",
-   "source": "classic: Source Clean honesty fixes",
-   "sha256": "5ad8d116c41d177f35243da9f8a0c547f857eaa5c9cbfb464b5768cd40fe4c0d",
-   "feature_version": "1.0.2"
+   "source": "source_ready first Check GET returns an idle envelope",
+   "sha256": "91b2cfa6c2fcb08f8c1238d6597c5cef5a534ec02bacbbf51f51f42ae3b2751b",
+   "feature_version": "1.0.3"
   },
   {
    "path": "routes_cleanup.py",

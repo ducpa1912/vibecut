@@ -182,10 +182,10 @@ def _stop(process: subprocess.Popen) -> None:
 
 def run_spec(
     spec: Path, data: Path, job_id: str, tmp_path: Path, timeout: int = 240,
-    extra_env: dict[str, str] | None = None,
+    extra_env: dict[str, str] | None = None, need_ffmpeg: bool = True,
 ) -> str:
     """Serve the fixture on a free port, run one spec, return its output."""
-    node, module = requirements()
+    node, module = requirements(need_ffmpeg=need_ffmpeg)
     port = free_port()
     base = f"http://127.0.0.1:{port}"
     log_path = tmp_path / "uvicorn.log"
