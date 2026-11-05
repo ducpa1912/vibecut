@@ -122,10 +122,35 @@ def test_the_preview_and_the_render_agree_on_framing(tmp_path):
     for entry, shown in zip(cases, windows):
         crop = compose_render._base_crop(
             1920, 1080, "9:16", entry.get("cx", 0.5), entry.get("cy", 0.5), entry["zoom"], 1080, 1920,
-            set_x="cx" in entry, set_y="cy" in entry,
+            set_x="cx" in entry, set_y="cy" in entry, free="cx" in entry or "cy" in entry,
         )
         expected = crop.get("window") or crop
         assert shown["x"] * 1920 == pytest.approx(expected["x"], abs=3)
         assert shown["y"] * 1080 == pytest.approx(expected["y"], abs=3)
         assert shown["w"] * 1920 == pytest.approx(expected["w"], abs=3)
         assert shown["h"] * 1080 == pytest.approx(expected["h"], abs=3)
+
+
+def test_a_scene_placed_by_hand_can_leave_the_frame_at_any_zoom():
+    placed = compose_render._base_crop(1080, 1920, "9:16", 0.1, 0.5, 1.0, 1080, 1920, free=True)
+    assert placed["place"]["x"] == pytest.approx(0.4)
+    assert placed["place"]["w"] == pytest.approx(0.6)
+    assert placed["x"] == 0
+    bigger = compose_render._base_crop(1920, 1080, "9:16", 0.5, 0.5, 2.0, 1080, 1920, free=True)
+    assert "place" not in bigger, "a window inside the media needs no padding"
+
+
+def test_zoom_out_over_time_runs_across_cuts():
+    motion = {"kind": "zoom_out", "start": 0.0, "end": 4.0, "amount": 0.2}
+    first = compose_render._motion_perspective_filter(
+        motion, out_start=0.0, out_end=2.0, segment_frames=60, out_w=1080, out_h=1920, fps=30,
+    )
+    second = compose_render._motion_perspective_filter(
+        motion, out_start=2.0, out_end=4.0, segment_frames=60, out_w=1080, out_h=1920, fps=30,
+    )
+    assert "1.2000+(-0.1000)" in first, "starts enlarged, halfway at the cut"
+    assert "1.1000+(-0.1000)" in second, "picks up where the last beat ended"
+    assert compose_render._motion_filter(
+        motion, out_start=0.0, out_end=2.0, segment_frames=60, out_w=1080, out_h=1920, fps=30,
+    )
+    assert edits.normalize_motion([{**motion, "id": "m1"}])[0]["kind"] == "zoom_out"

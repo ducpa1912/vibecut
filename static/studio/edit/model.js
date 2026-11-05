@@ -261,7 +261,8 @@ export const LAYER_COLOURS = {
 export const MOTION_LABELS = {
   punch_in: "Punch in",
   snap_zoom: "Snap zoom",
-  push: "Slow push",
+  push: "Zoom in over time",
+  zoom_out: "Zoom out over time",
   shake: "Shake",
 };
 
@@ -583,6 +584,27 @@ function cleanBars(layer, ranges, clips, label, drawn) {
       start: bar.start,
       end: bar.end,
     };
+  });
+}
+
+/**
+ * Saved Edits can hold many copies of one layer, from an old bug in the paint
+ * button. A copy has the same text, box, times and method, and no brush marks,
+ * so dropping it changes nothing in the render except its time.
+ */
+export function withoutRepeatedCleanLayers(layers) {
+  const seen = new Set();
+  return (Array.isArray(layers) ? layers : []).filter((layer) => {
+    const mask = layer?.mask;
+    const marks = Array.isArray(mask) ? mask.length : (mask?.strokes || []).length;
+    if (marks || !layer?.box) return true;
+    const box = ["x", "y", "w", "h"].map((key) => round(numberOr(layer.box[key]), 3));
+    const key = JSON.stringify([
+      layer.tracklet_id || "", layer.kind, layer.method || "", box, layer.ranges || [],
+    ]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 

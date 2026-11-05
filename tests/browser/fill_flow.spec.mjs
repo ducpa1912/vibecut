@@ -356,6 +356,22 @@ try {
     await page.mouse.move(toX, toY, { steps: 4 });
     await page.mouse.up();
   };
+  // Auto-detected text keeps its time. A box drawn by hand can be changed.
+  assert(
+    await page.locator(".st-tl-bar-clean:not(.is-found):not(.is-drawn)").count() > 0,
+    "there is no auto-detected bar to check",
+  );
+  assert(
+    await page.locator(".st-tl-bar-clean:not(.is-found):not(.is-drawn).is-timed").count() === 0,
+    "an auto-detected bar can be dragged",
+  );
+  const drawArea = await rectOf("#st-preview-canvas");
+  await page.locator('.st-preview-tool[data-tool="box"]').click();
+  await dragTo(
+    drawArea.x + drawArea.width * 0.3, drawArea.y + drawArea.height * 0.3,
+    drawArea.x + drawArea.width * 0.6, drawArea.y + drawArea.height * 0.36,
+  );
+  await page.waitForTimeout(300);
   const cleanBar = await barEnd(".st-tl-bar-clean.is-timed");
   const stacked = await page.evaluate(() => {
     const bars = [...document.querySelectorAll(".st-tl-track-clean .st-tl-bar")];
@@ -375,8 +391,9 @@ try {
   const shorter = await barEnd(".st-tl-bar-clean.is-timed");
   assert(shorter.width < cleanBar.width - 4, "dragging the Clean bar's edge did not shorten it");
   const afterClean = await savedEdit();
-  const savedRange = afterClean.clean?.[0]?.ranges?.[0];
-  assert(savedRange && savedRange.end < 24, `the Clean range was not saved: ${JSON.stringify(savedRange)}`);
+  const drawnLayer = afterClean.clean.find((layer) => !layer.tracklet_id);
+  const savedRange = drawnLayer?.ranges?.[0];
+  assert(savedRange && savedRange.end - savedRange.start < 4, `the Clean range was not saved: ${JSON.stringify(savedRange)}`);
 
   // A box shows only at its own time on the timeline.
   await page.locator(".st-tl-bar-clean.is-timed").first().click();
@@ -450,7 +467,7 @@ try {
   const fitted = (await savedEdit()).reframe;
   const fittedScenes = Object.values(fitted.scenes || {});
   assert(fittedScenes.length === 1 && fittedScenes[0].zoom < 1, `Fit was not saved: ${JSON.stringify(fitted)}`);
-  await page.locator(".st-framing-actions button", { hasText: "Move scene" }).click();
+  await page.locator(".st-framing-actions button", { hasText: "Move and zoom" }).click();
   const framed = await rectOf("#st-preview-canvas");
   await dragTo(
     framed.x + framed.width * 0.5, framed.y + framed.height * 0.5,
@@ -459,11 +476,31 @@ try {
   await page.waitForTimeout(900);
   const moved = Object.values((await savedEdit()).reframe.scenes)[0];
   assert(moved.cx < 0.5 && moved.cy < 0.5, `moving the scene was not saved: ${JSON.stringify(moved)}`);
-  await page.locator('.st-preview-tool[data-tool="select"]').click();
+  // A corner handle zooms the scene itself, and scrolling does too.
+  const zoomBefore = moved.zoom;
+  const handleArea = await rectOf("#st-preview-canvas");
+  // The project says 1920×1080, so this is the scene's corner in the 9:16 frame.
+  const windowW = (1080 * 9 / 16) / moved.zoom / 1920;
+  const windowH = 1 / moved.zoom;
+  const cornerX = Math.min(0.99, -(moved.cx - windowW / 2) / windowW + 1 / windowW);
+  const cornerY = Math.min(0.99, -(moved.cy - windowH / 2) / windowH + 1 / windowH);
+  await dragTo(
+    handleArea.x + handleArea.width * cornerX, handleArea.y + handleArea.height * cornerY,
+    handleArea.x + handleArea.width * (cornerX - 0.1), handleArea.y + handleArea.height * (cornerY - 0.05),
+  );
+  await page.waitForTimeout(900);
+  const scaled = Object.values((await savedEdit()).reframe.scenes)[0];
+  assert(scaled.zoom !== zoomBefore, `dragging a corner did not zoom the scene: ${JSON.stringify(scaled)}`);
+  await page.mouse.move(handleArea.x + handleArea.width / 2, handleArea.y + handleArea.height / 2);
+  await page.mouse.wheel(0, -200);
+  await page.waitForTimeout(1200);
+  const wheeled = Object.values((await savedEdit()).reframe.scenes)[0];
+  assert(wheeled.zoom > scaled.zoom, `scrolling did not zoom the scene: ${JSON.stringify(wheeled)}`);
   if (screenshot) {
     await page.waitForTimeout(1200);
     await page.screenshot({ path: screenshot.replace(/\.png$/, "_framing.png"), fullPage: false });
   }
+  await page.locator('.st-preview-tool[data-tool="select"]').click();
   console.log("Frame, safe area, framing and icons passed.");
   console.log("Found-text list, Remove all and painter mask passed.");
 } finally {

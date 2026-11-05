@@ -12,7 +12,7 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 - **Network list and phone button, left of Play:** the safe area for that network. It never shows in the render.
 - **Zoom buttons above the preview:** only change your view, from 25% to 300%. The render does not change.
 - **Framing** (crop icon on the right rail; it replaces Video zoom): the zoom and place of the scene under the playhead, in the render too. 1× fills the frame. **Fit scene** shows the whole picture, with black around it.
-- **Move button on the preview toolbar:** drag the scene inside the frame. **Area focus:** draw a box, and that part fills the frame.
+- **Move button on the preview toolbar:** an orange outline with corners appears. Drag a corner to zoom the scene in or out, drag the middle to move it, or scroll. **Area focus:** draw a box, and that part fills the frame.
 - **Add motion** (Elements → Effects): a timed zoom. Punch in eases in, Snap zoom jumps, and Push grows slowly.
 - **Blue box or bar:** one you drew. **Orange:** one the scan found. **Dashed bar:** found text with no layer yet.
 
@@ -51,6 +51,11 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 29 | **Clean all found text**, then read Clean layers and the Clean lane | Subtitles are one group with a count. A layer has one bar across cuts, and its name shows once | |
 | 30 | Move the playhead through the moment | The preview shows only the boxes and brush marks on at that time. Selecting a layer in the list moves the playhead to it | |
 | 31 | Delete a group with its bin icon, then **Delete all** (click twice), then Undo | The group goes, then all layers go, then Undo brings them back | |
+| 32 | Open a project that had repeated layers | A message says how many repeated layers were removed. The Clean lane and list show each text once | |
+| 33 | Try to drag an auto-detected Clean bar, then draw a box and drag its bar | The auto bar does not move. The drawn box's bar moves and resizes | |
+| 34 | **Framing** on the right rail, then drag a corner of the orange outline on the preview in and out | The scene shrinks and grows, with black in the empty frame | |
+| 35 | Scroll on the preview, then drag the middle of the scene past the white line | Scrolling zooms. The scene moves, and the part past the line is cut | |
+| 36 | Elements → Effects: **Zoom out over time** and **Zoom in over time**, **Add motion**, stretch the bar, Play | The scene zooms over the bar's length, and it runs across cuts | |
 
 ## Tell me too
 

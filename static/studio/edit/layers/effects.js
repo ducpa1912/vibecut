@@ -25,7 +25,8 @@ import {
 const MOTION_DEFAULTS = {
   punch_in: { amount: 0.08, ramp: 0.4 },
   snap_zoom: { amount: 0.12, ramp: 0.2 },
-  push: { amount: 0.06, ramp: 0 },
+  push: { amount: 0.2, ramp: 0 },
+  zoom_out: { amount: 0.2, ramp: 0 },
   shake: { amount: 0.01, ramp: 0.2 },
 };
 

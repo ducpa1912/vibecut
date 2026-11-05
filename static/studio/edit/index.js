@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261105-3";
+import { mountPreview } from "./preview.js?v=20261105-4";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -48,6 +48,7 @@ import {
   storySpans,
   replacedCleanSpans,
   storyToSourceRanges,
+  withoutRepeatedCleanLayers,
   clamp,
   formatTime,
   newTextLayer,
@@ -78,7 +79,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261105-3";
+    link.href = "/static/studio/edit/edit.css?v=20261105-4";
     document.head.append(link);
   }
 }
@@ -243,7 +244,7 @@ export function mount(root, ctx) {
               <div><dt>One frame back / forward</dt><dd><kbd>←</kbd> <kbd>→</kbd></dd></div>
               <div><dt>One second back / forward</dt><dd><kbd>Shift</kbd> + <kbd>←</kbd> / <kbd>→</kbd></dd></div>
               <div><dt>Select tool</dt><dd><kbd>V</kbd></dd></div>
-              <div><dt>Move the scene inside the frame</dt><dd><kbd>M</kbd></dd></div>
+              <div><dt>Move and zoom the scene</dt><dd><kbd>M</kbd></dd></div>
               <div><dt>Draw a Remove-text box</dt><dd><kbd>B</kbd></dd></div>
               <div><dt>Remove the selected layer</dt><dd><kbd>Delete</kbd></dd></div>
               <div><dt>Undo / redo</dt><dd><kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd></dd></div>
@@ -1490,9 +1491,10 @@ export function mount(root, ctx) {
       setFraming: (key, change, options) => setFraming(key, change, options),
       resetFraming: (key) => resetFraming(key),
       framingToAllScenes: (key) => framingToAllScenes(key),
+      showSceneHandles: () => { preview?.setTool("move"); },
       startMoveScene: () => {
         preview?.setTool("move");
-        notify("Drag on the preview to move this scene inside the frame.", "ok");
+        notify("Drag a corner to zoom the scene, or the middle to move it. Scrolling also zooms.", "ok");
       },
       startAreaFocus: () => {
         preview?.setTool("area");
@@ -2061,11 +2063,11 @@ export function mount(root, ctx) {
   }
 
   /** One scene's own pan and zoom. A drag saves only when it ends. */
-  function setFraming(key, change, { commit = true } = {}) {
+  function setFraming(key, change, { commit = true, replace = false } = {}) {
     if (!state.edit || !key) return;
     const reframe = state.edit.reframe || {};
     const scenes = { ...(reframe.scenes || {}) };
-    scenes[key] = { ...(scenes[key] || {}), ...change };
+    scenes[key] = replace ? { ...change } : { ...(scenes[key] || {}), ...change };
     state.edit.reframe = { ...reframe, scenes };
     if (commit) {
       touch("reframe");
@@ -2543,6 +2545,9 @@ export function mount(root, ctx) {
 
       state.edit = edit;
       upgradeMasks(state.edit);
+      const kept = withoutRepeatedCleanLayers(state.edit.clean);
+      const repeats = (state.edit.clean || []).length - kept.length;
+      if (repeats) state.edit.clean = kept;
       // The trim route's story `dur` is the same number the server will
       // render. Use it as the one duration source when it is present.
       const trim = await refreshTrimState({ authoritative: true, fresh: true });
@@ -2568,6 +2573,10 @@ export function mount(root, ctx) {
       }
       if (disposed || seq !== loadSeq) return;
 
+      if (repeats) {
+        touch("clean");
+        notify(`Removed ${formatCount(repeats, "repeated Clean layer")}. Undo brings them back.`, "ok");
+      }
       renderEditorParts();
       populateHeader();
       writeChoice({ setId: state.set.id, storyId: state.story.id, aspect: state.aspect });

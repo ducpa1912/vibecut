@@ -54,7 +54,7 @@ ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
 CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "mosaic", "delogo", "fill")
 # AI text fill engines for kind "fill" (see textfill/). STTN is the default.
 FILL_METHODS = ("sttn", "lama")
-MOTION_KINDS = ("punch_in", "snap_zoom", "push", "shake")
+MOTION_KINDS = ("punch_in", "snap_zoom", "push", "zoom_out", "shake")
 TEXT_KINDS = ("hook", "title", "lower_third", "cta", "emphasis")
 FX_KINDS = ("arrow", "circle", "underline", "progress_bar", "sticker")
 AUDIO_MODES = ("original", "original_bed", "voice_over", "dub", "music_only")
@@ -721,6 +721,7 @@ _MOTION_DEFAULTS = {
     "punch_in": {"amount": 0.08, "ramp": 0.40},
     "snap_zoom": {"amount": 0.12, "ramp": 0.20},
     "push": {"amount": 0.06, "ramp": 0.0},
+    "zoom_out": {"amount": 0.20, "ramp": 0.0},
     "shake": {"amount": 0.010, "ramp": 0.20},
 }
 

@@ -73,6 +73,7 @@ export function mountLayersPanel(host, ctx) {
       if (badge) button.append(el("span", { class: "st-layer-badge", text: badge }));
       button.addEventListener("click", () => {
         active = id;
+        if (id === "zoom") ctx.showSceneHandles?.();
         ctx.setActiveLayer?.(id);
         signature = "";
         render();
@@ -233,17 +234,17 @@ function mountFramingLayer(host, ctx) {
         ctx.setFraming?.(framing.key, { zoom: framing.fit, cx: 0.5, cy: 0.5 });
       }),
       iconButton("expand", "Fill frame", () => {
-        ctx.setFraming?.(framing.key, { zoom: 1 });
+        ctx.setFraming?.(framing.key, { zoom: 1 }, { replace: true });
       }),
-      iconButton("move", "Move scene", () => ctx.startMoveScene?.()),
+      iconButton("move", "Move and zoom", () => ctx.startMoveScene?.()),
       iconButton("focus", "Area focus", () => ctx.startAreaFocus?.()),
     ]),
     el("div", { class: "st-framing-actions" }, [
       iconButton("copy", "Use on all", () => ctx.framingToAllScenes?.(framing.key), "st-btn st-btn-quiet st-btn-small"),
       iconButton("history", "Reset scene", () => ctx.resetFraming?.(framing.key), "st-btn st-btn-quiet st-btn-small"),
     ]),
-    el("p", { class: "st-layer-note", text: "1× fills the frame. Below 1× the whole scene can fit, and black fills the rest. Anything past the frame border is cut in the render." }),
-    el("p", { class: "st-layer-note", text: "This changes only the picture of this scene. Sound stays on the timeline. The zoom buttons above the preview only change your view." }),
+    el("p", { class: "st-layer-note", text: "On the preview, drag a corner to zoom this scene in or out, drag the middle to move it, or scroll. 1× fills the frame. Where the scene leaves the frame, it is cut and black shows." }),
+    el("p", { class: "st-layer-note", text: "This changes only the picture of this scene. Sound stays on the timeline. The zoom buttons above the preview only change your view. To zoom over time: Elements, Effects, Zoom in or Zoom out over time." }),
   );
 }
 

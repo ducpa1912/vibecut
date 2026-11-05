@@ -144,6 +144,7 @@ def _base_crop(
     *,
     set_x: bool = True,
     set_y: bool = True,
+    free: bool = False,
 ) -> dict:
     target_ar = out_w / out_h
     source_ar = width / max(1, height)
@@ -153,9 +154,9 @@ def _base_crop(
     else:
         crop_w = _even(width)
         crop_h = min(_even(crop_w / target_ar), _even(height))
-    if zoom < 1.0:
-        return _zoomed_out_crop(
-            width, height, crop_w / zoom, crop_h / zoom, cx, cy, set_x, set_y,
+    if zoom < 1.0 or free:
+        return _placed_crop(
+            width, height, crop_w / zoom, crop_h / zoom, cx, cy, set_x, set_y, free,
         )
     if zoom > 1.0:
         crop_w = min(crop_w, _even(crop_w / zoom))
@@ -172,7 +173,7 @@ def _base_crop(
     }
 
 
-def _zoomed_out_crop(
+def _placed_crop(
     width: int,
     height: int,
     window_w: float,
@@ -181,25 +182,38 @@ def _zoomed_out_crop(
     cy: float,
     set_x: bool,
     set_y: bool,
+    free: bool,
 ) -> dict:
-    """A frame window bigger than the media, so the media sits inside the frame.
+    """A frame window that can reach past the media, so the frame can show empty.
 
-    The picture is centred on an axis it no longer fills, unless the creator
-    moved it there. ``crop`` is the part of the media in the frame, ``place`` is
-    where that part sits as fractions of the frame, and ``window`` is the whole
-    frame in source pixels, which layers stuck to the video are placed against.
-    Media past the frame edge is cut by the crop.
+    Zoomed out, the picture is centred on an axis it no longer fills, unless the
+    creator moved it there. ``free`` is a scene the creator placed by hand: it
+    sits exactly there, at any zoom. ``crop`` is the part of the media in the
+    frame, ``place`` is where that part sits as fractions of the frame, and
+    ``window`` is the whole frame in source pixels, which layers stuck to the
+    video are placed against. Media past the frame edge is cut by the crop.
     """
-    if window_w > width and not set_x:
-        cx = 0.5
-    if window_h > height and not set_y:
-        cy = 0.5
+    if not free:
+        if window_w > width and not set_x:
+            cx = 0.5
+        if window_h > height and not set_y:
+            cy = 0.5
     left = cx * width - window_w / 2.0
     top = cy * height - window_h / 2.0
-    if window_w <= width:
-        left = max(0.0, min(width - window_w, left))
-    if window_h <= height:
-        top = max(0.0, min(height - window_h, top))
+    if not free:
+        if window_w <= width:
+            left = max(0.0, min(width - window_w, left))
+        if window_h <= height:
+            top = max(0.0, min(height - window_h, top))
+    if left >= 0 and top >= 0 and left + window_w <= width and top + window_h <= height:
+        crop_w = _clamp_int(_even(window_w), 2, width if width % 2 == 0 else width - 1)
+        crop_h = _clamp_int(_even(window_h), 2, height if height % 2 == 0 else height - 1)
+        return {
+            "x": _even_int(int(round(left)), 0, width - crop_w),
+            "y": _even_int(int(round(top)), 0, height - crop_h),
+            "w": crop_w,
+            "h": crop_h,
+        }
     x0 = max(0.0, left)
     y0 = max(0.0, top)
     x1 = min(float(width), left + window_w)
@@ -615,6 +629,10 @@ def _motion_filter(
             f"if(lt(on,{first}),1.000,1.000+{amount:.3f}*"
             f"min(1,(on-{first})/{ramp_frames}))"
         )
+    elif kind == "zoom_out":
+        z_expr = _zoom_out_expression(
+            float(motion["start"]), float(motion["end"]), out_start, first, last, amount, fps,
+        )
     elif kind == "snap_zoom":
         z_expr = f"if(lt(on,{first}),1.000,{1.0 + amount:.3f})"
     else:  # push
@@ -631,6 +649,25 @@ def _frame_path_expression(points: list[tuple[float, float]], fps: int = OUT_FPS
     """Compile a seconds keyframe path for filters that expose ``on`` only."""
     expression = path_expression(points)
     return re.sub(r"\bt\b", f"(on/{fps})", expression)
+
+
+def _zoom_out_expression(
+    motion_start: float,
+    motion_end: float,
+    out_start: float,
+    first: int,
+    last: int,
+    amount: float,
+    fps: int,
+) -> str:
+    """Starts enlarged and eases to full size over the layer's whole span, across cuts."""
+    span = max(1e-6, motion_end - motion_start)
+    begin = 1.0 + amount * (1.0 - (out_start + first / fps - motion_start) / span)
+    end = 1.0 + amount * (1.0 - (out_start + last / fps - motion_start) / span)
+    return (
+        f"if(lt(on,{first})+gt(on,{last}),1.000,"
+        f"{begin:.4f}+({end - begin:.4f})*(on-{first})/{max(1, last - first)})"
+    )
 
 
 def _motion_perspective_filter(
@@ -682,6 +719,10 @@ def _motion_perspective_filter(
     else:
         if kind == "snap_zoom":
             z_expr = f"if(lt(on,{first}),1.000,{1.0 + amount:.4f})"
+        elif kind == "zoom_out":
+            z_expr = _zoom_out_expression(
+                motion_start, motion_end, out_start, first, first + active, amount, fps,
+            )
         else:
             start_seconds = first / fps
             points: list[tuple[float, float]] = [
@@ -1293,6 +1334,7 @@ def compile_edit(
             clip_width, clip_height, aspect, cx, cy, zoom, out_w, out_h,
             set_x=reframe["mode"] == "manual" or "cx" in overrides or "cx" in framing,
             set_y=reframe["mode"] == "manual" or "cy" in overrides or "cy" in framing,
+            free="cx" in framing or "cy" in framing,
         )
         clean_warnings: list[dict] = []
         clean_filter_list: list[str] = []

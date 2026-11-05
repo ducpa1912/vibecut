@@ -589,7 +589,9 @@ export function mountTimeline(root, options = {}) {
         if (Number.isFinite(from) && from !== to) handlers.onReorder(from, to);
       });
     }
-    const timed = (kind === "clean" || kind === "text" || kind === "effects")
+    // Auto-detected text follows the video, so only a box drawn by hand has a
+    // time to change here.
+    const timed = (kind === "clean" ? item.drawn : (kind === "text" || kind === "effects"))
       && !item.found && !outside && storyStart !== null;
     if (timed) {
       button.classList.add("is-timed");

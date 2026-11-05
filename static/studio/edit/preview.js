@@ -29,6 +29,7 @@ import {
   clipAt,
   framingAt,
   framingNeedsWholePicture,
+  mediaRectInFrame,
   motionZoomAt,
   stuckPosition,
   zoomedCrop,
@@ -144,7 +145,7 @@ export function mountPreview(root, options = {}) {
           <div class="st-preview-tools">
             <div class="st-preview-toolgroup" role="group" aria-label="Canvas tool">
               <button id="st-preview-tool-select" class="st-preview-tool is-active" type="button" data-tool="select" data-icon="cursor" aria-pressed="true" title="Select and move text and boxes (V)" aria-label="Select tool"></button>
-              <button id="st-preview-tool-move" class="st-preview-tool" type="button" data-tool="move" data-icon="move" aria-pressed="false" title="Move this scene inside the frame (M)" aria-label="Move scene"></button>
+              <button id="st-preview-tool-move" class="st-preview-tool" type="button" data-tool="move" data-icon="move" aria-pressed="false" title="Move and zoom this scene: drag a corner to zoom, the middle to move, or scroll (M)" aria-label="Move and zoom scene"></button>
               <button id="st-preview-tool-area" class="st-preview-tool" type="button" data-tool="area" data-icon="focus" aria-pressed="false" title="Area focus: draw the part of the scene to fill the frame" aria-label="Area focus"></button>
               <span class="st-preview-tool-sep" aria-hidden="true"></span>
               <button id="st-preview-tool-box" class="st-preview-tool" type="button" data-tool="box" data-icon="box" aria-pressed="false" title="Draw a Clean box (B)" aria-label="Draw box"></button>
@@ -637,6 +638,53 @@ export function mountPreview(root, options = {}) {
       }));
   }
 
+  function framingWindow() {
+    return cropAt({
+      edit: state.edit, job: state.job, story: state.story, time: state.time, aspect: state.aspect,
+    });
+  }
+
+  /** The scene's outline and corner handles, cut to the frame like the scene is. */
+  function mediaHandles(width, height) {
+    if (state.tool !== "move" || !state.edit) return null;
+    const framing = framingAt({
+      edit: state.edit, job: state.job, story: state.story, time: state.time, aspect: state.aspect,
+    });
+    if (!framing.key) return null;
+    const shown = visibleRect(mediaRectInFrame(framingWindow()));
+    if (!shown) return null;
+    const rect = pxRect(shown, width, height);
+    return {
+      framing,
+      rect,
+      corners: [
+        [rect.x, rect.y], [rect.x + rect.w, rect.y],
+        [rect.x, rect.y + rect.h], [rect.x + rect.w, rect.y + rect.h],
+      ],
+    };
+  }
+
+  function drawMediaHandles(width, height) {
+    const handles = mediaHandles(width, height);
+    if (!handles) return;
+    const size = Math.max(22, Math.round(width * 0.03));
+    const inset = 2;
+    ctx.save();
+    ctx.strokeStyle = "#e8a266";
+    ctx.lineWidth = Math.max(3, width * 0.003);
+    ctx.strokeRect(
+      handles.rect.x + inset, handles.rect.y + inset,
+      handles.rect.w - inset * 2, handles.rect.h - inset * 2,
+    );
+    ctx.fillStyle = "#e8a266";
+    for (const [x, y] of handles.corners) {
+      const left = clamp(x - size / 2, 0, width - size);
+      const top = clamp(y - size / 2, 0, height - size);
+      ctx.fillRect(left, top, size, size);
+    }
+    ctx.restore();
+  }
+
   function drawFoundBoxes(width, height) {
     for (const item of foundRects()) {
       if (!item.active) continue;
@@ -867,6 +915,7 @@ export function mountPreview(root, options = {}) {
     drawSafeZones(width, height);
     drawFoundBoxes(width, height);
     drawCleanBoxes(width, height);
+    drawMediaHandles(width, height);
     placeMethodSwitch();
     drawSelection(width, height);
     drawDrawPreview(width, height);
@@ -1538,25 +1587,37 @@ export function mountPreview(root, options = {}) {
       return;
     }
     if (state.tool === "move") {
-      const framing = framingAt({
-        edit: state.edit, job: state.job, story: state.story, time: state.time, aspect: state.aspect,
-      });
-      if (!framing.key) {
+      const handles = mediaHandles(dom.canvas.width, dom.canvas.height);
+      if (!handles) {
         setNote("A blank card has no picture to move.", "quiet");
         return;
       }
       pauseClockOnly();
-      const window = cropAt({
-        edit: state.edit, job: state.job, story: state.story, time: state.time, aspect: state.aspect,
-      });
-      drag = {
-        mode: "media",
-        key: framing.key,
-        startFrame: frame,
-        crop: window,
-        startCx: window.x + window.w / 2,
-        startCy: window.y + window.h / 2,
-      };
+      const reach = Math.max(44, dom.canvas.width * 0.05);
+      const corner = handles.corners.some(([x, y]) => Math.hypot(point.x - x, point.y - y) <= reach);
+      const window = framingWindow();
+      if (corner) {
+        const middle = {
+          x: handles.rect.x + handles.rect.w / 2,
+          y: handles.rect.y + handles.rect.h / 2,
+        };
+        drag = {
+          mode: "media-zoom",
+          key: handles.framing.key,
+          middle,
+          reach: Math.max(1, Math.hypot(point.x - middle.x, point.y - middle.y)),
+          startZoom: handles.framing.zoom,
+        };
+      } else {
+        drag = {
+          mode: "media",
+          key: handles.framing.key,
+          startFrame: frame,
+          crop: window,
+          startCx: window.x + window.w / 2,
+          startCy: window.y + window.h / 2,
+        };
+      }
       dom.canvas.setPointerCapture?.(event.pointerId);
       event.preventDefault();
       return;
@@ -1643,6 +1704,16 @@ export function mountPreview(root, options = {}) {
       event.preventDefault();
       return;
     }
+    if (drag.mode === "media-zoom") {
+      const point = canvasPoint(event);
+      const zoom = drag.startZoom
+        * (Math.hypot(point.x - drag.middle.x, point.y - drag.middle.y) / drag.reach);
+      drag.framing = { zoom: round(clamp(zoom, 0.1, 3), 3) };
+      callbacks.onFraming?.(drag.key, drag.framing, { commit: false });
+      draw();
+      event.preventDefault();
+      return;
+    }
     const frame = framePoint(event);
     if (drag.mode === "paint") {
       const last = drag.last || frame;
@@ -1717,7 +1788,7 @@ export function mountPreview(root, options = {}) {
         else callbacks.onBoxCreate(frameToBox(rect, current.crop));
       }
       setTool("select");
-    } else if (current.mode === "media") {
+    } else if (current.mode === "media" || current.mode === "media-zoom") {
       if (current.framing) callbacks.onFraming?.(current.key, current.framing, { commit: true });
     } else if (current.textBox) {
       callbacks.onTextBox?.(current.id, current.textBox, { commit: true });
@@ -1743,6 +1814,24 @@ export function mountPreview(root, options = {}) {
       callbacks.onCleanMethod(dom.boxMethod.dataset.layer, button.dataset.kind);
     }
   });
+  // With the Move tool on, scrolling zooms the scene. It saves once it settles.
+  let wheelTimer = 0;
+  dom.canvas.addEventListener("wheel", (event) => {
+    if (state.tool !== "move" || !state.edit) return;
+    const framing = framingAt({
+      edit: state.edit, job: state.job, story: state.story, time: state.time, aspect: state.aspect,
+    });
+    if (!framing.key) return;
+    event.preventDefault();
+    const change = { zoom: round(clamp(framing.zoom * Math.exp(-event.deltaY * 0.002), 0.1, 3), 3) };
+    callbacks.onFraming?.(framing.key, change, { commit: false });
+    draw();
+    if (wheelTimer) window.clearTimeout(wheelTimer);
+    wheelTimer = window.setTimeout(() => {
+      wheelTimer = 0;
+      callbacks.onFraming?.(framing.key, change, { commit: true });
+    }, 300);
+  }, { passive: false });
   dom.canvas.addEventListener("pointerdown", beginPointer);
   dom.canvas.addEventListener("pointermove", movePointer);
   dom.canvas.addEventListener("pointerup", endPointer);

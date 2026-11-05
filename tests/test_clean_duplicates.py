@@ -141,3 +141,28 @@ def test_subtitle_lines_in_one_area_are_one_row_and_one_group(tmp_path):
     assert out["rows"][0]["ids"] == ["s0", "s1", "s2"]
     assert out["rows"][0]["lines"] == 3
     assert out["groups"] == [3]
+
+
+def test_saved_copies_of_a_layer_are_dropped_but_painted_ones_stay(tmp_path):
+    def layer(layer_id, **extra):
+        return {
+            "id": layer_id, "kind": "fill", "method": "sttn", "tracklet_id": "trk_0001",
+            "box": {"x": 0.06, "y": 0.8, "w": 0.87, "h": 0.05},
+            "ranges": [{"start": 5.6, "end": 12.2}], **extra,
+        }
+
+    layers = [
+        layer("a"), layer("b"), layer("c"),
+        layer("painted", mask={"strokes": [{"r": 0.02, "points": [{"x": 0.1, "y": 0.8}]}]}),
+        {**layer("d"), "tracklet_id": "trk_0002"},
+    ]
+    out = _node(tmp_path, (
+        f'import {{ withoutRepeatedCleanLayers }} from "{(EDIT / "model.js").as_uri()}";\n'
+        f"console.log(JSON.stringify(withoutRepeatedCleanLayers({json.dumps(layers)}).map((item) => item.id)));\n"
+    ))
+    assert out == ["a", "painted", "d"]
+
+
+def test_only_a_drawn_box_can_change_time_on_the_timeline():
+    source = (EDIT / "timeline.js").read_text(encoding="utf-8")
+    assert 'kind === "clean" ? item.drawn : (kind === "text" || kind === "effects")' in source

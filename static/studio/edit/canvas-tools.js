@@ -63,6 +63,8 @@ export function motionZoomAt(edit, time, beatStart = 0, beatEnd = Infinity) {
       zoom *= 1 + amount * Math.min(1, (time - start) / Math.max(1 / 30, numberOr(motion.ramp)));
     } else if (motion.kind === "push") {
       zoom *= 1 + amount * Math.min(1, (time - start) / Math.max(1 / 30, end - start));
+    } else if (motion.kind === "zoom_out" && time <= end) {
+      zoom *= 1 + amount * (1 - (time - from) / Math.max(1 / 30, to - from));
     }
   }
   return zoom;
@@ -143,19 +145,20 @@ export function fitZoom(width, height, aspect) {
 /**
  * The frame's window on the media, as fractions of the media. Below 1× it is
  * bigger than the media, so x and y go negative and the frame shows empty space.
- * Mirrors `compose_render._base_crop` and `_zoomed_out_crop`.
+ * A scene placed by hand (`free`) sits exactly there at any zoom.
+ * Mirrors `compose_render._base_crop` and `_placed_crop`.
  */
-function baseCrop(width, height, aspect, cx, cy, zoom, setX = true, setY = true) {
+function baseCrop(width, height, aspect, cx, cy, zoom, setX = true, setY = true, free = false) {
   const cover = coverSize(width, height, aspect);
-  if (zoom < 1) {
+  if (zoom < 1 || free) {
     const windowW = cover.w / zoom;
     const windowH = cover.h / zoom;
-    const centreX = windowW > width && !setX ? 0.5 : cx;
-    const centreY = windowH > height && !setY ? 0.5 : cy;
+    const centreX = !free && windowW > width && !setX ? 0.5 : cx;
+    const centreY = !free && windowH > height && !setY ? 0.5 : cy;
     let left = centreX * width - windowW / 2;
     let top = centreY * height - windowH / 2;
-    if (windowW <= width) left = clamp(left, 0, width - windowW);
-    if (windowH <= height) top = clamp(top, 0, height - windowH);
+    if (!free && windowW <= width) left = clamp(left, 0, width - windowW);
+    if (!free && windowH <= height) top = clamp(top, 0, height - windowH);
     return { x: left / width, y: top / height, w: windowW / width, h: windowH / height };
   }
   let cropW = cover.w;
@@ -223,6 +226,7 @@ export function framingAt({ edit, job, story, time = 0, aspect = "9:16" } = {}) 
     entry,
     setX: setBy("cx"),
     setY: setBy("cy"),
+    free: "cx" in entry || "cy" in entry,
     cx: clamp(numberOr(overrides.cx, numberOr(entry.cx, cx)), 0, 1),
     cy: clamp(numberOr(overrides.cy, numberOr(entry.cy, cy)), 0, 1),
     zoom: clamp(
@@ -243,8 +247,15 @@ export function cropAt({ edit, job, story, time = 0, aspect = "9:16" } = {}) {
   const framing = framingAt({ edit, job, story, time, aspect });
   return baseCrop(
     framing.width, framing.height, aspect, framing.cx, framing.cy, framing.zoom,
-    framing.setX, framing.setY,
+    framing.setX, framing.setY, framing.free,
   );
+}
+
+/** Where the whole media sits in the frame, as fractions of the frame. */
+export function mediaRectInFrame(crop) {
+  const w = Math.max(1e-6, numberOr(crop?.w, 1));
+  const h = Math.max(1e-6, numberOr(crop?.h, 1));
+  return { x: -numberOr(crop?.x) / w, y: -numberOr(crop?.y) / h, w: 1 / w, h: 1 / h };
 }
 
 /** Panning or zooming out shows picture the scene-cropped fast preview left out. */
