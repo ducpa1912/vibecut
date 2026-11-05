@@ -117,9 +117,9 @@
   },
   {
    "path": "edits.py",
-   "source": "classic: no rights gate, LaMa default, mask support",
-   "sha256": "a0832a0fa058a20a6193cdbcd65b2fc22ebc38c5b496be9389e4a585d7111c8c",
-   "feature_version": "1.0.1"
+   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
+   "sha256": "69d8a4eee8faeff3f318fb3218b14c5def1796a76142cd5b766c695009a888a8",
+   "feature_version": "1.0.2"
   },
   {
    "path": "exports.py",
@@ -195,15 +195,15 @@
   },
   {
    "path": "render.py",
-   "source": "classic 2f385a2",
-   "sha256": "01d73f8c72c7db6bdd972b61e9df9366858f6eb4938654a60263ec0e3684787b",
-   "feature_version": "1.0.0"
+   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
+   "sha256": "e08f8937c0b80ed902937c66653c8e8dcaeb2361a2bfddcca1b0b1b6f613dd3b",
+   "feature_version": "1.0.1"
   },
   {
    "path": "requirements-optional.txt",
-   "source": "classic 2f385a2",
-   "sha256": "c8d0afef59af90a33daac822d9783131e1c83e092cbe3e58d77e4457eade0e46",
-   "feature_version": "1.0.0"
+   "source": "studio 632dc3a: LaMa-only fill needs no torch for text removal",
+   "sha256": "d249986cd350e8313e3e49c1594d5e2819d930aeb0b4322f104e0b042e4f2e5b",
+   "feature_version": "1.0.1"
   },
   {
    "path": "requirements.txt",
@@ -309,27 +309,21 @@
   },
   {
    "path": "textfill/__init__.py",
-   "source": "classic: no rights gate, LaMa default, mask support",
-   "sha256": "9532e92e4b3b509157491ead733f0ddd181636008b351a23d59ae3a30a2cbd28",
-   "feature_version": "1.0.1"
+   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
+   "sha256": "ccd6ff033fad1117f75d12514209d1c2a0fc2be1ce653f167e5320d659258aae",
+   "feature_version": "1.0.2"
   },
   {
    "path": "textfill/lama.py",
-   "source": "studio 7ce8dcf, verbatim",
-   "sha256": "a5cf6bc75c62435224dbd43b069a5c2baff0806fa4f5028bd4ea8728517eef5c",
-   "feature_version": "1.0.0"
-  },
-  {
-   "path": "textfill/mask.py",
-   "source": "classic: no rights gate, LaMa default, mask support",
-   "sha256": "bf0c4b568cea5e8ef3bc99e503ec7bc81d43866a276fbaa753dce928331fc093",
+   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
+   "sha256": "2cff5231088d83e8d3da09bee1292f13404414f98e9951c080319251ed8f11b1",
    "feature_version": "1.0.1"
   },
   {
-   "path": "textfill/sttn.py",
-   "source": "studio 7ce8dcf, verbatim",
-   "sha256": "a9cada5f5aac95fbed27796d4e2809f471f94eacaf4c27261f69ad459c611da9",
-   "feature_version": "1.0.0"
+   "path": "textfill/mask.py",
+   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
+   "sha256": "65e7e1851a818fc868c892d6fe1e1c22bfd5244f16476d9de09bcb765f37d81a",
+   "feature_version": "1.0.2"
   },
   {
    "path": "tighten.py",

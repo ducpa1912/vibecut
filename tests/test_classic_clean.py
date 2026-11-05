@@ -404,11 +404,12 @@ def test_fill_status_names_the_missing_models_and_never_lies(classic, monkeypatc
     client, tmp_path = classic
     status = client.get("/api/classic/fill").json()
     assert status["available"] is False
-    assert status["missing"] == ["LaMa", "STTN"]
+    assert status["missing"] == ["LaMa"]
     assert all(not item["installed"] for item in status["files"])
     assert "model pack" in status["note"]
-    assert status["engines"]["sttn"]["ready"] is False
-    assert "sttn_infer_model.pth" in status["engines"]["sttn"]["reason"]
+    assert status["engines"]["lama"]["ready"] is False
+    assert "lama_fp32.onnx" in status["engines"]["lama"]["reason"]
+    assert "sttn" not in status["engines"]
     assert status["preview"] is None
 
     preview = client.post(
@@ -434,43 +435,37 @@ def test_a_model_without_its_package_is_not_ready(classic, monkeypatch):
     status = client.get("/api/classic/fill").json()
     assert status["available"] is False
     assert status["missing"] == []
-    assert status["engines"]["sttn"]["model"] is True
-    assert "needs the package" in status["engines"]["sttn"]["reason"]
+    assert status["engines"]["lama"]["model"] is True
+    assert "needs the package" in status["engines"]["lama"]["reason"]
     with pytest.raises(routes_classic.ClassicTextError) as error:
         routes_classic.normalize_classic_clean([_box(method="fill")], 10.0)
     assert "needs the package" in str(error.value)
 
 
-# Only the engine that is missing is refused; the other one still works.
-def test_one_ready_engine_is_enough(classic, monkeypatch):
+# A box saved with the retired STTN engine still opens, and fills as LaMa.
+def test_a_saved_sttn_box_opens_as_lama(classic, monkeypatch):
     client, tmp_path = classic
     models = tmp_path / "fill"
     models.mkdir()
-    (models / routes_classic.FILL_MODELS["STTN"]).write_bytes(b"x")
+    (models / routes_classic.FILL_MODELS["LaMa"]).write_bytes(b"x")
     monkeypatch.setenv("VIBECUT_FILL_MODELS", str(models))
-    monkeypatch.setattr(
-        routes_classic, "_classic_runtime_installed",
-        lambda engine: (engine == "sttn", "AI fill with LAMA needs onnxruntime."),
-    )
+    monkeypatch.setattr(routes_classic, "_classic_runtime_installed", lambda engine: (True, ""))
     status = client.get("/api/classic/fill").json()
     assert status["available"] is True
-    assert status["default"] == "sttn"
-    assert status["engines"]["lama"]["ready"] is False
-    # The preview follows the only ready engine.
-    assert status["preview"] == "sttn"
-    assert "sttn" in status["methods"]
+    assert status["default"] == "lama"
+    assert list(status["engines"]) == ["lama"]
 
     layers = routes_classic.normalize_classic_clean(
         [_box(method="fill", engine="sttn")], 10.0,
     )
     assert layers[0]["method"] == "fill"
-    assert layers[0]["engine"] == "sttn"
+    assert layers[0]["engine"] == "lama"
     edit = routes_classic._classic_clean_edit(layers, _clips())
     assert edit[0]["kind"] == "fill"
-    assert edit[0]["method"] == "sttn"
+    assert edit[0]["method"] == "lama"
 
     with pytest.raises(routes_classic.ClassicTextError) as error:
         routes_classic.normalize_classic_clean(
-            [_box(method="fill", engine="lama")], 10.0,
+            [_box(method="fill", engine="propainter")], 10.0,
         )
     assert "LaMa" in str(error.value)

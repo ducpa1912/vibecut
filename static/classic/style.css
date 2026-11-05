@@ -3392,7 +3392,7 @@ select option:disabled { color: #666; }
 }
 .clean-found-actions .primary { margin-left: auto; }
 .clean-found-note { margin: 6px 0 0; }
-.clean-engine { max-width: 190px; font-size: 11px; }
+.clean-engine { font-size: 11px; color: var(--muted, inherit); }
 .clean-engine-row { grid-template-columns: minmax(0, 1fr) auto; }
 .clean-engine-row .clean-file-meta { grid-column: 1 / -1; }
 .clean-engine-row.is-ready .clean-file-state { color: var(--accent); }

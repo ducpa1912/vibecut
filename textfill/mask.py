@@ -17,14 +17,27 @@ import numpy as np
 # past them, so every box grows by this share of its height on each side.
 PAD_RATIO = 0.06
 PAD_MIN_PX = 3
-# Check samples OCR at 0.5 fps, so a detected range edge is only known to
-# about ±2 s. Detected layers (with a tracklet_id) get this margin.
-DETECTED_TIME_MARGIN = 1.0
+# The scan reads two frames a second, so a detected range edge is known to about
+# a quarter second. Detected layers (with a tracklet_id) get this margin.
+DETECTED_TIME_MARGIN = 0.25
 # Feather width of the paste-back edge, in pixels, outside the mask.
 FEATHER_PX = 3
 # Context a LaMa work area keeps around the text.
 CONTEXT_MIN_PX = 32
 CONTEXT_RATIO = 0.5
+# Finding the text inside a scanned box, per frame. Contrast is in 8-bit levels
+# against the local average; shares are of the box.
+TEXT_CONTRAST = 36.0
+TEXT_CONTRAST_MEDIAN = 2.5
+# The contrast limit reads this percentile of the box. Text can fill half of a
+# tight box, so the median measures the text itself and the limit goes above it.
+TEXT_QUIET_PERCENTILE = 30
+TEXT_WEAK_CONTRAST = 14.0
+TEXT_MIN_SHARE = 0.002
+TEXT_WEAK_SHARE = 0.01
+TEXT_MAX_SHARE = 0.5
+TEXT_GROW_RATIO = 0.006
+TEXT_GROW_MIN_PX = 3
 
 Rect = tuple[int, int, int, int]  # x0, y0, x1, y1; x1 and y1 exclusive
 
@@ -44,41 +57,73 @@ def layer_rect(layer: dict, width: int, height: int) -> Rect:
     return x0, y0, max(x0, x1), max(y0, y1)
 
 
+def _round_stamp(cx: float, cy: float, radius: float) -> list[Rect]:
+    """A filled circle as three overlapping rectangles."""
+    stamps = []
+    for across, down in ((1.0, 0.38), (0.75, 0.75), (0.38, 1.0)):
+        stamps.append((
+            int(math.floor(cx - radius * across)),
+            int(math.floor(cy - radius * down)),
+            int(math.ceil(cx + radius * across)),
+            int(math.ceil(cy + radius * down)),
+        ))
+    return stamps
+
+
 def layer_rects(layer: dict, width: int, height: int) -> list[Rect]:
     """Every pixel rectangle a layer covers on the source frame.
 
-    A freehand painter mask is a stroke object (or a legacy flat point list).
-    A box layer keeps the original padded rectangle.
+    A brush mask narrows the layer's box: strokes are joined, kept round and
+    clipped to the box. A mask too small to be a stroke (one click) is treated
+    as a slip, so the whole box is filled rather than one dot of it.
     """
-    rects: list[Rect] = [layer_rect(layer, width, height)]
+    bounds = layer_rect(layer, width, height)
     mask = layer.get("mask")
     if not mask:
-        return rects
+        return [bounds]
     if isinstance(mask, dict):
         strokes = mask.get("strokes") or []
     else:
         strokes = [{"r": 0.025, "points": mask}]
+    prepared: list[tuple[float, list[tuple[float, float]]]] = []
     for stroke in strokes:
         try:
             radius = float((stroke or {}).get("r", 0.02))
         except (TypeError, ValueError):
             radius = 0.02
+        points = []
         for point in (stroke or {}).get("points") or []:
             try:
-                cx = float(point.get("x", 0.0)) * width
-                cy = float(point.get("y", 0.0)) * height
+                points.append((float(point.get("x", 0.0)) * width, float(point.get("y", 0.0)) * height))
             except (TypeError, ValueError):
                 continue
-            rx = max(2.0, radius * width)
-            ry = rx
-            pad = max(PAD_MIN_PX, PAD_RATIO * rx * 2)
-            x0 = max(0, int(math.floor(cx - rx - pad)))
-            y0 = max(0, int(math.floor(cy - ry - pad)))
-            x1 = min(width, int(math.ceil(cx + rx + pad)))
-            y1 = min(height, int(math.ceil(cy + ry + pad)))
-            if x1 > x0 and y1 > y0:
-                rects.append((x0, y0, x1, y1))
-    return rects
+        if points:
+            prepared.append((max(2.0, radius * width), points))
+    every = [point for _radius, points in prepared for point in points]
+    if len(every) < 2:
+        return [bounds]
+    reach = max(radius for radius, _points in prepared)
+    span = (max(p[0] for p in every) - min(p[0] for p in every)) + (max(p[1] for p in every) - min(p[1] for p in every))
+    if span < reach:
+        return [bounds]
+    x0, y0, x1, y1 = bounds
+    rects: list[Rect] = []
+    for radius, points in prepared:
+        pad = max(PAD_MIN_PX, PAD_RATIO * radius * 2)
+        centres = [points[0]]
+        for (ax, ay), (bx, by) in zip(points, points[1:]):
+            # Fast drags leave gaps between samples; walk across them.
+            steps = max(1, int(math.ceil(math.hypot(bx - ax, by - ay) / max(1.0, radius * 0.75))))
+            centres.extend(
+                (ax + (bx - ax) * step / steps, ay + (by - ay) * step / steps)
+                for step in range(1, steps + 1)
+            )
+        for cx, cy in centres:
+            for left, top, right, bottom in _round_stamp(cx, cy, radius + pad):
+                clipped = (max(x0, left), max(y0, top), min(x1, right), min(y1, bottom))
+                if clipped[2] > clipped[0] and clipped[3] > clipped[1]:
+                    rects.append(clipped)
+    return rects or [bounds]
 
 
 def layer_windows(layer: dict) -> list[tuple[float, float]] | None:
@@ -153,49 +198,45 @@ def lama_area(rects: Iterable[Rect], width: int, height: int) -> Rect | None:
     )
 
 
-def sttn_strips(
-    rects: Iterable[Rect], width: int, height: int, ratio: float = 3 / 16,
-) -> list[tuple[int, int]]:
-    """Full-width horizontal strips (y0, y1) that cover the text union.
+def without_contained(rects: Iterable[Rect]) -> list[Rect]:
+    """The rects, less any that sits wholly inside another one."""
+    unique = list(dict.fromkeys(tuple(rect) for rect in rects))
+    return [
+        rect for rect in unique
+        if not any(
+            other != rect
+            and other[0] <= rect[0] and other[1] <= rect[1]
+            and other[2] >= rect[2] and other[3] >= rect[3]
+            for other in unique
+        )
+    ]
 
-    The STTN subtitle model reads a 16:3 strip, so each strip is
-    ``width * ratio`` tall. Taller text gets more strips; the last one is
-    pulled up so no strip leaves the frame.
+
+def lama_areas(rects: Iterable[Rect], width: int, height: int) -> list[Rect]:
+    """Work areas for these rects: text close together shares one, the rest apart.
+
+    The model's time follows the pixels it reads, so a title and a caption run
+    as two small areas and not as one holding all the picture between them.
     """
-    items = [rect for rect in rects if rect[3] > rect[1]]
-    if not items:
-        return []
-    strip = min(height, max(2, int(round(width * ratio))))
-    # A top caption and a bottom credit must not share one strip pass: the
-    # model would repaint the whole band between them. Cluster vertically
-    # separated boxes and make the strip list per cluster.
-    items.sort(key=lambda item: (item[1], item[3]))
-    clusters: list[list[Rect]] = []
-    for rect in items:
-        if clusters and rect[1] <= clusters[-1][0][3] + strip:
-            clusters[-1].append(rect)
-        else:
-            clusters.append([rect])
-    strips: list[tuple[int, int]] = []
-    for cluster in clusters:
-        top = min(rect[1] for rect in cluster)
-        bottom = max(rect[3] for rect in cluster)
-        if bottom - top <= strip:
-            middle = (top + bottom) // 2
-            y0 = min(max(0, middle - strip // 2), max(0, height - strip))
-            strips.append((y0, y0 + strip))
-            continue
-        y0 = top
-        while y0 < bottom:
-            start = min(max(0, y0), max(0, height - strip))
-            strips.append((start, start + strip))
-            y0 += strip
-    # Drop duplicate strips while keeping order.
-    unique: list[tuple[int, int]] = []
-    for item in strips:
-        if item not in unique:
-            unique.append(item)
-    return unique
+    areas = [lama_area([rect], width, height) for rect in without_contained(rects)]
+    areas = [area for area in areas if area is not None]
+    merged = True
+    while merged:
+        merged = False
+        for index, area in enumerate(areas):
+            for other_index in range(index + 1, len(areas)):
+                other = areas[other_index]
+                if area[0] < other[2] and other[0] < area[2] and area[1] < other[3] and other[1] < area[3]:
+                    areas[index] = (
+                        min(area[0], other[0]), min(area[1], other[1]),
+                        max(area[2], other[2]), max(area[3], other[3]),
+                    )
+                    del areas[other_index]
+                    merged = True
+                    break
+            if merged:
+                break
+    return sorted(areas, key=lambda area: (area[1], area[0]))
 
 
 def rasterize(rects: Iterable[Rect], width: int, height: int) -> np.ndarray:
@@ -243,3 +284,130 @@ def paste(original: np.ndarray, filled: np.ndarray, alpha: np.ndarray) -> np.nda
     keep = alpha <= 0.0
     out[keep] = original[keep]
     return out
+
+
+def uses_text_mask(layer: dict, width: int, height: int) -> bool:
+    """Only a scan layer without a brush stroke narrows to the text it found.
+
+    A drawn box means "remove this area", and a brush stroke is exact.
+    """
+    if not layer.get("tracklet_id"):
+        return False
+    return layer_rects(layer, width, height) == [layer_rect(layer, width, height)]
+
+
+def _local_mean(values: np.ndarray, radius: int) -> np.ndarray:
+    """Mean over a square around each pixel; edges repeat, so they stay flat."""
+    padded = np.pad(values, ((radius + 1, radius), (radius + 1, radius), (0, 0)), mode="edge")
+    total = padded.cumsum(axis=0).cumsum(axis=1)
+    size = 2 * radius + 1
+    return (
+        total[size:, size:] - total[:-size, size:] - total[size:, :-size] + total[:-size, :-size]
+    ) / (size * size)
+
+
+def text_in_region(region: np.ndarray, grow: int) -> np.ndarray | None:
+    """Text pixels of one RGB box, or None when the whole box must be filled.
+
+    Burned-in text stands out from what is around it in brightness or colour.
+    Returns an all-False mask when the box plainly has no text on this frame.
+    When it cannot tell (a very busy box, or faint structure that might be
+    faint text) it returns None, because leaving text behind is the worse error.
+    """
+    height, width = region.shape[:2]
+    if height < 3 or width < 3:
+        return None
+    values = region.astype(np.float32)
+    radius = max(4, min(height, width) // 2)
+    contrast = np.abs(values - _local_mean(values, radius)).max(axis=2)
+    limit = max(
+        TEXT_CONTRAST,
+        TEXT_CONTRAST_MEDIAN * float(np.percentile(contrast, TEXT_QUIET_PERCENTILE)),
+    )
+    strong = contrast > limit
+    # A lone speck is noise; a stroke has neighbours.
+    strong &= _box_mean(_box_mean(strong.astype(np.float32), 1, 0), 1, 1) >= 3 / 9
+    share = float(strong.mean())
+    if share > TEXT_MAX_SHARE:
+        return None
+    if share < TEXT_MIN_SHARE:
+        if float((contrast > TEXT_WEAK_CONTRAST).mean()) > TEXT_WEAK_SHARE:
+            return None
+        return np.zeros((height, width), dtype=bool)
+    grown = _box_mean(_box_mean(strong.astype(np.float32), grow, 0), grow, 1) > 1e-6
+    return grown | strong
+
+
+class TextMasks:
+    """Per-frame holes for a span: found text, plus painted or drawn areas.
+
+    A hole also covers the frames just before and after, so text fading in or
+    out is caught and the mask does not flicker. ``wrap`` must read the frames,
+    because the masks come from them.
+    """
+
+    WINDOW = 2
+
+    def __init__(self, tight: list[list[Rect]], exact: list[list[Rect]], width: int, height: int):
+        self.tight = tight
+        self.exact = exact
+        self.width = width
+        self.height = height
+        self.grow = max(TEXT_GROW_MIN_PX, int(round(width * TEXT_GROW_RATIO)))
+        self.found: dict[int, list[tuple[Rect, np.ndarray]]] = {}
+
+    def _measure(self, index: int, frame: np.ndarray) -> None:
+        rows = []
+        for rect in set(self.tight[min(index, len(self.tight) - 1)]):
+            x0, y0, x1, y1 = rect
+            text = text_in_region(frame[y0:y1, x0:x1], self.grow)
+            if text is None:
+                text = np.ones((y1 - y0, x1 - x0), dtype=bool)
+            if text.any():
+                rows.append((rect, text))
+        self.found[index] = rows
+
+    def wrap(self, frames: Iterable[np.ndarray]):
+        """Yield frames unchanged, having read ``WINDOW`` frames ahead of each."""
+        pending: list[np.ndarray] = []
+        index = 0
+        for frame in frames:
+            self._measure(index + len(pending), frame)
+            pending.append(frame)
+            if len(pending) > self.WINDOW:
+                yield pending.pop(0)
+                index += 1
+        for frame in pending:
+            yield frame
+
+    def _exact_at(self, index: int) -> list[Rect]:
+        return self.exact[min(index, len(self.exact) - 1)]
+
+    def _window(self, index: int):
+        for at in range(index - self.WINDOW, index + self.WINDOW + 1):
+            yield from self.found.get(at, ())
+
+    def has_fill(self, index: int) -> bool:
+        return bool(self._exact_at(index)) or any(True for _ in self._window(index))
+
+    def rects_for(self, index: int) -> list[Rect]:
+        """The rects worth filling on this frame; none when it has no text."""
+        tight = self.tight[min(index, len(self.tight) - 1)]
+        if not self.has_fill(index):
+            return []
+        return [*self._exact_at(index), *tight]
+
+    def hole(self, index: int, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+        """The hole on frame ``index`` within an area, in that area's pixels."""
+        out = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+        for left, top, right, bottom in self._exact_at(index):
+            out[max(top, y0) - y0:max(bottom - y0, 0), max(left, x0) - x0:max(right - x0, 0)] = True
+        for (left, top, right, bottom), text in self._window(index):
+            cx0, cy0, cx1, cy1 = max(left, x0), max(top, y0), min(right, x1), min(bottom, y1)
+            if cx1 > cx0 and cy1 > cy0:
+                out[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0] |= text[cy0 - top:cy1 - top, cx0 - left:cx1 - left]
+        return out
+
+    def forget_before(self, index: int) -> None:
+        for at in [key for key in self.found if key < index - self.WINDOW]:
+            del self.found[at]

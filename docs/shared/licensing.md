@@ -36,7 +36,6 @@ unmodified, separate process that VibeCut only calls over HTTP.
 | yt-dlp | `>=2025.10.22` | Default URL ingest | Unlicense | Public Python API only. Keep current; extractors change often. |
 | python-stretch (optional) | `>=0.3.1` | Signalsmith Stretch binding | MIT | Optional voice-fit backend; `requirements-optional.txt`. |
 | Signalsmith Stretch (optional) | via python-stretch | Pitch/time stretch | MIT | Vendored inside the python-stretch wheel; keep the MIT notice. |
-| STTN fill weights (optional) | AI text fill | MIT (STTN); Apache-2.0 for the subtitle-tuned variant | Not bundled. User installs `sttn_infer_model.pth`; include the STTN and variant notices if distributed. |
 | LaMa ONNX fill weights (optional) | AI text fill | Apache-2.0 | Not bundled. User installs `lama_fp32.onnx`; include the Apache-2.0 notice if distributed. |
 
 All direct requirements above are permissive or public-domain dedications; none

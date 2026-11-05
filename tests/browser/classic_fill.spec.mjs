@@ -4,7 +4,7 @@
  * The model pack is not installed on this Mac, so this spec mocks the three
  * routes that would touch it — engine status, the one-frame LaMa preview — and
  * asserts the founder's path: tick the subtitle, remove it with AI fill and
- * STTN, switch a box to LaMa, compare one frame, and read the copy that says
+ * LaMa, compare one frame, and read the copy that says
  * the stage box is not the filled picture. The frame route stays real.
  *
  * Exit 0 passes, exit 2 means this host cannot run Playwright (skip).
@@ -89,19 +89,15 @@ const FILL_STATUS = {
   missing: [],
   files: [],
   engines: {
-    sttn: {
-      id: "sttn", label: "STTN", ready: true, reason: "", model: true,
-      runtime: "torch", runtime_installed: true,
-    },
     lama: {
       id: "lama", label: "LaMa", ready: true, reason: "", model: true,
       runtime: "onnxruntime", runtime_installed: true,
     },
   },
-  default: "sttn",
+  default: "lama",
   preview: "lama",
-  methods: ["blur", "cover", "crop", "sttn"],
-  note: "AI fill is ready with STTN and LaMa.",
+  methods: ["blur", "crop", "lama"],
+  note: "AI fill is ready with LaMa.",
 };
 
 async function run() {
@@ -117,7 +113,7 @@ async function run() {
     previewBodies.push(JSON.parse(route.request().postData() || "{}"));
     return route.fulfill(json({
       before: PNG, after: PNG, width: 540, height: 960, time: 1,
-      method: "lama", render_method: "sttn", cached: false,
+      method: "lama", render_method: "lama", cached: false,
     }));
   });
 
@@ -130,16 +126,14 @@ async function run() {
   }, null, { timeout: 20000 });
 
   const panel = await page.locator("#clean-fill").textContent();
-  assert(/STTN · video, best on subtitles/.test(panel), "the panel hides the STTN engine");
-  assert(/LaMa · per frame, best on still backgrounds/.test(panel), "the panel hides the LaMa engine");
-  assert(/About 5 s per frame/.test(panel), "the panel hides what STTN costs");
-  assert(/About 16 s per frame/.test(panel), "the panel hides what LaMa costs");
+  assert(/LaMa/.test(panel), "the panel hides the engine");
+  assert(!/STTN/.test(panel), "the panel still offers STTN");
+  assert(/time left shows/.test(panel), "the panel hides what AI fill costs");
 
   // Tick the found subtitle and remove it with AI fill.
   await page.locator("[data-found-tick]").first().click();
   await page.selectOption("#clean-found-method", "fill");
-  const engineValue = await page.locator("#clean-found-engine").inputValue();
-  assert(engineValue === "sttn", `a subtitle defaults to ${engineValue}, not STTN`);
+  assert(await page.locator("#clean-found-engine").count() === 0, "the panel still offers an engine choice");
   await page.locator("[data-found-apply]").click();
   await page.waitForFunction(() => {
     const box = [...document.querySelectorAll("#clean-overlay .clean-box")].pop();
@@ -149,8 +143,7 @@ async function run() {
     const box = [...document.querySelectorAll("#clean-overlay .clean-box")].pop();
     return box.dataset.cleanId;
   });
-  const engine = await page.locator(`[data-clean-row="${boxId}"] [data-clean-engine]`).inputValue();
-  assert(engine === "sttn", `the subtitle box uses ${engine}, not STTN`);
+  assert(await page.locator(`[data-clean-row="${boxId}"] [data-clean-engine]`).count() === 0, "the box still offers an engine choice");
 
   // The stage says why the box is a box and not a filled picture — but only on
   // a frame the fill is active on, so move the playhead inside the scan range.
@@ -189,12 +182,7 @@ async function run() {
     throw new Error(`${error.message} ${JSON.stringify(diag)} headers=${JSON.stringify(frameHeaders)} body=${frameBodies[frameBodies.length - 1] || ""}`);
   }
 
-  // Switch that box to LaMa, then preview one frame.
-  await page.selectOption(`[data-clean-row="${boxId}"] [data-clean-engine]`, "lama");
-  await page.waitForFunction((id) => {
-    const box = document.querySelector(`#clean-overlay [data-clean-id="${id}"]`);
-    return box && box.dataset.method === "fill";
-  }, boxId, { timeout: 10000 });
+  // Preview one frame.
   await page.locator("#clean-fill-preview").click();
   await page.waitForFunction(() => document.querySelectorAll(".clean-fill-compare img").length === 2,
     null, { timeout: 20000 });
@@ -205,12 +193,12 @@ async function run() {
     return {
       srcs: images.map((image) => image.getAttribute("src") || ""),
       captions,
-      copy: /Preview uses LaMa\. The render uses STTN and may look different\./.test(fillText),
+      copy: /Preview uses LAMA\. The render uses the same engine/.test(fillText),
     };
   });
   assert(compare.srcs.every((src) => src.startsWith("data:image/png")), "the preview images are not pictures");
   assert(compare.captions.join("|") === "Before|After", `the preview captions are ${compare.captions.join("|")}`);
-  assert(compare.copy, "the preview hides that the render uses a different engine");
+  assert(compare.copy, "the preview hides that the render uses the same engine");
 
   const body = previewBodies[previewBodies.length - 1] || {};
   const sent = (body.clean || []).find((layer) => layer.method === "fill");

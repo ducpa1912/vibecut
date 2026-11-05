@@ -3,5 +3,4 @@
 # VibeCut runs without these: Clean's Blur, Cover and Crop always work, and
 # AI fill reports the missing package instead of failing a render by surprise.
 # The model files are separate downloads; see THIRD_PARTY_NOTICES.md.
-torch>=2.2
 onnxruntime>=1.17

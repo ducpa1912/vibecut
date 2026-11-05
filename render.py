@@ -2168,7 +2168,7 @@ def _prepare_fills(
                 raise PipelineError(str(exc)) from exc
     finally:
         # Model sessions are large; a finished or failed pre-pass must not
-        # hold STTN or LaMa memory for the rest of the app's life.
+        # hold LaMa's memory for the rest of the app's life.
         textfill.release_fillers()
         FILL_LOCK.release()
     return results

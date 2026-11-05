@@ -2,8 +2,8 @@
 
 The model pack is not installed on this Mac, so a browser run cannot fill a
 real frame here. This spec mocks engine status and the LaMa preview and checks
-the founder's path through them: tick a subtitle, remove it with AI fill and
-STTN, switch the box to LaMa, compare one frame, and read the copy that says
+the founder's path through them: tick a subtitle, remove it with AI fill, compare
+one frame, and read the copy that says
 the stage box is not the filled picture. The frame route stays real.
 """
 

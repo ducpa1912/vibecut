@@ -10,7 +10,7 @@ the change is additive and tested from Classic.
 ### Scope of the build after the old pin
 
 The previous pin was `193b60e`. The commits after it add the C0–C4 editor
-work, the Clean layer and frame route, AI fill with STTN/LaMa and its
+work, the Clean layer and frame route, AI fill with LaMa and its
 single-frame preview, the shared model cache, the shared-Python launcher, and
 the UI review. They are in scope for this beta build. C0–C4 are built and
 listed below; none has a founder pass yet. The two earlier admin commits

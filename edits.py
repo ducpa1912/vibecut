@@ -52,8 +52,10 @@ MAX_ID = 64
 
 ASPECTS = ("9:16", "4:5")
 CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "fill")
-# AI text fill engines for kind "fill" (see textfill/). STTN is the default.
-FILL_METHODS = ("sttn", "lama")
+# AI text fill engines for kind "fill" (see textfill/). Classic fills with LaMa.
+FILL_METHODS = ("lama",)
+# A layer saved earlier may still name a retired engine. It opens as LaMa.
+RETIRED_FILL_METHODS = ("sttn",)
 MOTION_KINDS = ("punch_in", "snap_zoom", "push", "shake")
 TEXT_KINDS = ("hook", "title", "lower_third", "cta", "emphasis")
 FX_KINDS = ("arrow", "circle", "underline", "progress_bar", "sticker")
@@ -578,6 +580,8 @@ def normalize_clean(value: Any) -> list[dict]:
             # Only a fill layer names an engine; a blur box that happens to
             # carry one is an error rather than a silently ignored field.
             method = str(raw.get("method") or FILL_METHODS[0]).strip().lower()
+            if method in RETIRED_FILL_METHODS:
+                method = FILL_METHODS[0]
             if method not in FILL_METHODS:
                 raise EditError(
                     f"clean[{index}].method must be one of: "

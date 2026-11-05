@@ -56,7 +56,7 @@ def _layer(**overrides) -> dict:
     layer = {
         "id": "cl01",
         "kind": "fill",
-        "method": "sttn",
+        "method": "lama",
         "box": {"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.16},
         "ranges": [{"start": 43.0, "end": 44.0}],
         "label": "subtitle",
@@ -78,12 +78,12 @@ def _compile(edit: dict, *, scenes: list[dict] | None = None) -> dict:
 # ------------------------------------------------------------------ the schema
 
 
-def test_only_a_fill_layer_carries_an_engine_and_it_defaults_to_sttn():
+def test_only_a_fill_layer_carries_an_engine_and_it_defaults_to_lama():
     layer = edits.normalize_clean([
         {"id": "a", "kind": "fill", "box": {"x": 0, "y": 0, "w": 0.2, "h": 0.1}},
         {"id": "b", "kind": "blur", "box": {"x": 0, "y": 0, "w": 0.2, "h": 0.1}},
     ])
-    assert layer[0]["method"] == "sttn"
+    assert layer[0]["method"] == "lama"
     assert "method" not in layer[1]
 
 
@@ -101,7 +101,7 @@ def test_a_fill_box_compiles_to_a_fill_plan_not_a_filter():
     assert segment["clean_ids"] == []
     assert [item for item in segment["pre_filters"] if "boxblur" in item or "drawbox" in item] == []
     assert segment["fill"]["ids"] == ["cl01"]
-    assert segment["fill"]["method"] == "sttn"
+    assert segment["fill"]["method"] == "lama"
     # Ranges in the plan are source time: 43-44 s of source, not 3-4 s of cut.
     assert segment["fill"]["layers"][0]["ranges"] == [{"start": 43.0, "end": 44.0}]
 
@@ -113,7 +113,7 @@ def test_a_fill_box_limited_to_one_clip_leaves_the_other_alone():
     assert second["fill"] is None
 
 
-def test_the_top_layer_decides_the_engine_and_a_mix_is_warned():
+def test_a_saved_sttn_box_compiles_as_lama_with_no_warning():
     compiled = _compile(_edit([
         _layer(id="cl01", method="sttn", box={"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.1}),
         _layer(id="cl02", method="lama", z=5, box={"x": 0.1, "y": 0.2, "w": 0.8, "h": 0.1}),
@@ -121,12 +121,12 @@ def test_the_top_layer_decides_the_engine_and_a_mix_is_warned():
     segment = compiled["segments"][0]
     assert segment["fill"]["method"] == "lama"
     assert segment["fill"]["ids"] == ["cl01", "cl02"]
-    assert any(item["code"] == "fill_method_mixed" for item in compiled["warnings"])
+    assert not any(item["code"] == "fill_method_mixed" for item in compiled["warnings"])
 
 
 def test_a_blur_and_a_fill_box_on_one_beat_keep_their_own_jobs():
     compiled = _compile(_edit([
-        _layer(id="cl01", method="sttn"),
+        _layer(id="cl01", method="lama"),
         {"id": "cl02", "kind": "blur", "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.1}},
     ]))
     segment = compiled["segments"][0]
@@ -158,24 +158,24 @@ def test_the_span_key_follows_the_box_and_the_model(tmp_path):
     meta = {"fingerprint": "abc", "width": 1920, "height": 1080, "fps": 30.0}
     base = textfill.span_key(
         meta=meta, start=40.0, duration=4.0, layers=[_layer()],
-        method="sttn", model_stamp="m1",
+        method="lama", model_stamp="m1",
     )
     moved = textfill.span_key(
         meta=meta, start=40.0, duration=4.0,
         layers=[_layer(box={"x": 0.1, "y": 0.6, "w": 0.8, "h": 0.16})],
-        method="sttn", model_stamp="m1",
+        method="lama", model_stamp="m1",
     )
     model = textfill.span_key(
         meta=meta, start=40.0, duration=4.0, layers=[_layer()],
-        method="sttn", model_stamp="m2",
+        method="lama", model_stamp="m2",
     )
     assert len({base, moved, model}) == 3
 
-    model_file = tmp_path / textfill.MODEL_FILES["sttn"]
+    model_file = tmp_path / textfill.MODEL_FILES["lama"]
     model_file.write_bytes(b"x" * 10)
-    first = textfill.model_signature(["sttn"], tmp_path)
+    first = textfill.model_signature(["lama"], tmp_path)
     model_file.write_bytes(b"x" * 20)
-    assert textfill.model_signature(["sttn"], tmp_path) != first
+    assert textfill.model_signature(["lama"], tmp_path) != first
     # A missing model is part of the signature, not an error.
     assert textfill.model_signature(["lama"], tmp_path)
 
@@ -244,7 +244,7 @@ def test_the_pre_pass_fills_only_beats_that_ask_and_releases_the_models(tmp_path
 
     segments = [
         {"start": 40.0, "frames": 120,
-         "fill": {"method": "sttn", "layers": [{"box": {}, "ranges": []}]}},
+         "fill": {"method": "lama", "layers": [{"box": {}, "ranges": []}]}},
         {"start": 100.0, "frames": 120, "fill": None},
     ]
     progress = []
@@ -273,7 +273,7 @@ def test_a_cancelled_fill_stops_the_render(tmp_path, monkeypatch):
 
     monkeypatch.setattr(textfill, "prepare_span", fake_prepare)
     monkeypatch.setattr(textfill, "release_fillers", lambda: None)
-    segments = [{"start": 0.0, "frames": 30, "fill": {"method": "sttn", "layers": []}}]
+    segments = [{"start": 0.0, "frames": 30, "fill": {"method": "lama", "layers": []}}]
     with pytest.raises(render.RenderCancelled):
         render._prepare_fills(
             "source.mp4", {"width": 1, "height": 1}, job_dir, segments,
@@ -290,7 +290,7 @@ def test_a_fill_failure_is_a_render_error_with_its_reason(tmp_path, monkeypatch)
 
     monkeypatch.setattr(textfill, "prepare_span", fake_prepare)
     monkeypatch.setattr(textfill, "release_fillers", lambda: None)
-    segments = [{"start": 0.0, "frames": 30, "fill": {"method": "sttn", "layers": []}}]
+    segments = [{"start": 0.0, "frames": 30, "fill": {"method": "lama", "layers": []}}]
     with pytest.raises(Exception) as error:
         render._prepare_fills(
             "source.mp4", {"width": 1, "height": 1}, job_dir, segments,
@@ -309,13 +309,8 @@ def test_a_clean_mask_is_schema_data_and_keeps_the_box():
     assert layer["method"] == "lama"
     assert layer["text_key"] == "same text"
     assert layer["mask"]["strokes"][0]["points"] == [{"x": 0.2, "y": 0.25}]
-    # The box is still there; a brush extends it rather than replacing it.
+    # One click is a slip, so the whole box is filled rather than one dot of it.
     rects = textfill.masks.layer_rects(layer, 1000, 1000)
-    assert len(rects) >= 2
+    assert rects == [textfill.masks.layer_rect(layer, 1000, 1000)]
 
 
-def test_top_and_bottom_text_do_not_share_one_sttn_strip():
-    rects = [(100, 900, 900, 980), (100, 40, 900, 120)]
-    strips = textfill.masks.sttn_strips(rects, 1000, 1000)
-    assert len(strips) >= 2
-    assert not any(a <= 500 <= b for a, b in strips)

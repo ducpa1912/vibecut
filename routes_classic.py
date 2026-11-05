@@ -157,15 +157,15 @@ MAX_CLASSIC_CLEAN = 24
 CLASSIC_CLEAN_DEFAULT_COLOR = "#0b0d12"
 # A Classic box's `method` is what the founder picked (blur, crop or fill); a fill box also carries `engine` (which model runs). `edits` calls the
 # engine "method" inside the Edit, so the two names must not be confused.
-# Classic's default is LaMa: it is the per-frame engine and works on a still
-# overlay without the temporal window STTN needs. STTN remains selectable.
-CLASSIC_FILL_ENGINES = ("lama", "sttn")
-FILL_MODELS = {"LaMa": "lama_fp32.onnx", "STTN": "sttn_infer_model.pth"}
-FILL_ENGINE_MODEL = {"sttn": "STTN", "lama": "LaMa"}
-FILL_RUNTIME = {"sttn": "torch", "lama": "onnxruntime"}
+# Classic fills with LaMa only. A box saved earlier with a retired engine still
+# opens and renders, as LaMa.
+CLASSIC_FILL_ENGINES = ("lama",)
+RETIRED_FILL_ENGINES = ("sttn",)
+FILL_MODELS = {"LaMa": "lama_fp32.onnx"}
+FILL_ENGINE_MODEL = {"lama": "LaMa"}
+FILL_RUNTIME = {"lama": "onnxruntime"}
 FILL_LICENSES = {
     "LaMa": "Apache-2.0 · github.com/Carve/LaMa-ONNX",
-    "STTN": "Apache-2.0 weights · MIT code · researchmm/STTN",
 }
 FILL_LOCK = threading.Lock()
 FILL_LOCKS: dict[str, threading.Lock] = {}
@@ -648,13 +648,11 @@ def normalize_classic_clean(
             )
         engine = ""
         if method == "fill":
-            # Only the engine that was asked for is refused, so a machine with
-            # STTN installed can still fill subtitles while LaMa is missing.
             engine = str(raw.get("engine") or "lama").strip().lower()
+            if engine in RETIRED_FILL_ENGINES:
+                engine = "lama"
             if engine not in CLASSIC_FILL_ENGINES:
-                raise ClassicTextError(
-                    "An AI fill box engine must be STTN or LaMa."
-                )
+                raise ClassicTextError("An AI fill box engine must be LaMa.")
             status = classic_fill_status() if require_ready else {}
             ready = (status.get("engines") or {}).get(engine) or {}
             if require_ready and not ready.get("ready"):
@@ -739,11 +737,9 @@ def _classic_runtime_installed(engine: str) -> tuple[bool, str]:
 
 
 def classic_fill_status() -> dict:
-    """Which AI-fill engines are usable, and why the others are not.
+    """Whether LaMa, the AI-fill engine, is usable, and why not when it is not.
 
-    Ready means the model file *and* its runtime package are both present. An
-    engine is refused on its own: STTN installed without LaMa still fills
-    subtitles, and the other way round.
+    Ready means the model file *and* its runtime package are both present.
     """
     import app
 
@@ -798,8 +794,7 @@ def classic_fill_status() -> dict:
         "files": files,
         "engines": engines,
         "default": default,
-        # The preview follows the selected render engine. LaMa is the default;
-        # STTN previews with a one-frame chunk.
+        # The preview and the render use the same engine.
         "preview": default,
         "methods": ["blur", "crop"] + ([default] if default else []),
         "note": (
@@ -1544,8 +1539,8 @@ def classic_frame(job_id: str, body: ClassicFrameBody):
 def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
     """Estimate the fill time before a render starts.
 
-    The rates are measured on this Mac and intentionally conservative; the
-    real render reports its own progress and timings.
+    The figure is this Mac's own time per frame from a finished fill. Until
+    one finishes there is no figure, and ``seconds`` is null.
     """
     import app
     import compose_render
@@ -1570,7 +1565,10 @@ def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
         )
     except compose_render.ComposeError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    rate = {"lama": 16.0, "sttn": 5.0}
+    import textfill
+
+    measured = textfill.fill_rate(app.DATA, "lama")
+    per_frame = measured["seconds"]
     seconds = 0.0
     frames = 0
     methods: set[str] = set()
@@ -1583,14 +1581,15 @@ def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
         span = max(0.0, float(segment.get("out_end") or 0.0) - float(segment.get("out_start") or 0.0))
         count = max(1, int(round(span * render.OUT_FPS)))
         frames += count
-        seconds += count * rate.get(method, 16.0)
+        seconds += count * float(per_frame or 0.0)
     return {
         "method": next(iter(methods), None),
         "methods": sorted(methods),
         "frames": frames,
-        "seconds": round(seconds, 1),
-        "estimate_seconds": int(round(seconds)),
-        "per_frame": rate,
+        "seconds": round(seconds, 1) if per_frame else None,
+        "estimate_seconds": int(round(seconds)) if per_frame else None,
+        "per_frame": {"lama": per_frame},
+        "measured": bool(measured["measured"]),
     }
 
 
@@ -1905,8 +1904,22 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
     try:
         frame_rgb = _read_source_frame(source_path, width, height, source_time)
         try:
+            # Scanned text narrows to its letters here too, so the preview
+            # shows the hole the render will use.
+            tight_rects = textfill.masks.frame_rects(
+                [
+                    layer for layer in fill_layers
+                    if textfill.masks.uses_text_mask(layer, width, height)
+                ],
+                start=source_time - (0.5 / max(1.0, fps)),
+                fps=fps,
+                frames=1,
+                width=width,
+                height=height,
+            )[0]
             filled_rgb = textfill.fill_frame(
                 frame_rgb, rects, data_root=job_dir.parent.parent, method=engine,
+                tight_rects=tight_rects,
             )
         except textfill.FillError as exc:
             return _fill_http_error(409, "fill_failed", str(exc))

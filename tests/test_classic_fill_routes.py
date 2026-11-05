@@ -79,13 +79,12 @@ def _ready(**overrides) -> dict:
         "missing": [],
         "files": [],
         "engines": {
-            "sttn": {"id": "sttn", "ready": True, "reason": "", "model": True},
             "lama": {"id": "lama", "ready": True, "reason": "", "model": True},
         },
         "default": "lama",
         "preview": "lama",
         "methods": ["blur", "crop", "lama"],
-        "note": "AI fill is ready with STTN and LaMa.",
+        "note": "AI fill is ready with LaMa.",
     }
     status.update(overrides)
     return status
@@ -314,5 +313,7 @@ def test_the_fill_estimate_names_frames_and_time(classic, monkeypatch):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["frames"] > 0
-    assert body["estimate_seconds"] > 0
+    # No fill has finished on this Mac, so no time is promised.
+    assert body["estimate_seconds"] is None
+    assert body["measured"] is False
     assert body["method"] == "lama"

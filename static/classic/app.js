@@ -393,7 +393,6 @@
       // "Remove ticked" and are cleared when the scan changes.
       foundTicks: new Set(),
       foundMethod: "fill",
-      foundEngine: "",
       fillPreview: null,
       // The frame is cropped; boxes are stored in source space. The server
       // sends each segment's crop with its frame, keyed by segment position.
@@ -6873,15 +6872,12 @@
     crop: { label: "Crop guard", note: "Keeps the frame inside the safe area." },
     fill: { label: "AI fill", note: "Repairs the region with the fill models." },
   };
-  // Honest numbers, measured once on this Mac. The point is that the founder
-  // chooses AI fill knowing a 30 s subtitle run is not a coffee break.
+  // AI fill is LaMa only. No time is promised: the render counts its own frames.
   const CLEAN_FILL_COST = {
-    sttn: "About 5 s per frame on this Mac. A 4 s subtitle run takes a few minutes.",
-    lama: "About 16 s per frame on this Mac. Use it for one still overlay, not a subtitle.",
+    lama: "AI fill is the slowest step of a render. The time left shows while it runs.",
   };
   const CLEAN_FILL_ENGINE_LABEL = {
-    sttn: "STTN · video, best on subtitles",
-    lama: "LaMa · per frame, best on still backgrounds",
+    lama: "LaMa",
   };
   const CLEAN_SCAN_METHOD = { plate: "blur", crop_guard: "crop", mask: "blur", blur: "blur" };
   const CLEAN_MIN_BOX = 0.02;
@@ -6982,7 +6978,7 @@
       radius: layer.radius,
       hidden: Boolean(layer.hidden),
       source: layer.source || "manual",
-      ...(cleanMethodKey(layer) === "fill" ? { engine: layer.engine || "lama" } : {}),
+      ...(cleanMethodKey(layer) === "fill" ? { engine: "lama" } : {}),
       ...(layer.mask ? { mask: layer.mask } : {}),
       ...(layer.text_key ? { text_key: layer.text_key } : {}),
     }));
@@ -7053,7 +7049,7 @@
     const hasFill = classicCleanLayers().some((layer) => cleanMethodKey(layer) === "fill");
     const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
     const fillLayer = selected && cleanMethodKey(selected) === "fill" ? selected : null;
-    const previewEngine = fillLayer?.engine || fill.default || "lama";
+    const previewEngine = "lama";
     const previewReady = Boolean(engines[previewEngine]?.ready);
     const previewHint = previewReady
       ? (hasFill
@@ -7157,7 +7153,7 @@
     const fillLayer = selected && cleanMethodKey(selected) === "fill"
       ? selected
       : classicCleanLayers().find((layer) => cleanMethodKey(layer) === "fill");
-    const engine = fillLayer?.engine || state.fill?.default || "lama";
+    const engine = "lama";
     if (dom.cleanPreviewEngine) {
       dom.cleanPreviewEngine.textContent = fillLayer
         ? `Engine ${String(engine).toUpperCase()}`
@@ -7167,13 +7163,7 @@
       if (!fillLayer) {
         dom.cleanPreviewEta.textContent = "No fill yet";
       } else {
-        const ranges = fillLayer.ranges || [];
-        const seconds = ranges.reduce((total, item) => (
-          total + Math.max(0, Number(item.end) - Number(item.start))
-        ), 0) || cleanCutTotal();
-        const perFrame = engine === "lama" ? 16 : 5;
-        const estimate = Math.round(seconds * 30 * perFrame);
-        dom.cleanPreviewEta.textContent = `Est. ${estimate < 60 ? `${estimate}s` : `${Math.ceil(estimate / 60)} min`}`;
+        dom.cleanPreviewEta.textContent = "Time shows during the render";
       }
     }
   }
@@ -7693,11 +7683,6 @@
     const methodOptions = methods
       .map(([key, label]) => `<option value="${key}"${key === method ? " selected" : ""}>${label}</option>`)
       .join("");
-    const engine = state.classicText.foundEngine || fill.default || "lama";
-    const engineOptions = Object.keys(CLEAN_FILL_ENGINE_LABEL).map((key) => {
-      const ready = Boolean(fill.engines?.[key]?.ready);
-      return `<option value="${key}"${key === engine ? " selected" : ""}${ready ? "" : " disabled"}>${esc(CLEAN_FILL_ENGINE_LABEL[key])}</option>`;
-    }).join("");
     const rowsHtml = rows.map((row, index) => {
       const cutStart = cleanRowCutStart(row);
       const outside = cutStart === null;
@@ -7737,7 +7722,6 @@
         <button class="ghost small" type="button" data-found-all>Select all</button>
         <button class="ghost small" type="button" data-found-none${tickCount ? "" : " disabled"}>Clear</button>
         <select id="clean-found-method" class="clean-method-select" aria-label="Method for ticked text">${methodOptions}</select>
-        <select id="clean-found-engine" class="clean-method-select" aria-label="AI fill engine"${method === "fill" && fill.available ? "" : " hidden"}>${engineOptions}</select>
         <button class="primary small" type="button" data-found-apply${tickCount ? "" : " disabled"}>Remove ticked (${tickCount})</button>
       </div>
       <p class="hint clean-found-note">${readyText}</p>`;
@@ -7778,8 +7762,7 @@
     }
     let method = state.classicText.foundMethod || "fill";
     if (method === "fill" && !(state.fill && state.fill.available)) method = "blur";
-    const engine = state.classicText.foundEngine
-      || state.fill?.default || "lama";
+    const engine = "lama";
     if (method === "fill" && !state.fill?.engines?.[engine]?.ready) {
       setCleanStatus(state.fill?.engines?.[engine]?.reason || "That engine is not installed.");
       return;
@@ -7835,13 +7818,7 @@
           `<button type="button" class="clean-chip${key === method ? " active" : ""}" data-clean-method="${key}" data-clean-target="${esc(layer.id)}" title="${esc(item.note)}">${item.label}</button>`
         )).join("");
       const enginePicker = method === "fill"
-        ? `<select class="clean-engine" data-clean-engine="${esc(layer.id)}" aria-label="Fill engine">${
-          Object.keys(CLEAN_FILL_ENGINE_LABEL).map((key) => {
-            const engine = (state.fill?.engines || {})[key] || {};
-            const label = CLEAN_FILL_ENGINE_LABEL[key];
-            const current = (layer.engine || "sttn") === key;
-            return `<option value="${key}"${current ? " selected" : ""}${engine.ready ? "" : " disabled"} title="${esc(engine.reason || label)}">${esc(label)}</option>`;
-          }).join("")}</select>`
+        ? `<span class="clean-engine">${esc(CLEAN_FILL_ENGINE_LABEL.lama)}</span>`
         : "";
       return `
         <div class="clean-row${selected ? " is-selected" : ""}${layer.hidden ? " is-off" : ""}" role="listitem" data-clean-row="${esc(layer.id)}">
@@ -7953,13 +7930,8 @@
     scheduleCleanFrame();
   }
 
-  // STTN sees motion, so it is the subtitle default; LaMa is per frame and
-  // only wins on a still overlay.
   function defaultFillEngine(_kind) {
-    const ready = (key) => Boolean(state.fill?.engines?.[key]?.ready);
-    // LaMa is the Classic default: per-frame and safe on a still overlay.
-    if (ready("lama")) return "lama";
-    return Object.keys(CLEAN_FILL_ENGINE_LABEL).find(ready) || "lama";
+    return "lama";
   }
 
   function setCleanMethod(id, method) {
@@ -7982,24 +7954,6 @@
     } else {
       setCleanStatus(`${CLEAN_METHODS[method].note}`);
     }
-    saveClassicText();
-    paintCleanStage();
-    scheduleCleanFrame();
-  }
-
-  function setCleanEngine(id, engine) {
-    const layer = classicCleanLayers().find((item) => item.id === id);
-    if (!layer || cleanMethodKey(layer) !== "fill") return;
-    if (!CLEAN_FILL_ENGINE_LABEL[engine]) return;
-    if (!state.fill?.engines?.[engine]?.ready) {
-      const reason = state.fill?.engines?.[engine]?.reason || "That engine is not installed.";
-      setCleanStatus(reason);
-      renderCleanLayers();
-      return;
-    }
-    pushClassicUndo();
-    layer.engine = engine;
-    setCleanStatus(`AI fill with ${CLEAN_FILL_ENGINE_LABEL[engine]}. ${CLEAN_FILL_COST[engine]}`);
     saveClassicText();
     paintCleanStage();
     scheduleCleanFrame();
@@ -8306,10 +8260,6 @@
       const row = event.target.closest("[data-clean-row]");
       if (row) selectClean(row.dataset.cleanRow);
     });
-    dom.cleanLayers?.addEventListener("change", (event) => {
-      const picker = event.target.closest("[data-clean-engine]");
-      if (picker) setCleanEngine(picker.dataset.cleanEngine, picker.value);
-    });
     dom.cleanFound?.addEventListener("click", (event) => {
       if (event.target.closest("[data-found-all]")) {
         const rows = cleanScanRows();
@@ -8348,9 +8298,6 @@
         state.classicText.foundMethod = event.target.value;
         renderCleanFound();
         return;
-      }
-      if (event.target.id === "clean-found-engine") {
-        state.classicText.foundEngine = event.target.value;
       }
     });
     dom.cleanFill?.addEventListener("click", (event) => {

@@ -16,7 +16,7 @@ Three separate things, on purpose:
 ## The rule
 
 - Classic's copy of the shared backend is pinned in `classic_runtime/manifest.json`:
-  75 files with path, sha256, source and version. The baseline is `classic` `2f385a2`.
+  74 files with path, sha256, source and version. The baseline is `classic` `2f385a2`.
 - `tests/test_classic_runtime_pin.py` fails when a pinned file changes without the
   manifest, when a new runtime file is not pinned, or when Classic imports
   `features.*` or `core.*` or names another lane's folder.
