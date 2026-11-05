@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -239,6 +240,49 @@ def test_segment_puts_decoder_and_seek_before_input(tmp_path, monkeypatch):
     assert cmd.index("-ss") < input_at
     assert cmd.index("-threads") < input_at
     assert cmd[cmd.index("-threads") + 1] == "2"
+    # Segments are intermediates; only the final mux rewrites for faststart.
+    assert "+faststart" not in cmd
+
+
+def test_concat_is_an_intermediate_without_faststart(tmp_path, monkeypatch):
+    captured = []
+
+    def fake_run(cmd, **_kwargs):
+        captured.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(render, "_run", fake_run)
+    (tmp_path / "000.mp4").write_bytes(b"segment")
+    render._concat_video(
+        tmp_path, tmp_path / "master.mp4", [tmp_path / "000.mp4"],
+        "final", encoder="libx264",
+    )
+    assert captured
+    assert "+faststart" not in captured[0]
+
+
+def test_mux_is_the_final_encode_and_keeps_faststart(tmp_path, monkeypatch):
+    captured = []
+
+    def fake_run(cmd, **_kwargs):
+        captured.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(render, "_run", fake_run)
+    render._mux(
+        tmp_path / "master.mp4", tmp_path / "audio.wav",
+        tmp_path / "out.mp4", "title", 4.0, "final", False,
+        encoder="libx264",
+    )
+    assert captured
+    assert "+faststart" in captured[0]
+
+
+def test_stage_records_wall_time():
+    timings = {"concat": 0.0}
+    with render._stage(timings, "concat"):
+        time.sleep(0.01)
+    assert timings["concat"] >= 0.005
 
 
 # ---------------------------------------------------------------- api.js cache

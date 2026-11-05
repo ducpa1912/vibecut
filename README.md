@@ -910,7 +910,7 @@ keep physical blocks until reused.
 | `VIBECUT_RETENTION_DAYS` | `0` (keep) | Delete whole jobs older than this. |
 | `VIBECUT_JOB_CLEAN_DAYS` | `0` (off) | Delete job work files after this age. |
 | `VIBECUT_CACHE_DAYS` | `14` | Age-prune caches. |
-| `VIBECUT_CACHE_MAX_GB` | `2` | LRU cap across caches. |
+| `VIBECUT_CACHE_MAX_GB` | `8` | LRU cap across caches. |
 | `VIBECUT_PRUNE_RENDERS` | `0` (off) | Opt in to pruning older unprotected renders. |
 | `VIBECUT_KEEP_RENDERS` | `1` | With pruning on: newest finals kept per group. |
 | `VIBECUT_KEEP_DRAFTS` | `0` | Keep drafts after a final exists. |

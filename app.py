@@ -3134,9 +3134,9 @@ def cleanup_storage() -> None:
     except ValueError:
         cache_days = 14.0
     try:
-        cache_max_gb = float(os.environ.get("VIBECUT_CACHE_MAX_GB", "2") or 0)
+        cache_max_gb = float(os.environ.get("VIBECUT_CACHE_MAX_GB", "8") or 0)
     except ValueError:
-        cache_max_gb = 2.0
+        cache_max_gb = 8.0
     removed_sources = gc_sources()
     if removed_sources:
         LOGGER.info("source store GC removed %d entries", removed_sources)
