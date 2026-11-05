@@ -10,6 +10,10 @@ Two artifacts are planned:
 2. **Mac Apple Silicon desktop app** — Developer ID signed and notarized `.app`
    inside a `.dmg`, arm64 only.
 
+A public pay-per-render site is a third shape, planned in
+[raas-distribution-plan.md](raas-distribution-plan.md). Its license position is
+Profile A below, but it needs accounts and shared workers.
+
 Both share the same rule: **VibeCut is proprietary; third-party licenses stay
 third-party.** Every artifact ships an EULA, `THIRD_PARTY_NOTICES.md`,
 `LICENSES/`, and an SBOM.
