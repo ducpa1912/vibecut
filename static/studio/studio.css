@@ -2071,3 +2071,6 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 #studio-root .st-delete-confirm:hover:not(:disabled) { border-color: var(--st-bad); background: var(--st-bad); filter: brightness(1.1); }
 #st-edit-finish { display: inline-flex; align-items: center; gap: 5px; }
 #st-edit-finish[hidden] { display: none; }
+
+.st-finish-reuse-option { display: flex; align-items: flex-start; gap: 8px; color: var(--st-muted); font-size: 12px; line-height: 1.35; cursor: pointer; }
+.st-finish-reuse-option input { flex: 0 0 auto; margin: 2px 0 0; accent-color: var(--st-accent); }

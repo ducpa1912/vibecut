@@ -774,3 +774,45 @@ def test_each_work_area_gets_its_own_fill_and_no_more():
     assert all(height < 120 for height, _width in filler.shapes)
     assert (out[0][200, 100] == 100).all()
 
+
+# --- One fill for a whole line ---------------------------------------------
+
+def test_a_still_line_uses_one_fill_for_all_its_frames():
+    frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(40)]
+    filler = _CountingFiller()
+    out = list(textfill.fill_frames_lama(
+        iter(frames), lambda index: [(5, 5, 20, 20)], filler, (0, 0, 40, 40),
+        step=6, reuse_still=True,
+    ))
+    assert len(out) == 40
+    assert filler.calls == 1
+
+
+def test_a_new_line_gets_its_own_fill():
+    frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(20)]
+    filler = _CountingFiller()
+    list(textfill.fill_frames_lama(
+        iter(frames),
+        lambda index: [(5, 5, 20, 20)] if index < 10 else [(5, 22, 20, 35)],
+        filler, (0, 0, 40, 40), step=6, reuse_still=True,
+    ))
+    assert filler.calls == 2
+
+
+def test_a_moving_shot_falls_back_to_key_frames_with_reuse_on():
+    frames = [np.full((40, 40, 3), (index * 40) % 256, dtype=np.uint8) for index in range(12)]
+    filler = _CountingFiller()
+    out = list(textfill.fill_frames_lama(
+        iter(frames), lambda index: [(5, 5, 20, 20)], filler, (0, 0, 40, 40),
+        step=6, reuse_still=True,
+    ))
+    assert len(out) == 12
+    # No worse than a model run per frame, and every frame still comes out.
+    assert filler.calls <= 12
+
+
+def test_reuse_is_part_of_a_lama_clip_only():
+    base = dict(meta=META, start=1.0, duration=2.0, layers=[_layer()], model_stamp="m")
+    assert textfill.span_key(method="lama", reuse_still=True, **base) != textfill.span_key(method="lama", **base)
+    assert textfill.span_key(method="sttn", reuse_still=True, **base) == textfill.span_key(method="sttn", **base)
+

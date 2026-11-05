@@ -47,6 +47,8 @@ LAMA_CARRY = 0.3
 LAMA_KEYS_PER_SECOND = 3.0
 # Mean change around the text (0..255) that stops a blend: the picture moved.
 LAMA_MOTION_LIMIT = 6.0
+# Tighter: one fill can last a whole line only while the shot barely changes.
+LAMA_STILL_LIMIT = 2.5
 # Seconds per unit before this machine has its own reading. A unit is one
 # strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
 # render on an M1 8 GB Mac under swap, and the OpenCV figures are real frames on
@@ -291,11 +293,13 @@ def span_key(
     layers: Iterable[dict],
     method: str,
     model_stamp: str,
+    reuse_still: bool = False,
 ) -> str:
     payload = {
         "version": VERSION,
         "lama_keys": lama_keys_per_second() if method == "lama" else None,
         "areas": "tight" if method == "lama" or method in CLASSIC_METHODS else None,
+        "reuse_still": bool(reuse_still) and method == "lama",
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
         "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
         "fps": round(float(meta.get("fps") or 0.0), 6),
@@ -454,16 +458,16 @@ def lama_step(fps: float) -> int:
     return max(1, int(round(float(fps) / keys)))
 
 
-def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray) -> bool:
+def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray, limit: float = LAMA_MOTION_LIMIT) -> bool:
     """Whether the picture around the text changed too much to blend across."""
     around = ~hole[::4, ::4]
     if not around.any():
         return False
     change = np.abs(first[::4, ::4].astype(np.int16) - second[::4, ::4].astype(np.int16))
-    return float(change[around].mean()) > LAMA_MOTION_LIMIT
+    return float(change[around].mean()) > limit
 
 
-def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0):
+def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, reuse_still=False):
     """Run the engine on key frames, on just the areas that hold text.
 
     A run is frames that share the same boxes, up to the step, while the picture
@@ -471,7 +475,13 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
     covering the whole run, and the frames between blend two fills. The next run
     starts from that fill when it is on the same area and covers the hole, which
     saves a model call. ``area`` fixes one work area; None finds them per run.
+
+    ``reuse_still`` tries one fill for a whole line first: made on the line's
+    first frame over its whole box, so later frames need no look ahead, and kept
+    while the shot barely changes. A try that ends early falls back to key frames
+    for one run, so a moving shot is not filled on every frame.
     """
+    try_still = reuse_still
     source = enumerate(frames)
     waiting = None
     last_fills: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
@@ -516,6 +526,54 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
             if on_frame:
                 on_frame(first[0])
             continue
+        if try_still:
+            whole = {
+                spot: masks.rasterize(
+                    _local(list(rects), *spot), spot[2] - spot[0], spot[3] - spot[1],
+                )
+                for spot in spots
+            }
+            kept = {}
+            for spot in spots:
+                x0, y0, x1, y1 = spot
+                _check_cancel(cancelled)
+                kept[spot] = filler.fill(first[1][y0:y1, x0:x1], whole[spot])
+            shown = 0
+            item = first
+            found = holes
+            while True:
+                out = item[1].copy()
+                for spot, fill in kept.items():
+                    x0, y0, x1, y1 = spot
+                    out[y0:y1, x0:x1] = masks.paste(
+                        item[1][y0:y1, x0:x1], fill, masks.feather(found[spot]),
+                    )
+                yield out
+                if on_frame:
+                    on_frame(item[0])
+                shown += 1
+                _check_cancel(cancelled)
+                item = next_frame()
+                if item is None:
+                    return
+                still = item[2] == rects and not any(
+                    _picture_moved(
+                        first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], whole[(x0, y0, x1, y1)],
+                        LAMA_STILL_LIMIT,
+                    )
+                    for x0, y0, x1, y1 in spots
+                )
+                found = {spot: hole_on(item[0], rects, spot) for spot in spots} if still else {}
+                if not still or not any(hole.any() for hole in found.values()):
+                    waiting = item
+                    break
+            # The fill is not blended into the next line, so nothing carries over.
+            last_fills = {}
+            # Stopped by the picture moving, not by the line ending: use key frames.
+            if waiting[2] == rects and shown < step:
+                try_still = False
+            continue
+        try_still = reuse_still
         run = [first]
         run_holes = [holes]
         while len(run) < step:
@@ -581,7 +639,7 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
         last_fills = {spot: (fill[1], fill[3]) for spot, fill in fills.items()}
 
 
-def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY):
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY, reuse_still=False):
     """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
 
     ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
@@ -592,7 +650,7 @@ def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelle
     if step > 1 or area is None:
         yield from _fill_frames_by_runs(
             frames, rects_for, filler, area, step,
-            on_frame=on_frame, cancelled=cancelled, hole_for=hole_for,
+            on_frame=on_frame, cancelled=cancelled, hole_for=hole_for, reuse_still=reuse_still,
         )
         return
     x0, y0, x1, y1 = area
@@ -773,6 +831,7 @@ def prepare_span(
     ffmpeg: str = "ffmpeg",
     progress: Progress | None = None,
     cancel_event: threading.Event | None = None,
+    reuse_still: bool = False,
 ) -> dict | None:
     """Write (or reuse) a filled clip of ``[start, start + duration]``.
 
@@ -802,7 +861,7 @@ def prepare_span(
     path = model_path(method, directory)
     key = span_key(
         meta=meta, start=start, duration=duration, layers=layers,
-        method=method, model_stamp=method_stamp(method, directory),
+        method=method, model_stamp=method_stamp(method, directory), reuse_still=reuse_still,
     )
     cache_dir = Path(cache_dir)
     output = cache_dir / f"{key}.mp4"
@@ -875,7 +934,8 @@ def prepare_span(
         if method == "lama":
             stream = fill_frames_lama(
                 source_frames, rects_for, filler, None,
-                on_frame=on_frame, cancelled=cancelled, step=lama_step(fps), **extra,
+                on_frame=on_frame, cancelled=cancelled, step=lama_step(fps),
+                reuse_still=reuse_still, **extra,
             )
         elif method in CLASSIC_METHODS:
             # Cheap enough for every frame, at full size, with nothing blended in.
