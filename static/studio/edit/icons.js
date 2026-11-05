@@ -16,6 +16,10 @@ const ICONS = {
     ["path", { d: "M5 12h14" }],
     ["path", { d: "m12 5 7 7-7 7" }],
   ],
+  "x": [
+    ["path", { d: "M18 6 6 18" }],
+    ["path", { d: "m6 6 12 12" }],
+  ],
   "audio-lines": [
     ["path", { d: "M2 10v3" }],
     ["path", { d: "M6 6v11" }],

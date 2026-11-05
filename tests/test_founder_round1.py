@@ -183,8 +183,9 @@ def test_the_wording_does_not_say_remove():
 
 
 def test_render_is_one_click_from_review():
-    assert "Add this moment to queue" in FINISH
+    assert "Edit this moment" in FINISH
     assert 'text: "Queue"' in FINISH
+    assert "Open queue" in FINISH
 
 
 def test_finish_shape_comes_from_edit_and_quality_has_six_tiers():
@@ -192,6 +193,28 @@ def test_finish_shape_comes_from_edit_and_quality_has_six_tiers():
     assert '"Shape",' not in FINISH
     for quality in ("360", "draft", "720", "final", "1440", "2160"):
         assert f'value: "{quality}"' in FINISH
+
+
+def test_review_and_notes_share_one_panel_with_a_frame():
+    assert "reviewFrame" in FINISH
+    assert "Clean check · this frame" in FINISH
+    assert "Review notes" not in FINISH
+
+
+def test_queue_is_a_drawer_with_queue_and_history_tabs():
+    assert "st-finish-drawer" in FINISH
+    assert 'tab("queue", "Queue"' in FINISH
+    assert 'tab("history", "History"' in FINISH
+    assert "Open queue" in FINISH
+
+
+def test_publish_calls_the_unit_a_story_and_names_full_video():
+    assert "One ready story" in FINISH
+    assert "No ready story yet" in FINISH
+    assert "No ready cut" not in FINISH
+    assert '"Full video"' in FINISH
+    assert "preferredReadyArtifact" in FINISH
+    assert 'artifactStoryId(item) === "st_full_video"' in FINISH
 
 
 def test_moments_can_be_cleared_and_a_search_with_none_keeps_them():

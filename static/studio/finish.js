@@ -15,7 +15,7 @@
  * Nothing outside this Mac is contacted.
  */
 
-import { paintIcons } from "./edit/icons.js";
+import { icon, paintIcons } from "./edit/icons.js";
 import {
   getTrimState,
   rebindStory,
@@ -109,20 +109,6 @@ function firstNumber(...values) {
     if (Number.isFinite(number)) return number;
   }
   return null;
-}
-
-function severityWord(value) {
-  const key = String(value || "info").toLowerCase();
-  if (key === "block" || key === "blocker" || key === "error") return "Must fix";
-  if (key === "warning" || key === "warn") return "Look";
-  return "Note";
-}
-
-function severityTone(value) {
-  const key = String(value || "info").toLowerCase();
-  if (key === "block" || key === "blocker" || key === "error") return "bad";
-  if (key === "warning" || key === "warn") return "busy";
-  return "quiet";
 }
 
 /**
@@ -462,7 +448,7 @@ export function failureReason(item) {
   return line.length > 240 ? `${line.slice(0, 237)}…` : line;
 }
 
-/** A file name for a downloaded cut: story-01-9x16-v2.mp4. */
+/** A file name for a downloaded story: story-01-9x16-v2.mp4. */
 export function downloadName(artifact, index = 0) {
   const shape = artifactAspect(artifact).replace(":", "x");
   const version = artifact?.versions?.version || artifact?.version || "";
@@ -526,6 +512,12 @@ export function mount(root, ctx) {
   let notice = "";
   let noticeTone = "";
   let selectedStoryId = "";
+  let currentEdit = null;
+  let reviewTime = 0;
+  let reviewPicked = false;
+  let queueTab = "queue";
+  let queueOpen = false;
+  let drawerFocus = null;
   // Shape is chosen in Edit. Start from the last Edit choice so opening
   // Finish from the step bar still renders the shape the user worked in.
   let aspect = (() => {
@@ -576,7 +568,7 @@ export function mount(root, ctx) {
         <div class="st-finish-heading">
           <p class="st-eyebrow">Step 4 · Finish</p>
           <h1 id="st-finish-title">Render and share</h1>
-          <p class="st-lede">Render the shape you set in Edit. Keep every version. Review the cut, then hand off a publish kit and a review link.</p>
+          <p class="st-lede">Render the shape you set in Edit. Keep every version. Review the story, then hand off a publish kit and a review link.</p>
         </div>
         <div class="st-finish-head-actions">
           <button id="st-finish-back" class="st-btn st-btn-ghost st-btn-small" type="button" data-icon="arrow-left">Edit</button>
@@ -597,6 +589,26 @@ export function mount(root, ctx) {
     repair: root.querySelector("#st-finish-repair"),
     body: root.querySelector("#st-finish-body"),
   };
+
+  const drawerLayer = el("div", { class: "st-finish-drawer-layer", hidden: true });
+  const drawer = el("aside", {
+    class: "st-finish-drawer",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "st-finish-drawer-title",
+  });
+  const drawerBackdrop = el("button", {
+    class: "st-finish-drawer-backdrop",
+    type: "button",
+    "aria-label": "Close render queue",
+  });
+  drawerBackdrop.addEventListener("click", closeDrawer);
+  drawerLayer.append(drawerBackdrop, drawer);
+  root.append(drawerLayer);
+  const onDrawerKey = (event) => {
+    if (event.key === "Escape" && queueOpen) closeDrawer();
+  };
+  document.addEventListener("keydown", onDrawerKey);
 
   dom.back?.addEventListener("click", () => ctx.go("edit"));
 
@@ -801,6 +813,23 @@ export function mount(root, ctx) {
     return artifacts.filter(artifactReady);
   }
 
+  /** A full-video render is the natural default for Publish when it exists. */
+  function preferredReadyArtifact(rows = readyArtifacts()) {
+    return rows.find((item) => artifactStoryId(item) === "st_full_video")
+      || rows[0]
+      || null;
+  }
+
+  /** A story name for any ready artifact, including a full-video render. */
+  function artifactStoryLabel(item) {
+    const storyId = artifactStoryId(item);
+    const index = stories().findIndex((row) => String(row.id) === storyId);
+    if (index >= 0) return storyName(stories()[index], index);
+    if (storyId === "st_full_video") return "Full video";
+    const title = String(item?.title || "").trim();
+    return title || "Story";
+  }
+
   function artifactsFor(storyId = selectedStory()?.id, shape = aspect) {
     return readyArtifacts()
       .filter((item) => artifactStoryId(item) === String(storyId || "")
@@ -847,21 +876,27 @@ export function mount(root, ctx) {
     const rows = allArtifactsFor();
     const ids = new Set(rows.map((item) => item.artifact_id));
     if (!ids.has(selectedArtifactId)) selectedArtifactId = rows[0]?.artifact_id || "";
-    const ready = rows.filter(artifactReady).map((item) => item.artifact_id);
-    if (!ready.includes(packetArtifactId)) packetArtifactId = ready[0] || "";
-    if (!ready.includes(shareArtifactId)) shareArtifactId = ready[0] || "";
-    if (!ready.includes(compareA)) compareA = ready[0] || "";
-    if (!ready.includes(compareB)) {
-      compareB = ready.find((id) => id !== compareA) || ready[1] || "";
+    // Publish is job-wide: a full-video artifact stays selected when the
+    // review card moves to a different story.
+    const allReady = readyArtifacts().map((item) => item.artifact_id);
+    const fallback = preferredReadyArtifact()?.artifact_id || "";
+    if (!allReady.includes(packetArtifactId)) packetArtifactId = fallback;
+    if (!allReady.includes(shareArtifactId)) shareArtifactId = fallback;
+    const storyReady = rows.filter(artifactReady).map((item) => item.artifact_id);
+    if (!storyReady.includes(compareA)) compareA = storyReady[0] || "";
+    if (!storyReady.includes(compareB)) {
+      compareB = storyReady.find((id) => id !== compareA) || storyReady[1] || "";
     }
   }
 
   function packetArtifact() {
-    return readyArtifacts().find((item) => item.artifact_id === packetArtifactId) || null;
+    return readyArtifacts().find((item) => item.artifact_id === packetArtifactId)
+      || preferredReadyArtifact();
   }
 
   function shareArtifact() {
-    return readyArtifacts().find((item) => item.artifact_id === shareArtifactId) || null;
+    return readyArtifacts().find((item) => item.artifact_id === shareArtifactId)
+      || preferredReadyArtifact();
   }
 
   function currentEditFor(storyId, shape) {
@@ -916,6 +951,8 @@ export function mount(root, ctx) {
     const pick = finishFocusPick(focus, sets);
     focus = null;
     if (pick) {
+      reviewPicked = false;
+      reviewTime = 0;
       if (pick.setId) activeSetId = pick.setId;
       if (pick.storyId) selectedStoryId = pick.storyId;
       if (pick.aspect) aspect = pick.aspect;
@@ -974,10 +1011,12 @@ export function mount(root, ctx) {
     const story = selectedStory();
     if (!job || !story) {
       checks = { markers: [], blocked: false, note: "", fallback: false };
+      currentEdit = null;
       return;
     }
     const seq = ++checkSeq;
     const edit = await currentEditFor(story.id, aspect).catch(() => null);
+    currentEdit = edit?.edit || edit || null;
     let payload = null;
     let fallback = false;
     if (edit?.id) {
@@ -1012,6 +1051,10 @@ export function mount(root, ctx) {
     if (disposed || seq !== checkSeq) return;
     const value = normalizeMarkers(payload);
     checks = { ...value, fallback };
+    if (!reviewPicked) {
+      const first = value.markers.find((marker) => Number.isFinite(Number(marker.at)));
+      reviewTime = first ? Number(first.at) : 0;
+    }
   }
 
   async function loadAll({ quiet = false } = {}) {
@@ -1114,6 +1157,185 @@ export function mount(root, ctx) {
     dom.body.append(card);
   }
 
+  function frameUrl(time) {
+    const editId = currentEdit?.id;
+    const jobId = job?.id || ctx.getJobId();
+    if (!editId || !jobId) return "";
+    const at = Math.max(0, Number(time) || 0).toFixed(3);
+    return `${jobRoot(jobId)}/edits/${encodeURIComponent(editId)}/frame?t=${at}&quality=draft`;
+  }
+
+  /** The quoted text in a check message, without the repeated sentence. */
+  function noteSample(marker) {
+    const message = String(marker?.message || "").trim();
+    const quoted = message.match(/: '(.+)'\.$/);
+    return quoted ? quoted[1] : message;
+  }
+
+  function cleanAt(time) {
+    const layers = Array.isArray(currentEdit?.clean) ? currentEdit.clean : [];
+    return layers.filter((layer) => {
+      const ranges = Array.isArray(layer?.ranges) ? layer.ranges : [];
+      if (!ranges.length) return true;
+      return ranges.some((range) => (
+        Number(time) >= Number(range.start) - 0.05
+        && Number(time) <= Number(range.end) + 0.05
+      ));
+    });
+  }
+
+  function cleanLabel(layer) {
+    if (layer?.kind === "fill") {
+      return layer.method === "sttn" ? "STTN fill" : "LaMa fill";
+    }
+    return String(layer?.kind || "clean").replace(/_/g, " ");
+  }
+
+  /** The exact frame the render uses, at one story time. */
+  function reviewFrame() {
+    const figure = el("figure", { class: "st-finish-frame" });
+    const src = frameUrl(reviewTime);
+    if (!src) {
+      figure.append(el("div", { class: "st-finish-frame-empty" }, [
+        el("p", { class: "st-hint", text: "Open this story in Edit to build its frame preview." }),
+      ]));
+      return figure;
+    }
+    figure.append(el("img", {
+      src,
+      alt: `Story frame at ${formatDuration(reviewTime)}`,
+      decoding: "async",
+    }));
+    const times = [...new Set(
+      checks.markers
+        .map((marker) => Number(marker.at))
+        .filter((value) => Number.isFinite(value)),
+    )].sort((left, right) => left - right);
+    const index = times.findIndex((value) => Math.abs(value - reviewTime) < 0.05);
+    const previous = el("button", {
+      class: "st-icon-btn",
+      type: "button",
+      "aria-label": "Previous note",
+      title: "Previous note",
+      disabled: !times.length,
+    }, [icon("arrow-left", { size: 14 })]);
+    const next = el("button", {
+      class: "st-icon-btn",
+      type: "button",
+      "aria-label": "Next note",
+      title: "Next note",
+      disabled: !times.length,
+    }, [icon("arrow-right", { size: 14 })]);
+    previous.addEventListener("click", () => {
+      const pick = index > 0 ? times[index - 1] : times[times.length - 1];
+      if (pick === undefined) return;
+      reviewTime = pick;
+      reviewPicked = true;
+      renderReviewCard();
+    });
+    next.addEventListener("click", () => {
+      const pick = index >= 0 && index + 1 < times.length ? times[index + 1] : times[0];
+      if (pick === undefined) return;
+      reviewTime = pick;
+      reviewPicked = true;
+      renderReviewCard();
+    });
+    figure.append(el("figcaption", { class: "st-finish-frame-bar" }, [
+      previous,
+      el("span", { class: "st-mono st-finish-frame-time", text: formatDuration(reviewTime) }),
+      next,
+      el("span", { class: "st-hint", text: "Frame from Edit · Clean applied" }),
+    ]));
+    return figure;
+  }
+
+  function notesPanel() {
+    const col = el("div", { class: "st-finish-notes" });
+    const markers = checks.markers;
+    col.append(el("div", { class: "st-finish-notes-head" }, [
+      el("h3", { text: "Leftover text" }),
+      el("p", {
+        class: "st-hint",
+        text: markers.length
+          ? `${formatCount(markers.length, "place")} with no Clean layer · click one to load its frame.`
+          : "No leftover text for this story and shape.",
+      }),
+    ]));
+    if (checks.blocked) {
+      col.append(el("div", { class: "st-finish-note-blocked" }, [
+        el("span", { class: "st-chip st-chip-bad", text: "Must fix" }),
+        el("p", { class: "st-hint", text: "A check blocks this hand-off. Fix it before packing or sharing." }),
+      ]));
+    }
+    if (!markers.length && checks.note) {
+      col.append(el("p", { class: "st-hint", text: checks.note }));
+    }
+    if (markers.length) {
+      const list = el("div", { class: "st-finish-note-list" });
+      for (const marker of markers) {
+        const at = Number(marker.at);
+        const active = Number.isFinite(at) && Math.abs(at - reviewTime) < 0.05;
+        const row = el("button", {
+          class: `st-finish-note${active ? " is-active" : ""}`,
+          type: "button",
+          title: marker.message,
+        }, [
+          el("span", {
+            class: "st-mono st-finish-note-time",
+            text: Number.isFinite(at) ? formatDuration(at) : "—",
+          }),
+          el("span", { class: "st-finish-note-copy", text: `'${noteSample(marker)}'` }),
+          icon("arrow-right", { size: 14 }),
+        ]);
+        row.addEventListener("click", () => {
+          if (!Number.isFinite(at)) return;
+          reviewTime = at;
+          reviewPicked = true;
+          renderReviewCard();
+        });
+        list.append(row);
+      }
+      col.append(list);
+    }
+    return col;
+  }
+
+  /** What Clean removed at the previewed frame, next to the frame itself. */
+  function cleanPanel() {
+    const layers = cleanAt(reviewTime);
+    const counts = new Map();
+    for (const layer of layers) {
+      const label = cleanLabel(layer);
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    const parts = [...counts.entries()].map(([label, count]) => `${count} ${label}`);
+    const panel = el("div", { class: "st-finish-clean-panel" }, [
+      el("span", { class: "st-label", text: "Clean check · this frame" }),
+      el("p", {
+        class: "st-hint",
+        text: currentEdit?.id
+          ? (layers.length
+            ? `${formatCount(layers.length, "area")} cleaned · ${parts.join(" · ")}`
+            : "No Clean layer covers this frame.")
+          : "Open this story in Edit to load the Clean check.",
+      }),
+    ]);
+    if (layers.length) {
+      const chips = el("div", { class: "st-finish-clean-chips" });
+      for (const layer of layers.slice(0, 6)) {
+        chips.append(el("span", {
+          class: "st-chip",
+          text: String(layer.label || layer.tracklet_kind || cleanLabel(layer)).slice(0, 36),
+        }));
+      }
+      if (layers.length > 6) {
+        chips.append(el("span", { class: "st-chip", text: `+${layers.length - 6}` }));
+      }
+      panel.append(chips);
+    }
+    return panel;
+  }
+
   function reviewCard() {
     const story = selectedStory();
     const rows = allArtifactsFor();
@@ -1124,55 +1346,62 @@ export function mount(root, ctx) {
     const item = ready.find((row) => row.artifact_id === selectedArtifactId)
       || ready[0] || fallback[0] || null;
     const card = el("section", { class: "st-card st-finish-card st-finish-review", "aria-labelledby": "st-finish-review-title" });
+    const actions = el("div", { class: "st-finish-review-actions" });
+    const checkAgain = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: "Check again",
+    });
+    checkAgain.addEventListener("click", () => { void refreshChecks(true, checkAgain); });
+    actions.append(checkAgain);
+    if (story) {
+      const edit = el("button", {
+        class: "st-btn st-btn-primary st-btn-small",
+        type: "button",
+        text: "Edit this moment",
+      });
+      edit.addEventListener("click", () => openEdit(story.id, aspect));
+      actions.append(edit);
+    }
     const head = el("div", { class: "st-card-head" }, [
       el("div", {}, [
         el("h2", { id: "st-finish-review-title", text: "Review" }),
         el("p", {
           class: "st-hint",
           text: story
-            ? `${storyName(story, selectedIndex())} · ${aspect}. Watch the cut before you publish, or change the moment.`
+            ? `${storyName(story, selectedIndex())} · ${aspect}. Preview the story and check leftover text.`
             : "No moment selected.",
         }),
       ]),
-      story ? el("button", {
-        class: "st-btn st-btn-primary st-btn-small",
-        type: "button",
-        text: "Edit this moment",
-      }) : null,
+      actions,
     ]);
-    const edit = head.querySelector("button");
-    if (edit) edit.addEventListener("click", () => openEdit(story.id, aspect));
     card.append(head);
-    if (!item) {
-      const queueNow = el("button", {
-        class: "st-btn st-btn-ghost",
-        type: "button",
-        text: `Add this moment to queue · ${aspect}`,
-        disabled: busy,
-      });
-      queueNow.addEventListener("click", () => { void queueStories([story], queueNow); });
-      card.append(el("div", { class: "st-finish-review-empty" }, [
-        queueNow,
-        el("p", { class: "st-hint", text: "No finished cut for this moment and shape yet. Queue it in Render, then review it here." }),
-      ]));
-      return card;
+
+    const grid = el("div", { class: "st-finish-review-grid" });
+    const media = el("div", { class: "st-finish-review-media" });
+    if (item) {
+      const box = el("figure", { class: "st-finish-review-video" });
+      box.append(el("figcaption", { class: "st-label", text: `${artifactLabel(item).replace(" · current", "")} · ${artifactAspect(item)}` }));
+      box.append(el("video", {
+        src: item.url,
+        poster: item.poster_url || null,
+        controls: true,
+        preload: "metadata",
+        playsinline: true,
+      }));
+      media.append(box);
+      for (const warning of renderWarnings(item)) {
+        media.append(el("p", { class: "st-warning st-finish-review-warning", text: warning }));
+      }
+      if (artifactStale(item)) {
+        media.append(el("p", { class: "st-warning st-finish-review-warning", text: STALE_RENDER_TEXT }));
+      }
+    } else {
+      media.append(reviewFrame());
     }
-    const box = el("figure", { class: "st-finish-review-video" });
-    box.append(el("figcaption", { class: "st-label", text: `${artifactLabel(item).replace(" · current", "")} · ${artifactAspect(item)}` }));
-    box.append(el("video", {
-      src: item.url,
-      poster: item.poster_url || null,
-      controls: true,
-      preload: "metadata",
-      playsinline: true,
-    }));
-    card.append(box);
-    for (const warning of renderWarnings(item)) {
-      card.append(el("p", { class: "st-warning st-finish-review-warning", text: warning }));
-    }
-    if (artifactStale(item)) {
-      card.append(el("p", { class: "st-warning st-finish-review-warning", text: STALE_RENDER_TEXT }));
-    }
+    media.append(cleanPanel());
+    grid.append(media, notesPanel());
+    card.append(grid);
     return card;
   }
 
@@ -1239,9 +1468,9 @@ export function mount(root, ctx) {
       return;
     }
     dom.body.append(
-      stage("01", "Review", "Watch the finished cut and read its notes before rendering another version.", reviewCard(), checksCard()),
+      stage("01", "Review", "Preview the story and check leftover text before rendering another version.", reviewCard()),
       stage("02", "Render", "One shape and quality for this set. Queue one moment or all of them; every render is a new version.", storyCard()),
-      stage("03", "Publish", "Build the kit for a ready cut, then share one exact version with a private link.", packetCard(), shareCard()),
+      stage("03", "Publish", "Build the kit for a ready story, then share one exact version with a private link.", packetCard(), shareCard()),
       advancedCard(),
     );
   }
@@ -1286,7 +1515,6 @@ export function mount(root, ctx) {
   function storyCard() {
     const card = el("section", { class: "st-card st-finish-card st-finish-render", "aria-labelledby": "st-finish-render-title" });
     const set = activeSet();
-    const queueHistoryOpen = dom.body.querySelector(".st-finish-queue-history")?.open === true;
     const head = el("div", { class: "st-card-head" }, [
       el("div", {}, [
         el("h2", { id: "st-finish-render-title", text: "Render" }),
@@ -1396,6 +1624,8 @@ export function mount(root, ctx) {
         shareArtifactId = "";
         compareA = "";
         compareB = "";
+        reviewPicked = false;
+        reviewTime = 0;
         keepArtifactSelection();
         void refreshChecks();
         renderAll();
@@ -1466,14 +1696,13 @@ export function mount(root, ctx) {
       list.append(row);
     });
     const divider = () => el("div", { class: "st-finish-divider", "aria-hidden": "true" });
-    const hasQueues = queues.length > 0;
     // Live work first: with twenty moments, progress must not sit below the fold.
-    if (hasQueues) {
-      card.append(divider(), queueCard(queueHistoryOpen));
+    if (splitQueues().active.length) {
+      card.append(divider(), queueStrip());
     }
     card.append(el("h3", { class: "st-finish-list-title", text: "Moments" }), list);
-    if (!hasQueues) {
-      card.append(divider(), queueCard(queueHistoryOpen));
+    if (!splitQueues().active.length) {
+      card.append(divider(), queueStrip());
     }
     return card;
   }
@@ -1490,20 +1719,64 @@ export function mount(root, ctx) {
     renderReviewCard();
   }
 
-  function queueCard(openHistory = false) {
-    const summary = queueSummary(queues, { jobId: job?.id || "", setId: activeSetId });
-    return el("section", {
-      class: "st-finish-queue-section st-finish-queue-card",
-      "aria-labelledby": "st-finish-queue-title",
-    }, [
-      el("div", { class: "st-finish-queue-header" }, [
-        el("div", {}, [
-          el("h2", { id: "st-finish-queue-title", text: "Queue" }),
-          el("p", { class: "st-hint st-finish-queue-summary", text: summary.text }),
-        ]),
-      ]),
-      queueBody(openHistory),
-    ]);
+  function queuesForJob() {
+    const jobId = String(job?.id || "");
+    return queues.filter((queue) => {
+      const items = Array.isArray(queue.items) ? queue.items : [];
+      if (!items.length) return true;
+      return !jobId || items.some((item) => String(item.job_id || "") === jobId);
+    });
+  }
+
+  function splitQueues() {
+    const rows = queuesForJob();
+    const active = rows.filter((queue) => {
+      const status = String(queue.status || "queued");
+      return ACTIVE_QUEUE.has(status) || queue.needs_resume || status === "paused";
+    });
+    const history = rows.filter((queue) => !active.includes(queue));
+    return { active, history };
+  }
+
+  /** One compact line in the render card; the full list lives in the drawer. */
+  function queueStrip() {
+    const { active, history } = splitQueues();
+    const current = active[0] || history[0];
+    const strip = el("div", { class: "st-finish-queue-strip" });
+    if (!current) {
+      strip.append(el("span", { class: "st-hint", text: "Nothing queued. Add a moment below." }));
+      return strip;
+    }
+    const status = String(current.status || "queued");
+    const items = Array.isArray(current.items) ? current.items : [];
+    const running = items.find((item) => String(item.state) === "running")
+      || items.find((item) => String(item.state) === "queued")
+      || null;
+    const progress = Math.round(
+      Math.max(0, Math.min(1, Number(current.progress) || 0)) * 100,
+    );
+    const eta = Number(items.length > 1 ? current.eta : (running?.eta ?? current.eta));
+    strip.append(el("span", { class: `st-chip st-chip-${statusTone(status)}`, text: statusText(status) }));
+    strip.append(el("strong", {
+      class: "st-finish-queue-strip-title",
+      text: running?.title || current.message || "Render",
+    }));
+    strip.append(el("span", {
+      class: "st-mono st-hint",
+      text: running?.aspect || items[0]?.aspect || aspect,
+    }));
+    strip.append(el("span", { class: "st-finish-queue-strip-pct st-mono", text: `${progress}%` }));
+    if (Number.isFinite(eta) && eta > 0) {
+      strip.append(el("span", { class: "st-hint", text: `${etaText(eta)} left` }));
+    }
+    const open = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: active.length ? "Open queue" : "History",
+    });
+    open.addEventListener("click", () => openDrawer(active.length ? "queue" : "history"));
+    strip.append(open);
+    return strip;
   }
 
   function queueRow(queue, liveBlock) {
@@ -1549,13 +1822,28 @@ export function mount(root, ctx) {
 
     const actions = el("div", { class: "st-finish-queue-actions" });
     if (active) {
-      const pause = el("button", { class: "st-btn st-btn-quiet st-btn-small", type: "button", text: "Pause" });
+      const pause = el("button", {
+        class: "st-btn st-btn-quiet st-btn-small",
+        type: "button",
+        text: "Pause",
+        dataset: { action: "pause", queueId: String(queue.id || "") },
+      });
       pause.addEventListener("click", () => { void queueAction(queue.id, "pause", pause); });
-      const cancel = el("button", { class: "st-btn st-btn-quiet st-btn-small st-finish-cancel", type: "button", text: "Cancel" });
+      const cancel = el("button", {
+        class: "st-btn st-btn-quiet st-btn-small st-finish-cancel",
+        type: "button",
+        text: "Cancel",
+        dataset: { action: "cancel", queueId: String(queue.id || "") },
+      });
       cancel.addEventListener("click", () => { void queueAction(queue.id, "cancel", cancel); });
       actions.append(pause, cancel);
     } else if (queue.needs_resume || status === "paused") {
-      const resume = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Resume" });
+      const resume = el("button", {
+        class: "st-btn st-btn-ghost st-btn-small",
+        type: "button",
+        text: "Resume",
+        dataset: { action: "resume", queueId: String(queue.id || "") },
+      });
       resume.addEventListener("click", () => { void queueAction(queue.id, "resume", resume); });
       actions.append(resume);
     }
@@ -1594,39 +1882,97 @@ export function mount(root, ctx) {
     return row;
   }
 
-  function queueBody(openHistory = false) {
-    const wrap = el("div", { class: "st-finish-queue" });
-    const rows = queues.slice(0, 8);
-    if (!rows.length) {
-      wrap.append(el("p", {
-        class: "st-hint st-finish-queue-empty",
-        text: "Add a moment above; it renders here with live progress.",
-      }));
-      return wrap;
-    }
-    const activeRows = rows.filter((queue) => {
-      const status = String(queue.status || "queued");
-      return ACTIVE_QUEUE.has(status) || queue.needs_resume || status === "paused";
+  function openDrawer(tab = "queue") {
+    queueTab = tab === "history" ? "history" : "queue";
+    queueOpen = true;
+    drawerFocus = document.activeElement;
+    paintDrawer();
+    drawerLayer.hidden = false;
+    drawer.querySelector("button")?.focus();
+  }
+
+  function closeDrawer() {
+    if (!queueOpen) return;
+    queueOpen = false;
+    drawerLayer.hidden = true;
+    if (drawerFocus?.isConnected) drawerFocus.focus();
+    drawerFocus = null;
+  }
+
+  function paintDrawer() {
+    if (!queueOpen) return;
+    const { active, history } = splitQueues();
+    const summary = queueSummary(queues, { jobId: job?.id || "", setId: activeSetId });
+    const close = el("button", {
+      class: "st-icon-btn",
+      type: "button",
+      "aria-label": "Close render queue",
+    }, [icon("x", { size: 16 })]);
+    close.addEventListener("click", closeDrawer);
+    const head = el("div", { class: "st-finish-drawer-head" }, [
+      el("div", {}, [
+        el("h2", { id: "st-finish-drawer-title", text: "Render queue" }),
+        el("p", { class: "st-hint", text: summary.text }),
+      ]),
+      close,
+    ]);
+    const tab = (id, label, count) => {
+      const button = el("button", {
+        class: "st-finish-drawer-tab",
+        type: "button",
+        role: "tab",
+        "aria-selected": queueTab === id ? "true" : "false",
+      }, [
+        el("span", { text: label }),
+        el("span", { class: "st-finish-drawer-count", text: String(count) }),
+      ]);
+      button.addEventListener("click", () => {
+        queueTab = id;
+        paintDrawer();
+      });
+      return button;
+    };
+    const tabs = el("div", {
+      class: "st-finish-drawer-tabs",
+      role: "tablist",
+      "aria-label": "Render queue tabs",
+    }, [
+      tab("queue", "Queue", active.length),
+      tab("history", "History", history.length),
+    ]);
+    const body = el("div", {
+      class: "st-finish-drawer-body",
+      role: "tabpanel",
+      "aria-label": queueTab === "queue" ? "Queue" : "History",
     });
-    const historyRows = rows.filter((queue) => !activeRows.includes(queue));
-    for (const queue of activeRows) wrap.append(queueRow(queue, true));
-    if (historyRows.length) {
-      const details = el("details", { class: "st-finish-queue-history", open: openHistory });
-      details.append(el("summary", {}, [
-        el("span", { text: "Finished and cancelled" }),
-        el("small", { text: formatCount(historyRows.length, "queue") }),
-      ]));
-      for (const queue of historyRows) details.append(queueRow(queue, false));
-      wrap.append(details);
+    const rows = queueTab === "queue" ? active : history;
+    if (!rows.length) {
+      body.append(el("p", {
+        class: "st-hint",
+        text: queueTab === "queue"
+          ? "Nothing is rendering. Add a moment from the list."
+          : "No finished or cancelled queue yet.",
+      }));
     }
-    return wrap;
+    for (const queue of rows) body.append(queueRow(queue, queueTab === "queue"));
+    drawer.replaceChildren(head, tabs, body);
   }
 
   function renderQueueCard() {
-    const card = dom.body.querySelector(".st-finish-queue-card");
-    if (!card) return;
-    const openHistory = card.querySelector(".st-finish-queue-history")?.open === true;
-    card.replaceWith(queueCard(openHistory));
+    const strip = dom.body.querySelector(".st-finish-queue-strip");
+    if (strip) strip.replaceWith(queueStrip());
+    if (!queueOpen) return;
+    const active = document.activeElement;
+    const action = active?.dataset?.action || "";
+    const queueId = active?.dataset?.queueId || "";
+    const body = drawer.querySelector(".st-finish-drawer-body");
+    const scroll = body?.scrollTop || 0;
+    paintDrawer();
+    const nextBody = drawer.querySelector(".st-finish-drawer-body");
+    if (nextBody) nextBody.scrollTop = scroll;
+    if (action && queueId) {
+      drawer.querySelector(`[data-action="${action}"][data-queue-id="${queueId}"]`)?.focus();
+    }
   }
 
   function versionsCard() {
@@ -1854,61 +2200,6 @@ export function mount(root, ctx) {
     existing.replaceWith(versionsCard());
   }
 
-  function checksCard() {
-    const story = selectedStory();
-    const card = el("section", { class: "st-card st-finish-card st-finish-checks", "aria-labelledby": "st-finish-checks-title" });
-    const head = el("div", { class: "st-card-head" }, [
-      el("div", {}, [
-        el("h2", { id: "st-finish-checks-title", text: "Review notes" }),
-        el("p", {
-          class: "st-hint",
-          text: story
-            ? `${storyName(story, selectedIndex())} · ${aspect}. Notes point at the timeline where the server can place them.`
-            : "Choose a story to see its notes.",
-        }),
-      ]),
-    ]);
-    const refresh = el("button", { class: "st-btn st-btn-ghost st-btn-small", type: "button", text: "Check again" });
-    refresh.addEventListener("click", () => { void refreshChecks(true, refresh); });
-    head.append(refresh);
-    card.append(head);
-
-    if (checks.blocked) {
-      card.append(el("div", { class: "st-check-warning", dataset: { severity: "warning" } }, [
-        el("span", { class: "st-chip st-chip-bad", text: "Must fix" }),
-        el("p", { text: "A check blocks this hand-off. Fix it before packing or sharing." }),
-      ]));
-    }
-    if (!checks.markers.length) {
-      card.append(el("p", {
-        class: "st-hint",
-        text: checks.note || (checks.fallback
-          ? "No notes for this story. Frame-level markers appear after this build adds them; whole-story checks were used."
-          : "No notes for this story and shape."),
-      }));
-    } else {
-      const list = el("div", { class: "st-finish-markers" });
-      for (const marker of checks.markers.slice(0, 30)) {
-        const row = el("div", { class: "st-finish-marker", dataset: { tone: severityTone(marker.severity) } }, [
-          el("span", { class: "st-chip", text: severityWord(marker.severity) }),
-          marker.at !== null
-            ? el("span", { class: "st-mono st-hint", text: formatDuration(marker.at) })
-            : null,
-          el("span", { class: "st-finish-marker-copy" }, [
-            el("strong", { text: marker.message }),
-            marker.suggestion ? el("small", { text: marker.suggestion }) : null,
-          ]),
-        ]);
-        list.append(row);
-      }
-      card.append(list);
-      if (checks.markers.length > 30) {
-        card.append(el("p", { class: "st-hint", text: `Showing 30 of ${checks.markers.length}.` }));
-      }
-    }
-    return card;
-  }
-
   async function refreshChecks(manual = false, button = null) {
     if (manual && button) {
       button.disabled = true;
@@ -1918,8 +2209,8 @@ export function mount(root, ctx) {
     try {
       await loadChecks();
       if (disposed) return;
-      const existing = dom.body.querySelector(".st-finish-checks");
-      if (existing) existing.replaceWith(checksCard());
+      const existing = dom.body.querySelector(".st-finish-review");
+      if (existing) existing.replaceWith(reviewCard());
       if (manual) announce(checks.markers.length ? `${formatCount(checks.markers.length, "note")} for this story.` : "No notes for this story.", checks.markers.length ? "" : "ok");
     } catch (error) {
       if (disposed) return;
@@ -1937,28 +2228,26 @@ export function mount(root, ctx) {
     const head = el("div", { class: "st-card-head" }, [
       el("div", {}, [
         el("h2", { id: "st-finish-packet-title", text: "Publish kit" }),
-        el("p", { class: "st-hint", text: "One ready cut, three titles, one description and three to eight hashtags. The kit carries the video, captions and covers." }),
+        el("p", { class: "st-hint", text: "One ready story, three titles, one description and three to eight hashtags. The kit carries the video, captions and covers." }),
       ]),
     ]);
     card.append(head);
 
     const ready = readyArtifacts();
     if (!ready.length) {
-      card.append(el("p", { class: "st-hint", text: "No ready cut yet. Queue a render first." }));
+      card.append(el("p", { class: "st-hint", text: "No ready story yet. Queue a render first." }));
       return card;
     }
-    const artifact = packetArtifact() || ready[0];
+    const artifact = packetArtifact() || preferredReadyArtifact(ready);
     if (!artifact) return card;
     // Build uses the cut this card shows, including the first-ready fallback.
     packetArtifactId = artifact.artifact_id;
 
-    const select = el("select", { "aria-label": "Cut for the publish kit" });
+    const select = el("select", { "aria-label": "Story for the publish kit" });
     for (const item of ready) {
-      const story = stories().find((row) => String(row.id) === artifactStoryId(item));
-      const index = stories().findIndex((row) => String(row.id) === artifactStoryId(item));
       select.append(el("option", {
         value: item.artifact_id,
-        text: `${story ? storyName(story, index) : "Cut"} · ${artifactAspect(item)} · ${artifactLabel(item).replace(" · current", "")}`,
+        text: `${artifactStoryLabel(item)} · ${artifactAspect(item)} · ${artifactLabel(item).replace(" · current", "")}`,
         selected: item.artifact_id === artifact.artifact_id,
       }));
     }
@@ -1970,7 +2259,7 @@ export function mount(root, ctx) {
       renderShareCard();
     });
     card.append(el("label", { class: "st-field st-finish-field-wide" }, [
-      el("span", { text: "Cut" }),
+      el("span", { text: "Story" }),
       select,
     ]));
 
@@ -2044,7 +2333,7 @@ export function mount(root, ctx) {
     grid.append(el("div", { class: "st-field" }, [
       el("span", { text: "Covers" }),
       covers,
-      el("small", { class: "st-field-hint", text: "Two frames from the exact cut." }),
+      el("small", { class: "st-field-hint", text: "Two frames from the exact story." }),
     ]));
     card.append(grid);
 
@@ -2182,20 +2471,20 @@ export function mount(root, ctx) {
     card.append(el("div", { class: "st-card-head" }, [
       el("div", {}, [
         el("h2", { id: "st-finish-share-title", text: "Review link" }),
-        el("p", { class: "st-hint", text: "A private link to one exact cut. It never points at a newer render." }),
+        el("p", { class: "st-hint", text: "A private link to one exact story. It never points at a newer render." }),
       ]),
     ]));
     const ready = readyArtifacts();
     if (!ready.length) {
-      card.append(el("p", { class: "st-hint", text: "Render a cut before making a review link." }));
+      card.append(el("p", { class: "st-hint", text: "Render a story before making a review link." }));
       return card;
     }
-    const artifact = shareArtifact() || ready[0];
-    const select = el("select", { "aria-label": "Cut for the review link" });
+    const artifact = shareArtifact() || preferredReadyArtifact(ready);
+    const select = el("select", { "aria-label": "Story for the review link" });
     for (const item of ready) {
       select.append(el("option", {
         value: item.artifact_id,
-        text: `${artifactLabel(item).replace(" · current", "")} · ${artifactAspect(item)}`,
+        text: `${artifactStoryLabel(item)} · ${artifactAspect(item)} · ${artifactLabel(item).replace(" · current", "")}`,
         selected: item.artifact_id === artifact.artifact_id,
       }));
     }
@@ -2228,7 +2517,7 @@ export function mount(root, ctx) {
     make.addEventListener("click", () => { void createShare(make); });
     card.append(
       el("div", { class: "st-finish-form-grid" }, [
-        el("label", { class: "st-field" }, [el("span", { text: "Cut" }), select]),
+        el("label", { class: "st-field" }, [el("span", { text: "Story" }), select]),
         el("label", { class: "st-field" }, [el("span", { text: "Expires" }), expiry]),
         el("label", { class: "st-field" }, [el("span", { text: "Label" }), label]),
       ]),
@@ -2746,7 +3035,7 @@ export function mount(root, ctx) {
     }
   }
 
-  /** The newest ready cut of every story in the current shape. */
+  /** The newest ready story in the current shape. */
   function latestReadyCuts(shape = aspect) {
     const rows = [];
     for (const [index, story] of stories().entries()) {
@@ -2774,7 +3063,7 @@ export function mount(root, ctx) {
           link.remove();
         }, order * 400);
       });
-      announce(`Downloading ${formatCount(cuts.length, "cut")}.`, "ok");
+      announce(`Downloading ${formatCount(cuts.length, "story", "stories")}.`, "ok");
     });
     return button;
   }
@@ -2828,7 +3117,7 @@ export function mount(root, ctx) {
       await loadEdits();
       if (disposed) return;
       renderVersionsCard();
-      announce("That edit is current again. Render a new cut to see it.", "ok");
+      announce("That edit is current again. Render a new story to see it.", "ok");
     } catch (error) {
       if (disposed) return;
       announce(error?.message || "Could not restore that edit version.", "bad");
@@ -2851,5 +3140,6 @@ export function mount(root, ctx) {
   return () => {
     disposed = true;
     stopPoll();
+    document.removeEventListener("keydown", onDrawerKey);
   };
 }
