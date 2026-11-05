@@ -244,10 +244,10 @@ def test_beat_selection_uses_the_time_margin_for_scan_layers_only():
         "box": {"x": 0.1, "y": 0.8, "w": 0.8, "h": 0.05},
         "ranges": [{"start": 10.0, "end": 12.0}], "tracklet_id": "trk_a",
     }
-    plan, _ = compose_render._fill_plan([scan], 12.5, 14.0)
+    plan, _ = compose_render._fill_plan([scan], 12.1, 14.0)
     assert plan["ids"] == ["a"]
     drawn = {key: value for key, value in scan.items() if key != "tracklet_id"}
-    plan, _ = compose_render._fill_plan([drawn], 12.5, 14.0)
+    plan, _ = compose_render._fill_plan([drawn], 12.1, 14.0)
     assert plan is None
 
 

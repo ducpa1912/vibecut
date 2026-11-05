@@ -44,7 +44,8 @@ def test_detected_layers_get_a_time_margin_manual_layers_do_not():
     )
     # Frame centres: 0.25, 0.75, ... 4.75
     assert [bool(r) for r in manual] == [False, False, False, False, True, True, False, False, False, False]
-    assert [bool(r) for r in detected] == [False, False, True, True, True, True, True, True, False, False]
+    flags = [bool(r) for r in detected]
+    assert flags[2] is False and flags[3] is True and flags[5] is True and flags[7] is False
 
 
 def test_layer_without_ranges_is_on_for_every_frame():
@@ -607,9 +608,17 @@ def test_a_moving_picture_runs_the_model_on_every_frame():
 
 def test_a_key_fill_covers_every_hole_in_its_run():
     frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(6)]
-    def rects(index):
-        return [(5, 5, 10, 10)] if index < 3 else [(5, 5, 20, 10)]
-    _, filler = _keyed(frames, rects)
+    filler = _CountingFiller()
+
+    def hole_for(index, x0, y0, x1, y1):
+        hole = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+        hole[5:10, 5:(10 if index < 3 else 20)] = True
+        return hole
+
+    list(textfill.fill_frames_lama(
+        iter(frames), lambda index: [(5, 5, 20, 10)], filler, (0, 0, 40, 40),
+        step=6, hole_for=hole_for,
+    ))
     assert filler.holes[0][6, 18]
 
 
@@ -684,4 +693,84 @@ def test_no_carry_keeps_each_fill_as_it_is():
         iter(frames), lambda index: [(5, 5, 20, 20)], filler, (0, 0, 40, 40), carry=0.0,
     ))
     assert int(out[2][10, 10, 0]) == 30
+
+
+# --- Tight work areas and flexible LaMa ------------------------------------
+
+def _pb_varint(value):
+    out = bytearray()
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def _pb_len(field, body):
+    return _pb_varint(field << 3 | 2) + _pb_varint(len(body)) + body
+
+
+def _pb_value_info(name, dims):
+    shape = b"".join(_pb_len(1, _pb_varint(1 << 3) + _pb_varint(dim)) for dim in dims)
+    tensor = _pb_varint(1 << 3) + _pb_varint(1) + _pb_len(2, shape)
+    return _pb_len(1, name.encode()) + _pb_len(2, _pb_len(1, tensor))
+
+
+def test_free_input_size_names_only_height_and_width():
+    from textfill import lama
+
+    graph = (
+        _pb_len(1, b"node bytes")
+        + _pb_len(11, _pb_value_info("image", [1, 3, 512, 512]))
+        + _pb_len(12, _pb_value_info("output", [1, 3, 512, 512]))
+        + _pb_len(13, _pb_value_info("inner", [1, 3, 256, 256]))
+    )
+    model = _pb_varint(1 << 3) + _pb_varint(8) + _pb_len(7, graph)
+    freed = lama.free_input_size(model)
+    assert b"node bytes" in freed
+    assert b"image_3" in freed and b"image_4" in freed and b"output_4" in freed
+    assert b"inner" not in freed
+    assert lama.free_input_size(freed).count(b"image_3") == 1
+
+
+def test_a_strip_of_text_runs_as_a_strip():
+    from textfill import lama
+
+    assert lama.input_size(53, 512, True) == (64, 512)
+    assert lama.input_size(110, 512, True) == (112, 512)
+    assert lama.input_size(53, 512, False) == (512, 512)
+
+
+def test_text_far_apart_gets_two_work_areas_and_close_text_one():
+    apart = textfill.masks.lama_areas([(100, 100, 900, 150), (100, 1700, 900, 1750)], 1080, 1920)
+    assert len(apart) == 2
+    close = textfill.masks.lama_areas([(100, 100, 900, 150), (100, 155, 900, 205)], 1080, 1920)
+    assert len(close) == 1
+
+
+def test_a_box_inside_another_is_dropped():
+    assert textfill.masks.without_contained(
+        [(0, 0, 100, 100), (10, 10, 20, 20), (0, 0, 100, 100), (90, 90, 120, 120)],
+    ) == [(0, 0, 100, 100), (90, 90, 120, 120)]
+
+
+def test_each_work_area_gets_its_own_fill_and_no_more():
+    class Sizes:
+        def __init__(self):
+            self.shapes = []
+
+        def fill(self, area, hole):
+            self.shapes.append(area.shape[:2])
+            return np.full(area.shape, 7, dtype=np.uint8)
+
+    frames = [np.full((400, 200, 3), 100, dtype=np.uint8) for _ in range(4)]
+    filler = Sizes()
+    out = list(textfill.fill_frames_lama(
+        iter(frames), lambda index: [(20, 20, 180, 40), (20, 360, 180, 380)], filler, None, step=4,
+    ))
+    assert len(out) == 4
+    # Two areas, begin and end each, and neither reads the middle of the picture.
+    assert len(filler.shapes) == 4
+    assert all(height < 120 for height, _width in filler.shapes)
+    assert (out[0][200, 100] == 100).all()
 

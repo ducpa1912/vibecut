@@ -295,6 +295,7 @@ def span_key(
     payload = {
         "version": VERSION,
         "lama_keys": lama_keys_per_second() if method == "lama" else None,
+        "areas": "tight" if method == "lama" or method in CLASSIC_METHODS else None,
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
         "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
         "fps": round(float(meta.get("fps") or 0.0), 6),
@@ -462,19 +463,18 @@ def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray) -> b
     return float(change[around].mean()) > LAMA_MOTION_LIMIT
 
 
-def _fill_frames_lama_keyed(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for):
-    """Run LaMa on key frames and blend the frames between them.
+def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0):
+    """Run the engine on key frames, on just the areas that hold text.
 
-    A run ends at the step, when the text leaves, or when the picture moves.
-    Its last frame is filled with a hole covering the whole run, so the blend
-    never shows text. The next run starts from that fill when it still covers
-    the next run's hole, which is what saves the model calls.
+    A run is frames that share the same boxes, up to the step, while the picture
+    holds still. Each area of it is filled once at its last frame, with a hole
+    covering the whole run, and the frames between blend two fills. The next run
+    starts from that fill when it is on the same area and covers the hole, which
+    saves a model call. ``area`` fixes one work area; None finds them per run.
     """
-    x0, y0, x1, y1 = area
     source = enumerate(frames)
     waiting = None
-    start_fill: np.ndarray | None = None
-    start_hole: np.ndarray | None = None
+    last_fills: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
 
     def next_frame():
         nonlocal waiting
@@ -485,83 +485,112 @@ def _fill_frames_lama_keyed(frames, rects_for, filler, area, step, *, on_frame, 
         if pair is None:
             return None
         index, frame = pair
-        local = _local(rects_for(index), x0, y0, x1, y1)
-        hole = None
-        if local:
-            hole = (
-                hole_for(index, x0, y0, x1, y1) if hole_for
-                else masks.rasterize(local, x1 - x0, y1 - y0)
-            )
-            if not hole.any():
-                hole = None
-        return index, frame, hole
+        return index, frame, tuple(sorted(masks.without_contained(rects_for(index))))
+
+    def areas_for(rects, frame):
+        if area is not None:
+            return [area]
+        return masks.lama_areas(rects, frame.shape[1] or width, frame.shape[0] or height)
+
+    def hole_on(index, rects, spot):
+        x0, y0, x1, y1 = spot
+        local = _local(list(rects), x0, y0, x1, y1)
+        if not local:
+            return np.zeros((y1 - y0, x1 - x0), dtype=bool)
+        return (
+            hole_for(index, x0, y0, x1, y1) if hole_for
+            else masks.rasterize(local, x1 - x0, y1 - y0)
+        )
 
     while True:
         _check_cancel(cancelled)
         first = next_frame()
         if first is None:
             return
-        if first[2] is None:
-            start_fill = start_hole = None
+        rects = first[2]
+        spots = areas_for(rects, first[1]) if rects else []
+        holes = {spot: hole_on(first[0], rects, spot) for spot in spots}
+        if not any(hole.any() for hole in holes.values()):
+            last_fills = {}
             yield first[1]
             if on_frame:
                 on_frame(first[0])
             continue
         run = [first]
+        run_holes = [holes]
         while len(run) < step:
             item = next_frame()
             if item is None:
                 break
-            if item[2] is None or _picture_moved(
-                first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], first[2],
-            ):
+            moved = any(
+                _picture_moved(
+                    first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], holes[(x0, y0, x1, y1)],
+                )
+                for x0, y0, x1, y1 in spots
+            )
+            if item[2] != rects or moved:
+                waiting = item
+                break
+            found = {spot: hole_on(item[0], rects, spot) for spot in spots}
+            if not any(hole.any() for hole in found.values()):
                 waiting = item
                 break
             run.append(item)
-        union = np.logical_or.reduce([item[2] for item in run])
-        _check_cancel(cancelled)
-        last_work = run[-1][1][y0:y1, x0:x1]
-        end_fill = filler.fill(last_work, union)
-        covered = start_hole is not None and not (union & ~start_hole).any()
-        begin = start_fill if covered else None
-        if begin is None and len(run) > 1:
+            run_holes.append(found)
+        fills: dict[tuple, tuple] = {}
+        for spot in spots:
+            x0, y0, x1, y1 = spot
+            union = np.logical_or.reduce([found[spot] for found in run_holes])
+            if not union.any():
+                continue
             _check_cancel(cancelled)
-            begin = filler.fill(first[1][y0:y1, x0:x1], union)
-        if begin is not None and len(run) == 1:
-            # A frame on its own has nothing to blend, so calm it with the last.
-            end_fill = np.clip(
-                end_fill.astype(np.float32) * (1 - LAMA_CARRY)
-                + begin.astype(np.float32) * LAMA_CARRY,
-                0, 255,
-            ).astype(np.uint8)
-        for position, (index, frame, hole) in enumerate(run):
-            if begin is None or position == len(run) - 1:
-                filled = end_fill
-            else:
-                # Runs that share a fill hand over on its frame, without a jump.
-                share = (position + (1 if covered else 0)) / (len(run) - (0 if covered else 1))
-                filled = np.clip(
-                    begin.astype(np.float32) * (1 - share) + end_fill.astype(np.float32) * share,
+            end_fill = filler.fill(run[-1][1][y0:y1, x0:x1], union)
+            earlier = last_fills.get(spot)
+            covered = earlier is not None and not (union & ~earlier[1]).any()
+            begin = earlier[0] if covered else None
+            if begin is None and len(run) > 1:
+                _check_cancel(cancelled)
+                begin = filler.fill(first[1][y0:y1, x0:x1], union)
+            if begin is not None and len(run) == 1 and step > 1:
+                # A frame on its own has nothing to blend, so calm it with the last.
+                end_fill = np.clip(
+                    end_fill.astype(np.float32) * (1 - LAMA_CARRY)
+                    + begin.astype(np.float32) * LAMA_CARRY,
                     0, 255,
                 ).astype(np.uint8)
-            work = frame[y0:y1, x0:x1]
+            fills[spot] = (begin, end_fill, covered, union)
+        for position, (index, frame, _rects) in enumerate(run):
             out = frame.copy()
-            out[y0:y1, x0:x1] = masks.paste(work, filled, masks.feather(hole))
+            for spot, (begin, end_fill, covered, _union) in fills.items():
+                x0, y0, x1, y1 = spot
+                if begin is None or position == len(run) - 1:
+                    filled = end_fill
+                else:
+                    # Runs that share a fill hand over on its frame, without a jump.
+                    share = (position + (1 if covered else 0)) / (len(run) - (0 if covered else 1))
+                    filled = np.clip(
+                        begin.astype(np.float32) * (1 - share) + end_fill.astype(np.float32) * share,
+                        0, 255,
+                    ).astype(np.uint8)
+                out[y0:y1, x0:x1] = masks.paste(
+                    frame[y0:y1, x0:x1], filled, masks.feather(run_holes[position][spot]),
+                )
             yield out
             if on_frame:
                 on_frame(index)
-        start_fill, start_hole = end_fill, union
+        last_fills = {spot: (fill[1], fill[3]) for spot, fill in fills.items()}
 
 
 def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY):
     """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
 
     ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
-    is the rects themselves. A ``step`` above 1 runs the model on key frames.
-    ``carry`` is the share of the last fill kept, to calm flicker.
+    is the rects themselves. A ``step`` above 1 runs the model on key frames, and
+    an ``area`` of None finds tight work areas for each run. ``carry`` is the
+    share of the last fill kept, to calm flicker.
     """
-    if step > 1:
-        yield from _fill_frames_lama_keyed(
+    if step > 1 or area is None:
+        yield from _fill_frames_by_runs(
             frames, rects_for, filler, area, step,
             on_frame=on_frame, cancelled=cancelled, hole_for=hole_for,
         )
@@ -788,11 +817,16 @@ def prepare_span(
         if tight_layers:
             exact_layers = [layer for layer in layers if layer not in tight_layers]
             size = {"start": start, "fps": fps, "frames": len(rect_table), "width": width, "height": height}
-            finder = masks.TextMasks(
-                masks.frame_rects(tight_layers, **size),
-                masks.frame_rects(exact_layers, **size),
-                width, height,
-            )
+            exact_rows = masks.frame_rects(exact_layers, **size)
+            # A text box wholly inside a drawn box or brush needs no second look.
+            tight_rows = [
+                [
+                    rect for rect in masks.without_contained(row)
+                    if rect in masks.without_contained([rect, *exact])
+                ]
+                for row, exact in zip(masks.frame_rects(tight_layers, **size), exact_rows)
+            ]
+            finder = masks.TextMasks(tight_rows, exact_rows, width, height)
 
     def rects_for(index: int) -> list[masks.Rect]:
         if finder is not None:
@@ -839,16 +873,14 @@ def prepare_span(
         source_frames = finder.wrap(frames()) if finder is not None else frames()
         extra = {"hole_for": hole_for} if finder is not None else {}
         if method == "lama":
-            area = masks.lama_area(span_rects, width, height)
             stream = fill_frames_lama(
-                source_frames, rects_for, filler, area,
+                source_frames, rects_for, filler, None,
                 on_frame=on_frame, cancelled=cancelled, step=lama_step(fps), **extra,
             )
         elif method in CLASSIC_METHODS:
             # Cheap enough for every frame, at full size, with nothing blended in.
-            area = masks.lama_area(span_rects, width, height)
             stream = fill_frames_lama(
-                source_frames, rects_for, filler, area,
+                source_frames, rects_for, filler, None,
                 on_frame=on_frame, cancelled=cancelled, carry=0.0, **extra,
             )
         else:

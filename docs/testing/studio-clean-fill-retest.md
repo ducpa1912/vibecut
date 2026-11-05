@@ -75,6 +75,7 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 53 | Render a 10 to 20 second moment with AI fill, on a still shot and a moving shot | It is much faster than one frame at a time. Tell me the time for each, and if the filled area smears on the moving shot | |
 | 54 | Clean → **AI engine** → Telea, then Navier-Stokes. For each: **Before / After** on a found line, then render a 10 to 20 second moment | The result takes about a fifth of a second per frame. Tell me which shots look acceptable; expect smears on detail like wood or leaves | |
 | 55 | **Before / After** on small text over a busy background | No letters are left behind | |
+| 56 | Scan again, then watch two stacked lines and a drawn box over a found line | Boxes of stacked lines touch and do not overlap. Render a moment and tell me its time per frame | |
 
 ## Tell me too
 

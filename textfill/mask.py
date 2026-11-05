@@ -17,9 +17,9 @@ import numpy as np
 # past them, so every box grows by this share of its height on each side.
 PAD_RATIO = 0.06
 PAD_MIN_PX = 3
-# Check samples OCR at 0.5 fps, so a detected range edge is only known to
-# about ±2 s. Detected layers (with a tracklet_id) get this margin.
-DETECTED_TIME_MARGIN = 1.0
+# The scan reads two frames a second, so a detected range edge is known to about
+# a quarter second. Detected layers (with a tracklet_id) get this margin.
+DETECTED_TIME_MARGIN = 0.25
 # Feather width of the paste-back edge, in pixels, outside the mask.
 FEATHER_PX = 3
 # Context a LaMa work area keeps around the text.
@@ -196,6 +196,47 @@ def lama_area(rects: Iterable[Rect], width: int, height: int) -> Rect | None:
         min(width, x1 + context),
         min(height, y1 + context),
     )
+
+
+def without_contained(rects: Iterable[Rect]) -> list[Rect]:
+    """The rects, less any that sits wholly inside another one."""
+    unique = list(dict.fromkeys(tuple(rect) for rect in rects))
+    return [
+        rect for rect in unique
+        if not any(
+            other != rect
+            and other[0] <= rect[0] and other[1] <= rect[1]
+            and other[2] >= rect[2] and other[3] >= rect[3]
+            for other in unique
+        )
+    ]
+
+
+def lama_areas(rects: Iterable[Rect], width: int, height: int) -> list[Rect]:
+    """Work areas for these rects: text close together shares one, the rest apart.
+
+    The model's time follows the pixels it reads, so a title and a caption run
+    as two small areas and not as one holding all the picture between them.
+    """
+    areas = [lama_area([rect], width, height) for rect in without_contained(rects)]
+    areas = [area for area in areas if area is not None]
+    merged = True
+    while merged:
+        merged = False
+        for index, area in enumerate(areas):
+            for other_index in range(index + 1, len(areas)):
+                other = areas[other_index]
+                if area[0] < other[2] and other[0] < area[2] and area[1] < other[3] and other[1] < area[3]:
+                    areas[index] = (
+                        min(area[0], other[0]), min(area[1], other[1]),
+                        max(area[2], other[2]), max(area[3], other[3]),
+                    )
+                    del areas[other_index]
+                    merged = True
+                    break
+            if merged:
+                break
+    return sorted(areas, key=lambda area: (area[1], area[0]))
 
 
 def sttn_strips(

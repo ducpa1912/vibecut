@@ -269,6 +269,32 @@ def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
     return _unique_layer_id(f"cl_{safe}", used)
 
 
+def _separate_stacked_boxes(layers: list[dict]) -> None:
+    """Meet stacked lines halfway, so padding does not lay one box over another.
+
+    Boxes that overlap by more than their padding hold text on top of text, and
+    stay as they are.
+    """
+    for index, first in enumerate(layers):
+        for second in layers[index + 1:]:
+            top, bottom = sorted((first, second), key=lambda layer: layer["box"]["y"])
+            a, b = top["box"], bottom["box"]
+            if min(a["x"] + a["w"], b["x"] + b["w"]) <= max(a["x"], b["x"]):
+                continue
+            overlap = a["y"] + a["h"] - b["y"]
+            if overlap <= 0 or overlap > 0.5 * min(a["h"], b["h"]):
+                continue
+            if not any(
+                min(x["end"], y["end"]) > max(x["start"], y["start"])
+                for x in top["ranges"] for y in bottom["ranges"]
+            ):
+                continue
+            middle = round(b["y"] + overlap / 2.0, 6)
+            a["h"] = round(middle - a["y"], 6)
+            b["h"] = round(b["y"] + b["h"] - middle, 6)
+            b["y"] = middle
+
+
 def _text_label(text: Any) -> str:
     """The words on screen name a layer, unless an Edit could not save them."""
     label = " ".join(str(text or "").split())[:80]
@@ -427,6 +453,7 @@ def tracklet_clean_layers(
             }
             layers.append(companion)
             z_cursor += 1
+    _separate_stacked_boxes(layers)
     return {
         "layers": layers,
         "refused": refused,
