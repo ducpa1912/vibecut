@@ -104,6 +104,9 @@ def test_classic_keeps_its_packs_and_its_own_launcher():
     assert "app.py" in text
     assert "classic_app" not in text
     assert "vibecut-studio" not in text
+    # A venv here lacks the shared packages, and AI fill then says it is not ready.
+    assert ".venv" not in text
+    assert "exec python3 app.py" in text
 
 
 def _classic_env() -> dict[str, str]:

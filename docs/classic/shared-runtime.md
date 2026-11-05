@@ -37,7 +37,7 @@ scripts/pin-classic-runtime.py --source "studio abc1234: why" render.py
 | `scripts/release.sh` | Checks signatures from the fixed commit in `scripts/release-signature-base`, not a merge-base with `main`. An unknown base stops the release. |
 | `scripts/lane-env.sh` | Classic: port 8796, jobs and settings in `~/vibecut-lanes/classic`, packs in `~/vibecut-lanes/classic/packs`, media, recordings, voices and music in `data/`, fill models in `~/.cache/vibecut/models/fill`. |
 | `scripts/ship-lane.sh` | Takes in only `origin/classic`. Never moves `main`. |
-| `scripts/serve-classic.sh` | Starts `app.py` from this checkout. It uses `.venv` here if there is one. |
+| `scripts/serve-classic.sh` | Starts `app.py` from this checkout with the machine's shared `python3`. A `.venv` in the checkout is not used. |
 
 ## What Classic still reads outside this checkout
 
