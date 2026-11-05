@@ -1665,6 +1665,10 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
         )
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    # The preview runs the real fill, so the same rights gate as the save and
+    # render paths must run before any pixels are changed. An unsaved request
+    # body is not evidence that the box is allowed.
+    _check_clean_rights(job, layers["clean"])
     aspect = str(body.aspect or "9:16").strip()
     if aspect not in CLASSIC_EDIT_ASPECTS:
         raise HTTPException(

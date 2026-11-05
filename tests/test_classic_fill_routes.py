@@ -169,6 +169,22 @@ def test_a_fill_box_on_a_watermark_is_refused(classic, monkeypatch):
     assert "watermark" in response.text.lower()
 
 
+def test_the_fill_preview_refuses_a_watermark_box(classic, monkeypatch):
+    client, _ = classic
+    monkeypatch.setattr(routes_classic, "classic_fill_status", lambda: _ready())
+    response = client.post(
+        "/api/classic/jobs/classic-fill/fill/preview",
+        json={
+            "clips": _clips(),
+            "clean": [_fill_box(kind="watermark")],
+            "t": 1.0,
+            "aspect": "9:16",
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert "watermark" in response.text.lower()
+
+
 def test_the_rights_lock_refuses_fill_without_the_tick(classic, monkeypatch):
     import settings_store
 
