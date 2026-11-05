@@ -75,10 +75,10 @@ def test_no_fill_means_no_sentence(tmp_path):
 
 def test_this_machines_rate_replaces_the_seed(tmp_path):
     assert textfill.fill_rate(tmp_path, "sttn") == {"seconds": 4.6, "measured": False}
-    assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 1.2, "measured": False}
+    assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 0.6, "measured": False}
     # A figure saved before key frames and tight areas is not used.
     (tmp_path / textfill.RATES_FILE).write_text('{"lama": {"seconds": 8.3, "runs": 9}}', encoding="utf-8")
-    assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 1.2, "measured": False}
+    assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 0.6, "measured": False}
     textfill.record_rate(tmp_path, "lama", 10, 20.0)
     assert textfill.fill_rate(tmp_path, "lama") == {"seconds": 2.0, "measured": True}
     (tmp_path / textfill.RATES_FILE).unlink()

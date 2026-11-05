@@ -52,8 +52,8 @@ LAMA_STILL_LIMIT = 2.5
 # Seconds per unit before this machine has its own reading. A unit is one
 # strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
 # render on an M1 8 GB Mac under swap, the OpenCV figures are real frames on that
-# Mac during a render, and LaMa's is the first estimate of the founder's render.
-SEED_RATES = {"sttn": 4.6, "lama": 1.2, "telea": 0.2, "ns": 0.2}
+# Mac during a render, and LaMa's is the founder's real render: 1171 frames in 685 s.
+SEED_RATES = {"sttn": 4.6, "lama": 0.6, "telea": 0.2, "ns": 0.2}
 # LaMa's saved figure from before key frames and tight areas is several times too
 # high, so the new code keeps its own. This holds the old figure out of estimates.
 RATE_KEYS = {"lama": "lama_keyed"}

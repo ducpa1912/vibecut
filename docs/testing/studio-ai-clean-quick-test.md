@@ -22,7 +22,7 @@
 | Date | Video | Code | Option | Estimate | First countdown | Real time | Score | Problems (time: what) |
 |---|---|---|---|---|---|---|---|---|
 | 2026-11-05 | Coffee garden, 59.6 s | before `ef61c18` | off | 2 h | | about 2 h | 6.5/10 | 22 to 25 s: text left; 28 to 31 s, 49 to 51 s: distortion on movement |
-| 2026-11-05 | Same | `632dc3a` | off | 2 h 42 min for 1171 frames (a stale rate, since fixed) | 30 min, then 23 min with Chrome tabs closed | | | |
+| 2026-11-05 | Same | `632dc3a` | off | 2 h 42 min for 1171 frames (a stale rate, since fixed) | 30 min, then 23 min with Chrome tabs closed | 11 min 39 s (fill 11 min 25 s) | not scored yet | not reviewed yet |
 
 ## The numbers
 
