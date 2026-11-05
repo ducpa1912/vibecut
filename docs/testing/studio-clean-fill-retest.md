@@ -85,4 +85,12 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 
 ## Results
 
-Not run yet.
+**2026-11-05, founder, full video, 59.6 s, AI fill with LaMa: 6.5/10.** The render took about 2 hours and started before the speed and box changes (`ef61c18` onward), so it used LaMa on every frame, one large crop, block boxes and a 1 s time margin.
+
+| Time | Founder saw | Cause found | Status |
+|---|---|---|---|
+| 22 to 23 s | Something rendered there | The second line of text was left behind | Fixed in `9e55079`, not re-rendered |
+| 24 to 25 s | Many overlapping boxes, then one removed | Blocks of text missed letters; a stale box ran 1 s past its line | Fixed in `dd21cd0`, `9e55079`, `5b552f6`, not re-rendered |
+| 28 to 31 s | Distortion: moving background in one scene | Each frame is filled alone, with a hand moving through the box | Open |
+| 32 s | Logo on the black cup removed cleanly | Steady dark surface | Good |
+| 49 to 51 s | Distortion on a mostly steady background | The cat crosses a full-width box; 30% of the last fill was kept | Open; the blend is gone from the keyed path, not re-rendered |
