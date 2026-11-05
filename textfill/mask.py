@@ -29,6 +29,9 @@ CONTEXT_RATIO = 0.5
 # against the local average; shares are of the box.
 TEXT_CONTRAST = 36.0
 TEXT_CONTRAST_MEDIAN = 2.5
+# The contrast limit reads this percentile of the box. Text can fill half of a
+# tight box, so the median measures the text itself and the limit goes above it.
+TEXT_QUIET_PERCENTILE = 30
 TEXT_WEAK_CONTRAST = 14.0
 TEXT_MIN_SHARE = 0.002
 TEXT_WEAK_SHARE = 0.01
@@ -311,7 +314,10 @@ def text_in_region(region: np.ndarray, grow: int) -> np.ndarray | None:
     values = region.astype(np.float32)
     radius = max(4, min(height, width) // 2)
     contrast = np.abs(values - _local_mean(values, radius)).max(axis=2)
-    limit = max(TEXT_CONTRAST, TEXT_CONTRAST_MEDIAN * float(np.median(contrast)))
+    limit = max(
+        TEXT_CONTRAST,
+        TEXT_CONTRAST_MEDIAN * float(np.percentile(contrast, TEXT_QUIET_PERCENTILE)),
+    )
     strong = contrast > limit
     # A lone speck is noise; a stroke has neighbours.
     strong &= _box_mean(_box_mean(strong.astype(np.float32), 1, 0), 1, 1) >= 3 / 9

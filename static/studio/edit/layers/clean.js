@@ -56,6 +56,8 @@ const KIND_COPY = {
 const FILL_METHODS = [
   ["lama", "LaMa · per frame, best on still backgrounds"],
   ["sttn", "STTN · video, best on subtitles"],
+  ["telea", "Telea · OpenCV, very fast, for plain backgrounds"],
+  ["ns", "Navier-Stokes · OpenCV, very fast, for smooth backgrounds"],
 ];
 const FILL_KINDS = new Set(["delogo", "blur", "plate", "mask"]);
 
@@ -1687,7 +1689,7 @@ export function mountCleanPanel(host, ctx) {
         class: "st-btn st-btn-ghost st-btn-small st-clean-compare",
         type: "button",
         text: "Before / After",
-        title: "One frame with LaMa, without saving. The render uses this Edit's engine.",
+        title: "One frame, without saving. STTN shows LaMa here; the render uses the Edit's engine.",
       });
       compare.addEventListener("click", () => ctx.compareLayer?.(layer.id));
       const testing = ctx.isFillTesting?.() === true;
@@ -1753,7 +1755,7 @@ export function mountCleanPanel(host, ctx) {
   function firstFillMethod() {
     const methods = fillStatus?.methods || {};
     if (fillStatus?.default && methods[fillStatus.default]?.ready) return fillStatus.default;
-    return FILL_METHODS.map(([value]) => value).find((method) => methods[method]?.ready) || "";
+    return ["lama", "sttn"].find((method) => methods[method]?.ready) || "";
   }
 
   async function loadFillStatus() {

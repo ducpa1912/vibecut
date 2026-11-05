@@ -28,6 +28,18 @@ def test_finds_text_pixels_not_the_whole_box():
     assert 0.05 < found.mean() < 0.5
 
 
+def test_dense_text_in_a_tight_box_is_found_across_its_width():
+    """Letters stayed in the render when text filled most of its box (2026-11-05)."""
+    rng = np.random.default_rng(3)
+    region = np.clip(150 + rng.integers(-6, 6, size=(60, 400, 3)), 0, 255).astype(np.uint8)
+    for x in range(4, 396, 11):
+        region[12:48, x:x + 7] = 235
+        region[12:48, x + 7:x + 9] = 40
+    found = masks.text_in_region(region, 3)
+    assert found is not None
+    assert found.any(axis=0).mean() > 0.9
+
+
 def test_a_flat_box_has_no_text():
     found = masks.text_in_region(_background(), 3)
     assert found is not None and not found.any()

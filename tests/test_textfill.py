@@ -643,3 +643,45 @@ def test_the_key_rate_is_part_of_a_lama_clip_only(monkeypatch):
     monkeypatch.setenv("VIBECUT_FILL_LAMA_KEYS", "0")
     assert textfill.span_key(method="lama", **base) != lama
     assert textfill.span_key(method="sttn", **base) == sttn
+
+
+# --- OpenCV engines -------------------------------------------------------
+
+@pytest.mark.parametrize("method", ["telea", "ns"])
+def test_opencv_engines_fill_a_hole_from_the_colours_around_it(method):
+    pytest.importorskip("cv2")
+    from textfill.classic import ClassicFiller
+
+    area = np.full((40, 40, 3), 120, dtype=np.uint8)
+    area[18:22, 10:30] = 255
+    hole = np.zeros((40, 40), dtype=bool)
+    hole[18:22, 10:30] = True
+    out = ClassicFiller(method).fill(area, hole)
+    assert out.shape == area.shape
+    assert abs(int(out[20, 20, 0]) - 120) <= 3
+    assert (out[0, 0] == 120).all()
+
+
+def test_opencv_engines_need_no_model_file(tmp_path):
+    assert textfill.missing_model("telea", tmp_path) is None
+    assert textfill.missing_model("ns", tmp_path) is None
+    assert textfill.span_key(
+        meta=META, start=0.0, duration=1.0, layers=[_layer()], method="telea", model_stamp="m",
+    ) != textfill.span_key(
+        meta=META, start=0.0, duration=1.0, layers=[_layer()], method="ns", model_stamp="m",
+    )
+
+
+def test_an_edit_saves_every_engine():
+    for method in ("lama", "sttn", "telea", "ns"):
+        assert edits.normalize_clean([_layer(method=method)])[0]["method"] == method
+
+
+def test_no_carry_keeps_each_fill_as_it_is():
+    frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(3)]
+    filler = _CountingFiller()
+    out = list(textfill.fill_frames_lama(
+        iter(frames), lambda index: [(5, 5, 20, 20)], filler, (0, 0, 40, 40), carry=0.0,
+    ))
+    assert int(out[2][10, 10, 0]) == 30
+

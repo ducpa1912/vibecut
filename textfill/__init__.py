@@ -27,12 +27,19 @@ import numpy as np
 
 from . import mask as masks
 
-METHODS = ("lama", "sttn")
+METHODS = ("lama", "sttn", "telea", "ns")
+# No model file: OpenCV spreads the colours around the hole into it.
+CLASSIC_METHODS = ("telea", "ns")
 DEFAULT_METHOD = "lama"
 VERSION = 3
 MODEL_FILES = {"sttn": "sttn_infer_model.pth", "lama": "lama_fp32.onnx"}
-MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime"}
-METHOD_COPY = {"sttn": "STTN (video)", "lama": "LaMa (per frame)"}
+MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime", "telea": "cv2", "ns": "cv2"}
+METHOD_COPY = {
+    "sttn": "STTN (video)",
+    "lama": "LaMa (per frame)",
+    "telea": "Telea (OpenCV)",
+    "ns": "Navier-Stokes (OpenCV)",
+}
 # Share of the previous frame's fill kept on LaMa output, to calm flicker.
 LAMA_CARRY = 0.3
 # LaMa fills about this many frames a second of video. The frames between blend
@@ -42,8 +49,9 @@ LAMA_KEYS_PER_SECOND = 3.0
 LAMA_MOTION_LIMIT = 6.0
 # Seconds per unit before this machine has its own reading. A unit is one
 # strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
-# render on an M1 8 GB Mac under swap. LaMa has no real-video reading yet.
-SEED_RATES = {"sttn": 4.6}
+# render on an M1 8 GB Mac under swap, and the OpenCV figures are real frames on
+# that Mac during a render. LaMa has no reading until one finishes here.
+SEED_RATES = {"sttn": 4.6, "telea": 0.2, "ns": 0.2}
 RATE_MIN_FRAMES = 60
 RATES_FILE = "fill_rates.json"
 
@@ -72,11 +80,13 @@ def models_dir(data_root: Path | str) -> Path:
 def model_path(method: str, directory: Path) -> Path:
     if method not in METHODS:
         raise FillError(f"Unknown fill method: {method}.")
-    return Path(directory) / MODEL_FILES[method]
+    return Path(directory) / MODEL_FILES.get(method, "opencv")
 
 
 def missing_model(method: str, directory: Path) -> str | None:
     """A plain message when the method's model file is absent, else None."""
+    if method in CLASSIC_METHODS:
+        return None
     path = model_path(method, directory)
     if path.is_file() and path.stat().st_size > 0:
         return None
@@ -178,7 +188,7 @@ def estimate_span(
     if not missing_model(method, directory):
         key = span_key(
             meta=meta, start=start, duration=duration, layers=layers,
-            method=method, model_stamp=_model_stamp(model_path(method, directory)),
+            method=method, model_stamp=method_stamp(method, directory),
         )
         output = Path(cache_dir) / f"{key}.mp4"
         row["cached"] = output.is_file() and output.stat().st_size > 1024
@@ -243,6 +253,17 @@ def _model_stamp(path: Path) -> str:
     return f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
 
 
+def method_stamp(method: str, directory: Path | str) -> str:
+    """What identifies an engine's pixels: its model file, or OpenCV's version."""
+    if method in CLASSIC_METHODS:
+        try:
+            import cv2
+        except ImportError:
+            return "opencv:missing"
+        return f"opencv:{cv2.__version__}"
+    return _model_stamp(model_path(method, Path(directory)))
+
+
 def model_signature(methods: Iterable[str], directory: Path | str) -> str:
     """A stable signature of the model files a render will read.
 
@@ -254,9 +275,10 @@ def model_signature(methods: Iterable[str], directory: Path | str) -> str:
     for method in sorted({str(item) for item in methods}):
         if method not in METHODS:
             continue
-        path = model_path(method, directory)
-        present = path.is_file() and path.stat().st_size > 0
-        parts.append([method, _model_stamp(path) if present else "missing"])
+        if missing_model(method, directory):
+            parts.append([method, "missing"])
+        else:
+            parts.append([method, method_stamp(method, directory)])
     payload = {"version": VERSION, "models": parts, "text_mask": text_mask_enabled()}
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -303,11 +325,14 @@ def _filler(method: str, path: Path):
                 if method == "sttn":
                     from .sttn import SttnFiller
                     filler = SttnFiller(path)
+                elif method in CLASSIC_METHODS:
+                    from .classic import ClassicFiller
+                    filler = ClassicFiller(method)
                 else:
                     from .lama import LamaFiller
                     filler = LamaFiller(path)
             except ImportError as exc:
-                package = "torch" if method == "sttn" else "onnxruntime"
+                package = MODEL_PACKAGES[method]
                 raise FillError(
                     f"{METHOD_COPY[method]} fill needs the {package} package on this Mac."
                 ) from exc
@@ -528,11 +553,12 @@ def _fill_frames_lama_keyed(frames, rects_for, filler, area, step, *, on_frame, 
         start_fill, start_hole = end_fill, union
 
 
-def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1):
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY):
     """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
 
     ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
     is the rects themselves. A ``step`` above 1 runs the model on key frames.
+    ``carry`` is the share of the last fill kept, to calm flicker.
     """
     if step > 1:
         yield from _fill_frames_lama_keyed(
@@ -558,10 +584,10 @@ def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelle
             work = frame[y0:y1, x0:x1]
             _check_cancel(cancelled)
             filled = filler.fill(work, hole)
-            if previous is not None:
+            if previous is not None and carry > 0:
                 filled = np.clip(
-                    filled.astype(np.float32) * (1 - LAMA_CARRY)
-                    + previous.astype(np.float32) * LAMA_CARRY,
+                    filled.astype(np.float32) * (1 - carry)
+                    + previous.astype(np.float32) * carry,
                     0, 255,
                 ).astype(np.uint8)
             previous = filled
@@ -663,11 +689,10 @@ def fill_frame(
     Rects also in ``tight_rects`` narrow to the text found in them, as in the
     render, so the preview shows the same hole.
 
-    The single-frame preview uses LaMa: it is the per-frame engine, so one
-    frame is a supported input. STTN needs neighbouring frames and is left to
-    the full render.
+    One frame is a supported input for LaMa and the OpenCV methods. STTN needs
+    neighbouring frames and is left to the full render.
     """
-    if method != "lama":
+    if method == "sttn":
         raise FillError("The single-frame fill preview uses the LaMa model.")
     directory = models_dir(data_root)
     problem = missing_model(method, directory)
@@ -748,7 +773,7 @@ def prepare_span(
     path = model_path(method, directory)
     key = span_key(
         meta=meta, start=start, duration=duration, layers=layers,
-        method=method, model_stamp=_model_stamp(path),
+        method=method, model_stamp=method_stamp(method, directory),
     )
     cache_dir = Path(cache_dir)
     output = cache_dir / f"{key}.mp4"
@@ -818,6 +843,13 @@ def prepare_span(
             stream = fill_frames_lama(
                 source_frames, rects_for, filler, area,
                 on_frame=on_frame, cancelled=cancelled, step=lama_step(fps), **extra,
+            )
+        elif method in CLASSIC_METHODS:
+            # Cheap enough for every frame, at full size, with nothing blended in.
+            area = masks.lama_area(span_rects, width, height)
+            stream = fill_frames_lama(
+                source_frames, rects_for, filler, area,
+                on_frame=on_frame, cancelled=cancelled, carry=0.0, **extra,
             )
         else:
             from .sttn import CHUNK, OVERLAP

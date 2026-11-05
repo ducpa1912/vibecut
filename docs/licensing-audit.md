@@ -90,6 +90,7 @@ user installs, or cloud API keys.
 | LaMa ONNX (`textfill/lama.py`) | Apache-2.0 (Carve/LaMa-ONNX port of big-lama) | Apache-2.0 | Permissive; include Apache notice and model source/hash. |
 | PyTorch (STTN runtime) | BSD-3-Clause | n/a | Permissive; huge; separate optional pack. |
 | ONNX Runtime (LaMa runtime) | MIT | n/a | Permissive. |
+| OpenCV (`textfill/classic.py`, Telea and Navier-Stokes) | Apache-2.0; `opencv-python-headless` wrapper MIT | No model weights | Optional. The wheel bundles LGPL FFmpeg libraries, so check them before shipping it in a pack. |
 | Kokoro-82M / kokoro-onnx | Apache-2.0 package; Apache-2.0 weights | Apache-2.0 | Permissive; include notice and model card. |
 | mlx / mlx-whisper | MIT | Whisper weights MIT | Permissive; include notice. |
 | DeepFilterNet 3 | MIT; some files Apache-2.0 | MIT/Apache-2.0 | Permissive; include dual notice. |

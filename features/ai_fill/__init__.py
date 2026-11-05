@@ -1,4 +1,4 @@
-"""AI fill feature contract: STTN/LaMa models and span filling."""
+"""AI fill feature contract: LaMa, STTN and OpenCV engines and span filling."""
 
 from core.contracts import FeatureContract
 
@@ -16,6 +16,7 @@ FillCancelled = _textfill.FillCancelled
 FillError = _textfill.FillError
 METHOD_COPY = _textfill.METHOD_COPY
 METHODS = _textfill.METHODS
+CLASSIC_METHODS = _textfill.CLASSIC_METHODS
 MODEL_FILES = _textfill.MODEL_FILES
 mask = _textfill.mask
 masks = mask
@@ -23,6 +24,10 @@ masks = mask
 
 def models_dir(data_root):
     return _textfill.models_dir(data_root)
+
+
+def method_stamp(method, directory):
+    return _textfill.method_stamp(method, directory)
 
 
 def model_path(method, directory):
@@ -70,7 +75,7 @@ def fill_frame(*args, **kwargs):
 
 
 __all__ = [
-    "DEFAULT_METHOD", "FEATURE", "FillCancelled", "FillError", "METHOD_COPY",
+    "CLASSIC_METHODS", "DEFAULT_METHOD", "FEATURE", "FillCancelled", "FillError", "METHOD_COPY",
     "METHODS", "MODEL_FILES", "busy", "estimate_span", "estimate_summary",
     "fill_frame", "mask", "masks", "method_problem", "missing_model",
     "model_path", "model_signature", "models_dir", "prepare_span",

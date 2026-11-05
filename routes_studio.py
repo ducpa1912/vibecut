@@ -246,8 +246,12 @@ def fill_status() -> dict:
             "ready": problem is None,
             "reason": problem or "",
         }
+    # OpenCV is picked by hand; it never stands in for a missing model.
     default = next(
-        (method for method in textfill.METHODS if methods[method]["ready"]),
+        (
+            method for method in textfill.METHODS
+            if method not in textfill.CLASSIC_METHODS and methods[method]["ready"]
+        ),
         None,
     )
     return {
@@ -823,10 +827,10 @@ def auto_clean(
         raise HTTPException(422, "method must be auto, ai or blur.")
     fill_method = str(body.fill_method or textfill.DEFAULT_METHOD).strip().lower()
     if fill_method not in textfill.METHODS:
-        raise HTTPException(422, "fill_method must be sttn or lama.")
+        raise HTTPException(422, "fill_method must be lama, sttn, telea or ns.")
     if method == "auto":
         ready = [
-            item for item in (fill_method, *textfill.METHODS)
+            item for item in (fill_method, "lama", "sttn")
             if textfill.method_problem(item, textfill.models_dir(app.DATA)) is None
         ]
         method = "ai" if ready else "blur"
@@ -1270,15 +1274,15 @@ def fill_preview(
         raise HTTPException(422, "No AI fill region is active at this frame.")
 
     directory = textfill.models_dir(app.DATA)
-    problem = textfill.missing_model("lama", directory)
+    # OpenCV previews with its own method; everything else with LaMa.
+    engine = body.method if body.method in textfill.CLASSIC_METHODS else "lama"
+    problem = textfill.method_problem(engine, directory)
     if problem:
         raise HTTPException(409, problem)
-    model_path = textfill.model_path("lama", directory)
-    stamp = model_path.stat()
     key = hashlib.sha1(
         (
-            f"{edit['hash']}:{draft_tag}:{frame}:{out_w}x{out_h}:lama:"
-            f"{stamp.st_size}:{stamp.st_mtime_ns}:{source.get('fingerprint')}"
+            f"{edit['hash']}:{draft_tag}:{frame}:{out_w}x{out_h}:{engine}:"
+            f"{textfill.method_stamp(engine, directory)}:{source.get('fingerprint')}"
         ).encode("utf-8"),
     ).hexdigest()[:20]
     job_dir = app._job_dir(job_id)
@@ -1292,7 +1296,7 @@ def fill_preview(
             "width": out_w,
             "height": out_h,
             "time": round(at, 3),
-            "method": "lama",
+            "method": engine,
             "cached": True,
         }
 
@@ -1310,7 +1314,7 @@ def fill_preview(
             height=height,
         )[0]
         filled_rgb = textfill.fill_frame(
-            frame_rgb, rects, data_root=job_dir.parent.parent, method="lama",
+            frame_rgb, rects, data_root=job_dir.parent.parent, method=engine,
             tight_rects=tight_rects,
         )
     except textfill.FillError as exc:
@@ -1349,7 +1353,7 @@ def fill_preview(
         "width": out_w,
         "height": out_h,
         "time": round(at, 3),
-        "method": "lama",
+        "method": engine,
         "cached": False,
     }
 

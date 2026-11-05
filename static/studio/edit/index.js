@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261105-13";
+import { mountPreview } from "./preview.js?v=20261105-14";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -83,7 +83,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261105-13";
+    link.href = "/static/studio/edit/edit.css?v=20261105-14";
     document.head.append(link);
   }
 }
@@ -1934,7 +1934,7 @@ export function mount(root, ctx) {
           method: "POST",
           body: {
             t: state.playhead,
-            method: "lama",
+            method: drawEngine(),
             clean: clone(state.edit.clean || []),
             layer_ids: [String(layerId)],
           },
@@ -1942,7 +1942,10 @@ export function mount(root, ctx) {
       );
       preview?.showCompare?.({
         ...result,
-        title: "LaMa preview · one frame",
+        title: {
+          telea: "Telea preview · one frame",
+          ns: "Navier-Stokes preview · one frame",
+        }[result?.method] || "LaMa preview · one frame",
         note: "The render uses this Edit's engine. Nothing was saved.",
       });
       notify("Before / After on this frame. Nothing was saved.", "ok");
