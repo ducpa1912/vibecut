@@ -2451,6 +2451,10 @@ def recover_jobs() -> None:
         try:
             with LOCK:
                 job = json.loads(path.read_text())
+                if job.get("deleting"):
+                    # A queued delete the restart cut short. Nothing runs now.
+                    shutil.rmtree(path.parent, ignore_errors=True)
+                    continue
                 changed = False
                 ingest_failed = False
                 if job.get("status") in LIVE:
@@ -5019,6 +5023,10 @@ _JOB_INDEX_LOCK = threading.Lock()
 
 
 def _job_index_row(job: dict) -> dict:
+    return {**_job_row(job), "_deleting": bool(job.get("deleting"))}
+
+
+def _job_row(job: dict) -> dict:
     analysis = job.get("analysis") or {}
     ingest = job.get("ingest") or {}
     source = job.get("source") or {}
@@ -5089,6 +5097,8 @@ def job_index() -> list[tuple[float, dict]]:
             cached = (stamp, row)
             with _JOB_INDEX_LOCK:
                 _JOB_INDEX[key] = cached
+        if cached[1].get("_deleting"):
+            continue
         rows.append((cached[0] / 1e9, cached[1]))
     with _JOB_INDEX_LOCK:
         for key in [key for key in _JOB_INDEX if key not in seen]:

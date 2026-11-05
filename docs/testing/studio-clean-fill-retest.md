@@ -62,7 +62,8 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 40 | Finish → pick Full video in the list, add to queue, and render a short video | The whole video renders and downloads. Tell me how long it took and how long the video was | |
 | 41 | Pick a network, then shrink and magnify the view, change the shape, press Play, go to Finish and back | The safe area and frame size stay on the white line throughout, and the network stays chosen | |
 | 42 | Press the top right **Finish** in Edit | It saves and opens Finish on this moment | |
-| 43 | Import: press the bin on an old video, then **Delete?**. Then **All videos** and do the same there | The video goes from both lists. A video still working, or with a pinned render or review link, says why it cannot go | |
+| 43 | Import: press the bin on an old video, then **Cancel**. Press it again, then **Delete**. Then **All videos** and do the same there | Cancel keeps it. Delete removes it from both lists | |
+| 44 | Start **Scan video** or a render, then press the bin on that video | The prompt names what is running. **Cancel** lets it carry on. **Delete** stops it, the video leaves the list at once, and the app stays responsive | |
 
 ## Tell me too
 

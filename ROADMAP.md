@@ -142,6 +142,16 @@ Source: founder session 1 (`docs/testing/founder-session-1/`) and the round 6 pa
 
 **Founder manual test after merge:** rerun the session 1 flow on A, C and B with codegen recording; check Dub with a target, the library after four renders, Back/Next, and Check progress without plateaus.
 
+### Special cuts (planned, not built)
+
+Founder note, 2026-11-05. Today a change of shape crops one picture to fit: Framing sets one zoom and place per scene. A special cut changes the layout when the shape changes, such as a vertical video made into a horizontal story, or the opposite. There can be dozens of templates, for example:
+
+- Split screen, top and bottom, or left and right.
+- Focus area: one part of the picture fills the frame.
+- Cut to centre.
+
+To work out when this is planned: whether a template applies per scene or to the whole cut, how it fits the Edit document and the fast preview, and how layers stuck to the video behave when one source shows twice in a frame.
+
 ### Next order
 
 1. R3 founder-session fixes (Dub, library, Back/Next, honest progress, speech).

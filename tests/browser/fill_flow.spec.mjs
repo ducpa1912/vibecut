@@ -600,9 +600,15 @@ try {
   await page.locator("#st-library-dialog [data-library-close]").first().click();
   const removeVideo = page.locator(".st-recent-row .st-delete-video").first();
   await removeVideo.click();
-  assert((await removeVideo.textContent()).includes("Delete?"), "delete did not ask once more");
+  await page.waitForSelector(".st-delete-dialog");
+  await page.locator(".st-delete-dialog button", { hasText: "Cancel" }).click();
+  assert(await page.locator(".st-delete-dialog").count() === 0, "Cancel left the prompt open");
+  assert(await page.locator(".st-recent-row").count() > 0, "Cancel deleted the video");
   await removeVideo.click();
+  await page.waitForSelector(".st-delete-dialog");
+  await page.locator(".st-delete-confirm").click();
   await page.waitForFunction(() => !document.querySelector(".st-recent-row"));
+  await page.waitForTimeout(1500);
   const gone = await page.evaluate(async (id) => (await fetch(`/api/jobs/${id}`)).status, jobId);
   assert(gone === 404, `the video was not deleted: ${gone}`);
   console.log("Finish button and delete video passed.");

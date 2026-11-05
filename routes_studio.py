@@ -8,6 +8,7 @@ helpers; importing at module level would be circular.
 
 from __future__ import annotations
 
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -467,6 +468,170 @@ def add_story(job_id: str, set_id: str, body: AddStoryBody) -> dict:
     record["updated"] = app.time.time()
     app._store_clip_set(job_id, record)
     return {"clip_set": record, "story": story}
+
+
+#: How long a queued delete waits for its work to stop before it goes anyway, so
+#: a worker that never answers cannot leave a video stuck.
+DELETE_WAIT_S = 120.0
+DELETE_SWEEP_S = 60.0
+
+
+def _job_work(job: dict) -> list[str]:
+    """What this video is doing now, in words for the delete prompt."""
+    import app
+    import routes_check
+
+    job_id = str(job["id"])
+    work: list[str] = []
+    status = job.get("status")
+    if status == "downloading":
+        work.append("Downloading the video")
+    elif status in app.LIVE:
+        work.append("Reading the video")
+    if (job.get("check") or {}).get("status") in routes_check.ACTIVE_STATES:
+        work.append("Scanning for text")
+    renders = sum(
+        1 for record in (job.get("renders") or {}).values()
+        if record.get("status") in app.ACTIVE_RENDER
+    )
+    if renders or app._has_active_artifacts(job):
+        work.append("Rendering" if renders <= 1 else f"Rendering {renders} cuts")
+    waiting = app.story_queues().waiting_for_job(job_id)
+    if waiting:
+        work.append(f"{waiting} waiting in the render queue")
+    for kind, label in (("transcribe", "Reading the speech"), ("script", "Writing a script")):
+        task = app.voice_pool.find_key(kind, job_id)
+        if task is not None and not task.terminal:
+            work.append(label)
+    return work
+
+
+def _job_keeps(job: dict) -> list[str]:
+    """What the owner marked to keep, which a delete takes with it."""
+    import app
+    import artifacts
+    import shares
+
+    keeps: list[str] = []
+    try:
+        pinned = sum(
+            1 for manifest in artifacts.list_manifests(app._job_dir(job["id"]))
+            if manifest.get("pinned")
+        )
+    except Exception:  # noqa: BLE001 - an unreadable manifest is not a reason to refuse
+        pinned = 0
+    if pinned:
+        keeps.append("1 pinned render" if pinned == 1 else f"{pinned} pinned renders")
+    links = len(shares.active_records(app.SHARES, job_id=job["id"], strict=False))
+    if links:
+        keeps.append("1 review link" if links == 1 else f"{links} review links")
+    return keeps
+
+
+def _stop_job_work(job_id: str, request: Request) -> None:
+    """Ask everything this video runs to stop. One refusal never blocks the rest."""
+    import app
+    import routes_check
+
+    job = app.load_job(job_id)
+    steps = [lambda: app.story_queues().drop_job(job_id)]
+    if job.get("status") == "downloading":
+        steps.append(lambda: app.cancel_url_ingest(job_id))
+    elif job.get("status") in app.LIVE:
+        steps.append(lambda: app.cancel_reading(job_id))
+    if (job.get("check") or {}).get("status") in routes_check.ACTIVE_STATES:
+        steps.append(lambda: routes_check.cancel_check(job_id, request))
+    for key, record in (job.get("renders") or {}).items():
+        if record.get("status") in app.ACTIVE_RENDER:
+            app.RENDER_CANCELS.setdefault((job_id, key), threading.Event()).set()
+    for kind in app.VOICE_TASK_KINDS:
+        event = app.VOICE_CANCELS.get((kind, job_id))
+        if event is not None:
+            steps.append(event.set)
+        steps.append(lambda kind=kind: app.voice_pool.cancel_key(kind, job_id))
+    sample = _SAMPLE_CANCELS.get(job_id)
+    if sample is not None:
+        steps.append(sample.set)
+    for step in steps:
+        try:
+            step()
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("could not stop part of job %s before deleting it", job_id)
+
+
+def _finish_delete(job_id: str) -> None:
+    """Wait for the work to stop, then remove the video and its review links."""
+    import app
+    import shares
+
+    deadline = time.monotonic() + DELETE_WAIT_S
+    while time.monotonic() < deadline:
+        try:
+            if not _job_work(app.load_job(job_id)):
+                break
+        except HTTPException:
+            return
+        except Exception:  # noqa: BLE001 - a bad read must not leave the video stuck
+            LOGGER.exception("could not read job %s while deleting it", job_id)
+            break
+        time.sleep(0.5)
+    else:
+        LOGGER.warning("job %s did not stop in time; deleting it anyway", job_id)
+    directory = app._job_dir(job_id)
+    with app.LOCK:
+        try:
+            for record in shares.list_records(app.SHARES, include_tokens=True, strict=False):
+                token = record.get("token")
+                if token and record.get("job_id") == job_id:
+                    shares.delete(token, app.SHARES)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("could not remove review links of job %s", job_id)
+        shutil.rmtree(directory, ignore_errors=True)
+    app.forget_voice_clone(job_id)
+    LOGGER.info("deleted job %s", job_id)
+    # A worker that outlived the wait may write once more before it notices.
+    time.sleep(DELETE_SWEEP_S)
+    if directory.is_dir() and not (directory / "job.json").exists():
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+@router.get("/api/jobs/{job_id}/delete-check")
+def delete_check(job_id: str) -> dict:
+    """What a delete would stop and remove. Runs nothing."""
+    import app
+
+    job = app.load_job(job_id)
+    return {"work": _job_work(job), "keeps": _job_keeps(job)}
+
+
+@router.post("/api/jobs/{job_id}/delete", status_code=202)
+def queue_delete(job_id: str, request: Request) -> dict:
+    """Stop this video's work and queue its delete. The owner already chose.
+
+    The video leaves every list at once, and the folder goes when the work has
+    stopped, or after a set wait. The mark survives a restart, which finishes it.
+    A source imported from a path on this Mac stays where it was.
+    """
+    import app
+    import shares
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    try:
+        shares.load(app.SHARES, strict=True)
+    except shares.ShareStoreError as exc:
+        raise app._share_store_unavailable(exc) from exc
+
+    def mark(job: dict) -> None:
+        job["deleting"] = round(time.time(), 3)
+
+    app.update_job(job_id, mark)
+    _stop_job_work(job_id, request)
+    threading.Thread(
+        target=_finish_delete, args=(job_id,),
+        name=f"vibecut-delete-{job_id}", daemon=True,
+    ).start()
+    return {"deleting": job_id}
 
 
 @router.post("/api/jobs/{job_id}/full-video")

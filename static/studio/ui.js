@@ -110,42 +110,66 @@ export function shortDate(epochSeconds) {
 }
 
 /**
- * A bin button that asks once more before it deletes. The second click runs
- * `onDelete`; moving away resets it. Failures go to `onError`.
+ * Ask before deleting a video, saying what is running and what goes with it.
+ * Resolves true for Delete, false for Cancel.
  */
-export function deleteVideoButton({ name, onDelete, onError }) {
-  const label = `Delete ${name}`;
+function askToDelete(host, name, { work = [], keeps = [] } = {}) {
+  return new Promise((resolve) => {
+    const finish = (answer) => {
+      dialog.close();
+      dialog.remove();
+      resolve(answer);
+    };
+    const keep = el("button", { class: "st-btn st-btn-ghost", type: "button", text: "Cancel" });
+    const remove = el("button", { class: "st-btn st-btn-primary st-delete-confirm", type: "button", text: "Delete" });
+    const list = (title, rows) => (rows.length
+      ? [el("p", { text: title }), el("ul", { class: "st-delete-list" }, rows.map((row) => el("li", { text: row })))]
+      : []);
+    const dialog = el("dialog", { class: "st-dialog st-delete-dialog", "aria-labelledby": "st-delete-title" }, [
+      el("div", { class: "st-dialog-head" }, [el("h2", { id: "st-delete-title", text: `Delete ${name}?` })]),
+      el("div", { class: "st-dialog-body" }, [
+        ...list("It is still working on this. Delete stops it first:", work),
+        ...list("These go with it:", keeps),
+        el("p", { text: "Its edits and renders are deleted for good. Your original file elsewhere on this Mac stays." }),
+      ]),
+      el("div", { class: "st-dialog-foot" }, [keep, remove]),
+    ]);
+    keep.addEventListener("click", () => finish(false));
+    remove.addEventListener("click", () => finish(true));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      finish(false);
+    });
+    host.append(dialog);
+    dialog.showModal();
+    keep.focus();
+  });
+}
+
+/**
+ * A bin button: it checks what the video is doing, asks, and on Delete queues it.
+ * `check` reads the state, `onDelete` deletes, and failures go to `onError`.
+ */
+export function deleteVideoButton({ name, check, onDelete, onError }) {
   const button = el("button", {
     class: "st-icon-btn st-delete-video",
     type: "button",
     title: "Delete this video and its edits and renders",
-    "aria-label": label,
+    "aria-label": `Delete ${name}`,
   }, [icon("trash")]);
-  let armed = false;
-  const reset = () => {
-    armed = false;
-    button.classList.remove("is-armed");
-    button.setAttribute("aria-label", label);
-    button.replaceChildren(icon("trash"));
-  };
   button.addEventListener("click", async (event) => {
     event.stopPropagation();
-    if (!armed) {
-      armed = true;
-      button.classList.add("is-armed");
-      button.setAttribute("aria-label", `Click again to delete ${name} for good`);
-      button.replaceChildren(document.createTextNode("Delete?"));
-      return;
-    }
     button.disabled = true;
     try {
-      await onDelete();
+      const state = await check();
+      if (await askToDelete(button.closest("#studio-root") || document.body, name, state)) {
+        await onDelete();
+      }
     } catch (error) {
-      button.disabled = false;
-      reset();
       onError?.(error);
+    } finally {
+      if (button.isConnected) button.disabled = false;
     }
   });
-  button.addEventListener("blur", reset);
   return button;
 }

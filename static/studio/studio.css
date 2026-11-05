@@ -1910,6 +1910,11 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 .st-recent-row, .st-library-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .st-recent-row .st-recent-item, .st-library-row .st-library-item { flex: 1 1 auto; min-width: 0; }
 .st-icon-btn.st-delete-video:hover:not(:disabled) { color: var(--st-bad); }
-.st-icon-btn.st-delete-video.is-armed { width: auto; padding-inline: 8px; background: var(--st-bad); color: #fff; font-size: 12px; font-weight: 600; }
+.st-delete-dialog { max-width: 440px; }
+.st-delete-dialog .st-dialog-body { display: grid; gap: 8px; }
+.st-delete-dialog p { margin: 0; }
+.st-delete-list { margin: 0; padding-left: 18px; color: var(--st-muted); }
+#studio-root .st-delete-confirm { border-color: var(--st-bad); background: var(--st-bad); color: #fff; }
+#studio-root .st-delete-confirm:hover:not(:disabled) { border-color: var(--st-bad); background: var(--st-bad); filter: brightness(1.1); }
 #st-edit-finish { display: inline-flex; align-items: center; gap: 5px; }
 #st-edit-finish[hidden] { display: none; }

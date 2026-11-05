@@ -291,6 +291,39 @@ class StoryQueueManager:
                     LOGGER.exception("could not cancel story render %s", item.get("artifact_id"))
         return self.public(queue)
 
+    def waiting_for_job(self, job_id: str) -> int:
+        """Items of one video that have not started yet, across all queues."""
+        return sum(
+            1
+            for queue in self.list()
+            for item in queue.get("items") or []
+            if item.get("job_id") == job_id and item.get("state") == "queued"
+        )
+
+    def drop_job(self, job_id: str) -> None:
+        """Take one video out of every queue, stopping its render if one runs."""
+        for summary in self.list():
+            running: list[dict] = []
+
+            def mutate(queue: dict) -> None:
+                for item in queue.get("items") or []:
+                    if item.get("job_id") != job_id or item.get("state") in TERMINAL_ITEMS:
+                        continue
+                    if item.get("state") == "running":
+                        running.append(dict(item))
+                    item["state"] = "cancelled"
+                    item["finished"] = _now()
+
+            if not any(item.get("job_id") == job_id for item in summary.get("items") or []):
+                continue
+            self._mutate(summary["id"], mutate)
+            for item in running:
+                if item.get("artifact_id") and self.backend is not None:
+                    try:
+                        self.backend.cancel(item, item["artifact_id"])
+                    except Exception:  # noqa: BLE001
+                        LOGGER.exception("could not cancel story render %s", item.get("artifact_id"))
+
     def resume(self, queue_id: str) -> dict:
         """One click: requeue interrupted items and run the rest in order."""
         def mutate(queue: dict) -> None:
@@ -409,7 +442,13 @@ class StoryQueueManager:
         self._set_item(queue_id, item["id"], artifact_id=artifact_id)
         limit = max(1.0, float(backend.timeout_for(item)))
         while True:
-            status = str(backend.status(item, artifact_id) or "")
+            try:
+                status = str(backend.status(item, artifact_id) or "")
+            except Exception as exc:  # noqa: BLE001 - e.g. the video was deleted meanwhile
+                self._set_item(
+                    queue_id, item["id"], state="failed", finished=_now(), error=_error_text(exc),
+                )
+                return
             if status == READY:
                 self._set_item(queue_id, item["id"], state="done", finished=_now())
                 return

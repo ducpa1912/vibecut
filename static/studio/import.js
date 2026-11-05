@@ -17,6 +17,7 @@ import { paintIcons } from "./edit/icons.js";
 import {
   createJobFromPath,
   createJobFromUrl,
+  deleteCheck,
   deleteJob,
   listJobs,
   request,
@@ -528,6 +529,7 @@ export function mount(root, ctx) {
         button,
         deleteVideoButton({
           name: job.name || job.title || job.id,
+          check: () => deleteCheck(job.id),
           onDelete: async () => {
             await deleteJob(job.id);
             ctx.jobDeleted?.(job.id);

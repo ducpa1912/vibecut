@@ -10,7 +10,7 @@
  * Nothing is deleted, renamed or uploaded.
  */
 
-import { deleteJob, listJobs, request } from "./api.js";
+import { deleteCheck, deleteJob, listJobs, request } from "./api.js";
 import { deleteVideoButton, el, formatBytes, formatDuration, shortDate, statusText, statusTone } from "./ui.js";
 
 export const FINISHED_TAB = "finished";
@@ -232,6 +232,7 @@ export function mount(root, ctx = {}) {
       row,
       deleteVideoButton({
         name: sourceTitle(job),
+        check: () => deleteCheck(job.id),
         onDelete: async () => {
           await deleteJob(job.id);
           ctx.jobDeleted?.(job.id);
