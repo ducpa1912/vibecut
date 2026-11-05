@@ -153,7 +153,8 @@ CLASSIC_CLEAN_KINDS = {
     "crop": "crop_guard",
     "fill": "fill",
 }
-MAX_CLASSIC_CLEAN = 24
+# One box per line of text, so a long video has many.
+MAX_CLASSIC_CLEAN = 1000
 CLASSIC_CLEAN_DEFAULT_COLOR = "#0b0d12"
 # A Classic box's `method` is what the founder picked (blur, crop or fill); a fill box also carries `engine` (which model runs). `edits` calls the
 # engine "method" inside the Edit, so the two names must not be confused.

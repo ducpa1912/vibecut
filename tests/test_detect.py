@@ -252,14 +252,25 @@ def _fake_extract(monkeypatch, duration: float, create: int | None = None):
     return calls
 
 
-def test_extract_text_frames_uses_half_fps_and_reports_windows(monkeypatch, tmp_path):
+def test_extract_text_frames_reads_two_a_second_and_reports_windows(monkeypatch, tmp_path):
     calls = _fake_extract(monkeypatch, 20.0)
     frames = pipeline.extract_text_frames("/tmp/source.mp4", tmp_path, 20.0)
-    assert len(frames) == 10
+    assert len(frames) == 40
     assert frames[0]["start"] == 0.0
-    assert frames[1]["start"] == 2.0
+    assert frames[1]["start"] == 0.5
     assert frames[-1]["end"] == 20.0
-    assert "fps=0.5000" in calls["cmd"][calls["cmd"].index("-vf") + 1]
+    assert "fps=2.0000" in calls["cmd"][calls["cmd"].index("-vf") + 1]
+
+
+def test_extract_text_frames_offsets_a_scene_window(monkeypatch, tmp_path):
+    calls = _fake_extract(monkeypatch, 20.0, create=8)
+    frames = pipeline.extract_text_frames(
+        "/tmp/source.mp4", tmp_path, 20.0, start=4.0, end=8.0,
+    )
+    assert frames[0]["start"] == 4.0
+    assert frames[-1]["end"] == 8.0
+    assert calls["cmd"][calls["cmd"].index("-ss") + 1] == "4.000"
+    assert calls["cmd"][calls["cmd"].index("-t") + 1] == "4.000"
 
 
 def test_extract_text_frames_lowers_cadence_for_long_sources(monkeypatch, tmp_path):
@@ -328,7 +339,7 @@ def test_read_text_samples_maps_records_to_frames(monkeypatch, tmp_path):
 # ---------------------------------------------------------------- tracklets
 
 
-def test_merge_lines_joins_two_caption_lines():
+def test_merge_lines_keeps_stacked_lines_apart():
     merged = detect.merge_lines(
         [
             line("first line of the caption", 0.15, 0.76, 0.7, 0.06),
@@ -336,9 +347,77 @@ def test_merge_lines_joins_two_caption_lines():
         ],
         start=0.0, end=2.0, source="sample",
     )
+    assert [item["box"] for item in merged] == [
+        box(0.15, 0.76, 0.7, 0.06), box(0.2, 0.83, 0.6, 0.06),
+    ]
+
+
+def test_merge_lines_joins_pieces_of_one_line():
+    merged = detect.merge_lines(
+        [
+            line("first piece", 0.12, 0.78, 0.39, 0.03),
+            line("second piece", 0.53, 0.78, 0.33, 0.03),
+        ],
+        start=0.0, end=2.0, source="sample",
+    )
     assert len(merged) == 1
-    assert merged[0]["box"] == box(0.15, 0.76, 0.7, 0.13)
-    assert "second line" in merged[0]["text"]
+    assert merged[0]["box"]["x"] == 0.12
+
+
+def _sample(start, *lines):
+    return {"start": start, "end": start + 0.5, "text": list(lines)}
+
+
+def _weak(text, x=0.3, y=0.78, w=0.3, h=0.03):
+    return {**line(text, x, y, w, h), "confidence": 0.3}
+
+
+def test_an_unsure_read_counts_when_the_next_frame_agrees():
+    rows = [_sample(9.0, _weak("wash and play 5")), _sample(9.5, _weak("wash and play x"))]
+    tracklets = detect.build_tracklets(detect.observations_from_samples(rows), 30.0)
+    assert len(tracklets) == 1
+    assert tracklets[0]["ranges"] == [{"start": 8.75, "end": 9.75}]
+
+
+def test_an_unsure_read_alone_is_noise():
+    rows = [_sample(9.0, _weak("zzq kk")), _sample(9.5), _sample(10.0, _weak("pmw rr", 0.6, 0.2))]
+    assert detect.build_tracklets(detect.observations_from_samples(rows), 30.0) == []
+
+
+def test_a_line_typing_on_is_one_tracklet():
+    words = "liking the taste of coffee, try this one"
+    rows = [
+        _sample(38.0, line("liking the taste", 0.07, 0.78, 0.35, 0.03)),
+        _sample(38.5, line(words, 0.07, 0.78, 0.83, 0.03)),
+        _sample(39.0, line(words, 0.07, 0.78, 0.83, 0.03)),
+    ]
+    tracklets = detect.build_tracklets(detect.observations_from_samples(rows), 60.0)
+    assert len(tracklets) == 1
+    assert tracklets[0]["text_sample"] == words
+    assert tracklets[0]["ranges"] == [{"start": 37.75, "end": 39.25}]
+
+
+def test_a_logo_above_a_caption_gets_its_own_box():
+    rows = [_sample(
+        40.0 + step * 0.5,
+        line("Coffee", 0.62, 0.72, 0.08, 0.02),
+        line("every cup tastes of summer", 0.21, 0.78, 0.67, 0.03),
+    ) for step in range(4)]
+    tracklets = detect.build_tracklets(detect.observations_from_samples(rows), 60.0)
+    assert sorted(item["box"]["h"] for item in tracklets) == [0.02, 0.03]
+
+
+def test_words_seen_in_many_places_are_marked_minor():
+    words = "luckin coffee"
+    rows = [
+        _sample(float(index * 5), line(words, x, y, 0.12, 0.02))
+        for index, (x, y) in enumerate(((0.25, 0.84), (0.48, 0.67), (0.66, 0.61)))
+    ]
+    rows.append(_sample(30.0, line("a real subtitle line", 0.2, 0.78, 0.6, 0.03)))
+    tracklets = detect.build_tracklets(detect.observations_from_samples(rows), 60.0)
+    minor = {item["text_sample"]: bool(item.get("minor")) for item in tracklets}
+    assert minor[words] is True
+    assert minor["a real subtitle line"] is False
 
 
 def test_merge_lines_keeps_far_apart_elements_separate():
@@ -360,17 +439,71 @@ def test_tracklet_contract_fields_and_ranges():
     assert set(tracklet) >= {
         "id", "kind", "box", "ranges", "text_sample", "confidence",
     }
-    assert tracklet["id"] == "trk_0001"
+    assert tracklet["id"].startswith("trk_")
     assert tracklet["kind"] == "subtitle"
-    assert tracklet["ranges"] == [{"start": 10.0, "end": 20.0}]
+    assert tracklet["ranges"] == [{"start": 9.0, "end": 19.0}]
     assert tracklet["box"] == box(0.1, 0.8, 0.8, 0.08)
     assert 0.0 <= tracklet["confidence"] <= 1.0
 
 
-def test_tracklet_ranges_merge_across_a_small_gap():
+def test_time_off_screen_is_not_covered():
     rows = subtitle_rows(3, start=0.0) + subtitle_rows(2, start=10.0)
     tracklets = detect.build_tracklets(observations(rows), 30.0, max_gap=5.0)
-    assert tracklets[0]["ranges"] == [{"start": 0.0, "end": 14.0}]
+    assert [item for tracklet in tracklets for item in tracklet["ranges"]] == [
+        {"start": 0.0, "end": 5.0}, {"start": 9.0, "end": 13.0},
+    ]
+
+
+def _timed_lines(*lines):
+    """Half-second samples: (text, x, w, first, last) for each line."""
+    observed = []
+    for text, x, w, first, last in lines:
+        t = first
+        while t <= last:
+            observed.append({
+                "text": text, "box": box(x, 0.8, w, 0.04), "confidence": 0.9,
+                "start": t, "end": t + 0.5, "t": t, "source": "sample",
+            })
+            t += 0.5
+    return observed
+
+
+def test_each_line_has_its_own_tight_box_and_time():
+    tracklets = detect.build_tracklets(_timed_lines(
+        ("the first line of words", 0.3, 0.4, 1.0, 3.0),
+        ("a very much longer second subtitle line here", 0.05, 0.9, 3.5, 6.0),
+    ), 30.0)
+    assert len(tracklets) == 2
+    short, long = tracklets
+    assert short["box"]["x"] == 0.3 and short["box"]["w"] == 0.4
+    assert long["box"]["x"] == 0.05 and long["box"]["w"] == 0.9
+    assert short["ranges"] == [{"start": 0.75, "end": 3.25}]
+    assert long["ranges"] == [{"start": 3.25, "end": 6.25}]
+    assert short["kind"] == long["kind"]
+    assert short["id"] != long["id"]
+
+
+def test_an_ocr_misread_stays_in_the_same_line():
+    tracklets = detect.build_tracklets(_timed_lines(
+        ("luckin coffee is here", 0.3, 0.4, 1.0, 2.0),
+        ("Iuckin coffee is here", 0.3, 0.4, 2.5, 3.0),
+    ), 30.0)
+    assert len(tracklets) == 1
+    assert tracklets[0]["ranges"] == [{"start": 0.75, "end": 3.25}]
+
+
+def test_a_scan_ignores_the_four_second_scene_readings(tmp_path):
+    job = job_record()
+    job["analysis"]["scenes"] = [{
+        "start": 0.0, "end": 20.0, "mid": 10.0, "ocr": "wide words",
+        "ocr_boxes": [{"text": "wide words", "box": box(0.0, 0.5, 1.0, 0.2), "confidence": 0.9}],
+    }]
+
+    def sampler(path, job_dir, duration, *, fps, max_frames):
+        return sample_payload(subtitle_rows(2, start=0.0))
+
+    report = detect.run_check("job1", job, tmp_path, sampler=sampler, audio_extractor=None)
+    assert all(item["box"]["w"] < 1.0 for item in report["tracklets"])
 
 
 def test_tracklet_ids_are_deterministic_by_time():
@@ -378,7 +511,7 @@ def test_tracklet_ids_are_deterministic_by_time():
     bottom = (0.0, [line("caption", 0.1, 0.8, 0.8, 0.08)])
     first = detect.build_tracklets(observations([bottom, top]), 20.0)
     second = detect.build_tracklets(observations([top, bottom]), 20.0)
-    assert [item["id"] for item in first] == ["trk_0001", "trk_0002"]
+    assert [item["id"] for item in first] == [item["id"] for item in second]
     assert [item["text_sample"] for item in first] == [
         item["text_sample"] for item in second
     ]
@@ -600,7 +733,7 @@ def test_watermark_is_refused_and_never_prefilled():
     job = job_record()
     rows = [{"text": "TikTok", "box": box(0.84, 0.05, 0.13, 0.05), "confidence": 0.9}]
     report = report_for(job, [(index * 2.0, rows) for index in range(4)])
-    assert report["policy"]["watermark_refused"] == ["trk_0001"]
+    assert report["policy"]["watermark_refused"] == [report["tracklets"][0]["id"]]
     assert report["policy"]["refusals"][0]["message"] == detect.WATERMARK_MESSAGE
     assert report["clean_prefill"][0]["action"] == "refused"
     assert report["clean_prefill"][0]["enabled"] is False
@@ -788,11 +921,29 @@ def test_run_check_samples_text_and_persists(tmp_path):
     report = detect.run_check(
         "job1", job, tmp_path, sampler=sampler, audio_extractor=None,
     )
-    assert calls == {"path": job["source"]["path"], "duration": 20.0, "fps": 0.5}
+    assert calls == {"path": job["source"]["path"], "duration": 20.0, "fps": 2.0}
     assert report["tracklets"][0]["kind"] == "subtitle"
     stored = detect.load_report(tmp_path)
     assert stored == report
     assert report["engine"]["sampled_pass"] is True
+
+
+def test_run_check_passes_a_scene_window_to_the_sampler(tmp_path):
+    job = job_record()
+    calls = {}
+
+    def sampler(path, job_dir, duration, *, fps, max_frames, **kwargs):
+        calls.update({"duration": duration, **kwargs})
+        return sample_payload(subtitle_rows(2, start=5.0))
+
+    report = detect.run_check(
+        "job1", job, tmp_path, sampler=sampler, audio_extractor=None,
+        start=4.0, end=8.0,
+    )
+    assert calls["duration"] == 20.0
+    assert calls["start"] == 4.0 and calls["end"] == 8.0
+    assert report["scope"] == {"start": 4.0, "end": 8.0}
+    assert report["status"] == "ready"
 
 
 def test_run_check_survives_a_sampler_failure(tmp_path):
@@ -958,3 +1109,12 @@ def test_check_body_validates_fps(check_env, inline_check):
         f"/api/jobs/{check_env.job_id}/check", json={"fps": 30},
     )
     assert response.status_code == 422
+
+
+def test_a_found_line_names_its_words_for_the_clean_panel():
+    entry = detect._tracklet_ref({
+        "id": "trk_a", "kind": "subtitle", "box": box(0.1, 0.8, 0.8, 0.05),
+        "ranges": [{"start": 0.0, "end": 2.0}], "text_sample": "  Say it   once ",
+    })
+    assert entry["text"] == "  Say it   once "
+    assert entry["text_key"] == "Say it once"

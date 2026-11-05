@@ -12,6 +12,7 @@ description for a future renderer, not an executable command.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from typing import Any, Iterable
@@ -28,7 +29,13 @@ EXPLICIT_CONFIDENCE = 1.0
 SUPPORTED_METHODS = ("blur", "cover", "crop")
 SUPPORTED_ASPECTS = ("9:16", "4:5", "1:1", "16:9")
 CLEAN_LAYER_KINDS = ("crop_guard", "blur", "plate", "mask")
-MAX_CLEAN_LAYERS = 32
+# One layer per line of text, so a long video has many.
+MAX_CLEAN_LAYERS = 1000
+# Words edits.py refuses in a label; what a video shows can contain them.
+_LABEL_FORBIDDEN_RE = re.compile(
+    r"inpaint|generative|delogo|watermark|voice[\s_-]*clon|avatar|stock[\s_-]*b-?roll",
+    re.IGNORECASE,
+)
 MAX_LAYER_RANGES = 64
 RESIDUAL_TARGET_PCT = 0.5
 # Hard server cap. The route rejects larger requests and the sampling helper
@@ -51,9 +58,10 @@ ASPECT_DIMENSIONS = {
 }
 
 LIMITATIONS = [
-    "Plausible cleanup, not restoration. Covered, blurred, or cropped pixels are not recovered.",
+    "Plausible cleanup, not restoration. Removed, covered, blurred, or cropped pixels are not recovered.",
+    "Remove interpolates nearby pixels; it is not generative repair and leaves no guarantee on complex backgrounds.",
     "No watermark removal and no guarantee that every text overlay is removed.",
-    "No generative repair, inpainting, face repair, logo repair, or temporal reconstruction.",
+    "No generative repair, face repair, logo repair, or temporal reconstruction.",
     "Scene OCR is advisory. When exact OCR boxes are unavailable, detection is approximate.",
     "A human must review every plan and every cleaned output before publishing.",
     "This prototype returns a plan only. It does not render, modify, or queue the source.",
@@ -224,8 +232,8 @@ def _padded_box(box: dict) -> dict:
     small, bounded pad keeps the Clean layer over the whole visible word
     without covering much of the frame.
     """
-    pad_x = min(0.02, max(0.005, float(box["w"]) * 0.05))
-    pad_y = min(0.04, max(0.008, float(box["h"]) * 0.35))
+    pad_x = min(0.012, max(0.004, float(box["w"]) * 0.03))
+    pad_y = min(0.012, max(0.006, float(box["h"]) * 0.25))
     x = max(0.0, float(box["x"]) - pad_x)
     y = max(0.0, float(box["y"]) - pad_y)
     right = min(1.0, float(box["x"]) + float(box["w"]) + pad_x)
@@ -238,12 +246,7 @@ def _padded_box(box: dict) -> dict:
     }
 
 
-def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
-    raw = str(tracklet.get("tracklet_id") or tracklet.get("id") or "trk").strip()
-    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")[:56]
-    if not safe or not safe[0].isalpha():
-        safe = f"trk_{safe}" if safe else "trk"
-    base = f"cl_{safe}"
+def _unique_layer_id(base: str, used: set[str]) -> str:
     candidate = base[:64]
     index = 2
     while candidate in used:
@@ -252,6 +255,48 @@ def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
         index += 1
     used.add(candidate)
     return candidate
+
+
+def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
+    raw = str(tracklet.get("tracklet_id") or tracklet.get("id") or "trk").strip()
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")[:56]
+    if not safe or not safe[0].isalpha():
+        safe = f"trk_{safe}" if safe else "trk"
+    return _unique_layer_id(f"cl_{safe}", used)
+
+
+def _separate_stacked_boxes(layers: list[dict]) -> None:
+    """Meet stacked lines halfway, so padding does not lay one box over another.
+
+    Boxes that overlap by more than their padding hold text on top of text, and
+    stay as they are.
+    """
+    for index, first in enumerate(layers):
+        for second in layers[index + 1:]:
+            top, bottom = sorted((first, second), key=lambda layer: layer["box"]["y"])
+            a, b = top["box"], bottom["box"]
+            if min(a["x"] + a["w"], b["x"] + b["w"]) <= max(a["x"], b["x"]):
+                continue
+            overlap = a["y"] + a["h"] - b["y"]
+            if overlap <= 0 or overlap > 0.5 * min(a["h"], b["h"]):
+                continue
+            if not any(
+                min(x["end"], y["end"]) > max(x["start"], y["start"])
+                for x in top["ranges"] for y in bottom["ranges"]
+            ):
+                continue
+            middle = round(b["y"] + overlap / 2.0, 6)
+            a["h"] = round(middle - a["y"], 6)
+            b["h"] = round(b["y"] + b["h"] - middle, 6)
+            b["y"] = middle
+
+
+def _text_label(text: Any) -> str:
+    """The words on screen name a layer, unless an Edit could not save them."""
+    label = " ".join(str(text or "").split())[:80]
+    if not label or _LABEL_FORBIDDEN_RE.search(label):
+        return "On-screen text"
+    return label
 
 
 def _layer_ranges(tracklet: dict) -> list[dict]:
@@ -325,6 +370,7 @@ def tracklet_clean_layers(
     warnings: list[str] = []
     used: set[str] = set()
     z_cursor = 0
+    samples = {str(item.get("id") or ""): item.get("text_sample") for item in items}
     for entry in entries:
         tracklet_id = entry["tracklet_id"]
         if wanted is not None and tracklet_id not in wanted:
@@ -391,18 +437,20 @@ def tracklet_clean_layers(
             "color": "#000000",
             "opacity": 1.0,
             "radius": radius,
-            "label": _LAYER_LABELS.get(
-                (kind, action), f"Burned-in {kind.replace('_', ' ')}"
-            )[:80],
+            # The words name the layer, in the list and on the timeline.
+            "label": _text_label(samples.get(tracklet_id)),
             # Optional provenance. The layer's own ``kind`` is the cleanup
             # method, so the detected Check kind travels as ``tracklet_kind``.
             # Edit save re-checks it against the rights policy.
             "tracklet_id": tracklet_id,
             "tracklet_kind": kind,
         }
+        text_key = _text_key(samples.get(tracklet_id))
+        if text_key:
+            base_layer["text_key"] = text_key
         layers.append(base_layer)
         z_cursor += 1
-        if kind == "subtitle" and action == "blur":
+        if kind == "subtitle" and action == "blur" and entry.get("quality_warning"):
             # Mid-frame text has no clean plate already in the frame. Add an
             # opaque cover under the blur so no old glyph can survive.
             if len(layers) >= MAX_CLEAN_LAYERS:
@@ -421,12 +469,141 @@ def tracklet_clean_layers(
             }
             layers.append(companion)
             z_cursor += 1
+    _separate_stacked_boxes(layers)
     return {
         "layers": layers,
         "refused": refused,
         "warnings": warnings,
         "attested": bool(effective),
         "tracklets": len(items),
+    }
+
+
+def _clean_region_key(layer: dict) -> tuple:
+    """Identify one Clean region without its layer or tracklet id."""
+    box = layer.get("box") if isinstance(layer.get("box"), dict) else {}
+    try:
+        coords = tuple(
+            round(float(box.get(key) or 0.0), 6)
+            for key in ("x", "y", "w", "h")
+        )
+    except (TypeError, ValueError):
+        coords = (0.0, 0.0, 0.0, 0.0)
+    return (
+        str(layer.get("kind") or "").strip().lower(),
+        coords,
+        tuple((item["start"], item["end"]) for item in _layer_ranges(layer)),
+    )
+
+
+def _text_key(text: Any) -> str:
+    """A short hash of what a scan read, comparable across scans."""
+    words = re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+    return hashlib.sha1(words.encode("utf-8")).hexdigest()[:12] if words else ""
+
+
+def _same_scan_text(first: dict, second: dict) -> bool:
+    """The same text in the same area. Overlapping different text is allowed.
+
+    Areas must match, and then the words match or the times overlap. Ids alone
+    are not trusted: older reports numbered them, so an id can name other text.
+    """
+    box_a, box_b = first.get("box"), second.get("box")
+    if not isinstance(box_a, dict) or not isinstance(box_b, dict):
+        return False
+    try:
+        if detect._similar(box_a, box_b) < 0.3:
+            return False
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return False
+    key_a, key_b = first.get("text_key"), second.get("text_key")
+    if key_a and key_b and key_a == key_b:
+        return True
+    ranges_a, ranges_b = _layer_ranges(first), _layer_ranges(second)
+    if not ranges_a or not ranges_b:
+        return True
+    # Lines that follow each other can touch; only a real overlap is one text.
+    return any(
+        min(a["end"], b["end"]) - max(a["start"], b["start"]) > 0.05
+        for a in ranges_a for b in ranges_b
+    )
+
+
+def _joined_ranges(first: list[dict], second: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    for item in sorted([*first, *second], key=lambda value: value["start"]):
+        if merged and item["start"] <= merged[-1]["end"]:
+            merged[-1]["end"] = max(merged[-1]["end"], item["end"])
+        else:
+            merged.append({"start": item["start"], "end": item["end"]})
+    return merged
+
+
+def merge_auto_clean_layers(
+    existing: Iterable[dict] | None,
+    generated: Iterable[dict] | None,
+) -> dict:
+    """Return generated Clean layers that an Edit does not already contain.
+
+    Existing layers are not changed here. When new times belong to a scan
+    layer already in the Edit, ``updated`` carries its id and joined ranges for
+    the frontend to apply. Drawn boxes have no tracklet and are never matched,
+    except an identical region. A generated id that collides with an existing
+    id gets a numeric suffix, so the frontend can still save the merged Edit.
+    """
+    current = [item for item in existing or [] if isinstance(item, dict)]
+    scanned = [dict(item) for item in current if str(item.get("tracklet_id") or "").strip()]
+    regions = {_clean_region_key(item) for item in current}
+    used = {
+        str(item.get("id") or "")
+        for item in current
+        if str(item.get("id") or "")
+    }
+    layers: list[dict] = []
+    skipped: list[dict] = []
+    updated: dict[str, list[dict]] = {}
+    for item in generated or []:
+        if not isinstance(item, dict):
+            continue
+        tracklet_id = str(item.get("tracklet_id") or "").strip()
+        kind = str(item.get("tracklet_kind") or item.get("kind") or "").strip().lower()
+        region = _clean_region_key(item)
+        match = next((row for row in [*scanned, *layers] if _same_scan_text(row, item)), None) if tracklet_id else None
+        if match is not None:
+            regions.add(region)
+            have = _layer_ranges(match)
+            incoming = _layer_ranges(item)
+            if have and incoming:
+                joined = _joined_ranges(have, incoming)
+                if joined != have:
+                    match["ranges"] = joined
+                    if match in scanned:
+                        updated[str(match.get("id") or "")] = joined
+            skipped.append({
+                "tracklet_id": tracklet_id,
+                "kind": kind,
+                "reason": "This text already has a Clean layer in the Edit.",
+            })
+            continue
+        if region in regions:
+            skipped.append({
+                "tracklet_id": tracklet_id or None,
+                "kind": kind,
+                "reason": "An identical Clean region is already in the Edit.",
+            })
+            continue
+        layer = dict(item)
+        raw_id = str(layer.get("id") or "").strip()
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_id).strip("_")[:64]
+        if not safe or not safe[0].isalpha():
+            safe = f"cl_{safe}" if safe else "cl_auto"
+        layer["id"] = _unique_layer_id(safe, used)
+        layers.append(layer)
+        regions.add(region)
+    return {
+        "layers": layers,
+        "skipped": skipped,
+        "updated": [{"id": key, "ranges": value} for key, value in updated.items()],
     }
 
 

@@ -69,9 +69,9 @@
   },
   {
    "path": "cleanup.py",
-   "source": "classic 2f385a2",
-   "sha256": "34e4039cdeda3ab254987795f9273f721080a6e54da514484ea9ad3c6d66d383",
-   "feature_version": "1.0.0"
+   "source": "studio 632dc3a: one tight box per line, weak reads, 2 fps scan",
+   "sha256": "7744b3d6a682e6e24ad19a28228521061c2d22c4cdbb547658ef19b45ad2c9d0",
+   "feature_version": "1.0.1"
   },
   {
    "path": "cli.py",
@@ -99,9 +99,9 @@
   },
   {
    "path": "detect.py",
-   "source": "classic: no rights gate, LaMa default, mask support",
-   "sha256": "7a9f7d0494bd1506f7c7ea2a0979f448d071be041d0f5f69a04402eedc28c83e",
-   "feature_version": "1.0.1"
+   "source": "studio 632dc3a: one tight box per line, weak reads, 2 fps scan",
+   "sha256": "7058416abbb8248f2b57efdaf16872a67b72b4f4a0039524c920450259e5b056",
+   "feature_version": "1.0.2"
   },
   {
    "path": "disk.py",
@@ -117,9 +117,9 @@
   },
   {
    "path": "edits.py",
-   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
-   "sha256": "69d8a4eee8faeff3f318fb3218b14c5def1796a76142cd5b766c695009a888a8",
-   "feature_version": "1.0.2"
+   "source": "studio 632dc3a: one tight box per line, weak reads, 2 fps scan",
+   "sha256": "9c26b0c1ce9eab79f5cec45aad47d1f54c31d3c3b615942b820aeeca515a021f",
+   "feature_version": "1.0.3"
   },
   {
    "path": "exports.py",
@@ -183,9 +183,9 @@
   },
   {
    "path": "pipeline.py",
-   "source": "classic 2f385a2",
-   "sha256": "b2e9e9bacdb566b7959d0bc9af650a070eda0c402632b5ac42b5d6a2ca8b8668",
-   "feature_version": "1.0.0"
+   "source": "studio 632dc3a: one tight box per line, weak reads, 2 fps scan",
+   "sha256": "707b1e4c621920a8907b3f63adcaef07e9bee71df57d8ef8b9021b08c6b8da68",
+   "feature_version": "1.0.1"
   },
   {
    "path": "preflight.py",

@@ -23,6 +23,8 @@ frame reader and audio extractor are injected by ``routes_check``.
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
+import hashlib
 import inspect
 import json
 import math
@@ -42,10 +44,16 @@ SCHEMA_VERSION = 1
 REPORT_DIR = "check"
 REPORT_FILE = "source_report.json"
 
-DEFAULT_SAMPLE_FPS = 0.5
+# A subtitle changes every few seconds, so the scan reads two frames a second.
+# That puts each edge of a text's time within a quarter second.
+DEFAULT_SAMPLE_FPS = 2.0
 DEFAULT_MAX_FRAMES = 3600
 TRACKLET_MAX_GAP = 4.5
-MAX_TRACKLETS = 160
+# Each line of text is its own tracklet, so a long video has many.
+MAX_TRACKLETS = 1000
+# Two readings are one line when this much of the words match; OCR misreads a
+# few characters from frame to frame.
+LINE_MATCH = 0.6
 MAX_RANGES = 200
 
 KINDS = rights.KINDS
@@ -246,6 +254,12 @@ def _observation(
 # junk ("^9UM.", "OII8C", "4HIH}") that inflated "regions need cleaning".
 OCR_MIN_CONFIDENCE = 0.4
 OCR_NOISY_CONFIDENCE = 0.7
+# A read this unsure counts only when the frames around it read the same words:
+# thin text over leaves reads badly, and noise does not repeat.
+OCR_WEAK_CONFIDENCE = 0.25
+# Two pieces on one line further apart than this (share of frame width) are
+# separate text.
+LINE_PIECE_GAP = 0.04
 _OCR_CLEAN_TOKEN = re.compile(r"^[\"'(\[]?[^\W\d_]+(?:['’-][^\W\d_]+)*[.,!?:;)\]\"'…]*$|^\d+(?:[.,:]\d+)*[%.,!?]?$")
 
 
@@ -282,8 +296,14 @@ def merge_lines(
     end: float,
     source: str,
     approximate: bool = False,
+    keep_weak: bool = False,
 ) -> list[dict]:
-    """Merge spatially adjacent OCR lines from one frame into text blocks."""
+    """Join pieces of one OCR line from a frame, so each box holds one line.
+
+    Stacked lines stay apart: joined, a caption and a logo above it make one
+    box over everything between them. ``keep_weak`` keeps unsure reads, marked,
+    for :func:`_rescue_weak_reads` to judge against the frames around them.
+    """
     items = []
     for line in lines or []:
         if not isinstance(line, dict):
@@ -293,12 +313,14 @@ def merge_lines(
         if not text or box is None:
             continue
         confidence = _clamp(_number(line.get("confidence"), 0.5))
-        if ocr_line_is_junk(text, confidence):
+        weak = ocr_line_is_junk(text, confidence)
+        if weak and not (keep_weak and confidence >= OCR_WEAK_CONFIDENCE):
             continue
         items.append({
             "text": text,
             "box": box,
             "confidence": confidence,
+            "weak": weak,
         })
     items.sort(key=lambda item: (item["box"]["y"], item["box"]["x"]))
     merged: list[dict] = []
@@ -306,18 +328,13 @@ def merge_lines(
         target = None
         for block in merged:
             box = block["box"]
-            vertical_gap = max(box["y"], item["box"]["y"]) - min(
-                box["y"] + box["h"], item["box"]["y"] + item["box"]["h"],
+            shared_height = min(box["y"] + box["h"], item["box"]["y"] + item["box"]["h"]) - max(
+                box["y"], item["box"]["y"],
             )
-            horizontal_overlap = max(
-                0.0,
-                min(box["x"] + box["w"], item["box"]["x"] + item["box"]["w"])
-                - max(box["x"], item["box"]["x"]),
+            across = max(box["x"], item["box"]["x"]) - min(
+                box["x"] + box["w"], item["box"]["x"] + item["box"]["w"],
             )
-            narrow = min(box["w"], item["box"]["w"])
-            if vertical_gap <= 0.6 * max(box["h"], item["box"]["h"]) and (
-                horizontal_overlap >= 0.45 * narrow or _iou(box, item["box"]) > 0.2
-            ):
+            if shared_height >= 0.5 * min(box["h"], item["box"]["h"]) and across <= LINE_PIECE_GAP:
                 target = block
                 break
         if target is None:
@@ -326,6 +343,7 @@ def merge_lines(
                 "box": dict(item["box"]),
                 "confidence": item["confidence"],
                 "lines": 1,
+                "weak": item["weak"],
             })
             continue
         total = target["lines"] + 1
@@ -335,12 +353,16 @@ def merge_lines(
         target["text"] = f"{target['text']} {item['text']}".strip()
         target["box"] = _union(target["box"], item["box"])
         target["lines"] = total
+        target["weak"] = target["weak"] and item["weak"]
     return [
-        _observation(
-            start=start, end=end, text=block["text"], box=block["box"],
-            confidence=block["confidence"], source=source,
-            approximate=approximate,
-        )
+        {
+            **_observation(
+                start=start, end=end, text=block["text"], box=block["box"],
+                confidence=block["confidence"], source=source,
+                approximate=approximate,
+            ),
+            **({"weak": True} if block["weak"] else {}),
+        }
         for block in merged
     ]
 
@@ -413,7 +435,7 @@ def observations_from_samples(samples: Iterable[dict]) -> list[dict]:
             end = start + 1e-3
         lines = sample.get("text") or []
         blocks = merge_lines(
-            lines, start=start, end=end, source="sample",
+            lines, start=start, end=end, source="sample", keep_weak=True,
         )
         _mark_screen_frame(blocks, len(lines))
         observations.extend(blocks)
@@ -697,6 +719,281 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
     return "lower_third" if y >= 0.5 else "title", 0.45
 
 
+def _track_box(track: dict) -> dict:
+    values = track["observations"]
+    box = dict(values[0]["box"])
+    for value in values[1:]:
+        box = _union(box, value["box"])
+    return box
+
+
+def _join_returning_text(tracks: list[dict]) -> list[dict]:
+    """One track per text and area, however long the text was off screen."""
+    joined: list[dict] = []
+    for track in tracks:
+        words = {_normalized_text(item["text"]) for item in track["observations"]} - {""}
+        box = _track_box(track)
+        match = next(
+            (
+                other for other in joined
+                if words & other["_words"] and _similar(box, other["_box"]) >= 0.3
+            ),
+            None,
+        )
+        if match is None:
+            joined.append({**track, "_words": words, "_box": box})
+            continue
+        match["observations"].extend(track["observations"])
+        match["_words"] |= words
+        match["_box"] = _union(match["_box"], box)
+    return joined
+
+
+def _stable_tracklet_id(item: dict, used: set[str]) -> str:
+    """An id from the text and area, so a rescan keeps it for the same text."""
+    cx, cy = _center(item["box"])
+    text = _normalized_text(item.get("text_sample"))
+    seed = f"{text}|{round(cx / 0.05)}|{round(cy / 0.05)}"
+    if not text:
+        ranges = item.get("ranges") or [{}]
+        seed += f"|{round(float(ranges[0].get('start') or 0.0), 1)}"
+    base = f"trk_{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:10]}"
+    candidate = base
+    suffix = 2
+    while candidate in used:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def _keep_text_outside_scope(report: dict, previous: dict | None, start: float, end: float) -> None:
+    """A scene scan adds to the last report, so it does not lose the rest."""
+    if not isinstance(previous, dict) or previous.get("status") != "ready":
+        return
+
+    def outside(ranges: Any) -> list[dict]:
+        pieces: list[dict] = []
+        for item in ranges if isinstance(ranges, list) else []:
+            if not isinstance(item, dict):
+                continue
+            low, high = _number(item.get("start"), 0.0), _number(item.get("end"), 0.0)
+            if low < start:
+                pieces.append({"start": low, "end": min(high, start)})
+            if high > end:
+                pieces.append({"start": max(low, end), "end": high})
+        return [piece for piece in pieces if piece["end"] > piece["start"]]
+
+    # The id comes from the words and the area, so text seen again in this scan
+    # has the same id. It joins its old row instead of listing twice.
+    current = {str(item.get("id")): item for item in report.get("tracklets") or []}
+    kept: list[dict] = []
+    for item in previous.get("tracklets") or []:
+        rest = outside(item.get("ranges"))
+        if not rest:
+            continue
+        match = current.get(str(item.get("id")))
+        if match is None:
+            kept.append({**item, "ranges": rest})
+            continue
+        match["ranges"] = _merge_ranges(
+            sorted([*(match.get("ranges") or []), *rest], key=lambda value: value["start"]),
+            0.0,
+        )
+        if isinstance(match.get("box"), dict) and isinstance(item.get("box"), dict):
+            match["box"] = _union(match["box"], item["box"])
+    if not kept and not any(
+        outside(item.get("ranges")) for item in previous.get("tracklets") or []
+    ):
+        return
+    report["tracklets"] = sorted(
+        [*kept, *(report.get("tracklets") or [])],
+        key=lambda item: (
+            _number((item.get("ranges") or [{}])[0].get("start"), 0.0), str(item.get("id") or ""),
+        ),
+    )
+    known = {str(item.get("id")) for item in report["tracklets"]}
+    seen = {str(entry.get("tracklet_id")) for entry in report.get("clean_prefill") or []}
+    report["clean_prefill"] = [
+        *(report.get("clean_prefill") or []),
+        *(
+            entry for entry in previous.get("clean_prefill") or []
+            if str(entry.get("tracklet_id")) in known and str(entry.get("tracklet_id")) not in seen
+        ),
+    ]
+    # The whole video was read, so this stays a whole-video report.
+    if not previous.get("scope"):
+        report.pop("scope", None)
+
+
+def _same_line(first: str, second: str) -> bool:
+    """Two readings of one line, allowing for OCR misreads."""
+    a, b = _normalized_text(first), _normalized_text(second)
+    if not a or not b or a == b:
+        return True
+    # Text typing itself on, or a read that caught part of the line.
+    if min(len(a), len(b)) >= 4 and (a in b or b in a):
+        return True
+    return SequenceMatcher(None, a, b, autojunk=False).ratio() >= LINE_MATCH
+
+
+def _line_runs(values: list[dict]) -> list[list[dict]]:
+    """Split one area's readings into the separate lines shown in it.
+
+    A new run starts when the words change, the box moves away, or the text
+    leaves the screen for longer than one missed frame.
+    """
+    runs: list[list[dict]] = []
+    for value in values:
+        last = runs[-1] if runs else None
+        if last is not None:
+            window = max(0.001, float(value["end"]) - float(value["start"]))
+            words = max((item["text"] for item in last), key=len)
+            if (
+                float(value["start"]) - float(last[-1]["end"]) <= 1.5 * window
+                and _same_line(value["text"], words)
+                and _similar(value["box"], last[-1]["box"]) > 0
+            ):
+                last.append(value)
+                continue
+        runs.append([value])
+    return runs
+
+
+def _run_range(run: list[dict], duration: float) -> dict:
+    """The time a line is on screen, from the frames that read it.
+
+    A sampled frame says the text was there at that moment, and it changed
+    somewhere between two frames, so each edge sits half a frame away.
+    """
+    start = float(run[0]["start"])
+    end = float(run[-1]["end"])
+    if run[0].get("source") == "sample":
+        half = (float(run[0]["end"]) - float(run[0]["start"])) / 2.0
+        start = max(0.0, start - half)
+        end = max(start + 0.001, float(run[-1]["start"]) + half)
+    if duration > 0:
+        end = min(duration, end)
+    return {"start": round(start, 3), "end": round(end, 3)}
+
+
+def _line_tracklets(item: dict, values: list[dict], duration: float) -> list[dict]:
+    """One tracklet per line, each with its own tight box and time."""
+    lines: list[list[list[dict]]] = []
+    for run in _line_runs(values):
+        words = _normalized_text(max((value["text"] for value in run), key=len, default=""))
+        home = next(
+            (
+                line for line in lines
+                if words and words == _normalized_text(
+                    max((value["text"] for value in line[0]), key=len, default=""),
+                )
+            ),
+            None,
+        )
+        if home is None:
+            lines.append([run])
+        else:
+            home.append(run)
+    out = []
+    for line in lines:
+        seen = [value for run in line for value in run]
+        box = dict(seen[0]["box"])
+        for value in seen[1:]:
+            box = _union(box, value["box"])
+        spans = _merge_ranges([_run_range(run, duration) for run in line], 0.0)
+        out.append({
+            **item,
+            "box": box,
+            "ranges": spans,
+            "text_sample": max((value["text"] for value in seen), key=len, default="")[:80],
+            "samples": len({int(value["start"] // 2.0) for value in seen}),
+            "duration": round(sum(span["end"] - span["start"] for span in spans), 3),
+            "approximate": any(value.get("approximate") for value in seen),
+        })
+    return out
+
+
+def _rescue_weak_reads(observations: list[dict]) -> list[dict]:
+    """Keep an unsure read only when a neighbouring frame read the same words."""
+    ordered = sorted(observations, key=lambda value: value["start"])
+    kept = []
+    for index, item in enumerate(ordered):
+        if not item.get("weak"):
+            kept.append(item)
+            continue
+        window = 1.5 * max(0.001, float(item["end"]) - float(item["start"]))
+        for other in (*ordered[max(0, index - 40):index], *ordered[index + 1:index + 41]):
+            if (
+                abs(float(other["start"]) - float(item["start"])) <= window
+                and float(other["start"]) != float(item["start"])
+                and _similar(item["box"], other["box"]) > 0
+                and _same_line(item["text"], other["text"])
+            ):
+                kept.append(item)
+                break
+    return kept
+
+
+def _inside_share(inner: dict, outer: dict) -> float:
+    """How much of ``inner`` sits inside ``outer``."""
+    width = min(inner["x"] + inner["w"], outer["x"] + outer["w"]) - max(inner["x"], outer["x"])
+    height = min(inner["y"] + inner["h"], outer["y"] + outer["h"]) - max(inner["y"], outer["y"])
+    if width <= 0 or height <= 0:
+        return 0.0
+    return width * height / max(1e-9, _area(inner))
+
+
+def _same_text_at_same_time(first: dict, second: dict) -> bool:
+    """Two readings of one piece of text, near each other in time and place."""
+    close_in_time = any(
+        min(a["end"], b["end"]) - max(a["start"], b["start"]) > -0.6
+        for a in first["ranges"] for b in second["ranges"]
+    )
+    return (
+        close_in_time
+        and _inside_share(second["box"], first["box"]) >= 0.6
+        and _same_line(first["text_sample"], second["text_sample"])
+    )
+
+
+def _without_repeats(items: list[dict]) -> list[dict]:
+    """One tracklet per text. Separate areas can read the same line twice."""
+    kept: list[dict] = []
+    for item in sorted(items, key=lambda value: -_area(value["box"])):
+        home = next((other for other in kept if _same_text_at_same_time(other, item)), None)
+        if home is None:
+            kept.append(item)
+            continue
+        home["ranges"] = _merge_ranges([*home["ranges"], *item["ranges"]], 0.0)
+        home["box"] = _union(home["box"], item["box"])
+        home["duration"] = round(sum(span["end"] - span["start"] for span in home["ranges"]), 3)
+        home["samples"] = int(home.get("samples") or 0) + int(item.get("samples") or 0)
+        if len(_normalized_text(item["text_sample"])) > len(_normalized_text(home["text_sample"])):
+            home["text_sample"] = item["text_sample"]
+        if item["kind"] == "subtitle":
+            home["kind"] = "subtitle"
+    return kept
+
+
+def _mark_minor(items: list[dict]) -> None:
+    """Flag what is likely in the scene, not on top of it: Clean leaves it unticked.
+
+    Words on a product show up in many places, and small print sits far below
+    the size of the video's main text. They stay listed and can be ticked.
+    """
+    heights = sorted(item["box"]["h"] for item in items)
+    usual = heights[len(heights) // 2] if heights else 0.0
+    for item in items:
+        places = sum(
+            1 for other in items
+            if not (_similar(item["box"], other["box"]) > 0)
+            and _same_line(item["text_sample"], other["text_sample"])
+        )
+        if places >= 2 or item["box"]["h"] < 0.6 * usual:
+            item["minor"] = True
+
+
 def build_tracklets(
     observations: Iterable[dict],
     duration: float,
@@ -705,7 +1002,10 @@ def build_tracklets(
     max_tracklets: int = MAX_TRACKLETS,
 ) -> list[dict]:
     """Cluster observations and attach the public tracklet fields."""
-    tracks = cluster_observations(observations, max_gap=max_gap)
+    observed = _rescue_weak_reads([
+        value for value in observations or [] if isinstance(value, dict)
+    ])
+    tracks = _join_returning_text(cluster_observations(observed, max_gap=max_gap))
     duration = max(0.0, float(duration or 0.0))
     items: list[dict] = []
     for track in tracks:
@@ -730,7 +1030,9 @@ def build_tracklets(
             "ranges": ranges,
             "text_sample": text_sample,
             "confidence": round(confidence, 3),
-            "samples": len(values),
+            # In two-second steps, whatever the scan's rate: classify() counts
+            # how long text lasted, not how often it was read.
+            "samples": len({int(value["start"] // 2.0) for value in values}),
             "duration": round(observed, 3),
             "approximate": any(value.get("approximate") for value in values),
             "screen_frame": (
@@ -747,14 +1049,17 @@ def build_tracklets(
             0.6 * confidence + 0.4 * rule
             + (0.05 if len(values) >= 3 else 0.0),
         ), 3)
-        items.append(item)
+        items.extend(_line_tracklets(item, values, duration))
+    items = _without_repeats(items)
+    _mark_minor(items)
     items.sort(key=lambda value: (
         value["ranges"][0]["start"] if value["ranges"] else 0.0,
         value["box"]["y"], value["box"]["x"],
     ))
     limit = max(0, int(max_tracklets))
-    for index, item in enumerate(items[:limit], start=1):
-        item["id"] = f"trk_{index:04d}"
+    used_ids: set[str] = set()
+    for item in items[:limit]:
+        item["id"] = _stable_tracklet_id(item, used_ids)
     result = []
     for item in items[:limit]:
         item.pop("_texts", None)
@@ -1083,8 +1388,8 @@ def _tracklet_ref(tracklet: dict) -> dict:
         "kind": tracklet["kind"],
         "box": dict(tracklet["box"]),
         "ranges": [dict(item) for item in tracklet["ranges"]],
-        "text": str(tracklet.get("text") or ""),
-        "text_key": " ".join(str(tracklet.get("text") or "").split())[:120],
+        "text": str(tracklet.get("text_sample") or ""),
+        "text_key": " ".join(str(tracklet.get("text_sample") or "").split())[:120],
     }
 
 
@@ -1225,7 +1530,7 @@ def _report_warnings(
     if watermarks:
         warnings.append({
             "code": "watermark_detected",
-            "severity": "blocker",
+            "severity": "warning",
             "message": WATERMARK_MESSAGE,
             "tracklet_ids": watermarks,
         })
@@ -1368,6 +1673,7 @@ def build_report(
     created: float | None = None,
     sampled_error: str | None = None,
     settings: dict | None = None,
+    scope: dict | None = None,
 ) -> dict:
     """Assemble the SourceReport from job evidence and text observations."""
     job = job or {}
@@ -1576,6 +1882,7 @@ def build_report(
         "recommendation": recommendation,
         "recommendation_reasons": reasons,
         "clean_prefill": prefill,
+        **({"scope": dict(scope)} if scope else {}),
         "policy": policy,
         "rights": {
             "attested": bool(attested),
@@ -1701,6 +2008,8 @@ def run_check(
     fps: float = DEFAULT_SAMPLE_FPS,
     max_frames: int = DEFAULT_MAX_FRAMES,
     progress: Callable[[float, str], None] | None = None,
+    start: float = 0.0,
+    end: float | None = None,
 ) -> dict:
     """Run one Check pass and persist its SourceReport.
 
@@ -1726,6 +2035,15 @@ def run_check(
             last_value[0] = value
             original_progress(value, message)
 
+    window_start = max(0.0, min(duration, float(start or 0.0)))
+    window_end = duration if end is None else max(window_start, min(duration, float(end)))
+    scoped = window_start > 0.001 or window_end < duration - 0.001
+    if scoped:
+        scenes = [
+            scene for scene in scenes
+            if _number(scene.get("end"), 0.0) > window_start
+            and _number(scene.get("start"), 0.0) < window_end
+        ]
     observations = observations_from_scenes(scenes)
     sampled: dict = {"ran": False, "frames": 0, "vision": False}
     sampled_error: str | None = None
@@ -1733,6 +2051,9 @@ def run_check(
         if progress:
             progress(0.05, f"Sampling text at {fps:g} frames a second")
         kwargs = {"fps": fps, "max_frames": max_frames}
+        if scoped:
+            kwargs["start"] = window_start
+            kwargs["end"] = window_end
         if progress and _accepts_progress(sampler):
             # Frame-level progress maps into Check's 5-65% sampling band.
             kwargs["progress"] = lambda fraction, message: progress(
@@ -1744,6 +2065,10 @@ def run_check(
             sampled_error = str(exc)[:300]
             payload = None
         frames, vision, count, used_fps = _sampler_payload(payload)
+        # Scene readings are one still with a four-second window. Once the timed
+        # pass has read the frames they only stretch the text's time and box.
+        if vision and count:
+            observations = []
         observations.extend(observations_from_samples(frames))
         sampled = {
             "ran": True,
@@ -1794,9 +2119,15 @@ def run_check(
         attestation=attestation,
         engine=engine,
         sampled_error=sampled_error,
+        scope=(
+            {"start": round(window_start, 3), "end": round(window_end, 3)}
+            if scoped else None
+        ),
     )
     report["timings"] = {"total": round(time.time() - started, 3)}
     report["progress"] = 1.0
+    if scoped:
+        _keep_text_outside_scope(report, load_report(job_dir), window_start, window_end)
     write_report(job_dir, report)
     if progress:
         progress(1.0, "Check complete")

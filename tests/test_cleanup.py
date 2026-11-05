@@ -1156,3 +1156,12 @@ def test_live_fixture_apply_clean_and_measure_residual(
     )
     assert residual["ocr_available"] is True
     assert residual["residual_pct"] <= cleanup.RESIDUAL_TARGET_PCT
+
+
+def test_stacked_lines_do_not_overlap_after_padding():
+    built = cleanup.tracklet_clean_layers([
+        _tracklet("trk_a", "subtitle", {"x": 0.1, "y": 0.77, "w": 0.7, "h": 0.03}),
+        _tracklet("trk_b", "subtitle", {"x": 0.1, "y": 0.80, "w": 0.6, "h": 0.03}),
+    ], attested=True)
+    top, bottom = sorted(built["layers"], key=lambda layer: layer["box"]["y"])
+    assert top["box"]["y"] + top["box"]["h"] <= bottom["box"]["y"] + 1e-6
