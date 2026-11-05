@@ -1879,6 +1879,7 @@ def run_render(
             story_id=plan.get("story_id"),
             generation=generation,
             edit_hash=(edit or {}).get("hash") or "",
+            fill_reuse=bool(plan.get("_fill_reuse")),
         )
         expected_id = artifacts.artifact_id(spec)
         if not artifacts.is_safe_artifact_id(artifact_id):
@@ -1913,12 +1914,30 @@ def run_render(
         meta = job["source"]
         title = f"{Path(job['source']['name']).stem} · {target}s cut"
 
+        # AI fill is a small part of the bar and nearly all of the time, so the
+        # bar's percent cannot give the time left while it runs. The fill counts
+        # its own frames; what follows is timed from where it starts on the bar.
+        fill_left: dict = {"seconds": None}
+        cutting: dict = {"at": 0.0, "fraction": 0.0}
+
+        def note_fill_left(seconds: float) -> None:
+            fill_left["seconds"] = float(seconds)
+
         def progress(fraction: float, message: str) -> None:
             fraction = max(0.0, min(0.99, fraction))
-            elapsed = time.time() - started
+            now = time.time()
             eta = None
-            if fraction > 0.03 and elapsed > 0.5:
-                eta = round(elapsed / fraction * (1.0 - fraction), 1)
+            if message.startswith("Filling text"):
+                if fill_left["seconds"] is not None:
+                    # The cut after the fill: about the video's length, not measured.
+                    eta = round(fill_left["seconds"] + float(prepared_total or 0.0), 1)
+            else:
+                if not cutting["at"]:
+                    cutting.update(at=now, fraction=fraction)
+                done = fraction - cutting["fraction"]
+                if done > 0.03 and now - cutting["at"] > 0.5:
+                    eta = round((now - cutting["at"]) / done * (1.0 - fraction), 1)
+            elapsed = now - started
             _set_render(
                 job_id, record_key, status="rendering",
                 progress=round(fraction, 4), message=message,
@@ -1939,6 +1958,7 @@ def run_render(
             render_total=prepared_total,
             caption_style=plan.get("_caption_style"),
             edit=edit,
+            fill_eta=note_fill_left,
         )
         result["caption_count"] = len(cues)
         render_delta = usage_store.delta(before_usage)
@@ -3083,9 +3103,9 @@ def cleanup_storage() -> None:
     except ValueError:
         cache_days = 14.0
     try:
-        cache_max_gb = float(os.environ.get("VIBECUT_CACHE_MAX_GB", "2") or 0)
+        cache_max_gb = float(os.environ.get("VIBECUT_CACHE_MAX_GB", "8") or 0)
     except ValueError:
-        cache_max_gb = 2.0
+        cache_max_gb = 8.0
     removed_sources = gc_sources()
     if removed_sources:
         LOGGER.info("source store GC removed %d entries", removed_sources)
@@ -4402,6 +4422,8 @@ class FromUrlBody(BaseModel):
 
 
 class PlanBody(BaseModel):
+    # One AI fill for a whole line on very still shots. Off by default.
+    fill_reuse: bool = False
     target: int = 30
     hook_scene: int | None = None
     force: bool = False
@@ -6197,6 +6219,8 @@ class StoryRenderBody(BaseModel):
     aspect: str = "9:16"
     captions: bool = True
     caption_track_id: str | None = None
+    # One AI fill for a whole line on very still shots. Off by default.
+    fill_reuse: bool = False
 
 
 class SelectionV2Body(BaseModel):
@@ -6800,6 +6824,8 @@ def _queue_story_render(
     public_plan = {
         key: value for key, value in plan.items() if not key.startswith("_")
     }
+    if body.fill_reuse:
+        plan["_fill_reuse"] = True
     queued = _queue_render(
         job_id,
         job,
@@ -6831,7 +6857,10 @@ class StoryRenderBackend:
     def start(self, item: dict) -> str:
         result = _queue_story_render(
             item["job_id"], item["set_id"], item["story_id"],
-            StoryRenderBody(aspect=item["aspect"], quality=item["quality"]),
+            StoryRenderBody(
+                aspect=item["aspect"], quality=item["quality"],
+                fill_reuse=bool(item.get("fill_reuse")),
+            ),
             reject_active=False,
         )
         artifact = str(result.get("artifact_id") or "")
@@ -6892,19 +6921,20 @@ _STORY_QUEUE_SUBMIT_LOCK = threading.Lock()
 _QUEUE_ETA_STATE: dict[str, dict] = {}
 
 
-def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str]:
+def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str, bool]:
     return (
         str(item.get("job_id") or ""),
         str(item.get("set_id") or ""),
         str(item.get("story_id") or ""),
         str(item.get("aspect") or "9:16"),
         str(item.get("quality") or "final"),
+        item.get("fill_reuse") is True,
     )
 
 
 def _active_queue_for(
     queues: list[dict],
-    identity: tuple[str, str, str, str, str],
+    identity: tuple[str, str, str, str, str, bool],
 ) -> dict | None:
     for queue in queues:
         if str(queue.get("status") or "") not in story_queue.ACTIVE_QUEUES:
@@ -6982,7 +7012,10 @@ def _smooth_item_eta(
     stage: str,
     raw: object,
 ) -> float | None:
-    """Hide unknown and zero estimates; never rise inside one stage."""
+    """Hide unknown and zero estimates, and calm them inside one stage.
+
+    An estimate can rise: holding the lowest one showed a time long gone.
+    """
     try:
         value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -6994,7 +7027,7 @@ def _smooth_item_eta(
     key = str(item.get("id") or item.get("artifact_id") or "")
     previous = state["items"].get(key)
     if isinstance(previous, dict) and previous.get("stage") == stage:
-        value = min(value, float(previous.get("eta") or value))
+        value = 0.7 * float(previous.get("eta") or value) + 0.3 * value
     state["items"][key] = {"stage": stage, "eta": value}
     return round(value, 1)
 
@@ -7007,21 +7040,20 @@ def _live_queue(queue: dict) -> dict:
     own progress and ETA, and the queue's progress and ETA include them.
 
     An ETA appears only after the renderer has a measured rate. It is never
-    shown as 0.0 while running and never rises inside one render stage. The
-    queue header and its running item are fed from the same estimate.
+    shown as 0.0 while running. The queue header is the running item's estimate
+    plus the items still waiting, so the two cannot disagree.
     """
     jobs: dict[str, dict] = {}
     items = queue.get("items") or []
     queue_id = str(queue.get("id") or "")
     state = None
     if queue_id and str(queue.get("status") or "") in story_queue.ACTIVE_QUEUES:
-        state = _QUEUE_ETA_STATE.setdefault(queue_id, {"items": {}, "queue": None})
+        state = _QUEUE_ETA_STATE.setdefault(queue_id, {"items": {}})
     elif queue_id:
         _QUEUE_ETA_STATE.pop(queue_id, None)
     partial = 0.0
     eta_total = 0.0
     eta_known = False
-    running_ids: list[str] = []
     for item in items:
         if item.get("state") != "running" or not item.get("artifact_id"):
             continue
@@ -7043,7 +7075,8 @@ def _live_queue(queue: dict) -> dict:
         fraction = max(0.0, min(1.0, float(record.get("progress") or 0.0)))
         item["progress"] = round(fraction, 4)
         item["message"] = record.get("message") or item.get("message")
-        stage = str(record.get("message") or "Rendering")
+        # The first word: the rest of a message counts frames and changes every tick.
+        stage = (str(record.get("message") or "Rendering").split() or ["Rendering"])[0]
         eta = _smooth_item_eta(state, item, stage, record.get("eta"))
         if eta is None:
             item.pop("eta", None)
@@ -7051,7 +7084,6 @@ def _live_queue(queue: dict) -> dict:
             item["eta"] = eta
             eta_total += eta
             eta_known = True
-        running_ids.append(str(item.get("id") or item["artifact_id"]))
         partial += fraction
     if items:
         done = sum(1 for item in items if item.get("state") in story_queue.TERMINAL_ITEMS)
@@ -7065,18 +7097,13 @@ def _live_queue(queue: dict) -> dict:
         if running:
             item = running[0]
             spent = float(item.get("progress") or 0.0)
-            per_item = float(item["eta"]) / max(0.05, 1.0 - spent) if spent < 1 else 0.0
+            begun = float(item.get("started") or 0.0)
+            if begun:
+                per_item = max(0.0, time.time() - begun) + float(item["eta"])
+            else:
+                per_item = float(item["eta"]) / max(0.05, 1.0 - spent) if spent < 1 else 0.0
         total = round(eta_total + waiting * per_item, 1)
         if total > 0:
-            if state is not None:
-                signature = (
-                    f"{queue.get('status')}:{len(items)}:"
-                    f"{','.join(running_ids)}"
-                )
-                previous = state.get("queue")
-                if isinstance(previous, dict) and previous.get("signature") == signature:
-                    total = min(total, float(previous.get("eta") or total))
-                state["queue"] = {"signature": signature, "eta": total}
             queue["eta"] = total
     return queue
 
@@ -8484,6 +8511,7 @@ def _queue_render_locked_impl(
         clips=prepared_clips,
         story_id=plan.get("story_id"),
         edit_hash=(edit or {}).get("hash") or "",
+        fill_reuse=bool(plan.get("_fill_reuse")),
     )
     generation = artifacts.resolve_generation(job_dir, base_spec, force=force)
     spec = replace(base_spec, generation=generation)
@@ -8714,6 +8742,8 @@ def start_render(job_id: str, body: PlanBody) -> dict:
     target = _valid_target(int(body.target))
     quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
     plan = _plan_for_body(job, target, body)
+    if body.fill_reuse:
+        plan["_fill_reuse"] = True
     caption_track = _caption_track_for_render(
         job_id, job, plan, body, captions, margin,
     )

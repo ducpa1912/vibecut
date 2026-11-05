@@ -8,6 +8,8 @@ not hidden in the browser.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import json
 
 import pytest
@@ -469,3 +471,23 @@ def test_a_saved_sttn_box_opens_as_lama(classic, monkeypatch):
             [_box(method="fill", engine="propainter")], 10.0,
         )
     assert "LaMa" in str(error.value)
+
+
+# Hand-drawn boxes start at the playhead for three seconds, and their time can be edited.
+def test_the_panel_places_and_times_a_drawn_box():
+    source = (Path(__file__).resolve().parents[1] / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "CLEAN_MANUAL_SECONDS = 3" in source
+    assert "window: cleanManualRange(currentCleanTime())" in source
+    assert "ranges: [cleanManualRange(currentCleanTime())].filter(Boolean)" in source
+    assert 'data-clean-time="${side}"' in source
+    assert "A box must end after it starts." in source
+
+
+def test_the_panel_offers_one_engine_and_the_still_option():
+    source = (Path(__file__).resolve().parents[1] / "static" / "classic" / "app.js").read_text(encoding="utf-8")
+    assert "data-clean-engine" not in source
+    assert "clean-found-engine" not in source
+    assert "STTN" not in source and "sttn" not in source
+    assert 'id="clean-fill-reuse"' in source
+    assert "{ fill_reuse: true }" in source
+

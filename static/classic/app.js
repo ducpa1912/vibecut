@@ -7072,6 +7072,10 @@
           <p class="clean-fill-title">AI fill is ready</p>
           <ul class="clean-file-list">${rows}</ul>
           <p class="hint">${esc(previewHint)}</p>
+          <label class="clean-fill-reuse" title="A new render. Your existing renders stay.">
+            <input id="clean-fill-reuse" type="checkbox"${state.classicText.fillReuse ? " checked" : ""}>
+            <span>Reuse one AI fill for a whole line on very still shots</span>
+          </label>
         </div>
         <button id="clean-fill-preview" class="ghost small" type="button"${previewReady && hasFill ? "" : " disabled"}${previewReady ? "" : ` title="${esc(previewHint)}"`}>Preview one frame</button>
       </div>
@@ -7307,6 +7311,18 @@
       ? crops[Object.keys(crops)[Object.keys(crops).length - 1]]
       : null;
     return known || CLEAN_FULL_CROP;
+  }
+
+  // A box drawn by hand starts at the playhead and lasts three seconds, inside
+  // the clip it was drawn on. Its time can be changed on its row.
+  const CLEAN_MANUAL_SECONDS = 3;
+
+  function cleanManualRange(t) {
+    const window = cleanClipWindowAt(t);
+    if (!window) return null;
+    const start = Math.max(window.start, Math.min(window.end, t));
+    const end = Math.min(window.end, start + CLEAN_MANUAL_SECONDS);
+    return end > start ? { start: round2(start), end: round2(end) } : window;
   }
 
   function cleanClipWindowAt(t) {
@@ -7827,11 +7843,40 @@
             <span class="clean-row-label">${esc(layer.label || layer.kind || "Box")} <span class="clean-row-src">${esc(layer.source === "scan" ? "scan" : "manual")}</span></span>
             <span class="clean-row-meta">${esc(ranges)} · ${(layer.box.w * 100).toFixed(0)}×${(layer.box.h * 100).toFixed(0)}%${out ? ` · ${esc(out)}` : ""}</span>
           </div>
+          ${cleanRowTimes(layer)}
           <div class="clean-row-methods" role="group" aria-label="Method">${chips}${enginePicker}</div>
           <button class="clean-row-del" type="button" data-clean-delete="${esc(layer.id)}" title="Delete box" aria-label="Delete box">✕</button>
         </div>`;
     };
     list.innerHTML = layers.map(row).join("");
+  }
+
+  // One time on a box can be edited here; a box with several keeps them all.
+  function cleanRowTimes(layer) {
+    const ranges = layer.ranges || [];
+    if (ranges.length !== 1) return "";
+    const field = (side, label) => (
+      `<label class="clean-row-time">${label}<input type="number" min="0" step="0.05" value="${round2(ranges[0][side])}" data-clean-time="${side}" data-clean-target="${esc(layer.id)}"></label>`
+    );
+    return `<div class="clean-row-times" role="group" aria-label="When this box applies">${field("start", "From")}${field("end", "To")}</div>`;
+  }
+
+  function setCleanTime(id, side, value) {
+    const layer = classicCleanLayers().find((item) => item.id === id);
+    const range = (layer?.ranges || [])[0];
+    const seconds = Number(value);
+    if (!range || layer.ranges.length !== 1 || !Number.isFinite(seconds)) return;
+    const other = side === "start" ? Number(range.end) : Number(range.start);
+    if (side === "start" ? seconds >= other : seconds <= other) {
+      setCleanStatus("A box must end after it starts.");
+      renderCleanLayers();
+      return;
+    }
+    pushClassicUndo();
+    range[side] = round2(Math.max(0, seconds));
+    saveClassicText();
+    paintCleanStage();
+    scheduleCleanFrame();
   }
 
   function cleanOutsideCut(layer) {
@@ -8148,6 +8193,7 @@
         let target = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
         if (!target) {
           target = addCleanBox({
+            ranges: [cleanManualRange(currentCleanTime())].filter(Boolean),
             box: { x: Math.max(0, source.x - 0.02), y: Math.max(0, source.y - 0.02), w: 0.04, h: 0.04 },
             method: state.classicText.drawMethod || "blur",
             label: "Brush stroke",
@@ -8198,7 +8244,7 @@
         last: { x: origin.x, y: origin.y, w: 0, h: 0 },
         preview,
         crop: cleanCropAt(currentCleanTime()),
-        window: cleanClipWindowAt(currentCleanTime()),
+        window: cleanManualRange(currentCleanTime()),
         method: state.classicText.drawMethod || "blur",
         pointerId: event.pointerId,
       };
@@ -8260,6 +8306,10 @@
       const row = event.target.closest("[data-clean-row]");
       if (row) selectClean(row.dataset.cleanRow);
     });
+    dom.cleanLayers?.addEventListener("change", (event) => {
+      const field = event.target.closest("[data-clean-time]");
+      if (field) setCleanTime(field.dataset.cleanTarget, field.dataset.cleanTime, field.value);
+    });
     dom.cleanFound?.addEventListener("click", (event) => {
       if (event.target.closest("[data-found-all]")) {
         const rows = cleanScanRows();
@@ -8299,6 +8349,11 @@
         renderCleanFound();
         return;
       }
+    });
+    dom.cleanFill?.addEventListener("change", (event) => {
+      if (event.target.id !== "clean-fill-reuse") return;
+      state.classicText.fillReuse = event.target.checked;
+      updateRenderPanel();
     });
     dom.cleanFill?.addEventListener("click", (event) => {
       const button = event.target.closest("#clean-fill-preview");
@@ -8597,6 +8652,7 @@
       script_id: state.scriptId || null,
       audio: currentAudioPlan(),
       edit: classicEditPayload(),
+      ...(state.classicText.fillReuse ? { fill_reuse: true } : {}),
     };
   }
 

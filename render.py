@@ -10,6 +10,7 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import logging
 import math
 import os
 import shutil
@@ -17,8 +18,10 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -33,6 +36,8 @@ import textfill
 from compose_render import path_expression as _path_expression
 from compose_render import path_value as _path_value
 from pipeline import PipelineError, crop_center, probe
+
+LOGGER = logging.getLogger(__name__)
 
 TARGET_AR = 9 / 16
 OUT_W = 1080
@@ -126,6 +131,16 @@ def _run(
 def _dims(aspect: str, quality: str) -> tuple[int, int]:
     final, draft = ASPECTS.get(aspect, ASPECTS["9:16"])
     return final if quality == "final" else draft
+
+
+@contextmanager
+def _stage(timings: dict[str, float], name: str):
+    """Record wall time for one render stage. No effect on the output."""
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        timings[name] = round(time.monotonic() - started, 3)
 
 
 def _choose_encoder(requested: str | None = None) -> str:
@@ -487,7 +502,6 @@ def _segment(
         "-vf", vf,
         "-an",
         *_encoder_args(encoder, quality),
-        "-movflags", "+faststart",
         "-video_track_timescale", "90000",
         "-avoid_negative_ts", "make_zero",
         "-muxdelay", "0", "-muxpreload", "0",
@@ -1567,7 +1581,6 @@ def _burn_layers(
         "-map", f"[{last}]", "-an",
         *_encoder_args(encoder, quality),
         "-t", f"{total:.6f}",
-        "-movflags", "+faststart",
         "-map_metadata", "-1",
         str(output),
     ]
@@ -1731,7 +1744,6 @@ def _burn_captions(
         "-map", f"[{last}]", "-an",
         *_encoder_args(encoder, quality),
         "-t", f"{total:.6f}",
-        "-movflags", "+faststart",
         "-map_metadata", "-1",
         str(output),
     ]
@@ -1757,7 +1769,6 @@ def _concat_video(
     ]
     final = base + [
         "-map", "0:v:0", "-an", "-c:v", "copy",
-        "-movflags", "+faststart",
         "-map_metadata", "-1",
         str(target_mp4),
     ]
@@ -1771,7 +1782,6 @@ def _concat_video(
     fallback = base + [
         "-map", "0:v:0", "-an",
         *_encoder_args("libx264", quality),
-        "-movflags", "+faststart",
         "-map_metadata", "-1",
         str(target_mp4),
     ]
@@ -2121,11 +2131,14 @@ def _prepare_fills(
     progress: Callable[[float, str], None],
     cancel_event: threading.Event | None,
     fps: int = OUT_FPS,
+    on_eta: Callable[[float], None] | None = None,
+    reuse_still: bool = False,
 ) -> list[dict | None]:
     """Run the AI text fill pre-pass: one filled clip per beat that needs it.
 
     Progress runs from 0.02 to 0.45. Clips are cached by source, span, layers,
-    engine and model, so a draft and the final share them.
+    engine and model, so a draft and the final share them. ``on_eta`` gets the
+    seconds of fill left; without it, the time left goes in the message.
     """
     planned = [
         (index, segment) for index, segment in enumerate(segments)
@@ -2135,17 +2148,37 @@ def _prepare_fills(
     if not planned:
         return results
     data_root = job_dir.parent.parent
+    started = time.monotonic()
+    # Frames still to run. A beat found in the cache comes off this total.
+    work_left = sum(int(segment["frames"]) for _index, segment in planned)
+    work_done = 0
     FILL_LOCK.acquire()
     try:
         for position, (index, segment) in enumerate(planned):
             plan = segment["fill"]
             low = 0.02 + 0.43 * position / len(planned)
             high = 0.02 + 0.43 * (position + 1) / len(planned)
+            beat_frames = int(segment["frames"])
 
-            def report(fraction: float, message: str, low=low, high=high) -> None:
+            def report(
+                fraction: float,
+                message: str,
+                low=low,
+                high=high,
+                beat_frames=beat_frames,
+            ) -> None:
+                done = work_done + beat_frames * max(0.0, min(1.0, fraction))
+                remaining = ""
+                elapsed = time.monotonic() - started
+                if done >= 10 and elapsed >= 20 and work_left > done:
+                    seconds = elapsed / done * (work_left - done)
+                    if on_eta:
+                        on_eta(seconds)
+                    else:
+                        remaining = f" · {textfill.duration_text(seconds)} left"
                 progress(
                     low + (high - low) * max(0.0, min(1.0, fraction)),
-                    f"Filling text, beat {position + 1}/{len(planned)} · {message}",
+                    f"Filling text, beat {position + 1}/{len(planned)} · {message}{remaining}",
                 )
 
             try:
@@ -2161,11 +2194,16 @@ def _prepare_fills(
                     ffmpeg=_ffmpeg(),
                     progress=report,
                     cancel_event=cancel_event,
+                    reuse_still=reuse_still,
                 )
             except textfill.FillCancelled as exc:
                 raise RenderCancelled("Render cancelled.") from exc
             except textfill.FillError as exc:
                 raise PipelineError(str(exc)) from exc
+            if results[index] is None or results[index].get("cached"):
+                work_left -= beat_frames
+            else:
+                work_done += beat_frames
     finally:
         # Model sessions are large; a finished or failed pre-pass must not
         # hold LaMa's memory for the rest of the app's life.
@@ -2195,7 +2233,15 @@ def render_reel(
     caption_style: dict | None = None,
     edit: dict | None = None,
     compiled_edit: dict | None = None,
+    fill_eta: Callable[[float], None] | None = None,
 ) -> dict:
+    render_started = time.monotonic()
+    timings: dict[str, float] = {
+        name: 0.0 for name in (
+            "fill", "segments", "concat", "layers", "captions",
+            "audio", "mux", "poster",
+        )
+    }
     quality = "draft" if quality == "draft" else "final"
     aspect = aspect if aspect in ASPECTS else "9:16"
     out_w, out_h = _dims(aspect, quality)
@@ -2339,6 +2385,7 @@ def render_reel(
         # Fill model files: replacing a checkpoint must not reuse a master
         # whose beats were built from the old model.
         "fill_models": fill_sig,
+        **({"fill_reuse": True} if plan.get("_fill_reuse") else {}),
         # Text raster version: a font change must not reuse an old master.
         "text_skin": LAYER_CACHE_VERSION,
     }, sort_keys=True).encode()).hexdigest()[:16]
@@ -2363,14 +2410,17 @@ def render_reel(
                         1, (os.cpu_count() or workers) // max(1, workers),
                     )
             progress(0.01, f"Preparing {len(clips)} beats · {quality} · {encoder}")
-            fills = _prepare_fills(
-                source, meta, job_dir,
-                edit_segments if compiled is not None else [],
-                progress, cancel_event,
-            )
+            with _stage(timings, "fill"):
+                fills = _prepare_fills(
+                    source, meta, job_dir,
+                    edit_segments if compiled is not None else [],
+                    progress, cancel_event, on_eta=fill_eta,
+                    reuse_still=bool(plan.get("_fill_reuse")),
+                )
             cut_from = 0.45 if any(fills) else 0.02
             done = 0
             segments: list[Path] = []
+            segments_started = time.monotonic()
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vibecut-seg") as pool:
                 futures = {}
                 for index, clip in enumerate(clips):
@@ -2414,28 +2464,32 @@ def render_reel(
                         f"Cutting beat {done} / {len(clips)}"
                         + (f" · {cached_count} cached" if cached_count else ""),
                     )
+            timings["segments"] = round(time.monotonic() - segments_started, 3)
             progress(0.82, "Joining the cut")
             master_tmp = tmp / "master.mp4"
-            _concat_video(tmp, master_tmp, segments, quality, cancel_event)
+            with _stage(timings, "concat"):
+                _concat_video(tmp, master_tmp, segments, quality, cancel_event)
             if layers:
                 progress(0.87, "Burning layers")
                 layered = tmp / "layers.mp4"
-                layer_count = _burn_layers(
-                    master_tmp, layers, layered, tmp, out_w, out_h, total,
-                    quality, encoder,
-                    cache_dir=job_dir.parent.parent / "cache" / "layers",
-                    cancel_event=cancel_event,
-                )
+                with _stage(timings, "layers"):
+                    layer_count = _burn_layers(
+                        master_tmp, layers, layered, tmp, out_w, out_h, total,
+                        quality, encoder,
+                        cache_dir=job_dir.parent.parent / "cache" / "layers",
+                        cancel_event=cancel_event,
+                    )
                 if layer_count:
                     os.replace(layered, master_tmp)
             elif captions and cues:
                 progress(0.87, "Burning captions")
                 captioned = tmp / "captioned.mp4"
-                _burn_captions(
-                    master_tmp, cues, captioned, tmp, out_w, out_h, total,
-                    quality, encoder, caption_margin, cancel_event,
-                    style=effective_style,
-                )
+                with _stage(timings, "captions"):
+                    _burn_captions(
+                        master_tmp, cues, captioned, tmp, out_w, out_h, total,
+                        quality, encoder, caption_margin, cancel_event,
+                        style=effective_style,
+                    )
                 os.replace(captioned, master_tmp)
             master_dir.mkdir(parents=True, exist_ok=True)
             os.replace(master_tmp, master)
@@ -2446,6 +2500,7 @@ def render_reel(
         audio_path = tmp / "audio.wav"
         audio_info: dict = {"mode": "keep"}
         bed: Path | None = None
+        audio_started = time.monotonic()
         if audio_plan and str(audio_plan.get("mode") or "keep") != "keep":
             progress(0.90, "Building the new audio")
             try:
@@ -2473,20 +2528,25 @@ def render_reel(
             _audio_track(source, meta, clips, audio_path, total, cancel_event)
         else:
             audio_path = bed
+        timings["audio"] = round(time.monotonic() - audio_started, 3)
 
         progress(0.95, "Muxing audio")
-        _mux(
-            master, audio_path, out_tmp, job_title, total, quality,
-            not (audio_plan and str(audio_plan.get("mode") or "keep") != "keep"),
-            cancel_event,
-        )
+        with _stage(timings, "mux"):
+            _mux(
+                master, audio_path, out_tmp, job_title, total, quality,
+                not (audio_plan and str(audio_plan.get("mode") or "keep") != "keep"),
+                cancel_event,
+            )
 
         info = probe(out_tmp)
-        seek = min(0.25, max(0.0, info["duration"] / 2))
-        _run([
-            _ffmpeg(), "-y", "-v", "error", "-ss", f"{seek:.3f}", "-i", str(out_tmp),
-            "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", str(poster_tmp),
-        ], timeout=60, cancel_event=cancel_event)
+        # Always from this render's file: the poster path is per target, and
+        # going back to an earlier Edit reuses a master older than the poster.
+        with _stage(timings, "poster"):
+            seek = min(0.25, max(0.0, info["duration"] / 2))
+            _run([
+                _ffmpeg(), "-y", "-v", "error", "-ss", f"{seek:.3f}", "-i", str(out_tmp),
+                "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", str(poster_tmp),
+            ], timeout=60, cancel_event=cancel_event)
 
         os.replace(out_tmp, out)
         os.replace(poster_tmp, poster)
@@ -2494,6 +2554,8 @@ def render_reel(
         shutil.rmtree(tmp, ignore_errors=True)
 
     progress(1.0, "Reel ready")
+    timings["total"] = round(time.monotonic() - render_started, 3)
+    LOGGER.info("render timings %s", timings)
     return {
         "target": target,
         "duration": info["duration"],
@@ -2513,6 +2575,7 @@ def render_reel(
         "layer_count": layer_count,
         "edit_hash": compiled.get("edit_hash") if compiled is not None else None,
         "cached": cached_count,
+        "timings": timings,
         "beat_bpm": None if not audio_plan else audio_plan.get("_beat_bpm"),
         "beat_drift": None if not audio_plan else audio_plan.get("_beat_drift"),
         "used_assets": (audio_plan or {}).get("_used_assets") or [],

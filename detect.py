@@ -1530,7 +1530,7 @@ def _report_warnings(
     if watermarks:
         warnings.append({
             "code": "watermark_detected",
-            "severity": "warning",
+            "severity": "blocker",
             "message": WATERMARK_MESSAGE,
             "tracklet_ids": watermarks,
         })

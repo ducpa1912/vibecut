@@ -122,7 +122,8 @@ def normalize_items(raw: object) -> list[dict]:
         quality = str(value.get("quality") or "final")
         if quality not in QUALITIES:
             raise QueueError(f"Item {index}: quality must be final or draft.")
-        identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality)
+        fill_reuse = value.get("fill_reuse") is True
+        identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality, fill_reuse)
         if identity in seen:
             raise QueueError(f"Item {index} repeats an earlier story and aspect.")
         seen.add(identity)
@@ -131,6 +132,7 @@ def normalize_items(raw: object) -> list[dict]:
             **ids,
             "aspect": aspect,
             "quality": quality,
+            "fill_reuse": fill_reuse,
             "title": str(value.get("title") or "")[:200],
             "state": "queued",
             "artifact_id": None,

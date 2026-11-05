@@ -3393,6 +3393,10 @@ select option:disabled { color: #666; }
 .clean-found-actions .primary { margin-left: auto; }
 .clean-found-note { margin: 6px 0 0; }
 .clean-engine { font-size: 11px; color: var(--muted, inherit); }
+.clean-row-times { display: flex; gap: 6px; }
+.clean-row-time { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
+.clean-row-time input { width: 62px; font-size: 11px; }
+.clean-fill-reuse { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; }
 .clean-engine-row { grid-template-columns: minmax(0, 1fr) auto; }
 .clean-engine-row .clean-file-meta { grid-column: 1 / -1; }
 .clean-engine-row.is-ready .clean-file-state { color: var(--accent); }

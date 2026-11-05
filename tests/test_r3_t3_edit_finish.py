@@ -331,7 +331,7 @@ def _eta_queue(eta, message="Rendering beats", queue_id="sq_r3_eta"):
     }
 
 
-def test_queue_eta_hides_zero_and_never_rises_within_a_stage(monkeypatch):
+def test_queue_eta_hides_zero_and_calms_within_a_stage(monkeypatch):
     app._QUEUE_ETA_STATE.clear()
     record = {"artifact_id": "art_1", "progress": 0.4, "eta": None, "message": "Rendering beats"}
     monkeypatch.setattr(app, "load_job", lambda job_id: {"renders": {"k": dict(record)}})
@@ -347,8 +347,9 @@ def test_queue_eta_hides_zero_and_never_rises_within_a_stage(monkeypatch):
 
     record["eta"] = 45.0
     second = app._live_queue(_eta_queue(45.0))
-    assert second["items"][0]["eta"] == 30.0
-    assert second["eta"] <= 80.0
+    # It can rise, by a part of the jump, so a low early guess does not stick.
+    assert second["items"][0]["eta"] == 34.5
+    assert second["eta"] > 80.0
 
     record["eta"] = 45.0
     record["message"] = "Burning layers"

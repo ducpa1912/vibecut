@@ -33,15 +33,15 @@
   },
   {
    "path": "app.py",
-   "source": "classic 2f385a2",
-   "sha256": "81e2563013ad0996cfd270595883a8c21bc6f6779f9c6c936968854974922842",
-   "feature_version": "1.0.0"
+   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
+   "sha256": "a0c039599bd322c8a4d8b1e42fc9ef1e3a8a441d75a36ab8b0ece04ebcc97ab2",
+   "feature_version": "1.0.1"
   },
   {
    "path": "artifacts.py",
-   "source": "classic 2f385a2",
-   "sha256": "c964470c2687a23872c4176ef572e65a8e7c779b8447d8c9cf3aed67c19b1e3b",
-   "feature_version": "1.0.0"
+   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
+   "sha256": "58085a1a19dbcf91da9f1888cb85094a882c1ff3a7de15b76774df13040a5f9c",
+   "feature_version": "1.0.1"
   },
   {
    "path": "audio.py",
@@ -99,9 +99,9 @@
   },
   {
    "path": "detect.py",
-   "source": "studio 632dc3a: one tight box per line, weak reads, 2 fps scan",
-   "sha256": "7058416abbb8248f2b57efdaf16872a67b72b4f4a0039524c920450259e5b056",
-   "feature_version": "1.0.2"
+   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
+   "sha256": "1f2fd7d3f4aeda8e6c1186ff85ae50cd6709d255e2b8a54cb4ee935951b37ad6",
+   "feature_version": "1.0.3"
   },
   {
    "path": "disk.py",
@@ -195,9 +195,9 @@
   },
   {
    "path": "render.py",
-   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
-   "sha256": "e08f8937c0b80ed902937c66653c8e8dcaeb2361a2bfddcca1b0b1b6f613dd3b",
-   "feature_version": "1.0.1"
+   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
+   "sha256": "c9fb314360ed9cb017b49bbe67fe58e981ea75c493b89b4b715644bd7208be4e",
+   "feature_version": "1.0.2"
   },
   {
    "path": "requirements-optional.txt",
@@ -297,9 +297,9 @@
   },
   {
    "path": "story_queue.py",
-   "source": "classic 2f385a2",
-   "sha256": "9e7b0c359c06e84e6049f989f9ff0148bb96ef28573d65790c32c300875b3682",
-   "feature_version": "1.0.0"
+   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
+   "sha256": "bd098de7d52bf5fc8b3d2cccc30af3d29f57153ca7d27b84e6d9a95404dc53c6",
+   "feature_version": "1.0.1"
   },
   {
    "path": "stt.py",

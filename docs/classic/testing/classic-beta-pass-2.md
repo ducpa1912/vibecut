@@ -226,6 +226,24 @@ These are the current T1–T6 checks. They replace the T1–T6 block in `classic
 | T6.2 | Keep **Work files**, click **Clean** | A plain confirmation | A native dialog titled **Clean work files?** says **Deletes: thumbnails, the transcript, extracted audio and deep-read scores.** and **Keeps: the source video, rendered reels and job details.** | |
 | T6.3 | Click **Cancel** | Cancel is safe | Nothing is removed and the button still reads **Clean**. | |
 
+## 9A. Text removal with LaMa
+
+Added on 2026-11-05 from what Studio learned. **No real video has run on this code**, so the speed and the result are what this section tests. Old scans keep their old boxes, so scan each video again first. Use your role **A** video, and ideally one with a moving shot behind the text.
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| 9A.1 | Open Clean and scan the video again. | Each line of text is its own row, named by its words. A logo does not join a subtitle. | |
+| 9A.2 | Look at the AI fill area. | It says **AI fill is ready** and names **LaMa** only. There is no engine choice on any box. | |
+| 9A.3 | Tick one found line and choose AI fill. Put the playhead inside it and press **Preview one frame**. | The letters are gone in **After**, and none are left at the edges. | |
+| 9A.4 | Press **Draw**, drag a box, and read its row. | The box starts at the playhead and lasts 3 seconds. **From** and **To** show on the row. | |
+| 9A.5 | Change **To** to a later time. Then set **To** before **From**. | The first change holds. The second says "A box must end after it starts." and changes nothing. | |
+| 9A.6 | Move and resize a found box on the video. | It moves and resizes like a drawn box. | |
+| 9A.7 | Render a draft with AI fill on a short cut. Note the start and end time. | While it fills, one time left shows and may go up as well as down. **Write the total time here.** | |
+| 9A.8 | Play that render where text sat over a still shot. | The text is gone, with no flicker. | |
+| 9A.9 | Play it where something moves behind the text. | Note any smear. LaMa fills each frame alone, so tighter boxes reduce this but do not end it. | |
+| 9A.10 | Tick **Reuse one AI fill for a whole line on very still shots**. Render the same cut. Note the time. | It makes a new render and the old one stays. It is faster on still shots. Note any frozen patch. | |
+| 9A.11 | Open a job you cleaned earlier with an STTN box, if you have one. Render it. | It opens and renders with LaMa, with no error. | |
+
 ## 10. Known issues
 
 Open findings at the time of this script. Do not report these twice.
