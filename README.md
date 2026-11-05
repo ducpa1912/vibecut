@@ -379,8 +379,8 @@ days.
 
 The main screen accepts:
 
-- **Drop a video** — upload. There is no size limit by default, only a check
-  that the file fits on disk (`VIBECUT_MAX_UPLOAD_GB` sets one).
+- **Drop a video** — upload. The default ceiling is 20 GB
+  (`VIBECUT_MAX_UPLOAD_GB`).
 - **Use a local path instead** — analyze a file in place without copying it.
 - **Paste a video link** — URL ingest through yt-dlp, with an optional
   xhs_get sidecar.
@@ -931,8 +931,8 @@ installed engines, models and cache sizes with removal hints.
 | `VIBECUT_PORT` | `8787` | HTTP port. |
 | `VIBECUT_DATA` | `./data` | Data root. |
 | `VIBECUT_TOKEN` | unset | Shared app token for `/api/*` and UI media. |
-| `VIBECUT_MAX_UPLOAD_GB` | `0` | Upload ceiling. `0` means no limit; free disk space is still checked. |
-| `VIBECUT_URL_MAX_GB` | `0` | xhs_get download ceiling. `0` means no limit. |
+| `VIBECUT_MAX_UPLOAD_GB` | `20` | Upload ceiling. |
+| `VIBECUT_URL_MAX_GB` | `4` | xhs_get download ceiling. |
 | `VIBECUT_DEEP_SCENES` | `300` | Deep-read shortlist size. |
 | `VIBECUT_ENCODER` | `auto` | `auto`, `videotoolbox` or `libx264`. |
 | `VIBECUT_RENDER_WORKERS` | `4` | Parallel segment workers. |

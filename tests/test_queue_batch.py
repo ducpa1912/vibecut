@@ -1154,16 +1154,17 @@ def test_oversized_upload_returns_413_before_disk_412(data_env, monkeypatch):
     assert response.status_code == 413
 
 
-def test_an_import_has_no_size_limit_by_default(data_env, monkeypatch):
-    assert app.MAX_UPLOAD == 0 or os.environ.get("VIBECUT_MAX_UPLOAD_GB")
-    monkeypatch.setattr(app, "MAX_UPLOAD", 0)
+def test_the_upload_limit_counts_each_video_on_its_own(data_env, monkeypatch):
     monkeypatch.setattr(disk, "usage", lambda path: _usage(100 * GIB, 100 * GIB))
+    # Room for one upload, with its form fields, but not for two together.
+    monkeypatch.setattr(app, "MAX_UPLOAD", 1024)
+    video = b"x" * 600
     with TestClient(app.app) as client:
-        response = client.post(
-            "/api/jobs/upload",
-            files={"file": ("big.mp4", b"not a video", "video/mp4")},
-        )
-    assert response.status_code != 413
+        for name in ("one.mp4", "two.mp4"):
+            response = client.post(
+                "/api/jobs/upload", files={"file": (name, video, "video/mp4")},
+            )
+            assert response.status_code != 413
 
 
 def test_url_preflight_and_invalid_size_hint(data_env, monkeypatch):

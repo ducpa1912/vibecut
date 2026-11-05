@@ -100,9 +100,7 @@ DATA = Path(os.environ.get("VIBECUT_DATA", ROOT / "data")).expanduser().resolve(
 JOBS = DATA / "jobs"
 HOST = os.environ.get("VIBECUT_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VIBECUT_PORT", "8787"))
-# No limit on the size of an import unless a deployment sets one. Free disk space
-# is still checked, since a file that does not fit cannot be stored.
-MAX_UPLOAD = int(float(os.environ.get("VIBECUT_MAX_UPLOAD_GB", "0") or 0) * 1024 ** 3)
+MAX_UPLOAD = int(float(os.environ.get("VIBECUT_MAX_UPLOAD_GB", "20")) * 1024 ** 3)
 ACTIVE = {"scanning", "reading", "scoring"}
 LIVE = ACTIVE | {"queued", "downloading"}
 LOCK = threading.RLock()
@@ -4812,7 +4810,7 @@ async def upload_job(
         declared = int(request.headers.get("content-length") or 0)
     except ValueError:
         declared = 0
-    if MAX_UPLOAD and declared > MAX_UPLOAD:
+    if declared > MAX_UPLOAD:
         raise HTTPException(
             413,
             f"Upload is larger than the {MAX_UPLOAD / 1024 ** 3:.0f} GB limit.",
@@ -4841,7 +4839,7 @@ async def upload_job(
                 if not chunk:
                     break
                 total += len(chunk)
-                if MAX_UPLOAD and total > MAX_UPLOAD:
+                if total > MAX_UPLOAD:
                     raise HTTPException(
                         413,
                         f"Upload is larger than the {MAX_UPLOAD / 1024 ** 3:.0f} GB limit.",
