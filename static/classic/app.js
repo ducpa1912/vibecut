@@ -136,6 +136,8 @@
     progressMessage: $("#progress-message"),
     stages: $("#stages"),
     progressError: $("#progress-error"),
+    progressDownload: $("#progress-download"),
+    progressRetry: $("#progress-retry"),
     progressSource: $("#progress-source"),
     progressBack: $("#progress-back"),
     progressCancelUrl: $("#progress-cancel-url"),
@@ -377,6 +379,7 @@
     sourceCleanOutput: $("#source-clean-output"),
     sourceCleanDownload: $("#source-clean-download"),
     sourceCleanReel: $("#source-clean-reel"),
+    sourceCleanAnalysisBack: $("#source-clean-analysis-back"),
     sourceCleanAgain: $("#source-clean-again"),
     cleanHelp: $("#clean-help"),
     finishCut: $("#finish-cut"),
@@ -401,9 +404,13 @@
       overlays: [],
       effects: [],
       clean: [],
+      deletedClean: new Map(),
+      durableCleanDeleted: new Map(),
+      newCleanTokens: new Map(),
       seq: 0,
       rev: 0,
       saveTimer: null,
+      savePromise: null,
       selection: "",
       drawMode: false,
       drawMethod: "blur",
@@ -441,12 +448,16 @@
     sourceClean: null,
     sourceCleanTimer: null,
     sourceCleanPollToken: 0,
+    sourceReelTimer: null,
+    sourceReelToken: 0,
     sourceCleanBusy: false,
     sourceCleanRunCancelled: false,
     sourceCleanNeedConfirm: false,
     sourceCleanEstimate: null,
     sourceCleanNotFound: false,
     sourceCleanNote: "",
+    sourceCleanAnalysisError: "",
+    sourceCleanAnalysisDetail: "",
     sourceCleanPhase: "",
     sourceCleanMediaSize: 0,
     sourceCleanReelStarted: false,
@@ -1844,11 +1855,13 @@
     dom.sourceCleanCancel?.addEventListener("click", cancelSourceCleanRender);
     dom.sourceCleanAgain?.addEventListener("click", cleanAgainSource);
     dom.sourceCleanReel?.addEventListener("click", makeReelFromSource);
+    dom.sourceCleanAnalysisBack?.addEventListener("click", backToSourceClean);
     dom.optCrop.addEventListener("change", syncOptions);
     dom.progressBack.addEventListener("click", resetToIngest);
     dom.progressSource?.addEventListener("click", () => {
       if (state.job) prepareSourceClean(state.job);
     });
+    dom.progressRetry?.addEventListener("click", retryCleanAnalysis);
     dom.progressCancelUrl.addEventListener("click", async () => {
       if (!state.ingestJob) return;
       state.cancelRequested = true;
@@ -2948,13 +2961,18 @@
           await openJob(id);
           return;
         }
-        if (status.status === "failed") {
+        if (CLEAN_TERMINAL.has(status.status)) {
           stopPoll();
           state.ingestJob = null;
           state.cancelRequested = false;
           state.busy = false;
           updateAnalyzeState();
-          showProgressError(status.error || status.message || "Analysis failed.");
+          if (state.job?.mode === "clean") {
+            state.job = { ...state.job, ...status };
+            await showProgressForJob(state.job);
+          } else {
+            updateProgress(status);
+          }
           return;
         }
         state.pollTimer = setTimeout(tick, 750);
@@ -2975,22 +2993,49 @@
     });
   }
 
+  const CLEAN_TERMINAL = new Set(["failed", "cancelled", "interrupted"]);
+
+  function cleanTerminalCopy(status) {
+    if (status === "cancelled") return "Analysis was cancelled.";
+    if (status === "interrupted") return "Analysis was interrupted.";
+    return "Analysis stopped before it could build the cut. Your clean video is still available.";
+  }
+
   function updateProgress(status) {
     const pct = Math.max(0, Math.min(100, Math.round((status.progress || 0) * 100)));
     dom.progressBar.style.width = `${pct}%`;
     dom.progressPct.textContent = `${pct}%`;
     dom.progressMessage.textContent = status.message || "Working";
-    dom.progressError.hidden = status.status !== "failed";
-    if (status.status === "failed") {
-      dom.progressError.textContent = status.error || status.message || "Analysis failed.";
+    const clean = state.job?.mode === "clean";
+    const terminal = CLEAN_TERMINAL.has(status.status);
+    const cleanTerminal = clean && terminal;
+    const raw = String(status.error || status.message || "").trim();
+    dom.progressError.hidden = !(cleanTerminal || status.status === "failed");
+    if (cleanTerminal) {
+      dom.progressError.textContent = tr(cleanTerminalCopy(status.status));
+      dom.progressError.title = raw;
+      if (raw) console.warn("Classic clean analysis stopped:", raw);
+    } else if (status.status === "failed") {
+      dom.progressError.textContent = raw || "Analysis failed.";
+      dom.progressError.title = "";
+    } else {
+      dom.progressError.textContent = "";
+      dom.progressError.title = "";
     }
-    dom.progressBack.hidden = status.status !== "failed";
-    if (dom.progressSource) {
-      dom.progressSource.hidden = !(
-        status.status === "failed"
-        && state.job?.mode === "clean"
-        && state.job?.status === "failed"
-      );
+    // A clean terminal job recovers from Source Clean; other jobs keep the
+    // existing ingest back link for failures.
+    dom.progressBack.hidden = clean ? true : !(terminal);
+    if (dom.progressSource) dom.progressSource.hidden = !cleanTerminal;
+    if (dom.progressRetry) {
+      dom.progressRetry.hidden = !cleanTerminal;
+      dom.progressRetry.disabled = false;
+      dom.progressRetry.textContent = "Retry analysis";
+    }
+    if (dom.progressDownload) {
+      if (!cleanTerminal) {
+        dom.progressDownload.hidden = true;
+        dom.progressDownload.removeAttribute("href");
+      }
     }
     if (dom.progressCancelUrl) {
       const downloading = status.status === "downloading" && !!state.ingestJob;
@@ -3008,6 +3053,8 @@
       scoring: "Choosing the hook",
       ready: "Cut ready",
       failed: "That didn't work",
+      cancelled: "Analysis cancelled",
+      interrupted: "Analysis interrupted",
     };
     dom.progressTitle.textContent = titles[status.status] || "Reading the video";
 
@@ -3023,6 +3070,7 @@
 
   function showProgressError(message) {
     dom.progressError.textContent = message || "Analysis failed.";
+    dom.progressError.title = "";
     dom.progressError.hidden = false;
     dom.progressBack.hidden = false;
   }
@@ -3031,14 +3079,56 @@
     dom.progressFile.textContent = name || "video";
   }
 
-  function showProgressForJob(job) {
+  async function loadProgressCleanRecovery(job) {
+    if (!state.job || state.job.id !== job.id || state.job.mode !== "clean") return;
+    if (!CLEAN_TERMINAL.has(job.status)) return;
+    let record = null;
+    try {
+      record = await api(`/api/classic/jobs/${job.id}/clean/source`);
+    } catch (_) { /* the recovery buttons stay usable */ }
+    if (!state.job || state.job.id !== job.id) return;
+    if (dom.progressDownload) {
+      if (record?.status === "ready" && record.url) {
+        dom.progressDownload.hidden = false;
+        dom.progressDownload.href = withToken(record.url);
+        dom.progressDownload.download = `${fileStem(job.source?.name || "source")}-clean.mp4`;
+      } else {
+        dom.progressDownload.hidden = true;
+        dom.progressDownload.removeAttribute("href");
+      }
+    }
+  }
+
+  async function showProgressForJob(job) {
     state.progressStart = Date.now();
     state.pollStart = Date.now();
     setProgressFile(job.source?.name || state.fileName || "video");
     showView("progress");
     updateProgress(job);
-    if (job.status === "failed") {
-      showProgressError(job.error || job.message);
+    if (job.mode === "clean" && CLEAN_TERMINAL.has(job.status)) {
+      await loadProgressCleanRecovery(job);
+    }
+  }
+
+  async function retryCleanAnalysis() {
+    const job = state.job;
+    if (!job || job.mode !== "clean" || !CLEAN_TERMINAL.has(job.status)) return;
+    if (dom.progressRetry) {
+      dom.progressRetry.disabled = true;
+      dom.progressRetry.textContent = "Retrying…";
+    }
+    try {
+      await api(`/api/jobs/${job.id}/analyze`, { method: "POST" });
+      await openJob(job.id);
+    } catch (error) {
+      if (dom.progressRetry) {
+        dom.progressRetry.disabled = false;
+        dom.progressRetry.textContent = "Retry analysis";
+      }
+      dom.progressError.hidden = false;
+      dom.progressError.textContent = "Analysis did not start. Try again.";
+      dom.progressError.title = error.message || "";
+      if (error.message) console.warn("Classic analysis did not start:", error.message);
     }
   }
 
@@ -3061,6 +3151,7 @@
 
   async function openJob(id) {
     stopPoll();
+    stopSourceReelPoll();
     try {
       const job = await api(`/api/jobs/${id}`);
       if (state.job?.id !== job.id) {
@@ -3105,18 +3196,20 @@
         // Extraction-only job: open Source Clean directly. No analysis poll and
         // no prepareResult here; a source_ready job has no scenes to render.
         await prepareSourceClean(job);
+        if (state.job?.id !== job.id) return;
         history.replaceState(null, "", jobHash(job.id));
         return;
       }
       if (job.status === "ready") {
-        prepareResult(job);
-      } else if (job.status === "failed") {
+        await prepareResult(job);
+        if (state.job?.id !== job.id) return;
+      } else if (CLEAN_TERMINAL.has(job.status)) {
         state.busy = false;
         updateAnalyzeState();
-        showProgressForJob(job);
+        await showProgressForJob(job);
       } else {        state.busy = true;
         updateAnalyzeState();
-        showProgressForJob(job);
+        await showProgressForJob(job);
         startAnalysisPoll(job.id);
       }
       history.replaceState(null, "", jobHash(job.id));
@@ -3136,8 +3229,20 @@
     }
   }
 
+  // The Make a reel handoff polls the job while the founder stays on Source
+  // Clean. Leaving that screen, opening another job or cancelling the handoff
+  // stops this timer; a later tick must never navigate for them.
+  function stopSourceReelPoll() {
+    state.sourceReelToken = (state.sourceReelToken || 0) + 1;
+    if (state.sourceReelTimer) {
+      clearTimeout(state.sourceReelTimer);
+      state.sourceReelTimer = null;
+    }
+  }
+
   function resetSourceCleanState() {
     stopSourceCleanPoll();
+    stopSourceReelPoll();
     state.sourceClean = null;
     state.sourceCleanBusy = false;
     state.sourceCleanRunCancelled = false;
@@ -3145,6 +3250,8 @@
     state.sourceCleanEstimate = null;
     state.sourceCleanNotFound = false;
     state.sourceCleanNote = "";
+    state.sourceCleanAnalysisError = "";
+    state.sourceCleanAnalysisDetail = "";
     state.sourceCleanPhase = "";
     state.sourceCleanMediaSize = 0;
     state.sourceCleanReelStarted = false;
@@ -3413,7 +3520,15 @@
     }
     if (dom.sourceCleanReel) {
       dom.sourceCleanReel.disabled = state.sourceCleanReelStarted;
-      dom.sourceCleanReel.textContent = tr(state.sourceCleanReelStarted ? "Analysis started" : "Make a reel");
+      dom.sourceCleanReel.textContent = tr(
+        state.sourceCleanAnalysisError
+          ? "Retry analysis"
+          : (state.sourceCleanReelStarted ? "Analysis started" : "Make a reel"),
+      );
+      dom.sourceCleanReel.title = "";
+    }
+    if (dom.sourceCleanAnalysisBack) {
+      dom.sourceCleanAnalysisBack.hidden = !(ready && state.sourceCleanAnalysisError);
     }
     if (dom.sourceCleanAgain) dom.sourceCleanAgain.disabled = false;
   }
@@ -3767,43 +3882,141 @@
   }
 
   async function cleanAgainSource() {
+    stopSourceReelPoll();
     const rescan = state.sourceCleanNotFound;
     state.sourceCleanNeedConfirm = false;
     state.sourceCleanEstimate = null;
     state.sourceCleanNotFound = false;
     state.sourceCleanNote = "";
+    state.sourceCleanAnalysisError = "";
+    state.sourceCleanAnalysisDetail = "";
     state.sourceClean = null;
     state.sourceCleanReelStarted = false;
     paintSourceClean();
     await runSourceClean({ confirm: true, forceScan: rescan });
   }
 
+  function backToSourceClean() {
+    if (!state.job || state.cleanScope !== "source") return;
+    state.sourceCleanAnalysisError = "";
+    state.sourceCleanAnalysisDetail = "";
+    state.sourceCleanNote = "";
+    paintSourceClean();
+  }
+
+  function sourceAnalysisStopped(status) {
+    if (status === "cancelled") return "Analysis was cancelled.";
+    if (status === "interrupted") return "Analysis was interrupted.";
+    if (status === "ready") return "Analysis finished without a cut.";
+    return "Analysis stopped before it could build the cut.";
+  }
+
+  function sourceAnalysisStoppedNote(status) {
+    return `${tr(sourceAnalysisStopped(status))} ${tr("Download the source clean file, or retry.")}`;
+  }
+
+  function startSourceReelPoll(id) {
+    stopSourceReelPoll();
+    const token = state.sourceReelToken;
+    const isCurrent = () => (
+      token === state.sourceReelToken
+      && state.job?.id === id
+      && state.cleanScope === "source"
+    );
+    let misses = 0;
+    const tick = async () => {
+      if (!isCurrent()) return;
+      try {
+        const job = await api(`/api/jobs/${id}`);
+        if (!isCurrent()) return;
+        misses = 0;
+        if (job.status === "ready" && job.analysis) {
+          stopSourceReelPoll();
+          state.sourceCleanReelStarted = false;
+          state.sourceCleanAnalysisError = "";
+          state.sourceCleanAnalysisDetail = "";
+          state.sourceCleanNote = "";
+          await openJob(id);
+          return;
+        }
+        const terminal = job.status === "ready"
+          || ["failed", "cancelled", "interrupted"].includes(job.status);
+        if (terminal) {
+          stopSourceReelPoll();
+          state.job = job;
+          state.sourceCleanReelStarted = false;
+          const detail = String(job.error || job.message || "").trim();
+          if (detail) console.warn("Classic analysis stopped:", detail);
+          state.sourceCleanAnalysisDetail = detail;
+          state.sourceCleanAnalysisError = sourceAnalysisStopped(job.status);
+          state.sourceCleanNote = sourceAnalysisStoppedNote(job.status);
+          paintSourceClean();
+          return;
+        }
+        state.job = { ...state.job, ...job };
+        const progress = Number.isFinite(Number(job.progress))
+          ? ` · ${Math.round(Math.max(0, Math.min(1, Number(job.progress))) * 100)}%`
+          : "";
+        state.sourceCleanNote = `${tr(job.message || "Analysis is running.")}${progress}`;
+        paintSourceClean();
+        state.sourceReelTimer = setTimeout(tick, 1000);
+      } catch (error) {
+        if (!isCurrent()) return;
+        misses += 1;
+        if (misses >= 5) {
+          stopSourceReelPoll();
+          state.sourceCleanReelStarted = false;
+          state.sourceCleanAnalysisDetail = error.message || "";
+          if (state.sourceCleanAnalysisDetail) {
+            console.warn("Classic analysis status failed:", state.sourceCleanAnalysisDetail);
+          }
+          state.sourceCleanAnalysisError = "Analysis status could not be checked.";
+          state.sourceCleanNote = `${tr(state.sourceCleanAnalysisError)} ${tr("Download the source clean file, or retry.")}`;
+          paintSourceClean();
+          return;
+        }
+        state.sourceReelTimer = setTimeout(tick, 1500);
+      }
+    };
+    tick();
+  }
+
   async function makeReelFromSource() {
     if (!state.job || state.cleanScope !== "source") return;
     const job = state.job;
     if (job.status === "ready" && job.analysis) {
-      prepareResult(job);
+      await prepareResult(job);
       return;
     }
+    // A second click while a poll is live must not submit another analysis.
+    if (state.sourceCleanReelStarted) return;
     state.sourceCleanReelStarted = true;
+    state.sourceCleanAnalysisError = "";
+    state.sourceCleanAnalysisDetail = "";
     state.sourceCleanNote = "Starting analysis…";
     paintSourceClean();
     try {
       const answer = await api(`/api/jobs/${job.id}/analyze`, { method: "POST" });
-      if (!state.job || state.job.id !== job.id) return;
+      if (!state.job || state.job.id !== job.id || state.cleanScope !== "source") return;
       if (answer && answer.status === "ready") {
         const fresh = await api(`/api/jobs/${job.id}`);
-        state.job = fresh;
-        prepareResult(fresh);
-        return;
+        if (!state.job || state.job.id !== job.id || state.cleanScope !== "source") return;
+        if (fresh.status === "ready" && fresh.analysis) {
+          await prepareResult(fresh);
+          return;
+        }
       }
-      state.sourceCleanNote = answer?.started === false
-        ? "Analysis already started. Open the cut from Recent cuts when it finishes."
-        : "Analysis started. Open the cut from Recent cuts when it finishes.";
+      state.sourceCleanNote = "Analysis started. The cut opens here when it is ready.";
       paintSourceClean();
+      startSourceReelPoll(job.id);
     } catch (error) {
       state.sourceCleanReelStarted = false;
-      state.sourceCleanNote = `Analysis did not start: ${error.message}. Try again.`;
+      state.sourceCleanAnalysisDetail = error.message || "";
+      if (state.sourceCleanAnalysisDetail) {
+        console.warn("Classic analysis did not start:", state.sourceCleanAnalysisDetail);
+      }
+      state.sourceCleanAnalysisError = "Analysis did not start.";
+      state.sourceCleanNote = `${tr(state.sourceCleanAnalysisError)} ${tr("Try again.")}`;
       paintSourceClean();
     }
   }
@@ -3876,13 +4089,18 @@
   }
 
   // A source -> cut switch keeps the same job. Flush the source save that is
-  // still debounced, then start the cut with a fresh text/tick state so a late
-  // source PUT cannot land on the cut or preselect cut rows.
-  function leaveSourceTextBeforeCut() {
+  // still debounced before the cut lookup, then start the cut with a fresh
+  // text/tick state so a late source PUT cannot land on the cut or preselect
+  // cut rows.
+  async function leaveSourceTextBeforeCut() {
     const pending = state.classicText.saveTimer;
+    const inFlight = state.classicText.savePromise;
     if (pending) clearTimeout(pending);
     state.classicText.saveTimer = null;
-    if (pending && state.job?.id) persistClassicText(classicPlanClips());
+    if (pending && state.job?.id) {
+      await persistClassicText(classicPlanClips());
+    }
+    if (inFlight) await inFlight;
     if (state.classicText.frameTimer) clearTimeout(state.classicText.frameTimer);
     state.classicText.frameTimer = null;
     try { state.classicText.frame.controller?.abort(); } catch (_) { /* ignore */ }
@@ -3891,9 +4109,14 @@
     renderClassicText();
   }
 
-  function prepareResult(job) {
+  async function prepareResult(job) {
     const leavingSource = state.cleanScope === "source";
-    if (leavingSource) leaveSourceTextBeforeCut();
+    const sourceJobId = leavingSource ? state.job?.id : "";
+    if (leavingSource) await leaveSourceTextBeforeCut();
+    if (leavingSource && (state.job?.id !== sourceJobId || state.cleanScope !== "source")) {
+      // A navigation during the flush wins; do not pull the founder back.
+      return;
+    }
     state.job = job;
     state.cleanScope = "cut";
     resetSourceCleanState();
@@ -7485,6 +7708,52 @@
     return (state.plan?.clips || []).map((clip) => ({ ...clip }));
   }
 
+  // The backend's identity: the scan tracklet first, else the text and the
+  // rounded source-space box. Kept local so an undo/re-add can ask for restore.
+  function cleanIdentityToken(layer) {
+    const tracklet = String(layer?.tracklet_id || "").trim();
+    if (tracklet) return JSON.stringify(["tracklet", tracklet]);
+    const box = layer?.box || {};
+    const rect = ["x", "y", "w", "h"].map((axis) => (
+      Math.round((Number(box[axis]) || 0) * 10000) / 10000
+    ));
+    return JSON.stringify(["text_key", String(layer?.text_key || ""), rect]);
+  }
+
+  function durableDeletedTokens(key = state.classicText.dataKey || classicCutKey(classicPlanClips())) {
+    if (!(state.classicText.durableCleanDeleted instanceof Map)) {
+      state.classicText.durableCleanDeleted = new Map();
+    }
+    if (!state.classicText.durableCleanDeleted.has(key)) {
+      state.classicText.durableCleanDeleted.set(key, new Set());
+    }
+    return state.classicText.durableCleanDeleted.get(key);
+  }
+
+  function newCleanTokenSet(key = state.classicText.dataKey || classicCutKey(classicPlanClips())) {
+    if (!(state.classicText.newCleanTokens instanceof Map)) {
+      state.classicText.newCleanTokens = new Map();
+    }
+    if (!state.classicText.newCleanTokens.has(key)) {
+      state.classicText.newCleanTokens.set(key, new Set());
+    }
+    return state.classicText.newCleanTokens.get(key);
+  }
+
+  // Pending deletes belong to one cut hash. A lookup on that cut must not
+  // forget a delete whose debounced PUT has not been sent yet.
+  function pendingCleanDeletes(key = state.classicText.dataKey || classicCutKey(classicPlanClips())) {
+    if (!(state.classicText.deletedClean instanceof Map)) {
+      state.classicText.deletedClean = new Map();
+    }
+    let entry = state.classicText.deletedClean.get(key);
+    if (!entry || !(entry.ids instanceof Set) || !(entry.tokens instanceof Set)) {
+      entry = { ids: new Set(), tokens: new Set() };
+      state.classicText.deletedClean.set(key, entry);
+    }
+    return entry;
+  }
+
   function classicLayerId(prefix) {
     const taken = new Set([
       ...state.classicText.overlays.map((layer) => layer.id),
@@ -7567,6 +7836,11 @@
     state.classicText.overlays = Array.isArray(cut?.overlays) ? cut.overlays : [];
     state.classicText.effects = Array.isArray(cut?.effects) ? cut.effects : [];
     state.classicText.clean = Array.isArray(cut?.clean) ? cut.clean : [];
+    if (cut && Array.isArray(cut.source_clean_deleted)) {
+      const durable = durableDeletedTokens(key);
+      durable.clear();
+      for (const token of cut.source_clean_deleted) durable.add(String(token));
+    }
     if (cut && cut.clean_reset) {
       // Boxes saved before boxes were stored in source space would land in the
       // wrong place, so the server drops them. Say so instead of going quiet.
@@ -7596,6 +7870,13 @@
       });
       if (seq !== state.classicText.seq || rev !== state.classicText.rev) return;
       applyClassicTextCut(result.cut, key);
+      if (state.cleanScope !== "source") {
+        if (result.source_clean_note) {
+          setCleanStatus(result.source_clean_note);
+        } else if (Number(result.source_clean_added) > 0) {
+          setCleanStatus("Source Clean layers added.");
+        }
+      }
       updateRenderPanel();
     } catch (_) {
       if (seq !== state.classicText.seq) return;
@@ -7606,6 +7887,23 @@
 
   async function persistClassicText(clips) {
     if (!state.job || !clips.length) return;
+    const clean = cleanPayloadLayers();
+    const presentIds = new Set(clean.map((layer) => String(layer.id || "")));
+    const presentTokens = new Set(clean.map((layer) => cleanIdentityToken(layer)));
+    const cutKey = classicCutKey(clips);
+    const pending = pendingCleanDeletes(cutKey);
+    const durable = durableDeletedTokens(cutKey);
+    const newlyAdded = newCleanTokenSet(cutKey);
+    const restoredIds = Array.from(pending.ids)
+      .filter((id) => presentIds.has(id));
+    const restoredTokens = Array.from(pending.tokens)
+      .filter((token) => presentTokens.has(token));
+    const durableRestored = Array.from(newlyAdded)
+      .filter((token) => durable.has(token) && presentTokens.has(token));
+    const restore = restoredIds.length > 0 || restoredTokens.length > 0
+      || durableRestored.length > 0;
+    const deleted = Array.from(pending.ids)
+      .filter((id) => id && !presentIds.has(id));
     try {
       await api(`/api/classic/jobs/${state.job.id}/text`, {
         method: "PUT",
@@ -7613,9 +7911,18 @@
           clips,
           overlays: state.classicText.overlays,
           effects: state.classicText.effects,
-          clean: cleanPayloadLayers(),
+          clean,
+          source_clean_deleted: deleted,
+          source_clean_restore: restore,
         }),
       });
+      for (const id of restoredIds) pending.ids.delete(id);
+      for (const token of restoredTokens) pending.tokens.delete(token);
+      for (const token of durableRestored) {
+        durable.delete(token);
+        pending.tokens.delete(token);
+      }
+      newlyAdded.clear();
     } catch (error) {
       toast(error.message);
     }
@@ -7632,7 +7939,13 @@
     if (state.classicText.saveTimer) clearTimeout(state.classicText.saveTimer);
     state.classicText.saveTimer = setTimeout(() => {
       state.classicText.saveTimer = null;
-      persistClassicText(clips);
+      const pending = persistClassicText(clips);
+      state.classicText.savePromise = pending;
+      pending.finally(() => {
+        if (state.classicText.savePromise === pending) {
+          state.classicText.savePromise = null;
+        }
+      });
     }, 350);
   }
 
@@ -8686,13 +8999,15 @@
     for (const row of rows) {
       if (row.manual) continue;
       const id = row.entry?.tracklet_id;
-      row.added = classicCleanLayers().some((layer) => {
+      const applied = classicCleanLayers().find((layer) => {
         if (layer.source !== "scan") return false;
         if (id && layer.tracklet_id === id) return true;
         return Boolean(row.key && layer.text_key
           && cleanTextKey(layer.text_key) === row.key
           && cleanBoxesMeet(layer.box, row.box));
       });
+      row.added = Boolean(applied);
+      row.hidden = Boolean(applied?.hidden);
     }
     rows.sort((a, b) => {
       const at = a.ranges[0]?.start ?? Number.MAX_SAFE_INTEGER;
@@ -8857,7 +9172,9 @@
              role="listitem" tabindex="0" data-found-index="${index}">
           ${row.manual
             ? '<span class="clean-found-tick-space" aria-hidden="true"></span>'
-            : `<input type="checkbox" class="clean-found-tick" data-found-tick="${index}"${ticked ? " checked" : ""} aria-label="Include ${esc(row.text)}">`}
+            : (row.added
+              ? `<input type="checkbox" class="clean-found-tick is-cleaned" data-found-tick="${index}" checked disabled aria-label="${row.hidden ? "Excluded" : "Already cleaned"}: ${esc(row.text)}">`
+              : `<input type="checkbox" class="clean-found-tick" data-found-tick="${index}"${ticked ? " checked" : ""} aria-label="Include ${esc(row.text)}">`)}
           ${thumb ? `<span class="clean-found-thumb" style="background-image:url('${esc(thumb)}');${cleanThumbStyle(row.box)}" aria-hidden="true"></span>` : '<span class="clean-found-thumb is-empty" aria-hidden="true"></span>'}
           <div class="clean-found-copy">
             <span class="clean-found-time mono">${esc(time)}</span>
@@ -9160,6 +9477,7 @@
       hidden: false,
     };
     classicCleanLayers().push(layer);
+    newCleanTokenSet().add(cleanIdentityToken(layer));
     state.classicText.selection = layer.id;
     setCleanStatus(`${CLEAN_METHODS[cleanMethodKey(layer)].label} box added. It saves with the ${state.cleanScope === "source" ? "whole video" : "cut"}.`);
     saveClassicText();
@@ -9171,8 +9489,12 @@
   function deleteCleanBox(id) {
     const before = classicCleanLayers().length;
     if (!before) return;
+    const layer = classicCleanLayers().find((item) => item.id === id);
     pushClassicUndo();
-    state.classicText.clean = classicCleanLayers().filter((layer) => layer.id !== id);
+    const pending = pendingCleanDeletes();
+    pending.ids.add(String(id));
+    if (layer) pending.tokens.add(cleanIdentityToken(layer));
+    state.classicText.clean = classicCleanLayers().filter((item) => item.id !== id);
     if (state.classicText.selection === id) state.classicText.selection = "";
     saveClassicText();
     paintCleanStage();
@@ -10697,6 +11019,15 @@
     dom.progressError.hidden = true;
     dom.progressBack.hidden = true;
     if (dom.progressSource) dom.progressSource.hidden = true;
+    if (dom.progressRetry) {
+      dom.progressRetry.hidden = true;
+      dom.progressRetry.disabled = false;
+      dom.progressRetry.textContent = "Retry analysis";
+    }
+    if (dom.progressDownload) {
+      dom.progressDownload.hidden = true;
+      dom.progressDownload.removeAttribute("href");
+    }
     dom.renderError.hidden = true;
     dom.playerWrap.hidden = true;
     dom.renderProgress.hidden = true;

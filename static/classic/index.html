@@ -214,6 +214,8 @@
         <div id="progress-error" class="error" hidden></div>
         <div class="progress-actions">
           <button id="progress-cancel-url" class="ghost" hidden>Cancel download</button>
+          <a id="progress-download" class="primary small" download hidden>Download <span class="arrow">↓</span></a>
+          <button id="progress-retry" class="ghost" hidden>Retry analysis</button>
           <button id="progress-source" class="ghost" hidden>Back to source clean</button>
           <button id="progress-back" class="ghost" hidden>Back to ingest</button>
         </div>
@@ -487,6 +489,7 @@
             <div id="source-clean-result-actions" class="source-clean-result-actions" hidden>
               <a id="source-clean-download" class="primary small" download hidden>Download <span class="arrow">↓</span></a>
               <button id="source-clean-reel" class="ghost small" type="button">Make a reel</button>
+              <button id="source-clean-analysis-back" class="ghost small" type="button" hidden>Back to source clean</button>
               <button id="source-clean-again" class="ghost small" type="button">Clean again</button>
             </div>
           </div>

@@ -130,6 +130,75 @@ const FILL = {
   note: "AI fill is ready with LaMa.",
 };
 
+// A ready cut for the same source. The source record below is what the real
+// server would have saved under the full-source clip.
+const CUT_CLIP = {
+  scene: 0, role: "hook", start: 2, end: 9, dur: 7,
+  why: "Hook: a strong opening.", mid: 5.5,
+  crop: { cx: 0.5, cy: 0.5 }, crop_mode: "center",
+};
+const CUT_SCENE = {
+  id: 0, start: 2, end: 9, dur: 7, mid: 5.5, hook: 70, score: 70,
+  deep: true, visual_score: 70, motion_score: 70, audio_score: 70,
+  text_score: 0, ocr: "", speech: "", tags: [], face: false,
+  crop: { cx: 0.5, cy: 0.5 }, crop_mode: "center",
+};
+const PLAN = {
+  target: 30, clips: [CUT_CLIP], total: 7, clip_count: 1,
+  hook_scene: 0, auto: true, note: "One clip", source_duration: 12,
+  hook_why: "Opening", payoff_why: "Ending",
+  reasoning: {
+    hook: { headline: "Opening" },
+    payoff: { headline: "Ending" },
+  },
+};
+const READY_JOB = {
+  ...JOB,
+  status: "ready",
+  progress: 1,
+  message: "Ready",
+  analysis: {
+    scene_count: 1, hook_scene: 0, deep_count: 1, elapsed: 1.2,
+    engine: {}, scenes: [CUT_SCENE],
+    plans: { "15": PLAN, "30": PLAN, "60": PLAN },
+  },
+};
+const SOURCE_CLIP = { scene: 0, start: 0, end: 12, dur: 12, role: "source" };
+
+// Deterministic already-mapped cut rows for the carry stub. Mapping itself is
+// covered by tests/test_classic_clean_carry.py; this stub only drives the UI.
+const CARRY_ROWS = [
+  {
+    id: "cl01", method: "blur",
+    box: { x: 0.1, y: 0.74, w: 0.8, h: 0.16 },
+    ranges: [{ start: 2, end: 6 }],
+    label: "Burned-in subtitle", kind: "subtitle", source: "scan",
+    tracklet_id: "t1", text_key: "same words", hidden: false,
+    opacity: 1, radius: 24, z: 0, color: "#0b0d12",
+  },
+  {
+    id: "cl02", method: "blur",
+    box: { x: 0.78, y: 0.03, w: 0.18, h: 0.08 },
+    ranges: [{ start: 0, end: 7 }],
+    label: "Handle or logo", kind: "handle_or_logo", source: "scan",
+    tracklet_id: "t2", text_key: "mark", hidden: false,
+    opacity: 1, radius: 24, z: 1, color: "#0b0d12",
+  },
+];
+
+// Only the identity token is mirrored here, so the stub can apply the same
+// delete/restore rule the backend uses. The source->cut mapping is not mirrored.
+function identityToken(layer) {
+  const tracklet = String(layer?.tracklet_id || "").trim();
+  if (tracklet) return JSON.stringify(["tracklet", tracklet]);
+  const box = layer?.box || {};
+  const rect = ["x", "y", "w", "h"].map((axis) => (
+    Math.round((Number(box[axis]) || 0) * 10000) / 10000
+  ));
+  return JSON.stringify(["text_key", String(layer?.text_key || ""), rect]);
+}
+
+
 let browser;
 try {
   browser = await chromium.launch({ headless: true });
@@ -148,22 +217,144 @@ async function run(viewport) {
   const analysisCalls = [];
   const renderBodies = [];
   let fillPreviewCalls = 0;
+  let analysisStarted = false;
+  let analysisPolls = 0;
+  let analysisDone = false;
+  let cutSeeded = false;
+  let cutRows = [];
+  let sourceRows = [];
+  let durableDeleted = new Set();
+  let terminalStatus = "";
+  let terminalError = "";
+  let immediateReady = false;
+  let slowSourceSave = false;
+  let textOrder = [];
+  const cutPuts = [];
   page.on("pageerror", (error) => pageErrors.push(String(error?.message || error)));
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
 
-  await page.route(/\/api\/jobs\/j1$/, (route) => route.fulfill(json(JOB)));
+  await page.route(/\/api\/jobs\/j1$/, (route) => {
+    if (!analysisStarted) return route.fulfill(json(JOB));
+    if (immediateReady) return route.fulfill(json(READY_JOB));
+    if (terminalStatus) {
+      return route.fulfill(json({
+        ...JOB,
+        status: terminalStatus,
+        error: terminalError || null,
+        message: terminalStatus === "cancelled" ? "Cancelled" : "Stopped",
+      }));
+    }
+    if (!analysisDone) {
+      analysisPolls += 1;
+      if (analysisPolls < 2) {
+        return route.fulfill(json({
+          ...JOB,
+          status: "reading",
+          progress: 0.4,
+          message: "Reading the video",
+        }));
+      }
+      analysisDone = true;
+    }
+    return route.fulfill(json(READY_JOB));
+  });
   await page.route(/\/api\/jobs\/j1\/check$/, (route) => route.fulfill(json(SCAN)));
   await page.route(/\/api\/jobs\/j1\/analyze$/, (route) => {
     analysisCalls.push(route.request().method());
-    return route.fulfill(json({ ok: true, id: "j1", status: "queued", started: true }, 202));
+    analysisStarted = true;
+    const status = immediateReady ? "ready" : "queued";
+    return route.fulfill(json({ ok: true, id: "j1", status, started: true }, 202));
   });
   await page.route(/\/api\/classic\/fill$/, (route) => route.fulfill(json(FILL)));
+  await page.route(/\/api\/jobs\/j1\/history/, (route) =>
+    route.fulfill(json({ entries: [] })));
+  await page.route(/\/api\/jobs\/j1\/audio\/moods/, (route) =>
+    route.fulfill(json({ moods: [] })));
+  await page.route(/\/api\/jobs\/j1\/mixer/, (route) =>
+    route.fulfill(json({
+      ready: false, total: 0, clips: [], original: [], music: [], voice: [], bed: [],
+    })));
+  await page.route(/\/api\/jobs\/j1\/thumb\/0$/, (route) =>
+    route.fulfill({ status: 200, contentType: "image/jpeg", body: JPEG_BYTES }));
+  await page.route(/\/api\/classic\/jobs\/j1\/frame$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "image/jpeg",
+      headers: { "X-VibeCut-Width": "608", "X-VibeCut-Height": "1080" },
+      body: JPEG_BYTES,
+    }));
 
-  await page.route(/\/api\/classic\/jobs\/j1\/text$/, (route) => {
-    const cut = { overlays: [], effects: [], clean: [] };
-    return route.fulfill(json({ cut, aspects: ["9:16", "4:5"] }));
+  await page.route(/\/api\/classic\/jobs\/j1\/text$/, async (route) => {
+    let body = {};
+    try { body = JSON.parse(route.request().postData() || "{}"); } catch (_) { /* empty */ }
+    const clips = Array.isArray(body.clips) ? body.clips : [];
+    const isSource = clips.length === 1 && clips[0]?.role === "source";
+    if (route.request().method() === "PUT") {
+      if (isSource) {
+        textOrder.push("source-put-start");
+        if (slowSourceSave) await new Promise((resolve) => setTimeout(resolve, 120));
+        sourceRows = Array.isArray(body.clean) ? body.clean : [];
+        textOrder.push("source-put-done");
+      } else {
+        const incoming = Array.isArray(body.clean) ? body.clean : [];
+        const previous = cutRows;
+        for (const id of Array.isArray(body.source_clean_deleted)
+          ? body.source_clean_deleted : []) {
+          const row = previous.find((item) => item.id === id)
+            || incoming.find((item) => item.id === id);
+          if (row) durableDeleted.add(identityToken(row));
+        }
+        if (body.source_clean_restore === true) {
+          for (const row of incoming) durableDeleted.delete(identityToken(row));
+          cutRows = incoming;
+        } else {
+          cutRows = incoming.filter((row) => !durableDeleted.has(identityToken(row)));
+        }
+        cutSeeded = true;
+        cutPuts.push({
+          clean: cutRows.map((row) => row.id),
+          deleted: Array.isArray(body.source_clean_deleted)
+            ? body.source_clean_deleted : [],
+          restore: body.source_clean_restore === true,
+        });
+      }
+      return route.fulfill(json({
+        cut: {
+          overlays: [], effects: [], clean: isSource ? sourceRows : cutRows,
+          source_clean_seeded: !isSource,
+          source_clean_deleted: [...durableDeleted],
+        },
+        aspects: ["9:16", "4:5"],
+      }));
+    }
+    if (isSource) {
+      textOrder.push("source-lookup");
+      return route.fulfill(json({
+        cut: { overlays: [], effects: [], clean: sourceRows, source_clean_seeded: false },
+        aspects: ["9:16", "4:5"],
+        source_clean_added: 0,
+        source_clean_note: "",
+      }));
+    }
+    textOrder.push("cut-lookup-start");
+    let added = 0;
+    if (!cutSeeded) {
+      cutRows = CARRY_ROWS.map((row) => JSON.parse(JSON.stringify(row)));
+      cutSeeded = true;
+      added = cutRows.length;
+    }
+    return route.fulfill(json({
+      cut: {
+        overlays: [], effects: [], clean: cutRows,
+        source_clean_seeded: true,
+        source_clean_deleted: [...durableDeleted],
+      },
+      aspects: ["9:16", "4:5"],
+      source_clean_added: added,
+      source_clean_note: "",
+    }));
   });
   await page.route(/\/api\/classic\/jobs\/j1\/fill\/estimate$/, (route) =>
     route.fulfill(json({ method: "lama", estimate_seconds: 90, seconds: 90, measured: true })));
@@ -360,12 +551,261 @@ async function run(viewport) {
 
   await page.locator("#source-clean-reel").click();
   assert(analysisCalls.length === 1, `${label}: Make a reel did not call analyze`);
+  const expectedRows = CARRY_ROWS.length;
+  // The handoff polls the job and opens the cut itself; it must not send the
+  // founder to Recent cuts or leave them on the source screen.
+  await page.waitForFunction((count) =>
+    !document.body.classList.contains("source-mode")
+      && document.querySelectorAll("#clean-layers .clean-row").length === count,
+  expectedRows, { timeout: 30000 });
+  assert(analysisPolls >= 2, `${label}: the handoff did not poll the job`);
+  assert(await page.evaluate(() => location.hash) === "#job=j1",
+    `${label}: the cut URL hash changed`);
+  const seeded = await page.evaluate(() => ({
+    rows: document.querySelectorAll("#clean-layers .clean-row").length,
+    status: document.querySelector("#clean-status").textContent || "",
+  }));
+  assert(seeded.rows === expectedRows, `${label}: the cut has ${seeded.rows} rows`);
+  assert(/Source Clean layers added/.test(seeded.status),
+    `${label}: the seeded note is ${seeded.status}`);
+
+  // Editing a cut row saves only the cut. The source lookup still returns the
+  // original source-space rows.
+  const readSourceRows = () => page.evaluate(async (clip) => {
+    const response = await fetch("/api/classic/jobs/j1/text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clips: [clip] }),
+    });
+    return (await response.json()).cut.clean;
+  }, SOURCE_CLIP);
+  const sourceBefore = await readSourceRows();
+  const saved = page.waitForRequest((request) =>
+    /\/api\/classic\/jobs\/j1\/text$/.test(request.url())
+      && request.method() === "PUT");
+  await page.locator('[data-clean-eye="cl01"]').click();
+  await saved;
+  const sourceAfter = await readSourceRows();
+  assert(JSON.stringify(sourceAfter) === JSON.stringify(sourceBefore),
+    `${label}: editing the cut changed the source clean record`);
+
+  // Reload the cut. The marker stops a second copy, so the rows stay few.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction((count) =>
+    !document.body.classList.contains("source-mode")
+      && document.querySelectorAll("#clean-layers .clean-row").length === count,
+  expectedRows, { timeout: 30000 });
+  const reloaded = await page.evaluate(() => ({
+    rows: document.querySelectorAll("#clean-layers .clean-row").length,
+    status: document.querySelector("#clean-status").textContent || "",
+    off: document.querySelectorAll("#clean-layers .clean-row.is-off").length,
+  }));
+  assert(reloaded.rows === expectedRows,
+    `${label}: reload duplicated the source rows (${reloaded.rows})`);
+  assert(!/Source Clean layers added/.test(reloaded.status),
+    `${label}: the seeded note appeared again on reload (${reloaded.status})`);
+  assert(reloaded.off === 1, `${label}: the edited row did not stay excluded`);
+  const hiddenCheck = await page.evaluate(() => {
+    const node = document.querySelector(
+      '#clean-found input[data-found-tick][disabled]',
+    );
+    return node ? node.getAttribute("aria-label") || "" : "";
+  });
+  assert(/^Excluded:/.test(hiddenCheck),
+    `${label}: a hidden carried row says ${hiddenCheck || "nothing"}`);
+
+  // Delete a carried row, make a normal edit (no restore), then undo both.
+  // The undo of the delete must send the explicit restore flag and survive a
+  // reload. The normal edit must never send it.
+  await page.locator('[data-clean-delete="cl01"]').click();
+  await page.waitForTimeout(500);
+  assert(cutPuts.at(-1)?.deleted.includes("cl01")
+    && cutPuts.at(-1)?.restore === false,
+  `${label}: the delete PUT is ${JSON.stringify(cutPuts.at(-1))}`);
+
+  await page.locator('[data-clean-eye="cl02"]').click();
+  await page.waitForTimeout(500);
+  assert(cutPuts.at(-1)?.restore === false,
+    `${label}: a normal edit sent the restore flag`);
+
+  await page.locator("#clean-undo").click();
+  await page.waitForTimeout(500);
+  assert(cutPuts.at(-1)?.restore === false,
+    `${label}: undoing a normal edit sent the restore flag`);
+  await page.locator("#clean-undo").click();
+  await page.waitForTimeout(500);
+  assert(cutPuts.at(-1)?.restore === true
+    && cutPuts.at(-1)?.clean.includes("cl01"),
+  `${label}: undoing a delete did not restore (${JSON.stringify(cutPuts.at(-1))})`);
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction((count) =>
+    !document.body.classList.contains("source-mode")
+      && document.querySelectorAll("#clean-layers .clean-row").length === count,
+  expectedRows, { timeout: 30000 });
+  const restored = await page.evaluate(() => ({
+    ids: [...document.querySelectorAll("#clean-layers .clean-row")]
+      .map((node) => node.dataset.cleanRow),
+  }));
+  assert(restored.ids.includes("cl01"),
+    `${label}: the undone row did not survive reload (${restored.ids})`);
+
+  // Durable across a reload: delete, reload, then re-add the same text. The
+  // browser only knows the delete token from the cut lookup payload.
+  await page.locator('[data-clean-delete="cl01"]').click();
+  await page.waitForTimeout(500);
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() =>
-    /Analysis started/.test(document.querySelector("#source-clean-output").textContent || ""),
-  null, { timeout: 10000 });
-  const startedNote = await page.locator("#source-clean-output").textContent();
-  assert(/Analysis started\. Open the cut from Recent cuts when it finishes\./.test(startedNote),
-    `${label}: the result note is ${startedNote}`);
+    !document.body.classList.contains("source-mode")
+      && document.querySelectorAll("#clean-layers .clean-row").length === 1,
+  null, { timeout: 30000 });
+  await page.locator('[data-found-index="0"] [data-found-tick="0"]').check();
+  await page.locator("[data-found-apply]").click();
+  await page.waitForTimeout(500);
+  assert(cutPuts.at(-1)?.restore === true,
+    `${label}: a reloaded re-add sent restore=false (${JSON.stringify(cutPuts.at(-1))})`);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() =>
+    !document.body.classList.contains("source-mode")
+      && document.querySelectorAll("#clean-layers .clean-row").length === 2,
+  null, { timeout: 30000 });
+  const readded = await page.evaluate(() => ({
+    labels: [...document.querySelectorAll("#clean-layers .clean-row-label")]
+      .map((node) => node.textContent),
+  }));
+  assert(readded.labels.some((text) => /subtitle/i.test(text)),
+    `${label}: the re-added row did not survive reload (${readded.labels})`);
+
+  // A stale tab has the old row but no local delete. It must send no restore
+  // flag, and the stub (like the server) keeps it deleted.
+  const oldClean = await page.evaluate(async (clip) => {
+    const response = await fetch("/api/classic/jobs/j1/text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clips: [clip] }),
+    });
+    return (await response.json()).cut.clean;
+  }, CUT_CLIP);
+  const target = oldClean.find((row) => row.tracklet_id === "t1");
+  assert(target, `${label}: the re-added row has no t1 identity`);
+  await page.locator(`[data-clean-delete="${target.id}"]`).click();
+  await page.waitForTimeout(500);
+  await page.evaluate(async ({ clip, clean }) => {
+    await fetch("/api/classic/jobs/j1/text", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clips: [clip], clean, overlays: [], effects: [] }),
+    });
+  }, { clip: CUT_CLIP, clean: oldClean });
+  assert(cutPuts.at(-1)?.restore === false,
+    `${label}: a stale tab sent the restore flag`);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() =>
+    !document.body.classList.contains("source-mode")
+      && document.querySelectorAll("#clean-layers .clean-row").length === 1,
+  null, { timeout: 30000 });
+  const stale = await page.evaluate(() => ({
+    labels: [...document.querySelectorAll("#clean-layers .clean-row-label")]
+      .map((node) => node.textContent),
+  }));
+  assert(!stale.labels.some((text) => /subtitle/i.test(text)),
+    `${label}: the stale tab restored a deleted row (${stale.labels})`);
+
+  async function backToSource(status = "", error = "") {
+    terminalStatus = status;
+    terminalError = error;
+    analysisStarted = false;
+    analysisDone = false;
+    immediateReady = false;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() =>
+      document.body.classList.contains("source-mode")
+        && !document.querySelector("#source-clean-result-actions").hidden,
+    null, { timeout: 30000 });
+  }
+
+  // Every terminal status stops the poll and gives the button back.
+  for (const [status, copy] of [
+    ["cancelled", "Analysis was cancelled."],
+    ["interrupted", "Analysis was interrupted."],
+  ]) {
+    await backToSource(status, `${status} by the operator`);
+    if (status === "cancelled") {
+      const cleaned = await page.evaluate(() => {
+        const node = document.querySelector(
+          '#clean-found input[data-found-tick][disabled]',
+        );
+        return node ? {
+          disabled: node.disabled,
+          label: node.getAttribute("aria-label") || "",
+        } : null;
+      });
+      assert(cleaned && cleaned.disabled && /Already cleaned/.test(cleaned.label),
+        `${label}: an applied found row is still an active checkbox`);
+    }
+    await page.locator("#source-clean-reel").click();
+    await page.waitForFunction(() =>
+      /Retry analysis/.test(document.querySelector("#source-clean-reel").textContent || "")
+        && !document.querySelector("#source-clean-reel").disabled,
+    null, { timeout: 15000 });
+    const stopped = await page.evaluate(() => ({
+      output: document.querySelector("#source-clean-output").textContent || "",
+      title: document.querySelector("#source-clean-reel").title || "",
+    }));
+    assert(stopped.output.includes(copy),
+      `${label}: ${status} note is ${stopped.output}`);
+    assert(!stopped.output.includes(`${status} by the operator`),
+      `${label}: ${status} detail leaked into the note`);
+    assert(stopped.title === "",
+      `${label}: ${status} detail leaked into the visible title`);
+  }
+
+  // A failure says a plain sentence; the raw engine/path detail stays out of
+  // the note and in the title. It must not leave the poll running.
+  await backToSource("failed", "/Users/founder/secret/model.onnx missing");
+  await page.locator("#source-clean-reel").click();
+  await page.waitForFunction(() =>
+    /Retry analysis/.test(document.querySelector("#source-clean-reel").textContent || "")
+      && !document.querySelector("#source-clean-reel").disabled,
+  null, { timeout: 15000 });
+  const failed = await page.evaluate(() => ({
+    output: document.querySelector("#source-clean-output").textContent || "",
+    title: document.querySelector("#source-clean-reel").title || "",
+  }));
+  assert(failed.output.includes("Analysis stopped before it could build the cut."),
+    `${label}: failure note is ${failed.output}`);
+  assert(!failed.output.includes("/Users/founder"),
+    `${label}: failure note leaked the raw error (${failed.output})`);
+  assert(failed.title === "",
+    `${label}: the raw error leaked into the visible title`);
+
+  // Leaving source mode with a save in flight must finish that source PUT
+  // before the cut lookup runs.
+  await backToSource();
+  analysisStarted = false;
+  analysisDone = false;
+  terminalStatus = "";
+  terminalError = "";
+  immediateReady = true;
+  slowSourceSave = true;
+  await page.waitForFunction(() =>
+    document.querySelectorAll("#clean-layers .clean-row").length > 0,
+  null, { timeout: 15000 });
+  textOrder = [];
+  assert(await page.locator("#clean-layers [data-clean-eye]").count() > 0,
+    `${label}: no source Clean row to edit`);
+  await page.evaluate(() => {
+    document.querySelector("#clean-layers [data-clean-eye]")?.click();
+    document.querySelector("#source-clean-reel").click();
+  });
+  await page.waitForFunction(() =>
+    !document.body.classList.contains("source-mode"),
+  null, { timeout: 30000 });
+  const putDone = textOrder.indexOf("source-put-done");
+  const cutStart = textOrder.indexOf("cut-lookup-start");
+  assert(putDone >= 0, `${label}: the pending source save never ran`);
+  assert(cutStart > putDone,
+    `${label}: the cut lookup ran before the source save (${textOrder.join(" | ")})`);
 
   assert(pageErrors.length === 0, `${label}: page errors: ${pageErrors.join(" | ")}`);
   assert(consoleErrors.length === 0, `${label}: console errors: ${consoleErrors.join(" | ")}`);

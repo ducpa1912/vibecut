@@ -505,27 +505,34 @@ def _analysis_cancel_event(job_id: str) -> threading.Event:
 def run_analysis(job_id: str) -> None:
     event = _analysis_cancel_event(job_id)
     job = load_job(job_id)
+
+    def persist(**values) -> None:
+        """Write only the fields analysis owns.
+
+        A source Clean save can land between two progress calls. Reading the
+        job once and saving the whole stale object would erase it, so every
+        write is a fresh read-modify-write of these keys only.
+        """
+        def mutate(current: dict) -> None:
+            current.update(values)
+        update_job(job_id, mutate)
+
     if event.is_set():
-        job["status"] = "cancelled"
-        job["progress"] = 1.0
-        job["message"] = "Cancelled"
-        job["error"] = None
-        save_job(job)
+        persist(status="cancelled", progress=1.0, message="Cancelled", error=None)
         ANALYSIS_CANCELS.pop(job_id, None)
         return
-    job["status"] = "scanning"
-    job["progress"] = 0.01
-    job["message"] = "Warming up"
-    job["error"] = None
-    save_job(job)
+    persist(
+        status="scanning", progress=0.01, message="Warming up", error=None,
+    )
 
     def progress(stage: str, fraction: float, message: str) -> None:
         if event.is_set():
             raise AnalysisCancelled("Analysis cancelled.")
-        job["status"] = stage if stage in ACTIVE else "scoring"
-        job["progress"] = round(max(0.01, min(0.995, fraction)), 4)
-        job["message"] = message
-        save_job(job)
+        persist(
+            status=stage if stage in ACTIVE else "scoring",
+            progress=round(max(0.01, min(0.995, fraction)), 4),
+            message=message,
+        )
 
     # Lets Cancel reading stop a speech engine that is mid-file.
     pipeline.stt.set_cancel_event(event)
@@ -544,34 +551,40 @@ def run_analysis(job_id: str) -> None:
         if event.is_set():
             raise AnalysisCancelled("Analysis cancelled.")
         analysis_delta = usage_store.delta(before_usage)
-        if analysis_delta["calls"] or analysis_delta["audio_seconds"] or analysis_delta["chars"]:
-            job.setdefault("usage", []).append({
-                "action": "analysis",
-                "at": round(time.time(), 3),
-                **analysis_delta,
-            })
-        job["analysis"] = analysis
-        job["status"] = "ready"
-        job["progress"] = 1.0
         count = int(analysis["scene_count"])
-        job["message"] = f"{count} {'moment' if count == 1 else 'moments'} · hook found"
-        job["error"] = None
-        save_job(job)
+        message = f"{count} {'moment' if count == 1 else 'moments'} · hook found"
+
+        def complete(current: dict) -> None:
+            current["analysis"] = analysis
+            current["status"] = "ready"
+            current["progress"] = 1.0
+            current["message"] = message
+            current["error"] = None
+            if (
+                analysis_delta["calls"] or analysis_delta["audio_seconds"]
+                or analysis_delta["chars"]
+            ):
+                # Append to the list another writer may have changed; never
+                # replace it with this worker's stale copy.
+                current.setdefault("usage", []).append({
+                    "action": "analysis",
+                    "at": round(time.time(), 3),
+                    **analysis_delta,
+                })
+
+        update_job(job_id, complete)
         LOGGER.info("job %s ready in %.1fs", job_id, analysis["elapsed"])
     except (AnalysisCancelled, pipeline.stt.SttCancelled):
         LOGGER.info("analysis cancelled for %s", job_id)
-        job["status"] = "cancelled"
-        job["progress"] = 1.0
-        job["message"] = "Cancelled"
-        job["error"] = None
-        save_job(job)
+        persist(
+            status="cancelled", progress=1.0, message="Cancelled", error=None,
+        )
     except Exception as exc:  # noqa: BLE001
         LOGGER.exception("analysis failed for %s", job_id)
-        job["status"] = "failed"
-        job["progress"] = 1.0
-        job["message"] = "Analysis failed"
-        job["error"] = str(exc)[:2400]
-        save_job(job)
+        persist(
+            status="failed", progress=1.0, message="Analysis failed",
+            error=str(exc)[:2400],
+        )
     finally:
         pipeline.stt.set_cancel_event(None)
         if ANALYSIS_CANCELS.get(job_id) is event:

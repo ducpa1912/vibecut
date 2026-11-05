@@ -33,9 +33,9 @@
   },
   {
    "path": "app.py",
-   "source": "studio 6a6bf58: keep AI fill work when a render stops",
-   "sha256": "56098c8b75c481faf83422c7e395e2aa0ef5a5c145a612024fedd3cd2b645ce5",
-   "feature_version": "1.0.5"
+   "source": "classic Phase 3: analysis writes only analysis-owned fields",
+   "sha256": "cd95291433a917f723c962a3729ec4bdde48ea2bc21a2cc79edd9c395441c134",
+   "feature_version": "1.0.6"
   },
   {
    "path": "artifacts.py",

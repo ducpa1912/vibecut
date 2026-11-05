@@ -169,6 +169,8 @@ def test_source_rail_reuses_the_clean_panel_and_names_every_state():
         'id="source-clean-download"',
         'id="source-clean-reel"',
         'id="source-clean-again"',
+        'id="progress-download"',
+        'id="progress-retry"',
     ):
         assert marker in html, marker
 
@@ -177,8 +179,23 @@ def test_source_rail_reuses_the_clean_panel_and_names_every_state():
     assert "dom.sourceCleanRun?.addEventListener(\"click\", sourceCleanPrimaryAction);" in js
     assert "dom.sourceCleanCancel?.addEventListener(\"click\", cancelSourceCleanRender);" in js
     assert "dom.sourceCleanReel?.addEventListener(\"click\", makeReelFromSource);" in js
+    assert "dom.sourceCleanAnalysisBack?.addEventListener(\"click\", backToSourceClean);" in js
     assert "await api(`/api/jobs/${job.id}/analyze`, { method: \"POST\" });" in js
     assert "Analysis started" in js
+    assert "function startSourceReelPoll(id)" in js
+    assert "setTimeout(tick, 1000)" in js
+    assert "if (state.sourceCleanReelStarted) return;" in js
+    assert "Source Clean layers added." in js
+    assert "Open the cut from Recent cuts" not in js
+    assert 'id="source-clean-analysis-back"' in html
+    assert "await persistClassicText(classicPlanClips());" in js
+    assert "async function prepareResult(job)" in js
+    assert "deletedClean: new Map()" in js
+    assert "function pendingCleanDeletes(" in js
+    assert "function cleanIdentityToken(" in js
+    assert "sourceAnalysisStoppedNote" in js
+    assert "Already cleaned" in js
+    assert "Excluded" in js
     assert "The clean file is missing. Render it again; no Download is offered." in js
 
     css = styles()
@@ -199,5 +216,11 @@ def test_vietnamese_dictionary_covers_the_new_ingest_and_source_copy():
         ("Clean again", "Làm sạch lại"),
         ("Whole video", "Toàn bộ video"),
         ("Finding text", "Đang tìm chữ"),
+        ("Source Clean layers added.", "Đã thêm các lớp Làm sạch nguồn."),
+        ("Retry analysis", "Thử phân tích lại"),
+        ("Analysis was cancelled.", "Phân tích đã bị hủy."),
+        ("Analysis was interrupted.", "Phân tích đã bị gián đoạn."),
+        ("Analysis stopped before it could build the cut.", "Phân tích đã dừng trước khi dựng được bản cắt."),
+        ("Download the source clean file, or retry.", "Tải tệp làm sạch nguồn, hoặc thử lại."),
     ):
         assert f'"{english}": "{vietnamese}"' in words, english

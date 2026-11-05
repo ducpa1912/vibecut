@@ -35,5 +35,6 @@ def test_source_clean_gate_states_in_a_real_browser(tmp_path):
         "ok gates blur-long",
         "ok gates source-to-cut",
         "ok gates ready-cut",
+        "ok gates terminal-clean-recovery",
     ):
         assert marker in output, output

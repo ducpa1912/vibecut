@@ -9,6 +9,7 @@ module level would be circular.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -173,6 +174,23 @@ FILL_LOCK = threading.Lock()
 FILL_LOCKS: dict[str, threading.Lock] = {}
 FRAME_LOCK = threading.Lock()
 FRAME_LOCKS: dict[str, threading.Lock] = {}
+# One carry pass per job at a time. The lock is in-process only: Classic is
+# served by one local uvicorn worker, and job writes are already serialized by
+# app.update_job. A second process would need a file lock.
+SOURCE_CARRY_LOCKS: dict[str, threading.Lock] = {}
+SOURCE_CARRY_LOCKS_GUARD = threading.Lock()
+SOURCE_CARRY_LOCK_LIMIT = 128
+SOURCE_CARRY_FALLBACK_LOCK = threading.Lock()
+SOURCE_CARRY_NOTE = (
+    "Source Clean layers could not be read. The cut is still usable."
+)
+SOURCE_CARRY_INVALID_NOTE = (
+    "Source Clean layers could not be copied. The cut is still usable."
+)
+CLASSIC_CLEAN_ID_MAX = 64
+CLASSIC_ANALYSIS_RETRY = frozenset({
+    "source_ready", "failed", "cancelled", "interrupted",
+})
 
 # Classic offers three positions; each maps to the Studio anchor and text
 # kind whose default box and margins already fit that edge.
@@ -210,6 +228,8 @@ class ClassicTextBody(BaseModel):
     overlays: list[dict] = []
     effects: list[dict] = []
     clean: list[dict] = []
+    source_clean_deleted: list[str] = []
+    source_clean_restore: bool = False
 
 
 class ClassicFrameBody(BaseModel):
@@ -607,6 +627,11 @@ def _classic_cut_payload(row, version: int = CLASSIC_TEXT_VERSION) -> dict | Non
         # Boxes drawn before version 2 used frame coordinates; they are reported
         # and dropped rather than drawn somewhere the founder never put them.
         "clean_reset": reset,
+        # Durable per-cut marker: Source Clean layers were copied here once.
+        "source_clean_seeded": bool(row.get("source_clean_seeded")),
+        # Opaque identity tokens the founder deleted from this cut. The browser
+        # needs them after a reload to tell a re-add from a stale old list.
+        "source_clean_deleted": list(row.get("source_clean_deleted") or []),
         "updated": row.get("updated"),
     }
 
@@ -628,6 +653,373 @@ def _classic_windows(clips: list[dict]) -> list[tuple[float, float, float, float
         windows.append((cursor, cursor + span, start, end))
         cursor += span
     return windows
+
+
+def _source_carry_lock(job_id: str) -> threading.Lock:
+    """The carry lock for one job. The process assumption is stated above."""
+    with SOURCE_CARRY_LOCKS_GUARD:
+        lock = SOURCE_CARRY_LOCKS.get(job_id)
+        if lock is not None:
+            return lock
+        if len(SOURCE_CARRY_LOCKS) >= SOURCE_CARRY_LOCK_LIMIT:
+            # Drop only idle locks. A busy lock is never replaced, because two
+            # threads must not hold different locks for the same job.
+            for stale in list(SOURCE_CARRY_LOCKS):
+                if not SOURCE_CARRY_LOCKS[stale].locked():
+                    SOURCE_CARRY_LOCKS.pop(stale, None)
+                    if len(SOURCE_CARRY_LOCKS) < SOURCE_CARRY_LOCK_LIMIT:
+                        break
+            if len(SOURCE_CARRY_LOCKS) >= SOURCE_CARRY_LOCK_LIMIT:
+                return SOURCE_CARRY_FALLBACK_LOCK
+        return SOURCE_CARRY_LOCKS.setdefault(job_id, threading.Lock())
+
+
+def _merge_clean_ranges(ranges: list[dict]) -> list[dict]:
+    """Sort and merge adjacent or overlapping cut-time ranges."""
+    items: list[dict] = []
+    for item in ranges:
+        try:
+            start = float(item.get("start") or 0.0)
+            end = float(item.get("end") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+            continue
+        items.append({"start": round(start, 3), "end": round(end, 3)})
+    items.sort(key=lambda entry: (entry["start"], entry["end"]))
+    merged: list[dict] = []
+    for entry in items:
+        if merged and entry["start"] <= merged[-1]["end"] + 1e-6:
+            merged[-1]["end"] = max(merged[-1]["end"], entry["end"])
+        else:
+            merged.append(dict(entry))
+    return merged
+
+
+def _clean_layer_identity(layer: dict) -> tuple:
+    """The copy check: the scan tracklet first, then the text and its box.
+
+    Two source rows with one tracklet are one text even if their boxes differ;
+    a drawn row without a tracklet is the same row only at the same text and
+    the same source-space rectangle.
+    """
+    tracklet = str(layer.get("tracklet_id") or "").strip()
+    if tracklet:
+        return ("tracklet", tracklet)
+    box = layer.get("box") if isinstance(layer.get("box"), dict) else {}
+    try:
+        rect = tuple(
+            round(float(box.get(axis) or 0.0), 4)
+            for axis in ("x", "y", "w", "h")
+        )
+    except (TypeError, ValueError):
+        rect = ()
+    return ("text_key", str(layer.get("text_key") or ""), rect)
+
+
+def _clean_identity_token(layer: dict) -> str:
+    """A JSON-safe durable form of the carry identity."""
+    return json.dumps(
+        _clean_layer_identity(layer), separators=(",", ":"), sort_keys=True,
+    )
+
+
+def _bounded_clean_id(base, suffix: int = 0) -> str:
+    """A Clean id that stays within the Edit schema's 64 characters."""
+    text = str(base or "cl")
+    tail = f"-s{suffix}" if suffix else ""
+    keep = max(1, CLASSIC_CLEAN_ID_MAX - len(tail))
+    return f"{text[:keep]}{tail}"
+
+
+def _source_layer_cut_ranges(
+    layer: dict, clips: list[dict], source_duration: float,
+) -> list[dict]:
+    """Map one source-space layer's source ranges into cut time.
+
+    A layer with no ranges covers the whole source. Each cut clip is a window:
+    only the part of the source range inside that clip plays, and it lands at
+    the clip's cut offset. Ranges that meet after mapping become one range.
+    """
+    windows = _classic_windows(clips)
+    if not windows:
+        return []
+    spans: list[tuple[float, float]] = []
+    raw_ranges = layer.get("ranges") or []
+    for item in raw_ranges:
+        if not isinstance(item, dict):
+            continue
+        try:
+            start = float(item.get("start") or 0.0)
+            end = float(item.get("end") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(start) and math.isfinite(end) and end > start:
+            spans.append((start, end))
+    if not spans and not raw_ranges:
+        limit = float(source_duration or 0.0)
+        if limit <= 0.0:
+            limit = max((window[3] for window in windows), default=0.0)
+        if limit <= 0.0:
+            return []
+        spans.append((0.0, limit))
+    mapped: list[dict] = []
+    for low, high in spans:
+        for cut_start, _cut_end, source_start, source_end in windows:
+            overlap_start = max(low, source_start)
+            overlap_end = min(high, source_end)
+            if overlap_end - overlap_start <= 1e-6:
+                continue
+            mapped.append({
+                "start": round(cut_start + overlap_start - source_start, 3),
+                "end": round(cut_start + overlap_end - source_start, 3),
+            })
+    return _merge_clean_ranges(mapped)
+
+
+def _carried_clean_layers(
+    source_layers: list[dict], clips: list[dict], source_duration: float,
+) -> list[dict]:
+    """Copy source layers onto a cut; drop any that do not overlap its clips."""
+    carried: list[dict] = []
+    for layer in source_layers:
+        if not isinstance(layer, dict):
+            continue
+        ranges = _source_layer_cut_ranges(layer, clips, source_duration)
+        if not ranges:
+            continue
+        copied = copy.deepcopy(layer)
+        copied["ranges"] = ranges
+        carried.append(copied)
+    return carried
+
+
+def _merge_carried_layers(
+    existing: list[dict], carried: list[dict],
+) -> tuple[list[dict], int]:
+    """Merge carried rows into the cut, never making a second copy.
+
+    One identity is one row. When two rows share a tracklet or a text+box, the
+    first box is kept and their time ranges are unioned; the later range is
+    never silently dropped.
+    """
+    merged: list[dict] = []
+    positions: dict[str, int] = {}
+    taken_ids: set[str] = set()
+
+    def add(layer: dict) -> bool:
+        token = _clean_identity_token(layer)
+        if token in positions:
+            target = merged[positions[token]]
+            target["ranges"] = _merge_clean_ranges(
+                list(target.get("ranges") or []) + list(layer.get("ranges") or []),
+            )
+            return False
+        copied = copy.deepcopy(layer)
+        base = _bounded_clean_id(copied.get("id") or f"src{len(merged) + 1:02d}")
+        layer_id = base
+        suffix = 2
+        while layer_id in taken_ids:
+            layer_id = _bounded_clean_id(base, suffix)
+            suffix += 1
+        copied["id"] = layer_id
+        taken_ids.add(layer_id)
+        positions[token] = len(merged)
+        merged.append(copied)
+        return True
+
+    for layer in existing:
+        if isinstance(layer, dict):
+            add(layer)
+    added = 0
+    for layer in carried:
+        if isinstance(layer, dict) and add(layer):
+            added += 1
+    return merged, added
+
+
+def _source_clean_key(job: dict) -> str:
+    """The cut key Source Clean saves its layers under."""
+    return edits.clip_snapshot_hash([clean_source.source_clip(_source_duration(job))])
+
+
+def _mark_source_seed_error(
+    job_id: str, key: str, clips: list[dict], total: float, note: str,
+) -> None:
+    """Record a carry error on an existing cut row. Never create a cut row here."""
+    import app
+
+    def mutate(current_job: dict) -> None:
+        cuts = dict(_classic_cuts(current_job))
+        current = cuts.get(key)
+        if not isinstance(current, dict):
+            return
+        row = dict(current)
+        row["source_clean_seed_error"] = note
+        row["updated"] = round(time.time(), 3)
+        cuts[key] = row
+        current_job["classic_text"] = {
+            "version": CLASSIC_TEXT_VERSION,
+            "cuts": cuts,
+        }
+
+    try:
+        with _source_carry_lock(job_id):
+            app.update_job(job_id, mutate)
+    except OSError:
+        app.LOGGER.exception("could not record the Source Clean carry error")
+
+
+def _clear_source_seed_error(job_id: str, key: str) -> None:
+    """Clear a stale carry error after a later lookup succeeds."""
+    import app
+
+    def mutate(current_job: dict) -> None:
+        cuts = dict(_classic_cuts(current_job))
+        current = cuts.get(key)
+        if not isinstance(current, dict) or not current.get("source_clean_seed_error"):
+            return
+        row = dict(current)
+        row["source_clean_seed_error"] = ""
+        row["updated"] = round(time.time(), 3)
+        cuts[key] = row
+        current_job["classic_text"] = {
+            "version": CLASSIC_TEXT_VERSION,
+            "cuts": cuts,
+        }
+
+    try:
+        with _source_carry_lock(job_id):
+            app.update_job(job_id, mutate)
+    except OSError:
+        app.LOGGER.exception("could not clear the Source Clean carry error")
+
+
+def _seed_source_clean_layers(job_id: str, clips: list[dict]) -> dict:
+    """Copy Source Clean rows onto this cut once, then mark the cut as seeded.
+
+    The marker lives on the cut row. A normal Clean save preserves it, so
+    clearing or editing the cut rows never lets a reload add the source copy
+    again. The source row itself is read-only here.
+    """
+    import app
+
+    result = {"added": 0, "note": ""}
+    key = edits.clip_snapshot_hash(clips)
+    total = _classic_total(clips)
+
+    # Read errors are confined to the source lookup. Mapping and validation
+    # below keep the cut usable and report a distinct note.
+    try:
+        job = app.load_job(job_id)
+        source_key = _source_clean_key(job)
+        if not source_key or source_key == key:
+            return result
+        source_row = _classic_cuts(job).get(source_key)
+        if not isinstance(source_row, dict):
+            _clear_source_seed_error(job_id, key)
+            return result
+        source_layers = [
+            dict(layer) for layer in source_row.get("clean") or []
+            if isinstance(layer, dict)
+        ]
+        if not source_layers:
+            _clear_source_seed_error(job_id, key)
+            return result
+        source_duration = _source_duration(job)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        app.LOGGER.warning("Source Clean lookup failed for %s: %s", job_id, exc)
+        _mark_source_seed_error(job_id, key, clips, total, SOURCE_CARRY_NOTE)
+        return {"added": 0, "note": SOURCE_CARRY_NOTE}
+
+    try:
+        carried = _carried_clean_layers(source_layers, clips, source_duration)
+        if carried:
+            # The mapped rows still use the one Clean schema: the same
+            # validator that accepted the source row accepts the cut copy.
+            carried = normalize_classic_clean(
+                carried, total, require_ready=False,
+            )
+    except Exception as exc:  # noqa: BLE001 - one bad copy must not kill the cut
+        if isinstance(exc, ClassicTextError):
+            app.LOGGER.warning(
+                "Source Clean carry is invalid for %s: %s", job_id, exc,
+            )
+        else:
+            app.LOGGER.exception(
+                "Source Clean carry failed for %s; keeping the stored cut",
+                job_id,
+            )
+        _mark_source_seed_error(
+            job_id, key, clips, total, SOURCE_CARRY_INVALID_NOTE,
+        )
+        return {"added": 0, "note": SOURCE_CARRY_INVALID_NOTE}
+
+    def mutate(current_job: dict) -> None:
+        cuts = dict(_classic_cuts(current_job))
+        current = cuts.get(key) if isinstance(cuts.get(key), dict) else {}
+        if current.get("source_clean_seeded"):
+            if current.get("source_clean_seed_error"):
+                row = dict(current)
+                row["source_clean_seed_error"] = ""
+                row["updated"] = round(time.time(), 3)
+                cuts[key] = row
+                current_job["classic_text"] = {
+                    "version": CLASSIC_TEXT_VERSION,
+                    "cuts": cuts,
+                }
+            return
+        existing = [
+            dict(layer) for layer in current.get("clean") or []
+            if isinstance(layer, dict)
+        ]
+        merged, added = _merge_carried_layers(existing, carried)
+        carried_tokens = {_clean_identity_token(layer) for layer in carried}
+        carry_layers = [
+            copy.deepcopy(layer) for layer in merged
+            if _clean_identity_token(layer) in carried_tokens
+        ]
+        row = {
+            "clips_hash": key,
+            "clip_count": len(clips),
+            "duration": total,
+            "overlays": [dict(layer) for layer in current.get("overlays") or []
+                         if isinstance(layer, dict)],
+            "graphics": [dict(layer) for layer in current.get("graphics") or []
+                         if isinstance(layer, dict)],
+            "motion": [dict(layer) for layer in current.get("motion") or []
+                       if isinstance(layer, dict)],
+            "clean": merged,
+            # Durable copy of the rows this cut received, and the identities
+            # the founder deleted from it. A stale tab cannot wipe them and a
+            # deleted row cannot come back on every save.
+            "source_clean_carry": carry_layers,
+            "source_clean_deleted": list(current.get("source_clean_deleted") or []),
+            "source_clean_seeded": True,
+            "source_clean_seed_error": "",
+            "updated": round(time.time(), 3),
+        }
+        cuts[key] = row
+        if len(cuts) > MAX_CLASSIC_CUTS:
+            keep = sorted(
+                cuts.items(),
+                key=lambda item: float((item[1] or {}).get("updated") or 0.0),
+                reverse=True,
+            )[:MAX_CLASSIC_CUTS]
+            cuts = dict(keep)
+        current_job["classic_text"] = {
+            "version": CLASSIC_TEXT_VERSION,
+            "cuts": cuts,
+        }
+        result["added"] = added
+
+    try:
+        with _source_carry_lock(job_id):
+            app.update_job(job_id, mutate)
+    except OSError:
+        app.LOGGER.exception("could not store the Source Clean carry for %s", job_id)
+        result["note"] = SOURCE_CARRY_NOTE
+    return result
 
 
 def _cut_ranges_to_source(ranges, clips: list[dict]) -> list[dict]:
@@ -901,27 +1293,135 @@ def classic_fill_status() -> dict:
     }
 
 
+def _remerge_stale_carry(
+    incoming: list[dict],
+    carry_layers: list[dict],
+    deleted_tokens: set[str],
+    deleted_ids: list[str],
+    current_clean: list[dict],
+    *,
+    restore_deleted: bool = False,
+) -> tuple[list[dict], list[dict], list[str]]:
+    """Put carried rows back when a stale tab saves a list from before the seed.
+
+    An explicit delete is recorded durably and survives later saves. An
+    incoming row whose identity is still marked deleted is dropped unless the
+    caller sets the explicit restore flag. Only a carried row that is missing
+    with no delete record is re-added.
+    """
+    for deleted_id in deleted_ids:
+        token_id = str(deleted_id)
+        for candidate in [*current_clean, *carry_layers]:
+            if not isinstance(candidate, dict):
+                continue
+            if str(candidate.get("id") or "") != token_id:
+                continue
+            deleted_tokens.add(_clean_identity_token(candidate))
+    clean: list[dict] = []
+    for layer in incoming:
+        if not isinstance(layer, dict):
+            continue
+        token = _clean_identity_token(layer)
+        if token in deleted_tokens:
+            if not restore_deleted:
+                # This is the stale tab's old copy of a deleted carried row.
+                continue
+            deleted_tokens.discard(token)
+        clean.append(copy.deepcopy(layer))
+    present_ids = {str(layer.get("id") or "") for layer in clean}
+    present_tokens = {_clean_identity_token(layer) for layer in clean}
+    taken_ids = set(present_ids)
+    for carried in carry_layers:
+        if not isinstance(carried, dict):
+            continue
+        token = _clean_identity_token(carried)
+        if token in deleted_tokens:
+            continue
+        if str(carried.get("id") or "") in present_ids or token in present_tokens:
+            continue
+        copied = copy.deepcopy(carried)
+        base = _bounded_clean_id(copied.get("id") or f"src{len(clean) + 1:02d}")
+        layer_id = base
+        suffix = 2
+        while layer_id in taken_ids:
+            layer_id = _bounded_clean_id(base, suffix)
+            suffix += 1
+        copied["id"] = layer_id
+        taken_ids.add(layer_id)
+        present_ids.add(layer_id)
+        present_tokens.add(token)
+        clean.append(copied)
+    # An edited carried row keeps its identity in the durable carry list. A
+    # deleted row stays in the list too; the delete token is what blocks it.
+    refreshed_carry: list[dict] = []
+    for carried in carry_layers:
+        if not isinstance(carried, dict):
+            continue
+        token = _clean_identity_token(carried)
+        carried_id = str(carried.get("id") or "")
+        match = next(
+            (
+                layer for layer in clean
+                if _clean_identity_token(layer) == token
+                or str(layer.get("id") or "") == carried_id
+            ),
+            None,
+        )
+        refreshed_carry.append(copy.deepcopy(match or carried))
+    return clean, refreshed_carry, sorted(deleted_tokens)
+
+
 def store_classic_cut(
     job_id: str, clips: list[dict], layers: dict,
+    source_clean_deleted: list[str] | None = None,
+    source_clean_restore: bool = False,
 ) -> dict:
     """Persist normalized layers under this cut's clip snapshot hash."""
     import app
 
     total = _classic_total(clips)
-    row = {
-        "clips_hash": edits.clip_snapshot_hash(clips),
-        "clip_count": len(clips),
-        "duration": total,
-        "overlays": list(layers.get("overlays") or []),
-        "graphics": list(layers.get("graphics") or []),
-        "motion": list(layers.get("motion") or []),
-        "clean": list(layers.get("clean") or []),
-        "updated": round(time.time(), 3),
-    }
+    key = edits.clip_snapshot_hash(clips)
+    saved: dict = {}
 
     def mutate(job: dict) -> None:
         cuts = dict(_classic_cuts(job))
-        cuts[row["clips_hash"]] = row
+        current = cuts.get(key) if isinstance(cuts.get(key), dict) else {}
+        clean = list(layers.get("clean") or [])
+        carry_layers = [
+            dict(layer) for layer in current.get("source_clean_carry") or []
+            if isinstance(layer, dict)
+        ]
+        deleted_tokens = {
+            str(token) for token in current.get("source_clean_deleted") or []
+        }
+        if current.get("source_clean_seeded") and carry_layers:
+            clean, carry_layers, deleted_tokens_list = _remerge_stale_carry(
+                clean,
+                carry_layers,
+                deleted_tokens,
+                source_clean_deleted or [],
+                [dict(layer) for layer in current.get("clean") or []
+                 if isinstance(layer, dict)],
+                restore_deleted=bool(source_clean_restore),
+            )
+            deleted_tokens = set(deleted_tokens_list)
+        row = {
+            "clips_hash": key,
+            "clip_count": len(clips),
+            "duration": total,
+            "overlays": list(layers.get("overlays") or []),
+            "graphics": list(layers.get("graphics") or []),
+            "motion": list(layers.get("motion") or []),
+            "clean": clean,
+            # A later save never resets the carry metadata: clearing or editing
+            # the rows is the founder's choice, not a second source copy.
+            "source_clean_carry": carry_layers,
+            "source_clean_deleted": sorted(deleted_tokens),
+            "source_clean_seeded": bool(current.get("source_clean_seeded")),
+            "source_clean_seed_error": str(current.get("source_clean_seed_error") or ""),
+            "updated": round(time.time(), 3),
+        }
+        cuts[key] = row
         if len(cuts) > MAX_CLASSIC_CUTS:
             keep = sorted(
                 cuts.items(),
@@ -933,9 +1433,10 @@ def store_classic_cut(
             "version": CLASSIC_TEXT_VERSION,
             "cuts": cuts,
         }
+        saved.update(row)
 
     app.update_job(job_id, mutate)
-    return row
+    return saved
 
 
 def _build_classic_edit(
@@ -1032,7 +1533,12 @@ def prepare_classic_render(
 
 @router.post("/api/classic/jobs/{job_id}/text")
 def classic_text_lookup(job_id: str, body: ClassicTextLookupBody) -> dict:
-    """Return the saved text and effects for the cut the browser holds."""
+    """Return the saved text and effects for the cut the browser holds.
+
+    Before returning, copy the job's Source Clean rows onto this cut once. The
+    copy is mapped from source time to cut time and the cut keeps a marker, so
+    an edited or cleared cut never receives the same rows again.
+    """
     import app
 
     job = app.load_job(job_id)
@@ -1040,11 +1546,15 @@ def classic_text_lookup(job_id: str, body: ClassicTextLookupBody) -> dict:
         clips = _classic_clips(body.clips)
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    carried = _seed_source_clean_layers(job_id, clips)
+    job = app.load_job(job_id)
     key = edits.clip_snapshot_hash(clips)
     row = _classic_cuts(job).get(key)
     return {
         "cut": _classic_cut_payload(row, _classic_store_version(job)),
         "aspects": list(CLASSIC_EDIT_ASPECTS),
+        "source_clean_added": int(carried.get("added") or 0),
+        "source_clean_note": str(carried.get("note") or ""),
     }
 
 
@@ -1062,7 +1572,10 @@ def classic_text_save(job_id: str, body: ClassicTextBody) -> dict:
         )
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    row = store_classic_cut(job_id, clips, layers)
+    row = store_classic_cut(
+        job_id, clips, layers, body.source_clean_deleted,
+        body.source_clean_restore,
+    )
     return {
         "cut": _classic_cut_payload(row),
         "aspects": list(CLASSIC_EDIT_ASPECTS),
@@ -1865,7 +2378,7 @@ def classic_start_analysis(job_id: str, request: Request):
     job = app.load_job(job_id)
     status = str(job.get("status") or "")
     analysis = job.get("analysis") or {}
-    if analysis.get("scenes") or (status == "ready" and analysis):
+    if status == "ready" and analysis:
         return {"ok": True, "id": job_id, "status": status, "started": False}
 
     task = app.analysis_pool.find_key("analysis", job_id)
@@ -1877,7 +2390,7 @@ def classic_start_analysis(job_id: str, request: Request):
             content={"ok": True, "id": job_id, "status": status, "started": False},
             headers={"Location": f"/api/jobs/{job_id}/status"},
         )
-    if status != "source_ready":
+    if status not in CLASSIC_ANALYSIS_RETRY:
         raise HTTPException(
             409, "This video is not waiting for analysis; import it again."
         )
@@ -1889,6 +2402,8 @@ def classic_start_analysis(job_id: str, request: Request):
         current["progress"] = 0.0
         current["message"] = "Queued for analysis"
         current["error"] = None
+        if status != "source_ready":
+            current["analysis"] = None
 
     job = app.update_job(job_id, mark)
     app.analysis_pool.submit(app.run_analysis, job_id)

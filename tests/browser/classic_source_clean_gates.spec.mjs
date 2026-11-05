@@ -750,6 +750,64 @@ async function readyCutAfterReel() {
   console.log("ok gates ready-cut");
 }
 
+async function terminalCleanRecovery() {
+  for (const status of ["failed", "cancelled", "interrupted"]) {
+    const job = sourceJob(`terminal${status}`, 10, status);
+    job.message = status === "failed" ? "Analysis failed" : status;
+    job.error = status === "failed"
+      ? "/private/var/folders/engine: vision model crashed"
+      : `/private/var/folders/${status}.log`;
+    const after = {
+      ...job,
+      status: "reading",
+      progress: 0.2,
+      message: "Reading the video",
+      error: null,
+    };
+    const { context, page, calls, errors } = await newPage(
+      { width: 1280, height: 800 }, job,
+      { recordReady: true, jobAfterAnalyze: after },
+    );
+    await page.goto(`${base}/#job=${job.id}`, { waitUntil: "domcontentloaded" });
+    await page.locator("#progress-view").waitFor({ state: "visible", timeout: 20000 });
+    await page.locator("#progress-retry").waitFor({ state: "visible", timeout: 10000 });
+    await page.locator("#progress-source").waitFor({ state: "visible", timeout: 10000 });
+    await page.locator("#progress-download").waitFor({ state: "visible", timeout: 10000 });
+    const state = await page.evaluate(() => ({
+      error: document.querySelector("#progress-error").textContent || "",
+      title: document.querySelector("#progress-error").title || "",
+      source: document.querySelector("#progress-source").hidden,
+      retry: document.querySelector("#progress-retry").hidden,
+      retryText: document.querySelector("#progress-retry").textContent || "",
+      download: document.querySelector("#progress-download").hidden,
+      downloadHref: document.querySelector("#progress-download").getAttribute("href") || "",
+      back: document.querySelector("#progress-back").hidden,
+    }));
+    const expected = status === "failed"
+      ? "Analysis stopped before it could build the cut. Your clean video is still available."
+      : (status === "cancelled" ? "Analysis was cancelled." : "Analysis was interrupted.");
+    assert(state.error === expected, `${status} copy is ${state.error}`);
+    assert(!/\/private\/|\.mp4/.test(state.error),
+      `${status} copy leaked a path or file name: ${state.error}`);
+    assert(state.title.includes("/private/"), `${status} raw detail is not in the title`);
+    assert(!state.source && !state.retry && !state.download,
+      `${status} recovery actions are hidden`);
+    assert(state.back, `${status} kept Back to ingest`);
+    assert(/Retry analysis/.test(state.retryText), `${status} retry label is ${state.retryText}`);
+    assert(/clean\/source\/media/.test(state.downloadHref),
+      `${status} download has no media URL`);
+
+    const request = page.waitForRequest((item) =>
+      /\/api\/jobs\/[^/]+\/analyze$/.test(item.url()) && item.method() === "POST");
+    await page.locator("#progress-retry").click();
+    await request;
+    assert(calls.analyze === 1, `${status} retry called analyze ${calls.analyze} times`);
+    assert(errors.length === 0, `${status} recovery errors: ${errors.join(" | ")}`);
+    await context.close();
+  }
+  console.log("ok gates terminal-clean-recovery");
+}
+
 try {
   await longVideo();
   await unconfirmed();
@@ -764,6 +822,7 @@ try {
   await blurLong();
   await sourceToCutLeak();
   await readyCutAfterReel();
+  await terminalCleanRecovery();
   assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(" | ")}`);
 } catch (error) {
   console.error(error?.stack || String(error));

@@ -119,6 +119,79 @@ def test_run_analysis_reports_a_cancelled_speech_engine(env, monkeypatch):
     assert job["status"] == "cancelled" and job["error"] is None
 
 
+def test_analysis_progress_keeps_a_concurrent_source_edit(env, monkeypatch):
+    env.write("queued")
+    app.update_job("j1", lambda job: job.update({
+        "clean_source": {"keep": True, "stage": 0},
+        "usage": [{"action": "existing"}],
+    }))
+    monkeypatch.setattr(
+        app.usage_store, "delta",
+        lambda before: {
+            "calls": 1, "input_tokens": 2, "output_tokens": 3,
+            "chars": 0, "audio_seconds": 0.0, "cost_usd": 0.0,
+        },
+    )
+
+    def analyze(path, source, job_dir, options, progress):
+        progress("scanning", 0.2, "Scanning")
+        app.update_job("j1", lambda job: job.update({
+            "clean_source": {"keep": True, "stage": 1},
+        }))
+        progress("reading", 0.5, "Reading")
+        app.update_job("j1", lambda job: job.update({
+            "classic_text": {"sentinel": True},
+        }))
+        return {"scene_count": 1, "elapsed": 0.2}
+
+    monkeypatch.setattr(app.pipeline, "analyze_source", analyze)
+    app.run_analysis("j1")
+
+    job = app.load_job("j1")
+    assert job["status"] == "ready"
+    assert job["analysis"] == {"scene_count": 1, "elapsed": 0.2}
+    assert job["clean_source"] == {"keep": True, "stage": 1}
+    assert job["classic_text"] == {"sentinel": True}
+    assert job["usage"][0] == {"action": "existing"}
+    assert job["usage"][-1]["action"] == "analysis"
+
+
+def test_a_cancelled_analysis_keeps_a_concurrent_source_edit(env, monkeypatch):
+    env.write("queued")
+
+    def analyze(path, source, job_dir, options, progress):
+        progress("scanning", 0.2, "Scanning")
+        app.update_job("j1", lambda job: job.update({
+            "clean_source": {"keep": True},
+        }))
+        raise app.AnalysisCancelled("stop")
+
+    monkeypatch.setattr(app.pipeline, "analyze_source", analyze)
+    app.run_analysis("j1")
+
+    job = app.load_job("j1")
+    assert job["status"] == "cancelled"
+    assert job["clean_source"] == {"keep": True}
+
+
+def test_a_failed_analysis_keeps_a_concurrent_source_edit(env, monkeypatch):
+    env.write("queued")
+
+    def analyze(path, source, job_dir, options, progress):
+        progress("scanning", 0.2, "Scanning")
+        app.update_job("j1", lambda job: job.update({
+            "clean_source": {"keep": True},
+        }))
+        raise RuntimeError("analysis broke")
+
+    monkeypatch.setattr(app.pipeline, "analyze_source", analyze)
+    app.run_analysis("j1")
+
+    job = app.load_job("j1")
+    assert job["status"] == "failed"
+    assert job["clean_source"] == {"keep": True}
+
+
 def test_child_run_stops_when_the_read_is_cancelled():
     event = threading.Event()
     stt.set_cancel_event(event)

@@ -419,6 +419,35 @@ def test_analyze_starts_later_and_is_idempotent(
     assert again.json()["started"] is False
 
 
+@pytest.mark.parametrize("terminal", ["failed", "cancelled", "interrupted"])
+def test_a_terminal_analysis_can_retry_from_source_clean(
+    classic, source_file, monkeypatch, terminal,
+):
+    """Retry is a real analysis run, not a dead button after a terminal state."""
+    client, _tmp, _data = classic
+    video, _meta = source_file
+    pool = CapturePool()
+    monkeypatch.setattr(app, "analysis_pool", pool)
+    job = _path_job(client, video)
+
+    def stop(current: dict) -> None:
+        current["status"] = terminal
+        current["progress"] = 1.0
+        current["message"] = "Analysis stopped"
+        current["error"] = "The vision pass stopped."
+        # A partial analysis from the stopped run must not make Retry a no-op.
+        current["analysis"] = {"scenes": [{"id": 0, "start": 0.0, "end": 1.0}]}
+
+    app.update_job(job["id"], stop)
+    retried = client.post(f"/api/jobs/{job['id']}/analyze")
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["started"] is True
+    current = app.load_job(job["id"])
+    assert current["status"] == "queued"
+    assert current["analysis"] is None
+    assert pool.calls, "a retry must submit run_analysis"
+
+
 # ------------------------------------------------------------------ renderer
 
 
