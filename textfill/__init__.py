@@ -51,9 +51,12 @@ LAMA_MOTION_LIMIT = 6.0
 LAMA_STILL_LIMIT = 2.5
 # Seconds per unit before this machine has its own reading. A unit is one
 # strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
-# render on an M1 8 GB Mac under swap, and the OpenCV figures are real frames on
-# that Mac during a render. LaMa has no reading until one finishes here.
-SEED_RATES = {"sttn": 4.6, "telea": 0.2, "ns": 0.2}
+# render on an M1 8 GB Mac under swap, the OpenCV figures are real frames on that
+# Mac during a render, and LaMa's is the first estimate of the founder's render.
+SEED_RATES = {"sttn": 4.6, "lama": 1.2, "telea": 0.2, "ns": 0.2}
+# LaMa's saved figure from before key frames and tight areas is several times too
+# high, so the new code keeps its own. This holds the old figure out of estimates.
+RATE_KEYS = {"lama": "lama_keyed"}
 RATE_MIN_FRAMES = 60
 RATES_FILE = "fill_rates.json"
 
@@ -119,7 +122,7 @@ def fill_rate(data_root: Path | str, method: str) -> dict:
     """Seconds per unit for an engine: this machine's own, else the seed."""
     try:
         stored = json.loads((Path(data_root) / RATES_FILE).read_text(encoding="utf-8"))
-        seconds = float(stored[method]["seconds"])
+        seconds = float(stored[RATE_KEYS.get(method, method)]["seconds"])
         if seconds > 0:
             return {"seconds": seconds, "measured": True}
     except (OSError, ValueError, KeyError, TypeError):
@@ -139,6 +142,7 @@ def record_rate(data_root: Path | str, method: str, units: int, seconds: float) 
     except (OSError, ValueError):
         stored = {}
     rate = seconds / units
+    method = RATE_KEYS.get(method, method)
     previous = stored.get(method) if isinstance(stored.get(method), dict) else {}
     old = previous.get("seconds")
     stored[method] = {

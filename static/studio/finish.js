@@ -1340,7 +1340,7 @@ export function mount(root, ctx) {
     )).length;
     const allLive = stories().length > 0 && liveCount === stories().length;
     const queueAll = el("button", {
-      class: "st-btn st-btn-primary",
+      class: "st-btn st-btn-primary st-finish-queue-all",
       type: "button",
       text: allLive ? "All queued" : `Queue ${formatCount(stories().length, "moment")}`,
       disabled: busy || staleIds.size > 0 || allLive,

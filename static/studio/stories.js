@@ -1061,7 +1061,7 @@ export function mount(root, ctx) {
     });
     own.addEventListener("click", () => { openBuilder(card); });
     const whole = el("button", {
-      class: "st-btn st-btn-ghost",
+      class: "st-btn st-btn-ghost st-moments-full-video",
       type: "button",
       title: "Bring every scene into Edit in time order. No moments are picked.",
     }, [icon("film"), el("span", { text: "Edit full video" })]);

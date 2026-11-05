@@ -816,3 +816,58 @@ def test_reuse_is_part_of_a_lama_clip_only():
     assert textfill.span_key(method="lama", reuse_still=True, **base) != textfill.span_key(method="lama", **base)
     assert textfill.span_key(method="sttn", reuse_still=True, **base) == textfill.span_key(method="sttn", **base)
 
+
+
+# --- AI clean test report ---------------------------------------------------
+
+def _report_tool():
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "clean_test_report.py"
+    spec = importlib.util.spec_from_file_location("clean_test_report", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_report_counts_seconds_once_and_finds_overlaps():
+    tool = _report_tool()
+    layers = [
+        {"label": "a", "box": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.1}, "ranges": [{"start": 0.0, "end": 2.0}]},
+        {"label": "b", "box": {"x": 0.1, "y": 0.15, "w": 0.5, "h": 0.1}, "ranges": [{"start": 1.0, "end": 3.0}]},
+        {"label": "c", "box": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.1}, "ranges": [{"start": 5.0, "end": 6.0}]},
+    ]
+    assert tool.covered_seconds(layers) == 4.0
+    assert tool.overlapping_pairs(layers) == [["a", "b"]]
+
+
+def test_report_summarizes_a_run():
+    tool = _report_tool()
+    report = {
+        "timings": {"total": 23.0}, "text": {"frames_read": 119},
+        "tracklets": [
+            {"id": "t1", "text_sample": "a subtitle"},
+            {"id": "t2", "text_sample": "luckin coffee", "minor": True},
+        ],
+    }
+    layers = [{
+        "tracklet_id": "t1", "label": "a subtitle", "kind": "fill", "method": "lama",
+        "box": {"x": 0.1, "y": 0.8, "w": 0.6, "h": 0.04}, "ranges": [{"start": 0.0, "end": 10.0}],
+    }]
+    out = tool.summarize(report, layers, {"timings": {"fill": 600.0}, "quality": "final"}, 30.0)
+    assert out["scan"]["found"] == 2 and out["scan"]["minor"] == 1
+    assert out["scan"]["left_out"] == ["luckin coffee"]
+    assert out["clean"]["frames_on"] == 300
+    assert out["render"]["fill_seconds_per_frame"] == 2.0
+
+
+def test_report_compares_with_the_founders_choice():
+    tool = _report_tool()
+    tracklets = [{"id": "t1", "text_sample": "a subtitle line"}, {"id": "t2", "text_sample": "luckin coffee"}]
+    layers = [{"tracklet_id": "t2", "label": "luckin coffee"}]
+    golden = tool.golden_from({"source": {"name": "v.mp4"}}, tracklets, [{"tracklet_id": "t1", "label": "a subtitle line"}])
+    assert golden == {"video": "v.mp4", "keep": ["a subtitle line"], "skip": ["luckin coffee"]}
+    difference = tool.compare(tracklets, layers, golden)
+    assert difference["keep_not_cleaned"] == ["a subtitle line"]
+    assert difference["skip_cleaned"] == ["luckin coffee"]
+    assert difference["keep_not_found"] == []
