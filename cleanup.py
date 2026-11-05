@@ -60,7 +60,7 @@ ASPECT_DIMENSIONS = {
 LIMITATIONS = [
     "Plausible cleanup, not restoration. Removed, covered, blurred, or cropped pixels are not recovered.",
     "Remove interpolates nearby pixels; it is not generative repair and leaves no guarantee on complex backgrounds.",
-    "No watermark removal and no guarantee that every text overlay is removed.",
+    "No guarantee that every text overlay is removed.",
     "No generative repair, face repair, logo repair, or temporal reconstruction.",
     "Scene OCR is advisory. When exact OCR boxes are unavailable, detection is approximate.",
     "A human must review every plan and every cleaned output before publishing.",
@@ -124,7 +124,7 @@ def normalize_method(value: Any) -> str:
     method = value.strip().lower()
     if method in SUPPORTED_METHODS:
         return method
-    if _WATERMARK_RE.search(method):
+    if _WATERMARK_RE.search(method) and not rights.gates_off():
         raise CleanupForbiddenError(
             "Watermark removal is not supported. Use crop, cover, or blur."
         )
@@ -151,6 +151,8 @@ def normalize_aspect(value: Any) -> str:
 
 def require_attestation(value: Any) -> dict:
     """Require an explicit ownership/permission attestation."""
+    if rights.gates_off():
+        return {"required": False, "accepted": True, "statement": ""}
     accepted = value is True
     if isinstance(value, str):
         statement = value.strip()
@@ -188,7 +190,7 @@ def normalize_box(value: Any) -> dict:
         raise CleanupValidationError("Box must stay inside the frame (0 to 1).")
     label = str(value.get("label") or value.get("purpose") or value.get("kind") or "")
     label = " ".join(label.split())[:80]
-    if _WATERMARK_RE.search(label):
+    if _WATERMARK_RE.search(label) and not rights.gates_off():
         raise CleanupForbiddenError(
             "Boxes that target a watermark are not supported."
         )
@@ -399,7 +401,7 @@ def tracklet_clean_layers(
                 "reason": reason,
             })
             continue
-        if kind == "handle_or_logo" and not include_handles:
+        if kind == "handle_or_logo" and not include_handles and not rights.gates_off():
             refused.append({
                 "tracklet_id": tracklet_id,
                 "kind": kind,

@@ -61,15 +61,24 @@ def _normalize_lock(value: Any, default: bool = DEFAULT_LOCK) -> bool:
     return default
 
 
+def gates_off() -> bool:
+    """Classic has no rights gate: any video, and any found text can be cleaned.
+
+    The founder is responsible for having permission to edit the footage, and
+    the UI says so. Studio keeps its gates.
+    """
+    import editions
+
+    return editions.edition() == "classic"
+
+
 def lock_enabled(settings: dict | None = None) -> bool:
     """Return ``rights.lock``; true when the setting is absent or malformed.
 
     Classic is a second supported product with no attestation step. Its Clean
     and import paths never read this gate; Studio keeps the setting.
     """
-    import editions
-
-    if editions.edition() == "classic":
+    if gates_off():
         return False
     if settings is None:
         settings = settings_store.load_settings()
@@ -121,6 +130,8 @@ def clean_block_reason(
     settings: dict | None = None,
 ) -> str | None:
     """Return why a Clean layer may not target this kind, or ``None``."""
+    if gates_off():
+        return None
     normalized = str(kind or "").strip().casefold()
     if normalized == "watermark":
         return "watermark"

@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import overlays
+import rights
 
 SCHEMA_VERSION = 1
 RENDERER_VERSION = 1
@@ -548,7 +549,9 @@ def normalize_clean(value: Any) -> list[dict]:
             raise EditError(f"Duplicate clean layer id: {layer_id}.")
         used.add(layer_id)
         label = " ".join(str(raw.get("label") or "").split())[:80]
-        _check_forbidden(label)
+        # Classic has no rights gate: a box may be named after what it removes.
+        if not rights.gates_off():
+            _check_forbidden(label)
         color = overlays.normalize_color(raw.get("color", "#000000"))
         opacity = _number(
             raw.get("opacity", 1.0), f"clean[{index}].opacity",

@@ -491,3 +491,42 @@ def test_the_panel_offers_one_engine_and_the_still_option():
     assert 'id="clean-fill-reuse"' in source
     assert "{ fill_reuse: true }" in source
 
+
+# No rights gate in Classic: any video, and any found kind can be cleaned.
+@pytest.mark.parametrize("kind", ["watermark", "screen_text", "handle_or_logo", "subtitle"])
+def test_every_found_kind_can_be_cleaned_in_classic(monkeypatch, kind):
+    import cleanup
+    import detect
+    import rights
+
+    monkeypatch.setenv("VIBECUT_EDITION", "classic")
+    job = {"rights": {"attested": False}}
+    assert rights.clean_block_reason(kind, job=job) is None
+    assert rights.may_import(False) is True
+    tracklet = {
+        "id": "trk_a", "kind": kind, "confidence": 0.9,
+        "box": {"x": 0.8, "y": 0.05, "w": 0.15, "h": 0.05},
+        "ranges": [{"start": 0.0, "end": 2.0}], "text_sample": "mark",
+    }
+    entry = detect.clean_prefill([tracklet], job=job)[0]
+    assert entry["enabled"] is True and entry["blocked"] is None
+    built = cleanup.tracklet_clean_layers([tracklet], job=job)
+    assert {layer["tracklet_id"] for layer in built["layers"]} == {"trk_a"}
+    assert built["refused"] == []
+
+
+def test_a_box_named_watermark_saves_in_classic_and_stays_refused_elsewhere(monkeypatch):
+    import cleanup
+    import edits
+
+    layer = {"id": "a", "kind": "fill", "label": "watermark",
+             "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.1}}
+    monkeypatch.setenv("VIBECUT_EDITION", "classic")
+    assert edits.normalize_clean([layer])[0]["label"] == "watermark"
+    assert cleanup.require_attestation(None)["accepted"] is True
+    monkeypatch.setenv("VIBECUT_EDITION", "all")
+    with pytest.raises(edits.EditError):
+        edits.normalize_clean([layer])
+    with pytest.raises(cleanup.CleanupValidationError):
+        cleanup.require_attestation(None)
+

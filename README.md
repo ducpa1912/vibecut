@@ -515,9 +515,10 @@ concat demuxer, muxes the audio bed, and writes a poster frame.
 ### 6. Clean (Flow 1)
 
 Clean removes baked-in text with deterministic layers: `crop_guard`, `blur`,
-`plate` and `mask`. It does not inpaint, regenerate or remove a platform
-watermark. The own-footage attestation is still required before a Clean layer
-saves, and the server checks it; the routes use `/api/jobs/{id}/cleanup/*`.
+`plate` and `mask`, plus AI fill with LaMa. Classic has no rights gate: any
+video can be added and any found text can be cleaned, and you are responsible for
+having permission to edit the footage. Studio's gate differs; the routes use
+`/api/jobs/{id}/cleanup/*`.
 
 Clean is **on by default**. Set `VIBECUT_ENABLE_CLEANUP=0` (also `false`, `no`
 or `off`) to disable the Clean planning and layer routes. The rights routes

@@ -1450,7 +1450,7 @@ def clean_prefill(
             ),
         }
         entry["enabled"] = entry["blocked"] is None
-        if kind == "watermark":
+        if kind == "watermark" and not rights.gates_off():
             entry.update({
                 "action": "refused",
                 "enabled": False,
@@ -1459,7 +1459,7 @@ def clean_prefill(
             })
             entries.append(entry)
             continue
-        if kind == "screen_text":
+        if kind == "screen_text" and not rights.gates_off():
             entry.update({
                 "action": "none",
                 "enabled": False,
@@ -1476,7 +1476,7 @@ def clean_prefill(
                 or box["y"] >= 0.82
             )
             entry["action"] = "crop_guard" if edge else "blur"
-            entry["enabled"] = False
+            entry["enabled"] = rights.gates_off()
             entry["blocked"] = cleanup_block_reason(
                 kind, job=policy_job, settings=settings,
             )
@@ -1530,8 +1530,8 @@ def _report_warnings(
     if watermarks:
         warnings.append({
             "code": "watermark_detected",
-            "severity": "blocker",
-            "message": WATERMARK_MESSAGE,
+            "severity": "warning" if rights.gates_off() else "blocker",
+            "message": "A platform mark was found." if rights.gates_off() else WATERMARK_MESSAGE,
             "tracklet_ids": watermarks,
         })
     if handles and not attested:
@@ -1824,7 +1824,10 @@ def build_report(
     if not text["confirmed"]:
         reasons.append("Text presence is unconfirmed.")
     if watermark_tracklets:
-        reasons.append("A platform mark was found; it cannot be cleaned.")
+        reasons.append(
+            "A platform mark was found." if rights.gates_off()
+            else "A platform mark was found; it cannot be cleaned."
+        )
 
     prefill = clean_prefill(
         tracklets, attested=attested, job=job, settings=settings,
