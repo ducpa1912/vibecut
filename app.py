@@ -6845,8 +6845,11 @@ def _queue_story_render(
     record = _clip_set_in_job(job, set_id)
     _clip_set_source_state(job, record)
     story = _story_in_set(record, story_id)
-    if body.quality not in ("final", "720", "draft"):
-        raise HTTPException(400, "Quality must be final, 720 or draft.")
+    if body.quality not in render.QUALITIES:
+        raise HTTPException(
+            400,
+            "Quality must be one of: " + ", ".join(render.QUALITIES) + ".",
+        )
     if body.aspect not in STORY_ASPECTS:
         raise HTTPException(400, "Story renders support 9:16, 4:5, 1:1, 16:9 and 16:10.")
     plan = _story_plan(job, record, story, set_id)
@@ -8767,7 +8770,7 @@ def _queue_render_locked_impl(
 def _render_options(
     body: PlanBody,
 ) -> tuple[str, str, str | None, bool, dict | None, str | None, float]:
-    quality = body.quality if body.quality in ("final", "720", "draft") else "final"
+    quality = body.quality if body.quality in render.QUALITIES else "final"
     preset = body.preset if body.preset in render.PRESETS else None
     preset_cfg = render.PRESETS.get(preset or "", {})
     aspect = body.aspect if body.aspect in render.ASPECTS else "9:16"
@@ -8877,7 +8880,7 @@ def cancel_render(
     # legacy key derivation needs a 15/30/60 target.
     if not record_key:
         target = _valid_target(int(target))
-    quality = quality if quality in ("final", "720", "draft") else "final"
+    quality = quality if quality in render.QUALITIES else "final"
     aspect = aspect if aspect in render.ASPECTS else "9:16"
     if not record_key:
         record_key = _render_key(

@@ -72,15 +72,34 @@ ASPECTS = {
     "16:10": ((1920, 1200), (960, 600)),
 }
 
-# Final, 720p and draft sizes keyed by quality. 720p is the middle choice
-# Studio offers between a 1080 final and a 540 draft.
+# Output sizes keyed by quality, smallest to largest. `draft` and `final`
+# are the legacy 540p and 1080p names kept for old records and previews.
 SIZES = {
-    "9:16": {"final": (1080, 1920), "720": (720, 1280), "draft": (540, 960)},
-    "4:5": {"final": (1080, 1350), "720": (720, 900), "draft": (540, 676)},
-    "1:1": {"final": (1080, 1080), "720": (720, 720), "draft": (540, 540)},
-    "16:9": {"final": (1920, 1080), "720": (1280, 720), "draft": (960, 540)},
-    "16:10": {"final": (1920, 1200), "720": (1280, 800), "draft": (960, 600)},
+    "9:16": {
+        "360": (360, 640), "draft": (540, 960), "720": (720, 1280),
+        "final": (1080, 1920), "1440": (1440, 2560), "2160": (2160, 3840),
+    },
+    "4:5": {
+        "360": (360, 450), "draft": (540, 676), "720": (720, 900),
+        "final": (1080, 1350), "1440": (1440, 1800), "2160": (2160, 2700),
+    },
+    "1:1": {
+        "360": (360, 360), "draft": (540, 540), "720": (720, 720),
+        "final": (1080, 1080), "1440": (1440, 1440), "2160": (2160, 2160),
+    },
+    "16:9": {
+        "360": (640, 360), "draft": (960, 540), "720": (1280, 720),
+        "final": (1920, 1080), "1440": (2560, 1440), "2160": (3840, 2160),
+    },
+    "16:10": {
+        "360": (576, 360), "draft": (864, 540), "720": (1280, 800),
+        "final": (1920, 1200), "1440": (2304, 1440), "2160": (3456, 2160),
+    },
 }
+
+#: Smallest to largest. ``draft`` is the 540p legacy name kept for old
+#: records and preview proxies; ``final`` is the 1080p legacy name.
+QUALITIES = ("360", "draft", "720", "final", "1440", "2160")
 
 
 class RenderCancelled(RuntimeError):
@@ -183,23 +202,32 @@ def _decoder_args(meta: dict, threads: int | None = None) -> list[str]:
 
 
 def _encoder_args(encoder: str, quality: str) -> list[str]:
+    # H.264 level must cover the frame size. 1080p stays at 4.2; 2K and 4K
+    # need 5.0/5.1 or the encoder rejects or clips the stream.
+    level = "5.1" if quality == "2160" else "5.0" if quality == "1440" else "4.2"
     if encoder == "videotoolbox":
-        bitrate = "10M" if quality == "final" else "6M" if quality == "720" else "3M"
+        bitrate = {
+            "360": "1M", "draft": "3M", "720": "6M",
+            "final": "10M", "1440": "20M", "2160": "40M",
+        }.get(quality, "10M")
         return [
             "-c:v", "h264_videotoolbox",
             "-b:v", bitrate,
             "-maxrate", bitrate,
             "-bufsize", bitrate,
             "-allow_sw", "1",
-            "-profile:v", "high", "-level", "4.2",
+            "-profile:v", "high", "-level", level,
             "-pix_fmt", "yuv420p",
             "-bf", "0",
         ]
     return [
         "-c:v", "libx264",
-        "-preset", "veryfast" if quality in ("final", "720") else "ultrafast",
-        "-crf", "18" if quality == "final" else "20" if quality == "720" else "23",
-        "-profile:v", "high", "-level", "4.2",
+        "-preset", "veryfast" if quality in ("final", "720", "1440", "2160") else "ultrafast",
+        "-crf", {
+            "360": "26", "draft": "23", "720": "20",
+            "final": "18", "1440": "18", "2160": "20",
+        }.get(quality, "18"),
+        "-profile:v", "high", "-level", level,
         "-pix_fmt", "yuv420p",
         # No B-frames keeps every segment starting at PTS 0. That lets the
         # concat demuxer copy video without gaps at the cut boundaries.
@@ -2568,7 +2596,7 @@ def render_reel(
             "audio", "mux", "poster",
         )
     }
-    quality = quality if quality in ("final", "720", "draft") else "final"
+    quality = quality if quality in QUALITIES else "final"
     aspect = aspect if aspect in ASPECTS else "9:16"
     out_w, out_h = _dims(aspect, quality)
     if output_size is None and isinstance(edit, dict) and isinstance(edit.get("output"), dict):

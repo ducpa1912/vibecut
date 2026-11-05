@@ -24,6 +24,15 @@ def test_720p_is_offered_between_final_and_draft():
     assert render._dims("9:16", "draft") == (540, 960)
 
 
+def test_quality_tiers_cover_360_2k_and_4k():
+    assert render.QUALITIES == ("360", "draft", "720", "final", "1440", "2160")
+    assert render._dims("9:16", "360") == (360, 640)
+    assert render._dims("9:16", "1440") == (1440, 2560)
+    assert render._dims("9:16", "2160") == (2160, 3840)
+    assert render._dims("16:9", "2160") == (3840, 2160)
+    assert render._dims("1:1", "2160") == (2160, 2160)
+
+
 def test_delete_clip_set_removes_one_moment_set(env):
     import app
 

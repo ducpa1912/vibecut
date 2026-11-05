@@ -285,6 +285,16 @@ def test_stage_records_wall_time():
     assert timings["concat"] >= 0.005
 
 
+def test_encoder_levels_and_rates_cover_2k_and_4k():
+    vt4k = render._encoder_args("videotoolbox", "2160")
+    assert vt4k[vt4k.index("-level") + 1] == "5.1"
+    assert "40M" in vt4k
+    x264_2k = render._encoder_args("libx264", "1440")
+    assert x264_2k[x264_2k.index("-level") + 1] == "5.0"
+    x264_360 = render._encoder_args("libx264", "360")
+    assert x264_360[x264_360.index("-preset") + 1] == "ultrafast"
+
+
 # ---------------------------------------------------------------- api.js cache
 
 NO_PAGE = (

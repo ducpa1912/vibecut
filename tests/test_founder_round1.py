@@ -187,6 +187,13 @@ def test_render_is_one_click_from_review():
     assert 'text: "Queue"' in FINISH
 
 
+def test_finish_shape_comes_from_edit_and_quality_has_six_tiers():
+    assert "Shape comes from Edit" in FINISH
+    assert '"Shape",' not in FINISH
+    for quality in ("360", "draft", "720", "final", "1440", "2160"):
+        assert f'value: "{quality}"' in FINISH
+
+
 def test_moments_can_be_cleared_and_a_search_with_none_keeps_them():
     assert "Clear all moments" in STORIES and "Delete moment" in STORIES
     assert "No new moments found. Your moments are unchanged." in STORIES

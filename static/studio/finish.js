@@ -46,6 +46,14 @@ const ASPECT_LABELS = {
   "16:9": "16:9 wide",
   "16:10": "16:10 wide",
 };
+const QUALITY_LABELS = {
+  "360": "360p",
+  draft: "540p draft",
+  "720": "720p",
+  final: "1080p final",
+  "1440": "2K",
+  "2160": "4K",
+};
 const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
 
 /**
@@ -518,7 +526,16 @@ export function mount(root, ctx) {
   let notice = "";
   let noticeTone = "";
   let selectedStoryId = "";
-  let aspect = "9:16";
+  // Shape is chosen in Edit. Start from the last Edit choice so opening
+  // Finish from the step bar still renders the shape the user worked in.
+  let aspect = (() => {
+    try {
+      const choice = JSON.parse(localStorage.getItem(EDIT_CHOICE_KEY) || "null");
+      return ASPECTS.includes(choice?.aspect) ? choice.aspect : "9:16";
+    } catch (_) {
+      return "9:16";
+    }
+  })();
   let quality = "final";
   // R2 trim health: per story, the current story revision and whether the
   // chosen shape's Edit still matches the range. A stale Edit is never queued.
@@ -558,7 +575,7 @@ export function mount(root, ctx) {
         <div class="st-finish-heading">
           <p class="st-eyebrow">Step 4 · Finish</p>
           <h1 id="st-finish-title">Render and share</h1>
-          <p class="st-lede">Render every moment in any of the five shapes. Keep every version. Review the cut, then hand off a publish kit and a review link.</p>
+          <p class="st-lede">Render the shape you set in Edit. Keep every version. Review the cut, then hand off a publish kit and a review link.</p>
         </div>
         <div class="st-finish-head-actions">
           <button id="st-finish-back" class="st-btn st-btn-ghost st-btn-small" type="button" data-icon="arrow-left">Edit</button>
@@ -1274,7 +1291,7 @@ export function mount(root, ctx) {
         el("h2", { id: "st-finish-render-title", text: "Render" }),
         el("p", {
           class: "st-hint",
-          text: `${formatCount(stories().length, "moment")} in this set. Every render is a new version; nothing is overwritten.`,
+          text: `${formatCount(stories().length, "moment")} in this set. Shape comes from Edit; pick quality here. Every render is a new version.`,
         }),
       ]),
       setPicker(),
@@ -1288,34 +1305,14 @@ export function mount(root, ctx) {
     const fields = el("div", { class: "st-finish-setup-fields" });
 
     fields.append(segmented(
-      "Shape",
-      ASPECTS.map((value) => ({
-        value,
-        label: value,
-        title: ASPECT_LABELS[value] || value,
-      })),
-      aspect,
-      (value) => {
-        aspect = value;
-        selectedArtifactId = "";
-        packetArtifactId = "";
-        shareArtifactId = "";
-        compareA = "";
-        compareB = "";
-        clearRepair();
-        keepArtifactSelection();
-        void refreshChecks();
-        renderAll();
-        void loadTrimHealth({ shape: aspect }).then(() => { if (!disposed) renderAll(); });
-      },
-    ));
-
-    fields.append(segmented(
       "Quality",
       [
-        { value: "draft", label: "540", title: "540p draft" },
-        { value: "720", label: "720", title: "720p" },
-        { value: "final", label: "1080", title: "1080p final" },
+        { value: "360", label: "360", title: QUALITY_LABELS["360"] },
+        { value: "draft", label: "540", title: QUALITY_LABELS.draft },
+        { value: "720", label: "720", title: QUALITY_LABELS["720"] },
+        { value: "final", label: "1080", title: QUALITY_LABELS.final },
+        { value: "1440", label: "2K", title: QUALITY_LABELS["1440"] },
+        { value: "2160", label: "4K", title: QUALITY_LABELS["2160"] },
       ],
       quality,
       (value) => {
@@ -1337,7 +1334,7 @@ export function mount(root, ctx) {
         ? "Repair every stale shape before queueing. A stale Edit never renders."
         : allLive
           ? `Every moment is already queued in ${aspect}.`
-          : `Queue every moment in ${ASPECT_LABELS[aspect] || aspect} at ${quality === "final" ? "1080p final" : quality === "720" ? "720p" : "540p draft"}.`,
+          : `Queue every moment in ${ASPECT_LABELS[aspect] || aspect} at ${QUALITY_LABELS[quality] || quality}.`,
     });
     queueAll.addEventListener("click", () => { void queueStories(stories(), queueAll); });
     setup.append(fields, queueAll);
@@ -1348,7 +1345,7 @@ export function mount(root, ctx) {
       el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
       el("span", { text: ASPECT_LABELS[aspect] || aspect }),
       el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
-      el("span", { text: quality === "final" ? "1080p final" : quality === "720" ? "720p" : "540p draft" }),
+      el("span", { text: QUALITY_LABELS[quality] || quality }),
     ]));
     card.append(fillNote);
     card.append(el("p", {
@@ -1394,9 +1391,8 @@ export function mount(root, ctx) {
         const ready = rows.find(artifactReady) || null;
         const latestShape = ready || rows[0] || null;
         const live = liveQueueItem(storyId, shapeValue);
-        // Keep the selected shape always, and any shape that has real work.
-        // Five "Not rendered" chips on every row is noise.
-        if (shapeValue !== aspect && !live && !latestShape) return [];
+        // Shape is chosen in Edit, so Finish shows that shape only.
+        if (shapeValue !== aspect) return [];
         let text;
         if (live) {
           text = `${shapeValue} · ${statusText(live.state)}`;
