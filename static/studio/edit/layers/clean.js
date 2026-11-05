@@ -54,8 +54,8 @@ const KIND_COPY = {
 
 // AI fill engines. The server keeps the same list (edits.FILL_METHODS).
 const FILL_METHODS = [
-  ["sttn", "STTN · video, best on subtitles"],
   ["lama", "LaMa · per frame, best on still backgrounds"],
+  ["sttn", "STTN · video, best on subtitles"],
 ];
 const FILL_KINDS = new Set(["delogo", "blur", "plate", "mask"]);
 
@@ -624,7 +624,7 @@ export function mountCleanPanel(host, ctx) {
   let fillStatus = null;
   let fillStatusError = "";
   let removeMethod = "blur";
-  let fillMethod = "sttn";
+  let fillMethod = "lama";
   let methodTouched = false;
   let fillEstimateTimer = 0;
   if (!FOUND_TICKS.has(jobId)) FOUND_TICKS.set(jobId, new Map());
@@ -2038,7 +2038,7 @@ export function mountCleanPanel(host, ctx) {
   function firstFillMethod() {
     const methods = fillStatus?.methods || {};
     if (fillStatus?.default && methods[fillStatus.default]?.ready) return fillStatus.default;
-    return ["sttn", "lama"].find((method) => methods[method]?.ready) || "";
+    return ["lama", "sttn"].find((method) => methods[method]?.ready) || "";
   }
 
   async function loadFillStatus() {

@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261105-8";
+import { mountPreview } from "./preview.js?v=20261105-9";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -79,7 +79,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261105-8";
+    link.href = "/static/studio/edit/edit.css?v=20261105-9";
     document.head.append(link);
   }
 }
@@ -1758,7 +1758,7 @@ export function mount(root, ctx) {
     const layer = manualLayer(layers.length);
     layer.id = `cl_paint_manual_${Date.now().toString(36)}`;
     layer.kind = "fill";
-    layer.method = "sttn";
+    layer.method = "lama";
     layer.mask = { space: "source", aspect: state.aspect, strokes: [] };
     const at = storyToSource(state.playhead);
     layer.ranges = at ? [{

@@ -54,8 +54,8 @@ MAX_ID = 64
 
 ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
 CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "mosaic", "delogo", "fill")
-# AI text fill engines for kind "fill" (see textfill/). STTN is the default.
-FILL_METHODS = ("sttn", "lama")
+# AI text fill engines for kind "fill" (see textfill/). LaMa is the default.
+FILL_METHODS = ("lama", "sttn")
 MOTION_KINDS = ("punch_in", "snap_zoom", "push", "zoom_out", "shake")
 TEXT_KINDS = ("hook", "title", "lower_third", "cta", "emphasis")
 FX_KINDS = ("arrow", "circle", "underline", "progress_bar", "sticker")

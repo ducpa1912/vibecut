@@ -64,6 +64,7 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 42 | Press the top right **Finish** in Edit | It saves and opens Finish on this moment | |
 | 43 | Import: press the bin on an old video, then **Cancel**. Press it again, then **Delete**. Then **All videos** and do the same there | Cancel keeps it. Delete removes it from both lists | |
 | 44 | Start **Scan video** or a render, then press the bin on that video | The prompt names what is running. **Cancel** lets it carry on. **Delete** stops it, the video leaves the list at once, and the app stays responsive | |
+| 45 | Clean: add a new box and read its engine, then render a 10 to 20 second moment with AI fill | The engine is LaMa, and layers you saved before keep their own engine. Tell me the real time, and whether the filled area flickers or looks soft | |
 
 ## Tell me too
 

@@ -27,8 +27,8 @@ import numpy as np
 
 from . import mask as masks
 
-METHODS = ("sttn", "lama")
-DEFAULT_METHOD = "sttn"
+METHODS = ("lama", "sttn")
+DEFAULT_METHOD = "lama"
 VERSION = 3
 MODEL_FILES = {"sttn": "sttn_infer_model.pth", "lama": "lama_fp32.onnx"}
 MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime"}

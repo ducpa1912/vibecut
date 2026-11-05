@@ -55,7 +55,7 @@ class AutoCleanBody(BaseModel):
     # Clean has two methods. auto picks AI fill when an engine is ready, else
     # Blur; ai and blur are explicit.
     method: str = "auto"
-    fill_method: str = "sttn"
+    fill_method: str = "lama"
 
     model_config = ConfigDict(extra="forbid")
 
@@ -248,7 +248,7 @@ def fill_status() -> dict:
             "reason": problem or "",
         }
     default = next(
-        (method for method in ("sttn", "lama") if methods[method]["ready"]),
+        (method for method in textfill.METHODS if methods[method]["ready"]),
         None,
     )
     return {
@@ -822,7 +822,7 @@ def auto_clean(
     method = str(body.method or "auto").strip().lower()
     if method not in {"auto", "ai", "blur"}:
         raise HTTPException(422, "method must be auto, ai or blur.")
-    fill_method = str(body.fill_method or "sttn").strip().lower()
+    fill_method = str(body.fill_method or textfill.DEFAULT_METHOD).strip().lower()
     if fill_method not in textfill.METHODS:
         raise HTTPException(422, "fill_method must be sttn or lama.")
     if method == "auto":

@@ -379,9 +379,12 @@ def test_models_dir_follows_the_lane_data_folder(tmp_path, monkeypatch):
 
 # --- Edit kind -------------------------------------------------------------
 
-def test_fill_kind_defaults_to_sttn_and_checks_the_engine():
+def test_fill_kind_defaults_to_lama_and_checks_the_engine():
     layer = edits.normalize_clean([_layer()])[0]
-    assert layer["kind"] == "fill" and layer["method"] == "sttn"
+    assert layer["kind"] == "fill" and layer["method"] == "lama"
+    assert textfill.DEFAULT_METHOD == "lama"
+    # A layer saved with STTN keeps it: the default only fills a missing method.
+    assert edits.normalize_clean([_layer(method="sttn")])[0]["method"] == "sttn"
     assert edits.normalize_clean([_layer(method="LaMa")])[0]["method"] == "lama"
     with pytest.raises(edits.EditError, match="method"):
         edits.normalize_clean([_layer(method="propainter")])
@@ -410,7 +413,7 @@ def test_compile_puts_fill_on_the_segment_not_in_the_filter_chain():
         _edit([_layer(ranges=[{"start": 1.0, "end": 2.0}])]), clips=CLIPS, source=SOURCE,
     )
     segment = compiled["segments"][0]
-    assert segment["fill"]["method"] == "sttn"
+    assert segment["fill"]["method"] == "lama"
     assert segment["fill"]["ids"] == ["cl01"]
     assert segment["fill"]["layers"][0]["ranges"] == [{"start": 1.0, "end": 2.0}]
     assert not any("delogo" in item for item in segment["pre_filters"])
@@ -426,7 +429,7 @@ def test_compile_has_no_fill_when_the_layer_is_off_the_beat():
 
 def test_compile_warns_when_one_beat_mixes_engines():
     compiled = compose_render.compile_edit(
-        _edit([_layer(), _layer(id="cl02", method="lama", z=1)]), clips=CLIPS, source=SOURCE,
+        _edit([_layer(method="sttn"), _layer(id="cl02", method="lama", z=1)]), clips=CLIPS, source=SOURCE,
     )
     assert compiled["segments"][0]["fill"]["method"] == "lama"
     assert any(item["code"] == "fill_method_mixed" for item in compiled["warnings"])
