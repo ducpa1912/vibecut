@@ -1,12 +1,12 @@
 # Classic beta pass 2 — founder test script
 
-**Build:** `classic` at `18b46ac`. Nothing here is verified until you run it. An automated walk is not evidence; only your Result column counts.
+**Build:** `classic` at `c7032b8`. Nothing here is verified until you run it. An automated walk is not evidence; only your Result column counts.
 
-**Recorded results.** No founder pass has been run at `18b46ac` yet. Write the hash you actually tested, the date and the outcome here, then fill the Result column. `scripts/release.sh` needs that same hash before a beta tag.
+**Recorded results.** No founder pass has been run at `c7032b8` yet. Write the hash you actually tested, the date and the outcome here, then fill the Result column. `scripts/release.sh` needs that same hash before a beta tag.
 
 | Hash tested | Date | Outcome | Notes |
 |---|---|---|---|
-| `18b46ac` | — | not run | — |
+| `c7032b8` | — | not run | — |
 
 **Start the app:** open Terminal and run these lines. Classic has its own port,
 data folder and media folder. Use port **8796**, never 8787.
@@ -62,8 +62,8 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | # | Action: where to click | Intent | Expected | Result |
 |---|---|---|---|---|
 | 2.2.1 | Click **Use a local path instead**, paste the full path to video **A**, click **Load** | Path import reads in place | The file card appears and a toast says **Video loaded in place.** No file is copied. | |
-| 2.2.2 | Click **Dissect video** | The rights dialog | A native OK/Cancel dialog says **The rights lock is on.** and **I own this footage or have the rights to it.** Click **OK**. | |
-| 2.2.3 | Click **Dissect video** again on a fresh path, then click **Cancel** in the rights dialog | Cancel is honest | The import stops and an error says **Import cancelled. Confirm you own this footage or have the rights to it.** | |
+| 2.2.2 | Click **Dissect video** | No attestation step | Analysis starts immediately. No rights dialog or own-footage tick appears. | |
+| 2.2.3 | Read the line under the import controls | Responsibility notice | It says **You are responsible for having permission to edit this footage.** | |
 
 ### 2.3 URL
 
@@ -141,7 +141,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 5.12 | Choose **All but source** in the Clean profile, click **Clean**, confirm | Clean profile | The confirmation names the wider deletion, the job stays open, and no error appears. | |
 | 5.13 | Click **Delete** on a throwaway job, confirm | Delete a job | The job leaves **Recent cuts** and its page returns to ingest. | |
 | 5.14 | Go back to **Recent cuts** | Recent list | Each local job shows a thumbnail or scene count, duration, date and status. A live job cannot be deleted and says why. | |
-| 5.15 | In Creator → **Queue**, open **Compatibility · source batches (15/30/60)**, paste two local paths, choose **Analyze only**, tick **I own these videos or have the rights to them**, click **Create batch** | A batch with the rights lock on | The batch starts. It does not return **409 Confirm you own this footage or have the rights to it.** Each item gets a job id and a state. | |
+| 5.15 | In Creator → **Queue**, open **Compatibility · source batches (15/30/60)**, paste two local paths, choose **Analyze only**, click **Create batch** | A batch without attestation | The batch starts. No rights tick or 409 appears. Each item gets a job id and a state. | |
 | 5.16 | Click **Pause**, **Resume**, then **Cancel** on that batch | Batch controls | Pause stops after the current item, Resume continues, Cancel asks for confirmation and then cancels the rest. | |
 
 ## 6. Creator: Clip Set and stories

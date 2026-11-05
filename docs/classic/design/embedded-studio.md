@@ -1,7 +1,7 @@
 # Studio features embedded in Classic
 
 Status: C0–C4 and AI fill built, none founder-passed. Base: `origin/studio`
-at `8457728`; Classic at `18b46ac`.
+at `8457728`; Classic at `c7032b8`.
 
 Classic is not an iframe around Studio. The goal is to bring the interaction
 patterns that fixed Studio's editor into Classic, while keeping Classic's page,
@@ -13,7 +13,7 @@ state and lane ownership independent.
 |---|---|---|
 | P0 | Fixed editor frame, compact toolbar, one scroll per panel, Find text on screen, scan progress/cancel | The frame and the scan flow. Classic currently has no in-Editor text scan. |
 | P1 | Layers panel, boxes drawn on the preview, draw/move/resize/delete, selection shared with timeline | The Layers panel and box editing. Classic has no equivalent. |
-| P2 | Found-text list with thumbnails/ticks, AI fill / Blur / Cover, single-frame LaMa preview | The whole flow, but this is a backend port: Classic has only work-file Clean, not Studio's Clean text layers. |
+| P2 | Found-text rows with thumbnails/ticks, AI fill / Blur / Crop guard, single-frame engine preview | The whole flow, but this is a backend port: Classic has only work-file Clean, not Studio's Clean text layers. |
 | P3 | Spacing/type scale, icon set, layer colours, shortcuts, undo/redo, empty-state actions | The design system and keyboard model, adapted to Classic. |
 | P4 | Shared app bar, Import/Moments/Finish frames, recent-first Import, scan state in Moments | The app bar and the Finish/Import/Moments layout rules. |
 
@@ -116,19 +116,19 @@ Gestures: drag to draw, drag to move, corner pulls to resize, `Del`, arrow
 nudges, `⌘Z`/`⇧⌘Z`, eye toggle, per-row method chips. The canvas is measured
 from the preview pane, so its corner handles stay on screen at 1024×680.
 
-Evidence: `tests/test_classic_clean.py` (format, compile, rights, frame route,
+Evidence: `tests/test_classic_clean.py` (format, compile, no-attestation, frame route,
 fill status) and `tests/browser/classic_clean.spec.mjs` at 1280×720 and
 1024×680 — draw, move, retag, hide, reload, undo, delete. The spec runs on a
 real fixture video, so the JPEG it asserts is a real ffmpeg frame.
 
-### C2a — Found text, Blur and Cover
+### C2a — Found text, Blur and Crop guard
 
 **Goal:** remove old text from the regions Check actually found with Blur or
-Cover. AI fill follows in C2b.
+Crop guard. AI fill follows in C2b.
 
 - Found-text list with thumbnails, words, time and ticks.
 - Watermarks and screen UI greyed with the server reason; never tickable.
-- Method picker: Blur and Cover in C2a; AI fill joins in C2b.
+- Method picker: Blur and Crop guard in C2a; AI fill joins in C2b.
 - Rights gate and Clean layer storage on the server.
 
 **Backend:** do not import Studio's `routes_studio.py`. Extract or fork the
@@ -151,24 +151,22 @@ C2 also needs a model-pack prerequisite before AI fill is offered:
 - size and SHA-256 in the release notes
 - install path under `~/vibecut-lanes/classic/models/fill`
 - license notices for STTN and LaMa
-- a missing-model state that falls back to Blur/Cover
+- a missing-model state that falls back to Blur/Crop guard
 
-Until the model pack and frame route exist, C2 stays at Blur/Cover.
+Until the model pack and frame route exist, C2 stays at Blur/Crop guard.
 
 **Done when:** the founder removes every subtitle in a moment with Blur or
-Cover and the rights gate refuses watermarks and screen UI.
+Crop guard; every detected kind is cleanable in Classic.
 
 **Status:** built, not founder-passed. The found-text list reads Check's own
 `clean_prefill`: thumbnail from the nearest scene still cropped by CSS to the
 found box, kind and server reason. Rows are ticked, then one "Remove ticked"
-removes them all with one method (Blur, Cover, or AI fill), in one undo step. Watermark and screen-UI rows are greyed with the
-server's reason and have no tick. Scan ranges are source time and boxes are
+removes them all with one method (Blur, Crop guard, or AI fill), in one undo step. Every detected kind is tickable; there is no rights refusal. Scan ranges are source time and boxes are
 translated clip by clip; text no clip carries says "not in this cut" instead of
-becoming a box that never appears. The rights gate is enforced on the server as
-well: `PUT /api/classic/jobs/{id}/text` refuses a blocked kind with `409`, and
-the rights lock refuses any box until the import carries the own-footage tick.
+becoming a box that never appears. Classic has no rights gate on the server: `PUT /api/classic/jobs/{id}/text` accepts every detected kind, and
+Classic has no rights lock or attestation step; every detected kind is cleanable.
 Proven in `tests/test_classic_clean.py::test_the_server_refuses_a_box_the_policy_blocks`
-and `test_the_rights_lock_refuses_clean_without_the_tick`.
+and `test_clean_has_no_attestation_step`.
 
 ### C2b — AI fill
 
@@ -177,13 +175,13 @@ and `test_the_rights_lock_refuses_clean_without_the_tick`.
 **Goal:** add AI fill to C2a.
 
 - Engine status and missing-model note.
-- Single-frame LaMa preview with before/after slider.
+- Single-frame before/after preview using the selected render engine.
 - `textfill` port and render hook.
 - Model pack, license notices and cache keys.
 
 **Done when:** the model pack is installed, the founder sees the AI-fill
 preview, and the full render fills every frame. Until then, C2 stays at Blur
-and Cover.
+and Crop guard.
 
 **Status:** built, models available, not founder-passed. The shared model
 cache at `~/.cache/vibecut/models/fill` has both `sttn_infer_model.pth` and
@@ -200,16 +198,16 @@ layer signature. Classic keeps its own `method` (blur/cover/crop/fill) and adds
 
 `GET /api/classic/fill` answers per engine, not one flag: `ready` means the
 model file **and** its runtime package are present, and each engine carries its
-own reason. STTN installed without LaMa still fills subtitles; only the
-one-frame preview needs LaMa, because STTN needs neighbouring frames.
+own reason. STTN installed without LaMa still fills subtitles; the
+one-frame preview uses the same engine as the render; LaMa is the default.
 `POST /api/classic/jobs/{id}/fill/preview` compiles the unsaved boxes, reads
-the source frame at the right source time, fills it with LaMa, burns overlays
+the source frame at the right source time, fills it with the selected engine, burns overlays
 and returns before/after JPEGs cached by edit, frame and model; it answers
 `409 fill_running` while a render holds the fill lock. The preview now runs
-the same rights gate as save/render, so a watermark or un-attested box is
-refused before any pixels change. The panel shows what is ready and what is
+the selected render engine and releases the model after the frame. Classic has
+no rights gate. The panel shows what is ready and what is
 missing, the cost per engine, an engine picker per fill layer, and only enables
-Preview when LaMa is ready. The render progress already reads server progress,
+Preview when the selected engine is ready. The render progress already reads server progress,
 so a fill render says `Filling text, beat i/n` and the existing Cancel stops
 it. No real full fill render has been verified in Classic yet; that is the
 founder's test.
@@ -228,7 +226,7 @@ existing scale (`--mono` kickers at 10-11px, 13px labels, 12px hints) instead of
 new one-off sizes. The toolbar uses one glyph set (`＋ ↶ ↷ ↻`) and drops its
 words below 1180px, where the column cannot hold them; every glyph keeps its
 `title` and `aria-label`. Layer colours come from the method (accent for Blur,
-blue for Cover, dashed for Crop) so the frame and the row agree. Keys: `B` draw,
+blue for Crop guard, dashed for Blur) so the frame and the row agree. Keys: `B` draw,
 `Del`, arrows, `Shift`+arrows, `Esc`, `⌘Z`/`⇧⌘Z`, `?` for the sheet (Chromium on
 macOS reports Shift+/ as `/`, so both open it). Undo/redo is one stack over
 text, effects and boxes, capped at 40. Empty states: the panel says there are no
@@ -242,9 +240,7 @@ boxes and offers both routes (scan or draw).
 - Moments text-scan state/action.
 - Finish fixed frame and Back to Edit.
 
-**Status:** built, not founder-passed. The rights tick is a checkbox beside
-Dissect video, shown only when Setup's lock asks for one; a start that skips it
-reveals and highlights the tick instead of a blocking `window.confirm`. The
+**Status:** built, not founder-passed. There is no rights tick or import confirmation. The
 Moments head carries the scan state as one chip (`Find text on screen ›`,
 `scanning text…`, `text scanned ✓`, `… failed`) that starts a scan when there is
 none and jumps to the card otherwise. Finish is one fixed frame: the edit panes
@@ -259,7 +255,7 @@ copying it would be the CSS-only port this document rules out.
 
 1. C0 ships and is founder-tested.
 2. C1 ships; boxes are usable.
-3. C2 ships behind the existing rights gate; real-video fill test required.
+3. C2 ships with no Classic rights gate; real-video fill test required.
 4. C3 and C4 ship together only after C1/C2 are stable.
 
 Every phase gets:

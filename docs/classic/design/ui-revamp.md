@@ -2,7 +2,7 @@
 
 Status: **proposal**, not implemented. Fifth UI pass after
 `classic-responsive-review.md` (passes 1–4). Screens were captured at
-`classic` `e56471c`; the current build is `18b46ac`, so this is a design
+`classic` `e56471c`; the current build is `c7032b8`, so this is a design
 proposal, not a screenshot of the shipped UI.
 
 Method: Node Playwright against a real fixture job

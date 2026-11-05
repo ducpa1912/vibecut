@@ -1,6 +1,6 @@
 # Classic lane plan
 
-Status: **active**, Classic lane only. Last reviewed at `classic` `18b46ac`.
+Status: **active**, Classic lane only. Last reviewed at `classic` `c7032b8`.
 
 Classic is an independent lane. It owns `static/classic/**`, `routes_classic.py`,
 and `docs/classic/**`. It does not import Studio or Voice Room UI state, and it
@@ -38,6 +38,13 @@ See `docs/shared/platform-capabilities.md`.
 Vietnamese is a curated interface language. Product names, acronyms and short
 English terms stay English when that is the better UX. User content is never
 translated. See `docs/shared/vi-glossary.md`.
+
+### No Clean attestation in Classic
+
+Classic has no rights gate, attestation tick, watermark refusal or per-video
+settings lock. The founder is responsible for having permission to edit the
+footage; the UI carries a plain responsibility notice. Every detected kind is
+cleanable. Studio keeps its own gate.
 
 ### Cobalt removal
 
@@ -131,10 +138,10 @@ and AI fill are built; none is founder-passed.
 ## Release gate
 
 - [ ] No P0 or P1 open. *(no sign-off recorded yet.)*
-- [x] Classic tests pass on the chosen tip. *(1,877 passed, 103 skipped at
-  `18b46ac`; the skips are tests waiting on absent `data/media` real files.
+- [x] Classic tests pass on the chosen tip. *(1,878 passed, 103 skipped at
+  `c7032b8`; the skips are tests waiting on absent `data/media` real files.
   `node --check` passes for every `static/**/*.js`.)*
-- [ ] Founder pass recorded on the chosen tip. *(no pass at `18b46ac` yet; the
+- [ ] Founder pass recorded on the chosen tip. *(no pass at `c7032b8` yet; the
   record table is at the top of the beta pass.)*
 - [x] All new commits are signed. *(Checked with
   `scripts/verify-signatures.sh`. `732254a` and `8186e2a` are recorded
@@ -142,7 +149,7 @@ and AI fill are built; none is founder-passed.
   exists. No beta tag exists yet.)*
 - [x] `docs/classic/testing/classic-beta-pass-2.md` matches the build. *(Labels,
   paths, media, Clean/fill steps and the T1–T6 trust table are re-checked
-  against the source at `18b46ac`. The founder's Result column is still the
+  against the source at `c7032b8`. The founder's Result column is still the
   only evidence for a pass.)*
 - [ ] Merge target confirmed: Classic lane only, or explicit merge to `main`.
   *(Nothing is merged; the lane stays on `classic` until someone asks.)*
