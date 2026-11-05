@@ -2460,11 +2460,13 @@ def _prepare_fills(
     progress: Callable[[float, str], None],
     cancel_event: threading.Event | None,
     fps: int = OUT_FPS,
+    on_eta: Callable[[float], None] | None = None,
 ) -> list[dict | None]:
     """Run the AI text fill pre-pass: one filled clip per beat that needs it.
 
     Progress runs from 0.02 to 0.45. Clips are cached by source, span, layers,
-    engine and model, so a draft and the final share them.
+    engine and model, so a draft and the final share them. ``on_eta`` gets the
+    seconds of fill left; without it, the time left goes in the message.
     """
     planned = [
         (index, segment) for index, segment in enumerate(segments)
@@ -2496,9 +2498,11 @@ def _prepare_fills(
                 remaining = ""
                 elapsed = time.monotonic() - started
                 if done >= 10 and elapsed >= 20 and work_left > done:
-                    remaining = (
-                        f" · {textfill.duration_text(elapsed / done * (work_left - done))} left"
-                    )
+                    seconds = elapsed / done * (work_left - done)
+                    if on_eta:
+                        on_eta(seconds)
+                    else:
+                        remaining = f" · {textfill.duration_text(seconds)} left"
                 progress(
                     low + (high - low) * max(0.0, min(1.0, fraction)),
                     f"Filling text, beat {position + 1}/{len(planned)} · {message}{remaining}",
@@ -2555,6 +2559,7 @@ def render_reel(
     edit: dict | None = None,
     compiled_edit: dict | None = None,
     output_size: tuple[int, int] | None = None,
+    fill_eta: Callable[[float], None] | None = None,
 ) -> dict:
     render_started = time.monotonic()
     timings: dict[str, float] = {
@@ -2758,7 +2763,7 @@ def render_reel(
             with _stage(timings, "fill"):
                 fills = _prepare_fills(
                     source, meta, job_dir, edit_segments if compiled is not None else [],
-                    progress, cancel_event,
+                    progress, cancel_event, on_eta=fill_eta,
                 )
             cut_from = 0.45 if any(fills) else 0.02
             done = 0

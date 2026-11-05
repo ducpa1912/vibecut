@@ -293,9 +293,9 @@ def test_queue_item_progress_text():
     """QA #18: a running item shows its % and time left."""
     out = run_module("finish.js", """
         return [m.itemProgressText({progress: 0.42, eta: 80}), m.itemProgressText({progress: 0.1}),
-                m.etaText(45), m.etaText(120)];
+                m.etaText(45), m.etaText(120), m.etaText(1000), m.etaText(3780)];
     """)
-    assert out == ["42% · about 1 min 20 s left", "10%", "45 s", "2 min"]
+    assert out == ["42% · about 1 min 20 s left", "10%", "45 s", "2 min", "17 min", "1 h 3 min"]
 
 
 @needs_node

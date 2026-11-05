@@ -391,8 +391,15 @@ export function editChain(rows, headId) {
 export function etaText(seconds) {
   const value = Math.max(0, Math.round(Number(seconds) || 0));
   if (value < 60) return `${value} s`;
+  if (value >= 3600) {
+    const hours = Math.floor(value / 3600);
+    const left = Math.round((value % 3600) / 60);
+    return left ? `${hours} h ${left} min` : `${hours} h`;
+  }
   const minutes = Math.floor(value / 60);
   const rest = value % 60;
+  // Seconds mean nothing on a long wait, and they make it look exact.
+  if (value >= 600) return `${Math.round(value / 60)} min`;
   return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
 }
 
