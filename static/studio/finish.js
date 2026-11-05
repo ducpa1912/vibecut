@@ -2997,7 +2997,7 @@ export function mount(root, ctx) {
     button.disabled = true;
     const previous = button.textContent;
     button.textContent = "Working…";
-    announce(action === "pause" ? "Pausing after the current story…"
+    announce(action === "pause" ? "Pausing…"
       : action === "cancel" ? "Cancelling the queue…" : "Resuming the queue…");
     try {
       await request(`/api/story-queues/${encodeURIComponent(queueId)}/${action}`, {
@@ -3007,7 +3007,7 @@ export function mount(root, ctx) {
       await loadQueues();
       if (disposed) return;
       renderQueueCard();
-      announce(action === "pause" ? "Queue paused." : action === "cancel" ? "Queue cancelled." : "Queue resumed.", "ok");
+      announce(action === "pause" ? "Queue paused. Resume keeps the work already done." : action === "cancel" ? "Queue cancelled." : "Queue resumed.", "ok");
       schedulePoll();
     } catch (error) {
       if (disposed) return;

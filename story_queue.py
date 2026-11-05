@@ -14,6 +14,10 @@ queue and marks its running item ``interrupted``. Nothing ever resumes on its
 own; :meth:`StoryQueueManager.resume` is the one-click path. A watchdog
 cancels an item that runs past its timeout, marks it failed and moves on.
 
+Pause semantics: :meth:`StoryQueueManager.pause` stops the running render at
+once and puts its item back in line. AI fills and encoded beats stay on disk, so
+resume starts that item again and only does the work still missing.
+
 The manager talks to the app through :class:`StoryBackend`, so ordering,
 recovery and timeout rules are testable without ffmpeg or FastAPI.
 """
@@ -40,6 +44,8 @@ ITEM_STATES = ("queued", "running", "done", "failed", "interrupted", "cancelled"
 TERMINAL_ITEMS = frozenset({"done", "failed", "cancelled"})
 ACTIVE_QUEUES = frozenset({"queued", "running"})
 READY = "ready"
+# Longest a resume waits for a paused render to stop. A model run ends in seconds.
+STOP_WAIT = 120.0
 FAILED_RENDERS = frozenset({"failed", "cancelled", "interrupted"})
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -254,19 +260,28 @@ class StoryQueueManager:
         return [row for row in self.list() if row["needs_resume"]]
 
     def pause(self, queue_id: str) -> dict:
+        running: list[dict] = []
+
         def mutate(queue: dict) -> None:
             if queue.get("status") not in ACTIVE_QUEUES:
                 raise QueueConflict("Only an active queue can be paused.")
             queue["status"] = "paused"
-            queue["message"] = "Paused; the current story keeps rendering."
+            queue["message"] = "Paused. Resume keeps the work already done."
             for item in queue.get("items") or []:
-                # Resume starts this item again; the deterministic artifact id
-                # means it waits on the same render instead of a second one.
                 if item.get("state") == "running":
+                    running.append(dict(item))
                     item["state"] = "queued"
+                    # Resume must not start again until this render has stopped.
+                    item["stopping"] = item.get("artifact_id")
 
         queue = self._mutate(queue_id, mutate)
         self._stops.setdefault(queue_id, threading.Event()).set()
+        for item in running:
+            if item.get("artifact_id") and self.backend is not None:
+                try:
+                    self.backend.cancel(item, item["artifact_id"])
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception("could not pause story render %s", item.get("artifact_id"))
         return self.public(queue)
 
     def cancel(self, queue_id: str) -> dict:
@@ -429,9 +444,27 @@ class StoryQueueManager:
                 if self._threads.get(queue_id) is threading.current_thread():
                     self._threads.pop(queue_id, None)
 
+    def _wait_until_stopped(self, queue_id: str, item: dict, stop: threading.Event) -> bool:
+        """A pause asked this item's render to stop. False if stopped again meanwhile."""
+        backend = self.backend
+        assert backend is not None
+        deadline = time.time() + STOP_WAIT
+        while time.time() < deadline:
+            try:
+                if str(backend.status(item, item["stopping"]) or "") in FAILED_RENDERS | {READY}:
+                    break
+            except Exception:  # noqa: BLE001 - e.g. the video was deleted; start reports it
+                break
+            if stop.wait(self.poll_interval):
+                return False
+        self._set_item(queue_id, item["id"], stopping=None)
+        return True
+
     def _run_item(self, queue_id: str, item: dict, stop: threading.Event) -> None:
         backend = self.backend
         assert backend is not None
+        if item.get("stopping") and not self._wait_until_stopped(queue_id, item, stop):
+            return
         started = time.time()
         self._set_item(
             queue_id, item["id"], state="running", started=_now(),
@@ -443,6 +476,15 @@ class StoryQueueManager:
             self._set_item(queue_id, item["id"], state="failed", error=_error_text(exc), finished=_now())
             return
         self._set_item(queue_id, item["id"], artifact_id=artifact_id)
+        if stop.is_set():
+            # A pause or cancel landed while this render was starting.
+            try:
+                backend.cancel(item, artifact_id)
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("could not stop story render %s", artifact_id)
+            if self._read(queue_id).get("status") == "paused":
+                self._set_item(queue_id, item["id"], state="queued", stopping=artifact_id)
+            return
         limit = max(1.0, float(backend.timeout_for(item)))
         while True:
             try:
@@ -454,6 +496,9 @@ class StoryQueueManager:
                 return
             if status == READY:
                 self._set_item(queue_id, item["id"], state="done", finished=_now())
+                return
+            if stop.is_set():
+                # Paused or cancelled: the render's end is not this item's failure.
                 return
             if status in FAILED_RENDERS:
                 self._set_item(
@@ -472,6 +517,5 @@ class StoryQueueManager:
                 )
                 return
             if stop.wait(self.poll_interval):
-                # Paused or cancelled: a running story keeps rendering on pause
-                # and is waited on at resume; cancel already stopped it.
+                # Paused or cancelled: both already asked the render to stop.
                 return

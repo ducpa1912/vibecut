@@ -922,3 +922,333 @@ def test_report_compares_with_the_founders_choice():
     assert difference["keep_not_cleaned"] == ["a subtitle line"]
     assert difference["skip_cleaned"] == ["luckin coffee"]
     assert difference["keep_not_found"] == []
+
+
+# --- saved fills: a stopped render keeps its model results ------------------
+
+
+class _PictureFiller:
+    """Same input, same output, and every call counted, like the real model."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def fill(self, area, mask):
+        self.calls += 1
+        out = area.copy()
+        out[mask] = int(area.mean()) % 256
+        return out
+
+
+def _moving_frames(count=40):
+    # Every frame differs a little, so runs form and frames blend between fills.
+    ramp = np.tile(np.linspace(20, 180, 200, dtype=np.uint8)[None, :, None], (100, 1, 3))
+    return [ramp + index for index in range(count)]
+
+
+def _rects_for(_index):
+    return [(20, 30, 180, 70)]
+
+
+def test_a_saved_fill_answers_without_the_model(tmp_path):
+    filler = _PictureFiller()
+    area = _moving_frames(1)[0]
+    mask = np.zeros(area.shape[:2], dtype=bool)
+    mask[10:20, 10:20] = True
+    first = textfill._SavedFills(filler, tmp_path / "saved", "model-a")
+    made = first.fill(area, mask)
+    assert filler.calls == 1 and first.hits == 0
+
+    again = textfill._SavedFills(filler, tmp_path / "saved", "model-a")
+    assert np.array_equal(again.fill(area, mask), made)
+    assert filler.calls == 1 and again.hits == 1
+
+
+def test_a_saved_fill_is_never_used_for_a_different_question(tmp_path):
+    filler = _PictureFiller()
+    area = _moving_frames(1)[0]
+    mask = np.zeros(area.shape[:2], dtype=bool)
+    mask[10:20, 10:20] = True
+    textfill._SavedFills(filler, tmp_path, "model-a").fill(area, mask)
+
+    other_mask = mask.copy()
+    other_mask[30, 30] = True
+    textfill._SavedFills(filler, tmp_path, "model-a").fill(area, other_mask)
+    assert filler.calls == 2
+    textfill._SavedFills(filler, tmp_path, "model-b").fill(area, mask)
+    assert filler.calls == 3
+    textfill._SavedFills(filler, tmp_path, "model-a").fill(np.roll(area, 1, axis=1), mask)
+    assert filler.calls == 4
+
+
+def test_a_damaged_saved_fill_goes_back_to_the_model(tmp_path):
+    filler = _PictureFiller()
+    area = _moving_frames(1)[0]
+    mask = np.ones(area.shape[:2], dtype=bool)
+    saved = textfill._SavedFills(filler, tmp_path, "model-a")
+    saved.fill(area, mask)
+    next(tmp_path.glob("*.npy")).write_bytes(b"not a picture")
+
+    again = textfill._SavedFills(filler, tmp_path, "model-a")
+    assert again.fill(area, mask).shape == area.shape
+    assert filler.calls == 2 and again.hits == 0
+
+
+def test_a_full_disk_costs_the_resume_not_the_render(tmp_path):
+    filler = _PictureFiller()
+    area = _moving_frames(1)[0]
+    mask = np.ones(area.shape[:2], dtype=bool)
+    blocked = tmp_path / "file"
+    blocked.write_text("in the way")
+    saved = textfill._SavedFills(filler, blocked / "saved", "model-a")
+    assert saved.fill(area, mask).shape == area.shape
+    assert saved.writable is False
+
+
+def test_a_resumed_clip_matches_one_that_never_stopped(tmp_path):
+    frames = _moving_frames()
+    whole_filler = _PictureFiller()
+    whole = list(textfill.fill_frames_lama(
+        iter(frames), _rects_for, whole_filler, None, step=4,
+    ))
+    assert whole_filler.calls > 2
+
+    first_filler = _PictureFiller()
+    seen = []
+
+    def stop_after_half():
+        return len(seen) >= len(frames) // 2
+
+    with pytest.raises(textfill.FillCancelled):
+        for frame in textfill.fill_frames_lama(
+            iter(frames), _rects_for,
+            textfill._SavedFills(first_filler, tmp_path, "model-a"), None,
+            step=4, cancelled=stop_after_half,
+        ):
+            seen.append(frame)
+    assert 0 < first_filler.calls < whole_filler.calls
+
+    second_filler = _PictureFiller()
+    resumed = textfill._SavedFills(second_filler, tmp_path, "model-a")
+    again = list(textfill.fill_frames_lama(iter(frames), _rects_for, resumed, None, step=4))
+
+    assert len(again) == len(whole)
+    assert all(np.array_equal(one, two) for one, two in zip(again, whole))
+    assert resumed.hits > 0
+    assert second_filler.calls + resumed.hits == whole_filler.calls
+    # The model is only asked for what the stopped run never finished.
+    assert second_filler.calls <= whole_filler.calls - first_filler.calls
+
+
+def test_a_finished_clip_removes_its_saved_fills(tmp_path):
+    filler = _PictureFiller()
+    area = _moving_frames(1)[0]
+    mask = np.ones(area.shape[:2], dtype=bool)
+    folder = tmp_path / "saved"
+    saved = textfill._SavedFills(filler, folder, "model-a")
+    saved.fill(area, mask)
+    assert list(folder.glob("*.npy"))
+    saved.forget()
+    assert not folder.exists()
+
+
+def test_tidying_saved_fills_drops_old_ones_and_leftovers(tmp_path, monkeypatch):
+    import os
+
+    now = 2_000_000_000.0
+    old = tmp_path / "old.npy"
+    new = tmp_path / "new.npy"
+    leftover = tmp_path / "a.npy.1.tmp"
+    for path in (old, new, leftover):
+        path.write_bytes(b"x" * 10)
+    os.utime(old, (now - textfill.SAVED_MAX_AGE - 1, now - textfill.SAVED_MAX_AGE - 1))
+    os.utime(new, (now - 5, now - 5))
+    os.utime(leftover, (now - 5, now - 5))
+    textfill._prune_saved(tmp_path, now=now)
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["new.npy"]
+
+    extra = tmp_path / "newer.npy"
+    extra.write_bytes(b"x" * 10)
+    os.utime(extra, (now - 1, now - 1))
+    monkeypatch.setattr(textfill, "SAVED_MAX_BYTES", 15)
+    textfill._prune_saved(tmp_path, now=now)
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["newer.npy"]
+
+
+def test_tidying_a_missing_folder_does_nothing(tmp_path):
+    textfill._prune_saved(tmp_path / "nothing-here")
+
+
+def _span_with_counting_model(tmp_path, monkeypatch, *, stop_at=None):
+    """prepare_span with ffmpeg and the model faked. Returns the model's call count."""
+    monkeypatch.setenv("VIBECUT_FILL_MODELS", str(tmp_path))
+    # Written once: a changed model file must not reuse old fills.
+    model_file = tmp_path / textfill.MODEL_FILES["lama"]
+    if not model_file.exists():
+        model_file.write_bytes(b"x")
+    source = _moving_frames(30)
+    model = _PictureFiller()
+
+    class Proc:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+
+        def poll(self):
+            return 0
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    class Reader:
+        def __init__(self, *args):
+            self.proc = Proc()
+            self.frames = iter(source)
+
+        def read(self):
+            return next(self.frames, None)
+
+    class Writer:
+        def __init__(self, _ffmpeg, output, *args):
+            self.proc = Proc()
+            self.output = Path(output)
+            self.output.parent.mkdir(parents=True, exist_ok=True)
+            self.output.write_bytes(b"x" * 2048)
+
+        def write(self, frame):
+            pass
+
+    rates = []
+    messages = []
+    replays = []
+    monkeypatch.setattr(textfill, "_Reader", Reader)
+    monkeypatch.setattr(textfill, "_Writer", Writer)
+    monkeypatch.setattr(textfill, "_filler", lambda *args: model)
+    monkeypatch.setattr(textfill, "RATE_MIN_FRAMES", 1)
+    monkeypatch.setattr(textfill, "record_rate", lambda *args: rates.append(args))
+    cancel = threading.Event()
+
+    def progress(fraction, message):
+        messages.append(message)
+        if stop_at is not None and fraction >= stop_at:
+            cancel.set()
+
+    layer = {"id": "b", "box": {"x": 0.1, "y": 0.3, "w": 0.8, "h": 0.4}, "ranges": [], "fill_keys": 10}
+    result = textfill.prepare_span(
+        source="unused.mp4",
+        meta={"width": 200, "height": 100, "fps": 30.0, "fingerprint": "f"},
+        start=0.0, duration=1.0, layers=[layer], method="lama",
+        cache_dir=tmp_path / "fill", data_root=tmp_path,
+        progress=progress, cancel_event=cancel, on_replay=replays.append,
+    )
+    return result, model, rates, messages, replays
+
+
+def test_stopping_a_clip_keeps_its_fills_and_the_next_run_uses_them(tmp_path, monkeypatch):
+    with pytest.raises(textfill.FillCancelled):
+        _span_with_counting_model(tmp_path, monkeypatch, stop_at=0.4)
+    folder = tmp_path / "fill" / textfill.SAVED_DIR
+    kept = list(folder.glob("*.npy"))
+    assert kept
+    assert not list((tmp_path / "fill").glob(".*.part.mp4"))
+
+    result, model, rates, messages, replays = _span_with_counting_model(tmp_path, monkeypatch)
+    assert result["cached"] is False
+    assert any("saved fills reused" in message for message in messages)
+    assert replays
+    # A resumed clip is not a speed to learn from.
+    assert rates == []
+    # Finished: the clip holds them now.
+    assert not folder.exists()
+    (tmp_path / "fresh").mkdir()
+    fresh_calls = _span_with_counting_model(tmp_path / "fresh", monkeypatch)[1].calls
+    assert model.calls < fresh_calls
+
+
+def test_a_frame_that_repeats_in_one_run_is_not_a_resume(tmp_path):
+    filler = _PictureFiller()
+    area = _moving_frames(1)[0]
+    mask = np.ones(area.shape[:2], dtype=bool)
+    saved = textfill._SavedFills(filler, tmp_path, "model-a")
+    saved.fill(area, mask)
+    saved.fill(area, mask)
+    assert filler.calls == 1 and saved.hits == 0
+
+
+def test_a_clip_with_nothing_saved_still_teaches_the_speed(tmp_path, monkeypatch):
+    _result, model, rates, messages, _replays = _span_with_counting_model(tmp_path, monkeypatch)
+    assert model.calls > 0
+    assert len(rates) == 1
+    assert not any("saved fills reused" in message for message in messages)
+    assert not (tmp_path / "fill" / textfill.SAVED_DIR).exists()
+
+
+def test_time_left_ignores_frames_a_resume_replayed(tmp_path, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(render.time, "monotonic", lambda: clock[0])
+    left = []
+
+    def fake_span(**kwargs):
+        # 60 frames replay in 6 s, then the model does 30 frames in 60 s.
+        clock[0] += 6.0
+        kwargs["on_replay"](60)
+        clock[0] += 60.0
+        kwargs["progress"](0.5, "LaMa 90/180")
+        return {"path": "x", "key": "k", "cached": False, "method": "lama"}
+
+    monkeypatch.setattr(textfill, "prepare_span", fake_span)
+    monkeypatch.setattr(textfill, "release_fillers", lambda: None)
+    monkeypatch.setattr(render, "_ffmpeg", lambda: "ffmpeg")
+    job_dir = tmp_path / "jobs" / "j"
+    job_dir.mkdir(parents=True)
+    render._prepare_fills(
+        "s.mp4", {"width": 200, "height": 100, "fps": 30.0, "fingerprint": "f"}, job_dir,
+        [{"fill": {"method": "lama", "layers": []}, "start": 0.0, "frames": 180}],
+        lambda value, text: None, None, on_eta=left.append,
+    )
+    # 2 s a frame on the 90 frames left, not the 0.73 s the whole pass averages.
+    assert left == [pytest.approx(180.0)]
+
+
+def _fake_caffeinate(monkeypatch):
+    started = []
+
+    class Proc:
+        def __init__(self, command, **_kwargs):
+            started.append(command)
+            self.stopped = False
+            Proc.last = self
+
+        def terminate(self):
+            self.stopped = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(render.sys, "platform", "darwin")
+    monkeypatch.setattr(render.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(render.subprocess, "Popen", Proc)
+    return started, Proc
+
+
+def test_a_render_keeps_the_mac_awake_and_lets_it_sleep_after(monkeypatch):
+    started, proc = _fake_caffeinate(monkeypatch)
+    monkeypatch.setenv("VIBECUT_KEEP_AWAKE", "1")
+    with pytest.raises(RuntimeError):
+        with render.keep_awake():
+            assert started[0][:3] == ["/usr/bin/caffeinate", "-i", "-w"]
+            assert proc.last.stopped is False
+            raise RuntimeError("render failed")
+    assert proc.last.stopped is True
+
+
+def test_keeping_awake_can_be_turned_off(monkeypatch):
+    started, _proc = _fake_caffeinate(monkeypatch)
+    monkeypatch.setenv("VIBECUT_KEEP_AWAKE", "0")
+    with render.keep_awake():
+        pass
+    assert started == []

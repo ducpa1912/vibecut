@@ -31,6 +31,9 @@ class FakeBackend:
         artifact = self.artifact(item)
         with self.lock:
             self.starts.append(item["story_id"])
+            if artifact in self.cancelled:
+                self.cancelled.remove(artifact)
+                self.ready_at.pop(artifact, None)
             if artifact not in self.ready_at:
                 self.renders[artifact] = self.renders.get(artifact, 0) + 1
                 self.ready_at[artifact] = time.time() + self.delay
@@ -157,19 +160,99 @@ def test_failed_start_isolated_and_cancel_stops_running_render(tmp_path):
     assert slow.cancelled == ["art_s1_9x16"]
 
 
-def test_pause_then_resume_waits_on_the_same_render(tmp_path):
-    backend = FakeBackend(delay=0.2)
+def test_pause_stops_the_render_at_once_and_resume_starts_it_again(tmp_path):
+    backend = FakeBackend(hang={"s1"})
     manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
     queue = manager.create(items(2))
     time.sleep(0.05)
     paused = manager.pause(queue["id"])
     assert manager.wait(queue["id"], 5)
     assert paused["status"] == "paused"
+    assert paused["needs_resume"] is True
     assert paused["items"][0]["state"] == "queued"
+    assert backend.cancelled == ["art_s1_9x16"]
+    current = manager.get(queue["id"])
+    assert current["items"][0]["state"] == "queued"
+    assert not current["items"][0].get("error")
+
+    backend.hang = set()
     manager.resume(queue["id"])
     assert manager.wait(queue["id"], 5)
-    assert manager.get(queue["id"])["status"] == "done"
-    assert backend.renders == {"art_s1_9x16": 1, "art_s2_9x16": 1}
+    done = manager.get(queue["id"])
+    assert done["status"] == "done"
+    assert [item["state"] for item in done["items"]] == ["done", "done"]
+    assert backend.starts == ["s1", "s1", "s2"]
+
+
+def test_resume_waits_for_a_paused_render_to_stop(tmp_path):
+    class SlowToStop(FakeBackend):
+        stopped = False
+
+        def status(self, item, artifact_id):
+            if artifact_id in self.cancelled and not self.stopped:
+                return "rendering"
+            return super().status(item, artifact_id)
+
+        def start(self, item):
+            if "art_s1_9x16" in self.cancelled:
+                assert self.stopped, "started again while the old render still ran"
+            return super().start(item)
+
+    backend = SlowToStop(hang={"s1"})
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    queue = manager.create(items(1))
+    time.sleep(0.05)
+    manager.pause(queue["id"])
+    assert manager.wait(queue["id"], 5)
+    backend.hang = set()
+    manager.resume(queue["id"])
+    time.sleep(0.1)
+    assert backend.starts == ["s1"]
+    backend.stopped = True
+    assert manager.wait(queue["id"], 5)
+    done = manager.get(queue["id"])
+    assert done["status"] == "done"
+    assert done["items"][0]["state"] == "done"
+    assert not done["items"][0].get("stopping")
+
+
+def test_a_pause_while_a_render_starts_still_stops_it(tmp_path):
+    class PauseDuringStart(FakeBackend):
+        manager = None
+        queue_id = ""
+
+        def start(self, item):
+            artifact = super().start(item)
+            if len(self.starts) == 1:
+                self.manager.pause(self.queue_id)
+            return artifact
+
+    backend = PauseDuringStart(hang={"s1"})
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    backend.manager = manager
+    real_start = manager._start
+    manager._start = lambda queue_id: None
+    queue = manager.create(items(1))
+    backend.queue_id = queue["id"]
+    manager._start = real_start
+    manager.resume(queue["id"])
+    assert manager.wait(queue["id"], 5)
+    current = manager.get(queue["id"])
+    assert current["status"] == "paused"
+    assert current["items"][0]["state"] == "queued"
+    assert backend.cancelled == ["art_s1_9x16"]
+
+
+def test_cancel_still_cancels_after_a_pause(tmp_path):
+    backend = FakeBackend(hang={"s1"})
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    queue = manager.create(items(1))
+    time.sleep(0.05)
+    manager.pause(queue["id"])
+    assert manager.wait(queue["id"], 5)
+    cancelled = manager.cancel(queue["id"])
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["items"][0]["state"] == "cancelled"
 
 
 def test_startup_stops_only_orphaned_encoders_under_this_data_dir(monkeypatch, tmp_path):
