@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import logging
 import os
 import subprocess
 import threading
@@ -43,14 +44,23 @@ LAMA_CARRY = 0.3
 LAMA_KEYS_PER_SECOND = 3.0
 # Mean change around the text (0..255) that stops a blend: the picture moved.
 LAMA_MOTION_LIMIT = 6.0
-# Tighter: one fill can last a whole line only while the shot barely changes.
-LAMA_STILL_LIMIT = 2.5
-# LaMa has no time per frame until a render finishes on this Mac.
+# A line planned by the scan needs no motion check, only a stop at a sudden change.
+LAMA_CUT_LIMIT = 30.0
+# Pixels around the text that the motion check reads.
+LAMA_RING_PX = 24
+# Cost of one LaMa run per pixel it reads, as a share of a 512 square, and of
+# reading, pasting and writing one frame.
+LAMA_FRAME_UNITS = 0.02
+# LaMa has no time per unit until a render finishes on this Mac. A unit is one run
+# on a full 512 square, so the figure does not depend on how much a video moves.
 SEED_RATES: dict[str, float] = {}
+# Earlier figures were per frame, under another key, and stay out of estimates.
+RATE_KEY = "lama_run"
 RATE_MIN_FRAMES = 60
 RATES_FILE = "fill_rates.json"
 
 Progress = Callable[[float, str], None]
+LOGGER = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 _FILLERS_LOCK = threading.Lock()
@@ -118,7 +128,7 @@ def fill_rate(data_root: Path | str, method: str) -> dict:
     """Seconds per unit for an engine: this machine's own, else the seed."""
     try:
         stored = json.loads((Path(data_root) / RATES_FILE).read_text(encoding="utf-8"))
-        seconds = float(stored[method]["seconds"])
+        seconds = float(stored[RATE_KEY]["seconds"])
         if seconds > 0:
             return {"seconds": seconds, "measured": True}
     except (OSError, ValueError, KeyError, TypeError):
@@ -138,9 +148,9 @@ def record_rate(data_root: Path | str, method: str, units: int, seconds: float) 
     except (OSError, ValueError):
         stored = {}
     rate = seconds / units
-    previous = stored.get(method) if isinstance(stored.get(method), dict) else {}
+    previous = stored.get(RATE_KEY) if isinstance(stored.get(RATE_KEY), dict) else {}
     old = previous.get("seconds")
-    stored[method] = {
+    stored[RATE_KEY] = {
         "seconds": round(rate if not old else float(old) * 0.5 + rate * 0.5, 4),
         "runs": int(previous.get("runs") or 0) + 1,
     }
@@ -156,6 +166,31 @@ def _span_units(rect_table: list, frames: int) -> tuple[int, int]:
     """(frames with something to fill, model units): one unit per frame."""
     active = sum(1 for rects in rect_table[:frames] if rects)
     return active, active
+
+
+def _planned_units(rect_table: list, layers, *, start: float, fps: float, frames: int, width: int, height: int) -> float:
+    """What the scan's plan will cost: its model runs, on the areas they read."""
+    from . import lama
+
+    plan_for = lama_plan(layers, start=start, fps=fps, frames=frames)
+    total = 0.0
+    index = 0
+    frames = min(frames, len(rect_table))
+    while index < frames:
+        rects = tuple(sorted(masks.without_contained(rect_table[index])))
+        end = index + 1
+        while end < frames and tuple(sorted(masks.without_contained(rect_table[end]))) == rects:
+            end += 1
+        if rects:
+            run_step, _limit, still = plan_for(index)
+            runs = 1 if still else (end - index) / run_step + 1
+            area_cost = sum(
+                lama.run_units(spot[3] - spot[1], spot[2] - spot[0])
+                for spot in masks.lama_areas(rects, width, height)
+            )
+            total += runs * area_cost + (end - index) * LAMA_FRAME_UNITS
+        index = end
+    return round(total, 2)
 
 
 def estimate_span(
@@ -182,6 +217,7 @@ def estimate_span(
     expected = max(1, int(round(duration * fps)))
     table = masks.frame_rects(layers, start=start, fps=fps, frames=expected, width=width, height=height)
     row["frames"], row["units"] = _span_units(table, expected)
+    row["units"] = _planned_units(table, layers, start=start, fps=fps, frames=expected, width=width, height=height)
     directory = models_dir(data_root)
     if not missing_model(method, directory):
         key = span_key(
@@ -284,13 +320,12 @@ def span_key(
     layers: Iterable[dict],
     method: str,
     model_stamp: str,
-    reuse_still: bool = False,
 ) -> str:
     payload = {
         "version": VERSION,
         "lama_keys": lama_keys_per_second(),
         "areas": "tight",
-        "reuse_still": bool(reuse_still),
+        "plan": "scan",
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
         "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
         "fps": round(float(meta.get("fps") or 0.0), 6),
@@ -305,6 +340,7 @@ def span_key(
                 "ranges": layer.get("ranges") or [],
                 "tracklet": layer.get("tracklet_id"),
                 "mask": layer.get("mask"),
+                "keys": layer.get("fill_keys"),
             }
             for layer in layers
         ],
@@ -434,12 +470,63 @@ def lama_keys_per_second() -> float:
     return max(0.0, value)
 
 
+def lama_plan(layers, *, start: float, fps: float, frames: int):
+    """``plan_for``: the scan's plan per frame, or the default where a layer has none.
+
+    Setting ``VIBECUT_FILL_LAMA_KEYS`` overrides the plan, to compare results.
+    """
+    default = (lama_step(fps), LAMA_MOTION_LIMIT, False)
+    if os.environ.get("VIBECUT_FILL_LAMA_KEYS"):
+        return lambda _index: default
+    table = masks.frame_keys(layers, start=start, fps=fps, frames=frames)
+
+    def plan_for(index: int):
+        keys = table[min(index, len(table) - 1)] if table else None
+        if keys is None:
+            return default
+        if keys <= 0:
+            return (lama_step(fps), LAMA_CUT_LIMIT, True)
+        return (max(1, int(round(fps / keys))), LAMA_CUT_LIMIT, False)
+
+    return plan_for
+
+
+class _CountedFiller:
+    """Counts the work a filler does, in the units its speed is measured in."""
+
+    def __init__(self, filler):
+        self.filler = filler
+        self.runs = 0
+        self.units = 0.0
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        from . import lama
+
+        self.runs += 1
+        self.units += lama.run_units(*mask.shape)
+        return self.filler.fill(area, mask)
+
+
 def lama_step(fps: float) -> int:
     """Frames from one LaMa fill to the next at this frame rate."""
     keys = lama_keys_per_second()
     if keys <= 0 or fps <= 0:
         return 1
     return max(1, int(round(float(fps) / keys)))
+
+
+def _ring_around(rects, spot, ring: int = LAMA_RING_PX) -> np.ndarray:
+    """The picture just around the text in a work area, as a mask to leave out.
+
+    Movement far from the text does not touch the fill, so it must not stop a blend.
+    """
+    x0, y0, x1, y1 = spot
+    keep = np.ones((y1 - y0, x1 - x0), dtype=bool)
+    for left, top, right, bottom in _local(list(rects), x0, y0, x1, y1):
+        keep[max(0, top - ring):bottom + ring, max(0, left - ring):right + ring] = False
+    for left, top, right, bottom in _local(list(rects), x0, y0, x1, y1):
+        keep[top:bottom, left:right] = True
+    return keep
 
 
 def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray, limit: float = LAMA_MOTION_LIMIT) -> bool:
@@ -451,7 +538,7 @@ def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray, limi
     return float(change[around].mean()) > limit
 
 
-def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, reuse_still=False):
+def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, plan_for=None):
     """Run the engine on key frames, on just the areas that hold text.
 
     A run is frames that share the same boxes, up to the step, while the picture
@@ -460,12 +547,12 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
     starts from that fill when it is on the same area and covers the hole, which
     saves a model call. ``area`` fixes one work area; None finds them per run.
 
-    ``reuse_still`` tries one fill for a whole line first: made on the line's
-    first frame over its whole box, so later frames need no look ahead, and kept
-    while the shot barely changes. A try that ends early falls back to key frames
-    for one run, so a moving shot is not filled on every frame.
+    ``plan_for(index)`` gives the scan's plan for a frame: (frames per fill, motion
+    limit, still). A still line gets one fill, made on its first frame over its
+    whole box, so later frames need no look ahead, and kept unless the picture
+    jumps. A try that ends early falls back to key frames for one run.
     """
-    try_still = reuse_still
+    failed_still = False
     source = enumerate(frames)
     waiting = None
     last_fills: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
@@ -510,7 +597,9 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
             if on_frame:
                 on_frame(first[0])
             continue
-        if try_still:
+        run_step, run_limit, still_line = plan_for(first[0]) if plan_for else (step, LAMA_MOTION_LIMIT, False)
+        ring = {spot: _ring_around(rects, spot) for spot in spots}
+        if still_line and not failed_still:
             whole = {
                 spot: masks.rasterize(
                     _local(list(rects), *spot), spot[2] - spot[0], spot[3] - spot[1],
@@ -542,8 +631,8 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
                     return
                 still = item[2] == rects and not any(
                     _picture_moved(
-                        first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], whole[(x0, y0, x1, y1)],
-                        LAMA_STILL_LIMIT,
+                        first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)],
+                        LAMA_MOTION_LIMIT,
                     )
                     for x0, y0, x1, y1 in spots
                 )
@@ -554,19 +643,18 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
             # The fill is not blended into the next line, so nothing carries over.
             last_fills = {}
             # Stopped by the picture moving, not by the line ending: use key frames.
-            if waiting[2] == rects and shown < step:
-                try_still = False
+            failed_still = waiting[2] == rects and shown < max(run_step, 2)
             continue
-        try_still = reuse_still
+        failed_still = False
         run = [first]
         run_holes = [holes]
-        while len(run) < step:
+        while len(run) < run_step:
             item = next_frame()
             if item is None:
                 break
             moved = any(
                 _picture_moved(
-                    first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], holes[(x0, y0, x1, y1)],
+                    first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)], run_limit,
                 )
                 for x0, y0, x1, y1 in spots
             )
@@ -623,7 +711,7 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
         last_fills = {spot: (fill[1], fill[3]) for spot, fill in fills.items()}
 
 
-def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY, reuse_still=False):
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY, plan_for=None):
     """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
 
     ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
@@ -634,7 +722,7 @@ def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelle
     if step > 1 or area is None:
         yield from _fill_frames_by_runs(
             frames, rects_for, filler, area, step,
-            on_frame=on_frame, cancelled=cancelled, hole_for=hole_for, reuse_still=reuse_still,
+            on_frame=on_frame, cancelled=cancelled, hole_for=hole_for, plan_for=plan_for,
         )
         return
     x0, y0, x1, y1 = area
@@ -735,7 +823,6 @@ def prepare_span(
     ffmpeg: str = "ffmpeg",
     progress: Progress | None = None,
     cancel_event: threading.Event | None = None,
-    reuse_still: bool = False,
 ) -> dict | None:
     """Write (or reuse) a filled clip of ``[start, start + duration]``.
 
@@ -765,7 +852,7 @@ def prepare_span(
     path = model_path(method, directory)
     key = span_key(
         meta=meta, start=start, duration=duration, layers=layers,
-        method=method, model_stamp=method_stamp(method, directory), reuse_still=reuse_still,
+        method=method, model_stamp=method_stamp(method, directory),
     )
     cache_dir = Path(cache_dir)
     output = cache_dir / f"{key}.mp4"
@@ -822,6 +909,8 @@ def prepare_span(
         for stale in cache_dir.glob(".*.part.mp4"):
             stale.unlink(missing_ok=True)
         filler = _filler(method, path)
+        counted = filler = _CountedFiller(filler)
+        plan_for = lama_plan(layers, start=start, fps=fps, frames=len(rect_table))
         reader = _Reader(ffmpeg, source, start, duration, fps, width, height)
         writer = _Writer(ffmpeg, part, fps, width, height)
 
@@ -838,7 +927,7 @@ def prepare_span(
         stream = fill_frames_lama(
             source_frames, rects_for, filler, None,
             on_frame=on_frame, cancelled=cancelled, step=lama_step(fps),
-            reuse_still=reuse_still, **extra,
+            plan_for=plan_for, **extra,
         )
         written = 0
         for frame in stream:
@@ -851,9 +940,14 @@ def prepare_span(
             detail = writer.proc.stderr.read().decode("utf-8", "replace").strip()[-400:]
             raise FillError(f"AI fill could not write the clip. {detail}".strip())
         os.replace(part, output)
+        took = time.monotonic() - started
+        LOGGER.info(
+            "fill span start=%.2f frames=%d runs=%d units=%.1f seconds=%.1f per_frame=%.2f",
+            start, written, counted.runs, counted.units, took, took / max(1, written),
+        )
         if written >= RATE_MIN_FRAMES:
-            _frames, units = _span_units(rect_table, expected)
-            record_rate(data_root, method, units, time.monotonic() - started)
+            units = counted.units + written * LAMA_FRAME_UNITS
+            record_rate(data_root, method, units, took)
     except BaseException:
         _stop(reader.proc if reader is not None else None)
         _stop(writer.proc if writer is not None else None)

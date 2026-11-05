@@ -425,6 +425,7 @@ def _fill_plan(
                 "ranges": [dict(item) for item in layer.get("ranges") or []],
                 **({"mask": source_mask(layer)} if source_mask(layer) else {}),
                 **({"tracklet_id": layer["tracklet_id"]} if layer.get("tracklet_id") else {}),
+                **({"fill_keys": layer["fill_keys"]} if layer.get("fill_keys") is not None else {}),
             }
             for layer in active
         ],

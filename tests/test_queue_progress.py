@@ -49,27 +49,3 @@ def test_the_header_and_its_item_show_one_estimate(monkeypatch):
     record["message"] = "Filling text, beat 8/19 · LaMa (per frame) 71/101"
     second = view()
     assert second["eta"] == second["items"][0]["eta"] == 3520.0
-
-
-def test_queue_items_carry_the_reuse_option():
-    import story_queue
-
-    rows = [
-        {"job_id": "abc123", "set_id": "cs_1", "story_id": "st_1", "aspect": "9:16",
-         "quality": "final", "fill_reuse": True},
-        {"job_id": "abc123", "set_id": "cs_1", "story_id": "st_1", "aspect": "9:16",
-         "quality": "final"},
-    ]
-    items = story_queue.normalize_items(rows)
-    assert [item["fill_reuse"] for item in items] == [True, False]
-
-
-def test_a_reuse_render_is_a_new_artifact_and_a_plain_one_keeps_its_id():
-    import artifacts
-
-    clips = [{"scene": 0, "start": 0.0, "end": 1.0}]
-    plain = artifacts.ArtifactSpec(clips=clips)
-    reused = artifacts.ArtifactSpec(clips=clips, fill_reuse=True)
-    assert "fill_reuse" not in plain.payload()
-    assert artifacts.artifact_id(plain) != artifacts.artifact_id(reused)
-    assert artifacts.ArtifactSpec.from_payload(reused.payload()).fill_reuse is True

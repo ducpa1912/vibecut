@@ -246,7 +246,6 @@ class ArtifactSpec:
     source_fingerprint: str = ""
     generation: int = 0
     edit_hash: str = ""
-    fill_reuse: bool = False
     transcript_id: str = ""
     audio_hash: str = ""
     music_hash: str = ""
@@ -283,9 +282,6 @@ class ArtifactSpec:
         # Edit, so legacy artifact ids and pinned links stay byte-stable.
         if self.edit_hash:
             payload["edit_hash"] = str(self.edit_hash)
-        # A render with the option is a new file, and leaves the plain one alone.
-        if self.fill_reuse:
-            payload["fill_reuse"] = True
         if self.transcript_id:
             payload["transcript_id"] = str(self.transcript_id)
         if self.audio_hash:
@@ -314,7 +310,6 @@ class ArtifactSpec:
             source_fingerprint=str(data.get("source_fingerprint") or ""),
             generation=_optional_int(data.get("generation")) or 0,
             edit_hash=str(data.get("edit_hash") or ""),
-            fill_reuse=data.get("fill_reuse") is True,
             transcript_id=str(data.get("transcript_id") or ""),
             audio_hash=str(data.get("audio_hash") or ""),
             music_hash=str(data.get("music_hash") or ""),
@@ -352,7 +347,6 @@ def build_spec(
     generation: int = 0,
     clips: Iterable[dict] | None = None,
     edit_hash: str = "",
-    fill_reuse: bool = False,
     transcript_id: str = "",
     audio_plan: dict | None = None,
     audio_hash: str = "",
@@ -395,7 +389,6 @@ def build_spec(
         source_fingerprint=source_fingerprint(job) or str(source.get("fingerprint") or ""),
         generation=max(0, int(generation or 0)),
         edit_hash=str(edit_hash or ""),
-        fill_reuse=bool(fill_reuse),
         transcript_id=str(transcript_id or ""),
         audio_hash=str(audio_hash or ""),
         music_hash=str(music_hash or ""),

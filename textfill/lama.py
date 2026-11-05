@@ -166,6 +166,12 @@ def input_size(fit_h: int, fit_w: int, flexible: bool) -> tuple[int, int]:
     return rounded(fit_h), rounded(fit_w)
 
 
+def run_units(height: int, width: int) -> float:
+    """One run's work on an area of this size, as a share of a full 512 square."""
+    run_h, run_w = input_size(*fit(height, width), True)
+    return run_h * run_w / float(SIZE * SIZE)
+
+
 class LamaFiller:
     def __init__(self, model_path: Path):
         import onnxruntime as ort

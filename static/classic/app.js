@@ -6981,6 +6981,7 @@
       ...(cleanMethodKey(layer) === "fill" ? { engine: "lama" } : {}),
       ...(layer.mask ? { mask: layer.mask } : {}),
       ...(layer.text_key ? { text_key: layer.text_key } : {}),
+      ...(layer.fill_keys !== undefined && layer.fill_keys !== null ? { fill_keys: layer.fill_keys } : {}),
     }));
   }
 
@@ -7072,10 +7073,6 @@
           <p class="clean-fill-title">AI fill is ready</p>
           <ul class="clean-file-list">${rows}</ul>
           <p class="hint">${esc(previewHint)}</p>
-          <label class="clean-fill-reuse" title="A new render. Your existing renders stay.">
-            <input id="clean-fill-reuse" type="checkbox"${state.classicText.fillReuse ? " checked" : ""}>
-            <span>Reuse one AI fill for a whole line on very still shots</span>
-          </label>
         </div>
         <button id="clean-fill-preview" class="ghost small" type="button"${previewReady && hasFill ? "" : " disabled"}${previewReady ? "" : ` title="${esc(previewHint)}"`}>Preview one frame</button>
       </div>
@@ -7762,6 +7759,7 @@
       tracklet_id: entry.tracklet_id,
       tracklet_kind: entry.kind,
       text_key: entry.text_key || entry.text || "",
+      ...(entry.fill_keys !== undefined ? { fill_keys: entry.fill_keys } : {}),
       ranges,
       source: "scan",
     });
@@ -7951,6 +7949,7 @@
       tracklet_id: options.tracklet_id || "",
       tracklet_kind: options.tracklet_kind || "",
       text_key: options.text_key || "",
+      ...(options.fill_keys !== undefined ? { fill_keys: options.fill_keys } : {}),
       mask: options.mask || null,
       source: options.source === "scan" ? "scan" : "manual",
       hidden: false,
@@ -8350,11 +8349,6 @@
         return;
       }
     });
-    dom.cleanFill?.addEventListener("change", (event) => {
-      if (event.target.id !== "clean-fill-reuse") return;
-      state.classicText.fillReuse = event.target.checked;
-      updateRenderPanel();
-    });
     dom.cleanFill?.addEventListener("click", (event) => {
       const button = event.target.closest("#clean-fill-preview");
       if (button) previewFill();
@@ -8652,7 +8646,6 @@
       script_id: state.scriptId || null,
       audio: currentAudioPlan(),
       edit: classicEditPayload(),
-      ...(state.classicText.fillReuse ? { fill_reuse: true } : {}),
     };
   }
 

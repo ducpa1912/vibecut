@@ -610,6 +610,9 @@ def _classic_clean_edit(layers: list[dict], clips: list[dict]) -> list[dict]:
         for key in ("tracklet_id", "tracklet_kind", "mask", "text_key"):
             if layer.get(key):
                 entry[key] = layer[key]
+        # Zero is a plan: one fill for the whole line.
+        if layer.get("fill_keys") is not None:
+            entry["fill_keys"] = layer["fill_keys"]
         edit_layers.append(entry)
     return edit_layers
 
@@ -685,6 +688,7 @@ def normalize_classic_clean(
             "tracklet_kind": tracklet_kind,
             "mask": raw.get("mask"),
             "text_key": raw.get("text_key"),
+            "fill_keys": raw.get("fill_keys"),
         })
         extras[layer_id] = {
             "method": method,

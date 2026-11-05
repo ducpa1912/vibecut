@@ -640,12 +640,15 @@ def test_each_work_area_gets_its_own_fill_and_no_more():
 
 # --- One fill for a whole line ---------------------------------------------
 
+STILL_PLAN = (6, textfill.LAMA_CUT_LIMIT, True)
+
+
 def test_a_still_line_uses_one_fill_for_all_its_frames():
     frames = [np.full((40, 40, 3), 100, dtype=np.uint8) for _ in range(40)]
     filler = _CountingFiller()
     out = list(textfill.fill_frames_lama(
         iter(frames), lambda index: [(5, 5, 20, 20)], filler, (0, 0, 40, 40),
-        step=6, reuse_still=True,
+        step=6, plan_for=lambda index: STILL_PLAN,
     ))
     assert len(out) == 40
     assert filler.calls == 1
@@ -657,7 +660,7 @@ def test_a_new_line_gets_its_own_fill():
     list(textfill.fill_frames_lama(
         iter(frames),
         lambda index: [(5, 5, 20, 20)] if index < 10 else [(5, 22, 20, 35)],
-        filler, (0, 0, 40, 40), step=6, reuse_still=True,
+        filler, (0, 0, 40, 40), step=6, plan_for=lambda index: STILL_PLAN,
     ))
     assert filler.calls == 2
 
@@ -667,16 +670,68 @@ def test_a_moving_shot_falls_back_to_key_frames_with_reuse_on():
     filler = _CountingFiller()
     out = list(textfill.fill_frames_lama(
         iter(frames), lambda index: [(5, 5, 20, 20)], filler, (0, 0, 40, 40),
-        step=6, reuse_still=True,
+        step=6, plan_for=lambda index: STILL_PLAN,
     ))
     assert len(out) == 12
     # No worse than a model run per frame, and every frame still comes out.
     assert filler.calls <= 12
 
 
-def test_reuse_is_part_of_the_clip_key():
-    base = dict(meta=META, start=1.0, duration=2.0, layers=[_layer()], model_stamp="m")
-    assert textfill.span_key(method="lama", reuse_still=True, **base) != textfill.span_key(method="lama", **base)
+def test_a_planned_moving_line_blends_instead_of_stopping_at_every_change():
+    frames = [np.full((40, 40, 3), 100 + index * 2, dtype=np.uint8) for index in range(30)]
+    filler = _CountingFiller()
+    list(textfill.fill_frames_lama(
+        iter(frames), lambda index: [(5, 5, 20, 20)], filler, (0, 0, 40, 40),
+        step=6, plan_for=lambda index: (6, textfill.LAMA_CUT_LIMIT, False),
+    ))
+    # The default limit would stop nearly every frame here.
+    assert filler.calls <= 8
+
+
+def test_movement_away_from_the_text_does_not_stop_a_blend():
+    base = np.full((200, 200, 3), 100, dtype=np.uint8)
+    moved = base.copy()
+    moved[150:, :] = 255
+    rects = [(20, 20, 80, 40)]
+    ring = textfill._ring_around(rects, (0, 0, 200, 200))
+    assert not textfill._picture_moved(base, moved, ring, 6.0)
+    near = base.copy()
+    near[40:60, 20:80] = 255
+    assert textfill._picture_moved(base, near, ring, 6.0)
+
+
+def test_the_plan_reads_the_busiest_line_and_a_drawn_box_uses_the_default(monkeypatch):
+    monkeypatch.delenv("VIBECUT_FILL_LAMA_KEYS", raising=False)
+    still = {"box": {"x": 0, "y": 0, "w": 1, "h": 1}, "ranges": [{"start": 0.0, "end": 1.0}], "fill_keys": 0.0}
+    busy = {"box": {"x": 0, "y": 0, "w": 1, "h": 1}, "ranges": [{"start": 1.0, "end": 2.0}], "fill_keys": 6.0}
+    drawn = {"box": {"x": 0, "y": 0, "w": 1, "h": 1}, "ranges": [{"start": 2.0, "end": 3.0}]}
+    plan = textfill.lama_plan([still, busy, drawn], start=0.0, fps=30.0, frames=90)
+    assert plan(10) == (textfill.lama_step(30.0), textfill.LAMA_CUT_LIMIT, True)
+    assert plan(45) == (5, textfill.LAMA_CUT_LIMIT, False)
+    assert plan(75) == (textfill.lama_step(30.0), textfill.LAMA_MOTION_LIMIT, False)
+
+
+def test_setting_the_key_rate_overrides_the_plan(monkeypatch):
+    monkeypatch.setenv("VIBECUT_FILL_LAMA_KEYS", "0")
+    layer = {"box": {"x": 0, "y": 0, "w": 1, "h": 1}, "ranges": [], "fill_keys": 0.0}
+    assert textfill.lama_plan([layer], start=0.0, fps=30.0, frames=10)(0)[0] == 1
+
+
+def test_the_estimate_follows_the_plan_and_the_crop():
+    rects = [[(100, 100, 900, 150)] for _ in range(60)]
+    box = {"x": 0.1, "y": 0.1, "w": 0.7, "h": 0.03}
+    ranges = [{"start": 0.0, "end": 2.0}]
+    size = {"start": 0.0, "fps": 30.0, "frames": 60, "width": 1080, "height": 1920}
+    still = textfill._planned_units(rects, [{"box": box, "ranges": ranges, "fill_keys": 0.0}], **size)
+    busy = textfill._planned_units(rects, [{"box": box, "ranges": ranges, "fill_keys": 6.0}], **size)
+    assert busy > 2 * still
+    tall = textfill._planned_units([[(100, 100, 900, 600)] for _ in range(60)], [{"box": box, "ranges": ranges, "fill_keys": 6.0}], **size)
+    assert tall > busy
+
+
+def test_a_plan_is_part_of_a_clip():
+    base = dict(meta=META, start=1.0, duration=2.0, method="lama", model_stamp="m")
+    assert textfill.span_key(layers=[_layer(fill_keys=0.0)], **base) != textfill.span_key(layers=[_layer(fill_keys=6.0)], **base)
 
 
 # --- LaMa only -------------------------------------------------------------
@@ -697,3 +752,19 @@ def test_a_saved_sttn_layer_still_renders_as_lama(tmp_path):
         textfill.known_method("propainter")
     (tmp_path / "lama_fp32.onnx").write_bytes(b"x" * 10)
     assert textfill.model_signature(["sttn"], tmp_path) == textfill.model_signature(["lama"], tmp_path)
+
+
+# --- the plan reaches the Clean panel's box ---------------------------------
+
+def test_a_zero_plan_survives_a_classic_box(monkeypatch):
+    import routes_classic
+
+    monkeypatch.setattr(routes_classic, "classic_fill_status", lambda: {"engines": {"lama": {"ready": True}}})
+    box = {
+        "method": "fill", "engine": "lama", "box": {"x": 0.1, "y": 0.1, "w": 0.3, "h": 0.1},
+        "ranges": [{"start": 0.0, "end": 2.0}], "fill_keys": 0.0,
+    }
+    layers = routes_classic.normalize_classic_clean([box], 10.0)
+    assert layers[0]["fill_keys"] == 0.0
+    edit = routes_classic._classic_clean_edit(layers, [{"scene": 0, "start": 0.0, "end": 4.0, "dur": 4.0, "role": "hook"}])
+    assert edit[0]["fill_keys"] == 0.0

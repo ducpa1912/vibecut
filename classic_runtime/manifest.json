@@ -33,15 +33,15 @@
   },
   {
    "path": "app.py",
-   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
-   "sha256": "a0c039599bd322c8a4d8b1e42fc9ef1e3a8a441d75a36ab8b0ece04ebcc97ab2",
-   "feature_version": "1.0.1"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "1f70726fb82031069e187762e14d83f33a9e690de722c76b699e2bf2a30df8d3",
+   "feature_version": "1.0.2"
   },
   {
    "path": "artifacts.py",
-   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
-   "sha256": "58085a1a19dbcf91da9f1888cb85094a882c1ff3a7de15b76774df13040a5f9c",
-   "feature_version": "1.0.1"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "c964470c2687a23872c4176ef572e65a8e7c779b8447d8c9cf3aed67c19b1e3b",
+   "feature_version": "1.0.2"
   },
   {
    "path": "audio.py",
@@ -69,9 +69,9 @@
   },
   {
    "path": "cleanup.py",
-   "source": "classic: founder decision 2026-11-05, no rights gate in Classic",
-   "sha256": "a4630a727a16f6b00225431e6c8e8b7cb43e5f862b2185f5f726a7a3e0b92695",
-   "feature_version": "1.0.2"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "cb6f7c22af32bbd2258d4d5ffddef104341412d026b8328c8e924f1e47109a80",
+   "feature_version": "1.0.3"
   },
   {
    "path": "cli.py",
@@ -93,15 +93,15 @@
   },
   {
    "path": "compose_render.py",
-   "source": "classic 2f385a2",
-   "sha256": "ea2757fd0116ba3d628a7af712f513a8310e47dbfae58f7391e902bb8eeb094d",
-   "feature_version": "1.0.0"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "b711784b2540275f7a7a6814d1feb31fc159627af87d685ce30973d2df5a48ad",
+   "feature_version": "1.0.1"
   },
   {
    "path": "detect.py",
-   "source": "classic: founder decision 2026-11-05, no rights gate in Classic",
-   "sha256": "10cb96753d5a0f287ceb528bf272107ff3b855436c4b4f6e3afaa645d23d9700",
-   "feature_version": "1.0.4"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "992fdebc7760cdf413bdc125a0835e1bf775c5613d95395164740b70475e42be",
+   "feature_version": "1.0.5"
   },
   {
    "path": "disk.py",
@@ -117,9 +117,9 @@
   },
   {
    "path": "edits.py",
-   "source": "classic: founder decision 2026-11-05, no rights gate in Classic",
-   "sha256": "9301c7738efc13edea4666668d158c55b421f2eade87f0ae6bf4cd5c6ce39f99",
-   "feature_version": "1.0.4"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "40a2dce3bb9dc3bceb18e408cc25c37159fc6587dc4164627ce492e2a54be431",
+   "feature_version": "1.0.5"
   },
   {
    "path": "exports.py",
@@ -183,9 +183,9 @@
   },
   {
    "path": "pipeline.py",
-   "source": "studio 632dc3a: one tight box per line, weak reads, 2 fps scan",
-   "sha256": "707b1e4c621920a8907b3f63adcaef07e9bee71df57d8ef8b9021b08c6b8da68",
-   "feature_version": "1.0.1"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "83a793d8b482da83e8d9adb94b74816e7d0b3fed9a7f1c20ad9c81f8c7d2ba88",
+   "feature_version": "1.0.2"
   },
   {
    "path": "preflight.py",
@@ -195,9 +195,9 @@
   },
   {
    "path": "render.py",
-   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
-   "sha256": "c9fb314360ed9cb017b49bbe67fe58e981ea75c493b89b4b715644bd7208be4e",
-   "feature_version": "1.0.2"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "2fc522b25df43b4b14d81f7cb6b80ba28d3f2a9e029787042551df78c4e7faba",
+   "feature_version": "1.0.3"
   },
   {
    "path": "requirements-optional.txt",
@@ -297,9 +297,9 @@
   },
   {
    "path": "story_queue.py",
-   "source": "studio 632dc3a: time left from counted frames, still-shot option, no intermediate faststart, stage timings, fresh poster",
-   "sha256": "bd098de7d52bf5fc8b3d2cccc30af3d29f57153ca7d27b84e6d9a95404dc53c6",
-   "feature_version": "1.0.1"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "9e7b0c359c06e84e6049f989f9ff0148bb96ef28573d65790c32c300875b3682",
+   "feature_version": "1.0.2"
   },
   {
    "path": "stt.py",
@@ -309,21 +309,21 @@
   },
   {
    "path": "textfill/__init__.py",
-   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
-   "sha256": "ccd6ff033fad1117f75d12514209d1c2a0fc2be1ce653f167e5320d659258aae",
-   "feature_version": "1.0.2"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "a105ff591bb0109a80f4d54577c73bd6bf199c74210e38e5f09dcd4ccf911ef7",
+   "feature_version": "1.0.3"
   },
   {
    "path": "textfill/lama.py",
-   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
-   "sha256": "2cff5231088d83e8d3da09bee1292f13404414f98e9951c080319251ed8f11b1",
-   "feature_version": "1.0.1"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "3b0810b8f8ddd6ea281d4f53aadc758a483e6817965eeb45a616ed4c881a0c10",
+   "feature_version": "1.0.2"
   },
   {
    "path": "textfill/mask.py",
-   "source": "studio 632dc3a: LaMa-only fill, key frames, tight areas, text masks",
-   "sha256": "65e7e1851a818fc868c892d6fe1e1c22bfd5244f16476d9de09bcb765f37d81a",
-   "feature_version": "1.0.2"
+   "source": "studio 53b7b07: plan the AI fill per line during the scan",
+   "sha256": "b1758784badc718bab5116ca5ca9c1e7b98d84a7dbc3c19468e78b50b184cc97",
+   "feature_version": "1.0.3"
   },
   {
    "path": "tighten.py",

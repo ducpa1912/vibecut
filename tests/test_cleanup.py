@@ -1165,3 +1165,10 @@ def test_stacked_lines_do_not_overlap_after_padding():
     ], attested=True)
     top, bottom = sorted(built["layers"], key=lambda layer: layer["box"]["y"])
     assert top["box"]["y"] + top["box"]["h"] <= bottom["box"]["y"] + 1e-6
+
+def test_a_line_plan_reaches_its_clean_layer():
+    tracklet = _tracklet("trk_a", "subtitle", {"x": 0.1, "y": 0.77, "w": 0.7, "h": 0.03})
+    tracklet["fill_plan"] = {"motion": 26.0, "noise": 0.75, "keys": 6.0}
+    layer = cleanup.tracklet_clean_layers([tracklet], attested=True)["layers"][0]
+    assert layer["fill_keys"] == 6.0
+    assert edits.normalize_clean([layer])[0]["fill_keys"] == 6.0

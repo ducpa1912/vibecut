@@ -129,7 +129,7 @@ _STORY_REF_KEYS = frozenset({
 })
 _CLEAN_KEYS = frozenset({
     "id", "kind", "box", "ranges", "z", "color", "opacity", "radius", "label",
-    "tracklet_id", "tracklet_kind", "method", "mask", "text_key",
+    "tracklet_id", "tracklet_kind", "method", "mask", "text_key", "fill_keys",
 })
 # Detected Check kinds an optional Clean layer may name. The layer's own
 # ``kind`` remains the cleanup method; ``tracklet_kind`` carries provenance
@@ -605,6 +605,10 @@ def normalize_clean(value: Any) -> list[dict]:
                     + ", ".join(TRACKLET_KINDS) + "."
                 )
             layer["tracklet_kind"] = tracklet_kind
+        if raw.get("fill_keys") is not None:
+            layer["fill_keys"] = round(_number(
+                raw["fill_keys"], f"clean[{index}].fill_keys", minimum=0.0, maximum=30.0,
+            ), 1)
         layers.append(layer)
     layers.sort(key=lambda item: (item["z"], item["id"]))
     return layers

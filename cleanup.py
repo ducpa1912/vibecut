@@ -373,6 +373,11 @@ def tracklet_clean_layers(
     used: set[str] = set()
     z_cursor = 0
     samples = {str(item.get("id") or ""): item.get("text_sample") for item in items}
+    plans = {
+        str(item.get("id") or ""): float(item["fill_plan"]["keys"])
+        for item in items
+        if isinstance(item.get("fill_plan"), dict) and "keys" in item["fill_plan"]
+    }
     for entry in entries:
         tracklet_id = entry["tracklet_id"]
         if wanted is not None and tracklet_id not in wanted:
@@ -447,6 +452,8 @@ def tracklet_clean_layers(
             "tracklet_id": tracklet_id,
             "tracklet_kind": kind,
         }
+        if tracklet_id in plans:
+            base_layer["fill_keys"] = plans[tracklet_id]
         text_key = _text_key(samples.get(tracklet_id))
         if text_key:
             base_layer["text_key"] = text_key

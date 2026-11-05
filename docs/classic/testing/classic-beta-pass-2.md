@@ -241,7 +241,7 @@ Added on 2026-11-05 from what Studio learned. **No real video has run on this co
 | 9A.7 | Render a draft with AI fill on a short cut. Note the start and end time. | While it fills, one time left shows and may go up as well as down. **Write the total time here.** | |
 | 9A.8 | Play that render where text sat over a still shot. | The text is gone, with no flicker. | |
 | 9A.9 | Play it where something moves behind the text. | Note any smear. LaMa fills each frame alone, so tighter boxes reduce this but do not end it. | |
-| 9A.10 | Tick **Reuse one AI fill for a whole line on very still shots**. Render the same cut. Note the time. | It makes a new render and the old one stays. It is faster on still shots. Note any frozen patch. | |
+| 9A.10 | Scan a still shot and a moving shot, render both, and note the time for each. | The scan plans each line, so the still shot is much faster per frame. Note any frozen patch on it and any smear on the moving one. **Write both times here.** |  |
 | 9A.11 | Open a job you cleaned earlier with an STTN box, if you have one. Render it. | It opens and renders with LaMa, with no error. | |
 
 ## 10. Known issues

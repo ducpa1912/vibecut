@@ -483,13 +483,13 @@ def test_the_panel_places_and_times_a_drawn_box():
     assert "A box must end after it starts." in source
 
 
-def test_the_panel_offers_one_engine_and_the_still_option():
+def test_the_panel_offers_one_engine_and_passes_the_scan_plan():
     source = (Path(__file__).resolve().parents[1] / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "data-clean-engine" not in source
     assert "clean-found-engine" not in source
     assert "STTN" not in source and "sttn" not in source
-    assert 'id="clean-fill-reuse"' in source
-    assert "{ fill_reuse: true }" in source
+    assert "clean-fill-reuse" not in source
+    assert "fill_keys: entry.fill_keys" in source
 
 
 # No rights gate in Classic: any video, and any found kind can be cleaned.

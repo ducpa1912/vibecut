@@ -1879,7 +1879,6 @@ def run_render(
             story_id=plan.get("story_id"),
             generation=generation,
             edit_hash=(edit or {}).get("hash") or "",
-            fill_reuse=bool(plan.get("_fill_reuse")),
         )
         expected_id = artifacts.artifact_id(spec)
         if not artifacts.is_safe_artifact_id(artifact_id):
@@ -4422,8 +4421,6 @@ class FromUrlBody(BaseModel):
 
 
 class PlanBody(BaseModel):
-    # One AI fill for a whole line on very still shots. Off by default.
-    fill_reuse: bool = False
     target: int = 30
     hook_scene: int | None = None
     force: bool = False
@@ -6219,8 +6216,6 @@ class StoryRenderBody(BaseModel):
     aspect: str = "9:16"
     captions: bool = True
     caption_track_id: str | None = None
-    # One AI fill for a whole line on very still shots. Off by default.
-    fill_reuse: bool = False
 
 
 class SelectionV2Body(BaseModel):
@@ -6824,8 +6819,6 @@ def _queue_story_render(
     public_plan = {
         key: value for key, value in plan.items() if not key.startswith("_")
     }
-    if body.fill_reuse:
-        plan["_fill_reuse"] = True
     queued = _queue_render(
         job_id,
         job,
@@ -6857,10 +6850,7 @@ class StoryRenderBackend:
     def start(self, item: dict) -> str:
         result = _queue_story_render(
             item["job_id"], item["set_id"], item["story_id"],
-            StoryRenderBody(
-                aspect=item["aspect"], quality=item["quality"],
-                fill_reuse=bool(item.get("fill_reuse")),
-            ),
+            StoryRenderBody(aspect=item["aspect"], quality=item["quality"]),
             reject_active=False,
         )
         artifact = str(result.get("artifact_id") or "")
@@ -6921,20 +6911,19 @@ _STORY_QUEUE_SUBMIT_LOCK = threading.Lock()
 _QUEUE_ETA_STATE: dict[str, dict] = {}
 
 
-def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str, bool]:
+def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str]:
     return (
         str(item.get("job_id") or ""),
         str(item.get("set_id") or ""),
         str(item.get("story_id") or ""),
         str(item.get("aspect") or "9:16"),
         str(item.get("quality") or "final"),
-        item.get("fill_reuse") is True,
     )
 
 
 def _active_queue_for(
     queues: list[dict],
-    identity: tuple[str, str, str, str, str, bool],
+    identity: tuple[str, str, str, str, str],
 ) -> dict | None:
     for queue in queues:
         if str(queue.get("status") or "") not in story_queue.ACTIVE_QUEUES:
@@ -8511,7 +8500,6 @@ def _queue_render_locked_impl(
         clips=prepared_clips,
         story_id=plan.get("story_id"),
         edit_hash=(edit or {}).get("hash") or "",
-        fill_reuse=bool(plan.get("_fill_reuse")),
     )
     generation = artifacts.resolve_generation(job_dir, base_spec, force=force)
     spec = replace(base_spec, generation=generation)
@@ -8742,8 +8730,6 @@ def start_render(job_id: str, body: PlanBody) -> dict:
     target = _valid_target(int(body.target))
     quality, aspect, encoder, captions, audio_plan, preset, margin = _render_options(body)
     plan = _plan_for_body(job, target, body)
-    if body.fill_reuse:
-        plan["_fill_reuse"] = True
     caption_track = _caption_track_for_render(
         job_id, job, plan, body, captions, margin,
     )
