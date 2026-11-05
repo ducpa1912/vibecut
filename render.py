@@ -2904,23 +2904,17 @@ def render_reel(
             )
 
         info = probe(out_tmp)
-        poster_fresh = (
-            poster.is_file()
-            and poster.stat().st_size > 0
-            and poster.stat().st_mtime >= master.stat().st_mtime
-        )
-        if poster_fresh:
-            timings["poster"] = 0.0
-        else:
-            with _stage(timings, "poster"):
-                seek = min(0.25, max(0.0, info["duration"] / 2))
-                _run([
-                    _ffmpeg(), "-y", "-v", "error", "-ss", f"{seek:.3f}", "-i", str(out_tmp),
-                    "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", str(poster_tmp),
-                ], timeout=60, cancel_event=cancel_event)
-                os.replace(poster_tmp, poster)
+        # Always from this render's file: the poster path is per target, and
+        # going back to an earlier Edit reuses a master older than the poster.
+        with _stage(timings, "poster"):
+            seek = min(0.25, max(0.0, info["duration"] / 2))
+            _run([
+                _ffmpeg(), "-y", "-v", "error", "-ss", f"{seek:.3f}", "-i", str(out_tmp),
+                "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", str(poster_tmp),
+            ], timeout=60, cancel_event=cancel_event)
 
         os.replace(out_tmp, out)
+        os.replace(poster_tmp, poster)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

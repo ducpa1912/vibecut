@@ -961,6 +961,30 @@ def test_custom_output_size_border_and_audio_fade_render(real_env):
     assert pipeline.probe(final)["fps"] == pytest.approx(60, abs=1)
 
 
+@needs_ffmpeg
+def test_render_replaces_the_poster_when_the_master_is_reused(real_env):
+    """Going back to an earlier Edit reuses its master, not the last poster."""
+    env = real_env
+    source, meta = env["source"], env["meta"]
+
+    def render_with(**extra):
+        return render.render_reel(
+            str(source), meta, env["dir"], _plan(), "Poster", lambda *args: None,
+            quality="draft", aspect="9:16", edit=_save_current(env, _edit(**extra)),
+        )
+
+    def corner_is_red(result):
+        poster = env["dir"] / "renders" / result["poster"]
+        pixel = np.asarray(Image.open(poster).convert("RGB"))[2, 2]
+        return pixel[0] > 180 and pixel[1] < 80 and pixel[2] < 80
+
+    plain = render_with()
+    assert not corner_is_red(plain)
+    assert corner_is_red(render_with(border={"width": 16, "color": "#ff0000", "radius": 0}))
+    # Newest file on disk is now the red poster, and the plain master is older.
+    assert not corner_is_red(render_with())
+
+
 def test_reverse_and_freeze_clip_intents_compile():
     edit = _edit(
         sequence=[
