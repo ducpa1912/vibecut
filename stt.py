@@ -36,6 +36,7 @@ import threading
 import time
 import unicodedata
 import urllib.parse
+import urllib.error
 import urllib.request
 import uuid
 import wave
@@ -358,16 +359,21 @@ def _whisper_env(model: str) -> dict[str, str]:
     return env
 
 
+WHISPER_TIMEOUT_MAX_S = 7200.0
+
+
 def whisper_timeout(duration: float, timeout: float | None = None) -> float:
     """Whisper's time limit, relative to the audio length.
 
-    A configured route timeout is an upper bound; a short clip never waits
-    the whole budget (a 2 s silent clip used to hold the read for 5 min).
+    A short clip never waits long (a 2 s silent clip used to hold the read for
+    5 min). The route's ``timeout`` does not apply: its 300 s default suits a cloud
+    call, but local Whisper runs near real time on a busy 8 GB Mac, so that limit
+    killed every 10-minute chunk halfway through.
     """
     seconds = max(0.0, float(duration or 0.0))
-    base = float(timeout) if timeout else max(900.0, min(7200.0, seconds * 14))
-    relative = 120.0 + seconds * 4.0
-    return max(30.0, min(base, relative))
+    if seconds <= 0.0:
+        return 30.0
+    return min(WHISPER_TIMEOUT_MAX_S, 120.0 + seconds * 4.0)
 
 
 # Speech gate: a window is voiced above this level, and a file needs this
@@ -1315,6 +1321,10 @@ def transcribe(
                 env=_whisper_env(chosen_model),
                 tick=heartbeat,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Whisper ran out of time after {int(budget)} s on {int(duration)} s of audio."
+            ) from exc
         except (OSError, subprocess.SubprocessError):
             return None
     if result.returncode != 0:
@@ -1418,6 +1428,13 @@ def _cloud_speech(
         try:
             with opener(request, timeout=max(10, timeout)) as response:
                 data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # Said plainly: "No transcript" hid a dead key behind silence.
+            if exc.code in (401, 402, 403):
+                raise RuntimeError(
+                    f"OpenRouter refused the key ({exc.code}). Check it in Setup."
+                ) from exc
+            raise RuntimeError(f"OpenRouter speech failed ({exc.code}).") from exc
         except Exception:  # noqa: BLE001 - a cloud failure returns no transcript
             return None
         payload = _whisper_payload(data)

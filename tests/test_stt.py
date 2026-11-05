@@ -266,7 +266,8 @@ def test_whisper_env_is_offline_only_for_a_cached_model(tmp_path, monkeypatch):
 
 def test_whisper_timeout_is_relative_to_clip_length():
     assert stt.whisper_timeout(2.0, 300) == pytest.approx(128.0)
-    assert stt.whisper_timeout(600.0, 300) == 300
+    assert stt.whisper_timeout(600.0, 300) == pytest.approx(2520.0), "300 s must not cut a chunk short"
+    assert stt.whisper_timeout(100000.0) == 7200.0
     assert stt.whisper_timeout(600.0) == pytest.approx(2520.0)
     assert stt.whisper_timeout(0.0, 5) == 30.0
 
@@ -736,3 +737,16 @@ def test_live_apple_helper_emits_word_timings(tmp_path):
     result = stt.transcribe_apple(wav, tmp_path / "job", "en")
     assert result and len(result["words"]) >= 3
     assert all(word["end"] >= word["start"] for word in result["words"])
+
+
+def test_whisper_running_out_of_time_says_so(tmp_path, monkeypatch):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"x")
+    monkeypatch.setattr(stt, "_whisper_command", lambda: ["whisper"])
+
+    def timed_out(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired("whisper", 1)
+
+    monkeypatch.setattr(stt, "_child_run", timed_out)
+    with pytest.raises(RuntimeError, match="ran out of time"):
+        stt.transcribe(wav, tmp_path, 600.0, lambda *_: None, timeout=300)

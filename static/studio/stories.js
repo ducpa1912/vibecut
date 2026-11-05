@@ -1151,6 +1151,16 @@ export function mount(root, ctx) {
     }
   }
 
+  /** Why the last read found no speech, from the engines that really tried. */
+  function speechFailure() {
+    const names = { whisper: "Whisper", openrouter: "OpenRouter", groq: "Groq", deepgram: "Deepgram", apple: "Apple" };
+    const tried = (job?.analysis?.engine?.stt_errors || [])
+      .filter((item) => item?.error && !String(item.error).includes("needs a known language"));
+    return tried
+      .map((item) => `${names[item.provider] || item.provider}: ${item.error}`)
+      .join(" ");
+  }
+
   function speechCard() {
     const state = speechState();
     if (state === "no_audio" || state === "no_speech" || state === "scripted") {
@@ -1167,8 +1177,9 @@ export function mount(root, ctx) {
     return el("div", { class: "st-speech-missing" }, [
       el("p", {
         class: "st-warning",
-        text: "This video was read without its speech, so moments cannot be cut on what people say. Read the speech now (OpenRouter, about 30 s for a 15 min video), then find moments.",
+        text: "This video was read without its speech, so moments cannot be cut on what people say. Read the speech now, then find moments.",
       }),
+      speechFailure() ? el("p", { class: "st-hint", text: speechFailure() }) : null,
       read,
     ]);
   }
