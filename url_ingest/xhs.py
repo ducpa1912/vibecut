@@ -96,8 +96,9 @@ _SKIPPED = (
 )
 
 
+# No limit unless a deployment sets one, the same as an upload.
 MAX_DOWNLOAD_BYTES = int(
-    float(os.environ.get("VIBECUT_URL_MAX_GB", "4") or 4) * 1024 ** 3
+    float(os.environ.get("VIBECUT_URL_MAX_GB", "0") or 0) * 1024 ** 3
 )
 
 
@@ -1169,7 +1170,7 @@ class XhsGetProvider(Provider):
                             break
                         handle.write(chunk)
                         received += len(chunk)
-                        if received > MAX_DOWNLOAD_BYTES:
+                        if MAX_DOWNLOAD_BYTES and received > MAX_DOWNLOAD_BYTES:
                             raise IngestError(
                                 "XHS download exceeded the configured URL ingest limit."
                             )
