@@ -2346,3 +2346,13 @@ def test_245gb_volume_with_10_4gb_free_allows_30s_final(monkeypatch, tmp_path):
     monkeypatch.setattr(disk, "usage", lambda path: _usage(245 * 10 ** 9, int(10.4 * 10 ** 9)))
     report = disk.check(disk.estimate_render(30, "final"), tmp_path)
     assert report["ok"] is True
+
+
+def test_a_batch_has_no_time_limit_unless_one_is_set(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIBECUT_BATCH_ANALYSIS_TIMEOUT", raising=False)
+    monkeypatch.delenv("VIBECUT_BATCH_RENDER_TIMEOUT", raising=False)
+    manager = batch.BatchManager(tmp_path)
+    assert manager.analysis_timeout == 0
+    assert manager.render_timeout == 0
+    monkeypatch.setenv("VIBECUT_BATCH_RENDER_TIMEOUT", "90")
+    assert batch.BatchManager(tmp_path).render_timeout == 90

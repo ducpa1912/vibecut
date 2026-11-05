@@ -6928,13 +6928,11 @@ class StoryRenderBackend:
         return ""
 
     def timeout_for(self, item: dict) -> float:
+        """No limit unless one is set: AI fill can run for hours, and Cancel stops it."""
         try:
-            fixed = float(os.environ.get("VIBECUT_STORY_TIMEOUT", "0") or 0)
+            return max(0.0, float(os.environ.get("VIBECUT_STORY_TIMEOUT", "0") or 0))
         except ValueError:
-            fixed = 0.0
-        if fixed > 0:
-            return fixed
-        return 1800.0
+            return 0.0
 
 
 _STORY_QUEUES: dict[str, story_queue.StoryQueueManager] = {}

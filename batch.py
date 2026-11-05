@@ -334,16 +334,16 @@ class BatchManager:
         self.poll_interval = max(0.01, float(poll_interval))
         try:
             self.analysis_timeout = float(
-                os.environ.get("VIBECUT_BATCH_ANALYSIS_TIMEOUT", "21600") or 21600
+                os.environ.get("VIBECUT_BATCH_ANALYSIS_TIMEOUT", "0") or 0
             )
         except ValueError:
-            self.analysis_timeout = 21600.0
+            self.analysis_timeout = 0.0
         try:
             self.render_timeout = float(
-                os.environ.get("VIBECUT_BATCH_RENDER_TIMEOUT", "7200") or 7200
+                os.environ.get("VIBECUT_BATCH_RENDER_TIMEOUT", "0") or 0
             )
         except ValueError:
-            self.render_timeout = 7200.0
+            self.render_timeout = 0.0
         self._lock = threading.RLock()
         self._threads: dict[str, threading.Thread] = {}
         self._running: set[str] = set()

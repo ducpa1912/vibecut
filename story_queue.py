@@ -11,8 +11,9 @@ that is already rendering is waited on rather than queued twice.
 
 Restart semantics: :meth:`StoryQueueManager.recover` pauses every active
 queue and marks its running item ``interrupted``. Nothing ever resumes on its
-own; :meth:`StoryQueueManager.resume` is the one-click path. A watchdog
-cancels an item that runs past its timeout, marks it failed and moves on.
+own; :meth:`StoryQueueManager.resume` is the one-click path. A render may take
+as long as it needs. Only a limit set on purpose starts a watchdog, which cancels
+an item that runs past it, marks it failed and moves on.
 
 Pause semantics: :meth:`StoryQueueManager.pause` stops the running render at
 once and puts its item back in line. AI fills and encoded beats stay on disk, so
@@ -76,7 +77,7 @@ class StoryBackend(Protocol):
         """Stop the render and its ffmpeg process group."""
 
     def timeout_for(self, item: dict) -> float:
-        """Seconds an item may render before the watchdog stops it."""
+        """Seconds an item may render before the watchdog stops it. 0 is no limit."""
 
 
 def _now() -> float:
@@ -449,7 +450,7 @@ class StoryQueueManager:
             if self._read(queue_id).get("status") == "paused":
                 self._set_item(queue_id, item["id"], state="queued", stopping=artifact_id)
             return
-        limit = max(1.0, float(backend.timeout_for(item)))
+        limit = float(backend.timeout_for(item))
         while True:
             status = str(backend.status(item, artifact_id) or "")
             if status == READY:
@@ -464,7 +465,7 @@ class StoryQueueManager:
                     error=_failure_text(backend, item, artifact_id, status),
                 )
                 return
-            if time.time() - started > limit:
+            if limit > 0 and time.time() - started > limit:
                 try:
                     backend.cancel(item, artifact_id)
                 except Exception:  # noqa: BLE001

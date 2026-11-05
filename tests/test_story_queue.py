@@ -134,6 +134,29 @@ def test_watchdog_stops_a_hung_item_and_starts_the_next(tmp_path):
     assert backend.cancelled == ["art_s1_9x16"]
 
 
+def test_no_limit_lets_a_render_run_until_it_is_cancelled(tmp_path):
+    backend = FakeBackend(hang={"s1"}, timeout=0)
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    queue = manager.create(items(1))
+    assert not manager.wait(queue["id"], 0.3)
+    assert manager.get(queue["id"])["items"][0]["state"] == "running"
+    assert backend.cancelled == []
+    manager.cancel(queue["id"])
+    assert manager.wait(queue["id"], 5)
+    assert backend.cancelled == ["art_s1_9x16"]
+
+
+def test_a_story_render_has_no_limit_unless_one_is_set(monkeypatch):
+    import app
+
+    monkeypatch.delenv("VIBECUT_STORY_TIMEOUT", raising=False)
+    assert app.StoryRenderBackend().timeout_for({}) == 0
+    monkeypatch.setenv("VIBECUT_STORY_TIMEOUT", "not a number")
+    assert app.StoryRenderBackend().timeout_for({}) == 0
+    monkeypatch.setenv("VIBECUT_STORY_TIMEOUT", "90")
+    assert app.StoryRenderBackend().timeout_for({}) == 90
+
+
 def test_failed_start_isolated_and_cancel_stops_running_render(tmp_path):
     class Flaky(FakeBackend):
         def start(self, item):

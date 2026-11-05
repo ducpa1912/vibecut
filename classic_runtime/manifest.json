@@ -33,9 +33,9 @@
   },
   {
    "path": "app.py",
-   "source": "classic Phase 3: analysis writes only analysis-owned fields",
-   "sha256": "cd95291433a917f723c962a3729ec4bdde48ea2bc21a2cc79edd9c395441c134",
-   "feature_version": "1.0.6"
+   "source": "classic: founder decision 2026-11-06, no time limit on queued renders",
+   "sha256": "92a6a20e2d5883d4a15d167cdcd94de40bea0485a6b584c67ffc9bd175d499e4",
+   "feature_version": "1.0.7"
   },
   {
    "path": "artifacts.py",
@@ -51,9 +51,9 @@
   },
   {
    "path": "batch.py",
-   "source": "classic 2f385a2",
-   "sha256": "0e80c6c6f6b3fc57c11dc9a4331dffff740b909ef7ec034800cb0f23e904a1c5",
-   "feature_version": "1.0.0"
+   "source": "classic: founder decision 2026-11-06, no time limit on queued renders",
+   "sha256": "905fc2995f848f0972973f784e946ba2e13528ef94b33f5389e77a6907a9060b",
+   "feature_version": "1.0.1"
   },
   {
    "path": "caption_reflow.py",
@@ -303,9 +303,9 @@
   },
   {
    "path": "story_queue.py",
-   "source": "studio 6a6bf58: keep AI fill work when a render stops",
-   "sha256": "f2eab3188e720ced8e36a54f637606d5d4c4a0986c58227150fda68676ae2f5b",
-   "feature_version": "1.0.3"
+   "source": "classic: founder decision 2026-11-06, no time limit on queued renders",
+   "sha256": "69294139801011a244cb9cf8419f0b83b9d97e21f247fbde33d041aa1af7359d",
+   "feature_version": "1.0.4"
   },
   {
    "path": "stt.py",
