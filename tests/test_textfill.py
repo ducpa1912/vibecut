@@ -531,7 +531,7 @@ def test_studio_clean_panel_offers_ai_fill():
     assert '"fill"' in clean.split("const KIND_ORDER", 1)[1].split("\n", 1)[0]
     assert 'fill: "AI fill"' in model
     assert '["sttn",' in clean and '["lama",' in clean
-    assert "Use AI fill for all" in clean
+    assert "function methodBar()" in clean
 
 
 # --- single-frame preview --------------------------------------------------

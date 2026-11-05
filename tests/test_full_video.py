@@ -68,3 +68,14 @@ def test_a_join_stops_before_it_drifts_from_the_video():
 def test_long_steps_get_more_time_than_the_old_limit():
     assert render._long_step(60.0, 900) == 900
     assert render._long_step(3600.0, 900) == 28800
+
+
+def test_a_full_video_alone_opens_edit_and_finish():
+    root = Path(__file__).resolve().parent.parent / "static" / "studio"
+    shell = (root / "shell.js").read_text(encoding="utf-8")
+    stories = (root / "stories.js").read_text(encoding="utf-8")
+    # Every set counts, not only the first, and the steps refresh before Edit opens.
+    assert "records.reduce((total, record)" in shell
+    assert "records[0]?.stories" not in shell
+    opened = stories.index("await openFullVideo(job.id)")
+    assert stories.index("ctx.refreshSteps?.()", opened) < stories.index('ctx.go("edit"', opened)

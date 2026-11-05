@@ -48,7 +48,6 @@ class AddStoryBody(BaseModel):
 
 
 class AutoCleanBody(BaseModel):
-    include_handles: bool = False
     # None keeps the old "all allowed regions" behaviour. An explicit list is
     # the found-text list's ticks, so Remove all only touches what was ticked.
     tracklet_ids: list[str] | None = None
@@ -854,7 +853,6 @@ def auto_clean(
         tracklets,
         job=job,
         settings=app.settings_store.load_settings(),
-        include_handles=bool(body.include_handles),
         selected=None if body.tracklet_ids is None else body.tracklet_ids,
     )
     generated = _apply_clean_method(

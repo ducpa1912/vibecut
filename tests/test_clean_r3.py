@@ -77,7 +77,7 @@ def test_a_grouped_switch_changes_every_piece():
 
 
 def test_old_kinds_are_marked_and_new_ones_rely_on_the_switch():
-    assert '(old)` }),' in CLEAN
+    assert "This is an old ${KIND_COPY[layer.kind]" in CLEAN
 
 
 def test_opening_clean_brings_its_lane_into_view():

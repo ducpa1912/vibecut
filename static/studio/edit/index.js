@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261105-9";
+import { mountPreview } from "./preview.js?v=20261105-11";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -30,6 +30,7 @@ import { boxToFrame, cropAt, framingAt, layerActive, sceneFramingKey, sourceTime
 import { icon, paintIcons } from "./icons.js";
 import {
   isFillAvailable,
+  drawEngine,
   manualLayer,
   maskPointCount,
   maskStrokes,
@@ -72,6 +73,9 @@ import {
 
 const CSS_ID = "vibecut-studio-edit-css";
 const CHOICE_KEY = "vibecut.studio.edit.choice";
+// How long a box or brush layer added by hand lasts, from the playhead.
+const MANUAL_LAYER_SECONDS = 3;
+
 const LAYER_FIELDS = ["sequence", "clean", "reframe", "motion", "color", "graphics", "captions", "audio", "border", "output", "assets"];
 
 function ensureStyles() {
@@ -79,7 +83,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261105-9";
+    link.href = "/static/studio/edit/edit.css?v=20261105-11";
     document.head.append(link);
   }
 }
@@ -1494,6 +1498,7 @@ export function mount(root, ctx) {
       resetFraming: (key) => resetFraming(key),
       framingToAllScenes: (key) => framingToAllScenes(key),
       showSceneHandles: () => { preview?.setTool("move"); },
+      releaseSceneHandles: () => { preview?.releaseMove?.(); },
       startMoveScene: () => {
         preview?.setTool("move");
         notify("Drag a corner to zoom the scene, or the middle to move it. Scrolling also zooms.", "ok");
@@ -1510,6 +1515,12 @@ export function mount(root, ctx) {
       addBox: (kind) => {
         addCleanBox(null, kind);
         preview?.refresh();
+      },
+      addPaint: () => {
+        const id = createPaintLayer();
+        if (!id) return;
+        preview?.startPaint?.(id);
+        notify("Drag over the text. The mask is applied only at render.", "ok");
       },
       setCleanMethod: (layerId, kind) => setCleanMethod(layerId, kind),
       isHiddenByCrop: (layer) => isHiddenByCrop(layer),
@@ -1752,19 +1763,41 @@ export function mount(root, ctx) {
     return null;
   }
 
+  /**
+   * Source times from the playhead forward, so a box covers what is on screen
+   * now and after. Crosses cuts in story order; stops at the end of the story.
+   */
+  function forwardRanges(seconds = MANUAL_LAYER_SECONDS) {
+    const ranges = [];
+    let at = state.playhead;
+    let left = seconds;
+    while (left > 0.001) {
+      const here = storyToSource(at);
+      if (!here) break;
+      const span = Math.min(left, here.end - here.time);
+      if (span <= 0.001) {
+        at += 0.01;
+        left -= 0.01;
+        continue;
+      }
+      const last = ranges.at(-1);
+      if (last && Math.abs(last.end - here.time) < 0.02) last.end = round(here.time + span, 2);
+      else ranges.push({ start: round(here.time, 2), end: round(here.time + span, 2) });
+      at += span;
+      left -= span;
+    }
+    return ranges;
+  }
+
   function createPaintLayer() {
     if (!state.edit) return "";
     const layers = (state.edit.clean || []).slice();
     const layer = manualLayer(layers.length);
     layer.id = `cl_paint_manual_${Date.now().toString(36)}`;
     layer.kind = "fill";
-    layer.method = "lama";
+    layer.method = drawEngine();
     layer.mask = { space: "source", aspect: state.aspect, strokes: [] };
-    const at = storyToSource(state.playhead);
-    layer.ranges = at ? [{
-      start: round(at.time, 2),
-      end: round(Math.max(at.time + 0.1, Math.min(at.end, at.time + 2)), 2),
-    }] : [];
+    layer.ranges = forwardRanges();
     layer.label = "Paint mask";
     layers.push(layer);
     state.edit.clean = layers;
@@ -1910,7 +1943,7 @@ export function mount(root, ctx) {
       preview?.showCompare?.({
         ...result,
         title: "LaMa preview · one frame",
-        note: "The render uses this layer's own engine. Nothing was saved.",
+        note: "The render uses this Edit's engine. Nothing was saved.",
       });
       notify("Before / After on this frame. Nothing was saved.", "ok");
     } catch (error) {
@@ -1999,10 +2032,9 @@ export function mount(root, ctx) {
     const layer = manualLayer(layers.length, box);
     if (kind) setLayerKind(layer, kind);
     if (layer.kind === "blur") layer.radius = safeRadius(layer.box, state.job?.source);
-    // A box starts on the current beat and can be widened. Never the whole
-    // story unless someone chooses that.
-    const at = storyToSource(state.playhead);
-    if (at) layer.ranges = [{ start: round(at.start, 2), end: round(at.end, 2) }];
+    // Never the whole story unless someone chooses that. It can be moved and
+    // resized on the timeline and on the video.
+    layer.ranges = forwardRanges();
     layers.push(layer);
     state.edit.clean = layers;
     touch("clean");
@@ -2280,6 +2312,7 @@ export function mount(root, ctx) {
     state.selected = id ? { kind, id } : null;
     if (kind === "clean") {
       state.activeLayer = "clean";
+      preview?.releaseMove?.();
       timeline?.focusLane?.("clean");
       // The preview shows only what is on at the playhead, so go to the layer.
       const layer = (state.edit?.clean || []).find((item) => item.id === id);

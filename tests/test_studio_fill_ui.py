@@ -16,44 +16,40 @@ ROUTES = (ROOT / "routes_studio.py").read_text(encoding="utf-8")
 TEXTFILL = (ROOT / "textfill" / "__init__.py").read_text(encoding="utf-8")
 
 
-def test_found_list_has_thumbnails_ticks_select_all_and_reasons():
+def test_found_list_has_ticks_select_all_and_no_refused_rows():
     assert "Found on screen" in CLEAN
     assert "st-found-row" in CLEAN
     assert "st-found-thumb" not in CLEAN
     assert "st-found-tick" in CLEAN
     assert "FOUND_TICKS" in CLEAN
     assert "FOUND_TICKS.get(jobId)" in CLEAN
-    assert "Select all" in CLEAN and "Clear ticks" in CLEAN
-    assert '"Watermark · not removed"' in CLEAN or "Watermark · not removed" in CLEAN
-    assert "Screen UI · not cleaned" in CLEAN
+    assert '"Select all"' in CLEAN and '"Clear"' in CLEAN
+    assert "not removed" not in CLEAN
+    assert "not cleaned" not in CLEAN
     assert "Already added to this moment." in CLEAN
-    assert "st-found-reason" in CSS
 
 
-def test_remove_all_sends_the_ticks_and_the_chosen_method():
+def test_remove_all_sends_the_ticks_and_the_one_method_choice():
     assert "ticked.flatMap((row) => row.tracklet.ids)" in CLEAN
     assert "tracklet_ids:" in CLEAN
-    assert "method: removeMethod" in CLEAN
-    assert "fill_method: fillMethod" in CLEAN
-    assert 'value: "ai"' in CLEAN and 'value: "blur"' in CLEAN
-    assert "AI fill (model missing)" in CLEAN
+    assert 'method: drawKind() === "fill" ? "ai" : "blur"' in CLEAN
+    assert "fill_method: drawEngine()" in CLEAN
+    assert "function methodBar()" in CLEAN
     assert "/api/fill/status" in CLEAN
-    assert "st-found-method" in CLEAN and "st-found-engine" in CLEAN
+    assert "st-found-engine" in CLEAN
 
 
 @needs_node
-def test_fill_for_all_only_converts_detected_tracklets():
+def test_new_layers_use_the_chosen_engine():
     out = run_module("edit/layers/clean.js", """
-        return m.useFillForAll([
-          {id: "a", kind: "delogo", tracklet_id: "trk_a", z: 0},
-          {id: "b", kind: "blur", z: 1},
-          {id: "c", kind: "plate", tracklet_id: "trk_c", z: 2},
-        ], "lama");
+        const first = m.setLayerKind({id: "a"}, "fill").method;
+        m.rememberEngine("sttn");
+        const second = m.setLayerKind({id: "b"}, "fill").method;
+        m.rememberEngine("lama");
+        return {first, second, third: m.setLayerKind({id: "c"}, "blur").method ?? null};
     """)
 
-    assert [layer["kind"] for layer in out] == ["fill", "blur", "fill"]
-    assert out[0]["method"] == "lama" and out[2]["method"] == "lama"
-    assert out[1] == {"id": "b", "kind": "blur", "z": 1}
+    assert out == {"first": "lama", "second": "sttn", "third": None}
 
 
 def test_engine_preview_is_scoped_and_never_saves_first():

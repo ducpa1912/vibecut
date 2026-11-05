@@ -237,7 +237,7 @@ def test_clean_offers_ai_fill_and_blur_only():
     assert "Mid-frame" not in CLEAN
     assert 'data-tl-action="mosaic"' not in TIMELINE
     assert "addMosaicLayer" not in INDEX
-    assert "(old)" in CLEAN
+    assert "This is an old" in CLEAN
 
 
 def test_each_box_has_its_own_switch():
@@ -248,8 +248,10 @@ def test_each_box_has_its_own_switch():
     assert "Hidden by crop" in CLEAN
 
 
-def test_a_new_box_starts_on_the_current_beat():
-    assert "layer.ranges = [{ start: round(at.start, 2), end: round(at.end, 2) }]" in INDEX
+def test_a_new_box_runs_three_seconds_forward_from_the_playhead():
+    assert "const MANUAL_LAYER_SECONDS = 3;" in INDEX
+    assert "function forwardRanges(seconds = MANUAL_LAYER_SECONDS)" in INDEX
+    assert INDEX.count("layer.ranges = forwardRanges();") == 2
 
 
 def test_brush_marks_are_saved_on_the_video():
@@ -259,8 +261,8 @@ def test_brush_marks_are_saved_on_the_video():
     assert "callbacks.onPaint(current.layerId, points, currentCrop())" in PREVIEW
 
 
-def test_brush_button_reuses_the_layer_and_drops_an_unpainted_one():
-    assert 'item.kind === "fill" && sameScanText(item, row.tracklet)' in CLEAN
+def test_paint_drops_a_layer_that_got_no_stroke():
+    assert "addPaint: () => {" in INDEX
     assert "function dropUnpaintedLayers()" in INDEX
     assert "callbacks.onPaintEnd()" in PREVIEW
     assert "A single click does nothing." in INDEX

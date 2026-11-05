@@ -42,7 +42,7 @@ Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music
 
 - 1491 tests pass; 7 opt-in skips.
 - Studio is the default UI; Classic remains behind `?classic=1` / Settings.
-- Rights lock is on by default; watermarks always refused; screen text never cleaned; handles/logos need a per-video tick.
+- Rights lock is on by default; watermarks, handles and logos need a per-video tick; every found text can be cleaned.
 - Clean is on by default; `VIBECUT_ENABLE_CLEANUP=0` disables it.
 - Packet v2 and Edit/trim identity are wired.
 - R2 trim is browser-tested on synthetic fixtures.
@@ -189,13 +189,13 @@ To work out when this is planned: whether a template applies per scene or to the
 
 Kinds: `subtitle`, `title`, `lower_third`, `handle_or_logo`, `watermark`, `credit`, `screen_text`.
 `screen_text` is dense UI/document text; never pre-filled for Clean, never counted as baked captions.
-Watermark always refused; handle/logo needs the per-video tick; rights not attested locks Clean.
+Watermark and handle/logo need the per-video tick; rights not attested locks Clean.
 
 ### Rights policy
 
 - `rights.py` is the only policy source; `GET /api/rights/policy`, `job.rights_policy`, `POST /api/settings` `rights.lock`.
 - Lock on: import needs the ownership tick; lock off: import open, but handle/logo cleaning still needs the per-video tick.
-- Watermark always refused; screen_text never cleaned, with lock on or off.
+- Watermark needs the per-video tick with lock on or off; screen_text cleans like any other text.
 - No request body or localStorage decides policy. Turning the lock on does not rewrite saved Edits.
 
 ### Atomic trim
@@ -229,7 +229,7 @@ POST /api/jobs/{job_id}/clip-sets/{set_id}/stories/{story_id}/trim
 
 - No accounts, cloud sync, team seats, subscription, credits, per-clip meter.
 - No publishing, scheduling, OAuth, platform APIs, analytics, virality scores.
-- No watermark removal.
+- Watermark removal only behind the per-video rights tick (founder decision 2026-11-05: every found text can be cleaned).
 - No generative face/logo repair, avatars, voice cloning, stock B-roll.
 - No full-source 4K cleanup, auto-resume, auto-posting, telemetry.
 - No silent retargeting, overwriting approved artifacts, or plan fallback when an Edit exists.

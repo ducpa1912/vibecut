@@ -4,9 +4,8 @@ The policy is intentionally small and pure. It reads a job record and the
 stored settings; it never reads a request body or browser storage. The hard
 rules hold whether the Setup lock is on or off:
 
-* a ``watermark`` is always refused;
-* ``screen_text`` is never cleaned (a quality rule, not a rights rule);
-* a ``handle_or_logo`` always needs the per-video ``attested`` tick.
+* a ``watermark`` or ``handle_or_logo`` always needs the per-video
+  ``attested`` tick.
 
 With ``rights.lock`` on, every other Clean kind also needs the tick and an
 import must carry it. With the lock off, those open up. A job created before
@@ -114,13 +113,9 @@ def clean_block_reason(
 ) -> str | None:
     """Return why a Clean layer may not target this kind, or ``None``."""
     normalized = str(kind or "").strip().casefold()
-    if normalized == "watermark":
-        return "watermark"
-    if normalized == "screen_text":
-        return "screen_text"
     attested = job_attested(job)
     if not attested:
-        if normalized == "handle_or_logo":
+        if normalized in ("handle_or_logo", "watermark"):
             return "attestation_required"
         if lock_enabled(settings):
             return "rights_not_attested"

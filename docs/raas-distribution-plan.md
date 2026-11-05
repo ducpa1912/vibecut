@@ -38,7 +38,7 @@ Founder sign-off is needed, because these are in force today:
 - `ROADMAP.md` local rule: everything works with the network off.
 - `PRD.md`: the main buyer "will not accept Terminal install, watermark, meter, or mandatory cloud."
 
-Those rules describe the Mac buyer, so RaaS targets a different buyer. Keep the rules for the Mac app and add a separate section for RaaS. Two more never-list items stay in force on hosted: no watermark removal, and no voice cloning (see section 7).
+Those rules describe the Mac buyer, so RaaS targets a different buyer. Keep the rules for the Mac app and add a separate section for RaaS. Voice cloning stays off on hosted (see section 7). Watermark removal is allowed on the Mac app behind the rights tick since 2026-11-05, and stays refused on hosted until counsel reviews it.
 
 ## 3. The customer flow
 

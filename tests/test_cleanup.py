@@ -521,7 +521,7 @@ def _report(tracklets: list[dict], *, attested: bool = True) -> dict:
     }
 
 
-def test_screen_text_kind_is_never_prefilled_or_counted_as_baked_text():
+def test_screen_text_is_not_counted_as_baked_text():
     job = _job_record()
     job["analysis"]["transcript"] = {"text": "talking"}
     for scene in job["analysis"]["scenes"]:
@@ -548,9 +548,6 @@ def test_screen_text_kind_is_never_prefilled_or_counted_as_baked_text():
         item for item in report["clean_prefill"] if item["kind"] == "screen_text"
     ]
     assert screen
-    assert all(item["action"] == "none" for item in screen)
-    assert all(item["enabled"] is False for item in screen)
-    assert all(item["blocked"] == "screen_text" for item in screen)
     assert report["policy"]["screen_text_ids"]
 
     attested = detect.build_report(
@@ -560,15 +557,14 @@ def test_screen_text_kind_is_never_prefilled_or_counted_as_baked_text():
         attestation=True,
     )
     assert attested["recommendation"] == "compose"
-    assert all(
-        item["kind"] != "screen_text" for item in attested["clean_prefill"]
-        if item["action"] in {"blur", "plate", "mask", "crop_guard"}
-    )
+    assert all(item["blocked"] is None for item in attested["clean_prefill"])
 
 
-def test_screen_text_is_refused_by_the_single_gate():
-    assert detect.cleanup_block_reason("screen_text", attested=True) == "screen_text"
-    assert detect.cleanup_block_reason("screen_text", attested=False) == "screen_text"
+def test_screen_text_follows_the_rights_like_other_text():
+    assert detect.cleanup_block_reason("screen_text", attested=True) is None
+    assert detect.cleanup_block_reason(
+        "screen_text", attested=False, settings={"rights": {"lock": True}},
+    ) == "rights_not_attested"
 
 
 def test_tracklet_clean_layers_map_kinds_to_edit_clean_layers():
@@ -599,20 +595,19 @@ def test_tracklet_clean_layers_map_kinds_to_edit_clean_layers():
     assert _padded_inside(first["box"])
 
 
-def test_watermark_and_screen_text_never_produce_clean_layers():
+def test_every_kind_produces_a_clean_layer_once_attested():
     tracklets = [
         _tracklet("trk_water", "watermark", {"x": 0.84, "y": 0.05, "w": 0.13, "h": 0.05}, text="TikTok"),
         _tracklet("trk_ui", "screen_text", {"x": 0.05, "y": 0.03, "w": 0.2, "h": 0.05}, text="Search"),
         _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
     ]
     built = cleanup.tracklet_clean_layers(tracklets, attested=True)
-    assert [layer["id"] for layer in built["layers"]] == ["cl_trk_sub"]
-    refused = {item["tracklet_id"]: item for item in built["refused"]}
-    assert refused["trk_water"]["blocked"] == "watermark"
-    assert refused["trk_ui"]["blocked"] == "screen_text"
+    assert {layer["id"] for layer in built["layers"]} == {"cl_trk_water", "cl_trk_ui", "cl_trk_sub"}
+    assert built["refused"] == []
+    assert edits.normalize_clean(built["layers"]) == built["layers"]
 
 
-def test_handle_needs_attestation_and_explicit_opt_in():
+def test_handle_needs_attestation():
     handle = _tracklet(
         "trk_handle", "handle_or_logo", {"x": 0.02, "y": 0.03, "w": 0.15, "h": 0.05},
         text="@myhandle",
@@ -621,13 +616,7 @@ def test_handle_needs_attestation_and_explicit_opt_in():
     assert locked["layers"] == []
     assert locked["refused"][0]["blocked"] == "attestation_required"
 
-    off = cleanup.tracklet_clean_layers([handle], attested=True)
-    assert off["layers"] == []
-    assert off["refused"][0]["blocked"] == "opt_in_required"
-
-    on = cleanup.tracklet_clean_layers(
-        [handle], attested=True, include_handles=True,
-    )
+    on = cleanup.tracklet_clean_layers([handle], attested=True)
     assert on["layers"][0]["kind"] == "crop_guard"
     assert edits.normalize_clean(on["layers"]) == on["layers"]
 
@@ -687,18 +676,10 @@ def test_cleanup_layers_route_builds_gated_layers(env):
     built = env.client.post(f"/api/jobs/{JOB_ID}/cleanup/layers", json={})
     assert built.status_code == 200, built.text
     body = built.json()
-    assert [layer["kind"] for layer in body["layers"]] == ["delogo"]
-    blocked = {item["tracklet_id"]: item["blocked"] for item in body["refused"]}
-    assert blocked["trk_ui"] == "screen_text"
-    assert blocked["trk_water"] == "watermark"
-    assert blocked["trk_handle"] == "opt_in_required"
-
-    handles = env.client.post(
-        f"/api/jobs/{JOB_ID}/cleanup/layers",
-        json={"tracklet_ids": ["trk_handle"], "include_handles": True},
-    )
-    assert handles.status_code == 200, handles.text
-    assert [layer["kind"] for layer in handles.json()["layers"]] == ["crop_guard"]
+    assert {layer["tracklet_id"] for layer in body["layers"]} == {
+        "trk_sub", "trk_ui", "trk_water", "trk_handle",
+    }
+    assert body["refused"] == []
 
     unknown = env.client.post(
         f"/api/jobs/{JOB_ID}/cleanup/layers",
@@ -723,19 +704,10 @@ def test_cleanup_layers_open_without_a_tick_when_the_lock_is_off(env):
     built = env.client.post(f"/api/jobs/{JOB_ID}/cleanup/layers", json={})
     assert built.status_code == 200, built.text
     body = built.json()
-    assert [layer["id"] for layer in body["layers"]] == ["cl_trk_sub"]
+    assert {layer["id"] for layer in body["layers"]} == {"cl_trk_sub", "cl_trk_ui"}
     blocked = {item["tracklet_id"]: item["blocked"] for item in body["refused"]}
-    assert blocked["trk_water"] == "watermark"
-    assert blocked["trk_ui"] == "screen_text"
+    assert blocked["trk_water"] == "attestation_required"
     assert blocked["trk_handle"] == "attestation_required"
-
-    handle = env.client.post(
-        f"/api/jobs/{JOB_ID}/cleanup/layers",
-        json={"tracklet_ids": ["trk_handle"], "include_handles": True},
-    )
-    assert handle.status_code == 200, handle.text
-    assert handle.json()["layers"] == []
-    assert handle.json()["refused"][0]["blocked"] == "attestation_required"
 
 
 def test_edit_save_requires_server_side_rights_for_clean_layers(env):

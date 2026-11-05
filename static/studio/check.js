@@ -481,7 +481,7 @@ export function mount(root, ctx) {
         input,
         el("span", {}, [
           el("strong", { text: "I own this footage or have the rights to it." }),
-          el("small", { text: "Stored on the server for this video. Watermarks are still never removed." }),
+          el("small", { text: "Stored on the server for this video." }),
         ]),
       ]),
       el("div", { class: "st-check-lock" }, [
@@ -511,9 +511,8 @@ export function mount(root, ctx) {
 
   function trackletCard(tracklet) {
     const kind = String(tracklet?.kind || "");
-    const blocked = kind === "watermark";
     const badge = el("span", {
-      class: `st-chip${blocked ? " st-chip-bad" : kind === "handle_or_logo" ? " st-chip-busy" : ""}`,
+      class: `st-chip${kind === "watermark" || kind === "handle_or_logo" ? " st-chip-busy" : ""}`,
       text: KIND_LABELS[kind] || "On-screen text",
     });
     const confidence = Number(tracklet?.confidence);
@@ -766,8 +765,8 @@ export function mount(root, ctx) {
           el("span", { text: "Open Edit → Clean to cover, blur or crop the text Check found. Nothing is applied twice." }),
         ]),
         el("li", {}, [
-          el("strong", { text: "Watermarks are refused" }),
-          el("span", { text: "Use your original file — it has no watermark. VibeCut never removes a platform mark." }),
+          el("strong", { text: "Your footage, your call" }),
+          el("span", { text: "A watermark, handle or logo needs your rights tick for this video." }),
         ]),
         el("li", {}, [
           el("strong", { text: "Every finding is advisory" }),

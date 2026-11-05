@@ -112,12 +112,11 @@ def test_audio_rows_split_into_original_voice_and_bgm():
     assert labels["captions"] == "Caption · cues"
 
 
-def test_painter_mask_is_on_the_detected_text_layer():
+def test_painter_mask_is_on_the_clean_layer():
     clean = (STUDIO / "layers" / "clean.js").read_text(encoding="utf-8")
     preview = (STUDIO / "preview.js").read_text(encoding="utf-8")
-    assert "startPaintRow" in clean
-    assert "st-found-paint" in clean
-    assert "mask" in clean and "Clear mask" in clean
+    assert "ctx.addPaint?.()" in clean
+    assert "mask" in clean and "Clear paint" in clean
     assert "startPaint(layerId" in preview
     assert "onPaint" in preview
     assert "paintPoints" in preview

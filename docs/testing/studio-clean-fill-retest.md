@@ -22,14 +22,14 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 |---|---|---|---|
 | 1 | Open Clean, draw a box with **Draw box** on a subtitle | The box and its timeline bar are blue, at the current time | |
 | 2 | Drag the bar's right edge, then drag its middle | It gets shorter, then moves in time. The box only shows in that time | |
-| 3 | **Scan video**, then **Check this scene** | The scene button only filters the list, at once, with no new scan. Other scenes' text comes back when you pick the video again | |
+| 3 | **Scan video**, then **This scene** in Found on screen | The scene button only filters the list, at once, with no new scan. **Whole video** brings the rest back | |
 | 4 | Look at the Clean lane where layers overlap | Overlapping bars stack in rows, and each can be clicked | |
 | 5 | Add found text to layers, then look at the list | Added text folds into one "already added" line, and the list holds what is left | |
 | 6 | Drag the timeline's top edge up | Lanes and text get bigger, not only the empty space | |
 | 7 | Select a scanned layer while the playhead is elsewhere, then **Test 1 second** | The playhead jumps to that layer, then Before/After and a moving clip appear after a few minutes | |
 | 8 | Do step 7 with a painted layer | Same. If it refuses, send me the message exactly | |
 | 9 | Look at the clip from step 7 or 8 | Text is gone, with no ghost and no halo, and objects do not smear | |
-| 10 | Find the bold line under **Add box** in Clean | It says about how long AI fill adds | |
+| 10 | Find the line under Clean layers | It says about how long AI fill adds | |
 | 11 | Elements → Text: add a Hook card, then drag it on the preview | It moves, and stays on that spot of the video. A plain click does not move it | |
 | 12 | Drag the Hook card's bar edge on the timeline, then type a new End in its panel | Its time changes both ways | |
 | 13 | **Framing**: raise to 1.5×, then press Play | The video and the Hook card grow together, playing and paused | |
@@ -48,11 +48,11 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 26 | Render a 10 to 20 second moment with a zoomed-out and a moved scene | The render matches the preview: same place, black in the empty frame, the cut part gone, and sound unchanged | |
 | 27 | Look at every toolbar: preview, timeline, right rail | One icon style. Each icon's tooltip matches what it does. Tell me any icon you cannot read | |
 | 28 | **Scan video** on a video with subtitles, then read the found list | All subtitle lines are one row, "Subtitles · N lines". The same words show once | |
-| 29 | **Clean all found text**, then read Clean layers and the Clean lane | Subtitles are one group with a count. A layer has one bar across cuts, and its name shows once | |
+| 29 | **Clean N**, then read Clean layers and the Clean lane | Subtitles are one group with a count, and open to one row per line. Each line has its own bar, with its words on it | |
 | 30 | Move the playhead through the moment | The preview shows only the boxes and brush marks on at that time. Selecting a layer in the list moves the playhead to it | |
 | 31 | Delete a group with its bin icon, then **Delete all** (click twice), then Undo | The group goes, then all layers go, then Undo brings them back | |
 | 32 | Open a project that had repeated layers | A message says how many repeated layers were removed. The Clean lane and list show each text once | |
-| 33 | Try to drag an auto-detected Clean bar, then draw a box and drag its bar | The auto bar does not move. The drawn box's bar moves and resizes | |
+| 33 | Drag a found text bar on the Clean lane, then a drawn box's bar | Both move and resize | |
 | 34 | **Framing** on the right rail, then drag a corner of the orange outline on the preview in and out | The scene shrinks and grows, with black in the empty frame | |
 | 35 | Scroll on the preview, then drag the middle of the scene past the white line | Scrolling zooms. The scene moves, and the part past the line is cut | |
 | 36 | Elements → Effects: **Zoom out over time** and **Zoom in over time**, **Add motion**, stretch the bar, Play | The scene zooms over the bar's length, and it runs across cuts | |
@@ -65,6 +65,12 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 43 | Import: press the bin on an old video, then **Cancel**. Press it again, then **Delete**. Then **All videos** and do the same there | Cancel keeps it. Delete removes it from both lists | |
 | 44 | Start **Scan video** or a render, then press the bin on that video | The prompt names what is running. **Cancel** lets it carry on. **Delete** stops it, the video leaves the list at once, and the app stays responsive | |
 | 45 | Clean: add a new box and read its engine, then render a 10 to 20 second moment with AI fill | The engine is LaMa, and layers you saved before keep their own engine. Tell me the real time, and whether the filled area flickers or looks soft | |
+| 46 | **Scan again**, then look at the boxes while you play | Each box fits its own line, not all lines together. It appears when the text appears and goes when it goes, within about a quarter second. Tell me how long the scan took | |
+| 47 | Click a box on the video, drag it, drag a corner, then drag its bar. Do this for a found text and a drawn box, also right after using **Framing** | The box moves and resizes on the video, and its time changes on the timeline | |
+| 48 | Pause on some text, then **Add box**, or **Paint** | The new layer starts at the playhead and lasts three seconds. Nothing is added before the playhead | |
+| 49 | Read the Clean panel from the top | One **Remove with** choice, **Add box** and **Paint**, the found list with one **Clean N** button, then the layers. Tell me anything you miss or cannot find | |
+| 50 | Find text labelled watermark, screen UI, title or card | Every row can be ticked and cleaned with AI fill or Blur | |
+| 51 | New video: press **Edit full video** without finding moments, then **Finish** | Finish opens on the full video, and it can be queued and rendered | |
 
 ## Tell me too
 

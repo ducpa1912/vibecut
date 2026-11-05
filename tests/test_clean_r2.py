@@ -218,7 +218,7 @@ def test_the_panel_and_finish_show_the_estimate():
 
 
 def test_the_one_frame_preview_is_labelled_and_the_real_test_exists():
-    assert "Before / After (LaMa)" in CLEAN
+    assert "Before / After" in CLEAN
     assert "LaMa preview · one frame" in INDEX
     assert "Test 1 second" in CLEAN and "Cancel test" in CLEAN
     assert "function testCleanLayer(layerId)" in INDEX and "/cancel" in INDEX

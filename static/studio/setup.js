@@ -58,7 +58,7 @@ const OPENROUTER_VOICES = ["heygen", "fish", "gemini"];
 const LOCAL_VOICES = ["say", "kokoro"];
 const CLOUD_VOICES = ["minimax", "elevenlabs"];
 
-export const RIGHTS_LOCK_HELP = "On: people must confirm they own the footage before importing or cleaning. Off: anyone can import, caption, voice and clean old captions. Watermarks are never removed, and handles or logos always need a ‘this is mine’ tick.";
+export const RIGHTS_LOCK_HELP = "On: people must confirm they own the footage before importing or cleaning. Off: anyone can import, caption, voice and clean old captions. A watermark, handle or logos always need a ‘this is mine’ tick.";
 
 export function rightsLockValue(policy, settings) {
   if (policy && typeof policy.lock === "boolean") return policy.lock;
@@ -472,7 +472,7 @@ export function mount(host, ctx = {}) {
       policy = await request("/api/rights/policy").catch(() => null);
       notice = locked
         ? "Rights lock is on. Import and cleaning need the own-footage tick."
-        : "Rights lock is off. Import and old-caption cleaning are open; watermarks stay refused and a handle or logo still needs its own tick.";
+        : "Rights lock is off. Import and old-caption cleaning are open; a watermark, handle or logo still needs its own tick.";
       noticeTone = "ok";
     } catch (cause) {
       notice = cause?.message || "Could not save the rights lock.";

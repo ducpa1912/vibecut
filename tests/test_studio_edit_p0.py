@@ -121,7 +121,7 @@ def test_new_edits_start_without_captions():
 
 def test_clean_copy_is_true_and_scan_is_a_task_in_edit():
     assert "Nothing invents missing pixels" not in CLEAN
-    assert "AI fill rebuilds the background" in CLEAN
+    assert "This scene" in CLEAN and "Whole video" in CLEAN
     assert "Check this scene" in CLEAN and "Scan video" in CLEAN
     assert "/check/cancel" in CLEAN
     assert "scanProgressRow" in CLEAN

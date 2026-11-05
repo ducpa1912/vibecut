@@ -88,7 +88,7 @@ def test_auto_clean_merge_keeps_layers_and_guards_by_tracklet_id():
 @needs_node
 def test_auto_clean_merge_stops_at_the_clean_layer_cap():
     out = run_module("edit/layers/clean.js", """
-        const full = Array.from({ length: 32 }, (_, index) => ({
+        const full = Array.from({ length: 1000 }, (_, index) => ({
           id: `cl_${index}`, tracklet_id: `trk_${index}`,
         }));
         const merged = m.mergeAutoCleanLayers(full, [
@@ -101,7 +101,7 @@ def test_auto_clean_merge_stops_at_the_clean_layer_cap():
         };
     """)
 
-    assert out["count"] == 32
+    assert out["count"] == 1000
     assert out["added"] == 0
     assert len(out["skipped"]) == 1
     assert "did not fit" in out["skipped"][0]["reason"]
@@ -158,12 +158,10 @@ def test_auto_clean_404_asks_for_a_scan_and_keeps_other_errors_readable():
 def test_clean_panel_has_one_quiet_remove_all_action():
     clean = source("edit/layers/clean.js")
 
-    assert "Clean all found text" in clean
-    assert "st-btn st-btn-ghost st-btn-small st-auto-clean-run" in clean
+    assert "`Clean ${ticked.length}`" in clean
+    assert "st-btn st-btn-primary st-btn-small st-auto-clean-run" in clean
     assert "disabled: running || !editId" in clean
-    # The header action stays secondary.
-    index = clean.index("st-auto-clean-run")
-    assert "st-btn-primary" not in clean[index - 160:index + 160]
+    assert clean.count("st-auto-clean-run") == 1
 
 
 def test_clean_panel_merges_through_set_clean_and_selects_the_first_new_layer():
@@ -196,7 +194,7 @@ def test_clean_panel_keeps_the_rights_gate_and_manual_add_box():
     assert "I own this footage or have the rights to it." in clean
     assert "Record rights in Check" in clean
     assert "Adding is locked by the server rights policy." in clean
-    assert 'text: "Add box"' in clean
+    assert '"Add box"' in clean
     assert "manualLayer" in clean
 
 

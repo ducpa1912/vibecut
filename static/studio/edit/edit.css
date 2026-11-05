@@ -2774,3 +2774,36 @@ body:has(.st-preview.is-focus) { overflow: hidden; }
 
 /* The frame's label follows it at once, so the view has no easing to wait for. */
 #studio-root .st-preview-canvas { transition: none; }
+
+/* Clean, simplified: one method, then what is found, then what is done. */
+.st-clean-bar { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px; padding: 6px; }
+.st-clean-bar-label { color: var(--st-muted); font-size: 11px; }
+.st-clean-method { justify-self: start; }
+.st-clean-method .st-method-option { min-height: 26px; padding: 3px 12px; }
+.st-clean-add { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.st-clean-add .st-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; }
+#studio-root .st-clean-scope { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 6px 6px; }
+#studio-root .st-clean-scope .st-method-option { min-height: 24px; padding: 2px 8px; font-size: 11px; }
+#studio-root .st-clean-scope .st-method-option,
+#studio-root .st-clean-rescan { white-space: nowrap; }
+#studio-root .st-clean-rescan { min-height: 24px; padding: 2px 4px; font-size: 11px; }
+#studio-root .st-found-select-all { min-height: 22px; padding: 1px 4px; font-size: 11px; }
+.st-found-card .st-clean-toolbar { display: block; padding: 6px; }
+.st-found-card .st-auto-clean-run { width: 100%; min-height: 30px; margin: 0; }
+.st-found-card .st-found-note { margin: 5px 0 0; }
+.st-clean-layers .st-layer-row { display: grid; gap: 0; justify-items: start; min-height: 34px; text-align: left; }
+.st-layer-row .st-layer-meta { color: var(--st-dim); font-family: var(--st-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.st-clean-layers .st-layer-list { margin: 0; }
+.st-clean-layers .st-field-hint, .st-clean-layers > .st-hint { margin: 0; padding: 4px 6px; }
+.st-clean-delete-all { margin-left: auto; }
+.st-clean-editor { display: grid; gap: 8px; padding: 8px 6px 10px; border-bottom: 1px solid var(--st-line); background: var(--st-panel-2); }
+.st-clean-editor .st-method-switch { justify-self: start; }
+.st-clean-times { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; align-items: end; }
+.st-clean-times .st-field { display: grid; gap: 2px; min-width: 0; }
+.st-clean-times .st-field > span { color: var(--st-muted); font-size: 11px; }
+.st-clean-times .st-field input { width: 100%; min-width: 0; min-height: 26px; font-variant-numeric: tabular-nums; }
+.st-clean-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.st-clean-actions .st-clean-test { margin-left: 0; }
+.st-clean-more { padding: 6px; color: var(--st-muted); font-size: 11px; border-top: 1px solid var(--st-line); }
+.st-clean-more > summary { cursor: pointer; }
+.st-clean-more .st-found-engine { width: 100%; margin-top: 6px; }

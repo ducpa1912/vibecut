@@ -178,19 +178,17 @@ try {
     { timeout: 30000 },
   );
 
-  const blocked = page.locator(".st-found-row.is-blocked");
-  assert(await blocked.count() === 2, "watermark and screen UI should be blocked");
-  const blockedText = await page.locator(".st-found-row.is-blocked .st-found-meta").first().textContent();
-  assert(/Watermark|Screen UI/.test(blockedText || ""), "blocked rows need a plain reason");
-  assert(await page.locator(".st-found-tick:checked").count() === 1,
-    "only the allowed subtitle should start ticked");
-  assert(await page.locator(".st-found-method").inputValue() === "ai",
+  assert(await page.locator(".st-found-row.is-blocked").count() === 0, "every found text can be cleaned");
+  assert(await page.locator(".st-found-tick:checked").count() === 3,
+    "every found text should start ticked");
+  assert(await page.locator(".st-clean-method .st-method-option.is-active").textContent() === "AI fill",
     "AI fill should be the default method when its model is ready");
   await page.locator(".st-found-row .st-found-copy").first().click();
   assert(
     !(await page.locator(".st-found-row .st-found-meta").first().textContent())?.includes("Not in this cut"),
     "row seek with real tracklet ranges must find the cut",
   );
+  await page.locator(".st-clean-more > summary").click();
   assert(await page.locator(".st-found-engine").inputValue() === "lama",
     "the default fill engine should come from /api/fill/status");
 
@@ -201,12 +199,12 @@ try {
   assert(captured.autoBody?.method === "ai", "Remove all sent the wrong method");
   assert(captured.autoBody?.fill_method === "lama", "Remove all sent the wrong engine");
   assert(
-    JSON.stringify(captured.autoBody?.tracklet_ids) === JSON.stringify(["trk_sub"]),
+    JSON.stringify([...(captured.autoBody?.tracklet_ids || [])].sort()) === JSON.stringify(["trk_sub", "trk_ui", "trk_water"]),
     "Remove all sent the wrong tracklets",
   );
 
   // Painter QA: create a mask on the detected subtitle and confirm it saves.
-  await page.locator(".st-found-paint").first().click();
+  await page.locator(".st-clean-editor .st-btn", { hasText: /^Paint/ }).first().click();
   const paintCanvas = page.locator("#st-preview-canvas");
   const paintBox = await paintCanvas.boundingBox();
   assert(paintBox && paintBox.width > 100, "preview is not measurable for painting");
@@ -249,11 +247,7 @@ try {
   assert(painter.masks > 0, "painter mask did not save");
   assert(painter.points >= 2, `painter saved too few points (${painter.points})`);
 
-  assert(
-    await page.locator(".st-found-row.is-painted .st-found-paint:disabled").count() === 1,
-    "the painted detected row must disable its brush",
-  );
-  // The row already had a layer from Remove all, so the brush reuses it.
+  // The found text's layer is selected after Clean, so the brush uses it.
   const paintLayerId = painter.ids.find((id) => id === "cl_trk_sub") || "";
   assert(paintLayerId, "the brush did not reuse the found text's layer");
   assert(painter.ids.filter((id) => String(id).startsWith("cl_paint_")).length === 0, "the brush added a second layer");
@@ -356,14 +350,10 @@ try {
     await page.mouse.move(toX, toY, { steps: 4 });
     await page.mouse.up();
   };
-  // Auto-detected text keeps its time. A box drawn by hand can be changed.
+  // Every Clean bar can change time, found text and drawn boxes alike.
   assert(
-    await page.locator(".st-tl-bar-clean:not(.is-found):not(.is-drawn)").count() > 0,
-    "there is no auto-detected bar to check",
-  );
-  assert(
-    await page.locator(".st-tl-bar-clean:not(.is-found):not(.is-drawn).is-timed").count() === 0,
-    "an auto-detected bar can be dragged",
+    await page.locator(".st-tl-bar-clean:not(.is-found):not(.is-drawn).is-timed").count() > 0,
+    "an auto-detected bar cannot be dragged",
   );
   const drawArea = await rectOf("#st-preview-canvas");
   await page.locator('.st-preview-tool[data-tool="box"]').click();
@@ -372,7 +362,38 @@ try {
     drawArea.x + drawArea.width * 0.6, drawArea.y + drawArea.height * 0.36,
   );
   await page.waitForTimeout(300);
-  const cleanBar = await barEnd(".st-tl-bar-clean.is-timed");
+  // A drawn box starts at the playhead and runs three seconds forward.
+  const drawnFirst = (await savedEdit()).clean.find((layer) => !layer.tracklet_id);
+  const drawnSpan = drawnFirst?.ranges?.[0];
+  assert(drawnSpan && Math.abs(drawnSpan.end - drawnSpan.start - 3) < 0.05,
+    `a drawn box should last three seconds: ${JSON.stringify(drawnSpan)}`);
+
+  // It can be clicked, moved and resized on the video, even after Framing.
+  await page.locator('[data-layer="zoom"]').click();
+  await page.locator('[data-layer="clean"]').click();
+  await page.waitForTimeout(150);
+  const boxCentre = {
+    x: drawArea.x + drawArea.width * 0.45,
+    y: drawArea.y + drawArea.height * 0.33,
+  };
+  await dragTo(boxCentre.x, boxCentre.y, boxCentre.x + drawArea.width * 0.1, boxCentre.y + drawArea.height * 0.1);
+  const movedBox = (await savedEdit()).clean.find((layer) => !layer.tracklet_id).box;
+  assert(Math.abs(movedBox.x - drawnFirst.box.x) > 0.02, `the box did not move: ${JSON.stringify(movedBox)}`);
+  // The box is padded and sits in source space, so find its corner on the frame.
+  const cropW = (movedBox.x - drawnFirst.box.x) / 0.1;
+  const cropH = (movedBox.y - drawnFirst.box.y) / 0.1;
+  const corner = {
+    x: 0.55 + (movedBox.w / 2) / cropW,
+    y: 0.43 + (movedBox.h / 2) / cropH,
+  };
+  await dragTo(
+    drawArea.x + drawArea.width * corner.x, drawArea.y + drawArea.height * corner.y,
+    drawArea.x + drawArea.width * (corner.x + 0.1), drawArea.y + drawArea.height * (corner.y + 0.05),
+  );
+  const grownBox = (await savedEdit()).clean.find((layer) => !layer.tracklet_id).box;
+  assert(grownBox.w > movedBox.w + 0.02, `the box did not resize: ${JSON.stringify(grownBox)}`);
+
+  const cleanBar = await barEnd(".st-tl-bar-clean.is-drawn.is-timed");
   const stacked = await page.evaluate(() => {
     const bars = [...document.querySelectorAll(".st-tl-track-clean .st-tl-bar")];
     const box = (bar) => bar.getBoundingClientRect();
@@ -388,7 +409,7 @@ try {
     cleanBar.x + cleanBar.width - 2, cleanBar.y + cleanBar.height / 2,
     cleanBar.x + cleanBar.width * 0.6, cleanBar.y + cleanBar.height / 2,
   );
-  const shorter = await barEnd(".st-tl-bar-clean.is-timed");
+  const shorter = await barEnd(".st-tl-bar-clean.is-drawn.is-timed");
   assert(shorter.width < cleanBar.width - 4, "dragging the Clean bar's edge did not shorten it");
   const afterClean = await savedEdit();
   const drawnLayer = afterClean.clean.find((layer) => !layer.tracklet_id);
@@ -396,14 +417,14 @@ try {
   assert(savedRange && savedRange.end - savedRange.start < 4, `the Clean range was not saved: ${JSON.stringify(savedRange)}`);
 
   // A box shows only at its own time on the timeline.
-  await page.locator(".st-tl-bar-clean.is-timed").first().click();
+  await page.locator(".st-tl-bar-clean.is-drawn.is-timed").first().click();
   await page.waitForTimeout(250);
   assert(await page.locator("#st-box-method").isVisible(), "the selected box is not on the preview at its time");
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press("End");
   await page.waitForTimeout(250);
   assert(!(await page.locator("#st-box-method").isVisible()), "the box still shows past its time");
-  await page.locator(".st-tl-bar-clean.is-timed").first().click();
+  await page.locator(".st-tl-bar-clean.is-drawn.is-timed").first().click();
   await page.waitForTimeout(250);
   assert(await page.locator("#st-box-method").isVisible(), "selecting the layer did not go to its time");
 

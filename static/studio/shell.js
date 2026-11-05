@@ -10,7 +10,7 @@
 
 import { mount as mountImport } from "./import.js";
 import { mount as mountMoments } from "./stories.js";
-import { mount as mountEdit } from "./edit.js?v=20261105-9";
+import { mount as mountEdit } from "./edit.js?v=20261105-11";
 import { mount as mountFinish } from "./finish.js";
 import { mount as mountLibrary } from "./library.js";
 import { SOURCES_TAB } from "./library.js";
@@ -498,7 +498,8 @@ export function startStudio() {
       else next.check = "none";
       if (sets.status === "fulfilled") {
         const records = Array.isArray(sets.value?.clip_sets) ? sets.value.clip_sets : [];
-        next.stories = Number(records[0]?.stories?.length || 0);
+        // Every set counts, the full video too: each one can be edited and rendered.
+        next.stories = records.reduce((total, record) => total + Number(record?.stories?.length || 0), 0);
       }
     }
     if (seq !== watchSeq || jobId !== (currentJob?.id || "")) return jobState;

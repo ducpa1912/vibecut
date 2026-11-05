@@ -163,6 +163,6 @@ def test_saved_copies_of_a_layer_are_dropped_but_painted_ones_stay(tmp_path):
     assert out == ["a", "painted", "d"]
 
 
-def test_only_a_drawn_box_can_change_time_on_the_timeline():
+def test_every_clean_bar_can_change_time_on_the_timeline():
     source = (EDIT / "timeline.js").read_text(encoding="utf-8")
-    assert 'kind === "clean" ? item.drawn : (kind === "text" || kind === "effects")' in source
+    assert '(kind === "clean" || kind === "text" || kind === "effects")' in source

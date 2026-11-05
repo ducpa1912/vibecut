@@ -56,7 +56,6 @@ class CleanLayersBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tracklet_ids: list[str] | None = None
-    include_handles: bool = False
 
 
 class ResidualBody(BaseModel):
@@ -291,8 +290,8 @@ def cleanup_layers(job_id: str, body: CleanLayersBody) -> dict:
     """Build Edit Clean layers from the stored Check report.
 
     The rights attestation is read from the job, never from this request.
-    Watermarks and screen-recording UI text are returned as refusals; handles
-    and logos are only returned with an explicit ``include_handles`` opt-in.
+    Watermarks, handles and logos need the own-footage attestation; a kind the
+    policy blocks comes back in ``refused``.
     """
     app = _job_app()
     job = app.load_job(job_id)
@@ -314,7 +313,6 @@ def cleanup_layers(job_id: str, body: CleanLayersBody) -> dict:
         tracklets,
         attested=attested,
         selected=body.tracklet_ids,
-        include_handles=bool(body.include_handles),
         job=job,
     )
     return {

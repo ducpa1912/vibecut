@@ -74,6 +74,7 @@ export function mountLayersPanel(host, ctx) {
       button.addEventListener("click", () => {
         active = id;
         if (id === "zoom") ctx.showSceneHandles?.();
+        else ctx.releaseSceneHandles?.();
         ctx.setActiveLayer?.(id);
         signature = "";
         render();

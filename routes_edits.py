@@ -227,12 +227,9 @@ def _require_clean_rights(job: dict, edit: dict) -> None:
 
 
 _CLEAN_KIND_MESSAGES = {
-    "watermark": "Watermark removal is not supported. Use your original file.",
-    "screen_text": (
-        "Screen-recording text is never cleaned. Leave that Clean layer out."
-    ),
     "attestation_required": (
-        "Own-footage attestation is required for a handle or logo Clean layer."
+        "Own-footage attestation is required for a watermark, handle or logo "
+        "Clean layer."
     ),
     "rights_not_attested": (
         "Rights attestation is required before saving a Clean layer. "
@@ -283,7 +280,7 @@ def _require_clean_kinds(job: dict, edit: dict, job_dir=None) -> None:
         # The lock itself is enforced on Clean saves by _require_clean_rights.
         # This pass only enforces the hard kind rules on every save, so a
         # colour or text edit never rewrites what an old Clean layer can do.
-        if blocked not in {"watermark", "screen_text", "attestation_required"}:
+        if blocked != "attestation_required":
             continue
         raise HTTPException(
             409,

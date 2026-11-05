@@ -922,7 +922,7 @@ def _clean_body(*layers) -> dict:
     }
 
 
-def test_clean_save_refuses_watermark_and_screen_text(edit_api):
+def test_clean_save_needs_the_tick_for_a_watermark_and_allows_screen_text(edit_api):
     detect.write_report(edit_api.directory, {
         "schema": 1, "status": "ready", "complete": True,
         "tracklets": [
@@ -931,43 +931,19 @@ def test_clean_save_refuses_watermark_and_screen_text(edit_api):
                 "box": {"x": 0.8, "y": 0.05, "w": 0.15, "h": 0.06},
                 "ranges": [{"start": 0.0, "end": 10.0}],
             },
-            {
-                "id": "trk_ui", "kind": "screen_text",
-                "box": {"x": 0.05, "y": 0.03, "w": 0.2, "h": 0.05},
-                "ranges": [{"start": 0.0, "end": 10.0}],
-            },
         ],
     })
     watermark = {
-        "kind": "plate",
+        "kind": "blur",
         "box": {"x": 0.8, "y": 0.05, "w": 0.15, "h": 0.06},
         "tracklet_id": "trk_water",
         "tracklet_kind": "watermark",
     }
-    screen = {
-        "kind": "blur",
-        "box": {"x": 0.05, "y": 0.03, "w": 0.2, "h": 0.05},
-        "tracklet_id": "trk_ui",
-        "tracklet_kind": "screen_text",
-    }
-    refused_water = edit_api.client.post(
+    refused = edit_api.client.post(
         f"/api/jobs/{JOB_ID}/edits", json=_clean_body(watermark),
     )
-    assert refused_water.status_code == 409
-    assert "Watermark" in refused_water.json()["detail"]
-
-    refused_screen = edit_api.client.post(
-        f"/api/jobs/{JOB_ID}/edits", json=_clean_body(screen),
-    )
-    assert refused_screen.status_code == 409
-    assert "Screen-recording text" in refused_screen.json()["detail"]
-
-    no_kind = {key: value for key, value in watermark.items() if key != "tracklet_kind"}
-    inferred = edit_api.client.post(
-        f"/api/jobs/{JOB_ID}/edits", json=_clean_body(no_kind),
-    )
-    assert inferred.status_code == 409
-    assert "Watermark" in inferred.json()["detail"]
+    assert refused.status_code == 409
+    assert "watermark" in refused.json()["detail"]
 
 
 def test_clean_save_handle_needs_attestation_and_old_edits_still_save(edit_api):

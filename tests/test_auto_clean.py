@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app
+import cleanup
 import detect
 import edits
 import textfill
@@ -256,7 +257,7 @@ def test_a_saved_region_without_a_tracklet_id_is_not_added_again(env):
     )
 
 
-def test_watermark_and_screen_text_are_skipped_not_returned(env):
+def test_every_found_kind_is_returned(env):
     detect.write_report(env.directory, _report([
         _tracklet(
             "trk_water", "watermark",
@@ -266,6 +267,10 @@ def test_watermark_and_screen_text_are_skipped_not_returned(env):
             "trk_ui", "screen_text",
             {"x": 0.05, "y": 0.03, "w": 0.2, "h": 0.05}, text="Search",
         ),
+        _tracklet(
+            "trk_handle", "handle_or_logo",
+            {"x": 0.02, "y": 0.13, "w": 0.15, "h": 0.05}, text="@me",
+        ),
         _tracklet("trk_sub", "subtitle", {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.09}),
     ]))
 
@@ -273,32 +278,18 @@ def test_watermark_and_screen_text_are_skipped_not_returned(env):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["added"] == 1
-    assert [layer["tracklet_id"] for layer in body["layers"]] == ["trk_sub"]
-    skipped = {item["tracklet_id"]: item for item in body["skipped"]}
-    assert set(skipped) == {"trk_water", "trk_ui"}
-    assert skipped["trk_water"]["reason"] == detect.WATERMARK_MESSAGE
-    assert skipped["trk_ui"]["reason"] == detect.SCREEN_TEXT_MESSAGE
-    assert skipped["trk_water"]["kind"] == "watermark"
-    assert skipped["trk_ui"]["kind"] == "screen_text"
+    assert {layer["tracklet_id"] for layer in body["layers"]} == {
+        "trk_water", "trk_ui", "trk_handle", "trk_sub",
+    }
+    assert all(layer["kind"] in {"fill", "blur"} for layer in body["layers"])
+    # The words name a layer, unless an Edit could not save them.
+    assert {layer["label"] for layer in body["layers"]} >= {"TikTok", "Search", "@me"}
 
 
-def test_handles_need_the_opt_in(env):
-    detect.write_report(env.directory, _report([
-        _tracklet(
-            "trk_handle", "handle_or_logo",
-            {"x": 0.02, "y": 0.03, "w": 0.15, "h": 0.05}, text="@me",
-        ),
-    ]))
-    default = _call(env)
-    assert default.status_code == 200, default.text
-    assert default.json()["added"] == 0
-    assert default.json()["skipped"][0]["tracklet_id"] == "trk_handle"
-
-    opt_in = _call(env, include_handles=True)
-    assert opt_in.status_code == 200, opt_in.text
-    assert opt_in.json()["added"] == 1
-    assert opt_in.json()["layers"][0]["kind"] in {"fill", "blur"}
+def test_a_label_an_edit_refuses_gets_a_plain_name():
+    assert cleanup._text_label("free avatar  maker") == "On-screen text"
+    assert cleanup._text_label("") == "On-screen text"
+    assert cleanup._text_label("hello   there") == "hello there"
 
 
 def test_missing_report_is_a_404(env):

@@ -148,7 +148,7 @@ def test_a_scene_scan_with_no_earlier_report_changes_nothing():
 
 def test_this_scene_only_filters_a_whole_video_scan():
     assert "!report?.scope || reportMatchesScene(ctx.getSceneRange?.())" in CLEAN
-    assert '"Scan video again"' in CLEAN
+    assert '"Scan again"' in CLEAN
 
 
 def test_test_one_second_goes_to_the_layer_first():
@@ -177,8 +177,8 @@ def test_drawn_boxes_have_their_own_colour():
 
 
 def test_the_wording_does_not_say_remove():
-    assert '"Delete layer"' in CLEAN
-    assert '"Clean all found text"' in CLEAN
+    assert '"Delete this layer"' in CLEAN
+    assert '`Clean ${ticked.length}`' in CLEAN
     assert 'text: "Remove layer"' not in CLEAN
 
 

@@ -253,14 +253,14 @@ def _fake_extract(monkeypatch, duration: float, create: int | None = None):
     return calls
 
 
-def test_extract_text_frames_uses_half_fps_and_reports_windows(monkeypatch, tmp_path):
+def test_extract_text_frames_reads_two_a_second_and_reports_windows(monkeypatch, tmp_path):
     calls = _fake_extract(monkeypatch, 20.0)
     frames = pipeline.extract_text_frames("/tmp/source.mp4", tmp_path, 20.0)
-    assert len(frames) == 10
+    assert len(frames) == 40
     assert frames[0]["start"] == 0.0
-    assert frames[1]["start"] == 2.0
+    assert frames[1]["start"] == 0.5
     assert frames[-1]["end"] == 20.0
-    assert "fps=0.5000" in calls["cmd"][calls["cmd"].index("-vf") + 1]
+    assert "fps=2.0000" in calls["cmd"][calls["cmd"].index("-vf") + 1]
 
 
 def test_extract_text_frames_lowers_cadence_for_long_sources(monkeypatch, tmp_path):
@@ -273,7 +273,7 @@ def test_extract_text_frames_lowers_cadence_for_long_sources(monkeypatch, tmp_pa
 
 
 def test_extract_text_frames_offsets_a_scene_window(monkeypatch, tmp_path):
-    calls = _fake_extract(monkeypatch, 20.0, create=2)
+    calls = _fake_extract(monkeypatch, 20.0, create=8)
     frames = pipeline.extract_text_frames(
         "/tmp/source.mp4", tmp_path, 20.0, start=4.0, end=8.0,
     )
@@ -374,15 +374,69 @@ def test_tracklet_contract_fields_and_ranges():
     }
     assert tracklet["id"].startswith("trk_")
     assert tracklet["kind"] == "subtitle"
-    assert tracklet["ranges"] == [{"start": 10.0, "end": 20.0}]
+    assert tracklet["ranges"] == [{"start": 9.0, "end": 19.0}]
     assert tracklet["box"] == box(0.1, 0.8, 0.8, 0.08)
     assert 0.0 <= tracklet["confidence"] <= 1.0
 
 
-def test_tracklet_ranges_merge_across_a_small_gap():
+def test_time_off_screen_is_not_covered():
     rows = subtitle_rows(3, start=0.0) + subtitle_rows(2, start=10.0)
     tracklets = detect.build_tracklets(observations(rows), 30.0, max_gap=5.0)
-    assert tracklets[0]["ranges"] == [{"start": 0.0, "end": 14.0}]
+    assert [item for tracklet in tracklets for item in tracklet["ranges"]] == [
+        {"start": 0.0, "end": 5.0}, {"start": 9.0, "end": 13.0},
+    ]
+
+
+def _timed_lines(*lines):
+    """Half-second samples: (text, x, w, first, last) for each line."""
+    observed = []
+    for text, x, w, first, last in lines:
+        t = first
+        while t <= last:
+            observed.append({
+                "text": text, "box": box(x, 0.8, w, 0.04), "confidence": 0.9,
+                "start": t, "end": t + 0.5, "t": t, "source": "sample",
+            })
+            t += 0.5
+    return observed
+
+
+def test_each_line_has_its_own_tight_box_and_time():
+    tracklets = detect.build_tracklets(_timed_lines(
+        ("the first line of words", 0.3, 0.4, 1.0, 3.0),
+        ("a very much longer second subtitle line here", 0.05, 0.9, 3.5, 6.0),
+    ), 30.0)
+    assert len(tracklets) == 2
+    short, long = tracklets
+    assert short["box"]["x"] == 0.3 and short["box"]["w"] == 0.4
+    assert long["box"]["x"] == 0.05 and long["box"]["w"] == 0.9
+    assert short["ranges"] == [{"start": 0.75, "end": 3.25}]
+    assert long["ranges"] == [{"start": 3.25, "end": 6.25}]
+    assert short["kind"] == long["kind"]
+    assert short["id"] != long["id"]
+
+
+def test_an_ocr_misread_stays_in_the_same_line():
+    tracklets = detect.build_tracklets(_timed_lines(
+        ("luckin coffee is here", 0.3, 0.4, 1.0, 2.0),
+        ("Iuckin coffee is here", 0.3, 0.4, 2.5, 3.0),
+    ), 30.0)
+    assert len(tracklets) == 1
+    assert tracklets[0]["ranges"] == [{"start": 0.75, "end": 3.25}]
+
+
+def test_a_scan_ignores_the_four_second_scene_readings(tmp_path):
+    job = job_record()
+    job["analysis"]["scenes"] = [{
+        "start": 0.0, "end": 20.0, "mid": 10.0, "ocr": "wide words",
+        "ocr_boxes": [{"text": "wide words", "box": box(0.0, 0.5, 1.0, 0.2), "confidence": 0.9}],
+    }]
+
+    def sampler(path, job_dir, duration, *, fps, max_frames):
+        return sample_payload(subtitle_rows(2, start=0.0))
+
+    report = detect.run_check("job1", job, tmp_path, sampler=sampler, audio_extractor=None)
+    assert all(item["box"]["w"] < 1.0 for item in report["tracklets"])
 
 
 def test_tracklet_ids_are_deterministic_by_time():
@@ -623,18 +677,15 @@ def test_unconfirmed_text_never_reports_a_clean_source():
     )
 
 
-def test_watermark_is_refused_and_never_prefilled():
+def test_watermark_is_flagged_and_can_be_cleaned():
     job = job_record()
     rows = [{"text": "TikTok", "box": box(0.84, 0.05, 0.13, 0.05), "confidence": 0.9}]
     report = report_for(job, [(index * 2.0, rows) for index in range(4)])
-    assert report["policy"]["watermark_refused"] == [report["tracklets"][0]["id"]]
-    assert report["policy"]["refusals"][0]["message"] == detect.WATERMARK_MESSAGE
-    assert report["clean_prefill"][0]["action"] == "refused"
-    assert report["clean_prefill"][0]["enabled"] is False
+    assert report["clean_prefill"][0]["action"] != "refused"
     warning = next(
         item for item in report["warnings"] if item["code"] == "watermark_detected"
     )
-    assert warning["severity"] == "blocker"
+    assert warning["severity"] == "warning"
 
 
 def test_handle_requires_attestation_and_stays_disabled():
@@ -676,10 +727,10 @@ def test_cleanup_block_reason_keys_on_the_detected_kind():
     locked = {"rights": {"lock": True}}
     assert detect.cleanup_block_reason(
         "watermark", attested=True, settings=locked,
-    ) == "watermark"
+    ) is None
     assert detect.cleanup_block_reason(
         "watermark", attested=False, settings=locked,
-    ) == "watermark"
+    ) == "attestation_required"
     assert (
         detect.cleanup_block_reason(
             "handle_or_logo", attested=False, settings=locked,
@@ -722,7 +773,7 @@ def test_prefill_opens_with_the_lock_off_but_keeps_the_hard_rules():
     by_id = {item["tracklet_id"]: item for item in entries}
     assert by_id["trk_sub"]["enabled"] is True
     assert by_id["trk_sub"]["blocked"] is None
-    assert by_id["trk_water"]["action"] == "refused"
+    assert by_id["trk_water"]["blocked"] == "attestation_required"
     assert by_id["trk_water"]["enabled"] is False
     assert by_id["trk_handle"]["blocked"] == "attestation_required"
     assert by_id["trk_handle"]["enabled"] is False
@@ -814,7 +865,7 @@ def test_run_check_samples_text_and_persists(tmp_path):
     report = detect.run_check(
         "job1", job, tmp_path, sampler=sampler, audio_extractor=None,
     )
-    assert calls == {"path": job["source"]["path"], "duration": 20.0, "fps": 0.5}
+    assert calls == {"path": job["source"]["path"], "duration": 20.0, "fps": 2.0}
     assert report["tracklets"][0]["kind"] == "subtitle"
     stored = detect.load_report(tmp_path)
     assert stored == report

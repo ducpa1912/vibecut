@@ -364,6 +364,7 @@ export function mount(root, ctx) {
     button.disabled = true;
     try {
       const result = await openFullVideo(job.id);
+      await ctx.refreshSteps?.();
       localStorage.setItem(EDIT_CHOICE_KEY, JSON.stringify({
         setId: result.clip_set.id,
         storyId: result.story.id,

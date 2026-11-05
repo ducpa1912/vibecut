@@ -49,13 +49,9 @@ def _job(attested: bool | None) -> dict:
 
 
 def _expected(lock: bool, kind: str, attested: bool) -> str | None:
-    if kind == "watermark":
-        return "watermark"
-    if kind == "screen_text":
-        return "screen_text"
     if attested:
         return None
-    if kind == "handle_or_logo":
+    if kind in ("handle_or_logo", "watermark"):
         return "attestation_required"
     return "rights_not_attested" if lock else None
 
@@ -70,13 +66,13 @@ def test_clean_matrix_lock_on_off_kind_attested(lock, kind, attested):
 
 
 @pytest.mark.parametrize("lock", [True, False])
-def test_watermark_and_screen_text_never_depend_on_the_lock(lock):
+def test_watermark_needs_the_tick_with_the_lock_on_or_off(lock):
     assert rights.clean_block_reason(
         "watermark", job=_job(True), settings=_settings(lock),
-    ) == "watermark"
+    ) is None
     assert rights.clean_block_reason(
-        "screen_text", job=_job(True), settings=_settings(lock),
-    ) == "screen_text"
+        "watermark", job=_job(False), settings=_settings(lock),
+    ) == "attestation_required"
 
 
 @pytest.mark.parametrize("lock", [True, False])
@@ -121,8 +117,8 @@ def test_policy_shape_without_a_job(monkeypatch, tmp_path):
     assert policy["attested"] is False
     assert policy["needs_import_tick"] is True
     assert set(policy["clean"]) == set(KINDS)
-    assert policy["clean"]["watermark"] == "watermark"
-    assert policy["clean"]["screen_text"] == "screen_text"
+    assert policy["clean"]["watermark"] == "attestation_required"
+    assert policy["clean"]["screen_text"] == "rights_not_attested"
     assert policy["clean"]["handle_or_logo"] == "attestation_required"
     assert policy["clean"]["subtitle"] == "rights_not_attested"
 
@@ -144,12 +140,9 @@ def test_policy_reads_the_job_and_the_saved_setting(monkeypatch, tmp_path):
 
 
 def test_detect_cleanup_block_reason_is_a_thin_compatible_wrapper():
-    assert detect.cleanup_block_reason("watermark", attested=True) == "watermark"
-    assert detect.cleanup_block_reason("watermark", attested=False) == "watermark"
-    assert (
-        detect.cleanup_block_reason("screen_text", attested=True)
-        == "screen_text"
-    )
+    assert detect.cleanup_block_reason("watermark", attested=True) is None
+    assert detect.cleanup_block_reason("watermark", attested=False) == "attestation_required"
+    assert detect.cleanup_block_reason("screen_text", attested=True) is None
     assert (
         detect.cleanup_block_reason("handle_or_logo", attested=False)
         == "attestation_required"
@@ -191,7 +184,7 @@ def test_detect_prefill_follows_the_lock_but_keeps_the_hard_rules():
     )
     blocked = {item["tracklet_id"]: item["blocked"] for item in locked}
     assert blocked["trk_sub"] == "rights_not_attested"
-    assert blocked["trk_water"] == "watermark"
+    assert blocked["trk_water"] == "attestation_required"
     assert blocked["trk_handle"] == "attestation_required"
     assert all(not item["enabled"] for item in locked)
 
@@ -201,7 +194,7 @@ def test_detect_prefill_follows_the_lock_but_keeps_the_hard_rules():
     by_id = {item["tracklet_id"]: item for item in open_prefill}
     assert by_id["trk_sub"]["enabled"] is True
     assert by_id["trk_sub"]["blocked"] is None
-    assert by_id["trk_water"]["action"] == "refused"
+    assert by_id["trk_water"]["blocked"] == "attestation_required"
     assert by_id["trk_water"]["enabled"] is False
     assert by_id["trk_handle"]["blocked"] == "attestation_required"
     assert by_id["trk_handle"]["enabled"] is False
@@ -214,7 +207,7 @@ def test_cleanup_layer_builder_follows_the_lock():
     )
     assert locked["layers"] == []
     assert {item["blocked"] for item in locked["refused"]} >= {
-        "rights_not_attested", "watermark", "attestation_required",
+        "rights_not_attested", "attestation_required",
     }
 
     open_build = cleanup.tracklet_clean_layers(
@@ -222,7 +215,7 @@ def test_cleanup_layer_builder_follows_the_lock():
     )
     assert [layer["id"] for layer in open_build["layers"]] == ["cl_trk_sub"]
     refused = {item["tracklet_id"]: item["blocked"] for item in open_build["refused"]}
-    assert refused["trk_water"] == "watermark"
+    assert refused["trk_water"] == "attestation_required"
     assert refused["trk_handle"] == "attestation_required"
 
 
@@ -398,7 +391,7 @@ def test_job_get_and_policy_route_expose_the_policy(env):
     job = env.client.get(f"/api/jobs/{created.json()['id']}").json()
     assert job["rights_policy"]["attested"] is True
     assert job["rights_policy"]["needs_import_tick"] is False
-    assert job["rights_policy"]["clean"]["watermark"] == "watermark"
+    assert job["rights_policy"]["clean"]["watermark"] is None
 
 
 def test_settings_round_trip_and_validation(env):

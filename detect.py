@@ -8,7 +8,7 @@ The module is pure planning data. It reads a job's stored analysis, optional
 * ``audio`` — speech coverage and a music estimate;
 * ``faces`` and ``quality`` — existing evidence plus simple thresholds;
 * ``recommendation`` — ``clean_then_compose`` / ``compose`` / ``music_first``;
-* ``clean_prefill`` — advisory Clean layer entries, including refusals;
+* ``clean_prefill`` — advisory Clean layer entries;
 * ``warnings`` and ``policy`` — the kind and rights gates.
 
 Policy is keyed on the detected kind, never on a caller label:
@@ -23,6 +23,7 @@ frame reader and audio extractor are injected by ``routes_check``.
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 import hashlib
 import inspect
 import json
@@ -43,10 +44,16 @@ SCHEMA_VERSION = 1
 REPORT_DIR = "check"
 REPORT_FILE = "source_report.json"
 
-DEFAULT_SAMPLE_FPS = 0.5
+# A subtitle changes every few seconds, so the scan reads two frames a second.
+# That puts each edge of a text's time within a quarter second.
+DEFAULT_SAMPLE_FPS = 2.0
 DEFAULT_MAX_FRAMES = 3600
 TRACKLET_MAX_GAP = 4.5
-MAX_TRACKLETS = 160
+# Each line of text is its own tracklet, so a long video has many.
+MAX_TRACKLETS = 1000
+# Two readings are one line when this much of the words match; OCR misreads a
+# few characters from frame to frame.
+LINE_MATCH = 0.6
 MAX_RANGES = 200
 
 KINDS = rights.KINDS
@@ -805,6 +812,91 @@ def _keep_text_outside_scope(report: dict, previous: dict | None, start: float, 
         report.pop("scope", None)
 
 
+def _same_line(first: str, second: str) -> bool:
+    """Two readings of one line, allowing for OCR misreads."""
+    a, b = _normalized_text(first), _normalized_text(second)
+    if not a or not b or a == b:
+        return True
+    return SequenceMatcher(None, a, b, autojunk=False).ratio() >= LINE_MATCH
+
+
+def _line_runs(values: list[dict]) -> list[list[dict]]:
+    """Split one area's readings into the separate lines shown in it.
+
+    A new run starts when the words change, the box moves away, or the text
+    leaves the screen for longer than one missed frame.
+    """
+    runs: list[list[dict]] = []
+    for value in values:
+        last = runs[-1] if runs else None
+        if last is not None:
+            window = max(0.001, float(value["end"]) - float(value["start"]))
+            words = max((item["text"] for item in last), key=len)
+            if (
+                float(value["start"]) - float(last[-1]["end"]) <= 1.5 * window
+                and _same_line(value["text"], words)
+                and _similar(value["box"], last[-1]["box"]) > 0
+            ):
+                last.append(value)
+                continue
+        runs.append([value])
+    return runs
+
+
+def _run_range(run: list[dict], duration: float) -> dict:
+    """The time a line is on screen, from the frames that read it.
+
+    A sampled frame says the text was there at that moment, and it changed
+    somewhere between two frames, so each edge sits half a frame away.
+    """
+    start = float(run[0]["start"])
+    end = float(run[-1]["end"])
+    if run[0].get("source") == "sample":
+        half = (float(run[0]["end"]) - float(run[0]["start"])) / 2.0
+        start = max(0.0, start - half)
+        end = max(start + 0.001, float(run[-1]["start"]) + half)
+    if duration > 0:
+        end = min(duration, end)
+    return {"start": round(start, 3), "end": round(end, 3)}
+
+
+def _line_tracklets(item: dict, values: list[dict], duration: float) -> list[dict]:
+    """One tracklet per line, each with its own tight box and time."""
+    lines: list[list[list[dict]]] = []
+    for run in _line_runs(values):
+        words = _normalized_text(max((value["text"] for value in run), key=len, default=""))
+        home = next(
+            (
+                line for line in lines
+                if words and words == _normalized_text(
+                    max((value["text"] for value in line[0]), key=len, default=""),
+                )
+            ),
+            None,
+        )
+        if home is None:
+            lines.append([run])
+        else:
+            home.append(run)
+    out = []
+    for line in lines:
+        seen = [value for run in line for value in run]
+        box = dict(seen[0]["box"])
+        for value in seen[1:]:
+            box = _union(box, value["box"])
+        spans = [_run_range(run, duration) for run in line]
+        out.append({
+            **item,
+            "box": box,
+            "ranges": spans,
+            "text_sample": max((value["text"] for value in seen), key=len, default="")[:80],
+            "samples": len({int(value["start"] // 2.0) for value in seen}),
+            "duration": round(sum(span["end"] - span["start"] for span in spans), 3),
+            "approximate": any(value.get("approximate") for value in seen),
+        })
+    return out
+
+
 def build_tracklets(
     observations: Iterable[dict],
     duration: float,
@@ -838,7 +930,9 @@ def build_tracklets(
             "ranges": ranges,
             "text_sample": text_sample,
             "confidence": round(confidence, 3),
-            "samples": len(values),
+            # In two-second steps, whatever the scan's rate: classify() counts
+            # how long text lasted, not how often it was read.
+            "samples": len({int(value["start"] // 2.0) for value in values}),
             "duration": round(observed, 3),
             "approximate": any(value.get("approximate") for value in values),
             "screen_frame": (
@@ -855,7 +949,7 @@ def build_tracklets(
             0.6 * confidence + 0.4 * rule
             + (0.05 if len(values) >= 3 else 0.0),
         ), 3)
-        items.append(item)
+        items.extend(_line_tracklets(item, values, duration))
     items.sort(key=lambda value: (
         value["ranges"][0]["start"] if value["ranges"] else 0.0,
         value["box"]["y"], value["box"]["x"],
@@ -1252,24 +1346,6 @@ def clean_prefill(
             ),
         }
         entry["enabled"] = entry["blocked"] is None
-        if kind == "watermark":
-            entry.update({
-                "action": "refused",
-                "enabled": False,
-                "blocked": "watermark",
-                "reason": WATERMARK_MESSAGE,
-            })
-            entries.append(entry)
-            continue
-        if kind == "screen_text":
-            entry.update({
-                "action": "none",
-                "enabled": False,
-                "blocked": "screen_text",
-                "reason": SCREEN_TEXT_MESSAGE,
-            })
-            entries.append(entry)
-            continue
         if kind == "handle_or_logo":
             edge = (
                 box["x"] + box["w"] <= 0.28
@@ -1333,7 +1409,7 @@ def _report_warnings(
     if watermarks:
         warnings.append({
             "code": "watermark_detected",
-            "severity": "blocker",
+            "severity": "warning",
             "message": WATERMARK_MESSAGE,
             "tracklet_ids": watermarks,
         })
@@ -1627,7 +1703,7 @@ def build_report(
     if not text["confirmed"]:
         reasons.append("Text presence is unconfirmed.")
     if watermark_tracklets:
-        reasons.append("A platform mark was found; it cannot be cleaned.")
+        reasons.append("A platform mark was found.")
 
     prefill = clean_prefill(
         tracklets, attested=attested, job=job, settings=settings,
@@ -1636,21 +1712,11 @@ def build_report(
         "clean_allowed": bool(attested or not rights.lock_enabled(settings)),
         "rights_attested": bool(attested),
         "attestation_source": attestation_source,
-        "watermark_refused": [item["id"] for item in watermark_tracklets],
         "handle_or_logo_ids": [item["id"] for item in handle_tracklets],
         "screen_text_ids": [item["id"] for item in screen_text_tracklets],
         "requires_attestation": [
-            item["id"] for item in handle_tracklets
+            item["id"] for item in [*handle_tracklets, *watermark_tracklets]
         ] if not attested else [],
-        "refusals": [
-            {
-                "tracklet_id": item["id"],
-                "kind": item["kind"],
-                "reason": "watermark",
-                "message": WATERMARK_MESSAGE,
-            }
-            for item in watermark_tracklets
-        ],
     }
     warnings = _report_warnings(
         tracklets,
@@ -1758,11 +1824,9 @@ def state_report(job: dict, state: str, *, error: str | None = None) -> dict:
         "policy": {
             "clean_allowed": False,
             "rights_attested": False,
-            "watermark_refused": [],
             "handle_or_logo_ids": [],
             "screen_text_ids": [],
             "requires_attestation": [],
-            "refusals": [],
         },
         "rights": {"attested": False, "source": None},
         "warnings": [],
@@ -1868,6 +1932,10 @@ def run_check(
             sampled_error = str(exc)[:300]
             payload = None
         frames, vision, count, used_fps = _sampler_payload(payload)
+        # Scene readings are one still with a four-second window. Once the timed
+        # pass has read the frames they only stretch the text's time and box.
+        if vision and count:
+            observations = []
         observations.extend(observations_from_samples(frames))
         sampled = {
             "ran": True,

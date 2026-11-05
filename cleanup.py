@@ -30,7 +30,12 @@ EXPLICIT_CONFIDENCE = 1.0
 SUPPORTED_METHODS = ("blur", "cover", "crop")
 SUPPORTED_ASPECTS = ("9:16", "4:5", "1:1", "16:9", "16:10")
 CLEAN_LAYER_KINDS = ("crop_guard", "blur", "plate", "mask", "delogo")
-MAX_CLEAN_LAYERS = 32
+MAX_CLEAN_LAYERS = 1000
+# Words edits.py refuses in a label; what a video shows can contain them.
+_LABEL_FORBIDDEN_RE = re.compile(
+    r"inpaint|generative|delogo|watermark|voice[\s_-]*clon|avatar|stock[\s_-]*b-?roll",
+    re.IGNORECASE,
+)
 MAX_LAYER_RANGES = 64
 RESIDUAL_TARGET_PCT = 0.5
 # Hard server cap. The route rejects larger requests and the sampling helper
@@ -264,6 +269,14 @@ def _tracklet_layer_id(tracklet: dict, used: set[str]) -> str:
     return _unique_layer_id(f"cl_{safe}", used)
 
 
+def _text_label(text: Any) -> str:
+    """The words on screen name a layer, unless an Edit could not save them."""
+    label = " ".join(str(text or "").split())[:80]
+    if not label or _LABEL_FORBIDDEN_RE.search(label):
+        return "On-screen text"
+    return label
+
+
 def _layer_ranges(tracklet: dict) -> list[dict]:
     ranges = []
     for item in tracklet.get("ranges") or []:
@@ -292,16 +305,14 @@ def tracklet_clean_layers(
     *,
     attested: bool | None = None,
     selected: Iterable[str] | None = None,
-    include_handles: bool = False,
     job: dict | None = None,
     settings: dict | None = None,
 ) -> dict:
     """Turn Check tracklets into Edit Clean layers, gated by detected kind.
 
-    ``rights.clean_block_reason`` is the single gate. Watermarks and
-    screen-recording UI text never produce a layer. Handles and logos need an
-    own-footage attestation plus an explicit ``include_handles`` opt-in.
-    Every other kind follows the stored ``rights.lock`` setting.
+    ``rights.clean_block_reason`` is the single gate. Watermarks, handles and
+    logos need an own-footage attestation. Every other kind follows the stored
+    ``rights.lock`` setting.
 
     Boxes are source-normalized and ranges are absolute source times, matching
     the Edit Clean coordinate contract. The returned dict carries ``layers``,
@@ -348,32 +359,14 @@ def tracklet_clean_layers(
         if blocked or action not in CLEAN_LAYER_KINDS:
             if blocked:
                 reason = entry.get("reason") or detect.RIGHTS_MESSAGE
-            elif kind == "screen_text":
-                reason = detect.SCREEN_TEXT_MESSAGE
-            elif kind == "watermark":
-                reason = detect.WATERMARK_MESSAGE
             else:
                 reason = "This tracklet has no supported Clean action."
             refused.append({
                 "tracklet_id": tracklet_id,
                 "kind": kind,
                 "action": action,
-                "blocked": blocked or (
-                    "screen_text" if kind == "screen_text" else "unsupported"
-                ),
+                "blocked": blocked or "unsupported",
                 "reason": reason,
-            })
-            continue
-        if kind == "handle_or_logo" and not include_handles:
-            refused.append({
-                "tracklet_id": tracklet_id,
-                "kind": kind,
-                "action": action,
-                "blocked": "opt_in_required",
-                "reason": (
-                    "Own handle or logo. Off by default; enable it explicitly "
-                    "for your own footage."
-                ),
             })
             continue
         if len(layers) >= MAX_CLEAN_LAYERS:
@@ -402,9 +395,8 @@ def tracklet_clean_layers(
             "color": "#000000",
             "opacity": 1.0,
             "radius": radius,
-            "label": _LAYER_LABELS.get(
-                (kind, action), f"Burned-in {kind.replace('_', ' ')}"
-            )[:80],
+            # The words name the layer, in the list and on the timeline.
+            "label": _text_label(samples.get(tracklet_id)),
             # Optional provenance. The layer's own ``kind`` is the cleanup
             # method, so the detected Check kind travels as ``tracklet_kind``.
             # Edit save re-checks it against the rights policy.
@@ -487,8 +479,9 @@ def _same_scan_text(first: dict, second: dict) -> bool:
     ranges_a, ranges_b = _layer_ranges(first), _layer_ranges(second)
     if not ranges_a or not ranges_b:
         return True
+    # Lines that follow each other can touch; only a real overlap is one text.
     return any(
-        a["start"] < b["end"] and b["start"] < a["end"]
+        min(a["end"], b["end"]) - max(a["start"], b["start"]) > 0.05
         for a in ranges_a for b in ranges_b
     )
 

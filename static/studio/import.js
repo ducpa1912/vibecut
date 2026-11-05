@@ -68,9 +68,7 @@ export function cleanBlockReason(policy, kind) {
 }
 
 export const CLEAN_REASON_TEXT = {
-  watermark: "This platform watermark is never removed. Use the original file.",
-  screen_text: "Screen interface text is left alone; it is never cleaned.",
-  attestation_required: "This handle or logo needs the per-video 'this is mine' tick.",
+  attestation_required: "This watermark, handle or logo needs the per-video 'this is mine' tick.",
   rights_not_attested: "Confirm you own this footage or have the rights to it before cleaning.",
 };
 
@@ -353,7 +351,7 @@ export function mount(root, ctx) {
     } else {
       dom.note.textContent = needsTick
         ? "Import starts reading the video. Moments unlock when it finishes."
-        : "The rights lock is off, so import starts straight away. Watermarks are never removed.";
+        : "The rights lock is off, so import starts straight away.";
     }
   }
 

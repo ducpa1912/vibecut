@@ -2138,6 +2138,10 @@ export function mountPreview(root, options = {}) {
       draw();
     },
     setTool,
+    /** Moving the scene would swallow clicks meant for a Clean box. */
+    releaseMove() {
+      if (state.tool === "move" || state.tool === "area") setTool("select");
+    },
     startPaint(layerId, radius = 0.025) {
       state.paintLayerId = String(layerId || "");
       state.paintRadius = Math.max(0.005, Math.min(0.2, Number(radius) || 0.025));
