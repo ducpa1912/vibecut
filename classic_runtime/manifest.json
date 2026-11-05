@@ -33,9 +33,9 @@
   },
   {
    "path": "app.py",
-   "source": "classic: Source Clean backend (Phase 1)",
-   "sha256": "5508edb26a25ec80bdef1fab0610dec1db4aefe9c1c5eeb3545e02d8601ec065",
-   "feature_version": "1.0.4"
+   "source": "studio 6a6bf58: keep AI fill work when a render stops",
+   "sha256": "56098c8b75c481faf83422c7e395e2aa0ef5a5c145a612024fedd3cd2b645ce5",
+   "feature_version": "1.0.5"
   },
   {
    "path": "artifacts.py",
@@ -69,9 +69,9 @@
   },
   {
    "path": "clean_source.py",
-   "source": "classic: Source Clean honesty fixes",
-   "sha256": "241b26432d6b12da8448236754f2aae392c4d12ecaa54d24661412c362f146ee",
-   "feature_version": "1.0.6"
+   "source": "studio 6a6bf58: keep AI fill work when a render stops",
+   "sha256": "6b8960c44b6c6ab1d77e68e5ea778814d5903c4397bc7a405ae1104764b414db",
+   "feature_version": "1.0.7"
   },
   {
    "path": "cleanup.py",
@@ -201,9 +201,9 @@
   },
   {
    "path": "render.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "2fc522b25df43b4b14d81f7cb6b80ba28d3f2a9e029787042551df78c4e7faba",
-   "feature_version": "1.0.3"
+   "source": "studio 6a6bf58: keep AI fill work when a render stops",
+   "sha256": "57f868e35616c20026ed081696b5fb3fe3bb029573ed527e2017aedd859a0b1f",
+   "feature_version": "1.0.4"
   },
   {
    "path": "requirements-optional.txt",
@@ -303,9 +303,9 @@
   },
   {
    "path": "story_queue.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "9e7b0c359c06e84e6049f989f9ff0148bb96ef28573d65790c32c300875b3682",
-   "feature_version": "1.0.2"
+   "source": "studio 6a6bf58: keep AI fill work when a render stops",
+   "sha256": "f2eab3188e720ced8e36a54f637606d5d4c4a0986c58227150fda68676ae2f5b",
+   "feature_version": "1.0.3"
   },
   {
    "path": "stt.py",
@@ -315,9 +315,9 @@
   },
   {
    "path": "textfill/__init__.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "a105ff591bb0109a80f4d54577c73bd6bf199c74210e38e5f09dcd4ccf911ef7",
-   "feature_version": "1.0.3"
+   "source": "studio 6a6bf58: keep AI fill work when a render stops",
+   "sha256": "a3e833e8d50f86fe24e5d699860430f12379705024bf535091039bb93d06f263",
+   "feature_version": "1.0.4"
   },
   {
    "path": "textfill/lama.py",

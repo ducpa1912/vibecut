@@ -352,11 +352,17 @@ def _started(job_id: str, layers: list[dict]) -> dict:
             **base,
         )
         task = POOL.submit(
-            run, job_id, visible, key, engine, check_seconds,
+            _run_awake, job_id, visible, key, engine, check_seconds,
             task_kind="source-clean", task_key=job_id,
         )
         _set(job_id, task_id=task.id)
         return _record(app.load_job(job_id))
+
+
+def _run_awake(*args, **kwargs) -> dict:
+    """A whole video can fill for hours, so the Mac must not idle to sleep."""
+    with render.keep_awake():
+        return run(*args, **kwargs)
 
 
 def start(job_id: str, layers: list[dict]) -> dict:

@@ -157,7 +157,7 @@ Send me pass or fail for each step, what you saw, any times you measured, and an
 | 6.7 | Click **Open in Smart Cut** on a story | Story to Classic | The Classic result view opens with the story's clips on the timeline and a manual-cut note. | |
 | 6.8 | Edit a sentence order or exclude a sentence, then click **Save edits** | Save Clip Set changes | The card keeps the new order and the meta line updates. | |
 | 6.9 | Click **Queue stories** with a 3-story set | Queue three stories | **Queue stories** opens the Queue tab and a toast says **3 stories queued.** The queue runs one story at a time. | |
-| 6.10 | On a fresh queue, click **Pause**, then **Resume** | Queue pause and resume | Pause says the current story keeps rendering; Resume continues with no duplicate artifact. | |
+| 6.10 | On a fresh queue, click **Pause**, then **Resume** | Queue pause and resume | Pause stops the running story within seconds and says Resume keeps the work already done. Resume starts that story again with no duplicate artifact. | |
 | 6.11 | On a fresh queue, click **Cancel** | Queue cancel | The queue says **Cancelled**; waiting items are cancelled and the running render stops. | |
 | 6.12 | Click **Queue stories** twice quickly on the same set | No duplicate queue | The second click attaches to the active queue. No failed row and no Version 2 appear. | |
 
@@ -243,6 +243,8 @@ Added on 2026-11-05 from what Studio learned. **No real video has run on this co
 | 9A.9 | Play it where something moves behind the text. | Note any smear. LaMa fills each frame alone, so tighter boxes reduce this but do not end it. | |
 | 9A.10 | Scan a still shot and a moving shot, render both, and note the time for each. | The scan plans each line, so the still shot is much faster per frame. Note any frozen patch on it and any smear on the moving one. **Write both times here.** |  |
 | 9A.11 | Open a job you cleaned earlier with an STTN box, if you have one. Render it. | It opens and renders with LaMa, with no error. | |
+| 9A.12 | Restart the server. Queue a story with AI fill, wait for several percent, click **Pause**, then **Resume**. | Pause stops within seconds. Resume climbs fast back to where it was, the message counts saved fills reused, then the time left appears. **Write the time to catch up here,** and note whether the join shows in the result. | |
+| 9A.13 | During a fill, stop the server. Start it again, then click **Resume**. | Same as 9A.12: the work is not lost. The Mac does not sleep during a render unless the lid is closed. | |
 
 ## 10. Known issues
 

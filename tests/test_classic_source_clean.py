@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import threading
+from contextlib import contextmanager
 import time
 from concurrent.futures import Future
 from pathlib import Path
@@ -1189,3 +1190,19 @@ def test_source_render_real_clip_keeps_size_audio_and_caches(
     again = _render_source(client, job, [_blur_box()])
     assert again.status_code == 200, again.text
     assert again.json()["cached"] is True
+
+
+def test_a_clean_video_render_keeps_the_mac_awake(monkeypatch):
+    seen = []
+
+    @contextmanager
+    def awake():
+        seen.append("awake")
+        yield
+        seen.append("may sleep")
+
+    monkeypatch.setattr(clean_source.render, "keep_awake", awake)
+    monkeypatch.setattr(clean_source, "run", lambda *args, **kwargs: seen.append("run") or {"ok": True})
+    assert clean_source._run_awake("job") == {"ok": True}
+    assert seen == ["awake", "run", "may sleep"]
+

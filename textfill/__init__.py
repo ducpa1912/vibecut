@@ -491,6 +491,117 @@ def lama_plan(layers, *, start: float, fps: float, frames: int):
     return plan_for
 
 
+# Model results kept on disk while a clip is unfinished, next to its .part file.
+SAVED_DIR = "saved"
+SAVED_MAX_AGE = 14 * 24 * 3600
+SAVED_MAX_BYTES = 2 * 1024 ** 3
+
+
+def _remove_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        LOGGER.warning("could not remove %s: %s", path.name, exc)
+
+
+class _SavedFills:
+    """Keeps each model result on disk, so a stopped render does not lose it.
+
+    A fill is named by what went in: the model, the crop's pixels and the hole.
+    The same frames and boxes ask the same questions in the same order, so after
+    a stop the run replays and only the fills still missing reach the model. A
+    result that does not match is simply a miss, so nothing here can reuse a
+    wrong picture. Results go when the clip they built is finished.
+    """
+
+    def __init__(self, filler, directory: Path, stamp: str):
+        self.filler = filler
+        self.directory = Path(directory)
+        self.stamp = stamp
+        # Fills from before this run. A frame that repeats in this run is no resume.
+        self.hits = 0
+        self.used: set[Path] = set()
+        self.writable = True
+
+    def _path(self, area: np.ndarray, mask: np.ndarray) -> Path:
+        digest = hashlib.sha1(f"{VERSION}|{self.stamp}|{area.shape}".encode())
+        digest.update(area.tobytes())
+        digest.update(mask.tobytes())
+        return self.directory / f"{digest.hexdigest()}.npy"
+
+    def _read(self, path: Path, shape: tuple) -> np.ndarray | None:
+        try:
+            found = np.load(path, allow_pickle=False)
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError):
+            _remove_quietly(path)
+            return None
+        return found if found.shape == shape else None
+
+    def _write(self, path: Path, result: np.ndarray) -> None:
+        if not self.writable:
+            return
+        temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            with temporary.open("wb") as handle:
+                np.save(handle, result, allow_pickle=False)
+            os.replace(temporary, path)
+        except OSError as exc:
+            # A full disk costs the resume, never the render.
+            self.writable = False
+            LOGGER.warning("could not save AI fills: %s", exc)
+            _remove_quietly(temporary)
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        path = self._path(area, mask)
+        found = self._read(path, area.shape)
+        if found is not None:
+            if path not in self.used:
+                self.hits += 1
+            self.used.add(path)
+            return found
+        self.used.add(path)
+        result = self.filler.fill(area, mask)
+        self._write(path, result)
+        return result
+
+    def forget(self) -> None:
+        """The finished clip holds these now."""
+        for path in self.used:
+            _remove_quietly(path)
+        try:
+            self.directory.rmdir()
+        except OSError:
+            pass  # Other clips still have fills here, or it never existed.
+
+
+def _prune_saved(directory: Path, *, now: float | None = None) -> None:
+    """Drop what an abandoned edit left: anything old, then the oldest past the cap."""
+    now = time.time() if now is None else now
+    try:
+        rows = [(entry.stat().st_mtime, entry.stat().st_size, Path(entry.path)) for entry in os.scandir(directory)]
+    except OSError:
+        return
+    kept = []
+    try:
+        for changed, size, path in rows:
+            # Only one fill runs at a time, so a .tmp here belongs to a killed one.
+            if path.suffix == ".tmp" or now - changed > SAVED_MAX_AGE:
+                path.unlink(missing_ok=True)
+            else:
+                kept.append((changed, size, path))
+        total = sum(size for _changed, size, _path in kept)
+        for _changed, size, path in sorted(kept, key=lambda row: row[0]):
+            if total <= SAVED_MAX_BYTES:
+                break
+            path.unlink(missing_ok=True)
+            total -= size
+    except OSError as exc:
+        LOGGER.warning("could not tidy saved AI fills: %s", exc)
+
+
 class _CountedFiller:
     """Counts the work a filler does, in the units its speed is measured in."""
 
@@ -823,11 +934,14 @@ def prepare_span(
     ffmpeg: str = "ffmpeg",
     progress: Progress | None = None,
     cancel_event: threading.Event | None = None,
+    on_replay: Callable[[int], None] | None = None,
 ) -> dict | None:
     """Write (or reuse) a filled clip of ``[start, start + duration]``.
 
     Returns ``{"path", "key", "cached", "method"}``, or None when no fill
-    layer touches the span.
+    layer touches the span. ``on_replay`` gets the frames done before the model
+    first ran: after a stop they came from saved fills, so they say nothing
+    about how long the rest will take.
     """
     method = known_method(method)
     width = int(meta.get("width") or 0)
@@ -860,6 +974,7 @@ def prepare_span(
         return {"path": str(output), "key": key, "cached": True, "method": method}
     cache_dir.mkdir(parents=True, exist_ok=True)
     part = cache_dir / f".{key}.part.mp4"
+    saved = counted = None
 
     finder = None
     if text_mask_enabled():
@@ -893,8 +1008,11 @@ def prepare_span(
         _check_cancel(cancelled)
         if finder is not None:
             finder.forget_before(index)
+        if on_replay is not None and counted is not None and counted.runs == 0:
+            on_replay(index + 1)
         if progress and index % 10 == 0:
-            progress(min(1.0, (index + 1) / expected), f"{METHOD_COPY[method]} {index + 1}/{expected}")
+            reused = f" · {saved.hits} saved fills reused" if saved is not None and saved.hits else ""
+            progress(min(1.0, (index + 1) / expected), f"{METHOD_COPY[method]} {index + 1}/{expected}{reused}")
 
     # A cancel while another render holds the lock must not wait for it.
     _check_cancel(cancelled)
@@ -909,7 +1027,11 @@ def prepare_span(
         for stale in cache_dir.glob(".*.part.mp4"):
             stale.unlink(missing_ok=True)
         filler = _filler(method, path)
-        counted = filler = _CountedFiller(filler)
+        counted = _CountedFiller(filler)
+        _prune_saved(cache_dir / SAVED_DIR)
+        saved = filler = _SavedFills(
+            counted, cache_dir / SAVED_DIR, method_stamp(method, directory),
+        )
         plan_for = lama_plan(layers, start=start, fps=fps, frames=len(rect_table))
         reader = _Reader(ffmpeg, source, start, duration, fps, width, height)
         writer = _Writer(ffmpeg, part, fps, width, height)
@@ -941,11 +1063,13 @@ def prepare_span(
             raise FillError(f"AI fill could not write the clip. {detail}".strip())
         os.replace(part, output)
         took = time.monotonic() - started
+        saved.forget()
         LOGGER.info(
-            "fill span start=%.2f frames=%d runs=%d units=%.1f seconds=%.1f per_frame=%.2f",
-            start, written, counted.runs, counted.units, took, took / max(1, written),
+            "fill span start=%.2f frames=%d runs=%d units=%.1f seconds=%.1f per_frame=%.2f reused=%d",
+            start, written, counted.runs, counted.units, took, took / max(1, written), saved.hits,
         )
-        if written >= RATE_MIN_FRAMES:
+        # A resumed clip spent little time on what it reused: not a speed to learn.
+        if written >= RATE_MIN_FRAMES and not saved.hits:
             units = counted.units + written * LAMA_FRAME_UNITS
             record_rate(data_root, method, units, took)
     except BaseException:

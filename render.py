@@ -2123,6 +2123,35 @@ def edit_beat_grid(
     return grid
 
 
+@contextmanager
+def keep_awake():
+    """Stop the Mac idling to sleep while a render runs.
+
+    ``-w`` ends caffeinate with this process, so a killed server leaves nothing
+    behind. A closed lid can still put the Mac to sleep.
+    """
+    proc = None
+    tool = shutil.which("caffeinate") if sys.platform == "darwin" else None
+    if tool and os.environ.get("VIBECUT_KEEP_AWAKE", "1") != "0":
+        try:
+            proc = subprocess.Popen(
+                [tool, "-i", "-w", str(os.getpid())],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            LOGGER.warning("could not keep the Mac awake: %s", exc)
+    try:
+        yield
+    finally:
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+
 def _prepare_fills(
     source: str,
     meta: dict,
@@ -2137,7 +2166,8 @@ def _prepare_fills(
 
     Progress runs from 0.02 to 0.45. Clips are cached by source, span, layers,
     engine and model, so a draft and the final share them. ``on_eta`` gets the
-    seconds of fill left; without it, the time left goes in the message.
+    seconds of fill left; without it, the time left goes in the message. The time
+    left comes from frames the model worked on, not ones a resume replayed.
     """
     planned = [
         (index, segment) for index, segment in enumerate(segments)
@@ -2147,14 +2177,27 @@ def _prepare_fills(
     if not planned:
         return results
     data_root = job_dir.parent.parent
-    started = time.monotonic()
     # Frames still to run. A beat found in the cache comes off this total.
     work_left = sum(int(segment["frames"]) for _index, segment in planned)
     work_done = 0
-    FILL_LOCK.acquire()
+    # Frames and seconds spent before the model ran: earlier beats, then this one.
+    replayed = {"frames": 0, "seconds": 0.0}
+    beat_replay = {"frames": 0, "seconds": 0.0}
+    # A pause must not wait for another render's fill to finish.
+    while not FILL_LOCK.acquire(timeout=0.2):
+        if cancel_event is not None and cancel_event.is_set():
+            raise RenderCancelled("Render cancelled.")
+    # Time left counts from here: the wait for the lock says nothing about speed.
+    started = time.monotonic()
     try:
         for position, (index, segment) in enumerate(planned):
             plan = segment["fill"]
+            beat_started = time.monotonic()
+            beat_replay.update(frames=0, seconds=0.0)
+
+            def on_replay(frames: int, beat_started=beat_started) -> None:
+                beat_replay.update(frames=frames, seconds=time.monotonic() - beat_started)
+
             low = 0.02 + 0.43 * position / len(planned)
             high = 0.02 + 0.43 * (position + 1) / len(planned)
             beat_frames = int(segment["frames"])
@@ -2168,9 +2211,10 @@ def _prepare_fills(
             ) -> None:
                 done = work_done + beat_frames * max(0.0, min(1.0, fraction))
                 remaining = ""
-                elapsed = time.monotonic() - started
-                if done >= 10 and elapsed >= 20 and work_left > done:
-                    seconds = elapsed / done * (work_left - done)
+                elapsed = time.monotonic() - started - replayed["seconds"] - beat_replay["seconds"]
+                worked = done - replayed["frames"] - beat_replay["frames"]
+                if worked >= 10 and elapsed >= 20 and work_left > done:
+                    seconds = elapsed / worked * (work_left - done)
                     if on_eta:
                         on_eta(seconds)
                     else:
@@ -2193,6 +2237,7 @@ def _prepare_fills(
                     ffmpeg=_ffmpeg(),
                     progress=report,
                     cancel_event=cancel_event,
+                    on_replay=on_replay,
                 )
             except textfill.FillCancelled as exc:
                 raise RenderCancelled("Render cancelled.") from exc
@@ -2202,6 +2247,9 @@ def _prepare_fills(
                 work_left -= beat_frames
             else:
                 work_done += beat_frames
+                replayed["frames"] += beat_replay["frames"]
+                replayed["seconds"] += beat_replay["seconds"]
+                beat_replay.update(frames=0, seconds=0.0)
     finally:
         # Model sessions are large; a finished or failed pre-pass must not
         # hold LaMa's memory for the rest of the app's life.

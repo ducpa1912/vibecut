@@ -1946,19 +1946,20 @@ def run_render(
         if cancel_event.is_set():
             raise render.RenderCancelled("Render cancelled.")
         before_usage = usage_store.snapshot()
-        result = render.render_reel(
-            source, meta, _job_dir(job_id), plan, title, progress,
-            quality=quality, aspect=aspect, encoder=encoder,
-            captions=captions, audio_plan=audio_plan, audio_sig=audio_sig,
-            caption_margin=caption_margin,
-            cancel_event=cancel_event,
-            caption_cues=caption_engine.cue_tuples(cues),
-            render_clips=prepared_clips,
-            render_total=prepared_total,
-            caption_style=plan.get("_caption_style"),
-            edit=edit,
-            fill_eta=note_fill_left,
-        )
+        with render.keep_awake():
+            result = render.render_reel(
+                source, meta, _job_dir(job_id), plan, title, progress,
+                quality=quality, aspect=aspect, encoder=encoder,
+                captions=captions, audio_plan=audio_plan, audio_sig=audio_sig,
+                caption_margin=caption_margin,
+                cancel_event=cancel_event,
+                caption_cues=caption_engine.cue_tuples(cues),
+                render_clips=prepared_clips,
+                render_total=prepared_total,
+                caption_style=plan.get("_caption_style"),
+                edit=edit,
+                fill_eta=note_fill_left,
+            )
         result["caption_count"] = len(cues)
         render_delta = usage_store.delta(before_usage)
         _append_usage(job_id, "render", render_delta)

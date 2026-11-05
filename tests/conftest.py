@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("VIBECUT_DATA", tempfile.mkdtemp(prefix="vibecut-test-"))
+os.environ.setdefault("VIBECUT_KEEP_AWAKE", "0")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
