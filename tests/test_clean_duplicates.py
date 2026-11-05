@@ -101,7 +101,7 @@ def test_dragging_a_bar_across_cuts_leaves_other_bars_alone(tmp_path):
 
 def test_the_found_list_shows_one_row_per_text(tmp_path):
     def row(tracklet_id, text, low, high, y=0.8):
-        return {**_tracklet(tracklet_id, (low, high), y=y), "text_sample": text}
+        return {**_tracklet(tracklet_id, (low, high), y=y), "text_sample": text, "kind": "title"}
 
     tracklets = [
         row("a", "Hello world", 0, 5),
@@ -119,3 +119,25 @@ def test_the_found_list_shows_one_row_per_text(tmp_path):
     assert out[0]["text_sample"] == "Hello world"
     assert out[0]["ranges"][0] == {"start": 0, "end": 5}
     assert len(out[0]["ranges"]) == 4
+
+
+def test_subtitle_lines_in_one_area_are_one_row_and_one_group(tmp_path):
+    lines = [
+        {**_tracklet(f"s{index}", (index, index + 1)), "text_sample": text}
+        for index, text in enumerate(["First line here", "Second line here", "Third line here"])
+    ]
+    layers = [
+        {"id": f"c{index}", "tracklet_id": f"s{index}", "tracklet_kind": "subtitle",
+         "label": f"Line {index}", "box": lines[0]["box"], "ranges": [{"start": index, "end": index + 1}]}
+        for index in range(3)
+    ]
+    out = _node(tmp_path, (
+        f'const m = await import({json.dumps((EDIT / "layers" / "clean.js").as_uri())});\n'
+        f"const rows = m.mergeFoundTracklets({json.dumps(lines)});\n"
+        f"const groups = m.cleanGroups({json.dumps(layers)});\n"
+        "console.log(JSON.stringify({ rows, groups: groups.map((group) => group.layers.length) }));\n"
+    ))
+    assert len(out["rows"]) == 1
+    assert out["rows"][0]["ids"] == ["s0", "s1", "s2"]
+    assert out["rows"][0]["lines"] == 3
+    assert out["groups"] == [3]

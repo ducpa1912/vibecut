@@ -47,6 +47,10 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 25 | Go to another scene | Framing names that scene, at its own zoom. **Use on all** copies a framing to every scene | |
 | 26 | Render a 10 to 20 second moment with a zoomed-out and a moved scene | The render matches the preview: same place, black in the empty frame, the cut part gone, and sound unchanged | |
 | 27 | Look at every toolbar: preview, timeline, right rail | One icon style. Each icon's tooltip matches what it does. Tell me any icon you cannot read | |
+| 28 | **Scan video** on a video with subtitles, then read the found list | All subtitle lines are one row, "Subtitles · N lines". The same words show once | |
+| 29 | **Clean all found text**, then read Clean layers and the Clean lane | Subtitles are one group with a count. A layer has one bar across cuts, and its name shows once | |
+| 30 | Move the playhead through the moment | The preview shows only the boxes and brush marks on at that time. Selecting a layer in the list moves the playhead to it | |
+| 31 | Delete a group with its bin icon, then **Delete all** (click twice), then Undo | The group goes, then all layers go, then Undo brings them back | |
 
 ## Tell me too
 

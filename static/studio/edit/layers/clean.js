@@ -218,8 +218,9 @@ function sameFoundText(first, second) {
 
 /**
  * One row per text. The scan can read the same words in the same area as
- * separate tracklets, so they join: `ids` carries them all to Clean, and the
- * longest reading names the row.
+ * separate tracklets, so they join, and the longest reading names the row.
+ * Subtitles are a new tracklet per line, so all lines in one area are one row.
+ * `ids` and `members` carry every tracklet to Clean.
  */
 export function mergeFoundTracklets(tracklets) {
   const rows = [];
@@ -228,16 +229,28 @@ export function mergeFoundTracklets(tracklets) {
     if (!id) continue;
     const key = foundTextKey(tracklet);
     const home = rows.find((row) => row.ids.includes(id))
-      || (key && rows.find((row) => (
-        row.kind === tracklet.kind && sameArea(row.box, tracklet.box)
-        && sameFoundText(foundTextKey(row), key)
-      )));
+      || rows.find((row) => {
+        if (row.kind !== tracklet.kind || !sameArea(row.box, tracklet.box)) return false;
+        return tracklet.kind === "subtitle"
+          || (key && sameFoundText(foundTextKey(row), key));
+      });
     if (!home) {
-      rows.push({ ...tracklet, ids: [id], ranges: [...(tracklet.ranges || [])] });
+      rows.push({
+        ...tracklet,
+        ids: [id],
+        members: [tracklet],
+        keys: new Set(key ? [key] : []),
+        ranges: [...(tracklet.ranges || [])],
+      });
       continue;
     }
-    if (!home.ids.includes(id)) home.ids.push(id);
+    if (!home.ids.includes(id)) {
+      home.ids.push(id);
+      home.members.push(tracklet);
+    }
+    if (key && ![...home.keys].some((other) => sameFoundText(other, key))) home.keys.add(key);
     if (key.length > foundTextKey(home).length) home.text_sample = tracklet.text_sample;
+    home.box = joinBoxes(home.box, tracklet.box);
     const sorted = [...home.ranges, ...(tracklet.ranges || [])]
       .sort((a, b) => numberOr(a.start) - numberOr(b.start));
     home.ranges = sorted.reduce((joined, range) => {
@@ -250,7 +263,19 @@ export function mergeFoundTracklets(tracklets) {
       return joined;
     }, []);
   }
-  return rows;
+  return rows.map(({ keys, ...row }) => ({ ...row, lines: Math.max(1, keys.size) }));
+}
+
+function joinBoxes(first, second) {
+  if (!first || !second) return first || second || null;
+  const x = Math.min(numberOr(first.x), numberOr(second.x));
+  const y = Math.min(numberOr(first.y), numberOr(second.y));
+  return {
+    x,
+    y,
+    w: Math.max(numberOr(first.x) + numberOr(first.w), numberOr(second.x) + numberOr(second.w)) - x,
+    h: Math.max(numberOr(first.y) + numberOr(first.h), numberOr(second.y) + numberOr(second.h)) - y,
+  };
 }
 
 /**
@@ -265,6 +290,7 @@ export function cleanGroups(layers) {
     const home = scanned && groups.find((group) => {
       const first = group.layers[0];
       if (!String(first?.tracklet_id || "").trim() || !sameArea(first.box, layer.box)) return false;
+      if (first.tracklet_kind === "subtitle" && layer.tracklet_kind === "subtitle") return true;
       return first.tracklet_id === layer.tracklet_id
         || (first.label && first.label === layer.label)
         || sameScanText(first, layer);
@@ -740,7 +766,9 @@ export function mountCleanPanel(host, ctx) {
         || entry?.action === "none"
         || entry?.blocked === "screen_text";
       const locked = !blocked && !skipped && Boolean(reasonCode);
-      const added = current.some((layer) => sameScanText(layer, tracklet));
+      const added = tracklet.members.every((member) => (
+        current.some((layer) => sameScanText(layer, member))
+      ));
       let reason = reasonText(kind, entry);
       if (added) reason = "Already added to this moment.";
       else if (full && !blocked && !skipped) {
@@ -759,7 +787,9 @@ export function mountCleanPanel(host, ctx) {
         kind,
         entry,
         box: tracklet?.box && typeof tracklet.box === "object" ? tracklet.box : null,
-        text: String(tracklet?.text_sample || "").trim() || "No words read",
+        text: tracklet.lines > 1
+          ? `Subtitles · ${tracklet.lines} lines`
+          : String(tracklet?.text_sample || "").trim() || "No words read",
         ranges: Array.isArray(tracklet?.ranges) ? tracklet.ranges : [],
         time: rangeSummary(tracklet?.ranges),
         reason,
@@ -1435,12 +1465,38 @@ export function mountCleanPanel(host, ctx) {
     return card;
   }
 
+  /** Two clicks, since it takes every layer of this moment at once. Undo restores them. */
+  function deleteAllButton() {
+    const label = "Delete all";
+    const button = el("button", {
+      class: "st-btn st-btn-quiet st-btn-small st-danger st-clean-delete-all",
+      type: "button",
+      text: label,
+    });
+    let armed = false;
+    button.addEventListener("click", () => {
+      if (!armed) {
+        armed = true;
+        button.textContent = "Click again to delete all";
+        return;
+      }
+      ctx.setClean([]);
+      ctx.select("clean", "");
+    });
+    button.addEventListener("blur", () => {
+      armed = false;
+      button.textContent = label;
+    });
+    return button;
+  }
+
   function existingCard(selectedId) {
     const layers = ctx.getEdit()?.clean || [];
     const card = el("div", { class: "st-clean-layers" });
     card.append(el("div", { class: "st-clean-layers-head" }, [
       el("strong", { text: "Clean layers" }),
       el("span", { text: String(layers.length) }),
+      layers.length > 1 ? deleteAllButton() : null,
     ]));
     if (!layers.length) {
       card.append(el("p", { class: "st-hint", text: "Nothing is covered yet. Add a Check region, or place a box by hand." }));
@@ -1614,11 +1670,26 @@ export function mountCleanPanel(host, ctx) {
       });
       head.append(toggle);
     }
-    head.append(layerRow(first, selectedId));
+    const subtitles = group.layers.length > 1
+      && group.layers.every((layer) => layer.tracklet_kind === "subtitle");
+    head.append(layerRow(subtitles ? { ...first, label: "Subtitles" } : first, selectedId));
     if (pieces.length > 1 || group.layers.length > 1) {
       head.append(el("span", { class: "st-clean-group-count", text: `${Math.max(pieces.length, group.layers.length)}×` }));
     }
     head.append(methodSwitch(group.layers));
+    const remove = el("button", {
+      class: "st-icon-btn st-icon-small",
+      type: "button",
+      title: group.layers.length > 1 ? "Delete these layers" : "Delete this layer",
+      "aria-label": `Delete ${first.label || "this layer"}`,
+    }, [icon("trash", { size: 14 })]);
+    remove.addEventListener("click", () => {
+      const gone = new Set(group.layers.map((layer) => layer.id));
+      ctx.setClean((ctx.getEdit()?.clean || []).filter((layer) => !gone.has(layer.id)));
+      if (gone.has(selectedId)) ctx.select("clean", "");
+      else ctx.refresh?.();
+    });
+    head.append(remove);
     wrap.append(head);
     if (open) {
       const inside = el("div", { class: "st-clean-pieces" });
