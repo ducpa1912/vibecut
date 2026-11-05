@@ -18,10 +18,11 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
+import clean_source
 import detect
 import edits
 import render
@@ -250,6 +251,25 @@ class ClassicCleanLayersBody(BaseModel):
     clips: list[dict]
 
 
+class ClassicSourceCleanBody(BaseModel):
+    """A full-source Clean render. ``clips`` may be omitted or the source clip."""
+
+    model_config = {"extra": "forbid"}
+
+    clips: list[dict] = []
+    clean: list[dict] = []
+
+
+class ClassicSourceFrameBody(BaseModel):
+    """One source-aspect frame. ``clips`` is accepted for the same body shape."""
+
+    model_config = {"extra": "forbid"}
+
+    clips: list[dict] = []
+    clean: list[dict] = []
+    t: float = 0.0
+
+
 class ClassicTextLookupBody(BaseModel):
     clips: list[dict]
 
@@ -289,6 +309,76 @@ def _classic_total(clips: list[dict]) -> float:
         for clip in clips
     )
     return round(total, 3)
+
+
+def _source_duration(job: dict) -> float:
+    """The whole source length; Source Clean never renders a cut."""
+    try:
+        duration = float((job.get("source") or {}).get("duration") or 0.0)
+    except (TypeError, ValueError) as exc:
+        raise ClassicTextError("The source duration is not readable.") from exc
+    if not math.isfinite(duration) or duration <= 0.0:
+        raise ClassicTextError("The source duration is not readable.")
+    return duration
+
+
+def _source_clip_for_job(job: dict, clips) -> tuple[dict, float]:
+    """Return the canonical full-source clip and its duration.
+
+    A caller may send the helper's own clip. It may not send a partial cut:
+    that would quietly turn Source Clean into the cut renderer.
+    """
+    duration = _source_duration(job)
+    if clips:
+        parsed = _classic_clips(clips)
+        if (
+            len(parsed) != 1
+            or abs(float(parsed[0]["start"])) > 1e-3
+            or abs(float(parsed[0]["end"]) - duration) > 0.05
+        ):
+            raise ClassicTextError(
+                "Source Clean renders the whole video. Clips must cover it "
+                f"from 0 to {duration:.3f}s."
+            )
+    return clean_source.source_clip(duration), duration
+
+
+def _reject_source_crop(layers: list[dict]) -> list[dict]:
+    if any(
+        layer.get("method") == "crop" or layer.get("kind") == "crop_guard"
+        for layer in layers
+    ):
+        raise ClassicTextError(
+            "Crop guard would crop the whole source. Source Clean keeps the "
+            "full frame; use Blur or AI fill."
+        )
+    return layers
+
+
+def _source_clean_layers(value, total: float, *, require_ready: bool = True) -> list[dict]:
+    """Validate source Clean boxes with the Edit rules, then refuse Crop."""
+    return _reject_source_crop(
+        normalize_classic_clean(value, total, require_ready=require_ready)
+    )
+
+
+def _is_source_body(job: dict, clips: list[dict]) -> bool:
+    """Whether these clips are the helper's one full-source clip.
+
+    The browser sends ``role: "source"`` for Source Clean. That marker lets the
+    existing fill bodies use the source aspect even when an older client omits
+    ``aspect: "source"``. A multi-clip cut is never source mode.
+    """
+    if len(clips) != 1 or str(clips[0].get("role") or "") != "source":
+        return False
+    try:
+        duration = float((job.get("source") or {}).get("duration") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return (
+        abs(float(clips[0].get("start") or 0.0)) <= 1e-3
+        and abs(float(clips[0].get("end") or 0.0) - duration) <= 0.05
+    )
 
 
 def _classic_time(value, label: str, total: float) -> float:
@@ -1545,10 +1635,12 @@ def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
     """Estimate the fill time before a render starts.
 
     The figure is this Mac's own time per frame from a finished fill. Until
-    one finishes there is no figure, and ``seconds`` is null.
+    one finishes there is no figure, and ``seconds`` is null. An ``aspect`` of
+    ``source`` estimates the whole source at its own size.
     """
     import app
     import compose_render
+    import textfill
 
     job = app.load_job(job_id)
     try:
@@ -1558,8 +1650,77 @@ def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     aspect = str(body.aspect or "9:16").strip()
-    if aspect not in CLASSIC_EDIT_ASPECTS:
-        raise HTTPException(422, "The preview renders on 9:16 and 4:5 only.")
+    source_mode = aspect == "source" or _is_source_body(job, clips)
+    if aspect not in (*CLASSIC_EDIT_ASPECTS, "source") and not source_mode:
+        raise HTTPException(
+            422, "The preview renders on 9:16, 4:5 or source only."
+        )
+    if source_mode:
+        edit_layers = _classic_clean_edit(layers["clean"], clips)
+        fill_layers = [
+            layer for layer in edit_layers
+            if layer.get("kind") == "fill" and not layer.get("hidden")
+        ]
+        if not fill_layers:
+            return {
+                "method": None,
+                "methods": [],
+                "frames": 0,
+                "units": 0,
+                "seconds": None,
+                "estimate_seconds": None,
+                "per_frame": {},
+                "measured": False,
+                "cached": False,
+                "scope": "source",
+                "text": "No AI fill boxes are active in this source.",
+            }
+        engine = textfill.known_method(
+            next(
+                (
+                    layer.get("method") or layer.get("engine")
+                    for layer in fill_layers
+                    if layer.get("method") or layer.get("engine")
+                ),
+                "lama",
+            )
+        )
+        source = job.get("source") or {}
+        fps = float(source.get("fps") or render.OUT_FPS) or render.OUT_FPS
+        spans = clean_source._chunk_spans(total, fps, fill_layers)
+        rows = []
+        for low, high in spans:
+            active = [
+                layer for layer in fill_layers
+                if clean_source._overlaps(layer, low, high)
+            ]
+            if not active:
+                continue
+            rows.append(textfill.estimate_span(
+                meta=source,
+                start=low,
+                duration=high - low,
+                layers=active,
+                method=engine,
+                cache_dir=app._job_dir(job_id) / "fill" / "source",
+                data_root=app.DATA,
+            ))
+        summary = textfill.estimate_summary(rows, app.DATA)
+        rate = textfill.fill_rate(app.DATA, engine)
+        measured = bool(rate["seconds"]) and bool(summary["measured"])
+        return {
+            "method": engine,
+            "methods": [engine],
+            "frames": sum(int(row.get("frames") or 0) for row in rows),
+            "units": sum(int(row.get("units") or 0) for row in rows),
+            "seconds": summary["seconds"] if measured else None,
+            "estimate_seconds": int(round(summary["seconds"])) if measured else None,
+            "per_frame": {engine: rate["seconds"]},
+            "measured": measured,
+            "cached": bool(rows) and all(bool(row.get("cached")) for row in rows),
+            "scope": "source",
+            "text": summary["text"],
+        }
     edit = _build_classic_edit(clips, aspect, layers)
     try:
         compiled = compose_render.compile_edit(
@@ -1570,31 +1731,40 @@ def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
         )
     except compose_render.ComposeError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    import textfill
 
-    measured = textfill.fill_rate(app.DATA, "lama")
-    per_frame = measured["seconds"]
-    seconds = 0.0
-    frames = 0
-    methods: set[str] = set()
+    meta = job.get("source") or {}
+    fps = float(meta.get("fps") or render.OUT_FPS) or render.OUT_FPS
+    cache_dir = app._job_dir(job_id) / "fill"
+    rows = []
     for segment in compiled.get("segments") or []:
         fill = segment.get("fill") or {}
         if not fill:
             continue
-        method = str(fill.get("method") or "lama").lower()
-        methods.add(method)
-        span = max(0.0, float(segment.get("out_end") or 0.0) - float(segment.get("out_start") or 0.0))
-        count = max(1, int(round(span * render.OUT_FPS)))
-        frames += count
-        seconds += count * float(per_frame or 0.0)
+        frames = int(segment.get("frames") or 0)
+        span = frames / render.OUT_FPS if frames else max(
+            0.0,
+            float(segment.get("out_end") or 0.0)
+            - float(segment.get("out_start") or 0.0),
+        )
+        rows.append(textfill.estimate_span(
+            meta={**meta, "fps": fps},
+            start=float(segment.get("start") or 0.0),
+            duration=span,
+            layers=fill.get("layers") or [],
+            method=str(fill.get("method") or "lama"),
+            cache_dir=cache_dir,
+            data_root=app.DATA,
+        ))
+    summary = textfill.estimate_summary(rows, app.DATA)
+    measured = bool(summary["seconds"]) and summary["measured"]
     return {
-        "method": next(iter(methods), None),
-        "methods": sorted(methods),
-        "frames": frames,
-        "seconds": round(seconds, 1) if per_frame else None,
-        "estimate_seconds": int(round(seconds)) if per_frame else None,
-        "per_frame": {"lama": per_frame},
-        "measured": bool(measured["measured"]),
+        "method": "lama" if rows else None,
+        "methods": ["lama"] if rows else [],
+        "frames": sum(int(row.get("frames") or 0) for row in rows),
+        "seconds": summary["seconds"] if measured else None,
+        "estimate_seconds": int(round(summary["seconds"])) if measured else None,
+        "measured": measured,
+        "text": summary["text"],
     }
 
 
@@ -1679,6 +1849,204 @@ def classic_clean_residual(job_id: str, body: ClassicCleanLayersBody) -> dict:
     }
 
 
+@router.post("/api/jobs/{job_id}/analyze")
+def classic_start_analysis(job_id: str, request: Request):
+    """Start analysis later for an extraction-only (``source_ready``) job.
+
+    This is the handoff for **Make a reel**. Repeated calls are idempotent
+    while analysis is queued or running, and a job that is already analyzed is
+    left alone instead of being read twice. The route lives in the Classic lane
+    because Clean mode is what creates a ``source_ready`` job.
+    """
+    import app
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = app.load_job(job_id)
+    status = str(job.get("status") or "")
+    analysis = job.get("analysis") or {}
+    if analysis.get("scenes") or (status == "ready" and analysis):
+        return {"ok": True, "id": job_id, "status": status, "started": False}
+
+    task = app.analysis_pool.find_key("analysis", job_id)
+    if status == "queued" or status in app.ACTIVE or (
+        task is not None and not task.terminal
+    ):
+        return JSONResponse(
+            status_code=202,
+            content={"ok": True, "id": job_id, "status": status, "started": False},
+            headers={"Location": f"/api/jobs/{job_id}/status"},
+        )
+    if status != "source_ready":
+        raise HTTPException(
+            409, "This video is not waiting for analysis; import it again."
+        )
+    app.require_source(job)
+    app.ANALYSIS_CANCELS.pop(job_id, None)
+
+    def mark(current: dict) -> None:
+        current["status"] = "queued"
+        current["progress"] = 0.0
+        current["message"] = "Queued for analysis"
+        current["error"] = None
+
+    job = app.update_job(job_id, mark)
+    app.analysis_pool.submit(app.run_analysis, job_id)
+    return JSONResponse(
+        status_code=202,
+        content={"ok": True, "id": job_id, "status": job.get("status"), "started": True},
+        headers={"Location": f"/api/jobs/{job_id}/status"},
+    )
+
+
+@router.post("/api/classic/jobs/{job_id}/clean/source/render")
+def classic_source_clean_render(
+    job_id: str, body: ClassicSourceCleanBody, request: Request,
+):
+    """Start (or reuse) the full-source Clean render."""
+    import app
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    job = app.load_job(job_id)
+    app.require_source(job)
+    try:
+        clip, total = _source_clip_for_job(job, body.clips)
+        layers = _source_clean_layers(body.clean, total)
+        edit_layers = _classic_clean_edit(layers, [clip])
+    except ClassicTextError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    record = clean_source.start(job_id, edit_layers)
+    status_code = 200 if record.get("status") == "ready" else 202
+    headers = (
+        {"Location": f"/api/classic/jobs/{job_id}/clean/source"}
+        if status_code == 202 else {}
+    )
+    return JSONResponse(record, status_code=status_code, headers=headers)
+
+
+@router.get("/api/classic/jobs/{job_id}/clean/source")
+def classic_source_clean_status(job_id: str) -> dict:
+    """The current Source Clean record: idle, queued, running, ready or failed."""
+    return clean_source.get(job_id)
+
+
+@router.post("/api/classic/jobs/{job_id}/clean/source/cancel")
+def classic_source_clean_cancel(job_id: str, request: Request) -> dict:
+    """Stop a queued or running Source Clean render and remove its partial."""
+    import app
+
+    if not app._setup_origin_ok(request):
+        raise HTTPException(403, "Cross-site writes are blocked.")
+    return clean_source.cancel(job_id)
+
+
+@router.get("/api/classic/jobs/{job_id}/clean/source/media")
+def classic_source_clean_media(job_id: str):
+    """Download the finished full-source file. No partial is ever served."""
+    import app
+
+    job = app.load_job(job_id)
+    record = clean_source.get(job_id)
+    path = Path(str(record.get("path") or ""))
+    if record.get("status") != "ready" or not path.is_file():
+        raise HTTPException(404, "The Source Clean result is not ready.")
+    name = Path(str((job.get("source") or {}).get("name") or "source.mp4"))
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"{name.stem}-clean.mp4",
+    )
+
+
+@router.post(
+    "/api/classic/jobs/{job_id}/frame/source",
+    responses={200: {"content": {"image/jpeg": {}}}},
+)
+def classic_source_frame(job_id: str, body: ClassicSourceFrameBody):
+    """One JPEG at the source's own aspect, with blur boxes applied."""
+    import app
+    import textfill
+
+    job = app.load_job(job_id)
+    app.require_source(job)
+    try:
+        clip, total = _source_clip_for_job(job, body.clips)
+        layers = normalize_classic_layers(
+            [], [], total, body.clean, require_ready_fill=False,
+        )
+        visible = _reject_source_crop(
+            [layer for layer in layers["clean"] if not layer.get("hidden")]
+        )
+        edit_visible = _classic_clean_edit(visible, [clip])
+    except ClassicTextError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    source = job.get("source") or {}
+    source_path = Path(str(source.get("path") or ""))
+    width = int(source.get("width") or 0)
+    height = int(source.get("height") or 0)
+    fps = float(source.get("fps") or 0.0)
+    if not source_path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    if width < 2 or height < 2 or total <= 0.0:
+        raise HTTPException(409, "The source size is not available for a frame.")
+    try:
+        at = float(body.t)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "t must be a finite time in seconds.") from exc
+    if not math.isfinite(at) or at < 0.0 or at > total + (1.0 / 30.0):
+        raise HTTPException(
+            422, f"t must be between 0 and the source duration ({total:.3f}s).",
+        )
+    at = min(at, total)
+    if fps > 0.0:
+        last_frame = max(0, int(round(total * fps)) - 1)
+        at = min(max(0, int(round(at * fps))), last_frame) / fps
+    frame_rgb = _read_source_frame(source_path, width, height, at)
+    filters, applied, _warnings = _source_filters_at(
+        edit_visible, at, width, height,
+    )
+    chain = ",".join([
+        *filters,
+        f"scale={width}:{height}:flags=lanczos",
+        "setsar=1",
+    ])
+    tmp = app._job_dir(job_id) / "renders" / f"tmp_source_frame_{uuid.uuid4().hex}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    try:
+        from PIL import Image
+
+        raw = tmp / "frame.png"
+        output = tmp / "frame.jpg"
+        Image.fromarray(frame_rgb).save(raw)
+        _render_preview_jpeg(raw, output, chain)
+        payload = output.read_bytes()
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
+    fill_layers = [layer for layer in edit_visible if layer.get("kind") == "fill"]
+    active_fill = 0
+    if fill_layers and fps > 0.0:
+        active_fill = len(textfill.masks.frame_rects(
+            fill_layers,
+            start=max(0.0, at - (0.5 / max(1.0, fps))),
+            fps=fps,
+            frames=1,
+            width=width,
+            height=height,
+        )[0])
+    headers = {
+        "Cache-Control": "no-store",
+        "X-VibeCut-Frame": f"{at:.3f}",
+        "X-VibeCut-Clean": str(len(applied)),
+        "X-VibeCut-Fill": str(active_fill),
+        "X-VibeCut-Width": str(width),
+        "X-VibeCut-Height": str(height),
+    }
+    return Response(content=payload, media_type="image/jpeg", headers=headers)
+
+
 @router.get("/api/classic/fill")
 def classic_fill() -> dict:
     """AI-fill engine status. Never a fake ready state."""
@@ -1721,9 +2089,15 @@ def _read_source_frame(path: Path, width: int, height: int, at: float):
     ).reshape((int(height), int(width), 3)).copy()
 
 
-def _preview_filter_chain(segment: dict, out_w: int, out_h: int) -> str:
+def _preview_filter_chain(
+    segment: dict, out_w: int, out_h: int, pre_filters: list[str] | None = None,
+) -> str:
     """The source-side clean, crop, scale and colour chain for one frame."""
-    parts = [str(item) for item in segment.get("pre_filters") or []]
+    parts = [
+        str(item) for item in (
+            segment.get("pre_filters") if pre_filters is None else pre_filters
+        ) or []
+    ]
     crop = segment.get("crop") or {}
     try:
         crop_w = int(crop.get("w") or 0)
@@ -1739,6 +2113,36 @@ def _preview_filter_chain(segment: dict, out_w: int, out_h: int) -> str:
     return ",".join(part for part in parts if part)
 
 
+def _source_filters_at(
+    layers: list[dict], at: float, width: int, height: int,
+) -> tuple[list[str], list[str], list[dict]]:
+    """Compile only the Clean layers active on one still frame.
+
+    The cut renderer compiles a whole segment and gates each filter with
+    ``enable='between(t,...)'``. A still is rendered at t=0, so a range that
+    starts later would never match. Select the layers here and pass them with
+    no ranges: a still has no time to gate.
+    """
+    import compose_render
+
+    active: list[dict] = []
+    for layer in layers:
+        ranges = layer.get("ranges") or []
+        if not ranges:
+            active.append({**layer, "ranges": []})
+            continue
+        for item in ranges:
+            try:
+                low = float(item["start"])
+                high = float(item["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if low <= at <= high:
+                active.append({**layer, "ranges": []})
+                break
+    return compose_render._clean_filters(active, 0.0, 1.0, width, height)
+
+
 def _render_preview_jpeg(png: Path, output: Path, chain: str) -> None:
     """Encode one PNG through the same crop/colour chain as the beat."""
     import subprocess
@@ -1751,6 +2155,171 @@ def _render_preview_jpeg(png: Path, output: Path, chain: str) -> None:
     if completed.returncode != 0 or not output.is_file():
         tail = (completed.stderr or b"")[-1200:].decode("utf-8", "replace")
         raise HTTPException(500, f"Could not prepare the fill preview. {tail}".strip())
+
+
+def _classic_source_fill_preview(
+    job_id: str, job: dict, layers: dict, at: float, status: dict,
+) -> dict:
+    """Before/after at the source size, through the same fill engine."""
+    import hashlib
+    import shutil
+    import uuid
+
+    from PIL import Image
+
+    import app
+    import textfill
+
+    source = job.get("source") or {}
+    source_path = Path(str(source.get("path") or ""))
+    if not source_path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    width = int(source.get("width") or 0)
+    height = int(source.get("height") or 0)
+    duration = float(source.get("duration") or 0.0)
+    fps = float(source.get("fps") or 0.0)
+    if width < 2 or height < 2 or duration <= 0.0 or fps <= 0.0:
+        raise HTTPException(409, "The source size and frame rate are not available.")
+    visible = _classic_clean_edit(
+        [
+            layer for layer in layers.get("clean") or []
+            if not layer.get("hidden")
+        ],
+        [clean_source.source_clip(duration)],
+    )
+    fill_layers = [layer for layer in visible if layer.get("kind") == "fill"]
+    if not fill_layers:
+        raise HTTPException(
+            422,
+            "No AI fill box is active at this frame. Choose AI fill for a box "
+            "and put the playhead inside its range.",
+        )
+    last_frame = max(0, int(round(duration * fps)) - 1)
+    frame_index = min(max(0, int(round(at * fps))), last_frame)
+    at = frame_index / fps
+    rects = textfill.masks.frame_rects(
+        fill_layers,
+        start=max(0.0, at - (0.5 / max(1.0, fps))),
+        fps=fps,
+        frames=1,
+        width=width,
+        height=height,
+    )[0]
+    if not rects:
+        raise HTTPException(422, "No AI fill region is active at this frame.")
+    engine = textfill.known_method(
+        next(
+            (
+                layer.get("method") or layer.get("engine")
+                for layer in fill_layers
+                if layer.get("method") or layer.get("engine")
+            ),
+            "lama",
+        )
+    )
+    engine_status = (status.get("engines") or {}).get(engine) or {}
+    if not engine_status.get("ready"):
+        return _fill_http_error(
+            409,
+            "model_missing",
+            engine_status.get("reason") or status.get("note") or "",
+            fill=status,
+        )
+    directory = textfill.models_dir(app.DATA)
+    problem = textfill.missing_model(engine, directory)
+    if problem:
+        return _fill_http_error(409, "model_missing", problem, fill=status)
+    stamp = textfill.method_stamp(engine, directory)
+    layer_hash = hashlib.sha1(
+        json.dumps(visible, sort_keys=True, default=str).encode("utf-8"),
+    ).hexdigest()[:16]
+    key = hashlib.sha1(
+        (
+            f"source-preview:{source.get('fingerprint')}:{frame_index}:"
+            f"{width}x{height}:{fps}:{engine}:{stamp}:{layer_hash}"
+        ).encode("utf-8"),
+    ).hexdigest()[:20]
+    job_dir = app._job_dir(job_id)
+    cache_dir = job_dir / "fill" / "preview"
+    before_jpg = cache_dir / f"{key}_before.jpg"
+    after_jpg = cache_dir / f"{key}_after.jpg"
+    if before_jpg.is_file() and after_jpg.is_file():
+        return {
+            "before": _data_url(before_jpg),
+            "after": _data_url(after_jpg),
+            "width": width,
+            "height": height,
+            "time": round(at, 3),
+            "method": engine,
+            "render_method": engine,
+            "cached": True,
+            "scope": "source",
+        }
+
+    if textfill.busy() or not render.FILL_LOCK.acquire(blocking=False):
+        return _fill_http_error(
+            409,
+            "fill_running",
+            "A fill is already running. Wait for the render to finish, then "
+            "preview. Cancel the render if you want to compare now.",
+        )
+    tmp = job_dir / "renders" / f"tmp_fill_preview_{uuid.uuid4().hex}"
+    try:
+        tmp.mkdir(parents=True, exist_ok=True)
+        frame_rgb = _read_source_frame(source_path, width, height, at)
+        try:
+            tight_rects = textfill.masks.frame_rects(
+                [
+                    layer for layer in fill_layers
+                    if textfill.masks.uses_text_mask(layer, width, height)
+                ],
+                start=max(0.0, at - (0.5 / max(1.0, fps))),
+                fps=fps,
+                frames=1,
+                width=width,
+                height=height,
+            )[0]
+            filled_rgb = textfill.fill_frame(
+                frame_rgb, rects, data_root=job_dir.parent.parent, method=engine,
+                tight_rects=tight_rects,
+            )
+        except textfill.FillError as exc:
+            return _fill_http_error(409, "fill_failed", str(exc))
+        before_png = tmp / "before.png"
+        after_png = tmp / "after.png"
+        Image.fromarray(frame_rgb).save(before_png)
+        Image.fromarray(filled_rgb).save(after_png)
+        filters, _applied, _warnings = _source_filters_at(
+            visible, at, width, height,
+        )
+        chain = ",".join([
+            *filters,
+            f"scale={width}:{height}:flags=lanczos",
+            "setsar=1",
+        ])
+        before_final = tmp / "before.jpg"
+        after_final = tmp / "after.jpg"
+        _render_preview_jpeg(before_png, before_final, chain)
+        _render_preview_jpeg(after_png, after_final, chain)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(before_final, before_jpg)
+        shutil.copyfile(after_final, after_jpg)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        # One frame: keeping LaMa loaded would cost a render's worth of memory.
+        textfill.release_fillers()
+        render.FILL_LOCK.release()
+    return {
+        "before": _data_url(before_jpg),
+        "after": _data_url(after_jpg),
+        "width": width,
+        "height": height,
+        "time": round(at, 3),
+        "method": engine,
+        "render_method": engine,
+        "cached": False,
+        "scope": "source",
+    }
 
 
 @router.post("/api/classic/jobs/{job_id}/fill/preview")
@@ -1787,10 +2356,11 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     aspect = str(body.aspect or "9:16").strip()
-    if aspect not in CLASSIC_EDIT_ASPECTS:
+    source_mode = aspect == "source" or _is_source_body(job, clips)
+    if aspect not in (*CLASSIC_EDIT_ASPECTS, "source") and not source_mode:
         raise HTTPException(
             422,
-            "The preview renders on 9:16 and 4:5 only. Switch the shape.",
+            "The preview renders on 9:16, 4:5 or source only. Switch the shape.",
         )
     try:
         at = float(body.t)
@@ -1801,6 +2371,8 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
             422, f"t must be between 0 and the cut duration ({total:.3f}s).",
         )
     at = min(at, total)
+    if source_mode:
+        return _classic_source_fill_preview(job_id, job, layers, at, status)
     source = job.get("source") or {}
     source_path = Path(str(source.get("path") or ""))
     if not source_path.is_file():
@@ -1935,7 +2507,13 @@ def classic_fill_preview(job_id: str, body: ClassicFillBody) -> dict:
             after_png = tmp / "after.png"
             Image.fromarray(frame_rgb).save(before_png)
             Image.fromarray(filled_rgb).save(after_png)
-            chain = _preview_filter_chain(segment, out_w, out_h)
+            chain = _preview_filter_chain(
+                segment, out_w, out_h,
+                pre_filters=_source_filters_at(
+                    _classic_clean_edit(layers["clean"], clips),
+                    source_time, width, height,
+                )[0],
+            )
             before_raw = tmp / "before_raw.jpg"
             after_raw = tmp / "after_raw.jpg"
             _render_preview_jpeg(before_png, before_raw, chain)

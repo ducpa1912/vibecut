@@ -149,16 +149,17 @@ def run_check_job(job_id: str, options: dict) -> dict:
             progress=progress,
         )
         recommendation = report.get("recommendation")
+        tracklet_count = len(report.get("tracklets") or [])
         _set_check(
             job_id, app,
             status="ready",
             progress=1.0,
             message=(
-                f"{len(report.get('tracklets') or [])} text regions · "
-                f"{recommendation}"
+                f"{tracklet_count} text "
+                f"{'region' if tracklet_count == 1 else 'regions'} found"
             ),
             recommendation=recommendation,
-            tracklet_count=len(report.get("tracklets") or []),
+            tracklet_count=tracklet_count,
             duration_s=round(time.time() - started, 3),
             report=detect.REPORT_DIR + "/" + detect.REPORT_FILE,
             error=None,
@@ -187,7 +188,11 @@ def start_check(job_id: str, body: CheckBody | None = None):
     app = _job_app()
     job = app.load_job(job_id)
     analysis = job.get("analysis") or {}
-    if job.get("status") != "ready" or not analysis.get("scenes"):
+    analysis_ready = job.get("status") == "ready" and bool(analysis.get("scenes"))
+    # Clean mode stops at source_ready with no analysis. Check samples the whole
+    # source when scenes are empty, so it needs no invented scene.
+    source_ready = job.get("status") == "source_ready" and not analysis
+    if not analysis_ready and not source_ready:
         raise HTTPException(409, "Analysis is not ready yet.")
     app.require_source(job)
 

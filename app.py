@@ -4397,6 +4397,9 @@ class PathBody(BaseModel):
     path: str
     options: dict = {}
     job_id: str | None = None
+    # ``clean`` probes the source and stops at source_ready; ``reel`` keeps the
+    # normal analysis pipeline unchanged.
+    mode: str = "reel"
     # The own-footage note from Import. Stored on the job; policy is unchanged.
     rights: bool | None = None
 
@@ -4685,6 +4688,14 @@ def import_rights(attested: bool | None) -> dict | None:
     return {"attested": bool(attested), "at": round(time.time(), 3), "source": "import"}
 
 
+def _job_mode(value: str | None) -> str:
+    """A job is either the normal reel path or extraction-only Clean."""
+    mode = str(value or "reel").strip().lower()
+    if mode not in {"reel", "clean"}:
+        raise HTTPException(422, "mode must be reel or clean.")
+    return mode
+
+
 def _new_job(
     source_path: Path,
     name: str,
@@ -4692,6 +4703,9 @@ def _new_job(
     options: dict,
     job_id: str | None = None,
     rights: dict | None = None,
+    *,
+    analyze: bool = True,
+    mode: str = "reel",
 ) -> dict:
     job_id = job_id or uuid.uuid4().hex[:12]
     directory = JOBS / job_id
@@ -4700,10 +4714,11 @@ def _new_job(
         "id": job_id,
         "created": round(time.time(), 3),
         "updated": round(time.time(), 3),
-        "status": "queued",
-        "progress": 0.0,
-        "message": "Queued",
+        "status": "queued" if analyze else "source_ready",
+        "progress": 0.0 if analyze else 1.0,
+        "message": "Queued" if analyze else "Source ready",
         "error": None,
+        "mode": mode,
         "source": {
             "path": str(source_path),
             "name": name,
@@ -4722,7 +4737,8 @@ def _new_job(
     if rights is not None:
         job["rights"] = dict(rights)
     save_job(job)
-    analysis_pool.submit(run_analysis, job_id)
+    if analyze:
+        analysis_pool.submit(run_analysis, job_id)
     return job
 
 
@@ -4732,7 +4748,9 @@ async def upload_job(
     file: UploadFile = File(...),
     options: str = Form("{}"),
     rights: str = Form(""),
+    mode: str = Form("reel"),
 ) -> dict:
+    job_mode = _job_mode(mode)
     try:
         parsed_options = clean_options(json.loads(options))
     except json.JSONDecodeError:
@@ -4791,6 +4809,7 @@ async def upload_job(
         job = _new_job(
             destination, original, meta, parsed_options, job_id=job_id,
             rights=import_rights(attested),
+            analyze=job_mode != "clean", mode=job_mode,
         )
         return {"id": job["id"], "status": job["status"]}
     except HTTPException:
@@ -4823,6 +4842,7 @@ async def upload_job(
 @app.post("/api/jobs/path")
 def job_from_path(body: PathBody) -> dict:
     _require_import_rights(body.rights)
+    mode = _job_mode(body.mode)
     path = _local_video_path(body.path)
     disk.preflight(disk.estimate_path(path), DATA)
     meta = _probe_video(path)
@@ -4834,6 +4854,7 @@ def job_from_path(body: PathBody) -> dict:
     job = _new_job(
         path.resolve(), path.name, meta, clean_options(body.options),
         job_id=job_id, rights=import_rights(body.rights),
+        analyze=mode != "clean", mode=mode,
     )
     return {"id": job["id"], "status": job["status"]}
 

@@ -33,9 +33,9 @@
   },
   {
    "path": "app.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "1f70726fb82031069e187762e14d83f33a9e690de722c76b699e2bf2a30df8d3",
-   "feature_version": "1.0.2"
+   "source": "classic: Source Clean backend (Phase 1)",
+   "sha256": "5508edb26a25ec80bdef1fab0610dec1db4aefe9c1c5eeb3545e02d8601ec065",
+   "feature_version": "1.0.4"
   },
   {
    "path": "artifacts.py",
@@ -66,6 +66,12 @@
    "source": "classic 2f385a2",
    "sha256": "d8a0d16d4adab7a594b11039c523efa690ac0373d2bc9fb6cc230588b6506111",
    "feature_version": "1.0.0"
+  },
+  {
+   "path": "clean_source.py",
+   "source": "classic: Source Clean honesty fixes",
+   "sha256": "241b26432d6b12da8448236754f2aae392c4d12ecaa54d24661412c362f146ee",
+   "feature_version": "1.0.6"
   },
   {
    "path": "cleanup.py",
@@ -225,9 +231,9 @@
   },
   {
    "path": "routes_check.py",
-   "source": "classic 2f385a2",
-   "sha256": "2181341ea0d7c2666641f1b5b86bd6c4bdea28c3ee39f8dbf9b6130fbdfe6c3f",
-   "feature_version": "1.0.0"
+   "source": "classic: Source Clean honesty fixes",
+   "sha256": "5ad8d116c41d177f35243da9f8a0c547f857eaa5c9cbfb464b5768cd40fe4c0d",
+   "feature_version": "1.0.2"
   },
   {
    "path": "routes_cleanup.py",
