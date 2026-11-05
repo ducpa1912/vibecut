@@ -87,7 +87,7 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 
 **2026-11-05, founder, full video, 59.6 s, AI fill with LaMa: 6.5/10.** The render took about 2 hours and started before the speed and box changes (`ef61c18` onward), so it used LaMa on every frame, one large crop, block boxes and a 1 s time margin.
 
-| Time | Founder saw | Cause found | Status |
+| Time | Founder saw | Likely cause, from frames and layers | Status |
 |---|---|---|---|
 | 22 to 23 s | Something rendered there | The second line of text was left behind | Fixed in `9e55079`, not re-rendered |
 | 24 to 25 s | Many overlapping boxes, then one removed | Blocks of text missed letters; a stale box ran 1 s past its line | Fixed in `dd21cd0`, `9e55079`, `5b552f6`, not re-rendered |
