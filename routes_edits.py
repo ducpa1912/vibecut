@@ -761,6 +761,26 @@ def _compiled_preview(
 _CLEAN_PREVIEW_LOCK = threading.Lock()
 
 
+def _fills_missing(job: dict, job_dir, compiled: dict, fps: int) -> bool:
+    """Whether a beat of this cut still needs an AI fill to be run."""
+    for segment in compiled.get("segments") or []:
+        plan = segment.get("fill")
+        if not plan:
+            continue
+        row = textfill.estimate_span(
+            meta=job.get("source") or {},
+            start=float(segment.get("start") or 0.0),
+            duration=int(segment.get("frames") or 0) / max(1, fps),
+            layers=plan.get("layers") or [],
+            method=plan.get("method") or textfill.DEFAULT_METHOD,
+            cache_dir=job_dir / "fill",
+            data_root=job_dir.parent.parent,
+        )
+        if row.get("frames") and not row.get("cached"):
+            return True
+    return False
+
+
 @router.get(
     "/api/jobs/{job_id}/edits/{edit_id}/clean-preview",
     responses={200: {"content": {"video/mp4": {}}}},
@@ -768,9 +788,10 @@ _CLEAN_PREVIEW_LOCK = threading.Lock()
 def edit_clean_preview(job_id: str, edit_id: str, mode: str = "fill") -> FileResponse:
     """A draft video of this Edit with Clean applied.
 
-    ``mode=fill`` is what the final render does. ``mode=blur`` swaps every
-    AI-fill layer to blur, so text left outside the boxes stays visible. It is
-    a check view, never a deliverable.
+    ``mode=fill`` is what the final render does, and only joins fills a render
+    has already made: AI fill can take an hour, so opening a page must not start
+    one. ``mode=blur`` swaps every AI-fill layer to blur, so text left outside the
+    boxes stays visible. It is a check view, never a deliverable.
     """
     mode = "blur" if str(mode or "").strip().lower() == "blur" else "fill"
     job, edit, story = _fresh_story(job_id, edit_id)
@@ -813,6 +834,10 @@ def edit_clean_preview(job_id: str, edit_id: str, mode: str = "fill") -> FileRes
             )
         except compose_render.ComposeError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
+        if mode == "fill" and _fills_missing(job, job_dir, compiled, fps):
+            raise HTTPException(
+                409, "AI fill has not run for this cut yet. Render it to see the result here.",
+            )
         total = sum(
             int(segment.get("frames") or 0)
             for segment in compiled.get("segments") or []

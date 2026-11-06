@@ -1253,7 +1253,8 @@ export function mount(root, ctx) {
     video.addEventListener("canplay", () => { hint.textContent = modeText; });
     video.addEventListener("loadedmetadata", () => {
       const at = Math.max(0, Math.min(reviewTime, Number(video.duration) || reviewTime));
-      if (Number.isFinite(at)) video.currentTime = at;
+      // The first frames fade in from black, so show the picture at the start.
+      if (Number.isFinite(at)) video.currentTime = at || 0.2;
     });
     video.addEventListener("timeupdate", () => {
       const label = figure.querySelector(".st-finish-preview-time");
@@ -1265,10 +1266,13 @@ export function mount(root, ctx) {
       if (panel) panel.replaceWith(cleanPanel());
     });
     video.addEventListener("error", () => {
-      // Fill preview needs the model pack. Fall back to the blur check.
-      if (reviewMode === "blur") return;
+      // AI fill shows here once a render has made it. Until then, the blur check.
+      if (reviewMode === "blur") {
+        hint.textContent = "Preview could not be built.";
+        return;
+      }
       reviewMode = "blur";
-      announce("AI fill preview is unavailable; showing Quick blur.", "bad");
+      announce("AI fill shows here after a render. Showing Quick blur for now.");
       renderReviewCard();
     });
     const toggle = el("button", {

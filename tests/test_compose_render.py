@@ -467,3 +467,52 @@ def test_clean_preview_blur_swaps_fill_for_a_check_view():
     blurred = _compile(edit, clean_preview="blur", include_graphics=False)["segments"][0]
     assert blurred["fill"] is None
     assert "boxblur=" in blurred["pre_filter"]
+
+
+def test_opening_the_clean_preview_never_starts_an_ai_fill(monkeypatch, tmp_path):
+    import routes_edits
+    import textfill
+
+    rows = {"frames": 40, "cached": False}
+    monkeypatch.setattr(textfill, "estimate_span", lambda **_kwargs: dict(rows))
+    compiled = {"segments": [
+        {"frames": 40, "start": 0.0, "fill": {"layers": [], "method": "lama"}},
+        {"frames": 10, "start": 2.0},
+    ]}
+    assert routes_edits._fills_missing({"source": {}}, tmp_path, compiled, 30) is True
+    rows["cached"] = True
+    assert routes_edits._fills_missing({"source": {}}, tmp_path, compiled, 30) is False
+    rows.update(frames=0, cached=False)
+    assert routes_edits._fills_missing({"source": {}}, tmp_path, compiled, 30) is False
+
+
+def test_a_frame_past_the_real_end_of_a_source_uses_its_last_frame(monkeypatch, tmp_path):
+    import render
+
+    job_dir = tmp_path / "jobs" / "j"
+    job_dir.mkdir(parents=True)
+    commands = []
+
+    def fake_run(cmd, timeout=None, cwd=None, cancel_event=None):
+        commands.append(cmd)
+        if "-sseof" in cmd:
+            from pathlib import Path
+
+            Path(cmd[-1]).write_bytes(b"png")
+
+    def fake_burn(_png, _overlays, output, *_args, **_kwargs):
+        output.write_bytes(b"jpeg")
+
+    monkeypatch.setattr(render, "_run", fake_run)
+    monkeypatch.setattr(render, "_segment", lambda *args, **kwargs: False)
+    monkeypatch.setattr(render, "_burn_frame", fake_burn)
+    monkeypatch.setattr(render, "_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(render, "_clip_media", lambda _dir, _segment, source, meta: (source, meta))
+    monkeypatch.setattr(render, "_choose_encoder", lambda _encoder: "libx264")
+    compiled = {
+        "aspect": "9:16", "overlays": [],
+        "segments": [{"frames": 30, "start": 0.0, "out_start": 0.0, "out_end": 1.0}],
+    }
+    payload = render.render_story_frame("s.mp4", {}, job_dir, compiled, 1.0)
+    assert payload == b"jpeg"
+    assert any("-sseof" in cmd for cmd in commands)

@@ -1330,3 +1330,8 @@ def test_only_a_box_with_no_plan_changes_its_clip_key(monkeypatch):
     monkeypatch.setattr(textfill, "LAMA_UNPLANNED_KEYS", 9.0)
     assert textfill.span_key(layers=drawn, **args) != drawn_key
     assert textfill.span_key(layers=planned, **args) == planned_key
+
+
+def test_the_render_passes_its_frame_rate_to_the_fill():
+    source = (Path(render.__file__)).read_text()
+    assert "progress, cancel_event, fps=output_fps, on_eta=fill_eta" in source
