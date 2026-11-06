@@ -176,8 +176,10 @@ class StoryQueueManager:
         self._lock = threading.RLock()
         self._threads: dict[str, threading.Thread] = {}
         self._stops: dict[str, threading.Event] = {}
-        # One render at a time, across every queue on this machine.
-        self._turn = threading.Lock()
+        # One queue renders at a time on this machine, oldest first.
+        self._turn = threading.Condition()
+        self._turn_taken = False
+        self._waiting: dict[str, float] = {}
 
     # ------------------------------------------------------------ storage
 
@@ -429,9 +431,38 @@ class StoryQueueManager:
 
         return self._mutate(queue_id, mutate)
 
+    def _take_turn(self, queue_id: str, order: float, stop: threading.Event) -> bool:
+        """Wait until this queue is the oldest waiting and nothing renders."""
+        with self._turn:
+            if self._turn_taken or self._waiting:
+                self._mutate(queue_id, lambda queue: queue.update(message="Waiting for the render before it"))
+            self._waiting[queue_id] = order
+            try:
+                while not stop.is_set():
+                    first = min(self._waiting, key=lambda name: (self._waiting[name], name))
+                    if not self._turn_taken and first == queue_id:
+                        self._turn_taken = True
+                        return True
+                    self._turn.wait(self.poll_interval)
+                return False
+            finally:
+                self._waiting.pop(queue_id, None)
+                self._turn.notify_all()
+
+    def _give_turn(self) -> None:
+        with self._turn:
+            self._turn_taken = False
+            self._turn.notify_all()
+
     def _run(self, queue_id: str, stop: threading.Event) -> None:
+        has_turn = False
         try:
-            self._mutate(queue_id, lambda queue: queue.update(status="running", message="Rendering"))
+            queue = self._mutate(queue_id, lambda queue: queue.update(status="running", message="Rendering"))
+            # One queue at a time on this machine, oldest first, each to its end.
+            has_turn = self._take_turn(queue_id, float(queue.get("created") or 0), stop)
+            if not has_turn:
+                return
+            self._mutate(queue_id, lambda queue: queue.update(message="Rendering"))
             while not stop.is_set():
                 queue = self._read(queue_id)
                 if queue.get("status") != "running":
@@ -447,37 +478,20 @@ class StoryQueueManager:
                         message=f"Done · {failed} failed" if failed else "Done",
                     ))
                     return
-                # Another choice of the same story waits its turn, not colliding with it.
-                if not self._turn.acquire(blocking=False):
-                    self._mutate(queue_id, lambda queue: queue.update(message="Waiting for the render before it"))
-                    while not self._turn.acquire(timeout=self.poll_interval):
-                        if stop.is_set():
-                            return
+                began = time.time()
                 try:
-                    if stop.is_set():
-                        return
-                    # It may have been taken out of the queue while it waited.
-                    fresh = next(
-                        (row for row in self._read(queue_id).get("items") or [] if row.get("id") == item["id"]),
-                        None,
-                    )
-                    if fresh is None or fresh.get("state") != "queued":
-                        continue
-                    self._mutate(queue_id, lambda queue: queue.update(message="Rendering"))
-                    began = time.time()
-                    try:
-                        self._run_item(queue_id, fresh, stop)
-                    finally:
-                        # Time spent over every try, so a resumed render reports it all.
-                        self._set_item(
-                            queue_id, fresh["id"],
-                            spent=round(float(fresh.get("spent") or 0.0) + time.time() - began, 1),
-                        )
+                    self._run_item(queue_id, item, stop)
                 finally:
-                    self._turn.release()
+                    # Time spent over every try, so a resumed render reports it all.
+                    self._set_item(
+                        queue_id, item["id"],
+                        spent=round(float(item.get("spent") or 0.0) + time.time() - began, 1),
+                    )
         except Exception:  # noqa: BLE001
             LOGGER.exception("story queue %s stopped unexpectedly", queue_id)
         finally:
+            if has_turn:
+                self._give_turn()
             with self._lock:
                 if self._threads.get(queue_id) is threading.current_thread():
                     self._threads.pop(queue_id, None)

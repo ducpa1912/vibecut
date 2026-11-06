@@ -274,6 +274,24 @@ def test_a_second_queue_waits_for_the_render_before_it(tmp_path):
     assert manager.get(second["id"])["status"] == "done"
 
 
+def test_queues_run_oldest_first_each_to_its_end(tmp_path):
+    backend = FakeBackend(hang={"s1"})
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    row = lambda name: {"job_id": "j", "set_id": "set1", "story_id": name}
+    first = manager.create([row("s1"), row("s2")])
+    time.sleep(0.03)
+    second = manager.create([row("s3")])
+    time.sleep(0.03)
+    third = manager.create([row("s4")])
+    time.sleep(0.03)
+    fourth = manager.create([row("s5")])
+    time.sleep(0.05)
+    backend.hang = set()
+    for queue in (first, second, third, fourth):
+        assert manager.wait(queue["id"], 5)
+    assert backend.starts == ["s1", "s2", "s3", "s4", "s5"]
+
+
 def test_pausing_a_render_lets_the_next_queue_start(tmp_path):
     backend = FakeBackend(hang={"s1"})
     manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)

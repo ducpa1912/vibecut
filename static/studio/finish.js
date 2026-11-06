@@ -213,6 +213,15 @@ function fillChoiceWords(row) {
   ].filter(Boolean);
 }
 
+/** The order queues will run in: what renders now, then oldest first. */
+export function queueRunOrder(rows) {
+  const rendering = (queue) => (queue?.items || []).some((item) => String(item?.state) === "running");
+  return [...(rows || [])].sort((a, b) => (
+    Number(rendering(b)) - Number(rendering(a))
+    || Number(a?.created || 0) - Number(b?.created || 0)
+  ));
+}
+
 /** A finished render's real time: "6 min 42 s". */
 export function tookText(seconds) {
   const total = Math.round(Number(seconds) || 0);
@@ -1996,7 +2005,7 @@ export function mount(root, ctx) {
       return ACTIVE_QUEUE.has(status) || queue.needs_resume || status === "paused";
     });
     const history = rows.filter((queue) => !active.includes(queue));
-    return { active, history };
+    return { active: queueRunOrder(active), history };
   }
 
   function queueRow(queue, liveBlock) {
@@ -2015,11 +2024,15 @@ export function mount(root, ctx) {
     const eta = Number(items.length > 1 ? queue.eta : (running?.eta ?? queue.eta));
     const hasEta = Number.isFinite(eta) && eta > 0;
     const active = ACTIVE_QUEUE.has(status);
+    const waitingTurn = active && !items.some((item) => String(item.state) === "running");
     const percent = Math.round(progress * 100);
 
     const row = el("div", { class: `st-finish-queue-row${liveBlock ? " is-live" : ""}` });
     const top = el("div", { class: "st-finish-queue-top" }, [
-      el("span", { class: `st-chip st-chip-${statusTone(status)}`, text: statusText(status) }),
+      el("span", {
+        class: `st-chip st-chip-${waitingTurn ? "quiet" : statusTone(status)}`,
+        text: waitingTurn ? "Waiting" : statusText(status),
+      }),
       el("strong", { class: "st-finish-queue-title", text: title }),
       shape ? el("span", {
         class: "st-mono st-finish-queue-shape",

@@ -548,3 +548,25 @@ def test_the_panel_offers_the_swap_and_says_what_a_box_costs():
     assert "Clean only the ${formatLines(lines.length)} inside" in CLEAN
     assert "This box repaints ${share}% of the picture" in CLEAN
     assert "async function snapToLines" in CLEAN
+
+
+def test_the_queue_list_shows_the_order_things_will_run():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    url = (ROOT / "static/studio/finish.js").as_uri()
+    rows = [
+        {"id": "newest", "created": 3, "items": [{"state": "queued"}]},
+        {"id": "next", "created": 2, "items": [{"state": "queued"}]},
+        {"id": "now", "created": 1, "items": [{"state": "running"}]},
+    ]
+    done = subprocess.run(
+        [node, "--input-type=module", "-e", (
+            f"const m = await import({json.dumps(url)});\n"
+            f"console.log(JSON.stringify(m.queueRunOrder({json.dumps(rows)}).map((row) => row.id)));"
+        )],
+        capture_output=True, text=True, timeout=60, check=True,
+    )
+    assert json.loads(done.stdout) == ["now", "next", "newest"]
+    assert '"Waiting"' in FINISH
+
