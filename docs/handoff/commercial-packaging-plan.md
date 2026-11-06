@@ -41,7 +41,8 @@ Non-negotiable:
 |---|---|---|---|---|---|
 | **VibeCut Mac Solo** | solo creator | DMG, arm64 | **$149 one-time**, 1 year updates, 2 Macs | payment fee, support | Build first |
 | **VibeCut Mac Studio** | small team | DMG, arm64 | **$249**, 1 year updates, 5 Macs | payment fee, support | Same build, license tier |
-| **Cloud Private** | team that wants its own server | managed container + URL | **$199/mo + $499 setup** | VM, storage, support | Build second |
+| **Cloud Private** | team that wants its own server | managed container + URL | **$199/mo + $299 setup** | shared 16-core host, storage, support | Build second |
+| **Mac Native** | team that needs Apple OCR/STT | managed Mac mini | **$349/mo** | Mac mini M6, support | Optional premium |
 | **Cloud Web / RaaS** | occasional creator | browser, per render | **$0.12/render second, $9 minimum**, or $29/mo with 5 min | CPU/GPU, clean API, storage, egress | Build third |
 
 Prices are starting assumptions. Validate with 10 founder calls before launch.
@@ -183,25 +184,64 @@ Apple Vision and Apple Speech are macOS-only. On Linux:
 
 Do not claim Apple-quality OCR on Linux until measured.
 
-### 4.4 Pricing
+### 4.4 Hosting options
 
-Starting assumption:
+CPU-only fill changes the economics. MI-GAN is MIT (code and weights) and its
+seed rate is 0.6 s per frame on CPU, versus 4.0 s for LaMa. A 90-second job can
+therefore run on a cheap CPU host without a GPU. Prices below are the founder's
+2026 quotes and must be rechecked.
 
-- **$199/month**, 4 vCPU / 16 GB / 250 GB, one concurrent render.
-- **$499 setup** (provision, migrate, first project).
-- Extra storage $0.20/GB/month.
-- Extra render concurrency $49/month.
-- Managed GPU clean billed at cost + 30%, or a $49/month add-on with a quota.
+| Host | Spec | Price | Role | Tenants |
+|---|---|---:|---|---:|
+| Contabo VPS Plus 6 | 6 vCPU EPYC, 12 GB, 300 GB NVMe | **$23/mo** | pilot / design partners | 1 |
+| Contabo CPU 16 | 16 vCPU EPYC 7282, 64 GB, 480 GB NVMe | **$155/mo** | Private Standard | 3 isolated containers |
+| Contabo dedicated | 24 × 2.5 GHz EPYC 9224, 128 GB, 2 × 1 TB SSD | **$240/mo** | scale / dedicated tier | 6–8 containers |
+| Mac mini M6 | 16 GB, 256 GB | **$150/mo** | Mac Native | 1 |
+| Mac mini M5 Pro | 24 GB, 512 GB | **$250/mo** | Mac Native Pro | 1 |
 
-Gross margin target: 50–60% after VM, storage, backup and support.
+Sharing a 16-core host between three private containers is **isolated data,
+shared compute**. Each container gets a CPU and memory limit. It is not a
+dedicated SLA; sell it as shared compute and keep the dedicated tier for
+customers who need guaranteed throughput.
 
-### 4.5 Why not multi-tenant first
+### 4.5 Pricing
+
+| Tier | Host | Price | Includes | Host cost per tenant |
+|---|---|---|---:|---:|
+| **Pilot** | VPS Plus 6 | **$49/mo** or free design partner | 720p, 1 project, 1 render at a time | $23 |
+| **Private Standard** | 16-core host, 3 containers | **$199/mo + $299 setup** | 1080p, 1 render at a time, 100 GB | ~$52 |
+| **Private Dedicated** | 24-core dedicated | **$499/mo + $499 setup** | 2K, 2 renders at a time, 500 GB, SLA | $240 |
+| **Mac Native** | Mac mini M6 | **$349/mo** | Apple OCR/STT, VideoToolbox, 1080p | $150 |
+| **Mac Native Pro** | Mac mini M5 Pro | **$449/mo** | 2K, 2 renders at a time, 512 GB | $250 |
+
+Add-ons: extra storage $0.20/GB/month; extra concurrency $49/month; remote
+clean billed at cost + 30%.
+
+The $199 Standard price only works because three containers share a $155 host.
+A one-tenant $199 instance on a $155 host leaves too little for support. If
+sharing is not acceptable, the price is $299–$349.
+
+### 4.6 CPU fill
+
+- Default hosted fill: **MI-GAN** on CPU. MIT code and weights; 0.6 s/frame
+  seed.
+- Quality fallback: LaMa ONNX. Slower (4.0 s/frame seed), still CPU.
+- STTN optional on CPU, 4.6 s/frame; use only when its subtitle quality wins.
+- No GPU worker needed for the pilot or Standard tier.
+- One fill at a time per container; separate containers can fill in parallel.
+- Set `OMP_NUM_THREADS`/torch threads per container so three containers do not
+  each spawn all cores.
+- Remote VOID is a burst/quality option, not the default.
+- Measure the real rate on the host before promising 25 minutes. The seed rates
+  are starting estimates, not a benchmark.
+
+### 4.7 Why not multi-tenant first
 
 The app has one shared `VIBECUT_TOKEN`, one settings file and one job list.
 Every route assumes one workspace. A public site would expose every customer's
 videos. Tenancy is a code project: owner checks on every route, tenant IDs on
 jobs/media, object storage isolation, auth, queue and billing. Private
-instances avoid that risk while proving willingness to pay.
+containers avoid that risk while proving willingness to pay.
 
 ## 5. VibeCut Web / RaaS
 
@@ -227,7 +267,7 @@ API (HOSTED profile) ── Postgres: users, orgs, jobs, orders, credits
   │                   ── S3: sources, work copies, edits, outputs
   ├─ prepare workers (CPU): proxy, scenes, transcript, OCR
   ├─ render workers (CPU): ffmpeg
-  └─ fill workers (GPU) or VOID API: Clean only
+  └─ clean workers (CPU MI-GAN; GPU optional) or VOID API
 ```
 
 Start with Postgres as the queue (`SKIP LOCKED`). Add Redis/SQS when measured.
@@ -287,24 +327,31 @@ Every artifact ships:
 
 ### Cloud Private
 
-- VM 4 vCPU/16 GB: $50–$90/month.
-- 250 GB + backup: $10–$20.
-- Monitoring/support: $30–$50.
-- Price $199 → 50–65% margin.
+| Tier | Host cost | Other cost | Price | Margin before support |
+|---|---:|---:|---:|---:|
+| Pilot, 1 tenant | $23 | $5 backup | $49 | ~40% |
+| Standard, 3 tenants on $155 host | $52/tenant | $15 | $199 | ~66% |
+| Dedicated, 1 tenant on $240 host | $240 | $20 | $499 | ~48% |
+| Mac Native, 1 Mac mini M6 | $150 | $10 | $349 | ~54% |
+
+Support is the variable. Budget 20 minutes per customer per month; at $30/h
+that is $10. Shared-host Standard has the best margin. The pilot is for
+learning, not profit.
 
 ### Cloud Web
 
-Per 90-second job:
+Per 90-second job, CPU-only MI-GAN:
 
 | Cost | Low | High |
 |---|---:|---:|
-| CPU render | $0.10 | $0.40 |
-| Clean (VOID) | $0.75 | $2.25 |
+| CPU render + local MI-GAN | $0.10 | $0.40 |
+| Remote VOID, optional | $0 | $2.25 |
 | Storage/egress | $0.05 | $0.15 |
 | Payment fee | $0.30 | $0.50 |
-| **Total** | **$1.20** | **$3.30** |
+| **Total** | **$0.45** | **$3.30** |
 
-Charge $9–$12 → 65–85% margin before support.
+Charge $9–$12 → 65–90% margin before support. The CPU-only path is the default;
+remote VOID is a speed/quality add-on.
 
 Do not offer unlimited renders. Do not include long source analysis free.
 
@@ -339,9 +386,9 @@ Do not offer unlimited renders. Do not include long source analysis free.
 |---|---|---|---|
 | M0 | Price, license, merchant, supported macOS, hosted profile | 1 week | Founder sign-off |
 | M1 | Mac DMG beta: sidecar, LaMa pack, signing, notarization, license, Sparkle | 4–6 weeks | Clean-Mac install + 10 founder runs |
-| M2 | Cloud Private beta: image, auth edge, volume, backup, runbook | 3–4 weeks | One paying pilot |
+| M2 | Cloud Private beta: image, auth edge, volume, backup, benchmark | 3–4 weeks | One 90 s job under 25 min on the $23 VPS; 3 tenants stable on the $155 host |
 | M3 | Paid launch: Mac + Private, website, docs, support | 2 weeks | 10 sales / 3 pilots |
-| M4 | Multi-tenant Web: auth, tenancy, queue, billing, GPU clean | 8–12 weeks | 100 users, cost per job measured |
+| M4 | Multi-tenant Web: auth, tenancy, queue, billing, CPU/GPU clean | 8–12 weeks | 100 users, cost per job measured |
 
 Do not start M4 before M3 metrics: activation, first render, repeat use,
 support minutes per customer.
@@ -354,9 +401,12 @@ support minutes per customer.
 | GPL ffmpeg or TTS enters the DMG | `check_proprietary_deps.py` in CI; LGPL build |
 | Model pack licenses drift | Pin hash + license per model; SBOM |
 | ProPainter used commercially by mistake | Block it in the provider interface; document S-Lab |
-| Private cloud leaks between customers | One instance per customer until tenancy ships |
-| Apple Vision/Speech missing on Linux | Measure cloud OCR/STT before promising parity |
-| GPU clean cost overruns | Quote before render; per-job budget alert |
+| Private cloud leaks between customers | One container per customer until tenancy ships |
+| Contabo has no SLA and shares CPU | Pilot only; move paid Standard to a 16-core host or dedicated; monitor steal and latency |
+| Three containers contend for CPU | Per-container CPU/memory limits; benchmark one tenant first |
+| Mac mini host is a single point of failure | Backups + swap unit; premium price reflects it |
+| Apple Vision/Speech missing on Linux | Measure cloud OCR/STT before promising parity; Mac Native tier for Apple-native |
+| Clean cost overruns | CPU MI-GAN default; remote VOID only when quoted |
 | Piracy of the Mac app | Offline license + fair refunds; no heavy DRM |
 | Support burden | Docs, in-app diagnostics, 48-hour email SLA |
 | App Store rejection | Direct DMG only |
@@ -365,6 +415,9 @@ Open decisions for the founder:
 
 1. Mac price: $149 Solo / $249 Studio, or a single $199 license?
 2. Is a 1-year update window acceptable, with optional renewal?
-3. Private Cloud at $199/month, or $299 with more support?
-4. RaaS price: $0.12/render second with $9 minimum?
-5. Is a Mac-only product enough for launch, with Cloud Private as a service?
+3. Private Standard: $199 with three containers on one host, or $299 with a
+   dedicated slice? The first needs shared-compute wording.
+4. Is the $23 VPS pilot for design partners only, or a paid $49 tier?
+5. Mac Native at $349 on a $150 Mac mini: premium support or self-serve?
+6. RaaS price: $0.12/render second with $9 minimum?
+7. Is Mac + Private enough for launch, with Web/RaaS later?
