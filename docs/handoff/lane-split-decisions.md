@@ -41,9 +41,7 @@ Matrix: [classic-studio-matrix.md](classic-studio-matrix.md)
 
 ## Constraints
 
-- Studio worktree currently has unrelated uncommitted Clean work. Do not mix
-  port work into it.
-- Classic worktree currently has uncommitted AI-fill work. Do not overwrite it.
+- On 2026-11-04, the Studio and Classic worktrees each held uncommitted Clean work, so port work was kept apart from it. That work has since been committed.
 - `core/` is the stable contract. Root modules remain the implementation
   bodies behind `features/*`; a physical move can happen later without changing
   the app contracts.

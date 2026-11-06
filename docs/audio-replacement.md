@@ -2,6 +2,8 @@
 
 ## Status: first version built
 
+Studio's Audio layer in Edit offers Original, Voice-Over and Dub, plus Library, Upload and AI music. The five modes below remain in the backend and in Classic.
+
 The render panel now has an **Audio** section with five modes:
 
 | Mode | Pipeline |

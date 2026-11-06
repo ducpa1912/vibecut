@@ -1,10 +1,8 @@
 # VibeCut Roadmap
 
-**Status:** R2 atomic trim merged. Tag `refactor-2-done`.
-**Main:** `0f68275`
-**Suite:** 1491 passed, 7 skipped.
-**Release status:** internal alpha; paid release gates remain open.
-**Source of truth:** this file replaces all earlier plan and roadmap files. Discussion records and handoffs remain historical.
+**Status (2026-11-06):** Studio is in internal alpha. R3 is merged (tag `refactor-3-done`). Work since then is the Studio revamp and AI text cleaning. Paid release gates remain open.
+**Suite:** about 2,400 tests. They are code checks; the founder tests by hand on real files.
+**Source of truth:** this file is the only active plan and roadmap. `PRODUCT.md` holds the product record and `DESIGN.md` the look. Discussion records and handoffs remain historical.
 
 ---
 
@@ -12,18 +10,18 @@
 
 ### Current product
 
-One local Mac workstation for turning long video or a finished cut into short posts:
+Studio is one local Mac workstation for turning a long recording or a finished video into posts:
 
 ```text
-IMPORT → CHECK → STORIES → EDIT → FINISH
+IMPORT → MOMENTS → EDIT → FINISH
 ```
 
-- **Check** detects baked text, speech, music, faces, quality and rights, then recommends clean-first or compose-first.
-- **Stories** finds sentence-bound stories with hook, payoff and evidence.
-- **Edit** is one document per story/aspect: Clean, Reframe, Motion, Color, Text, Captions, Audio.
-- **Finish** renders 9:16/4:5, builds packet v2, preflight markers, versions, review links.
+- **Import** takes a file, path or link, and reads scenes, speech and on-screen text.
+- **Moments** finds moments worth posting, or **Edit full video** opens every scene in order.
+- **Edit** is one document per moment and shape: Clean, Framing, Motion, Color, Text, Captions, Audio.
+- **Finish** reviews an exact frame, renders through a stoppable queue in six quality tiers and five shapes, and builds publish kits and review links.
 
-Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music/voice/transcription/text routes with the creator's key.
+Studio, Classic and the Voice Room are separate products on separate branches, ports and data folders (`docs/branching.md`). Main tracks Studio. Platform: macOS on Apple Silicon. Local-first; cloud only for explicit music, voice, transcription and text routes with the creator's key.
 
 ### Shipped by wave and round
 
@@ -37,16 +35,19 @@ Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music
 | QA round 1 | merged `2564ac8` | 25 QA fixes: captions, scroll, error copy, source-missing, cancel reading, story cards, queue progress, autosave, rights record |
 | R1 | `refactor-1-done` | Rights policy module + Studio Rights, story picks/trim handles, render performance + Studio read cache |
 | R2 | `refactor-2-done` | Atomic trim transaction, layer/caption ripple, fail-closed stale Edit, both-direction Studio trim, undo/rebind, Playwright drag acceptance |
+| R3 | `refactor-3-done` | Dub and voice workflow, finished-video library, Edit navigation and Finish honesty, Import progress and speech |
+| Lane split | no tag | Separate `studio_app.py` and `classic_app.py`, `core/` contract with pinned profiles, `features/*` packages, Classic and Voice Room out of Studio's page |
+| Studio revamp | no tag | Import → Moments → Edit → Finish, Edit rebuilt as Elements, Preview and Layers, frame border, scene Framing, one icon set, full-video edit, render phase as one surface, queue drawer |
+| AI text cleaning | no tag | AI fill Clean layers (LaMa default; STTN, Telea, Navier-Stokes optional), one tight box per line, per-line fill plan from the scan, key-frame blending, flexible LaMa size, saved fills with real Pause and Resume |
 
 ### Current state
 
-- 1491 tests pass; 7 opt-in skips.
-- Studio is the default UI; Classic remains behind `?classic=1` / Settings.
-- Rights lock is on by default; watermarks, handles and logos need a per-video tick; every found text can be cleaned.
-- Clean is on by default; `VIBECUT_ENABLE_CLEANUP=0` disables it.
-- Packet v2 and Edit/trim identity are wired.
-- R2 trim is browser-tested on synthetic fixtures.
-- Wave 5 hardening is not done: no `wave-5-done` tag, no signed/notarized app proof, no 90-minute performance proof, no founder acceptance run.
+- Studio is its own app on port 8795. Classic is a second supported product on 8796; `?classic=1` no longer exists in Studio.
+- All found text can be cleaned; a watermark, handle or logo needs a per-video tick. Clean is on by default; `VIBECUT_ENABLE_CLEANUP=0` disables it.
+- Import limits are per video: 10 GB upload, 2 GB XHS download, plus the free-disk check.
+- A Clean render on the newest fill has not been timed or rated. The founder's last review, on older code, was 6.5/10 with distortion on moving shots.
+- Saved fills and real Pause have code checks but no real resume yet.
+- Wave 5 hardening is not done: no `wave-5-done` tag, no signed or notarized app proof, no 90-minute performance proof, no founder acceptance run.
 
 ### Pre-wave version history (compressed)
 
@@ -55,6 +56,22 @@ Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music
 ---
 
 ## 2. Open items and next steps
+
+### Text removal (active)
+
+Founder tests by hand: `docs/testing/studio-ai-clean-quick-test.md` and `docs/testing/studio-clean-fill-retest.md` (steps 57–59).
+
+- Time and rate the per-line fill plan on a still video and a moving one. Motion thresholds and the 4 s first estimate are chosen values, tuned on two videos.
+- Time a real Pause and Resume, and check that no join shows in the result.
+- Moving-shot distortion is LaMa's open limit, since it fills each frame alone. STTN on moving shots is an untested idea.
+- Thread count and Core ML for LaMa are untimed.
+- Classic is porting this work on its own branch (LaMa only).
+
+### Open decisions for the founder
+
+- Voice cloning is on the never-list below, yet Studio ships `voice_clone` in Setup behind its gate. Decide which one stands.
+- Render as a service (`docs/raas-distribution-plan.md`) would reverse parts of the never-list for a different buyer. Plan only.
+- Vietnamese interface and the AI-music preview lock are deferred from Classic (`docs/handoff/classic-studio-matrix.md`).
 
 ### Paid-release gates
 
@@ -77,7 +94,7 @@ Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music
 | Beat snap only within ±120 ms; A/B music preview plays raw bed | Wave 5 |
 | Voice-fit not persisted; loudness only when a render exists | Wave 5 preflight |
 | Packet cover silently falls back to ffmpeg/poster | Wave 5 bug bash |
-| `MAX_CLEAN=32`; Vision sampler once failed | Wave 5 |
+| Clean layer cap is now 1000 (`edits.MAX_CLEAN`). Vision sampler once failed | Wave 5 |
 | Cloud music unverified: no MiniMax key; Lyria 401 | Founder key |
 | HeyGen free tier ends 2026-11-30; fallback to MiniMax | Check after date |
 
@@ -106,9 +123,9 @@ Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music
 - Round 6 panel ran five app servers with Check, proxy and render on one Mac. Check stalled at 63% and a 4:5 render took about 6 min, versus 5–40 s alone.
 - This is likely a local-machine limit, not an app bug. After launch, measure concurrent jobs: one ffmpeg/vision worker pool per machine, a queue cap, and an honest ETA that counts the queue ahead.
 
-### R3 founder-session fixes (planned, from round_6.md)
+### R3 founder-session fixes (built, tag `refactor-3-done`)
 
-Source: founder session 1 (`docs/testing/founder-session-1/`) and the round 6 panel. Four tracks with disjoint files, so they can be built in parallel and merged T1 → T4.
+Kept for reference. Source: founder session 1 (`docs/testing/founder-session-1/`) and the round 6 panel. Four tracks with disjoint files, so they can be built in parallel and merged T1 → T4.
 
 **T1 Dub and voice workflow** (`static/studio/edit/layers/audio.js`, `audio.py` messages, `story_queue.py` failure reason)
 - Dub gets a source-language confirm and a target-language picker; Studio writes `audio.translate`.
@@ -142,6 +159,10 @@ Source: founder session 1 (`docs/testing/founder-session-1/`) and the round 6 pa
 
 **Founder manual test after merge:** rerun the session 1 flow on A, C and B with codegen recording; check Dub with a target, the library after four renders, Back/Next, and Check progress without plateaus.
 
+### Smart reshape (direction recorded, not built)
+
+Shape now belongs to Edit. Direction and plan: `docs/handoff/smart-reshape-plan.md`.
+
 ### Special cuts (planned, not built)
 
 Founder note, 2026-11-05. Today a change of shape crops one picture to fit: Framing sets one zoom and place per scene. A special cut changes the layout when the shape changes, such as a vertical video made into a horizontal story, or the opposite. There can be dozens of templates, for example:
@@ -154,11 +175,13 @@ To work out when this is planned: whether a template applies per scene or to the
 
 ### Next order
 
-1. R3 founder-session fixes (Dub, library, Back/Next, honest progress, speech).
-2. Run founder manual checks for Waves 3/4, R1, R2 and R3.
-3. Wave 5 packaging/performance/bug-bash.
-4. Paid-release gates G1–G5 and the 20-source benchmark.
-5. Deferred trim features only after paid trim is proven.
+1. Text removal: founder retests on real video, then tune from the results.
+2. Publish features: `docs/handoff/publish-plan.md`.
+3. Smart reshape and special cuts, once planned.
+4. Run founder manual checks for Waves 3/4, R1, R2 and R3.
+5. Wave 5 packaging, performance and bug bash.
+6. Paid-release gates G1–G5 and the 20-source benchmark.
+7. Deferred trim features only after paid trim is proven.
 
 ---
 
@@ -258,12 +281,50 @@ Import, Check, Stories, Edit, render and packet work with the network off. Cloud
 
 ---
 
-## 5. Pointers
+## 5. Earlier status, for reference
+
+Superseded by §1 on 2026-11-06.
+
+**Status:** R2 atomic trim merged. Tag `refactor-2-done`.
+**Main:** `0f68275`
+**Suite:** 1491 passed, 7 skipped.
+**Release status:** internal alpha; paid release gates remain open.
+**Source of truth:** this file replaces all earlier plan and roadmap files. Discussion records and handoffs remain historical.
+
+**Earlier product description**
+
+One local Mac workstation for turning long video or a finished cut into short posts:
+
+```text
+IMPORT → CHECK → STORIES → EDIT → FINISH
+```
+
+- **Check** detects baked text, speech, music, faces, quality and rights, then recommends clean-first or compose-first.
+- **Stories** finds sentence-bound stories with hook, payoff and evidence.
+- **Edit** is one document per story/aspect: Clean, Reframe, Motion, Color, Text, Captions, Audio.
+- **Finish** renders 9:16/4:5, builds packet v2, preflight markers, versions, review links.
+
+Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music/voice/transcription/text routes with the creator's key.
+
+**Earlier state**
+
+- 1491 tests pass; 7 opt-in skips.
+- Studio is the default UI; Classic remains behind `?classic=1` / Settings.
+- Rights lock is on by default; watermarks, handles and logos need a per-video tick; every found text can be cleaned.
+- Clean is on by default; `VIBECUT_ENABLE_CLEANUP=0` disables it.
+- Packet v2 and Edit/trim identity are wired.
+- R2 trim is browser-tested on synthetic fixtures.
+- Wave 5 hardening is not done: no `wave-5-done` tag, no signed/notarized app proof, no 90-minute performance proof, no founder acceptance run.
+
+---
+
+## 6. Pointers
 
 - Discussion records: `round_*.md`.
 - Wave/round handoffs: `docs/handoff/**`.
 - QA evidence/checklists: `docs/testing/**`.
-- Product brief: `FOUNDER_BRIEF.md`; paid-v1 PRD: `PRD.md`; setup and feature docs: `README.md`, `docs/*.md`.
-- Tags: `wave-1-done`, `wave-2-done`, `wave-3-done`, `wave-4-done`, `refactor-1-done`, `refactor-2-done`.
+- Product record: `PRODUCT.md`; design system: `DESIGN.md`; product brief: `FOUNDER_BRIEF.md`; paid-v1 PRD: `PRD.md`; setup and feature docs: `README.md`, `docs/*.md`.
+- Lanes and shipping: `docs/branching.md`.
+- Tags: `wave-1-done`, `wave-2-done`, `wave-3-done`, `wave-4-done`, `refactor-1-done`, `refactor-2-done`, `refactor-3-done`.
 
 **Rule:** this roadmap is the only active plan/roadmap. If a proposal is not in §2 or a contract in §3, it is historical.

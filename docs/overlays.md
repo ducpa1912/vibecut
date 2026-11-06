@@ -1,5 +1,7 @@
 # Flow 2 overlay plans
 
+> The planning API below still exists, but Studio's Text, Effects and Captions layers in Edit now do this work and do burn into the render.
+
 Flow 2 adds **clean input plus new hook, title, caption, lower-third and CTA
 overlays** to a finished cut. It is a local retention feature, not a paid
 wedge. This document covers the gated planning API only. No overlay is burned

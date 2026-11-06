@@ -1,5 +1,5 @@
 > **Scope:** Setup exposes OpenCode, OpenRouter, MiniMax and local engines. The
-> admin console manages all eight AI keys and the ordered route lists for
+> admin console manages the six active AI keys and the ordered route lists for
 > intelligence, speech, music, and transcription. Cloud STT/TTS are optional;
 > local engines remain the default. OpenRouter project keys override env.
 

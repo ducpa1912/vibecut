@@ -79,7 +79,7 @@ in-process pools scale horizontally.
 | ffmpeg/ffprobe | Required; choose GPL-compliant or LGPL build (see plan) |
 | yt-dlp | Required for URL import; plain package, no GPL extras |
 | Pillow/NumPy | Required |
-| STTN + LaMa | Optional build profile; Apache-2.0 models + torch/onnxruntime |
+| LaMa (default), STTN | Optional build profile; Apache-2.0 models + onnxruntime for LaMa, torch for STTN |
 | Demucs | **Exclude** until weights are cleared |
 | RoFormer | Preferred separation if needed |
 | Whisper | Optional; Linux has no Apple Speech, so local STT needs mlx-whisper only on macOS; use cloud STT on Linux |

@@ -5,6 +5,8 @@
 **Author:** Founder, solo content creator.
 **Use:** Raw product input, not market research. This is the buyer’s dogfood report and the basis for the paid-v1 promise, refund triggers, and scope cuts.
 
+> **Kept as written.** This is the founder's report from 2026-10-26 and is not updated. Current product record: [PRODUCT.md](PRODUCT.md).
+
 > **Raw input note:** two founder asks were deliberately revised after product review. The raw brief asks for a paid alpha; the PRD ships a free alpha until the five gates pass. The raw brief asks for “four of six” as a feeling; the PRD uses a per-source floor of three (two for 20–29 minutes), with mean 4/6 as a portfolio target. Final decisions are in [PRD.md](PRD.md), not in this raw brief.
 
 ---

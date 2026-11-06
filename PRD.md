@@ -7,6 +7,19 @@
 
 > **Scope correction 2026-10-26:** Flow 1 and Flow 2 are not a cleanup add-on and a retention sidecar. They are one Check → Stories → Edit workflow. Flow 2 is the full Compose UI/UX; Flow 1 is the cleanup pre-pass. See [ROADMAP.md](ROADMAP.md#1-where-we-are-now). Paid 1.0 scope below is unchanged.
 
+> **Where this stands, 2026-11-06.** The promise, price, gates and decisions below are still the plan for paid v1, and nothing here has shipped. The rest of this section lists what has moved since version 1.1, so the old text stays for reference.
+>
+> | This PRD says | Today |
+> |---|---|
+> | Six paid-v1 screens: Import, Stories, Captions, Queue, Packet, Review (§9) | Studio has four steps: Import, Moments, Edit, Finish. Captions live in Edit; Queue, Review and Publish live in Finish |
+> | 9:16 and 4:5 only; 1:1 and 16:9 out (§13, §15) | Studio renders 9:16, 4:5, 1:1, 16:9 and 16:10. The paid promise still only depends on 9:16 and 4:5 |
+> | Final or draft render (FR-6) | Six quality tiers, 360p to 4K |
+> | macOS 14+ (§10) | The current build has been run on macOS 26. The supported list is still an open question |
+> | Baseline at `2228066` (§1) | Much of that baseline is fixed. Open gates are in [ROADMAP.md](ROADMAP.md#2-open-items-and-next-steps) |
+> | Not listed | Clean and AI text removal, full-video edit and render, and Classic as a second product now exist. They sit outside this paid promise |
+>
+> Current product record: [PRODUCT.md](PRODUCT.md).
+
 ---
 
 ## 1. Executive summary

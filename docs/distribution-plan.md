@@ -1,6 +1,6 @@
 # Distribution plan · cloud and Apple Silicon desktop
 
-Date: 2026-11-04
+Date: 2026-11-04, checked 2026-11-06. LaMa is now the default AI fill engine, so a build can ship LaMa with `onnxruntime` and leave out STTN and `torch`. Telea and Navier-Stokes are optional and need OpenCV (Apache-2.0).
 Source audit: [licensing-audit.md](licensing-audit.md) · Cloud deep dive: [cloud-architecture.md](cloud-architecture.md)
 Product license: proprietary (root `LICENSE`; EULA still required)
 

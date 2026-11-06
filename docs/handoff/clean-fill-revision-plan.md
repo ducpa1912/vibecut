@@ -2,7 +2,9 @@
 
 Date: 2026-11-04. Code reviewed: `studio` at `e274b45`.
 
-Status: revision 5. M0, R0, R1, R2, R3 and R4 built; R5 spike built on one Text layer, the rest of R5 not started.
+Current state and open items are in `docs/cleanup.md` and `ROADMAP.md` §2. This plan is kept for its reasoning.
+
+Status at revision 5: M0, R0, R1, R2, R3 and R4 built; R5 spike built on one Text layer, the rest of R5 not started.
 
 **Rule for this work:** audit from code and tests. Do not open the founder's projects to see what they did unless they say so. Layers found in a project may just be the founder testing, so they are not bug reports.
 

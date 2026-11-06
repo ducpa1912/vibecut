@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T00:00:00Z",
+  "title": "Design System: VibeCut Studio",
+  "extensions": {
+    "colorMeta": {
+      "amber-work-light": { "role": "primary", "displayName": "Amber Work Light", "canonical": "#e8a266" },
+      "bench-black": { "role": "neutral", "displayName": "Bench Black", "canonical": "#0b0b0c" },
+      "paper-white": { "role": "neutral", "displayName": "Paper White", "canonical": "#f1efe9" },
+      "ok-green": { "role": "state", "displayName": "OK Green", "canonical": "#8ec9a3" },
+      "bad-coral": { "role": "state", "displayName": "Bad Coral", "canonical": "#e28a7c" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Step and Finish stage headings only." },
+      "body-editor": { "displayName": "Body Editor", "purpose": "Edit panels." },
+      "timecode": { "displayName": "Timecode", "purpose": "Time and technical values." }
+    },
+    "shadows": [
+      { "name": "selected-ring", "value": "0 0 0 1px var(--st-accent)", "purpose": "Selected object. A hairline, not lift." },
+      { "name": "inner-edge", "value": "inset 0 0 0 1px var(--st-line-2)", "purpose": "Inner edge on a control." },
+      { "name": "active-row", "value": "inset 2px 0 0 var(--st-accent)", "purpose": "Active row marker." }
+    ],
+    "motion": [
+      { "name": "press", "value": "transform 140ms ease", "purpose": "Button press moves down 1px." },
+      { "name": "panel-width", "value": "width 160ms ease", "purpose": "Panel width changes." }
+    ],
+    "breakpoints": [
+      { "name": "phone", "value": "767px" },
+      { "name": "drawer", "value": "1023px" },
+      { "name": "compact", "value": "1100px" },
+      { "name": "laptop", "value": "1366px" },
+      { "name": "short-screen", "value": "780px tall" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action in a view.",
+      "html": "<button class=\"ds-btn-primary\">Add to queue</button>",
+      "css": ".ds-btn-primary { min-height: 40px; padding: 9px 17px; border: 1px solid #e8a266; border-radius: 10px; background: #e8a266; color: #1a1209; font-size: 13.5px; font-weight: 580; transition: transform 140ms ease, background 140ms ease; } .ds-btn-primary:hover { background: #f0b27c; border-color: #f0b27c; } .ds-btn-primary:focus-visible { outline: 2px solid #e8a266; outline-offset: 3px; } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "A secondary action.",
+      "html": "<button class=\"ds-btn-ghost\">Scan video</button>",
+      "css": ".ds-btn-ghost { min-height: 40px; padding: 9px 17px; border: 1px solid #3a3a40; border-radius: 10px; background: transparent; color: #f1efe9; font-size: 13.5px; font-weight: 580; transition: transform 140ms ease, background 140ms ease; } .ds-btn-ghost:hover { border-color: #5a5a62; background: #17171a; } .ds-btn-ghost:focus-visible { outline: 2px solid #e8a266; outline-offset: 3px; } .ds-btn-ghost:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "A low-priority action, such as Pause.",
+      "html": "<button class=\"ds-btn-quiet\">Pause</button>",
+      "css": ".ds-btn-quiet { min-height: 32px; padding: 6px 12px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: #a3a1a6; font-size: 12px; font-weight: 580; } .ds-btn-quiet:hover { background: #17171a; color: #f1efe9; } .ds-btn-quiet:focus-visible { outline: 2px solid #e8a266; outline-offset: 3px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Darkroom Bench",
+    "overview": "A dim, warm working room for long sessions. The picture is the lit object on the bench, the tools stay quiet around it, and amber marks what is active, like a safelight.",
+    "keyCharacteristics": [
+      "Near-black, slightly warm tonal layers instead of shadows.",
+      "One accent: amber, on the primary action, the selection and the focus.",
+      "Serif for headings that name where you are, system sans for controls, mono for time."
+    ],
+    "rules": [
+      { "name": "The Safelight Rule", "body": "Amber means active or next.", "section": "colors" },
+      { "name": "The Blue and Orange Rule", "body": "A drawn box is blue and a found box is orange, everywhere boxes appear.", "section": "colors" },
+      { "name": "The One Serif Rule", "body": "The serif is for headings that name where you are.", "section": "typography" },
+      { "name": "The No Lift Rule", "body": "Do not float a surface with a soft drop shadow.", "section": "elevation" }
+    ],
+    "dos": ["Do keep the video the brightest thing on screen.", "Do keep Edit one fixed screen, with scrolling inside its panels."],
+    "donts": ["Don't add a second accent colour.", "Don't add web fonts or remote assets."]
+  }
+}

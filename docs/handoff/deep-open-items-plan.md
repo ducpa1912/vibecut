@@ -1,6 +1,6 @@
 # Deep open-items plan
 
-Status: Phase 0 — baseline audit and decisions  
+Status: open items now live in `ROADMAP.md` §2; this log is kept for reference. Last phase here: Phase 0, baseline audit and decisions  
 Created: 2026-11-03  
 Baseline commit: `3067c20`  
 Source checkup: `docs/testing/studio-edit-deep-checkup.md`

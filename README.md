@@ -1,17 +1,27 @@
 # VibeCut
 
-VibeCut is a self-hosted, local-first long-video → short-reel cutter. Drop a
-minutes- or hours-long video; VibeCut scans it, reads the frames and speech,
-finds a hook, builds 15 / 30 / 60 second cuts, reframes the subject, optionally
-replaces the audio, and renders the reel on your machine.
+VibeCut Studio is a local Mac workstation for video. Bring in a long recording or
+a finished video, find the moments worth posting or edit the whole thing, remove
+old burned-in text with AI, add new captions, voice and music, and render on your
+own machine.
+
+```text
+Import → Moments → Edit → Finish
+```
 
 Everything runs locally by default. There is no account, no cloud upload, and
 no watermark. Cloud providers are optional and inactive until a key is saved.
 The source is proprietary and closed-source; see [LICENSE](LICENSE) and
 [docs/licensing.md](docs/licensing.md).
 
-**v0.13.0** · [Roadmap](ROADMAP.md) · [Admin console](docs/admin.md) ·
-[URL ingest](docs/url-ingest.md) · [Cloud speech](docs/cloud-speech.md)
+This repo holds three products on separate branches: **Studio** (this branch),
+**Classic** and the **Voice Room**. Each has its own port and data. See
+[docs/branching.md](docs/branching.md).
+
+**Status:** internal alpha, not for sale yet ·
+[Product](PRODUCT.md) · [Roadmap](ROADMAP.md) · [Design system](DESIGN.md) ·
+[Paid v1 PRD](PRD.md) · [Clean and AI fill](docs/cleanup.md) ·
+[Admin console](docs/admin.md) · [URL ingest](docs/url-ingest.md)
 
 ## Quick start
 
@@ -28,14 +38,33 @@ Requirements:
 - Optional: OpenCode Go for DeepSeek V4.1 Flash. Enter a project key in Setup,
   or sign in with the OpenCode CLI.
 
+Start Studio:
+
 ```bash
-cd vibecut
+cd vibecut-studio
+python3 studio_app.py
+```
+
+Open <http://127.0.0.1:8795>. Studio keeps its data in `~/vibecut-lanes/studio`
+unless `VIBECUT_DATA` says otherwise. `scripts/serve-studio.sh` does the same.
+When working in a lane worktree, load its environment first:
+
+```bash
+eval "$(scripts/lane-env.sh)" && python3 studio_app.py
+```
+
+AI fill needs its model in `<data>/models/fill` (or `VIBECUT_FILL_MODELS`). LaMa
+is `lama_fp32.onnx` and needs `onnxruntime`; optional engines are listed in
+`requirements-optional.txt`.
+
+`classic_app.py` starts Classic on 8796. The older shared app is still available
+for that workflow:
+
+```bash
 ./run.sh
 ```
 
-Open <http://127.0.0.1:8787>.
-
-`run.sh` uses `.venv/bin/python` when present and otherwise the system
+It opens on <http://127.0.0.1:8787>. `run.sh` uses `.venv/bin/python` when present and otherwise the system
 `python3`. If the core packages are missing, it installs `requirements.txt`
 first. To run without the wrapper:
 
@@ -52,12 +81,12 @@ gitignored.
 
 ## First-run checklist
 
-1. Open the main app and choose a local file, a local path, or a URL.
+1. Open Studio and choose a local file, a local path, or a URL.
 2. Open **Setup** if you want cloud intelligence, transcription, voice, music,
    or URL sidecar settings.
 3. Open `/_ductator/` to create the single local admin account, manage AI keys,
    inspect provider catalogs, edit ordered model routes, and read logs.
-4. Render a draft, check the cut, then render a final.
+4. Find moments or press **Edit full video**, then queue a render in Finish.
 
 The main app and the admin console are deliberately separate surfaces. Setup is
 the normal user configuration drawer. The admin console is the operational
@@ -65,7 +94,9 @@ control room and is not linked from the public app.
 
 ## What it does
 
-VibeCut keeps one local job record per source. The pipeline is:
+VibeCut keeps one local job record per source. Studio's four steps are described
+in [Studio workflow](#studio-workflow). Underneath, the analysis and cutting
+pipeline is:
 
 1. **Probe** the source with `ffprobe` and store duration, dimensions, fps,
    audio presence, and a fingerprint.
@@ -80,7 +111,8 @@ VibeCut keeps one local job record per source. The pipeline is:
    mono 16 kHz track.
 5. **Score** visual sharpness, motion, audio, on-screen text, speech and subject
    presence. Black and frozen beats are tagged and pushed out of plans.
-6. **Plan** 15 / 30 / 60 second cuts. Plans share a hook, keep body beats in
+6. **Plan** 15 / 30 / 60 second cuts for the older flow. Studio finds moments of
+   any length instead. Plans share a hook, keep body beats in
    source order, land a payoff at the end, and avoid clustering.
 7. **Edit** in Smart Cut: reorder, trim, remove, add Moments, choose an
    alternate hook, apply story-arc order, save variants, and compare A/B hooks.
@@ -373,7 +405,59 @@ URL query strings, fragments, and cookie paths are redacted; key changes record
 only the masked value. Audit retention is 365 days and pipeline retention is 90
 days.
 
-## Workflow
+## Studio workflow
+
+### Import
+
+Add a file, a local path or a video link. Limits are per video: 10 GB for an
+upload and 2 GB for an XHS download, plus a check that the file fits on disk.
+Studio reads scenes and speech. **Edit full video** skips finding moments and
+opens every scene in order.
+
+### Moments
+
+Find moments, build your own, or delete them. Each moment opens in Edit.
+
+### Edit
+
+One document per moment and shape, on one timeline and preview. Elements add
+Text, Effects and clips, and the shape is set here: 9:16, 4:5, 1:1, 16:9 or 16:10.
+Framing sets each scene's zoom and place. Layers are saved as immutable versions.
+
+**Clean** removes burned-in text:
+
+- **Scan video** finds each line of text once, with its own tight box and time.
+  Logos on objects are listed but start unticked. A watermark, handle or logo
+  needs a tick for that video.
+- **Clean N** turns ticked rows into layers. **Add box** and **Paint** add your
+  own, starting at the playhead and lasting three seconds.
+- Each layer is AI fill or blur. Boxes and timeline bars can be moved and resized.
+- During the scan, Studio measures how much the picture moves around each line
+  against that video's own noise, and saves a plan: one fill when the line is
+  still, up to six fills a second when it moves. Frames between are blended.
+
+LaMa is the default fill engine. STTN, Telea and Navier-Stokes are optional. See
+[docs/cleanup.md](docs/cleanup.md).
+
+### Finish
+
+Review shows an exact frame and a leftover-text check. Render has six quality
+tiers: 360p, 540p draft, 720p, 1080p final, 2K (1440) and 4K (2160). The queue
+runs one render at a time in a drawer with Queue and History tabs.
+
+- **Pause** stops the running render within seconds. **Resume** starts that item
+  again, and only the work still missing is done.
+- AI fill results and encoded beats stay on disk, so a stop, crash or server
+  restart loses little. Nothing resumes by itself.
+- The Mac stays awake while a render runs. A closed lid can still sleep it.
+
+Publish builds a publish kit or a review link for one ready render.
+
+## Classic-era workflow
+
+The sections below describe the earlier single-page workflow, which Classic and
+the older shared app still follow. They are kept for reference. Studio's own
+screens are described above.
 
 ### 1. Ingest
 
@@ -510,10 +594,10 @@ concat demuxer, muxes the audio bed, and writes a poster frame.
 
 ### 6. Clean (Flow 1)
 
-Clean removes baked-in text with deterministic layers: `crop_guard`, `blur`,
-`plate` and `mask`. It does not inpaint, regenerate or remove a platform
-watermark. The own-footage attestation is still required before a Clean layer
-saves, and the server checks it; the routes use `/api/jobs/{id}/cleanup/*`.
+Clean removes baked-in text with `crop_guard`, `blur`, `plate`, `mask`, `mosaic`,
+`delogo` and `fill` (AI inpainting) layers. Studio offers AI fill and blur. All
+found text can be cleaned, and a watermark, handle or logo needs a per-video tick
+that the server checks. The routes use `/api/jobs/{id}/cleanup/*`.
 
 Clean is **on by default**. Set `VIBECUT_ENABLE_CLEANUP=0` (also `false`, `no`
 or `off`) to disable the Clean planning and layer routes. The rights routes
@@ -588,10 +672,14 @@ Audio replacement: `--audio-mode keep|full|bed|voice|music`,
 
 ## API reference
 
+This reference lists the longest-standing routes. `/openapi.json` lists every
+route, including Studio's Edit, Clean, queue and library routes
+(`/api/jobs/{job_id}/edits/*`, `/api/story-queues/*`, `/api/artifacts`).
+
 All routes are local by default. JSON errors use `{"detail": "..."}`. Job IDs
-are 12 lowercase hex characters. `target` is 15, 30 or 60. `quality` is `final`
-or `draft`. `aspect` is `9:16`, `4:5`, `1:1` or `16:9`. `order` is `source` or
-`arc`.
+are 12 lowercase hex characters. `target` is 15, 30 or 60 on the legacy routes.
+`quality` is `360`, `draft`, `720`, `final`, `1440` or `2160`. `aspect` is `9:16`,
+`4:5`, `1:1`, `16:9` or `16:10`. `order` is `source` or `arc`.
 
 When `VIBECUT_TOKEN` is set, supply it as:
 
@@ -842,7 +930,8 @@ Workflow body:
 
 ## Storage
 
-Default data root: `data/`. Override with `VIBECUT_DATA`.
+Default data root: `~/vibecut-lanes/studio` for Studio, `~/vibecut-lanes/classic`
+for Classic, and `data/` for the older shared app. Override with `VIBECUT_DATA`.
 
 ```text
 data/
@@ -864,6 +953,9 @@ data/
     transcript/transcript.json  Timestamped speech transcript
     audio/                      Uploaded/fitted audio and script artifacts
     renders/                    reel_*.mp4 and reel_*.jpg
+    edits/                      Immutable Edit versions
+    fill/                       Finished AI fill clips, one per beat
+    fill/saved/                 Model results kept until their clip finishes
     history/
       index.json                Capped summaries
       <entry_id>.json           Full per-entry snapshot
@@ -884,6 +976,7 @@ data/
     stt-test/                   Live STT test clip/transcript
     voice-test/                 Live TTS test clips
   models/kokoro/                Kokoro model files when the Voice Pack is installed
+  models/fill/                  AI fill models (LaMa, optional STTN)
 assets/music/
   library/                      User library tracks (own / licensed / CC)
   generated/                    AI beds kept as reusable library tracks
@@ -928,14 +1021,21 @@ installed engines, models and cache sizes with removal hints.
 | Variable | Default | Meaning |
 |---|---|---|
 | `VIBECUT_HOST` | `127.0.0.1` | Bind address. |
-| `VIBECUT_PORT` | `8787` | HTTP port. |
-| `VIBECUT_DATA` | `./data` | Data root. |
+| `VIBECUT_PORT` | `8795` Studio, `8796` Classic, `8787` shared app | HTTP port. |
+| `VIBECUT_DATA` | `~/vibecut-lanes/<app>`, or `./data` for the shared app | Data root. |
 | `VIBECUT_TOKEN` | unset | Shared app token for `/api/*` and UI media. |
 | `VIBECUT_MAX_UPLOAD_GB` | `10` | Upload ceiling, per video. |
 | `VIBECUT_URL_MAX_GB` | `2` | xhs_get download ceiling, per video. |
 | `VIBECUT_DEEP_SCENES` | `300` | Deep-read shortlist size. |
 | `VIBECUT_ENCODER` | `auto` | `auto`, `videotoolbox` or `libx264`. |
 | `VIBECUT_RENDER_WORKERS` | `4` | Parallel segment workers. |
+| `VIBECUT_DECODER` | `auto` | `videotoolbox` forces hardware decode for software AV1 sources. |
+| `VIBECUT_KEEP_AWAKE` | `1` | `0` lets the Mac idle to sleep during a render. |
+| `VIBECUT_FILL_MODELS` | `<data>/models/fill` | AI fill model folder. |
+| `VIBECUT_FILL_LAMA_KEYS` | scan's plan | Fills per second for every line. `0` runs LaMa on every frame. |
+| `VIBECUT_FILL_LAMA_PROVIDER` | CPU | `coreml` tries Core ML first. |
+| `VIBECUT_FILL_DEVICE` | `auto` | STTN device. |
+| `VIBECUT_FILL_TEXT_MASK` | `on` | `off` fills the whole box, not only the letters. |
 | `VIBECUT_CAPTION_FONT_FILE` | system font | Caption TTF/TTC. |
 | `VIBECUT_HISTORY_MAX` | `50` | Per-job history entries, capped at 200. |
 | `VIBECUT_ADMIN_TRUST_PROXY` | unset | Set `1` only behind a TLS-terminating proxy. |
@@ -981,7 +1081,7 @@ controls as well.
 docker compose up --build
 ```
 
-The container uses `libx264`, Debian ffmpeg and DejaVu fonts, mounts `./data`
+This runs the older shared app, not Studio. The container uses `libx264`, Debian ffmpeg and DejaVu fonts, mounts `./data`
 at `/data`, and serves port `8787`. Apple Vision and MLX Whisper are
 macOS-only, so the container falls back to center crop and no Apple speech. Set
 `VIBECUT_TOKEN` for any non-loopback use. The container binds `0.0.0.0`, so
@@ -1023,6 +1123,9 @@ publishing, team accounts, cloud sync, or hosted render farm is included.
   It does not understand irony or brand safety.
 - Crop is per beat with optional tracking. A subject moving across a long take
   can still drift; split the source or edit the cut.
+- AI fill handles each frame alone, so moving backgrounds can show distortion.
+  It is much slower than the video's length on a Mac. The founder rated a real
+  render on the old code 6.5/10; the newer fill has not been re-rated yet.
 - Captions come from OCR and speech. If subtitles are already burned in, turn
   captions off to avoid doubles.
 - Translation and rewrite quality depend on the configured model. Preview
@@ -1034,7 +1137,7 @@ publishing, team accounts, cloud sync, or hosted render farm is included.
   again** if you need a separately retained file.
 - Analysis and render pools are in-process. A restart marks interrupted work
   `interrupted`; retry requeues it. Partial analysis and partial ffmpeg output
-  are not resumed, but finished render segments come from the cache.
+  are not resumed, but finished render segments and saved AI fills are reused.
 - Private batches run sequentially, at most ten items, under
   `data/batches/<batch_id>.json`. A restart pauses an active batch and keeps
   completed outputs; resume requeues the remaining work.
@@ -1047,9 +1150,8 @@ publishing, team accounts, cloud sync, or hosted render farm is included.
 ```bash
 python3 -m pip install -r requirements-dev.txt
 python3 -m pytest -q
-python3 -m compileall -q app.py overlays.py routes_overlays.py job_queue.py batch.py disk.py routes_batches.py audio.py pipeline.py settings_store.py workflow_config.py admin
-node --check static/app.js
-node --check static/admin.js
+python3 -m compileall -q .
+find static -name '*.js' -print0 | xargs -0 -n1 node --check
 python3 scripts/check_proprietary_deps.py
 git diff --check
 ```
@@ -1057,7 +1159,9 @@ git diff --check
 `requirements-dev.txt` adds `pytest` and `httpx2`, which Starlette's
 `TestClient` needs. Runtime installs do not need them.
 
-Current suite: **612 tests**. The optional beat-grid test skips when `librosa`
+The suite has about 2,400 tests, which are code checks on arrays and fakes. The
+founder tests the app by hand on real files (`docs/testing/`). `scripts/ship.sh`
+runs these checks, pushes `studio` and moves `main`. The optional beat-grid test skips when `librosa`
 is not installed. The tests use temporary `VIBECUT_DATA` directories and do not
 require ffmpeg for the fast unit set. The dependency audit checks direct
 requirements, sidecar imports, and the installed yt-dlp floor. Two existing
@@ -1065,6 +1169,10 @@ warnings are expected: `setuptools` lacks usable license metadata.
 
 ## Documentation
 
+- [Product](PRODUCT.md) and [design system](DESIGN.md)
+- [Roadmap](ROADMAP.md) and [paid v1 PRD](PRD.md)
+- [Branches, lanes and shipping](docs/branching.md)
+- [Clean and AI fill](docs/cleanup.md)
 - [Admin console](docs/admin.md)
 - [URL ingest and sidecars](docs/url-ingest.md)
 - [URL ingest QA](docs/url-ingest-qa.md)
@@ -1077,8 +1185,8 @@ warnings are expected: `setuptools` lacks usable license metadata.
 - [License audit](docs/licensing-audit.md)
 - [Cloud and Mac distribution plan](docs/distribution-plan.md)
 - [Cloud architecture](docs/cloud-architecture.md)
+- [Render as a service plan](docs/raas-distribution-plan.md)
 - [Architecture and contracts](ROADMAP.md#3-product-contracts-still-in-force)
-- [Roadmap](ROADMAP.md)
 
 ## License
 

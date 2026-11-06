@@ -1,6 +1,6 @@
 # Branches, lanes and shipping
 
-Method of 2026-10-29. It replaces the earlier rule that every lane merged and moved `main`.
+Method of 2026-10-29, updated 2026-11-06. It replaces the earlier rule that every lane merged and moved `main`.
 That rule failed in practice: the lanes used each other's files, env, notes and test ports.
 
 ## The lanes
@@ -35,7 +35,8 @@ Each lane has its own:
 | `scripts/serve-studio.sh` | Studio | Starts `studio_app.py`; port/data defaults live in the entrypoint (8795 / Application Support lane folder). |
 | `scripts/serve-classic.sh` | Classic | Starts `classic_app.py`; port/data defaults live in the entrypoint (8796 / Application Support lane folder). |
 | `scripts/serve.sh` | legacy lane helper | Kept for the old lane workflow; new work uses the per-app scripts. |
-| `scripts/record.sh` | the founder | Opens a recorded browser on the running lane. It saves `trace.zip`, `network.har` and `storage.json`. |
+| `scripts/record.sh` | the founder | Opens a recorded browser on the running lane. It saves `trace-NNN.zip` pieces every 5 minutes, `network.har` and `storage.json`, so closing the browser keeps what was recorded. |
+| `scripts/clean_test_report.py` | Studio | Read-only report on a Clean test run. |
 | `scripts/ship-lane.sh` | classic, voice-room | Takes in its own branch from GitHub, runs the checks, and pushes that branch. It never moves `main`. |
 | `scripts/ship.sh` | studio | Same checks, pushes studio, then fast-forwards and pushes `main`. |
 | `scripts/release.sh --founder-passed` | classic | Tags a beta (below). |
@@ -54,7 +55,8 @@ studio  ──ship───────► origin/studio  ──► main + Studi
 voice-room ──ship-lane► origin/voice-room (hidden feature lane)
 ```
 
-Shared backend changes still need an explicit port or cherry-pick. Do not
+Since 2026-11-04 there are no merge commits from `classic` or `voice-room` into
+`studio`. Shared backend changes need an explicit port or cherry-pick. Do not
 assume a release merge carries them. If Classic needs a Studio backend change,
 ask the Studio owner for the commit and port it into the Classic lane with
 Classic tests. If Studio needs a Classic fix, do the same in reverse.
@@ -95,7 +97,9 @@ Never delete a feature to hide it. Deleting code on one lane deletes it everywhe
   The recording stays on the founder's Mac, out of the repo.
 - Agents never open the recorded browser. The founder owns the terminal and the Ctrl-C.
 - Founder test scripts in `docs/testing/` follow the founder's own recorded clicks. Never invent steps.
-- Automated tests are code checks. They run on every ship and never replace the founder's test.
+- Automated tests are code checks. They run on every ship and never replace the founder's test. Do not run the full suite while the founder's render is running.
+- The founder starts the server. After a change that needs a restart, give the command rather than restarting it.
+- Do not open the founder's projects or media unless they say so for that request.
 
 ## Working with OpenCode
 
@@ -110,7 +114,7 @@ When the founder's test pass on `classic` is clean, run `scripts/release.sh --fo
 
 ## Studio plan
 
-The current Studio plan and open items are in `docs/handoff/r3-review.md` ("Studio plan (revised 2026-11-01)"). Lane split decisions and the Classic/Studio matrix are in
+The current Studio plan and open items are in `ROADMAP.md` §2. `docs/handoff/r3-review.md` holds the earlier plan. Lane split decisions and the Classic/Studio matrix are in
 `docs/handoff/lane-split-decisions.md` and `docs/handoff/classic-studio-matrix.md`.
 
 ## History

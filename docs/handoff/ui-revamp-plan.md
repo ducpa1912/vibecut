@@ -1,6 +1,6 @@
 # Edit UI revamp — plan
 
-Status: P0/P1 built. Look deferred.
+Status: P0 to P4 built (`ui-revamp-p0.md` to `ui-revamp-p4.md`). Recorded look: `DESIGN.md`.
 
 ## P0
 1. Remove the obsolete Moment bar. Story selector moves into Preview head.

@@ -1,5 +1,7 @@
 # Text fill test plan: STTN and LaMa (2026-11-01)
 
+> Finished. AI fill shipped as a Clean kind and LaMa is the default. See `docs/cleanup.md`. Kept for reference.
+
 Goal: find out whether a local AI fill removes burned-in text better than
 today's Clean kinds (blur, plate, mask, delogo), and whether it is fast enough
 on the founder's Mac (Apple M1, 8 GB). This plan is a **bench test only**. It

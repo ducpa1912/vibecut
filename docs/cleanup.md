@@ -1,8 +1,46 @@
-# Cleanup Kit (Flow 1 prototype)
+# Clean and AI fill
 
-Deterministic cleanup planning for a finished video with baked-in text. This is
-a gated API prototype, not a paid v1 surface. It returns a plan only: it does
-not render, modify, or queue media.
+Updated 2026-11-06. This page starts with how Studio removes burned-in text today.
+The original planning API is documented after it and is still in use.
+
+## How Studio cleans text
+
+1. **Scan.** `detect.py` samples the video at 2 frames a second and reads text at
+   1280 wide. Each line gets one tracklet with its own box and time. Weak reads are
+   kept when a neighbouring frame reads the same words, and repeats are dropped.
+   Logos on objects start unticked.
+2. **Plan.** `plan_fills` measures how much the picture changes around each line
+   against the video's own noise floor, and saves `fill_plan` on the tracklet.
+   A line within four times the noise gets one fill. A moving line gets up to six
+   fills a second. Clean layers copy this as `fill_keys`. Drawn boxes have no scan
+   data and use the default of three a second. Old scans have no plan, so press
+   **Scan again**.
+3. **Layers.** A Clean layer is AI fill or blur, on a box or painted mask, with its
+   own time. Up to 1000 layers (`edits.MAX_CLEAN`). All found text can be cleaned;
+   a watermark, handle or logo needs a tick for that video.
+4. **Fill.** `textfill/` runs before the cut, one clip per beat, in
+   `jobs/<id>/fill/<key>.mp4`. Only the area holding text goes to the model, and a
+   mask finds the letters inside the box. Motion is checked only near the text,
+   and a jump starts a new fill.
+5. **Resume.** Each LaMa result goes to `jobs/<id>/fill/saved/` as it finishes,
+   named by the model, crop and hole. After a stop, the run replays and only the
+   missing fills reach the model. Results are removed when their clip finishes, or
+   tidied after 14 days or past 2 GB. A full disk costs the resume, not the render.
+
+| Engine | Default | Notes |
+|---|---|---|
+| LaMa ONNX | Yes | Per frame, flexible input up to 512 on the longest side. Needs `onnxruntime` |
+| STTN | No | Video model, heavier. Needs `torch` |
+| Telea, Navier-Stokes | No | OpenCV, about a fifth of a second a frame, smear on detail. Optional, needs `opencv-python-headless` |
+
+Moving backgrounds can still distort, because LaMa fills each frame alone. Timings
+and the founder's review are in `docs/testing/studio-clean-fill-retest.md`. Settings
+are listed in `README.md` under Configuration.
+
+# Cleanup planning API
+
+Deterministic cleanup planning for a finished video with baked-in text. It returns
+a plan only: it does not render, modify, or queue media.
 
 ## Enable
 
