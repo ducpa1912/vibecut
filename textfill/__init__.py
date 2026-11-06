@@ -18,6 +18,7 @@ import importlib.util
 import json
 import logging
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -28,14 +29,21 @@ import numpy as np
 
 from . import mask as masks
 
-METHODS = ("lama", "sttn", "telea", "ns")
+METHODS = ("lama", "migan", "sttn", "telea", "ns")
+# Engines that run on key frames, with a plan, saved results and a choice of chip.
+KEYED_METHODS = ("lama", "migan")
+DEVICES = ("cpu", "gpu")
+DEFAULT_DEVICE = "cpu"
 # No model file: OpenCV spreads the colours around the hole into it.
 CLASSIC_METHODS = ("telea", "ns")
 DEFAULT_METHOD = "lama"
 VERSION = 3
-MODEL_FILES = {"sttn": "sttn_infer_model.pth", "lama": "lama_fp32.onnx"}
-MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime", "telea": "cv2", "ns": "cv2"}
+MODEL_FILES = {"sttn": "sttn_infer_model.pth", "lama": "lama_fp32.onnx", "migan": "migan_traced.pt"}
+# The file an engine reads on the GPU. MI-GAN uses the same one on both chips.
+GPU_MODEL_FILES = {"lama": "big-lama.pt", "migan": "migan_traced.pt"}
+MODEL_PACKAGES = {"sttn": "torch", "lama": "onnxruntime", "migan": "torch", "telea": "cv2", "ns": "cv2"}
 METHOD_COPY = {
+    "migan": "MI-GAN (per frame)",
     "sttn": "STTN (video)",
     "lama": "LaMa (per frame)",
     "telea": "Telea (OpenCV)",
@@ -65,10 +73,14 @@ LAMA_FRAME_UNITS = 0.02
 # strip of one frame for STTN and one frame for LaMa. STTN's figure is a real
 # render on an M1 8 GB Mac under swap, the OpenCV figures are real frames on that
 # Mac during a render, and LaMa's is a full square on that Mac.
-SEED_RATES = {"sttn": 4.6, "lama": 4.0, "telea": 0.2, "ns": 0.2}
+SEED_RATES = {"sttn": 4.6, "lama": 4.0, "migan": 0.6, "telea": 0.2, "ns": 0.2}
+# On the GPU: arrays on an M1 8 GB Mac, about 0.6 s and 0.2 s, plus room for heat.
+SEED_GPU_RATES = {"lama": 0.8, "migan": 0.25}
+# Reading, pasting and writing one frame, whichever engine runs.
+FRAME_SECONDS = 0.08
 # LaMa's unit is one run on a full 512 square, so its figure no longer depends on
 # how much a video moves. Earlier figures were per frame and stay out of this.
-RATE_KEYS = {"lama": "lama_run"}
+RATE_KEYS = {"lama": "lama_run", "migan": "migan_run"}
 RATE_MIN_FRAMES = 60
 RATES_FILE = "fill_rates.json"
 
@@ -95,10 +107,50 @@ def models_dir(data_root: Path | str) -> Path:
     return Path(data_root) / "models" / "fill"
 
 
-def model_path(method: str, directory: Path) -> Path:
+def model_path(method: str, directory: Path, device: str = DEFAULT_DEVICE) -> Path:
     if method not in METHODS:
         raise FillError(f"Unknown fill method: {method}.")
+    if device == "gpu" and method in GPU_MODEL_FILES:
+        return Path(directory) / GPU_MODEL_FILES[method]
     return Path(directory) / MODEL_FILES.get(method, "opencv")
+
+
+def gpu_problem(method: str, directory: Path) -> str | None:
+    """Why an engine cannot run on the GPU here, or None."""
+    if method not in GPU_MODEL_FILES:
+        return f"{METHOD_COPY.get(method, method)} has no GPU option."
+    from .torch_fill import gpu_possible
+
+    if not gpu_possible():
+        return "The GPU option needs PyTorch on an Apple Silicon Mac."
+    path = model_path(method, directory, "gpu")
+    if path.is_file() and path.stat().st_size > 0:
+        return None
+    return f"The GPU option for {METHOD_COPY.get(method, method)} needs {path.name} in {directory}."
+
+
+def chosen_device(method: str, device: str | None, directory: Path) -> str:
+    """The chip a fill really uses: the GPU only when asked for and able to run."""
+    if device == "gpu" and gpu_problem(method, directory) is None:
+        return "gpu"
+    return DEFAULT_DEVICE
+
+
+def follow_problem() -> str | None:
+    """Why a fill cannot follow the camera here, or None."""
+    from .follow import problem
+
+    return problem()
+
+
+def render_options(directory: Path) -> dict:
+    """What the Render step can offer on this machine."""
+    gpu = {}
+    for method in KEYED_METHODS:
+        reason = gpu_problem(method, directory)
+        gpu[method] = {"ready": reason is None, "reason": reason or ""}
+    follow = follow_problem()
+    return {"gpu": gpu, "follow": {"ready": follow is None, "reason": follow or ""}}
 
 
 def missing_model(method: str, directory: Path) -> str | None:
@@ -131,19 +183,38 @@ def text_mask_enabled() -> bool:
     return value not in {"0", "off", "false", "no"}
 
 
-def fill_rate(data_root: Path | str, method: str) -> dict:
+def _rate_key(method: str, device: str = DEFAULT_DEVICE) -> str:
+    key = RATE_KEYS.get(method, method)
+    return f"{key}_gpu" if device == "gpu" else key
+
+
+def _seed_rate(method: str, device: str = DEFAULT_DEVICE) -> float | None:
+    if device == "gpu" and method in SEED_GPU_RATES:
+        return SEED_GPU_RATES[method]
+    return SEED_RATES.get(method)
+
+
+def frame_units(method: str, device: str = DEFAULT_DEVICE) -> float:
+    """The per-frame work as a share of a model run, in that engine's units."""
+    seed = _seed_rate(method, device)
+    return FRAME_SECONDS / seed if seed else LAMA_FRAME_UNITS
+
+
+def fill_rate(data_root: Path | str, method: str, device: str = DEFAULT_DEVICE) -> dict:
     """Seconds per unit for an engine: this machine's own, else the seed."""
     try:
         stored = json.loads((Path(data_root) / RATES_FILE).read_text(encoding="utf-8"))
-        seconds = float(stored[RATE_KEYS.get(method, method)]["seconds"])
+        seconds = float(stored[_rate_key(method, device)]["seconds"])
         if seconds > 0:
             return {"seconds": seconds, "measured": True}
     except (OSError, ValueError, KeyError, TypeError):
         pass
-    return {"seconds": SEED_RATES.get(method), "measured": False}
+    return {"seconds": _seed_rate(method, device), "measured": False}
 
 
-def record_rate(data_root: Path | str, method: str, units: int, seconds: float) -> None:
+def record_rate(
+    data_root: Path | str, method: str, units: int, seconds: float, device: str = DEFAULT_DEVICE,
+) -> None:
     """Remember how fast a finished fill ran. Short runs are mostly model load."""
     if units <= 0 or seconds <= 0:
         return
@@ -155,7 +226,7 @@ def record_rate(data_root: Path | str, method: str, units: int, seconds: float) 
     except (OSError, ValueError):
         stored = {}
     rate = seconds / units
-    method = RATE_KEYS.get(method, method)
+    method = _rate_key(method, device)
     previous = stored.get(method) if isinstance(stored.get(method), dict) else {}
     old = previous.get("seconds")
     stored[method] = {
@@ -179,10 +250,20 @@ def _span_units(rect_table: list, frames: int, width: int, height: int, method: 
     return len(active), len(active) * len(masks.sttn_strips(every, width, height))
 
 
-def _planned_units(rect_table: list, layers, *, start: float, fps: float, frames: int, width: int, height: int) -> float:
-    """What the fill will cost: its planned model runs, on the areas they read."""
+def _run_units(method: str, height: int, width: int) -> float:
+    """One model run's work. MI-GAN always reads a full square."""
+    if method != "lama":
+        return 1.0
     from . import lama
 
+    return lama.run_units(height, width)
+
+
+def _planned_units(
+    rect_table: list, layers, *, start: float, fps: float, frames: int, width: int, height: int,
+    method: str = "lama", device: str = DEFAULT_DEVICE,
+) -> float:
+    """What the fill will cost: its planned model runs, on the areas they read."""
     plan_for = lama_plan(layers, start=start, fps=fps, frames=frames)
     total = 0.0
     index = 0
@@ -198,10 +279,10 @@ def _planned_units(rect_table: list, layers, *, start: float, fps: float, frames
             run_step = shortest[0] if shortest else run_step
             runs = 1 if still else (end - index) / run_step + 1
             area_cost = sum(
-                lama.run_units(spot[3] - spot[1], spot[2] - spot[0])
+                _run_units(method, spot[3] - spot[1], spot[2] - spot[0])
                 for spot in masks.lama_areas(rects, width, height)
             )
-            total += runs * area_cost + (end - index) * LAMA_FRAME_UNITS
+            total += runs * area_cost + (end - index) * frame_units(method, device)
         index = end
     return round(total, 2)
 
@@ -215,6 +296,8 @@ def estimate_span(
     method: str,
     cache_dir: Path,
     data_root: Path,
+    device: str = DEFAULT_DEVICE,
+    follow_motion: bool = False,
 ) -> dict:
     """What one beat's fill will cost, without running anything.
 
@@ -224,19 +307,25 @@ def estimate_span(
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
     fps = float(meta.get("fps") or 0.0)
-    row = {"method": method, "frames": 0, "units": 0, "cached": False}
+    directory = models_dir(data_root)
+    device = chosen_device(method, device, directory)
+    follow_motion = _follow_on(method, follow_motion)
+    row = {"method": method, "device": device, "frames": 0, "units": 0, "cached": False}
     if width < 2 or height < 2 or fps <= 0:
         return row
     expected = max(1, int(round(duration * fps)))
     table = masks.frame_rects(layers, start=start, fps=fps, frames=expected, width=width, height=height)
     row["frames"], row["units"] = _span_units(table, expected, width, height, method)
-    if method == "lama":
-        row["units"] = _planned_units(table, layers, start=start, fps=fps, frames=expected, width=width, height=height)
-    directory = models_dir(data_root)
+    if method in KEYED_METHODS:
+        row["units"] = _planned_units(
+            table, layers, start=start, fps=fps, frames=expected, width=width, height=height,
+            method=method, device=device,
+        )
     if not missing_model(method, directory):
         key = span_key(
             meta=meta, start=start, duration=duration, layers=layers,
-            method=method, model_stamp=method_stamp(method, directory),
+            method=method, model_stamp=method_stamp(method, directory, device),
+            follow_motion=follow_motion,
         )
         output = Path(cache_dir) / f"{key}.mp4"
         row["cached"] = output.is_file() and output.stat().st_size > 1024
@@ -262,15 +351,19 @@ def estimate_summary(rows: list[dict], data_root: Path | str) -> dict:
     unknown = []
     measured = True
     for method in METHODS:
-        units = sum(row["units"] for row in to_run if row["method"] == method)
-        if not units:
-            continue
-        rate = fill_rate(data_root, method)
-        if rate["seconds"] is None:
-            unknown.append(METHOD_COPY[method])
-            continue
-        seconds += units * rate["seconds"]
-        measured = measured and rate["measured"]
+        for device in DEVICES:
+            units = sum(
+                row["units"] for row in to_run
+                if row["method"] == method and row.get("device", DEFAULT_DEVICE) == device
+            )
+            if not units:
+                continue
+            rate = fill_rate(data_root, method, device)
+            if rate["seconds"] is None:
+                unknown.append(METHOD_COPY[method])
+                continue
+            seconds += units * rate["seconds"]
+            measured = measured and rate["measured"]
     frames = sum(row["frames"] for row in to_run)
     if not planned:
         text = ""
@@ -301,8 +394,10 @@ def _model_stamp(path: Path) -> str:
     return f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
 
 
-def method_stamp(method: str, directory: Path | str) -> str:
+def method_stamp(method: str, directory: Path | str, device: str = DEFAULT_DEVICE) -> str:
     """What identifies an engine's pixels: its model file, or OpenCV's version."""
+    if device == "gpu" and method in GPU_MODEL_FILES:
+        return f"{_model_stamp(model_path(method, Path(directory), 'gpu'))}:gpu"
     if method in CLASSIC_METHODS:
         try:
             import cv2
@@ -327,7 +422,7 @@ def model_signature(methods: Iterable[str], directory: Path | str) -> str:
             parts.append([method, "missing"])
         else:
             parts.append([method, method_stamp(method, directory)])
-            if method == "lama":
+            if method in KEYED_METHODS:
                 parts.append(["runs", LAMA_RUN_RULE])
     payload = {"version": VERSION, "models": parts, "text_mask": text_mask_enabled()}
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
@@ -341,13 +436,14 @@ def span_key(
     layers: Iterable[dict],
     method: str,
     model_stamp: str,
+    follow_motion: bool = False,
 ) -> str:
     layers = list(layers)
     payload = {
         "version": VERSION,
-        "lama_keys": lama_keys_per_second() if method == "lama" else None,
-        "areas": "tight" if method == "lama" or method in CLASSIC_METHODS else None,
-        "plan": "scan" if method == "lama" else None,
+        "lama_keys": lama_keys_per_second() if method in KEYED_METHODS else None,
+        "areas": "tight" if method in KEYED_METHODS or method in CLASSIC_METHODS else None,
+        "plan": "scan" if method in KEYED_METHODS else None,
         "source": meta.get("fingerprint") or f"{meta.get('size')}:{meta.get('duration')}",
         "size": [int(meta.get("width") or 0), int(meta.get("height") or 0)],
         "fps": round(float(meta.get("fps") or 0.0), 6),
@@ -368,13 +464,19 @@ def span_key(
         ],
     }
     # Only a box with no plan changed with this rule, so planned clips stay valid.
-    if method == "lama" and any(layer.get("fill_keys") is None for layer in layers):
+    if method in KEYED_METHODS and any(layer.get("fill_keys") is None for layer in layers):
         payload["unplanned"] = LAMA_UNPLANNED_KEYS
+    if follow_motion:
+        payload["follow"] = True
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
 
 
-def _filler(method: str, path: Path):
-    key = (method, str(path))
+def _follow_on(method: str, follow_motion: bool) -> bool:
+    return bool(follow_motion) and method in KEYED_METHODS and follow_problem() is None
+
+
+def _filler(method: str, path: Path, device: str = DEFAULT_DEVICE):
+    key = (method, str(path), device)
     with _FILLERS_LOCK:
         filler = _FILLERS.get(key)
         if filler is None:
@@ -385,6 +487,12 @@ def _filler(method: str, path: Path):
                 elif method in CLASSIC_METHODS:
                     from .classic import ClassicFiller
                     filler = ClassicFiller(method)
+                elif method == "migan":
+                    from .torch_fill import MiganFiller
+                    filler = MiganFiller(path, device)
+                elif device == "gpu":
+                    from .torch_fill import LamaGpuFiller
+                    filler = LamaGpuFiller(path)
                 else:
                     from .lama import LamaFiller
                     filler = LamaFiller(path)
@@ -406,6 +514,9 @@ def release_fillers() -> None:
     """Drop the loaded model sessions so a finished render frees their memory."""
     with _FILLERS_LOCK:
         _FILLERS.clear()
+    from .torch_fill import release_gpu_memory
+
+    release_gpu_memory()
 
 
 def _check_cancel(cancelled: Callable[[], bool] | None) -> None:
@@ -528,10 +639,13 @@ def lama_plan(layers, *, start: float, fps: float, frames: int):
     return plan_for
 
 
-# Model results kept on disk while a clip is unfinished, next to its .part file.
+# Model results kept on disk, so a stopped render or a small edit needs fewer runs.
 SAVED_DIR = "saved"
 SAVED_MAX_AGE = 14 * 24 * 3600
+# Across every video in this data folder.
 SAVED_MAX_BYTES = 2 * 1024 ** 3
+# Saved fills give way, and stop being written, below this much free disk.
+SAVED_MIN_FREE = 10 * 1024 ** 3
 
 
 def _remove_quietly(path: Path) -> None:
@@ -547,8 +661,9 @@ class _SavedFills:
     A fill is named by what went in: the model, the crop's pixels and the hole.
     The same frames and boxes ask the same questions in the same order, so after
     a stop the run replays and only the fills still missing reach the model. A
-    result that does not match is simply a miss, so nothing here can reuse a
-    wrong picture. Results go when the clip they built is finished.
+    later edit reuses every fill it still asks for. A result that does not match
+    is simply a miss, so nothing here can reuse a wrong picture. Old results go in
+    :func:`_prune_saved`.
     """
 
     def __init__(self, filler, directory: Path, stamp: str):
@@ -577,7 +692,7 @@ class _SavedFills:
         return found if found.shape == shape else None
 
     def _write(self, path: Path, result: np.ndarray) -> None:
-        if not self.writable:
+        if not self.writable or _free_disk(self.directory) < SAVED_MIN_FREE:
             return
         temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         try:
@@ -597,6 +712,11 @@ class _SavedFills:
         if found is not None:
             if path not in self.used:
                 self.hits += 1
+                # Recently used fills are the last to be tidied away.
+                try:
+                    os.utime(path)
+                except OSError:
+                    pass
             self.used.add(path)
             return found
         self.used.add(path)
@@ -604,22 +724,37 @@ class _SavedFills:
         self._write(path, result)
         return result
 
-    def forget(self) -> None:
-        """The finished clip holds these now."""
-        for path in self.used:
-            _remove_quietly(path)
+
+def _free_disk(path: Path) -> int:
+    """Free bytes on the disk that holds this path, which may not exist yet."""
+    for folder in (Path(path), *Path(path).parents):
         try:
-            self.directory.rmdir()
+            return shutil.disk_usage(folder).free
         except OSError:
-            pass  # Other clips still have fills here, or it never existed.
+            continue
+    return SAVED_MIN_FREE
 
 
-def _prune_saved(directory: Path, *, now: float | None = None) -> None:
-    """Drop what an abandoned edit left: anything old, then the oldest past the cap."""
+def _saved_folders(data_root: Path | str, *others: Path) -> list[Path]:
+    """Every saved-fill folder in this data folder, so the cap covers them all."""
+    jobs = Path(data_root) / "jobs"
+    found = [*jobs.glob(f"*/fill/{SAVED_DIR}"), *jobs.glob(f"*/fill/sample/{SAVED_DIR}"), *others]
+    return list(dict.fromkeys(found))
+
+
+def _prune_saved(directories, *, now: float | None = None) -> None:
+    """Drop old fills, then the oldest past the cap or while the disk is short."""
     now = time.time() if now is None else now
-    try:
-        rows = [(entry.stat().st_mtime, entry.stat().st_size, Path(entry.path)) for entry in os.scandir(directory)]
-    except OSError:
+    folders = [directories] if isinstance(directories, (str, Path)) else list(directories)
+    rows = []
+    for directory in folders:
+        try:
+            for entry in os.scandir(directory):
+                stat = entry.stat()
+                rows.append((stat.st_mtime, stat.st_size, Path(entry.path)))
+        except OSError:
+            continue
+    if not rows:
         return
     kept = []
     try:
@@ -630,11 +765,13 @@ def _prune_saved(directory: Path, *, now: float | None = None) -> None:
             else:
                 kept.append((changed, size, path))
         total = sum(size for _changed, size, _path in kept)
+        short = max(0, SAVED_MIN_FREE - _free_disk(rows[0][2]))
         for _changed, size, path in sorted(kept, key=lambda row: row[0]):
-            if total <= SAVED_MAX_BYTES:
+            if total <= SAVED_MAX_BYTES and short <= 0:
                 break
             path.unlink(missing_ok=True)
             total -= size
+            short -= size
     except OSError as exc:
         LOGGER.warning("could not tidy saved AI fills: %s", exc)
 
@@ -642,17 +779,44 @@ def _prune_saved(directory: Path, *, now: float | None = None) -> None:
 class _CountedFiller:
     """Counts the work a filler does, in the units its speed is measured in."""
 
-    def __init__(self, filler):
+    def __init__(self, filler, method: str = "lama"):
         self.filler = filler
+        self.method = method
         self.runs = 0
         self.units = 0.0
 
     def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        from . import lama
-
         self.runs += 1
-        self.units += lama.run_units(*mask.shape)
+        self.units += _run_units(self.method, *mask.shape)
         return self.filler.fill(area, mask)
+
+
+class _GpuOrCpu:
+    """The GPU until it fails, then the CPU, so a render is never lost to it."""
+
+    def __init__(self, load_gpu: Callable[[], object], load_cpu: Callable[[], object]):
+        self.load_cpu = load_cpu
+        self.filler = None
+        self.on_gpu = True
+        try:
+            self.filler = load_gpu()
+        except (FillError, OSError, RuntimeError) as exc:
+            LOGGER.warning("AI fill stays on the CPU: the GPU could not load it: %s", exc)
+            self._to_cpu()
+
+    def _to_cpu(self) -> None:
+        self.on_gpu = False
+        self.filler = self.load_cpu()
+
+    def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if not self.on_gpu:
+            return self.filler.fill(area, mask)
+        try:
+            return self.filler.fill(area, mask)
+        except RuntimeError as exc:
+            LOGGER.warning("AI fill moved to the CPU: the GPU failed: %s", exc)
+            self._to_cpu()
+            return self.filler.fill(area, mask)
 
 
 def lama_step(fps: float) -> int:
@@ -686,7 +850,7 @@ def _picture_moved(first: np.ndarray, second: np.ndarray, hole: np.ndarray, limi
     return float(change[around].mean()) > limit
 
 
-def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, plan_for=None):
+def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, cancelled, hole_for, width=0, height=0, plan_for=None, follow=False):
     """Run the engine on key frames, on just the areas that hold text.
 
     A run is frames that share the same boxes, up to the step, while the picture
@@ -699,11 +863,27 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
     still), and optionally a shortest run, which only a cut can end sooner. A still line gets one fill, made on its first frame over its
     whole box, so later frames need no look ahead, and kept unless the picture
     jumps. A try that ends early falls back to key frames for one run.
+
+    ``follow`` makes one fill last while it can be moved with the camera. When it
+    stops fitting, the shot goes on key frames, starting from where the fill was,
+    and a shot that keeps breaking it is tried less often.
     """
     failed_still = False
+    follow_fails = 0
+    follow_wait = 0
     source = enumerate(frames)
     waiting = None
     last_fills: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+    softened: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+
+    def soft(spot, hole):
+        # A box's hole is often the same frame after frame.
+        last = softened.get(spot)
+        if last is not None and np.array_equal(last[0], hole):
+            return last[1]
+        alpha = masks.feather(hole)
+        softened[spot] = (hole, alpha)
+        return alpha
 
     def next_frame():
         nonlocal waiting
@@ -748,7 +928,10 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
         run_step, run_limit, still_line, *shortest = plan_for(first[0]) if plan_for else (step, LAMA_MOTION_LIMIT, False)
         shortest_run = shortest[0] if shortest else 1
         ring = {spot: _ring_around(rects, spot) for spot in spots}
-        if still_line and not failed_still:
+        following = follow and follow_wait == 0
+        if follow and not following:
+            follow_wait -= 1
+        if following or (still_line and not failed_still and not follow):
             whole = {
                 spot: masks.rasterize(
                     _local(list(rects), *spot), spot[2] - spot[0], spot[3] - spot[1],
@@ -760,15 +943,26 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
                 x0, y0, x1, y1 = spot
                 _check_cancel(cancelled)
                 kept[spot] = filler.fill(first[1][y0:y1, x0:x1], whole[spot])
+            followers = {}
+            if following:
+                from .follow import FollowedFill
+
+                followers = {
+                    spot: FollowedFill(
+                        first[1][spot[1]:spot[3], spot[0]:spot[2]], kept[spot], whole[spot], ring[spot],
+                    )
+                    for spot in spots
+                }
             shown = 0
             item = first
             found = holes
+            current = kept
             while True:
                 out = item[1].copy()
-                for spot, fill in kept.items():
+                for spot, fill in current.items():
                     x0, y0, x1, y1 = spot
                     out[y0:y1, x0:x1] = masks.paste(
-                        item[1][y0:y1, x0:x1], fill, masks.feather(found[spot]),
+                        item[1][y0:y1, x0:x1], fill, soft(spot, found[spot]),
                     )
                 yield out
                 if on_frame:
@@ -778,17 +972,41 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
                 item = next_frame()
                 if item is None:
                     return
-                still = item[2] == rects and not any(
-                    _picture_moved(
-                        first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)],
-                        LAMA_MOTION_LIMIT,
+                if following:
+                    still = item[2] == rects
+                    found = {spot: hole_on(item[0], rects, spot) for spot in spots} if still else {}
+                    if still and any(hole.any() for hole in found.values()):
+                        moved_on = {}
+                        for spot in spots:
+                            x0, y0, x1, y1 = spot
+                            moved_on[spot] = followers[spot].fill_for(item[1][y0:y1, x0:x1], found[spot])
+                            if moved_on[spot] is None:
+                                still = False
+                                break
+                        if still:
+                            current = moved_on
+                else:
+                    still = item[2] == rects and not any(
+                        _picture_moved(
+                            first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)],
+                            LAMA_MOTION_LIMIT,
+                        )
+                        for x0, y0, x1, y1 in spots
                     )
-                    for x0, y0, x1, y1 in spots
-                )
-                found = {spot: hole_on(item[0], rects, spot) for spot in spots} if still else {}
+                    found = {spot: hole_on(item[0], rects, spot) for spot in spots} if still else {}
                 if not still or not any(hole.any() for hole in found.values()):
                     waiting = item
                     break
+            if following:
+                same_line = waiting[2] == rects
+                # The next run blends on from the moved fill, so the fill does not jump.
+                last_fills = {spot: (current[spot], whole[spot]) for spot in spots} if same_line else {}
+                if same_line and shown < max(run_step, 2):
+                    follow_fails += 1
+                    follow_wait = min(8, 2 ** follow_fails)
+                else:
+                    follow_fails = 0
+                continue
             # The fill is not blended into the next line, so nothing carries over.
             last_fills = {}
             # Stopped by the picture moving, not by the line ending: use key frames.
@@ -853,7 +1071,7 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
                         0, 255,
                     ).astype(np.uint8)
                 out[y0:y1, x0:x1] = masks.paste(
-                    frame[y0:y1, x0:x1], filled, masks.feather(run_holes[position][spot]),
+                    frame[y0:y1, x0:x1], filled, soft(spot, run_holes[position][spot]),
                 )
             yield out
             if on_frame:
@@ -861,7 +1079,7 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
         last_fills = {spot: (fill[1], fill[3]) for spot, fill in fills.items()}
 
 
-def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY, plan_for=None):
+def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelled=None, hole_for=None, step=1, carry=LAMA_CARRY, plan_for=None, follow=False):
     """Yield filled frames. ``rects_for(index)`` gives that frame's rects.
 
     ``hole_for(index, x0, y0, x1, y1)`` narrows the hole; without it the hole
@@ -872,7 +1090,7 @@ def fill_frames_lama(frames, rects_for, filler, area, *, on_frame=None, cancelle
     if step > 1 or area is None:
         yield from _fill_frames_by_runs(
             frames, rects_for, filler, area, step,
-            on_frame=on_frame, cancelled=cancelled, hole_for=hole_for, plan_for=plan_for,
+            on_frame=on_frame, cancelled=cancelled, hole_for=hole_for, plan_for=plan_for, follow=follow,
         )
         return
     x0, y0, x1, y1 = area
@@ -1054,13 +1272,16 @@ def prepare_span(
     progress: Progress | None = None,
     cancel_event: threading.Event | None = None,
     on_replay: Callable[[int], None] | None = None,
+    device: str = DEFAULT_DEVICE,
+    follow_motion: bool = False,
 ) -> dict | None:
     """Write (or reuse) a filled clip of ``[start, start + duration]``.
 
     Returns ``{"path", "key", "cached", "method"}``, or None when no fill
     layer touches the span. ``on_replay`` gets the frames done before the model
     first ran: after a stop they came from saved fills, so they say nothing
-    about how long the rest will take.
+    about how long the rest will take. ``device`` and ``follow_motion`` are the
+    Render step's choices; the engine itself is the layer's own, and stays.
     """
     method = method if method in METHODS else DEFAULT_METHOD
     width = int(meta.get("width") or 0)
@@ -1082,10 +1303,13 @@ def prepare_span(
     problem = missing_model(method, directory)
     if problem:
         raise FillError(problem)
-    path = model_path(method, directory)
+    device = chosen_device(method, device, directory)
+    follow_motion = _follow_on(method, follow_motion)
+    path = model_path(method, directory, device)
     key = span_key(
         meta=meta, start=start, duration=duration, layers=layers,
-        method=method, model_stamp=method_stamp(method, directory),
+        method=method, model_stamp=method_stamp(method, directory, device),
+        follow_motion=follow_motion,
     )
     cache_dir = Path(cache_dir)
     output = cache_dir / f"{key}.mp4"
@@ -1145,13 +1369,19 @@ def prepare_span(
         # by a killed server.
         for stale in cache_dir.glob(".*.part.mp4"):
             stale.unlink(missing_ok=True)
-        filler = _filler(method, path)
+        if device == "gpu":
+            filler = _GpuOrCpu(
+                lambda: _filler(method, path, "gpu"),
+                lambda: _filler(method, model_path(method, directory), DEFAULT_DEVICE),
+            )
+        else:
+            filler = _filler(method, path)
         plan_for = None
-        if method == "lama":
-            counted = _CountedFiller(filler)
-            _prune_saved(cache_dir / SAVED_DIR)
+        if method in KEYED_METHODS:
+            counted = _CountedFiller(filler, method)
+            _prune_saved(_saved_folders(data_root, cache_dir / SAVED_DIR))
             saved = filler = _SavedFills(
-                counted, cache_dir / SAVED_DIR, method_stamp(method, directory),
+                counted, cache_dir / SAVED_DIR, method_stamp(method, directory, device),
             )
             plan_for = lama_plan(layers, start=start, fps=fps, frames=len(rect_table))
         reader = _Reader(ffmpeg, source, start, duration, fps, width, height)
@@ -1167,11 +1397,11 @@ def prepare_span(
 
         source_frames = finder.wrap(frames()) if finder is not None else frames()
         extra = {"hole_for": hole_for} if finder is not None else {}
-        if method == "lama":
+        if method in KEYED_METHODS:
             stream = fill_frames_lama(
                 source_frames, rects_for, filler, None,
                 on_frame=on_frame, cancelled=cancelled, step=lama_step(fps),
-                plan_for=plan_for, **extra,
+                plan_for=plan_for, follow=follow_motion, **extra,
             )
         elif method in CLASSIC_METHODS:
             # Cheap enough for every frame, at full size, with nothing blended in.
@@ -1199,20 +1429,20 @@ def prepare_span(
             raise FillError(f"AI fill could not write the clip. {detail}".strip())
         os.replace(part, output)
         took = time.monotonic() - started
-        if saved is not None:
-            saved.forget()
         if counted is not None:
             LOGGER.info(
-                "fill span start=%.2f frames=%d runs=%d units=%.1f seconds=%.1f per_frame=%.2f reused=%d",
+                "fill span start=%.2f frames=%d runs=%d units=%.1f seconds=%.1f per_frame=%.2f reused=%d "
+                "engine=%s device=%s follow=%s",
                 start, written, counted.runs, counted.units, took, took / max(1, written), saved.hits,
+                method, device, follow_motion,
             )
         # A resumed clip spent little time on what it reused: not a speed to learn.
         if written >= RATE_MIN_FRAMES and not (saved is not None and saved.hits):
             if counted is not None:
-                units = counted.units + written * LAMA_FRAME_UNITS
+                units = counted.units + written * frame_units(method, device)
             else:
                 _frames, units = _span_units(rect_table, expected, width, height, method)
-            record_rate(data_root, method, units, took)
+            record_rate(data_root, method, units, took, device)
     except BaseException:
         _stop(reader.proc if reader is not None else None)
         _stop(writer.proc if writer is not None else None)

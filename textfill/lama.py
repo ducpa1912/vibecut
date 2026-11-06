@@ -172,6 +172,38 @@ def run_units(height: int, width: int) -> float:
     return run_h * run_w / float(SIZE * SIZE)
 
 
+def fit_images(area: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """The picture and hole at the size an engine reads, and that (h, w)."""
+    height, width = mask.shape
+    fit_h, fit_w = fit(height, width)
+    image = np.asarray(
+        Image.fromarray(area).resize((fit_w, fit_h), Image.BICUBIC),
+        dtype=np.uint8,
+    )
+    small = np.asarray(
+        Image.fromarray(mask.astype(np.uint8) * 255).resize((fit_w, fit_h), Image.BILINEAR),
+    ) > 0
+    return image, small, fit_h, fit_w
+
+
+def prepare_feed(area: np.ndarray, mask: np.ndarray, flexible: bool = True):
+    """The picture and hole padded to a size LaMa runs at, and the size before it."""
+    image, small, fit_h, fit_w = fit_images(area, mask)
+    run_h, run_w = input_size(fit_h, fit_w, flexible)
+    pad = ((0, run_h - fit_h), (0, run_w - fit_w))
+    image = np.pad(image, pad + ((0, 0),), mode="edge")
+    small = np.pad(small, pad, mode="constant")
+    return image, small, fit_h, fit_w
+
+
+def restore(result: np.ndarray, fit_h: int, fit_w: int, height: int, width: int) -> np.ndarray:
+    """An engine's picture back at the work area's size, with its padding gone."""
+    return np.asarray(
+        Image.fromarray(result[:fit_h, :fit_w]).resize((width, height), Image.BICUBIC),
+        dtype=np.uint8,
+    )
+
+
 class LamaFiller:
     def __init__(self, model_path: Path):
         import onnxruntime as ort
@@ -194,24 +226,9 @@ class LamaFiller:
     def fill(self, area: np.ndarray, mask: np.ndarray) -> np.ndarray:
         """Fill ``mask`` (H, W bool) in ``area`` (H, W, 3 uint8). Same size out."""
         height, width = mask.shape
-        fit_h, fit_w = fit(height, width)
-        image = np.asarray(
-            Image.fromarray(area).resize((fit_w, fit_h), Image.BICUBIC),
-            dtype=np.uint8,
-        )
-        small = np.asarray(
-            Image.fromarray(mask.astype(np.uint8) * 255).resize((fit_w, fit_h), Image.BILINEAR),
-        ) > 0
-        run_h, run_w = input_size(fit_h, fit_w, self.flexible)
-        pad = ((0, run_h - fit_h), (0, run_w - fit_w))
-        image = np.pad(image, pad + ((0, 0),), mode="edge")
-        small = np.pad(small, pad, mode="constant")
+        image, small, fit_h, fit_w = prepare_feed(area, mask, self.flexible)
         feed_image = (image.astype(np.float32) / 255.0).transpose(2, 0, 1)[None]
         feed_mask = small.astype(np.float32)[None, None]
         result = self.session.run(None, {"image": feed_image, "mask": feed_mask})[0][0]
         result = np.clip(result.transpose(1, 2, 0), 0, 255).astype(np.uint8)
-        result = result[:fit_h, :fit_w]
-        return np.asarray(
-            Image.fromarray(result).resize((width, height), Image.BICUBIC),
-            dtype=np.uint8,
-        )
+        return restore(result, fit_h, fit_w, height, width)

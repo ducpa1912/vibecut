@@ -54,7 +54,9 @@ eval "$(scripts/lane-env.sh)" && python3 studio_app.py
 ```
 
 AI fill needs its model in `<data>/models/fill` (or `VIBECUT_FILL_MODELS`). LaMa
-is `lama_fp32.onnx` and needs `onnxruntime`; optional engines are listed in
+is `lama_fp32.onnx` and needs `onnxruntime`. The GPU option also needs `big-lama.pt`
+and `torch`, and MI-GAN needs `migan_traced.pt` and `torch`. Both files are in the
+GitHub releases of `Sanster/models`. Optional packages are listed in
 `requirements-optional.txt`.
 
 `classic_app.py` starts Classic on 8796. The older shared app is still available
@@ -436,14 +438,16 @@ Framing sets each scene's zoom and place. Layers are saved as immutable versions
   against that video's own noise, and saves a plan: one fill when the line is
   still, up to six fills a second when it moves. Frames between are blended.
 
-LaMa is the default fill engine. STTN, Telea and Navier-Stokes are optional. See
+LaMa is the default fill engine. MI-GAN, STTN, Telea and Navier-Stokes are optional.
+A drawn box says what it costs, and can swap itself for the found lines inside it. See
 [docs/cleanup.md](docs/cleanup.md).
 
 ### Finish
 
 Review shows an exact frame and a leftover-text check. Render has six quality
-tiers: 360p, 540p draft, 720p, 1080p final, 2K (1440) and 4K (2160). The queue
-runs one render at a time in a drawer with Queue and History tabs.
+tiers: 360p, 540p draft, 720p, 1080p final, 2K (1440) and 4K (2160). When a moment
+has AI fill, it also offers **AI fill on CPU or GPU** and **Follow camera motion**. The
+queue runs one render at a time, with Queue and History tabs.
 
 - **Pause** stops the running render within seconds. **Resume** starts that item
   again, and only the work still missing is done.
@@ -955,7 +959,7 @@ data/
     renders/                    reel_*.mp4 and reel_*.jpg
     edits/                      Immutable Edit versions
     fill/                       Finished AI fill clips, one per beat
-    fill/saved/                 Model results kept until their clip finishes
+    fill/saved/                 Model results, reused after a stop or an edit
     history/
       index.json                Capped summaries
       <entry_id>.json           Full per-entry snapshot
@@ -976,7 +980,7 @@ data/
     stt-test/                   Live STT test clip/transcript
     voice-test/                 Live TTS test clips
   models/kokoro/                Kokoro model files when the Voice Pack is installed
-  models/fill/                  AI fill models (LaMa, optional STTN)
+  models/fill/                  AI fill models (LaMa, optional MI-GAN and STTN)
 assets/music/
   library/                      User library tracks (own / licensed / CC)
   generated/                    AI beds kept as reusable library tracks

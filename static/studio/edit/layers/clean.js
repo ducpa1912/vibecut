@@ -18,7 +18,7 @@ import {
   policyLocked,
 } from "../../import.js";
 import { ensureCheckStyles } from "../../check.js";
-import { el, formatCount } from "../../ui.js";
+import { el, fillChoice, formatCount } from "../../ui.js";
 import { icon } from "../icons.js";
 import {
   CLEAN_LABELS,
@@ -55,6 +55,7 @@ const KIND_COPY = {
 // AI fill engines. The server keeps the same list (edits.FILL_METHODS).
 const FILL_METHODS = [
   ["lama", "LaMa · per frame, best on still backgrounds"],
+  ["migan", "MI-GAN · small and quick, per frame"],
   ["sttn", "STTN · video, best on subtitles"],
   ["telea", "Telea · OpenCV, very fast, for plain backgrounds"],
   ["ns", "Navier-Stokes · OpenCV, very fast, for smooth backgrounds"],
@@ -470,6 +471,42 @@ export function safeRadius(box, source) {
   return Math.max(2, Math.min(12, Math.floor(minPixels / 4) - 1));
 }
 
+/**
+ * The found lines a drawn box covers: mostly inside it, and on screen during it.
+ * Logos on objects start unticked in the found list, so they are left out here too.
+ */
+export function linesInsideBox(layer, tracklets) {
+  const box = layer?.box;
+  if (!box) return [];
+  const ranges = Array.isArray(layer.ranges) ? layer.ranges : [];
+  return (Array.isArray(tracklets) ? tracklets : []).filter((tracklet) => {
+    const line = tracklet?.box;
+    if (!line || tracklet?.minor === true || !tracklet?.id) return false;
+    const width = Math.min(box.x + box.w, line.x + line.w) - Math.max(box.x, line.x);
+    const height = Math.min(box.y + box.h, line.y + line.h) - Math.max(box.y, line.y);
+    if (width <= 0 || height <= 0) return false;
+    if ((width * height) / Math.max(1e-6, line.w * line.h) < 0.6) return false;
+    if (!ranges.length) return true;
+    return (Array.isArray(tracklet.ranges) ? tracklet.ranges : []).some((seen) => ranges.some((range) => (
+      Number(seen.start) < Number(range.end) && Number(range.start) < Number(seen.end)
+    )));
+  });
+}
+
+/** Keep a line's times inside the times the box was on. An empty list means always. */
+export function rangesWithin(lineRanges, boxRanges) {
+  if (!Array.isArray(boxRanges) || !boxRanges.length) return lineRanges;
+  const kept = [];
+  for (const line of Array.isArray(lineRanges) ? lineRanges : []) {
+    for (const box of boxRanges) {
+      const start = Math.max(Number(line.start), Number(box.start));
+      const end = Math.min(Number(line.end), Number(box.end));
+      if (end > start) kept.push({ start, end });
+    }
+  }
+  return kept;
+}
+
 function layerFromEntry(entry, tracklet, index, source) {
   const kind = actionKind(entry?.action);
   const text = String(tracklet?.text_sample || "").trim();
@@ -536,6 +573,10 @@ export function manualLayer(index, box = null) {
     label: "Drawn box",
   };
   return setLayerKind(layer, drawKind());
+}
+
+function formatLines(count) {
+  return `${count} ${count === 1 ? "line" : "lines"}`;
 }
 
 function field(label, control, hint = "") {
@@ -907,6 +948,103 @@ export function mountCleanPanel(host, ctx) {
       autoState.notice = autoCleanFailure(error);
       ctx.refresh();
     }
+  }
+
+  /** Swap a drawn box for the found lines inside it. */
+  async function snapToLines(layer, lines) {
+    const activeJob = currentJobId() || jobId;
+    const currentEdit = ctx.getEdit();
+    if (!canClean() || autoState.busy || !activeJob || !currentEdit?.id) return;
+    autoState.busy = true;
+    autoState.notice = null;
+    render();
+    try {
+      const result = await autoCleanRequest(activeJob, currentEdit.id, {
+        tracklet_ids: lines.map((line) => String(line.id)),
+        method: layer.kind === "fill" ? "ai" : "blur",
+        fill_method: layer.method || drawEngine(),
+      });
+      if (disposed) {
+        autoState.busy = false;
+        return;
+      }
+      const rest = clone(ctx.getEdit()?.clean || []).filter((item) => item.id !== layer.id);
+      for (const change of Array.isArray(result?.updated) ? result.updated : []) {
+        const existing = rest.find((item) => item.id === change.id);
+        if (existing) existing.ranges = change.ranges;
+      }
+      const merged = mergeAutoCleanLayers(rest, result?.layers);
+      for (const added of merged.added) {
+        const inside = rangesWithin(added.ranges, layer.ranges);
+        const kept = merged.layers.find((item) => item.id === added.id);
+        if (kept) kept.ranges = inside;
+      }
+      const layers = merged.layers.filter((item) => !Array.isArray(item.ranges) || item.ranges.length
+        || !merged.added.some((added) => added.id === item.id));
+      autoState.busy = false;
+      const covered = merged.added.length + (Array.isArray(result?.updated) ? result.updated.length : 0)
+        + (Array.isArray(result?.skipped) ? result.skipped.filter((row) => /already/i.test(row?.reason || "")).length : 0);
+      if (!covered) {
+        autoState.notice = {
+          text: "Those lines could not be added, so the box stays.",
+          tone: "bad",
+          scan: false,
+        };
+        ctx.refresh();
+        return;
+      }
+      ctx.setClean(layers);
+      autoState.notice = {
+        text: `The box is now ${formatLines(lines.length)}.`,
+        tone: "ok",
+        scan: false,
+      };
+      ctx.select("clean", merged.added[0]?.id || "");
+    } catch (error) {
+      if (disposed) {
+        autoState.busy = false;
+        return;
+      }
+      autoState.busy = false;
+      autoState.notice = autoCleanFailure(error);
+      ctx.refresh();
+    }
+  }
+
+  /** What a big drawn box costs, and the cheaper way when the scan has found its text. */
+  function boxCostCard(layer) {
+    const box = layer.box;
+    if (layer.kind !== "fill" || String(layer.tracklet_id || "").trim() || !box) return null;
+    const share = Math.round(numberOr(box.w) * numberOr(box.h) * 100);
+    if (share < 5) return null;
+    const ranges = Array.isArray(layer.ranges) ? layer.ranges : [];
+    const seconds = ranges.reduce((sum, range) => sum + Math.max(0, numberOr(range.end) - numberOr(range.start)), 0);
+    const during = ranges.length ? ` for ${Math.round(seconds)} s` : "";
+    const card = el("div", { class: "st-clean-snap" }, [
+      el("p", {
+        class: "st-field-hint",
+        text: `This box repaints ${share}% of the picture${during}. That is the slowest kind of AI fill, and it can smear what is behind the text.`,
+      }),
+    ]);
+    if (scanState() !== "ready") {
+      card.append(el("p", { class: "st-field-hint", text: "Scan video to clean only the text inside." }));
+      return card;
+    }
+    const lines = linesInsideBox(layer, report?.tracklets);
+    if (!lines.length) {
+      card.append(el("p", { class: "st-field-hint", text: "The scan found no text inside this box." }));
+      return card;
+    }
+    const snap = el("button", {
+      class: "st-btn st-btn-ghost st-btn-small",
+      type: "button",
+      text: `Clean only the ${formatLines(lines.length)} inside`,
+      disabled: !canClean() || autoState.busy,
+      title: "Tight boxes, each on screen only with its line. Text the scan missed is left as it is.",
+    });
+    snap.addEventListener("click", () => { void snapToLines(layer, lines); });
+    card.append(snap);
+    return card;
   }
 
   function scanState() {
@@ -1477,7 +1615,7 @@ export function mountCleanPanel(host, ctx) {
       try {
         const result = await request(
           `/api/jobs/${encodeURIComponent(jobId)}/edits/${encodeURIComponent(current.id)}/fill-estimate`,
-          { method: "POST", body: { clean } },
+          { method: "POST", body: { clean, ...fillChoice() } },
         );
         if (disposed || signature !== fillEstimateFor) return;
         fillEstimateText = String(result?.text || "");
@@ -1605,6 +1743,10 @@ export function mountCleanPanel(host, ctx) {
     const many = group.layers.length > 1;
 
     stage.append(methodSwitch(group.layers));
+    if (!many) {
+      const cost = boxCostCard(layer);
+      if (cost) stage.append(cost);
+    }
     if (many) stage.append(el("small", { class: "st-field-hint", text: `Applies to all ${group.layers.length} lines.` }));
     if (!KIND_ORDER.includes(layer.kind)) {
       stage.append(el("p", {

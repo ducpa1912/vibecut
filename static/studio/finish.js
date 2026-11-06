@@ -26,9 +26,11 @@ import { artifactIsStale, STALE_RENDER_TEXT } from "./trust.js";
 import {
   clear,
   el,
+  fillChoice,
   formatBytes,
   formatCount,
   formatDuration,
+  saveFillChoice,
   setStatus,
   shortDate,
   statusText,
@@ -529,6 +531,8 @@ export function mount(root, ctx) {
     }
   })();
   let quality = "final";
+  let fillChoiceNow = fillChoice();
+  let renderOptions = null;
   // R2 trim health: per story, the current story revision and whether the
   // chosen shape's Edit still matches the range. A stale Edit is never queued.
   const trimHealth = new Map();
@@ -630,22 +634,101 @@ export function mount(root, ctx) {
     return sets.find((item) => item.id === activeSetId) || sets[0] || null;
   }
 
+  /** The GPU only when this Mac can run it, whatever was remembered. */
+  function fillDeviceNow() {
+    if (fillChoiceNow.device !== "gpu") return "cpu";
+    return gpuReady() ? "gpu" : "cpu";
+  }
+
+  function gpuReady() {
+    const gpu = renderOptions?.gpu || {};
+    return Object.values(gpu).some((row) => row?.ready);
+  }
+
+  /** How the Render step's AI fill runs. The engine stays each layer's own. */
+  function paintFillOptions() {
+    const host = dom.body.querySelector(".st-finish-fill-options");
+    if (!host) return;
+    clear(host);
+    host.hidden = !(fillEstimate.beats > 0);
+    if (host.hidden) return;
+    const gpuBlocked = !gpuReady();
+    const device = segmented(
+      "AI fill on",
+      [
+        { value: "cpu", label: "CPU", title: "Slower, and uses less memory." },
+        {
+          value: "gpu",
+          label: "GPU",
+          disabled: gpuBlocked,
+          title: gpuBlocked
+            ? (renderOptions?.gpu?.lama?.reason || "The GPU option is not ready on this Mac.")
+            : "Much faster on this Mac, and uses more memory. Layers on an OpenCV or STTN engine stay as they are.",
+        },
+      ],
+      fillDeviceNow(),
+      (value) => {
+        fillChoiceNow = { ...fillChoiceNow, device: value };
+        saveFillChoice(fillChoiceNow);
+        paintFillOptions();
+        void loadFillEstimate();
+      },
+    );
+    const followBlocked = renderOptions?.follow?.ready === false;
+    const follow = el("input", {
+      type: "checkbox",
+      checked: fillChoiceNow.follow && !followBlocked,
+      disabled: followBlocked,
+    });
+    follow.addEventListener("change", () => {
+      fillChoiceNow = { ...fillChoiceNow, follow: follow.checked };
+      saveFillChoice(fillChoiceNow);
+      void loadFillEstimate();
+    });
+    host.append(device, el("label", {
+      class: "st-finish-follow",
+      title: followBlocked
+        ? (renderOptions?.follow?.reason || "")
+        : "LaMa and MI-GAN. One fill moves with the camera, and real pixels replace it as they come into view. Other movement falls back to normal fills.",
+    }, [follow, el("span", { text: "Follow camera motion" })]));
+  }
+
+  async function loadRenderOptions() {
+    if (renderOptions) return;
+    renderOptions = {};
+    try {
+      const status = await request("/api/fill/status");
+      if (disposed) return;
+      renderOptions = status?.render_options || {};
+    } catch (_) {
+      renderOptions = {};
+    }
+    paintFillOptions();
+    fillEstimate.key = "";
+    void loadFillEstimate();
+  }
+
   /** How long AI fill adds to these renders. Asks once per set, shape and visit. */
   async function loadFillEstimate() {
     const set = activeSet();
     const jobId = ctx.getJobId();
     if (!set?.id || !jobId) return;
-    const key = `${jobId}:${set.id}:${aspect}`;
+    const device = fillDeviceNow();
+    const key = `${jobId}:${set.id}:${aspect}:${device}:${fillChoiceNow.follow}`;
     if (fillEstimate.key === key) return;
-    fillEstimate = { key, text: "" };
+    fillEstimate = { key, text: "", beats: fillEstimate.beats || 0 };
     try {
-      const query = new URLSearchParams({ set_id: set.id, aspect });
+      const query = new URLSearchParams({
+        set_id: set.id, aspect, device, follow: String(fillChoiceNow.follow),
+      });
       const result = await request(`${jobRoot(jobId)}/fill-estimate?${query}`);
       if (disposed || fillEstimate.key !== key) return;
       fillEstimate.text = String(result?.text || "");
+      fillEstimate.beats = Number(result?.beats) || 0;
     } catch (_) {
       return;
     }
+    paintFillOptions();
     const node = dom.body.querySelector(".st-finish-fill-note");
     if (node) {
       node.textContent = fillEstimate.text;
@@ -1496,6 +1579,7 @@ export function mount(root, ctx) {
         type: "button",
         text: option.label,
         title: option.title || option.label,
+        disabled: option.disabled === true,
         "aria-pressed": option.value === value ? "true" : "false",
       });
       button.addEventListener("click", () => onPick(option.value));
@@ -1538,6 +1622,7 @@ export function mount(root, ctx) {
       ])),
       advancedCard(),
     );
+    paintFillOptions();
   }
 
   function setPicker() {
@@ -1614,6 +1699,8 @@ export function mount(root, ctx) {
         renderStoryCard();
       },
     ));
+    fields.append(el("div", { class: "st-finish-fill-options", hidden: !(fillEstimate.beats > 0) }));
+    void loadRenderOptions();
 
     const liveCount = stories().filter((story) => (
       liveQueueItem(String(story.id || ""), aspect)
@@ -1760,6 +1847,7 @@ export function mount(root, ctx) {
     const existing = dom.body.querySelector(".st-finish-render");
     if (!existing) return;
     existing.replaceWith(storyCard());
+    paintFillOptions();
     renderReviewCard();
   }
 
@@ -2927,6 +3015,8 @@ export function mount(root, ctx) {
         story_id: story.id,
         aspect: shape,
         quality,
+        fill_device: fillDeviceNow() === "gpu" ? "gpu" : "",
+        fill_follow: fillChoiceNow.follow && renderOptions?.follow?.ready !== false,
         title: storyName(story, stories().indexOf(story)),
       }));
       const result = await request("/api/story-queues", { method: "POST", body: { items } });

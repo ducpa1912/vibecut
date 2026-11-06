@@ -336,13 +336,22 @@ def feather(mask: np.ndarray, radius: int = FEATHER_PX) -> np.ndarray:
 
 def paste(original: np.ndarray, filled: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     """Blend ``filled`` over ``original`` with ``alpha`` (H, W). uint8 out."""
-    if not alpha.any():
+    rows = np.flatnonzero(alpha.any(axis=1))
+    if not rows.size:
         return original.copy()
-    weight = alpha[..., None]
-    blended = original.astype(np.float32) * (1.0 - weight) + filled.astype(np.float32) * weight
-    out = np.clip(np.rint(blended), 0, 255).astype(np.uint8)
-    keep = alpha <= 0.0
-    out[keep] = original[keep]
+    columns = np.flatnonzero(alpha.any(axis=0))
+    # Only the part the hole touches, which is often a small share of the area.
+    y0, y1 = int(rows[0]), int(rows[-1]) + 1
+    x0, x1 = int(columns[0]), int(columns[-1]) + 1
+    part = alpha[y0:y1, x0:x1]
+    weight = part[..., None]
+    before = original[y0:y1, x0:x1]
+    blended = before.astype(np.float32) * (1.0 - weight) + filled[y0:y1, x0:x1].astype(np.float32) * weight
+    region = np.clip(np.rint(blended), 0, 255).astype(np.uint8)
+    keep = part <= 0.0
+    region[keep] = before[keep]
+    out = original.copy()
+    out[y0:y1, x0:x1] = region
     return out
 
 

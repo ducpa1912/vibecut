@@ -1040,18 +1040,6 @@ def test_a_resumed_clip_matches_one_that_never_stopped(tmp_path):
     assert second_filler.calls <= whole_filler.calls - first_filler.calls
 
 
-def test_a_finished_clip_removes_its_saved_fills(tmp_path):
-    filler = _PictureFiller()
-    area = _moving_frames(1)[0]
-    mask = np.ones(area.shape[:2], dtype=bool)
-    folder = tmp_path / "saved"
-    saved = textfill._SavedFills(filler, folder, "model-a")
-    saved.fill(area, mask)
-    assert list(folder.glob("*.npy"))
-    saved.forget()
-    assert not folder.exists()
-
-
 def test_tidying_saved_fills_drops_old_ones_and_leftovers(tmp_path, monkeypatch):
     import os
 
@@ -1162,8 +1150,8 @@ def test_stopping_a_clip_keeps_its_fills_and_the_next_run_uses_them(tmp_path, mo
     assert replays
     # A resumed clip is not a speed to learn from.
     assert rates == []
-    # Finished: the clip holds them now.
-    assert not folder.exists()
+    # Kept, so a later edit can reuse what it still asks for.
+    assert list(folder.glob("*.npy"))
     (tmp_path / "fresh").mkdir()
     fresh_calls = _span_with_counting_model(tmp_path / "fresh", monkeypatch)[1].calls
     assert model.calls < fresh_calls
@@ -1184,7 +1172,6 @@ def test_a_clip_with_nothing_saved_still_teaches_the_speed(tmp_path, monkeypatch
     assert model.calls > 0
     assert len(rates) == 1
     assert not any("saved fills reused" in message for message in messages)
-    assert not (tmp_path / "fill" / textfill.SAVED_DIR).exists()
 
 
 def test_time_left_ignores_frames_a_resume_replayed(tmp_path, monkeypatch):

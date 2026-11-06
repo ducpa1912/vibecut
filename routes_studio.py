@@ -259,6 +259,7 @@ def fill_status() -> dict:
         "default": default,
         "preview": "lama" if methods["lama"]["ready"] else None,
         "models_dir": str(directory),
+        "render_options": textfill.render_options(directory),
     }
 
 
@@ -827,7 +828,7 @@ def auto_clean(
         raise HTTPException(422, "method must be auto, ai or blur.")
     fill_method = str(body.fill_method or textfill.DEFAULT_METHOD).strip().lower()
     if fill_method not in textfill.METHODS:
-        raise HTTPException(422, "fill_method must be lama, sttn, telea or ns.")
+        raise HTTPException(422, "fill_method must be lama, migan, sttn, telea or ns.")
     if method == "auto":
         ready = [
             item for item in (fill_method, "lama", "sttn")
@@ -959,7 +960,9 @@ def _draft_edit(
     return drafted, tag
 
 
-def _edit_fill_rows(job_id: str, job: dict, edit: dict, story: dict) -> list[dict]:
+def _edit_fill_rows(
+    job_id: str, job: dict, edit: dict, story: dict, device: str = "cpu", follow: bool = False,
+) -> list[dict]:
     """One cost row per beat of this Edit that has an AI fill."""
     import app
     import render
@@ -983,12 +986,16 @@ def _edit_fill_rows(job_id: str, job: dict, edit: dict, story: dict) -> list[dic
             method=plan.get("method") or textfill.DEFAULT_METHOD,
             cache_dir=job_dir / "fill",
             data_root=job_dir.parent.parent,
+            device=device,
+            follow_motion=follow,
         ))
     return rows
 
 
 class FillEstimateBody(BaseModel):
     clean: list[dict] | None = None
+    device: str = "cpu"
+    follow: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1011,12 +1018,14 @@ def fill_estimate(
     job, edit, story = routes_edits._fresh_story(job_id, edit_id)
     edit, _tag = _draft_edit(edit, body.clean, None)
     return textfill.estimate_summary(
-        _edit_fill_rows(job_id, job, edit, story), app.DATA,
+        _edit_fill_rows(job_id, job, edit, story, body.device, body.follow), app.DATA,
     )
 
 
 @router.get("/api/jobs/{job_id}/fill-estimate")
-def job_fill_estimate(job_id: str, set_id: str, aspect: str) -> dict:
+def job_fill_estimate(
+    job_id: str, set_id: str, aspect: str, device: str = "cpu", follow: bool = False,
+) -> dict:
     """The same figure for every saved Edit of a clip set in one shape."""
     import app
     import routes_edits
@@ -1032,7 +1041,7 @@ def job_fill_estimate(job_id: str, set_id: str, aspect: str) -> dict:
         except HTTPException:
             # A stale Edit cannot render; Finish says so on its own row.
             continue
-        rows.extend(_edit_fill_rows(job_id, fresh_job, edit, story))
+        rows.extend(_edit_fill_rows(job_id, fresh_job, edit, story, device, follow))
     return textfill.estimate_summary(rows, app.DATA)
 
 
@@ -1274,8 +1283,8 @@ def fill_preview(
         raise HTTPException(422, "No AI fill region is active at this frame.")
 
     directory = textfill.models_dir(app.DATA)
-    # OpenCV previews with its own method; everything else with LaMa.
-    engine = body.method if body.method in textfill.CLASSIC_METHODS else "lama"
+    # OpenCV and MI-GAN preview as themselves; everything else with LaMa.
+    engine = body.method if body.method in (*textfill.CLASSIC_METHODS, "migan") else "lama"
     problem = textfill.method_problem(engine, directory)
     if problem:
         raise HTTPException(409, problem)

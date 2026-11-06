@@ -80,6 +80,10 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 58 | Restart the server. Queue a full video with AI fill, wait for several percent, press **Pause**, then **Resume** | Pause stops within seconds and the queue says Paused. Resume climbs fast back to where it was, the message counts saved fills reused, then the time left appears. Tell me the time to catch up, and whether the join shows in the result | |
 | 59 | During a fill, stop the server with Ctrl+C. Start it again, then **Resume** | Same as step 58: the work is not lost, and the Mac did not sleep during the render unless the lid was closed | |
 | 60 | Draw one box on a moving shot, AI fill, then render. The box must be new or moved, so the old clip is not reused | It takes about one model run per 4 frames at 25 fps, not one per frame. The estimate under Clean layers is close to the real time. Tell me both, and any smear | |
+| 61 | Finish → **AI fill on GPU**, then render a video with AI fill. Compare with a CPU render of the same Edit | It renders much faster, the two results look the same, and the first render asks for no new choices. Tell me both times, and if the Mac slowed or swapped | |
+| 62 | Clean → **AI engine** → MI-GAN, then render on CPU and on GPU | Text is gone. Tell me the times, and any flicker or smear compared with LaMa | |
+| 63 | Finish → tick **Follow camera motion**, then render a shot with a camera move and a shot with something crossing the text | The camera move keeps a steady fill with fewer model runs. The crossing falls back with no jump. Tell me the times, and where it looks wrong | |
+| 64 | Draw a box over several lines of found text and select it, then press **Clean only the N lines inside** | The panel says what the box costs. The box becomes tight line boxes, on screen only with their lines, inside the box's time | |
 
 ## Tell me too
 

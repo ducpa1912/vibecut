@@ -173,3 +173,23 @@ export function deleteVideoButton({ name, check, onDelete, onError }) {
   });
   return button;
 }
+
+const FILL_CHOICE_KEY = "vibecut.fillChoice";
+
+/** The Render step's AI fill choices, remembered on this browser. */
+export function fillChoice() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILL_CHOICE_KEY) || "null");
+    return { device: saved?.device === "gpu" ? "gpu" : "cpu", follow: saved?.follow === true };
+  } catch (_) {
+    return { device: "cpu", follow: false };
+  }
+}
+
+export function saveFillChoice(choice) {
+  try {
+    localStorage.setItem(FILL_CHOICE_KEY, JSON.stringify(choice));
+  } catch (_) {
+    /* The choice lasts until the page closes. */
+  }
+}

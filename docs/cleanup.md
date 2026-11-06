@@ -23,14 +23,34 @@ The original planning API is documented after it and is still in use.
    `jobs/<id>/fill/<key>.mp4`. Only the area holding text goes to the model, and a
    mask finds the letters inside the box. Motion is checked only near the text,
    and a jump starts a new fill.
-5. **Resume.** Each LaMa result goes to `jobs/<id>/fill/saved/` as it finishes,
-   named by the model, crop and hole. After a stop, the run replays and only the
-   missing fills reach the model. Results are removed when their clip finishes, or
-   tidied after 14 days or past 2 GB. A full disk costs the resume, not the render.
+5. **Saved fills.** Each LaMa or MI-GAN result goes to `jobs/<id>/fill/saved/` as it
+   finishes, named by the model, crop and hole. After a stop, the run replays and
+   only the missing fills reach the model. A later edit reuses every fill it still
+   asks for. They are tidied after 14 days, past 2 GB across all videos, or when free
+   disk drops below 10 GB, which also stops new ones being saved.
+
+## Render choices
+
+Finish offers two choices when a moment has AI fill. Neither changes a layer's
+engine, and a choice other than the default makes a new render and leaves the plain
+one alone.
+
+- **AI fill on CPU or GPU.** The GPU option runs LaMa or MI-GAN through PyTorch on the
+  Apple GPU. If the GPU fails, the render carries on with the CPU. On plain arrays on
+  an M1 8 GB Mac, LaMa on the GPU took 0.36 s against 2.37 s at 304×512, and matched
+  the CPU's picture to within 1 level out of 255. It uses more memory.
+- **Follow camera motion.** One fill moves with the camera, its light is matched to
+  the picture around the text, and real pixels replace it as they come into view. When
+  the area around the text stops matching, such as a hand crossing it, the shot goes
+  back to key frames for a while. It needs OpenCV.
+
+A drawn box of 5% of the picture or more says what it costs. When the scan has found
+text inside it, **Clean only the N lines inside** swaps it for tight boxes.
 
 | Engine | Default | Notes |
 |---|---|---|
-| LaMa ONNX | Yes | Per frame, flexible input up to 512 on the longest side. Needs `onnxruntime` |
+| LaMa | Yes | Per frame, flexible input up to 512 on the longest side. CPU uses `lama_fp32.onnx` and `onnxruntime`. GPU uses `big-lama.pt` and `torch` |
+| MI-GAN | No | Per frame, always reads a 512 square, so LaMa is faster on thin lines on the same chip. `migan_traced.pt` and `torch`, on CPU or GPU |
 | STTN | No | Video model, heavier. Needs `torch` |
 | Telea, Navier-Stokes | No | OpenCV, about a fifth of a second a frame, smear on detail. Optional, needs `opencv-python-headless` |
 

@@ -761,7 +761,9 @@ def _compiled_preview(
 _CLEAN_PREVIEW_LOCK = threading.Lock()
 
 
-def _fills_missing(job: dict, job_dir, compiled: dict, fps: int) -> bool:
+def _fills_missing(
+    job: dict, job_dir, compiled: dict, fps: int, device: str = "cpu", follow: bool = False,
+) -> bool:
     """Whether a beat of this cut still needs an AI fill to be run."""
     for segment in compiled.get("segments") or []:
         plan = segment.get("fill")
@@ -775,6 +777,8 @@ def _fills_missing(job: dict, job_dir, compiled: dict, fps: int) -> bool:
             method=plan.get("method") or textfill.DEFAULT_METHOD,
             cache_dir=job_dir / "fill",
             data_root=job_dir.parent.parent,
+            device=device,
+            follow_motion=follow,
         )
         if row.get("frames") and not row.get("cached"):
             return True
@@ -834,10 +838,20 @@ def edit_clean_preview(job_id: str, edit_id: str, mode: str = "fill") -> FileRes
             )
         except compose_render.ComposeError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
-        if mode == "fill" and _fills_missing(job, job_dir, compiled, fps):
-            raise HTTPException(
-                409, "AI fill has not run for this cut yet. Render it to see the result here.",
-            )
+        fill_choice: dict = {}
+        if mode == "fill":
+            # Whichever Render choices already made this cut's fills.
+            for device, follow in (("cpu", False), ("gpu", False), ("cpu", True), ("gpu", True)):
+                if not _fills_missing(job, job_dir, compiled, fps, device, follow):
+                    fill_choice = {
+                        **({"_fill_device": "gpu"} if device == "gpu" else {}),
+                        **({"_fill_follow": True} if follow else {}),
+                    }
+                    break
+            else:
+                raise HTTPException(
+                    409, "AI fill has not run for this cut yet. Render it to see the result here.",
+                )
         total = sum(
             int(segment.get("frames") or 0)
             for segment in compiled.get("segments") or []
@@ -849,7 +863,11 @@ def edit_clean_preview(job_id: str, edit_id: str, mode: str = "fill") -> FileRes
                 str(job["source"]["path"]),
                 job.get("source") or {},
                 job_dir,
-                {"target": target, "_scenes": (job.get("analysis") or {}).get("scenes") or []},
+                {
+                    "target": target,
+                    "_scenes": (job.get("analysis") or {}).get("scenes") or [],
+                    **fill_choice,
+                },
                 str(story.get("title") or "Clean preview"),
                 lambda *_args, **_kwargs: None,
                 quality="draft",

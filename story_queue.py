@@ -131,7 +131,9 @@ def normalize_items(raw: object) -> list[dict]:
                 f"Item {index}: quality must be one of "
                 + ", ".join(QUALITIES) + "."
             )
-        identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality)
+        fill_device = "gpu" if value.get("fill_device") == "gpu" else ""
+        fill_follow = value.get("fill_follow") is True
+        identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality, fill_device, fill_follow)
         if identity in seen:
             raise QueueError(f"Item {index} repeats an earlier story and aspect.")
         seen.add(identity)
@@ -140,6 +142,8 @@ def normalize_items(raw: object) -> list[dict]:
             **ids,
             "aspect": aspect,
             "quality": quality,
+            "fill_device": fill_device,
+            "fill_follow": fill_follow,
             "title": str(value.get("title") or "")[:200],
             "state": "queued",
             "artifact_id": None,

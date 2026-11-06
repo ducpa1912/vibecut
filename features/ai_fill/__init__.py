@@ -1,4 +1,4 @@
-"""AI fill feature contract: LaMa, STTN and OpenCV engines and span filling."""
+"""AI fill feature contract: LaMa, MI-GAN, STTN and OpenCV engines and span filling."""
 
 from core.contracts import FeatureContract
 
@@ -15,6 +15,7 @@ DEFAULT_METHOD = _textfill.DEFAULT_METHOD
 FillCancelled = _textfill.FillCancelled
 FillError = _textfill.FillError
 METHOD_COPY = _textfill.METHOD_COPY
+DEVICES = _textfill.DEVICES
 METHODS = _textfill.METHODS
 CLASSIC_METHODS = _textfill.CLASSIC_METHODS
 MODEL_FILES = _textfill.MODEL_FILES
@@ -26,8 +27,8 @@ def models_dir(data_root):
     return _textfill.models_dir(data_root)
 
 
-def method_stamp(method, directory):
-    return _textfill.method_stamp(method, directory)
+def method_stamp(method, directory, device="cpu"):
+    return _textfill.method_stamp(method, directory, device)
 
 
 def model_path(method, directory):
@@ -40,6 +41,10 @@ def missing_model(method, directory):
 
 def method_problem(method, directory):
     return _textfill.method_problem(method, directory)
+
+
+def render_options(directory):
+    return _textfill.render_options(directory)
 
 
 def model_signature(methods, directory):
@@ -76,8 +81,8 @@ def fill_frame(*args, **kwargs):
 
 __all__ = [
     "CLASSIC_METHODS", "DEFAULT_METHOD", "FEATURE", "FillCancelled", "FillError", "METHOD_COPY",
-    "METHODS", "MODEL_FILES", "busy", "estimate_span", "estimate_summary",
+    "DEVICES", "METHODS", "MODEL_FILES", "busy", "estimate_span", "estimate_summary",
     "fill_frame", "mask", "masks", "method_problem", "missing_model",
     "model_path", "model_signature", "models_dir", "prepare_span",
-    "release_fillers", "span_key",
+    "release_fillers", "render_options", "span_key",
 ]

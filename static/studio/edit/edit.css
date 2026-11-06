@@ -2798,6 +2798,8 @@ body:has(.st-preview.is-focus) { overflow: hidden; }
 .st-clean-delete-all { margin-left: auto; }
 .st-clean-editor { display: grid; gap: 8px; padding: 8px 6px 10px; border-bottom: 1px solid var(--st-line); background: var(--st-panel-2); }
 .st-clean-editor .st-method-switch { justify-self: start; }
+.st-clean-snap { display: grid; gap: 6px; justify-items: start; padding: 8px; border: 1px solid var(--st-line); border-radius: 8px; background: var(--st-panel-2); }
+.st-clean-snap .st-field-hint { margin: 0; }
 .st-clean-times { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; align-items: end; }
 .st-clean-times .st-field { display: grid; gap: 2px; min-width: 0; }
 .st-clean-times .st-field > span { color: var(--st-muted); font-size: 11px; }

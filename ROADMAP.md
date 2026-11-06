@@ -61,10 +61,11 @@ Studio, Classic and the Voice Room are separate products on separate branches, p
 
 Founder tests by hand: `docs/testing/studio-ai-clean-quick-test.md` and `docs/testing/studio-clean-fill-retest.md` (steps 57–59).
 
+- Rate the GPU option, MI-GAN, Follow camera motion and the swap from a box to lines on real video (steps 61–64). All are built and checked on arrays only. On arrays, LaMa on the GPU was about 6× faster than on the CPU with the same picture, so it may become the default.
 - Time and rate the per-line fill plan on a still video and a moving one. Motion thresholds and the 4 s first estimate are chosen values, tuned on two videos.
 - Time a real Pause and Resume, and check that no join shows in the result.
 - Moving-shot distortion is LaMa's open limit, since it fills each frame alone. STTN on moving shots is an untested idea.
-- Thread count and Core ML for LaMa are untimed.
+- Core ML through ONNX Runtime is ruled out for LaMa, at 52–65 s a run. CPU thread count needs a retest with cool-downs, since heat slowed the same run about 1.7× within minutes on a fanless Air.
 - Classic is porting this work on its own branch (LaMa only).
 
 ### Open decisions for the founder
