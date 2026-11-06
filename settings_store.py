@@ -70,6 +70,9 @@ DEFAULTS = {
     "translation": {
         "mode": "auto",
     },
+    "classic_clean": {
+        "flow": "review_first",
+    },
     "openrouter": {
         "enabled": True,
         "model": _default_route_model("rewrite", "openrouter"),
@@ -243,6 +246,15 @@ def _normalize_rights(value: object) -> dict:
     return {"lock": lock}
 
 
+def _normalize_classic_clean(value: object) -> dict:
+    """Keep Classic's clean flow one of its two modes; review first by default."""
+    section = dict(value) if isinstance(value, dict) else {}
+    flow = str(section.get("flow") or "").strip().lower()
+    if flow not in {"review_first", "one_click"}:
+        flow = "review_first"
+    return {"flow": flow}
+
+
 def _normalize_voice_fit(value: object) -> dict:
     """Keep the shared voice-fit policy valid across lanes."""
     section = dict(value) if isinstance(value, dict) else {}
@@ -315,6 +327,7 @@ def load_settings() -> dict:
         translation["mode"] = "auto"
         merged["translation"] = translation
     _clean_ingest(merged)
+    merged["classic_clean"] = _normalize_classic_clean(merged.get("classic_clean"))
     merged["rights"] = _normalize_rights(merged.get("rights"))
     merged["voice_fit"] = _normalize_voice_fit(merged.get("voice_fit"))
     try:
@@ -340,6 +353,7 @@ def save_settings(patch: dict) -> dict:
     with LOCK:
         current = load_settings()
         merged = _merge(current, patch)
+        merged["classic_clean"] = _normalize_classic_clean(merged.get("classic_clean"))
         merged["rights"] = _normalize_rights(merged.get("rights"))
         merged["voice_fit"] = _normalize_voice_fit(merged.get("voice_fit"))
         DATA.mkdir(parents=True, exist_ok=True)

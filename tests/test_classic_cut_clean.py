@@ -129,7 +129,7 @@ def test_cut_clean_has_one_primary_action_and_no_second_renderer():
     assert "SOURCE_CONFIDENCE_MIN" in js
     assert "cleanRowCutStart(row) !== null" in js
     assert 'label = `Clean ${ticked} text${ticked === 1 ? "" : "s"} & render`;' in js
-    assert 'label = "Find text & clean";' in js
+    assert 'let label = reviewFirst ? "Find text" : "Find text & clean";' in js
     assert '"No baked-in text found. Nothing was rendered."' in js
     assert 'label = "Render cut";' in js
     assert 'dom.cutCleanRun.textContent = label ? tr(label) : "";' in js
@@ -485,7 +485,9 @@ def test_new_report_clears_storage_but_ordinary_refresh_keeps_it():
     assert "clearStoredFoundTicks();" in refresh
     start = between(js, "async function startTextScan(runAgain = false)", "async function cancelTextScan()")
     assert "clearStoredFoundTicks();" in start
-    assert 'if (next.status === "ready" && state.cleanScope === "cut") ensureCutFoundTicks();' in start
+    assert 'if (next.status === "ready") {' in start
+    assert "ensureCutFoundTicks();" in start
+    assert "ensureSourceFoundTicks();" in start
 
 
 def test_source_ticks_use_the_same_identity_helpers():

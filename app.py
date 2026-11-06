@@ -3656,6 +3656,7 @@ async def save_settings(request: Request) -> dict:
         allowed_settings = {
             "opencode", "translation", "openrouter", "minimax", "stt", "tts",
             "ingest", "preflight", "caption_styles", "rights", "voice_fit",
+            "classic_clean",
         }
         unknown = sorted(set(patch) - allowed_settings)
         if unknown:

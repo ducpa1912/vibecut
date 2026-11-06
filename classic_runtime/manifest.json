@@ -33,9 +33,9 @@
   },
   {
    "path": "app.py",
-   "source": "classic: founder decision 2026-11-06, no time limit on queued renders",
-   "sha256": "92a6a20e2d5883d4a15d167cdcd94de40bea0485a6b584c67ffc9bd175d499e4",
-   "feature_version": "1.0.7"
+   "source": "classic: accept the clean flow setting through the settings API",
+   "sha256": "333b24241f18aa62864afd7b30b97261d6fa46807c3473343bbd692b96ce9edd",
+   "feature_version": "1.0.8"
   },
   {
    "path": "artifacts.py",
@@ -201,9 +201,9 @@
   },
   {
    "path": "render.py",
-   "source": "studio 6a6bf58: keep AI fill work when a render stops",
-   "sha256": "57f868e35616c20026ed081696b5fb3fe3bb029573ed527e2017aedd859a0b1f",
-   "feature_version": "1.0.4"
+   "source": "studio b1efbe7: pass the render frame rate to the fill and use the real last frame",
+   "sha256": "3113bd3589739e68a6ebd3fcd74a74b251eb899603e51673962a5a1e56c0eae6",
+   "feature_version": "1.0.5"
   },
   {
    "path": "requirements-optional.txt",
@@ -285,9 +285,9 @@
   },
   {
    "path": "settings_store.py",
-   "source": "classic 2f385a2",
-   "sha256": "2060dc46a23cd8aa48caacfecf49dd81fe01b3a17f644d87df7f10b3544a27f2",
-   "feature_version": "1.0.0"
+   "source": "classic: clean flow setting (review first or one click)",
+   "sha256": "2be1f152d1f608487889018be0b35e8cd2ce8cc0475f8720605ba76690d49d2d",
+   "feature_version": "1.0.1"
   },
   {
    "path": "shares.py",
@@ -315,9 +315,9 @@
   },
   {
    "path": "textfill/__init__.py",
-   "source": "studio 6a6bf58: keep AI fill work when a render stops",
-   "sha256": "a3e833e8d50f86fe24e5d699860430f12379705024bf535091039bb93d06f263",
-   "feature_version": "1.0.4"
+   "source": "studio 4c4c769: stop an unplanned box running LaMa on nearly every frame",
+   "sha256": "ae11eea3f2d9434469aacdedae30b5bcbab2cb40b9964e548b51831dc268416a",
+   "feature_version": "1.0.5"
   },
   {
    "path": "textfill/lama.py",

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>VibeCut — Classic</title>
-  <link rel="stylesheet" href="/static/classic/style.css?v=0.18.1">
+  <link rel="stylesheet" href="/static/classic/style.css?v=0.19.0">
   <link rel="stylesheet" href="/static/classic/creator.css?v=0.15.0">
   <!-- vibecut:edition -->
   <style>
@@ -48,8 +48,9 @@
     })();
   </script>
   <script src="/static/classic/trust.js?v=0.1.0" defer></script>
-  <script src="/static/classic/i18n.js?v=0.3.2" defer></script>
-  <script src="/static/classic/app.js?v=0.18.3" defer></script>
+  <script src="/static/classic/i18n.js?v=0.4.0" defer></script>
+  <script src="/static/classic/clean-merge.js?v=0.1.0" defer></script>
+  <script src="/static/classic/app.js?v=0.19.0" defer></script>
   <script src="/static/classic/creator.js?v=0.15.0" defer></script>
 </head>
 <body>
@@ -279,6 +280,8 @@
         <div class="clean-stage-body">
           <div id="clean-canvas" class="clean-canvas" data-aspect="9:16">
             <img id="clean-frame" class="clean-frame" alt="Frame of the cut" hidden>
+            <video id="clean-review-video" class="clean-review-video" playsinline preload="metadata" hidden aria-label="Detection check video"></video>
+            <div id="clean-review-blur" class="clean-review-blur" hidden aria-hidden="true"></div>
             <div id="clean-overlay" class="clean-overlay"></div>
             <div id="clean-frame-state" class="clean-frame-state" role="status" aria-live="polite"></div>
           </div>
@@ -294,9 +297,11 @@
           <span class="hint" id="clean-preview-moment">—</span>
           <span class="hint" id="clean-preview-engine">—</span>
           <span class="hint" id="clean-preview-eta">—</span>
+          <span id="clean-review-copy" class="hint clean-review-copy" hidden>Detection check · all found boxes blurred · not the final clean</span>
+          <span id="clean-review-note" class="hint clean-review-note" role="status" aria-live="polite" hidden></span>
           <button id="clean-preview-before" class="ghost small" type="button">Before</button>
           <button id="clean-preview-after" class="ghost small" type="button">After</button>
-          <button id="clean-preview-play" class="ghost small" type="button">Play this text</button>
+          <button id="clean-preview-play" class="ghost small" type="button" aria-pressed="false">Play</button>
           <button id="clean-preview-ai" class="ghost small" type="button">AI fill</button>
           <button id="clean-preview-blur" class="ghost small" type="button">Blur</button>
           <button id="clean-preview-exclude" class="ghost small" type="button">Exclude</button>
@@ -517,6 +522,7 @@
           </div>
           <div id="cut-clean-action" class="cut-clean-action" hidden>
             <p id="cut-clean-summary" class="cut-clean-summary" role="status" aria-live="polite"></p>
+            <p id="cut-clean-play-note" class="hint cut-clean-play-note" role="status" hidden>Render a draft once to play this cut.</p>
             <div id="cut-clean-progress" class="cut-clean-progress" hidden>
               <div class="cut-clean-bar" aria-hidden="true"><i id="cut-clean-progress-fill"></i></div>
               <span id="cut-clean-stage" class="hint">Finding text</span>
@@ -1447,6 +1453,21 @@
           </label>
           <label class="setup-check"><input id="setup-voice-extreme" type="checkbox"> Allow extreme chipmunk speed above 1.8×</label>
           <p id="setup-voice-warning" class="setup-hint" role="status" hidden></p>
+        </section>
+
+        <section class="setup-section">
+          <div class="setup-title">
+            <h3>Clean review</h3>
+            <span class="setup-badge">Clean</span>
+          </div>
+          <label class="setup-field">
+            <span>Cleaning flow</span>
+            <select id="setup-clean-flow">
+              <option value="review_first" selected>Review first — scan stops, nothing is cleaned until the explicit clean click.</option>
+              <option value="one_click">One click — scan, clean and render in one action.</option>
+            </select>
+          </label>
+          <p class="setup-hint">Review first is the default. It finds text and stops so you can check every row before a render starts. One click is faster for repeat work.</p>
         </section>
 
         <section class="setup-section">

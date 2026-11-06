@@ -99,6 +99,16 @@ async function clickPrimary(page, runSelector, downloadSelector, label) {
           + `Screenshot: ${join(OUT, `${label}-review.png`)}`,
         );
       }
+      if (!enabled && /clean \d+ text/i.test(text)) {
+        throw new Error(
+          `${label}: review is required. Tick at least one row in the rail, then run the command again.`,
+        );
+      }
+      if (/scan again|rescan/i.test(text)) {
+        throw new Error(
+          `${label}: the scan found no usable text rows. Use a clip with baked-in text.`,
+        );
+      }
       if (enabled && !/finding text|cleaning|rendering|preparing|estimating/i.test(text)) {
         const wantsConfirm = /clean \d+ text/i.test(text) || /render cut/i.test(text);
         if (!clicked || (wantsConfirm && !clickedConfirm)) {

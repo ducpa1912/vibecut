@@ -13,6 +13,7 @@ import copy
 import hashlib
 import json
 import math
+import mimetypes
 import os
 import threading
 import time
@@ -2471,6 +2472,48 @@ def classic_source_clean_media(job_id: str):
         path,
         media_type="video/mp4",
         filename=f"{name.stem}-clean.mp4",
+    )
+
+
+def _source_media_type(path: Path) -> str:
+    """The source's own media type from its suffix; octet-stream when unknown."""
+    guessed, _encoding = mimetypes.guess_type(path.name)
+    return guessed or "application/octet-stream"
+
+
+def _source_download_name(path: Path, display_name: object) -> str:
+    """A safe single path component, keeping the source's real suffix."""
+    from url_ingest import registry
+
+    fallback = f"source{path.suffix.lower() or '.mp4'}"
+    name = registry.safe_filename(
+        Path(str(display_name or "")).name, fallback, max_length=140,
+    )
+    if not Path(name).suffix and path.suffix:
+        name = f"{Path(name).stem}{path.suffix.lower()}"
+    return name
+
+
+@router.get("/api/classic/jobs/{job_id}/source/media")
+def classic_source_media(job_id: str):
+    """Stream the original source for before/after playback.
+
+    The file is served in place, never copied or transcoded. FileResponse adds
+    byte-range support, so the player can seek without loading the whole video.
+    """
+    import app
+
+    job = app.load_job(job_id)
+    app.require_source(job)
+    source = job.get("source") or {}
+    path = Path(str(source.get("path") or ""))
+    if not path.is_file():
+        raise HTTPException(404, "The source video for this job is missing.")
+    return FileResponse(
+        path,
+        media_type=_source_media_type(path),
+        filename=_source_download_name(path, source.get("name")),
+        content_disposition_type="inline",
     )
 
 

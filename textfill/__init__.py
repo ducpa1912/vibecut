@@ -44,6 +44,12 @@ LAMA_CARRY = 0.3
 LAMA_KEYS_PER_SECOND = 3.0
 # Mean change around the text (0..255) that stops a blend: the picture moved.
 LAMA_MOTION_LIMIT = 6.0
+# Fills a second a box with no scan plan needs at most, however much the picture
+# moves. Without this floor, a moving shot ran the model on nearly every frame.
+LAMA_UNPLANNED_KEYS = 6.0
+# Bump when the run rule changes what a fill looks like, so a cut made under the
+# old rule is not reused.
+LAMA_RUN_RULE = 2
 # A line planned by the scan needs no motion check, only a stop at a sudden change.
 LAMA_CUT_LIMIT = 30.0
 # Pixels around the text that the motion check reads.
@@ -169,7 +175,7 @@ def _span_units(rect_table: list, frames: int) -> tuple[int, int]:
 
 
 def _planned_units(rect_table: list, layers, *, start: float, fps: float, frames: int, width: int, height: int) -> float:
-    """What the scan's plan will cost: its model runs, on the areas they read."""
+    """What the fill will cost: its planned model runs, on the areas they read."""
     from . import lama
 
     plan_for = lama_plan(layers, start=start, fps=fps, frames=frames)
@@ -182,7 +188,9 @@ def _planned_units(rect_table: list, layers, *, start: float, fps: float, frames
         while end < frames and tuple(sorted(masks.without_contained(rect_table[end]))) == rects:
             end += 1
         if rects:
-            run_step, _limit, still = plan_for(index)
+            run_step, _limit, still, *shortest = plan_for(index)
+            # A box with no plan: the most it can need, on a moving shot.
+            run_step = shortest[0] if shortest else run_step
             runs = 1 if still else (end - index) / run_step + 1
             area_cost = sum(
                 lama.run_units(spot[3] - spot[1], spot[2] - spot[0])
@@ -308,6 +316,8 @@ def model_signature(methods: Iterable[str], directory: Path | str) -> str:
             parts.append([method, "missing"])
         else:
             parts.append([method, method_stamp(method, directory)])
+            if method == "lama":
+                parts.append(["runs", LAMA_RUN_RULE])
     payload = {"version": VERSION, "models": parts, "text_mask": text_mask_enabled()}
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -321,6 +331,7 @@ def span_key(
     method: str,
     model_stamp: str,
 ) -> str:
+    layers = list(layers)
     payload = {
         "version": VERSION,
         "lama_keys": lama_keys_per_second(),
@@ -345,6 +356,9 @@ def span_key(
             for layer in layers
         ],
     }
+    # Only a box with no plan changed with this rule, so planned clips stay valid.
+    if method == "lama" and any(layer.get("fill_keys") is None for layer in layers):
+        payload["unplanned"] = LAMA_UNPLANNED_KEYS
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
 
 
@@ -474,10 +488,15 @@ def lama_plan(layers, *, start: float, fps: float, frames: int):
     """``plan_for``: the scan's plan per frame, or the default where a layer has none.
 
     Setting ``VIBECUT_FILL_LAMA_KEYS`` overrides the plan, to compare results.
+    A box with no plan, such as a drawn one, adapts as it runs: the default number
+    of fills when the picture holds still, up to ``LAMA_UNPLANNED_KEYS`` when it
+    moves, and more only at a cut. The fourth value is that shortest run.
     """
     default = (lama_step(fps), LAMA_MOTION_LIMIT, False)
     if os.environ.get("VIBECUT_FILL_LAMA_KEYS"):
         return lambda _index: default
+    shortest = max(1, min(default[0], int(round(fps / LAMA_UNPLANNED_KEYS))))
+    default = (*default, shortest)
     table = masks.frame_keys(layers, start=start, fps=fps, frames=frames)
 
     def plan_for(index: int):
@@ -658,10 +677,11 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
     starts from that fill when it is on the same area and covers the hole, which
     saves a model call. ``area`` fixes one work area; None finds them per run.
 
-    ``plan_for(index)`` gives the scan's plan for a frame: (frames per fill, motion
-    limit, still). A still line gets one fill, made on its first frame over its
-    whole box, so later frames need no look ahead, and kept unless the picture
-    jumps. A try that ends early falls back to key frames for one run.
+    ``plan_for(index)`` gives the plan for a frame: (frames per fill, motion limit,
+    still), and optionally a shortest run, which only a cut can end sooner. A still
+    line gets one fill, made on its first frame over its whole box, so later frames
+    need no look ahead, and kept unless the picture jumps. A try that ends early
+    falls back to key frames for one run.
     """
     failed_still = False
     source = enumerate(frames)
@@ -708,7 +728,8 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
             if on_frame:
                 on_frame(first[0])
             continue
-        run_step, run_limit, still_line = plan_for(first[0]) if plan_for else (step, LAMA_MOTION_LIMIT, False)
+        run_step, run_limit, still_line, *shortest = plan_for(first[0]) if plan_for else (step, LAMA_MOTION_LIMIT, False)
+        shortest_run = shortest[0] if shortest else 1
         ring = {spot: _ring_around(rects, spot) for spot in spots}
         if still_line and not failed_still:
             whole = {
@@ -763,9 +784,10 @@ def _fill_frames_by_runs(frames, rects_for, filler, area, step, *, on_frame, can
             item = next_frame()
             if item is None:
                 break
+            limit = LAMA_CUT_LIMIT if len(run) < shortest_run else run_limit
             moved = any(
                 _picture_moved(
-                    first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)], run_limit,
+                    first[1][y0:y1, x0:x1], item[1][y0:y1, x0:x1], ring[(x0, y0, x1, y1)], limit,
                 )
                 for x0, y0, x1, y1 in spots
             )

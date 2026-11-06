@@ -50,21 +50,30 @@ mkdir -p ~/vibecut-lanes/recordings
 
 ### 1. Clean the whole video
 
-1. On ingest, click **Clean video** and choose the real clip.
-2. Wait for **Source ready**. Source Clean opens; Edit, moments and Smart Cut
+1. Open Setup → **Clean review**. Confirm **Review first** is selected. It is the
+   default. **One click** is opt-in and keeps the old scan-clean-render action.
+2. On ingest, click **Clean video** and choose the real clip.
+3. Wait for **Source ready**. Source Clean opens; Edit, moments and Smart Cut
    are absent.
-3. Confirm the frame shows the source aspect, not a 9:16 crop. Confirm the rail
+4. Confirm the frame shows the source aspect, not a 9:16 crop. Confirm the rail
    names the file, duration, size, frame count and engine.
-4. Click **Find text & clean** once for a clip under three minutes, or twice for
-   a clip of three minutes or more (first click scans and shows the estimate).
-5. Watch the stage line: **Finding text** → **Cleaning** → **Encoding**.
-6. Wait for **Download**.
+5. Click **Find text**. The scan runs and stops.
+6. Confirm **no Clean layers were saved and no render started**. The rail says
+   **N texts found. Review the rows, then clean.**
+7. Review every row. High-confidence rows start selected; tick or untick what
+   should be cleaned. Low-confidence rows stay visible.
+8. Click **Clean N texts & render**.
+9. Watch the stage line: **Finding text** → **Cleaning** → **Encoding**.
+10. Wait for **Download**.
 
 Expected:
 
-- One primary action owns the screen before the run.
+- The scan is a review stop, not an automatic clean.
+- No layer, no file and no render exists after the scan alone.
 - The row list ticks only high-confidence text by default; low-confidence rows
   stay visible behind **Review N more**.
+- Rows are one per text and area. Subtitle lines in one area share one row with
+  a line count. Different text in different areas stays separate.
 - Clean opens on the first timed text row when one exists. If the scan finds no
   timed row, the frame says **No text row at 0:00. Scrub the frame or scan
   again.** instead of claiming the frame is black.
@@ -74,7 +83,28 @@ Expected:
   rate, upright, with the source audio. Duration matches the source within one
   frame.
 
-### 2. Before / After matches the file
+### 2. Detection check playback
+
+1. Before cleaning, click **Play** in the preview panel.
+2. The real source video plays. Every found box and every drawn box is blurred,
+   ticked or not.
+3. Watch for leftover text outside the boxes, two boxes on one line, a box on
+   the wrong object, or a box that covers too much.
+4. Seek with the scrubber and pause. Click **Before** to return to the still
+   frame.
+5. Confirm the note says **Detection check · all found boxes blurred · not the
+   final clean**.
+
+Expected:
+
+- Play starts immediately. It does not start AI fill, a clean render or a save.
+- Blur covers all found and manual boxes, including low-confidence and unticked
+  rows. Text outside a box stays sharp.
+- Overlap and wrong boxes are visible, not hidden by stacking.
+- On a cut, Play uses a ready cut render. If no render exists, the rail says
+  **Render a draft once to play this cut.** and does not start one.
+
+### 3. Before / After matches the file
 
 1. On the frame, click **After**.
 2. Compare the filled area with the same moment in the downloaded file.
@@ -86,7 +116,7 @@ Expected: After uses the same fill engine and layer data as the render. A
 mismatch is a blocker. A missing filled frame must say so and fall back to the
 source frame plus Clean boxes; it must not claim success.
 
-### 3. Clean a cut
+### 4. Clean a cut
 
 1. From the source result click **Make a reel**. Wait for the cut.
 2. The result screen shows **Edit | Clean**. Click **Clean**.
@@ -94,20 +124,21 @@ source frame plus Clean boxes; it must not claim success.
    scan affordance appears once.
 4. Confirm the carried source Clean layers are present with no duplicate rows.
    A cut row can be excluded or edited without changing the source copy.
-5. Click **Clean N texts & render** once.
-6. Wait for the cut **Download**.
+5. Click **Find text**. The scan stops for review. Confirm no render started.
+6. Review the rows, then click **Clean N texts & render**.
+7. Wait for the cut **Download**.
 
 Expected:
 
-- The primary action reads **Clean N texts & render** (or **Render cut** when
-  the cut has no found text).
+- The primary action reads **Find text**, then **Clean N texts & render** (or
+  **Render cut** when the cut has no found text).
 - Rows outside the cut say **Not in this cut** and do not move the playhead.
 - The render finishes into the normal render record; **Download** is live and
   saves `<source>-<target>s.mp4`.
 - **Clean again** reruns honestly. A stale file is labelled **Download older
   file**; it is not presented as fresh.
 
-### 4. Cancel and failure
+### 5. Cancel and failure
 
 1. Start a whole-video clean on a clip long enough to reach **Cleaning**.
 2. Click **Cancel** while it runs.
@@ -126,7 +157,7 @@ Expected:
   stays in the console.
 - `ls <job folder>` shows no `.part`.
 
-### 5. Full-length download and layer carry
+### 6. Full-length download and layer carry
 
 1. Download the whole-video clean file. Play it fully.
 2. Re-open the job from Recent cuts.
@@ -141,7 +172,7 @@ Expected:
 - A source row that is excluded in the cut still shows **Excluded**, never
   **Already cleaned** beside it.
 
-### 6. Responsive and keyboard
+### 7. Responsive and keyboard
 
 1. Record at 1440×900 and repeat the key clicks at 1280×800.
 2. Resize to 1050×800 and 900×800 in Source Clean and Cut Clean.

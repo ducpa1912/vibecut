@@ -17,6 +17,12 @@ done because tests pass; the product owner gate is separate.
 - The source is never modified. Every result is a new file.
 - No timeline. Moments are the cut model.
 - UI type floor is 11 px.
+- Clean review has two flows: **Review first** (default) scans only until the
+  explicit clean click, and **One click** keeps scan -> clean -> render in one
+  action. The setting is `settings.classic_clean.flow`; review first is the
+  default.
+- The detection check plays the real source or a ready cut render with one
+  blur box over every found row. It never fills, saves or renders.
 
 ## Phase 1 — Source Clean backend
 
@@ -118,10 +124,11 @@ done because tests pass; the product owner gate is separate.
   - a visible review path for low-confidence rows;
   - one sticky action: **Find text & clean**.
 - One-action pipeline:
-  - scan, apply the auto-ticked rows, render;
-  - under 3 minutes runs through;
-  - 3 minutes or more scans, then shows **Clean N texts · ~X** and waits for
-    the second click;
+  - **One click** mode: scan, apply the auto-ticked rows, render;
+  - **Review first** mode (default): scan only, then **Clean N texts & render**;
+  - under 3 minutes runs through in One click;
+  - 3 minutes or more scans, then shows **Clean N texts · ~X** in One click
+    and waits for the second click;
   - progress names the stage: Finding text, Cleaning, Encoding;
   - cancel leaves no partial file.
 - Nothing found: no render. Say **No baked-in text found** and offer **Make a

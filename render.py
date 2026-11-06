@@ -1985,6 +1985,14 @@ def render_story_frame(
             "-frames:v", "1",
             str(frame_png),
         ], timeout=60, cancel_event=cancel_event)
+        if not frame_png.is_file():
+            # A source can end a frame or two before the compiled length.
+            _run([
+                _ffmpeg(), "-y", "-v", "error",
+                "-sseof", "-1", "-i", str(segment_path),
+                "-update", "1",
+                str(frame_png),
+            ], timeout=60, cancel_event=cancel_event)
         frame_jpg = tmp / "frame.jpg"
         _burn_frame(
             frame_png,
@@ -2455,11 +2463,12 @@ def render_reel(
                         1, (os.cpu_count() or workers) // max(1, workers),
                     )
             progress(0.01, f"Preparing {len(clips)} beats · {quality} · {encoder}")
+            output_fps = int(compiled.get("fps") or OUT_FPS) if compiled is not None else OUT_FPS
             with _stage(timings, "fill"):
                 fills = _prepare_fills(
                     source, meta, job_dir,
                     edit_segments if compiled is not None else [],
-                    progress, cancel_event, on_eta=fill_eta,
+                    progress, cancel_event, fps=output_fps, on_eta=fill_eta,
                 )
             cut_from = 0.45 if any(fills) else 0.02
             done = 0

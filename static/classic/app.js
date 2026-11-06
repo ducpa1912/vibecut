@@ -34,6 +34,17 @@
   // copy and never in a tooltip.
   const diagnosticsLogged = new Set();
 
+  // Merge identity is pure and testable without a browser. The page ships the
+  // module before this script, so the rail, the overlay and the saved layers
+  // all share one rule for "the same text".
+  const {
+    sameArea,
+    foundTextKey,
+    mergeRanges: mergeCleanRangeList,
+    mergeFoundEntries,
+    dedupeCleanLayers,
+  } = window.ClassicCleanMerge;
+
   // Motion is a preference, not a decoration: any programmatic scroll must ask
   // before it animates. CSS also disables animations and transitions in the
   // reduced-motion media query; this covers the JS-only smooth scrolls.
@@ -80,6 +91,7 @@
     setupUseBrief: $("#setup-use-brief"),
     setupTranslationMode: $("#setup-translation-mode"),
     setupSttLanguage: $("#setup-stt-language"),
+    setupCleanFlow: $("#setup-clean-flow"),
     setupMinimaxKey: $("#setup-minimax-key"),
     setupElevenlabsKey: $("#setup-elevenlabs-key"),
     setupVoicePreserve: $("#setup-voice-preserve"),
@@ -351,6 +363,10 @@
     cleanStage: $("#clean-stage"),
     cleanCanvas: $("#clean-canvas"),
     cleanFrame: $("#clean-frame"),
+    cleanReviewVideo: $("#clean-review-video"),
+    cleanReviewBlur: $("#clean-review-blur"),
+    cleanReviewCopy: $("#clean-review-copy"),
+    cleanReviewNote: $("#clean-review-note"),
     cleanOverlay: $("#clean-overlay"),
     cleanFrameState: $("#clean-frame-state"),
     cleanStageTime: $("#clean-stage-time"),
@@ -406,6 +422,7 @@
     cutCleanMeta: $("#cut-clean-meta"),
     cutCleanAction: $("#cut-clean-action"),
     cutCleanSummary: $("#cut-clean-summary"),
+    cutCleanPlayNote: $("#cut-clean-play-note"),
     cutCleanProgress: $("#cut-clean-progress"),
     cutCleanProgressFill: $("#cut-clean-progress-fill"),
     cutCleanStage: $("#cut-clean-stage"),
@@ -476,6 +493,17 @@
       // The frame is cropped; boxes are stored in source space. The server
       // sends each segment's crop with its frame, keyed by segment position.
       crops: {},
+      // Detection check: play the real video, with a blur box over every found
+      // row. `review.active` means the video element owns the frame; the still
+      // image comes back on Before/After or a video error.
+      review: {
+        active: false,
+        playing: false,
+        key: "",
+        error: "",
+        raf: 0,
+        boxesAt: 0,
+      },
     };
   }
 
@@ -493,6 +521,9 @@
     job: null,
     textScan: null,
     cleanScope: "cut",
+    // Review first is the safe default: a scan only selects rows. One click
+    // keeps the old scan -> clean -> render path as an opt-in.
+    cleanFlow: "review_first",
     resultMode: "edit",
     cutCleanBusy: false,
     cutCleanPhase: "",
@@ -887,6 +918,10 @@
     }
     dom.setupOpencodeStatus.classList.toggle("warn", !runtime.opencode);
     dom.setupSttLanguage.value = (settings.stt || {}).language || "en";
+    const classicClean = settings.classic_clean || {};
+    const cleanFlow = classicClean.flow === "one_click" ? "one_click" : "review_first";
+    state.cleanFlow = cleanFlow;
+    if (dom.setupCleanFlow) dom.setupCleanFlow.value = cleanFlow;
     if (dom.setupRightsLock) dom.setupRightsLock.checked = (settings.rights || {}).lock !== false;
     const ingest = settings.ingest || {};
     dom.setupIngestProvider.value = ["auto", "ytdlp", "xhs"].includes(ingest.provider)
@@ -934,6 +969,10 @@
     updatePrivacyPill();
     renderSetupEngines();
     renderFirstRunNudge();
+    if (state.job) {
+      paintSourceClean();
+      paintCutClean();
+    }
     if (dom.speechNote && !dom.speechNote.textContent.includes("unavailable")) {
       dom.speechNote.textContent = "Apple / local Whisper";
     }
@@ -1070,6 +1109,9 @@
           },
           stt: {
             language: dom.setupSttLanguage.value,
+          },
+          classic_clean: {
+            flow: dom.setupCleanFlow?.value === "one_click" ? "one_click" : "review_first",
           },
           rights: {
             lock: false,
@@ -3237,6 +3279,7 @@
         state.history = [];
         state.historyEntry = null;
         state.timelineScroll = 0;
+        stopCleanReview();
         if (state.classicText.saveTimer) clearTimeout(state.classicText.saveTimer);
         if (state.classicText.frameTimer) clearTimeout(state.classicText.frameTimer);
         try { state.classicText.frame.controller?.abort(); } catch (_) { /* ignore */ }
@@ -3311,6 +3354,7 @@
   function resetSourceCleanState() {
     stopSourceCleanPoll();
     stopSourceReelPoll();
+    stopCleanReview();
     state.sourceClean = null;
     state.sourceCleanBusy = false;
     state.sourceCleanRunCancelled = false;
@@ -3377,6 +3421,7 @@
   }
 
   function resetCutCleanState() {
+    stopCleanReview();
     state.resultMode = "edit";
     state.editDrawMode = false;
     state.editFocusElement = null;
@@ -3443,6 +3488,7 @@
       paintCutClean();
     } else {
       if (wasClean) {
+        stopCleanReview();
         state.classicText.drawMode = Boolean(state.editDrawMode);
         if (state.plan) paintCleanStage({ rows: false });
         restoreEditFocus();
@@ -3574,6 +3620,16 @@
     return tickedRowsFor(rows, ticks, { source: true }).length;
   }
 
+  function sourceCleanReportReady() {
+    const report = state.textScan?.report;
+    return state.textScan?.status === "ready"
+      && Boolean(report && report.text && report.text.confirmed === true);
+  }
+
+  function sourceReviewRows(rows) {
+    return (rows || []).filter((row) => !row.manual && sourceInsideRow(row));
+  }
+
   function paintSourceClean() {
     if (state.cleanScope !== "source") return;
     const record = state.sourceClean;
@@ -3585,9 +3641,14 @@
     const report = state.textScan?.report;
     const confirmed = Boolean(report && report.text && report.text.confirmed === true);
     const rows = cleanScanRows();
+    const reviewFirst = state.cleanFlow !== "one_click";
+    const reportReady = scanStatus === "ready" && confirmed;
+    const available = sourceReviewRows(rows);
     const ticked = sourceTickedCount(rows, state.classicText.foundTicks);
     const applied = classicCleanLayers().filter((layer) => layer.source === "scan").length;
-    const cleanCount = ticked || applied;
+    const cleanCount = ticked || applied || available.length;
+    const needsSelection = reviewFirst && reportReady && available.length > 0
+      && !ticked && !applied;
     const low = sourceLowRows(rows).length;
     const engine = sourceCleanEngineLabel(record);
     const duration = Math.max(0, Number(state.job?.source?.duration) || 0);
@@ -3623,24 +3684,32 @@
         summary = "Clean cancelled. Nothing partial is kept. Retry when ready.";
       } else if (record?.status === "failed") {
         summary = sourceCleanFailureText(record);
-      } else if (!showResult && rows.length) {
-        const count = cleanCount || rows.length;
-        const tail = low ? ` · review ${low} more` : "";
-        summary = `${count} text${count === 1 ? "" : "s"} · ${engine}${tail}`;
-        if (state.sourceCleanNeedConfirm) {
-          const estimate = state.sourceCleanEstimate;
-          if (estimate?.blur) {
-            summary += " · Blur needs no fill estimate · render progress will show";
-          } else if (estimate?.estimate_seconds) {
-            summary += ` · ~${formatEstimate(estimate.estimate_seconds)}`;
-          } else if (!estimate) {
-            summary += " · estimating…";
-          } else {
-            summary += " · estimate unavailable";
+      } else if (!showResult && available.length) {
+        if (reviewFirst) {
+          const count = available.length;
+          const lowTail = low ? ` ${low} low-confidence.` : "";
+          summary = `${count} text${count === 1 ? "" : "s"} found. Review the rows, then clean.${lowTail}`;
+        } else {
+          const count = cleanCount || available.length;
+          const tail = low ? ` · review ${low} more` : "";
+          summary = `${count} text${count === 1 ? "" : "s"} · ${engine}${tail}`;
+          if (state.sourceCleanNeedConfirm) {
+            const estimate = state.sourceCleanEstimate;
+            if (estimate?.blur) {
+              summary += " · Blur needs no fill estimate · render progress will show";
+            } else if (estimate?.estimate_seconds) {
+              summary += ` · ~${formatEstimate(estimate.estimate_seconds)}`;
+            } else if (!estimate) {
+              summary += " · estimating…";
+            } else {
+              summary += " · estimate unavailable";
+            }
           }
         }
       } else if (!showResult && confirmed) {
-        summary = `Nothing is ticked yet · ${engine}`;
+        summary = reviewFirst
+          ? "No baked-in text found. Nothing was rendered."
+          : `Nothing is ticked yet · ${engine}`;
       }
     }
     if (dom.sourceCleanSummary) {
@@ -3648,7 +3717,7 @@
       dom.sourceCleanSummary.hidden = !summary;
     }
 
-    let label = "Find text & clean";
+    let label = reviewFirst ? "Find text" : "Find text & clean";
     let disabled = false;
     if (active) {
       label = "Cleaning…";
@@ -3657,7 +3726,12 @@
       label = `${state.sourceCleanPhase || "Preparing"}…`;
       disabled = true;
     } else if (record?.status === "failed" || record?.status === "cancelled") {
-      label = "Retry clean";
+      if (reviewFirst && reportReady && available.length && cleanCount) {
+        label = `Clean ${cleanCount} text${cleanCount === 1 ? "" : "s"} & render`;
+        disabled = needsSelection;
+      } else {
+        label = "Retry clean";
+      }
     } else if (scanStatus === "failed") {
       label = "Retry scan";
     } else if (scanStatus === "cancelled") {
@@ -3666,7 +3740,7 @@
       label = "Rescan text";
     } else if (state.sourceCleanNotFound) {
       label = "Scan again";
-    } else if (state.sourceCleanNeedConfirm) {
+    } else if (!reviewFirst && state.sourceCleanNeedConfirm) {
       const estimate = state.sourceCleanEstimate;
       const count = cleanCount || rows.length;
       const time = estimate?.blur
@@ -3675,6 +3749,14 @@
           ? ` · ~${formatEstimate(estimate.estimate_seconds)}`
           : (estimate ? " · estimate unavailable" : " · estimating…"));
       label = `Clean ${count} text${count === 1 ? "" : "s"}${time}`;
+    } else if (reviewFirst) {
+      if (reportReady && available.length) {
+        const count = cleanCount || available.length;
+        label = `Clean ${count} text${count === 1 ? "" : "s"} & render`;
+        disabled = needsSelection;
+      } else if (reportReady) {
+        label = "Scan again";
+      }
     } else if (scanStatus === "ready" && confirmed && rows.length && !ticked) {
       label = applied
         ? `Clean ${applied} text${applied === 1 ? "" : "s"}`
@@ -3685,6 +3767,9 @@
     if (dom.sourceCleanRun) {
       dom.sourceCleanRun.textContent = tr(label);
       dom.sourceCleanRun.disabled = disabled || state.sourceCleanBusy || scanActive;
+      dom.sourceCleanRun.title = needsSelection && disabled
+        ? tr("Select at least one row to clean.")
+        : "";
     }
     if (dom.sourceCleanCancel) {
       dom.sourceCleanCancel.hidden = !(active || scanActive);
@@ -3847,10 +3932,13 @@
     const rows = cleanScanRows();
     const ticks = state.classicText.foundTicks;
     const review = cutCleanReviewState(rows, ticks);
+    const reviewFirst = state.cleanFlow !== "one_click";
     const { ticked, applied, low, needsReview } = review;
     const foundRows = cutCleanFoundRows(rows);
     const emptyConfirmed = cutCleanEmptyConfirmed(rows);
     const noInsideFound = cutCleanNoInsideFound(rows);
+    const needsSelection = reviewFirst && cutCleanReportReady()
+      && review.available.length > 0 && ticked === 0 && applied === 0;
     const working = scanActive || state.cutCleanBusy;
     const record = working ? null : cutCleanRenderRecord();
     const renderActive = isRenderActive(record);
@@ -3921,16 +4009,21 @@
       } else if (noInsideFound) {
         summary = "No found text is inside this cut. Nothing to clean here.";
       } else if (foundRows.length) {
-        const count = ticked || applied || foundRows.length;
-        const reviewNote = low ? ` · review ${low} more` : "";
-        const fillReason = !fillEngineReady()
-          ? "AI fill needs its model pack · Blur and Crop guard work"
-          : "";
-        if (!fillEngineReady()) {
-          cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason
-            || state.fill?.note || "");
+        if (reviewFirst) {
+          summary = `${foundRows.length} text${foundRows.length === 1 ? "" : "s"} found. `
+            + `Review the rows, then clean.${low ? ` ${low} low-confidence.` : ""}`;
+        } else {
+          const count = ticked || applied || foundRows.length;
+          const reviewNote = low ? ` · review ${low} more` : "";
+          const fillReason = !fillEngineReady()
+            ? "AI fill needs its model pack · Blur and Crop guard work"
+            : "";
+          if (!fillEngineReady()) {
+            cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason
+              || state.fill?.note || "");
+          }
+          summary = `${count} text${count === 1 ? "" : "s"} · ${engine}${reviewNote}${fillReason ? ` · ${fillReason}` : ""}`;
         }
-        summary = `${count} text${count === 1 ? "" : "s"} · ${engine}${reviewNote}${fillReason ? ` · ${fillReason}` : ""}`;
       } else {
         summary = "No text scan yet for this cut.";
       }
@@ -3939,8 +4032,16 @@
       dom.cutCleanSummary.textContent = summary ? tr(summary) : "";
       dom.cutCleanSummary.hidden = !summary;
     }
+    if (dom.cutCleanPlayNote) {
+      const playable = Boolean(cleanReviewRecord());
+      const showPlayNote = cutCleanActive() && !playable && !renderActive && !ready && !working;
+      dom.cutCleanPlayNote.hidden = !showPlayNote;
+      dom.cutCleanPlayNote.textContent = showPlayNote
+        ? tr("Render a draft once to play this cut.")
+        : "";
+    }
 
-    let label = "Find text & clean";
+    let label = reviewFirst ? "Find text" : "Find text & clean";
     let disabled = false;
     const cleanCount = ticked || applied || review.available.length;
     const staleNeedsReview = stale && needsReview && applied === 0;
@@ -3967,6 +4068,19 @@
       label = "Rescan text";
     } else if (scanStatus === "ready" && !confirmed) {
       label = "Rescan text";
+    } else if (reviewFirst) {
+      if (failed) {
+        label = (ticked || applied)
+          ? `Clean ${cleanCount} text${cleanCount === 1 ? "" : "s"} & render`
+          : "Render cut";
+      } else if (cutCleanReportReady() && review.available.length) {
+        label = `Clean ${cleanCount} text${cleanCount === 1 ? "" : "s"} & render`;
+        disabled = needsSelection;
+      } else if (cutCleanReportReady()) {
+        label = (ticked || applied)
+          ? `Clean ${cleanCount} text${cleanCount === 1 ? "" : "s"} & render`
+          : "Scan again";
+      }
     } else if (ticked) {
       label = `Clean ${ticked} text${ticked === 1 ? "" : "s"} & render`;
     } else if (needsReview && applied === 0 && !failed) {
@@ -3984,6 +4098,9 @@
       dom.cutCleanRun.textContent = label ? tr(label) : "";
       dom.cutCleanRun.hidden = ready;
       dom.cutCleanRun.disabled = disabled || state.cutCleanBusy || scanActive || renderActive;
+      dom.cutCleanRun.title = needsSelection && disabled
+        ? tr("Select at least one row to clean.")
+        : "";
     }
     if (dom.cutCleanCancel) {
       dom.cutCleanCancel.hidden = !(scanActive
@@ -4021,7 +4138,7 @@
   async function runCutClean(options = {}) {
     if (!state.job || state.cleanScope !== "cut") return;
     if (state.cutCleanBusy || isRenderActive(cutCleanRenderRecord())) return;
-    const { forceScan = false, renderOnly = false } = options;
+    const { forceScan = false, renderOnly = false, scanOnly = false } = options;
     state.cutCleanBusy = true;
     state.cutCleanCancelled = false;
     setCutCleanNote("");
@@ -4069,6 +4186,28 @@
       }
 
       const rows = cleanScanRows();
+      if (scanOnly) {
+        ensureCutFoundTicks();
+        const found = cutCleanFoundRows(rows);
+        if (!found.length) {
+          setCutCleanNote("No baked-in text found. Nothing was rendered.");
+          paintCutClean();
+          return;
+        }
+        const inside = found.filter((row) => cleanRowCutStart(row) !== null).length;
+        if (!inside) {
+          setCutCleanNote("No found text is inside this cut. Nothing was cleaned.");
+          paintCutClean();
+          return;
+        }
+        const low = cutCleanLowRows(rows).length;
+        setCutCleanNote(`${found.length} text${found.length === 1 ? "" : "s"} found. `
+          + `Review the rows, then clean.${low ? ` ${low} low-confidence.` : ""}`);
+        paintCutClean();
+        scrollIntoViewSafe(dom.cleanFound, { behavior: "smooth", block: "nearest" });
+        dom.cleanFound?.querySelector(".clean-found-row")?.focus();
+        return;
+      }
       if (!cutCleanFoundRows(rows).length) {
         setCutCleanNote("");
         return;
@@ -4188,10 +4327,16 @@
 
   async function cutCleanPrimaryAction() {
     if (!state.job || state.cleanScope !== "cut") return;
+    const reviewFirst = state.cleanFlow !== "one_click";
+    if (reviewFirst && !cutCleanReportReady()) {
+      await runCutClean({ scanOnly: true, forceScan: true });
+      return;
+    }
     const rows = cleanScanRows();
     const emptyConfirmed = cutCleanEmptyConfirmed(rows);
     const noInsideFound = cutCleanNoInsideFound(rows);
     const review = cutCleanReviewState(rows, state.classicText.foundTicks);
+    const ticked = review.ticked;
     const record = cutCleanRenderRecord();
     if (emptyConfirmed) {
       await runCutClean({ renderOnly: true });
@@ -4359,7 +4504,8 @@
   }
 
   async function runSourceCleanSteps(options = {}) {
-    const { confirm = false, forceScan = false } = options;
+    const { confirm = false, forceScan = false, scanOnly = false } = options;
+    const reviewFirst = state.cleanFlow !== "one_click";
 
     state.sourceCleanNote = "";
     state.sourceCleanNotFound = false;
@@ -4409,8 +4555,31 @@
     const tickedRows = tickedRowsFor(rows, state.classicText.foundTicks, { source: true });
     const ticked = tickedRows.length;
     const hasLayers = cleanPayloadLayers().length > 0;
+    if (scanOnly) {
+      const available = sourceReviewRows(rows);
+      if (!available.length) {
+        state.sourceCleanNotFound = true;
+        state.sourceCleanNeedConfirm = false;
+        state.sourceCleanEstimate = null;
+        state.sourceCleanNote = "";
+        paintSourceClean();
+        return;
+      }
+      const low = sourceLowRows(rows).length;
+      state.sourceCleanNeedConfirm = false;
+      state.sourceCleanEstimate = null;
+      state.sourceCleanNote = `${available.length} text`
+        + `${available.length === 1 ? "" : "s"} found. `
+        + `Review the rows, then clean.${low ? ` ${low} low-confidence.` : ""}`;
+      paintSourceClean();
+      scrollIntoViewSafe(dom.cleanFound, { behavior: "smooth", block: "nearest" });
+      dom.cleanFound?.querySelector(".clean-found-row")?.focus();
+      return;
+    }
     if (!ticked && !hasLayers) {
-      state.sourceCleanNote = `${rows.length} text${rows.length === 1 ? "" : "s"} found. Tick the ones to remove, or review the list.`;
+      state.sourceCleanNote = reviewFirst
+        ? `${rows.length} text${rows.length === 1 ? "" : "s"} found. Review the rows, then clean.`
+        : `${rows.length} text${rows.length === 1 ? "" : "s"} found. Tick the ones to remove, or review the list.`;
       paintSourceClean();
       scrollIntoViewSafe(dom.cleanFound, { behavior: "smooth", block: "nearest" });
       dom.cleanFound?.querySelector(".clean-found-row")?.focus();
@@ -4418,7 +4587,7 @@
     }
 
     const duration = Math.max(0, Number(state.job.source.duration) || 0);
-    if (duration >= 180 && !confirm) {
+    if (!reviewFirst && duration >= 180 && !confirm) {
       state.sourceCleanPhase = "Estimating";
       paintSourceClean();
       const method = cleanMethodForTicks();
@@ -4551,8 +4720,35 @@
   }
 
   async function sourceCleanPrimaryAction() {
+    if (!state.job || state.cleanScope !== "source") return;
     const record = state.sourceClean;
+    if (record?.status === "ready") return;
     const retryRender = record?.status === "failed" || record?.status === "cancelled";
+    if (state.cleanFlow !== "one_click") {
+      if (!sourceCleanReportReady()) {
+        await runSourceClean({ scanOnly: true, forceScan: true });
+        return;
+      }
+      const rows = cleanScanRows();
+      const available = sourceReviewRows(rows);
+      if (!available.length) {
+        await runSourceClean({ scanOnly: true, forceScan: true });
+        return;
+      }
+      const ticked = sourceTickedCount(rows, state.classicText.foundTicks);
+      const applied = classicCleanLayers().filter((layer) => layer.source === "scan").length;
+      if (!ticked && !applied) {
+        const low = sourceLowRows(rows).length;
+        state.sourceCleanNote = `${available.length} text${available.length === 1 ? "" : "s"} found. `
+          + `Review the rows, then clean.${low ? ` ${low} low-confidence.` : ""}`;
+        paintSourceClean();
+        scrollIntoViewSafe(dom.cleanFound, { behavior: "smooth", block: "nearest" });
+        dom.cleanFound?.querySelector(".clean-found-row")?.focus();
+        return;
+      }
+      await runSourceClean({ confirm: true });
+      return;
+    }
     await runSourceClean({
       confirm: state.sourceCleanNeedConfirm || retryRender,
     });
@@ -4757,7 +4953,9 @@
       ensureSourceFoundTicks();
       const report = state.textScan.report;
       const confirmed = Boolean(report && report.text && report.text.confirmed === true);
-      if (confirmed && !cleanScanRows().length) state.sourceCleanNotFound = true;
+      if (confirmed && !cleanScanRows().some((row) => !row.manual)) {
+        state.sourceCleanNotFound = true;
+      }
     }
     paintCleanStage();
     scheduleCleanFrame();
@@ -4783,6 +4981,7 @@
       await persistClassicText(classicPlanClips());
     }
     if (inFlight) await inFlight;
+    stopCleanReview();
     if (state.classicText.frameTimer) clearTimeout(state.classicText.frameTimer);
     state.classicText.frameTimer = null;
     try { state.classicText.frame.controller?.abort(); } catch (_) { /* ignore */ }
@@ -8528,6 +8727,12 @@
     state.classicText.overlays = Array.isArray(cut?.overlays) ? cut.overlays : [];
     state.classicText.effects = Array.isArray(cut?.effects) ? cut.effects : [];
     state.classicText.clean = Array.isArray(cut?.clean) ? cut.clean : [];
+    // Older cuts can hold the same scanned text many times. One box per text
+    // is the saved shape from now on; write the deduped list back when it
+    // actually changed.
+    const dedupedClean = dedupeCleanLayers(state.classicText.clean);
+    const cleanDeduped = dedupedClean.changed;
+    if (cleanDeduped) state.classicText.clean = dedupedClean.layers;
     const resetTicks = state.cleanScope === "cut"
       && Boolean(state.classicText.pendingTickReset)
       && state.classicText.pendingTickReset === key;
@@ -8552,6 +8757,7 @@
     renderClassicText();
     paintCleanStage();
     scheduleCleanFrame();
+    if (cleanDeduped) saveClassicText();
     if (resetTicks && state.textScan?.status === "ready") ensureCutFoundTicks();
   }
 
@@ -8835,6 +9041,8 @@
     state.classicText.overlays = Array.isArray(parsed.overlays) ? parsed.overlays : [];
     state.classicText.effects = Array.isArray(parsed.effects) ? parsed.effects : [];
     state.classicText.clean = Array.isArray(parsed.clean) ? parsed.clean : [];
+    const deduped = dedupeCleanLayers(state.classicText.clean);
+    if (deduped.changed) state.classicText.clean = deduped.layers;
     if (!classicCleanLayers().some((layer) => layer.id === state.classicText.selection)) {
       state.classicText.selection = "";
     }
@@ -9388,7 +9596,7 @@
     if (!overlay) return;
     const t = currentCleanTime();
     const crop = cleanCropAt(t);
-    const layers = classicCleanLayers();
+    const layers = dedupeCleanLayers(classicCleanLayers()).layers;
     overlay.innerHTML = layers.map((layer) => {
       const active = cleanVisibleAt(layer, t);
       const selected = layer.id === state.classicText.selection;
@@ -9434,12 +9642,312 @@
       dom.cleanFrameState.title = "";
       dom.cleanFrameState.hidden = !message;
     }
-    if (dom.cleanFrame) dom.cleanFrame.hidden = !state.classicText.frame.url;
+    if (dom.cleanFrame) dom.cleanFrame.hidden = !state.classicText.frame.url
+      || Boolean(state.classicText.review.active);
     updateCleanPreviewMeta();
+    paintCleanReviewChrome();
+    paintCleanReviewBoxes();
+  }
+
+  // ------------------------------------------------- detection check playback
+  //
+  // Play the real source, or a ready cut render, under one blur box for every
+  // found row. This is a check, not a render: no fill, no save and no render
+  // ever starts from this control.
+
+  function cleanReviewRecord() {
+    for (const quality of ["final", "draft"]) {
+      const record = findRender(quality);
+      if (record?.status === "ready" && record.url) return record;
+    }
+    return null;
+  }
+
+  function cleanReviewUrl() {
+    if (!state.job) return "";
+    if (state.cleanScope === "source") {
+      return `/api/classic/jobs/${encodeURIComponent(state.job.id)}/source/media`;
+    }
+    return cutCleanActive() ? (cleanReviewRecord()?.url || "") : "";
+  }
+
+  function reviewRangesForRow(row) {
+    const raw = Array.isArray(row?.ranges) ? row.ranges : [];
+    if (state.cleanScope === "source" || row?.manual) return raw;
+    return cleanCutRanges(raw);
+  }
+
+  function reviewRowActive(row, t) {
+    const raw = Array.isArray(row?.ranges) ? row.ranges : [];
+    const ranges = reviewRangesForRow(row);
+    if (state.cleanScope === "cut" && !row?.manual && raw.length && !ranges.length) {
+      return false;
+    }
+    if (!ranges.length) return true;
+    return ranges.some((range) => (
+      t + 1 / 30 > Number(range.start) && t < Number(range.end)
+    ));
+  }
+
+  function paintCleanReviewBoxes(t = currentCleanTime()) {
+    const blur = dom.cleanReviewBlur;
+    if (!blur) return;
+    if (!state.classicText.review.active) {
+      blur.hidden = true;
+      if (blur.innerHTML) blur.innerHTML = "";
+      delete blur.dataset.reviewKey;
+      return;
+    }
+    // The time readout moves every frame; rebuilding up to 200 boxes can wait
+    // for a short beat without the overlay drifting from the video.
+    const review = state.classicText.review;
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (review.boxesAt && now - review.boxesAt < 55) return;
+    review.boxesAt = now;
+    blur.hidden = false;
+    const crop = cleanCropAt(t);
+    const boxes = [];
+    for (const row of cleanScanRows()) {
+      if (!reviewRowActive(row, t)) continue;
+      if (!row.box || !cleanBoxOnFrame(row.box, crop)) continue;
+      const box = cleanFrameBox(row.box, crop);
+      if (box.w <= 0.0001 || box.h <= 0.0001) continue;
+      boxes.push(
+        `<span class="clean-review-box" style="left:${(box.x * 100).toFixed(2)}%;`
+        + `top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;`
+        + `height:${(box.h * 100).toFixed(2)}%"></span>`,
+      );
+    }
+    const html = boxes.join("");
+    if (html !== (blur.dataset.reviewKey || "")) {
+      blur.innerHTML = html;
+      blur.dataset.reviewKey = html;
+    }
+  }
+
+  function updateCleanReviewButton() {
+    if (!dom.cleanPreviewPlay) return;
+    const review = state.classicText.review;
+    const playing = Boolean(review.active && review.playing);
+    dom.cleanPreviewPlay.textContent = tr(playing ? "Pause" : "Play");
+    dom.cleanPreviewPlay.setAttribute("aria-pressed", playing ? "true" : "false");
+    dom.cleanPreviewPlay.title = tr(
+      "Play the detection check. Every found box is blurred; this is not the final clean.",
+    );
+  }
+
+  function paintCleanReviewChrome() {
+    const scopeActive = state.cleanScope === "source" || cutCleanActive();
+    const review = state.classicText.review;
+    const cutPlayable = !cutCleanActive() || Boolean(cleanReviewRecord());
+    if (dom.cleanReviewCopy) {
+      dom.cleanReviewCopy.hidden = !scopeActive || Boolean(review.error) || !cutPlayable;
+      if (scopeActive) {
+        dom.cleanReviewCopy.textContent = tr(
+          "Detection check · all found boxes blurred · not the final clean",
+        );
+      }
+    }
+    let note = scopeActive ? (review.error || "") : "";
+    if (dom.cleanReviewNote) {
+      dom.cleanReviewNote.hidden = !note;
+      dom.cleanReviewNote.textContent = note;
+    }
+    if (dom.cleanPreviewPlay) dom.cleanPreviewPlay.hidden = !scopeActive;
+    updateCleanReviewButton();
+  }
+
+  function syncCleanReviewTime() {
+    const video = dom.cleanReviewVideo;
+    if (!video || !state.classicText.review.active) return;
+    const limit = Math.max(0.01, cleanCutTotal() || Number(video.duration) || 0.01);
+    const t = clamp(Number(video.currentTime) || 0, 0, limit);
+    state.classicText.t = t;
+    if (dom.cleanScrub) dom.cleanScrub.value = String(t);
+    if (dom.cleanStageTime) dom.cleanStageTime.textContent = `${t.toFixed(1)}s`;
+    if (dom.cleanScrubReadout) {
+      dom.cleanScrubReadout.textContent = `${t.toFixed(1)} / ${limit.toFixed(1)}s`;
+    }
+    updateCleanPreviewMeta();
+    paintCleanReviewBoxes(t);
+  }
+
+  function stopCleanReview(options = {}) {
+    const review = state.classicText.review;
+    const video = dom.cleanReviewVideo;
+    if (review.raf) cancelAnimationFrame(review.raf);
+    review.raf = 0;
+    if (video) {
+      try { video.pause(); } catch (_) { /* the element may not be ready */ }
+      if (options.syncTime) {
+        const limit = Math.max(0.01, cleanCutTotal() || Number(video.duration) || 0.01);
+        state.classicText.t = clamp(Number(video.currentTime) || 0, 0, limit);
+        if (dom.cleanScrub) dom.cleanScrub.value = String(state.classicText.t);
+        if (dom.cleanStageTime) dom.cleanStageTime.textContent = `${state.classicText.t.toFixed(1)}s`;
+        if (dom.cleanScrubReadout) {
+          dom.cleanScrubReadout.textContent = `${state.classicText.t.toFixed(1)} / ${limit.toFixed(1)}s`;
+        }
+        updateCleanPreviewMeta();
+      }
+      video.hidden = true;
+    }
+    review.playing = false;
+    review.active = false;
+    review.boxesAt = 0;
+    dom.cleanCanvas?.classList.remove("is-review-playing");
+    if (dom.cleanReviewBlur) {
+      dom.cleanReviewBlur.hidden = true;
+      dom.cleanReviewBlur.innerHTML = "";
+      delete dom.cleanReviewBlur.dataset.reviewKey;
+    }
+    if (dom.cleanFrame) dom.cleanFrame.hidden = !state.classicText.frame.url;
+    updateCleanReviewButton();
+  }
+
+  function failCleanReview(message, detail = "") {
+    const review = state.classicText.review;
+    review.error = message;
+    review.key = "";
+    review.boxesAt = 0;
+    stopCleanReview();
+    state.classicText.previewSide = "before";
+    setCleanStatus(message);
+    if (detail) cleanDiagnostic("Classic clean detection check failed:", detail);
+    paintCleanReviewChrome();
+    scheduleCleanFrame(true);
+  }
+
+  function cleanReviewTick() {
+    const review = state.classicText.review;
+    if (!review.active || !review.playing) return;
+    syncCleanReviewTime();
+    review.raf = requestAnimationFrame(cleanReviewTick);
+  }
+
+  function seekCleanReview(t) {
+    const video = dom.cleanReviewVideo;
+    if (!video || !state.classicText.review.active) return;
+    const limit = Math.max(0.01, cleanCutTotal() || Number(video.duration) || 0.01);
+    const time = clamp(Number(t) || 0, 0, limit);
+    try { video.currentTime = time; } catch (_) { /* metadata may still load */ }
+    state.classicText.t = time;
+    state.classicText.review.boxesAt = 0;
+    paintCleanReviewBoxes(time);
+  }
+
+  async function startCleanReviewPlayback() {
+    if (!state.job) return;
+    const review = state.classicText.review;
+    const url = cleanReviewUrl();
+    if (!url) {
+      if (cutCleanActive()) {
+        const note = tr("Render a draft once to play this cut.");
+        setCleanStatus(note);
+        paintCleanReviewChrome();
+        paintCutClean();
+      }
+      return;
+    }
+    const video = dom.cleanReviewVideo;
+    if (!video) return;
+    if (state.classicText.frameTimer) clearTimeout(state.classicText.frameTimer);
+    state.classicText.frameTimer = null;
+    try { state.classicText.frame.controller?.abort(); } catch (_) { /* ignore */ }
+    const key = `${state.cleanScope}:${state.job.id}:${url}`;
+    review.error = "";
+    if (review.key !== key) {
+      review.key = key;
+      video.src = url;
+      try { video.load(); } catch (_) { /* the error event reports it */ }
+    }
+    const seek = video.ended ? 0 : currentCleanTime();
+    review.active = true;
+    review.playing = true;
+    review.boxesAt = 0;
+    dom.cleanCanvas?.classList.add("is-review-playing");
+    video.hidden = false;
+    if (dom.cleanReviewBlur) dom.cleanReviewBlur.hidden = false;
+    if (dom.cleanFrame) dom.cleanFrame.hidden = true;
+    video.dataset.reviewSeek = String(seek);
+    state.classicText.t = seek;
+    if (video.readyState >= 1) {
+      try { video.currentTime = seek; } catch (_) { /* keep the browser's time */ }
+    }
+    paintCleanReviewBoxes(seek);
+    paintCleanReviewChrome();
+    try {
+      await video.play();
+    } catch (error) {
+      failCleanReview(
+        tr("The video could not play here. Showing the still frame."),
+        error?.message || "play rejected",
+      );
+    }
+  }
+
+  function toggleCleanReviewPlayback() {
+    const review = state.classicText.review;
+    const video = dom.cleanReviewVideo;
+    if (review.active && video && !video.paused) {
+      video.pause();
+      return;
+    }
+    void startCleanReviewPlayback();
+  }
+
+  function bindCleanReviewVideo() {
+    const video = dom.cleanReviewVideo;
+    if (!video) return;
+    video.addEventListener("loadedmetadata", () => {
+      if (!state.classicText.review.active) return;
+      const seek = Number(video.dataset.reviewSeek);
+      if (Number.isFinite(seek)) {
+        try { video.currentTime = seek; } catch (_) { /* keep the browser's time */ }
+      }
+      paintCleanReviewBoxes();
+    });
+    video.addEventListener("play", () => {
+      const review = state.classicText.review;
+      if (!review.active) return;
+      review.playing = true;
+      if (!review.raf) review.raf = requestAnimationFrame(cleanReviewTick);
+      updateCleanReviewButton();
+    });
+    video.addEventListener("pause", () => {
+      const review = state.classicText.review;
+      review.playing = false;
+      if (review.raf) cancelAnimationFrame(review.raf);
+      review.raf = 0;
+      updateCleanReviewButton();
+    });
+    video.addEventListener("timeupdate", () => {
+      if (state.classicText.review.active) syncCleanReviewTime();
+    });
+    video.addEventListener("seeked", () => {
+      if (state.classicText.review.active) syncCleanReviewTime();
+    });
+    video.addEventListener("ended", () => {
+      const review = state.classicText.review;
+      review.playing = false;
+      if (review.raf) cancelAnimationFrame(review.raf);
+      review.raf = 0;
+      updateCleanReviewButton();
+    });
+    video.addEventListener("error", () => {
+      if (!state.classicText.review.active) return;
+      failCleanReview(
+        tr("The video could not play here. Showing the still frame."),
+        video.error?.message || `media error ${video.error?.code || ""}`,
+      );
+    });
   }
 
   async function refreshCleanFrame(force = false) {
     if (!state.job || !state.plan) return;
+    // The detection check owns the frame while its video is up. A still fetch
+    // would only hide under the video, and an After frame could start an AI
+    // fill. Before/After stops the check first, then asks for the still.
+    if (state.classicText.review.active) return;
     const clips = state.plan.clips || [];
     if (!clips.length) return;
     const sourceScope = state.cleanScope === "source";
@@ -9722,31 +10230,11 @@
   }
 
   function cleanTextKey(value) {
-    return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+    return foundTextKey(value);
   }
 
   function cleanBoxesMeet(a, b) {
-    if (!a || !b) return false;
-    const ax = Number(a.x) || 0;
-    const ay = Number(a.y) || 0;
-    const aw = Number(a.w) || 0;
-    const ah = Number(a.h) || 0;
-    const bx = Number(b.x) || 0;
-    const by = Number(b.y) || 0;
-    const bw = Number(b.w) || 0;
-    const bh = Number(b.h) || 0;
-    const left = Math.max(ax, bx);
-    const top = Math.max(ay, by);
-    const right = Math.min(ax + aw, bx + bw);
-    const bottom = Math.min(ay + ah, by + bh);
-    if (right > left && bottom > top) {
-      const overlap = (right - left) * (bottom - top);
-      const area = Math.max(1e-6, Math.min(aw * ah, bw * bh));
-      if (overlap / area >= 0.25) return true;
-    }
-    const cx = Math.abs((ax + aw / 2) - (bx + bw / 2));
-    const cy = Math.abs((ay + ah / 2) - (by + bh / 2));
-    return cx <= 0.045 && cy <= 0.045;
+    return sameArea(a, b);
   }
 
   function cleanRowRanges(rows) {
@@ -9758,16 +10246,7 @@
         if (end > start) out.push({ start, end });
       }
     }
-    out.sort((a, b) => a.start - b.start);
-    const merged = [];
-    for (const item of out) {
-      if (merged.length && item.start <= merged[merged.length - 1].end + 1e-6) {
-        merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, item.end);
-      } else {
-        merged.push({ ...item });
-      }
-    }
-    return merged;
+    return mergeCleanRangeList(out);
   }
 
   // Map source-time ranges onto the cut timeline. Source Clean has one clip
@@ -9799,43 +10278,72 @@
     return mapped;
   }
 
-  // One row per distinct text. Same text in the same area merges across
-  // detection frames; a different area stays a separate row. Rows are packed
-  // into lanes so two rows that overlap in time never sit on top of each
-  // other. Drawn boxes are rows too.
+  // One row per distinct text. The scan can read the same words in the same
+  // area as separate tracklets, and subtitles are a new tracklet per line, so
+  // mergeFoundEntries joins them into one stable row. Drawn boxes are rows too.
+  function scanLayerMatchesRow(layer, row) {
+    if (!layer || layer.source !== "scan" || !row) return false;
+    if (!sameArea(layer.box, row.box)) return false;
+    const id = String(layer.tracklet_id || "").trim();
+    if (id && (row.tracklet_ids || []).includes(id)) return true;
+    if (row.kind === "subtitle" && layer.tracklet_kind === "subtitle") return true;
+    return Boolean(row.text_key && layer.text_key
+      && cleanTextKey(layer.text_key) === cleanTextKey(row.text_key));
+  }
+
+  // A row can hold several ranges. Every interval takes part in lane packing,
+  // so a row with a second range later in the cut cannot sit on a neighbour.
+  function cleanRowLaneIntervals(row) {
+    const raw = Array.isArray(row?.ranges) ? row.ranges : [];
+    const mapped = state.cleanScope === "cut" && !row?.manual
+      ? cleanCutRanges(raw)
+      : raw;
+    if (mapped.length) return mapped;
+    if (raw.length && state.cleanScope === "cut" && !row?.manual) return [];
+    return [{ start: 0, end: Math.max(0.1, cleanCutTotal()) }];
+  }
+
+  function assignCleanLanes(rows) {
+    const lanes = [];
+    for (const row of rows) {
+      const intervals = cleanRowLaneIntervals(row);
+      let lane = 0;
+      while (lane < lanes.length && intervals.some((item) => (
+        lanes[lane].some((other) => (
+          Math.min(Number(item.end), Number(other.end))
+          - Math.max(Number(item.start), Number(other.start)) > 1e-6
+        ))
+      ))) lane += 1;
+      if (!lanes[lane]) lanes[lane] = [];
+      lanes[lane].push(...intervals);
+      row.lane = lane;
+    }
+  }
+
   function cleanScanRows() {
-    const rows = [];
-    for (const entry of cleanScanEntries()) {
-      const text = String(entry.text || entry.text_key || entry.kind || "Text").trim();
-      const key = cleanTextKey(entry.text_key || entry.text || text);
-      const existing = rows.find((row) => row.key === key && cleanBoxesMeet(row.box, entry.box));
-      if (existing) {
-        existing.ranges = cleanRowRanges([
-          { ranges: existing.ranges },
-          { ranges: entry.ranges || [] },
-        ]);
-        existing.confidence = Math.max(
-          Number(existing.confidence) || 0, Number(entry.confidence) || 0,
-        );
-        existing.entryRows.push(entry);
-        continue;
-      }
-      rows.push({
-        key,
-        text: text || "Text",
+    const rows = mergeFoundEntries(cleanScanEntries()).map((entry) => {
+      const text = String(entry.text || entry.text_key || "").trim()
+        || String(entry.kind || "Text");
+      const ids = Array.isArray(entry.ids) ? entry.ids.slice() : [];
+      return {
+        key: foundTextKey(text),
+        text,
         box: entry.box,
         kind: entry.kind || "text",
         confidence: Number(entry.confidence) || 0,
         ranges: cleanRowRanges([{ ranges: entry.ranges || [] }]),
-        entryRows: [entry],
+        entryRows: Array.isArray(entry.members) ? entry.members : [entry],
         entry,
-        tracklet_id: entry.tracklet_id || "",
-        text_key: entry.text_key || entry.text || text,
+        tracklet_id: entry.tracklet_id || ids[0] || "",
+        tracklet_ids: ids,
+        text_key: entry.text_key || text,
+        identity: `scan:${ids.slice().sort().join("+")}`,
+        lines: Math.max(1, Number(entry.lines) || 1),
         method: state.classicText.foundMethod || "fill",
         manual: false,
         added: false,
-      });
-    }
+      };
+    });
     for (const layer of classicCleanLayers()) {
       if (layer.source !== "manual") continue;
       rows.push({
@@ -9855,16 +10363,11 @@
     }
     for (const row of rows) {
       if (row.manual) continue;
-      const id = row.entry?.tracklet_id;
-      const applied = classicCleanLayers().find((layer) => {
-        if (layer.source !== "scan") return false;
-        if (id && layer.tracklet_id === id) return true;
-        return Boolean(row.key && layer.text_key
-          && cleanTextKey(layer.text_key) === row.key
-          && cleanBoxesMeet(layer.box, row.box));
-      });
-      row.added = Boolean(applied);
-      row.hidden = Boolean(applied?.hidden);
+      const matching = classicCleanLayers().filter((layer) => (
+        scanLayerMatchesRow(layer, row)
+      ));
+      row.added = matching.length > 0;
+      row.hidden = matching.length > 0 && matching.every((layer) => Boolean(layer.hidden));
     }
     rows.sort((a, b) => {
       const at = a.ranges[0]?.start ?? Number.MAX_SAFE_INTEGER;
@@ -9872,15 +10375,7 @@
       if (at !== bt) return at - bt;
       return String(a.kind).localeCompare(String(b.kind));
     });
-    const lanes = [];
-    for (const row of rows) {
-      const start = row.ranges[0]?.start ?? Number.MAX_SAFE_INTEGER;
-      const end = row.ranges[row.ranges.length - 1]?.end ?? start;
-      let lane = 0;
-      while (lane < lanes.length && lanes[lane] > start + 1e-6) lane += 1;
-      lanes[lane] = end;
-      row.lane = lane;
-    }
+    assignCleanLanes(rows);
     return rows;
   }
 
@@ -9894,6 +10389,7 @@
     if (row.manual) {
       return `manual:${row.layer_id || String(row.key || "").replace(/^manual:/, "")}`;
     }
+    if (row.identity) return row.identity;
     if (row.tracklet_id) return `tracklet:${row.tracklet_id}`;
     const text = cleanTextKey(row.text_key || row.text || String(row.key || "").replace(/^manual:/, ""));
     const box = row.box || {};
@@ -10078,6 +10574,7 @@
     state.classicText.t = Math.max(0, cutStart - 0.5);
     state.classicText.zeroNote = false;
     state.classicText.focusBox = row.box;
+    if (state.classicText.review.active) seekCleanReview(state.classicText.t);
     if (row.layer_id && classicCleanLayers().some((layer) => layer.id === row.layer_id)) {
       state.classicText.selection = row.layer_id;
     }
@@ -10155,13 +10652,13 @@
             ? '<span class="clean-found-tick-space" aria-hidden="true"></span>'
             : (row.added
               ? `<input type="checkbox" class="clean-found-tick is-cleaned" data-found-tick="${esc(identity)}" checked disabled aria-label="${row.hidden ? "Excluded" : "Already cleaned"}: ${esc(row.text)}">`
-              : `<input type="checkbox" class="clean-found-tick" data-found-tick="${esc(identity)}"${ticked ? " checked" : ""} aria-label="Include ${esc(row.text)}">`)}
+              : `<input type="checkbox" class="clean-found-tick" data-found-tick="${esc(identity)}"${ticked ? " checked" : ""} aria-label="Select ${esc(row.text)} for cleaning">`)}
           ${thumb ? `<span class="clean-found-thumb" style="background-image:url('${esc(thumb)}');${cleanThumbStyle(row.box)}" aria-hidden="true"></span>` : '<span class="clean-found-thumb is-empty" aria-hidden="true"></span>'}
           <div class="clean-found-copy">
             <span class="clean-found-time mono">${esc(time)}</span>
             <span class="clean-found-kind">${esc(row.kind)}${sourceScope ? `<span class="clean-found-confidence">${Math.round((Number(row.confidence) || 0) * 100)}%</span>` : ""}</span>
             <span class="clean-found-sample">${esc(row.text)}</span>
-            <span class="clean-found-method">${esc(CLEAN_METHODS[cleanRowMethod(row)].label)} · lane ${Number(row.lane) + 1}${low ? " · review" : ""}</span>
+            <span class="clean-found-method">${esc(CLEAN_METHODS[cleanRowMethod(row)].label)} · lane ${Number(row.lane) + 1}${row.lines > 1 ? ` · ${row.lines} lines` : ""}${low ? " · review" : ""}${ticked && !row.added ? ' · <b class="clean-found-selected">Selected</b>' : ""}</span>
           </div>
           ${outside ? '<span class="clean-found-blocked">Not in this cut</span>' : ""}
           ${row.manual ? '<span class="clean-found-blocked is-added">drawn</span>' : ""}
@@ -10271,6 +10768,11 @@
       }
       addCleanFromScan(entry, method, engine);
       added += 1;
+    }
+    const deduped = dedupeCleanLayers(classicCleanLayers());
+    if (deduped.changed) state.classicText.clean = deduped.layers;
+    if (!classicCleanLayers().some((layer) => layer.id === state.classicText.selection)) {
+      state.classicText.selection = "";
     }
     state.classicText.foundTicks = new Set();
     state.classicText.foundTicksInit = true;
@@ -10382,7 +10884,7 @@
           copy.textContent = tr("Scanning the whole video…");
         } else if (scanStatus === "ready" && confirmed) {
           copy.textContent = scannedRows
-            ? tr("Text was found but is not cleaned yet. Tick a row or use Find text & clean.")
+            ? tr("Text was found but is not cleaned yet. Select the rows, then clean.")
             : tr("No baked-in text found. Nothing was rendered.");
         } else if (scanStatus === "ready") {
           copy.textContent = tr("The scan could not confirm on-screen text. Rescan to try again.");
@@ -10391,7 +10893,7 @@
         } else if (scanStatus === "cancelled") {
           copy.textContent = tr("Scan cancelled. Scan again when ready.");
         } else {
-          copy.textContent = tr("No text scan yet. Find text & clean scans the whole video and fills each text it finds.");
+          copy.textContent = tr("No text scan yet. Find text scans the whole video. Review first stops so you can check every row.");
         }
       } else if (scanStatus === "queued" || scanStatus === "running") {
         copy.textContent = tr("Scanning the cut for text…");
@@ -10406,7 +10908,7 @@
       } else if (scanStatus === "cancelled") {
         copy.textContent = tr("Scan cancelled. Scan again when ready.");
       } else {
-        copy.textContent = tr("No text scan yet. Find text & clean scans this cut and fills each text it finds.");
+        copy.textContent = tr("No text scan yet. Find text scans this cut. Review first stops so you can check every row.");
       }
     }
   }
@@ -10828,6 +11330,7 @@
     dom.cleanScrub?.addEventListener("input", () => {
       state.classicText.t = Number(dom.cleanScrub.value) || 0;
       state.classicText.zeroNote = false;
+      if (state.classicText.review.active) seekCleanReview(state.classicText.t);
       paintCleanStage();
       scheduleCleanFrame();
     });
@@ -10937,31 +11440,18 @@
       if (button) previewFill();
     });
     dom.cleanPreviewBefore?.addEventListener("click", () => {
+      stopCleanReview({ syncTime: true });
       state.classicText.previewSide = "before";
       if (state.cleanScope === "source" || cutCleanActive()) scheduleCleanFrame(true);
       renderCleanFill();
     });
     dom.cleanPreviewAfter?.addEventListener("click", () => {
+      stopCleanReview({ syncTime: true });
       state.classicText.previewSide = "after";
       if (state.cleanScope === "source" || cutCleanActive()) scheduleCleanFrame(true);
       renderCleanFill();
     });
-    dom.cleanPreviewPlay?.addEventListener("click", () => {
-      const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
-      const row = cleanScanRows().find((item) => item.layer_id === state.classicText.selection)
-        || cleanScanRows().find((item) => item.method === "fill");
-      if (row) focusCleanRow(row);
-      else if (selected) {
-        const cut = state.cleanScope === "source"
-          ? cleanCutRanges(selected.ranges)
-          : (selected.ranges || []);
-        state.classicText.t = Math.max(0, (cut[0]?.start || 0) - 0.5);
-        paintCleanStage();
-        scheduleCleanFrame();
-      } else {
-        setCleanStatus("Select a text row or box first.");
-      }
-    });
+    dom.cleanPreviewPlay?.addEventListener("click", toggleCleanReviewPlayback);
     dom.cleanPreviewExclude?.addEventListener("click", () => {
       const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
       if (!selected) {
@@ -11003,6 +11493,7 @@
         setCleanStatus(`${item.kind} · ${item.text} · ${cleanRowTimeLabel(item)}`);
       }
     });
+    bindCleanReviewVideo();
     paintClassicUndo();
   }
 
@@ -11092,6 +11583,7 @@
       dom.finishCut.setAttribute("aria-pressed", enabled ? "true" : "false");
     }
     if (enabled) {
+      stopCleanReview();
       state.classicText.drawMode = false;
       paintCleanStage();
       updateRenderPanel();
@@ -12370,7 +12862,10 @@
       }
       if (!state.job || state.job.id !== jobId) return;
       state.textScan = { jobId, status: next.status, report: next.report, controller };
-      if (next.status === "ready" && state.cleanScope === "cut") ensureCutFoundTicks();
+      if (next.status === "ready") {
+        if (state.cleanScope === "cut") ensureCutFoundTicks();
+        else if (state.cleanScope === "source") ensureSourceFoundTicks();
+      }
       paintTextScan();
       if (next.status !== "queued" && next.status !== "running") return;
     }
@@ -12397,7 +12892,10 @@
         state.classicText.foundTicksInit = false;
       }
       state.textScan = { jobId, status: next.status, report: next.report, controller };
-      if (next.status === "ready" && state.cleanScope === "cut") ensureCutFoundTicks();
+      if (next.status === "ready") {
+        if (state.cleanScope === "cut") ensureCutFoundTicks();
+        else if (state.cleanScope === "source") ensureSourceFoundTicks();
+      }
       paintTextScan();
       if (next.status === "queued" || next.status === "running") {
         await pollTextScan(jobId, controller);
@@ -12452,7 +12950,10 @@
     }
     if (controller.signal.aborted || !state.job || state.job.id !== jobId) return;
     state.textScan = { jobId, status: next.status, report: next.report, controller };
-    if (next.status === "ready" && state.cleanScope === "cut") ensureCutFoundTicks();
+    if (next.status === "ready") {
+      if (state.cleanScope === "cut") ensureCutFoundTicks();
+      else if (state.cleanScope === "source") ensureSourceFoundTicks();
+    }
     paintTextScan();
     if (next.status === "queued" || next.status === "running") {
       await pollTextScan(jobId, controller);

@@ -8,6 +8,7 @@ media; ``tests/test_no_generated_media.py`` owns that rule.
 
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 from contextlib import contextmanager
@@ -1250,4 +1251,26 @@ def test_a_clean_video_render_keeps_the_mac_awake(monkeypatch):
     monkeypatch.setattr(clean_source, "run", lambda *args, **kwargs: seen.append("run") or {"ok": True})
     assert clean_source._run_awake("job") == {"ok": True}
     assert seen == ["awake", "run", "may sleep"]
+
+
+# ------------------------------------------------------------ source playback
+
+
+def test_source_playback_route_streams_the_original_in_place():
+    path = "/api/classic/jobs/{job_id}/source/media"
+    # FastAPI keeps included routers lazy, so read the Classic router itself.
+    route = next(route for route in routes_classic.router.routes if route.path == path)
+    assert "GET" in route.methods
+    source = inspect.getsource(route.endpoint)
+    assert "app.require_source(job)" in source
+    assert "FileResponse(" in source
+    assert 'content_disposition_type="inline"' in source
+
+    assert routes_classic._source_media_type(Path("clip.mp4")) == "video/mp4"
+    assert routes_classic._source_media_type(Path("clip.unknown")) == "application/octet-stream"
+    name = routes_classic._source_download_name(
+        Path("/data/source.mov"), "../../clip name.mov",
+    )
+    assert name.endswith(".mov") and "/" not in name and "\\" not in name
+    assert routes_classic._source_download_name(Path("source.mkv"), "clip") == "clip.mkv"
 

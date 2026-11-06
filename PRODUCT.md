@@ -52,7 +52,10 @@ first-timer must be able to say what will be removed before the render starts.
 - Clean video uploads and probes the source only. It does not run Smart Cut
   analysis.
 - Clean opens on the full source with its frame, rows and one sticky action.
-- Primary action: **Find text & clean** — scan, fill and encode.
+- Clean review defaults to **Review first**: **Find text** scans only, and
+  **Clean N texts & render** applies the ticked rows and renders. **One click**
+  is an opt-in Setup choice that scans, cleans and renders in one action.
+- A scan never adds a layer or starts a render on its own.
 - High-confidence rows inside the source are ticked by default. Low-confidence
   rows stay visible behind a review path.
 - Method: AI fill with LaMa by default; Blur and Crop guard are available.
@@ -79,7 +82,8 @@ first-timer must be able to say what will be removed before the render starts.
 
 ## Success
 
-- From the ingest screen to a downloaded clean video: three clicks, no scroll.
+- From the ingest screen to a downloaded clean video: three clicks in One
+  click, four in Review first (Find text, review, Clean, Download). No scroll.
 - From the result screen to a downloaded clean cut: three clicks, no scroll.
 - A real clip's before/after preview matches the rendered file.
 - Full test suite green. No skipped acceptance because a real file is absent
@@ -102,5 +106,5 @@ and Linux run the same UI with cloud AI where native engines are absent. The
 interface is English with a curated Vietnamese translation. Rendering, files
 and caches stay on the machine.
 
-Last updated: 2026-11-06, Classic after `fb433d7` (Phase 5 polish;
+Last updated: 2026-11-06, Classic review-first revision (Phase 5 polish;
 founder clean-video acceptance PENDING).

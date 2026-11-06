@@ -3303,8 +3303,33 @@ select option:disabled { color: #666; }
 }
 .clean-canvas[data-aspect="4:5"] { aspect-ratio: 4 / 5; }
 .clean-canvas.is-drawing { cursor: crosshair; }
-.clean-frame { width: 100%; height: 100%; object-fit: cover; }
-.clean-overlay { position: absolute; inset: 0; }
+.clean-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.clean-review-video {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #050506;
+}
+.clean-review-blur { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.clean-review-box {
+  position: absolute;
+  border: 1px solid rgba(232, 162, 102, 0.42);
+  border-radius: 4px;
+  background: rgba(5, 5, 6, 0.02);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.clean-overlay { position: absolute; inset: 0; z-index: 3; }
+.clean-canvas.is-review-playing .clean-box { opacity: 0; pointer-events: none; }
 
 .clean-box {
   position: absolute;
@@ -3358,6 +3383,7 @@ select option:disabled { color: #666; }
 
 .clean-frame-state {
   position: absolute;
+  z-index: 5;
   left: 6px;
   right: 6px;
   bottom: 6px;
@@ -3781,6 +3807,25 @@ body.editor-frame.finish-frame .speech-notice { width: min(100%, 680px); }
   font-size: 11px;
 }
 .clean-preview-controls .hint { font-size: 11px; }
+.clean-review-copy,
+.clean-review-note {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.clean-review-copy { color: var(--dim); }
+.clean-review-note { color: var(--muted); }
+.clean-found-selected {
+  align-self: center;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
 .clean-empty-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .clean-found-row { position: relative; }
 .clean-found-time { font-size: 11px; color: var(--muted); }
@@ -3917,6 +3962,7 @@ body.source-mode .clean-row-src { font-size: 11px; }
 }
 .source-clean-summary,
 .cut-clean-summary { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.cut-clean-play-note { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .source-clean-progress,
 .cut-clean-progress { display: flex; align-items: center; gap: 8px; }
 .source-clean-bar,

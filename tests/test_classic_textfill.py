@@ -708,7 +708,7 @@ def test_the_plan_reads_the_busiest_line_and_a_drawn_box_uses_the_default(monkey
     plan = textfill.lama_plan([still, busy, drawn], start=0.0, fps=30.0, frames=90)
     assert plan(10) == (textfill.lama_step(30.0), textfill.LAMA_CUT_LIMIT, True)
     assert plan(45) == (5, textfill.LAMA_CUT_LIMIT, False)
-    assert plan(75) == (textfill.lama_step(30.0), textfill.LAMA_MOTION_LIMIT, False)
+    assert plan(75) == (textfill.lama_step(30.0), textfill.LAMA_MOTION_LIMIT, False, 5)
 
 
 def test_setting_the_key_rate_overrides_the_plan(monkeypatch):
@@ -1118,3 +1118,116 @@ def test_a_pause_does_not_wait_for_another_renders_fill(tmp_path, monkeypatch):
     finally:
         render.FILL_LOCK.release()
     assert not render.FILL_LOCK.locked()
+
+
+# --- a box with no scan plan ------------------------------------------------
+
+
+def _drifting_frames(count, *, step=10):
+    """Change around the box passes the motion limit between frames, but is no cut."""
+    ramp = np.tile(np.linspace(20, 120, 200, dtype=np.uint8)[None, :, None], (100, 1, 3))
+    return [ramp + min(index * step, 130) for index in range(count)]
+
+
+def _fills_for(frames, fps=24.0, keys=None):
+    layer = {"box": {"x": 0.1, "y": 0.3, "w": 0.8, "h": 0.4}, "ranges": []}
+    if keys is not None:
+        layer["fill_keys"] = keys
+    plan = textfill.lama_plan([layer], start=0.0, fps=fps, frames=len(frames))
+    filler = _PictureFiller()
+    out = list(textfill.fill_frames_lama(
+        iter(frames), _rects_for, filler, None, step=8, plan_for=plan,
+    ))
+    assert len(out) == len(frames)
+    return filler.calls
+
+
+def test_a_drawn_box_on_a_moving_shot_does_not_fill_every_frame():
+    frames = _drifting_frames(12, step=8)
+    assert _fills_for(frames) <= 5
+
+
+def test_a_drawn_box_on_a_still_shot_keeps_the_default_rate():
+    moving = _fills_for(_drifting_frames(24, step=5))
+    ramp = _drifting_frames(1)[0]
+    still = _fills_for([ramp.copy() for _ in range(24)])
+    assert still < moving
+
+
+def test_a_cut_still_ends_a_drawn_box_run_early():
+    ramp = _drifting_frames(1)[0]
+    frames = [ramp.copy(), ramp.copy(), np.clip(ramp.astype(np.int16) + 100, 0, 255).astype(np.uint8)]
+    frames += [frames[-1].copy() for _ in range(3)]
+    layer_plan = textfill.lama_plan(
+        [{"box": {"x": 0.1, "y": 0.3, "w": 0.8, "h": 0.4}, "ranges": []}],
+        start=0.0, fps=24.0, frames=len(frames),
+    )
+    assert layer_plan(0)[3] == 4
+    filler = _PictureFiller()
+    out = list(textfill.fill_frames_lama(iter(frames), _rects_for, filler, None, step=8, plan_for=layer_plan))
+    # Nothing from before the cut is blended into the frames after it.
+    assert out[3][0, 100, 0] == frames[3][0, 100, 0]
+    assert filler.calls >= 2
+
+
+def test_the_override_keeps_the_strict_motion_rule(monkeypatch):
+    monkeypatch.setenv("VIBECUT_FILL_LAMA_KEYS", "3")
+    plan = textfill.lama_plan([{"box": {"x": 0, "y": 0, "w": 1, "h": 1}, "ranges": []}], start=0.0, fps=24.0, frames=4)
+    assert len(plan(0)) == 3
+
+
+def test_the_estimate_counts_a_drawn_box_at_its_moving_rate():
+    layer = {"box": {"x": 0.0, "y": 0.6, "w": 1.0, "h": 0.25}, "ranges": []}
+    planned = dict(layer, fill_keys=3.0)
+    size = {"start": 0.0, "fps": 25.0, "frames": 250, "width": 1080, "height": 1920}
+    table = textfill.masks.frame_rects([layer], **size)
+    drawn_units = textfill._planned_units(table, [layer], **size)
+    plan_units = textfill._planned_units(table, [planned], **size)
+    assert drawn_units > plan_units * 1.5
+
+
+def test_only_a_box_with_no_plan_changes_its_clip_key(monkeypatch):
+    meta = {"fingerprint": "f", "width": 100, "height": 100, "fps": 25.0}
+    args = dict(meta=meta, start=0.0, duration=1.0, method="lama", model_stamp="m")
+    drawn = [{"box": {"x": 0, "y": 0, "w": 1, "h": 1}, "ranges": []}]
+    planned = [dict(drawn[0], fill_keys=3.0)]
+    drawn_key = textfill.span_key(layers=drawn, **args)
+    planned_key = textfill.span_key(layers=planned, **args)
+    monkeypatch.setattr(textfill, "LAMA_UNPLANNED_KEYS", 9.0)
+    assert textfill.span_key(layers=drawn, **args) != drawn_key
+    assert textfill.span_key(layers=planned, **args) == planned_key
+
+
+# --- render frame rate and the real last frame ------------------------------
+
+
+def test_the_render_passes_its_frame_rate_to_the_fill():
+    source = Path(render.__file__).read_text(encoding="utf-8")
+    assert "fps=output_fps" in source
+
+
+def test_a_frame_past_the_real_end_of_a_source_uses_its_last_frame(monkeypatch, tmp_path):
+    job_dir = tmp_path / "jobs" / "j"
+    job_dir.mkdir(parents=True)
+    commands = []
+
+    def fake_run(cmd, timeout=None, cwd=None, cancel_event=None):
+        commands.append(cmd)
+        if "-sseof" in cmd:
+            Path(cmd[-1]).write_bytes(b"png")
+
+    def fake_burn(_png, _overlays, output, *_args, **_kwargs):
+        output.write_bytes(b"jpeg")
+
+    monkeypatch.setattr(render, "_run", fake_run)
+    monkeypatch.setattr(render, "_segment", lambda *args, **kwargs: False)
+    monkeypatch.setattr(render, "_burn_frame", fake_burn)
+    monkeypatch.setattr(render, "_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(render, "_choose_encoder", lambda _encoder: "libx264")
+    compiled = {
+        "aspect": "9:16", "overlays": [],
+        "segments": [{"frames": 30, "start": 0.0, "out_start": 0.0, "out_end": 1.0}],
+    }
+    payload = render.render_story_frame("s.mp4", {}, job_dir, compiled, 1.0)
+    assert payload == b"jpeg"
+    assert any("-sseof" in cmd for cmd in commands)
