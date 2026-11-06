@@ -779,7 +779,7 @@ def extract_tracking_frames(
     return files
 
 
-CHECK_SAMPLE_FPS = 2.0
+CHECK_SAMPLE_FPS = 4.0
 CHECK_SAMPLE_MAX_FRAMES = 3600
 CHECK_OCR_BATCH = 24
 # Thin captions over a busy picture read at full size and not at 960.

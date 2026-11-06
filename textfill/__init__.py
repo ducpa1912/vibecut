@@ -37,7 +37,7 @@ DEFAULT_DEVICE = "cpu"
 # No model file: OpenCV spreads the colours around the hole into it.
 CLASSIC_METHODS = ("telea", "ns")
 DEFAULT_METHOD = "lama"
-VERSION = 3
+VERSION = 4
 MODEL_FILES = {"sttn": "sttn_infer_model.pth", "lama": "lama_fp32.onnx", "migan": "migan_traced.pt"}
 # The file an engine reads on the GPU. MI-GAN uses the same one on both chips.
 GPU_MODEL_FILES = {"lama": "big-lama.pt", "migan": "migan_traced.pt"}
@@ -61,7 +61,7 @@ LAMA_MOTION_LIMIT = 6.0
 LAMA_UNPLANNED_KEYS = 6.0
 # Bump when the run rule changes what a fill looks like, so a cut made under the
 # old rule is not reused.
-LAMA_RUN_RULE = 2
+LAMA_RUN_RULE = 3
 # A line planned by the scan needs no motion check, only a stop at a sudden change.
 LAMA_CUT_LIMIT = 30.0
 # Pixels around the text that the motion check reads.

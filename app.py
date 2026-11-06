@@ -1924,6 +1924,7 @@ def run_render(
             edit_hash=(edit or {}).get("hash") or "",
             fill_device=str(plan.get("_fill_device") or ""),
             fill_follow=bool(plan.get("_fill_follow")),
+            fill_method=str(plan.get("_fill_method") or ""),
         )
         expected_id = artifacts.artifact_id(spec)
         if not artifacts.is_safe_artifact_id(artifact_id):
@@ -6292,6 +6293,7 @@ class StoryRenderBody(BaseModel):
     # The Render step's AI fill choices. The engine stays the one each layer has.
     fill_device: str = ""
     fill_follow: bool = False
+    fill_method: str = ""
 
 
 class SelectionV2Body(BaseModel):
@@ -6913,10 +6915,16 @@ def _queue_story_render(
     public_plan = {
         key: value for key, value in plan.items() if not key.startswith("_")
     }
-    # These only mean something to a keyed AI fill, so a plain render stays the same file.
+    # These only mean something to an AI fill, so a plain render stays the same file.
+    has_fill = any(
+        isinstance(layer, dict) and layer.get("kind") == "fill"
+        for layer in (edit or {}).get("clean") or []
+    )
+    if has_fill and body.fill_method:
+        plan["_fill_method"] = body.fill_method
     if any(
         isinstance(layer, dict) and layer.get("kind") == "fill"
-        and str(layer.get("method") or "lama") in ("lama", "migan")
+        and str(body.fill_method or layer.get("method") or "lama") in ("lama", "migan")
         for layer in (edit or {}).get("clean") or []
     ):
         if body.fill_device == "gpu":
@@ -6958,6 +6966,7 @@ class StoryRenderBackend:
                 aspect=item["aspect"], quality=item["quality"],
                 fill_device=str(item.get("fill_device") or ""),
                 fill_follow=item.get("fill_follow") is True,
+                fill_method=str(item.get("fill_method") or ""),
             ),
             reject_active=False,
         )
@@ -7029,7 +7038,7 @@ _STORY_QUEUE_SUBMIT_LOCK = threading.Lock()
 _QUEUE_ETA_STATE: dict[str, dict] = {}
 
 
-def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str, str, bool, str]:
+def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str, str, bool, str, str]:
     return (
         str(item.get("job_id") or ""),
         str(item.get("set_id") or ""),
@@ -7039,12 +7048,13 @@ def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str, str, boo
         "gpu" if item.get("fill_device") == "gpu" else "",
         item.get("fill_follow") is True,
         str(item.get("edit_hash") or ""),
+        str(item.get("fill_method") or ""),
     )
 
 
 def _active_queue_for(
     queues: list[dict],
-    identity: tuple[str, str, str, str, str, str, bool, str],
+    identity: tuple[str, str, str, str, str, str, bool, str, str],
 ) -> dict | None:
     for queue in queues:
         if str(queue.get("status") or "") not in story_queue.ACTIVE_QUEUES:
@@ -8611,6 +8621,7 @@ def _queue_render_locked_impl(
         edit_hash=(edit or {}).get("hash") or "",
         fill_device=str(plan.get("_fill_device") or ""),
         fill_follow=bool(plan.get("_fill_follow")),
+        fill_method=str(plan.get("_fill_method") or ""),
     )
     generation = artifacts.resolve_generation(job_dir, base_spec, force=force)
     spec = replace(base_spec, generation=generation)

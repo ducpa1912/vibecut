@@ -2830,6 +2830,11 @@ def render_reel(
         ], sort_keys=True).encode()).hexdigest()[:16]
         if layers else ""
     )
+    # The Render step's model, for this render only. The Edit keeps its own.
+    if plan.get("_fill_method"):
+        for segment in edit_segments:
+            if segment.get("fill"):
+                segment["fill"] = {**segment["fill"], "method": plan["_fill_method"]}
     fill_methods = sorted({
         str((segment.get("fill") or {}).get("method") or "")
         for segment in edit_segments
@@ -2862,6 +2867,7 @@ def render_reel(
         "fill_models": fill_sig,
         **({"fill_device": plan["_fill_device"]} if plan.get("_fill_device") else {}),
         **({"fill_follow": True} if plan.get("_fill_follow") else {}),
+        **({"fill_method": plan["_fill_method"]} if plan.get("_fill_method") else {}),
         # Text raster version: a font change must not reuse an old master.
         "text_skin": LAYER_CACHE_VERSION,
         # Preview variants never share a master with a deliverable render.

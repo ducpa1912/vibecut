@@ -5,8 +5,8 @@ The original planning API is documented after it and is still in use.
 
 ## How Studio cleans text
 
-1. **Scan.** `detect.py` samples the video at 2 frames a second and reads text at
-   1280 wide. Each line gets one tracklet with its own box and time. Weak reads are
+1. **Scan.** `detect.py` samples the video at 4 frames a second, up to 3600 frames,
+   and reads text at 1280 wide. Each line gets one tracklet with its own box and time. Weak reads are
    kept when a neighbouring frame reads the same words, and repeats are dropped.
    Logos on objects start unticked.
 2. **Plan.** `plan_fills` measures how much the picture changes around each line
@@ -31,9 +31,10 @@ The original planning API is documented after it and is still in use.
 
 ## Render choices
 
-Finish offers two choices when a moment has AI fill. Neither changes a layer's
-engine, and a choice other than the default makes a new render and leaves the plain
-one alone.
+Finish offers three choices when a moment has AI fill. None changes the Edit, and a
+choice other than the default makes a new render and leaves the plain one alone.
+
+- **AI model.** For this render only. Clean keeps its own model.
 
 - **AI fill on CPU or GPU.** The GPU option runs LaMa or MI-GAN through PyTorch on the
   Apple GPU. If the GPU fails, the render carries on with the CPU. On plain arrays on

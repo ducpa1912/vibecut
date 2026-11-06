@@ -85,6 +85,9 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 63 | Finish → tick **Follow camera motion**, then render a shot with a camera move and a shot with something crossing the text | The camera move keeps a steady fill with fewer model runs. The crossing falls back with no jump. Tell me the times, and where it looks wrong | |
 | 64 | Draw a box over several lines of found text and select it, then press **Clean only the N lines inside** | The panel says what the box costs. The box becomes tight line boxes, on screen only with their lines, inside the box's time | |
 | 65 | While a render runs, pick another quality, GPU or **Follow camera motion**, then **Queue**. Change the model in Clean and queue again | The button is open for any new choice, and shows Queued only for the same choice. The renders run one after another, and the review video does not reload | |
+| 66 | **Scan again**, render with AI fill, then check 7 s, 9 to 12 s | Every word is found, including short ones. The text turns into picture, not a dark patch | |
+| 67 | Click a dashed bar on the Clean lane | The playhead moves to it, and it becomes a solid bar you can edit | |
+| 68 | Open Finish, let a render end, and open History | The page opens at once and the review video fills in after. The render joins Finished without a reload. History says how long it took | |
 
 ## Tell me too
 

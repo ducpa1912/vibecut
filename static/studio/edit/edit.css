@@ -2364,7 +2364,7 @@ body:has(.st-preview.is-focus) { overflow: hidden; }
 .st-found-method-wrap > span { display: none; }
 .st-found-method, .st-found-engine { min-height: 26px; padding: 2px 5px; font-size: 11px; }
 .st-auto-clean-run { margin-left: auto; }
-.st-tl-bar-clean.is-found { border-style: dashed; opacity: .78; }
+.st-tl-bar-clean.is-found { border-style: dashed; opacity: .78; cursor: copy; }
 .st-tl-bar-clean.is-found:hover { opacity: 1; }
 /* Engine Before/After on the preview stage */
 .st-preview-stage { position: relative; }

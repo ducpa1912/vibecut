@@ -206,7 +206,33 @@ const ARTIFACT_QUALITY = {
 
 /** How a render's AI fill ran, when it was not the default. */
 function fillChoiceWords(row) {
-  return [row?.fill_device === "gpu" ? "GPU" : "", row?.fill_follow === true ? "Follow" : ""].filter(Boolean);
+  return [
+    FILL_MODEL_LABELS[row?.fill_method] || "",
+    row?.fill_device === "gpu" ? "GPU" : "",
+    row?.fill_follow === true ? "Follow" : "",
+  ].filter(Boolean);
+}
+
+/** A finished render's real time: "6 min 42 s". */
+export function tookText(seconds) {
+  const total = Math.round(Number(seconds) || 0);
+  if (total < 1) return "";
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  if (hours) return `${hours} h ${minutes} min`;
+  return minutes ? `${minutes} min ${rest} s` : `${rest} s`;
+}
+
+/** How long a queue's renders really took, over every try. */
+export function queueTook(items) {
+  return (Array.isArray(items) ? items : []).reduce((sum, item) => {
+    const spent = Number(item?.spent);
+    if (Number.isFinite(spent) && spent > 0) return sum + spent;
+    const started = Number(item?.started);
+    const finished = Number(item?.finished);
+    return sum + (started > 0 && finished > started ? finished - started : 0);
+  }, 0);
 }
 
 function artifactLabel(artifact) {
@@ -547,6 +573,9 @@ export function mount(root, ctx) {
   let quality = "final";
   let fillChoiceNow = fillChoice();
   let renderOptions = null;
+  let fillMethods = {};
+  // The Render step's model, for the next render only. Empty keeps the Edit's own.
+  let fillMethodNow = "";
   // R2 trim health: per story, the current story revision and whether the
   // chosen shape's Edit still matches the range. A stale Edit is never queued.
   const trimHealth = new Map();
@@ -691,20 +720,24 @@ export function mount(root, ctx) {
       .filter((layer) => layer?.kind === "fill");
     const models = [...new Set(fillLayers.map((layer) => String(layer?.method || "lama")))];
     if (models.length) {
-      const change = el("button", {
-        class: "st-btn st-btn-quiet st-btn-small",
-        type: "button",
-        text: "Change",
-        title: "Open Clean in Edit to change the AI model.",
+      const own = models.length === 1 ? models[0] : "";
+      const picker = el("select", {
+        class: "st-finish-fill-model",
+        "aria-label": "AI model for this render",
+        title: "For this render only. Clean keeps its own model.",
       });
-      change.addEventListener("click", () => openEdit(selectedStory()?.id, aspect));
+      if (!own) picker.append(el("option", { value: "", text: "As set in Clean", selected: !fillMethodNow }));
+      for (const [value, text] of Object.entries(FILL_MODEL_LABELS)) {
+        if (fillMethods[value]?.ready === false && value !== own) continue;
+        picker.append(el("option", { value, text, selected: (fillMethodNow || own) === value }));
+      }
+      picker.addEventListener("change", () => {
+        fillMethodNow = picker.value === own ? "" : picker.value;
+        renderRenderCard();
+      });
       host.append(el("div", { class: "st-seg-group" }, [
         el("span", { class: "st-label", text: "AI model" }),
-        el("span", {
-          class: "st-finish-fill-model",
-          text: models.map((model) => FILL_MODEL_LABELS[model] || model).join(" + "),
-        }),
-        change,
+        picker,
       ]));
     }
     const followBlocked = renderOptions?.follow?.ready === false;
@@ -733,6 +766,7 @@ export function mount(root, ctx) {
       const status = await request("/api/fill/status");
       if (disposed) return;
       renderOptions = status?.render_options || {};
+      fillMethods = status?.methods || {};
     } catch (_) {
       renderOptions = {};
     }
@@ -747,12 +781,12 @@ export function mount(root, ctx) {
     const jobId = ctx.getJobId();
     if (!set?.id || !jobId) return;
     const device = fillDeviceNow();
-    const key = `${jobId}:${set.id}:${aspect}:${device}:${fillChoiceNow.follow}`;
+    const key = `${jobId}:${set.id}:${aspect}:${device}:${fillChoiceNow.follow}:${fillMethodNow}`;
     if (fillEstimate.key === key) return;
     fillEstimate = { key, text: "", beats: fillEstimate.beats || 0 };
     try {
       const query = new URLSearchParams({
-        set_id: set.id, aspect, device, follow: String(fillChoiceNow.follow),
+        set_id: set.id, aspect, device, follow: String(fillChoiceNow.follow), method: fillMethodNow,
       });
       const result = await request(`${jobRoot(jobId)}/fill-estimate?${query}`);
       if (disposed || fillEstimate.key !== key) return;
@@ -1065,10 +1099,15 @@ export function mount(root, ctx) {
     if (String(row?.quality || "final") !== String(quality)) return false;
     if ((row?.fill_device === "gpu" ? "gpu" : "cpu") !== queuedDevice()) return false;
     if ((row?.fill_follow === true) !== queuedFollow()) return false;
+    if (String(row?.fill_method || "") !== queuedMethod()) return false;
     // The open Edit is known; a changed one is new work.
     const open = String(selectedStory()?.id || "") === String(storyId || "");
     const editHash = String(row?.edit_hash || "");
     return !(open && editHash && currentEdit?.hash && editHash !== String(currentEdit.hash));
+  }
+
+  function queuedMethod() {
+    return fillEstimate.beats > 0 ? fillMethodNow : "";
   }
 
   function queuedDevice() {
@@ -1277,20 +1316,9 @@ export function mount(root, ctx) {
       }
       await loadSets();
       await Promise.all([loadArtifacts(), loadQueues(), loadEdits(), loadPackets(), loadShares()]);
-      if (stories().length) {
-        await Promise.all([
-          loadChecks().catch((error) => {
-            checks = {
-              markers: [],
-              blocked: false,
-              note: checksFailedNote(error),
-              fallback: true,
-            };
-          }),
-          loadTrimHealth(),
-        ]);
-      }
+      // The page first. Leftover text and trim health fill in when they are ready.
       renderAll();
+      if (stories().length) void loadReviewChecks();
       // Clear the loading line, but keep a notice something else set meanwhile.
       if (!notice || notice === LOADING_NOTE) announce("");
       schedulePoll();
@@ -1308,9 +1336,27 @@ export function mount(root, ctx) {
     }
   }
 
+  async function loadReviewChecks() {
+    await Promise.all([
+      loadChecks().catch((error) => {
+        checks = {
+          markers: [],
+          blocked: false,
+          note: checksFailedNote(error),
+          fallback: true,
+        };
+      }),
+      loadTrimHealth().catch(() => {}),
+    ]);
+    if (disposed) return;
+    dom.body.querySelector(".st-finish-notes")?.replaceWith(notesPanel());
+    renderRenderCard();
+  }
+
   async function poll() {
     if (disposed || loading) return;
     const wasActive = hasActiveWork();
+    const readyBefore = readyArtifacts().length;
     const queueIds = queues
       .filter((queue) => ACTIVE_QUEUE.has(String(queue?.status || "")))
       .map((queue) => queue.id);
@@ -1322,6 +1368,13 @@ export function mount(root, ctx) {
       if (disposed) return;
       renderQueueCard();
       renderRenderCard();
+      // A finished render belongs in Finished and Publish at once.
+      if (readyArtifacts().length !== readyBefore) {
+        keepArtifactSelection();
+        renderFinishedCard();
+        renderPacketCard();
+        renderShareCard();
+      }
       if (wasActive && !hasActiveWork()) {
         await Promise.all([loadPackets(), loadShares()]);
         renderVersionsCard();
@@ -1786,6 +1839,10 @@ export function mount(root, ctx) {
       el("span", { text: ASPECT_LABELS[aspect] || aspect }),
       el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
       el("span", { text: QUALITY_LABELS[quality] || quality }),
+      ...(queuedMethod() ? [
+        el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
+        el("span", { text: FILL_MODEL_LABELS[queuedMethod()] }),
+      ] : []),
       ...(queuedDevice() === "gpu" ? [
         el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
         el("span", { text: "GPU" }),
@@ -1988,6 +2045,8 @@ export function mount(root, ctx) {
     if (items.length > 1) facts.push(`${done} of ${items.length} done`);
     if (active && hasEta) facts.push(`about ${etaText(eta)} left`);
     if (!active && queue.created) facts.push(shortDate(queue.created));
+    const took = active ? "" : tookText(queueTook(items));
+    if (took) facts.push(`Took ${took}`);
     foot.append(el("span", { class: "st-hint", text: facts.join(" · ") }));
 
     const actions = el("div", { class: "st-finish-queue-actions" });
@@ -3096,6 +3155,7 @@ export function mount(root, ctx) {
         quality,
         fill_device: queuedDevice() === "gpu" ? "gpu" : "",
         fill_follow: queuedFollow(),
+        fill_method: queuedMethod(),
         title: storyName(story, stories().indexOf(story)),
       }));
       const result = await request("/api/story-queues", { method: "POST", body: { items } });

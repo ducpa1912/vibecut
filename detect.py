@@ -46,7 +46,8 @@ REPORT_FILE = "source_report.json"
 
 # A subtitle changes every few seconds, so the scan reads two frames a second.
 # That puts each edge of a text's time within a quarter second.
-DEFAULT_SAMPLE_FPS = 2.0
+# Burned-in captions can last under half a second, so two frames a second missed some.
+DEFAULT_SAMPLE_FPS = 4.0
 DEFAULT_MAX_FRAMES = 3600
 TRACKLET_MAX_GAP = 4.5
 # Each line of text is its own tracklet, so a long video has many.

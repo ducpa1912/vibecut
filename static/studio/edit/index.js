@@ -22,14 +22,17 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261106-3";
+import { mountPreview } from "./preview.js?v=20261106-4";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
 import { boxToFrame, cropAt, framingAt, layerActive, sceneFramingKey, sourceTimeAt, visibleRect } from "./canvas-tools.js";
 import { icon, paintIcons } from "./icons.js";
 import {
+  autoCleanRequest,
+  drawKind,
   isFillAvailable,
+  mergeAutoCleanLayers,
   drawEngine,
   manualLayer,
   maskPointCount,
@@ -83,7 +86,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261106-3";
+    link.href = "/static/studio/edit/edit.css?v=20261106-4";
     document.head.append(link);
   }
 }
@@ -1705,6 +1708,41 @@ export function mount(root, ctx) {
       elementsPanel = mountElementsPanel(dom.elements, layerPanelCtx);
     } else {
       elementsPanel.refresh();
+    }
+  }
+
+  /** A found text bar: go to it, and make it a Clean layer you can edit. */
+  async function cleanFoundText(id) {
+    const row = (state.foundText || []).find((item) => String(item.id) === String(id));
+    const storyTime = sourceToStory(row?.ranges?.[0]?.start);
+    if (storyTime !== null) seek(storyTime);
+    preview?.setFoundFocus?.(id);
+    const existing = (state.edit?.clean || []).find((item) => String(item.tracklet_id || "") === String(id));
+    if (existing) {
+      selectLayer("clean", existing.id);
+      return;
+    }
+    if (!state.edit?.id) return;
+    try {
+      const result = await autoCleanRequest(state.job.id, state.edit.id, {
+        tracklet_ids: [String(id)],
+        method: drawKind() === "fill" ? "ai" : "blur",
+        fill_method: drawEngine(),
+      });
+      if (!state.edit) return;
+      const merged = mergeAutoCleanLayers(state.edit.clean || [], result?.layers);
+      if (!merged.added.length) {
+        notify(result?.skipped?.[0]?.reason || "This text could not be added.", "bad");
+        return;
+      }
+      state.edit.clean = merged.layers;
+      touch("clean");
+      renderLayers();
+      preview?.refresh?.();
+      scheduleTimeline();
+      selectLayer("clean", merged.added[0].id);
+    } catch (error) {
+      notify(error?.message || "This text could not be added.", "bad");
     }
   }
 
@@ -3416,6 +3454,7 @@ export function mount(root, ctx) {
       timeline = mountTimeline(dom.timeline, {
         jobId: state.job.id,
         onSeek: (time) => seek(time),
+        onFound: (id) => { void cleanFoundText(id); },
         onLayerTime: (change) => setLayerTime(change),
         onSelect: (kind, id) => selectLayer(kind, id),
         onAdd: (kind) => addLayer(kind),

@@ -962,6 +962,7 @@ def _draft_edit(
 
 def _edit_fill_rows(
     job_id: str, job: dict, edit: dict, story: dict, device: str = "cpu", follow: bool = False,
+    method: str = "",
 ) -> list[dict]:
     """One cost row per beat of this Edit that has an AI fill."""
     import app
@@ -983,7 +984,7 @@ def _edit_fill_rows(
             start=float(segment["start"]),
             duration=int(segment["frames"]) / fps,
             layers=plan.get("layers") or [],
-            method=plan.get("method") or textfill.DEFAULT_METHOD,
+            method=method or plan.get("method") or textfill.DEFAULT_METHOD,
             cache_dir=job_dir / "fill",
             data_root=job_dir.parent.parent,
             device=device,
@@ -1025,6 +1026,7 @@ def fill_estimate(
 @router.get("/api/jobs/{job_id}/fill-estimate")
 def job_fill_estimate(
     job_id: str, set_id: str, aspect: str, device: str = "cpu", follow: bool = False,
+    method: str = "",
 ) -> dict:
     """The same figure for every saved Edit of a clip set in one shape."""
     import app
@@ -1041,7 +1043,7 @@ def job_fill_estimate(
         except HTTPException:
             # A stale Edit cannot render; Finish says so on its own row.
             continue
-        rows.extend(_edit_fill_rows(job_id, fresh_job, edit, story, device, follow))
+        rows.extend(_edit_fill_rows(job_id, fresh_job, edit, story, device, follow, method))
     return textfill.estimate_summary(rows, app.DATA)
 
 

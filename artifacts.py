@@ -249,6 +249,7 @@ class ArtifactSpec:
     # The Render step's AI fill choices. Only a non-default choice is recorded.
     fill_device: str = ""
     fill_follow: bool = False
+    fill_method: str = ""
     transcript_id: str = ""
     audio_hash: str = ""
     music_hash: str = ""
@@ -290,6 +291,8 @@ class ArtifactSpec:
             payload["fill_device"] = str(self.fill_device)
         if self.fill_follow:
             payload["fill_follow"] = True
+        if self.fill_method:
+            payload["fill_method"] = str(self.fill_method)
         if self.transcript_id:
             payload["transcript_id"] = str(self.transcript_id)
         if self.audio_hash:
@@ -320,6 +323,7 @@ class ArtifactSpec:
             edit_hash=str(data.get("edit_hash") or ""),
             fill_device=str(data.get("fill_device") or ""),
             fill_follow=data.get("fill_follow") is True,
+            fill_method=str(data.get("fill_method") or ""),
             transcript_id=str(data.get("transcript_id") or ""),
             audio_hash=str(data.get("audio_hash") or ""),
             music_hash=str(data.get("music_hash") or ""),
@@ -359,6 +363,7 @@ def build_spec(
     edit_hash: str = "",
     fill_device: str = "",
     fill_follow: bool = False,
+    fill_method: str = "",
     transcript_id: str = "",
     audio_plan: dict | None = None,
     audio_hash: str = "",
@@ -403,6 +408,7 @@ def build_spec(
         edit_hash=str(edit_hash or ""),
         fill_device=str(fill_device or ""),
         fill_follow=bool(fill_follow),
+        fill_method=str(fill_method or ""),
         transcript_id=str(transcript_id or ""),
         audio_hash=str(audio_hash or ""),
         music_hash=str(music_hash or ""),
@@ -606,6 +612,7 @@ def manifest_summary(manifest: dict) -> dict:
         "quality": spec.get("quality"),
         "fill_device": spec.get("fill_device") or "",
         "fill_follow": spec.get("fill_follow") is True,
+        "fill_method": spec.get("fill_method") or "",
         "aspect": spec.get("aspect"),
         "hook_scene": spec.get("hook_scene"),
         "hook_override": bool(spec.get("hook_override")),

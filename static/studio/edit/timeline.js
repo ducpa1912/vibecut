@@ -529,7 +529,7 @@ export function mountTimeline(root, options = {}) {
     const span = storyStart === null
       ? "Outside the story range"
       : formatSpan(storyStart, storyEnd ?? storyStart);
-    const title = `${label || LANE_LABELS[kind] || "Layer"} · ${span}${outside ? " · outside the trimmed story" : ""}${item.hidden ? " · hidden outside, kept in the Edit" : ""}${item.pinned ? " · pinned to the story start" : ""}`;
+    const title = `${label || LANE_LABELS[kind] || "Layer"} · ${span}${outside ? " · outside the trimmed story" : ""}${item.hidden ? " · hidden outside, kept in the Edit" : ""}${item.pinned ? " · pinned to the story start" : ""}${item.found ? " · Click to clean this text" : ""}`;
     const attrs = {
       class: `st-tl-bar st-tl-bar-${kind}${item.found ? " is-found" : ""}${item.drawn ? " is-drawn" : ""}${item.sceneClip ? ` st-tl-role-${item.role || "beat"}` : ""}${item.muted ? " is-muted" : ""}${item.dashed ? " is-dashed" : ""}${outside ? " is-outside" : ""}${item.hidden ? " is-hidden-outside" : ""}${item.pinned ? " is-pinned" : ""}${selectedNow ? " is-selected" : ""}`,
       title,

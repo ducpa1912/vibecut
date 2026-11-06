@@ -16,6 +16,10 @@ import numpy as np
 # OCR boxes sit tight on the glyphs. Outlines, shadows and anti-aliasing reach
 # past them, so every box grows by this share of its height on each side.
 PAD_RATIO = 0.06
+# Found text often has a dark outline or shadow beyond its letters. Left outside the
+# hole, the model copies it and the text turns into a dark patch.
+TEXT_SHADOW_RATIO = 0.18
+TEXT_SHADOW_MIN_PX = 6
 PAD_MIN_PX = 3
 # The scan reads two frames a second, so a detected range edge is known to about
 # a quarter second. Detected layers (with a tracklet_id) get this margin.
@@ -23,7 +27,7 @@ DETECTED_TIME_MARGIN = 0.25
 # Feather width of the paste-back edge, in pixels, outside the mask.
 FEATHER_PX = 3
 # Context a LaMa work area keeps around the text.
-CONTEXT_MIN_PX = 32
+CONTEXT_MIN_PX = 96
 CONTEXT_RATIO = 0.5
 # Finding the text inside a scanned box, per frame. Contrast is in 8-bit levels
 # against the local average; shares are of the box.
@@ -50,6 +54,8 @@ def layer_rect(layer: dict, width: int, height: int) -> Rect:
     w = float(box.get("w", 0.0)) * width
     h = float(box.get("h", 0.0)) * height
     pad = max(PAD_MIN_PX, PAD_RATIO * h)
+    if layer.get("tracklet_id"):
+        pad = max(pad, TEXT_SHADOW_MIN_PX, TEXT_SHADOW_RATIO * h)
     x0 = max(0, int(math.floor(x - pad)))
     y0 = max(0, int(math.floor(y - pad)))
     x1 = min(width, int(math.ceil(x + w + pad)))
@@ -429,7 +435,9 @@ class TextMasks:
         rows = []
         for rect in set(self.tight[min(index, len(self.tight) - 1)]):
             x0, y0, x1, y1 = rect
-            text = text_in_region(frame[y0:y1, x0:x1], self.grow)
+            # The letters' outline and shadow belong to the hole too.
+            grow = max(self.grow, int(round(TEXT_SHADOW_RATIO * (y1 - y0) * 0.7)))
+            text = text_in_region(frame[y0:y1, x0:x1], grow)
             if text is None:
                 text = np.ones((y1 - y0, x1 - x0), dtype=bool)
             if text.any():

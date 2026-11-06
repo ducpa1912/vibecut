@@ -254,14 +254,14 @@ def _fake_extract(monkeypatch, duration: float, create: int | None = None):
     return calls
 
 
-def test_extract_text_frames_reads_two_a_second_and_reports_windows(monkeypatch, tmp_path):
+def test_extract_text_frames_reads_four_a_second_and_reports_windows(monkeypatch, tmp_path):
     calls = _fake_extract(monkeypatch, 20.0)
     frames = pipeline.extract_text_frames("/tmp/source.mp4", tmp_path, 20.0)
-    assert len(frames) == 40
+    assert len(frames) == 80
     assert frames[0]["start"] == 0.0
-    assert frames[1]["start"] == 0.5
+    assert frames[1]["start"] == 0.25
     assert frames[-1]["end"] == 20.0
-    assert "fps=2.0000" in calls["cmd"][calls["cmd"].index("-vf") + 1]
+    assert "fps=4.0000" in calls["cmd"][calls["cmd"].index("-vf") + 1]
 
 
 def test_extract_text_frames_lowers_cadence_for_long_sources(monkeypatch, tmp_path):
@@ -274,7 +274,7 @@ def test_extract_text_frames_lowers_cadence_for_long_sources(monkeypatch, tmp_pa
 
 
 def test_extract_text_frames_offsets_a_scene_window(monkeypatch, tmp_path):
-    calls = _fake_extract(monkeypatch, 20.0, create=8)
+    calls = _fake_extract(monkeypatch, 20.0, create=16)
     frames = pipeline.extract_text_frames(
         "/tmp/source.mp4", tmp_path, 20.0, start=4.0, end=8.0,
     )
@@ -934,7 +934,7 @@ def test_run_check_samples_text_and_persists(tmp_path):
     report = detect.run_check(
         "job1", job, tmp_path, sampler=sampler, audio_extractor=None,
     )
-    assert calls == {"path": job["source"]["path"], "duration": 20.0, "fps": 2.0}
+    assert calls == {"path": job["source"]["path"], "duration": 20.0, "fps": 4.0}
     assert report["tracklets"][0]["kind"] == "subtitle"
     stored = detect.load_report(tmp_path)
     assert stored == report

@@ -1572,7 +1572,7 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 .st-finish-fill-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .st-finish-fill-options[hidden] { display: none; }
 .st-finish-follow { display: inline-flex; align-items: center; gap: 7px; color: var(--st-muted); font-size: 12px; cursor: pointer; }
-.st-finish-fill-model { color: var(--st-text); font-size: 12px; white-space: nowrap; }
+.st-finish-fill-model { min-height: 32px; padding: 4px 8px; border: 1px solid var(--st-line-2); border-radius: 8px; background: var(--st-panel-2); color: var(--st-text); font-size: 12px; }
 .st-finish-follow input { flex: 0 0 auto; margin: 0; accent-color: var(--st-accent); }
 .st-finish-setup-fields {
   display: flex;
@@ -1644,10 +1644,11 @@ main.st-main[data-step="finish"] > .st-finish-panel {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.85fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 .st-finish-render-grid > .st-card { min-width: 0; }
-.st-finish-queue-card { display: grid; gap: 12px; align-content: start; min-width: 0; }
+/* The same height as Render beside it: the list scrolls and never makes the row taller. */
+.st-finish-queue-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .st-finish-queue-tabs {
   display: flex;
   gap: 4px;
@@ -1669,7 +1670,7 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 .st-finish-queue-tab:hover { background: var(--st-panel-2); color: var(--st-text); }
 .st-finish-queue-tab[aria-selected="true"] { background: var(--st-panel-3); color: var(--st-text); }
 .st-finish-queue-count { color: var(--st-dim); font-family: var(--st-mono); font-size: 11px; }
-.st-finish-queue-body { min-height: 0; max-height: min(60vh, 640px); overflow-y: auto; }
+.st-finish-queue-body { flex: 1 1 auto; height: 0; min-height: 160px; overflow-y: auto; }
 
 .st-finish-cost-note {
   max-width: 72ch;
@@ -2201,3 +2202,7 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 .st-finish-queue-top { flex-wrap: wrap; }
 .st-finish-queue-top .st-finish-queue-title { flex: 1 1 0; min-width: 0; }
 .st-finish-queue-top .st-finish-queue-shape { order: 3; flex: 1 0 100%; white-space: nowrap; }
+
+@media (max-width: 1100px) {
+  .st-finish-queue-body { height: auto; max-height: min(60vh, 640px); }
+}

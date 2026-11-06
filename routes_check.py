@@ -52,7 +52,7 @@ class CheckBody(BaseModel):
     # job record written by POST /rights and from rights.py, never this body.
     attestation: bool | str | None = None
     sample_text: bool = True
-    fps: float = Field(default=detect.DEFAULT_SAMPLE_FPS, ge=0.1, le=2.0)
+    fps: float = Field(default=detect.DEFAULT_SAMPLE_FPS, ge=0.1, le=4.0)
     # Optional source-time window for a scene-scoped pass.
     start: float | None = Field(default=None, ge=0.0)
     end: float | None = Field(default=None, ge=0.0)

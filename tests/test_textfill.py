@@ -93,7 +93,7 @@ def test_sttn_strips_are_full_width_16_by_3_and_stay_in_frame():
 
 def test_lama_area_keeps_context_around_the_union():
     area = masks.lama_area([(100, 500, 300, 540), (120, 560, 280, 600)], 720, 1280)
-    assert area == (50, 450, 350, 650)
+    assert area == (4, 404, 396, 696)
 
 
 # --- chunking --------------------------------------------------------------
@@ -763,15 +763,15 @@ def test_each_work_area_gets_its_own_fill_and_no_more():
             self.shapes.append(area.shape[:2])
             return np.full(area.shape, 7, dtype=np.uint8)
 
-    frames = [np.full((400, 200, 3), 100, dtype=np.uint8) for _ in range(4)]
+    frames = [np.full((800, 200, 3), 100, dtype=np.uint8) for _ in range(4)]
     filler = Sizes()
     out = list(textfill.fill_frames_lama(
-        iter(frames), lambda index: [(20, 20, 180, 40), (20, 360, 180, 380)], filler, None, step=4,
+        iter(frames), lambda index: [(20, 20, 180, 40), (20, 760, 180, 780)], filler, None, step=4,
     ))
     assert len(out) == 4
     # Two areas, begin and end each, and neither reads the middle of the picture.
     assert len(filler.shapes) == 4
-    assert all(height < 120 for height, _width in filler.shapes)
+    assert all(height < 200 for height, _width in filler.shapes)
     assert (out[0][200, 100] == 100).all()
 
 

@@ -134,7 +134,9 @@ def normalize_items(raw: object) -> list[dict]:
         fill_device = "gpu" if value.get("fill_device") == "gpu" else ""
         fill_follow = value.get("fill_follow") is True
         edit_hash = str(value.get("edit_hash") or "")[:80]
-        identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality, fill_device, fill_follow)
+        fill_method = str(value.get("fill_method") or "")
+        fill_method = fill_method if fill_method in ("lama", "migan", "sttn", "telea", "ns") else ""
+        identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality, fill_device, fill_follow, fill_method)
         if identity in seen:
             raise QueueError(f"Item {index} repeats an earlier story and aspect.")
         seen.add(identity)
@@ -146,6 +148,7 @@ def normalize_items(raw: object) -> list[dict]:
             "fill_device": fill_device,
             "fill_follow": fill_follow,
             "edit_hash": edit_hash,
+            "fill_method": fill_method,
             "title": str(value.get("title") or "")[:200],
             "state": "queued",
             "artifact_id": None,
@@ -461,7 +464,15 @@ class StoryQueueManager:
                     if fresh is None or fresh.get("state") != "queued":
                         continue
                     self._mutate(queue_id, lambda queue: queue.update(message="Rendering"))
-                    self._run_item(queue_id, fresh, stop)
+                    began = time.time()
+                    try:
+                        self._run_item(queue_id, fresh, stop)
+                    finally:
+                        # Time spent over every try, so a resumed render reports it all.
+                        self._set_item(
+                            queue_id, fresh["id"],
+                            spent=round(float(fresh.get("spent") or 0.0) + time.time() - began, 1),
+                        )
                 finally:
                     self._turn.release()
         except Exception:  # noqa: BLE001

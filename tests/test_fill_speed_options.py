@@ -239,7 +239,71 @@ def test_the_model_can_be_changed_where_the_method_is_chosen():
     assert '...(current === "fill" ? modelPicker() : [])' in bar
     assert '"AI model"' in bar
     assert "engineFold" not in CLEAN
-    assert 'text: "Change"' in FINISH and "AI model" in FINISH
+    assert "AI model for this render" in FINISH
+
+
+def test_a_render_can_pick_its_model_without_changing_the_edit():
+    from dataclasses import replace
+
+    item = {"job_id": "j1", "set_id": "s1", "story_id": "a", "fill_method": "migan"}
+    assert story_queue.normalize_items([item])[0]["fill_method"] == "migan"
+    assert story_queue.normalize_items([{**item, "fill_method": "nope"}])[0]["fill_method"] == ""
+    spec = artifacts.ArtifactSpec.from_payload({"target": 30, "story_id": "s"})
+    assert artifacts.artifact_id(replace(spec, fill_method="migan")) != artifacts.artifact_id(spec)
+    assert "fill_method: queuedMethod()" in FINISH
+    body = FINISH[FINISH.index("function matchesChoice"):FINISH.index("function queuedDevice")]
+    assert "row?.fill_method" in body
+
+
+def test_found_text_is_clickable_on_the_timeline():
+    index = (ROOT / "static/studio/edit/index.js").read_text(encoding="utf-8")
+    timeline = index[index.index("timeline = mountTimeline("):]
+    assert "onFound: (id) => { void cleanFoundText(id); }" in timeline[:300]
+    assert "async function cleanFoundText" in index
+
+
+def test_finish_shows_the_page_before_the_slow_checks():
+    load = FINISH[FINISH.index("async function loadAll"):FINISH.index("async function loadReviewChecks")]
+    assert load.index("renderAll();") < load.index("void loadReviewChecks();")
+    assert "loadChecks()" not in load
+
+
+def test_a_finished_render_reaches_the_finished_list():
+    poll = FINISH[FINISH.index("async function poll"):FINISH.index("function renderSkeleton")]
+    assert "readyArtifacts().length !== readyBefore" in poll
+    assert "renderFinishedCard();" in poll
+
+
+def test_history_says_how_long_it_really_took():
+    assert "Took ${took}" in FINISH
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    url = (ROOT / "static/studio/finish.js").as_uri()
+    done = subprocess.run(
+        [node, "--input-type=module", "-e", (
+            f"const m = await import({json.dumps(url)});\n"
+            "console.log(JSON.stringify([m.tookText(402), m.tookText(42), m.tookText(3780),"
+            " m.queueTook([{spent: 100}, {started: 10, finished: 40}])]));"
+        )],
+        capture_output=True, text=True, timeout=60, check=True,
+    )
+    assert json.loads(done.stdout) == ["6 min 42 s", "42 s", "1 h 3 min", 130]
+
+
+def test_a_text_shadow_is_inside_the_hole_and_a_drawn_box_stays_exact():
+    box = {"x": 0.3, "y": 0.6, "w": 0.3, "h": 0.04}
+    found = masks.layer_rect({"box": box, "tracklet_id": "t"}, 1080, 1920)
+    drawn = masks.layer_rect({"box": box}, 1080, 1920)
+    assert found[3] - found[1] > drawn[3] - drawn[1] + 10
+    assert masks.CONTEXT_MIN_PX >= 96
+
+
+def test_short_captions_get_sampled_often_enough():
+    import detect
+    import pipeline
+
+    assert detect.DEFAULT_SAMPLE_FPS >= 4.0 and pipeline.CHECK_SAMPLE_FPS >= 4.0
 
 
 # --- following the camera --------------------------------------------------------
