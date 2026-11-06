@@ -42,7 +42,8 @@ Non-negotiable:
 | **VibeCut Mac Solo** | solo creator | DMG, arm64 | **$149 one-time**, 1 year updates, 2 Macs | payment fee, support | Build first |
 | **VibeCut Mac Studio** | small team | DMG, arm64 | **$249**, 1 year updates, 5 Macs | payment fee, support | Same build, license tier |
 | **Cloud Private** | team that wants its own server | managed container + URL | **$199/mo + $299 setup** | shared 16-core host, storage, support | Build second |
-| **Mac Native** | team that needs Apple OCR/STT | managed Mac mini | **$349/mo** | Mac mini M6, support | Optional premium |
+| **Mac Shared** | 2–3 small teams | one Mac mini, isolated instances | **$249/mo per tenant** | Mac mini M6, support | Optional premium |
+| **Mac Native** | team that needs a whole Mac | managed Mac mini | **$349/mo** | Mac mini M6, support | Optional premium |
 | **Cloud Web / RaaS** | occasional creator | browser, per render | **$0.12/render second, $9 minimum**, or $29/mo with 5 min | CPU/GPU, clean API, storage, egress | Build third |
 
 Prices are starting assumptions. Validate with 10 founder calls before launch.
@@ -196,8 +197,8 @@ therefore run on a cheap CPU host without a GPU. Prices below are the founder's
 | Contabo VPS Plus 6 | 6 vCPU EPYC, 12 GB, 300 GB NVMe | **$23/mo** | pilot / design partners | 1 |
 | Contabo CPU 16 | 16 vCPU EPYC 7282, 64 GB, 480 GB NVMe | **$155/mo** | Private Standard | 3 isolated containers |
 | Contabo dedicated | 24 × 2.5 GHz EPYC 9224, 128 GB, 2 × 1 TB SSD | **$240/mo** | scale / dedicated tier | 6–8 containers |
-| Mac mini M6 | 16 GB, 256 GB | **$150/mo** | Mac Native | 1 |
-| Mac mini M5 Pro | 24 GB, 512 GB | **$250/mo** | Mac Native Pro | 1 |
+| Mac mini M6 | 16 GB, 256 GB | **$150/mo** | Mac Shared / Native | 2–3 shared, or 1 dedicated |
+| Mac mini M5 Pro | 24 GB, 512 GB | **$250/mo** | Mac Shared Pro | 3 shared, or 1 dedicated |
 
 Sharing a 16-core host between three private containers is **isolated data,
 shared compute**. Each container gets a CPU and memory limit. It is not a
@@ -221,7 +222,68 @@ The $199 Standard price only works because three containers share a $155 host.
 A one-tenant $199 instance on a $155 host leaves too little for support. If
 sharing is not acceptable, the price is $299–$349.
 
-### 4.6 CPU fill
+### 4.6 Three tenants on one Mac mini
+
+Yes, this works, and it is cheaper than the Contabo Standard.
+
+**Do not use RLS for this.** The app stores jobs as JSON files and settings in
+a local store, not in Postgres. RLS would not cover `jobs/`, sources, renders
+or previews. It would also require moving all job state to Postgres and adding
+an owner check to every route. That is the multi-tenant project, not a login
+form.
+
+Use **three isolated app instances** instead:
+
+```text
+tenant1.vibecut.example ─┐
+tenant2.vibecut.example ─┼─ Caddy + auth ─┬─ :8801  app, /data/tenant1
+tenant3.vibecut.example ─┘                ├─ :8802  app, /data/tenant2
+                                          └─ :8803  app, /data/tenant3
+```
+
+- One `studio_app.py` per tenant, different `VIBECUT_DATA` and
+  `VIBECUT_PORT`.
+- One macOS user per tenant, or one service user with three data roots.
+- Shared read-only model directory; symlink it into each data root.
+- Caddy maps subdomain → port. Auth at the edge (OIDC or magic link) checks
+  the user's tenant, then proxies. The app keeps its per-launch token.
+- Per-process `VIBECUT_RENDER_WORKERS=2`; one render at a time per tenant.
+- A tiny host supervisor limits concurrent renders to two and pauses a tenant
+  when free memory is low.
+- Backups per tenant; update each instance one at a time.
+
+Why this is better than one process + RLS:
+
+- File isolation is real: no tenant can list another tenant's jobs.
+- One crash does not take all three down.
+- No route audit, no Postgres migration, no media path guards.
+- You can sell it now.
+
+Limits:
+
+- 16 GB is tight for three simultaneous renders. Two heavy tenants are safe;
+  three need light/queued use. Use the 24 GB M5 Pro for three comfortable
+  tenants.
+- One Mac mini is a single point of failure. Keep a spare or a cloud fallback.
+- macOS updates and remote management are yours.
+
+Performance: an M6 is roughly 2–4× an M1 for this work. Three tenants share
+that. Do not promise each tenant the full machine; promise a queue and a
+measured 90-second render time.
+
+Pricing on a $150 Mac mini:
+
+| Tier | Tenants | Price per tenant | Host cost per tenant | Margin |
+|---|---:|---:|---:|---:|
+| Mac Shared, M6 16 GB | 2–3 | **$249/mo** | $50–$75 | 70–80% |
+| Mac Shared, M5 Pro 24 GB | 3 | **$299/mo** | ~$83 | 72% |
+| Mac Dedicated | 1 | **$349/mo** | $150 | 57% |
+
+The shared Mac tier beats the Contabo Standard on margin and gives Apple
+Vision/Speech plus VideoToolbox. It is the best pilot host if the benchmark
+holds.
+
+### 4.7 CPU fill
 
 - Default hosted fill: **MI-GAN** on CPU. MIT code and weights; 0.6 s/frame
   seed.
@@ -235,7 +297,7 @@ sharing is not acceptable, the price is $299–$349.
 - Measure the real rate on the host before promising 25 minutes. The seed rates
   are starting estimates, not a benchmark.
 
-### 4.7 Why not multi-tenant first
+### 4.8 Why not multi-tenant first
 
 The app has one shared `VIBECUT_TOKEN`, one settings file and one job list.
 Every route assumes one workspace. A public site would expose every customer's
@@ -332,6 +394,7 @@ Every artifact ships:
 | Pilot, 1 tenant | $23 | $5 backup | $49 | ~40% |
 | Standard, 3 tenants on $155 host | $52/tenant | $15 | $199 | ~66% |
 | Dedicated, 1 tenant on $240 host | $240 | $20 | $499 | ~48% |
+| Mac Shared, 3 tenants on M6 | $50/tenant | $10 | $249 | ~76% |
 | Mac Native, 1 Mac mini M6 | $150 | $10 | $349 | ~54% |
 
 Support is the variable. Budget 20 minutes per customer per month; at $30/h
@@ -404,7 +467,9 @@ support minutes per customer.
 | Private cloud leaks between customers | One container per customer until tenancy ships |
 | Contabo has no SLA and shares CPU | Pilot only; move paid Standard to a 16-core host or dedicated; monitor steal and latency |
 | Three containers contend for CPU | Per-container CPU/memory limits; benchmark one tenant first |
-| Mac mini host is a single point of failure | Backups + swap unit; premium price reflects it |
+| Mac mini host is a single point of failure | Backups + spare unit; price reflects it |
+| Three Mac tenants exhaust 16 GB | Start with two; use M5 Pro 24 GB for three; host memory guard |
+| Edge auth misroutes a tenant | Auth maps user to one port; deny by default; test all three URLs |
 | Apple Vision/Speech missing on Linux | Measure cloud OCR/STT before promising parity; Mac Native tier for Apple-native |
 | Clean cost overruns | CPU MI-GAN default; remote VOID only when quoted |
 | Piracy of the Mac app | Offline license + fair refunds; no heavy DRM |
@@ -418,6 +483,8 @@ Open decisions for the founder:
 3. Private Standard: $199 with three containers on one host, or $299 with a
    dedicated slice? The first needs shared-compute wording.
 4. Is the $23 VPS pilot for design partners only, or a paid $49 tier?
-5. Mac Native at $349 on a $150 Mac mini: premium support or self-serve?
-6. RaaS price: $0.12/render second with $9 minimum?
-7. Is Mac + Private enough for launch, with Web/RaaS later?
+5. Mac Shared at $249 on an M6 16 GB with two tenants, or $299 on an M5 Pro
+   24 GB with three? Start with two on the M6.
+6. Mac Native dedicated at $349: premium support or self-serve?
+7. RaaS price: $0.12/render second with $9 minimum?
+8. Is Mac + Private enough for launch, with Web/RaaS later?
