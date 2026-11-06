@@ -1,163 +1,253 @@
-# Text detection and Clean: stop over-cleaning
+# Text detection and Clean: quality first
 
 Date: 2026-11-06
-Status: plan
-Trigger: one 89-second job held **2.0 GB of AI-fill cache** and 49 Clean layers.
-The notes still showed junk reads: `-500Z`, `CPA/`, `CPAI`.
+Status: revised plan
+Trigger: one 89-second job held **2.0 GB of AI-fill cache** and 49 Clean layers,
+with junk reads such as `-500Z`, `CPA/`, `CPAI`.
 
-## 1. What "overfitting" means here
+## 1. Rule
 
-The pipeline is fitting the Clean plan to OCR noise, not to text:
+**Every real text gets the highest-quality clean.** AI fill is the default and
+stays the default. No downgrade to blur for low confidence, busy background,
+small text or crop position. No skip based on those.
 
-- one layer per OCR observation instead of one per text that persists;
-- low-confidence, one-frame reads become layers;
-- the whole text box is repainted, not only the glyphs;
-- every layer and keyframe is cached as an uncompressed array;
-- nothing caps layers, filled area or cache per job.
+Precision work decides **what is text**. Quality work never decides **how well
+to clean it**.
 
-That produces 49 layers, four residual-text notes that are OCR junk, and a 2 GB
-cache for a short video. Better detection is the first fix; the cache format is
-the second.
+- A real text block is AI-filled.
+- A doubtful read is shown for review, not silently blurred or dropped.
+- A text outside the story is not cleaned because it is not on screen, not
+  because it is hard.
+- Blur remains a user choice, never an automatic fallback.
+- If the fill model is missing, the job says AI fill is unavailable. It does
+  not quietly produce a blur.
 
-## 2. Where the 2 GB came from
+The 1m30s job that takes under 25 minutes locally is acceptable. The target is
+not to make Clean cheap. The target is to stop fitting the plan to OCR noise.
 
-The fill span cache writes one H.264 clip per beat. That is bounded.
+## 2. What overfitting means here
 
-The keyframe cache is the problem:
+- One layer per OCR observation instead of one per real text.
+- One-frame, low-confidence reads become layers.
+- Whole boxes repainted instead of glyph masks.
+- Every keyframe cached as an uncompressed array.
+- No measurement of false positives, duplicate tracklets or cache per job.
 
-- `textfill._SavedFills` writes **one uncompressed `.npy` per model keyframe**.
-- The array is the crop area the model saw, not a compressed image.
-- A 720p crop can be hundreds of KB per frame. Hundreds of keyframes reach
-  gigabytes.
-- `SAVED_MAX_BYTES = 2 GB` is a **global** cap, so one job can take it all.
-- There is no per-job cap and no UI warning.
+That produced 49 layers and 2 GB of cache for 89 seconds. Detection precision
+and cache format are the fixes. Clean quality is not reduced.
 
-So a job can spend 2 GB to save a fill that a compressed clip would hold in tens
-of MB.
-
-## 3. Detection plan
+## 3. Detection: find real text, not every read
 
 ### 3.1 Multi-frame consensus
 
-Do not trust one OCR read.
-
-- Sample OCR at 4–6 fps in the candidate regions.
-- Cluster observations by box IoU, time gap and text similarity.
-- Keep a tracklet only when it has at least 3 observations and at least 0.5 s
-  of screen time.
-- A single-frame read becomes a suggestion, never an auto-Clean layer.
+- OCR at 4–6 fps in candidate regions.
+- Cluster observations by IoU, time gap and text similarity.
+- Keep a text only when it appears in at least 3 observations over at least
+  0.5 s.
+- A single-frame read becomes a review suggestion, not an auto layer.
 
 ### 3.2 Script-aware junk filter
 
-Current filter accepts some garbage because it only checks confidence and token
-shape. Add:
+Keep real words and real CJK runs. Reject OCR noise:
 
-- reject Latin tokens with no vowels above two characters;
-- reject strings with no letters or CJK characters;
-- reject mixed-case random strings (`CPAI`, `CPA/`, `-500Z`);
-- reject a trailing slash or a leading hyphen followed by digits;
-- require OCR confidence `>= 0.55`, or `>= 0.40` with multi-frame agreement;
-- second-pass OCR at 2× on the crop; keep only text read twice with different
-  preprocessing.
+- Latin tokens with no vowels above two letters;
+- strings with no letters or CJK;
+- random mixed case (`CPAI`, `CPA/`) and stray `-500Z`;
+- trailing slash / leading hyphen-digit patterns;
+- OCR confidence below 0.55 unless multi-frame agreement is strong;
+- second-pass OCR at 2×; keep only text read twice with different preprocessing.
 
-Tune against labelled clips, not one video.
+Thresholds come from a labelled corpus, not one video.
 
-### 3.3 Speech correlation
+### 3.3 Speech match
 
-Baked subtitles usually match the transcript.
-
+- Baked subtitles usually match the transcript.
 - Fuzzy-match tracklet text to transcript words in the same time range.
-- Boost confidence on a match.
-- Penalise random caption-band text with no speech match.
-- Do not auto-clean non-speech text unless the user ticks it.
+- Boost a match; flag a caption-band read with no speech for review.
+- A flag does not downgrade or skip the clean. It only controls auto-apply.
 
 ### 3.4 Block, not line
 
-- Merge OCR lines that form one subtitle block: same area, stacked lines, close
-  time ranges.
+- Merge stacked OCR lines into one subtitle block.
 - One tracklet = one text block over its lifetime.
-- Split only when the layout changes, not when a line changes.
-- Target: at most 6 auto-clean layers per minute.
+- Split only when the layout changes.
+- A 25-beat story should not produce 49 layers from one subtitle lane.
 
-### 3.5 Visual persistence
+### 3.5 Persistence
 
-A logo or UI label persists. A B-roll sign flashes.
+- Prefer text that persists. A B-roll sign that flashes is still reviewable.
+- Do not use persistence to choose blur or to skip.
+- Use it to rank the review list and to merge observations.
 
-- Require either a speech match or 1.5 s of stable pixels.
-- Exclude dynamic text unless explicitly selected.
-- Use the existing classifier (`subtitle`, `title`, `lower_third`,
-  `handle_or_logo`, `watermark`, `credit`, `screen_text`) as a prior, not a
-  verdict.
+## 4. Auto-clean: highest quality
 
-## 4. Auto-clean plan
+- One Clean layer per real tracklet.
+- Ranges = the tracklet lifetime.
+- Default method = AI fill for every accepted text.
+- Fill at the best available model and device. GPU when available; LaMa,
+  MI-GAN or STTN as the user chooses.
+- Mask from OCR lines and glyph segmentation, not the full box.
+- Keep the line mask and the block box; the fill uses the tight mask.
+- Show the plan before applying only when detection is uncertain. Confidence
+  controls **review**, not method.
 
-- One layer per tracklet, ranges = the tracklet lifetime.
-- Default to the **line mask** from OCR boxes, not the full box.
-- Use the text mask when available; fill glyphs, not the background.
-- Choose the method by confidence and cost:
-  - high-confidence subtitle, busy background → AI fill;
-  - small or low-confidence text, static background → blur;
-  - a text behind the crop → skip.
-- Show a plan before applying:
-  - number of texts, layers, seconds, estimated fill time and cache size;
-  - warn above 6 layers/min, 20 minutes, or 500 MB.
-- Re-scan a few frames after Clean; if residual text or overfill appears, do not
-  apply the plan automatically.
+No layer-per-minute cap, no 20-minute cap, no 500 MB cap. The plan shows:
+texts, layers, cleaned seconds, estimated time, cache estimate. The user can
+proceed, because 25 minutes for 90 seconds is acceptable.
 
-## 5. Cache plan
+## 5. Cache: stop wasting space without limiting quality
 
-1. **Replace `.npy` keyframes** with compressed holes:
-   - PNG/WebP for the filled crop, or a single compressed clip per span.
-   - Keep the manifest separate; never store full raw frames.
-2. **Per-job cap**: default 512 MB, hard cap 2 GB, LRU within the job.
-3. **Global fill cache** keyed by:
-   `source hash + span + mask hash + method + model signature`.
-4. **One cache artifact per span**, not per frame and per layer.
-5. **Delete with the job**; no orphan previews, proxies or saved fills.
-6. **Show usage** in Storage: fill, spans, previews, proxies.
+The 2 GB came from `textfill._SavedFills`: one uncompressed `.npy` per model
+keyframe, under a global 2 GB cap with no per-job view.
 
-Expected: the same 89-second job should stay under 100 MB of fill cache.
+Fix the format and reuse:
 
-## 6. Metrics
+1. Store filled holes as compressed PNG/WebP, or one compressed clip per span.
+2. One artifact per span, not per frame and per layer.
+3. Global fill cache keyed by
+   `source hash + span + mask hash + method + model`.
+4. Deduplicate identical spans across layers and jobs.
+5. Delete with the job; no orphan previews or saved fills.
+6. Show per-job cache use. Warn at a soft threshold; never drop a fill the
+   current render needs.
+7. Keep the current 25-minute local run acceptable. Compression is the win, not
+   a smaller clean.
 
-Measure on a labelled corpus, not on one clip:
+The same 89-second job should compress to well under 200 MB without reducing
+the filled area or model quality.
+
+## 6. Online Clean API
+
+Goal: optional remote AI fill at **less than $0.05 per second of cleaned
+footage**, with equal or better quality than local LaMa.
+
+### 6.1 What to send
+
+Only the spans that contain text. Not the whole 90 seconds.
+
+- Upload each span (source video range + mask video) or a single montage of
+  spans.
+- Receive the filled span.
+- Splice it back locally at the exact frame.
+- Keep original audio locally.
+
+If 90 seconds contains 20 seconds of text, the price is for 20 cleaned seconds,
+not 90.
+
+### 6.2 Candidate APIs
+
+Prices read from provider pages on 2026-11-06. They change; recheck before
+committing. A "run" is one provider call; frame counts and run time decide the
+real per-second figure.
+
+| Provider | Model | Input | Price | Per cleaned second | Notes |
+|---|---|---|---|---|---|
+| Replicate | ProPainter | video + mask | ~$0.039 per run, L40S $0.000975/s | ~$0.012–0.015/s | Flow-based video inpainting, subvideos of 80 frames, best quality fit for text |
+| fal | VOID Video Inpainting | video + mask or prompt | $0.05 per video; $0.10 pass 2; +$0.05 SAM-3 mask | ~$0.008–0.023/s | Up to ~197 frames per run; generative, may invent background; test on text |
+| Runway | Aleph 2.0 | prompt edit | $0.28/s | no | Over budget |
+| fal | Wan / Kling / Veo video models | prompt | $0.05–$0.40/s | no | Generative; not mask-accurate |
+| Replicate | Wan 2.1 / official video | prompt | $0.09–$0.25/s | no | Generative; not mask-accurate |
+| Self-hosted | ProPainter / E2FGVI | video + mask | H100 $4.50/h on fal, RTX Pro 6000 $2.99/h | depends on throughput | Cheapest at volume after a benchmark |
+
+Estimates:
+
+- **ProPainter, 90 seconds all text**: 34 runs of ~80 frames at $0.039 ≈
+  **$1.33** (≈ $0.015/s). Under the $4.50 budget.
+- **ProPainter, 20 seconds of text**: 8 runs ≈ **$0.31**.
+- **VOID, 90 seconds, one pass**: ~15 runs at $0.05 ≈ **$0.75**; pass 2 and mask
+  can raise it to ~$2.25.
+- **Runway Aleph**: 90 × $0.28 = **$25.20**, rejected.
+
+The cheap options are ProPainter-style mask inpainting and VOID. ProPainter is
+the safer quality bet for text; VOID needs a visual test.
+
+### 6.3 Provider interface
+
+```text
+POST /api/jobs/{id}/clean/remote-estimate
+  -> spans, cleaned seconds, provider price, estimate, quality warning
+
+POST /api/jobs/{id}/clean/remote
+  -> job, edit, provider, consent, budget
+  -> queued remote fills; local render continues
+```
+
+- `CleanProvider` contract: `estimate(spans)`, `submit(span, mask)`,
+  `status(id)`, `fetch(id)`, `cancel(id)`.
+- One provider call per span chunk; overlaps blended locally.
+- Remote result is verified: frame count, resolution, mask alignment.
+- If remote fails, fall back to local AI fill. Never to blur.
+- Cache remote results in the same global fill cache.
+- Store provider, model, price and job id in the manifest.
+
+### 6.4 Decisions for the user
+
+- Upload only text spans, not the whole source.
+- Explicit consent per job; show provider, bytes and estimate.
+- Per-job budget is a warning/confirmation, not a technical cap.
+- Keep local AI fill as the default; remote is an option for speed.
+
+### 6.5 Quality gate
+
+Run the same 5 clips through local LaMa, local STTN, remote ProPainter and
+remote VOID. Compare:
+
+- OCR residual inside the cleaned area;
+- changed pixels outside the text mask;
+- temporal flicker between frames;
+- background texture and edge continuity;
+- total time and cost per cleaned second.
+
+Accept a provider only if it matches local quality on text and stays under
+$0.05 per cleaned second.
+
+### 6.6 Sources
+
+- Replicate ProPainter: <https://replicate.com/jd7h/propainter>
+  (model page: ~$0.039 per run, L40S, 80-frame subvideos).
+- fal VOID: <https://fal.ai/models/fal-ai/void-video-inpainting>
+  ($0.05 per video, pass 2 $0.10, SAM-3 mask +$0.05).
+- Runway API pricing: <https://dev.runway.com/pricing>
+  (Aleph 2.0 $0.28 per second).
+- Replicate GPU pricing: <https://replicate.com/pricing>
+  (L40S $0.000975/s).
+- fal serverless GPU pricing: <https://fal.ai/pricing>
+  (H100 from $4.50/h).
+
+## 7. Metrics
 
 | Metric | Target |
 |---|---|
 | False text tracklets | < 1 per minute |
-| Auto-clean layers | <= 6 per minute |
-| Fill cache | < 100 MB per minute of cut |
-| Fill time | record before and after |
+| Duplicate tracklets | 0 |
+| Layers per real text | 1 |
+| Auto-applied doubtful text | 0 |
 | Changed pixels outside text | < 10% |
 | Residual text after clean | < 1 per clip |
-| Duplicate tracklets | 0 |
+| Cache per cleaned second | < 2 MB/s after compression |
+| Local clean time | <= 25 min for 90 s |
+| Remote cost | < $0.05 per cleaned second |
 
-Log these per job and show them in Check/Clean.
+No cap on real layers. A video with 30 real texts gets 30 AI fills.
 
-## 7. Phases
+## 8. Phases
 
 | Phase | Work | Gate |
 |---|---|---|
-| 1 | Instrument: tracklets, layers, cache bytes, fill seconds | Numbers match disk |
-| 2 | Multi-frame consensus + junk filter + speech match | Labelled clips pass |
-| 3 | Block merge and auto-clean budget | <= 6 layers/min |
-| 4 | Line masks + method choice | Overfill under 10% |
-| 5 | Compressed keyframe cache + per-job cap | < 100 MB/min |
-| 6 | Global fill cache and job-delete cleanup | Same source reuses fills |
-| 7 | Plan preview and residual check | No auto-apply above budget |
+| 1 | Instrument false text, layers, cleaned seconds, cache bytes | Numbers match disk |
+| 2 | Multi-frame consensus + junk filter + speech match | Corpus false positives < 1/min |
+| 3 | Block tracklets and review queue | One layer per real text |
+| 4 | Tight glyph masks, always AI fill | Quality equal or better |
+| 5 | Compressed keyframe cache + global dedupe | 89 s job under 200 MB |
+| 6 | Provider interface + estimate/consent | Estimate matches invoice |
+| 7 | ProPainter remote test | < $0.05/cleaned s, quality gate |
+| 8 | VOID remote test | Same gate; keep only if it wins |
 
-## 8. Non-goals
+## 9. Non-goals
 
-- No per-video threshold tuning. Thresholds live in settings and are tested on
-  the corpus.
-- No second model. Detection quality comes from consensus, not a bigger net.
-- No silent auto-clean. Above the budget, the user sees the plan first.
-
-## 9. Files
-
-- `detect.py` — OCR filter, merge, tracklets.
-- `cleanup.py` — tracklet-to-layer plan, merge rules.
-- `routes_studio.py` — auto-clean route and budget.
-- `textfill/__init__.py` — keyframe cache, span cache, pruning.
-- `static/studio/edit/layers/clean.js` — plan summary and warnings.
-- `tests/test_auto_clean.py`, `tests/test_clean_r0.py`, `tests/test_textfill.py`.
+- No blur fallback for hard text.
+- No skipping text because it is small, busy, low-confidence or near a crop.
+- No hard cap that lowers quality.
+- No per-video threshold tuning.
+- No generative prompt editing of the whole frame.
+- No remote upload without explicit consent.
