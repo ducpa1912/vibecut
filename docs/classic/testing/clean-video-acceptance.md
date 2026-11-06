@@ -1,13 +1,13 @@
 # Clean video acceptance — founder gate
 
-Status: **PENDING**. No founder pass is recorded on this tip. The automated
-suites prove the stubbed pipeline and the UI states; they do not prove image
-quality on real footage, a real LaMa model pack, or the full-length file on
-disk.
+Status: **PENDING**. No founder pass is recorded on this tip. Automated tests
+are engineering checks only; they are not acceptance. Only the human run on
+real footage with the real model pack counts. No generated media or fake voice
+is used in this document.
 
-Tip for this pass: `classic` at the commit that adds Phase 5 polish. The
-reviewer writes the verdict in this file and in the phase notes; a green test
-run alone is not acceptance.
+Tip for this pass: the current `classic` tip after Phase 5. The reviewer writes
+the verdict in this file and in the phase notes; a green test run alone is not
+acceptance.
 
 ## Terminal 1 — serve Classic
 
@@ -159,20 +159,41 @@ Expected:
 - With **Reduce motion** enabled in the OS, page scrolls jump and transitions
   and animations do not play.
 
-## Automated evidence
+## Real-use Playwright script
 
-Run without starting the real server:
+The script drives the real server and the real video. It does not start the
+server, generate media, fake voice, or stub a route.
+
+Terminal 2:
 
 ```bash
 cd /Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic
-python3 -m pytest tests/test_classic_phase5.py -q
-python3 -m pytest tests/test_classic_phase5_browser.py -q
-python3 -m pytest tests/test_classic_source_clean_browser.py tests/test_classic_cut_clean_browser.py tests/test_classic_source_clean_gates.py -q
+CLASSIC_REAL_VIDEO="/absolute/path/to/your-real-video.mp4" \
+  node scripts/classic-real-acceptance.mjs
 ```
 
-Expected: all pass. The browser specs start their own private loopback uvicorn
-and stop it when the spec ends. They skip (exit 2) when Node Playwright is not
-installed, which is not a pass.
+Add the cut pass:
+
+```bash
+CLASSIC_REAL_VIDEO="/absolute/path/to/your-real-video.mp4" \
+CLASSIC_REAL_CUT=1 \
+  node scripts/classic-real-acceptance.mjs
+```
+
+Optional:
+
+```bash
+CLASSIC_URL="http://127.0.0.1:8796/" \
+CLASSIC_OUT_DIR="$HOME/vibecut-lanes/real-acceptance/run-1" \
+CLASSIC_VIEWPORT="1280x800" \
+CLASSIC_REAL_VIDEO="/absolute/path/to/your-real-video.mp4" \
+  node scripts/classic-real-acceptance.mjs
+```
+
+The script writes screenshots, a JSON report, and the downloaded files under
+`CLASSIC_OUT_DIR` (default `~/vibecut-lanes/real-acceptance/<timestamp>`). It
+stops for human review when the scan finds only low-confidence rows; it never
+auto-ticks those.
 
 ## Result
 
