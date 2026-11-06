@@ -379,7 +379,7 @@ days.
 
 The main screen accepts:
 
-- **Drop a video** — upload. The default ceiling is 20 GB
+- **Drop a video** — upload. The default ceiling is 10 GB per video
   (`VIBECUT_MAX_UPLOAD_GB`).
 - **Use a local path instead** — analyze a file in place without copying it.
 - **Paste a video link** — URL ingest through yt-dlp, with an optional
@@ -915,7 +915,7 @@ keep physical blocks until reused.
 | `VIBECUT_KEEP_RENDERS` | `1` | With pruning on: newest finals kept per group. |
 | `VIBECUT_KEEP_DRAFTS` | `0` | Keep drafts after a final exists. |
 | `VIBECUT_SOURCES_GC_DAYS` | `0` (off) | Opt-in sweep of unreferenced source-store entries. |
-| `VIBECUT_STORY_TIMEOUT` | `1800` | Seconds before the story queue watchdog stops a render. |
+| `VIBECUT_STORY_TIMEOUT` | Longer of 1800 and 200 × the story's seconds | Seconds before the story queue watchdog stops a render. |
 | `VIBECUT_EXPERIMENTAL` | `0` | Enables post-v1 routes such as the hook matrix. |
 | `VIBECUT_HISTORY_MAX` | `50` | History entries per job; hard maximum 200. |
 
@@ -931,8 +931,8 @@ installed engines, models and cache sizes with removal hints.
 | `VIBECUT_PORT` | `8787` | HTTP port. |
 | `VIBECUT_DATA` | `./data` | Data root. |
 | `VIBECUT_TOKEN` | unset | Shared app token for `/api/*` and UI media. |
-| `VIBECUT_MAX_UPLOAD_GB` | `20` | Upload ceiling. |
-| `VIBECUT_URL_MAX_GB` | `4` | xhs_get download ceiling. |
+| `VIBECUT_MAX_UPLOAD_GB` | `10` | Upload ceiling, per video. |
+| `VIBECUT_URL_MAX_GB` | `2` | xhs_get download ceiling, per video. |
 | `VIBECUT_DEEP_SCENES` | `300` | Deep-read shortlist size. |
 | `VIBECUT_ENCODER` | `auto` | `auto`, `videotoolbox` or `libx264`. |
 | `VIBECUT_RENDER_WORKERS` | `4` | Parallel segment workers. |

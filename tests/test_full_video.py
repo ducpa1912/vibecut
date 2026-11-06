@@ -81,3 +81,29 @@ def test_a_full_video_alone_opens_edit_and_finish():
     assert "records[0]?.stories" not in shell
     opened = stories.index("await openFullVideo(job.id)")
     assert stories.index("ctx.refreshSteps?.()", opened) < stories.index('ctx.go("edit"', opened)
+
+
+def test_a_beat_limit_follows_its_length_and_picture_size():
+    assert render._beat_limit(3.0, 1080, 1920) == render.BEAT_MIN_SECONDS
+    assert render._beat_limit(60.0, 1080, 1920) == 480
+    assert render._beat_limit(600.0, 1080, 1920) == 4800
+    assert render._beat_limit(60.0, 2160, 3840) == 1920
+    assert render._beat_limit(60.0, 720, 1280) == 480
+    assert render._beat_limit(0.0, 0, 0) == render.BEAT_MIN_SECONDS
+
+
+def test_joining_beats_is_limited_by_the_video_not_the_beat_count(tmp_path, monkeypatch):
+    limits = []
+
+    def fake_run(cmd, timeout=None, cwd=None, cancel_event=None):
+        limits.append(timeout)
+        if len(limits) == 1:
+            raise render.PipelineError("copy failed")
+
+    monkeypatch.setattr(render, "_run", fake_run)
+    monkeypatch.setattr(render, "_ffmpeg", lambda: "ffmpeg")
+    render._concat_video(
+        tmp_path, tmp_path / "out.mp4", [tmp_path / "a.mp4"], "final",
+        total=1800.0, size=(1080, 1920),
+    )
+    assert limits == [1800, 14400]

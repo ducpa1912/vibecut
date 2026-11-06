@@ -1167,6 +1167,12 @@ def test_the_upload_limit_counts_each_video_on_its_own(data_env, monkeypatch):
             assert response.status_code != 413
 
 
+def test_import_limits_default_to_10_gb_and_2_gb():
+    root = Path(app.__file__).parent
+    assert '"VIBECUT_MAX_UPLOAD_GB", "10"' in (root / "app.py").read_text()
+    assert '"VIBECUT_URL_MAX_GB", "2") or 2' in (root / "url_ingest" / "xhs.py").read_text()
+
+
 def test_url_preflight_and_invalid_size_hint(data_env, monkeypatch):
     monkeypatch.setattr(disk, "usage", lambda path: _usage(100 * GIB, 4 * GIB))
     with TestClient(app.app) as client:

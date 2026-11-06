@@ -98,7 +98,7 @@ Hosted API (Studio, `hosted` profile) ── Postgres: users, job owners, orders
 | `GET /api/jobs` lists every job | **Anyone sees everyone's videos** | Owner check on all about 180 routes, denied by default, with a test that walks every route |
 | `POST /api/jobs/path` imports a server path | **Reads files from the server** | Not in the hosted profile |
 | Setup holds provider keys and settings | Shared secrets are exposed | Not in the hosted profile; admin only |
-| Upload limit 20 GB, through the API | Disk and cost abuse | Resumable direct upload, starting at 2 GB and 60 minutes |
+| Upload limit 10 GB, through the API | Disk and cost abuse | Resumable direct upload, starting at 2 GB and 60 minutes |
 | In-process pools, one render at a time | One user blocks everyone | Worker queue with per-user limits |
 | `vision.py` and Apple Speech are macOS only | No OCR or local speech on Linux | Linux OCR and speech, tested against Apple's results first |
 | `textfill/sttn.py` chooses only `cpu` or `mps` | No Nvidia GPU support | Add `cuda`, and measure it |

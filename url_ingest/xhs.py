@@ -97,7 +97,7 @@ _SKIPPED = (
 
 
 MAX_DOWNLOAD_BYTES = int(
-    float(os.environ.get("VIBECUT_URL_MAX_GB", "4") or 4) * 1024 ** 3
+    float(os.environ.get("VIBECUT_URL_MAX_GB", "2") or 2) * 1024 ** 3
 )
 
 

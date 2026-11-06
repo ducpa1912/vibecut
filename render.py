@@ -472,7 +472,24 @@ def _blank_segment(
         "-video_track_timescale", "90000",
         "-avoid_negative_ts", "make_zero",
         str(output),
-    ], timeout=300, cancel_event=cancel_event)
+    ], timeout=_beat_limit(duration, out_w, out_h), cancel_event=cancel_event)
+
+
+# The real cut ran near 4× faster than the video on this Mac, with beats sharing
+# the cores: these limits only catch a stuck ffmpeg, not a slow one.
+BEAT_MIN_SECONDS = 180
+BEAT_TIMES_LENGTH = 8
+HD_PIXELS = 1920 * 1080
+
+
+def _beat_limit(seconds: float, width: int, height: int) -> int:
+    """Seconds an encode of this length may take, at this picture size.
+
+    Time grows with the length and the pixels, measured from 1080p. A short beat
+    keeps a floor, since opening a large source takes time whatever the length.
+    """
+    pixels = max(1.0, int(width or 0) * int(height or 0) / HD_PIXELS)
+    return max(BEAT_MIN_SECONDS, int(float(seconds or 0.0) * BEAT_TIMES_LENGTH * pixels))
 
 
 def _segment_cache_key(
@@ -632,7 +649,12 @@ def _segment(
         "-muxdelay", "0", "-muxpreload", "0",
         str(part),
     ]
-    _run(cmd, timeout=300, cancel_event=cancel_event)
+    # The source's size too: a 4K source costs its decode in a 720p render.
+    pixels = max(
+        out_w * out_h,
+        int(meta.get("width") or 0) * int(meta.get("height") or 0),
+    )
+    _run(cmd, timeout=_beat_limit(duration, pixels, 1), cancel_event=cancel_event)
     cache_dir.mkdir(parents=True, exist_ok=True)
     try:
         os.replace(part, cached)
@@ -2031,8 +2053,14 @@ def _concat_video(
     cancel_event: threading.Event | None = None,
     *,
     encoder: str = "libx264",
+    total: float = 0.0,
+    size: tuple[int, int] = (0, 0),
 ) -> None:
-    """Join cached video segments without audio. Stays a copy when possible."""
+    """Join cached video segments without audio. Stays a copy when possible.
+
+    A copy only moves bytes, so it gets the video's length, in real time, as its
+    limit. The fallback encodes everything, so it is limited like one long beat.
+    """
     ffmpeg = _ffmpeg()
     list_path = tmp / "segments.txt"
     if not segments:
@@ -2048,7 +2076,8 @@ def _concat_video(
         str(target_mp4),
     ]
     try:
-        _run(final, timeout=max(600, 30 * len(segments)), cwd=tmp, cancel_event=cancel_event)
+        copy_limit = max(BEAT_MIN_SECONDS, 2 * len(segments), int(total or 0.0))
+        _run(final, timeout=copy_limit, cwd=tmp, cancel_event=cancel_event)
         return
     except RenderCancelled:
         raise
@@ -2060,7 +2089,7 @@ def _concat_video(
         "-map_metadata", "-1",
         str(target_mp4),
     ]
-    _run(fallback, timeout=max(900, 120 * len(segments)), cwd=tmp, cancel_event=cancel_event)
+    _run(fallback, timeout=_beat_limit(total, *size), cwd=tmp, cancel_event=cancel_event)
 
 
 def _mux(
@@ -2407,7 +2436,10 @@ def build_story_proxy(
             )
             segments.append(segment_path)
         master = tmp / "master.mp4"
-        _concat_video(tmp, master, segments, "draft", cancel_event, encoder=encoder)
+        _concat_video(
+            tmp, master, segments, "draft", cancel_event,
+            encoder=encoder, total=total, size=(out_w, out_h),
+        )
         audio_path = tmp / "audio.wav"
         _audio_track(
             source, meta, proxy_clips, audio_path, total, cancel_event,
@@ -2905,7 +2937,10 @@ def render_reel(
             progress(0.82, "Joining the cut")
             master_tmp = tmp / "master.mp4"
             with _stage(timings, "concat"):
-                _concat_video(tmp, master_tmp, segments, quality, cancel_event, encoder=encoder)
+                _concat_video(
+                    tmp, master_tmp, segments, quality, cancel_event,
+                    encoder=encoder, total=total, size=(out_w, out_h),
+                )
             if layers:
                 progress(0.87, "Burning layers")
                 layered = tmp / "layers.mp4"
