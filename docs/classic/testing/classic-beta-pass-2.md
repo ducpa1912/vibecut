@@ -245,6 +245,8 @@ Added on 2026-11-05 from what Studio learned. **No real video has run on this co
 | 9A.11 | Open a job you cleaned earlier with an STTN box, if you have one. Render it. | It opens and renders with LaMa, with no error. | |
 | 9A.12 | Restart the server. Queue a story with AI fill, wait for several percent, click **Pause**, then **Resume**. | Pause stops within seconds. Resume climbs fast back to where it was, the message counts saved fills reused, then the time left appears. **Write the time to catch up here,** and note whether the join shows in the result. | |
 | 9A.13 | During a fill, stop the server. Start it again, then click **Resume**. | Same as 9A.12: the work is not lost. The Mac does not sleep during a render unless the lid is closed. | |
+| 9A.14 | After `big-lama.pt` is in the models folder, restart the server and render the shot from 9A.10 again. | The progress message says **GPU**. **Write the time here.** Play it next to the earlier render and note any difference in the filled area. | |
+| 9A.15 | Render the same cut again after changing one box's end time. | It finishes much faster than the first time, and the message counts saved fills reused. | |
 
 ## 10. Known issues
 

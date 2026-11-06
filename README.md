@@ -920,6 +920,7 @@ keep physical blocks until reused.
 | `VIBECUT_KEEP_RENDERS` | `1` | With pruning on: newest finals kept per group. |
 | `VIBECUT_KEEP_DRAFTS` | `0` | Keep drafts after a final exists. |
 | `VIBECUT_SOURCES_GC_DAYS` | `0` (off) | Opt-in sweep of unreferenced source-store entries. |
+| `VIBECUT_FILL_DEVICE` | automatic | AI fill uses the Apple GPU when PyTorch and `big-lama.pt` are present. `cpu` keeps it on the CPU. |
 | `VIBECUT_STORY_TIMEOUT` | `0` (no limit) | Seconds before the story queue watchdog stops a render. |
 | `VIBECUT_BATCH_ANALYSIS_TIMEOUT` | `0` (no limit) | Seconds a batch item may analyse before it fails. |
 | `VIBECUT_BATCH_RENDER_TIMEOUT` | `0` (no limit) | Seconds a batch item may render before it fails. |

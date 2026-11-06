@@ -315,21 +315,27 @@
   },
   {
    "path": "textfill/__init__.py",
-   "source": "studio 4c4c769: stop an unplanned box running LaMa on nearly every frame",
-   "sha256": "ae11eea3f2d9434469aacdedae30b5bcbab2cb40b9964e548b51831dc268416a",
-   "feature_version": "1.0.5"
+   "source": "studio 8810335: LaMa on the Apple GPU, saved fills kept across renders",
+   "sha256": "46827331e25d7aa31a83a88f5d2a00caae8048b6295d37e54a5f1045136d773a",
+   "feature_version": "1.0.6"
   },
   {
    "path": "textfill/lama.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "3b0810b8f8ddd6ea281d4f53aadc758a483e6817965eeb45a616ed4c881a0c10",
-   "feature_version": "1.0.2"
+   "source": "studio 8810335: LaMa on the Apple GPU, saved fills kept across renders",
+   "sha256": "4568429813543de50e8394a0e57c2040f4393198c818211f1b79e75fe1b7201f",
+   "feature_version": "1.0.3"
   },
   {
    "path": "textfill/mask.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "b1758784badc718bab5116ca5ca9c1e7b98d84a7dbc3c19468e78b50b184cc97",
-   "feature_version": "1.0.3"
+   "source": "studio 8810335: LaMa on the Apple GPU, saved fills kept across renders",
+   "sha256": "c0d26152cbbcc16df7cbd71b02081865f196860bbc00faf93b23301350baff78",
+   "feature_version": "1.0.4"
+  },
+  {
+   "path": "textfill/torch_fill.py",
+   "source": "studio 8810335: LaMa on the Apple GPU, saved fills kept across renders",
+   "sha256": "d11a53ff70692d8e834839df79dd8930061eaa582110e494be7184954bdbb21a",
+   "feature_version": "1.0.0"
   },
   {
    "path": "tighten.py",

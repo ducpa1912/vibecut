@@ -887,18 +887,6 @@ def test_a_resumed_clip_matches_one_that_never_stopped(tmp_path):
     assert second_filler.calls <= whole_filler.calls - first_filler.calls
 
 
-def test_a_finished_clip_removes_its_saved_fills(tmp_path):
-    filler = _PictureFiller()
-    area = _moving_frames(1)[0]
-    mask = np.ones(area.shape[:2], dtype=bool)
-    folder = tmp_path / "saved"
-    saved = textfill._SavedFills(filler, folder, "model-a")
-    saved.fill(area, mask)
-    assert list(folder.glob("*.npy"))
-    saved.forget()
-    assert not folder.exists()
-
-
 def test_tidying_saved_fills_drops_old_ones_and_leftovers(tmp_path, monkeypatch):
     import os
 
@@ -1009,8 +997,8 @@ def test_stopping_a_clip_keeps_its_fills_and_the_next_run_uses_them(tmp_path, mo
     assert replays
     # A resumed clip is not a speed to learn from.
     assert rates == []
-    # Finished: the clip holds them now.
-    assert not folder.exists()
+    # Kept, so a later edit can reuse what it still asks for.
+    assert list(folder.glob("*.npy"))
     (tmp_path / "fresh").mkdir()
     fresh_calls = _span_with_counting_model(tmp_path / "fresh", monkeypatch)[1].calls
     assert model.calls < fresh_calls
@@ -1031,7 +1019,6 @@ def test_a_clip_with_nothing_saved_still_teaches_the_speed(tmp_path, monkeypatch
     assert model.calls > 0
     assert len(rates) == 1
     assert not any("saved fills reused" in message for message in messages)
-    assert not (tmp_path / "fill" / textfill.SAVED_DIR).exists()
 
 
 def test_time_left_ignores_frames_a_resume_replayed(tmp_path, monkeypatch):
@@ -1231,3 +1218,193 @@ def test_a_frame_past_the_real_end_of_a_source_uses_its_last_frame(monkeypatch, 
     payload = render.render_story_frame("s.mp4", {}, job_dir, compiled, 1.0)
     assert payload == b"jpeg"
     assert any("-sseof" in cmd for cmd in commands)
+
+
+# --- the Apple GPU ------------------------------------------------------------
+
+
+class _Counting:
+    def __init__(self):
+        self.calls = 0
+
+    def fill(self, area, mask):
+        self.calls += 1
+        out = area.copy()
+        out[mask] = 128
+        return out
+
+
+def _picture(height=200, width=320, seed=3):
+    rng = np.random.default_rng(seed)
+    coarse = rng.integers(0, 255, (height // 8 + 2, width // 8 + 2, 3), dtype=np.uint8)
+    return np.repeat(np.repeat(coarse, 8, axis=0), 8, axis=1)[:height, :width].copy()
+
+
+def test_fills_use_the_gpu_only_when_its_model_is_here(tmp_path, monkeypatch):
+    import textfill.torch_fill as torch_fill
+
+    monkeypatch.delenv("VIBECUT_FILL_DEVICE", raising=False)
+    monkeypatch.setattr(torch_fill, "gpu_possible", lambda: True)
+    assert textfill.chosen_device(tmp_path) == "cpu"
+    assert "big-lama.pt" in textfill.gpu_problem(tmp_path)
+    (tmp_path / "big-lama.pt").write_bytes(b"x")
+    assert textfill.chosen_device(tmp_path) == "gpu"
+    monkeypatch.setenv("VIBECUT_FILL_DEVICE", "cpu")
+    assert textfill.chosen_device(tmp_path) == "cpu"
+    monkeypatch.delenv("VIBECUT_FILL_DEVICE")
+    monkeypatch.setattr(torch_fill, "gpu_possible", lambda: False)
+    assert textfill.chosen_device(tmp_path) == "cpu"
+
+
+def test_a_clip_from_one_chip_is_not_taken_for_the_other(tmp_path, monkeypatch):
+    import textfill.torch_fill as torch_fill
+
+    monkeypatch.delenv("VIBECUT_FILL_DEVICE", raising=False)
+    monkeypatch.setattr(torch_fill, "gpu_possible", lambda: True)
+    (tmp_path / "lama_fp32.onnx").write_bytes(b"cpu")
+    before = textfill.method_stamp("lama", tmp_path)
+    assert before == textfill.method_stamp("lama", tmp_path, "cpu")
+    signature = textfill.model_signature(["lama"], tmp_path)
+    (tmp_path / "big-lama.pt").write_bytes(b"gpu")
+    assert textfill.method_stamp("lama", tmp_path).endswith(":gpu")
+    assert textfill.model_signature(["lama"], tmp_path) != signature
+    monkeypatch.setenv("VIBECUT_FILL_DEVICE", "cpu")
+    # Without the GPU, nothing made on the CPU before this change is made again.
+    assert textfill.method_stamp("lama", tmp_path) == before
+    assert textfill.model_signature(["lama"], tmp_path) == signature
+
+
+def test_a_gpu_that_fails_hands_the_render_to_the_cpu():
+    class Bad:
+        def fill(self, area, mask):
+            raise RuntimeError("MPS backend out of memory")
+
+    cpu = _Counting()
+    chosen = textfill._GpuOrCpu(lambda: Bad(), lambda: cpu)
+    area = _picture(40, 40)
+    mask = np.ones((40, 40), dtype=bool)
+    assert chosen.fill(area, mask).shape == area.shape
+    assert chosen.on_gpu is False and cpu.calls == 1
+    chosen.fill(area, mask)
+    assert cpu.calls == 2
+
+
+def test_a_gpu_that_cannot_load_starts_on_the_cpu():
+    def broken():
+        raise RuntimeError("no MPS device")
+
+    cpu = _Counting()
+    chosen = textfill._GpuOrCpu(broken, lambda: cpu)
+    assert chosen.on_gpu is False
+    chosen.fill(_picture(40, 40), np.ones((40, 40), dtype=bool))
+    assert cpu.calls == 1
+
+
+def test_lama_on_the_gpu_returns_the_work_area_size(monkeypatch):
+    torch = pytest.importorskip("torch")
+    import textfill.torch_fill as torch_fill
+
+    def model(image, mask):
+        return torch.full_like(image, 0.5)
+
+    monkeypatch.setattr(torch_fill, "_load", lambda _path, _device: model)
+    filler = torch_fill.LamaGpuFiller(Path("big-lama.pt"))
+    filler.device = "cpu"
+    out = filler.fill(_picture(100, 300), np.ones((100, 300), dtype=bool))
+    assert out.shape == (100, 300, 3)
+    assert out.dtype == np.uint8
+
+
+def test_each_chip_keeps_its_own_speed(tmp_path):
+    textfill.record_rate(tmp_path, "lama", 10, 40.0)
+    textfill.record_rate(tmp_path, "lama", 10, 8.0, "gpu")
+    assert textfill.fill_rate(tmp_path, "lama")["seconds"] == pytest.approx(4.0)
+    assert textfill.fill_rate(tmp_path, "lama", "gpu")["seconds"] == pytest.approx(0.8)
+    base = {"method": "lama", "frames": 100, "units": 10.0, "cached": False}
+    assert textfill.estimate_summary([{**base, "device": "gpu"}], tmp_path)["seconds"] == pytest.approx(8.0)
+    assert textfill.estimate_summary([{**base, "device": "cpu"}], tmp_path)["seconds"] == pytest.approx(40.0)
+
+
+def test_a_gpu_with_no_measured_speed_promises_no_time(tmp_path):
+    textfill.record_rate(tmp_path, "lama", 10, 40.0)
+    assert textfill.fill_rate(tmp_path, "lama", "gpu") == {"seconds": None, "measured": False}
+
+
+# --- saved fills stay after a clip, and feathering and pasting do less --------
+
+
+def test_saved_fills_outlive_the_clip_and_the_cap_covers_every_video(tmp_path, monkeypatch):
+    import os
+
+    one = tmp_path / "jobs" / "a" / "fill" / "saved"
+    two = tmp_path / "jobs" / "b" / "fill" / "source" / "saved"
+    one.mkdir(parents=True)
+    two.mkdir(parents=True)
+    now = 2_000_000_000.0
+    for index, folder in enumerate((one, two, one)):
+        path = folder / f"{index}.npy"
+        path.write_bytes(b"x" * 10)
+        os.utime(path, (now - 100 + index, now - 100 + index))
+    monkeypatch.setattr(textfill, "SAVED_MAX_BYTES", 15)
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: 10 ** 15)
+    folders = textfill._saved_folders(tmp_path)
+    assert set(folders) == {one, two}
+    textfill._prune_saved(folders, now=now)
+    assert [path.name for path in one.iterdir()] == ["2.npy"]
+    assert list(two.iterdir()) == []
+
+
+def test_saved_fills_give_way_when_the_disk_is_short(tmp_path, monkeypatch):
+    import os
+
+    now = 2_000_000_000.0
+    for index in range(4):
+        path = tmp_path / f"{index}.npy"
+        path.write_bytes(b"x" * 10)
+        os.utime(path, (now - 10 + index, now - 10 + index))
+    monkeypatch.setattr(textfill, "SAVED_MIN_FREE", 100)
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: 85)
+    textfill._prune_saved(tmp_path, now=now)
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["2.npy", "3.npy"]
+
+
+def test_no_fill_is_saved_when_the_disk_is_short(tmp_path, monkeypatch):
+    monkeypatch.setattr(textfill, "_free_disk", lambda _path: 0)
+    model = _Counting()
+    saved = textfill._SavedFills(model, tmp_path / "saved", "m")
+    saved.fill(_picture(40, 40), np.ones((40, 40), dtype=bool))
+    assert model.calls == 1
+    assert not (tmp_path / "saved").exists()
+
+
+def test_a_box_with_the_same_hole_is_feathered_once(monkeypatch):
+    calls = []
+    real = masks.feather
+
+    def counted(hole, *args, **kwargs):
+        calls.append(1)
+        return real(hole, *args, **kwargs)
+
+    monkeypatch.setattr(masks, "feather", counted)
+    frames = [_picture() for _ in range(10)]
+    list(textfill.fill_frames_lama(
+        iter(frames), lambda _index: [(60, 80, 260, 120)], _Counting(), None, step=5,
+        plan_for=lambda _index: (5, textfill.LAMA_MOTION_LIMIT, False),
+    ))
+    assert len(calls) == 1
+
+
+def test_paste_touches_only_the_hole_and_matches_a_full_blend():
+    rng = np.random.default_rng(1)
+    original = rng.integers(0, 255, (60, 80, 3), dtype=np.uint8)
+    filled = rng.integers(0, 255, (60, 80, 3), dtype=np.uint8)
+    hole = np.zeros((60, 80), dtype=bool)
+    hole[20:30, 30:50] = True
+    alpha = masks.feather(hole)
+    weight = alpha[..., None]
+    full = np.clip(
+        np.rint(original.astype(np.float32) * (1 - weight) + filled.astype(np.float32) * weight), 0, 255,
+    ).astype(np.uint8)
+    full[alpha <= 0] = original[alpha <= 0]
+    assert np.array_equal(masks.paste(original, filled, alpha), full)
+    assert np.array_equal(masks.paste(original, filled, np.zeros((60, 80), dtype=np.float32)), original)

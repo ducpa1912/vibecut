@@ -1273,6 +1273,9 @@ def classic_fill_status() -> dict:
         (engine for engine in CLASSIC_FILL_ENGINES if engines[engine]["ready"]),
         None,
     )
+    import textfill
+
+    gpu_reason = textfill.gpu_problem(directory)
     ready_names = [FILL_ENGINE_MODEL[item] for item in CLASSIC_FILL_ENGINES
                    if engines[item]["ready"]]
     return {
@@ -1284,6 +1287,8 @@ def classic_fill_status() -> dict:
         "default": default,
         # The preview and the render use the same engine.
         "preview": default,
+        # Fills use the GPU by themselves when it can run them.
+        "gpu": {"ready": gpu_reason is None, "reason": gpu_reason or ""},
         "methods": ["blur", "crop"] + ([default] if default else []),
         "note": (
             "AI fill is ready with " + " and ".join(ready_names) + "."
