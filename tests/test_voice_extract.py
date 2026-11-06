@@ -7,6 +7,7 @@ One test at the bottom needs a real ffmpeg.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -30,6 +31,18 @@ import voice_extract
 def isolated_cache(monkeypatch, tmp_path):
     """Cache keys are content hashes, so tests with equal bytes must not share."""
     monkeypatch.setattr(audio, "CACHE", tmp_path / "cache")
+
+
+@pytest.fixture
+def fake_torch(monkeypatch):
+    """Diarization tests fake pyannote; torch is optional in CI too."""
+    module = types.ModuleType("torch")
+    module.backends = types.SimpleNamespace(
+        mps=types.SimpleNamespace(is_available=lambda: False),
+    )
+    module.device = lambda name: name
+    monkeypatch.setitem(sys.modules, "torch", module)
+    return module
 
 
 def _speech_wav(path: Path, seconds: float = 6.0, *, gain_db: float | None = None) -> Path:
@@ -319,7 +332,7 @@ def test_available_backends_reports_installed_engines(monkeypatch):
     }
 
 
-def test_speaker_filter_keeps_only_the_chosen_speaker(tmp_path, monkeypatch):
+def test_speaker_filter_keeps_only_the_chosen_speaker(tmp_path, monkeypatch, fake_torch):
     annotation = types.SimpleNamespace(
         itertracks=lambda yield_label=False: iter([
             (types.SimpleNamespace(start=0.0, end=2.0), None, "SPEAKER_00"),
@@ -354,7 +367,7 @@ def test_speaker_filter_keeps_only_the_chosen_speaker(tmp_path, monkeypatch):
     assert warnings == []
 
 
-def test_speaker_filter_warns_about_overlapping_speech(tmp_path, monkeypatch):
+def test_speaker_filter_warns_about_overlapping_speech(tmp_path, monkeypatch, fake_torch):
     annotation = types.SimpleNamespace(
         itertracks=lambda yield_label=False: iter([
             (types.SimpleNamespace(start=0.0, end=3.0), None, "SPEAKER_00"),
@@ -385,7 +398,7 @@ def test_speaker_filter_warns_about_overlapping_speech(tmp_path, monkeypatch):
     assert any("Overlapping speech" in item for item in warnings)
 
 
-def test_speaker_filter_names_available_labels(tmp_path, monkeypatch):
+def test_speaker_filter_names_available_labels(tmp_path, monkeypatch, fake_torch):
     annotation = types.SimpleNamespace(
         itertracks=lambda yield_label=False: iter([
             (types.SimpleNamespace(start=0.0, end=2.0), None, "SPEAKER_00"),
@@ -411,6 +424,29 @@ def test_speaker_filter_names_available_labels(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_store, "get_secret", lambda name: "hf_test")
     with pytest.raises(audio.AudioError, match="Available: SPEAKER_00"):
         voice_extract._speaker_spans(tmp_path / "in.wav", [(0.0, 2.0)], "SPEAKER_09", None)
+
+
+def test_speaker_filter_reports_missing_torch(tmp_path, monkeypatch):
+    monkeypatch.setattr(voice_extract, "_pyannote", lambda: True)
+    monkeypatch.setattr(settings_store, "get_secret", lambda name: "hf_test")
+    import builtins
+
+    original = builtins.__import__
+
+    def no_torch(name, *args, **kwargs):
+        if name == "torch":
+            raise ImportError("No module named 'torch'")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_torch)
+    monkeypatch.setattr(
+        voice_extract.importlib.util, "find_spec",
+        lambda name: None if name == "torch" else importlib.util.find_spec(name),
+    )
+    with pytest.raises(audio.AudioError, match="needs torch"):
+        voice_extract._speaker_spans(
+            tmp_path / "in.wav", [(0.0, 2.0)], 1, None,
+        )
 
 
 # ---------------------------------------------------------------- denoise + engines

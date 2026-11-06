@@ -14,6 +14,7 @@ missing. Cache layout mirrors the Demucs stems cache in ``audio.py``.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -489,6 +490,14 @@ def _speaker_spans(
     _check(cancel_event)
     try:
         import torch  # noqa: PLC0415
+    except ImportError:
+        if importlib.util.find_spec("torch") is not None:
+            raise
+        raise audio.AudioError(
+            "Speaker filtering needs torch. Install it with "
+            "`pip install torch`, then try again."
+        ) from None
+    try:
         from pyannote.audio import Pipeline  # noqa: PLC0415
 
         try:

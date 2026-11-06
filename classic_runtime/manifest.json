@@ -435,9 +435,9 @@
   },
   {
    "path": "voice_extract.py",
-   "source": "classic 2f385a2",
-   "sha256": "0182170b10419d5724c512bcfbf41d59a918a18446a6f99423269068c2df1454",
-   "feature_version": "1.0.0"
+   "source": "classic: clear torch-missing message",
+   "sha256": "c2bd122438968581ea5d8676cc1bed4227e139dd033b39d9f47deed6ec11ce62",
+   "feature_version": "1.0.1"
   },
   {
    "path": "voice_fit.py",

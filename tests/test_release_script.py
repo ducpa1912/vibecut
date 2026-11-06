@@ -105,6 +105,18 @@ def test_an_unknown_signature_base_fails_closed(tmp_path):
 def test_the_tracked_signature_base_is_behind_classic():
     root = SCRIPT.parent.parent
     first = (root / "scripts" / "release-signature-base").read_text().splitlines()[0]
+    present = subprocess.run(
+        ["git", "cat-file", "-e", f"{first}^{{commit}}"], cwd=root,
+    )
+    shallow = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=root, capture_output=True, text=True,
+    ).stdout.strip() == "true"
+    if present.returncode != 0 and shallow:
+        pytest.skip(
+            "signature base commit is not in this shallow clone; fetch full "
+            "history with `git fetch --unshallow` to run this check."
+        )
     subprocess.run(
         ["git", "merge-base", "--is-ancestor", first, "HEAD"], cwd=root, check=True,
     )
