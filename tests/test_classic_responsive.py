@@ -54,12 +54,14 @@ def test_the_moments_gallery_sits_before_the_smart_cut():
 def test_a_finished_render_scrolls_the_player_into_view_once():
     script = (ROOT / "static" / "classic" / "app.js").read_text(encoding="utf-8")
     assert "const revealPlayer = state.renderWasActive === true && !active;" in script
-    assert "dom.playerWrap.scrollIntoView({ behavior: \"smooth\", block: \"center\" })" in script
+    assert 'scrollIntoViewSafe(dom.playerWrap, { behavior: "smooth", block: "center" })' in script
 
 
 def test_mobile_result_actions_use_three_columns():
     css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
-    start = css.rindex("@media (max-width: 680px)")
+    marker = "grid-template-columns: repeat(3, minmax(0, 1fr));"
+    found = css.index(marker)
+    start = css.rindex("@media (max-width: 680px)", 0, found)
     block = css[start:css.index("@media (max-width: 480px)", start)]
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in block
     assert ".result-actions .primary," in block

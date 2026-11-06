@@ -189,14 +189,47 @@ done because tests pass; the product owner gate is separate.
 
 ## Phase 5 — Polish and final gate
 
-- Type, spacing, focus rings, keyboard, reduced motion, 11 px floor.
-- Responsive: 1440×900 and 1280×800; rail becomes a bottom sheet under 1100 px.
-- Copy review: controls name the action; errors name the problem and recovery.
-- Playwright: no console errors, no horizontal overflow, click counts.
-- Full suite green.
-- Real-clip acceptance: founder-provided media, before/after matches preview and
-  render, full-length download plays, cancel leaves no `.part`.
-- Docs updated. Signed commits. `main` not moved.
+Status: **built, automated suites green, founder acceptance PENDING.** The
+developer pass is done on `classic` after `fb433d7`. The product-owner gate is
+still open; see `docs/classic/testing/clean-video-acceptance.md`.
+
+### Build
+
+- Type floor is 11 px everywhere; the body-level `--dim` override is `#9a999f`
+  so muted copy is 6.6:1 on `--panel`, and disabled controls no longer fade
+  below readable contrast.
+- Focus rings are declared for buttons, rows, checkboxes, selects, the scrub,
+  the job menu and frame boxes/handles. Setup fields no longer set
+  `outline: none`.
+- `prefers-reduced-motion: reduce` stops animations, transitions, CSS smooth
+  scroll and every programmatic `scrollIntoView`.
+- `Escape` closes the row detail and the job menu and returns focus. Rows and
+  checkboxes keep their keyboard seek/toggle behaviour.
+- Responsive: 1440×900 and 1280×800 keep the frame and rail side by side. Under
+  1100 px the rail is a rounded bottom sheet below the frame at 1050×800 and
+  900×800, with the primary pinned to the sheet's bottom edge. No horizontal
+  overflow.
+- Copy: errors name the problem and the recovery. Raw model paths, ffmpeg tails
+  and analysis detail stay in the console; visible titles/tooltips are plain.
+  Vietnamese covers the new clean-again, review, stale, no-baseline and
+  no-text-row copy.
+- Clean opens on the first timed text row. When no row exists, the frame says
+  **No text row at 0:00. Scrub the frame or scan again.**
+- A cut record that says ready without a media URL is treated as failed; it
+  offers a retry and no dead Download.
+- One primary action remains per Clean screen; no duplicate scan affordance.
+
+### Acceptance for Phase 5
+
+- Full non-browser Classic suite: 444 passed, 5 skipped (real-media-only).
+- Stubbed browser harness: Source Clean, Cut Clean, Source Clean gates and the
+  new Phase 5 spec pass at 1440/1280/1050/900.
+- New tests: `tests/test_classic_phase5.py`,
+  `tests/test_classic_phase5_browser.py`.
+- Real-clip acceptance remains **PENDING** for the founder. Commands and the
+  checklist are in `docs/classic/testing/clean-video-acceptance.md`.
+- Signed commits and `main` not moved remain ship steps, not part of this
+  developer pass.
 
 ## Deferred and carry-forward
 
@@ -214,13 +247,18 @@ done because tests pass; the product owner gate is separate.
 - The source frame route paints Blur only. The filled "after" frame comes from
   `/fill/preview`; Phase 2 must pair them so the frame looks filled.
 - A raw encoder failure can still expose ffmpeg text. Map it to a plain
-  "Clean could not encode this source" message in a later copy pass.
+  "Clean could not encode this source" message in a later copy pass. **Done in
+  Phase 5:** visible copy says the size cannot be encoded or the clean did not
+  finish; the raw tail goes to `console.warn`.
 - Phase 5: opening the cut at 0:00 can show the source's black fade; start the
-  preview on the first usable frame or explain the fade.
+  preview on the first usable frame or explain the fade. **Done:** Clean opens
+  on the first timed text row, otherwise the frame says there is no text row at 0:00.
 - Phase 5: raw analysis detail can reach the frame tooltip; keep diagnostics in
-  the detail strip, not in founder-facing hover copy.
+  the detail strip, not in founder-facing hover copy. **Done:** raw frame,
+  model and render detail goes to `console.warn`; titles and tooltips are plain.
 - Phase 5: normalize Clean identity tokens across reloads and carried layers so
-  the same text and box never compare as two identities.
+  the same text and box never compare as two identities. **Carried from Phase
+  3; not part of the Phase 5 polish above.**
 
 ## Review loop
 

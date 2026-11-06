@@ -30,6 +30,29 @@
     circle: "Circle (centre)",
   };
 
+  // Raw engine detail is logged once per label + message, never inside visible
+  // copy and never in a tooltip.
+  const diagnosticsLogged = new Set();
+
+  // Motion is a preference, not a decoration: any programmatic scroll must ask
+  // before it animates. CSS also disables animations and transitions in the
+  // reduced-motion media query; this covers the JS-only smooth scrolls.
+  function reducedMotion() {
+    try {
+      return window.matchMedia("(prefers-reduced-motion: reduce)").matches === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function scrollIntoViewSafe(node, options = {}) {
+    if (!node || typeof node.scrollIntoView !== "function") return;
+    node.scrollIntoView({
+      ...options,
+      behavior: reducedMotion() ? "auto" : (options.behavior || "auto"),
+    });
+  }
+
   const dom = {
     ingest: $("#ingest-view"),
     progress: $("#progress-view"),
@@ -443,7 +466,13 @@
       pendingTickReset: "",
       tickStoreKey: "",
       foundMethod: "fill",
+      detailIdentity: "",
       fillPreview: null,
+      // Clean opens on the first text-bearing row when it can, so a black hook
+      // fade is not the only first impression. The zero note is a plain
+      // explanation when there is no row to open on.
+      openedAtFirstText: false,
+      zeroNote: false,
       // The frame is cropped; boxes are stored in source space. The server
       // sends each segment's crop with its frame, keyed by segment position.
       crops: {},
@@ -1724,6 +1753,7 @@
     const count = group.jobs.length;
     const { failed, status, statusText } = recentStatus(job);
     const error = String(job.error || job.ingest_error || (failed ? job.message : "") || "").trim();
+    const plainError = error ? plainJobError(error) : "";
     const selected = state.recentSelectedId === job.id || state.job?.id === job.id;
     return `
       <div class="recent-item">
@@ -1738,7 +1768,7 @@
             <span class="recent-status-text">${esc(statusText)}</span>
             <span class="dot${failed ? " failed" : LIVE_JOB_STATUS.has(job.status) ? " live" : ""}">${esc(status)}</span>
           </span>
-          ${error ? `<span class="recent-error" title="${esc(error)}">${esc(error)}</span>` : ""}
+          ${error ? `<span class="recent-error">${esc(plainError)}</span>` : ""}
         </button>
       </div>`;
   }
@@ -1929,7 +1959,7 @@
     dom.hookChange.addEventListener("click", () => {
       setSort("best");
       setMomentsExpanded(true, { scroll: false });
-      dom.momentsSection?.scrollIntoView({ behavior: "smooth", block: "start" });
+      scrollIntoViewSafe(dom.momentsSection, { behavior: "smooth", block: "start" });
       toast("Tap a scene, then use it as the hook.");
     });
     dom.resetHook.addEventListener("click", resetHook);
@@ -2278,7 +2308,7 @@
       dom.momentsExpand.setAttribute("aria-expanded", state.momentsExpanded ? "true" : "false");
       if (state.momentsExpanded) {
         renderMomentList();
-        dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        scrollIntoViewSafe(dom.momentsFull, { behavior: "smooth", block: "nearest" });
       }
       updateMomentControls(
         state.job?.analysis?.scenes?.length || 0,
@@ -3050,10 +3080,11 @@
     dom.progressError.hidden = !(cleanTerminal || status.status === "failed");
     if (cleanTerminal) {
       dom.progressError.textContent = tr(cleanTerminalCopy(status.status));
-      dom.progressError.title = raw;
+      dom.progressError.title = "";
       if (raw) console.warn("Classic clean analysis stopped:", raw);
     } else if (status.status === "failed") {
-      dom.progressError.textContent = raw || "Analysis failed.";
+      if (raw) console.warn("Classic analysis failed:", raw);
+      dom.progressError.textContent = `${tr("Analysis failed.")} ${tr("Retry analysis, or go back to ingest.")}`;
       dom.progressError.title = "";
     } else {
       dom.progressError.textContent = "";
@@ -3164,7 +3195,7 @@
       }
       dom.progressError.hidden = false;
       dom.progressError.textContent = "Analysis did not start. Try again.";
-      dom.progressError.title = error.message || "";
+      dom.progressError.title = "";
       if (error.message) console.warn("Classic analysis did not start:", error.message);
     }
   }
@@ -3455,8 +3486,9 @@
     applyCleanMode(clean);
     if (clean) {
       renderCutCleanHeader();
+      const moved = openCleanAtFirstText();
       paintCleanStage();
-      scheduleCleanFrame();
+      scheduleCleanFrame(moved);
     }
   }
 
@@ -3518,8 +3550,11 @@
   }
 
   function sourceCleanFailureText(record) {
-    const reason = clipText(record?.error || record?.message || "The clean render did not finish.", 240);
-    return `Clean failed: ${reason} Retry; no partial file is kept.`;
+    const raw = cleanDiagnostic(
+      "Classic source clean failed:",
+      record?.error || record?.message || "",
+    );
+    return `Clean failed: ${plainCleanError(raw)}`;
   }
 
   function sourceLowRows(rows) {
@@ -3819,20 +3854,24 @@
     const working = scanActive || state.cutCleanBusy;
     const record = working ? null : cutCleanRenderRecord();
     const renderActive = isRenderActive(record);
-    const recordReady = record?.status === "ready";
+    const missingFile = Boolean(record?.status === "ready" && !record.url);
+    const recordReady = Boolean(record?.status === "ready" && record.url);
     const staleState = recordReady ? renderStaleFor(record) : { stale: false, noBaseline: false };
     const stale = Boolean(recordReady && staleState.stale);
     const noBaseline = Boolean(recordReady && staleState.noBaseline);
     const ready = Boolean(recordReady && !stale);
-    const failed = record?.status === "failed" || record?.status === "cancelled";
+    const failed = record?.status === "failed" || record?.status === "cancelled" || missingFile;
     const engine = cutCleanEngineLabel();
     const duration = cleanCutTotal();
 
     if (recordReady || failed) state.cutCleanPhase = "";
-    if (record?.status === "cancelled") {
+    if (missingFile) {
+      setCutCleanNote("The rendered file is missing. Render again; no Download is offered.");
+    } else if (record?.status === "cancelled") {
       setCutCleanNote("Render cancelled. Nothing partial is kept. Clean again when ready.");
     } else if (record?.status === "failed") {
-      setCutCleanNote(`Render failed: ${clipText(record?.error || "the cut did not render.", 200)} Nothing partial is kept.`);
+      const raw = cleanDiagnostic("Classic cut render failed:", record?.error || "");
+      setCutCleanNote(`Render failed: ${tr(plainRenderError(raw))}`);
     }
 
     let progress = 0;
@@ -3865,7 +3904,7 @@
           summary += ` · ${tr("No render baseline on this browser. Render again to confirm this cut matches.")}`;
         }
       } else if (failed) {
-        summary = `Render failed: ${clipText(record?.error || "the cut did not render.", 200)} Render again; no partial file is kept.`;
+        summary = `Render failed: ${tr(plainRenderError(record?.error || record?.message || ""))}`;
       } else if (renderActive || state.cutCleanPhase === "Rendering") {
         summary = "Rendering the cut with its Clean boxes.";
       } else if (state.cutCleanPhase === "Cleaning") {
@@ -3885,8 +3924,12 @@
         const count = ticked || applied || foundRows.length;
         const reviewNote = low ? ` · review ${low} more` : "";
         const fillReason = !fillEngineReady()
-          ? (state.fill?.engines?.lama?.reason || state.fill?.note || "")
+          ? "AI fill needs its model pack · Blur and Crop guard work"
           : "";
+        if (!fillEngineReady()) {
+          cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason
+            || state.fill?.note || "");
+        }
         summary = `${count} text${count === 1 ? "" : "s"} · ${engine}${reviewNote}${fillReason ? ` · ${fillReason}` : ""}`;
       } else {
         summary = "No text scan yet for this cut.";
@@ -4046,7 +4089,7 @@
           ? `${rows.length} text${rows.length === 1 ? "" : "s"} found · review ${low} low-confidence row${low === 1 ? "" : "s"}; tick the ones to remove.`
           : `${rows.length} text${rows.length === 1 ? "" : "s"} found. Tick the ones to remove, or review the list.`);
         paintCutClean();
-        dom.cleanFound?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        scrollIntoViewSafe(dom.cleanFound, { behavior: "smooth", block: "nearest" });
         dom.cleanFound?.querySelector(".clean-found-row")?.focus();
         return;
       }
@@ -4098,7 +4141,7 @@
         if (!state.job || state.cleanScope !== "cut") return;
         setCutCleanNote("Scan cancelled. Nothing was cleaned or rendered. Scan again when ready.");
       } catch (error) {
-        setCutCleanNote(`Cancel did not reach the scan: ${error.message}. Retry, or wait for it to finish.`);
+        setCutCleanNote("Cancel did not reach the scan. Wait, then try again.");
       } finally {
         paintCutClean();
       }
@@ -4155,7 +4198,8 @@
       return;
     }
     const staleRecord = record?.status === "ready" && renderStaleFor(record).stale;
-    const failedRecord = record?.status === "failed" || record?.status === "cancelled";
+    const failedRecord = record?.status === "failed" || record?.status === "cancelled"
+      || Boolean(record?.status === "ready" && !record.url);
     const staleNeedsReview = staleRecord && review.needsReview && review.applied === 0;
     if (staleRecord && !staleNeedsReview) {
       await runCutClean();
@@ -4165,9 +4209,13 @@
       await runCutClean({ renderOnly: true });
       return;
     }
+    if (failedRecord && !ticked && review.applied === 0) {
+      await runCutClean({ renderOnly: true });
+      return;
+    }
     if (state.textScan?.status === "ready" && review.needsReview
       && review.applied === 0 && !failedRecord) {
-      dom.cleanFound?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      scrollIntoViewSafe(dom.cleanFound, { behavior: "smooth", block: "nearest" });
       const reviewRow = review.low
         ? dom.cleanFound?.querySelector(".clean-found-row.is-low")
         : dom.cleanFound?.querySelector(".clean-found-row");
@@ -4242,8 +4290,9 @@
         state.sourceClean = {
           ...(state.sourceClean || {}),
           status: "failed",
-          error: `The clean status could not be read: ${error.message}. Retry when the server is reachable.`,
+          error: "The clean status could not be read. Check the server, then retry.",
         };
+        cleanDiagnostic("Classic clean status failed:", error.message);
         paintSourceClean();
       }
     };
@@ -4261,7 +4310,8 @@
       else if (sourceCleanActive(record)) startSourceCleanPoll(id);
     } catch (error) {
       if (!state.job || state.job.id !== id) return;
-      state.sourceCleanNote = `The Clean status is unavailable: ${error.message}. Run a scan or retry.`;
+      state.sourceCleanNote = "The Clean status could not be read. Check the server, then retry.";
+      cleanDiagnostic("Classic clean status failed:", error.message);
     }
     paintSourceClean();
   }
@@ -4362,7 +4412,7 @@
     if (!ticked && !hasLayers) {
       state.sourceCleanNote = `${rows.length} text${rows.length === 1 ? "" : "s"} found. Tick the ones to remove, or review the list.`;
       paintSourceClean();
-      dom.cleanFound?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      scrollIntoViewSafe(dom.cleanFound, { behavior: "smooth", block: "nearest" });
       dom.cleanFound?.querySelector(".clean-found-row")?.focus();
       return;
     }
@@ -4412,17 +4462,8 @@
   }
 
   function sourceCleanErrorText(error) {
-    const message = clipText(error?.message || "The clean render did not finish.", 240);
-    if (/fill_running|already running/i.test(message)) {
-      return "A fill is already running. Wait for it or cancel it, then retry. Nothing was rendered.";
-    }
-    if (/model|not installed|missing/i.test(message)) {
-      return `${message} Install the LaMa pack in Setup, or use Blur, then retry.`;
-    }
-    if (/even width|H\.264/i.test(message)) {
-      return `${message} Use an even-size source, then retry.`;
-    }
-    return `${message} Nothing partial is kept. Retry when ready.`;
+    const raw = cleanDiagnostic("Classic clean render did not start:", error?.message || "");
+    return plainCleanError(raw);
   }
 
   async function startSourceCleanRender() {
@@ -4482,7 +4523,7 @@
         if (!state.job || state.job.id !== id) return;
         state.sourceCleanNote = "Scan cancelled. Nothing was cleaned or rendered. Scan again when ready.";
       } catch (error) {
-        state.sourceCleanNote = `Cancel did not reach the scan: ${error.message}. Retry, or wait for it to finish.`;
+        state.sourceCleanNote = "Cancel did not reach the scan. Wait, then try again.";
       } finally {
         if (dom.sourceCleanCancel) dom.sourceCleanCancel.disabled = false;
         paintSourceClean();
@@ -4502,7 +4543,7 @@
       if (sourceCleanActive(state.sourceClean)) startSourceCleanPoll(id);
     } catch (error) {
       if (!state.job || state.job.id !== id) return;
-      state.sourceCleanNote = `Cancel did not reach the render: ${error.message}. Retry, or wait for it to finish.`;
+      state.sourceCleanNote = "Cancel did not reach the render. Wait, then try again.";
       paintSourceClean();
     } finally {
       if (dom.sourceCleanCancel) dom.sourceCleanCancel.disabled = false;
@@ -4722,6 +4763,9 @@
     scheduleCleanFrame();
     await loadSourceCleanRecord();
     paintSourceClean();
+    openCleanAtFirstText();
+    paintCleanStage();
+    scheduleCleanFrame();
     history.replaceState(null, "", jobHash(job.id));
     document.title = `${fileStem(job.source.name)} · VibeCut`;
   }
@@ -5158,7 +5202,7 @@
     dom.mixerPanel.hidden = !state.mixerOpen;
     if (state.mixerOpen) {
       drawMixer();
-      dom.mixerPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      scrollIntoViewSafe(dom.mixerPanel, { behavior: "smooth", block: "nearest" });
     }
   }
 
@@ -6065,7 +6109,7 @@
     if (state.momentsExpanded) {
       renderMomentList();
       if (options.scroll !== false) {
-        dom.momentsFull.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        scrollIntoViewSafe(dom.momentsFull, { behavior: "smooth", block: "nearest" });
       }
     }
   }
@@ -6269,7 +6313,7 @@
       loadAudioMoods();
       loadAudioScript();
       toast(state.overrideHook === null ? "Auto hook restored." : `Hook set to ${fmtTime(scene?.start || 0, 1)}.`);
-      document.querySelector(".export-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      scrollIntoViewSafe(document.querySelector(".export-panel"), { behavior: "smooth", block: "start" });
     } catch (error) {
       state.overrideHook = previous;
       await refreshPlan();
@@ -9151,18 +9195,10 @@
     return clips.length ? `clip ${clips.length}/${clips.length}` : "";
   }
 
-  function cleanClipTitle(t) {
-    if (state.cleanScope === "source") return "";
-    const clips = state.plan?.clips || [];
-    let cursor = 0;
-    for (const clip of clips) {
-      const span = Math.max(0, Number(clip.end) - Number(clip.start));
-      if (t < cursor + span + 1e-6) {
-        const scene = sceneById(clip.scene);
-        return scene ? clipText(sceneLine(scene), 90) : "";
-      }
-      cursor += span;
-    }
+  // The bar already shows the clip position and role. The old tooltip put raw
+  // OCR or speech analysis into a hover title; diagnostics stay in the detail
+  // strip, not in founder-facing copy.
+  function cleanClipTitle() {
     return "";
   }
 
@@ -9236,11 +9272,13 @@
       if (dom.cleanPreviewAi) {
         const ready = fillEngineReady();
         dom.cleanPreviewAi.disabled = !ready;
-        dom.cleanPreviewAi.title = ready
-          ? "Use AI fill for the selected box or the ticked text."
-          : (state.fill?.engines?.lama?.reason
-            || state.fill?.note
-            || "AI fill needs its model pack. Blur works now.");
+        if (ready) {
+          dom.cleanPreviewAi.title = "Use AI fill for the selected box or the ticked text.";
+        } else {
+          cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason
+            || state.fill?.note || "");
+          dom.cleanPreviewAi.title = "AI fill needs its model pack. Install it in Setup, or use Blur.";
+        }
       }
       dom.cleanCanvas.classList.toggle("is-drawing", state.classicText.drawMode);
     }
@@ -9388,8 +9426,12 @@
       if (state.classicText.drawMode) message = "Drag on the frame to draw a box.";
       else if (frame.busy) message = "Rendering this frame…";
       else if (frame.error) message = cleanShortError(frame.error);
+      else if (state.classicText.zeroNote && currentCleanTime() <= 0.05) {
+        message = "No text row at 0:00. Scrub the frame or scan again.";
+      }
+      if (frame.error) cleanDiagnostic("Classic clean frame failed:", frame.error);
       dom.cleanFrameState.textContent = message;
-      dom.cleanFrameState.title = frame.error || "";
+      dom.cleanFrameState.title = "";
       dom.cleanFrameState.hidden = !message;
     }
     if (dom.cleanFrame) dom.cleanFrame.hidden = !state.classicText.frame.url;
@@ -9513,7 +9555,8 @@
       if (error && (error.name === "AbortError" || controller.signal.aborted)) return;
       if (seq !== state.classicText.frame.seq) return;
       state.classicText.frame.key = "";
-      state.classicText.frame.error = `Frame failed: ${error.message}`;
+      cleanDiagnostic("Classic clean frame failed:", error.message);
+      state.classicText.frame.error = "The frame did not render. Retry Refresh; the Clean boxes are unchanged.";
     } finally {
       if (seq === state.classicText.frame.seq) {
         state.classicText.frame.busy = false;
@@ -9536,12 +9579,130 @@
   }
 
   // An ffmpeg tail is diagnostic, not a caption: one line on the frame, the
-  // whole tail in the tooltip so nothing is hidden from the founder.
+  // whole tail in the console. No tooltip carries the raw engine text.
   function cleanShortError(message) {
     const lines = String(message || "").split("\n").map((line) => line.trim()).filter(Boolean);
     const first = lines[0] || "The frame did not render.";
     const more = lines.length > 1 ? ` (${lines.length - 1} more lines)` : "";
     return first.length > 140 ? `${first.slice(0, 137)}…${more}` : `${first}${more}`;
+  }
+
+  function cleanDiagnostic(label, value) {
+    const raw = String(value || "").trim();
+    const key = `${label}\n${raw}`;
+    if (raw && !diagnosticsLogged.has(key)) {
+      diagnosticsLogged.add(key);
+      console.warn(label, raw);
+    }
+    return raw;
+  }
+
+  // Visible copy names the problem and the recovery. Raw paths, ffmpeg tails
+  // and model file names stay in the console where a founder can share them.
+  function plainCleanError(value) {
+    const raw = String(value || "");
+    if (/clean file is missing/i.test(raw)) {
+      return "The clean file is missing. Render it again; no Download is offered.";
+    }
+    if (/no readable duration|has no readable duration/i.test(raw)) {
+      return "This source has no readable duration. Choose another file.";
+    }
+    if (/no clean boxes/i.test(raw)) {
+      return "No Clean boxes to render. Draw a box or tick a text row.";
+    }
+    if (/crop guard/i.test(raw)) {
+      return "Crop guard is not available on the whole video. Use Blur or AI fill.";
+    }
+    if (/fill_running|already running/i.test(raw)) {
+      return "A fill is already running. Wait for it or cancel it, then retry.";
+    }
+    if (/model|not installed|model pack/i.test(raw)) {
+      return "The clean model is missing. Install it in Setup, or choose Blur, then retry.";
+    }
+    if (/even width|H\.264|[Oo]dd (width|height)/.test(raw)) {
+      return "This file size cannot be encoded. Use an even-size source, then retry.";
+    }
+    if (/cancel/i.test(raw)) return "The clean was cancelled.";
+    return "The clean did not finish. Retry; no partial file is kept.";
+  }
+
+  function plainRenderError(value) {
+    const raw = String(value || "");
+    if (/model|not installed|fill model|model pack/i.test(raw)) {
+      return "The fill model is missing. Install it in Setup, or use Blur, then retry.";
+    }
+    if (/missing scene|scene .* does not exist/i.test(raw)) {
+      return "The cut changed while rendering. Render it again.";
+    }
+    if (/even width|H\.264|[Oo]dd (width|height)/.test(raw)) {
+      return "This file size cannot be encoded. Use an even-size source, then retry.";
+    }
+    if (/cancel/i.test(raw)) return "The render was cancelled.";
+    return "The render did not finish. Retry; no partial file is kept.";
+  }
+
+  function plainJobError(value) {
+    const raw = String(value || "");
+    if (/cancel/i.test(raw)) return "The job was cancelled.";
+    if (/ffmpeg is not installed|not on PATH/i.test(raw)) {
+      return "ffmpeg is missing. Install ffmpeg, then retry.";
+    }
+    if (/format is not available|requested format/i.test(raw)) {
+      return "That video format is not available. Choose another format or link.";
+    }
+    if (/private|unavailable|not available|sign in|log in/i.test(raw)) {
+      return "That video is not available. Check the link or sign in, then retry.";
+    }
+    if (/unsupported|invalid format/i.test(raw)) {
+      return "This video format is not supported. Use another file or link.";
+    }
+    if (/download|yt-dlp|network/i.test(raw)) {
+      return "The video could not be downloaded. Check the link and retry.";
+    }
+    if (/model|not installed|missing/i.test(raw)) {
+      return "The model is missing. Open Setup, then retry.";
+    }
+    if (/vision|ocr|text/i.test(raw)) return "The text scan failed. Retry the scan.";
+    return "The job stopped before it finished. Open it and retry.";
+  }
+
+  function cleanFirstTextTime() {
+    let first = null;
+    let any = false;
+    for (const row of cleanScanRows()) {
+      if (row.manual || row.added) continue;
+      any = true;
+      // A row without ranges covers the whole video. Prefer a real timed row,
+      // otherwise a logo at 0:00 would hide the subtitle that starts later.
+      if (!Array.isArray(row.ranges) || !row.ranges.length) continue;
+      const value = state.cleanScope === "source"
+        ? Number(row.ranges[0].start)
+        : cleanRowCutStart(row);
+      if (value === null || value === undefined) continue;
+      const start = Number(value);
+      if (!Number.isFinite(start) || start < 0) continue;
+      if (first === null || start < first) first = start;
+    }
+    if (first === null && any) return 0;
+    return first;
+  }
+
+  // One-shot on entering Clean. A row at or near the first frame means there
+  // is no fade to explain; a later row moves the playhead to that picture.
+  function openCleanAtFirstText() {
+    if (state.classicText.openedAtFirstText) return false;
+    state.classicText.openedAtFirstText = true;
+    const start = cleanFirstTextTime();
+    if (start === null) {
+      state.classicText.zeroNote = currentCleanTime() <= 0.05;
+      return false;
+    }
+    state.classicText.zeroNote = false;
+    if (start > 0.05 && currentCleanTime() <= 0.05) {
+      state.classicText.t = start;
+      return true;
+    }
+    return false;
   }
 
   function scheduleCleanFrame(force = false) {
@@ -9915,6 +10076,7 @@
     // double-click); Edit keeps the drawer.
     if (scene && !cutCleanActive()) openDrawer(scene.id);
     state.classicText.t = Math.max(0, cutStart - 0.5);
+    state.classicText.zeroNote = false;
     state.classicText.focusBox = row.box;
     if (row.layer_id && classicCleanLayers().some((layer) => layer.id === row.layer_id)) {
       state.classicText.selection = row.layer_id;
@@ -9922,7 +10084,7 @@
     if (dom.cleanScrub) dom.cleanScrub.value = String(state.classicText.t);
     paintCleanStage({ rows: false });
     scheduleCleanFrame();
-    dom.cleanStage?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    scrollIntoViewSafe(dom.cleanStage, { behavior: "smooth", block: "nearest" });
     setCleanStatus(scene
       ? `Moment ${scene.id + 1} · ${fmtTime(cutStart, 1)} · ${row.kind}`
       : `${sourceMode ? "Source" : "Cut"} ${fmtTime(cutStart, 1)} · ${row.kind}`);
@@ -9938,6 +10100,7 @@
     if (!row || !dom.cleanDetail) return;
     const sourceScope = state.cleanScope === "source";
     const time = cleanRowTimeLabel(row);
+    state.classicText.detailIdentity = cleanRowIdentity(row);
     dom.cleanDetail.hidden = false;
     dom.cleanDetail.innerHTML = `
       <div><strong>${esc(row.text || "Text")}</strong> · ${esc(row.kind || "text")}</div>
@@ -10008,6 +10171,20 @@
     const tickCount = sourceScope
       ? sourceTickedCount(rows, ticks)
       : cutCleanTickedCount(rows, ticks);
+    // A scan can finish after Clean opened. The first text-bearing row is then
+    // the honest first picture; no paint here, because renderCleanFound runs
+    // inside paintCleanStage.
+    if (state.classicText.zeroNote) {
+      const start = cleanFirstTextTime();
+      if (start !== null) {
+        state.classicText.zeroNote = false;
+        if (start > 0.05 && currentCleanTime() <= 0.05) {
+          state.classicText.t = start;
+          if (dom.cleanScrub) dom.cleanScrub.value = String(start);
+          scheduleCleanFrame(true);
+        }
+      }
+    }
     const readyText = fillEngineReady()
       ? `AI fill ready${fill.default ? ` · ${esc(String(fill.default).toUpperCase())} by default` : ""}`
       : (state.cleanScope === "source"
@@ -10650,6 +10827,7 @@
     });
     dom.cleanScrub?.addEventListener("input", () => {
       state.classicText.t = Number(dom.cleanScrub.value) || 0;
+      state.classicText.zeroNote = false;
       paintCleanStage();
       scheduleCleanFrame();
     });
@@ -10700,7 +10878,7 @@
       }
       if (event.target.closest("[data-found-review]")) {
         const first = dom.cleanFound?.querySelector(".clean-found-row.is-low");
-        first?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        scrollIntoViewSafe(first, { behavior: "smooth", block: "nearest" });
         first?.focus();
         setCleanStatus("Low-confidence rows stay visible. Tick the ones you recognise, then clean.");
         return;
@@ -10795,9 +10973,9 @@
     });
     dom.cleanPreviewAi?.addEventListener("click", () => {
       if (!fillEngineReady()) {
-        setCleanStatus(state.fill?.engines?.lama?.reason
-          || state.fill?.note
-          || "AI fill needs its model pack. Blur works now.");
+        cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason
+          || state.fill?.note || "");
+        setCleanStatus("AI fill needs its model pack. Install it in Setup, or use Blur.");
         return;
       }
       const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
@@ -10842,6 +11020,21 @@
     if (event.key === "Escape" && dom.shortcutsSheet && !dom.shortcutsSheet.hidden) {
       event.preventDefault();
       closeShortcuts();
+      return true;
+    }
+    if (event.key === "Escape" && dom.cleanDetail && !dom.cleanDetail.hidden) {
+      event.preventDefault();
+      const identity = state.classicText.detailIdentity;
+      dom.cleanDetail.hidden = true;
+      dom.cleanDetail.innerHTML = "";
+      const index = identity
+        ? cleanScanRows().findIndex((row) => cleanRowIdentity(row) === identity)
+        : -1;
+      const target = index >= 0
+        ? dom.cleanFound?.querySelector(`[data-found-index="${index}"]`)
+        : dom.cleanFound?.querySelector("[data-found-index]");
+      target?.focus({ preventScroll: true });
+      state.classicText.detailIdentity = "";
       return true;
     }
     if (typing) return false;
@@ -10945,7 +11138,7 @@
   function momentsScanAction() {
     if (!state.job || state.cleanScope === "source") return;
     setResultMode("clean");
-    dom.cutCleanAction?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    scrollIntoViewSafe(dom.cutCleanAction, { block: "nearest", behavior: "smooth" });
   }
 
   // ------------------------------------------------------------ shortcut sheet
@@ -11280,7 +11473,7 @@
       if (revealPlayer && state.playerScrollKey !== record.key) {
         state.playerScrollKey = record.key;
         setTimeout(() => {
-          dom.playerWrap.scrollIntoView({ behavior: "smooth", block: "center" });
+          scrollIntoViewSafe(dom.playerWrap, { behavior: "smooth", block: "center" });
         }, 60);
       }
     };
@@ -11319,7 +11512,8 @@
     const failed = (finalMatches && finalRecord.status === "failed" && finalRecord)
       || (draftMatches && draftRecord.status === "failed" && draftRecord);
     if (failed) {
-      dom.renderError.textContent = failed.error || "Render failed.";
+      cleanDiagnostic("Classic render failed:", failed.error || "");
+      dom.renderError.textContent = tr(plainRenderError(failed.error));
       dom.renderError.hidden = false;
     }
 

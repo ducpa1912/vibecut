@@ -35,7 +35,7 @@ def test_the_player_scrolls_only_on_the_ready_transition():
 
 def test_the_ready_scroll_still_targets_the_player():
     js = script()
-    assert 'dom.playerWrap.scrollIntoView({ behavior: "smooth", block: "center" })' in js
+    assert 'scrollIntoViewSafe(dom.playerWrap, { behavior: "smooth", block: "center" })' in js
 
 
 def test_a_new_render_clears_the_scroll_key():
@@ -63,7 +63,9 @@ def test_moments_sit_before_smart_cut_and_the_player_before_edit():
 
 def test_mobile_moments_stack_heading_controls_legend_rail():
     sheet = css()
-    start = sheet.rindex("@media (max-width: 680px)")
+    marker = ".moments-head { flex-direction: column; align-items: stretch; gap: 10px; }"
+    found = sheet.index(marker)
+    start = sheet.rindex("@media (max-width: 680px)", 0, found)
     block = sheet[start:sheet.index("@media (max-width: 480px)", start)]
     assert ".moments-head { flex-direction: column; align-items: stretch; gap: 10px; }" in block
     assert ".scene-tools { flex-direction: row;" in block

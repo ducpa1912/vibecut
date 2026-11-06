@@ -204,7 +204,8 @@ def test_source_rail_reuses_the_clean_panel_and_names_every_state():
     assert "body.source-mode .editor-pane-settings > *:not(#clean-panel)" in css
     assert ".source-clean-action {" in css
     assert "position: sticky;" in css
-    assert "@media (min-width: 1000px) and (max-width: 1099px)" in css
+    assert "@media (min-width: 1100px)" in css
+    assert "@media (max-width: 1099px)" in css
 
 
 def test_vietnamese_dictionary_covers_the_new_ingest_and_source_copy():

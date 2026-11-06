@@ -102,4 +102,5 @@ and Linux run the same UI with cloud AI where native engines are absent. The
 interface is English with a curated Vietnamese translation. Rendering, files
 and caches stay on the machine.
 
-Last updated: 2026-11-05, Classic at `70e51dd`.
+Last updated: 2026-11-06, Classic after `fb433d7` (Phase 5 polish;
+founder clean-video acceptance PENDING).

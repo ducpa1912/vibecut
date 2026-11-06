@@ -76,7 +76,8 @@ def test_unavailable_models_are_disabled_options():
     assert "${disabled ? \" disabled\" : \"\"}" in script
     css = (ROOT / "static" / "classic" / "style.css").read_text(encoding="utf-8")
     assert ".select-menu button:disabled" in css
-    assert "filter: blur(0.35px)" in css
+    assert "opacity: 0.62" in css
+    assert "filter: blur(0.35px)" not in css
     assert 'event.target?.closest?.(".select-menu")' in script
 
 

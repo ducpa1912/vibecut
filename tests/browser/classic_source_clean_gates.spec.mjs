@@ -585,8 +585,10 @@ async function blurLong() {
     "source mode still shows Remove ticked");
   assert(await page.locator("#clean-preview-ai").isDisabled(),
     "AI fill button is enabled without the model");
-  assert(/lama_fp32\.onnx/.test(await page.locator("#clean-preview-ai").getAttribute("title") || ""),
-    "AI fill button hides the missing model reason");
+  const aiTitle = await page.locator("#clean-preview-ai").getAttribute("title") || "";
+  assert(/model pack/.test(aiTitle), `AI fill button hides the plain reason (${aiTitle})`);
+  assert(!/lama_fp32|Users|Library|\.onnx/.test(aiTitle),
+    `AI fill button leaked the model path into its title (${aiTitle})`);
 
   await page.locator("#source-clean-run").click();
   await page.waitForFunction(() => /Blur needs no fill estimate/.test(
@@ -789,7 +791,7 @@ async function terminalCleanRecovery() {
     assert(state.error === expected, `${status} copy is ${state.error}`);
     assert(!/\/private\/|\.mp4/.test(state.error),
       `${status} copy leaked a path or file name: ${state.error}`);
-    assert(state.title.includes("/private/"), `${status} raw detail is not in the title`);
+    assert(state.title === "", `${status} raw detail leaked into the title`);
     assert(!state.source && !state.retry && !state.download,
       `${status} recovery actions are hidden`);
     assert(state.back, `${status} kept Back to ingest`);

@@ -1,6 +1,7 @@
 # Classic lane plan
 
-Status: **active**, Classic lane only. Last reviewed at `classic` `c7032b8`.
+Status: **active**, Classic lane only. Phase 5 clean-video polish is built after
+`classic` `fb433d7` (founder acceptance PENDING).
 
 Classic is an independent lane. It owns `static/classic/**`, `routes_classic.py`,
 and `docs/classic/**`. It does not import Studio or Voice Room UI state, and it
@@ -134,6 +135,22 @@ and AI fill are built; none is founder-passed.
 - [x] C3: type scale, one glyph toolbar, layer colours, shortcuts, undo/redo.
 - [x] C4: Import, Moments and Finish brought onto the same frame. Classic
   keeps its own top bar instead of importing Studio's shared one.
+
+### F. Clean video and Clean cut
+
+Build contract: `docs/classic/design/clean-video-plan.md`. Phase 1–4 are built;
+Phase 5 polish is built and automated suites are green. Founder acceptance is
+still open.
+
+- [x] Phase 1: source-clean backend, original-size render, source frame.
+- [x] Phase 2: ingest `Clean video`, one-action Source Clean rail.
+- [x] Phase 3: Make a reel handoff and source layer carry.
+- [x] Phase 4: Cut Clean focus mode, one scan entry, one primary action.
+- [x] Phase 5: responsive bottom sheet, reduced motion, focus rings, 11 px
+  floor, plain error copy, Vietnamese entries, black-0:00 handling.
+- [ ] Founder clean-video acceptance on real media.
+  *(PENDING. Commands and checklist: `docs/classic/testing/clean-video-acceptance.md`.
+  The automated run is not a founder pass.)*
 
 ## Release gate
 

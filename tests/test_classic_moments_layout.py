@@ -97,7 +97,9 @@ def test_the_select_stays_32_pixels_at_every_width():
 
 def test_mobile_puts_heading_then_legend_then_rail_in_order():
     sheet = css()
-    start = sheet.rindex("@media (max-width: 680px)")
+    marker = ".moments-section { display: flex; flex-direction: column; }"
+    found = sheet.index(marker)
+    start = sheet.rindex("@media (max-width: 680px)", 0, found)
     block = sheet[start:sheet.index("@media (max-width: 480px)", start)]
     assert ".moments-section { display: flex; flex-direction: column; }" in block
     assert ".moments-head { order: 1; }" in block
