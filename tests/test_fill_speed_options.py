@@ -570,3 +570,31 @@ def test_the_queue_list_shows_the_order_things_will_run():
     assert json.loads(done.stdout) == ["now", "next", "newest"]
     assert '"Waiting"' in FINISH
 
+
+def test_every_queue_row_names_its_model_and_chip():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    url = (ROOT / "static/studio/finish.js").as_uri()
+    rows = [
+        {"fill_model": "lama"},
+        {"fill_model": "lama", "fill_device": "gpu"},
+        {"fill_model": "lama", "fill_follow": True},
+        {"fill_model": "migan"},
+        {"fill_model": "migan", "fill_device": "gpu"},
+        {"fill_model": "telea", "fill_device": "gpu"},
+        {},
+    ]
+    done = subprocess.run(
+        [node, "--input-type=module", "-e", (
+            f"const m = await import({json.dumps(url)});\n"
+            f"console.log(JSON.stringify({json.dumps(rows)}.map((row) => m.queueMethodWords(row).join(' '))));"
+        )],
+        capture_output=True, text=True, timeout=60, check=True,
+    )
+    assert json.loads(done.stdout) == [
+        "LaMa CPU", "LaMa GPU", "LaMa CPU Follow", "MI-GAN CPU", "MI-GAN GPU", "Telea", "",
+    ]
+    item = {"job_id": "j1", "set_id": "s1", "story_id": "a", "fill_model": "migan"}
+    assert story_queue.normalize_items([item])[0]["fill_model"] == "migan"
+

@@ -213,6 +213,22 @@ function fillChoiceWords(row) {
   ].filter(Boolean);
 }
 
+/**
+ * How a queued render's AI fill runs, always in full: model, chip, Follow.
+ * Older rows did not record their model, so they use the fallback.
+ */
+export function queueMethodWords(item, fallbackModel = "") {
+  const model = String(item?.fill_model || item?.fill_method || fallbackModel || "");
+  if (!model) return fillChoiceWords(item);
+  if (model === "mixed") return ["Mixed models", ...(item?.fill_follow === true ? ["Follow"] : [])];
+  const keyed = model === "lama" || model === "migan";
+  return [
+    FILL_MODEL_LABELS[model] || model,
+    keyed ? (item?.fill_device === "gpu" ? "GPU" : "CPU") : "",
+    keyed && item?.fill_follow === true ? "Follow" : "",
+  ].filter(Boolean);
+}
+
 /** The order queues will run in: what renders now, then oldest first. */
 export function queueRunOrder(rows) {
   const rendering = (queue) => (queue?.items || []).some((item) => String(item?.state) === "running");
@@ -1113,6 +1129,15 @@ export function mount(root, ctx) {
     const open = String(selectedStory()?.id || "") === String(storyId || "");
     const editHash = String(row?.edit_hash || "");
     return !(open && editHash && currentEdit?.hash && editHash !== String(currentEdit.hash));
+  }
+
+  /** A row from before queues recorded the model: the open Edit's, if it has one. */
+  function rowFallbackModel(item) {
+    if (String(item?.job_id || "") !== String(job?.id || "")) return "";
+    const models = new Set((Array.isArray(currentEdit?.clean) ? currentEdit.clean : [])
+      .filter((layer) => layer?.kind === "fill")
+      .map((layer) => String(layer?.method || "lama")));
+    return models.size === 1 ? [...models][0] : "";
   }
 
   function queuedMethod() {
@@ -2039,7 +2064,7 @@ export function mount(root, ctx) {
         text: [
           shape,
           QUEUE_QUALITY[running?.quality || items[0]?.quality] || "",
-          ...fillChoiceWords(running || items[0]),
+          ...queueMethodWords(running || items[0], rowFallbackModel(running || items[0])),
         ].filter(Boolean).join(" · "),
       }) : null,
       el("span", { class: "st-mono st-finish-queue-percent", text: `${percent}%` }),

@@ -7105,6 +7105,15 @@ def create_story_queue(body: StoryQueueBody) -> dict:
             )
             # A changed Edit is new work, even while the old one is still queued.
             item["edit_hash"] = str((edit or {}).get("hash") or "")
+            models = {
+                str(layer.get("method") or "lama")
+                for layer in (edit or {}).get("clean") or []
+                if isinstance(layer, dict) and layer.get("kind") == "fill"
+            }
+            item["fill_model"] = (
+                (str(item.get("fill_method") or "") or (models.pop() if len(models) == 1 else "mixed"))
+                if models else ""
+            )
     with _STORY_QUEUE_SUBMIT_LOCK:
         manager = story_queues()
         active = manager.list()

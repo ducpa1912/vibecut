@@ -136,6 +136,9 @@ def normalize_items(raw: object) -> list[dict]:
         edit_hash = str(value.get("edit_hash") or "")[:80]
         fill_method = str(value.get("fill_method") or "")
         fill_method = fill_method if fill_method in ("lama", "migan", "sttn", "telea", "ns") else ""
+        # What this render's AI fill runs on, for the queue to show. Not part of its identity.
+        fill_model = str(value.get("fill_model") or "")
+        fill_model = fill_model if fill_model in ("lama", "migan", "sttn", "telea", "ns", "mixed") else ""
         identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality, fill_device, fill_follow, fill_method)
         if identity in seen:
             raise QueueError(f"Item {index} repeats an earlier story and aspect.")
@@ -149,6 +152,7 @@ def normalize_items(raw: object) -> list[dict]:
             "fill_follow": fill_follow,
             "edit_hash": edit_hash,
             "fill_method": fill_method,
+            "fill_model": fill_model,
             "title": str(value.get("title") or "")[:200],
             "state": "queued",
             "artifact_id": None,
