@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
@@ -2549,6 +2550,27 @@ def keep_awake():
                 proc.wait()
 
 
+# How far back the fill's time left looks. A busy start, or a Mac that has since
+# warmed up, should stop counting within a couple of minutes.
+FILL_ETA_WINDOW_SECONDS = 120.0
+FILL_ETA_MIN_SECONDS = 20.0
+FILL_ETA_MIN_FRAMES = 10
+
+
+def _recent_seconds_per_frame(
+    samples: deque[tuple[float, float]], elapsed: float, worked: float,
+) -> float:
+    """Seconds per frame over the last two minutes, or the whole run until then."""
+    samples.append((elapsed, worked))
+    while len(samples) > 1 and elapsed - samples[1][0] >= FILL_ETA_WINDOW_SECONDS:
+        samples.popleft()
+    spent = elapsed - samples[0][0]
+    frames = worked - samples[0][1]
+    if spent >= FILL_ETA_MIN_SECONDS and frames >= FILL_ETA_MIN_FRAMES:
+        return spent / frames
+    return elapsed / max(worked, 1.0)
+
+
 def _prepare_fills(
     source: str,
     meta: dict,
@@ -2580,6 +2602,7 @@ def _prepare_fills(
     # Frames still to run. A beat found in the cache comes off this total.
     work_left = sum(int(segment["frames"]) for _index, segment in planned)
     work_done = 0
+    recent: deque[tuple[float, float]] = deque()
     # Frames and seconds spent before the model ran: earlier beats, then this one.
     replayed = {"frames": 0, "seconds": 0.0}
     beat_replay = {"frames": 0, "seconds": 0.0}
@@ -2608,7 +2631,7 @@ def _prepare_fills(
                 elapsed = time.monotonic() - started - replayed["seconds"] - beat_replay["seconds"]
                 worked = done - replayed["frames"] - beat_replay["frames"]
                 if worked >= 10 and elapsed >= 20 and work_left > done:
-                    seconds = elapsed / worked * (work_left - done)
+                    seconds = _recent_seconds_per_frame(recent, elapsed, worked) * (work_left - done)
                     if on_eta:
                         on_eta(seconds)
                     else:

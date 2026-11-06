@@ -1414,6 +1414,8 @@ export function mount(root, ctx) {
       if (wasActive && !hasActiveWork()) {
         await Promise.all([loadPackets(), loadShares()]);
         renderVersionsCard();
+        // The render just made the AI fill, so show that rather than the blur check.
+        reviewMode = "fill";
         renderReviewCard();
         renderPacketCard();
         renderShareCard();
@@ -1497,6 +1499,11 @@ export function mount(root, ctx) {
       if (panel) panel.replaceWith(cleanPanel());
     });
     video.addEventListener("error", () => {
+      // Building a preview slows a running render, so it waits for the render.
+      if (hasActiveWork()) {
+        hint.textContent = "Preview waits for the render to finish, so the render keeps its speed.";
+        return;
+      }
       // AI fill shows here once a render has made it. Until then, the blur check.
       if (reviewMode === "blur") {
         hint.textContent = "Preview could not be built.";

@@ -370,3 +370,13 @@ def test_delete_removes_a_paused_queue(tmp_path):
     manager.delete(queue["id"])
     with pytest.raises(sq.QueueNotFound):
         manager.get(queue["id"])
+
+
+def test_render_running_counts_only_queues_still_at_work(tmp_path):
+    manager = sq.StoryQueueManager(tmp_path, FakeBackend())
+    assert manager.render_running() is False
+    (tmp_path / "story_queues").mkdir(exist_ok=True)
+    path = tmp_path / "story_queues" / "sq_one.json"
+    for status, expected in (("running", True), ("queued", True), ("paused", False), ("done", False)):
+        path.write_text(json.dumps({"id": "sq_one", "status": status, "items": []}), encoding="utf-8")
+        assert manager.render_running() is expected, status

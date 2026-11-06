@@ -339,6 +339,10 @@ class StoryQueueManager:
             self._path(queue_id).unlink(missing_ok=True)
         return {"id": queue_id}
 
+    def render_running(self) -> bool:
+        """Whether any queue is rendering or waiting for its turn on this Mac."""
+        return any(queue.get("status") in ACTIVE_QUEUES for queue in self.list())
+
     def waiting_for_job(self, job_id: str) -> int:
         """Items of one video that have not started yet, across all queues."""
         return sum(

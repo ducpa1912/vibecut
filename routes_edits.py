@@ -819,6 +819,10 @@ def edit_clean_preview(job_id: str, edit_id: str, mode: str = "fill") -> FileRes
     with _CLEAN_PREVIEW_LOCK:
         if cache.is_file() and cache.stat().st_size > 1024:
             return FileResponse(cache, media_type="video/mp4")
+        # A preview encodes the whole cut, which slowed a running AI fill by five
+        # times. One already built still plays above; a new one waits its turn.
+        if _app().story_queues().render_running():
+            raise HTTPException(409, "This preview waits until the render finishes.")
         aspect = str(edit.get("aspect") or "9:16")
         size = render._dims(aspect, "draft")
         fps = int((edit.get("output") or {}).get("fps") or 30)

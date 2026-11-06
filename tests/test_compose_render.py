@@ -516,3 +516,53 @@ def test_a_frame_past_the_real_end_of_a_source_uses_its_last_frame(monkeypatch, 
     payload = render.render_story_frame("s.mp4", {}, job_dir, compiled, 1.0)
     assert payload == b"jpeg"
     assert any("-sseof" in cmd for cmd in commands)
+
+
+def test_a_new_clean_preview_waits_for_a_running_render(monkeypatch, tmp_path):
+    import types
+
+    import pytest
+    from fastapi import HTTPException
+
+    import routes_edits
+
+    job_dir = tmp_path / "jobs" / "j"
+    (job_dir / "previews").mkdir(parents=True)
+    running = types.SimpleNamespace(story_queues=lambda: types.SimpleNamespace(render_running=lambda: True))
+    monkeypatch.setattr(routes_edits, "_app", lambda: running)
+    monkeypatch.setattr(routes_edits, "_job_dir", lambda _job: job_dir)
+    monkeypatch.setattr(routes_edits, "_fresh_story", lambda _job, _edit: ({}, {"clean": []}, {}))
+
+    with pytest.raises(HTTPException) as refused:
+        routes_edits.edit_clean_preview("j", "e", mode="blur")
+    assert refused.value.status_code == 409
+    assert "waits" in refused.value.detail
+
+    built = job_dir / "previews" / "clean_e_blur.mp4"
+    built.write_bytes(b"0" * 2048)
+    assert routes_edits.edit_clean_preview("j", "e", mode="blur").path == built
+
+
+def test_fill_time_left_forgets_a_slow_start():
+    from collections import deque
+
+    import render
+
+    samples = deque()
+    # A busy Mac: 3 s a frame for five minutes, then 0.5 s a frame.
+    for second in range(0, 301, 10):
+        render._recent_seconds_per_frame(samples, float(second), second / 3.0)
+    assert render._recent_seconds_per_frame(samples, 310.0, 103.3 + 20) < 3.0
+    rate = 0.0
+    for second in range(320, 441, 10):
+        rate = render._recent_seconds_per_frame(samples, float(second), 123.3 + (second - 310) * 2.0)
+    assert rate == pytest.approx(0.5, abs=0.01)
+    assert rate < 440 / (123.3 + 260)
+
+
+def test_fill_time_left_uses_the_whole_run_before_it_has_a_window():
+    from collections import deque
+
+    import render
+
+    assert render._recent_seconds_per_frame(deque(), 30.0, 15.0) == 2.0

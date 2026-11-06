@@ -203,6 +203,13 @@ def test_review_and_notes_share_one_panel_with_a_playable_preview():
     assert "Review notes" not in FINISH
 
 
+def test_review_preview_waits_for_a_render_and_then_shows_the_fill():
+    assert "Preview waits for the render to finish" in FINISH
+    held = FINISH.index("Preview waits for the render to finish")
+    assert FINISH.index("if (hasActiveWork())", held - 200) < held
+    assert 'reviewMode = "fill";\n        renderReviewCard();' in FINISH
+
+
 def test_queue_sits_beside_render_with_queue_and_history_tabs():
     assert "st-finish-render-grid" in FINISH
     assert "st-finish-queue-card" in FINISH
