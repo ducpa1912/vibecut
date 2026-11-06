@@ -185,7 +185,7 @@ def test_the_wording_does_not_say_remove():
 def test_render_is_one_click_from_review():
     assert "Edit this moment" in FINISH
     assert 'text: "Queue"' in FINISH
-    assert "Open queue" in FINISH
+    assert 'queueTabButton("queue", "Queue"' in FINISH
 
 
 def test_finish_shape_comes_from_edit_and_quality_has_six_tiers():
@@ -195,17 +195,20 @@ def test_finish_shape_comes_from_edit_and_quality_has_six_tiers():
         assert f'value: "{quality}"' in FINISH
 
 
-def test_review_and_notes_share_one_panel_with_a_frame():
-    assert "reviewFrame" in FINISH
+def test_review_and_notes_share_one_panel_with_a_playable_preview():
+    assert "reviewPlayer" in FINISH
+    assert "clean-preview" in FINISH
+    assert "Quick blur" in FINISH
     assert "Clean check · this frame" in FINISH
     assert "Review notes" not in FINISH
 
 
-def test_queue_is_a_drawer_with_queue_and_history_tabs():
-    assert "st-finish-drawer" in FINISH
-    assert 'tab("queue", "Queue"' in FINISH
-    assert 'tab("history", "History"' in FINISH
-    assert "Open queue" in FINISH
+def test_queue_sits_beside_render_with_queue_and_history_tabs():
+    assert "st-finish-render-grid" in FINISH
+    assert "st-finish-queue-card" in FINISH
+    assert 'queueTabButton("queue", "Queue"' in FINISH
+    assert 'queueTabButton("history", "History"' in FINISH
+    assert "st-finish-drawer" not in FINISH
 
 
 def test_publish_calls_the_unit_a_story_and_names_full_video():
@@ -215,6 +218,10 @@ def test_publish_calls_the_unit_a_story_and_names_full_video():
     assert '"Full video"' in FINISH
     assert "preferredReadyArtifact" in FINISH
     assert 'artifactStoryId(item) === "st_full_video"' in FINISH
+    assert "st-finish-publish-grid" in FINISH
+    assert "st-finish-finished" in FINISH
+    assert 'text: "Open file"' in FINISH
+    assert 'text: "Download"' in FINISH
 
 
 def test_moments_can_be_cleared_and_a_search_with_none_keeps_them():

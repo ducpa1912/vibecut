@@ -9,6 +9,7 @@ Storage and validation live in :mod:`edits`; preview compilation lives in
 from __future__ import annotations
 
 import math
+import threading
 import time
 
 from fastapi import APIRouter, HTTPException
@@ -22,6 +23,7 @@ import edits
 import history_store
 import render
 import rights
+import textfill
 
 
 def _app():
@@ -754,6 +756,96 @@ def _compiled_preview(
         )
     except compose_render.ComposeError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+_CLEAN_PREVIEW_LOCK = threading.Lock()
+
+
+@router.get(
+    "/api/jobs/{job_id}/edits/{edit_id}/clean-preview",
+    responses={200: {"content": {"video/mp4": {}}}},
+)
+def edit_clean_preview(job_id: str, edit_id: str, mode: str = "fill") -> FileResponse:
+    """A draft video of this Edit with Clean applied.
+
+    ``mode=fill`` is what the final render does. ``mode=blur`` swaps every
+    AI-fill layer to blur, so text left outside the boxes stays visible. It is
+    a check view, never a deliverable.
+    """
+    mode = "blur" if str(mode or "").strip().lower() == "blur" else "fill"
+    job, edit, story = _fresh_story(job_id, edit_id)
+    job_dir = _job_dir(job_id)
+    data_root = job_dir.parent.parent
+    if mode == "fill":
+        fill_methods = {
+            str(layer.get("method") or textfill.DEFAULT_METHOD)
+            for layer in edit.get("clean") or []
+            if str(layer.get("kind") or "") == "fill"
+        }
+        for method in sorted(fill_methods):
+            problem = textfill.method_problem(
+                method, textfill.models_dir(data_root),
+            )
+            if problem:
+                raise HTTPException(409, problem)
+
+    previews = job_dir / "previews"
+    cache = previews / f"clean_{edit_id}_{mode}.mp4"
+    with _CLEAN_PREVIEW_LOCK:
+        if cache.is_file() and cache.stat().st_size > 1024:
+            return FileResponse(cache, media_type="video/mp4")
+        aspect = str(edit.get("aspect") or "9:16")
+        size = render._dims(aspect, "draft")
+        fps = int((edit.get("output") or {}).get("fps") or 30)
+        try:
+            compiled = compose_render.compile_edit(
+                edit,
+                clips=_edit_clips(edit, story),
+                source=job.get("source") or {},
+                scenes=(job.get("analysis") or {}).get("scenes") or [],
+                caption_track=None,
+                include_captions=False,
+                include_graphics=False,
+                clean_preview=mode,
+                size=size,
+                motion_engine=compose_render.EDIT_MOTION_ENGINE,
+                fps=fps,
+            )
+        except compose_render.ComposeError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        total = sum(
+            int(segment.get("frames") or 0)
+            for segment in compiled.get("segments") or []
+        ) / max(1, fps)
+        target = max(1, int(round(total)))
+        previews.mkdir(parents=True, exist_ok=True)
+        try:
+            result = render.render_reel(
+                str(job["source"]["path"]),
+                job.get("source") or {},
+                job_dir,
+                {"target": target, "_scenes": (job.get("analysis") or {}).get("scenes") or []},
+                str(story.get("title") or "Clean preview"),
+                lambda *_args, **_kwargs: None,
+                quality="draft",
+                aspect=aspect,
+                captions=False,
+                edit=edit,
+                compiled_edit=compiled,
+                output_size=size,
+                filename_tag=f"clean-{mode}-{edit_id[-8:]}",
+            )
+        except render.PipelineError as exc:
+            status = 409 if "model is missing" in str(exc).lower() else 500
+            raise HTTPException(status, str(exc)) from exc
+        built = job_dir / "renders" / str(result.get("path") or "")
+        if not built.is_file():
+            raise HTTPException(500, "The clean preview did not produce a file.")
+        poster = result.get("poster")
+        if poster:
+            (job_dir / "renders" / str(poster)).unlink(missing_ok=True)
+        built.replace(cache)
+    return FileResponse(cache, media_type="video/mp4")
 
 
 @router.get(

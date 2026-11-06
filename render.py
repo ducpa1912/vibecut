@@ -2664,6 +2664,7 @@ def render_reel(
     compiled_edit: dict | None = None,
     output_size: tuple[int, int] | None = None,
     fill_eta: Callable[[float], None] | None = None,
+    filename_tag: str = "",
 ) -> dict:
     render_started = time.monotonic()
     timings: dict[str, float] = {
@@ -2702,6 +2703,13 @@ def render_reel(
     default_w, default_h = _dims(aspect, quality)
     if (out_w, out_h) != (default_w, default_h):
         suffix += f"_{out_w}x{out_h}"
+    if filename_tag:
+        safe = "".join(
+            char if char.isalnum() or char in "-_" else "-"
+            for char in str(filename_tag)
+        ).strip("-")
+        if safe:
+            suffix += f"_{safe[:48]}"
     if audio_plan and str(audio_plan.get("mode") or "keep") != "keep":
         audio_sig = audio_sig or audio.signature(audio_plan)
         if audio_sig:
@@ -2842,6 +2850,8 @@ def render_reel(
         "fill_models": fill_sig,
         # Text raster version: a font change must not reuse an old master.
         "text_skin": LAYER_CACHE_VERSION,
+        # Preview variants never share a master with a deliverable render.
+        "preview_tag": filename_tag,
     }, sort_keys=True).encode()).hexdigest()[:16]
     master = master_dir / f"{master_key}.mp4"
     cached_count = 0

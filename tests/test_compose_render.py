@@ -455,3 +455,15 @@ def test_delogo_clean_layer_compiles_to_interpolation():
     ))
     assert result["segments"][0]["clean_ids"]
     assert result["segments"][0]["pre_filters"] == ["delogo=x=192:y=756:w=960:h=108"]
+
+
+def test_clean_preview_blur_swaps_fill_for_a_check_view():
+    edit = _edit(clean=[{
+        "kind": "fill", "method": "lama",
+        "box": {"x": 0.2, "y": 0.2, "w": 0.2, "h": 0.2},
+    }])
+    filled = _compile(edit)["segments"][0]
+    assert filled["fill"]["method"] == "lama"
+    blurred = _compile(edit, clean_preview="blur", include_graphics=False)["segments"][0]
+    assert blurred["fill"] is None
+    assert "boxblur=" in blurred["pre_filter"]

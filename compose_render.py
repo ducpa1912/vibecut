@@ -1217,6 +1217,8 @@ def compile_edit(
     scenes: Any = None,
     caption_track: dict | None = None,
     include_captions: bool = True,
+    include_graphics: bool = True,
+    clean_preview: str = "",
     size: tuple[int, int] | None = None,
     motion_engine: str = "zoompan",
     beats: object = None,
@@ -1233,6 +1235,21 @@ def compile_edit(
         normalized = edits.normalize_edit(edit)
     except edits.EditError as exc:
         raise ComposeError(str(exc)) from exc
+    if not include_graphics:
+        normalized = {**normalized, "graphics": []}
+    if str(clean_preview or "").strip().lower() == "blur":
+        cleaned = []
+        for layer in normalized.get("clean") or []:
+            if str(layer.get("kind") or "") == "fill":
+                cleaned.append({
+                    **layer,
+                    "kind": "blur",
+                    "radius": max(18, int(layer.get("radius") or 24)),
+                })
+                cleaned[-1].pop("method", None)
+            else:
+                cleaned.append(layer)
+        normalized = {**normalized, "clean": cleaned}
     beat_list = fx.beat_times(beats)
     if beat_list:
         # Snap a copy; the stored Edit and its hash never change.

@@ -32,8 +32,11 @@ GET  /api/shares?job_id=
   story. A full-video render reads **Full video**, not "Cut".
 - Every ready artifact is listed, including a full-video render. Previously a
   full-video row could fall back to the generic "Cut" label.
-- The Review stage now shows a frame from the current Edit and a compact note
-  list; the separate "Review notes" card is gone.
+- Publish is two columns: the kit and review link on the left, the finished
+  list on the right. Each finished row has **Open file** and **Download**.
+- The Review stage now plays a draft preview of the current Edit, with a
+  Quick blur check and a compact leftover-text list; the separate
+  "Review notes" card is gone.
 
 ## 3. Full video and stories
 
