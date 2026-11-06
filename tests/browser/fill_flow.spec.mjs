@@ -188,9 +188,8 @@ try {
     !(await page.locator(".st-found-row .st-found-meta").first().textContent())?.includes("Not in this cut"),
     "row seek with real tracklet ranges must find the cut",
   );
-  await page.locator(".st-clean-more > summary").click();
-  assert(await page.locator(".st-found-engine").inputValue() === "lama",
-    "the default fill engine should come from /api/fill/status");
+  assert(await page.locator(".st-clean-model").inputValue() === "lama",
+    "the AI model should show under Remove with, and start on LaMa");
 
   await page.locator(".st-auto-clean-run").click();
   // Text that has a layer folds away, so the list holds only what is left.
