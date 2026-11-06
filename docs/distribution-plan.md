@@ -4,6 +4,9 @@ Date: 2026-11-04, checked 2026-11-06. LaMa is now the default AI fill engine, so
 Source audit: [licensing-audit.md](licensing-audit.md) · Cloud deep dive: [cloud-architecture.md](cloud-architecture.md)
 Product license: proprietary (root `LICENSE`; EULA still required)
 
+Commercial sequence: see [commercial-packaging-plan.md](commercial-packaging-plan.md).
+This file remains the technical build and license reference.
+
 Two artifacts are planned:
 
 1. **Cloud deployment** — hosted service, optional customer-hosted image.

@@ -142,24 +142,35 @@ real per-second figure.
 
 | Provider | Model | Input | Price | Per cleaned second | Notes |
 |---|---|---|---|---|---|
-| Replicate | ProPainter | video + mask | ~$0.039 per run, L40S $0.000975/s | ~$0.012–0.015/s | Flow-based video inpainting, subvideos of 80 frames, best quality fit for text |
+| Replicate | ProPainter | video + mask | ~$0.039 per run, L40S $0.000975/s | ~$0.012–0.015/s | Best quality fit, but **S-Lab 1.0 non-commercial**; do not use commercially without written permission |
 | fal | VOID Video Inpainting | video + mask or prompt | $0.05 per video; $0.10 pass 2; +$0.05 SAM-3 mask | ~$0.008–0.023/s | Up to ~197 frames per run; generative, may invent background; test on text |
 | Runway | Aleph 2.0 | prompt edit | $0.28/s | no | Over budget |
 | fal | Wan / Kling / Veo video models | prompt | $0.05–$0.40/s | no | Generative; not mask-accurate |
 | Replicate | Wan 2.1 / official video | prompt | $0.09–$0.25/s | no | Generative; not mask-accurate |
-| Self-hosted | ProPainter / E2FGVI | video + mask | H100 $4.50/h on fal, RTX Pro 6000 $2.99/h | depends on throughput | Cheapest at volume after a benchmark |
+| Self-hosted | VOID (Apache-2.0), ProPainter only if licensed | video + mask | H100 $4.50/h on fal, RTX Pro 6000 $2.99/h | depends on throughput | Cheapest at volume after a benchmark |
 
 Estimates:
 
-- **ProPainter, 90 seconds all text**: 34 runs of ~80 frames at $0.039 ≈
-  **$1.33** (≈ $0.015/s). Under the $4.50 budget.
-- **ProPainter, 20 seconds of text**: 8 runs ≈ **$0.31**.
-- **VOID, 90 seconds, one pass**: ~15 runs at $0.05 ≈ **$0.75**; pass 2 and mask
-  can raise it to ~$2.25.
+- **VOID, 90 seconds, one pass**: ~15 runs at $0.05 ≈ **$0.75**; pass 2 and
+  mask can raise it to ~$2.25. Apache-2.0, so this is the commercial path.
+- **ProPainter, if licensed**: 34 runs of ~80 frames at $0.039 ≈ **$1.33**
+  (≈ $0.015/s). Not usable commercially today.
+- **Local LaMa/STTN**: no per-second fee; 25 minutes for 90 seconds is accepted.
 - **Runway Aleph**: 90 × $0.28 = **$25.20**, rejected.
 
-The cheap options are ProPainter-style mask inpainting and VOID. ProPainter is
-the safer quality bet for text; VOID needs a visual test.
+The cheap options are ProPainter-style mask inpainting and VOID.
+
+**License blocker:** ProPainter code and weights are S-Lab License 1.0,
+non-commercial. Do not put it in a paid build or a paid hosted service until the
+authors grant a commercial license. The model page on Replicate does not change
+that.
+
+**Commercial candidate:** VOID is Apache-2.0 (Netflix), so it is usable in a
+paid product. fal bills it per video, not per second. Test it on text before
+trusting the quality.
+
+Local LaMa and STTN remain the commercial default. They are Apache-2.0/MIT and
+already run on the Mac.
 
 ### 6.3 Provider interface
 
@@ -189,8 +200,8 @@ POST /api/jobs/{id}/clean/remote
 
 ### 6.5 Quality gate
 
-Run the same 5 clips through local LaMa, local STTN, remote ProPainter and
-remote VOID. Compare:
+Run the same 5 clips through local LaMa, local STTN, remote VOID and, only
+with a commercial license, remote ProPainter. Compare:
 
 - OCR residual inside the cleaned area;
 - changed pixels outside the text mask;
@@ -205,8 +216,11 @@ $0.05 per cleaned second.
 
 - Replicate ProPainter: <https://replicate.com/jd7h/propainter>
   (model page: ~$0.039 per run, L40S, 80-frame subvideos).
+- ProPainter license: <https://github.com/sczhou/ProPainter/blob/master/LICENSE>
+  (S-Lab 1.0, non-commercial).
 - fal VOID: <https://fal.ai/models/fal-ai/void-video-inpainting>
   ($0.05 per video, pass 2 $0.10, SAM-3 mask +$0.05).
+- VOID license: <https://github.com/Netflix/void-model> (Apache-2.0).
 - Runway API pricing: <https://dev.runway.com/pricing>
   (Aleph 2.0 $0.28 per second).
 - Replicate GPU pricing: <https://replicate.com/pricing>
@@ -240,8 +254,8 @@ No cap on real layers. A video with 30 real texts gets 30 AI fills.
 | 4 | Tight glyph masks, always AI fill | Quality equal or better |
 | 5 | Compressed keyframe cache + global dedupe | 89 s job under 200 MB |
 | 6 | Provider interface + estimate/consent | Estimate matches invoice |
-| 7 | ProPainter remote test | < $0.05/cleaned s, quality gate |
-| 8 | VOID remote test | Same gate; keep only if it wins |
+| 7 | VOID remote test | < $0.05/cleaned s, quality gate |
+| 8 | ProPainter commercial license (optional) | Only with written permission |
 
 ## 9. Non-goals
 

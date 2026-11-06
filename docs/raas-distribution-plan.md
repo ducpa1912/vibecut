@@ -2,6 +2,8 @@
 
 Date: 2026-11-05
 Status: plan only, nothing built
+Sequencing: [commercial-packaging-plan.md](commercial-packaging-plan.md) puts
+Cloud Private before public RaaS. This file remains the RaaS design reference.
 Companions: [distribution plan](distribution-plan.md) · [cloud architecture](cloud-architecture.md) · [license audit](licensing-audit.md)
 
 **The offer:** people visit the site, plan the cut in Studio, pay for the final render, and download the file.
