@@ -237,14 +237,25 @@
         <div class="result-actions">
           <button id="finish-cut" class="ghost" type="button" aria-pressed="false">Finish</button>
           <button id="shortcuts-open" class="ghost" type="button" aria-haspopup="dialog" title="Keyboard shortcuts (?)">?</button>
-          <button id="new-video" class="ghost">New video</button>
-          <select id="clean-profile" class="clean-profile" aria-label="Clean profile" title="What Clean removes">
-            <option value="workfiles" selected>Work files</option>
-            <option value="renders">Renders</option>
-            <option value="all">All but source</option>
-          </select>
-          <button id="clean-job" class="ghost">Clean</button>
-          <button id="delete-job" class="ghost danger">Delete</button>
+          <div id="result-mode" class="result-mode" role="group" aria-label="Result mode" hidden>
+            <button id="result-mode-edit" class="result-mode-btn is-active" type="button" data-result-mode="edit" aria-pressed="true">Edit</button>
+            <button id="result-mode-clean" class="result-mode-btn" type="button" data-result-mode="clean" aria-pressed="false">Clean</button>
+          </div>
+          <div id="job-menu-wrap" class="job-menu-wrap">
+            <button id="job-menu-open" class="ghost job-menu-toggle" type="button" aria-expanded="false" aria-controls="job-menu" title="Job actions">More</button>
+            <div id="job-menu" class="job-menu" role="group" aria-label="Job actions" hidden>
+              <label class="job-menu-field">Clean work files
+                <select id="clean-profile" class="clean-profile" aria-label="Clean profile" title="What Clean work files removes">
+                  <option value="workfiles" selected>Work files</option>
+                  <option value="renders">Renders</option>
+                  <option value="all">All but source</option>
+                </select>
+              </label>
+              <button id="clean-job" class="job-menu-item" type="button">Clean work files…</button>
+              <button id="new-video" class="job-menu-item" type="button">New video</button>
+              <button id="delete-job" class="job-menu-item danger" type="button">Delete job…</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -461,14 +472,25 @@
             <span id="source-clean-name" class="source-clean-name">—</span>
             <span id="source-clean-meta" class="hint source-clean-meta"></span>
           </div>
+          <div id="cut-clean-head" class="cut-clean-head" hidden>
+            <span id="cut-clean-name" class="cut-clean-name">—</span>
+            <span id="cut-clean-meta" class="hint cut-clean-meta"></span>
+          </div>
           <div id="clean-found" class="clean-found" hidden></div>
           <div id="clean-detail" class="clean-detail" hidden></div>
           <div id="clean-layers" class="clean-layers" role="list"></div>
           <div id="clean-empty" class="clean-empty">
             <p class="hint">No clean boxes yet. Find text, or draw a box on the frame.</p>
-            <div class="clean-empty-actions">
-              <button id="clean-empty-scan-this" class="ghost small" type="button">Scan this moment</button>
-              <button id="clean-empty-scan-video" class="ghost small" type="button">Scan video</button>
+          </div>
+          <div id="clean-scan" class="clean-scan">
+            <p id="clean-scan-status" class="hint clean-scan-status" role="status" aria-live="polite">Not scanned yet. Find text to look for captions, watermarks and screen UI baked into the cut.</p>
+            <div id="clean-scan-progress" class="clean-scan-progress" hidden>
+              <div class="clean-scan-bar" aria-hidden="true"><i id="clean-scan-fill"></i></div>
+              <span id="clean-scan-progress-text" class="hint"></span>
+            </div>
+            <div class="clean-scan-actions">
+              <button id="clean-scan-start" class="ghost small" type="button">Find text on screen</button>
+              <button id="clean-scan-cancel" class="ghost small" type="button" hidden>Cancel</button>
             </div>
           </div>
           <p id="clean-status" class="hint clean-status" role="status" aria-live="polite"></p>
@@ -493,24 +515,20 @@
               <button id="source-clean-again" class="ghost small" type="button">Clean again</button>
             </div>
           </div>
-        </section>
-
-        <section id="text-scan" class="edit-card text-scan-card" aria-labelledby="text-scan-title">
-          <div class="edit-card-head">
-            <div>
-              <h4 id="text-scan-title">Find text on screen</h4>
-              <p>Scan the cut for baked-in captions, watermarks and screen UI.</p>
+          <div id="cut-clean-action" class="cut-clean-action" hidden>
+            <p id="cut-clean-summary" class="cut-clean-summary" role="status" aria-live="polite"></p>
+            <div id="cut-clean-progress" class="cut-clean-progress" hidden>
+              <div class="cut-clean-bar" aria-hidden="true"><i id="cut-clean-progress-fill"></i></div>
+              <span id="cut-clean-stage" class="hint">Finding text</span>
             </div>
-            <span id="text-scan-badge" class="text-scan-badge" hidden></span>
-          </div>
-          <p id="text-scan-status" class="hint text-scan-status" role="status" aria-live="polite">No text scan yet for this cut.</p>
-          <div id="text-scan-progress" class="text-scan-progress" hidden>
-            <div class="text-scan-bar" aria-hidden="true"><i id="text-scan-fill"></i></div>
-            <span id="text-scan-progress-text" class="hint"></span>
-          </div>
-          <div class="text-scan-actions">
-            <button id="text-scan-start" class="ghost small" type="button">Find text on screen</button>
-            <button id="text-scan-cancel" class="ghost small" type="button" hidden>Cancel</button>
+            <div id="cut-clean-buttons" class="cut-clean-buttons">
+              <button id="cut-clean-run" class="primary" type="button">Find text &amp; clean</button>
+              <button id="cut-clean-cancel" class="ghost" type="button" hidden>Cancel</button>
+            </div>
+            <div id="cut-clean-result-actions" class="cut-clean-result-actions" hidden>
+              <a id="cut-clean-download" class="primary small" download hidden>Download <span class="arrow">↓</span></a>
+              <button id="cut-clean-again" class="ghost small" type="button">Clean again</button>
+            </div>
           </div>
         </section>
 

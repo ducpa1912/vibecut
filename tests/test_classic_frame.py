@@ -43,14 +43,18 @@ def test_settings_holds_scan_edit_mixer_and_activity():
     settings = view[view.index("editor-pane-settings"):]
     for marker in (
         'class="edit-section-head"',
-        'id="text-scan"',
+        'id="clean-panel"',
+        'id="clean-scan"',
+        'id="clean-scan-start"',
         'id="audio-panel"',
         'id="mixer-panel"',
         'id="history-panel"',
     ):
         assert marker in settings
-    assert settings.index('id="text-scan"') < settings.index('id="audio-panel"')
-    assert settings.index('class="edit-section-head"') < settings.index('id="text-scan"')
+    assert 'id="text-scan"' not in view
+    assert 'id="text-scan-start"' not in view
+    assert settings.index('id="clean-scan"') < settings.index('id="audio-panel"')
+    assert settings.index('class="edit-section-head"') < settings.index('id="clean-panel"')
 
 
 def test_the_frame_only_starts_at_a_thousand_pixels():

@@ -449,8 +449,8 @@ async function run(viewport) {
     eyebrow: document.querySelector("#result-eyebrow").textContent,
     back: !document.querySelector("#source-back").hidden,
     actions: getComputedStyle(document.querySelector(".result-actions")).display,
-    scan: getComputedStyle(document.querySelector("#text-scan")).display,
-    cleanThis: getComputedStyle(document.querySelector("#clean-empty-scan-this")).display,
+    legacyScan: document.querySelector("#text-scan") === null,
+    scanBlock: getComputedStyle(document.querySelector("#clean-scan")).display,
     rows: document.querySelectorAll("#clean-found .clean-found-row").length,
     ticks: document.querySelectorAll("#clean-found [data-found-tick]:checked").length,
     review: Boolean(document.querySelector("[data-found-review]")),
@@ -464,8 +464,8 @@ async function run(viewport) {
   assert(/source/.test(head.eyebrow), `${label}: eyebrow is ${head.eyebrow}`);
   assert(head.back, `${label}: back action is hidden`);
   assert(head.actions === "none", `${label}: result actions still show`);
-  assert(head.scan === "none", `${label}: the scan card still shows`);
-  assert(head.cleanThis === "none", `${label}: Scan this moment still shows`);
+  assert(head.legacyScan, `${label}: the removed scan card is still in the page`);
+  assert(head.scanBlock === "none", `${label}: the scan block still shows in source mode`);
   assert(head.rows === 3, `${label}: ${head.rows} rows`);
   assert(head.ticks === 2, `${label}: ${head.ticks} auto ticks`);
   assert(head.review, `${label}: no Review N more path`);
@@ -516,14 +516,14 @@ async function run(viewport) {
   // Tick change after the first clean: the next render must carry the new row,
   // not reuse the first set just because a render already happened. Space on a
   // focused checkbox must keep its native toggle and focus after the repaint.
-  await page.locator('[data-found-index="1"] [data-found-tick="1"]').focus();
+  await page.locator('[data-found-index="1"] [data-found-tick]').focus();
   await page.keyboard.press("Space");
   const keyboardTick = await page.evaluate(() => ({
-    checked: document.querySelector('[data-found-index="1"] [data-found-tick="1"]')?.checked === true,
+    checked: document.querySelector('[data-found-index="1"] [data-found-tick]')?.checked === true,
     focus: document.activeElement?.dataset?.foundTick || "",
   }));
   assert(keyboardTick.checked, `${label}: Space did not toggle the checkbox`);
-  assert(keyboardTick.focus === "1", `${label}: focus moved to ${keyboardTick.focus || "nothing"}`);
+  assert(Boolean(keyboardTick.focus), `${label}: focus moved to ${keyboardTick.focus || "nothing"}`);
   const nextRender = page.waitForRequest((request) =>
     /\/clean\/source\/render$/.test(request.url()) && request.method() === "POST");
   await page.locator("#source-clean-again").click();
@@ -659,7 +659,7 @@ async function run(viewport) {
     !document.body.classList.contains("source-mode")
       && document.querySelectorAll("#clean-layers .clean-row").length === 1,
   null, { timeout: 30000 });
-  await page.locator('[data-found-index="0"] [data-found-tick="0"]').check();
+  await page.locator('[data-found-index="0"] [data-found-tick]').check();
   await page.locator("[data-found-apply]").click();
   await page.waitForTimeout(500);
   assert(cutPuts.at(-1)?.restore === true,

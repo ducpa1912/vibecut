@@ -134,7 +134,16 @@ async function run(viewport) {
       return route.fulfill(json(scanEnvelope("running", progress), 202));
     }
     if (scan === "idle") {
-      return route.fulfill(json({ detail: "Check has not run yet." }, 404));
+      return route.fulfill(json({
+        status: "idle",
+        report: null,
+        complete: false,
+        progress: 0,
+        message: "No Check report yet for this cut.",
+        text: { confirmed: false, present: false, tracklets: 0 },
+        tracklets: [],
+        clean_prefill: [],
+      }));
     }
     if (scan === "cancelled") {
       return route.fulfill(json(scanEnvelope("cancelled", 1), 202));
@@ -186,11 +195,11 @@ async function run(viewport) {
     const visible = (element) => Boolean(element) && element.offsetParent !== null;
     const preview = node(".editor-pane-preview").getBoundingClientRect();
     const settings = node(".editor-pane-settings").getBoundingClientRect();
-    const scan = node("#text-scan").getBoundingClientRect();
+    const scan = node("#clean-scan").getBoundingClientRect();
     return {
       previewVisible: visible(node(".hook-panel")) || visible(node("#player-wrap")),
       scanInSettings: scan.x >= settings.x - 1 && scan.right <= settings.right + 1,
-      scanVisible: visible(node("#text-scan")),
+      scanVisible: visible(node("#clean-scan")),
       scanBottom: scan.bottom,
       previewBottom: preview.bottom,
       settingsBottom: settings.bottom,
@@ -201,43 +210,43 @@ async function run(viewport) {
   assert(live.scanVisible, `${label}: the scan card is not visible`);
 
   // Idle → running.
-  const status = page.locator("#text-scan-status");
+  const status = page.locator("#clean-scan-status");
   assert(
     (await status.textContent()).includes("Not scanned yet"),
     `${label}: idle scan card does not say it has not run`,
   );
-  await page.locator("#text-scan-start").click();
+  await page.locator("#clean-scan-start").click();
   await page.waitForFunction(() => {
-    const text = document.querySelector("#text-scan-status")?.textContent || "";
+    const text = document.querySelector("#clean-scan-status")?.textContent || "";
     return /Scanning for text on screen/.test(text);
   }, null, { timeout: 15000 });
-  assert(await page.locator("#text-scan-cancel").isVisible(),
+  assert(await page.locator("#clean-scan-cancel").isVisible(),
     `${label}: the running scan offers no Cancel`);
-  assert(await page.locator("#text-scan-start").isHidden(),
+  assert(await page.locator("#clean-scan-start").isHidden(),
     `${label}: the running scan still offers Start`);
 
   // Running → cancelled.
-  await page.locator("#text-scan-cancel").click();
+  await page.locator("#clean-scan-cancel").click();
   await page.waitForFunction(() => {
-    const text = document.querySelector("#text-scan-status")?.textContent || "";
+    const text = document.querySelector("#clean-scan-status")?.textContent || "";
     return /Scan cancelled/.test(text);
   }, null, { timeout: 15000 });
-  assert((await page.locator("#text-scan-badge").textContent()).trim() === "cancelled",
-    `${label}: a cancelled scan keeps the wrong badge`);
+  assert((await status.textContent()).includes("Scan cancelled"),
+    `${label}: a cancelled scan does not say it was cancelled`);
 
   // Cancelled → ready, on a deliberate second start.
   scan = "ready";
-  await page.locator("#text-scan-start").click();
+  await page.locator("#clean-scan-start").click();
   await page.waitForFunction(() => {
-    const text = document.querySelector("#text-scan-status")?.textContent || "";
+    const text = document.querySelector("#clean-scan-status")?.textContent || "";
     return /Text on screen: 2 regions/.test(text);
   }, null, { timeout: 15000 });
-  assert((await page.locator("#text-scan-start").textContent()).trim() === "Scan again",
+  assert((await page.locator("#clean-scan-start").textContent()).trim() === "Scan again",
     `${label}: a finished scan does not offer Scan again`);
 
   // Focusing the scan button must not move the page under the frame.
   await page.evaluate(() => {
-    document.querySelector("#text-scan-start").focus();
+    document.querySelector("#clean-scan-start").focus();
     document.querySelector("#audio-panel").scrollIntoView({ block: "start" });
   });
   await page.waitForTimeout(300);

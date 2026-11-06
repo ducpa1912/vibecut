@@ -231,9 +231,9 @@
   },
   {
    "path": "routes_check.py",
-   "source": "source_ready first Check GET returns an idle envelope",
-   "sha256": "91b2cfa6c2fcb08f8c1238d6597c5cef5a534ec02bacbbf51f51f42ae3b2751b",
-   "feature_version": "1.0.3"
+   "source": "Classic cut open returns an idle Check envelope instead of a console 404",
+   "sha256": "6f8dcdd978a7c674b18110678af3917fb48d57a42d26e6e69325d4929c0c725f",
+   "feature_version": "1.0.4"
   },
   {
    "path": "routes_cleanup.py",

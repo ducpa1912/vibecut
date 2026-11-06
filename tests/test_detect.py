@@ -1066,10 +1066,15 @@ def test_check_post_rejects_an_unready_job(check_env, inline_check):
     assert "not ready" in response.json()["detail"]
 
 
-def test_check_get_before_run_is_404(check_env):
+def test_check_get_before_run_returns_idle_for_a_ready_cut(check_env):
     client = TestClient(app.app)
     response = client.get(f"/api/jobs/{check_env.job_id}/check")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "idle"
+    assert body["report"] is None
+    assert body["message"] == "No Check report yet for this cut."
+    assert body["clean_prefill"] == []
 
 
 def test_check_unknown_job_is_404(inline_check):

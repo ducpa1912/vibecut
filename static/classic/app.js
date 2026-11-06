@@ -319,14 +319,12 @@
     historyLatest: $("#history-latest"),
     historyList: $("#history-list"),
     historyDetail: $("#history-detail"),
-    textScan: $("#text-scan"),
-    textScanStatus: $("#text-scan-status"),
-    textScanBadge: $("#text-scan-badge"),
-    textScanProgress: $("#text-scan-progress"),
-    textScanFill: $("#text-scan-fill"),
-    textScanProgressText: $("#text-scan-progress-text"),
-    textScanStart: $("#text-scan-start"),
-    textScanCancel: $("#text-scan-cancel"),
+    textScanStatus: $("#clean-scan-status"),
+    textScanProgress: $("#clean-scan-progress"),
+    textScanFill: $("#clean-scan-fill"),
+    textScanProgressText: $("#clean-scan-progress-text"),
+    textScanStart: $("#clean-scan-start"),
+    textScanCancel: $("#clean-scan-cancel"),
     cleanStage: $("#clean-stage"),
     cleanCanvas: $("#clean-canvas"),
     cleanFrame: $("#clean-frame"),
@@ -347,6 +345,7 @@
     cleanFound: $("#clean-found"),
     cleanLayers: $("#clean-layers"),
     cleanEmpty: $("#clean-empty"),
+    cleanScan: $("#clean-scan"),
     cleanStatus: $("#clean-status"),
     cleanFillNote: $("#clean-fill-note"),
     cleanFill: $("#clean-fill"),
@@ -360,8 +359,6 @@
     cleanPreviewAi: $("#clean-preview-ai"),
     cleanPreviewBlur: $("#clean-preview-blur"),
     cleanPreviewExclude: $("#clean-preview-exclude"),
-    cleanEmptyScanThis: $("#clean-empty-scan-this"),
-    cleanEmptyScanVideo: $("#clean-empty-scan-video"),
     cleanDetail: $("#clean-detail"),
     sourceCleanHead: $("#source-clean-head"),
     sourceCleanName: $("#source-clean-name"),
@@ -381,6 +378,26 @@
     sourceCleanReel: $("#source-clean-reel"),
     sourceCleanAnalysisBack: $("#source-clean-analysis-back"),
     sourceCleanAgain: $("#source-clean-again"),
+    cutCleanHead: $("#cut-clean-head"),
+    cutCleanName: $("#cut-clean-name"),
+    cutCleanMeta: $("#cut-clean-meta"),
+    cutCleanAction: $("#cut-clean-action"),
+    cutCleanSummary: $("#cut-clean-summary"),
+    cutCleanProgress: $("#cut-clean-progress"),
+    cutCleanProgressFill: $("#cut-clean-progress-fill"),
+    cutCleanStage: $("#cut-clean-stage"),
+    cutCleanButtons: $("#cut-clean-buttons"),
+    cutCleanRun: $("#cut-clean-run"),
+    cutCleanCancel: $("#cut-clean-cancel"),
+    cutCleanResultActions: $("#cut-clean-result-actions"),
+    cutCleanDownload: $("#cut-clean-download"),
+    cutCleanAgain: $("#cut-clean-again"),
+    resultMode: $("#result-mode"),
+    resultModeEdit: $("#result-mode-edit"),
+    resultModeClean: $("#result-mode-clean"),
+    jobMenuWrap: $("#job-menu-wrap"),
+    jobMenuOpen: $("#job-menu-open"),
+    jobMenu: $("#job-menu"),
     cleanHelp: $("#clean-help"),
     finishCut: $("#finish-cut"),
     shortcutsOpen: $("#shortcuts-open"),
@@ -423,6 +440,8 @@
       // "Remove ticked" and are cleared when the scan changes.
       foundTicks: new Set(),
       foundTicksInit: false,
+      pendingTickReset: "",
+      tickStoreKey: "",
       foundMethod: "fill",
       fillPreview: null,
       // The frame is cropped; boxes are stored in source space. The server
@@ -445,6 +464,15 @@
     job: null,
     textScan: null,
     cleanScope: "cut",
+    resultMode: "edit",
+    cutCleanBusy: false,
+    cutCleanPhase: "",
+    cutCleanNote: "",
+    cutCleanCancelled: false,
+    cutCleanRecordKey: "",
+    editDrawMode: false,
+    editFocusElement: null,
+    editSettingsScroll: 0,
     sourceClean: null,
     sourceCleanTimer: null,
     sourceCleanPollToken: 0,
@@ -1856,6 +1884,15 @@
     dom.sourceCleanAgain?.addEventListener("click", cleanAgainSource);
     dom.sourceCleanReel?.addEventListener("click", makeReelFromSource);
     dom.sourceCleanAnalysisBack?.addEventListener("click", backToSourceClean);
+    dom.cutCleanRun?.addEventListener("click", cutCleanPrimaryAction);
+    dom.cutCleanCancel?.addEventListener("click", cancelCutClean);
+    dom.cutCleanAgain?.addEventListener("click", cleanAgainCut);
+    dom.resultModeEdit?.addEventListener("click", () => setResultMode("edit"));
+    dom.resultModeClean?.addEventListener("click", () => setResultMode("clean"));
+    dom.resultModeClean?.addEventListener("pointerdown", captureEditFocus);
+    dom.resultModeClean?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") captureEditFocus();
+    });
     dom.optCrop.addEventListener("change", syncOptions);
     dom.progressBack.addEventListener("click", resetToIngest);
     dom.progressSource?.addEventListener("click", () => {
@@ -3289,9 +3326,9 @@
     if (dom.sourceCleanHead) dom.sourceCleanHead.hidden = !on;
     if (dom.sourceCleanAction) dom.sourceCleanAction.hidden = !on;
     if (dom.sourceCleanResult) dom.sourceCleanResult.hidden = !on;
-    if (dom.cleanEmptyScanThis) dom.cleanEmptyScanThis.hidden = Boolean(on);
-    if (dom.cleanEmptyScanVideo) dom.cleanEmptyScanVideo.hidden = Boolean(on);
-    if (dom.textScan) dom.textScan.hidden = Boolean(on);
+    if (dom.resultMode) dom.resultMode.hidden = Boolean(on);
+    if (dom.cutCleanHead) dom.cutCleanHead.hidden = Boolean(on) || !cutCleanActive();
+    if (dom.cutCleanAction) dom.cutCleanAction.hidden = Boolean(on) || !cutCleanActive();
     if (dom.cleanPanelCopy) {
       dom.cleanPanelCopy.textContent = tr(on
         ? "Remove text from the whole video. The frame is the real render."
@@ -3301,6 +3338,125 @@
     if (!on && dom.cleanDetail) {
       dom.cleanDetail.hidden = true;
       dom.cleanDetail.innerHTML = "";
+    }
+  }
+
+  function cutCleanActive() {
+    return state.resultMode === "clean" && state.cleanScope === "cut";
+  }
+
+  function resetCutCleanState() {
+    state.resultMode = "edit";
+    state.editDrawMode = false;
+    state.editFocusElement = null;
+    state.editSettingsScroll = 0;
+    state.cutCleanBusy = false;
+    state.cutCleanPhase = "";
+    state.cutCleanNote = "";
+    state.cutCleanCancelled = false;
+    state.cutCleanRecordKey = "";
+  }
+
+  function editSettingsPane() {
+    return dom.result ? $(".editor-pane-settings", dom.result) : null;
+  }
+
+  function captureEditFocus() {
+    const active = document.activeElement;
+    if (active && active !== document.body && !active.closest?.("#result-mode")) {
+      state.editFocusElement = active;
+    }
+    const pane = editSettingsPane();
+    if (pane) state.editSettingsScroll = pane.scrollTop;
+  }
+
+  function restoreEditFocus() {
+    const target = state.editFocusElement;
+    const pane = editSettingsPane();
+    const scrollTop = state.editSettingsScroll;
+    state.editFocusElement = null;
+    if (target && target.isConnected && target.offsetParent !== null && !target.disabled) {
+      target.focus({ preventScroll: true });
+      if (pane) pane.scrollTop = scrollTop;
+      return;
+    }
+    if (target) {
+      dom.resultModeEdit?.focus({ preventScroll: true });
+      if (pane) pane.scrollTop = scrollTop;
+      setCleanStatus("Edit restored. The previous control is no longer available, so focus is on Edit.");
+      return;
+    }
+    if (pane) pane.scrollTop = scrollTop;
+  }
+
+  function applyCleanMode(on) {
+    const wasClean = cutCleanActive();
+    const enabled = Boolean(on) && state.cleanScope === "cut" && Boolean(state.job);
+    state.resultMode = enabled ? "clean" : "edit";
+    document.body.classList.toggle("cut-clean-mode", enabled);
+    if (dom.resultMode) dom.resultMode.hidden = state.cleanScope === "source" || !state.job;
+    if (dom.resultModeEdit) {
+      dom.resultModeEdit.setAttribute("aria-pressed", enabled ? "false" : "true");
+      dom.resultModeEdit.classList.toggle("is-active", !enabled);
+    }
+    if (dom.resultModeClean) {
+      dom.resultModeClean.setAttribute("aria-pressed", enabled ? "true" : "false");
+      dom.resultModeClean.classList.toggle("is-active", enabled);
+    }
+    if (dom.cutCleanHead) dom.cutCleanHead.hidden = !enabled;
+    if (dom.cutCleanAction) dom.cutCleanAction.hidden = !enabled;
+    if (enabled) {
+      if (!wasClean) state.editDrawMode = state.classicText.drawMode;
+      state.classicText.drawMode = false;
+      if (state.plan) paintCleanStage({ rows: false });
+      paintCutClean();
+    } else {
+      if (wasClean) {
+        state.classicText.drawMode = Boolean(state.editDrawMode);
+        if (state.plan) paintCleanStage({ rows: false });
+        restoreEditFocus();
+      }
+      setCleanFillNote(0);
+    }
+    updateResultModeGuard();
+  }
+
+  function cutCleanSwitchBlocked() {
+    if (state.cleanScope !== "cut") return "";
+    if (state.cutCleanPhase === "Finding text") {
+      return "Finding text. Wait or Cancel before leaving Clean.";
+    }
+    if (state.cutCleanPhase === "Cleaning" || (state.cutCleanBusy && state.cutCleanPhase !== "Rendering")) {
+      return "Cleaning. Wait or Cancel before leaving Clean.";
+    }
+    return "";
+  }
+
+  function updateResultModeGuard() {
+    if (!dom.resultModeEdit) return;
+    const blocked = cutCleanSwitchBlocked();
+    dom.resultModeEdit.disabled = Boolean(blocked);
+    dom.resultModeEdit.title = blocked || "";
+    dom.resultModeClean.disabled = false;
+    dom.resultModeClean.title = "";
+  }
+
+  function setResultMode(mode) {
+    if (state.cleanScope !== "cut" || !state.job) return;
+    const clean = mode === "clean";
+    if (clean === cutCleanActive()) return;
+    const blocked = !clean && cutCleanSwitchBlocked();
+    if (blocked) {
+      toast(blocked);
+      updateResultModeGuard();
+      return;
+    }
+    if (clean) captureEditFocus();
+    applyCleanMode(clean);
+    if (clean) {
+      renderCutCleanHeader();
+      paintCleanStage();
+      scheduleCleanFrame();
     }
   }
 
@@ -3370,8 +3526,17 @@
     return rows.filter((row) => !row.manual && Number(row.confidence) < SOURCE_CONFIDENCE_MIN);
   }
 
+  function tickedRowsFor(rows, ticks, options = {}) {
+    const sourceScope = Boolean(options.source);
+    const byId = new Map(rows.map((row) => [cleanRowIdentity(row), row]));
+    return Array.from(ticks)
+      .map((identity) => byId.get(identity))
+      .filter((row) => row && !row.manual && !row.added
+        && (sourceScope || cleanRowCutStart(row) !== null));
+  }
+
   function sourceTickedCount(rows, ticks) {
-    return Array.from(ticks).filter((index) => rows[index] && !rows[index].manual && !rows[index].added).length;
+    return tickedRowsFor(rows, ticks, { source: true }).length;
   }
 
   function paintSourceClean() {
@@ -3533,6 +3698,489 @@
     if (dom.sourceCleanAgain) dom.sourceCleanAgain.disabled = false;
   }
 
+  function cutCleanEngineLabel() {
+    if (fillEngineReady()) return "LaMa";
+    if (state.fill) return "Blur · AI fill unavailable";
+    return "Blur";
+  }
+
+  function renderCutCleanHeader() {
+    if (state.cleanScope !== "cut" || !state.job) return;
+    const total = cleanCutTotal();
+    const fps = Number(state.job.source?.fps) || 0;
+    const frames = fps ? Math.round(total * fps) : 0;
+    const rows = cleanScanRows().length;
+    if (dom.cutCleanName) dom.cutCleanName.textContent = `${state.target}s clean cut`;
+    if (dom.cutCleanMeta) {
+      dom.cutCleanMeta.textContent = [
+        fmtDuration(total),
+        rows ? `${rows} row${rows === 1 ? "" : "s"}` : (frames ? `${frames} frames` : ""),
+        cutCleanEngineLabel(),
+      ].filter(Boolean).join(" · ");
+    }
+  }
+
+  function cutCleanRenderRecord() {
+    const key = state.cutCleanRecordKey;
+    const record = key ? state.job?.renders?.[key] : null;
+    if (record
+      && (record.target === undefined || Number(record.target) === Number(state.target))
+      && (record.aspect || "9:16") === state.aspect) {
+      return record;
+    }
+    const active = activeRender();
+    if (isRenderActive(active)) return active;
+    const existing = findRender("final");
+    if (existing?.status === "ready") return existing;
+    return null;
+  }
+
+  function ensureCutFoundTicks() {
+    if (state.cleanScope !== "cut" || state.classicText.foundTicksInit) return;
+    applyStoredFoundTicks(cleanScanRows(), { source: false });
+  }
+
+  function cutCleanLowRows(rows) {
+    return rows.filter((row) => !row.manual && !row.added
+      && cleanRowCutStart(row) !== null
+      && Number(row.confidence) < SOURCE_CONFIDENCE_MIN);
+  }
+
+  function cutCleanTickedCount(rows, ticks) {
+    return tickedRowsFor(rows, ticks, { source: false }).length;
+  }
+
+  // One review predicate for the label, the summary and the action. A found
+  // row that is still unticked needs a human choice when it is low-confidence,
+  // or when no Clean scan layer has been applied yet. A drawn box alone does
+  // not count as an applied scan layer.
+  function cutCleanReviewState(rows, ticks) {
+    const available = rows.filter((row) => !row.manual && !row.added
+      && cleanRowCutStart(row) !== null);
+    const low = available.filter((row) => (
+      Number(row.confidence) < SOURCE_CONFIDENCE_MIN
+    )).length;
+    const ticked = cutCleanTickedCount(rows, ticks);
+    const applied = classicCleanLayers().filter((layer) => layer.source === "scan").length;
+    return {
+      available,
+      low,
+      ticked,
+      applied,
+      needsReview: available.length > 0 && ticked === 0 && applied === 0,
+    };
+  }
+
+  function setCutCleanNote(message) {
+    state.cutCleanNote = message || "";
+    setCleanStatus(state.cutCleanNote);
+  }
+
+  function cutCleanFoundRows(rows) {
+    return (rows || []).filter((row) => !row.manual);
+  }
+
+  function cutCleanReportReady() {
+    const report = state.textScan?.report;
+    return state.textScan?.status === "ready"
+      && Boolean(report && report.text && report.text.confirmed === true);
+  }
+
+  function cutCleanEmptyConfirmed(rows) {
+    return cutCleanReportReady() && cutCleanFoundRows(rows).length === 0;
+  }
+
+  function cutCleanNoInsideFound(rows) {
+    const found = cutCleanFoundRows(rows);
+    return cutCleanReportReady()
+      && found.length > 0
+      && !found.some((row) => cleanRowCutStart(row) !== null);
+  }
+
+  function paintCutClean() {
+    if (!state.job || state.cleanScope !== "cut") return;
+    const active = cutCleanActive();
+    if (dom.cutCleanHead) dom.cutCleanHead.hidden = !active;
+    if (dom.cutCleanAction) dom.cutCleanAction.hidden = !active;
+    renderCutCleanHeader();
+
+    const scan = state.textScan;
+    const scanStatus = scan?.status || "idle";
+    const scanActive = scanStatus === "queued" || scanStatus === "running";
+    const report = scan?.report;
+    const confirmed = Boolean(report && report.text && report.text.confirmed === true);
+    const rows = cleanScanRows();
+    const ticks = state.classicText.foundTicks;
+    const review = cutCleanReviewState(rows, ticks);
+    const { ticked, applied, low, needsReview } = review;
+    const foundRows = cutCleanFoundRows(rows);
+    const emptyConfirmed = cutCleanEmptyConfirmed(rows);
+    const noInsideFound = cutCleanNoInsideFound(rows);
+    const working = scanActive || state.cutCleanBusy;
+    const record = working ? null : cutCleanRenderRecord();
+    const renderActive = isRenderActive(record);
+    const recordReady = record?.status === "ready";
+    const staleState = recordReady ? renderStaleFor(record) : { stale: false, noBaseline: false };
+    const stale = Boolean(recordReady && staleState.stale);
+    const noBaseline = Boolean(recordReady && staleState.noBaseline);
+    const ready = Boolean(recordReady && !stale);
+    const failed = record?.status === "failed" || record?.status === "cancelled";
+    const engine = cutCleanEngineLabel();
+    const duration = cleanCutTotal();
+
+    if (recordReady || failed) state.cutCleanPhase = "";
+    if (record?.status === "cancelled") {
+      setCutCleanNote("Render cancelled. Nothing partial is kept. Clean again when ready.");
+    } else if (record?.status === "failed") {
+      setCutCleanNote(`Render failed: ${clipText(record?.error || "the cut did not render.", 200)} Nothing partial is kept.`);
+    }
+
+    let progress = 0;
+    let stage = "";
+    if (scanActive || state.cutCleanPhase === "Finding text") {
+      progress = Number(report?.progress);
+      if (!Number.isFinite(progress)) progress = 0;
+      stage = `Finding text · ${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+    } else if (state.cutCleanPhase === "Cleaning") {
+      progress = 0.5;
+      stage = "Cleaning";
+    } else if (renderActive || state.cutCleanPhase === "Rendering") {
+      progress = Number(record?.progress);
+      if (!Number.isFinite(progress)) progress = 0;
+      stage = `Rendering · ${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+    }
+    if (dom.cutCleanProgress) dom.cutCleanProgress.hidden = !stage;
+    if (dom.cutCleanProgressFill) {
+      dom.cutCleanProgressFill.style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+    }
+    if (dom.cutCleanStage) dom.cutCleanStage.textContent = stage ? tr(stage) : "";
+
+    let summary = state.cutCleanNote;
+    if (!summary) {
+      if (stale) {
+        summary = "Changed since this render. The older file is still available; render again to update it.";
+      } else if (ready) {
+        summary = `Clean cut ready · ${state.target}s · ${fmtDuration(duration)} · ${engine}`;
+        if (noBaseline) {
+          summary += ` · ${tr("No render baseline on this browser. Render again to confirm this cut matches.")}`;
+        }
+      } else if (failed) {
+        summary = `Render failed: ${clipText(record?.error || "the cut did not render.", 200)} Render again; no partial file is kept.`;
+      } else if (renderActive || state.cutCleanPhase === "Rendering") {
+        summary = "Rendering the cut with its Clean boxes.";
+      } else if (state.cutCleanPhase === "Cleaning") {
+        summary = "Applying the ticked Clean boxes.";
+      } else if (scanActive) {
+        summary = "Finding text on screen.";
+      } else if (emptyConfirmed) {
+        summary = "No baked-in text found. Nothing was rendered.";
+      } else if (scanStatus === "failed") {
+        const reason = clipText(report?.message || report?.error || "the scan did not finish.", 180).replace(/[.!?]+$/, "");
+        summary = `The scan failed: ${reason}. Retry the scan; nothing was rendered.`;
+      } else if (scanStatus === "cancelled") {
+        summary = "Scan cancelled. Scan again when ready.";
+      } else if (noInsideFound) {
+        summary = "No found text is inside this cut. Nothing to clean here.";
+      } else if (foundRows.length) {
+        const count = ticked || applied || foundRows.length;
+        const reviewNote = low ? ` · review ${low} more` : "";
+        const fillReason = !fillEngineReady()
+          ? (state.fill?.engines?.lama?.reason || state.fill?.note || "")
+          : "";
+        summary = `${count} text${count === 1 ? "" : "s"} · ${engine}${reviewNote}${fillReason ? ` · ${fillReason}` : ""}`;
+      } else {
+        summary = "No text scan yet for this cut.";
+      }
+    }
+    if (dom.cutCleanSummary) {
+      dom.cutCleanSummary.textContent = summary ? tr(summary) : "";
+      dom.cutCleanSummary.hidden = !summary;
+    }
+
+    let label = "Find text & clean";
+    let disabled = false;
+    const cleanCount = ticked || applied || review.available.length;
+    const staleNeedsReview = stale && needsReview && applied === 0;
+    if (ready) {
+      label = "";
+    } else if (scanActive) {
+      label = "Finding text…";
+      disabled = true;
+    } else if (state.cutCleanBusy) {
+      label = `${state.cutCleanPhase || "Preparing"}…`;
+      disabled = true;
+    } else if (renderActive) {
+      label = "Rendering…";
+      disabled = true;
+    } else if (emptyConfirmed) {
+      label = "Render cut";
+    } else if (noInsideFound && !applied) {
+      label = "Render cut";
+    } else if (stale && !staleNeedsReview && cleanCount) {
+      label = `Clean ${cleanCount} text${cleanCount === 1 ? "" : "s"} & render again`;
+    } else if (scanStatus === "failed") {
+      label = "Retry scan";
+    } else if (scanStatus === "cancelled") {
+      label = "Rescan text";
+    } else if (scanStatus === "ready" && !confirmed) {
+      label = "Rescan text";
+    } else if (ticked) {
+      label = `Clean ${ticked} text${ticked === 1 ? "" : "s"} & render`;
+    } else if (needsReview && applied === 0 && !failed) {
+      label = review.low
+        ? `Review ${review.low} low-confidence`
+        : `Review ${review.available.length} text${review.available.length === 1 ? "" : "s"}`;
+    } else if (applied) {
+      label = `Clean ${applied} text${applied === 1 ? "" : "s"} & render`;
+    } else if (failed) {
+      label = cleanCount
+        ? `Clean ${cleanCount} text${cleanCount === 1 ? "" : "s"} & render`
+        : "Render cut";
+    }
+    if (dom.cutCleanRun) {
+      dom.cutCleanRun.textContent = label ? tr(label) : "";
+      dom.cutCleanRun.hidden = ready;
+      dom.cutCleanRun.disabled = disabled || state.cutCleanBusy || scanActive || renderActive;
+    }
+    if (dom.cutCleanCancel) {
+      dom.cutCleanCancel.hidden = !(scanActive
+        || state.cutCleanPhase === "Cleaning"
+        || renderActive);
+      dom.cutCleanCancel.disabled = false;
+    }
+    if (dom.cutCleanButtons) dom.cutCleanButtons.hidden = ready;
+    if (dom.cutCleanResultActions) dom.cutCleanResultActions.hidden = !(ready || stale || failed);
+
+    if (dom.cutCleanDownload) {
+      if ((ready || stale) && record.url) {
+        dom.cutCleanDownload.hidden = false;
+        dom.cutCleanDownload.href = withToken(record.url);
+        dom.cutCleanDownload.download = `${fileStem(state.job?.source?.name || "cut")}-${state.target}s.mp4`;
+        dom.cutCleanDownload.className = stale ? "ghost small" : "primary small";
+        const downloadLabel = tr(stale ? "Download older file" : "Download");
+        dom.cutCleanDownload.innerHTML = `${esc(downloadLabel)} <span class="arrow">↓</span>`;
+        dom.cutCleanDownload.title = stale
+          ? tr("This file is older than the current Clean changes.")
+          : "";
+      } else {
+        dom.cutCleanDownload.hidden = true;
+        dom.cutCleanDownload.removeAttribute("href");
+        dom.cutCleanDownload.title = "";
+      }
+    }
+    if (dom.cutCleanAgain) {
+      dom.cutCleanAgain.hidden = stale;
+      dom.cutCleanAgain.disabled = false;
+    }
+    updateResultModeGuard();
+  }
+
+  async function runCutClean(options = {}) {
+    if (!state.job || state.cleanScope !== "cut") return;
+    if (state.cutCleanBusy || isRenderActive(cutCleanRenderRecord())) return;
+    const { forceScan = false, renderOnly = false } = options;
+    state.cutCleanBusy = true;
+    state.cutCleanCancelled = false;
+    setCutCleanNote("");
+    try {
+      if (renderOnly) {
+        state.cutCleanPhase = "Rendering";
+        state.cutCleanRecordKey = "";
+        paintCutClean();
+        const result = await startRender("final");
+        if (!result?.render) {
+          state.cutCleanPhase = "";
+          setCutCleanNote("Render did not start. Check the render note in Edit.");
+        } else {
+          state.cutCleanRecordKey = result.render.record_key || result.render.key
+            || renderKey(state.target, "final");
+        }
+        return;
+      }
+
+      let scanStatus = state.textScan?.status || "idle";
+      let report = state.textScan?.report;
+      let confirmed = Boolean(report && report.text && report.text.confirmed === true);
+      if (forceScan || scanStatus !== "ready" || !confirmed) {
+        state.cutCleanPhase = "Finding text";
+        paintCutClean();
+        await startTextScan(true);
+        if (!state.job || state.cleanScope !== "cut") return;
+        scanStatus = state.textScan?.status || "idle";
+        report = state.textScan?.report;
+        confirmed = Boolean(report && report.text && report.text.confirmed === true);
+      }
+      if (state.cutCleanCancelled || scanStatus === "cancelled") {
+        setCutCleanNote("Scan cancelled. Nothing was cleaned or rendered. Scan again when ready.");
+        return;
+      }
+      if (scanStatus === "failed") {
+        const reason = clipText(report?.message || report?.error || "the text scan did not finish.", 200)
+          .replace(/[.!?]+$/, "");
+        setCutCleanNote(`The scan failed: ${reason}. Retry the scan; nothing was rendered.`);
+        return;
+      }
+      if (!confirmed) {
+        setCutCleanNote("The scan could not confirm on-screen text, so nothing was cleaned. Rescan to try again.");
+        return;
+      }
+
+      const rows = cleanScanRows();
+      if (!cutCleanFoundRows(rows).length) {
+        setCutCleanNote("");
+        return;
+      }
+      ensureCutFoundTicks();
+      const ticked = cutCleanTickedCount(rows, state.classicText.foundTicks);
+      const hasLayers = cleanPayloadLayers().length > 0;
+      if (!ticked && !hasLayers) {
+        const low = cutCleanLowRows(rows).length;
+        const inside = cutCleanFoundRows(rows)
+          .filter((row) => cleanRowCutStart(row) !== null).length;
+        if (!inside) {
+          setCutCleanNote("No found text is inside this cut. Nothing was cleaned.");
+          paintCutClean();
+          return;
+        }
+        setCutCleanNote(low
+          ? `${rows.length} text${rows.length === 1 ? "" : "s"} found · review ${low} low-confidence row${low === 1 ? "" : "s"}; tick the ones to remove.`
+          : `${rows.length} text${rows.length === 1 ? "" : "s"} found. Tick the ones to remove, or review the list.`);
+        paintCutClean();
+        dom.cleanFound?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        dom.cleanFound?.querySelector(".clean-found-row")?.focus();
+        return;
+      }
+
+      if (ticked) {
+        state.cutCleanPhase = "Cleaning";
+        paintCutClean();
+        await loadFillStatus();
+        const before = classicCleanLayers().length;
+        applyFoundTicks();
+        await persistClassicText(classicPlanClips());
+        if (state.cutCleanCancelled) {
+          setCutCleanNote("Cleaning stopped before render. Nothing was rendered.");
+          return;
+        }
+        if (classicCleanLayers().length <= before) {
+          setCutCleanNote("No box was added. Check the fill engine or tick a text row again.");
+          return;
+        }
+      }
+
+      state.cutCleanPhase = "Rendering";
+      state.cutCleanRecordKey = "";
+      paintCutClean();
+      const result = await startRender("final");
+      if (!result?.render) {
+        state.cutCleanPhase = "";
+        setCutCleanNote("Render did not start. Check the render note in Edit.");
+        return;
+      }
+      state.cutCleanRecordKey = result.render.record_key || result.render.key
+        || renderKey(state.target, "final");
+    } finally {
+      state.cutCleanBusy = false;
+      if (state.cutCleanPhase !== "Rendering") state.cutCleanPhase = "";
+      paintCutClean();
+    }
+  }
+
+  async function cancelCutClean() {
+    if (!state.job || state.cleanScope !== "cut") return;
+    const scanActive = ["queued", "running"].includes(state.textScan?.status || "");
+    if (scanActive) {
+      state.cutCleanCancelled = true;
+      setCutCleanNote("Cancelling the scan…");
+      paintCutClean();
+      try {
+        await cancelTextScan();
+        if (!state.job || state.cleanScope !== "cut") return;
+        setCutCleanNote("Scan cancelled. Nothing was cleaned or rendered. Scan again when ready.");
+      } catch (error) {
+        setCutCleanNote(`Cancel did not reach the scan: ${error.message}. Retry, or wait for it to finish.`);
+      } finally {
+        paintCutClean();
+      }
+      return;
+    }
+    if (state.cutCleanPhase === "Cleaning") {
+      state.cutCleanCancelled = true;
+      setCutCleanNote("Stopping before render…");
+      paintCutClean();
+      return;
+    }
+    if (isRenderActive(cutCleanRenderRecord())) {
+      setCutCleanNote("Stopping the render…");
+      paintCutClean();
+      await cancelRender();
+      paintCutClean();
+      return;
+    }
+    if (state.cutCleanPhase === "Rendering") {
+      setCutCleanNote("The render is starting. Cancel again when it is running.");
+      paintCutClean();
+    }
+  }
+
+  async function cleanAgainCut() {
+    if (!state.job || state.cleanScope !== "cut") return;
+    const rows = cleanScanRows();
+    const emptyConfirmed = cutCleanEmptyConfirmed(rows);
+    setCutCleanNote("");
+    state.cutCleanCancelled = false;
+    state.cutCleanRecordKey = "";
+    state.cutCleanPhase = "";
+    paintCutClean();
+    if (emptyConfirmed) {
+      const note = classicCleanLayers().length
+        ? "No baked-in text found. Re-rendering with the existing Clean boxes."
+        : "No baked-in text found. Rendering the cut without Clean boxes.";
+      await runCutClean({ renderOnly: true });
+      setCleanStatus(note);
+      return;
+    }
+    await runCutClean({ forceScan: !classicCleanLayers().length });
+  }
+
+  async function cutCleanPrimaryAction() {
+    if (!state.job || state.cleanScope !== "cut") return;
+    const rows = cleanScanRows();
+    const emptyConfirmed = cutCleanEmptyConfirmed(rows);
+    const noInsideFound = cutCleanNoInsideFound(rows);
+    const review = cutCleanReviewState(rows, state.classicText.foundTicks);
+    const record = cutCleanRenderRecord();
+    if (emptyConfirmed) {
+      await runCutClean({ renderOnly: true });
+      return;
+    }
+    const staleRecord = record?.status === "ready" && renderStaleFor(record).stale;
+    const failedRecord = record?.status === "failed" || record?.status === "cancelled";
+    const staleNeedsReview = staleRecord && review.needsReview && review.applied === 0;
+    if (staleRecord && !staleNeedsReview) {
+      await runCutClean();
+      return;
+    }
+    if (noInsideFound && !review.applied) {
+      await runCutClean({ renderOnly: true });
+      return;
+    }
+    if (state.textScan?.status === "ready" && review.needsReview
+      && review.applied === 0 && !failedRecord) {
+      dom.cleanFound?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const reviewRow = review.low
+        ? dom.cleanFound?.querySelector(".clean-found-row.is-low")
+        : dom.cleanFound?.querySelector(".clean-found-row");
+      reviewRow?.focus();
+      setCutCleanNote(review.low
+        ? "Review the low-confidence rows. Tick the ones to remove, then use the Clean action again."
+        : "Review the found text. Tick the rows to remove, then use the Clean action again.");
+      paintCutClean();
+      return;
+    }
+    await runCutClean();
+  }
+
   async function verifySourceCleanMedia(record) {
     if (!state.job || !record) return { ok: false, size: 0 };
     const url = record.url || `/api/classic/jobs/${state.job.id}/clean/source/media`;
@@ -3627,17 +4275,7 @@
 
   function ensureSourceFoundTicks() {
     if (state.classicText.foundTicksInit) return;
-    const rows = cleanScanRows();
-    const ticks = new Set();
-    rows.forEach((row, index) => {
-      if (row.manual || row.added) return;
-      if (Number(row.confidence) < SOURCE_CONFIDENCE_MIN) return;
-      if (!sourceInsideRow(row)) return;
-      ticks.add(index);
-    });
-    state.classicText.foundTicks = ticks;
-    state.classicText.foundTicksInit = true;
-    renderCleanFound();
+    applyStoredFoundTicks(cleanScanRows(), { source: true });
   }
 
   async function estimateSourceClean(clean = cleanPayloadLayers()) {
@@ -3718,10 +4356,8 @@
       return;
     }
     ensureSourceFoundTicks();
-    const ticks = Array.from(state.classicText.foundTicks)
-      .filter((index) => rows[index] && !rows[index].manual && !rows[index].added)
-      .sort((a, b) => a - b);
-    const ticked = sourceTickedCount(rows, state.classicText.foundTicks);
+    const tickedRows = tickedRowsFor(rows, state.classicText.foundTicks, { source: true });
+    const ticked = tickedRows.length;
     const hasLayers = cleanPayloadLayers().length > 0;
     if (!ticked && !hasLayers) {
       state.sourceCleanNote = `${rows.length} text${rows.length === 1 ? "" : "s"} found. Tick the ones to remove, or review the list.`;
@@ -3737,7 +4373,7 @@
       paintSourceClean();
       const method = cleanMethodForTicks();
       const pending = ticked
-        ? cleanEstimatePayload(rows, ticks, method)
+        ? cleanEstimatePayload(rows, tickedRows.map((row) => rows.indexOf(row)), method)
         : cleanPayloadLayers();
       const wantsFill = pending.some(
         (layer) => cleanMethodKey(layer) === "fill" && !layer.hidden,
@@ -4059,6 +4695,8 @@
     dom.transcriptPanel.innerHTML = "";
     dom.momentsFull.hidden = true;
     dom.momentsRail.hidden = false;
+    resetCutCleanState();
+    applyCleanMode(false);
     applySourceMode(true);
     setSourceAspect(job.source.width, job.source.height);
     renderSourceCleanHeader();
@@ -4120,7 +4758,9 @@
     state.job = job;
     state.cleanScope = "cut";
     resetSourceCleanState();
+    resetCutCleanState();
     applySourceMode(false);
+    applyCleanMode(false);
     setCleanStatus("");
     cancelAudioScript();
     cancelTranslationWarm();
@@ -4167,6 +4807,7 @@
     refreshTextScan();
     loadFillStatus();
     paintCleanStage();
+    paintCutClean();
     scheduleCleanFrame();
     loadAudioEngines();
     loadAudioMoods();
@@ -4405,6 +5046,13 @@
   function renderPlan() {
     const plan = state.plan;
     if (!plan) return;
+    const cutKey = classicCutKey(classicPlanClips());
+    if (state.cleanScope === "cut" && cutKey && cutKey !== state.classicText.loadedKey) {
+      // The cut changed. Wait for refreshClassicText to load this cut's Clean
+      // layers before deciding which found rows are still available to tick.
+      state.classicText.pendingTickReset = cutKey;
+      state.cutCleanRecordKey = "";
+    }
     const scroll = Number(state.timelineScroll) || 0;
     dom.planTotal.textContent = tr(`${plan.total.toFixed(1)}s cut · ${plan.clip_count} beats`);
     dom.planBadge.textContent = tr(plan.auto ? "auto hook" : "custom hook");
@@ -7836,6 +8484,14 @@
     state.classicText.overlays = Array.isArray(cut?.overlays) ? cut.overlays : [];
     state.classicText.effects = Array.isArray(cut?.effects) ? cut.effects : [];
     state.classicText.clean = Array.isArray(cut?.clean) ? cut.clean : [];
+    const resetTicks = state.cleanScope === "cut"
+      && Boolean(state.classicText.pendingTickReset)
+      && state.classicText.pendingTickReset === key;
+    if (resetTicks) {
+      state.classicText.foundTicks = new Set();
+      state.classicText.foundTicksInit = false;
+      state.classicText.pendingTickReset = "";
+    }
     if (cut && Array.isArray(cut.source_clean_deleted)) {
       const durable = durableDeletedTokens(key);
       durable.clear();
@@ -7852,6 +8508,7 @@
     renderClassicText();
     paintCleanStage();
     scheduleCleanFrame();
+    if (resetTicks && state.textScan?.status === "ready") ensureCutFoundTicks();
   }
 
   async function refreshClassicText(force = false) {
@@ -8089,6 +8746,12 @@
   };
   const CLEAN_SCAN_METHOD = { plate: "blur", crop_guard: "crop", mask: "blur", blur: "blur" };
   const CLEAN_MIN_BOX = 0.02;
+  // These match routes_classic.normalize_classic_clean. A new box and a box
+  // reloaded from the server must hash the same before any render signature is
+  // compared.
+  const CLEAN_DEFAULT_COLOR = "#0b0d12";
+  const CLEAN_DEFAULT_OPACITY = 1;
+  const CLEAN_DEFAULT_RADIUS = 24;
   const SOURCE_CONFIDENCE_MIN = 0.65;
   const CLASSIC_UNDO_LIMIT = 40;
 
@@ -8169,22 +8832,43 @@
     return CLEAN_METHODS[cleanMethodKey(layer)].label;
   }
 
+  function mergeCleanRanges(ranges) {
+    const items = [];
+    for (const item of ranges || []) {
+      const start = Number(item?.start);
+      const end = Number(item?.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+      items.push({
+        start: Math.round(start * 1000) / 1000,
+        end: Math.round(end * 1000) / 1000,
+      });
+    }
+    items.sort((a, b) => a.start - b.start || a.end - b.end);
+    const merged = [];
+    for (const item of items) {
+      const last = merged[merged.length - 1];
+      if (last && item.start <= last.end + 1e-6) {
+        last.end = Math.max(last.end, item.end);
+      } else {
+        merged.push({ ...item });
+      }
+    }
+    return merged;
+  }
+
   function cleanPayloadLayers() {
     return classicCleanLayers().map((layer) => ({
       id: layer.id,
       method: cleanMethodKey(layer),
       box: { x: layer.box.x, y: layer.box.y, w: layer.box.w, h: layer.box.h },
-      ranges: (layer.ranges || []).map((item) => ({
-        start: Number(item.start) || 0,
-        end: Number(item.end) || 0,
-      })),
+      ranges: mergeCleanRanges(layer.ranges || []),
       label: layer.label || "",
       kind: layer.kind || layer.tracklet_kind || "manual",
       tracklet_id: layer.tracklet_id || undefined,
       tracklet_kind: layer.tracklet_kind || undefined,
-      color: layer.color || undefined,
-      opacity: layer.opacity,
-      radius: layer.radius,
+      color: layer.color || CLEAN_DEFAULT_COLOR,
+      opacity: Number.isFinite(Number(layer.opacity)) ? Number(layer.opacity) : CLEAN_DEFAULT_OPACITY,
+      radius: Number.isFinite(Number(layer.radius)) ? Number(layer.radius) : CLEAN_DEFAULT_RADIUS,
       hidden: Boolean(layer.hidden),
       source: layer.source || "manual",
       ...(cleanMethodKey(layer) === "fill" ? { engine: "lama" } : {}),
@@ -8268,7 +8952,8 @@
       : (engines[previewEngine]?.reason || "That engine is not ready on this Mac.");
     const preview = state.classicText.fillPreview;
     const side = state.classicText.previewSide === "before" ? "before" : "after";
-    const result = preview
+    const inPlace = state.cleanScope === "source" || cutCleanActive();
+    const result = (!inPlace && preview)
       ? `<div class="clean-fill-compare is-${side}">
            <figure class="is-before"><img src="${esc(preview.before)}" alt="The frame before the fill"><figcaption>Before</figcaption></figure>
            <figure class="is-after"><img src="${esc(preview.after)}" alt="The same frame after the fill"><figcaption>After</figcaption></figure>
@@ -8291,6 +8976,7 @@
   async function previewFill() {
     if (!state.job) return;
     const sourceScope = state.cleanScope === "source";
+    const inPlace = sourceScope || cutCleanActive();
     const bodies = () => ({
       clips: classicPlanClips(),
       clean: cleanPayloadLayers(),
@@ -8313,11 +8999,11 @@
         method: "POST",
         body: JSON.stringify(bodies()),
       });
-      if (sourceScope) {
-        // Source Clean keeps Before/After on the one frame, not in a second
-        // image column: the After button swaps in this filled JPEG.
+      if (inPlace) {
+        // Clean keeps Before/After on the one frame, not in a second image
+        // column: After swaps in this filled JPEG.
         state.classicText.previewSide = "after";
-        setSourceAspect(payload.width, payload.height);
+        if (sourceScope) setSourceAspect(payload.width, payload.height);
         if (state.classicText.frame.url) URL.revokeObjectURL(state.classicText.frame.url);
         state.classicText.frame.url = payload.after;
         state.classicText.frame.key = "";
@@ -8372,7 +9058,11 @@
   function updateCleanPreviewMeta() {
     const t = currentCleanTime();
     const sourceScope = state.cleanScope === "source";
-    if (dom.cleanPreviewTime) dom.cleanPreviewTime.textContent = `Source ${fmtTime(cleanSourceTimeAt(t), 2)}`;
+    if (dom.cleanPreviewTime) {
+      dom.cleanPreviewTime.textContent = sourceScope
+        ? `Source ${fmtTime(cleanSourceTimeAt(t), 2)}`
+        : `Cut ${fmtTime(t, 2)}`;
+    }
     if (dom.cleanPreviewMoment) {
       dom.cleanPreviewMoment.textContent = sourceScope
         ? tr("Whole video")
@@ -8711,23 +9401,24 @@
     const clips = state.plan.clips || [];
     if (!clips.length) return;
     const sourceScope = state.cleanScope === "source";
-    const side = sourceScope && state.classicText.previewSide === "after" ? "after" : "before";
+    const sideMode = sourceScope || cutCleanActive();
+    const side = sideMode && state.classicText.previewSide === "after" ? "after" : "before";
     const now = currentCleanTime();
     const activeClean = cleanPayloadLayers();
-    const activeFill = sourceScope
+    const activeFill = sideMode
       ? classicCleanLayers().filter((layer) => (
         !layer.hidden
         && cleanMethodKey(layer) === "fill"
         && cleanVisibleAt(layer, now)
       ))
       : [];
-    const visibleClean = sourceScope
+    const visibleClean = sideMode
       ? activeClean.filter((layer) => !layer.hidden && cleanVisibleAt(layer, now))
       : [];
     // Before is the original source: no blur, no fill. After is the same time
     // with the active layers the render will use.
-    const body = cleanFrameBody(sourceScope && side === "before" ? [] : activeClean);
-    const key = sourceScope ? `${cleanFrameKey(body)}|${side}` : cleanFrameKey(body);
+    const body = cleanFrameBody(sideMode && side === "before" ? [] : activeClean);
+    const key = sideMode ? `${cleanFrameKey(body)}|${side}` : cleanFrameKey(body);
     if (!force && key === state.classicText.frame.key && state.classicText.frame.url) return;
     const seq = ++state.classicText.frame.seq;
     state.classicText.frame.busy = true;
@@ -8738,17 +9429,17 @@
     state.classicText.frame.controller = controller;
     paintCleanBoxes();
     try {
-      let sourceNote = "";
-      if (sourceScope) {
+      let sideNote = "";
+      if (sideMode) {
         if (side === "after" && activeFill.length) {
           try {
             const payload = await api(`/api/classic/jobs/${state.job.id}/fill/preview`, {
               method: "POST",
-              body: JSON.stringify({ ...body, aspect: "source" }),
+              body: JSON.stringify(sourceScope ? { ...body, aspect: "source" } : body),
               signal: controller.signal,
             });
             if (seq !== state.classicText.frame.seq) return;
-            setSourceAspect(payload.width, payload.height);
+            if (sourceScope) setSourceAspect(payload.width, payload.height);
             if (state.classicText.frame.url) URL.revokeObjectURL(state.classicText.frame.url);
             state.classicText.frame.url = payload.after;
             state.classicText.frame.key = key;
@@ -8758,10 +9449,10 @@
             return;
           } catch (error) {
             if (error && (error.name === "AbortError" || controller.signal.aborted)) throw error;
-            sourceNote = "The filled frame is unavailable. After shows the source frame with Clean boxes; the render still applies them.";
+            sideNote = "The filled frame is unavailable. After shows the source frame with Clean boxes; the render still applies them.";
           }
         } else if (side === "after") {
-          sourceNote = visibleClean.length
+          sideNote = visibleClean.length
             ? "After shows the blur this render uses."
             : "After matches Before; no Clean layer is active at this time.";
         }
@@ -8793,7 +9484,7 @@
         );
         setCleanFillNote(
           Number(response.headers.get("X-VibeCut-Fill")) || 0,
-          sourceNote || (side === "after"
+          sideNote || (side === "after"
             ? (visibleClean.length
               ? "After shows the blur this render uses."
               : "After matches Before; no Clean layer is active at this time.")
@@ -8805,7 +9496,10 @@
           state.classicText.crops[crop.index] = crop.box;
           paintCleanBoxes();
         }
-        setCleanFillNote(Number(response.headers.get("X-VibeCut-Fill")) || 0);
+        setCleanFillNote(
+          Number(response.headers.get("X-VibeCut-Fill")) || 0,
+          sideMode ? sideNote : "",
+        );
       }
       const blob = await response.blob();
       if (seq !== state.classicText.frame.seq) return;
@@ -8974,6 +9668,8 @@
         ranges: cleanRowRanges([{ ranges: entry.ranges || [] }]),
         entryRows: [entry],
         entry,
+        tracklet_id: entry.tracklet_id || "",
+        text_key: entry.text_key || entry.text || text,
         method: state.classicText.foundMethod || "fill",
         manual: false,
         added: false,
@@ -9027,6 +9723,103 @@
     return rows;
   }
 
+  function roundedBox(axis, value) {
+    const number = Number(value) || 0;
+    return Math.round(number * 10000) / 10000;
+  }
+
+  function cleanRowIdentity(row) {
+    if (!row) return "";
+    if (row.manual) {
+      return `manual:${row.layer_id || String(row.key || "").replace(/^manual:/, "")}`;
+    }
+    if (row.tracklet_id) return `tracklet:${row.tracklet_id}`;
+    const text = cleanTextKey(row.text_key || row.text || String(row.key || "").replace(/^manual:/, ""));
+    const box = row.box || {};
+    const rect = ["x", "y", "w", "h"].map((axis) => roundedBox(axis, box[axis])).join(",");
+    return `text:${text}|${rect}`;
+  }
+
+  function tickHash(value) {
+    let hash = 2166136261;
+    const text = String(value || "");
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function cleanTickStorageKey(report = state.textScan?.report) {
+    if (!state.job) return "";
+    const cutKey = classicCutKey(classicPlanClips());
+    if (!cutKey) return "";
+    return `classic-clean-ticks:${state.job.id}:${state.cleanScope}:${cutKey}:${tickHash(textScanReportKey(report))}`;
+  }
+
+  function loadStoredFoundTicks() {
+    const key = cleanTickStorageKey();
+    if (!key) return null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.ticked)) return null;
+      return {
+        ticked: parsed.ticked.map(String),
+        seen: Array.isArray(parsed.seen) ? parsed.seen.map(String) : [],
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function saveFoundTicks() {
+    const key = cleanTickStorageKey();
+    if (!key) return;
+    const rows = cleanScanRows().filter((row) => !row.manual && !row.added);
+    const seen = rows.map((row) => cleanRowIdentity(row));
+    const live = new Set(seen);
+    const ticked = Array.from(state.classicText.foundTicks)
+      .filter((identity) => live.has(identity));
+    try {
+      localStorage.setItem(key, JSON.stringify({ ticked, seen }));
+      state.classicText.tickStoreKey = key;
+    } catch (_) { /* storage may be unavailable */ }
+  }
+
+  function clearStoredFoundTicks(key = state.classicText.tickStoreKey) {
+    if (!key) return;
+    try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
+    if (state.classicText.tickStoreKey === key) state.classicText.tickStoreKey = "";
+  }
+
+  function applyStoredFoundTicks(rows, options = {}) {
+    const sourceScope = Boolean(options.source);
+    const stored = loadStoredFoundTicks();
+    const actionable = rows.filter((row) => {
+      if (row.manual || row.added) return false;
+      if (sourceScope) return sourceInsideRow(row);
+      return cleanRowCutStart(row) !== null;
+    });
+    const live = new Set(actionable.map((row) => cleanRowIdentity(row)));
+    const ticks = new Set();
+    const seen = new Set(stored?.seen || []);
+    for (const identity of stored?.ticked || []) {
+      if (live.has(identity)) ticks.add(identity);
+    }
+    for (const row of actionable) {
+      const identity = cleanRowIdentity(row);
+      if (seen.has(identity)) continue;
+      if (Number(row.confidence) < SOURCE_CONFIDENCE_MIN) continue;
+      ticks.add(identity);
+    }
+    state.classicText.foundTicks = ticks;
+    state.classicText.foundTicksInit = true;
+    saveFoundTicks();
+    renderCleanFound();
+  }
+
   function fillEngineReady() {
     return Boolean(state.fill?.available && state.fill?.engines?.lama?.ready);
   }
@@ -9076,28 +9869,51 @@
   }
 
   function cleanRowCutStart(row) {
+    if (!row) return null;
+    if (row.manual) return row.ranges.length ? row.ranges[0].start : 0;
     if (!row.ranges.length) return 0;
     const mapped = cleanCutRanges(row.ranges);
     return mapped.length ? mapped[0].start : null;
   }
 
-  function cleanSourceScene(at) {
-    const scenes = state.job?.analysis?.scenes;
-    if (!Array.isArray(scenes)) return null;
-    return scenes.find((scene) => at >= scene.start && at < scene.end) || null;
+  // Scan prefill ranges are source time; a drawn row already stores cut time.
+  // The rail shows what the founder sees: cut time on a cut, source time on a
+  // whole video.
+  function cleanRowDisplayRanges(row) {
+    if (!row) return [];
+    if (state.cleanScope === "source" || row.manual) return row.ranges || [];
+    return cleanCutRanges(row.ranges);
+  }
+
+  function cleanRowTimeLabel(row) {
+    const ranges = cleanRowDisplayRanges(row);
+    if (ranges.length) {
+      return `${fmtTime(ranges[0].start, 1)} – ${fmtTime(ranges[ranges.length - 1].end, 1)}`;
+    }
+    if ((row.ranges || []).length) return "—";
+    return state.cleanScope === "source" ? "whole video" : "whole cut";
+  }
+
+  function cleanSceneAtCut(t) {
+    const clips = state.plan?.clips || [];
+    if (!clips.length) return null;
+    const index = cleanSegmentAt(t);
+    return sceneById(clips[index]?.scene);
   }
 
   function focusCleanRow(row) {
     if (!row) return;
     const sourceMode = state.cleanScope === "source";
-    const sourceStart = Number(row.ranges[0]?.start) || 0;
     const cutStart = cleanRowCutStart(row);
     if (cutStart === null) {
       setCleanStatus("Not in this cut. Add the moment to Smart Cut first.");
       return;
     }
-    const scene = sourceMode ? null : cleanSourceScene(sourceStart);
-    if (scene) openDrawer(scene.id);
+    const scene = sourceMode ? null : cleanSceneAtCut(cutStart);
+    // Clean is a focus mode: a click seeks and highlights the box on the frame.
+    // The moment drawer would cover that frame (and the detail strip on a
+    // double-click); Edit keeps the drawer.
+    if (scene && !cutCleanActive()) openDrawer(scene.id);
     state.classicText.t = Math.max(0, cutStart - 0.5);
     state.classicText.focusBox = row.box;
     if (row.layer_id && classicCleanLayers().some((layer) => layer.id === row.layer_id)) {
@@ -9108,8 +9924,8 @@
     scheduleCleanFrame();
     dom.cleanStage?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     setCleanStatus(scene
-      ? `Moment ${scene.id + 1} · ${fmtTime(scene.start, 1)} · ${row.kind}`
-      : `Source ${fmtTime(sourceStart, 1)} · ${row.kind}`);
+      ? `Moment ${scene.id + 1} · ${fmtTime(cutStart, 1)} · ${row.kind}`
+      : `${sourceMode ? "Source" : "Cut"} ${fmtTime(cutStart, 1)} · ${row.kind}`);
   }
 
   function resetSourceConfirmation() {
@@ -9121,9 +9937,7 @@
   function openCleanDetail(row) {
     if (!row || !dom.cleanDetail) return;
     const sourceScope = state.cleanScope === "source";
-    const time = row.ranges.length
-      ? `${fmtTime(row.ranges[0].start, 1)} – ${fmtTime(row.ranges[row.ranges.length - 1].end, 1)}`
-      : (sourceScope ? "whole video" : "whole cut");
+    const time = cleanRowTimeLabel(row);
     dom.cleanDetail.hidden = false;
     dom.cleanDetail.innerHTML = `
       <div><strong>${esc(row.text || "Text")}</strong> · ${esc(row.kind || "text")}</div>
@@ -9144,8 +9958,11 @@
     }
     panel.hidden = false;
     const ticks = state.classicText.foundTicks;
-    for (const index of Array.from(ticks)) {
-      if (!rows[index] || rows[index].manual || rows[index].added) ticks.delete(index);
+    const liveTicks = new Set(rows
+      .filter((row) => !row.manual && !row.added)
+      .map((row) => cleanRowIdentity(row)));
+    for (const identity of Array.from(ticks)) {
+      if (!liveTicks.has(identity)) ticks.delete(identity);
     }
     const fill = state.fill || {};
     const methods = [["fill", "AI fill"], ["blur", "Blur"], ["crop", "Crop guard"]]
@@ -9156,25 +9973,26 @@
     const methodOptions = methods
       .map(([key, label]) => `<option value="${key}"${key === method ? " selected" : ""}>${label}</option>`)
       .join("");
-    const lowCount = sourceScope ? sourceLowRows(rows).length : 0;
+    const lowCount = sourceScope ? sourceLowRows(rows).length : cutCleanLowRows(rows).length;
     const rowsHtml = rows.map((row, index) => {
+      const identity = cleanRowIdentity(row);
       const cutStart = cleanRowCutStart(row);
       const outside = !sourceScope && cutStart === null;
-      const ticked = !row.manual && !row.added && ticks.has(index);
-      const low = sourceScope && !row.manual && Number(row.confidence) < SOURCE_CONFIDENCE_MIN;
-      const scene = sourceScope ? null : cleanSourceScene(Number(row.ranges[0]?.start) || 0);
+      const ticked = !row.manual && !row.added && ticks.has(identity);
+      const low = !row.manual && !row.added
+        && Number(row.confidence) < SOURCE_CONFIDENCE_MIN
+        && (sourceScope || cutStart !== null);
+      const scene = sourceScope ? null : cleanSceneAtCut(cutStart ?? 0);
       const thumb = scene ? thumbUrl(scene) : "";
-      const time = row.ranges.length
-        ? `${fmtTime(row.ranges[0].start, 1)} – ${fmtTime(row.ranges[row.ranges.length - 1].end, 1)}`
-        : (sourceScope ? "whole video" : "whole cut");
+      const time = cleanRowTimeLabel(row);
       return `
         <div class="clean-found-row clean-lane-${Math.min(3, row.lane || 0)}${ticked ? " is-ticked" : ""}${outside ? " is-outside" : ""}${low ? " is-low" : ""}${row.added ? " is-added" : ""}"
              role="listitem" tabindex="0" data-found-index="${index}">
           ${row.manual
             ? '<span class="clean-found-tick-space" aria-hidden="true"></span>'
             : (row.added
-              ? `<input type="checkbox" class="clean-found-tick is-cleaned" data-found-tick="${index}" checked disabled aria-label="${row.hidden ? "Excluded" : "Already cleaned"}: ${esc(row.text)}">`
-              : `<input type="checkbox" class="clean-found-tick" data-found-tick="${index}"${ticked ? " checked" : ""} aria-label="Include ${esc(row.text)}">`)}
+              ? `<input type="checkbox" class="clean-found-tick is-cleaned" data-found-tick="${esc(identity)}" checked disabled aria-label="${row.hidden ? "Excluded" : "Already cleaned"}: ${esc(row.text)}">`
+              : `<input type="checkbox" class="clean-found-tick" data-found-tick="${esc(identity)}"${ticked ? " checked" : ""} aria-label="Include ${esc(row.text)}">`)}
           ${thumb ? `<span class="clean-found-thumb" style="background-image:url('${esc(thumb)}');${cleanThumbStyle(row.box)}" aria-hidden="true"></span>` : '<span class="clean-found-thumb is-empty" aria-hidden="true"></span>'}
           <div class="clean-found-copy">
             <span class="clean-found-time mono">${esc(time)}</span>
@@ -9184,12 +10002,12 @@
           </div>
           ${outside ? '<span class="clean-found-blocked">Not in this cut</span>' : ""}
           ${row.manual ? '<span class="clean-found-blocked is-added">drawn</span>' : ""}
-          ${row.added && !row.manual ? '<span class="clean-found-blocked is-added">cleaned</span>' : ""}
+          ${row.added && !row.manual ? `<span class="clean-found-blocked is-added">${row.hidden ? "Excluded" : "Already cleaned"}</span>` : ""}
         </div>`;
     }).join("");
     const tickCount = sourceScope
       ? sourceTickedCount(rows, ticks)
-      : Array.from(ticks).filter((index) => rows[index] && !rows[index].manual).length;
+      : cutCleanTickedCount(rows, ticks);
     const readyText = fillEngineReady()
       ? `AI fill ready${fill.default ? ` · ${esc(String(fill.default).toUpperCase())} by default` : ""}`
       : (state.cleanScope === "source"
@@ -9213,6 +10031,7 @@
       </div>
       <p class="hint clean-found-note">${readyText}</p>`;
     if (sourceScope) paintSourceClean();
+    else paintCutClean();
   }
 
   function addCleanFromScan(entry, method, engine) {
@@ -9242,9 +10061,11 @@
 
   function applyFoundTicks() {
     const rows = cleanScanRows();
+    const byIdentity = new Map(rows.map((row) => [cleanRowIdentity(row), row]));
     const ticks = Array.from(state.classicText.foundTicks)
-      .filter((index) => rows[index] && !rows[index].manual && !rows[index].added)
-      .sort((a, b) => a - b);
+      .map((identity) => byIdentity.get(identity))
+      .filter((row) => row && !row.manual && !row.added)
+      .sort((a, b) => rows.indexOf(a) - rows.indexOf(b));
     if (!ticks.length) {
       setCleanStatus("Tick the text you want removed first.");
       return;
@@ -9260,8 +10081,7 @@
     let outside = 0;
     // One undo step for the whole tick, not one per row.
     pushClassicUndo();
-    for (const index of ticks) {
-      const row = rows[index];
+    for (const row of ticks) {
       const entry = row.entry || {
         ...row,
         ranges: row.ranges,
@@ -9276,6 +10096,8 @@
       added += 1;
     }
     state.classicText.foundTicks = new Set();
+    state.classicText.foundTicksInit = true;
+    saveFoundTicks();
     saveClassicText();
     paintCleanStage();
     scheduleCleanFrame();
@@ -9374,11 +10196,11 @@
     dom.cleanEmpty.hidden = layers.length > 0;
     const copy = dom.cleanEmpty.querySelector("p");
     if (copy) {
+      const report = state.textScan?.report;
+      const confirmed = Boolean(report && report.text && report.text.confirmed === true);
+      const scannedRows = cleanScanRows().length;
+      const scanStatus = state.textScan?.status || "idle";
       if (sourceScope) {
-        const report = state.textScan?.report;
-        const confirmed = Boolean(report && report.text && report.text.confirmed === true);
-        const scannedRows = cleanScanRows().length;
-        const scanStatus = state.textScan?.status || "idle";
         if (scanStatus === "queued" || scanStatus === "running") {
           copy.textContent = tr("Scanning the whole video…");
         } else if (scanStatus === "ready" && confirmed) {
@@ -9394,12 +10216,22 @@
         } else {
           copy.textContent = tr("No text scan yet. Find text & clean scans the whole video and fills each text it finds.");
         }
+      } else if (scanStatus === "queued" || scanStatus === "running") {
+        copy.textContent = tr("Scanning the cut for text…");
+      } else if (scanStatus === "ready" && confirmed) {
+        copy.textContent = scannedRows
+          ? tr("Text was found but is not cleaned yet. Tick a row or use the Clean action.")
+          : tr("No baked-in text found. Nothing was rendered.");
+      } else if (scanStatus === "ready") {
+        copy.textContent = tr("The scan could not confirm on-screen text. Rescan to try again.");
+      } else if (scanStatus === "failed") {
+        copy.textContent = tr("The scan failed. Retry the scan; nothing was rendered.");
+      } else if (scanStatus === "cancelled") {
+        copy.textContent = tr("Scan cancelled. Scan again when ready.");
       } else {
-        copy.textContent = tr("No clean boxes yet. Find text, or draw a box on the frame.");
+        copy.textContent = tr("No text scan yet. Find text & clean scans this cut and fills each text it finds.");
       }
     }
-    if (dom.cleanEmptyScanThis) dom.cleanEmptyScanThis.hidden = sourceScope;
-    if (dom.cleanEmptyScanVideo) dom.cleanEmptyScanVideo.hidden = sourceScope;
   }
 
   function paintCleanPanel(options = {}) {
@@ -9474,6 +10306,9 @@
       ...(options.fill_keys !== undefined ? { fill_keys: options.fill_keys } : {}),
       mask: options.mask || null,
       source: options.source === "scan" ? "scan" : "manual",
+      color: options.color || CLEAN_DEFAULT_COLOR,
+      opacity: Number.isFinite(Number(options.opacity)) ? Number(options.opacity) : CLEAN_DEFAULT_OPACITY,
+      radius: Number.isFinite(Number(options.radius)) ? Number(options.radius) : CLEAN_DEFAULT_RADIUS,
       hidden: false,
     };
     classicCleanLayers().push(layer);
@@ -9846,17 +10681,20 @@
       if (event.target.closest("[data-found-all]")) {
         const rows = cleanScanRows();
         state.classicText.foundTicks = new Set(
-          rows.map((row, index) => (
-            row.manual || row.added || cleanRowCutStart(row) === null ? -1 : index
-          )).filter((index) => index >= 0),
+          rows
+            .filter((row) => !row.manual && !row.added
+              && (state.cleanScope === "source" || cleanRowCutStart(row) !== null))
+            .map((row) => cleanRowIdentity(row)),
         );
         resetSourceConfirmation();
+        saveFoundTicks();
         renderCleanFound();
         return;
       }
       if (event.target.closest("[data-found-none]")) {
         state.classicText.foundTicks = new Set();
         resetSourceConfirmation();
+        saveFoundTicks();
         renderCleanFound();
         return;
       }
@@ -9880,14 +10718,15 @@
     dom.cleanFound?.addEventListener("change", (event) => {
       const tick = event.target.closest("[data-found-tick]");
       if (tick) {
-        const index = Number(tick.dataset.foundTick);
-        if (tick.checked) state.classicText.foundTicks.add(index);
-        else state.classicText.foundTicks.delete(index);
+        const identity = tick.dataset.foundTick || "";
+        if (tick.checked) state.classicText.foundTicks.add(identity);
+        else state.classicText.foundTicks.delete(identity);
         resetSourceConfirmation();
+        saveFoundTicks();
         renderCleanFound();
-        const restored = dom.cleanFound?.querySelector(
-          `[data-found-index="${index}"] [data-found-tick="${index}"]`,
-        ) || dom.cleanFound?.querySelector(`[data-found-index="${index}"]`);
+        const restored = Array.from(
+          dom.cleanFound?.querySelectorAll("[data-found-tick]") || [],
+        ).find((node) => node.dataset.foundTick === identity);
         restored?.focus();
         return;
       }
@@ -9921,12 +10760,12 @@
     });
     dom.cleanPreviewBefore?.addEventListener("click", () => {
       state.classicText.previewSide = "before";
-      if (state.cleanScope === "source") scheduleCleanFrame(true);
+      if (state.cleanScope === "source" || cutCleanActive()) scheduleCleanFrame(true);
       renderCleanFill();
     });
     dom.cleanPreviewAfter?.addEventListener("click", () => {
       state.classicText.previewSide = "after";
-      if (state.cleanScope === "source") scheduleCleanFrame(true);
+      if (state.cleanScope === "source" || cutCleanActive()) scheduleCleanFrame(true);
       renderCleanFill();
     });
     dom.cleanPreviewPlay?.addEventListener("click", () => {
@@ -9935,7 +10774,9 @@
         || cleanScanRows().find((item) => item.method === "fill");
       if (row) focusCleanRow(row);
       else if (selected) {
-        const cut = cleanCutRanges(selected.ranges);
+        const cut = state.cleanScope === "source"
+          ? cleanCutRanges(selected.ranges)
+          : (selected.ranges || []);
         state.classicText.t = Math.max(0, (cut[0]?.start || 0) - 0.5);
         paintCleanStage();
         scheduleCleanFrame();
@@ -9968,8 +10809,6 @@
       if (selected) setCleanMethod(selected.id, "blur");
       else setCleanStatus("Select a box first.");
     });
-    dom.cleanEmptyScanThis?.addEventListener("click", () => startTextScan());
-    dom.cleanEmptyScanVideo?.addEventListener("click", () => startTextScan());
     dom.cleanDetail?.addEventListener("click", (event) => {
       if (event.target.closest("[data-clean-detail-close]")) {
         dom.cleanDetail.hidden = true;
@@ -9983,7 +10822,7 @@
       if (item) {
         focusCleanRow(item);
         openCleanDetail(item);
-        setCleanStatus(`${item.kind} · ${item.text} · ${item.ranges.length ? `${fmtTime(item.ranges[0].start, 1)}–${fmtTime(item.ranges[item.ranges.length - 1].end, 1)}` : (state.cleanScope === "source" ? "whole video" : "whole cut")}`);
+        setCleanStatus(`${item.kind} · ${item.text} · ${cleanRowTimeLabel(item)}`);
       }
     });
     paintClassicUndo();
@@ -10089,7 +10928,7 @@
     chip.hidden = false;
     const facts = textScanFacts(scan && scan.report);
     const labels = {
-      idle: "Find text on screen ›",
+      idle: "Clean text ›",
       queued: "text scan queued",
       running: "scanning text…",
       ready: facts.confirmed ? "text scanned ✓" : "scanned · no text",
@@ -10105,12 +10944,8 @@
 
   function momentsScanAction() {
     if (!state.job || state.cleanScope === "source") return;
-    const status = (state.textScan && state.textScan.status) || "idle";
-    if (status === "idle" || status === "cancelled" || status === "failed") {
-      startTextScan();
-      return;
-    }
-    if (dom.cleanPanel) dom.cleanPanel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setResultMode("clean");
+    dom.cutCleanAction?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
   // ------------------------------------------------------------ shortcut sheet
@@ -10126,8 +10961,50 @@
     dom.shortcutsSheet.hidden = true;
   }
 
+  function setJobMenu(open, options = {}) {
+    if (!dom.jobMenu || !dom.jobMenuOpen) return;
+    const on = Boolean(open);
+    const restoreFocus = Boolean(options.restoreFocus);
+    dom.jobMenu.hidden = !on;
+    dom.jobMenuOpen.setAttribute("aria-expanded", on ? "true" : "false");
+    if (on) dom.jobMenu.querySelector("select, button")?.focus();
+    else if (restoreFocus) dom.jobMenuOpen.focus();
+  }
+
+  function bindJobMenu() {
+    if (!dom.jobMenuOpen || !dom.jobMenu) return;
+    dom.jobMenuOpen.addEventListener("click", () => setJobMenu(dom.jobMenu.hidden));
+    dom.jobMenu.addEventListener("click", (event) => {
+      if (event.target.closest("#clean-profile")) event.stopPropagation();
+      if (event.target.closest(".job-menu-item")) {
+        setJobMenu(false);
+        // A non-navigating item keeps the user in the result screen. Return
+        // focus to More after the click, but never on an outside dismissal.
+        setTimeout(() => {
+          if (dom.result && !dom.result.hidden) dom.jobMenuOpen.focus();
+        }, 0);
+      }
+    });
+    document.addEventListener("mousedown", (event) => {
+      if (dom.jobMenu.hidden) return;
+      if (event.target.closest("#job-menu-wrap")) return;
+      setJobMenu(false);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || dom.jobMenu.hidden) return;
+      event.preventDefault();
+      setJobMenu(false, { restoreFocus: true });
+    });
+  }
+
   function bindChrome() {
     dom.finishCut?.addEventListener("click", toggleFinishMode);
+    document.addEventListener("focusin", (event) => {
+      if (state.cleanScope !== "cut" || cutCleanActive()) return;
+      const element = event.target;
+      if (!element || !dom.result?.contains(element) || element.closest?.("#result-mode")) return;
+      state.editFocusElement = element;
+    });
     dom.shortcutsOpen?.addEventListener("click", openShortcuts);
     dom.cleanHelp?.addEventListener("click", openShortcuts);
     dom.shortcutsClose?.addEventListener("click", closeShortcuts);
@@ -10135,6 +11012,7 @@
       if (event.target.closest("[data-shortcuts-close]")) closeShortcuts();
     });
     dom.momentsScan?.addEventListener("click", momentsScanAction);
+    bindJobMenu();
     const pane = dom.cleanStage?.closest(".editor-pane");
     if (pane && typeof ResizeObserver === "function") {
       const observer = new ResizeObserver(() => sizeCleanCanvas());
@@ -10250,19 +11128,24 @@
     } catch (_) { /* storage may be unavailable */ }
   }
 
-  function updateRenderStale(record) {
-    if (!dom.renderStale) return;
-    let stale = false;
+  function renderStaleFor(record) {
+    if (!record) return { stale: false, noBaseline: false };
     let baseline = String(record?.request_sig || "");
     const key = renderSigKey(record);
-    if (!baseline && record && key) {
+    if (!baseline && key) {
       try { baseline = localStorage.getItem(key) || ""; } catch (_) { /* ignore */ }
     }
-    if (baseline) {
-      stale = baseline !== renderSignatureOf(
-        renderRequestFor(record.target, record.quality || "final"),
-      );
-    } else if (record) {
+    if (!baseline) return { stale: false, noBaseline: true };
+    const current = renderSignatureOf(
+      renderRequestFor(record.target, record.quality || "final"),
+    );
+    return { stale: baseline !== current, noBaseline: false };
+  }
+
+  function updateRenderStale(record) {
+    if (!dom.renderStale) return;
+    const stateForRecord = renderStaleFor(record);
+    if (stateForRecord.noBaseline) {
       dom.renderStale.textContent = tr("No render baseline on this browser. Render again to confirm this cut matches.");
       dom.renderStale.hidden = false;
       return;
@@ -10271,7 +11154,7 @@
       window.ClassicTrust?.STALE_RENDER_TEXT
       || "Changed since this render — render again to see it.",
     );
-    dom.renderStale.hidden = !stale;
+    dom.renderStale.hidden = !stateForRecord.stale;
   }
 
   // The render itself can call a paid provider (cloud voice, generated
@@ -10332,6 +11215,7 @@
 
     const revealPlayer = state.renderWasActive === true && !active;
     state.renderWasActive = !!active;
+    if (state.cleanScope === "cut" && state.job) paintCutClean();
 
     dom.renderError.hidden = true;
     dom.resultReady.hidden = true;
@@ -10491,9 +11375,11 @@
       startRenderPoll(state.job.id);
       loadHistory();
       toast(quality === "draft" ? "Rendering draft…" : (force ? "Re-rendering reel…" : "Rendering reel…"));
+      return result;
     } catch (error) {
       toast(error.message);
       updateRenderPanel();
+      return null;
     }
   }
 
@@ -10981,7 +11867,9 @@
     stopPoll();
     resetSourceCleanState();
     state.cleanScope = "cut";
+    resetCutCleanState();
     applySourceMode(false);
+    applyCleanMode(false);
     closeDrawer();
     state.job = null;
     state.plan = null;
@@ -11098,7 +11986,7 @@
       toast(error.message);
     } finally {
       dom.cleanJob.disabled = false;
-      dom.cleanJob.textContent = "Clean";
+      dom.cleanJob.textContent = "Clean work files…";
     }
   }
 
@@ -11176,44 +12064,38 @@
     const active = status === "queued" || status === "running";
     const progress = Number(report && report.progress);
     const pct = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
+    const sourceScope = state.cleanScope === "source";
 
     dom.textScanProgress.hidden = !active;
     dom.textScanCancel.hidden = !active;
     dom.textScanStart.hidden = active;
-    dom.textScanBadge.hidden = active || status === "idle";
-    dom.textScanBadge.className = "text-scan-badge"
-      + (status === "ready" && facts.confirmed ? " is-ready" : "")
-      + (status === "failed" ? " is-failed" : "");
     if (active) {
       dom.textScanFill.style.width = `${Math.round(pct * 100)}%`;
       dom.textScanProgressText.textContent = `${Math.round(pct * 100)}%`;
     }
 
     if (status === "queued") {
-      dom.textScanBadge.textContent = "queued";
       dom.textScanStatus.textContent = "Queued. The scan starts as soon as the Mac is free.";
       dom.textScanStart.textContent = "Find text on screen";
     } else if (status === "running") {
-      dom.textScanBadge.textContent = "scanning";
       dom.textScanStatus.textContent = `Scanning for text on screen… ${Math.round(pct * 100)}%`;
       dom.textScanStart.textContent = "Find text on screen";
     } else if (status === "ready") {
-      dom.textScanBadge.textContent = facts.confirmed ? "✓ text found" : "no text";
       dom.textScanStatus.textContent = facts.confirmed
-        ? `Text on screen: ${facts.regions} ${facts.regions === 1 ? "region" : "regions"} across this cut.`
-        : "Scan finished. No readable text on screen in this cut.";
+        ? `Text on screen: ${facts.regions} ${facts.regions === 1 ? "region" : "regions"} across this ${sourceScope ? "source" : "cut"}.`
+        : `Scan finished. No readable text on screen in this ${sourceScope ? "source" : "cut"}.`;
       dom.textScanStart.textContent = "Scan again";
     } else if (status === "cancelled") {
-      dom.textScanBadge.textContent = "cancelled";
       dom.textScanStatus.textContent = "Scan cancelled. Nothing was written for this cut.";
       dom.textScanStart.textContent = "Find text on screen";
     } else if (status === "failed") {
       const reason = (report && (report.message || report.error)) || "the scan did not finish";
-      dom.textScanBadge.textContent = "failed";
       dom.textScanStatus.textContent = `Scan failed: ${reason}`;
       dom.textScanStart.textContent = "Retry scan";
     } else {
-      dom.textScanStatus.textContent = "Not scanned yet. Find text to look for captions, watermarks and screen UI baked into the cut.";
+      dom.textScanStatus.textContent = sourceScope
+        ? "Not scanned yet. Find text & clean scans the whole video."
+        : "Not scanned yet. Find text to look for captions, watermarks and screen UI baked into the cut.";
       dom.textScanStart.textContent = "Find text on screen";
     }
     renderCleanFound();
@@ -11294,6 +12176,7 @@
       }
       if (!state.job || state.job.id !== jobId) return;
       state.textScan = { jobId, status: next.status, report: next.report, controller };
+      if (next.status === "ready" && state.cleanScope === "cut") ensureCutFoundTicks();
       paintTextScan();
       if (next.status !== "queued" && next.status !== "running") return;
     }
@@ -11315,10 +12198,12 @@
         next.status === "ready"
         && (previousStatus !== "ready" || previousKey !== textScanReportKey(next.report))
       ) {
+        clearStoredFoundTicks();
         state.classicText.foundTicks = new Set();
         state.classicText.foundTicksInit = false;
       }
       state.textScan = { jobId, status: next.status, report: next.report, controller };
+      if (next.status === "ready" && state.cleanScope === "cut") ensureCutFoundTicks();
       paintTextScan();
       if (next.status === "queued" || next.status === "running") {
         await pollTextScan(jobId, controller);
@@ -11336,6 +12221,7 @@
     if (!jobId || !dom.textScanStatus) return;
     const force = Boolean(runAgain) || Boolean(state.textScan && state.textScan.report);
     abortTextScan();
+    clearStoredFoundTicks();
     state.classicText.foundTicks = new Set();
     state.classicText.foundTicksInit = false;
     const controller = new AbortController();
@@ -11372,6 +12258,7 @@
     }
     if (controller.signal.aborted || !state.job || state.job.id !== jobId) return;
     state.textScan = { jobId, status: next.status, report: next.report, controller };
+    if (next.status === "ready" && state.cleanScope === "cut") ensureCutFoundTicks();
     paintTextScan();
     if (next.status === "queued" || next.status === "running") {
       await pollTextScan(jobId, controller);

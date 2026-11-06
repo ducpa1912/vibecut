@@ -215,6 +215,12 @@ done because tests pass; the product owner gate is separate.
   `/fill/preview`; Phase 2 must pair them so the frame looks filled.
 - A raw encoder failure can still expose ffmpeg text. Map it to a plain
   "Clean could not encode this source" message in a later copy pass.
+- Phase 5: opening the cut at 0:00 can show the source's black fade; start the
+  preview on the first usable frame or explain the fade.
+- Phase 5: raw analysis detail can reach the frame tooltip; keep diagnostics in
+  the detail strip, not in founder-facing hover copy.
+- Phase 5: normalize Clean identity tokens across reloads and carried layers so
+  the same text and box never compare as two identities.
 
 ## Review loop
 

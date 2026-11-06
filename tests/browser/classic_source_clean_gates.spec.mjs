@@ -732,8 +732,8 @@ async function readyCutAfterReel() {
   assert(foundRow.tick, "the ready cut row has no tick");
   assert(/background-size:/.test(foundRow.style),
     `the ready cut row has no thumbnail style: ${foundRow.style}`);
-  await page.locator('[data-found-index="0"] [data-found-tick="0"]').check();
-  assert(await page.locator('[data-found-index="0"] [data-found-tick="0"]').isChecked(),
+  await page.locator('[data-found-index="0"] [data-found-tick]').check();
+  assert(await page.locator('[data-found-index="0"] [data-found-tick]').isChecked(),
     "the ready cut row cannot be ticked");
   const state = await page.evaluate(() => ({
     source: document.body.classList.contains("source-mode"),

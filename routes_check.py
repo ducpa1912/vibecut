@@ -255,20 +255,23 @@ def get_check(job_id: str):
     report = detect.load_report(app._job_dir(job_id))
     if report is not None:
         return report
-    if job.get("status") == "source_ready" and not job.get("analysis"):
-        # Source Clean opens on an extraction-only job before Check has run.
-        # An idle envelope is honest and keeps the first paint free of a 404.
-        return {
-            "status": "idle",
-            "report": None,
-            "complete": False,
-            "progress": 0.0,
-            "message": "No Check report yet for this source.",
-            "text": {"confirmed": False, "present": False, "tracklets": 0},
-            "tracklets": [],
-            "clean_prefill": [],
-        }
-    raise HTTPException(404, "Check has not run yet.")
+    # A fresh cut opens before Check has run. An idle envelope is honest and
+    # keeps the first paint free of a 404; cancelled/failed/ready records above
+    # still win.
+    source_ready = job.get("status") == "source_ready" and not job.get("analysis")
+    return {
+        "status": "idle",
+        "report": None,
+        "complete": False,
+        "progress": 0.0,
+        "message": (
+            "No Check report yet for this source."
+            if source_ready else "No Check report yet for this cut."
+        ),
+        "text": {"confirmed": False, "present": False, "tracklets": 0},
+        "tracklets": [],
+        "clean_prefill": [],
+    }
 
 
 @router.post("/api/jobs/{job_id}/check/cancel")
