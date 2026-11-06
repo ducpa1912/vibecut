@@ -12,9 +12,10 @@ The original planning API is documented after it and is still in use.
 2. **Plan.** `plan_fills` measures how much the picture changes around each line
    against the video's own noise floor, and saves `fill_plan` on the tracklet.
    A line within four times the noise gets one fill. A moving line gets up to six
-   fills a second. Clean layers copy this as `fill_keys`. Drawn boxes have no scan
-   data and use the default of three a second. Old scans have no plan, so press
-   **Scan again**.
+   fills a second. Clean layers copy this as `fill_keys`. Drawn boxes and old scans
+   have no plan, so they adapt while rendering: three fills a second when the
+   picture holds still, up to six when it moves, and more only at a cut. Press
+   **Scan again** on an old scan to get a plan.
 3. **Layers.** A Clean layer is AI fill or blur, on a box or painted mask, with its
    own time. Up to 1000 layers (`edits.MAX_CLEAN`). All found text can be cleaned;
    a watermark, handle or logo needs a tick for that video.

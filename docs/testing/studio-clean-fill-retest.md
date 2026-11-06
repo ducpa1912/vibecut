@@ -79,6 +79,7 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 57 | **Scan again** on a mostly still video and on a moving one, then render each | Each line gets its own plan: one fill when still, more when moving. The estimate is close to the real time on both. Tell me the times, and any smear on moving shots | |
 | 58 | Restart the server. Queue a full video with AI fill, wait for several percent, press **Pause**, then **Resume** | Pause stops within seconds and the queue says Paused. Resume climbs fast back to where it was, the message counts saved fills reused, then the time left appears. Tell me the time to catch up, and whether the join shows in the result | |
 | 59 | During a fill, stop the server with Ctrl+C. Start it again, then **Resume** | Same as step 58: the work is not lost, and the Mac did not sleep during the render unless the lid was closed | |
+| 60 | Draw one box on a moving shot, AI fill, then render. The box must be new or moved, so the old clip is not reused | It takes about one model run per 4 frames at 25 fps, not one per frame. The estimate under Clean layers is close to the real time. Tell me both, and any smear | |
 
 ## Tell me too
 
