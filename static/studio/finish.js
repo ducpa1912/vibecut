@@ -1383,7 +1383,9 @@ export function mount(root, ctx) {
       loadTrimHealth().catch(() => {}),
     ]);
     if (disposed) return;
-    dom.body.querySelector(".st-finish-notes")?.replaceWith(notesPanel());
+    // The page renders before the Edit loads; rebuild Review once its id is
+    // here, or the player keeps the empty state forever.
+    renderReviewCard();
     renderRenderCard();
   }
 
@@ -1681,7 +1683,24 @@ export function mount(root, ctx) {
 
     const grid = el("div", { class: "st-finish-review-grid" });
     const media = el("div", { class: "st-finish-review-media" });
-    media.append(reviewPlayer());
+    if (!currentEdit?.id && item) {
+      // A stale Edit cannot render, but the finished story can still be watched.
+      const box = el("figure", { class: "st-finish-review-video" });
+      box.append(el("figcaption", {
+        class: "st-label",
+        text: `${artifactLabel(item).replace(" · current", "")} · ${artifactAspect(item)}`,
+      }));
+      box.append(el("video", {
+        src: item.url,
+        poster: item.poster_url || null,
+        controls: true,
+        preload: "metadata",
+        playsinline: true,
+      }));
+      media.append(box);
+    } else {
+      media.append(reviewPlayer());
+    }
     if (item) {
       for (const warning of renderWarnings(item)) {
         media.append(el("p", { class: "st-warning st-finish-review-warning", text: warning }));
@@ -2113,6 +2132,17 @@ export function mount(root, ctx) {
       });
       resume.addEventListener("click", () => { void queueAction(queue.id, "resume", resume); });
       actions.append(resume);
+    }
+    if (!active) {
+      const remove = el("button", {
+        class: "st-btn st-btn-quiet st-btn-small st-finish-cancel",
+        type: "button",
+        text: "Delete",
+        dataset: { action: "delete", queueId: String(queue.id || "") },
+        title: "Remove this queue record. Renders and files stay.",
+      });
+      remove.addEventListener("click", () => { void deleteQueue(queue, remove); });
+      actions.append(remove);
     }
     foot.append(actions);
 
@@ -3259,6 +3289,43 @@ export function mount(root, ctx) {
       if (button.isConnected) {
         button.disabled = false;
         button.textContent = previous;
+      }
+    }
+  }
+
+  async function deleteQueue(queue, button) {
+    if (!queue?.id) return;
+    if (button.dataset.confirm !== "1") {
+      button.dataset.confirm = "1";
+      const previous = button.textContent;
+      button.textContent = "Delete?";
+      window.setTimeout(() => {
+        if (!button.isConnected) return;
+        button.dataset.confirm = "";
+        button.textContent = previous;
+      }, 3000);
+      return;
+    }
+    button.disabled = true;
+    const previous = button.textContent;
+    button.textContent = "Working…";
+    announce("Deleting the queue record…");
+    try {
+      await request(`/api/story-queues/${encodeURIComponent(queue.id)}`, {
+        method: "DELETE",
+      });
+      await loadQueues();
+      if (disposed) return;
+      renderQueueCard();
+      announce("Queue deleted. Its renders and files stay in Publish.", "ok");
+      schedulePoll();
+    } catch (error) {
+      if (disposed) return;
+      announce(error?.message || "Could not delete the queue.", "bad");
+      if (button.isConnected) {
+        button.disabled = false;
+        button.textContent = previous;
+        button.dataset.confirm = "";
       }
     }
   }

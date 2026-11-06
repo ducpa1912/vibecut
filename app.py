@@ -7257,6 +7257,15 @@ def get_story_queue(queue_id: str) -> dict:
         raise _queue_http(exc) from exc
 
 
+@app.delete("/api/story-queues/{queue_id}")
+def delete_story_queue(queue_id: str) -> dict:
+    try:
+        story_queues().delete(queue_id)
+    except story_queue.QueueError as exc:
+        raise _queue_http(exc) from exc
+    return {"deleted": queue_id}
+
+
 @app.post("/api/story-queues/{queue_id}/{action}")
 def act_on_story_queue(queue_id: str, action: str) -> dict:
     manager = story_queues()

@@ -347,3 +347,26 @@ def test_render_pruning_is_off_by_default(monkeypatch):
     assert app._render_pruning_enabled() is False
     monkeypatch.setenv("VIBECUT_PRUNE_RENDERS", "1")
     assert app._render_pruning_enabled() is True
+
+
+def test_delete_removes_a_finished_queue_and_refuses_a_live_one(tmp_path):
+    backend = FakeBackend(delay=0.2)
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    queue = manager.create(items(1))
+    with pytest.raises(sq.QueueConflict, match="Cancel"):
+        manager.delete(queue["id"])
+    assert manager.wait(queue["id"], 5)
+    manager.delete(queue["id"])
+    with pytest.raises(sq.QueueNotFound):
+        manager.get(queue["id"])
+
+
+def test_delete_removes_a_paused_queue(tmp_path):
+    backend = FakeBackend(hang={"s1"})
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    queue = manager.create(items(1))
+    time.sleep(0.05)
+    manager.pause(queue["id"])
+    manager.delete(queue["id"])
+    with pytest.raises(sq.QueueNotFound):
+        manager.get(queue["id"])

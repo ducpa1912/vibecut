@@ -211,6 +211,17 @@ def test_queue_sits_beside_render_with_queue_and_history_tabs():
     assert "st-finish-drawer" not in FINISH
 
 
+def test_queue_history_can_delete_an_old_queue():
+    assert "async function deleteQueue" in FINISH
+    assert 'method: "DELETE"' in FINISH
+    assert 'text: "Delete"' in FINISH
+
+
+def test_review_rebuilds_after_the_edit_loads():
+    assert "renderReviewCard();" in FINISH
+    assert "renderRenderCard();" in FINISH
+
+
 def test_publish_calls_the_unit_a_story_and_names_full_video():
     assert "One ready story" in FINISH
     assert "No ready story yet" in FINISH

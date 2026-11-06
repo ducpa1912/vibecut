@@ -1289,6 +1289,14 @@ main.st-main[data-step="finish"] > .st-finish-panel {
 }
 .st-finish-review-media { display: grid; gap: 8px; min-width: 0; }
 .st-finish-review-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.st-finish-review-video { display: grid; gap: 6px; margin: 0; min-width: 0; }
+.st-finish-review-video video {
+  width: 100%;
+  max-height: min(58vh, 600px);
+  border: 1px solid var(--st-line);
+  border-radius: 10px;
+  background: #000;
+}
 .st-finish-player { display: grid; gap: 8px; margin: 0; min-width: 0; }
 .st-finish-player video {
   display: block;

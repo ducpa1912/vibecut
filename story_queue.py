@@ -326,6 +326,19 @@ class StoryQueueManager:
                     LOGGER.exception("could not cancel story render %s", item.get("artifact_id"))
         return self.public(queue)
 
+    def delete(self, queue_id: str) -> dict:
+        """Remove a finished or paused queue record. Never races a live run."""
+        with self._lock:
+            queue = self._read(queue_id)
+            if queue.get("status") in ACTIVE_QUEUES:
+                raise QueueConflict("Cancel this queue before deleting it.")
+            self._stops.setdefault(queue_id, threading.Event()).set()
+            self._threads.pop(queue_id, None)
+            self._stops.pop(queue_id, None)
+            self._waiting.pop(queue_id, None)
+            self._path(queue_id).unlink(missing_ok=True)
+        return {"id": queue_id}
+
     def waiting_for_job(self, job_id: str) -> int:
         """Items of one video that have not started yet, across all queues."""
         return sum(
