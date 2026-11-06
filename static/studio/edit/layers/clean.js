@@ -52,13 +52,13 @@ const KIND_COPY = {
   crop_guard: "Keep out of crop",
 };
 
-// AI fill engines. The server keeps the same list (edits.FILL_METHODS).
+// AI fill models. The server keeps the same list (edits.FILL_METHODS).
 const FILL_METHODS = [
-  ["lama", "LaMa · per frame, best on still backgrounds"],
-  ["migan", "MI-GAN · small and quick, per frame"],
-  ["sttn", "STTN · video, best on subtitles"],
-  ["telea", "Telea · OpenCV, very fast, for plain backgrounds"],
-  ["ns", "Navier-Stokes · OpenCV, very fast, for smooth backgrounds"],
+  ["lama", "LaMa", "Per frame, the default."],
+  ["migan", "MI-GAN", "Per frame, a small model for big boxes."],
+  ["sttn", "STTN", "Video model, made for subtitles."],
+  ["telea", "Telea", "Very fast, for plain backgrounds."],
+  ["ns", "Navier-Stokes", "Very fast, for smooth backgrounds."],
 ];
 const FILL_KINDS = new Set(["delogo", "blur", "plate", "mask"]);
 
@@ -655,7 +655,6 @@ export function mountCleanPanel(host, ctx) {
   let fillStatus = null;
   let fillStatusError = "";
   let fillEstimateTimer = 0;
-  let moreOpen = false;
   if (!FOUND_TICKS.has(jobId)) FOUND_TICKS.set(jobId, new Map());
   const foundTicks = FOUND_TICKS.get(jobId);
 
@@ -1233,8 +1232,43 @@ export function mountCleanPanel(host, ctx) {
     return el("div", { class: "st-clean-bar" }, [
       el("span", { class: "st-clean-bar-label", text: "Remove with" }),
       switcher,
+      ...(current === "fill" ? modelPicker() : []),
       el("div", { class: "st-clean-add" }, [addBox, paint]),
     ]);
+  }
+
+  /** The AI model, one choice for every AI fill box in this moment. */
+  function modelPicker() {
+    const ready = FILL_METHODS.filter(([value]) => fillReady(value));
+    if (!ready.length) return [];
+    const fills = (ctx.getEdit()?.clean || []).filter((layer) => layer?.kind === "fill");
+    const used = [...new Set(fills.map((layer) => String(layer?.method || "lama")))];
+    // New boxes follow the boxes already here, also after a reload.
+    if (used.length === 1) rememberEngine(used[0]);
+    const select = el("select", {
+      class: "st-found-engine st-clean-model",
+      "aria-label": "AI model",
+      disabled: !canClean(),
+    });
+    if (used.length > 1) select.append(el("option", { value: "", text: "Mixed", selected: true, disabled: true }));
+    for (const [value, text] of ready) {
+      select.append(el("option", { value, text, selected: used.length <= 1 && value === drawEngine() }));
+    }
+    select.addEventListener("change", () => {
+      rememberEngine(select.value);
+      ctx.setClean((ctx.getEdit()?.clean || []).map((layer) => (
+        layer.kind === "fill" ? { ...layer, method: select.value } : layer
+      )));
+      render();
+    });
+    const hint = used.length > 1
+      ? "These boxes use different models. Pick one for them all."
+      : FILL_METHODS.find(([value]) => value === drawEngine())?.[2] || "";
+    return [
+      el("span", { class: "st-clean-bar-label", text: "AI model" }),
+      select,
+      el("small", { class: "st-field-hint st-clean-model-hint", text: hint }),
+    ];
   }
 
   function runBar(rows) {
@@ -1578,30 +1612,6 @@ export function mountCleanPanel(host, ctx) {
     return card;
   }
 
-  /** The engine is one choice for the whole Edit, kept out of the way. */
-  function engineFold() {
-    const ready = Object.entries(fillStatus?.methods || {}).filter(([, value]) => value?.ready);
-    if (ready.length < 2) return null;
-    const engine = el("select", { class: "st-found-engine", "aria-label": "AI fill engine", disabled: !canClean() });
-    for (const [value, text] of FILL_METHODS) {
-      if (!ready.some(([id]) => id === value)) continue;
-      engine.append(el("option", { value, text, selected: value === drawEngine() }));
-    }
-    engine.addEventListener("change", () => {
-      rememberEngine(engine.value);
-      ctx.setClean((ctx.getEdit()?.clean || []).map((layer) => (
-        layer.kind === "fill" ? { ...layer, method: engine.value } : layer
-      )));
-      ctx.refresh?.();
-    });
-    const fold = el("details", { class: "st-clean-more", open: moreOpen }, [
-      el("summary", { text: "AI engine" }),
-      engine,
-    ]);
-    fold.addEventListener("toggle", () => { moreOpen = fold.open; });
-    return fold;
-  }
-
   /** How long the render will take for these layers. Asks only when they change. */
   function scheduleFillEstimate(node) {
     const current = ctx.getEdit();
@@ -1876,8 +1886,6 @@ export function mountCleanPanel(host, ctx) {
     const found = suggestionsCard();
     if (found) host.append(found);
     host.append(existingCard(selectedId));
-    const more = engineFold();
-    if (more) host.append(more);
 
     if (!canClean() && report) {
       host.append(el("p", {

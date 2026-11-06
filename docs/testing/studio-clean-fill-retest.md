@@ -73,7 +73,7 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 51 | New video: press **Edit full video** without finding moments, then **Finish** | Finish opens on the full video, and it can be queued and rendered | |
 | 52 | **Scan again**, then read Found on screen and look at the boxes | Each line has its own box, with no second box over the same words. Logos on objects, like a cup, are listed but start unticked. Tell me any repeat or any box bigger than its text | |
 | 53 | Render a 10 to 20 second moment with AI fill, on a still shot and a moving shot | It is much faster than one frame at a time. Tell me the time for each, and if the filled area smears on the moving shot | |
-| 54 | Clean → **AI engine** → Telea, then Navier-Stokes. For each: **Before / After** on a found line, then render a 10 to 20 second moment | The result takes about a fifth of a second per frame. Tell me which shots look acceptable; expect smears on detail like wood or leaves | |
+| 54 | Clean → **AI model** → Telea, then Navier-Stokes. For each: **Before / After** on a found line, then render a 10 to 20 second moment | The result takes about a fifth of a second per frame. Tell me which shots look acceptable; expect smears on detail like wood or leaves | |
 | 55 | **Before / After** on small text over a busy background | No letters are left behind | |
 | 56 | Scan again, then watch two stacked lines and a drawn box over a found line | Boxes of stacked lines touch and do not overlap. Render a moment and tell me its time per frame | |
 | 57 | **Scan again** on a mostly still video and on a moving one, then render each | Each line gets its own plan: one fill when still, more when moving. The estimate is close to the real time on both. Tell me the times, and any smear on moving shots | |
@@ -81,9 +81,10 @@ Send me pass or fail for each step, what you saw, and any error text exactly as 
 | 59 | During a fill, stop the server with Ctrl+C. Start it again, then **Resume** | Same as step 58: the work is not lost, and the Mac did not sleep during the render unless the lid was closed | |
 | 60 | Draw one box on a moving shot, AI fill, then render. The box must be new or moved, so the old clip is not reused | It takes about one model run per 4 frames at 25 fps, not one per frame. The estimate under Clean layers is close to the real time. Tell me both, and any smear | |
 | 61 | Finish → **AI fill on GPU**, then render a video with AI fill. Compare with a CPU render of the same Edit | It renders much faster, the two results look the same, and the first render asks for no new choices. Tell me both times, and if the Mac slowed or swapped | |
-| 62 | Clean → **AI engine** → MI-GAN, then render on CPU and on GPU | Text is gone. Tell me the times, and any flicker or smear compared with LaMa | |
+| 62 | Clean → **AI model** → MI-GAN, then render on CPU and on GPU | Text is gone. Tell me the times, and any flicker or smear compared with LaMa | |
 | 63 | Finish → tick **Follow camera motion**, then render a shot with a camera move and a shot with something crossing the text | The camera move keeps a steady fill with fewer model runs. The crossing falls back with no jump. Tell me the times, and where it looks wrong | |
 | 64 | Draw a box over several lines of found text and select it, then press **Clean only the N lines inside** | The panel says what the box costs. The box becomes tight line boxes, on screen only with their lines, inside the box's time | |
+| 65 | While a render runs, pick another quality, GPU or **Follow camera motion**, then **Queue**. Change the model in Clean and queue again | The button is open for any new choice, and shows Queued only for the same choice. The renders run one after another, and the review video does not reload | |
 
 ## Tell me too
 

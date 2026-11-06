@@ -58,6 +58,12 @@ const QUALITY_LABELS = {
   "2160": "4K",
 };
 const EDIT_CHOICE_KEY = "vibecut.studio.edit.choice";
+const QUEUE_QUALITY = {
+  "360": "360p", draft: "540p", "720": "720p", final: "1080p", "1440": "2K", "2160": "4K",
+};
+const FILL_MODEL_LABELS = {
+  lama: "LaMa", migan: "MI-GAN", sttn: "STTN", telea: "Telea", ns: "Navier-Stokes",
+};
 
 /**
  * Where Finish opens after Open in Finish: the cut's set, story, shape and
@@ -194,12 +200,20 @@ function plainVersion(value) {
     .replace(/\bv\?\b/g, "Version ?");
 }
 
+const ARTIFACT_QUALITY = {
+  "360": "360p", draft: "Draft", "720": "720p", final: "Final", "1440": "2K", "2160": "4K",
+};
+
+/** How a render's AI fill ran, when it was not the default. */
+function fillChoiceWords(row) {
+  return [row?.fill_device === "gpu" ? "GPU" : "", row?.fill_follow === true ? "Follow" : ""].filter(Boolean);
+}
+
 function artifactLabel(artifact) {
   const version = plainVersion(artifact?.versions?.label || `v${artifact?.version || "?"}`);
-  const quality = artifact?.quality === "draft" ? "Draft"
-    : artifact?.quality === "720" ? "720p" : "Final";
+  const quality = ARTIFACT_QUALITY[artifact?.quality] || "Final";
   const when = artifact?.created ? shortDate(artifact.created) : "";
-  return [version, quality, when].filter(Boolean).join(" · ");
+  return [version, quality, ...fillChoiceWords(artifact), when].filter(Boolean).join(" · ");
 }
 
 /**
@@ -670,10 +684,29 @@ export function mount(root, ctx) {
       (value) => {
         fillChoiceNow = { ...fillChoiceNow, device: value };
         saveFillChoice(fillChoiceNow);
-        paintFillOptions();
-        void loadFillEstimate();
+        renderRenderCard();
       },
     );
+    const fillLayers = (Array.isArray(currentEdit?.clean) ? currentEdit.clean : [])
+      .filter((layer) => layer?.kind === "fill");
+    const models = [...new Set(fillLayers.map((layer) => String(layer?.method || "lama")))];
+    if (models.length) {
+      const change = el("button", {
+        class: "st-btn st-btn-quiet st-btn-small",
+        type: "button",
+        text: "Change",
+        title: "Open Clean in Edit to change the AI model.",
+      });
+      change.addEventListener("click", () => openEdit(selectedStory()?.id, aspect));
+      host.append(el("div", { class: "st-seg-group" }, [
+        el("span", { class: "st-label", text: "AI model" }),
+        el("span", {
+          class: "st-finish-fill-model",
+          text: models.map((model) => FILL_MODEL_LABELS[model] || model).join(" + "),
+        }),
+        change,
+      ]));
+    }
     const followBlocked = renderOptions?.follow?.ready === false;
     const follow = el("input", {
       type: "checkbox",
@@ -683,7 +716,7 @@ export function mount(root, ctx) {
     follow.addEventListener("change", () => {
       fillChoiceNow = { ...fillChoiceNow, follow: follow.checked };
       saveFillChoice(fillChoiceNow);
-      void loadFillEstimate();
+      renderRenderCard();
     });
     host.append(device, el("label", {
       class: "st-finish-follow",
@@ -724,7 +757,13 @@ export function mount(root, ctx) {
       const result = await request(`${jobRoot(jobId)}/fill-estimate?${query}`);
       if (disposed || fillEstimate.key !== key) return;
       fillEstimate.text = String(result?.text || "");
+      const hadFill = fillEstimate.beats > 0;
       fillEstimate.beats = Number(result?.beats) || 0;
+      // Whether the choices apply decides what the Queue buttons offer.
+      if (hadFill !== fillEstimate.beats > 0) {
+        renderRenderCard();
+        return;
+      }
     } catch (_) {
       return;
     }
@@ -1007,17 +1046,37 @@ export function mount(root, ctx) {
   }
 
   /** The live queue item for one story and shape, if it is still waiting/running. */
-  function liveQueueItem(storyId, shapeValue) {
+  function liveQueueItem(storyId, shapeValue, exact = false) {
     for (const queue of queues) {
       if (!ACTIVE_QUEUE.has(String(queue?.status || ""))) continue;
       const item = (queue.items || []).find((row) => (
         String(row?.story_id || "") === String(storyId || "")
         && String(row?.aspect || "9:16") === String(shapeValue || "9:16")
         && ACTIVE_ITEM.has(String(row?.state || ""))
+        && (!exact || matchesChoice(row, storyId))
       ));
       if (item) return item;
     }
     return null;
+  }
+
+  /** Whether a queued render is the one the Queue button would add now. */
+  function matchesChoice(row, storyId) {
+    if (String(row?.quality || "final") !== String(quality)) return false;
+    if ((row?.fill_device === "gpu" ? "gpu" : "cpu") !== queuedDevice()) return false;
+    if ((row?.fill_follow === true) !== queuedFollow()) return false;
+    // The open Edit is known; a changed one is new work.
+    const open = String(selectedStory()?.id || "") === String(storyId || "");
+    const editHash = String(row?.edit_hash || "");
+    return !(open && editHash && currentEdit?.hash && editHash !== String(currentEdit.hash));
+  }
+
+  function queuedDevice() {
+    return fillEstimate.beats > 0 ? fillDeviceNow() : "cpu";
+  }
+
+  function queuedFollow() {
+    return fillEstimate.beats > 0 && fillChoiceNow.follow && renderOptions?.follow?.ready !== false;
   }
 
   function keepArtifactSelection() {
@@ -1262,7 +1321,7 @@ export function mount(root, ctx) {
       await Promise.all([loadQueues(), loadArtifacts()]);
       if (disposed) return;
       renderQueueCard();
-      renderStoryCard();
+      renderRenderCard();
       if (wasActive && !hasActiveWork()) {
         await Promise.all([loadPackets(), loadShares()]);
         renderVersionsCard();
@@ -1696,25 +1755,25 @@ export function mount(root, ctx) {
       quality,
       (value) => {
         quality = value;
-        renderStoryCard();
+        renderRenderCard();
       },
     ));
     fields.append(el("div", { class: "st-finish-fill-options", hidden: !(fillEstimate.beats > 0) }));
     void loadRenderOptions();
 
     const liveCount = stories().filter((story) => (
-      liveQueueItem(String(story.id || ""), aspect)
+      liveQueueItem(String(story.id || ""), aspect, true)
     )).length;
     const allLive = stories().length > 0 && liveCount === stories().length;
     const queueAll = el("button", {
       class: "st-btn st-btn-primary st-finish-queue-all",
       type: "button",
-      text: allLive ? "All queued" : `Queue ${formatCount(stories().length, "moment")}`,
+      text: allLive ? "Queued" : `Queue ${formatCount(stories().length, "moment")}`,
       disabled: busy || staleIds.size > 0 || allLive,
       title: staleIds.size
         ? "Repair every stale shape before queueing. A stale Edit never renders."
         : allLive
-          ? `Every moment is already queued in ${aspect}.`
+          ? `Every moment is already queued with these choices. Pick another quality or AI fill choice to queue again.`
           : `Queue every moment in ${ASPECT_LABELS[aspect] || aspect} at ${QUALITY_LABELS[quality] || quality}.`,
     });
     queueAll.addEventListener("click", () => { void queueStories(stories(), queueAll); });
@@ -1727,6 +1786,14 @@ export function mount(root, ctx) {
       el("span", { text: ASPECT_LABELS[aspect] || aspect }),
       el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
       el("span", { text: QUALITY_LABELS[quality] || quality }),
+      ...(queuedDevice() === "gpu" ? [
+        el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
+        el("span", { text: "GPU" }),
+      ] : []),
+      ...(queuedFollow() ? [
+        el("span", { class: "st-finish-summary-dot", "aria-hidden": "true", text: "·" }),
+        el("span", { text: "Follow camera motion" }),
+      ] : []),
     ]));
     card.append(fillNote);
     card.append(el("p", {
@@ -1800,12 +1867,12 @@ export function mount(root, ctx) {
         stale ? el("span", { class: "st-chip st-chip-bad", text: "Edit stale" }) : null,
       ]);
       const actions = el("div", { class: "st-finish-story-actions" });
-      const live = liveQueueItem(storyId, aspect);
+      const live = liveQueueItem(storyId, aspect, true);
       const queueOne = live
         ? el("span", {
           class: "st-chip st-chip-busy",
           text: statusText(live.state),
-          title: `This moment is already ${statusText(live.state).toLowerCase()} in ${aspect}.`,
+          title: `This moment is already ${statusText(live.state).toLowerCase()} with these choices. Pick another quality or AI fill choice to queue again.`,
         })
         : el("button", {
           class: "st-btn st-btn-quiet st-btn-small st-finish-queue-one",
@@ -1843,11 +1910,16 @@ export function mount(root, ctx) {
     if (existing) existing.replaceWith(reviewCard());
   }
 
-  function renderStoryCard() {
+  /** The Render card alone, so a choice or a poll never reloads the review video. */
+  function renderRenderCard() {
     const existing = dom.body.querySelector(".st-finish-render");
     if (!existing) return;
     existing.replaceWith(storyCard());
     paintFillOptions();
+  }
+
+  function renderStoryCard() {
+    renderRenderCard();
     renderReviewCard();
   }
 
@@ -1892,7 +1964,14 @@ export function mount(root, ctx) {
     const top = el("div", { class: "st-finish-queue-top" }, [
       el("span", { class: `st-chip st-chip-${statusTone(status)}`, text: statusText(status) }),
       el("strong", { class: "st-finish-queue-title", text: title }),
-      shape ? el("span", { class: "st-mono st-finish-queue-shape", text: shape }) : null,
+      shape ? el("span", {
+        class: "st-mono st-finish-queue-shape",
+        text: [
+          shape,
+          QUEUE_QUALITY[running?.quality || items[0]?.quality] || "",
+          ...fillChoiceWords(running || items[0]),
+        ].filter(Boolean).join(" · "),
+      }) : null,
       el("span", { class: "st-mono st-finish-queue-percent", text: `${percent}%` }),
     ]);
     const track = el("div", {
@@ -3015,8 +3094,8 @@ export function mount(root, ctx) {
         story_id: story.id,
         aspect: shape,
         quality,
-        fill_device: fillDeviceNow() === "gpu" ? "gpu" : "",
-        fill_follow: fillChoiceNow.follow && renderOptions?.follow?.ready !== false,
+        fill_device: queuedDevice() === "gpu" ? "gpu" : "",
+        fill_follow: queuedFollow(),
         title: storyName(story, stories().indexOf(story)),
       }));
       const result = await request("/api/story-queues", { method: "POST", body: { items } });
@@ -3054,7 +3133,7 @@ export function mount(root, ctx) {
       busy = false;
       // Rebuild the card so every queue button (not only the one clicked)
       // reflects the new busy/stale state, including after a 409 repair banner.
-      if (!disposed) renderStoryCard();
+      if (!disposed) renderRenderCard();
     }
   }
 

@@ -255,6 +255,51 @@ def test_cancel_still_cancels_after_a_pause(tmp_path):
     assert cancelled["items"][0]["state"] == "cancelled"
 
 
+def test_a_second_queue_waits_for_the_render_before_it(tmp_path):
+    backend = FakeBackend(hang={"s1"})
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    first = manager.create([{"job_id": "j", "set_id": "set1", "story_id": "s1"}])
+    time.sleep(0.05)
+    second = manager.create([{"job_id": "j", "set_id": "set1", "story_id": "s2", "quality": "1440"}])
+    time.sleep(0.1)
+    # The second has not started while the first renders.
+    assert backend.starts == ["s1"]
+    waiting = manager.get(second["id"])
+    assert waiting["items"][0]["state"] == "queued"
+    assert waiting["message"] == "Waiting for the render before it"
+    backend.hang = set()
+    assert manager.wait(first["id"], 5)
+    assert manager.wait(second["id"], 5)
+    assert backend.starts == ["s1", "s2"]
+    assert manager.get(second["id"])["status"] == "done"
+
+
+def test_pausing_a_render_lets_the_next_queue_start(tmp_path):
+    backend = FakeBackend(hang={"s1"})
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    first = manager.create([{"job_id": "j", "set_id": "set1", "story_id": "s1"}])
+    time.sleep(0.05)
+    second = manager.create([{"job_id": "j", "set_id": "set1", "story_id": "s2"}])
+    time.sleep(0.05)
+    manager.pause(first["id"])
+    assert manager.wait(second["id"], 5)
+    assert manager.get(second["id"])["status"] == "done"
+
+
+def test_an_item_dropped_while_waiting_never_starts(tmp_path):
+    backend = FakeBackend(hang={"s1"})
+    manager = sq.StoryQueueManager(tmp_path, backend, poll_interval=0.01)
+    first = manager.create([{"job_id": "a", "set_id": "set1", "story_id": "s1"}])
+    time.sleep(0.05)
+    second = manager.create([{"job_id": "b", "set_id": "set1", "story_id": "s2"}])
+    time.sleep(0.05)
+    manager.drop_job("b")
+    backend.hang = set()
+    assert manager.wait(first["id"], 5)
+    assert manager.wait(second["id"], 5)
+    assert backend.starts == ["s1"]
+
+
 def test_startup_stops_only_orphaned_encoders_under_this_data_dir(monkeypatch, tmp_path):
     import subprocess
 

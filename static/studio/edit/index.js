@@ -22,7 +22,7 @@ import {
 } from "../api.js";
 import { el, formatCount, setStatus } from "../ui.js";
 import { receiptSummary } from "../stories.js";
-import { mountPreview } from "./preview.js?v=20261106-2";
+import { mountPreview } from "./preview.js?v=20261106-3";
 import { mountTimeline } from "./timeline.js";
 import { mountLayersPanel } from "./layers-panel.js";
 import { mountElementsPanel } from "./elements-panel.js";
@@ -83,7 +83,7 @@ function ensureStyles() {
     const link = document.createElement("link");
     link.id = CSS_ID;
     link.rel = "stylesheet";
-    link.href = "/static/studio/edit/edit.css?v=20261106-2";
+    link.href = "/static/studio/edit/edit.css?v=20261106-3";
     document.head.append(link);
   }
 }

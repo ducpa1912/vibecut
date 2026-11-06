@@ -2778,6 +2778,8 @@ body:has(.st-preview.is-focus) { overflow: hidden; }
 /* Clean, simplified: one method, then what is found, then what is done. */
 .st-clean-bar { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px; padding: 6px; }
 .st-clean-bar-label { color: var(--st-muted); font-size: 11px; }
+.st-clean-model { width: 100%; max-width: none; }
+.st-clean-model-hint { grid-column: 1 / -1; margin: -2px 0 2px; }
 .st-clean-method { justify-self: start; }
 .st-clean-method .st-method-option { min-height: 26px; padding: 3px 12px; }
 .st-clean-add { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }

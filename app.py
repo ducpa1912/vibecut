@@ -7029,7 +7029,7 @@ _STORY_QUEUE_SUBMIT_LOCK = threading.Lock()
 _QUEUE_ETA_STATE: dict[str, dict] = {}
 
 
-def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str, str, bool]:
+def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str, str, bool, str]:
     return (
         str(item.get("job_id") or ""),
         str(item.get("set_id") or ""),
@@ -7038,12 +7038,13 @@ def _story_queue_identity(item: dict) -> tuple[str, str, str, str, str, str, boo
         str(item.get("quality") or "final"),
         "gpu" if item.get("fill_device") == "gpu" else "",
         item.get("fill_follow") is True,
+        str(item.get("edit_hash") or ""),
     )
 
 
 def _active_queue_for(
     queues: list[dict],
-    identity: tuple[str, str, str, str, str, str, bool],
+    identity: tuple[str, str, str, str, str, str, bool, str],
 ) -> dict | None:
     for queue in queues:
         if str(queue.get("status") or "") not in story_queue.ACTIVE_QUEUES:
@@ -7077,8 +7078,8 @@ class StoryQueueBody(BaseModel):
 def create_story_queue(body: StoryQueueBody) -> dict:
     """Up to ten story items render one after another; nothing auto-resumes.
 
-    Queueing is idempotent by identity: a story/shape/quality already waiting
-    or rendering is attached to its active queue instead of creating a second
+    Queueing is idempotent by identity: the same Edit, shape, quality and AI fill
+    choices already waiting or rendering is attached to its active queue instead of creating a second
     item or a failed "already rendering" row.
     """
     for item in body.items:
@@ -7089,9 +7090,11 @@ def create_story_queue(body: StoryQueueBody) -> dict:
             story = _story_in_set(record, str(item.get("story_id") or ""))
             # A stale Edit fails the queue request closed, before any item
             # starts; the worker would only report it after the 200.
-            _story_edit_for_render(
+            edit = _story_edit_for_render(
                 job, story, set_id, str(item.get("aspect") or "9:16"),
             )
+            # A changed Edit is new work, even while the old one is still queued.
+            item["edit_hash"] = str((edit or {}).get("hash") or "")
     with _STORY_QUEUE_SUBMIT_LOCK:
         manager = story_queues()
         active = manager.list()

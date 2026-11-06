@@ -215,8 +215,31 @@ def test_only_a_chosen_option_changes_a_renders_identity():
 def test_the_render_step_offers_the_choices():
     assert 'segmented(\n      "AI fill on"' in FINISH
     assert "Follow camera motion" in FINISH
-    assert 'fill_device: fillDeviceNow() === "gpu" ? "gpu" : ""' in FINISH
-    assert "fill_follow:" in FINISH
+    assert 'fill_device: queuedDevice() === "gpu" ? "gpu" : ""' in FINISH
+    assert "fill_follow: queuedFollow()" in FINISH
+
+
+def test_queue_buttons_only_close_for_the_same_choices():
+    assert "liveQueueItem(String(story.id || \"\"), aspect, true)" in FINISH
+    assert "const live = liveQueueItem(storyId, aspect, true);" in FINISH
+    body = FINISH[FINISH.index("function matchesChoice"):FINISH.index("function queuedDevice")]
+    assert "row?.quality" in body and "row?.fill_device" in body and "row?.fill_follow" in body
+    assert "edit_hash" in body
+
+
+def test_a_choice_or_a_poll_never_reloads_the_review_video():
+    poll = FINISH[FINISH.index("async function poll"):FINISH.index("function renderSkeleton")]
+    assert "renderRenderCard();" in poll
+    assert "renderStoryCard();" not in poll
+    assert "renderReviewCard" not in FINISH[FINISH.index("function renderRenderCard"):FINISH.index("function renderStoryCard")]
+
+
+def test_the_model_can_be_changed_where_the_method_is_chosen():
+    bar = CLEAN[CLEAN.index("function methodBar"):CLEAN.index("function runBar")]
+    assert '...(current === "fill" ? modelPicker() : [])' in bar
+    assert '"AI model"' in bar
+    assert "engineFold" not in CLEAN
+    assert 'text: "Change"' in FINISH and "AI model" in FINISH
 
 
 # --- following the camera --------------------------------------------------------

@@ -604,6 +604,8 @@ def manifest_summary(manifest: dict) -> dict:
         "story_id": spec.get("story_id"),
         "target": spec.get("target"),
         "quality": spec.get("quality"),
+        "fill_device": spec.get("fill_device") or "",
+        "fill_follow": spec.get("fill_follow") is True,
         "aspect": spec.get("aspect"),
         "hook_scene": spec.get("hook_scene"),
         "hook_override": bool(spec.get("hook_override")),

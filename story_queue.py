@@ -133,6 +133,7 @@ def normalize_items(raw: object) -> list[dict]:
             )
         fill_device = "gpu" if value.get("fill_device") == "gpu" else ""
         fill_follow = value.get("fill_follow") is True
+        edit_hash = str(value.get("edit_hash") or "")[:80]
         identity = (ids["job_id"], ids["set_id"], ids["story_id"], aspect, quality, fill_device, fill_follow)
         if identity in seen:
             raise QueueError(f"Item {index} repeats an earlier story and aspect.")
@@ -144,6 +145,7 @@ def normalize_items(raw: object) -> list[dict]:
             "quality": quality,
             "fill_device": fill_device,
             "fill_follow": fill_follow,
+            "edit_hash": edit_hash,
             "title": str(value.get("title") or "")[:200],
             "state": "queued",
             "artifact_id": None,
@@ -171,6 +173,8 @@ class StoryQueueManager:
         self._lock = threading.RLock()
         self._threads: dict[str, threading.Thread] = {}
         self._stops: dict[str, threading.Event] = {}
+        # One render at a time, across every queue on this machine.
+        self._turn = threading.Lock()
 
     # ------------------------------------------------------------ storage
 
@@ -440,7 +444,26 @@ class StoryQueueManager:
                         message=f"Done · {failed} failed" if failed else "Done",
                     ))
                     return
-                self._run_item(queue_id, item, stop)
+                # Another choice of the same story waits its turn, not colliding with it.
+                if not self._turn.acquire(blocking=False):
+                    self._mutate(queue_id, lambda queue: queue.update(message="Waiting for the render before it"))
+                    while not self._turn.acquire(timeout=self.poll_interval):
+                        if stop.is_set():
+                            return
+                try:
+                    if stop.is_set():
+                        return
+                    # It may have been taken out of the queue while it waited.
+                    fresh = next(
+                        (row for row in self._read(queue_id).get("items") or [] if row.get("id") == item["id"]),
+                        None,
+                    )
+                    if fresh is None or fresh.get("state") != "queued":
+                        continue
+                    self._mutate(queue_id, lambda queue: queue.update(message="Rendering"))
+                    self._run_item(queue_id, fresh, stop)
+                finally:
+                    self._turn.release()
         except Exception:  # noqa: BLE001
             LOGGER.exception("story queue %s stopped unexpectedly", queue_id)
         finally:
