@@ -2169,6 +2169,8 @@ def _prepare_fills(
     cancel_event: threading.Event | None,
     fps: int = OUT_FPS,
     on_eta: Callable[[float], None] | None = None,
+    device: str | None = None,
+    follow_motion: bool = False,
 ) -> list[dict | None]:
     """Run the AI text fill pre-pass: one filled clip per beat that needs it.
 
@@ -2246,6 +2248,8 @@ def _prepare_fills(
                     progress=report,
                     cancel_event=cancel_event,
                     on_replay=on_replay,
+                    device=device,
+                    follow_motion=follow_motion,
                 )
             except textfill.FillCancelled as exc:
                 raise RenderCancelled("Render cancelled.") from exc
@@ -2439,6 +2443,8 @@ def render_reel(
         # Fill model files: replacing a checkpoint must not reuse a master
         # whose beats were built from the old model.
         "fill_models": fill_sig,
+        **({"fill_device": plan["_fill_device"]} if plan.get("_fill_device") else {}),
+        **({"fill_follow": True} if plan.get("_fill_follow") else {}),
         # Text raster version: a font change must not reuse an old master.
         "text_skin": LAYER_CACHE_VERSION,
     }, sort_keys=True).encode()).hexdigest()[:16]
@@ -2469,6 +2475,8 @@ def render_reel(
                     source, meta, job_dir,
                     edit_segments if compiled is not None else [],
                     progress, cancel_event, fps=output_fps, on_eta=fill_eta,
+                    device=str(plan.get("_fill_device") or "") or None,
+                    follow_motion=bool(plan.get("_fill_follow")),
                 )
             cut_from = 0.45 if any(fills) else 0.02
             done = 0

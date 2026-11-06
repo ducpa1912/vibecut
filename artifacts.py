@@ -246,6 +246,9 @@ class ArtifactSpec:
     source_fingerprint: str = ""
     generation: int = 0
     edit_hash: str = ""
+    # The Render step's AI fill choices. Only a non-default choice is recorded.
+    fill_device: str = ""
+    fill_follow: bool = False
     transcript_id: str = ""
     audio_hash: str = ""
     music_hash: str = ""
@@ -282,6 +285,11 @@ class ArtifactSpec:
         # Edit, so legacy artifact ids and pinned links stay byte-stable.
         if self.edit_hash:
             payload["edit_hash"] = str(self.edit_hash)
+        # A render with these choices is a new file, and leaves the plain one alone.
+        if self.fill_device:
+            payload["fill_device"] = str(self.fill_device)
+        if self.fill_follow:
+            payload["fill_follow"] = True
         if self.transcript_id:
             payload["transcript_id"] = str(self.transcript_id)
         if self.audio_hash:
@@ -310,6 +318,8 @@ class ArtifactSpec:
             source_fingerprint=str(data.get("source_fingerprint") or ""),
             generation=_optional_int(data.get("generation")) or 0,
             edit_hash=str(data.get("edit_hash") or ""),
+            fill_device=str(data.get("fill_device") or ""),
+            fill_follow=data.get("fill_follow") is True,
             transcript_id=str(data.get("transcript_id") or ""),
             audio_hash=str(data.get("audio_hash") or ""),
             music_hash=str(data.get("music_hash") or ""),
@@ -347,6 +357,8 @@ def build_spec(
     generation: int = 0,
     clips: Iterable[dict] | None = None,
     edit_hash: str = "",
+    fill_device: str = "",
+    fill_follow: bool = False,
     transcript_id: str = "",
     audio_plan: dict | None = None,
     audio_hash: str = "",
@@ -389,6 +401,8 @@ def build_spec(
         source_fingerprint=source_fingerprint(job) or str(source.get("fingerprint") or ""),
         generation=max(0, int(generation or 0)),
         edit_hash=str(edit_hash or ""),
+        fill_device=str(fill_device or ""),
+        fill_follow=bool(fill_follow),
         transcript_id=str(transcript_id or ""),
         audio_hash=str(audio_hash or ""),
         music_hash=str(music_hash or ""),

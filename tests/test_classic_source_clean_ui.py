@@ -141,7 +141,7 @@ def test_source_rows_frame_and_box_cap_are_wired():
     assert "cleanFrameBody" in js and 'state.cleanScope === "source"' in js
     assert 'const outside = !sourceScope && cutStart === null;' in js
     assert "click a row to jump to the text" in js
-    assert "const cap = sourceScope ? 200 : 24;" in js
+    assert "const cap = 1000;" in js
     assert 'state.cleanScope !== "source" && !classicTextSupported()' in js
     assert "Whole video" in js
     assert "sourceCleanStageFor" in js

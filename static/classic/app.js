@@ -3540,10 +3540,10 @@
 
   function sourceCleanEngineLabel(record = state.sourceClean) {
     const method = String(record?.method || "").toLowerCase();
-    if (method === "lama") return "LaMa";
     if (method === "blur") return "Blur";
+    if (CLEAN_FILL_ENGINE_LABEL[method]) return CLEAN_FILL_ENGINE_LABEL[method];
     if (method) return method.toUpperCase();
-    if (state.fill?.engines?.lama?.ready) return "LaMa";
+    if (state.fill?.engines?.lama?.ready) return CLEAN_FILL_ENGINE_LABEL[fillEngineNow()];
     if (state.fill && state.fill.available === false) return "Blur · AI fill unavailable";
     return "LaMa";
   }
@@ -3819,7 +3819,7 @@
   }
 
   function cutCleanEngineLabel() {
-    if (fillEngineReady()) return "LaMa";
+    if (fillEngineReady()) return CLEAN_FILL_ENGINE_LABEL[fillEngineNow()];
     if (state.fill) return "Blur · AI fill unavailable";
     return "Blur";
   }
@@ -4481,6 +4481,7 @@
           clips: classicPlanClips(),
           clean,
           aspect: "source",
+          ...fillRequestFields(),
         }),
       });
     } catch (error) {
@@ -4650,7 +4651,7 @@
     try {
       const record = await api(`/api/classic/jobs/${state.job.id}/clean/source/render`, {
         method: "POST",
-        body: JSON.stringify({ clips: classicPlanClips(), clean: layers }),
+        body: JSON.stringify({ clips: classicPlanClips(), clean: layers, ...fillRequestFields() }),
       });
       if (!state.job || state.cleanScope !== "source") return;
       state.sourceClean = record;
@@ -7809,6 +7810,7 @@
               script_id: state.scriptId || null,
               audio: currentAudioPlan(),
               edit: classicEditPayload(),
+              ...fillRequestFields(),
             };
             const requestSig = renderSignatureOf(body);
             const result = await api(`/api/jobs/${state.job.id}/render`, {
@@ -8987,12 +8989,18 @@
     crop: { label: "Crop guard", note: "Keeps the frame inside the safe area." },
     fill: { label: "AI fill", note: "Repairs the region with the fill models." },
   };
-  // AI fill is LaMa only. No time is promised: the render counts its own frames.
+  // LaMa is the default engine. No time is promised: the render counts its own frames.
   const CLEAN_FILL_COST = {
     lama: "AI fill is the slowest step of a render. The time left shows while it runs.",
+    migan: "Always reads a 512 square, so LaMa is faster on thin lines.",
+    telea: "About a fifth of a second a frame. Smears on detail.",
+    ns: "About a fifth of a second a frame. Smears on detail.",
   };
   const CLEAN_FILL_ENGINE_LABEL = {
     lama: "LaMa",
+    migan: "MI-GAN",
+    telea: "Telea",
+    ns: "Navier-Stokes",
   };
   const CLEAN_SCAN_METHOD = { plate: "blur", crop_guard: "crop", mask: "blur", blur: "blur" };
   const CLEAN_MIN_BOX = 0.02;
@@ -9123,7 +9131,7 @@
       radius: Number.isFinite(Number(layer.radius)) ? Number(layer.radius) : CLEAN_DEFAULT_RADIUS,
       hidden: Boolean(layer.hidden),
       source: layer.source || "manual",
-      ...(cleanMethodKey(layer) === "fill" ? { engine: "lama" } : {}),
+      ...(cleanMethodKey(layer) === "fill" ? { engine: fillEngineNow() } : {}),
       ...(layer.mask ? { mask: layer.mask } : {}),
       ...(layer.text_key ? { text_key: layer.text_key } : {}),
       ...(layer.fill_keys !== undefined && layer.fill_keys !== null ? { fill_keys: layer.fill_keys } : {}),
@@ -9158,6 +9166,84 @@
     }
     renderCleanFill();
     return state.fill;
+  }
+
+  /** How AI fill runs: the engine, the chip, and following the camera. */
+  function fillOptionsHtml() {
+    const choice = fillChoiceNow();
+    const engines = state.fill?.engines || {};
+    const options = state.fill?.render_options || {};
+    const engine = fillEngineNow();
+    const engineRows = window.ClassicCleanOptions.ENGINES.map((key) => {
+      const row = engines[key] || {};
+      const label = CLEAN_FILL_ENGINE_LABEL[key] || key;
+      return `<option value="${esc(key)}"${key === engine ? " selected" : ""}${row.ready ? "" : " disabled"}>${esc(row.ready ? label : `${label} (not ready)`)}</option>`;
+    }).join("");
+    const gpu = options.gpu?.[engine];
+    const keyed = Boolean(gpu);
+    const onGpu = keyed && gpu.ready && choice.device !== "cpu";
+    const follow = options.follow || {};
+    const chip = keyed ? `
+      <label class="clean-fill-option">AI fill on
+        <select id="clean-fill-device" title="${esc(gpu.ready ? "The GPU is much faster and uses more memory." : (gpu.reason || ""))}">
+          <option value=""${onGpu ? " selected" : ""}${gpu.ready ? "" : " disabled"}>GPU</option>
+          <option value="cpu"${onGpu ? "" : " selected"}>CPU</option>
+        </select>
+      </label>
+      <label class="clean-fill-option" title="${esc(follow.ready === false ? (follow.reason || "") : "One fill moves with the camera, and real pixels replace it as they come into view. Other movement falls back to key frames.")}">
+        <input id="clean-fill-follow" type="checkbox"${choice.follow && follow.ready !== false ? " checked" : ""}${follow.ready === false ? " disabled" : ""}>
+        Follow camera motion
+      </label>` : "";
+    return `<div class="clean-fill-options">
+      <label class="clean-fill-option">Engine <select id="clean-fill-engine">${engineRows}</select></label>
+      ${chip}
+    </div>`;
+  }
+
+  /** What a big drawn box costs, and the cheaper way when the scan found its text. */
+  function bigBoxesHtml() {
+    const api = window.ClassicCleanOptions;
+    const tracklets = state.textScan?.report?.tracklets;
+    return classicCleanLayers().map((layer) => {
+      const share = api.bigBoxShare(layer);
+      if (!share) return "";
+      const lines = api.linesInsideBox(layer, tracklets);
+      const count = lines.length === 1 ? "1 line" : `${lines.length} lines`;
+      const action = lines.length
+        ? `<button class="ghost small" type="button" data-clean-snap="${esc(layer.id)}" title="Tight boxes, each on screen only with its line. Text the scan missed is left as it is.">Clean only the ${count} inside</button>`
+        : `<span class="hint">${state.textScan?.report ? "The scan found no text inside this box." : "Scan the video to clean only the text inside."}</span>`;
+      return `<div class="clean-big-box"><p class="hint">This box repaints ${share}% of the picture. That is the slowest kind of AI fill, and it can smear what is behind the text.</p>${action}</div>`;
+    }).join("");
+  }
+
+  /** Swap a big drawn box for tight boxes on the lines the scan found inside it. */
+  function snapBoxToLines(id) {
+    const api = window.ClassicCleanOptions;
+    const layer = classicCleanLayers().find((item) => item.id === id);
+    if (!layer) return;
+    const lines = api.linesInsideBox(layer, state.textScan?.report?.tracklets);
+    if (!lines.length) return;
+    const entries = state.textScan?.report?.clean_prefill || [];
+    const before = classicCleanLayers().length;
+    deleteCleanBox(id);
+    for (const line of lines) {
+      const entry = entries.find((row) => row.tracklet_id === line.id) || {};
+      addCleanFromScan({
+        ...entry,
+        tracklet_id: line.id,
+        kind: entry.kind || line.kind,
+        box: entry.box || line.box,
+        ranges: api.rangesWithin(line.ranges, layer.ranges),
+      }, "fill", fillEngineNow());
+    }
+    setCleanStatus(`Replaced the box with ${classicCleanLayers().length - before + 1} tight boxes.`);
+    renderCleanFill();
+  }
+
+  function setFillChoice(patch) {
+    state.fillChoice = window.ClassicCleanOptions.normalChoice({ ...fillChoiceNow(), ...patch });
+    window.ClassicCleanOptions.saveChoice(window.localStorage, state.fillChoice);
+    renderCleanFill();
   }
 
   function renderCleanFill() {
@@ -9195,7 +9281,7 @@
     const hasFill = classicCleanLayers().some((layer) => cleanMethodKey(layer) === "fill");
     const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
     const fillLayer = selected && cleanMethodKey(selected) === "fill" ? selected : null;
-    const previewEngine = "lama";
+    const previewEngine = fillEngineNow();
     const previewReady = Boolean(engines[previewEngine]?.ready);
     const previewHint = previewReady
       ? (hasFill
@@ -9218,6 +9304,8 @@
         <div>
           <p class="clean-fill-title">AI fill is ready</p>
           <ul class="clean-file-list">${rows}</ul>
+          ${fillOptionsHtml()}
+          ${bigBoxesHtml()}
           <p class="hint">${esc(previewHint)}</p>
         </div>
         <button id="clean-fill-preview" class="ghost small" type="button"${previewReady && hasFill ? "" : " disabled"}${previewReady ? "" : ` title="${esc(previewHint)}"`}>Preview one frame</button>
@@ -9245,7 +9333,7 @@
       button.disabled = true;
       button.textContent = "Filling one frame…";
     }
-    setCleanStatus("Filling one frame with LaMa. The first one loads the model, so it takes a moment.");
+    setCleanStatus(`Filling one frame with ${state.fill?.engines?.[fillEngineNow()]?.label || "LaMa"}. The first one loads the model, so it takes a moment.`);
     try {
       const payload = await api(`/api/classic/jobs/${state.job.id}/fill/preview`, {
         method: "POST",
@@ -9324,15 +9412,15 @@
     const fillLayer = selected && cleanMethodKey(selected) === "fill"
       ? selected
       : classicCleanLayers().find((layer) => cleanMethodKey(layer) === "fill");
-    const engine = "lama";
+    const engine = CLEAN_FILL_ENGINE_LABEL[fillEngineNow()];
     if (dom.cleanPreviewEngine) {
       if (sourceScope) {
         dom.cleanPreviewEngine.textContent = fillLayer
-          ? `Engine ${String(engine).toUpperCase()}`
+          ? `Engine ${engine}`
           : `Engine ${sourceCleanEngineLabel()}`;
       } else {
         dom.cleanPreviewEngine.textContent = fillLayer
-          ? `Engine ${String(engine).toUpperCase()}`
+          ? `Engine ${engine}`
           : "Clean preview";
       }
     }
@@ -9779,7 +9867,8 @@
     review.raf = 0;
     if (video) {
       try { video.pause(); } catch (_) { /* the element may not be ready */ }
-      if (options.syncTime) {
+      // Only a playing check owns the time. Otherwise the video sits at 0.
+      if (options.syncTime && review.active) {
         const limit = Math.max(0.01, cleanCutTotal() || Number(video.duration) || 0.01);
         state.classicText.t = clamp(Number(video.currentTime) || 0, 0, limit);
         if (dom.cleanScrub) dom.cleanScrub.value = String(state.classicText.t);
@@ -10477,6 +10566,21 @@
     renderCleanFound();
   }
 
+  function fillChoiceNow() {
+    if (!state.fillChoice) state.fillChoice = window.ClassicCleanOptions.loadChoice(window.localStorage);
+    return state.fillChoice;
+  }
+
+  /** The engine chosen, or LaMa when that one is not ready on this Mac. */
+  function fillEngineNow() {
+    const engine = fillChoiceNow().engine;
+    return state.fill?.engines?.[engine]?.ready ? engine : "lama";
+  }
+
+  function fillRequestFields() {
+    return window.ClassicCleanOptions.requestFields({ ...fillChoiceNow(), engine: fillEngineNow() });
+  }
+
   function fillEngineReady() {
     return Boolean(state.fill?.available && state.fill?.engines?.lama?.ready);
   }
@@ -10508,7 +10612,7 @@
         tracklet_kind: row?.kind || entry.kind || undefined,
         text_key: entry.text_key || entry.text || row?.text || "",
         ...(entry.fill_keys !== undefined ? { fill_keys: entry.fill_keys } : {}),
-        ...(method === "fill" ? { engine: "lama" } : {}),
+        ...(method === "fill" ? { engine: fillEngineNow() } : {}),
       };
     });
   }
@@ -10746,7 +10850,7 @@
     }
     let method = state.classicText.foundMethod || "fill";
     if (method === "fill" && !fillEngineReady()) method = "blur";
-    const engine = "lama";
+    const engine = fillEngineNow();
     if (method === "fill" && !state.fill?.engines?.[engine]?.ready) {
       setCleanStatus(state.fill?.engines?.[engine]?.reason || "That engine is not installed.");
       return;
@@ -10956,11 +11060,9 @@
         return classicCleanLayers()[index];
       }
     }
-    const cap = sourceScope ? 200 : 24;
+    const cap = 1000;
     if (classicCleanLayers().length >= cap) {
-      toast(sourceScope
-        ? "A whole video supports at most 200 Clean boxes."
-        : "A cut supports at most 24 Clean boxes.");
+      toast(`A video supports at most ${cap} Clean boxes.`);
       return null;
     }
     pushClassicUndo();
@@ -11016,7 +11118,7 @@
   }
 
   function defaultFillEngine(_kind) {
-    return "lama";
+    return fillEngineNow();
   }
 
   function setCleanMethod(id, method) {
@@ -11438,6 +11540,13 @@
     dom.cleanFill?.addEventListener("click", (event) => {
       const button = event.target.closest("#clean-fill-preview");
       if (button) previewFill();
+      const snap = event.target.closest("[data-clean-snap]");
+      if (snap) snapBoxToLines(snap.dataset.cleanSnap);
+    });
+    dom.cleanFill?.addEventListener("change", (event) => {
+      if (event.target.id === "clean-fill-engine") setFillChoice({ engine: event.target.value });
+      if (event.target.id === "clean-fill-device") setFillChoice({ device: event.target.value });
+      if (event.target.id === "clean-fill-follow") setFillChoice({ follow: event.target.checked });
     });
     dom.cleanPreviewBefore?.addEventListener("click", () => {
       stopCleanReview({ syncTime: true });
@@ -11790,6 +11899,7 @@
       script_id: state.scriptId || null,
       audio: currentAudioPlan(),
       edit: classicEditPayload(),
+      ...fillRequestFields(),
     };
   }
 

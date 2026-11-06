@@ -172,8 +172,8 @@ def run_units(height: int, width: int) -> float:
     return run_h * run_w / float(SIZE * SIZE)
 
 
-def prepare_feed(area: np.ndarray, mask: np.ndarray, flexible: bool = True):
-    """The picture and hole padded to a size LaMa runs at, and the size before it."""
+def fit_images(area: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """The picture and hole at the size an engine reads, and that (h, w)."""
     height, width = mask.shape
     fit_h, fit_w = fit(height, width)
     image = np.asarray(
@@ -183,6 +183,12 @@ def prepare_feed(area: np.ndarray, mask: np.ndarray, flexible: bool = True):
     small = np.asarray(
         Image.fromarray(mask.astype(np.uint8) * 255).resize((fit_w, fit_h), Image.BILINEAR),
     ) > 0
+    return image, small, fit_h, fit_w
+
+
+def prepare_feed(area: np.ndarray, mask: np.ndarray, flexible: bool = True):
+    """The picture and hole padded to a size LaMa runs at, and the size before it."""
+    image, small, fit_h, fit_w = fit_images(area, mask)
     run_h, run_w = input_size(fit_h, fit_w, flexible)
     pad = ((0, run_h - fit_h), (0, run_w - fit_w))
     image = np.pad(image, pad + ((0, 0),), mode="edge")
@@ -191,7 +197,7 @@ def prepare_feed(area: np.ndarray, mask: np.ndarray, flexible: bool = True):
 
 
 def restore(result: np.ndarray, fit_h: int, fit_w: int, height: int, width: int) -> np.ndarray:
-    """LaMa's picture back at the work area's size, with its padding gone."""
+    """An engine's picture back at the work area's size, with its padding gone."""
     return np.asarray(
         Image.fromarray(result[:fit_h, :fit_w]).resize((width, height), Image.BICUBIC),
         dtype=np.uint8,

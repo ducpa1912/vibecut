@@ -247,6 +247,9 @@ Added on 2026-11-05 from what Studio learned. **No real video has run on this co
 | 9A.13 | During a fill, stop the server. Start it again, then click **Resume**. | Same as 9A.12: the work is not lost. The Mac does not sleep during a render unless the lid is closed. | |
 | 9A.14 | After `big-lama.pt` is in the models folder, restart the server and render the shot from 9A.10 again. | The progress message says **GPU**. **Write the time here.** Play it next to the earlier render and note any difference in the filled area. | |
 | 9A.15 | Render the same cut again after changing one box's end time. | It finishes much faster than the first time, and the message counts saved fills reused. | |
+| 9A.16 | In the Clean panel, tick **Follow camera motion** and render a shot where the camera pans behind text. Render it again without the tick. | **Write both times here.** Note which looks cleaner, and any place the fill slides or jumps. | |
+| 9A.17 | Choose **Telea** as the engine and render a short cut with thin captions on a plain background. | It finishes far faster than LaMa. Note any smear. | |
+| 9A.18 | Draw a big box over a caption after a scan. Click **Clean only the N lines inside**. | Before the click, the panel says what the box costs. After it, the big box becomes tight boxes, each on screen only with its line. | |
 
 ## 10. Known issues
 

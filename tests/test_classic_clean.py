@@ -455,7 +455,7 @@ def test_a_saved_sttn_box_opens_as_lama(classic, monkeypatch):
     status = client.get("/api/classic/fill").json()
     assert status["available"] is True
     assert status["default"] == "lama"
-    assert list(status["engines"]) == ["lama"]
+    assert list(status["engines"]) == ["lama", "migan", "telea", "ns"]
 
     layers = routes_classic.normalize_classic_clean(
         [_box(method="fill", engine="sttn")], 10.0,
@@ -488,6 +488,7 @@ def test_the_panel_offers_one_engine_and_passes_the_scan_plan():
     assert "data-clean-engine" not in source
     assert "clean-found-engine" not in source
     assert "STTN" not in source and "sttn" not in source
+    assert source.count('id="clean-fill-engine"') == 1
     assert "clean-fill-reuse" not in source
     assert "fill_keys: entry.fill_keys" in source
 

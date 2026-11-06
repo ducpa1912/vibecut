@@ -4,3 +4,7 @@
 # AI fill reports the missing package instead of failing a render by surprise.
 # The model files are separate downloads; see THIRD_PARTY_NOTICES.md.
 onnxruntime>=1.17
+# The GPU option and MI-GAN read big-lama.pt and migan_traced.pt with PyTorch.
+torch>=2.2
+# Telea, Navier-Stokes and following the camera.
+opencv-python-headless>=4.11,<5

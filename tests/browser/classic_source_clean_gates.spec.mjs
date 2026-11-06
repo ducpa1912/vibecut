@@ -117,6 +117,10 @@ async function install(page, job, options = {}) {
   };
 
   await page.route(/\/api\/.*/, (route) => route.fulfill(json({ detail: "not found" }, 404)));
+  // These scenarios drive the one-click flow. Review first has its own tests.
+  await page.route(/\/api\/settings$/, (route) => route.fulfill(json({
+    settings: { classic_clean: { flow: "one_click" } },
+  })));
 
   await page.route(new RegExp(`/api/jobs/${id}$`), (route) => {
     jobReads += 1;

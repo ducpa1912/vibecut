@@ -4129,3 +4129,8 @@ body.source-mode .clean-row-src { font-size: 11px; }
   body.source-mode .source-clean-result-actions,
   body.cut-clean-mode .cut-clean-result-actions { row-gap: 6px; }
 }
+
+.clean-fill-options { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 8px 0; }
+.clean-fill-option { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.clean-big-box { margin: 8px 0; }
+.clean-big-box .hint { margin: 0 0 6px; }

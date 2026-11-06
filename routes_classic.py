@@ -161,15 +161,16 @@ MAX_CLASSIC_CLEAN = 1000
 CLASSIC_CLEAN_DEFAULT_COLOR = "#0b0d12"
 # A Classic box's `method` is what the founder picked (blur, crop or fill); a fill box also carries `engine` (which model runs). `edits` calls the
 # engine "method" inside the Edit, so the two names must not be confused.
-# Classic fills with LaMa only. A box saved earlier with a retired engine still
-# opens and renders, as LaMa.
-CLASSIC_FILL_ENGINES = ("lama",)
+# A box saved earlier with a retired engine still opens and renders, as LaMa.
+CLASSIC_FILL_ENGINES = ("lama", "migan", "telea", "ns")
 RETIRED_FILL_ENGINES = ("sttn",)
-FILL_MODELS = {"LaMa": "lama_fp32.onnx"}
-FILL_ENGINE_MODEL = {"lama": "LaMa"}
-FILL_RUNTIME = {"lama": "onnxruntime"}
+# Telea and Navier-Stokes are OpenCV, with no model file.
+FILL_MODELS = {"LaMa": "lama_fp32.onnx", "MI-GAN": "migan_traced.pt"}
+FILL_ENGINE_MODEL = {"lama": "LaMa", "migan": "MI-GAN", "telea": "Telea", "ns": "Navier-Stokes"}
+FILL_RUNTIME = {"lama": "onnxruntime", "migan": "torch", "telea": "cv2", "ns": "cv2"}
 FILL_LICENSES = {
     "LaMa": "Apache-2.0 · github.com/Carve/LaMa-ONNX",
+    "MI-GAN": "MIT · github.com/Picsart-AI-Research/MI-GAN",
 }
 FILL_LOCK = threading.Lock()
 FILL_LOCKS: dict[str, threading.Lock] = {}
@@ -258,12 +259,19 @@ class ClassicFillBody(BaseModel):
     aspect: str = "9:16"
 
 
+def _fill_device(value: str) -> str | None:
+    """A chip asked for, or None for the default: the GPU when it can run the fill."""
+    return value if value in ("cpu", "gpu") else None
+
+
 class ClassicFillEstimateBody(BaseModel):
     model_config = {"extra": "forbid"}
 
     clips: list[dict]
     clean: list[dict] = []
     aspect: str = "9:16"
+    fill_device: str = ""
+    fill_follow: bool = False
 
 
 class ClassicCleanLayersBody(BaseModel):
@@ -279,6 +287,8 @@ class ClassicSourceCleanBody(BaseModel):
 
     clips: list[dict] = []
     clean: list[dict] = []
+    fill_device: str = ""
+    fill_follow: bool = False
 
 
 class ClassicSourceFrameBody(BaseModel):
@@ -1139,7 +1149,9 @@ def normalize_classic_clean(
             if engine in RETIRED_FILL_ENGINES:
                 engine = "lama"
             if engine not in CLASSIC_FILL_ENGINES:
-                raise ClassicTextError("An AI fill box engine must be LaMa.")
+                raise ClassicTextError(
+                    "An AI fill box engine must be LaMa, MI-GAN, Telea or Navier-Stokes.",
+                )
             status = classic_fill_status() if require_ready else {}
             ready = (status.get("engines") or {}).get(engine) or {}
             if require_ready and not ready.get("ready"):
@@ -1238,10 +1250,11 @@ def classic_fill_status() -> dict:
     missing = []
     for engine in CLASSIC_FILL_ENGINES:
         name = FILL_ENGINE_MODEL[engine]
-        filename = FILL_MODELS[name]
-        path = directory / filename
-        installed = path.is_file() and path.stat().st_size > 0
-        if not installed:
+        filename = FILL_MODELS.get(name)
+        path = directory / filename if filename else None
+        installed = path is None or (path.is_file() and path.stat().st_size > 0)
+        # Only the default engine's file makes AI fill count as not installed.
+        if not installed and engine == CLASSIC_FILL_ENGINES[0]:
             missing.append(name)
         runtime_ok, runtime_reason = _classic_runtime_installed(engine)
         reason = ""
@@ -1261,21 +1274,19 @@ def classic_fill_status() -> dict:
             "runtime": FILL_RUNTIME.get(engine, ""),
             "runtime_installed": runtime_ok,
         }
-        files.append({
-            "name": name,
-            "engine": engine,
-            "file": filename,
-            "license": FILL_LICENSES.get(name, ""),
-            "installed": installed,
-            "bytes": path.stat().st_size if path.is_file() else 0,
-        })
-    default = next(
-        (engine for engine in CLASSIC_FILL_ENGINES if engines[engine]["ready"]),
-        None,
-    )
+        if path is not None:
+            files.append({
+                "name": name,
+                "engine": engine,
+                "file": filename,
+                "license": FILL_LICENSES.get(name, ""),
+                "installed": installed,
+                "bytes": path.stat().st_size if path.is_file() else 0,
+            })
+    # LaMa is the default and the fallback, so AI fill counts as ready only with it.
+    default = "lama" if engines["lama"]["ready"] else None
     import textfill
 
-    gpu_reason = textfill.gpu_problem(directory)
     ready_names = [FILL_ENGINE_MODEL[item] for item in CLASSIC_FILL_ENGINES
                    if engines[item]["ready"]]
     return {
@@ -1288,7 +1299,7 @@ def classic_fill_status() -> dict:
         # The preview and the render use the same engine.
         "preview": default,
         # Fills use the GPU by themselves when it can run them.
-        "gpu": {"ready": gpu_reason is None, "reason": gpu_reason or ""},
+        "render_options": textfill.render_options(directory),
         "methods": ["blur", "crop"] + ([default] if default else []),
         "note": (
             "AI fill is ready with " + " and ".join(ready_names) + "."
@@ -2223,9 +2234,13 @@ def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
                 method=engine,
                 cache_dir=app._job_dir(job_id) / "fill" / "source",
                 data_root=app.DATA,
+                device=_fill_device(body.fill_device),
+                follow_motion=body.fill_follow,
             ))
         summary = textfill.estimate_summary(rows, app.DATA)
-        rate = textfill.fill_rate(app.DATA, engine)
+        rate = textfill.fill_rate(
+            app.DATA, engine, rows[0].get("device", textfill.DEFAULT_DEVICE) if rows else textfill.DEFAULT_DEVICE,
+        )
         measured = bool(rate["seconds"]) and bool(summary["measured"])
         return {
             "method": engine,
@@ -2273,12 +2288,15 @@ def classic_fill_estimate(job_id: str, body: ClassicFillEstimateBody) -> dict:
             method=str(fill.get("method") or "lama"),
             cache_dir=cache_dir,
             data_root=app.DATA,
+            device=_fill_device(body.fill_device),
+            follow_motion=body.fill_follow,
         ))
     summary = textfill.estimate_summary(rows, app.DATA)
     measured = bool(summary["seconds"]) and summary["measured"]
+    methods = sorted({str(row["method"]) for row in rows})
     return {
-        "method": "lama" if rows else None,
-        "methods": ["lama"] if rows else [],
+        "method": methods[0] if methods else None,
+        "methods": methods,
         "frames": sum(int(row.get("frames") or 0) for row in rows),
         "seconds": summary["seconds"] if measured else None,
         "estimate_seconds": int(round(summary["seconds"])) if measured else None,
@@ -2437,7 +2455,9 @@ def classic_source_clean_render(
         edit_layers = _classic_clean_edit(layers, [clip])
     except ClassicTextError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    record = clean_source.start(job_id, edit_layers)
+    record = clean_source.start(
+        job_id, edit_layers, device=_fill_device(body.fill_device), follow=body.fill_follow,
+    )
     status_code = 200 if record.get("status") == "ready" else 202
     headers = (
         {"Location": f"/api/classic/jobs/{job_id}/clean/source"}

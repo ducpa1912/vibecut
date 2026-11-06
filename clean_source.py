@@ -166,8 +166,7 @@ def _engine(layers: list[dict]) -> str | None:
     }
     if not engines:
         return None
-    # Classic stores one engine per box, and only LaMa is supported. A mixed
-    # list still runs as the one engine, exactly like the cut renderer.
+    # A mixed list still runs as one engine, exactly like the cut renderer.
     return "lama" if "lama" in engines else sorted(engines)[0]
 
 
@@ -202,6 +201,7 @@ def _cache_key(
     duration: float,
     engine: str | None,
     model_stamp: str,
+    follow: bool = False,
 ) -> str:
     source = job.get("source") or {}
     payload = {
@@ -222,6 +222,8 @@ def _cache_key(
         "encoder": "h264/yuv420p",
         "chunk_seconds": CHUNK_SECONDS,
         "max_chunk_rects": MAX_CHUNK_RECTS,
+        # Only a chosen option changes the key, so earlier results stay valid.
+        **({"follow": True} if follow else {}),
     }
     return hashlib.sha1(
         json.dumps(payload, sort_keys=True, default=str).encode("utf-8"),
@@ -248,7 +250,9 @@ def _ready_message(width: int, height: int, duration: float, cached: bool) -> st
     return f"Clean video ready · {width}×{height} · {duration:.1f}s{tail}"
 
 
-def _started(job_id: str, layers: list[dict]) -> dict:
+def _started(
+    job_id: str, layers: list[dict], device: str | None = None, follow: bool = False,
+) -> dict:
     app = _app()
     job = app.load_job(job_id)
     app.require_source(job)
@@ -282,14 +286,15 @@ def _started(job_id: str, layers: list[dict]) -> dict:
         problem = textfill.missing_model(engine, directory)
         if problem:
             raise SourceCleanError(problem)
-        model_stamp = textfill.method_stamp(engine, directory)
+        model_stamp = textfill.method_stamp(engine, directory, device)
+        follow = textfill._follow_on(engine, follow)
 
     record = _record(job)
     if record.get("status") in ACTIVE and _live_task(record) is not None:
         raise SourceCleanError("A Source Clean render is already running.")
 
     check_started = time.monotonic()
-    key = _cache_key(job, visible, duration, engine, model_stamp)
+    key = _cache_key(job, visible, duration, engine, model_stamp, follow)
     job_dir, cache_dir, _fill_cache = _dirs(job_id)
     final = cache_dir / f"{key}.mp4"
     check_seconds = round(time.monotonic() - check_started, 3)
@@ -352,7 +357,7 @@ def _started(job_id: str, layers: list[dict]) -> dict:
             **base,
         )
         task = POOL.submit(
-            _run_awake, job_id, visible, key, engine, check_seconds,
+            _run_awake, job_id, visible, key, engine, check_seconds, device, follow,
             task_kind="source-clean", task_key=job_id,
         )
         _set(job_id, task_id=task.id)
@@ -365,10 +370,12 @@ def _run_awake(*args, **kwargs) -> dict:
         return run(*args, **kwargs)
 
 
-def start(job_id: str, layers: list[dict]) -> dict:
+def start(
+    job_id: str, layers: list[dict], device: str | None = None, follow: bool = False,
+) -> dict:
     """Start, or return the existing ready result, one full-source render."""
     try:
-        return _started(job_id, layers)
+        return _started(job_id, layers, device, follow)
     except SourceCleanError as exc:
         from fastapi import HTTPException
 
@@ -520,6 +527,8 @@ def _fill_master(
     fill_cache: Path,
     tmp: Path,
     cancel: threading.Event,
+    device: str | None = None,
+    follow: bool = False,
 ) -> tuple[Path | None, bool]:
     """One video-only fill master, chunked when the plan is large.
 
@@ -543,6 +552,8 @@ def _fill_master(
             data_root=_app().DATA,
             progress=_progress(job_id, cancel, 0.05, 0.68),
             cancel_event=cancel,
+            device=device,
+            follow_motion=follow,
         )
         return (Path(str(result["path"])) if result else None), False
 
@@ -568,6 +579,8 @@ def _fill_master(
                 data_root=_app().DATA,
                 progress=_progress(job_id, cancel, low, high),
                 cancel_event=cancel,
+                device=device,
+                follow_motion=follow,
             )
             if result:
                 clip = Path(str(result["path"]))
@@ -673,6 +686,8 @@ def run(
     key: str,
     engine: str | None,
     check_seconds: float = 0.0,
+    device: str | None = None,
+    follow: bool = False,
 ) -> dict:
     """Worker: fill, encode and mux one full-source file. Always terminal."""
     app = _app()
@@ -743,6 +758,8 @@ def run(
                     fill_cache,
                     tmp,
                     cancel,
+                    device=device,
+                    follow=follow,
                 )
         timings["fill"] = round(timings.get("fill", 0.0), 3)
 

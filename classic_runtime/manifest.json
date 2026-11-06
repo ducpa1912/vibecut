@@ -33,15 +33,15 @@
   },
   {
    "path": "app.py",
-   "source": "classic: accept the clean flow setting through the settings API",
-   "sha256": "333b24241f18aa62864afd7b30b97261d6fa46807c3473343bbd692b96ce9edd",
-   "feature_version": "1.0.8"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "e1f471e86405a6a4b539547634207c4f973227df8a536dc2d0513df11590f780",
+   "feature_version": "1.0.10"
   },
   {
    "path": "artifacts.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "c964470c2687a23872c4176ef572e65a8e7c779b8447d8c9cf3aed67c19b1e3b",
-   "feature_version": "1.0.2"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "2b2d1d4948f7f36687d78a19b6114b18d8320cc4846921ddbebbcc6828cab8ff",
+   "feature_version": "1.0.4"
   },
   {
    "path": "audio.py",
@@ -69,9 +69,9 @@
   },
   {
    "path": "clean_source.py",
-   "source": "studio 6a6bf58: keep AI fill work when a render stops",
-   "sha256": "6b8960c44b6c6ab1d77e68e5ea778814d5903c4397bc7a405ae1104764b414db",
-   "feature_version": "1.0.7"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "916589dd8173e82cb8d465d3ced45308be18720e02ef47ff787e03c975fcae26",
+   "feature_version": "1.0.9"
   },
   {
    "path": "cleanup.py",
@@ -123,9 +123,9 @@
   },
   {
    "path": "edits.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "40a2dce3bb9dc3bceb18e408cc25c37159fc6587dc4164627ce492e2a54be431",
-   "feature_version": "1.0.5"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "19e7b05f1ab044a95209c85a19a1a83d4f39467243a29ed2bf078ce330653426",
+   "feature_version": "1.0.7"
   },
   {
    "path": "exports.py",
@@ -201,15 +201,15 @@
   },
   {
    "path": "render.py",
-   "source": "studio b1efbe7: pass the render frame rate to the fill and use the real last frame",
-   "sha256": "3113bd3589739e68a6ebd3fcd74a74b251eb899603e51673962a5a1e56c0eae6",
-   "feature_version": "1.0.5"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "1e806d96489b55bbcd2b544cb98f83a3b9e9058d168a28d890c3c2dda46a7808",
+   "feature_version": "1.0.7"
   },
   {
    "path": "requirements-optional.txt",
-   "source": "studio 632dc3a: LaMa-only fill needs no torch for text removal",
-   "sha256": "d249986cd350e8313e3e49c1594d5e2819d930aeb0b4322f104e0b042e4f2e5b",
-   "feature_version": "1.0.1"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "c35ae15887eae559ab364b9c673da28ec7441eef2cde7aecf23c80fa76888299",
+   "feature_version": "1.0.3"
   },
   {
    "path": "requirements.txt",
@@ -303,9 +303,9 @@
   },
   {
    "path": "story_queue.py",
-   "source": "classic: founder decision 2026-11-06, no time limit on queued renders",
-   "sha256": "69294139801011a244cb9cf8419f0b83b9d97e21f247fbde33d041aa1af7359d",
-   "feature_version": "1.0.4"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "911aa10a56af8597d0a7ea985757a7143f8a8717987db037509ef8902649dab1",
+   "feature_version": "1.0.6"
   },
   {
    "path": "stt.py",
@@ -315,27 +315,39 @@
   },
   {
    "path": "textfill/__init__.py",
-   "source": "studio 8810335: LaMa on the Apple GPU, saved fills kept across renders",
-   "sha256": "46827331e25d7aa31a83a88f5d2a00caae8048b6295d37e54a5f1045136d773a",
-   "feature_version": "1.0.6"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "6c0a2d026bd208ae5f84dd65a51809f12d20fbadc7ddce6872223c9ab59c4709",
+   "feature_version": "1.0.8"
+  },
+  {
+   "path": "textfill/classic.py",
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "5059f0ab6dbc38ae5cdf0976aa3785e2adf044efc8b64320a6c584555b9fca51",
+   "feature_version": "1.0.1"
+  },
+  {
+   "path": "textfill/follow.py",
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "5d1e077c701232eb4d42aac5cafbfc707f64c3a973aa0e91e9fa598b38130971",
+   "feature_version": "1.0.1"
   },
   {
    "path": "textfill/lama.py",
-   "source": "studio 8810335: LaMa on the Apple GPU, saved fills kept across renders",
-   "sha256": "4568429813543de50e8394a0e57c2040f4393198c818211f1b79e75fe1b7201f",
-   "feature_version": "1.0.3"
-  },
-  {
-   "path": "textfill/mask.py",
-   "source": "studio 8810335: LaMa on the Apple GPU, saved fills kept across renders",
-   "sha256": "c0d26152cbbcc16df7cbd71b02081865f196860bbc00faf93b23301350baff78",
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "2bb3553905b07a886d577454ddd517a83b82f22d33eaa7a9af152041e3171c53",
    "feature_version": "1.0.4"
   },
   {
+   "path": "textfill/mask.py",
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "c0d26152cbbcc16df7cbd71b02081865f196860bbc00faf93b23301350baff78",
+   "feature_version": "1.0.5"
+  },
+  {
    "path": "textfill/torch_fill.py",
-   "source": "studio 8810335: LaMa on the Apple GPU, saved fills kept across renders",
-   "sha256": "d11a53ff70692d8e834839df79dd8930061eaa582110e494be7184954bdbb21a",
-   "feature_version": "1.0.0"
+   "source": "studio 8810335: engines, GPU and CPU choice, camera following",
+   "sha256": "0ef540e36727aaaffdd9f2e2ccbdf9741ad41524ae1e58971640536a120adde3",
+   "feature_version": "1.0.2"
   },
   {
    "path": "tighten.py",

@@ -734,15 +734,14 @@ def test_a_plan_is_part_of_a_clip():
     assert textfill.span_key(layers=[_layer(fill_keys=0.0)], **base) != textfill.span_key(layers=[_layer(fill_keys=6.0)], **base)
 
 
-# --- LaMa only -------------------------------------------------------------
+# --- engines ---------------------------------------------------------------
 
-def test_classic_offers_lama_and_nothing_else():
-    assert textfill.METHODS == ("lama",)
+def test_classic_offers_these_engines_with_lama_first():
+    assert textfill.METHODS == ("lama", "migan", "telea", "ns")
     assert textfill.DEFAULT_METHOD == "lama"
-    assert edits.FILL_METHODS == ("lama",)
+    assert edits.FILL_METHODS == textfill.METHODS
     root = Path(__file__).resolve().parent.parent
     assert not (root / "textfill" / "sttn.py").exists()
-    assert not (root / "textfill" / "classic.py").exists()
 
 
 def test_a_saved_sttn_layer_still_renders_as_lama(tmp_path):
@@ -1245,15 +1244,15 @@ def test_fills_use_the_gpu_only_when_its_model_is_here(tmp_path, monkeypatch):
 
     monkeypatch.delenv("VIBECUT_FILL_DEVICE", raising=False)
     monkeypatch.setattr(torch_fill, "gpu_possible", lambda: True)
-    assert textfill.chosen_device(tmp_path) == "cpu"
-    assert "big-lama.pt" in textfill.gpu_problem(tmp_path)
+    assert textfill.chosen_device("lama", None, tmp_path) == "cpu"
+    assert "big-lama.pt" in textfill.gpu_problem("lama", tmp_path)
     (tmp_path / "big-lama.pt").write_bytes(b"x")
-    assert textfill.chosen_device(tmp_path) == "gpu"
+    assert textfill.chosen_device("lama", None, tmp_path) == "gpu"
     monkeypatch.setenv("VIBECUT_FILL_DEVICE", "cpu")
-    assert textfill.chosen_device(tmp_path) == "cpu"
+    assert textfill.chosen_device("lama", None, tmp_path) == "cpu"
     monkeypatch.delenv("VIBECUT_FILL_DEVICE")
     monkeypatch.setattr(torch_fill, "gpu_possible", lambda: False)
-    assert textfill.chosen_device(tmp_path) == "cpu"
+    assert textfill.chosen_device("lama", None, tmp_path) == "cpu"
 
 
 def test_a_clip_from_one_chip_is_not_taken_for_the_other(tmp_path, monkeypatch):
@@ -1408,3 +1407,82 @@ def test_paste_touches_only_the_hole_and_matches_a_full_blend():
     full[alpha <= 0] = original[alpha <= 0]
     assert np.array_equal(masks.paste(original, filled, alpha), full)
     assert np.array_equal(masks.paste(original, filled, np.zeros((60, 80), dtype=np.float32)), original)
+
+
+# --- a box with no scan plan ------------------------------------------------
+
+
+
+def _drifting_frames(count, *, step=10):
+    """Change around the box passes the motion limit between frames, but is no cut."""
+    ramp = np.tile(np.linspace(20, 120, 200, dtype=np.uint8)[None, :, None], (100, 1, 3))
+    return [ramp + min(index * step, 130) for index in range(count)]
+
+
+def _fills_for(frames, fps=24.0, keys=None):
+    layer = {"box": {"x": 0.1, "y": 0.3, "w": 0.8, "h": 0.4}, "ranges": []}
+    if keys is not None:
+        layer["fill_keys"] = keys
+    plan = textfill.lama_plan([layer], start=0.0, fps=fps, frames=len(frames))
+    filler = _PictureFiller()
+    out = list(textfill.fill_frames_lama(
+        iter(frames), _rects_for, filler, None, step=8, plan_for=plan,
+    ))
+    assert len(out) == len(frames)
+    return filler.calls
+
+
+def test_a_drawn_box_on_a_moving_shot_does_not_fill_every_frame():
+    frames = _drifting_frames(12, step=8)
+    assert _fills_for(frames) <= 5
+
+
+def test_a_drawn_box_on_a_still_shot_keeps_the_default_rate():
+    moving = _fills_for(_drifting_frames(24, step=5))
+    ramp = _drifting_frames(1)[0]
+    still = _fills_for([ramp.copy() for _ in range(24)])
+    assert still < moving
+
+
+def test_a_cut_still_ends_a_drawn_box_run_early():
+    ramp = _drifting_frames(1)[0]
+    frames = [ramp.copy(), ramp.copy(), np.clip(ramp.astype(np.int16) + 100, 0, 255).astype(np.uint8)]
+    frames += [frames[-1].copy() for _ in range(3)]
+    layer_plan = textfill.lama_plan(
+        [{"box": {"x": 0.1, "y": 0.3, "w": 0.8, "h": 0.4}, "ranges": []}],
+        start=0.0, fps=24.0, frames=len(frames),
+    )
+    assert layer_plan(0)[3] == 4
+    filler = _PictureFiller()
+    out = list(textfill.fill_frames_lama(iter(frames), _rects_for, filler, None, step=8, plan_for=layer_plan))
+    # Nothing from before the cut is blended into the frames after it.
+    assert out[3][0, 100, 0] == frames[3][0, 100, 0]
+    assert filler.calls >= 2
+
+
+def test_the_override_keeps_the_strict_motion_rule(monkeypatch):
+    monkeypatch.setenv("VIBECUT_FILL_LAMA_KEYS", "3")
+    plan = textfill.lama_plan([{"box": {"x": 0, "y": 0, "w": 1, "h": 1}, "ranges": []}], start=0.0, fps=24.0, frames=4)
+    assert len(plan(0)) == 3
+
+
+def test_the_estimate_counts_a_drawn_box_at_its_moving_rate():
+    layer = {"box": {"x": 0.0, "y": 0.6, "w": 1.0, "h": 0.25}, "ranges": []}
+    planned = dict(layer, fill_keys=3.0)
+    size = {"start": 0.0, "fps": 25.0, "frames": 250, "width": 1080, "height": 1920}
+    table = textfill.masks.frame_rects([layer], **size)
+    drawn_units = textfill._planned_units(table, [layer], **size)
+    plan_units = textfill._planned_units(table, [planned], **size)
+    assert drawn_units > plan_units * 1.5
+
+
+def test_only_a_box_with_no_plan_changes_its_clip_key(monkeypatch):
+    meta = {"fingerprint": "f", "width": 100, "height": 100, "fps": 25.0}
+    args = dict(meta=meta, start=0.0, duration=1.0, method="lama", model_stamp="m")
+    drawn = [{"box": {"x": 0, "y": 0, "w": 1, "h": 1}, "ranges": []}]
+    planned = [dict(drawn[0], fill_keys=3.0)]
+    drawn_key = textfill.span_key(layers=drawn, **args)
+    planned_key = textfill.span_key(layers=planned, **args)
+    monkeypatch.setattr(textfill, "LAMA_UNPLANNED_KEYS", 9.0)
+    assert textfill.span_key(layers=drawn, **args) != drawn_key
+    assert textfill.span_key(layers=planned, **args) == planned_key

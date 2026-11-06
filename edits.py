@@ -53,8 +53,8 @@ MAX_ID = 64
 
 ASPECTS = ("9:16", "4:5")
 CLEAN_KINDS = ("crop_guard", "blur", "plate", "mask", "fill")
-# AI text fill engines for kind "fill" (see textfill/). Classic fills with LaMa.
-FILL_METHODS = ("lama",)
+# AI text fill engines for kind "fill" (see textfill/). LaMa is the default.
+FILL_METHODS = ("lama", "migan", "telea", "ns")
 # A layer saved earlier may still name a retired engine. It opens as LaMa.
 RETIRED_FILL_METHODS = ("sttn",)
 MOTION_KINDS = ("punch_in", "snap_zoom", "push", "shake")

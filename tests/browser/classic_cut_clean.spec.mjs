@@ -168,7 +168,16 @@ const FILL = {
   available: true,
   missing: [],
   files: [],
-  engines: { lama: { id: "lama", ready: true, reason: "" } },
+  engines: {
+    lama: { id: "lama", ready: true, reason: "" },
+    migan: { id: "migan", ready: false, reason: "AI fill with MI-GAN is missing migan_traced.pt." },
+    telea: { id: "telea", ready: true, reason: "" },
+    ns: { id: "ns", ready: false, reason: "AI fill with NS needs the cv2 package on this Mac." },
+  },
+  render_options: {
+    gpu: { lama: { ready: true, reason: "" }, migan: { ready: false, reason: "needs migan_traced.pt" } },
+    follow: { ready: true, reason: "" },
+  },
   default: "lama",
   preview: "lama",
   methods: ["blur", "crop", "lama"],
@@ -267,6 +276,10 @@ async function run(viewport) {
   let releaseFill;
   const fillGate = new Promise((resolve) => { releaseFill = resolve; });
 
+  // This spec drives the one-click flow. Review first has its own tests.
+  await page.route(/\/api\/settings$/, (route) => route.fulfill(json({
+    settings: { classic_clean: { flow: "one_click" } },
+  })));
   await page.route(/\/api\/jobs\/j1$/, (route) => route.fulfill(json({
     ...(targetScan ? TARGET_JOB : READY_JOB),
     renders: renderRecord ? { [renderRecord.record_key]: renderRecord } : {},
@@ -775,11 +788,31 @@ async function run(viewport) {
   assert(fillPreviewBodies.length >= 1 && fillPreviewBodies[0].clean.length === 1,
     `${label}: After sent ${fillPreviewBodies[0]?.clean?.length} Clean layers`);
 
+  // The AI fill choices are offered, and the next render carries them.
+  const fillOptions = await page.evaluate(() => ({
+    engine: document.querySelector("#clean-fill-engine")?.value,
+    device: document.querySelector("#clean-fill-device")?.value,
+    follow: document.querySelector("#clean-fill-follow")?.checked,
+    disabled: [...document.querySelectorAll("#clean-fill-engine option")]
+      .filter((node) => node.disabled).map((node) => node.value),
+  }));
+  assert(fillOptions.engine === "lama" && fillOptions.device === "" && fillOptions.follow === false,
+    `${label}: the AI fill defaults are ${JSON.stringify(fillOptions)}`);
+  assert(fillOptions.disabled.join() === "migan,ns",
+    `${label}: the engines not ready are ${fillOptions.disabled.join()}`);
+  await page.locator("#clean-fill-device").selectOption("cpu");
+  await page.locator("#clean-fill-follow").check();
+  const remembered = await page.evaluate(() => JSON.parse(localStorage.getItem("vibecut.classic.fillChoice")));
+  assert(remembered.device === "cpu" && remembered.follow === true,
+    `${label}: the AI fill choice was not kept: ${JSON.stringify(remembered)}`);
+
   // Clean again reaches a second ready record through the normal render path.
   const secondRender = page.waitForRequest((request) =>
     /\/api\/jobs\/j1\/render$/.test(request.url()) && request.method() === "POST");
   await page.locator("#cut-clean-again").click();
   await secondRender;
+  assert(renderBodies.at(-1).fill_device === "cpu" && renderBodies.at(-1).fill_follow === true,
+    `${label}: the render carried ${renderBodies.at(-1).fill_device} / ${renderBodies.at(-1).fill_follow}`);
   await page.waitForFunction(() =>
     /media\/reel_15_2\.mp4/.test(document.querySelector("#cut-clean-download")?.getAttribute("href") || "")
       && !document.querySelector("#cut-clean-result-actions").hidden,
