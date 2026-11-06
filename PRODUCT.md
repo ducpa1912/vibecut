@@ -2,7 +2,7 @@
 
 Classic is a second supported VibeCut product, separate from Studio. It turns a
 source video into either a clean video or a short reel built from moments. It
-has no timeline, no rights gate, no attestation tick and no watermark refusal.
+has no editing timeline (Clean has a range timeline for detected text), no rights gate, no attestation tick and no watermark refusal.
 The founder is responsible for having permission to edit the footage; the UI
 carries a plain responsibility notice.
 
@@ -91,7 +91,7 @@ first-timer must be able to say what will be removed before the render starts.
 
 ## Boundaries
 
-- No timeline.
+- No editing timeline. Clean has a range timeline for detected text ranges.
 - No rights gate, attestation, watermark refusal or per-video tick.
 - No Cover / Plate method.
 - No Studio page imports.

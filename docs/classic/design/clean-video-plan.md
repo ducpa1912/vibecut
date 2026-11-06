@@ -15,14 +15,25 @@ done because tests pass; the product owner gate is separate.
 - Clean layers are source-space boxes with optional brush masks and source-time
   ranges. The Edit clean schema is authoritative.
 - The source is never modified. Every result is a new file.
-- No timeline. Moments are the cut model.
+- No editing timeline. Moments are the cut model. Clean has a range timeline for detected text.
 - UI type floor is 11 px.
 - Clean review has two flows: **Review first** (default) scans only until the
   explicit clean click, and **One click** keeps scan -> clean -> render in one
   action. The setting is `settings.classic_clean.flow`; review first is the
   default.
-- The detection check plays the real source or a ready cut render with one
-  blur box over every found row. It never fills, saves or renders.
+- Source Clean and Cut Clean share one workspace: a centered preview, a compact
+  action header above a full-width range timeline. The Clean timeline shows the
+  detected text ranges and layer time; Moments and Smart Cut remain the cut
+  model. Edit keeps its three-pane frame.
+- Detection preview outlines the real source boxes. It never blurs them, fills
+  them, saves or renders.
+- Text detection runs at 4 fps, capped at 3,600 frames. Clean ranges use a
+  0.75 s gap and a 0.15 s edge trim, so a clear frame gets no box.
+- Subtitle lines in one area are one timeline row, but each line keeps its own
+  tight box, ranges and fill plan. AI fill never unions them into one large box.
+- Minor text starts unticked; the timeline still shows it. AI fill uses the
+  scan's per-line key rate: one fill for a still line, up to six a second when
+  the picture moves.
 
 ## Phase 1 — Source Clean backend
 

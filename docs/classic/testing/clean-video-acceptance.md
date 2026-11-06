@@ -55,25 +55,30 @@ mkdir -p ~/vibecut-lanes/recordings
 2. On ingest, click **Clean video** and choose the real clip.
 3. Wait for **Source ready**. Source Clean opens; Edit, moments and Smart Cut
    are absent.
-4. Confirm the frame shows the source aspect, not a 9:16 crop. Confirm the rail
-   names the file, duration, size, frame count and engine.
+4. Confirm the frame shows the source aspect, not a 9:16 crop. Confirm the
+   compact header names the model state, and the timeline shows the total
+   duration.
 5. Click **Find text**. The scan runs and stops.
-6. Confirm **no Clean layers were saved and no render started**. The rail says
-   **N texts found. Review the rows, then clean.**
-7. Review every row. High-confidence rows start selected; tick or untick what
-   should be cleaned. Low-confidence rows stay visible.
-8. Click **Clean N texts & render**.
-9. Watch the stage line: **Finding text** → **Cleaning** → **Encoding**.
-10. Wait for **Download**.
+6. Confirm **no Clean layers were saved and no render started**. Detected text
+   appears automatically as blue timeline bars.
+7. Review the timeline. Click a bar to seek and show its tight box on the
+   preview. Drag a bar to move its range; drag an edge to trim it. Double-click
+   a bar to include or leave it out of Clean.
+8. Confirm the model chip says **AI fill · Ready** or **Not ready**. Open it to
+   choose a ready engine. GPU/CPU and Follow camera stay under **Fill options**.
+9. Click **Clean N texts & render**.
+10. Watch the stage line: **Finding text** → **Cleaning** → **Encoding**.
+11. Wait for **Download**.
 
 Expected:
 
 - The scan is a review stop, not an automatic clean.
 - No layer, no file and no render exists after the scan alone.
-- The row list ticks only high-confidence text by default; low-confidence rows
-  stay visible behind **Review N more**.
-- Rows are one per text and area. Subtitle lines in one area share one row with
-  a line count. Different text in different areas stays separate.
+- Detected text is in the timeline immediately, one bar per tight line range.
+- A subtitle area is one timeline row; its lines keep separate tight boxes and
+  times. AI fill uses line boxes, not one large union box.
+- A clear frame has no bar and no box.
+- The model menu is anchored, 13px, and shows ready/not-ready per engine.
 - Clean opens on the first timed text row when one exists. If the scan finds no
   timed row, the frame says **No text row at 0:00. Scrub the frame or scan
   again.** instead of claiming the frame is black.
@@ -83,34 +88,35 @@ Expected:
   rate, upright, with the source audio. Duration matches the source within one
   frame.
 
-### 2. Detection check playback
+### 2. Timeline and detection review
 
-1. Before cleaning, click **Play** in the preview panel.
-2. The real source video plays. Every found box and every drawn box is blurred,
-   ticked or not.
+1. Before cleaning, click the **Play** icon in the preview panel.
+2. The real source video plays. Every found box and every drawn box is shown as
+   an outline, ticked or not. There is no blur fill.
 3. Watch for leftover text outside the boxes, two boxes on one line, a box on
    the wrong object, or a box that covers too much.
-4. Seek with the scrubber and pause. Click **Before** to return to the still
-   frame.
-5. Confirm the note says **Detection check · all found boxes blurred · not the
-   final clean**.
+4. Click a timeline bar to seek to its start and show its tight box. Drag its
+   body to move it; drag an edge to trim it.
+5. Use **Add range** to start a manual box at the playhead.
+6. Confirm the note says **Detection check · boxes outlined · not the final
+   clean**.
 
 Expected:
 
 - Play starts immediately. It does not start AI fill, a clean render or a save.
-- Blur covers all found and manual boxes, including low-confidence and unticked
-  rows. Text outside a box stays sharp.
-- Overlap and wrong boxes are visible, not hidden by stacking.
-- On a cut, Play uses a ready cut render. If no render exists, the rail says
-  **Render a draft once to play this cut.** and does not start one.
+- Outlines cover all found and manual boxes, including low-confidence and
+  unticked rows. Text outside a box stays sharp.
+- Overlap, wrong boxes and clear frames are visible, not hidden by blur.
+- On a cut, Play uses a ready cut render. If no render exists, the workspace
+  says **Render a draft once to play this cut.** and does not start one.
 
 ### 3. Before / After matches the file
 
 1. On the frame, click **After**.
 2. Compare the filled area with the same moment in the downloaded file.
 3. Click **Before** and confirm the original text returns.
-4. Click a row: the playhead moves to its start minus 0.5 s and the box is
-   highlighted. Double-click opens the detail strip; `Escape` closes it.
+4. Click a timeline bar: the playhead moves to its start and the box is
+   highlighted. Drag its edges to trim; `Escape` deselects.
 
 Expected: After uses the same fill engine and layer data as the render. A
 mismatch is a blocker. A missing filled frame must say so and fall back to the
@@ -120,12 +126,13 @@ source frame plus Clean boxes; it must not claim success.
 
 1. From the source result click **Make a reel**. Wait for the cut.
 2. The result screen shows **Edit | Clean**. Click **Clean**.
-3. Confirm the Edit columns are hidden, the frame and one rail remain, and the
-   scan affordance appears once.
-4. Confirm the carried source Clean layers are present with no duplicate rows.
-   A cut row can be excluded or edited without changing the source copy.
+3. Confirm the Edit columns are hidden, the frame and the timeline remain, and
+   the scan affordance appears once.
+4. Confirm the carried source Clean layers appear as timeline bars with no
+   duplicate rows. A cut bar can be excluded or edited without changing the
+   source copy.
 5. Click **Find text**. The scan stops for review. Confirm no render started.
-6. Review the rows, then click **Clean N texts & render**.
+6. Review the timeline bars, then click **Clean N texts & render**.
 7. Wait for the cut **Download**.
 
 Expected:
@@ -149,7 +156,7 @@ Expected:
 
 - Cancel stops the job and leaves no `.part` file. Check the job folder:
   no partial MP4 is offered as a result.
-- The rail says the clean or render was cancelled and offers a retry. No dead
+- The workspace says the clean or render was cancelled and offers a retry. No dead
   **Download** appears.
 - A missing model disables AI fill only, keeps Blur available, and names the
   recovery. The raw model path is in the console, not in a tooltip.
@@ -180,13 +187,12 @@ Expected:
 Expected:
 
 - No horizontal scrollbar at any of the four sizes.
-- At 1440×900 and 1280×800 the frame and rail sit side by side; the primary and
+- At 1440×900 and 1280×800 the frame sits above the timeline; the primary and
   **Download** stay above the fold.
-- Under 1100 px the rail becomes a bottom sheet below the frame, with rounded
-  top corners and the primary pinned to the sheet's bottom edge. Scrolling the
-  rail never hides the primary.
-- Tab reaches the primary, rows, checkboxes, selects and the scrubber with a
-  visible focus ring. `Escape` closes the job menu and the row detail.
+- Under 1100 px the timeline stays below the frame and the action bar stays
+  visible; scrolling the timeline never hides the primary.
+- Tab reaches the primary, timeline bars, model menu, scrubber and expand
+  control with a visible focus ring. `Escape` closes the job menu and menus.
 - With **Reduce motion** enabled in the OS, page scrolls jump and transitions
   and animations do not play.
 

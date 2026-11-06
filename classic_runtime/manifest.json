@@ -105,9 +105,9 @@
   },
   {
    "path": "detect.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "992fdebc7760cdf413bdc125a0835e1bf775c5613d95395164740b70475e42be",
-   "feature_version": "1.0.5"
+   "source": "classic: 4 fps tight clean ranges",
+   "sha256": "32a997273b2a95e5218f1c645911076f641814938eb2f121fe8e3f046161e7ee",
+   "feature_version": "1.0.6"
   },
   {
    "path": "disk.py",
@@ -189,9 +189,9 @@
   },
   {
    "path": "pipeline.py",
-   "source": "studio 53b7b07: plan the AI fill per line during the scan",
-   "sha256": "83a793d8b482da83e8d9adb94b74816e7d0b3fed9a7f1c20ad9c81f8c7d2ba88",
-   "feature_version": "1.0.2"
+   "source": "classic: 4 fps tight clean ranges",
+   "sha256": "e6b8dfc1a467b444773b5dae56a9656d3b8491689ece34c7c738829dfa4b9fd3",
+   "feature_version": "1.0.3"
   },
   {
    "path": "preflight.py",
@@ -231,9 +231,9 @@
   },
   {
    "path": "routes_check.py",
-   "source": "Classic cut open returns an idle Check envelope instead of a console 404",
-   "sha256": "6f8dcdd978a7c674b18110678af3917fb48d57a42d26e6e69325d4929c0c725f",
-   "feature_version": "1.0.4"
+   "source": "classic: 4 fps tight clean ranges",
+   "sha256": "8aa96636ff93583fef1bb83b8af94136541f9f8cbd65db6f5526bed5e0c6f70f",
+   "feature_version": "1.0.5"
   },
   {
    "path": "routes_cleanup.py",

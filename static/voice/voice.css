@@ -18,6 +18,9 @@
   --dim: #6c6b70;
   --accent: #e8a266;
   --accent-soft: rgba(232, 162, 102, 0.12);
+  --range-blue: #5b8cff;
+  --range-blue-soft: rgba(91, 140, 255, 0.18);
+  --playhead: #a78bfa;
   --danger: #df7d6e;
   --ok: #a8c7a1;
   --radius: 18px;

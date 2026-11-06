@@ -195,7 +195,7 @@ def test_model_missing_keeps_blur_and_names_the_reason():
     assert "function cutCleanEngineLabel()" in js
     assert '"Blur · AI fill unavailable"' in js
     # Phase 5: the raw model path/sentence is logged, not shown in a title.
-    assert 'cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason' in js
+    assert 'cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.[fillEngineNow()]?.reason' in js
     assert 'dom.cleanPreviewAi.title = "AI fill needs its model pack.' in js
     assert "if (method === \"fill\" && !fillEngineReady()) method = \"blur\";" in js
 

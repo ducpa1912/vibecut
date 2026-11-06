@@ -2,7 +2,7 @@
 
 ``POST /api/jobs/{id}/check`` starts one Check pass; ``GET`` returns its
 ``SourceReport``. The pass runs on its own single-worker scheduler so a long
-0.5 fps text sample never blocks the analysis or render queues.
+4 fps text sample never blocks the analysis or render queues.
 
 The report is stored under ``jobs/<id>/check/source_report.json`` and its
 summary on ``job["check"]``. A report is trusted only when ``status`` is
@@ -52,7 +52,7 @@ class CheckBody(BaseModel):
     # job record written by POST /rights and from rights.py, never this body.
     attestation: bool | str | None = None
     sample_text: bool = True
-    fps: float = Field(default=detect.DEFAULT_SAMPLE_FPS, ge=0.1, le=2.0)
+    fps: float = Field(default=detect.DEFAULT_SAMPLE_FPS, ge=0.1, le=4.0)
 
 
 router = APIRouter()

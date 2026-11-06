@@ -1,7 +1,7 @@
 """Source Check: turn OCR samples into text tracklets and a SourceReport.
 
 The module is pure planning data. It reads a job's stored analysis, optional
-0.5 fps OCR samples and optional audio statistics, and returns one report:
+4 fps OCR samples and optional audio statistics, and returns one report:
 
 * ``tracklets`` — persistent on-screen text regions with source-normalized
   boxes, time ranges and a rule-based kind;
@@ -44,11 +44,15 @@ SCHEMA_VERSION = 1
 REPORT_DIR = "check"
 REPORT_FILE = "source_report.json"
 
-# A subtitle changes every few seconds, so the scan reads two frames a second.
-# That puts each edge of a text's time within a quarter second.
-DEFAULT_SAMPLE_FPS = 2.0
+# A subtitle changes every few seconds, so the scan reads four frames a second.
+# That puts each edge of a text's time within an eighth of a second.
+DEFAULT_SAMPLE_FPS = 4.0
 DEFAULT_MAX_FRAMES = 3600
 TRACKLET_MAX_GAP = 4.5
+# Clean uses tight spans: one missed read still joins, a clear screen does not.
+CLEAN_RANGE_GAP = 0.75
+# Each edge sits this far inside the read, so a frame with no text is not covered.
+CLEAN_EDGE_TRIM = 0.15
 # Each line of text is its own tracklet, so a long video has many.
 MAX_TRACKLETS = 1000
 # Two readings are one line when this much of the words match; OCR misreads a
@@ -461,6 +465,18 @@ def _merge_ranges(ranges: list[dict], gap: float) -> list[dict]:
     return merged[:MAX_RANGES]
 
 
+def _trim_clean_range(span: dict) -> dict:
+    """Pull both edges inside the read, without shrinking a short span to nothing."""
+    start = max(0.0, float(span["start"]))
+    end = float(span["end"])
+    if end - start > 2.0 * CLEAN_EDGE_TRIM + 0.001:
+        start += CLEAN_EDGE_TRIM
+        end -= CLEAN_EDGE_TRIM
+    if end - start < 0.001:
+        end = start + 0.001
+    return {"start": round(start, 3), "end": round(end, 3)}
+
+
 def _texts(observations: list[dict]) -> list[tuple[float, str]]:
     values = []
     for item in observations:
@@ -798,14 +814,26 @@ def _keep_text_outside_scope(report: dict, previous: dict | None, start: float, 
         rest = outside(item.get("ranges"))
         if not rest:
             continue
+        clean_rest = (
+            outside(item.get("clean_ranges")) if "clean_ranges" in item else None
+        )
         match = current.get(str(item.get("id")))
         if match is None:
-            kept.append({**item, "ranges": rest})
+            kept_item = {**item, "ranges": rest}
+            if clean_rest is not None:
+                kept_item["clean_ranges"] = clean_rest
+            kept.append(kept_item)
             continue
+        current_ranges = list(match.get("ranges") or [])
+        current_clean = list(match.get("clean_ranges") or current_ranges)
         match["ranges"] = _merge_ranges(
-            sorted([*(match.get("ranges") or []), *rest], key=lambda value: value["start"]),
+            sorted([*current_ranges, *rest], key=lambda value: value["start"]),
             0.0,
         )
+        if "clean_ranges" in match or clean_rest is not None:
+            match["clean_ranges"] = _merge_ranges(
+                [*current_clean, *(clean_rest or [])], CLEAN_RANGE_GAP,
+            )
         if isinstance(match.get("box"), dict) and isinstance(item.get("box"), dict):
             match["box"] = _union(match["box"], item["box"])
     if not kept and not any(
@@ -907,11 +935,17 @@ def _line_tracklets(item: dict, values: list[dict], duration: float) -> list[dic
         box = dict(seen[0]["box"])
         for value in seen[1:]:
             box = _union(box, value["box"])
-        spans = _merge_ranges([_run_range(run, duration) for run in line], 0.0)
+        observed = [_run_range(run, duration) for run in line]
+        spans = _merge_ranges(list(observed), 0.0)
+        clean = [
+            _trim_clean_range(span)
+            for span in _merge_ranges(observed, CLEAN_RANGE_GAP)
+        ]
         out.append({
             **item,
             "box": box,
             "ranges": spans,
+            "clean_ranges": clean,
             "text_sample": max((value["text"] for value in seen), key=len, default="")[:80],
             "samples": len({int(value["start"] // 2.0) for value in seen}),
             "duration": round(sum(span["end"] - span["start"] for span in spans), 3),
@@ -971,7 +1005,13 @@ def _without_repeats(items: list[dict]) -> list[dict]:
         if home is None:
             kept.append(item)
             continue
+        clean_home = home.get("clean_ranges") or home["ranges"]
+        clean_item = item.get("clean_ranges") or item["ranges"]
         home["ranges"] = _merge_ranges([*home["ranges"], *item["ranges"]], 0.0)
+        if "clean_ranges" in home or "clean_ranges" in item:
+            home["clean_ranges"] = _merge_ranges(
+                [*clean_home, *clean_item], CLEAN_RANGE_GAP,
+            )
         home["box"] = _union(home["box"], item["box"])
         home["duration"] = round(sum(span["end"] - span["start"] for span in home["ranges"]), 3)
         home["samples"] = int(home.get("samples") or 0) + int(item.get("samples") or 0)
@@ -1035,7 +1075,8 @@ def plan_fills(tracklets: list[dict], frames: list[dict], motion: dict | None, s
             for frame, change in zip(frames, maps)
             if change is not None and any(
                 float(span["start"]) <= float(frame["start"]) <= float(span["end"])
-                for span in tracklet.get("ranges") or []
+                for span in tracklet.get("clean_ranges")
+                or tracklet.get("ranges") or []
             )
         ]
         if not readings:
@@ -1441,11 +1482,12 @@ def _job_attestation(job: dict) -> tuple[bool, str | None]:
 
 
 def _tracklet_ref(tracklet: dict) -> dict:
+    spans = tracklet.get("clean_ranges") or tracklet["ranges"]
     return {
         "tracklet_id": tracklet["id"],
         "kind": tracklet["kind"],
         "box": dict(tracklet["box"]),
-        "ranges": [dict(item) for item in tracklet["ranges"]],
+        "ranges": [dict(item) for item in spans],
         "text": str(tracklet.get("text_sample") or ""),
         "text_key": " ".join(str(tracklet.get("text_sample") or "").split())[:120],
     }
@@ -2075,7 +2117,7 @@ def run_check(
     """Run one Check pass and persist its SourceReport.
 
     ``sampler`` returns ``{"frames": [...], "vision": bool}`` (the pipeline
-    0.5 fps pass). ``audio_extractor`` returns a 16 kHz mono wav path for the
+    4 fps pass). ``audio_extractor`` returns a 16 kHz mono wav path for the
     music estimate. Both are optional and may be faked by tests.
     """
     started = time.time()

@@ -785,7 +785,7 @@ def extract_tracking_frames(
     return files
 
 
-CHECK_SAMPLE_FPS = 2.0
+CHECK_SAMPLE_FPS = 4.0
 CHECK_SAMPLE_MAX_FRAMES = 3600
 CHECK_OCR_BATCH = 24
 # Thin captions over a busy picture read at full size and not at 960.
@@ -856,7 +856,7 @@ def extract_text_frames(
 ) -> list[dict]:
     """Extract evenly spaced stills for the Check text pass.
 
-    The default cadence is 2 fps (one frame every half second). Long sources
+    The default cadence is 4 fps (one frame every quarter second). Long sources
     lower the cadence so the pass never exceeds ``max_frames``. Frame times are
     the sample starts; each frame represents ``1 / cadence`` seconds.
     """

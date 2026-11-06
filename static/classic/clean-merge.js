@@ -3,7 +3,7 @@
  * with plain data.
  *
  * The rules mirror Studio's `clean.js`: one row per area and text, subtitles
- * in one area are one row, and a saved scan layer never stacks on its twin.
+ * in one area are one row, and only an exact duplicate saved layer merges.
  */
 (function (root, factory) {
   const api = factory();
@@ -175,59 +175,89 @@
     }));
   }
 
-  /** One saved layer per text and area; drawn boxes stay on their own rows. */
+  /** The identity of one saved layer: its tracklet and box, or an exact box + text. */
+  function exactLayerKey(layer) {
+    if (!layer || typeof layer !== "object") return "";
+    const box = layer.box || {};
+    const rect = ["x", "y", "w", "h"]
+      .map((axis) => Math.round(numberOr(box[axis]) * 10000) / 10000)
+      .join(",");
+    const tracklet = String(layer.tracklet_id || "").trim();
+    if (tracklet) return `tracklet:${tracklet}:${rect}`;
+    const kind = String(layer.tracklet_kind || layer.kind || "");
+    const text = foundTextKey(layer.text_key || layer.label);
+    return `box:${kind}:${text}:${rect}`;
+  }
+
+  /** Two saved layers that describe the same tracklet and the same box. */
+  function sameExactLayer(first, second) {
+    const key = exactLayerKey(first);
+    return Boolean(key) && key === exactLayerKey(second);
+  }
+
+  /**
+   * Merge only exact duplicate layers: the same tracklet, or the same box and
+   * text when neither has a tracklet. Different subtitle lines in one area
+   * keep their own tight box, range and fill keys; they are not one layer.
+   */
   function dedupeCleanLayers(layers) {
-    const groups = [];
     const source = Array.isArray(layers) ? layers : [];
+    const groups = new Map();
+    let changed = false;
     for (const layer of source) {
-      if (!layer || typeof layer !== "object") continue;
-      if (String(layer.source || "").trim() === "manual") {
-        groups.push({ layers: [layer] });
+      if (!layer || typeof layer !== "object") {
+        changed = true;
         continue;
       }
-      const scanned = String(layer.tracklet_id || "").trim();
-      const home = scanned && groups.find((group) => {
-        const first = group.layers[0];
-        if (!String(first?.tracklet_id || "").trim()) return false;
-        if (!sameArea(first.box, layer.box)) return false;
-        const firstKind = first.tracklet_kind || first.kind;
-        const nextKind = layer.tracklet_kind || layer.kind;
-        if (firstKind !== nextKind) return false;
-        if (firstKind === "subtitle" && nextKind === "subtitle") return true;
-        if (first.tracklet_id === layer.tracklet_id) return true;
-        const firstText = foundTextKey(first.text_key || first.label);
-        const nextText = foundTextKey(layer.text_key || layer.label);
-        return Boolean(firstText && nextText && firstText === nextText);
-      });
-      if (home) home.layers.push(layer);
-      else groups.push({ layers: [layer] });
+      if (String(layer.source || "").trim() === "manual") {
+        groups.set(`manual:${layer.id || groups.size}`, [layer]);
+        continue;
+      }
+      const key = exactLayerKey(layer);
+      if (!key) {
+        groups.set(`layer:${groups.size}`, [layer]);
+        continue;
+      }
+      const home = groups.get(key);
+      if (home) {
+        home.push(layer);
+        changed = true;
+      } else {
+        groups.set(key, [layer]);
+      }
     }
-    let changed = false;
-    const merged = groups.map((group) => {
-      const first = group.layers[0];
-      if (group.layers.length === 1) return first;
-      changed = true;
-      const longest = (field) => group.layers
+    const merged = [];
+    for (const group of groups.values()) {
+      const first = group[0];
+      if (group.length === 1) {
+        merged.push(first);
+        continue;
+      }
+      const longest = (field) => group
         .map((layer) => String(layer?.[field] || ""))
         .sort((a, b) => b.length - a.length)[0];
       const label = longest("label");
       const textKey = longest("text_key");
       // No ranges means the layer applies at every time. Joining it with a
       // bounded twin must not narrow it to that twin's windows.
-      const unbounded = group.layers.some((layer) => (
+      const unbounded = group.some((layer) => (
         !Array.isArray(layer.ranges) || layer.ranges.length === 0
       ));
-      return {
+      const fillKeys = group.find((layer) => layer.fill_keys !== undefined)?.fill_keys;
+      merged.push({
         ...first,
-        box: group.layers.reduce((box, layer) => joinBoxes(box, layer.box), null),
+        // The exact duplicate carries the same box. Keep the tight box; never
+        // union different lines into one large layer.
+        box: { ...(first.box || {}) },
         ranges: unbounded
           ? []
-          : mergeRanges(group.layers.flatMap((layer) => layer.ranges || [])),
-        hidden: group.layers.every((layer) => Boolean(layer.hidden)),
+          : mergeRanges(group.flatMap((layer) => layer.ranges || [])),
+        hidden: group.every((layer) => Boolean(layer.hidden)),
         ...(label ? { label } : {}),
         ...(textKey ? { text_key: textKey } : {}),
-      };
-    });
+        ...(fillKeys !== undefined ? { fill_keys: fillKeys } : {}),
+      });
+    }
     return { layers: merged, changed: changed || merged.length !== source.length };
   }
 
@@ -239,6 +269,8 @@
     mergeRanges,
     sameScanText,
     mergeFoundEntries,
+    exactLayerKey,
+    sameExactLayer,
     dedupeCleanLayers,
   };
 });

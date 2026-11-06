@@ -488,7 +488,10 @@ def test_the_panel_offers_one_engine_and_passes_the_scan_plan():
     assert "data-clean-engine" not in source
     assert "clean-found-engine" not in source
     assert "STTN" not in source and "sttn" not in source
-    assert source.count('id="clean-fill-engine"') == 1
+    # The engine is one authored menu, not a native select popup.
+    assert 'id="clean-fill-engine"' not in source
+    assert 'id="clean-engine-menu"' in source
+    assert "clean-engine-item" in source
     assert "clean-fill-reuse" not in source
     assert "fill_keys: entry.fill_keys" in source
 

@@ -253,18 +253,18 @@ def _fake_extract(monkeypatch, duration: float, create: int | None = None):
     return calls
 
 
-def test_extract_text_frames_reads_two_a_second_and_reports_windows(monkeypatch, tmp_path):
+def test_extract_text_frames_reads_four_a_second_and_reports_windows(monkeypatch, tmp_path):
     calls = _fake_extract(monkeypatch, 20.0)
     frames = pipeline.extract_text_frames("/tmp/source.mp4", tmp_path, 20.0)
-    assert len(frames) == 40
+    assert len(frames) == 80
     assert frames[0]["start"] == 0.0
-    assert frames[1]["start"] == 0.5
+    assert frames[1]["start"] == 0.25
     assert frames[-1]["end"] == 20.0
-    assert "fps=2.0000" in calls["cmd"][calls["cmd"].index("-vf") + 1]
+    assert "fps=4.0000" in calls["cmd"][calls["cmd"].index("-vf") + 1]
 
 
 def test_extract_text_frames_offsets_a_scene_window(monkeypatch, tmp_path):
-    calls = _fake_extract(monkeypatch, 20.0, create=8)
+    calls = _fake_extract(monkeypatch, 20.0, create=16)
     frames = pipeline.extract_text_frames(
         "/tmp/source.mp4", tmp_path, 20.0, start=4.0, end=8.0,
     )
@@ -922,7 +922,7 @@ def test_run_check_samples_text_and_persists(tmp_path):
     report = detect.run_check(
         "job1", job, tmp_path, sampler=sampler, audio_extractor=None,
     )
-    assert calls == {"path": job["source"]["path"], "duration": 20.0, "fps": 2.0}
+    assert calls == {"path": job["source"]["path"], "duration": 20.0, "fps": 4.0}
     assert report["tracklets"][0]["kind"] == "subtitle"
     stored = detect.load_report(tmp_path)
     assert stored == report
@@ -1174,3 +1174,106 @@ def test_no_motion_reading_leaves_no_plan():
     tracklet = _plan_tracklet()
     detect.plan_fills([tracklet], _plan_frames(2), None, {"width": 1080, "height": 1920})
     assert "fill_plan" not in tracklet
+
+
+# ---------------------------------------------------------------- clean ranges
+
+
+def _fast_sample(start, *lines):
+    """One 4 fps frame: a quarter-second window."""
+    return {"start": start, "end": start + 0.25, "text": list(lines)}
+
+
+def test_clean_ranges_split_when_text_is_off_for_more_than_the_gap():
+    rows = [
+        _fast_sample(1.0, line("wait for it")),
+        _fast_sample(3.0, line("wait for it")),
+    ]
+    tracklet = detect.build_tracklets(
+        detect.observations_from_samples(rows), 10.0,
+    )[0]
+    assert tracklet["clean_ranges"] == [
+        {"start": 0.875, "end": 1.125},
+        {"start": 2.875, "end": 3.125},
+    ]
+    # The clear middle is not covered, so Clean draws no box there.
+    assert not any(
+        span["start"] <= 2.0 <= span["end"] for span in tracklet["clean_ranges"]
+    )
+
+
+def test_clean_ranges_trim_both_edges_of_a_long_read():
+    rows = [
+        _fast_sample(1.0 + index * 0.25, line("one line stays"))
+        for index in range(9)
+    ]
+    tracklet = detect.build_tracklets(
+        detect.observations_from_samples(rows), 10.0,
+    )[0]
+    assert tracklet["ranges"] == [{"start": 0.875, "end": 3.125}]
+    assert tracklet["clean_ranges"] == [{"start": 1.025, "end": 2.975}]
+
+
+def test_tracklet_ref_uses_the_clean_ranges():
+    entry = detect._tracklet_ref({
+        "id": "trk_a",
+        "kind": "subtitle",
+        "box": box(0.1, 0.8, 0.8, 0.05),
+        "ranges": [{"start": 0.0, "end": 4.0}],
+        "clean_ranges": [{"start": 0.15, "end": 3.85}],
+        "text_sample": "Say it once",
+    })
+    assert entry["ranges"] == [{"start": 0.15, "end": 3.85}]
+
+
+def test_fill_plan_reads_motion_only_inside_clean_ranges():
+    frames = [{"start": float(index)} for index in range(6)]
+    quiet = np.zeros((64, 36), dtype=np.uint8)
+    busy = np.full((64, 36), 40 * 4, dtype=np.uint8)
+    motion = {"maps": [None, busy, busy, busy, quiet, quiet], "scale": 4.0}
+    tracklet = {
+        "box": box(0.2, 0.8, 0.6, 0.03),
+        "ranges": [{"start": 0.0, "end": 10.0}],
+        "clean_ranges": [{"start": 4.0, "end": 5.0}],
+    }
+
+    detect.plan_fills([tracklet], frames, motion, {"width": 1080, "height": 1920})
+
+    # Motion while the line is clear is ignored; the clean span holds still.
+    assert tracklet["fill_plan"]["keys"] == 0.0
+
+
+def test_each_line_keeps_its_own_fill_keys(tmp_path):
+    job = job_record()
+    rows = [
+        (
+            index * 0.5,
+            [
+                line("still label", 0.1, 0.2, 0.6, 0.04),
+                line("moving label", 0.1, 0.8, 0.8, 0.04),
+            ],
+        )
+        for index in range(5)
+    ]
+    quiet = np.zeros((64, 36), dtype=np.uint8)
+    busy = np.full((64, 36), 40 * 4, dtype=np.uint8)
+    busy[:32, :] = 0
+
+    def sampler(path, job_dir, duration, *, fps, max_frames):
+        return {
+            **sample_payload(rows),
+            "motion": {"maps": [None, busy, busy, busy, busy], "scale": 4.0},
+        }
+
+    report = detect.run_check(
+        "job1", job, tmp_path, sampler=sampler, audio_extractor=None,
+    )
+    by_text = {item["text_sample"]: item for item in report["tracklets"]}
+    assert by_text["still label"]["fill_plan"]["keys"] == 0.0
+    assert by_text["moving label"]["fill_plan"]["keys"] == detect.MOTION_MOST_KEYS
+
+    prefill = {entry["tracklet_id"]: entry for entry in report["clean_prefill"]}
+    for item in report["tracklets"]:
+        entry = prefill[item["id"]]
+        assert entry["fill_keys"] == item["fill_plan"]["keys"]
+        assert entry["ranges"] == item["clean_ranges"]

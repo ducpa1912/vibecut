@@ -151,15 +151,15 @@ assert.equal(home.text, "Hello world");
     )
 
 
-def test_dedupe_merges_saved_twins_and_leaves_manual_layers_alone():
+def test_dedupe_merges_exact_twins_and_leaves_manual_layers_alone():
     run_merge(
         """
 const layers = [
   { id: "cl01", source: "scan", tracklet_id: "t1", tracklet_kind: "subtitle",
     box: { x: 0.1, y: 0.7, w: 0.3, h: 0.1 }, ranges: [{ start: 0, end: 1 }],
-    label: "subtitle", text_key: "first", hidden: true },
-  { id: "cl02", source: "scan", tracklet_id: "t2", tracklet_kind: "subtitle",
-    box: { x: 0.12, y: 0.72, w: 0.34, h: 0.1 }, ranges: [{ start: 1.2, end: 2.4 }],
+    label: "subtitle", text_key: "first", hidden: true, fill_keys: ["face"] },
+  { id: "cl02", source: "scan", tracklet_id: "t1", tracklet_kind: "subtitle",
+    box: { x: 0.1, y: 0.7, w: 0.3, h: 0.1 }, ranges: [{ start: 1.2, end: 2.4 }],
     label: "a much longer label", text_key: "a much longer line", hidden: false },
   { id: "cl03", source: "manual", box: { x: 0.1, y: 0.7, w: 0.3, h: 0.1 },
     ranges: [{ start: 0, end: 1 }], label: "Drawn box" },
@@ -177,10 +177,47 @@ assert.equal(merged.label, "a much longer label");
 assert.equal(merged.text_key, "a much longer line");
 assert.equal(merged.hidden, false);
 assert.deepEqual(merged.ranges, [{ start: 0, end: 1 }, { start: 1.2, end: 2.4 }]);
-assert.equal(merged.box.x, 0.1);
-assert.equal(merged.box.y, 0.7);
-assert.ok(Math.abs(merged.box.w - 0.36) < 1e-9);
-assert.ok(Math.abs(merged.box.h - 0.12) < 1e-9);
+assert.deepEqual(merged.fill_keys, ["face"]);
+// The exact duplicate keeps the tight box; it is never unioned.
+assert.deepEqual(merged.box, { x: 0.1, y: 0.7, w: 0.3, h: 0.1 });
+"""
+    )
+
+
+def test_dedupe_keeps_different_subtitle_lines_tight_and_apart():
+    run_merge(
+        """
+const layers = [
+  { id: "cl01", source: "scan", tracklet_id: "t1", tracklet_kind: "subtitle",
+    box: { x: 0.1, y: 0.7, w: 0.3, h: 0.1 }, ranges: [{ start: 0, end: 1 }],
+    label: "first line", text_key: "first line", fill_keys: ["a"] },
+  { id: "cl02", source: "scan", tracklet_id: "t2", tracklet_kind: "subtitle",
+    box: { x: 0.12, y: 0.72, w: 0.34, h: 0.1 }, ranges: [{ start: 1.2, end: 2.4 }],
+    label: "a much longer line", text_key: "a much longer line", fill_keys: ["b"] },
+];
+const out = merge.dedupeCleanLayers(layers);
+assert.equal(out.changed, false);
+assert.equal(out.layers.length, 2);
+assert.deepEqual(out.layers[0].box, { x: 0.1, y: 0.7, w: 0.3, h: 0.1 });
+assert.deepEqual(out.layers[1].box, { x: 0.12, y: 0.72, w: 0.34, h: 0.1 });
+assert.deepEqual(out.layers[0].fill_keys, ["a"]);
+assert.deepEqual(out.layers[1].fill_keys, ["b"]);
+"""
+    )
+
+
+def test_dedupe_without_a_tracklet_needs_the_same_box_and_text():
+    run_merge(
+        """
+const first = { id: "cl01", source: "scan", box: { x: 0.2, y: 0.2, w: 0.2, h: 0.1 },
+  label: "same", text_key: "same", ranges: [{ start: 0, end: 1 }] };
+const twin = { ...first, id: "cl02" };
+const other = { ...first, id: "cl03", box: { x: 0.21, y: 0.2, w: 0.2, h: 0.1 } };
+const out = merge.dedupeCleanLayers([first, twin, other]);
+assert.equal(out.layers.length, 2);
+assert.equal(merge.sameExactLayer(first, twin), true);
+assert.equal(merge.sameExactLayer(first, other), false);
+assert.deepEqual(out.layers[0].box, { x: 0.2, y: 0.2, w: 0.2, h: 0.1 });
 """
     )
 
@@ -192,12 +229,13 @@ const layers = [
   { id: "cl01", source: "scan", tracklet_id: "t1", tracklet_kind: "title",
     box: { x: 0.1, y: 0.1, w: 0.2, h: 0.1 }, ranges: [],
     label: "title", text_key: "same" },
-  { id: "cl02", source: "scan", tracklet_id: "t2", tracklet_kind: "title",
-    box: { x: 0.11, y: 0.11, w: 0.2, h: 0.1 }, ranges: [{ start: 1, end: 2 }],
+  { id: "cl02", source: "scan", tracklet_id: "t1", tracklet_kind: "title",
+    box: { x: 0.1, y: 0.1, w: 0.2, h: 0.1 }, ranges: [{ start: 1, end: 2 }],
     label: "title", text_key: "same" },
 ];
 const out = merge.dedupeCleanLayers(layers);
 assert.equal(out.changed, true);
+assert.equal(out.layers.length, 1);
 assert.deepEqual(out.layers[0].ranges, []);
 """
     )
@@ -288,10 +326,14 @@ def test_playable_detection_check_is_wired_without_a_render():
     assert 'id="clean-preview-play"' in page
     assert 'aria-pressed="false"' in page
     assert "source/media" in app
-    assert "backdrop-filter: blur(14px)" in css
-    assert "-webkit-backdrop-filter: blur(14px)" in css
+    # Detection preview is outlines only: no blur fill, no backdrop filter.
+    assert "backdrop-filter: blur(14px)" not in css
+    assert ".clean-review-box" in css
+    assert ".clean-scan-box" in css
     assert 'src="/static/classic/clean-merge.js' in page
     assert page.index("clean-merge.js") < page.index("app.js")
+    assert 'src="/static/classic/clean-timeline.js' in page
+    assert page.index("clean-timeline.js") < page.index("app.js")
 
     play = between(app, "async function startCleanReviewPlayback()", "function toggleCleanReviewPlayback()")
     assert "source/media" in app
@@ -306,17 +348,18 @@ def test_playable_detection_check_is_wired_without_a_render():
     assert "cut-clean-play-note" in page
     assert "const showPlayNote = cutCleanActive() && !playable && !renderActive && !ready && !working;" in app
     assert "The video could not play here. Showing the still frame." in app
-    assert "Detection check · all found boxes blurred · not the final clean" in app
+    assert "Detection check · boxes outlined · not the final clean" in app
     frame = between(app, "async function refreshCleanFrame(force = false)", "function cleanCropHeader(response)")
     assert "if (state.classicText.review.active) return;" in frame
     assert "fill/preview" not in between(
         app, "async function startCleanReviewPlayback()", "function toggleCleanReviewPlayback()",
     )
-    overlay = between(app, "function paintCleanReviewBoxes(t = currentCleanTime())", "function updateCleanReviewButton()")
-    assert "for (const row of cleanScanRows())" in overlay
+    overlay = between(app, "function cleanScanPartsAt(t, options = {})", "function paintCleanBoxes()")
+    assert "cleanOverrideFor(row, member)" in overlay
+    assert "member?.box" in overlay
+    assert "row.entryRows" in overlay
     assert "cleanReviewCandidates" not in overlay
     assert "row.ticked" not in overlay
-    assert "cleanReviewRecord" not in overlay
 
 
 def test_vietnamese_carries_the_review_copy():
@@ -330,5 +373,5 @@ def test_vietnamese_carries_the_review_copy():
         ("Render a draft once to play this cut.", "Render một bản nháp để phát bản cắt này."),
     ):
         assert f'"{english}": "{vietnamese}"' in words, english
-    assert "Detection check · all found boxes blurred · not the final clean" in words
+    assert "Detection check · boxes outlined · not the final clean" in words
     assert "/^(\\d+) texts? found\\. Review the rows, then clean\\.$/" in words

@@ -45,6 +45,25 @@
     dedupeCleanLayers,
   } = window.ClassicCleanMerge;
 
+  // Timeline identity is pure too: one bar per tight member range, with the
+  // source/cut mapping left to the caller.
+  const CleanTimeline = window.ClassicCleanTimeline;
+
+  // Authored 16 px icons. One stroke weight, currentColor, no Unicode glyphs.
+  const CLEAN_ICONS = {
+    play: '<svg class="clean-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
+    pause: '<svg class="clean-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>',
+    trash: '<svg class="clean-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="m6 7 1 14h10l1-14"/></svg>',
+    eye: '<svg class="clean-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.1 12.3a1 1 0 0 1 0-.7 10.8 10.8 0 0 1 19.8 0 1 1 0 0 1 0 .7 10.8 10.8 0 0 1-19.8 0"/><circle cx="12" cy="12" r="3"/></svg>',
+    "eye-off": '<svg class="clean-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.7 5.1a10.7 10.7 0 0 1 11.2 6.6 1 1 0 0 1 0 .7 10.7 10.7 0 0 1-1.4 2.5"/><path d="M14.1 14.2a3 3 0 0 1-4.2-4.2"/><path d="M17.5 17.5a10.7 10.7 0 0 1-15.4-5.2 1 1 0 0 1 0-.7 10.7 10.7 0 0 1 4.4-5.1"/><path d="m2 2 20 20"/></svg>',
+    chevron: '<svg class="clean-model-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+    sliders: '<svg class="clean-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>',
+  };
+
+  function cleanIcon(name) {
+    return CLEAN_ICONS[name] || CLEAN_ICONS.play;
+  }
+
   // Motion is a preference, not a decoration: any programmatic scroll must ask
   // before it animates. CSS also disables animations and transitions in the
   // reduced-motion media query; this covers the JS-only smooth scrolls.
@@ -398,6 +417,17 @@
     cleanPreviewAi: $("#clean-preview-ai"),
     cleanPreviewBlur: $("#clean-preview-blur"),
     cleanPreviewExclude: $("#clean-preview-exclude"),
+    cleanPreviewExpand: $("#clean-preview-expand"),
+    cleanTimelinePanel: $("#clean-timeline-panel"),
+    cleanTimeline: $("#clean-timeline"),
+    cleanRuler: $("#clean-ruler"),
+    cleanLanes: $("#clean-lanes"),
+    cleanPlayhead: $("#clean-playhead"),
+    cleanTimelineTotal: $("#clean-timeline-total"),
+    cleanTimelineCount: $("#clean-timeline-count"),
+    cleanTimelineEmpty: $("#clean-timeline-empty"),
+    cleanAddRange: $("#clean-add-range"),
+    cleanActionBar: $("#clean-action-bar"),
     cleanDetail: $("#clean-detail"),
     sourceCleanHead: $("#source-clean-head"),
     sourceCleanName: $("#source-clean-name"),
@@ -484,6 +514,11 @@
       tickStoreKey: "",
       foundMethod: "fill",
       detailIdentity: "",
+      // Timeline selection and scan-only range edits. A bar drag on a row
+      // that is not applied yet stores an override here; applying the row
+      // uses it instead of the scan range, so a repaint cannot lose it.
+      selectedBar: "",
+      rangeOverrides: {},
       fillPreview: null,
       // Clean opens on the first text-bearing row when it can, so a black hook
       // fade is not the only first impression. The zero note is a plain
@@ -493,7 +528,7 @@
       // The frame is cropped; boxes are stored in source space. The server
       // sends each segment's crop with its frame, keyed by segment position.
       crops: {},
-      // Detection check: play the real video, with a blur box over every found
+      // Detection check: play the real video, with an outline over every found
       // row. `review.active` means the video element owns the frame; the still
       // image comes back on Before/After or a video error.
       review: {
@@ -922,6 +957,7 @@
     const cleanFlow = classicClean.flow === "one_click" ? "one_click" : "review_first";
     state.cleanFlow = cleanFlow;
     if (dom.setupCleanFlow) dom.setupCleanFlow.value = cleanFlow;
+    syncCleanFlowButtons();
     if (dom.setupRightsLock) dom.setupRightsLock.checked = (settings.rights || {}).lock !== false;
     const ingest = settings.ingest || {};
     dom.setupIngestProvider.value = ["auto", "ytdlp", "xhs"].includes(ingest.provider)
@@ -1435,6 +1471,16 @@
     return Number.isFinite(number) && number >= 0 ? number : fallback;
   }
 
+  function syncCleanFlowButtons() {
+    if (!dom.setupCleanFlow) return;
+    const flow = dom.setupCleanFlow.value === "one_click" ? "one_click" : "review_first";
+    dom.setup?.querySelectorAll("#setup-clean-flow-control [data-clean-flow]").forEach((button) => {
+      const active = button.dataset.cleanFlow === flow;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
   function bindSetup() {
     dom.setupOpen.addEventListener("click", openSetup);
     dom.setupClose.addEventListener("click", closeSetup);
@@ -1442,6 +1488,13 @@
       node.addEventListener("click", closeSetup);
     });
     dom.setupSave.addEventListener("click", saveSetup);
+    dom.setup?.querySelectorAll("#setup-clean-flow-control [data-clean-flow]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!dom.setupCleanFlow) return;
+        dom.setupCleanFlow.value = button.dataset.cleanFlow === "one_click" ? "one_click" : "review_first";
+        syncCleanFlowButtons();
+      });
+    });
     dom.setupVoicePreserve?.addEventListener("change", updateVoiceFitWarning);
     dom.setupVoiceExtreme?.addEventListener("change", updateVoiceFitWarning);
     dom.setupVoiceEngine?.addEventListener("change", updateVoiceFitWarning);
@@ -3543,7 +3596,7 @@
     if (method === "blur") return "Blur";
     if (CLEAN_FILL_ENGINE_LABEL[method]) return CLEAN_FILL_ENGINE_LABEL[method];
     if (method) return method.toUpperCase();
-    if (state.fill?.engines?.lama?.ready) return CLEAN_FILL_ENGINE_LABEL[fillEngineNow()];
+    if (fillEngineReady()) return CLEAN_FILL_ENGINE_LABEL[fillEngineNow()];
     if (state.fill && state.fill.available === false) return "Blur · AI fill unavailable";
     return "LaMa";
   }
@@ -4019,7 +4072,7 @@
             ? "AI fill needs its model pack · Blur and Crop guard work"
             : "";
           if (!fillEngineReady()) {
-            cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason
+            cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.[fillEngineNow()]?.reason
               || state.fill?.note || "");
           }
           summary = `${count} text${count === 1 ? "" : "s"} · ${engine}${reviewNote}${fillReason ? ` · ${fillReason}` : ""}`;
@@ -9168,36 +9221,104 @@
     return state.fill;
   }
 
-  /** How AI fill runs: the engine, the chip, and following the camera. */
-  function fillOptionsHtml() {
+  /** One compact status chip, an engine menu and a small Fill options popover. */
+  function fillMenuHtml() {
     const choice = fillChoiceNow();
     const engines = state.fill?.engines || {};
     const options = state.fill?.render_options || {};
     const engine = fillEngineNow();
-    const engineRows = window.ClassicCleanOptions.ENGINES.map((key) => {
+    const ready = fillEngineReady();
+    const rows = window.ClassicCleanOptions.ENGINES.map((key) => {
       const row = engines[key] || {};
       const label = CLEAN_FILL_ENGINE_LABEL[key] || key;
-      return `<option value="${esc(key)}"${key === engine ? " selected" : ""}${row.ready ? "" : " disabled"}>${esc(row.ready ? label : `${label} (not ready)`)}</option>`;
+      const isReady = Boolean(row.ready);
+      const reason = row.reason || "Not installed.";
+      return `<button type="button" class="clean-engine-item" role="menuitemradio"
+        data-engine="${esc(key)}"
+        aria-checked="${key === engine ? "true" : "false"}"
+        ${isReady ? "" : "disabled"}
+        aria-label="${esc(isReady ? `${label}, ready` : `${label}, not ready. ${reason}`)}"
+        title="${esc(isReady ? CLEAN_FILL_COST[key] : reason)}">
+        <span>${esc(label)}</span>
+        <span class="clean-engine-state">${isReady ? "Ready" : "Not ready"}</span>
+      </button>`;
     }).join("");
     const gpu = options.gpu?.[engine];
     const keyed = Boolean(gpu);
     const onGpu = keyed && gpu.ready && choice.device !== "cpu";
     const follow = options.follow || {};
-    const chip = keyed ? `
-      <label class="clean-fill-option">AI fill on
-        <select id="clean-fill-device" title="${esc(gpu.ready ? "The GPU is much faster and uses more memory." : (gpu.reason || ""))}">
-          <option value=""${onGpu ? " selected" : ""}${gpu.ready ? "" : " disabled"}>GPU</option>
-          <option value="cpu"${onGpu ? "" : " selected"}>CPU</option>
-        </select>
-      </label>
-      <label class="clean-fill-option" title="${esc(follow.ready === false ? (follow.reason || "") : "One fill moves with the camera, and real pixels replace it as they come into view. Other movement falls back to key frames.")}">
-        <input id="clean-fill-follow" type="checkbox"${choice.follow && follow.ready !== false ? " checked" : ""}${follow.ready === false ? " disabled" : ""}>
-        Follow camera motion
-      </label>` : "";
-    return `<div class="clean-fill-options">
-      <label class="clean-fill-option">Engine <select id="clean-fill-engine">${engineRows}</select></label>
-      ${chip}
+    const device = keyed ? `
+      <p>AI fill on</p>
+      <div class="clean-fill-group" role="group" aria-label="Fill device">
+        <button type="button" data-fill-device="" aria-pressed="${onGpu ? "true" : "false"}"${gpu.ready ? "" : " disabled"} title="${esc(gpu.ready ? "The GPU is much faster and uses more memory." : (gpu.reason || ""))}">GPU</button>
+        <button type="button" data-fill-device="cpu" aria-pressed="${onGpu ? "false" : "true"}">CPU</button>
+      </div>` : '<p>This engine has no device choice.</p>';
+    const followReady = follow.ready !== false;
+    return `<div class="clean-model">
+      <span class="clean-model-anchor">
+        <button id="clean-model-chip" class="clean-model-chip${ready ? " is-ready" : ""}" type="button"
+          aria-haspopup="menu" aria-expanded="false" aria-controls="clean-engine-menu"
+          title="${esc(ready ? "Choose the AI fill engine" : (state.fill?.note || "AI fill needs its model pack."))}">
+          AI fill · ${ready ? "Ready" : "Not ready"}${cleanIcon("chevron")}
+        </button>
+        <div id="clean-engine-menu" class="clean-engine-menu" role="menu" aria-label="AI fill engine" hidden>${rows}</div>
+      </span>
+      <button id="clean-fill-options-open" class="icon-btn" type="button"
+        aria-label="Fill options" title="Fill options"
+        aria-expanded="false" aria-controls="clean-fill-options">${cleanIcon("sliders")}</button>
+      <div id="clean-fill-options" class="clean-fill-popover" role="dialog" aria-label="Fill options" hidden>
+        ${device}
+        <label class="clean-fill-check" title="${esc(followReady ? "One fill moves with the camera, and real pixels replace it as they come into view." : (follow.reason || ""))}">
+          <input id="clean-fill-follow" type="checkbox"${choice.follow && followReady ? " checked" : ""}${followReady ? "" : " disabled"}>
+          Follow camera
+        </label>
+      </div>
     </div>`;
+  }
+
+  function closeCleanModelMenus() {
+    const chip = $("#clean-model-chip");
+    const menu = $("#clean-engine-menu");
+    const open = $("#clean-fill-options-open");
+    const popover = $("#clean-fill-options");
+    if (menu) menu.hidden = true;
+    if (chip) chip.setAttribute("aria-expanded", "false");
+    if (popover) popover.hidden = true;
+    if (open) open.setAttribute("aria-expanded", "false");
+  }
+
+  function paintCleanModelMenu() {
+    const menu = $("#clean-engine-menu");
+    const chip = $("#clean-model-chip");
+    if (!menu) return;
+    const open = chip?.getAttribute("aria-expanded") === "true";
+    menu.hidden = !open;
+    if (!open) return;
+    const rect = chip.getBoundingClientRect();
+    const roomBelow = window.innerHeight - rect.bottom;
+    menu.classList.toggle("is-above", roomBelow < 210);
+  }
+
+  function toggleCleanEngineMenu(force) {
+    const chip = $("#clean-model-chip");
+    const menu = $("#clean-engine-menu");
+    if (!chip || !menu) return;
+    const open = force === undefined ? chip.getAttribute("aria-expanded") !== "true" : Boolean(force);
+    closeCleanModelMenus();
+    chip.setAttribute("aria-expanded", open ? "true" : "false");
+    paintCleanModelMenu();
+    if (open) menu.querySelector(".clean-engine-item[aria-checked='true']:not(:disabled), .clean-engine-item:not(:disabled)")?.focus();
+  }
+
+  function toggleCleanFillOptions(force) {
+    const button = $("#clean-fill-options-open");
+    const popover = $("#clean-fill-options");
+    if (!button || !popover) return;
+    const open = force === undefined ? button.getAttribute("aria-expanded") !== "true" : Boolean(force);
+    closeCleanModelMenus();
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+    popover.hidden = !open;
+    if (open) popover.querySelector("button, input")?.focus();
   }
 
   /** What a big drawn box costs, and the cheaper way when the scan found its text. */
@@ -9254,63 +9375,8 @@
       return;
     }
     dom.cleanFill.hidden = false;
-    const engines = fill.engines || {};
-    const rows = Object.keys(CLEAN_FILL_ENGINE_LABEL).map((key) => {
-      const engine = engines[key] || {};
-      const ready = Boolean(engine.ready);
-      return `
-        <li class="clean-engine-row${ready ? " is-ready" : ""}">
-          <span class="clean-file-name">${esc(CLEAN_FILL_ENGINE_LABEL[key])}</span>
-          <span class="clean-file-state">${ready ? "ready" : "missing"}</span>
-          <span class="clean-file-meta">${esc(ready ? CLEAN_FILL_COST[key] : (engine.reason || "Not installed."))}</span>
-        </li>`;
-    }).join("");
-    if (!fill.available) {
-      dom.cleanFill.innerHTML = `
-        <div class="clean-fill-locked">
-          <span class="clean-fill-lock" aria-hidden="true">🔒</span>
-          <div>
-            <p class="clean-fill-title">AI fill is not ready on this Mac</p>
-            <p class="hint">${esc(fill.note)}</p>
-            <ul class="clean-file-list">${rows}</ul>
-            <p class="hint">${state.cleanScope === "source" ? "Blur works on the whole video now." : "Blur and Crop guard work on this cut now."}</p>
-          </div>
-        </div>`;
-      return;
-    }
-    const hasFill = classicCleanLayers().some((layer) => cleanMethodKey(layer) === "fill");
-    const selected = classicCleanLayers().find((layer) => layer.id === state.classicText.selection);
-    const fillLayer = selected && cleanMethodKey(selected) === "fill" ? selected : null;
-    const previewEngine = fillEngineNow();
-    const previewReady = Boolean(engines[previewEngine]?.ready);
-    const previewHint = previewReady
-      ? (hasFill
-        ? `Compare the frame before and after with ${String(previewEngine).toUpperCase()}. The render uses the same engine.`
-        : "Draw a box, choose AI fill, then compare one frame here.")
-      : (engines[previewEngine]?.reason || "That engine is not ready on this Mac.");
-    const preview = state.classicText.fillPreview;
-    const side = state.classicText.previewSide === "before" ? "before" : "after";
-    const inPlace = state.cleanScope === "source" || cutCleanActive();
-    const result = (!inPlace && preview)
-      ? `<div class="clean-fill-compare is-${side}">
-           <figure class="is-before"><img src="${esc(preview.before)}" alt="The frame before the fill"><figcaption>Before</figcaption></figure>
-           <figure class="is-after"><img src="${esc(preview.after)}" alt="The same frame after the fill"><figcaption>After</figcaption></figure>
-         </div>
-         <p class="hint">Preview uses ${esc(String(preview.method || preview.render_method || "lama").toUpperCase())}. The render uses the same engine; model memory is released after this frame.</p>`
-      : "";
-    dom.cleanFill.innerHTML = `
-      <div class="clean-fill-ready">
-        <span class="clean-fill-dot" aria-hidden="true"></span>
-        <div>
-          <p class="clean-fill-title">AI fill is ready</p>
-          <ul class="clean-file-list">${rows}</ul>
-          ${fillOptionsHtml()}
-          ${bigBoxesHtml()}
-          <p class="hint">${esc(previewHint)}</p>
-        </div>
-        <button id="clean-fill-preview" class="ghost small" type="button"${previewReady && hasFill ? "" : " disabled"}${previewReady ? "" : ` title="${esc(previewHint)}"`}>Preview one frame</button>
-      </div>
-      ${result}`;
+    dom.cleanFill.innerHTML = fillMenuHtml();
+    paintCleanModelMenu();
   }
 
   async function previewFill() {
@@ -9507,10 +9573,18 @@
     const height = pane && pane.clientHeight
       ? pane.clientHeight
       : window.innerHeight;
-    // The toolbar, the scrub row and the stage gaps take the rest.
+    // The toolbar, the scrub row, the preview controls and the range timeline
+    // take the rest. The timeline lives under the frame, so it must be
+    // subtracted here or the frame pushes it below the pane.
     const bar = stage.querySelector(".clean-stage-bar");
     const foot = stage.querySelector(".clean-stage-foot");
-    const chrome = (bar?.offsetHeight || 0) + (foot?.offsetHeight || 0) + 20;
+    const controls = document.querySelector("#clean-preview-controls");
+    const timeline = document.querySelector("#clean-timeline-panel");
+    const timelineRoom = timeline && !timeline.hidden
+      ? (timeline.offsetHeight || 0) + 14
+      : 0;
+    const chrome = (bar?.offsetHeight || 0) + (foot?.offsetHeight || 0)
+      + (controls?.offsetHeight || 0) + timelineRoom + 24;
     const room = Math.max(190, Math.round(height - chrome));
     stage.style.setProperty("--clean-frame-h", `${room}px`);
     const canvas = dom.cleanCanvas;
@@ -9571,7 +9645,7 @@
         if (ready) {
           dom.cleanPreviewAi.title = "Use AI fill for the selected box or the ticked text.";
         } else {
-          cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason
+          cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.[fillEngineNow()]?.reason
             || state.fill?.note || "");
           dom.cleanPreviewAi.title = "AI fill needs its model pack. Install it in Setup, or use Blur.";
         }
@@ -9679,6 +9753,39 @@
     return right - left > 1e-4 && bottom - top > 1e-4;
   }
 
+  /** One entry per tight member box at the current time. */
+  function cleanScanPartsAt(t, options = {}) {
+    const includeAdded = options.includeAdded === true;
+    const selected = state.classicText.selectedBar;
+    const parts = [];
+    for (const row of cleanTimelineRows()) {
+      if (row.manual) continue;
+      const identity = cleanRowIdentity(row);
+      if (row.added && !includeAdded && identity !== selected) continue;
+      const members = Array.isArray(row.entryRows) && row.entryRows.length ? row.entryRows : [row];
+      for (const member of members) {
+        const box = member?.box || row.box;
+        if (!box) continue;
+        const raw = cleanOverrideFor(row, member) || member.ranges || row.ranges || [];
+        const ranges = cleanTimelineMapRanges(raw, row);
+        if (raw.length && !ranges.length) continue;
+        const active = !ranges.length || ranges.some((range) => (
+          t + 1 / 30 > Number(range.start) && t < Number(range.end)
+        ));
+        if (!active) continue;
+        parts.push({
+          row,
+          member,
+          identity,
+          box,
+          label: CleanTimeline.barLabel(member?.text || member?.text_key || row.text, 0),
+          selected: identity === selected,
+        });
+      }
+    }
+    return parts;
+  }
+
   function paintCleanBoxes() {
     const overlay = dom.cleanOverlay;
     if (!overlay) return;
@@ -9703,16 +9810,29 @@
              style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"
              role="button" tabindex="0"
              aria-label="${esc(cleanMethodLabel(layer))} box ${esc(layer.label || layer.id)}">
-          <span class="clean-box-tag">${esc(cleanMethodLabel(layer))}${layer.hidden ? " · off" : ""}${active ? "" : " · not here"}${offFrame ? " · off frame" : ""}</span>
+          <span class="clean-box-tag">${selected
+            ? esc(CleanTimeline.barLabel(layer.text_key || layer.label || layer.kind, 0))
+            : `${esc(cleanMethodLabel(layer))}${layer.hidden ? " · off" : ""}${active ? "" : " · not here"}${offFrame ? " · off frame" : ""}`}</span>
           <span class="clean-handle" data-clean-handle="nw"></span>
           <span class="clean-handle" data-clean-handle="ne"></span>
           <span class="clean-handle" data-clean-handle="sw"></span>
           <span class="clean-handle" data-clean-handle="se"></span>
         </div>`;
     }).join("");
+    const selectedRow = state.classicText.selectedBar;
+    const scanBoxes = cleanScanPartsAt(t).filter((part) => !part.row.added).map((part) => {
+      const box = cleanFrameBox(part.box, crop);
+      if (box.w <= 0.0001 || box.h <= 0.0001) return "";
+      return `
+        <div class="clean-scan-box${part.selected ? " is-selected" : ""}"
+             style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%"
+             aria-hidden="true">
+          ${part.selected ? `<span class="clean-scan-tag">${esc(part.label)}</span>` : ""}
+        </div>`;
+    }).join("");
+    if (!state.classicText.review.active) overlay.insertAdjacentHTML("beforeend", scanBoxes);
     const focus = state.classicText.focusBox;
-    if (focus) {
-      const crop = cleanCropAt(t);
+    if (focus && !selectedRow && !state.classicText.review.active) {
       const box = cleanFrameBox(focus, crop);
       overlay.insertAdjacentHTML("beforeend", `<div class="clean-focus-box" style="left:${(box.x * 100).toFixed(2)}%;top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;height:${(box.h * 100).toFixed(2)}%" aria-hidden="true"></div>`);
     }
@@ -9735,6 +9855,7 @@
     updateCleanPreviewMeta();
     paintCleanReviewChrome();
     paintCleanReviewBoxes();
+    paintCleanTimeline();
   }
 
   // ------------------------------------------------- detection check playback
@@ -9794,18 +9915,16 @@
     review.boxesAt = now;
     blur.hidden = false;
     const crop = cleanCropAt(t);
-    const boxes = [];
-    for (const row of cleanScanRows()) {
-      if (!reviewRowActive(row, t)) continue;
-      if (!row.box || !cleanBoxOnFrame(row.box, crop)) continue;
-      const box = cleanFrameBox(row.box, crop);
-      if (box.w <= 0.0001 || box.h <= 0.0001) continue;
-      boxes.push(
-        `<span class="clean-review-box" style="left:${(box.x * 100).toFixed(2)}%;`
+    const parts = cleanScanPartsAt(t, { includeAdded: true });
+    const boxes = parts.map((part) => {
+      if (!cleanBoxOnFrame(part.box, crop)) return "";
+      const box = cleanFrameBox(part.box, crop);
+      if (box.w <= 0.0001 || box.h <= 0.0001) return "";
+      return `<span class="clean-review-box${part.selected ? " is-selected" : ""}" style="left:${(box.x * 100).toFixed(2)}%;`
         + `top:${(box.y * 100).toFixed(2)}%;width:${(box.w * 100).toFixed(2)}%;`
-        + `height:${(box.h * 100).toFixed(2)}%"></span>`,
-      );
-    }
+        + `height:${(box.h * 100).toFixed(2)}%">`
+        + `${part.selected ? `<span class="clean-review-tag">${esc(part.label)}</span>` : ""}</span>`;
+    });
     const html = boxes.join("");
     if (html !== (blur.dataset.reviewKey || "")) {
       blur.innerHTML = html;
@@ -9817,11 +9936,19 @@
     if (!dom.cleanPreviewPlay) return;
     const review = state.classicText.review;
     const playing = Boolean(review.active && review.playing);
-    dom.cleanPreviewPlay.textContent = tr(playing ? "Pause" : "Play");
+    dom.cleanPreviewPlay.innerHTML = cleanIcon(playing ? "pause" : "play");
     dom.cleanPreviewPlay.setAttribute("aria-pressed", playing ? "true" : "false");
+    dom.cleanPreviewPlay.setAttribute("aria-label", tr(
+      playing ? "Pause detection check" : "Play detection check",
+    ));
     dom.cleanPreviewPlay.title = tr(
-      "Play the detection check. Every found box is blurred; this is not the final clean.",
+      "Play the detection check. Boxes are outlined; this is not the final clean.",
     );
+  }
+
+  function cleanHasAfterRender() {
+    if (state.cleanScope === "source") return state.sourceClean?.status === "ready";
+    return Boolean(cleanReviewRecord());
   }
 
   function paintCleanReviewChrome() {
@@ -9832,7 +9959,7 @@
       dom.cleanReviewCopy.hidden = !scopeActive || Boolean(review.error) || !cutPlayable;
       if (scopeActive) {
         dom.cleanReviewCopy.textContent = tr(
-          "Detection check · all found boxes blurred · not the final clean",
+          "Detection check · boxes outlined · not the final clean",
         );
       }
     }
@@ -9842,6 +9969,9 @@
       dom.cleanReviewNote.textContent = note;
     }
     if (dom.cleanPreviewPlay) dom.cleanPreviewPlay.hidden = !scopeActive;
+    const hasAfter = cleanHasAfterRender();
+    if (dom.cleanPreviewBefore) dom.cleanPreviewBefore.hidden = !hasAfter;
+    if (dom.cleanPreviewAfter) dom.cleanPreviewAfter.hidden = !hasAfter;
     updateCleanReviewButton();
   }
 
@@ -9858,6 +9988,7 @@
     }
     updateCleanPreviewMeta();
     paintCleanReviewBoxes(t);
+    updateCleanPlayhead(t);
   }
 
   function stopCleanReview(options = {}) {
@@ -10457,6 +10588,15 @@
       ));
       row.added = matching.length > 0;
       row.hidden = matching.length > 0 && matching.every((layer) => Boolean(layer.hidden));
+      const members = Array.isArray(row.entryRows) && row.entryRows.length ? row.entryRows : [];
+      if (members.length) {
+        const overridden = members.some((member) => cleanOverrideFor(row, member));
+        if (overridden) {
+          row.ranges = cleanRowRanges(members.map((member) => ({
+            ranges: cleanOverrideFor(row, member) || member.ranges || [],
+          })));
+        }
+      }
     }
     rows.sort((a, b) => {
       const at = a.ranges[0]?.start ?? Number.MAX_SAFE_INTEGER;
@@ -10571,10 +10711,12 @@
     return state.fillChoice;
   }
 
-  /** The engine chosen, or LaMa when that one is not ready on this Mac. */
+  /** The chosen engine when ready, else the first ready engine, else LaMa. */
   function fillEngineNow() {
-    const engine = fillChoiceNow().engine;
-    return state.fill?.engines?.[engine]?.ready ? engine : "lama";
+    const engines = state.fill?.engines || {};
+    const chosen = fillChoiceNow().engine;
+    if (engines[chosen]?.ready) return chosen;
+    return window.ClassicCleanOptions.ENGINES.find((key) => engines[key]?.ready) || "lama";
   }
 
   function fillRequestFields() {
@@ -10582,7 +10724,7 @@
   }
 
   function fillEngineReady() {
-    return Boolean(state.fill?.available && state.fill?.engines?.lama?.ready);
+    return Boolean(state.fill?.available && state.fill?.engines?.[fillEngineNow()]?.ready);
   }
 
   function cleanRowMethod(row) {
@@ -10598,23 +10740,32 @@
   }
 
   function cleanEstimatePayload(rows, ticks, method) {
-    return ticks.map((index, order) => {
+    const layers = [];
+    for (const index of ticks) {
       const row = rows[index];
-      const entry = row?.entry || row || {};
-      return {
-        id: `preview${order + 1}`,
-        method,
-        box: row?.box || entry.box,
-        ranges: row?.ranges || entry.ranges || [],
-        label: row?.kind || entry.kind || "text",
-        kind: row?.kind || entry.kind || "text",
-        tracklet_id: entry.tracklet_id || undefined,
-        tracklet_kind: row?.kind || entry.kind || undefined,
-        text_key: entry.text_key || entry.text || row?.text || "",
-        ...(entry.fill_keys !== undefined ? { fill_keys: entry.fill_keys } : {}),
-        ...(method === "fill" ? { engine: fillEngineNow() } : {}),
-      };
-    });
+      if (!row) continue;
+      const members = row.manual
+        ? [row]
+        : (Array.isArray(row.entryRows) && row.entryRows.length ? row.entryRows : [row.entry]);
+      for (const member of members) {
+        if (!member) continue;
+        const ranges = cleanOverrideFor(row, member) || member.ranges || row.ranges || [];
+        layers.push({
+          id: `preview${layers.length + 1}`,
+          method,
+          box: member.box || row.box,
+          ranges,
+          label: member.kind || row.kind || "text",
+          kind: member.kind || row.kind || "text",
+          tracklet_id: member.tracklet_id || row.tracklet_id || undefined,
+          tracklet_kind: member.kind || row.kind || undefined,
+          text_key: member.text_key || member.text || row.text_key || row.text || "",
+          ...(member.fill_keys !== undefined ? { fill_keys: member.fill_keys } : {}),
+          ...(method === "fill" ? { engine: fillEngineNow() } : {}),
+        });
+      }
+    }
+    return layers;
   }
 
   function cleanThumbStyle(box) {
@@ -10653,6 +10804,335 @@
     }
     if ((row.ranges || []).length) return "—";
     return state.cleanScope === "source" ? "whole video" : "whole cut";
+  }
+
+  // ------------------------------------------------------------ clean timeline
+  //
+  // One bar is one tight member range. A grouped row keeps one lane, and every
+  // member keeps its own box and time. Source Clean reads source time; Cut
+  // Clean maps the same ranges to cut time.
+
+  function cleanWorkspaceActive() {
+    return state.cleanScope === "source" || cutCleanActive();
+  }
+
+  function cleanTimelineTotal() {
+    return Math.max(0.1, Number(cleanCutTotal()) || 0.1);
+  }
+
+  function cleanTimelineMapRanges(ranges, row) {
+    if (state.cleanScope === "cut" && !row?.manual) return cleanCutRanges(ranges);
+    return CleanTimeline.normalizeRanges(ranges);
+  }
+
+  function cleanDisplayToSourceRange(row, range) {
+    if (state.cleanScope !== "cut" || row?.manual) return range;
+    return {
+      start: cleanSourceTimeAt(Number(range.start) || 0),
+      end: cleanSourceTimeAt(Number(range.end) || 0),
+    };
+  }
+
+  function cleanOverrideKey(row, member) {
+    return `${cleanRowIdentity(row)}|${String(member?.tracklet_id || "")}`;
+  }
+
+  function cleanOverrideFor(row, member) {
+    const key = cleanOverrideKey(row, member);
+    const stored = state.classicText.rangeOverrides[key];
+    return Array.isArray(stored) ? stored : null;
+  }
+
+  function setCleanOverride(row, member, ranges) {
+    const key = cleanOverrideKey(row, member);
+    if (ranges && ranges.length) state.classicText.rangeOverrides[key] = ranges;
+    else delete state.classicText.rangeOverrides[key];
+  }
+
+  function cleanTimelineRows() {
+    return cleanScanRows().filter((row) => (
+      state.cleanScope === "source" || row.manual || cleanRowCutStart(row) !== null
+    ));
+  }
+
+  function cleanTimelineBars(rows = cleanTimelineRows()) {
+    return CleanTimeline.buildBars(rows, {
+      total: cleanTimelineTotal(),
+      identity: cleanRowIdentity,
+      mapRanges: cleanTimelineMapRanges,
+      overrideFor: cleanOverrideFor,
+      labelFor: (member, index, row) => CleanTimeline.barLabel(
+        member?.text || member?.text_key || row?.text,
+        index,
+      ),
+    });
+  }
+
+  function updateCleanPlayhead(t = currentCleanTime()) {
+    if (!dom.cleanPlayhead || !dom.cleanLanes) return;
+    const total = cleanTimelineTotal();
+    const time = clamp(Number(t) || 0, 0, total);
+    const left = dom.cleanLanes.offsetLeft + (time / total) * dom.cleanLanes.offsetWidth;
+    dom.cleanPlayhead.style.left = `${left}px`;
+  }
+
+  function paintCleanRuler(total) {
+    if (!dom.cleanRuler) return;
+    const ticks = CleanTimeline.rulerTicks(total, 6);
+    dom.cleanRuler.innerHTML = ticks.map((tick) => `
+      <span class="clean-ruler-tick" style="left:${tick.left.toFixed(3)}%">${esc(fmtTime(tick.time, total < 60 ? 1 : 0))}</span>`).join("");
+  }
+
+  function paintCleanTimeline() {
+    if (!dom.cleanTimelinePanel || !dom.cleanLanes) return;
+    const active = Boolean(state.job && state.plan) && cleanWorkspaceActive();
+    dom.cleanTimelinePanel.hidden = !active;
+    if (!active) return;
+    const total = cleanTimelineTotal();
+    const rows = cleanTimelineRows();
+    const bars = cleanTimelineBars(rows);
+    const selected = state.classicText.selectedBar;
+    const ticks = state.classicText.foundTicks;
+    if (dom.cleanTimelineTotal) dom.cleanTimelineTotal.textContent = fmtTime(total, 1);
+    if (dom.cleanTimelineCount) {
+      dom.cleanTimelineCount.textContent = `${bars.length} bar${bars.length === 1 ? "" : "s"}`;
+    }
+    paintCleanRuler(total);
+    const laneCount = Math.max(1, rows.reduce((max, row) => Math.max(max, Number(row.lane) || 0), 0) + 1);
+    const lanes = Array.from({ length: laneCount }, () => []);
+    for (const bar of bars) {
+      const lane = clamp(bar.lane, 0, laneCount - 1);
+      lanes[lane].push(bar);
+    }
+    const rowByIdentity = new Map(rows.map((row) => [cleanRowIdentity(row), row]));
+    dom.cleanLanes.innerHTML = lanes.map((laneBars, laneIndex) => `
+      <div class="clean-lane" data-clean-lane="${laneIndex}">
+        ${laneBars.map((bar) => {
+          const row = rowByIdentity.get(bar.rowIdentity);
+          const isTicked = Boolean(row && (row.added || ticks.has(bar.rowIdentity)));
+          const isSelected = bar.rowIdentity === selected;
+          return `<div class="clean-bar${bar.manual ? " is-manual" : ""}${isSelected ? " is-selected" : ""}${row && !row.added && !isTicked ? " is-unticked" : ""}"
+            role="button" tabindex="0"
+            data-clean-bar="${esc(bar.id)}"
+            data-bar-row="${esc(bar.rowIdentity)}"
+            data-bar-member="${esc(bar.memberId)}"
+            data-bar-start="${bar.start}"
+            data-bar-end="${bar.end}"
+            data-bar-override="${esc(bar.overrideKey)}"
+            aria-label="${esc(bar.label)} ${esc(fmtTime(bar.start, 1))} to ${esc(fmtTime(bar.end, 1))}"
+            title="${esc(bar.label)} · ${esc(fmtTime(bar.start, 1))} – ${esc(fmtTime(bar.end, 1))}${row && !row.added && !row.manual ? " · double-click to include or leave out" : ""}"
+            style="left:${bar.left.toFixed(3)}%;width:${bar.width.toFixed(3)}%">
+            <span class="clean-bar-label">${esc(bar.label)}</span>
+            <span class="clean-bar-trim" data-trim="start" aria-hidden="true"></span>
+            <span class="clean-bar-trim" data-trim="end" aria-hidden="true"></span>
+          </div>`;
+        }).join("")}
+      </div>`).join("");
+    if (dom.cleanTimelineEmpty) dom.cleanTimelineEmpty.hidden = bars.length > 0;
+    updateCleanPlayhead();
+    sizeCleanCanvas();
+  }
+
+  function cleanTimelineTimeAt(clientX) {
+    const node = dom.cleanLanes || dom.cleanTimeline;
+    if (!node) return 0;
+    const rect = node.getBoundingClientRect();
+    const ratio = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+    return ratio * cleanTimelineTotal();
+  }
+
+  function cleanSeek(t) {
+    const total = cleanTimelineTotal();
+    const time = clamp(Number(t) || 0, 0, total);
+    state.classicText.t = time;
+    state.classicText.zeroNote = false;
+    if (state.classicText.review.active) seekCleanReview(time);
+    if (dom.cleanScrub) dom.cleanScrub.value = String(time);
+    if (dom.cleanStageTime) dom.cleanStageTime.textContent = `${time.toFixed(1)}s`;
+    if (dom.cleanScrubReadout) {
+      dom.cleanScrubReadout.textContent = `${time.toFixed(1)} / ${total.toFixed(1)}s`;
+    }
+    paintCleanBoxes();
+    updateCleanPlayhead(time);
+    scheduleCleanFrame();
+  }
+
+  function selectCleanBar(rowIdentity, options = {}) {
+    const row = cleanTimelineRows().find((item) => cleanRowIdentity(item) === rowIdentity);
+    if (!row) return;
+    state.classicText.selectedBar = rowIdentity;
+    const member = options.memberId
+      ? (row.entryRows || []).find((item) => String(item.tracklet_id || "") === options.memberId)
+      : null;
+    const start = Number(options.start);
+    if (Number.isFinite(start)) cleanSeek(start);
+    const layers = classicCleanLayers();
+    const match = row.manual
+      ? layers.find((layer) => layer.id === row.layer_id)
+      : layers.find((layer) => (
+        layer.source === "scan"
+        && (!member || String(layer.tracklet_id || "") === String(member.tracklet_id || ""))
+        && scanLayerMatchesRow(layer, row)
+      ));
+    state.classicText.selection = match ? match.id : "";
+    paintCleanStage({ rows: false });
+    setCleanStatus(`${CleanTimeline.barLabel(member?.text || row.text, 0)} · ${fmtTime(row.ranges?.[0]?.start ?? 0, 1)}`);
+  }
+
+  function cleanBarEntry(barId) {
+    const rows = cleanTimelineRows();
+    for (const row of rows) {
+      const identity = cleanRowIdentity(row);
+      const members = row.manual ? [{ ...row, tracklet_id: "" }] : (row.entryRows || [row]);
+      for (const member of members) {
+        if (`${identity}|${String(member?.tracklet_id || "")}|${barId.split("|").pop()}` !== barId) continue;
+        return { row, member, identity };
+      }
+    }
+    return null;
+  }
+
+  /** Replace one member range, keeping every other member tight and separate. */
+  function setCleanBarRange(entry, rangeIndex, range) {
+    if (!entry || !range) return;
+    const { row, member } = entry;
+    const layers = classicCleanLayers().filter((layer) => {
+      if (layer.source !== "scan") return row.manual && layer.id === row.layer_id;
+      if (!member?.tracklet_id) return false;
+      return String(layer.tracklet_id || "") === String(member.tracklet_id || "");
+    });
+    const override = cleanOverrideFor(row, member);
+    const fromLayer = !override && layers[0]?.ranges?.length
+      ? layers[0].ranges.map((item) => (state.cleanScope === "cut" && !row.manual
+        ? { start: cleanSourceTimeAt(item.start), end: cleanSourceTimeAt(item.end) }
+        : { ...item }))
+      : null;
+    const raw = CleanTimeline.normalizeRanges(fromLayer || override || member.ranges || row.ranges || []);
+    const next = raw.map((item, index) => (index === rangeIndex ? range : item));
+    if (!next.length) next.push(range);
+    if (layers.length) {
+      const layerRanges = state.cleanScope === "cut" && !row.manual
+        ? cleanCutRanges(next)
+        : next;
+      for (const layer of layers) layer.ranges = layerRanges.map((item) => ({ ...item }));
+      state.classicText.rangeOverrides[cleanOverrideKey(row, member)] = next.map((item) => ({ ...item }));
+      saveClassicText();
+    } else {
+      setCleanOverride(row, member, next);
+    }
+    paintCleanBoxes();
+  }
+
+  function paintCleanRulerAndBarDrag() {
+    const timeline = dom.cleanTimeline;
+    if (!timeline || timeline.dataset.bound === "1") return;
+    timeline.dataset.bound = "1";
+    let drag = null;
+    const onMove = (event) => {
+      if (!drag) return;
+      if (drag.kind === "seek") {
+        cleanSeek(cleanTimelineTimeAt(event.clientX));
+        return;
+      }
+      const delta = cleanTimelineTimeAt(event.clientX) - drag.originTime;
+      const total = cleanTimelineTotal();
+      const entry = cleanBarEntry(drag.barId);
+      if (!entry) return;
+      const base = { start: drag.start, end: drag.end };
+      const range = drag.kind === "trim"
+        ? CleanTimeline.trimRange(base, drag.side, (drag.side === "start" ? drag.start : drag.end) + delta, total)
+        : CleanTimeline.moveRange(base, delta, total);
+      setCleanBarRange(entry, drag.rangeIndex, cleanDisplayToSourceRange(entry.row, range));
+    };
+    const onUp = () => {
+      if (!drag) return;
+      const finished = drag;
+      drag = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (finished.kind !== "seek") {
+        saveClassicText();
+        scheduleCleanFrame();
+      }
+    };
+    timeline.addEventListener("dblclick", (event) => {
+      const bar = event.target.closest("[data-clean-bar]");
+      if (!bar) return;
+      const row = cleanTimelineRows().find((item) => cleanRowIdentity(item) === bar.dataset.barRow);
+      if (!row || row.added || row.manual) return;
+      event.preventDefault();
+      const identity = cleanRowIdentity(row);
+      if (state.classicText.foundTicks.has(identity)) state.classicText.foundTicks.delete(identity);
+      else state.classicText.foundTicks.add(identity);
+      saveFoundTicks();
+      paintCleanStage({ rows: false });
+      setCleanStatus(state.classicText.foundTicks.has(identity)
+        ? "Bar included in Clean."
+        : "Bar left out of Clean. Double-click to include it again.");
+    });
+    timeline.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      const trim = event.target.closest("[data-trim]");
+      const bar = event.target.closest("[data-clean-bar]");
+      if (bar) {
+        event.preventDefault();
+        const entry = cleanBarEntry(bar.dataset.cleanBar);
+        if (!entry) return;
+        const start = Number(bar.dataset.barStart) || 0;
+        const end = Number(bar.dataset.barEnd) || 0;
+        selectCleanBar(bar.dataset.barRow, {
+          memberId: bar.dataset.barMember || "",
+          start: trim?.dataset.trim === "end" ? Math.max(0, end - 0.05) : start,
+        });
+        const rangeIndex = Number(bar.dataset.cleanBar.split("|").pop()) || 0;
+        const raw = CleanTimeline.rangesFor(entry.row, entry.member, cleanOverrideFor(entry.row, entry.member));
+        const range = raw[rangeIndex] || { start, end };
+        drag = {
+          kind: trim ? "trim" : "move",
+          side: trim?.dataset.trim || "",
+          barId: bar.dataset.cleanBar,
+          range,
+          rangeIndex,
+          start,
+          end,
+          originTime: cleanTimelineTimeAt(event.clientX),
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp, { once: true });
+        return;
+      }
+      if (event.target.closest(".clean-lane, #clean-ruler, .clean-timeline")) {
+        event.preventDefault();
+        cleanSeek(cleanTimelineTimeAt(event.clientX));
+        drag = { kind: "seek" };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp, { once: true });
+      }
+    });
+  }
+
+  function startCleanAddRange() {
+    if (!cleanWorkspaceActive()) return;
+    stopCleanReview({ syncTime: true });
+    state.classicText.drawMode = true;
+    state.classicText.brushMode = false;
+    setCleanStatus("Draw the box on the frame. It starts at the playhead.");
+    paintCleanStage();
+    scrollIntoViewSafe(dom.cleanCanvas, { behavior: "smooth", block: "nearest" });
+  }
+
+  function toggleCleanExpand() {
+    const canvas = dom.cleanCanvas;
+    if (!canvas) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+      return;
+    }
+    if (canvas.requestFullscreen) {
+      canvas.requestFullscreen().catch(() => canvas.classList.toggle("is-expanded"));
+    } else {
+      canvas.classList.toggle("is-expanded");
+    }
   }
 
   function cleanSceneAtCut(t) {
@@ -10860,18 +11340,31 @@
     // One undo step for the whole tick, not one per row.
     pushClassicUndo();
     for (const row of ticks) {
-      const entry = row.entry || {
-        ...row,
-        ranges: row.ranges,
-        box: row.box,
-        tracklet_id: row.entryRows?.[0]?.tracklet_id,
-      };
-      if ((entry.ranges || []).length && !cleanCutRanges(entry.ranges).length) {
-        outside += 1;
-        continue;
+      // A grouped row is one choice, but every member keeps its own tight box,
+      // ranges and fill keys. Never union subtitle lines into one large layer.
+      const members = row.manual
+        ? [row]
+        : (Array.isArray(row.entryRows) && row.entryRows.length ? row.entryRows : [row.entry]);
+      let outsideRow = false;
+      for (const member of members) {
+        if (!member) continue;
+        const override = cleanOverrideFor(row, member);
+        const ranges = override || member.ranges || row.ranges || [];
+        if (ranges.length && !cleanCutRanges(ranges).length) {
+          outsideRow = true;
+          continue;
+        }
+        addCleanFromScan({
+          ...member,
+          box: member.box || row.box,
+          ranges,
+          text_key: member.text_key || member.text || row.text_key || row.text,
+          tracklet_id: member.tracklet_id || row.tracklet_id,
+          kind: member.kind || row.kind,
+        }, method, engine);
+        added += 1;
       }
-      addCleanFromScan(entry, method, engine);
-      added += 1;
+      if (outsideRow) outside += 1;
     }
     const deduped = dedupeCleanLayers(classicCleanLayers());
     if (deduped.changed) state.classicText.clean = deduped.layers;
@@ -10919,18 +11412,18 @@
           `<button type="button" class="clean-chip${key === method ? " active" : ""}" data-clean-method="${key}" data-clean-target="${esc(layer.id)}" title="${esc(item.note)}">${item.label}</button>`
         )).join("");
       const enginePicker = method === "fill"
-        ? `<span class="clean-engine">${esc(CLEAN_FILL_ENGINE_LABEL.lama)}</span>`
+        ? `<span class="clean-engine">${esc(CLEAN_FILL_ENGINE_LABEL[fillEngineNow()])}</span>`
         : "";
       return `
         <div class="clean-row${selected ? " is-selected" : ""}${layer.hidden ? " is-off" : ""}" role="listitem" data-clean-row="${esc(layer.id)}">
-          <button class="clean-eye" type="button" data-clean-eye="${esc(layer.id)}" aria-pressed="${layer.hidden ? "false" : "true"}" title="${layer.hidden ? "Show" : "Hide"} this box">${layer.hidden ? "◌" : "◉"}</button>
+          <button class="clean-eye" type="button" data-clean-eye="${esc(layer.id)}" aria-pressed="${layer.hidden ? "false" : "true"}" title="${layer.hidden ? "Show" : "Hide"} this box" aria-label="${layer.hidden ? "Show" : "Hide"} this box">${cleanIcon(layer.hidden ? "eye-off" : "eye")}</button>
           <div class="clean-row-copy">
             <span class="clean-row-label">${esc(layer.label || layer.kind || "Box")} <span class="clean-row-src">${esc(layer.source === "scan" ? "scan" : "manual")}</span></span>
             <span class="clean-row-meta">${esc(ranges)} · ${(layer.box.w * 100).toFixed(0)}×${(layer.box.h * 100).toFixed(0)}%${out ? ` · ${esc(out)}` : ""}</span>
           </div>
           ${cleanRowTimes(layer)}
           <div class="clean-row-methods" role="group" aria-label="Method">${chips}${enginePicker}</div>
-          <button class="clean-row-del" type="button" data-clean-delete="${esc(layer.id)}" title="Delete box" aria-label="Delete box">✕</button>
+          <button class="clean-row-del" type="button" data-clean-delete="${esc(layer.id)}" title="Delete box" aria-label="Delete box">${cleanIcon("trash")}</button>
         </div>`;
     };
     list.innerHTML = layers.map(row).join("");
@@ -11036,6 +11529,7 @@
 
   function selectClean(id) {
     state.classicText.selection = id || "";
+    if (!id) state.classicText.selectedBar = "";
     paintCleanStage();
   }
 
@@ -11111,7 +11605,10 @@
     pending.ids.add(String(id));
     if (layer) pending.tokens.add(cleanIdentityToken(layer));
     state.classicText.clean = classicCleanLayers().filter((item) => item.id !== id);
-    if (state.classicText.selection === id) state.classicText.selection = "";
+    if (state.classicText.selection === id) {
+      state.classicText.selection = "";
+      state.classicText.selectedBar = "";
+    }
     saveClassicText();
     paintCleanStage();
     scheduleCleanFrame();
@@ -11414,6 +11911,8 @@
 
   function bindClean() {
     dom.cleanDraw?.addEventListener("click", toggleCleanDraw);
+    dom.cleanAddRange?.addEventListener("click", startCleanAddRange);
+    dom.cleanPreviewExpand?.addEventListener("click", toggleCleanExpand);
     dom.cleanBrush?.addEventListener("click", () => {
       state.classicText.brushMode = !state.classicText.brushMode;
       state.classicText.drawMode = false;
@@ -11430,13 +11929,11 @@
       refreshCleanFrame(true);
     });
     dom.cleanScrub?.addEventListener("input", () => {
-      state.classicText.t = Number(dom.cleanScrub.value) || 0;
-      state.classicText.zeroNote = false;
-      if (state.classicText.review.active) seekCleanReview(state.classicText.t);
-      paintCleanStage();
-      scheduleCleanFrame();
+      cleanSeek(Number(dom.cleanScrub.value) || 0);
+      paintCleanStage({ rows: false });
     });
     bindCleanStageDrag();
+    paintCleanRulerAndBarDrag();
     dom.cleanLayers?.addEventListener("click", (event) => {
       const eye = event.target.closest("[data-clean-eye]");
       if (eye) {
@@ -11538,15 +12035,48 @@
       }
     });
     dom.cleanFill?.addEventListener("click", (event) => {
-      const button = event.target.closest("#clean-fill-preview");
-      if (button) previewFill();
+      if (event.target.closest("#clean-model-chip")) {
+        toggleCleanEngineMenu();
+        return;
+      }
+      const engine = event.target.closest("[data-engine]");
+      if (engine) {
+        if (!engine.disabled) setFillChoice({ engine: engine.dataset.engine });
+        toggleCleanEngineMenu(false);
+        $("#clean-model-chip")?.focus();
+        return;
+      }
+      if (event.target.closest("#clean-fill-options-open")) {
+        toggleCleanFillOptions();
+        return;
+      }
+      const device = event.target.closest("[data-fill-device]");
+      if (device && !device.disabled) {
+        setFillChoice({ device: device.dataset.fillDevice });
+        toggleCleanFillOptions(true);
+        return;
+      }
       const snap = event.target.closest("[data-clean-snap]");
       if (snap) snapBoxToLines(snap.dataset.cleanSnap);
     });
     dom.cleanFill?.addEventListener("change", (event) => {
-      if (event.target.id === "clean-fill-engine") setFillChoice({ engine: event.target.value });
-      if (event.target.id === "clean-fill-device") setFillChoice({ device: event.target.value });
       if (event.target.id === "clean-fill-follow") setFillChoice({ follow: event.target.checked });
+    });
+    dom.cleanFill?.addEventListener("keydown", (event) => {
+      const menu = $("#clean-engine-menu");
+      if (!menu || menu.hidden) return;
+      const items = [...menu.querySelectorAll(".clean-engine-item:not(:disabled)")];
+      if (!items.length) return;
+      const current = items.indexOf(document.activeElement);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const next = items[clamp(current + (event.key === "ArrowDown" ? 1 : -1), 0, items.length - 1)];
+        next?.focus();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closeCleanModelMenus();
+        $("#clean-model-chip")?.focus();
+      }
     });
     dom.cleanPreviewBefore?.addEventListener("click", () => {
       stopCleanReview({ syncTime: true });
@@ -11572,7 +12102,7 @@
     });
     dom.cleanPreviewAi?.addEventListener("click", () => {
       if (!fillEngineReady()) {
-        cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.lama?.reason
+        cleanDiagnostic("Classic AI fill unavailable:", state.fill?.engines?.[fillEngineNow()]?.reason
           || state.fill?.note || "");
         setCleanStatus("AI fill needs its model pack. Install it in Setup, or use Blur.");
         return;
@@ -11604,6 +12134,12 @@
     });
     bindCleanReviewVideo();
     paintClassicUndo();
+    document.addEventListener("pointerdown", (event) => {
+      if (!event.target.closest?.("#clean-fill")) closeCleanModelMenus();
+    });
+    document.addEventListener("fullscreenchange", () => {
+      dom.cleanCanvas?.classList.toggle("is-expanded", Boolean(document.fullscreenElement));
+    });
   }
 
   function cleanShortcut(event) {
@@ -11622,6 +12158,15 @@
       closeShortcuts();
       return true;
     }
+    if (event.key === "Escape" && (
+      ($("#clean-engine-menu") && !$("#clean-engine-menu").hidden)
+      || ($("#clean-fill-options") && !$("#clean-fill-options").hidden)
+    )) {
+      event.preventDefault();
+      closeCleanModelMenus();
+      $("#clean-model-chip")?.focus();
+      return true;
+    }
     if (event.key === "Escape" && dom.cleanDetail && !dom.cleanDetail.hidden) {
       event.preventDefault();
       const identity = state.classicText.detailIdentity;
@@ -11638,6 +12183,7 @@
       return true;
     }
     if (typing) return false;
+    if (event.target.closest?.("#clean-fill")) return false;
     const meta = event.metaKey || event.ctrlKey;
     if (meta && event.key.toLowerCase() === "z") {
       event.preventDefault();
@@ -11662,7 +12208,19 @@
         paintCleanStage();
       } else {
         selectClean("");
+        state.classicText.selectedBar = "";
+        paintCleanStage({ rows: false });
       }
+      return true;
+    }
+    if (
+      cleanWorkspaceActive()
+      && (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      && !event.altKey
+    ) {
+      event.preventDefault();
+      const step = event.shiftKey ? 1 : 0.1;
+      cleanSeek(currentCleanTime() + (event.key === "ArrowRight" ? step : -step));
       return true;
     }
     if (state.classicText.selection && event.key.startsWith("Arrow")) {
@@ -12895,6 +13453,7 @@
       dom.textScanStart.textContent = "Find text on screen";
     }
     renderCleanFound();
+    paintCleanTimeline();
     paintMomentsScan();
   }
 
