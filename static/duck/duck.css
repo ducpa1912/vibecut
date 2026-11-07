@@ -604,6 +604,20 @@ h2 {
 .clean-preview img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; background: var(--canvas); }
 .clean-preview figcaption { padding: 8px 10px; color: var(--muted); font-size: 11px; background: var(--surface-raised); }
 
+.voice-panel { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.voice-panel select {
+  height: 30px;
+  max-width: 220px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+.voice-panel audio { width: 100%; height: 34px; margin-top: 8px; }
+
 .captions-panel { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
 .caption-cues { display: grid; gap: 5px; max-height: 320px; overflow: auto; }
 .caption-row {

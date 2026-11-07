@@ -306,6 +306,15 @@ def test_caption_burn_helpers() -> None:
     assert drawn.tobytes() != frame.tobytes()
 
 
+def test_local_voices_list(tmp_path: Path) -> None:
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token"}
+    with TestClient(app) as client:
+        response = client.get("/api/voices", headers=headers)
+        assert response.status_code == 200
+        assert isinstance(response.json()["voices"], list)
+
+
 def test_project_rejects_source_outside_data_root(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.mp4"
     outside.write_bytes(b"outside")

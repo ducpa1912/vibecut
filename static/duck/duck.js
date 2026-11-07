@@ -45,6 +45,12 @@ const cleanLayers = document.querySelector("#clean-layers");
 const renderEdit = document.querySelector("#render-edit");
 const renderStatus = document.querySelector("#render-status");
 const downloadRender = document.querySelector("#download-render");
+const voiceSelect = document.querySelector("#voice-select");
+const voiceMode = document.querySelector("#voice-mode");
+const generateVoice = document.querySelector("#generate-voice");
+const previewVoice = document.querySelector("#preview-voice");
+const voiceStatus = document.querySelector("#voice-status");
+const voiceAudio = document.querySelector("#voice-audio");
 const generateCaptions = document.querySelector("#generate-captions");
 const downloadCaptions = document.querySelector("#download-captions");
 const burnCaptions = document.querySelector("#burn-captions");
@@ -283,6 +289,7 @@ async function selectEdit(editId) {
   editMeta.textContent = `${formatTime(activeEdit.start)}–${formatTime(activeEdit.end)} · ${activeEdit.clips?.length || 0} clips`;
   renderCleanLayers();
   renderCaptions();
+  renderVoice();
   resetRenderUi();
   void pollRender();
   await loadEdits();
@@ -601,6 +608,79 @@ async function downloadCaptionTrack() {
   }
 }
 
+let voicesLoaded = false;
+
+async function loadVoices() {
+  if (voicesLoaded || !voiceSelect) return;
+  try {
+    const data = await api("/api/voices");
+    voiceSelect.replaceChildren();
+    for (const item of data.voices || []) {
+      const option = document.createElement("option");
+      option.value = item.name;
+      option.textContent = `${item.name} · ${item.locale}`;
+      if (item.name === "Samantha") option.selected = true;
+      voiceSelect.append(option);
+    }
+    voicesLoaded = true;
+  } catch (error) {
+    if (voiceStatus) voiceStatus.textContent = `Voices unavailable: ${error.message}`;
+  }
+}
+
+function renderVoice() {
+  const track = activeEdit?.voice;
+  if (!track) {
+    if (voiceStatus) voiceStatus.textContent = "No voice-over yet";
+    if (previewVoice) previewVoice.hidden = true;
+    if (voiceAudio) voiceAudio.hidden = true;
+    return;
+  }
+  if (voiceStatus) voiceStatus.textContent = `${track.voice} · ${track.mode === "voice_only" ? "voice only" : "voice over"}`;
+  if (previewVoice) previewVoice.hidden = false;
+}
+
+async function generateVoiceTrack() {
+  if (!activeProject || !activeEdit) return;
+  if (voiceStatus) voiceStatus.textContent = "Generating voice…";
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/voice`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          voice: voiceSelect?.value || "Samantha",
+          mode: voiceMode?.value || "voice_over",
+        }),
+      },
+    );
+    activeEdit.voice = data.voice;
+    renderVoice();
+  } catch (error) {
+    if (voiceStatus) voiceStatus.textContent = `Voice failed: ${error.message}`;
+  }
+}
+
+async function previewVoiceTrack() {
+  if (!activeProject || !activeEdit) return;
+  try {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/voice/audio`,
+      { headers: { Authorization: `Bearer ${launchToken}` }, cache: "no-store" },
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    if (voiceAudio.dataset.url) URL.revokeObjectURL(voiceAudio.dataset.url);
+    const url = URL.createObjectURL(blob);
+    voiceAudio.dataset.url = url;
+    voiceAudio.src = url;
+    voiceAudio.hidden = false;
+    await voiceAudio.play();
+  } catch (error) {
+    if (voiceStatus) voiceStatus.textContent = `Preview failed: ${error.message}`;
+  }
+}
+
 async function startRenderEdit() {
   if (!activeProject || !activeEdit) return;
   renderTimer = null;
@@ -667,6 +747,7 @@ async function openProject(project) {
   storyEnd.value = "";
   storyTitle.value = "";
   renderEditorStories();
+  void loadVoices();
   await loadEdits();
   try {
     const data = await api(`/api/projects/${encodeURIComponent(project.id)}/check`);
@@ -689,6 +770,8 @@ downloadRender?.addEventListener("click", downloadRendered);
 generateCaptions?.addEventListener("click", generateCaptionTrack);
 downloadCaptions?.addEventListener("click", downloadCaptionTrack);
 burnCaptions?.addEventListener("change", () => setCaptionBurn(burnCaptions.checked));
+generateVoice?.addEventListener("click", generateVoiceTrack);
+previewVoice?.addEventListener("click", previewVoiceTrack);
 captionStyle?.addEventListener("change", setCaptionStyle);
 captionPosition?.addEventListener("change", setCaptionStyle);
 editor?.addEventListener("click", (event) => {

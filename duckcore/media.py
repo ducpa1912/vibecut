@@ -42,6 +42,17 @@ def ffprobe() -> str:
     return _tool("ffprobe")
 
 
+def has_audio(source: str | Path) -> bool:
+    result = subprocess.run(
+        [
+            ffprobe(), "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(source),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    return "audio" in result.stdout
+
+
 def extract_frame(source: str | Path, when: float) -> Image.Image:
     command = [
         ffmpeg(), "-v", "error", "-ss", f"{max(0.0, float(when)):.3f}",

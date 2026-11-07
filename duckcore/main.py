@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from duckcore import app_settings, captions, clean, edits, preview, render
+from duckcore import app_settings, captions, clean, edits, preview, render, voice
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -71,6 +71,11 @@ class CaptionsPatch(BaseModel):
     burn: bool | None = None
     style: str | None = None
     position: str | None = None
+
+
+class VoicePatch(BaseModel):
+    voice: str = Field(min_length=1, max_length=80)
+    mode: str = Field(default="voice_over", pattern="^(voice_over|voice_only)$")
 
 
 class DevImport(BaseModel):
@@ -474,6 +479,56 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             media_type="application/x-subrip",
             headers={"Content-Disposition": f'attachment; filename="{edit_id}.srt"'},
         )
+
+    @app.get("/api/voices")
+    def local_voices(_: None = Depends(require_token)) -> dict:
+        return {"voices": voice.list_voices()}
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/voice")
+    def get_voice(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        return {"voice": edit.get("voice")}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/voice")
+    def build_voice(
+        project_id: str, edit_id: str, body: VoicePatch, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        try:
+            track = voice.build_voice(
+                edit, edit.get("captions") or {}, data_root,
+                voice=body.voice, mode=body.mode,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+        return {"voice": track}
+
+    @app.get(
+        "/api/projects/{project_id}/edits/{edit_id}/voice/audio",
+        responses={200: {"content": {"audio/wav": {}}}},
+    )
+    def voice_audio(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> FileResponse:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        track = edit.get("voice") or {}
+        path = data_root / "projects" / project_id / str(track.get("audio") or "")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Voice audio is missing.")
+        return FileResponse(path, media_type="audio/wav")
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/render")
     def start_render(

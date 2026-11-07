@@ -36,6 +36,7 @@ Day 1 shell and Day 2 projects/import are implemented. The app is not App Store 
 - Durable render queue: run, pause, resume, cancel; survives restart.
 - Settings: engine status, model verification, storage, online-job endpoint.
 - Captions: generate from transcript, edit cue text, download SRT, choose Clean/Bold/Minimal style and bottom/middle/top position, or burn into the render.
+- Voice-over: local macOS voices, script from captions, voice-over or voice-only, preview and render mix.
 - Language is auto-detect only; no picker.
 - Project cards show Check status and story candidates.
 - Tests for core auth, projects, engine status, edits and clean layers.

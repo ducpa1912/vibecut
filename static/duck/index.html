@@ -187,6 +187,20 @@
             </figure>
             <div id="clean-layers" class="clean-layers"></div>
 
+            <section class="voice-panel">
+              <div class="edit-actions">
+                <select id="voice-select" aria-label="Local voice"></select>
+                <select id="voice-mode" aria-label="Voice mode">
+                  <option value="voice_over">Voice over original</option>
+                  <option value="voice_only">Voice only</option>
+                </select>
+                <button class="secondary" type="button" id="generate-voice">Generate voice-over</button>
+                <button class="secondary" type="button" id="preview-voice" hidden>Preview voice</button>
+                <span class="section-note" id="voice-status"></span>
+              </div>
+              <audio id="voice-audio" controls hidden></audio>
+            </section>
+
             <section class="captions-panel">
               <div class="edit-actions">
                 <button class="secondary" type="button" id="generate-captions">Generate captions</button>

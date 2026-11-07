@@ -190,6 +190,22 @@ curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application
 
 Styles: `clean`, `bold`, `minimal`. Positions: `bottom`, `middle`, `top`.
 
+### Voice-over
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/voices"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"voice":"Samantha","mode":"voice_over"}' \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/voice"
+
+curl -s -o voice.wav -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/voice/audio"
+```
+
+Expected: 2-second edit produced a 2.000s mono 22.05kHz WAV; render mixed it over the original audio.
+
 ## 4. Development app bundle
 
 ```bash

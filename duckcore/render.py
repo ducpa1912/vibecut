@@ -180,6 +180,34 @@ def render_edit(
                 )
                 captioned.replace(output)
 
+        voice = edit.get("voice")
+        if isinstance(voice, dict) and voice.get("audio"):
+            voice_path = job_dir / str(voice["audio"])
+            if voice_path.is_file():
+                if progress:
+                    progress(0.985, "Mixing voice-over")
+                mixed = output.with_name(f".{output.stem}.voice.mp4")
+                if voice.get("mode") == "voice_only" or not media.has_audio(output):
+                    _run([
+                        ffmpeg, "-y", "-v", "error",
+                        "-i", str(output), "-i", str(voice_path),
+                        "-map", "0:v:0", "-map", "1:a:0",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                        "-shortest", "-movflags", "+faststart", str(mixed),
+                    ])
+                else:
+                    _run([
+                        ffmpeg, "-y", "-v", "error",
+                        "-i", str(output), "-i", str(voice_path),
+                        "-filter_complex",
+                        "[0:a]volume=0.22[o];[1:a]volume=1.0[v];"
+                        "[o][v]amix=inputs=2:duration=first:dropout_transition=0[a]",
+                        "-map", "0:v:0", "-map", "[a]",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                        "-shortest", "-movflags", "+faststart", str(mixed),
+                    ])
+                mixed.replace(output)
+
         if progress:
             progress(1.0, "Render complete")
         return output
