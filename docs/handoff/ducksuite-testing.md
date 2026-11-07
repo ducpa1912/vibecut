@@ -83,6 +83,26 @@ When done, the response contains:
 
 A 46-second 1080p clip on this Mac took about 50 seconds and produced one story and 80 text tracklets.
 
+### Full edit, story, and clean
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/full"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/stories/$STORY/smart-cut"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/clean/from-check"
+```
+
+Expected:
+
+- full edit clips match the Check scenes
+- smart cut uses the story clips
+- clean layers are one per Check tracklet
+- layer actions are `fill`, `blur` or `exclude`
+
 ## 4. Development app bundle
 
 ```bash

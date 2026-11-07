@@ -4,6 +4,29 @@ const projectsHost = document.querySelector("#projects");
 const importButton = document.querySelector("#import-button");
 const engineGrid = document.querySelector("#engine-grid");
 const engineNote = document.querySelector("#engine-note");
+const editor = document.querySelector("#editor");
+const editorTitle = document.querySelector("#editor-title");
+const editorMeta = document.querySelector("#editor-meta");
+const editorClose = document.querySelector("#editor-close");
+const editorStories = document.querySelector("#editor-stories");
+const editorEdits = document.querySelector("#editor-edits");
+const editorEmpty = document.querySelector("#editor-empty");
+const editPanel = document.querySelector("#edit-panel");
+const editFull = document.querySelector("#edit-full");
+const buildStory = document.querySelector("#build-story");
+const storyStart = document.querySelector("#story-start");
+const storyEnd = document.querySelector("#story-end");
+const storyTitle = document.querySelector("#story-title");
+const editKind = document.querySelector("#edit-kind");
+const editTitle = document.querySelector("#edit-title");
+const editMeta = document.querySelector("#edit-meta");
+const cleanFromCheck = document.querySelector("#clean-from-check");
+const cleanCount = document.querySelector("#clean-count");
+const cleanLayers = document.querySelector("#clean-layers");
+
+let activeProject = null;
+let activeCheck = null;
+let activeEdit = null;
 
 let launchToken = "";
 let baseURL = "";
@@ -133,6 +156,250 @@ async function startCheck(project, card) {
   }
 }
 
+function closeEditor() {
+  editor.hidden = true;
+  activeProject = null;
+  activeCheck = null;
+  activeEdit = null;
+}
+
+function storyQuote(story) {
+  const sentence = (story.sentences || []).find((item) => item.text);
+  return String(sentence?.text || story.title || "Story").slice(0, 140);
+}
+
+function editorStoryRow(story) {
+  const row = document.createElement("div");
+  row.className = "editor-story";
+  const copy = document.createElement("div");
+  const title = document.createElement("p");
+  title.className = "editor-story-title";
+  title.textContent = storyQuote(story);
+  const meta = document.createElement("p");
+  meta.className = "editor-story-meta";
+  meta.textContent = `${formatTime(story.start)}–${formatTime(story.end)} · ${Math.round(story.dur || 0)}s`;
+  copy.append(title, meta);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "project-check";
+  button.textContent = "Smart cut";
+  button.addEventListener("click", () => smartCut(story.id));
+  row.append(copy, button);
+  return row;
+}
+
+function renderEditorStories() {
+  if (!editorStories) return;
+  editorStories.replaceChildren();
+  if (!activeCheck || activeCheck.state !== "done" || !activeCheck.result) {
+    const note = document.createElement("p");
+    note.className = "editor-note";
+    note.textContent = activeCheck?.state === "running"
+      ? "Check is still running. Stories appear when it finishes."
+      : "Run Check to find smart stories.";
+    editorStories.append(note);
+    return;
+  }
+  const rows = activeCheck.result.stories?.stories || [];
+  if (!rows.length) {
+    const note = document.createElement("p");
+    note.className = "editor-note";
+    note.textContent = "No story candidate yet. Build one manually below.";
+    editorStories.append(note);
+    return;
+  }
+  for (const story of rows) editorStories.append(editorStoryRow(story));
+}
+
+function renderEdits(rows) {
+  if (!editorEdits) return;
+  editorEdits.replaceChildren();
+  if (!rows.length) {
+    const note = document.createElement("p");
+    note.className = "editor-note";
+    note.textContent = "No edits yet.";
+    editorEdits.append(note);
+    return;
+  }
+  for (const row of rows) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "editor-edit-row";
+    const label = document.createElement("span");
+    label.textContent = row.title || (row.kind === "full" ? "Full video" : "Story");
+    const meta = document.createElement("span");
+    meta.textContent = `${formatTime(row.start)}–${formatTime(row.end)} · ${row.clean || 0} clean`;
+    button.append(label, meta);
+    button.addEventListener("click", () => selectEdit(row.id));
+    if (activeEdit?.id === row.id) button.classList.add("is-active");
+    editorEdits.append(button);
+  }
+}
+
+async function loadEdits() {
+  if (!activeProject) return;
+  const data = await api(`/api/projects/${encodeURIComponent(activeProject.id)}/edits`);
+  renderEdits(data.edits || []);
+}
+
+async function selectEdit(editId) {
+  if (!activeProject) return;
+  const data = await api(`/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(editId)}`);
+  activeEdit = data.edit;
+  editorEmpty.hidden = true;
+  editPanel.hidden = false;
+  editKind.textContent = activeEdit.kind === "full" ? "Full video" : "Story";
+  editTitle.textContent = activeEdit.title || "Edit";
+  editMeta.textContent = `${formatTime(activeEdit.start)}–${formatTime(activeEdit.end)} · ${activeEdit.clips?.length || 0} clips`;
+  renderCleanLayers();
+  await loadEdits();
+}
+
+function renderCleanLayers() {
+  cleanLayers.replaceChildren();
+  const layers = activeEdit?.clean || [];
+  cleanCount.textContent = layers.length ? `${layers.length} layers` : "No clean layers yet";
+  if (!layers.length) {
+    const note = document.createElement("p");
+    note.className = "editor-note";
+    note.textContent = "Create layers from Check, or add a manual box later.";
+    cleanLayers.append(note);
+    return;
+  }
+  for (const layer of layers) {
+    const row = document.createElement("div");
+    row.className = "clean-row";
+    const info = document.createElement("div");
+    info.className = "clean-info";
+    const title = document.createElement("p");
+    title.className = "clean-title";
+    title.textContent = layer.text_sample || layer.label || "Found text";
+    const meta = document.createElement("p");
+    meta.className = "clean-meta";
+    const start = layer.ranges?.[0]?.start;
+    const end = layer.ranges?.[layer.ranges.length - 1]?.end;
+    meta.textContent = `${layer.tracklet_kind || "text"} · ${formatTime(start)}–${formatTime(end)}`;
+    info.append(title, meta);
+    const actions = document.createElement("div");
+    actions.className = "clean-actions";
+    for (const [action, label] of [["fill", "Fill"], ["blur", "Blur"], ["exclude", "Off"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "clean-action";
+      button.textContent = label;
+      const current = layer.enabled === false ? "exclude" : (layer.kind === "blur" ? "blur" : "fill");
+      if (current === action) button.classList.add("is-active");
+      button.addEventListener("click", () => setLayerAction(layer.id, action));
+      actions.append(button);
+    }
+    row.append(info, actions);
+    cleanLayers.append(row);
+  }
+}
+
+async function setLayerAction(layerId, action) {
+  if (!activeProject || !activeEdit) return;
+  const data = await api(
+    `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/clean/${encodeURIComponent(layerId)}`,
+    { method: "PATCH", body: JSON.stringify({ action }) },
+  );
+  activeEdit = data.edit;
+  renderCleanLayers();
+  await loadEdits();
+}
+
+async function createFullEdit() {
+  if (!activeProject) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(activeProject.id)}/edits/full`, { method: "POST" });
+    await loadEdits();
+    await selectEdit(data.edit.id);
+  } catch (error) {
+    setStatus(`Full edit failed: ${error.message}`, "bad");
+  }
+}
+
+async function smartCut(storyId) {
+  if (!activeProject) return;
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/stories/${encodeURIComponent(storyId)}/smart-cut`,
+      { method: "POST" },
+    );
+    await loadEdits();
+    await selectEdit(data.edit.id);
+  } catch (error) {
+    setStatus(`Smart cut failed: ${error.message}`, "bad");
+  }
+}
+
+async function buildManualStory() {
+  if (!activeProject) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(activeProject.id)}/edits/story`, {
+      method: "POST",
+      body: JSON.stringify({
+        start: Number(storyStart.value) || 0,
+        end: Number(storyEnd.value) || 0,
+        title: storyTitle.value || "",
+      }),
+    });
+    storyTitle.value = "";
+    await loadEdits();
+    await selectEdit(data.edit.id);
+  } catch (error) {
+    setStatus(`Story build failed: ${error.message}`, "bad");
+  }
+}
+
+async function cleanFromCheckLayers() {
+  if (!activeProject || !activeEdit) return;
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/clean/from-check`,
+      { method: "POST" },
+    );
+    activeEdit = data.edit;
+    renderCleanLayers();
+    await loadEdits();
+  } catch (error) {
+    setStatus(`Clean layers failed: ${error.message}`, "bad");
+  }
+}
+
+async function openProject(project) {
+  activeProject = project;
+  activeCheck = null;
+  activeEdit = null;
+  editor.hidden = false;
+  editorTitle.textContent = project.name;
+  editorMeta.textContent = `${formatBytes(project.source_bytes)} · local`;
+  editorEmpty.hidden = false;
+  editPanel.hidden = true;
+  storyStart.value = "0";
+  storyEnd.value = "";
+  storyTitle.value = "";
+  renderEditorStories();
+  await loadEdits();
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(project.id)}/check`);
+    activeCheck = data.check;
+    renderEditorStories();
+    const duration = Number(activeCheck.result?.meta?.duration) || 0;
+    storyEnd.value = duration ? String(Math.round(duration * 10) / 10) : "";
+  } catch (error) {
+    setStatus(`Project check failed: ${error.message}`, "bad");
+  }
+}
+
+editorClose?.addEventListener("click", closeEditor);
+editFull?.addEventListener("click", createFullEdit);
+buildStory?.addEventListener("click", buildManualStory);
+cleanFromCheck?.addEventListener("click", cleanFromCheckLayers);
+editor?.addEventListener("click", (event) => {
+  if (event.target === editor) closeEditor();
+});
+
 function projectCard(project) {
   const card = document.createElement("article");
   card.className = "project-card";
@@ -153,7 +420,12 @@ function projectCard(project) {
   check.className = "project-check";
   check.textContent = "Check";
   check.addEventListener("click", () => startCheck(project, card));
-  actions.append(check);
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "project-check";
+  open.textContent = "Open";
+  open.addEventListener("click", () => openProject(project));
+  actions.append(check, open);
   card.append(actions);
 
   const status = document.createElement("p");

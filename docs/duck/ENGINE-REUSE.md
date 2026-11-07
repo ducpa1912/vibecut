@@ -31,6 +31,13 @@ Copied into `duckcore/engine/` from Studio `510bee9`:
 - `captions.py`
 - `textfill/` with `METHODS = ("lama",)`
 - `workflow_config.py`, `usage_store.py`, minimal `packs.py`, minimal `settings_store.py`
+- `pipeline.py` — probe, scene scan, thumbnails, OCR sampling, transcript, analysis
+
+DuckSuite-only modules:
+
+- `duckcore/check.py` — background Check and smart stories
+- `duckcore/edits.py` — full-video edit, manual story, smart cut
+- `duckcore/clean.py` — clean layers from Check tracklets
 
 Local API:
 

@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from duckcore import clean, edits
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -44,6 +45,17 @@ class ProjectCreate(BaseModel):
 
 class ProjectRename(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+
+
+class StoryEditBody(BaseModel):
+    story_id: str = ""
+    start: float | None = None
+    end: float | None = None
+    title: str = Field(default="", max_length=120)
+
+
+class LayerAction(BaseModel):
+    action: str = Field(pattern="^(fill|blur|exclude)$")
 
 
 class DevImport(BaseModel):
@@ -218,6 +230,115 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Project not found.") from exc
         return {"check": checks.cancel(project_id)}
+
+    def completed_check(project_id: str) -> dict:
+        status = checks.status(project_id)
+        if status.get("state") != "done" or not isinstance(status.get("result"), dict):
+            raise HTTPException(
+                status_code=409,
+                detail="Run Check first; the edit needs Check results.",
+            )
+        return status["result"]
+
+    @app.get("/api/projects/{project_id}/edits")
+    def list_project_edits(project_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        return {"edits": edits.list_edits(data_root, project_id)}
+
+    @app.post("/api/projects/{project_id}/edits/full")
+    def create_full_edit(project_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            store.get(project_id)
+            check = completed_check(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        return {"edit": edits.create_full(project_id, check, data_root)}
+
+    @app.post("/api/projects/{project_id}/edits/story")
+    def create_story_edit(
+        project_id: str, body: StoryEditBody, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            store.get(project_id)
+            check = completed_check(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        try:
+            edit = edits.create_story(
+                project_id,
+                check,
+                data_root,
+                story_id=body.story_id,
+                start=body.start,
+                end=body.end,
+                title=body.title,
+            )
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"edit": edit}
+
+    @app.post("/api/projects/{project_id}/stories/{story_id}/smart-cut")
+    def create_smart_cut(
+        project_id: str, story_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            store.get(project_id)
+            check = completed_check(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        try:
+            edit = edits.create_story(
+                project_id, check, data_root, story_id=story_id,
+            )
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"edit": edit}
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}")
+    def get_project_edit(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            return {"edit": edits.get_edit(data_root, project_id, edit_id)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/clean/from-check")
+    def clean_from_check(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            check = completed_check(project_id)
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        report = check.get("report") or {}
+        edit = clean.apply_report(edit, report)
+        edits.save_edit(edit, data_root)
+        return {"edit": edit, "layers": len(edit.get("clean") or [])}
+
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/clean/{layer_id}")
+    def patch_clean_layer(
+        project_id: str,
+        edit_id: str,
+        layer_id: str,
+        body: LayerAction,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edit = clean.patch_layer(edit, layer_id, body.action)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Layer not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        edits.save_edit(edit, data_root)
+        return {"edit": edit}
 
     @app.patch("/api/projects/{project_id}")
     def rename_project(

@@ -112,6 +112,63 @@
       </footer>
     </main>
   </div>
+
+  <div class="editor-overlay" id="editor" hidden>
+    <div class="editor-sheet" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+      <header class="editor-head">
+        <div>
+          <p class="kicker">Project</p>
+          <h2 id="editor-title">Edit</h2>
+          <p class="editor-meta" id="editor-meta"></p>
+        </div>
+        <button class="quiet" type="button" id="editor-close">Close</button>
+      </header>
+      <div class="editor-body">
+        <aside class="editor-side">
+          <section>
+            <h3>Full video</h3>
+            <p id="full-copy">Start with the whole source, then clean or cut stories from it.</p>
+            <button class="primary" type="button" id="edit-full">Edit full video</button>
+          </section>
+          <section>
+            <h3>Smart stories</h3>
+            <div id="editor-stories" class="editor-stories"></div>
+          </section>
+          <section>
+            <h3>Story builder</h3>
+            <div class="story-form">
+              <label>Start <input id="story-start" type="number" min="0" step="0.1"></label>
+              <label>End <input id="story-end" type="number" min="0" step="0.1"></label>
+              <label>Title <input id="story-title" type="text" maxlength="120" placeholder="Optional"></label>
+            </div>
+            <button class="secondary" type="button" id="build-story">Build story</button>
+          </section>
+          <section>
+            <h3>Edits</h3>
+            <div id="editor-edits" class="editor-edits"></div>
+          </section>
+        </aside>
+        <main class="editor-main">
+          <div class="editor-empty" id="editor-empty">Choose an edit, or start with the full video.</div>
+          <div id="edit-panel" hidden>
+            <header class="edit-head">
+              <div>
+                <p class="kicker" id="edit-kind">Full video</p>
+                <h3 id="edit-title">Edit</h3>
+              </div>
+              <span id="edit-meta" class="section-note"></span>
+            </header>
+            <div class="edit-actions">
+              <button class="primary" type="button" id="clean-from-check">Create clean layers from Check</button>
+              <span class="section-note" id="clean-count"></span>
+            </div>
+            <div id="clean-layers" class="clean-layers"></div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
   <script src="/assets/duck.js"></script>
 </body>
 </html>

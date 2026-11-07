@@ -29,8 +29,10 @@ Day 1 shell and Day 2 projects/import are implemented. The app is not App Store 
 - Engine extraction: Apple Vision, Apple Speech, smart story helpers, LaMa text fill.
 - `/api/engine` and `/api/models` show what is ready on this Mac.
 - Background Check: scenes, transcript, OCR tracklets, smart story candidates.
+- Full-video edit first, then manual story builder and one-click smart cut.
+- Clean layers from Check: LaMa Fill, explicit Blur or Off.
 - Project cards show Check status and story candidates.
-- Tests for core auth, projects, engine status and idle Check.
+- Tests for core auth, projects, engine status, edits and clean layers.
 
 See [ROADMAP.md](ROADMAP.md) and [docs/duck/DISTRIBUTION.md](docs/duck/DISTRIBUTION.md).
 

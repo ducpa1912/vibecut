@@ -180,6 +180,7 @@ class CheckManager:
                     "text": str(transcript.get("text") or "")[:4000],
                 },
                 "engine": analysis.get("engine") or {},
+                "scenes": analysis.get("scenes") or [],
                 "stories": stories,
                 "report": report,
                 "finished": time.time(),
