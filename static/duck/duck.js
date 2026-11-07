@@ -45,6 +45,10 @@ const cleanLayers = document.querySelector("#clean-layers");
 const renderEdit = document.querySelector("#render-edit");
 const renderStatus = document.querySelector("#render-status");
 const downloadRender = document.querySelector("#download-render");
+const generateCaptions = document.querySelector("#generate-captions");
+const downloadCaptions = document.querySelector("#download-captions");
+const captionsStatus = document.querySelector("#captions-status");
+const captionCues = document.querySelector("#caption-cues");
 
 let activeProject = null;
 let activeCheck = null;
@@ -275,6 +279,7 @@ async function selectEdit(editId) {
   editTitle.textContent = activeEdit.title || "Edit";
   editMeta.textContent = `${formatTime(activeEdit.start)}–${formatTime(activeEdit.end)} · ${activeEdit.clips?.length || 0} clips`;
   renderCleanLayers();
+  renderCaptions();
   resetRenderUi();
   void pollRender();
   await loadEdits();
@@ -460,6 +465,86 @@ async function pollRender() {
   }
 }
 
+function renderCaptions() {
+  if (!captionCues) return;
+  const track = activeEdit?.captions;
+  captionCues.replaceChildren();
+  if (!track || !track.cues?.length) {
+    const note = document.createElement("p");
+    note.className = "editor-note";
+    note.textContent = "No captions yet. Generate them from the transcript.";
+    captionCues.append(note);
+    if (captionsStatus) captionsStatus.textContent = "";
+    if (downloadCaptions) downloadCaptions.hidden = true;
+    return;
+  }
+  if (captionsStatus) captionsStatus.textContent = `${track.cues.length} cues · SRT`;
+  if (downloadCaptions) downloadCaptions.hidden = false;
+  for (const cue of track.cues) {
+    const row = document.createElement("div");
+    row.className = "caption-row";
+    const time = document.createElement("span");
+    time.className = "caption-time";
+    time.textContent = `${formatTime(cue.start)}–${formatTime(cue.end)}`;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = cue.text || "";
+    input.maxLength = 240;
+    input.addEventListener("change", () => saveCue(cue.id, input.value));
+    row.append(time, input);
+    captionCues.append(row);
+  }
+}
+
+async function saveCue(cueId, text) {
+  if (!activeProject || !activeEdit) return;
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/captions/cues/${encodeURIComponent(cueId)}`,
+      { method: "PATCH", body: JSON.stringify({ text }) },
+    );
+    activeEdit.captions = data.captions;
+    if (captionsStatus) captionsStatus.textContent = "Saved";
+  } catch (error) {
+    if (captionsStatus) captionsStatus.textContent = `Save failed: ${error.message}`;
+  }
+}
+
+async function generateCaptionTrack() {
+  if (!activeProject || !activeEdit) return;
+  if (captionsStatus) captionsStatus.textContent = "Generating…";
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/captions/generate`,
+      { method: "POST" },
+    );
+    activeEdit.captions = data.captions;
+    renderCaptions();
+  } catch (error) {
+    if (captionsStatus) captionsStatus.textContent = `Captions failed: ${error.message}`;
+  }
+}
+
+async function downloadCaptionTrack() {
+  if (!activeProject || !activeEdit) return;
+  try {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/captions.srt`,
+      { headers: { Authorization: `Bearer ${launchToken}` }, cache: "no-store" },
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${activeProject.name.replace(/[^\w.-]+/g, "-")}-${activeEdit.id}.srt`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    if (captionsStatus) captionsStatus.textContent = `Download failed: ${error.message}`;
+  }
+}
+
 async function startRenderEdit() {
   if (!activeProject || !activeEdit) return;
   renderTimer = null;
@@ -545,6 +630,8 @@ cleanFromCheck?.addEventListener("click", cleanFromCheckLayers);
 cleanPreview?.addEventListener("click", previewClean);
 renderEdit?.addEventListener("click", startRenderEdit);
 downloadRender?.addEventListener("click", downloadRendered);
+generateCaptions?.addEventListener("click", generateCaptionTrack);
+downloadCaptions?.addEventListener("click", downloadCaptionTrack);
 editor?.addEventListener("click", (event) => {
   if (event.target === editor) closeEditor();
 });

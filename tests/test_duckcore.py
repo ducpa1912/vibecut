@@ -222,6 +222,62 @@ def test_settings_online_and_model_verify(tmp_path: Path) -> None:
         assert verified.json()["ok"] is False
 
 
+def test_captions_generate_edit_and_srt(tmp_path: Path) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fake")
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token"}
+
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "Caption test", "source_path": str(source)},
+        ).json()["project"]
+        _write_fake_check(tmp_path, project["id"])
+        transcript_dir = tmp_path / "projects" / project["id"] / "transcript"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        (transcript_dir / "transcript_v2_tr_test.json").write_text(
+            __import__("json").dumps({
+                "id": "tr_test",
+                "created": 1.0,
+                "segments": [
+                    {"start": 0.0, "end": 2.0, "text": "First line."},
+                    {"start": 2.0, "end": 4.0, "text": "Second line."},
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        edit = client.post(
+            f"/api/projects/{project['id']}/edits/full",
+            headers=headers,
+        ).json()["edit"]
+        generated = client.post(
+            f"/api/projects/{project['id']}/edits/{edit['id']}/captions/generate",
+            headers=headers,
+        )
+        assert generated.status_code == 200
+        track = generated.json()["captions"]
+        assert len(track["cues"]) == 2
+
+        cue_id = track["cues"][0]["id"]
+        patched = client.patch(
+            f"/api/projects/{project['id']}/edits/{edit['id']}/captions/cues/{cue_id}",
+            headers=headers,
+            json={"text": "Edited line."},
+        )
+        assert patched.status_code == 200
+        assert patched.json()["captions"]["cues"][0]["text"] == "Edited line."
+
+        srt = client.get(
+            f"/api/projects/{project['id']}/edits/{edit['id']}/captions.srt",
+            headers=headers,
+        )
+        assert srt.status_code == 200
+        assert "Edited line." in srt.text
+
+
 def test_project_rejects_source_outside_data_root(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.mp4"
     outside.write_bytes(b"outside")

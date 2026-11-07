@@ -155,6 +155,18 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 Expected: language `auto`, model hash matches `1faef...`, invalid endpoint rejected.
 
+### Captions
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/captions/generate"
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/captions.srt"
+```
+
+Expected: one cue per transcript segment piece, editable text, valid SRT. A 46-second full edit produced 35 cues in this test.
+
 ## 4. Development app bundle
 
 ```bash

@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from duckcore import app_settings, clean, edits, preview, render
+from duckcore import app_settings, captions, clean, edits, preview, render
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -61,6 +61,14 @@ class LayerAction(BaseModel):
 class SettingsPatch(BaseModel):
     online_enabled: bool | None = None
     online_endpoint: str | None = None
+
+
+class CuePatch(BaseModel):
+    text: str = Field(max_length=240)
+
+
+class CaptionsPatch(BaseModel):
+    burn: bool
 
 
 class DevImport(BaseModel):
@@ -374,6 +382,85 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
         return FileResponse(output, media_type="image/jpeg")
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/captions")
+    def get_captions(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        return {"captions": edit.get("captions")}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/captions/generate")
+    def generate_captions(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        from duckcore.engine import stt
+
+        job_dir = data_root / "projects" / project_id
+        transcript = stt.load_latest_transcript(job_dir) or {}
+        try:
+            track = captions.generate(edit, transcript, data_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"captions": track}
+
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/captions/cues/{cue_id}")
+    def patch_caption_cue(
+        project_id: str,
+        edit_id: str,
+        cue_id: str,
+        body: CuePatch,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            track = captions.update_cue(edit, cue_id, body.text, data_root)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Cue not found.") from exc
+        return {"captions": track}
+
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/captions")
+    def patch_captions(
+        project_id: str,
+        edit_id: str,
+        body: CaptionsPatch,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            track = captions.set_burn(edit, body.burn, data_root)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"captions": track}
+
+    @app.get(
+        "/api/projects/{project_id}/edits/{edit_id}/captions.srt",
+        responses={200: {"content": {"application/x-subrip": {}}}},
+    )
+    def captions_srt(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> Response:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        track = edit.get("captions")
+        if not isinstance(track, dict):
+            raise HTTPException(status_code=409, detail="Generate captions first.")
+        return Response(
+            captions.srt(track),
+            media_type="application/x-subrip",
+            headers={"Content-Disposition": f'attachment; filename="{edit_id}.srt"'},
+        )
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/render")
     def start_render(

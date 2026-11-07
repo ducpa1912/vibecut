@@ -594,6 +594,27 @@ h2 {
 .clean-preview img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; background: var(--canvas); }
 .clean-preview figcaption { padding: 8px 10px; color: var(--muted); font-size: 11px; background: var(--surface-raised); }
 
+.captions-panel { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.caption-cues { display: grid; gap: 5px; max-height: 320px; overflow: auto; }
+.caption-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.caption-time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.caption-row input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
 .clean-layers { display: grid; gap: 6px; }
 .clean-row {
   display: flex;
