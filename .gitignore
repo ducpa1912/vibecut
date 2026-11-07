@@ -9,3 +9,10 @@ __pycache__/
 
 assets/music/generated/
 .lane/
+
+# DuckSuite Mac shell
+mac/DuckSuite/*.xcodeproj/
+mac/DuckSuite/DerivedData/
+mac/DuckSuite/.build/
+mac/DuckSuite/*.xcworkspace/
+mac/DuckSuite/xcuserdata/

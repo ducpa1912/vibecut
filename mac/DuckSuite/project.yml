@@ -1,0 +1,30 @@
+name: DuckSuite
+options:
+  bundleIdPrefix: com.ducksuite
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+targets:
+  DuckSuite:
+    type: application
+    platform: macOS
+    sources:
+      - path: DuckSuite
+    info:
+      path: DuckSuite/Info.plist
+    entitlements:
+      path: DuckSuite/DuckSuite.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ducksuite.app
+        PRODUCT_NAME: DuckSuite
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
