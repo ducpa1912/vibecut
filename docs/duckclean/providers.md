@@ -10,6 +10,11 @@ DuckClean's shape decides the winner:
 - metadata is small, so the Postgres bill is mostly compute and idle time;
 - the API runs on Cloudflare Workers, so R2 and Hyperdrive remove moving parts.
 
+**Scope:** this file compares auth, object storage and Postgres only. Hosting,
+CPU and GPU worker cost is in [`cost-model.md`](./cost-model.md). The 1M row in
+the cost table below is therefore incomplete; the corrected three-scale total,
+including hosting and worker, is in that file.
+
 "PostgREST" is the REST layer over Postgres, not the database. Supabase bundles
 PostgREST. This note compares Postgres hosting, which is what the current schema
 needs.
@@ -149,10 +154,12 @@ R2 wins. Model the ratio, not the headline storage rate.
 | **Better Auth + Neon + R2** | ~$5–35 | No per-user auth fee; own the data | You own auth security, UI, patches |
 | **Self-hosted Supabase/PocketBase** | ~$5 VPS | Full control | You own backups, upgrades, uptime |
 
-## Cost scenarios
+## Data-plane cost scenarios
 
-Assumptions: list prices, 1,000 / 100,000 / 1,000,000 MAU, video on R2,
-Cloudflare Workers Paid for Queues. Domain and GPU worker excluded.
+Assumptions: list prices, 1,000 / 100,000 / 1,000,000 MAU, video on R2.
+These rows cover auth + database + storage only. They exclude Cloudflare
+Workers, CPU detection, GPU render and video worker hosting. Use
+[`cost-model.md`](./cost-model.md) for the full operator cost.
 
 | Workload | Clerk + Neon + R2 | WorkOS + Neon + R2 | Supabase Pro + R2 | Better Auth + Neon + R2 |
 |---|---:|---:|---:|---:|
@@ -201,8 +208,9 @@ matters more than a few dollars of storage.
 
 ## Final recommendation
 
-1. **Ship M1 on Clerk free + Neon free + R2 + Workers Paid.** About **$5/month**
-   before domain and GPU.
+1. **Ship M1 on Clerk free + Neon free + R2 + Workers Paid.** About **$5–6/month**
+   before domain and GPU. Full hosting/worker model:
+   [`cost-model.md`](./cost-model.md).
 2. **Keep R2.** It is the correct storage for video egress, and the code already
    uses it.
 3. **Do not switch auth yet.** Re-evaluate at 50k MRU; then WorkOS AuthKit is

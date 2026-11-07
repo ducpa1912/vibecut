@@ -11,6 +11,10 @@ not a reel cutter, not a local runner. There is no desktop install, no local
 render path and no phone limitation: rendering runs on cloud workers, so a
 phone can upload, review, render and download.
 
+Status: **M1 code complete** — signed-in library, direct-to-R2 upload, probe,
+proxy and playback. Live cloud resources are not provisioned yet. M2 is beat
+dissection and detection.
+
 ## Product promise
 
 - One purpose: remove text, logos and burnt-in images as cleanly as the current

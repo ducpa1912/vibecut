@@ -1,9 +1,11 @@
 # DuckClean build plan
 
-Status: plan, with the M0 contract frozen in
-[`contract.md`](./contract.md). Brand-new cloud product on a standalone orphan
-branch `duckclean` in `github.com/ducpa1912/vibecut`, with no shared history
-with Classic or `main`. Local path:
+Status: **M1 code complete; live cloud provisioning pending.** M0 contract is
+frozen in [`contract.md`](./contract.md). Hosting and worker cost is in
+[`cost-model.md`](./cost-model.md); provider alternatives are in
+[`providers.md`](./providers.md). Brand-new cloud product on a standalone
+orphan branch `duckclean` in `github.com/ducpa1912/vibecut`, with no shared
+history with Classic or `main`. Local path:
 `/Users/happynghia/Public/Project/Code/drop_eval/duckclean`.
 
 Classic keeps shipping in its lane. DuckClean ports engine fixes from Classic;
@@ -14,15 +16,16 @@ it never merges the whole Classic lane, and `main` is not moved.
 | Decision | Choice |
 |---|---|
 | Product shape | Cloud-only, single-purpose auto-clean |
-| Frontend | Static SPA on Cloudflare Pages |
-| API | Cloudflare Workers + Hono, TypeScript |
-| Database | Postgres (Neon or Supabase), Cloudflare Hyperdrive |
-| Blob | Cloudflare R2 (S3 API, presigned URLs) |
-| Queue / retry | Cloudflare Queues plus DB-backed job state |
-| CPU worker | Docker image on Hugging Face (Spaces or Jobs) |
-| GPU worker | Same Docker image, GPU tier on Hugging Face, then dedicated GPU cloud |
-| Auth | OAuth through Clerk (Google, Apple, email link) with JWKS verification in Workers |
+| Frontend | Static SPA on Cloudflare Pages (free static hosting) |
+| API | Cloudflare Workers Paid ($5/month base) + Hono, TypeScript |
+| Database | Postgres on Neon free for M1; Supabase or other Postgres later; Cloudflare Hyperdrive |
+| Blob | Cloudflare R2 (S3 API, presigned URLs, zero egress) |
+| Queue / retry | Cloudflare Queues plus DB-backed job state (included in Workers Paid) |
+| CPU worker | Docker image on Hugging Face CPU Basic for M1/M2; CPU Upgrade when volume needs it |
+| GPU worker | RunPod or Modal serverless for render; HF GPU only if it wins on measured cost |
+| Auth | OAuth through Clerk for M1 (50k MRU free); re-evaluate at 50k–100k MRU |
 | Billing | Stripe metered usage, render-hour equivalent |
+| Cost model | [`cost-model.md`](./cost-model.md): hosting, DB, storage, CPU and GPU at three scales |
 | Unit of work | Beat: scene-bounded span of 1–4 seconds |
 | Package manager | npm workspaces (`web`, `api`), one lockfile |
 | Python packaging | `pyproject.toml`; the image installs the package, no `requirements.txt` |
@@ -58,13 +61,17 @@ duckclean/
     openapi.yaml               # frozen HTTP contract
     test/                      # migration (PGlite), OpenAPI, hashing, zod
   worker/                      # Python worker, one image for CPU and GPU
+    Dockerfile                 # ffmpeg + package, HF Docker Space port 7860
+    README.md                  # Hugging Face Space metadata
     pyproject.toml             # deps + ruff + mypy + pytest config
     duckclean_worker/
+      app.py                   # FastAPI: health, probe, proxy, cancel
+      media.py                 # ffprobe, proxy, poster, ffmpeg
+      storage.py               # presigned GET/PUT, local test seam
       contract.py              # pydantic wire models, route payloads
       signing.py               # HMAC-SHA256 + clock skew
-      # task 4 adds: app.py (FastAPI routes), storage.py, beats.py, frames.py
-      # task 5 adds: ocr.py, logos.py, masks.py
-      # task 8 adds: fill/{lama,propainter,generative}.py, render.py,
+      # M2 adds: beats.py, frames.py, ocr.py, logos.py, masks.py
+      # M5 adds: fill/{lama,propainter,generative}.py, render.py,
       # assemble.py, usage.py
     tests/
   engine/                      # ported Classic engine, no Classic routes
@@ -72,6 +79,10 @@ duckclean/
     PORT_LOG.md                # what is ported, from where, verified by what
   docs/duckclean/
     contract.md                # frozen decisions, revisions, tickets, limits
+    cost-model.md              # hosting, DB, storage, CPU and GPU at three scales
+    providers.md               # auth/storage/Postgres alternatives and prices
+    infrastructure.md          # Clerk, Postgres, Hyperdrive, R2, worker, Pages
+    m1-surface-brief.md        # M1 library/upload surface
 ```
 
 `engine/` is a copy with a clear port log, not a git submodule and not a shared
@@ -581,6 +592,32 @@ render_hours = compute_seconds * weight / 3600
 - Cancelled and failed jobs bill actual compute, never the estimate.
 - Detection and preview are metered too, at their own weight.
 - Plan attributes: included render hours, storage bytes, output retention.
+
+### Hosting and worker cost
+
+The customer price is render-hour equivalent. The operator cost is hosting,
+database, storage, CPU and GPU. The full model is in
+[`cost-model.md`](./cost-model.md).
+
+Planning assumptions: 2-minute average source, 3 CPU-minutes per upload,
+5 GPU-minutes per rendered clip, L4 GPU at $0.59–0.80/hour, video on R2.
+
+| Scale | Hosting + DB + storage + worker | With Clerk | With WorkOS/Supabase |
+|---|---:|---:|---:|
+| Early: 1k MAU, 50 GB, 500 GB egress | ~$6–30 | ~$6–30 | ~$6–30 |
+| Growth: 100k MAU, 1 TB, 10 TB | ~$150–210 | ~$1.2k | ~$150–250 |
+| Scale: 1M MAU, 10 TB, 100 TB | ~$1.4k–2.0k | ~$20.4k | ~$1.4k–4.3k |
+
+The GPU line is the largest unknown. At 20k renders/month:
+
+| GPU-min per render | At $0.59/hr |
+|---:|---:|
+| 1 | ~$197 |
+| 5 | ~$983 |
+| 15 | ~$2,950 |
+
+Do not price the commercial plan until one real clip gives measured CPU-minutes
+per upload and GPU-minutes per rendered output minute.
 
 ## 13. Frontend
 

@@ -4,8 +4,11 @@ Status: M1 code is complete. No live cloud resource is provisioned yet. This
 document separates what exists in the repo from what must be created in an
 account.
 
-Provider alternatives and current list prices are in
-[`providers.md`](./providers.md).
+Run `npm run m1:doctor` to check local env files, Wrangler auth and live health
+without printing secrets.
+
+Provider alternatives are in [`providers.md`](./providers.md). Hosting and
+worker cost at three scales is in [`cost-model.md`](./cost-model.md).
 
 ## The four services, plainly
 

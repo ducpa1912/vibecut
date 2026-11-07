@@ -10,7 +10,8 @@ phone can complete the entire flow.
 contract. `docs/duckclean/infrastructure.md` says exactly what Clerk, R2,
 Postgres and Hyperdrive are, what exists, and what must be created.
 `docs/duckclean/providers.md` compares current auth, storage and Postgres
-prices. If a doc disagrees with `HANDOFF.md`, the handoff wins.
+prices. `docs/duckclean/cost-model.md` is the three-scale hosting and worker
+cost model. If a doc disagrees with `HANDOFF.md`, the handoff wins.
 
 ## Status
 
@@ -72,6 +73,7 @@ cp api/.dev.vars.example api/.dev.vars
 cp web/.env.example web/.env.local
 # fill Clerk, Postgres, R2 and the worker secret
 
+npm run m1:doctor               # missing env, Wrangler auth, live health
 npm run dev:web                 # Vite on :5173, proxies /api to :8787
 npm run dev:api                 # wrangler dev on :8787
 cd worker && ../.venv/bin/uvicorn duckclean_worker.app:app --port 8799

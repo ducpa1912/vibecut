@@ -20,7 +20,8 @@
     "format:js": "prettier --write .",
     "format:js:check": "prettier --check .",
     "test:js": "npm run test --workspaces --if-present",
-    "migrate:check": "npm run test --workspace api -- --run test/migration.test.ts"
+    "migrate:check": "npm run test --workspace api -- --run test/migration.test.ts",
+    "m1:doctor": "bash scripts/m1-doctor.sh"
   },
   "overrides": {
     "vite": "7.3.7"

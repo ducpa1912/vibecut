@@ -46,6 +46,8 @@ the full flow.
   are, what is provisioned (nothing yet), and the exact setup commands.
 - `docs/duckclean/providers.md` — auth, object storage and Postgres
   alternatives with current prices, cost scenarios and migration notes.
+- `docs/duckclean/cost-model.md` — hosting, database, storage, CPU and GPU at
+  three scales, including what subsidizes and what inflates the bill.
 
 If a decision below conflicts with a doc, this handoff wins. Update the docs in
 the same change.
