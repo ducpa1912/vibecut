@@ -296,6 +296,56 @@ h2 {
 
 .project-meta { margin: 0; color: var(--muted); font-size: 12px; }
 
+.project-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+.project-check {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.project-check:hover:not(:disabled) { background: #f1ece3; }
+.project-check:disabled { opacity: .6; cursor: wait; }
+
+.project-check-status {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.project-stories {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.story-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid #efe8dc;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.story-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.story-time { flex: none; font-variant-numeric: tabular-nums; }
+
 .project-delete {
   position: absolute;
   top: 14px;

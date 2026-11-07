@@ -12,7 +12,7 @@
 |---:|---|---|
 | 1 | **Shell done; StoreKit/render pending** | `duckcore` sidecar, token handshake, static shell, SwiftUI shell, dev `.app`, LaMa model copy, tests |
 | 2 | **Projects/import done** | SQLite project index, native import bridge, project cards, delete, dev fallback |
-| 3 | **Engine extracted; pipeline wiring next** | Apple Vision, Apple Speech, detect/story engine, captions, LaMa textfill copied and importable; `/api/engine` and `/api/models` report readiness |
+| 3 | **Check pipeline built; edit/render next** | Background Check runs scenes, transcript, OCR tracklets and smart stories; probe is about 50 s for a 46 s 1080p clip; `/api/engine` and `/api/models` report readiness |
 
 Day 1 remaining: LGPL ffmpeg bundle, full Xcode build, StoreKit test, sample 1080p render.
 

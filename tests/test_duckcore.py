@@ -80,6 +80,26 @@ def test_engine_status_lists_vision_speech_and_lama(tmp_path: Path) -> None:
         assert models.json()["models"][0]["id"] == "lama"
 
 
+def test_check_starts_idle(tmp_path: Path) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"not a real video")
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token"}
+
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "Idle", "source_path": str(source)},
+        ).json()["project"]
+        check = client.get(
+            f"/api/projects/{project['id']}/check",
+            headers=headers,
+        )
+        assert check.status_code == 200
+        assert check.json()["check"]["state"] == "idle"
+
+
 def test_project_rejects_source_outside_data_root(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.mp4"
     outside.write_bytes(b"outside")

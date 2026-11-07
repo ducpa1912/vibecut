@@ -45,6 +45,94 @@ function formatBytes(bytes) {
   return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function formatTime(seconds) {
+  const value = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(value / 60);
+  const rest = Math.floor(value % 60);
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function storyLine(story) {
+  const row = document.createElement("div");
+  row.className = "story-line";
+  const title = document.createElement("span");
+  title.className = "story-title";
+  const hook = (story.sentences || []).find((item) => item.text)?.text || story.title || "Story";
+  title.textContent = String(hook).slice(0, 110);
+  const time = document.createElement("span");
+  time.className = "story-time";
+  time.textContent = `${formatTime(story.start)}–${formatTime(story.end)}`;
+  row.append(title, time);
+  return row;
+}
+
+function renderCheck(project, card, check) {
+  const status = card.querySelector(".project-check-status");
+  const button = card.querySelector(".project-check");
+  const stories = card.querySelector(".project-stories");
+  if (!status || !button || !stories) return;
+
+  const state = check.state || "idle";
+  const percent = Math.round((Number(check.progress) || 0) * 100);
+  if (state === "queued" || state === "running") {
+    status.textContent = `${check.stage || "Checking"} · ${percent}%`;
+    button.textContent = "Checking…";
+    button.disabled = true;
+    return;
+  }
+  if (state === "done") {
+    const rows = check.result?.stories?.stories || [];
+    status.textContent = `Check complete · ${rows.length} ${rows.length === 1 ? "story" : "stories"}`;
+    button.textContent = "Re-check";
+    button.disabled = false;
+    stories.replaceChildren(...rows.slice(0, 3).map(storyLine));
+    return;
+  }
+  if (state === "failed" || state === "cancelled") {
+    status.textContent = check.message || "Check failed";
+    button.textContent = "Retry";
+    button.disabled = false;
+    stories.replaceChildren();
+    return;
+  }
+  status.textContent = "Not checked";
+  button.textContent = "Check";
+  button.disabled = false;
+  stories.replaceChildren();
+}
+
+async function pollCheck(project, card) {
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(project.id)}/check`);
+    renderCheck(project, card, data.check);
+    if (data.check.state === "queued" || data.check.state === "running") {
+      setTimeout(() => pollCheck(project, card), 1500);
+    }
+  } catch (error) {
+    setStatus(`Check status failed: ${error.message}`, "bad");
+  }
+}
+
+async function startCheck(project, card) {
+  const button = card.querySelector(".project-check");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Starting…";
+  }
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(project.id)}/check`, {
+      method: "POST",
+    });
+    renderCheck(project, card, data.check);
+    if (data.check.state === "queued" || data.check.state === "running") {
+      setTimeout(() => pollCheck(project, card), 1000);
+    }
+  } catch (error) {
+    setStatus(`Check failed: ${error.message}`, "bad");
+    if (button) button.disabled = false;
+  }
+}
+
 function projectCard(project) {
   const card = document.createElement("article");
   card.className = "project-card";
@@ -57,6 +145,25 @@ function projectCard(project) {
   meta.className = "project-meta";
   meta.textContent = `${formatBytes(project.source_bytes)} · local`;
   card.append(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "project-actions";
+  const check = document.createElement("button");
+  check.type = "button";
+  check.className = "project-check";
+  check.textContent = "Check";
+  check.addEventListener("click", () => startCheck(project, card));
+  actions.append(check);
+  card.append(actions);
+
+  const status = document.createElement("p");
+  status.className = "project-check-status";
+  status.textContent = "Not checked";
+  card.append(status);
+
+  const stories = document.createElement("div");
+  stories.className = "project-stories";
+  card.append(stories);
 
   const remove = document.createElement("button");
   remove.type = "button";
@@ -73,6 +180,7 @@ function projectCard(project) {
   });
   card.append(remove);
 
+  void pollCheck(project, card);
   return card;
 }
 

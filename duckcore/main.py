@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,6 +58,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     data_root = Path(data_root).expanduser().resolve()
     data_root.mkdir(parents=True, exist_ok=True)
     store = ProjectStore(data_root)
+    checks = CheckManager(data_root, store)
     dev_mode = os.environ.get("DUCK_DEV", "").strip() == "1"
     engine_cache: dict = {"at": 0.0, "value": None}
 
@@ -188,9 +190,34 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     @app.get("/api/projects/{project_id}")
     def get_project(project_id: str, _: None = Depends(require_token)) -> dict:
         try:
-            return {"project": store.get(project_id)}
+            project = store.get(project_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Project not found.") from exc
+        return {"project": project, "check": checks.status(project_id)}
+
+    @app.post("/api/projects/{project_id}/check")
+    def start_check(project_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        return {"check": checks.start(project_id)}
+
+    @app.get("/api/projects/{project_id}/check")
+    def check_status(project_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        return {"check": checks.status(project_id)}
+
+    @app.post("/api/projects/{project_id}/check/cancel")
+    def cancel_check(project_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        return {"check": checks.cancel(project_id)}
 
     @app.patch("/api/projects/{project_id}")
     def rename_project(

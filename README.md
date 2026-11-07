@@ -28,7 +28,9 @@ Day 1 shell and Day 2 projects/import are implemented. The app is not App Store 
 - Development `.app` builder.
 - Engine extraction: Apple Vision, Apple Speech, smart story helpers, LaMa text fill.
 - `/api/engine` and `/api/models` show what is ready on this Mac.
-- Tests for core auth, projects and engine status.
+- Background Check: scenes, transcript, OCR tracklets, smart story candidates.
+- Project cards show Check status and story candidates.
+- Tests for core auth, projects, engine status and idle Check.
 
 See [ROADMAP.md](ROADMAP.md) and [docs/duck/DISTRIBUTION.md](docs/duck/DISTRIBUTION.md).
 

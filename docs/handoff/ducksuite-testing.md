@@ -57,6 +57,32 @@ Expected:
 - `fill.method: "lama"`, `fill.ready: true`
 - `models[0].id: "lama"`
 
+## 3b. Run a real check
+
+```bash
+TOKEN=<printed token>
+PROJECT=<project id>
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/check"
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/check"
+```
+
+The check runs in the background. Expected progression:
+
+```text
+queued → Scanning → Reading → Stories → Check → done
+```
+
+When done, the response contains:
+
+- `result.meta` — duration, size, fps
+- `result.transcript` — provider, language, segment count
+- `result.stories.stories` — smart story candidates
+- `result.report.tracklets` — detected text regions with fill plans
+
+A 46-second 1080p clip on this Mac took about 50 seconds and produced one story and 80 text tracklets.
+
 ## 4. Development app bundle
 
 ```bash
