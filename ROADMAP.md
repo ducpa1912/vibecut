@@ -12,7 +12,7 @@
 |---:|---|---|
 | 1 | **Shell done; StoreKit/render pending** | `duckcore` sidecar, token handshake, static shell, SwiftUI shell, dev `.app`, LaMa model copy, tests |
 | 2 | **Projects/import done** | SQLite project index, native import bridge, project cards, delete, dev fallback |
-| 3 | **Check, edit, smart cut, clean, preview, render built** | Background Check; full-video edit; manual story; smart cut; clean layers with Fill/Blur/Off; clean frame preview; 1080p render with original audio. Queue and settings next. |
+| 3 | **Check, edit, clean, preview, render, queue built** | Background Check; full-video edit; manual story; smart cut; clean layers; clean frame preview; 1080p VideoToolbox render with audio; durable SQLite queue with pause/resume/cancel. Settings, captions and voice next. |
 
 Day 1 remaining: LGPL ffmpeg bundle, full Xcode build, StoreKit test, sample 1080p render.
 

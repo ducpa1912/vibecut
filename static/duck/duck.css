@@ -223,7 +223,23 @@ h2 {
   );
 }
 
-.projects-section, .engine-section { display: grid; gap: 14px; }
+.projects-section, .engine-section, .queue-section { display: grid; gap: 14px; }
+
+.queue-controls { display: flex; align-items: center; gap: 8px; }
+.queue-list { display: grid; gap: 6px; }
+.queue-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+}
+.queue-info { min-width: 0; }
+.queue-title { margin: 0; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-meta { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
 
 .engine-grid {
   display: grid;

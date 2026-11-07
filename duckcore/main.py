@@ -71,7 +71,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     data_root.mkdir(parents=True, exist_ok=True)
     store = ProjectStore(data_root)
     checks = CheckManager(data_root, store)
-    renders = render.RenderManager(data_root, store)
+    renders = render.RenderQueue(data_root)
     dev_mode = os.environ.get("DUCK_DEV", "").strip() == "1"
     engine_cache: dict = {"at": 0.0, "value": None}
 
@@ -370,6 +370,24 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         project_id: str, edit_id: str, _: None = Depends(require_token)
     ) -> dict:
         return {"render": renders.status(project_id, edit_id)}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/render/cancel")
+    def cancel_render(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        return {"render": renders.cancel(project_id, edit_id)}
+
+    @app.get("/api/queue")
+    def render_queue(_: None = Depends(require_token)) -> dict:
+        return {"paused": renders.paused, "items": renders.list()}
+
+    @app.post("/api/queue/pause")
+    def pause_queue(_: None = Depends(require_token)) -> dict:
+        return renders.pause()
+
+    @app.post("/api/queue/resume")
+    def resume_queue(_: None = Depends(require_token)) -> dict:
+        return renders.resume()
 
     @app.get(
         "/api/projects/{project_id}/edits/{edit_id}/render/file",

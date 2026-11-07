@@ -121,6 +121,24 @@ curl -s -o out.mp4 -H "Authorization: Bearer $TOKEN" \
 
 Expected render: H.264/AAC MP4, 1080p short side, 24 or 30 fps, original audio. A 5-second smoke render took about 100 seconds on this Mac with LaMa fill.
 
+### Queue
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/queue"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/queue/pause"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/queue/resume"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/render/cancel"
+```
+
+The queue is one local worker, first queued first. A completed or cancelled job stays in the list.
+
 ## 4. Development app bundle
 
 ```bash

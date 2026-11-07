@@ -4,6 +4,10 @@ const projectsHost = document.querySelector("#projects");
 const importButton = document.querySelector("#import-button");
 const engineGrid = document.querySelector("#engine-grid");
 const engineNote = document.querySelector("#engine-note");
+const queueList = document.querySelector("#queue-list");
+const queueStatus = document.querySelector("#queue-status");
+const queuePause = document.querySelector("#queue-pause");
+const queueResume = document.querySelector("#queue-resume");
 const editor = document.querySelector("#editor");
 const editorTitle = document.querySelector("#editor-title");
 const editorMeta = document.querySelector("#editor-meta");
@@ -451,6 +455,7 @@ async function startRenderEdit() {
   try {
     const data = await api(renderUrl(), { method: "POST" });
     paintRender(data.render);
+    await loadQueue();
     if (data.render.state === "queued" || data.render.state === "running") {
       renderTimer = setTimeout(pollRender, 1000);
     }
@@ -664,6 +669,80 @@ async function loadEngine() {
   }
 }
 
+function queueRow(item) {
+  const row = document.createElement("div");
+  row.className = "queue-row";
+  const info = document.createElement("div");
+  info.className = "queue-info";
+  const title = document.createElement("p");
+  title.className = "queue-title";
+  title.textContent = item.title || item.edit_id || "Render";
+  const meta = document.createElement("p");
+  meta.className = "queue-meta";
+  const percent = Math.round((Number(item.progress) || 0) * 100);
+  meta.textContent = `${item.project_name || item.project_id} · ${item.stage || item.state} · ${percent}%`;
+  info.append(title, meta);
+  row.append(info);
+  if (["queued", "running", "cancelling"].includes(item.state)) {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "clean-action";
+    cancel.textContent = item.state === "cancelling" ? "Stopping…" : "Cancel";
+    cancel.disabled = item.state === "cancelling";
+    cancel.addEventListener("click", () => cancelQueueItem(item));
+    row.append(cancel);
+  }
+  return row;
+}
+
+async function loadQueue() {
+  if (!queueList) return;
+  try {
+    const data = await api("/api/queue");
+    const items = data.items || [];
+    queueList.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "projects-empty";
+      empty.textContent = "No renders queued. Open an edit and choose Render 1080p.";
+      queueList.append(empty);
+    } else {
+      for (const item of items) queueList.append(queueRow(item));
+    }
+    const active = items.filter((item) => ["queued", "running", "cancelling"].includes(item.state)).length;
+    if (queueStatus) queueStatus.textContent = data.paused ? "Paused" : (active ? `${active} active` : "Idle");
+    if (queuePause) queuePause.hidden = Boolean(data.paused);
+    if (queueResume) queueResume.hidden = !data.paused;
+  } catch (error) {
+    if (queueStatus) queueStatus.textContent = "Queue unavailable";
+  }
+}
+
+async function cancelQueueItem(item) {
+  try {
+    await api(
+      `/api/projects/${encodeURIComponent(item.project_id)}/edits/${encodeURIComponent(item.edit_id)}/render/cancel`,
+      { method: "POST" },
+    );
+    await loadQueue();
+    await pollRender();
+  } catch (error) {
+    setStatus(`Cancel failed: ${error.message}`, "bad");
+  }
+}
+
+async function setQueuePaused(paused) {
+  try {
+    await api(paused ? "/api/queue/pause" : "/api/queue/resume", { method: "POST" });
+    await loadQueue();
+  } catch (error) {
+    setStatus(`Queue failed: ${error.message}`, "bad");
+  }
+}
+
+queuePause?.addEventListener("click", () => setQueuePaused(true));
+queueResume?.addEventListener("click", () => setQueuePaused(false));
+
 async function health() {
   if (!launchToken) {
     setStatus("No launch token", "bad");
@@ -672,7 +751,8 @@ async function health() {
   try {
     const data = await api("/api/health");
     setStatus(`Local core ${data.version}`, "ok");
-    await Promise.all([loadProjects(), loadEngine()]);
+    await Promise.all([loadProjects(), loadEngine(), loadQueue()]);
+    setInterval(loadQueue, 4000);
   } catch (error) {
     setStatus("Local core unavailable", "bad");
     console.error(error);

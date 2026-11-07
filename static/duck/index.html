@@ -68,6 +68,21 @@
         <div class="projects" id="projects" aria-live="polite"></div>
       </section>
 
+      <section class="queue-section" aria-labelledby="queue-title">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Local worker</p>
+            <h2 id="queue-title">Render queue</h2>
+          </div>
+          <div class="queue-controls">
+            <span class="section-note" id="queue-status">Idle</span>
+            <button class="quiet" type="button" id="queue-pause">Pause</button>
+            <button class="quiet" type="button" id="queue-resume" hidden>Resume</button>
+          </div>
+        </div>
+        <div class="queue-list" id="queue-list" aria-live="polite"></div>
+      </section>
+
       <section class="engine-section" aria-labelledby="engine-title">
         <div class="section-head">
           <div>
