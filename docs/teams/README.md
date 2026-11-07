@@ -44,6 +44,10 @@ Daylight Story Desk:
 - flat surfaces, 1px hairlines, one amber primary action;
 - no newsroom, parchment, darkroom, glass, gradients, mascot illustration, extra modes.
 
+## User test
+
+First-time solo-creator test: [user-test-01.md](user-test-01.md). Verdict: FAIL. Proof/render parity, Check handoff timing, captions, fine trim, hidden clean layers, and proof invalidation are the blockers.
+
 ## Build report
 
 See [BUILD-REPORT.md](BUILD-REPORT.md).
