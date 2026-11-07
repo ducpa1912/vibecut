@@ -1,5 +1,9 @@
 # M1 surface brief — upload and library
 
+Status: built in `web/src/App.tsx`. The surface is code-complete; the live
+Clerk, Postgres and R2 resources are still unprovisioned. See
+[`infrastructure.md`](./infrastructure.md).
+
 Scope: the signed-in shell, the library list, the upload flow and the item view
 for one uploaded clip. Mode: **Operate**. This is not the review timeline (M3)
 and not the render screen (M5).

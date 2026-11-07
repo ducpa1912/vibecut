@@ -42,6 +42,8 @@ the full flow.
   pack.
 - `docs/duckclean/contract.md` — the frozen M0 wire contract: revisions,
   tickets, state machines, limits and the decisions taken while freezing it.
+- `docs/duckclean/infrastructure.md` — what Clerk, R2, Postgres and Hyperdrive
+  are, what is provisioned (nothing yet), and the exact setup commands.
 
 If a decision below conflicts with a doc, this handoff wins. Update the docs in
 the same change.

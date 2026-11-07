@@ -97,7 +97,10 @@ export function createVerifier(options: AuthOptions): Verifier {
     try {
       ({ payload } = await jwtVerify(token, keys, {
         issuer: options.issuer,
-        audience: options.audience,
+        // Clerk's default session token has no `aud`. Keep audience optional so
+        // M1 works with the default token; set CLERK_AUDIENCE when a JWT
+        // template adds one.
+        ...(options.audience ? { audience: options.audience } : {}),
         algorithms: ['RS256'],
         clockTolerance: 5,
         requiredClaims: ['sub', 'exp', 'iat'],
@@ -145,7 +148,7 @@ export function authOptionsFromEnv(
   const jwksJson = env.APP_ENV === 'development' ? env.AUTH_JWKS_JSON : undefined;
   return {
     issuer,
-    audience: env.CLERK_AUDIENCE,
+    audience: env.CLERK_AUDIENCE.trim(),
     jwksUrl: env.CLERK_JWKS_URL ?? `${issuer}/.well-known/jwks.json`,
     jwksJson,
     allowedOrigins: env.ALLOWED_ORIGINS.split(',')
