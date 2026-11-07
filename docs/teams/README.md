@@ -44,6 +44,10 @@ Daylight Story Desk:
 - flat surfaces, 1px hairlines, one amber primary action;
 - no newsroom, parchment, darkroom, glass, gradients, mascot illustration, extra modes.
 
+## Clean quality
+
+Separate clean-quality work is tracked in [clean-quality/loop-01.md](clean-quality/loop-01.md). Baseline complete: proof/render mismatch reproduced; render still has a 1.8 s dark pill; 1 fps is a regression; 8 fps is clamped and fragments titles.
+
 ## User test
 
 First-time solo-creator test: [user-test-01.md](user-test-01.md). Verdict: FAIL. Proof/render parity, Check handoff timing, captions, fine trim, hidden clean layers, and proof invalidation are the blockers.
