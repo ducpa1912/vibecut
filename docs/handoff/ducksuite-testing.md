@@ -139,6 +139,22 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 The queue is one local worker, first queued first. A completed or cancelled job stays in the list.
 
+### Settings
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/settings"
+
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"online_enabled":true,"online_endpoint":"https://render.example.com"}' \
+  "http://127.0.0.1:8797/api/settings"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/models/lama/verify"
+```
+
+Expected: language `auto`, model hash matches `1faef...`, invalid endpoint rejected.
+
 ## 4. Development app bundle
 
 ```bash

@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from duckcore import clean, edits, preview, render
+from duckcore import app_settings, clean, edits, preview, render
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -56,6 +56,11 @@ class StoryEditBody(BaseModel):
 
 class LayerAction(BaseModel):
     action: str = Field(pattern="^(fill|blur|exclude)$")
+
+
+class SettingsPatch(BaseModel):
+    online_enabled: bool | None = None
+    online_endpoint: str | None = None
 
 
 class DevImport(BaseModel):
@@ -185,6 +190,22 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 }
             ]
         }
+
+    @app.get("/api/settings")
+    def get_settings(_: None = Depends(require_token)) -> dict:
+        return app_settings.snapshot(data_root)
+
+    @app.patch("/api/settings")
+    def patch_settings(body: SettingsPatch, _: None = Depends(require_token)) -> dict:
+        try:
+            app_settings.update(data_root, body.model_dump(exclude_none=True))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return app_settings.snapshot(data_root)
+
+    @app.post("/api/models/{model_id}/verify")
+    def verify_model(model_id: str, _: None = Depends(require_token)) -> dict:
+        return app_settings.verify_model(data_root, model_id)
 
     @app.get("/api/projects")
     def list_projects(_: None = Depends(require_token)) -> dict:

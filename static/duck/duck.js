@@ -8,6 +8,17 @@ const queueList = document.querySelector("#queue-list");
 const queueStatus = document.querySelector("#queue-status");
 const queuePause = document.querySelector("#queue-pause");
 const queueResume = document.querySelector("#queue-resume");
+const settingsButton = document.querySelector("#settings");
+const settingsPanel = document.querySelector("#settings-panel");
+const settingsClose = document.querySelector("#settings-close");
+const settingsEngine = document.querySelector("#settings-engine");
+const settingsModels = document.querySelector("#settings-models");
+const settingsStorage = document.querySelector("#settings-storage");
+const settingsVersion = document.querySelector("#settings-version");
+const onlineEnabled = document.querySelector("#online-enabled");
+const onlineEndpoint = document.querySelector("#online-endpoint");
+const onlineStatus = document.querySelector("#online-status");
+const saveOnline = document.querySelector("#save-online");
 const editor = document.querySelector("#editor");
 const editorTitle = document.querySelector("#editor-title");
 const editorMeta = document.querySelector("#editor-meta");
@@ -742,6 +753,109 @@ async function setQueuePaused(paused) {
 
 queuePause?.addEventListener("click", () => setQueuePaused(true));
 queueResume?.addEventListener("click", () => setQueuePaused(false));
+
+function settingsRow(label, value) {
+  const row = document.createElement("div");
+  row.className = "settings-row";
+  const key = document.createElement("span");
+  key.textContent = label;
+  const val = document.createElement("span");
+  val.textContent = value;
+  row.append(key, val);
+  return row;
+}
+
+async function verifyModel(id, status) {
+  status.textContent = "Verifying…";
+  try {
+    const data = await api(`/api/models/${encodeURIComponent(id)}/verify`, { method: "POST" });
+    status.textContent = data.ok ? "Verified" : "Checksum mismatch";
+    status.classList.toggle("is-bad", !data.ok);
+  } catch (error) {
+    status.textContent = error.message;
+    status.classList.add("is-bad");
+  }
+}
+
+async function loadSettingsPanel() {
+  if (!settingsPanel) return;
+  try {
+    const [settings, engine, models] = await Promise.all([
+      api("/api/settings"),
+      api("/api/engine"),
+      api("/api/models"),
+    ]);
+    settingsEngine.replaceChildren(
+      settingsRow("Apple Vision", engine.vision.available ? "Ready" : "Unavailable"),
+      settingsRow("Apple Speech", engine.speech.apple ? "Ready" : "Unavailable"),
+      settingsRow("LaMa", engine.fill.ready ? "Ready" : (engine.fill.problem || "Unavailable")),
+      settingsRow("Smart stories", engine.stories.ready ? "Ready" : "Unavailable"),
+    );
+    settingsModels.replaceChildren();
+    for (const model of models.models || []) {
+      const row = document.createElement("div");
+      row.className = "settings-row";
+      const name = document.createElement("span");
+      name.textContent = `${model.label} · ${formatBytes(model.bytes)}`;
+      const action = document.createElement("span");
+      action.className = "settings-model-action";
+      const status = document.createElement("span");
+      status.className = "section-note";
+      status.textContent = model.installed ? "Installed" : "Missing";
+      const verify = document.createElement("button");
+      verify.type = "button";
+      verify.className = "clean-action";
+      verify.textContent = "Verify";
+      verify.addEventListener("click", () => verifyModel(model.id, status));
+      action.append(status, verify);
+      row.append(name, action);
+      settingsModels.append(row);
+    }
+    settingsStorage.replaceChildren(
+      settingsRow("Data folder", settings.storage.data_root),
+      settingsRow("Projects", formatBytes(settings.storage.projects_bytes)),
+      settingsRow("Models", formatBytes(settings.storage.models_bytes)),
+      settingsRow("Free disk", formatBytes(settings.storage.free_bytes)),
+    );
+    onlineEnabled.checked = Boolean(settings.online.enabled);
+    onlineEndpoint.value = settings.online.endpoint || "";
+    settingsVersion.textContent = `DuckSuite ${settings.version} · local-first · no account`;
+  } catch (error) {
+    settingsEngine.replaceChildren(settingsRow("Settings", error.message));
+  }
+}
+
+async function openSettings() {
+  settingsPanel.hidden = false;
+  await loadSettingsPanel();
+}
+
+function closeSettings() {
+  settingsPanel.hidden = true;
+}
+
+async function saveOnlineSettings() {
+  if (onlineStatus) onlineStatus.textContent = "Saving…";
+  try {
+    await api("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({
+        online_enabled: onlineEnabled.checked,
+        online_endpoint: onlineEndpoint.value.trim(),
+      }),
+    });
+    if (onlineStatus) onlineStatus.textContent = "Saved";
+  } catch (error) {
+    if (onlineStatus) onlineStatus.textContent = error.message;
+  }
+}
+
+settingsButton?.addEventListener("click", openSettings);
+settingsClose?.addEventListener("click", closeSettings);
+saveOnline?.addEventListener("click", saveOnlineSettings);
+settingsPanel?.addEventListener("click", (event) => {
+  if (event.target === settingsPanel) closeSettings();
+});
 
 async function health() {
   if (!launchToken) {

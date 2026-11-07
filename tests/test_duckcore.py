@@ -190,6 +190,38 @@ def test_full_edit_smart_cut_and_clean_layers(tmp_path: Path) -> None:
         assert patched.json()["edit"]["clean"][0]["kind"] == "blur"
 
 
+def test_settings_online_and_model_verify(tmp_path: Path) -> None:
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token"}
+
+    with TestClient(app) as client:
+        settings = client.get("/api/settings", headers=headers)
+        assert settings.status_code == 200
+        assert settings.json()["language"] == "auto"
+        assert settings.json()["online"]["enabled"] is False
+
+        patched = client.patch(
+            "/api/settings",
+            headers=headers,
+            json={"online_enabled": True, "online_endpoint": "https://render.example.com"},
+        )
+        assert patched.status_code == 200
+        assert patched.json()["online"]["enabled"] is True
+        assert patched.json()["online"]["endpoint"] == "https://render.example.com"
+
+        bad = client.patch(
+            "/api/settings",
+            headers=headers,
+            json={"online_endpoint": "ftp://example.com"},
+        )
+        assert bad.status_code == 400
+
+        verified = client.post("/api/models/lama/verify", headers=headers)
+        assert verified.status_code == 200
+        assert verified.json()["model"] == "lama"
+        assert verified.json()["ok"] is False
+
+
 def test_project_rejects_source_outside_data_root(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.mp4"
     outside.write_bytes(b"outside")

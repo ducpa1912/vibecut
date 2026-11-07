@@ -192,6 +192,50 @@
     </div>
   </div>
 
+  <div class="settings-overlay" id="settings-panel" hidden>
+    <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header class="editor-head">
+        <div>
+          <p class="kicker">DuckSuite</p>
+          <h2 id="settings-title">Settings</h2>
+          <p class="editor-meta">Local models, storage and optional online jobs.</p>
+        </div>
+        <button class="quiet" type="button" id="settings-close">Close</button>
+      </header>
+      <div class="settings-body">
+        <section>
+          <h3>Local engine</h3>
+          <div id="settings-engine" class="settings-list"></div>
+        </section>
+        <section>
+          <h3>Models</h3>
+          <div id="settings-models" class="settings-list"></div>
+        </section>
+        <section>
+          <h3>Storage</h3>
+          <div id="settings-storage" class="settings-list"></div>
+        </section>
+        <section>
+          <h3>Online jobs</h3>
+          <label class="settings-check"><input type="checkbox" id="online-enabled"> Enable optional online jobs</label>
+          <input id="online-endpoint" type="url" placeholder="https://render.example.com" autocomplete="off">
+          <div class="settings-actions">
+            <button class="secondary" type="button" id="save-online">Save online settings</button>
+            <span class="section-note" id="online-status"></span>
+          </div>
+        </section>
+        <section>
+          <h3>Language</h3>
+          <p class="settings-copy">Auto-detect only. Apple Speech when the language is known; Whisper for auto detection. No language picker.</p>
+        </section>
+        <section>
+          <h3>About</h3>
+          <p class="settings-copy" id="settings-version"></p>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <script src="/assets/duck.js"></script>
 </body>
 </html>

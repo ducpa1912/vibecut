@@ -34,6 +34,8 @@ Day 1 shell and Day 2 projects/import are implemented. The app is not App Store 
 - Clean preview from a real frame.
 - Render full video or a story at 1080p, 24/30 fps, with clean layers and original audio.
 - Durable render queue: run, pause, resume, cancel; survives restart.
+- Settings: engine status, model verification, storage, online-job endpoint.
+- Language is auto-detect only; no picker.
 - Project cards show Check status and story candidates.
 - Tests for core auth, projects, engine status, edits and clean layers.
 
