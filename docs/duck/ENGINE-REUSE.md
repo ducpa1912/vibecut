@@ -11,6 +11,7 @@ Rule: **copy selected code into a new orphan DuckSuite branch. Do not merge Stud
 | Apple Vision | `vision.py`, `tools/vision_probe.swift` | Copy. OCR, faces, saliency, smart crop. |
 | Apple Speech | `stt.py`, `tools/apple_transcribe.swift` | Copy. Default transcription. |
 | Text tracking / masks | `detect.py`, `textfill/mask.py` | Copy. One layer per real text; tracking and fill planning. |
+| Smart stories | `clipset.py`, `selection.py`, story parts of `pipeline.py`/`detect.py` | **Copy and adapt.** Local OCR + transcript + story finding is DuckSuite’s USP. One project, one source; no multi-set comparison UI. |
 | LaMa fill | `textfill/` | Copy **LaMa only**. No MI-GAN or STTN at launch. |
 | Render baseline | `render.py` selected parts | Copy as a baseline. It is not “best”; optimize after launch. |
 | Captions | `captions.py`, `caption_reflow.py` | Copy and simplify to one track. |
@@ -19,12 +20,30 @@ Rule: **copy selected code into a new orphan DuckSuite branch. Do not merge Stud
 | Project/edit model | `edits.py`, `compose_render.py` | **Undecided.** Do not copy wholesale. Start with a new minimal project/manifest; borrow immutable-edit and hash ideas only. |
 | Licenses | `LICENSE`, `LICENSES/`, `THIRD_PARTY_NOTICES.md` | Copy and update for DuckSuite. |
 
+## Keep as a small FastAPI app
+
+DuckSuite still uses FastAPI. It does **not** copy the old 110-route monolith.
+
+The new local API keeps:
+
+- import and project jobs
+- job check / analysis
+- smart story finding
+- edit
+- render
+- queue
+- settings
+- model list, download, verify, remove
+- optional online-job API
+
+It drops admin, batches, shares, preflight, Classic, Voice Room, URL ingest and publish.
+
 ## Do not copy
 
 - `app.py` 110-route monolith.
 - Studio routers except tiny pieces DuckSuite needs.
 - Studio UI.
-- Stories, moments, clip sets, selection, packet, publish, review links.
+- Packet, publish, review links, version labels.
 - Admin, batches, shares, preflight.
 - Voice cloning.
 - URL/XHS ingest.
@@ -34,7 +53,7 @@ Rule: **copy selected code into a new orphan DuckSuite branch. Do not merge Stud
 
 - **`app.py` 110 routes**: the old monolithic FastAPI server. It exposes every Studio feature: import, jobs, check, edits, render, queue, packet, admin, shares, classic, voice and more. DuckSuite gets a small local API instead.
 - **`routes_*`**: separate FastAPI modules for feature areas. DuckSuite copies only the engine calls it needs, or rewrites them into its small API.
-- **Stories / moments / clip sets / selection**: Studio’s long-video-to-shorts story engine. DuckSuite keeps a simple Dissect (scenes, transcript, moments), not the full story selection system.
+- **Stories / moments / clip sets / selection**: Studio’s long-video-to-shorts story engine. DuckSuite keeps the smart story finding; it drops the multi-set comparison UI and publish-side story packaging.
 - **Packet / publish / review links**: publish bundle, cover/copy, client review URLs and version labels. Not DuckSuite v1.
 - **Admin / batches / shares / preflight**: local admin console, batch jobs, review sharing and publish checks. Not a consumer app.
 - **URL/XHS ingest**: downloading from platforms via yt-dlp or Xiaohongshu scrapers. Legal/ToS/copyright/App Review risk; local file import only.

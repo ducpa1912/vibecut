@@ -47,7 +47,7 @@ DuckSuite is a **$29 Mac App Store app**, macOS 26+ on Apple Silicon.
 
 Must ship:
 
-- **Dissect:** scenes, transcript, 3–8 moments, manual moment builder.
+- **Dissect:** scenes, transcript, local OCR, smart story candidates with hook/payoff evidence, manual moment builder.
 - **Detect:** text, faces, saliency, speech, music, quality warnings.
 - **Clean:** LaMa AI fill default; explicit Blur; one box per real text; before/after.
 - **Voice-over:** local Apple voices + Kokoro.
@@ -64,7 +64,7 @@ Hard cuts:
 - No publish kit, review links, versions, packet.
 - No URL/path import.
 - No voice cloning, cloud keys, generated music.
-- No multi-set stories, strength score, queue-all from Moments.
+- No multi-set comparison UI, strength score, queue-all from Moments. Smart story finding stays.
 - No STTN/MI-GAN/Telea/Navier-Stokes picker, GPU toggle, follow-camera toggle.
 - No admin, Classic, LAN review links, telemetry.
 

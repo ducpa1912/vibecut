@@ -16,7 +16,7 @@ This plan is agent-native: one implementation day per phase is the target. Exter
 
 - **Mac App Store app**, macOS 26+ on Apple Silicon.
 - **$29 paid upfront.** No trial, no license key, no account.
-- **Dissect:** scene cuts, transcript, 3–8 moment candidates, manual moment builder.
+- **Dissect:** scene cuts, transcript, local OCR, smart story candidates with hook/payoff evidence, manual moment builder.
 - **Detect:** on-screen text, faces, saliency, speech, music, basic quality warnings.
 - **Clean:** LaMa AI fill default; explicit Blur; one box per real text; before/after; manual box.
 - **Voice-over:** local Apple voices + Kokoro; script editor; per-line preview.
@@ -35,7 +35,7 @@ This plan is agent-native: one implementation day per phase is the target. Exter
 - **No publish kit**, review links, versions, apply-look, packet.
 - No URL/XHS/path import.
 - No voice cloning, cloud voices, generated music, provider keys.
-- No multi-set story search, strength score, queue-all from Moments.
+- No multi-set comparison UI, strength score, queue-all from Moments. Smart story finding stays.
 - No STTN/MI-GAN/Telea/Navier-Stokes picker, GPU toggle, follow-camera toggle.
 - No admin, Classic, LAN review links, telemetry.
 
@@ -167,10 +167,10 @@ This is the hard day. If it fails, stop and fix the shell before UI work.
 
 - Reuse `pipeline.probe`, `scan_scenes`, `extract_thumbs`, `extract_text_frames`, `read_text_samples`, `analyze_source`.
 - Reuse `stt.transcribe_source` with Apple Speech default and Whisper fallback.
-- Build 3–8 moment candidates from contiguous scene/transcript windows.
-- Use `clipset.py` helpers only; do **not** ship `selection.py` multi-set story search.
-- Each moment shows thumbnail, start/end, hook quote, payoff quote, duration.
-- No strength score. No multi-set picker. No queue-all.
+- Build smart story candidates from scenes, transcript and OCR. This is DuckSuite’s USP, not a stripped feature.
+- Reuse the story engine: `clipset.py`, `selection.py` and the relevant `pipeline.py`/`detect.py` story functions, adapted to one project and one source.
+- Each story shows thumbnail, start/end, hook quote, payoff quote, duration.
+- No strength score. No multi-set comparison picker. No queue-all.
 
 ### Detect
 

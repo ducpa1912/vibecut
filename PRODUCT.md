@@ -37,6 +37,7 @@ Import → Analyze → Edit → Render → Export
 
 ### Phase 1 must-haves
 
+- **Smart stories are core.** One long video is segmented, read with local OCR and transcript, and ranked into story candidates with hook/payoff evidence. This is DuckSuite’s USP; it is not removed. There is no multi-set comparison UI at launch.
 - **Dub is required.** Voice-over and dub both ship. Dub uses Apple Translation plus local TTS, with an editable script and three launch languages: English, Vietnamese and Chinese. If quality is weak, label it beta; do not cut it.
 - **1080p only.** No 720p, 2K, 4K, 60 fps, HDR or ProRes.
 - **24 and 30 fps only.** Source may be other rates; output is 24 or 30.
@@ -138,7 +139,7 @@ DuckSuite is the local Mac essential toolkit for creators who will not upload cl
 - Batch across projects, templates, API, automation.
 - Voice cloning, cloud voices, generated music, cloud provider keys.
 - URL/XHS/path import.
-- Multi-set story search, strength score, queue-all from Moments.
+- Multi-set comparison UI, strength score, queue-all from Moments. Smart story finding itself stays.
 - STTN/MI-GAN/Telea/Navier-Stokes picker, GPU toggle, follow-camera toggle.
 - Admin console, Classic, LAN review links, telemetry, analytics.
 
