@@ -1,8 +1,10 @@
 # DuckClean build plan
 
-Status: plan. Brand-new cloud product on branch `duckclean`, cut from Classic
-`bb3e89e`. Worktree:
-`/Users/happynghia/Public/Project/Code/drop_eval/vibecut-duckclean`.
+Status: plan, with the M0 contract frozen in
+[`contract.md`](./contract.md). Brand-new cloud product on a standalone orphan
+branch `duckclean` in `github.com/ducpa1912/vibecut`, with no shared history
+with Classic or `main`. Local path:
+`/Users/happynghia/Public/Project/Code/drop_eval/duckclean`.
 
 Classic keeps shipping in its lane. DuckClean ports engine fixes from Classic;
 it never merges the whole Classic lane, and `main` is not moved.
@@ -22,6 +24,9 @@ it never merges the whole Classic lane, and `main` is not moved.
 | Auth | OAuth through Clerk (Google, Apple, email link) with JWKS verification in Workers |
 | Billing | Stripe metered usage, render-hour equivalent |
 | Unit of work | Beat: scene-bounded span of 1–4 seconds |
+| Package manager | npm workspaces (`web`, `api`), one lockfile |
+| Python packaging | `pyproject.toml`; the image installs the package, no `requirements.txt` |
+| Preview job | A `render_jobs` row with `kind = 'preview'`, same state machine as render |
 | Reuse | `detect.py`, `textfill/`, `clean_source.py`, `pipeline.py` ported into `engine/` |
 | Retired | Local runner, local custody, Apple Vision as the only OCR, whole-video blind render |
 
@@ -33,52 +38,40 @@ keys, data model and billing unit are the parts that must not drift.
 ```
 duckclean/
   web/                         # Vite + React + TypeScript SPA → Cloudflare Pages
-  api/                         # Cloudflare Worker
+    src/                       # M1: library, upload, item player
+  api/                         # Cloudflare Worker (Hono)
     src/
-      index.ts
-      auth.ts                  # JWT/JWKS, user upsert
-      routes/
-        library.ts
-        sources.ts
-        detections.ts
-        renders.ts
-        previews.ts
-        billing.ts
-        webhooks.ts
-      db/                      # queries + migrations entry
-      r2.ts                    # presign GET/PUT, lifecycle
-      queue.ts                 # enqueue, retry, dead letter
-      worker_client.ts         # signed calls to CPU/GPU worker
-      stripe.ts
-      schemas.ts               # zod
-    migrations/
-      0001_init.sql
-  worker/                      # Python render worker, one Docker image
+      index.ts                 # Worker default: fetch + queue handlers
+      app.ts                   # M1 routes: health, me, uploads, library, play
+      runtime.ts               # bindings → pool, signer, verifier, queue
+      auth.ts                  # Clerk JWKS verification + identity
+      db.ts / sql.ts           # user-scoped queries; Hyperdrive or PGlite
+      storage.ts               # keys, SigV4 presign, HEAD verification
+      jobs.ts                  # worker dispatch + queue consumer
+      errors.ts                # code → status → action
+      schemas.ts               # zod mirror of the OpenAPI contract
+      canonical.ts             # canonical JSON, beat/detection/selection hashes
+      worker-contract.ts       # zod validation of worker responses
+      # later tasks add: routes/{detections,renders,previews,billing,webhooks}
+    migrations/0001_init.sql   # frozen schema
+    migrations/0002_m1.sql     # posters + worker dispatch records
+    openapi.yaml               # frozen HTTP contract
+    test/                      # migration (PGlite), OpenAPI, hashing, zod
+  worker/                      # Python worker, one image for CPU and GPU
+    pyproject.toml             # deps + ruff + mypy + pytest config
     duckclean_worker/
-      app.py                   # FastAPI: /health /v1/probe /v1/dissect /v1/detect /v1/render /v1/cancel
-      contract.py              # pydantic request/response models
-      storage.py               # R2/S3 client, presigned transfer
-      beats.py                 # scene cut, beat split, concat plan
-      frames.py                # extraction, tiling, downscale
-      ocr.py                   # Linux OCR backend
-      logos.py                 # open-vocab logo/watermark detection
-      masks.py                 # glyph and region masks
-      fill/
-        lama.py
-        propainter.py          # temporal video inpainting
-        generative.py          # Flux Fill / SDXL inpainting
-      render.py                # per-beat fill + encode
-      assemble.py              # concat, audio mux, finalize
-      usage.py                 # compute-seconds and device class
-    Dockerfile
-    requirements.txt
+      contract.py              # pydantic wire models, route payloads
+      signing.py               # HMAC-SHA256 + clock skew
+      # task 4 adds: app.py (FastAPI routes), storage.py, beats.py, frames.py
+      # task 5 adds: ocr.py, logos.py, masks.py
+      # task 8 adds: fill/{lama,propainter,generative}.py, render.py,
+      # assemble.py, usage.py
+    tests/
   engine/                      # ported Classic engine, no Classic routes
-    detect.py
-    clean_source.py
-    pipeline.py
-    textfill/
-    vision/                    # optional macOS-only path, not used in cloud
+    README.md
+    PORT_LOG.md                # what is ported, from where, verified by what
   docs/duckclean/
+    contract.md                # frozen decisions, revisions, tickets, limits
 ```
 
 `engine/` is a copy with a clear port log, not a git submodule and not a shared
@@ -160,14 +153,17 @@ detection_runs
   coverage, truncated, error, started_at, finished_at
 
 detection_groups
-  id, run_id, beat_id, kind, lane, order_index,
-  sample_text, box_json, confidence, member_count,
-  included_default, low_confidence
+  id, user_id, run_id, kind, lane, order_index,
+  sample_text, box_x, box_y, box_w, box_h, confidence_milli,
+  member_count, included_default, low_confidence
+  -- no beat_id: one group spans beats (a corner logo is one group)
 
 detection_members
-  id, group_id, text, ranges_json, range_mode,
-  box_json, confidence, fill_keys, mask_asset_id,
+  id, user_id, group_id, order_index, text, range_mode,
+  ranges_json, box_x, box_y, box_w, box_h, confidence_milli,
+  provenance, fill_keys_json, mask_asset_id,
   included_default, low_confidence
+  -- each range carries beat_id, beat_index, start_frame, end_frame
 
 mask_assets
   id, run_id, group_id, member_id, kind,
@@ -176,32 +172,41 @@ mask_assets
 ```
 
 `range_mode` is `ranges` or `whole_source`. Empty `ranges_json` never means the
-whole video.
+whole video: a CHECK constraint rejects it, and so does the worker contract.
+Boxes are integer pixels in the source display frame; times are integer
+milliseconds and frame indices. Nothing hashed is a float. See
+[`contract.md`](./contract.md) §1 and §6.
 
 ### Rendering and usage
 
 ```
 render_jobs
-  id, user_id, library_item_id, detection_run_id, revision,
+  id, user_id, library_item_id, detection_run_id,
+  kind ('render'|'preview'), revision, selection_revision,
   status, stage, progress, engine, device_class,
-  selection_json, estimate_seconds, compute_seconds,
+  params_json, selection_json, model_versions_json,
+  beats_total, beats_fill, beats_passthrough,
+  estimate_seconds, compute_seconds,
   output_asset_id, error_code, error_detail,
-  idempotency_key, worker_id, parent_job_id,
-  created_at, started_at, finished_at
+  idempotency_key, worker_job_id, worker_id, parent_job_id,
+  cancel_requested_at, created_at, started_at, finished_at
 
 render_segments
-  id, render_job_id, beat_id, status, attempt,
-  input_r2_key, output_r2_key, fill_seconds, encode_seconds,
-  compute_seconds, error_code, updated_at
+  id, render_job_id, beat_id, beat_index,
+  mode ('fill'|'passthrough'), status, attempt,
+  segment_key, fill_engine, input_r2_key, output_r2_key,
+  fill_seconds, encode_seconds, compute_seconds,
+  error_code, updated_at
 
 output_assets
   id, render_job_id, r2_key, bytes, duration, width, height,
   fps, has_audio, engine, created_at
 
 usage_ledger
-  id, user_id, render_job_id, device_class, model_tier,
-  compute_seconds, weight, render_hours, stripe_meter_event_id,
-  created_at
+  id, user_id, render_job_id, detection_run_id, kind, device_class,
+  model_tier, compute_seconds, weight,
+  render_hours (generated: compute_seconds * weight / 3600),
+  stripe_meter_event_id, idempotency_key, created_at
 
 events
   id, user_id, job_id, type, payload_json, created_at
@@ -239,7 +244,7 @@ webhooks. Every response carries a request id.
 | POST | `/library/{id}/render/cancel` | Cancel render |
 | GET | `/library/{id}/download` | Short-lived output GET ticket |
 | POST | `/library/{id}/preview` | Pre-render ticket for selected groups |
-| GET | `/previews/{id}` | Pre-render progress and ticket |
+| GET | `/previews/{id}` | Pre-render progress; `id` is a `kind=preview` render job |
 | GET | `/billing/estimate` | Render-hour estimate for a selection |
 | GET | `/billing/usage` | Ledger and balance |
 | POST | `/webhooks/stripe` | Meter events, payment state |

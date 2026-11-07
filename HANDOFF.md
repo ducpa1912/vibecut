@@ -7,6 +7,15 @@ This repository is intentionally new. It contains the product plan and real-file
 detection evidence, and no legacy application code. Build the cloud product from
 this document and the docs in `docs/duckclean/`.
 
+## Repository
+
+- Remote: `https://github.com/ducpa1912/vibecut.git`
+- Branch: `duckclean`
+- Local path: `/Users/happynghia/Public/Project/Code/drop_eval/duckclean`
+- This is a standalone orphan branch. It shares no history with `classic` or
+  `main`.
+- Push only to `origin/duckclean`. Never push to `main` or `classic`.
+
 ## Mission
 
 Given a real user video:
@@ -31,6 +40,8 @@ the full flow.
   beat pipeline, detection and fill stack.
 - `docs/duckclean/detection-report.md` — real-file evidence and the calibration
   pack.
+- `docs/duckclean/contract.md` — the frozen M0 wire contract: revisions,
+  tickets, state machines, limits and the decisions taken while freezing it.
 
 If a decision below conflicts with a doc, this handoff wins. Update the docs in
 the same change.
@@ -232,13 +243,18 @@ Do not start the review UI before the contract and upload path exist.
 
 ## Reference
 
-Classic repository:
-`/Users/happynghia/Public/Project/Code/drop_eval/vibecut-classic`
+Classic is reference only. It lives on `origin/classic` in this same repo at
+commit `bb3e89e`. There is no Classic worktree.
 
-- Classic lane: `bb3e89e`
-- DuckClean docs archive: branch `duckclean` at `dc38cec`
+```bash
+git fetch origin classic
+mkdir -p engine
+git archive origin/classic \
+  detect.py clean_source.py pipeline.py textfill \
+  | tar -x -C engine
+```
 
-Useful files to port later:
+Adapt the ported files. Do not import Classic app modules.
 
 - `detect.py` — tracklets, ranges, fill planning.
 - `clean_source.py` — full-source fill, encode, audio mux, cancel, cache.

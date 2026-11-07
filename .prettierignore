@@ -1,0 +1,14 @@
+# Markdown docs are hand-formatted; Prettier reflows tables and prose.
+*.md
+docs/
+
+# Generated / vendored
+node_modules/
+dist/
+coverage/
+package-lock.json
+api/migrations/
+
+# Python
+.venv/
+__pycache__/

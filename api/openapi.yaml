@@ -1,0 +1,1407 @@
+openapi: 3.1.0
+info:
+  title: DuckClean API
+  version: 0.1.0
+  summary: Cloud-only removal of baked-in text, logos and burnt-in images from video.
+  description: |
+    Normative HTTP contract for DuckClean. This document is frozen before any
+    application code. `api/src/schemas.ts` (runtime validation) and
+    `worker/duckclean_worker/contract.py` (worker wire models) must match it.
+
+    Invariants encoded here:
+    * Video bytes never pass through this API. Uploads and downloads are
+      presigned R2 URLs; the API only signs and records.
+    * The server owns groups, members, boxes, ranges, masks and revisions. The
+      client sends intent (group/member ids, overrides), never derived state.
+    * `range_mode` is `ranges` or `whole_source`. An empty `ranges` array is a
+      validation error and never means "the whole video".
+    * Every route except `/health` and the webhooks requires a Clerk session.
+    * Every error response uses the single envelope in `#/components/schemas/ErrorEnvelope`.
+
+servers:
+  - url: https://api.duckclean.app/api/v1
+    description: Production
+  - url: http://127.0.0.1:8787/api/v1
+    description: Local worker (wrangler dev)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: system
+  - name: account
+  - name: uploads
+  - name: library
+  - name: detection
+  - name: render
+  - name: billing
+  - name: webhooks
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [system]
+      summary: API, database, R2 and worker fleet truth
+      security: []
+      responses:
+        '200':
+          description: Service health. `degraded` when a dependency is down.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /me:
+    get:
+      operationId: getMe
+      tags: [account]
+      summary: Current user, plan, balance and storage
+      responses:
+        '200':
+          description: The authenticated account.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /uploads:
+    post:
+      operationId: createUpload
+      tags: [uploads]
+      summary: Create an upload ticket and a presigned direct-to-R2 PUT
+      description: |
+        Creates a `library_item` in `uploading` state plus a pending
+        `source_asset`. The browser PUTs the file straight to R2. Quota,
+        extension, content type and declared size are checked here, before a
+        URL is signed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadCreateRequest' }
+      responses:
+        '201':
+          description: Upload ticket.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadTicket' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /uploads/{upload_id}/complete:
+    post:
+      operationId: completeUpload
+      tags: [uploads]
+      summary: Verify the uploaded object with R2 HEAD and enqueue probe
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          description: 'The `source_asset.id` returned by `POST /uploads`.'
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadCompleteRequest' }
+      responses:
+        '202':
+          description: |
+            Upload verified; probe queued. R2 HEAD is the only proof: a missing
+            or short object is `source_unreadable` with `detail.reason` and
+            leaves the item `upload_incomplete`.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadCompleteResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /uploads/{upload_id}/sign:
+    post:
+      operationId: reSignUpload
+      tags: [uploads]
+      summary: Re-sign a pending upload after a dropped connection
+      description: |
+        Returns a fresh 15-minute PUT for the same object key and the same
+        library item, so a failed upload retries without orphaning a row. A
+        completed upload is `conflict`; an unknown or foreign id is `not_found`.
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          description: 'The `source_asset.id` returned by `POST /uploads`.'
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Fresh upload ticket for the same object.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadTicket' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library:
+    get:
+      operationId: listLibrary
+      tags: [library]
+      summary: User library, newest first
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/LibraryStatus' }
+      responses:
+        '200':
+          description: Page of library items.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryPage' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library/{library_item_id}:
+    get:
+      operationId: getLibraryItem
+      tags: [library]
+      summary: Item, source, proxy, beats summary, detection and render state
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      responses:
+        '200':
+          description: Library item detail.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryItemDetail' }
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteLibraryItem
+      tags: [library]
+      summary: Soft-delete the item and purge its R2 objects
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      responses:
+        '204':
+          description: Deleted. Source, proxy, masks, segments and outputs are purged.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library/{library_item_id}/play:
+    get:
+      operationId: getPlayTicket
+      tags: [library]
+      summary: Short-lived signed GET for the review proxy
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      responses:
+        '200':
+          description: Proxy ticket. TTL 10 minutes.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlayTicket' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library/{library_item_id}/detect:
+    post:
+      operationId: startDetection
+      tags: [detection]
+      summary: Start frame-by-frame detection
+      description: |
+        Queues a detection run over the item's frozen beat manifest. One active
+        run per item. The revision is computed by the server from the source
+        hash, beat manifest hash, detection options and model versions.
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DetectRequest' }
+      responses:
+        '202':
+          description: Detection queued.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DetectionState' }
+        default:
+          $ref: '#/components/responses/Error'
+    get:
+      operationId: getDetection
+      tags: [detection]
+      summary: Progress, coverage, groups and members
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      responses:
+        '200':
+          description: Latest detection state for this item.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DetectionState' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library/{library_item_id}/detect/cancel:
+    post:
+      operationId: cancelDetection
+      tags: [detection]
+      summary: Request cancellation at the next safe boundary
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      responses:
+        '202':
+          description: Cancel accepted. Consumed compute is still billed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DetectionState' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library/{library_item_id}/render:
+    post:
+      operationId: startRender
+      tags: [render]
+      summary: Render only the selected beats and assemble the full-length output
+      description: |
+        The server expands the selection into a per-beat plan: beats with at
+        least one selected range are fill beats, the rest are passthrough beats
+        encoded with identical H.264/yuv420p parameters. Segments are
+        concatenated in beat order and the original audio is muxed once.
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenderRequest' }
+      responses:
+        '202':
+          description: Render queued.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenderState' }
+        default:
+          $ref: '#/components/responses/Error'
+    get:
+      operationId: getRender
+      tags: [render]
+      summary: Job stage, per-segment progress and output facts
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+        - name: job_id
+          in: query
+          description: Defaults to the newest render job for this item.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Render state.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenderState' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library/{library_item_id}/render/cancel:
+    post:
+      operationId: cancelRender
+      tags: [render]
+      summary: Cancel and delete `.part` objects
+      description: |
+        The worker stops at the next safe boundary, deletes partial objects, and
+        reports consumed compute. A cancelled job never yields a download.
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      responses:
+        '202':
+          description: Cancel accepted.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenderState' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library/{library_item_id}/preview:
+    post:
+      operationId: startPreview
+      tags: [render]
+      summary: Pre-render check with blur or a cheap fill, clearly labelled
+      description: |
+        A preview is a render job with `kind=preview`: 0.5 scale, CRF 28, blur
+        (or LaMa preview), hard time limit. It is diagnostic playback, never
+        presented as the final file.
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewRequest' }
+      responses:
+        '202':
+          description: Preview queued.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenderState' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /previews/{preview_id}:
+    get:
+      operationId: getPreview
+      tags: [render]
+      summary: Preview progress and signed playback URL
+      parameters:
+        - name: preview_id
+          in: path
+          required: true
+          description: The `render_jobs.id` of a `kind=preview` job.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Preview state.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenderState' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /library/{library_item_id}/download:
+    get:
+      operationId: getDownload
+      tags: [render]
+      summary: Short-lived signed GET for the finished output
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+      responses:
+        '200':
+          description: Download ticket. Only for a `ready` render job.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadTicket' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /billing/estimate:
+    get:
+      operationId: getEstimate
+      tags: [billing]
+      summary: Render-hour estimate for a selection, before spending
+      parameters:
+        - $ref: '#/components/parameters/LibraryItemId'
+        - name: detection_revision
+          in: query
+          required: true
+          schema: { type: string }
+        - name: engine
+          in: query
+          schema: { $ref: '#/components/schemas/FillEngine' }
+        - name: device_class
+          in: query
+          schema: { $ref: '#/components/schemas/DeviceClass' }
+        - name: group_ids
+          in: query
+          description: Comma-separated group ids. Omit for the default inclusion set.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estimate, labelled as an estimate.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Estimate' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /billing/usage:
+    get:
+      operationId: getUsage
+      tags: [billing]
+      summary: Ledger, balance and storage
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Usage for the current period.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usage' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /webhooks/stripe:
+    post:
+      operationId: stripeWebhook
+      tags: [webhooks]
+      summary: Stripe meter and payment events
+      security: []
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Accepted or already processed (idempotent by event id).
+        default:
+          $ref: '#/components/responses/Error'
+
+  /webhooks/worker:
+    post:
+      operationId: workerWebhook
+      tags: [webhooks]
+      summary: Signed worker progress, completion and failure callbacks
+      security: []
+      description: |
+        HMAC-SHA256 over `<timestamp>.<raw body>` in
+        `X-DuckClean-Signature: t=<unix>,v1=<hex>`. Requests with more than 300
+        seconds of clock skew are rejected. Callbacks are idempotent by
+        `(job_id, seq)`.
+      parameters:
+        - name: X-DuckClean-Signature
+          in: header
+          required: true
+          schema: { type: string }
+        - name: X-DuckClean-Key-Id
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerCallback' }
+      responses:
+        '202':
+          description: Callback accepted.
+        default:
+          $ref: '#/components/responses/Error'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Clerk session JWT, verified against JWKS with issuer and audience checks.
+
+  parameters:
+    LibraryItemId:
+      name: library_item_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  headers:
+    RequestId:
+      description: Correlates logs and client error reports.
+      schema: { type: string }
+
+  responses:
+    Error:
+      description: Single error envelope for every failure.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  schemas:
+    # ------------------------------------------------------------------ errors
+    ErrorCode:
+      type: string
+      enum:
+        - unauthorized
+        - forbidden
+        - not_found
+        - validation
+        - conflict
+        - too_large
+        - unsupported_media
+        - quota
+        - rate_limited
+        - stale_detection
+        - worker_unavailable
+        - source_unreadable
+        - render_failed
+        - cancelled
+        - internal
+    ErrorAction:
+      type: string
+      description: Machine-readable next step for the client.
+      enum:
+        - none
+        - sign_in
+        - retry
+        - reload_detection
+        - upgrade_plan
+        - choose_engine
+        - reselect_range
+        - reupload
+        - contact_support
+    ErrorDetail:
+      type: object
+      additionalProperties: true
+    ApiError:
+      type: object
+      required: [code, message, detail, retryable, action]
+      additionalProperties: false
+      properties:
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        message:
+          type: string
+          description: Safe for display. Never contains OCR text or signed URLs.
+        detail: { $ref: '#/components/schemas/ErrorDetail' }
+        retryable: { type: boolean }
+        action: { $ref: '#/components/schemas/ErrorAction' }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error: { $ref: '#/components/schemas/ApiError' }
+
+    # ------------------------------------------------------------------ system
+    HealthCheck:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        latency_ms: { type: integer, minimum: 0 }
+        detail: { type: string }
+    Health:
+      type: object
+      required: [status, version, request_id, time, checks]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        version: { type: string }
+        request_id: { type: string }
+        time: { type: string, format: date-time }
+        checks:
+          type: object
+          required: [db, r2, cpu_worker, gpu_worker]
+          properties:
+            db: { $ref: '#/components/schemas/HealthCheck' }
+            r2: { $ref: '#/components/schemas/HealthCheck' }
+            cpu_worker: { $ref: '#/components/schemas/HealthCheck' }
+            gpu_worker: { $ref: '#/components/schemas/HealthCheck' }
+
+    # ----------------------------------------------------------------- account
+    Me:
+      type: object
+      required:
+        - id
+        - email
+        - display_name
+        - plan
+        - render_seconds_balance
+        - storage_bytes_used
+        - storage_bytes_limit
+        - monthly_render_hours
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: [string, 'null'], format: email }
+        display_name: { type: [string, 'null'] }
+        avatar_url: { type: [string, 'null'], format: uri }
+        plan: { type: string, enum: [free, pro, studio] }
+        render_seconds_balance: { type: number, minimum: 0 }
+        storage_bytes_used: { type: integer, minimum: 0 }
+        storage_bytes_limit: { type: integer, minimum: 0 }
+        monthly_render_hours: { type: number, minimum: 0 }
+
+    # -------------------------------------------------------------- primitives
+    Box:
+      type: object
+      description: |
+        Integer pixel box in the source display frame (rotation applied). Not
+        normalised, not a float. The UI normalises by dividing by
+        `source.display_width` / `display_height`.
+      required: [x, y, w, h]
+      additionalProperties: false
+      properties:
+        x: { type: integer, minimum: 0 }
+        y: { type: integer, minimum: 0 }
+        w: { type: integer, minimum: 1 }
+        h: { type: integer, minimum: 1 }
+    Range:
+      type: object
+      description: |
+        Half-open frame span [start_frame, end_frame) inside one beat. Times are
+        derived from frames and the source frame rate.
+      required: [beat_id, beat_index, start_frame, end_frame, start_ms, end_ms]
+      additionalProperties: false
+      properties:
+        beat_id: { type: string, format: uuid }
+        beat_index: { type: integer, minimum: 0 }
+        start_frame: { type: integer, minimum: 0 }
+        end_frame: { type: integer, minimum: 0 }
+        start_ms: { type: integer, minimum: 0 }
+        end_ms: { type: integer, minimum: 0 }
+    RangeMode:
+      type: string
+      enum: [ranges, whole_source]
+    FillEngine:
+      type: string
+      enum: [auto, blur, lama, propainter, generative, cover]
+    DeviceClass:
+      type: string
+      enum: [cpu, gpu_standard, gpu_premium]
+    Provenance:
+      type: string
+      enum: [ocr, logo, user_box, manual]
+    # ------------------------------------------------------------------ uploads
+    UploadCreateRequest:
+      type: object
+      required: [filename, content_type, bytes]
+      additionalProperties: false
+      properties:
+        filename: { type: string, minLength: 1, maxLength: 200 }
+        content_type:
+          type: string
+          enum: [video/mp4, video/quicktime, video/webm, video/x-matroska]
+        bytes: { type: integer, minimum: 1, maximum: 5000000000 }
+        title: { type: string, minLength: 1, maxLength: 200 }
+    UploadTicket:
+      type: object
+      required:
+        - upload_id
+        - library_item_id
+        - source_asset_id
+        - method
+        - url
+        - headers
+        - expires_at
+        - max_bytes
+      additionalProperties: false
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+          description: Same value as `source_asset_id`; used by `/complete`.
+        library_item_id: { type: string, format: uuid }
+        source_asset_id: { type: string, format: uuid }
+        method: { type: string, enum: [PUT] }
+        url:
+          type: string
+          format: uri
+          description: Single-object presigned R2 PUT. TTL 15 minutes.
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        expires_at: { type: string, format: date-time }
+        max_bytes: { type: integer, minimum: 1 }
+    UploadCompleteRequest:
+      type: object
+      required: [bytes]
+      additionalProperties: false
+      properties:
+        bytes: { type: integer, minimum: 1 }
+        etag:
+          type: string
+          description: 'Optional client-reported ETag; R2 HEAD wins on mismatch.'
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+    UploadCompleteResponse:
+      type: object
+      required: [library_item, probe_queued]
+      additionalProperties: false
+      properties:
+        library_item: { $ref: '#/components/schemas/LibraryItem' }
+        probe_queued: { type: boolean }
+
+    # ------------------------------------------------------------------ library
+    LibraryStatus:
+      type: string
+      enum:
+        - uploading
+        - uploaded
+        - probing
+        - dissecting
+        - ready
+        - upload_incomplete
+        - failed
+        - deleting
+    SourceAsset:
+      type: object
+      required: [id, filename, content_type, bytes, upload_status]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        content_type: { type: string }
+        bytes: { type: integer, minimum: 0 }
+        etag: { type: [string, 'null'] }
+        sha256: { type: [string, 'null'] }
+        upload_status: { type: string, enum: [pending, completed, abandoned] }
+        probe_status: { type: string, enum: [pending, running, succeeded, failed] }
+        dissect_status: { type: string, enum: [pending, running, succeeded, failed] }
+        beat_manifest_hash: { type: [string, 'null'] }
+    ProxyAsset:
+      type: object
+      required: [id, width, height, duration_ms, fps, bytes]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+        duration_ms: { type: integer, minimum: 1 }
+        fps: { type: number, minimum: 0.01 }
+        bytes: { type: integer, minimum: 0 }
+    ProbeInfo:
+      type: object
+      required:
+        - duration_ms
+        - display_width
+        - display_height
+        - rotation
+        - fps
+        - fps_num
+        - fps_den
+        - frame_count
+        - video_codec
+        - pixel_format
+        - has_audio
+      additionalProperties: false
+      properties:
+        duration_ms: { type: integer, minimum: 1 }
+        display_width: { type: integer, minimum: 1 }
+        display_height: { type: integer, minimum: 1 }
+        coded_width: { type: integer, minimum: 1 }
+        coded_height: { type: integer, minimum: 1 }
+        rotation: { type: integer, enum: [0, 90, 180, 270] }
+        fps: { type: number, minimum: 0.01 }
+        fps_num: { type: integer, minimum: 1 }
+        fps_den: { type: integer, minimum: 1 }
+        frame_count: { type: integer, minimum: 1 }
+        video_codec: { type: string }
+        pixel_format: { type: string }
+        audio_codec: { type: [string, 'null'] }
+        has_audio: { type: boolean }
+    LibraryItem:
+      type: object
+      required:
+        - id
+        - title
+        - status
+        - created_at
+        - updated_at
+        - duration_ms
+        - width
+        - height
+        - fps
+        - has_audio
+        - bytes
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        status: { $ref: '#/components/schemas/LibraryStatus' }
+        error: { oneOf: [{ $ref: '#/components/schemas/ApiError' }, { type: 'null' }] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        duration_ms: { type: [integer, 'null'], minimum: 0 }
+        width: { type: [integer, 'null'], minimum: 1 }
+        height: { type: [integer, 'null'], minimum: 1 }
+        fps: { type: [number, 'null'] }
+        has_audio: { type: [boolean, 'null'] }
+        bytes: { type: [integer, 'null'], minimum: 0 }
+        poster_url: { type: [string, 'null'], format: uri }
+        poster_expires_at: { type: [string, 'null'], format: date-time }
+        detection_revision: { type: [string, 'null'] }
+        render_job_id: { type: [string, 'null'], format: uuid }
+        render_status: { type: [string, 'null'] }
+    LibraryPage:
+      type: object
+      required: [items, next_cursor]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/LibraryItem' } }
+        next_cursor: { type: [string, 'null'] }
+    Beat:
+      type: object
+      required:
+        - id
+        - index
+        - start_frame
+        - end_frame
+        - start_ms
+        - end_ms
+        - boundary
+        - status
+        - has_target
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        index: { type: integer, minimum: 0 }
+        start_frame: { type: integer, minimum: 0 }
+        end_frame: { type: integer, minimum: 0 }
+        start_ms: { type: integer, minimum: 0 }
+        end_ms: { type: integer, minimum: 0 }
+        boundary: { type: string, enum: [start, scene, cap, end] }
+        status: { type: string, enum: [pending, ready, empty, failed] }
+        has_target: { type: boolean }
+    LibraryItemDetail:
+      allOf:
+        - $ref: '#/components/schemas/LibraryItem'
+        - type: object
+          required: [source, proxy, beats, detection, render]
+          properties:
+            source: { $ref: '#/components/schemas/SourceAsset' }
+            proxy:
+              { oneOf: [{ $ref: '#/components/schemas/ProxyAsset' }, { type: 'null' }] }
+            probe:
+              { oneOf: [{ $ref: '#/components/schemas/ProbeInfo' }, { type: 'null' }] }
+            beats:
+              type: object
+              required: [total, with_target, manifest_hash]
+              additionalProperties: false
+              properties:
+                total: { type: integer, minimum: 0 }
+                with_target: { type: integer, minimum: 0 }
+                manifest_hash: { type: [string, 'null'] }
+                items: { type: array, items: { $ref: '#/components/schemas/Beat' } }
+            detection:
+              {
+                oneOf:
+                  [{ $ref: '#/components/schemas/DetectionState' }, { type: 'null' }],
+              }
+            render:
+              { oneOf: [{ $ref: '#/components/schemas/RenderState' }, { type: 'null' }] }
+    PlayTicket:
+      type: object
+      required: [url, expires_at, duration_ms, width, height]
+      additionalProperties: false
+      properties:
+        url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        duration_ms: { type: integer, minimum: 1 }
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+    DownloadTicket:
+      type: object
+      required: [url, expires_at, filename, bytes]
+      additionalProperties: false
+      properties:
+        url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        filename: { type: string }
+        bytes: { type: integer, minimum: 0 }
+
+    # ---------------------------------------------------------------- detection
+    DetectRequest:
+      type: object
+      required: [text, logos]
+      additionalProperties: false
+      properties:
+        engine: { type: string, enum: [auto, paddleocr, rapidocr], default: auto }
+        text: { type: boolean }
+        logos: { type: boolean }
+        tile_small_text: { type: boolean, default: true }
+        max_width: { type: integer, minimum: 320, maximum: 3840, default: 1920 }
+        regions:
+          type: array
+          description: User-drawn regions. Always accepted as ground truth.
+          items: { $ref: '#/components/schemas/DetectRegion' }
+        scope:
+          type: object
+          additionalProperties: false
+          properties:
+            beat_indexes:
+              type: array
+              description: Omit to scan every beat.
+              items: { type: integer, minimum: 0 }
+    DetectRegion:
+      type: object
+      required: [box]
+      additionalProperties: false
+      properties:
+        region_id: { type: string, format: uuid }
+        box: { $ref: '#/components/schemas/Box' }
+        prompt: { type: string, maxLength: 100 }
+    MaskRef:
+      type: object
+      required: [id, kind, format, provenance, model_version]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [glyph, region, feather] }
+        format: { type: string, enum: [png, webp] }
+        url:
+          type: [string, 'null']
+          format: uri
+          description: Short-lived signed GET for the review overlay. TTL 10 minutes.
+        expires_at: { type: [string, 'null'], format: date-time }
+        provenance: { $ref: '#/components/schemas/Provenance' }
+        model_version: { type: string }
+    DetectionMember:
+      type: object
+      required:
+        - id
+        - text
+        - range_mode
+        - ranges
+        - box
+        - confidence
+        - provenance
+        - mask
+        - included_default
+        - low_confidence
+        - fill_keys
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        text: { type: [string, 'null'] }
+        range_mode: { $ref: '#/components/schemas/RangeMode' }
+        ranges: { type: array, items: { $ref: '#/components/schemas/Range' } }
+        box: { $ref: '#/components/schemas/Box' }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        provenance: { $ref: '#/components/schemas/Provenance' }
+        mask: { oneOf: [{ $ref: '#/components/schemas/MaskRef' }, { type: 'null' }] }
+        included_default: { type: boolean }
+        low_confidence: { type: boolean }
+        fill_keys:
+          type: array
+          description: Frame indices where the fill engine needs a mask.
+          items: { type: integer, minimum: 0 }
+    DetectionGroup:
+      type: object
+      required:
+        - id
+        - kind
+        - lane
+        - order_index
+        - sample_text
+        - box
+        - confidence
+        - member_count
+        - included_default
+        - low_confidence
+        - members
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [text, logo, watermark, image, user_box] }
+        lane: { type: integer, minimum: 0 }
+        order_index: { type: integer, minimum: 0 }
+        sample_text: { type: [string, 'null'] }
+        box: { $ref: '#/components/schemas/Box' }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        member_count: { type: integer, minimum: 0 }
+        included_default: { type: boolean }
+        low_confidence: { type: boolean }
+        members: { type: array, items: { $ref: '#/components/schemas/DetectionMember' } }
+    DetectionRun:
+      type: object
+      required:
+        - id
+        - revision
+        - status
+        - progress
+        - engine
+        - model_versions
+        - frames_read
+        - frames_skipped
+        - frames_total
+        - coverage
+        - truncated
+        - ocr_available
+        - logo_model_available
+        - warnings
+        - compute_seconds
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        revision: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        engine: { type: string, enum: [auto, paddleocr, rapidocr] }
+        model_versions: { type: object, additionalProperties: { type: string } }
+        frames_read: { type: integer, minimum: 0 }
+        frames_skipped: { type: integer, minimum: 0 }
+        frames_total: { type: integer, minimum: 0 }
+        effective_fps: { type: [number, 'null'] }
+        coverage:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+          description: frames_read / frames_total. Null before the run starts.
+        truncated:
+          type: boolean
+          description: True when the scan hit a cap. Truncated is not "no text".
+        ocr_available: { type: boolean }
+        logo_model_available: { type: boolean }
+        warnings:
+          type: array
+          items:
+            {
+              type: string,
+              enum:
+                [
+                  scan_truncated,
+                  ocr_unavailable,
+                  logo_model_unavailable,
+                  frame_cap,
+                  low_confidence_only,
+                ],
+            }
+        compute_seconds: { type: number, minimum: 0 }
+        device_class:
+          { oneOf: [{ $ref: '#/components/schemas/DeviceClass' }, { type: 'null' }] }
+        error: { oneOf: [{ $ref: '#/components/schemas/ApiError' }, { type: 'null' }] }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+    DetectionState:
+      type: object
+      description: |
+        `run=null` means detection has never run for this item. A succeeded run
+        with zero groups is a valid empty result and must read "No text found",
+        never "cleaned", and must not offer a render.
+      required: [run, groups, beats, selection_counts]
+      additionalProperties: false
+      properties:
+        run: { oneOf: [{ $ref: '#/components/schemas/DetectionRun' }, { type: 'null' }] }
+        groups: { type: array, items: { $ref: '#/components/schemas/DetectionGroup' } }
+        beats:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [beat_id, index, start_ms, end_ms, status, has_target]
+            properties:
+              beat_id: { type: string, format: uuid }
+              index: { type: integer, minimum: 0 }
+              start_ms: { type: integer, minimum: 0 }
+              end_ms: { type: integer, minimum: 0 }
+              status: { type: string, enum: [pending, ready, empty, failed] }
+              has_target: { type: boolean }
+        selection_counts:
+          type: object
+          description: Convenience for the review header; authoritative list is `groups`.
+          additionalProperties: false
+          required: [groups, members, beats_with_target]
+          properties:
+            groups: { type: integer, minimum: 0 }
+            members: { type: integer, minimum: 0 }
+            beats_with_target: { type: integer, minimum: 0 }
+
+    # ------------------------------------------------------------------- render
+    SelectionOverride:
+      type: object
+      required: [member_id, range_mode, ranges]
+      additionalProperties: false
+      properties:
+        member_id: { type: string, format: uuid }
+        range_mode: { $ref: '#/components/schemas/RangeMode' }
+        ranges:
+          type: array
+          description: Required non-empty when `range_mode=ranges`.
+          items:
+            type: object
+            additionalProperties: false
+            required: [beat_id, start_frame, end_frame]
+            properties:
+              beat_id: { type: string, format: uuid }
+              start_frame: { type: integer, minimum: 0 }
+              end_frame: { type: integer, minimum: 0 }
+    SelectionGroup:
+      type: object
+      required: [group_id, member_ids, overrides]
+      additionalProperties: false
+      properties:
+        group_id: { type: string, format: uuid }
+        member_ids:
+          type: array
+          description: Included members. Empty means the group contributes nothing.
+          items: { type: string, format: uuid }
+        engine: { oneOf: [{ $ref: '#/components/schemas/FillEngine' }, { type: 'null' }] }
+        overrides:
+          { type: array, items: { $ref: '#/components/schemas/SelectionOverride' } }
+    ManualRegion:
+      type: object
+      required: [region_id, box, range_mode, ranges]
+      additionalProperties: false
+      properties:
+        region_id: { type: string, format: uuid }
+        box: { $ref: '#/components/schemas/Box' }
+        range_mode: { $ref: '#/components/schemas/RangeMode' }
+        ranges: { type: array, items: { $ref: '#/components/schemas/Range' } }
+        engine: { oneOf: [{ $ref: '#/components/schemas/FillEngine' }, { type: 'null' }] }
+        prompt: { type: [string, 'null'], maxLength: 100 }
+    Selection:
+      type: object
+      required: [groups, manual_regions]
+      additionalProperties: false
+      properties:
+        groups: { type: array, items: { $ref: '#/components/schemas/SelectionGroup' } }
+        manual_regions:
+          { type: array, items: { $ref: '#/components/schemas/ManualRegion' } }
+    RenderRequest:
+      type: object
+      required: [detection_revision, selection]
+      additionalProperties: false
+      properties:
+        detection_revision:
+          type: string
+          description: Must equal the item's current detection revision or 409 stale_detection.
+        selection: { $ref: '#/components/schemas/Selection' }
+        engine: { $ref: '#/components/schemas/FillEngine' }
+        device_class: { $ref: '#/components/schemas/DeviceClass' }
+        idempotency_key: { type: string, minLength: 8, maxLength: 100 }
+    PreviewRequest:
+      type: object
+      required: [detection_revision, selection]
+      additionalProperties: false
+      properties:
+        detection_revision: { type: string }
+        selection: { $ref: '#/components/schemas/Selection' }
+        engine:
+          type: string
+          enum: [blur, lama]
+          default: blur
+          description: Preview never uses the final fill engine.
+        device_class: { $ref: '#/components/schemas/DeviceClass' }
+    RenderSegment:
+      type: object
+      required: [beat_index, beat_id, mode, status, attempt, compute_seconds]
+      additionalProperties: false
+      properties:
+        beat_index: { type: integer, minimum: 0 }
+        beat_id: { type: string, format: uuid }
+        mode: { type: string, enum: [fill, passthrough] }
+        status: { type: string, enum: [pending, running, done, failed, lost, cancelled] }
+        attempt: { type: integer, minimum: 0 }
+        fill_engine:
+          { oneOf: [{ $ref: '#/components/schemas/FillEngine' }, { type: 'null' }] }
+        compute_seconds: { type: number, minimum: 0 }
+        error: { oneOf: [{ $ref: '#/components/schemas/ApiError' }, { type: 'null' }] }
+    RenderOutput:
+      type: object
+      required: [url, expires_at, bytes, duration_ms, width, height, fps, has_audio]
+      additionalProperties: false
+      properties:
+        url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        bytes: { type: integer, minimum: 0 }
+        duration_ms: { type: integer, minimum: 1 }
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+        fps: { type: number }
+        has_audio: { type: boolean }
+        sha256: { type: [string, 'null'] }
+    RenderState:
+      type: object
+      required:
+        - job_id
+        - kind
+        - status
+        - stage
+        - progress
+        - detection_revision
+        - selection_revision
+        - engine
+        - device_class
+        - beats_total
+        - beats_fill
+        - beats_passthrough
+        - estimate_seconds
+        - compute_seconds
+        - segments
+        - output
+      additionalProperties: false
+      properties:
+        job_id: { type: string, format: uuid }
+        kind: { type: string, enum: [render, preview] }
+        status:
+          { type: string, enum: [queued, running, assembling, ready, failed, cancelled] }
+        stage:
+          type: string
+          enum: [queued, planning, rendering, assembling, finalizing, done]
+        progress: { type: number, minimum: 0, maximum: 1 }
+        detection_revision: { type: string }
+        selection_revision: { type: string }
+        engine: { $ref: '#/components/schemas/FillEngine' }
+        device_class: { $ref: '#/components/schemas/DeviceClass' }
+        beats_total: { type: integer, minimum: 0 }
+        beats_fill: { type: integer, minimum: 0 }
+        beats_passthrough: { type: integer, minimum: 0 }
+        estimate_seconds: { type: number, minimum: 0 }
+        compute_seconds: { type: number, minimum: 0 }
+        segments: { type: array, items: { $ref: '#/components/schemas/RenderSegment' } }
+        output:
+          { oneOf: [{ $ref: '#/components/schemas/RenderOutput' }, { type: 'null' }] }
+        error: { oneOf: [{ $ref: '#/components/schemas/ApiError' }, { type: 'null' }] }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+
+    # ------------------------------------------------------------------ billing
+    Estimate:
+      type: object
+      required:
+        - render_hours
+        - compute_seconds
+        - beats_fill
+        - beats_passthrough
+        - beats_total
+        - engine
+        - device_class
+        - rate_table_version
+        - is_estimate
+      additionalProperties: false
+      properties:
+        render_hours: { type: number, minimum: 0 }
+        compute_seconds: { type: number, minimum: 0 }
+        beats_fill: { type: integer, minimum: 0 }
+        beats_passthrough: { type: integer, minimum: 0 }
+        beats_total: { type: integer, minimum: 0 }
+        engine: { $ref: '#/components/schemas/FillEngine' }
+        device_class: { $ref: '#/components/schemas/DeviceClass' }
+        rate_table_version: { type: string }
+        is_estimate:
+          type: boolean
+          const: true
+          description: Always true. Billed usage is the worker's reported compute.
+    LedgerRow:
+      type: object
+      required:
+        - id
+        - kind
+        - device_class
+        - compute_seconds
+        - weight
+        - render_hours
+        - stripe_meter_status
+        - created_at
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [detect, preview, render] }
+        device_class: { $ref: '#/components/schemas/DeviceClass' }
+        compute_seconds: { type: number, minimum: 0 }
+        weight: { type: number, minimum: 0 }
+        render_hours: { type: number, minimum: 0 }
+        job_id: { type: [string, 'null'], format: uuid }
+        stripe_meter_status: { type: string, enum: [pending, sent, failed, skipped] }
+        created_at: { type: string, format: date-time }
+    Usage:
+      type: object
+      required:
+        - balance_render_hours
+        - used_render_hours_this_period
+        - included_render_hours
+        - storage_bytes_used
+        - period_start
+        - ledger
+        - next_cursor
+      additionalProperties: false
+      properties:
+        balance_render_hours: { type: number }
+        used_render_hours_this_period: { type: number, minimum: 0 }
+        included_render_hours: { type: number, minimum: 0 }
+        storage_bytes_used: { type: integer, minimum: 0 }
+        period_start: { type: string, format: date-time }
+        ledger: { type: array, items: { $ref: '#/components/schemas/LedgerRow' } }
+        next_cursor: { type: [string, 'null'] }
+
+    # ------------------------------------------------------------------ workers
+    WorkerCallback:
+      type: object
+      required:
+        - job_id
+        - seq
+        - kind
+        - status
+        - progress
+        - compute_seconds
+        - device_class
+        - model_versions
+        - input_bytes
+        - output_bytes
+      additionalProperties: false
+      properties:
+        job_id: { type: string, format: uuid }
+        seq:
+          type: integer
+          minimum: 1
+          description: Monotonic per job. Duplicate seq is ignored.
+        kind: { type: string, enum: [probe, dissect, detect, render, preview] }
+        status: { type: string, enum: [running, succeeded, failed, cancelled] }
+        stage: { type: [string, 'null'] }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        stage_detail: { type: [string, 'null'], maxLength: 200 }
+        compute_seconds: { type: number, minimum: 0 }
+        device_class: { $ref: '#/components/schemas/DeviceClass' }
+        model_versions: { type: object, additionalProperties: { type: string } }
+        input_bytes: { type: integer, minimum: 0 }
+        output_bytes: { type: integer, minimum: 0 }
+        beats_done: { type: integer, minimum: 0 }
+        beats_total: { type: integer, minimum: 0 }
+        frames_read: { type: integer, minimum: 0 }
+        error:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [code, message]
+              properties:
+                code: { type: string }
+                message: { type: string }
+                retryable: { type: boolean }
+            - type: 'null'

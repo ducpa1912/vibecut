@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main, duckclean]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: web + api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint:js
+
+      - name: Format check
+        run: npm run format:js:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Contract tests
+        run: npm run test:js
+
+      - name: Build web
+        run: npm run build
+
+  python:
+    name: worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: worker/pyproject.toml
+
+      - name: Install
+        run: pip install -e "worker[dev]"
+
+      - name: Format check
+        run: ruff format --check worker
+
+      - name: Lint
+        run: ruff check worker
+
+      - name: Typecheck
+        working-directory: worker
+        run: mypy
+
+      - name: Tests
+        run: pytest worker/tests

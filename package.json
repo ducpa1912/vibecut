@@ -1,0 +1,41 @@
+{
+  "name": "duckclean",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DuckClean — cloud-only removal of baked-in text, logos and burnt-in images from video.",
+  "workspaces": [
+    "web",
+    "api"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev:web": "npm run dev --workspace web",
+    "dev:api": "npm run dev --workspace api",
+    "build": "npm run build --workspace web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint:js": "eslint .",
+    "format:js": "prettier --write .",
+    "format:js:check": "prettier --check .",
+    "test:js": "npm run test --workspaces --if-present",
+    "migrate:check": "npm run test --workspace api -- --run test/migration.test.ts"
+  },
+  "overrides": {
+    "vite": "7.3.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.19.2",
+    "eslint": "9.39.5",
+    "globals": "16.5.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261104.1": true
+  }
+}
