@@ -35,6 +35,7 @@ The artifact is not a UI bug. It is a mask/fill/tracking quality bug. The UI cor
 5. **No per-frame mask propagation.** Fill plans are line-level, not frame-level.
 6. **No quality gate.** A proof is marked generated even when text or a dark artifact remains.
 7. **Preview proves a midpoint, not the hard frame.** The worst frame may be the first or last frame of the text range.
+8. **Proof and render pipelines can disagree.** The real-user test found a scene-01 proof with black blobs while an exported frame from the same source and layer set was clean. A proof that is not an actual render frame is not a proof.
 
 ## Sampling decision: do not lower the whole scan to 1 fps
 
@@ -75,6 +76,7 @@ Every loop produces the same numbers for the same fixture.
 
 **Engineer**
 - Freeze `check-smoke` as the torture test.
+- Reproduce the real-user P0: same scene-01 frame through the proof path and the render path.
 - Instrument mask coverage, residual OCR, black-artifact score, color delta, temporal diff.
 - Export per-scene before / fill / clean frames.
 - Fix the 2 fps vs 4 fps comment.
@@ -86,10 +88,12 @@ Every loop produces the same numbers for the same fixture.
 
 **Product**
 - Define pass/fail in plain language: no dark black artifact, no visible text, no unnatural image.
+- Require proof/render parity: the proof must be a frame from the same all-layer pipeline as the export.
 - Approve the metric thresholds.
 
 **Exit**
 - Baseline report with images and scores.
+- Proof/render mismatch reproduced and owned as P0.
 - Product accepts the test harness.
 
 ### Loop 2 — Mask and tracklet
@@ -214,5 +218,6 @@ Loop order: 1 → 2 → 3 → 4 → 5. No loop starts until the previous product
 - Any residual text on a verified scene: P1.
 - Any unnatural color/halo: P1.
 - Any silent blur fallback: P0.
+- Proof and render disagree: P0.
 - Product rejects a scene: loop continues.
 - Tester cannot reproduce a pass: loop continues.

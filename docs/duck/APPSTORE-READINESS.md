@@ -81,6 +81,10 @@ Notarization is **not** part of the Mac App Store path. It is required only for 
 | Clean quality | Scene 01 large-title artifact; some proofs still contain text | “Clean” is the key selling point; do not submit with a P1 proof |
 | TestFlight | No archive, upload, or clean-Mac test | Release gate |
 
+## P1 execution plan
+
+See [APPSTORE-P1-PLAN.md](APPSTORE-P1-PLAN.md) for owners, order, commands, and exit criteria.
+
 ## Missing — P1
 
 - Third-party notices are still VibeCut-era and mention yt-dlp, xhs_get, voice engines, and VibeCut. Rewrite for DuckSuite: FastAPI, Uvicorn, NumPy, Pillow, ONNX Runtime, LaMa, Python, ffmpeg LGPL, Swift helpers.
