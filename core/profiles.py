@@ -75,6 +75,30 @@ CLASSIC = AppProfile(
     modules=frozenset({"ai_fill", "captions", "voice_clone", "url_ingest"}),
 )
 
+DUCKSUITE = AppProfile(
+    id="ducksuite",
+    label="DuckSuite",
+    port=8797,
+    data_folder="ducksuite",
+    edition="ducksuite",
+    page="duck",
+    features=frozenset({"duck_page"}),
+    routers=frozenset(),
+    modules=frozenset({"ai_fill", "captions"}),
+)
+
+DUCKCLEAN = AppProfile(
+    id="duckclean",
+    label="DuckClean",
+    port=8798,
+    data_folder="duckclean",
+    edition="duckclean",
+    page="classic",
+    features=frozenset({"classic_page", "check", "cleanup"}),
+    routers=frozenset({"classic_page", "check", "cleanup"}),
+    modules=frozenset({"ai_fill", "captions"}),
+)
+
 LEGACY = AppProfile(
     id="legacy",
     label="Legacy shared app",
@@ -94,7 +118,13 @@ LEGACY = AppProfile(
     modules=frozenset({"ai_fill", "captions", "voice_clone", "url_ingest"}),
 )
 
-PROFILES = {"studio": STUDIO, "classic": CLASSIC, "legacy": LEGACY}
+PROFILES = {
+    "studio": STUDIO,
+    "classic": CLASSIC,
+    "ducksuite": DUCKSUITE,
+    "duckclean": DUCKCLEAN,
+    "legacy": LEGACY,
+}
 
 
 def active_profile(app_id: str | None = None) -> AppProfile:
