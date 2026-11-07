@@ -47,12 +47,12 @@ Requirements:
 Start Studio:
 
 ```bash
-cd vibecut-studio
-python3 studio_app.py
+cd ducksuite
+scripts/serve-duck.sh
 ```
 
-Open <http://127.0.0.1:8795>. Studio keeps its data in `~/vibecut-lanes/studio`
-unless `VIBECUT_DATA` says otherwise. `scripts/serve-studio.sh` does the same.
+Open the printed URL. DuckSuite dev data lives in `~/vibecut-lanes/ducksuite`
+unless `VIBECUT_DATA` says otherwise.
 When working in a lane worktree, load its environment first:
 
 ```bash

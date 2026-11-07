@@ -35,7 +35,7 @@ for helper in vision_probe transcribe_apple translate_apple; do
   fi
 done
 
-MODEL="${DUCK_LAMA_MODEL:-$HOME/vibecut-lanes/studio/models/fill/lama_fp32.onnx}"
+MODEL="${DUCK_LAMA_MODEL:-$HOME/vibecut-lanes/ducksuite/models/fill/lama_fp32.onnx}"
 if [ -f "$MODEL" ]; then
   mkdir -p "$APP/Contents/Resources/base-models"
   cp "$MODEL" "$APP/Contents/Resources/base-models/lama_fp32.onnx"
