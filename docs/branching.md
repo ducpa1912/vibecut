@@ -10,6 +10,16 @@ Updated 2026-11-07. This supersedes the older lane map.
 
 The old `vibecut-studio` folder was moved to `ducksuite`. The branch and folder now match.
 
+`ducksuite` is an **orphan branch**. Its first commit has no parent. It is a new app, not a fork of Studio history.
+
+## Archive branch
+
+| Branch | Worktree | Status |
+|---|---|---|
+| `ducksuite-history` | none | Archive of the earlier fork attempt: Studio history + DuckSuite Day 1/2. Do not build, do not merge. |
+
+The archive is pushed to `origin/ducksuite-history`. The local worktree was removed.
+
 ## Frozen lanes
 
 | Lane | Role | Worktree | Status |
