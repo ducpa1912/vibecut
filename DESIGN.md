@@ -1,6 +1,6 @@
 ---
-name: VibeCut Studio
-description: A dim, warm workbench for cutting video on your own Mac
+name: VibeCut Studio (legacy visual system)
+description: Legacy dim workbench; DuckSuite replaces it with the Daylight Bench direction
 colors:
   amber-work-light: "#e8a266"
   amber-work-light-hover: "#f0b27c"

@@ -1,5 +1,11 @@
 # VibeCut
 
+> **Product note (2026-11-07):** The shipping Mac product is **DuckSuite** — a
+> $29 Mac App Store app. VibeCut Studio is the codebase and legacy name. Current
+> sources: [PRODUCT.md](PRODUCT.md), [ROADMAP.md](ROADMAP.md) and
+> [docs/handoff/ducksuite-phase1-plan.md](docs/handoff/ducksuite-phase1-plan.md).
+> DuckClean ships from the Classic lane, not Studio.
+
 VibeCut Studio is a local Mac workstation for video. Bring in a long recording or
 a finished video, find the moments worth posting or edit the whole thing, remove
 old burned-in text with AI, add new captions, voice and music, and render on your

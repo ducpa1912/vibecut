@@ -1,5 +1,7 @@
 # VibeCut PRD — Paid v1
 
+> **Historical (2026-11-07).** This PRD describes the retired VibeCut Studio $249 direct-DMG plan. It is not the active product plan. The shipping Mac product is **DuckSuite** at $29 on the Mac App Store. Current sources: [PRODUCT.md](PRODUCT.md), [ROADMAP.md](ROADMAP.md) and [docs/handoff/ducksuite-phase1-plan.md](docs/handoff/ducksuite-phase1-plan.md).
+
 **Status:** Draft for founder approval. Release verdict: **ALPHA ONLY** until the five gates pass.
 **Owner:** Founder/CEO. **Author:** Senior Product Lead.
 **Version:** 1.1 · **Date:** 2026-10-26

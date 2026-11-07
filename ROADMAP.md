@@ -1,331 +1,221 @@
-# VibeCut Roadmap
+# Duck Roadmap
 
-**Status (2026-11-06):** Studio is in internal alpha. R3 is merged (tag `refactor-3-done`). Work since then is the Studio revamp and AI text cleaning. Paid release gates remain open.
-**Suite:** about 2,400 tests. They are code checks; the founder tests by hand on real files.
-**Source of truth:** this file is the only active plan and roadmap. `PRODUCT.md` holds the product record and `DESIGN.md` the look. Discussion records and handoffs remain historical.
+**Status (2026-11-07):** Phase 1 DuckSuite is the only active build. VibeCut Studio is the codebase/legacy name. The old $249 VibeCut Studio plan is historical; this file supersedes it.
+
+**Clock:** agent-native. One implementation phase per day is the target. External gates — App Review, StoreKit propagation, clean-Mac signing, model quality, HF capacity, legal/license review — run in parallel and are not coding days.
+
+**Source of truth:** this file. Product record: `PRODUCT.md`. Detailed Phase 1 steps: `docs/handoff/ducksuite-phase1-plan.md`. Design system: `DESIGN.md` until the DuckSuite “Daylight Bench” rewrite lands.
 
 ---
 
-## 1. Where we are now
+## 1. Phase 1 clock
 
-### Current product
+| Day | Build | Gate |
+|---:|---|---|
+| **0** | Freeze scope, pricing, model list, App Store decisions | G0 |
+| **1** | Sandboxed SwiftUI shell + bundled `duckcore` + LGPL ffmpeg + LaMa ONNX + local API + StoreKit test | Clean-Mac launch; no downloaded code |
+| **2** | New DuckSuite shell, Home/Projects, Import, native file access | Import → project on 3 real clips |
+| **3** | Analyze: Dissect + Detect | Scenes, transcript, text/face/music evidence |
+| **4** | Edit: Cut, Frame, Captions, Text, Clean | First clean render on 5 clips |
+| **5** | Voice-over + **Dub** | Voice and dub preview; 3 languages |
+| **6** | Render + Export + Queue + Model Manager + Settings | Full 1080p export; model verify |
+| **7** | App Store packaging, privacy manifest, IAP, TestFlight | TestFlight build; review submit |
+| **8–9** | HF free CPU broker + Space + consent + retention | Free CPU cost/time measured |
+| **10–11** | Paid CPU + StoreKit subscription + quota + 3 concurrent | Purchase/restore/refund test |
+| **12–13** | CUDA path + GPU benchmark on HF/Beam/Modal | Render Plus yes/no |
+| **14** | Bugfix, docs, 10-creator beta | Launch gate |
 
-Studio is one local Mac workstation for turning a long recording or a finished video into posts:
+This is 14 implementation days plus Apple review. Local-only TestFlight should exist on Day 7.
+
+---
+
+## 2. Phase 1 — DuckSuite
+
+### 2.1 Scope lock
+
+DuckSuite is a **$29 Mac App Store app**, macOS 26+ on Apple Silicon.
+
+Must ship:
+
+- **Dissect:** scenes, transcript, 3–8 moments, manual moment builder.
+- **Detect:** text, faces, saliency, speech, music, quality warnings.
+- **Clean:** LaMa AI fill default; explicit Blur; one box per real text; before/after.
+- **Voice-over:** local Apple voices + Kokoro.
+- **Dub:** Apple Translation + local TTS; editable script; English, Vietnamese, Chinese; beta label allowed, cut not allowed.
+- **Edit:** trim, split, reorder, remove silence; 9:16/4:5/1:1/16:9; auto-frame; captions; text; music.
+- **Render:** 1080p only; 24/30 fps; MP4 H.264/AAC.
+- **Export:** MP4, SRT, cover JPG. No publish kit.
+- **Cloud render:** optional free CPU, then paid CPU. GPU is a later gate.
+
+Hard cuts:
+
+- No 720p/2K/4K/60 fps/HDR/ProRes.
+- No LUTs, colour grading, effects, motion keyframes, borders.
+- No publish kit, review links, versions, packet.
+- No URL/path import.
+- No voice cloning, cloud keys, generated music.
+- No multi-set stories, strength score, queue-all from Moments.
+- No STTN/MI-GAN/Telea/Navier-Stokes picker, GPU toggle, follow-camera toggle.
+- No admin, Classic, LAN review links, telemetry.
+
+### 2.2 Product shape
 
 ```text
-IMPORT → MOMENTS → EDIT → FINISH
+Home / Projects
+  └── Project
+        ├── 1 Import
+        ├── 2 Analyze
+        │     ├── Moments
+        │     └── Footage check
+        ├── 3 Edit
+        │     ├── Cut
+        │     ├── Frame
+        │     ├── Captions
+        │     ├── Text
+        │     ├── Clean
+        │     ├── Voice
+        │     └── Music
+        ├── 4 Render
+        └── 5 Export
+Render Queue
+Settings
 ```
 
-- **Import** takes a file, path or link, and reads scenes, speech and on-screen text.
-- **Moments** finds moments worth posting, or **Edit full video** opens every scene in order.
-- **Edit** is one document per moment and shape: Clean, Framing, Motion, Color, Text, Captions, Audio.
-- **Finish** reviews an exact frame, renders through a stoppable queue in six quality tiers and five shapes, and builds publish kits and review links.
+**UI direction:** “Daylight Bench.” Light chrome, dark video canvas, one amber accent. Native SwiftUI chrome around a WKWebView editor. Minimum 12 px labels, 13 px panel body, 15 px body. WCAG 2.2 AA.
 
-Studio, Classic and the Voice Room are separate products on separate branches, ports and data folders (`docs/branching.md`). Main tracks Studio. Platform: macOS on Apple Silicon. Local-first; cloud only for explicit music, voice, transcription and text routes with the creator's key.
-
-### Shipped by wave and round
-
-| Wave / round | Tag | Shipped |
-|---|---|---|
-| Pre-wave 0.1–0.13 | — | Core cut, deep read, render speed, audio replacement, CAS sources, Smart Cut, captions, translation, URL ingest, admin console |
-| Wave 1 Foundation | `wave-1-done` | Edit model/versions/compiler, audio split (`stt`/`tts`/`music`), Check backend with OCR boxes and tracklets, Studio shell |
-| Wave 2 Engine | `wave-2-done` | Render hooks (`pre/post` filters, motion, layer burn), Transcript v2/word timings, TTS + packs, Studio Edit base |
-| Wave 3 Flows | `wave-3-done` | Compose text/FX/LUT/stickers, Clean Flow 1, music/mix/dub, Studio Check/Edit/Clean/Effects/Audio |
-| Wave 4 Finish | `wave-4-done` | Packet v2, preflight markers, migration + Classic fallback, Studio Finish/Setup, server Clean auto-fill, music candidates |
-| QA round 1 | merged `2564ac8` | 25 QA fixes: captions, scroll, error copy, source-missing, cancel reading, story cards, queue progress, autosave, rights record |
-| R1 | `refactor-1-done` | Rights policy module + Studio Rights, story picks/trim handles, render performance + Studio read cache |
-| R2 | `refactor-2-done` | Atomic trim transaction, layer/caption ripple, fail-closed stale Edit, both-direction Studio trim, undo/rebind, Playwright drag acceptance |
-| R3 | `refactor-3-done` | Dub and voice workflow, finished-video library, Edit navigation and Finish honesty, Import progress and speech |
-| Lane split | no tag | Separate `studio_app.py` and `classic_app.py`, `core/` contract with pinned profiles, `features/*` packages, Classic and Voice Room out of Studio's page |
-| Studio revamp | no tag | Import → Moments → Edit → Finish, Edit rebuilt as Elements, Preview and Layers, frame border, scene Framing, one icon set, full-video edit, render phase as one surface, queue drawer |
-| AI text cleaning | no tag | AI fill Clean layers (LaMa default; STTN, Telea, Navier-Stokes optional), one tight box per line, per-line fill plan from the scan, key-frame blending, flexible LaMa size, saved fills with real Pause and Resume |
-
-### Current state
-
-- Studio is its own app on port 8795. Classic is a second supported product on 8796; `?classic=1` no longer exists in Studio.
-- All found text can be cleaned; a watermark, handle or logo needs a per-video tick. Clean is on by default; `VIBECUT_ENABLE_CLEANUP=0` disables it.
-- Import limits are per video: 10 GB upload, 2 GB XHS download, plus the free-disk check.
-- A Clean render on the newest fill has not been timed or rated. The founder's last review, on older code, was 6.5/10 with distortion on moving shots.
-- Saved fills and real Pause have code checks but no real resume yet.
-- Wave 5 hardening is not done: no `wave-5-done` tag, no signed or notarized app proof, no 90-minute performance proof, no founder acceptance run.
-
-### Pre-wave version history (compressed)
-
-`0.1` core cut · `0.2` deep read · `0.3` render speed · `0.4` audio replacement · `0.5` storage/speed · `0.6` script/delivery · `0.7` cloud config · `0.8` bilateral crop · `0.9` review/keyboard/translation · `0.10` voice/music/upload · `0.11` rewrite/history/UI · `0.12` URL ingest · `0.13` admin console.
-
----
-
-## 2. Open items and next steps
-
-### Text removal (active)
-
-Founder tests by hand: `docs/testing/studio-ai-clean-quick-test.md` and `docs/testing/studio-clean-fill-retest.md` (steps 57–59).
-
-- Rate the GPU option, MI-GAN, Follow camera motion and the swap from a box to lines on real video (steps 61–64). All are built and checked on arrays only. On arrays, LaMa on the GPU was about 6× faster than on the CPU with the same picture, so it may become the default.
-- Time and rate the per-line fill plan on a still video and a moving one. Motion thresholds and the 4 s first estimate are chosen values, tuned on two videos.
-- Time a real Pause and Resume, and check that no join shows in the result.
-- Moving-shot distortion is LaMa's open limit, since it fills each frame alone. STTN on moving shots is an untested idea.
-- Core ML through ONNX Runtime is ruled out for LaMa, at 52–65 s a run. CPU thread count needs a retest with cool-downs, since heat slowed the same run about 1.7× within minutes on a fanless Air.
-- Classic is porting this work on its own branch (LaMa only).
-
-### Open decisions for the founder
-
-- Voice cloning is on the never-list below, yet Studio ships `voice_clone` in Setup behind its gate. Decide which one stands.
-- Render as a service (`docs/raas-distribution-plan.md`) would reverse parts of the never-list for a different buyer. Plan only.
-- Vietnamese interface and the AI-music preview lock are deferred from Classic (`docs/handoff/classic-studio-matrix.md`).
-
-### Paid-release gates
-
-- **G1:** signed/notarized Mac app, launchd, offline license, clean-Mac install.
-- **G2:** 20-source story benchmark, keeper rate, lineage.
-- **G3:** crash/timeout/resume proof.
-- **G4:** auth/admin; rights lock is now server-side.
-- **G5:** disk reserve behavior.
-- Founder acceptance: 10 creators, videos A and B, all manual tables.
-
-### Wave 5 hardening (not done)
-
-| Item | Owner / note |
-|---|---|
-| Founder checklists `docs/testing/w3-live-checklist.md`, `w4-founder-checklist.md`, R1/R2 tables | Founder → Claude records |
-| Pack install/remove HTTP route; real SHA-256 pins/URLs | Wave 5 packaging |
-| 90-minute performance: frame endpoint, proxy, residual sampling | Wave 5 performance |
-| Frame/vs/final 60 fps path; overlapping caption fallback | Wave 5 |
-| Animation: arrow/underline/sticker draw-on still static | Wave 5 polish |
-| Beat snap only within ±120 ms; A/B music preview plays raw bed | Wave 5 |
-| Voice-fit not persisted; loudness only when a render exists | Wave 5 preflight |
-| Packet cover silently falls back to ffmpeg/poster | Wave 5 bug bash |
-| Clean layer cap is now 1000 (`edits.MAX_CLEAN`). Vision sampler once failed | Wave 5 |
-| Cloud music unverified: no MiniMax key; Lyria 401 | Founder key |
-| HeyGen free tier ends 2026-11-30; fallback to MiniMax | Check after date |
-
-### R2 trim carry-overs
-
-- Classic still changes ranges via `PATCH /clip-sets`; render fails closed with Repair, but Classic has no trim UI.
-- Packet stale check is per story, not per aspect: a stale 4:5 blocks a 9:16-only packet.
-- Timeline shows the whole ±90 s pool, so a short story can look small.
-- `localStorage` job-id reads remain in `shell.js`, `effects.js`, `clean.js`, `audio.js`.
-- `story_start` pins keep their output offset when the story becomes shorter.
-- Founder R2 manual tables are unrun.
-- Deferred: A/B compare, approved-version lock, transcript-range trim, word-boundary trim.
-- Rejected: split/merge, multi-range, frame-level freeform trim, silence/beat trim, auto-filler removal, auto-deleting outside layers, cloud/multi-user.
-
-### QA round 1 partials that still matter
-
-- Stickers are not drawn in live playback; browser fonts are approximate; exact frame is truth.
-- CJK runs use Arial Unicode/Hiragino regular; ZWJ emoji and flags render as components.
-- Loudness gate skips only near-silence; music-only audio still runs STT.
-- Older clip sets keep character-share timing until stories are found again.
-- First render after upgrade re-encodes once (`layers-v2`/`text_skin` cache keys).
-- Founder retest of the 25 QA items remains a manual checklist.
-
-### Post-launch scalability (watch)
-
-- Round 6 panel ran five app servers with Check, proxy and render on one Mac. Check stalled at 63% and a 4:5 render took about 6 min, versus 5–40 s alone.
-- This is likely a local-machine limit, not an app bug. After launch, measure concurrent jobs: one ffmpeg/vision worker pool per machine, a queue cap, and an honest ETA that counts the queue ahead.
-
-### R3 founder-session fixes (built, tag `refactor-3-done`)
-
-Kept for reference. Source: founder session 1 (`docs/testing/founder-session-1/`) and the round 6 panel. Four tracks with disjoint files, so they can be built in parallel and merged T1 → T4.
-
-**T1 Dub and voice workflow** (`static/studio/edit/layers/audio.js`, `audio.py` messages, `story_queue.py` failure reason)
-- Dub gets a source-language confirm and a target-language picker; Studio writes `audio.translate`.
-- Voice-over and Dub get an editable script box (prefilled from the transcript or translation).
-- Queue refuses a Dub with no target, with the reason in place; a failed queue row shows the server's message, never only "Render failed".
-- Audio tab order: Voice first, Music second. Dub and Voice-over copy explains the real difference.
-- Translated captions stay deferred until Dub renders end to end.
-
-**T2 Finished-video library** (new `routes_library.py`, new `static/studio/library.js`, the `shell.js` video picker)
-- `GET /api/artifacts`: every finished render across jobs, with job, story, shape, quality, version, date, and file size.
-- Studio "Your videos" splits into Finished and Sources tabs. Finished shows thumbnail, story, shape, version, date, play, download and open in Finish.
-- Sources show the job title, not `source.mp4`.
-- Read-only over existing render records; no new storage.
-
-**T3 Edit navigation and Finish honesty** (`static/studio/edit/index.js`, `static/studio/finish.js`, `preflight.py`, `app.py` queue route, frame route)
-- Sticky Back to Stories and Next: Finish in Edit, with save state beside them.
-- Preflight resolves clip-set story ids; never a masked 404.
-- Queue is idempotent: Queue all twice attaches to the active item, no failed duplicate row, no extra version.
-- Finish summary counts every shape and story queued.
-- Render-queue ETA: hidden until there is a measured rate, never 0.0 while running, never jumps back up within one stage.
-- Frame request at `t = duration` is clamped to the last frame instead of 422.
-
-**T4 Import/Check progress and speech** (`pipeline.py`, `stt.py`, `detect.py`, `static/studio/check.js`, `disk.py`)
-- Stage-weighted, monotonic progress; a heartbeat line during crop and speech; an ETA after 10%; a Cancel that stops ffmpeg.
-- No 68% "Tracking crop" plateau; copy matches the real length of the source.
-- Speech auto-detects language instead of defaulting to `en`; retry speech in place; the warning tells "off" apart from "engine returned nothing".
-- Disk refusal shows free, reserve and shortfall in GB; a path import that copies nothing doesn't demand the full reserve.
-
-**Deferred:** client approval and delivery log, the per-source rights record, single shared read between Import and Check, per-workflow Translate/Voice/Music routing in Studio, batch templates.
-**Rejected (round 6):** more voice engines, auto-Dub with a cloud default, auto-publish, auto-queueing every shape on import.
-
-**Founder manual test after merge:** rerun the session 1 flow on A, C and B with codegen recording; check Dub with a target, the library after four renders, Back/Next, and Check progress without plateaus.
-
-### Smart reshape (direction recorded, not built)
-
-Shape now belongs to Edit. Direction and plan: `docs/handoff/smart-reshape-plan.md`.
-
-### Special cuts (planned, not built)
-
-Founder note, 2026-11-05. Today a change of shape crops one picture to fit: Framing sets one zoom and place per scene. A special cut changes the layout when the shape changes, such as a vertical video made into a horizontal story, or the opposite. There can be dozens of templates, for example:
-
-- Split screen, top and bottom, or left and right.
-- Focus area: one part of the picture fills the frame.
-- Cut to centre.
-
-To work out when this is planned: whether a template applies per scene or to the whole cut, how it fits the Edit document and the fast preview, and how layers stuck to the video behave when one source shows twice in a frame.
-
-### Next order
-
-1. Text removal: founder retests on real video, then tune from the results.
-2. Publish features: `docs/handoff/publish-plan.md`.
-3. Smart reshape and special cuts, once planned.
-4. Run founder manual checks for Waves 3/4, R1, R2 and R3.
-5. Wave 5 packaging, performance and bug bash.
-6. Paid-release gates G1–G5 and the 20-source benchmark.
-7. Deferred trim features only after paid trim is proven.
-
----
-
-## 3. Product contracts still in force
-
-### Edit contract
-
-- One `Edit` per story/aspect, schema 1; immutable versions in `jobs/<id>/edits/<edit_id>.json`.
-- Pointer: `job["story_edits"]["{set_id}:{story_id}:{aspect}"]`.
-- Fields: `id`, `version`, `parent`, `hash`, `renderer_version`, `story_ref`, `aspect`, `clean[]`, `reframe`, `motion[]`, `color`, `graphics[]`, `captions`, `audio`.
-- `story_ref.clip_hash` must equal `edits.clip_snapshot_hash(story.clips)`.
-- Optional `pin` (`story_start`/`story_end`) and `hidden`; absent fields hash exactly as before. `anchor` is accepted as a trim-input alias; `pin` is canonical.
-- Coordinate rule: Clean in source coords; Graphics/Captions in output coords; Motion changes the crop window.
-- Hash: sha256 over canonical JSON, includes layer assets and renderer version.
-- Stale Edit must never render. Story render/Finish/packet return 409 `edit_stale` when a pointer exists but the Edit is stale/unreadable. Legacy plan path only when no pointer exists.
-
-### Transcript v2
-
-`jobs/<id>/transcript/transcript_v2*.json`; immutable. Fields: `id`, `source_hash`, `engine`, `model`, `language`, `created`, `hash`, `segments[]`, `words[]`, `quality`. Caption tracks record `transcript_id`. Word timings are measured; interpolation only for legacy.
-
-### SourceReport / Check
-
-`POST/GET /api/jobs/{id}/check`. Tracklet:
+### 2.3 Technical shape
 
 ```text
-{id, kind, box{x,y,w,h} source-normalized 0–1, ranges[{start,end}], text_sample, confidence}
+DuckSuite.app (sandboxed)
+  SwiftUI shell
+    StoreKit 2 · NSOpenPanel/NSSavePanel · WKWebView · process supervisor
+          │ 127.0.0.1:random + per-launch token
+          ▼
+  duckcore (bundled Python 3.11)
+    FastAPI · Dissect/Detect/Clean/Voice/Dub/Edit/Render
+    LGPL ffmpeg · ONNX Runtime · LaMa · prebuilt Apple helpers
+    SQLite queue · project JSON
+          │ HTTPS + app token, only on user consent
+          ▼
+  Render broker
+    StoreKit receipt validation · quota · idempotency
+    R2 presigned upload/download
+    HF / Beam / Modal / RunPod adapters
 ```
 
-Kinds: `subtitle`, `title`, `lower_third`, `handle_or_logo`, `watermark`, `credit`, `screen_text`.
-`screen_text` is dense UI/document text; never pre-filled for Clean, never counted as baked captions.
-Watermark and handle/logo need the per-video tick; rights not attested locks Clean.
+No HF token in the Mac app. No downloaded executable code. Core models bundled.
 
-### Rights policy
+### 2.4 Phase 1 gates
 
-- `rights.py` is the only policy source; `GET /api/rights/policy`, `job.rights_policy`, `POST /api/settings` `rights.lock`.
-- Lock on: import needs the ownership tick; lock off: import open, but handle/logo cleaning still needs the per-video tick.
-- Watermark needs the per-video tick with lock on or off; screen_text cleans like any other text.
-- No request body or localStorage decides policy. Turning the lock on does not rewrite saved Edits.
-
-### Atomic trim
-
-```text
-POST /api/jobs/{job_id}/clip-sets/{set_id}/stories/{story_id}/trim
-  expected_revision
-  start_sentence
-  end_sentence
-  dry_run?
-```
-
-- One `update_job` commit; story range + Edit versions + caption track + pointers commit together or not at all.
-- Revision bump on every range change; mismatch is 409 `revision_mismatch`.
-- Pool is the contiguous source range between neighbouring stories, ±90 s; both directions.
-- Time mapping through old/new clips: inside moved, partly clipped, fully outside kept as `hidden` with old times, never deleted.
-- Captions rebuild/reflow in the same transaction; manual text kept; cached track rejected on clip-hash mismatch.
-- Receipt: old/new range, moved/clipped/outside/pinned layers, caption counts.
-- Undo restores range/Edit/captions as a new version with a new undo token. Artifacts and review links never change.
-- Finish fails closed; no plan fallback while an Edit pointer exists.
-- `GET trim`, `POST trim/undo`, `POST trim/rebind`; `dry_run` writes nothing.
-
-### Packet v2 / identity
-
-- Packet includes `edit.json`, `audio.json`, `music.json`, layer assets, frame-endpoint covers.
-- Artifact identity covers `edit.hash`, `transcript_id`, audio/music hashes.
-- Review links show `Edit vN`.
-- Packet route: `POST /api/jobs/{job_id}/artifacts/{artifact_id}/packet`.
-
-### Never-list
-
-- No accounts, cloud sync, team seats, subscription, credits, per-clip meter.
-- No publishing, scheduling, OAuth, platform APIs, analytics, virality scores.
-- Watermark removal only behind the per-video rights tick (founder decision 2026-11-05: every found text can be cleaned).
-- No generative face/logo repair, avatars, voice cloning, stock B-roll.
-- No full-source 4K cleanup, auto-resume, auto-posting, telemetry.
-- No silent retargeting, overwriting approved artifacts, or plan fallback when an Edit exists.
-- Do not delete layers or artifacts during trim.
-
-### Local/offline rule
-
-Import, Check, Stories, Edit, render and packet work with the network off. Cloud is explicit: music generation, cloud voices, optional STT and AI text. Cloud uses the creator's own key.
+- **G0 — Scope:** one-page scope signed; $29/$5/$20 locked; model licenses reviewed; macOS 26 decision.
+- **G1 — Shell:** clean Mac install; sandbox; bundled Python/ffmpeg/LaMa; local API token; StoreKit test purchase.
+- **G2 — Local flow:** Import → Analyze → Edit → Render → Export on 3 real clips.
+- **G3 — Quality:** 20 real clips; clean, voice, dub, captions pass; no silent blur.
+- **G4 — App Store:** privacy manifest, App Privacy label, IAP, restore, review notes, TestFlight.
+- **G5 — Free CPU:** cost/hour measured; queue fair; retention and deletion work; abuse controls.
+- **G6 — Paid CPU:** purchase/restore/refund; 3 concurrent; margin >50%.
+- **G7 — GPU:** >2× faster than CPU and cost <$0.50 per 90 s render; otherwise no Render Plus.
+- **G8 — Launch:** 10 creators; activation, refunds, crash-free, support load targets.
 
 ---
 
-## 4. Superseded history
+## 3. Phase 2 — DuckClean
 
-| Old file | What it planned | What replaced it |
-|---|---|---|
-| `PLAN.md` | Paid-v1 execution: stabilize, package beta, paid gates, pilot, benchmark | Wave/Studio work; paid gates remain in §2. Contracts and gates absorbed here. |
-| `BUILD_PLAN.md` | Detect → Dissect → Compose, Flow 1/2, SFX, filters, music, sub-agent waves | Superseded by studio revamp; the workflow is now Check → Stories → Edit with Clean/Text/Captions/Effects/Color/Audio. |
-| `REVAMP_PLAN.md` | Studio product plan: Edit document, Check, STT/TTS/music, packs, UI, milestones | Executed through Waves 1–4, R1/R2; lasting contracts are in §3. |
-| `WORKPLAN.md` | Wave roles, ownership, review rules, handoffs | Waves complete; no ongoing planning authority. Handoffs remain historical. |
-| `ROADMAP.md` (old) | Engineering version history, shipped checklist, provider notes, future cloud proposals | This file. Old cloud/open-core proposals are dropped. |
-| `ROADMAP_V1.md` | Paid-v1 product roadmap | Superseded by Studio work; paid gates remain. |
-| `ROADMAP_V2.md` | Paid-v1 + conditional cleanup/overlay roadmap | Superseded by revamp and R1/R2. |
-| `docs/REFACTOR_PLAN.md` | R1 rights lock, Studio rights, story picks/trim, performance | Executed in R1; rights/trim/perf contracts remain. |
-| `docs/R2_TRIM_PLAN.md` | Atomic trim transaction, caption reflow, fail-closed render, Studio trim, acceptance | Executed in R2; atomic trim contract remains in §3. |
-| `docs/cloud-plan.md` | Open-source + cloud control plane, queues, multi-tenant, billing | Design exploration, never implemented. Product remains local-first; no cloud accounts or hosted control plane. |
+**DuckClean ships from the Classic lane, not Studio.**
+
+- Branch/lane: `classic` and `classic_app.py`; not `studio_app.py`.
+- New `DUCKCLEAN` profile composed from `CLASSIC` in `core/profiles.py`.
+- Reuses Classic `check`, `cleanup`, `ai_fill`, render pieces.
+- No Studio page, no stories, no Edit document, no Studio queue.
+- Flow: upload → detect text → AI fill or blur → download.
+- Free trial on HF free CPU; paid CPU; Express T4/on-demand waitlist.
+- Linux OCR test: PaddleOCR / EasyOCR / Florence-2 / Qwen-VL on 40–60 clips. Gate: ≥90% text regions clean, no false positives, temporal stability. Fail → Mac OCR worker.
+- No accounts before paid; no unlimited; no publish.
 
 ---
 
-## 5. Earlier status, for reference
+## 4. Phase 3 — DuckClassic
 
-Superseded by §1 on 2026-11-06.
+Cloud clean/quick for operators and automation buyers.
 
-**Status:** R2 atomic trim merged. Tag `refactor-2-done`.
-**Main:** `0f68275`
-**Suite:** 1491 passed, 7 skipped.
-**Release status:** internal alpha; paid release gates remain open.
-**Source of truth:** this file replaces all earlier plan and roadmap files. Discussion records and handoffs remain historical.
-
-**Earlier product description**
-
-One local Mac workstation for turning long video or a finished cut into short posts:
-
-```text
-IMPORT → CHECK → STORIES → EDIT → FINISH
-```
-
-- **Check** detects baked text, speech, music, faces, quality and rights, then recommends clean-first or compose-first.
-- **Stories** finds sentence-bound stories with hook, payoff and evidence.
-- **Edit** is one document per story/aspect: Clean, Reframe, Motion, Color, Text, Captions, Audio.
-- **Finish** renders 9:16/4:5, builds packet v2, preflight markers, versions, review links.
-
-Platform: macOS 26+ on Apple Silicon. Local-first; cloud only for explicit music/voice/transcription/text routes with the creator's key.
-
-**Earlier state**
-
-- 1491 tests pass; 7 opt-in skips.
-- Studio is the default UI; Classic remains behind `?classic=1` / Settings.
-- Rights lock is on by default; watermarks, handles and logos need a per-video tick; every found text can be cleaned.
-- Clean is on by default; `VIBECUT_ENABLE_CLEANUP=0` disables it.
-- Packet v2 and Edit/trim identity are wired.
-- R2 trim is browser-tested on synthetic fixtures.
-- Wave 5 hardening is not done: no `wave-5-done` tag, no signed/notarized app proof, no 90-minute performance proof, no founder acceptance run.
+- Credits, API render, templates, batch clean, quick queue.
+- Not a pro editor; no colour grading, no multi-track NLE, no publish suite.
+- Reuses DuckClean/DuckSuite broker and `duck-render` worker image.
+- Start only after DuckClean has paying users.
 
 ---
 
-## 6. Pointers
+## 5. Phase 4 — DuckStudio
 
-- Discussion records: `round_*.md`.
-- Wave/round handoffs: `docs/handoff/**`.
-- QA evidence/checklists: `docs/testing/**`.
-- Product record: `PRODUCT.md`; design system: `DESIGN.md`; product brief: `FOUNDER_BRIEF.md`; paid-v1 PRD: `PRD.md`; setup and feature docs: `README.md`, `docs/*.md`.
-- Lanes and shipping: `docs/branching.md`.
-- Tags: `wave-1-done`, `wave-2-done`, `wave-3-done`, `wave-4-done`, `refactor-1-done`, `refactor-2-done`, `refactor-3-done`.
+Full cloud suite for non-Mac users.
 
-**Rule:** this roadmap is the only active plan/roadmap. If a proposal is not in §2 or a contract in §3, it is historical.
+- Assets, editing, captions, voice, clean, publish, collaboration.
+- Shared DuckKit design system, project manifest, model registry, render adapter.
+- Do not build shared tenancy, teams or OAuth before DuckSuite and DuckClean are paying.
+
+---
+
+## 6. Product contracts
+
+### Local-first
+
+- DuckSuite works offline after purchase and model install.
+- No account, no telemetry, no upload by default.
+- Cloud render is opt-in per project with a visible consent sheet.
+
+### App Store
+
+- Mac App Store only for Phase 1. No Sparkle, no license key, no direct DMG.
+- Sandbox; user-selected file access; no path import.
+- Bundle Python, ffmpeg LGPL, ONNX Runtime, LaMa, prebuilt Swift helpers.
+- No downloaded executable code. Optional packs are data with SHA-256 + Ed25519 signature.
+- StoreKit 2: $29 app; Render subscription; restore; manage subscription.
+- Privacy manifest + App Privacy label; subprocessors named.
+- Local server: `127.0.0.1`, random port, token every route.
+- Watermark removal only with own-footage attestation; no watermark-removal marketing.
+
+### Render
+
+- One manifest for local and remote.
+- Artifact ID = SHA-256 of source, edit, masks, model hashes, renderer version.
+- Same inputs = same artifact; never overwrite a ready artifact.
+- Render hour = one hour of worker wall-clock. Show output estimate from measured speed.
+- Failed/cancelled jobs do not consume hours. No auto-overage.
+
+### Models
+
+- `models/manifest.json` with id, version, file, size, SHA-256, license, source, min app.
+- Core models bundled. Optional packs data-only.
+- Verify signature, size and SHA-256 before activation; verify again after update.
+- No silent model replacement. Old renders stay playable.
+
+### DuckClean lane
+
+- **DuckClean is a Classic-lane product.** New profile from `CLASSIC`; new minimal web UI; no Studio imports.
+- Classic's Clean behavior is the source, not Studio's story/Edit document.
+- If a fix belongs in shared Clean, land it in the shared engine and both lanes use it.
+
+---
+
+## 7. What not to build now
+
+- No 4K/2K/720p/60 fps/HDR/ProRes.
+- No LUTs/colour grading/effects/motion.
+- No publish kit/review links/versions/packet.
+- No URL/XHS/path import.
+- No voice cloning, cloud voices, generated music, provider keys.
+- No multi-set stories, strength score, queue-all.
+- No admin, Classic inside DuckSuite, LAN review.
+- No accounts, teams, OAuth, Stripe, multi-tenant control plane.
+- No direct DMG until App Store is live or rejected.
+- No GPU Render Plus before the benchmark.
+- No shared Mac/tenant hosting.
+
+---
+
+## 8. Legacy
+
+- VibeCut Studio remains the codebase name and the source of the engine.
+- The old $249 direct-DMG plan, Sparkle updates, license keys and Cloud Private plan are historical.
+- `PRD.md` and `docs/handoff/commercial-packaging-plan.md` carry historical banners.
+- Existing Studio tests and contracts remain valid for the engine; product-level docs above override the old commercial plan.

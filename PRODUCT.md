@@ -2,84 +2,169 @@
 
 <!-- impeccable:product-schema 1 -->
 
-Recorded 2026-11-06 from `PRD.md`, `FOUNDER_BRIEF.md`, `ROADMAP.md`, the Studio code and the founder's answers. This file describes VibeCut Studio. Classic is a second product with its own roadmap and release (`docs/handoff/lane-split-decisions.md`).
+Recorded 2026-11-07. This file supersedes the VibeCut Studio $249 plan. VibeCut Studio is the codebase and legacy name; **DuckSuite** is the shipping Mac product. The previous plan remains in git history and is marked historical in `PRD.md` and `docs/handoff/commercial-packaging-plan.md`.
 
 ## Platform
 
-web
+macOS 26+ on Apple Silicon. DuckSuite ships through the Mac App Store. The web products ship later, in this order: DuckClean, DuckClassic, DuckStudio.
 
-A browser page served by a local Python app on the creator's Mac. The planned paid build wraps it as a signed Mac app.
+## Product family
+
+| Product | Buyer | Job | Surface | Price |
+|---|---|---|---|---|
+| **DuckSuite** | Mac creator-editor | Dissect one long video, detect what is there, clean old text, add captions, voice or dub, cut a short, render 1080p, export. | Mac App Store app | **$29 one-time**; optional cloud render |
+| **DuckClean** | Anyone with one finished video and old text | Upload, find burned-in text, clean it, download. No timeline. | Web, **shipped from the Classic lane** | Free trial; paid CPU; Express GPU waitlist |
+| **DuckClassic** | Operator or automation buyer | Cloud clean/quick render, API, templates, credits. Not a pro editor. | Web | Credits |
+| **DuckStudio** | Non-Mac creator or team | Full cloud suite: assets, edit, captions, voice, clean, publish, collaboration. | Web | Subscription or credits |
+
+DuckSuite is the only product in Phase 1. The other three are roadmap, not launch scope.
+
+## DuckSuite
+
+**One sentence:** DuckSuite turns one long video into the few clips you will actually post — old text cleaned, captions timed, voice or dub added — on your Mac, for one price.
+
+```text
+Import → Analyze → Edit → Render → Export
+```
+
+- **Import** takes one local file: MP4, MOV or M4V. No path field, no URL downloader.
+- **Analyze** has two tabs: **Moments** (Dissect) and **Footage check** (Detect).
+- **Edit** holds the simple tools: Cut, Frame, Captions, Text, Clean, Voice, Music.
+- **Render** produces one 1080p file at 24 or 30 fps, in 9:16, 4:5, 1:1 or 16:9.
+- **Export** saves MP4, SRT and a cover image. No publish kit, no review links, no versions.
+
+### Phase 1 must-haves
+
+- **Dub is required.** Voice-over and dub both ship. Dub uses Apple Translation plus local TTS, with an editable script and three launch languages: English, Vietnamese and Chinese. If quality is weak, label it beta; do not cut it.
+- **1080p only.** No 720p, 2K, 4K, 60 fps, HDR or ProRes.
+- **24 and 30 fps only.** Source may be other rates; output is 24 or 30.
+- **No LUTs, no colour grading.** The Color tool and LUT import are removed from DuckSuite. Simple brightness is not a feature; keep the picture as shot.
+- **No publish kit.** No titles/hashtags/description generator, covers, review links, versions, apply-look or packet. Export files only.
+- **Text clean is LaMa AI fill or explicit Blur.** No model picker, no GPU toggle, no STTN/Telea/Navier-Stokes in the local app.
+- **Local is complete.** No account. No telemetry. No upload unless the user chooses Cloud render.
+- **Core models are bundled.** LaMa ONNX, LGPL ffmpeg, ONNX Runtime and the prebuilt Apple helpers ship inside the app. Optional voice/dub language packs are data downloads with checksum and signature, never code.
+- **Cloud render is optional.** Free CPU first, then paid CPU. GPU is a later evaluation, not a Phase 1 promise.
+
+### Pricing
+
+| Offer | Price | Includes |
+|---|---:|---|
+| DuckSuite app | **$29 one-time** | All local v1 tools; 1.x bug fixes and macOS compatibility |
+| DuckSuite Render | **$5/month** | 10 render hours, CPU, 1080p, up to 3 concurrent |
+| DuckSuite Render Plus | **$20/month** | 10 GPU render hours, 1080p, up to 3 concurrent — only after the GPU gate |
+| Overage | **$0.50/render hour** CPU; **$2.50/render hour** GPU | No auto-charge |
+
+**Render hour = one hour of worker wall-clock, not one hour of finished video.** The app shows an output estimate from measured speed. No unlimited plan.
+
+## DuckClean
+
+**DuckClean ships from the Classic lane, not Studio.**
+
+- New `DUCKCLEAN` profile composed from `CLASSIC` in `core/profiles.py`.
+- Entry point: `classic_app.py` / a thin `duckclean_app.py` that configures the profile before importing the shared backend.
+- Reuses Classic's `check`, `cleanup`, `ai_fill` and render pieces.
+- No Studio page, no stories, no Edit document, no Studio queue, no Studio timeline.
+- Clean-only flow: upload → detect text → choose AI fill or blur → download.
+- Free trial on HF free CPU. Paid CPU follows. Express is a T4/on-demand waitlist.
+- Linux OCR must be tested on 40–60 real clips. If it fails, DuckClean uses a Mac OCR worker or stays Mac-assisted.
+
+## DuckClassic
+
+Cloud clean and quick render for operators and automation buyers.
+
+- Credits, API render, templates, batch clean, quick queue.
+- Not a pro video editor; no colour grading, no multi-track NLE, no publish suite.
+- Reuses the DuckClean/DuckSuite render broker and worker image.
+
+## DuckStudio
+
+Full cloud suite for non-Mac users.
+
+- Assets, editing, captions, voice, clean, publish, collaboration.
+- Not Phase 1. Do not build shared tenancy, accounts or team features before DuckSuite and DuckClean are paying.
 
 ## Users
 
-Two users count equally.
+### DuckSuite
 
-- **Long-recording creator.** A technical solo creator-editor on Apple Silicon with 20–120-minute podcasts, interviews, courses or livestreams, shipping 3–10 shorts a week, sometimes with client footage and a deadline. The job is to find the moments worth posting, fix them and hand over a finished file without opening an editing suite.
-- **Repurposer.** Someone reworking a finished video for a new platform, shape or language. The job is to remove old burned-in text, reframe, add new captions, voice and music, and render the whole video or part of it.
+A solo creator-editor on Apple Silicon with one long recording or one finished video and a deadline. They want the few clips they will post, not a clip farm. They value local custody, a flat price and a file they keep.
 
-Both value local files and flat cost. Neither will accept a meter, a watermark or a mandatory cloud. A small studio with one operator is a secondary case, with no seats, comments or approvals.
+### DuckClean
 
-## Product Purpose
+A repurposer with one finished video and old burned-in text. They do not want a timeline. They want upload, clean, download.
 
-VibeCut Studio is a local Mac workstation that takes one video through four steps:
+### DuckClassic
 
-```text
-Import → Moments → Edit → Finish
-```
+An operator or automation buyer who wants repeatable cloud clean/render through a simple UI or API.
 
-- **Import** takes a file, a path or a link, then reads scenes, speech and on-screen text.
-- **Moments** finds moments worth posting, or opens the whole video for editing.
-- **Edit** holds one document per moment and shape, with Clean, Framing, Motion, Color, Text, Captions and Audio layers on one timeline.
-- **Finish** reviews the frame, renders through a queue that can stop and resume, and builds publish kits and review links.
+### DuckStudio
 
-Success means the creator gets the few pieces they will actually post, with text, captions and copy already right, from their own machine.
-
-**Planned paid v1, not yet shipped.** One eligible 30–120-minute recording gives at least three stories you would post, each with captions and a packet that is still there tomorrow, or your money back (two stories for 20–29 minutes). $249 one-time. It stays blocked until gates G1–G5, the 20-source benchmark and the founder's acceptance pass. See `PRD.md` and `ROADMAP.md`.
+A non-Mac creator or small team that wants the full suite without installing anything.
 
 ## Positioning
 
-The local Mac video workstation for creators who will not upload client footage or pay per clip. The heavy work, including AI text removal, runs on the creator's own machine, and every render is a file they keep.
+DuckSuite is the local Mac essential toolkit for creators who will not upload client footage or pay per clip. It does the few jobs that matter — dissect, detect, clean, voice, dub, edit, export — and leaves the pro NLE and the publish suite to other products.
 
-## Operating Context
+## Operating context
 
-- Long sessions on one Mac, often leaving a render running while doing something else.
-- macOS on Apple Silicon. The founder's test machine is an Apple M1 with 8 GB.
-- Renders can take far longer than the video when AI fill runs, so progress, honest time left and safe stopping are part of the job.
-- Footage may belong to a client, so custody and deletion matter.
-- The founder tests by hand on real files. Automated tests are code checks only.
+- One Mac, one project, one source. Long sessions; renders can take far longer than the video when AI fill runs.
+- Footage may belong to a client. Custody, deletion and honest cloud consent matter.
+- The app must work offline after models are installed and the app is purchased.
+- The Mac App Store is the only Phase 1 distribution channel. No Sparkle, no license key, no direct DMG.
+- App Review is a gate, not a final step. Sandbox, bundled code, model distribution and StoreKit are designed in from Day 1.
 
-## Capabilities and Constraints
+## Capabilities and constraints
 
-- **Text removal:** the scan finds each line of on-screen text with its own box and time, and plans the fill per line from how much the picture moves around it. Layers can be AI fill or blur. LaMa is the default engine; STTN, Telea and Navier-Stokes are optional.
-- **Rights:** all found text can be cleaned. A watermark, handle or logo needs a tick for that video.
-- **Shapes and quality:** 9:16, 4:5, 1:1, 16:9 and 16:10; six quality tiers from 360p to 4K.
-- **Import limits, per video:** 10 GB per upload and 2 GB per XHS download, plus a free-disk check.
-- **Local first:** import, scan, edit, render and packet work with the network off. Cloud is opt-in for music, voice, transcription and AI text, with the creator's own key.
-- **Refused for the Mac product:** accounts, cloud sync, seats, subscriptions, credits, publishing or platform APIs, analytics, virality scores, telemetry, auto-posting, generative face or logo repair, avatars, stock B-roll, and silently overwriting or retargeting a finished render. A render that stops never restarts by itself; resume is one click.
-- **Undecided:** the hosted render-as-a-service plan in `docs/raas-distribution-plan.md` is plan only and would reverse some rules above for a different buyer. Founder sign-off is required first.
-- **Undecided:** voice cloning is refused in `ROADMAP.md`, yet Studio ships a gated `voice_clone` feature in Setup. The founder has yet to decide which stands.
-- **Terms:** a moment is what the creator cuts; "story" remains the unit in queues and publish kits. Avoid version jargon and "artifact" in the interface.
+- **Dissect:** scene cuts, transcript, 3–8 moment candidates, hook/payoff evidence, manual moment builder.
+- **Detect:** on-screen text, faces, saliency, speech, music, basic quality warnings. No score.
+- **Clean:** one layer per real text; LaMa AI fill default; explicit Blur; manual box; before/after; no silent blur fallback.
+- **Voice-over:** local TTS with Apple voices and Kokoro. No cloud keys, no cloning.
+- **Dub:** Apple Translation plus local TTS; editable script; three launch languages; beta label.
+- **Edit:** trim, split, reorder, remove silence; 9:16, 4:5, 1:1, 16:9; auto-frame; captions; text; music.
+- **Render:** 1080p, 24/30 fps, MP4 H.264/AAC; local queue; optional cloud render.
+- **Export:** MP4, SRT, cover JPG; Save, Reveal, Share, Copy captions.
+- **Models:** bundled core; optional data packs with SHA-256 and signature.
+- **Cloud:** opt-in per project; free CPU then paid CPU; GPU only after benchmark.
+- **App Store:** sandboxed, StoreKit 2, no downloaded executable code, LGPL ffmpeg, prebuilt Apple helpers.
 
-## Brand Commitments
+### Non-goals for DuckSuite v1
 
-The name is VibeCut, and this product is VibeCut Studio. The source is proprietary. Copy is plain and honest: it states real limits, gives a route to fix an error, and never presents a score as proof.
+- 720p, 2K, 4K, 60 fps, HDR, ProRes, 10-bit.
+- LUTs, colour grading, effects, motion keyframes, borders, stickers.
+- B-roll, stock assets, photo import, multi-video projects.
+- Publish kit, titles/hashtags/description, cover variants, review links, versions, apply-look, packet.
+- Batch across projects, templates, API, automation.
+- Voice cloning, cloud voices, generated music, cloud provider keys.
+- URL/XHS/path import.
+- Multi-set story search, strength score, queue-all from Moments.
+- STTN/MI-GAN/Telea/Navier-Stokes picker, GPU toggle, follow-camera toggle.
+- Admin console, Classic, LAN review links, telemetry, analytics.
 
-## Evidence on Hand
+## Brand commitments
 
-- The founder's dogfood report: `FOUNDER_BRIEF.md`.
-- Founder sessions and panel reviews: `docs/testing/founder-session-1/`, `round_6.md`.
-- Founder's review of a real AI fill render, 6.5/10 on the old code: `docs/testing/studio-clean-fill-retest.md`.
+- The family name is **Duck**. The Mac product is **DuckSuite for Mac**. The cloud products always carry their descriptor: **DuckClean**, **DuckClassic**, **DuckStudio**.
+- The duck is a mark, not a mascot. No cartoon behaviour in the product.
+- Copy is plain and honest: state the limit, give a route to fix the error, never present a score as proof.
+- One accent: amber. Blue only for cloud status. Red only for destructive/error.
+- DuckSuite feels like a daylight workbench with a dark video canvas. DuckClean is white and calm. DuckClassic is dense and quick. DuckStudio is dark and full.
 
-Absent, and not to be invented: the 20-source benchmark, customer testimonials, paying customers, signed-app proof, and any measured keeper rate.
+## Evidence on hand
 
-## Product Principles
+- Existing VibeCut Studio code: local pipeline, Apple Vision/Speech, LaMa/MI-GAN/STTN, render queue, Classic lane.
+- Founder decisions, 2026-11-06/07: $29 Mac App Store app; $5/$20 render; dub required; 1080p only; 24/30 fps; no LUTs/colour grading; no publish kit; DuckClean from Classic lane.
+- No signed app proof, no App Store approval, no 20-source DuckSuite benchmark, no paying DuckSuite customers, no measured GPU render, no Linux OCR proof.
 
-1. **The creator's few real posts beat more clips.** Judge features by what gets posted, not how much gets generated.
-2. **One object through every change.** An edit, retry, reload or shape change never silently forks or overwrites a result.
-3. **Local custody and flat cost.** The creator's files stay theirs, with no meter.
-4. **Fail visibly and recover.** Show the real reason and the real time left, and do not lose finished work when something stops.
-5. **Show evidence, never sell a score.**
+Do not invent proof. The roadmap gates are the evidence plan.
 
-## Accessibility & Inclusion
+## Product principles
 
-WCAG 2.2 AA is the paid-v1 target: visible focus, 200% zoom, screen-reader labels and live regions for render and queue, colour never the only signal, reduced motion, and a keyboard path instead of drag-only actions. Supported widths are in `PRD.md` §9.
+1. **Local custody beats cloud convenience.** The Mac app is complete without an account.
+2. **One object through every change.** A project, edit, render and export never silently fork or overwrite.
+3. **Fail visibly and recover.** Show the real reason and the real time left. No fake ETA, no silent fallback.
+4. **No silent quality downgrade.** AI fill default; missing model fails visibly; blur is an explicit choice.
+5. **Sell hours, not infinity.** Every cloud plan has a visible cap and a measured cost.
+6. **Ship the small thing.** DuckSuite is a five-tool utility suite, not a mini-Studio.
+
+## Accessibility and inclusion
+
+WCAG 2.2 AA is the target for DuckSuite and DuckClean: visible focus, 200% zoom, keyboard paths, screen-reader labels, live regions for render/queue/model download, colour never the only signal, reduced motion, and captions for sample videos. Minimum 12 px labels, 13 px panel body, 15 px body. Test at 1024×700, 1280×800 and 1440×900.

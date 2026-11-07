@@ -1,7 +1,9 @@
 # Commercial packaging plan
 
+> **Historical (2026-11-07).** The $249 direct-DMG / Cloud Private plan below is retired. The active plan is DuckSuite on the Mac App Store, with DuckClean shipping from the Classic lane. Current sources: [PRODUCT.md](../../PRODUCT.md), [ROADMAP.md](../../ROADMAP.md) and [ducksuite-phase1-plan.md](ducksuite-phase1-plan.md).
+
 Date: 2026-11-06
-Status: decision draft
+Status: historical
 Supersedes the commercial sequence in `distribution-plan.md` and
 `raas-distribution-plan.md`. The technical build and license details in those
 documents still apply.
