@@ -1,0 +1,111 @@
+# Third-party notices
+
+VibeCut is proprietary software. The components below remain under their own
+licenses. This file is a release checklist entry point, not legal advice.
+Resolve exact versions and full license texts from the release environment; see
+[docs/licensing.md](docs/licensing.md), [the license audit](docs/licensing-audit.md)
+and [the distribution plan](docs/distribution-plan.md).
+
+## Runtime Python packages
+
+| Component | License | Upstream |
+|---|---|---|
+| FastAPI | MIT | https://github.com/fastapi/fastapi |
+| Uvicorn | BSD-3-Clause | https://github.com/encode/uvicorn |
+| python-multipart | Apache-2.0 | https://github.com/Kludex/python-multipart |
+| NumPy | BSD-3-Clause and bundled permissive notices | https://numpy.org |
+| Pillow | MIT-CMU (HPND) | https://python-pillow.org |
+| yt-dlp | Unlicense | https://github.com/yt-dlp/yt-dlp |
+| python-stretch (optional) | MIT | https://github.com/gregogiudici/python-stretch |
+| Signalsmith Stretch (optional, via python-stretch) | MIT | https://github.com/Signalsmith-Audio/signalsmith-stretch |
+
+yt-dlp is the default URL downloader and is used through its public Python API.
+A copy of the Unlicense text must be included in release artifacts. No
+attribution is required by the Unlicense, but the inventory should still list
+the installed version.
+
+## System dependencies
+
+- **ffmpeg / ffprobe** — a user-installed system dependency by default. Its
+  license depends on the build. A Homebrew build with `--enable-gpl` and
+  `--enable-version3` is GPL-3.0-or-later; do not bundle it without the
+  corresponding notices and source or written offer.
+- **Apple Vision / Speech / AVFoundation** — used through macOS frameworks.
+  Apple SDK binaries are not redistributed with VibeCut.
+- **swiftc / Xcode Command Line Tools** — used on the user's machine to build
+  the Vision helper. Do not redistribute the toolchain.
+
+## Optional external sidecars
+
+xhs_get is not part of the proprietary VibeCut source tree or default
+artifact. If a distribution ships it alongside VibeCut, keep it in a separate
+artifact and comply with its license:
+
+- **xhs_get** — GPL-3.0. Provide corresponding source or a written offer and the
+  license text. Keep its cookies and session inside its own process.
+
+No xhs_get source, comments, tests, or assets are copied into the VibeCut
+URL-ingest modules. The integration is HTTP-only.
+
+## Voice extraction engines
+
+Clean voice extraction (`voice_extract.py`) runs only on this Mac. Its engines
+are optional, are never required for a clone, and weights with unresolved
+terms are downloaded on first use rather than bundled with VibeCut.
+
+| Component | License | Upstream |
+|---|---|---|
+| DeepFilterNet 3 (`deep-filter`) | Code MIT; model weights MIT / Apache-2.0 | https://github.com/rikorose/deepfilternet |
+| Silero VAD v5 | MIT (code and weights) | https://github.com/snakers4/silero-vad |
+| Mel-Band RoFormer (Kim vocal 2) weights | MIT since 2026-04-22 (previously GPL-3.0); MLX conversion MIT | https://huggingface.co/mlx-community/mel-roformer-kim-vocal-2-mlx |
+| `audio-separator` | MIT (wrapper only; model terms stay with each checkpoint) | https://github.com/streichgeorg/python-audio-separator |
+| Demucs `htdemucs` / `htdemucs_ft` | Code MIT. The weights are **not** covered by the MIT grant; the author calls them research-oriented because of the MUSDB terms. | https://github.com/facebookresearch/demucs |
+| pyannote.audio 3.1 / Community-1 | Code MIT; 3.1 pipeline MIT; Community-1 weights CC-BY-4.0. Gated Hugging Face download. | https://huggingface.co/pyannote/speaker-diarization-3.1 |
+| ffmpeg `afftdn` | Part of the ffmpeg build; the binary's LGPL/GPL configuration applies, not VibeCut's source | https://ffmpeg.org |
+
+pyannote attribution: speaker diarization uses pyannote.audio and the
+`pyannote/speaker-diarization-3.1` pipeline by Hervé Bredin and contributors,
+licensed MIT; the Community-1 weights are CC-BY-4.0. Keep this attribution in
+About or Setup wherever the speaker filter is offered.
+
+Demucs note: VibeCut calls the user's installed Demucs and caches the vocal
+stem locally. Do not redistribute Demucs weights in an installer until the
+weight terms are cleared; Mel-Band RoFormer is the permissive-weight
+alternative. MDX-Net/UVR and BS-RoFormer checkpoints are experiments only and
+must not ship until their model authors grant written permission.
+
+Mel-Band RoFormer and Demucs weights are downloaded on first use or supplied by
+an installed pack. No model weights are stored in the VibeCut repository.
+
+
+## Frontend assets
+
+| Component | License | Upstream |
+|---|---|---|
+| Lucide icon paths (`static/studio/edit/icons.js`) | ISC | https://github.com/lucide-icons/lucide |
+| Sticker PNGs (`assets/stickers`) | In-house | Drawn for VibeCut |
+| Colour LUTs (`assets/luts`) | In-house | Generated from VibeCut colour presets |
+| Bundled music | None | Both music folders are empty; user uploads are not redistributed |
+
+Lucide notice text: `LICENSES/Lucide-ISC.txt`. The source comment in
+`icons.js` must stay in sync with this license.
+
+## Fill model weights
+
+| Component | License | Source | SHA-256 |
+|---|---|---|---|
+| STTN subtitle fill (`sttn_infer_model.pth`) | Apache-2.0 weights; MIT code | YaoFANGUK/video-subtitle-remover (Apache-2.0), researchmm/STTN (MIT) | `c8408c9dd1300bd7000ea3a81b8236db89d9c0f185837781e38283c1e464675b` |
+| LaMa ONNX (`lama_fp32.onnx`) | Apache-2.0 | Carve/LaMa-ONNX, port of big-lama | `1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6` |
+
+Model weights are separate works. If a build bundles or hosts these files,
+include the Apache-2.0 text, the upstream URL, the model name and the hash.
+Do not list only the Python package license.
+
+## Release-blocking third-party components
+
+- **ffmpeg** — the current Homebrew build is GPL-3.0-or-later. See the audit and
+  distribution plan before bundling it or shipping a customer-hosted image.
+- **Demucs weights** — code MIT, weights not covered by that grant. Exclude from
+  paid/cloud artifacts until written permission exists.
+- **Piper, phonemizer, espeak-ng, minisbd** — GPL/AGPL optional engines. Exclude
+  from release environments.

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>DuckSuite</title>
+  <link rel="stylesheet" href="/assets/duck.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail" aria-label="DuckSuite">
+      <div class="mark" aria-hidden="true">D</div>
+      <nav>
+        <a class="rail-item is-active" href="#projects">Projects</a>
+        <a class="rail-item" href="#analyze">Analyze</a>
+        <a class="rail-item" href="#edit">Edit</a>
+        <a class="rail-item" href="#render">Render</a>
+        <a class="rail-item" href="#export">Export</a>
+      </nav>
+      <div class="rail-foot">
+        <button class="quiet" type="button" id="settings">Settings</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">DuckSuite for Mac</p>
+          <h1>Your video stays on this Mac.</h1>
+        </div>
+        <div class="status" id="core-status" role="status" aria-live="polite">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="core-status-text">Starting local core…</span>
+        </div>
+      </header>
+
+      <section class="bench" aria-labelledby="start-title">
+        <div class="bench-copy">
+          <p class="kicker">Day 1 shell</p>
+          <h2 id="start-title">One video in. The few clips you will post out.</h2>
+          <p class="lede">
+            Dissect, detect old text, clean it, add captions, voice or dub, and export
+            1080p — without an account and without uploading your footage.
+          </p>
+          <div class="actions">
+            <button class="primary" type="button" id="import-button">Import video</button>
+            <button class="secondary" type="button" disabled>Open sample</button>
+          </div>
+          <p class="fine">MP4, MOV or M4V. One source per project. Copied into DuckSuite’s local container.</p>
+        </div>
+        <div class="frame" aria-hidden="true">
+          <div class="frame-inner">
+            <div class="frame-grain"></div>
+            <p>1080p · 24/30 fps</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="projects-section" aria-labelledby="projects-title">
+        <div class="section-head">
+          <div>
+            <p class="kicker">On this Mac</p>
+            <h2 id="projects-title">Projects</h2>
+          </div>
+          <span class="section-note">No account required</span>
+        </div>
+        <div class="projects" id="projects" aria-live="polite"></div>
+      </section>
+
+      <section class="grid" aria-label="What ships in DuckSuite">
+        <article class="card">
+          <h3>Dissect</h3>
+          <p>Scene cuts, transcript, three to eight moments, and the evidence behind each one.</p>
+        </article>
+        <article class="card">
+          <h3>Detect</h3>
+          <p>On-screen text, faces, speech, music and quality warnings in one footage check.</p>
+        </article>
+        <article class="card">
+          <h3>Clean</h3>
+          <p>One layer per real text. LaMa AI fill by default. Blur is an explicit choice.</p>
+        </article>
+        <article class="card">
+          <h3>Voice &amp; Dub</h3>
+          <p>Local voices, editable scripts, and English, Vietnamese or Chinese dub.</p>
+        </article>
+        <article class="card">
+          <h3>Edit</h3>
+          <p>Trim, split, reframe, captions, text and music. No LUTs, no colour grading.</p>
+        </article>
+        <article class="card">
+          <h3>Render &amp; Export</h3>
+          <p>1080p at 24 or 30 fps. MP4, SRT and cover. No publish kit.</p>
+        </article>
+      </section>
+
+      <footer class="foot">
+        <span>Local-first · no account · no telemetry</span>
+        <span id="version">DuckSuite 0.1.0</span>
+      </footer>
+    </main>
+  </div>
+  <script src="/assets/duck.js"></script>
+</body>
+</html>
