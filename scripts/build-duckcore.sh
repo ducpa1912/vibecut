@@ -8,8 +8,10 @@ OUT="${1:-$ROOT/build/duckcore-dist}"
 if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
 fi
+REQUIREMENTS="$ROOT/requirements-duck.txt"
+if [ ! -f "$REQUIREMENTS" ]; then REQUIREMENTS="$ROOT/requirements.txt"; fi
 "$VENV/bin/pip" install -q --upgrade pip
-"$VENV/bin/pip" install -q -r "$ROOT/requirements.txt" pyinstaller
+"$VENV/bin/pip" install -q -r "$REQUIREMENTS" pyinstaller
 
 rm -rf "$OUT" "$ROOT/build/pyinstaller-work" "$ROOT/build/pyinstaller-spec"
 mkdir -p "$ROOT/build/pyinstaller-spec"
