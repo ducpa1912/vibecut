@@ -29,9 +29,19 @@ cp -R "$CORE/duckcore/." "$APP/Contents/Resources/duckcore/"
 mkdir -p "$APP/Contents/Resources/static"
 cp -R "$ROOT/static/duck" "$APP/Contents/Resources/static/duck"
 
+mkdir -p "$ROOT/bin"
 for helper in vision_probe transcribe_apple translate_apple; do
-  if [ -x "$ROOT/bin/$helper" ]; then
-    cp "$ROOT/bin/$helper" "$APP/Contents/Helpers/$helper"
+  source="$ROOT/tools/$helper.swift"
+  binary="$ROOT/bin/$helper"
+  if [ -f "$source" ] && { [ ! -x "$binary" ] || [ "$source" -nt "$binary" ]; }; then
+    if [ "$helper" = "vision_probe" ]; then
+      swiftc -O -swift-version 5 "$source" -o "$binary"
+    else
+      swiftc -O -parse-as-library "$source" -o "$binary"
+    fi
+  fi
+  if [ -x "$binary" ]; then
+    cp "$binary" "$APP/Contents/Helpers/$helper"
   fi
 done
 
