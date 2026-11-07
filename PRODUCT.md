@@ -2,7 +2,9 @@
 
 <!-- impeccable:product-schema 1 -->
 
-Recorded 2026-11-07. This file supersedes the VibeCut Studio $249 plan. VibeCut Studio is the codebase and legacy name; **DuckSuite** is the shipping Mac product. The previous plan remains in git history and is marked historical in `PRD.md` and `docs/handoff/commercial-packaging-plan.md`.
+Recorded 2026-11-07. This file supersedes the VibeCut Studio $249 plan. VibeCut Studio is the frozen reference codebase; **DuckSuite** is the new offline macOS product. The previous plan remains in git history and is marked historical in `PRD.md` and `docs/handoff/commercial-packaging-plan.md`.
+
+Distribution: [docs/duck/DISTRIBUTION.md](docs/duck/DISTRIBUTION.md). Commercial: [docs/duck/COMMERCIAL.md](docs/duck/COMMERCIAL.md).
 
 ## Platform
 
