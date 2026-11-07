@@ -4,6 +4,9 @@ Status: M1 code is complete. No live cloud resource is provisioned yet. This
 document separates what exists in the repo from what must be created in an
 account.
 
+Provider alternatives and current list prices are in
+[`providers.md`](./providers.md).
+
 ## The four services, plainly
 
 | Service | What it is | Not |

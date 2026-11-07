@@ -8,8 +8,9 @@ phone can complete the entire flow.
 
 `HANDOFF.md` is the binding brief. `docs/duckclean/contract.md` is the frozen M0
 contract. `docs/duckclean/infrastructure.md` says exactly what Clerk, R2,
-Postgres and Hyperdrive are, what exists, and what must be created. If a doc
-disagrees with `HANDOFF.md`, the handoff wins.
+Postgres and Hyperdrive are, what exists, and what must be created.
+`docs/duckclean/providers.md` compares current auth, storage and Postgres
+prices. If a doc disagrees with `HANDOFF.md`, the handoff wins.
 
 ## Status
 
