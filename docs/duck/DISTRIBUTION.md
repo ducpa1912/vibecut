@@ -4,7 +4,7 @@ Date: 2026-11-07
 Status: active
 Product: **DuckSuite for Mac**
 Supersedes: VibeCut DMG, Cloud Private, and hosted-tenant distribution plans
-Related: `COMMERCIAL.md`, `../PRODUCT.md`, `../ROADMAP.md`
+Related: `COMMERCIAL.md`, `APPSTORE-READINESS.md`, `CLEAN-QUALITY-PLAN.md`, `../PRODUCT.md`, `../ROADMAP.md`
 
 ## 1. What DuckSuite is
 
