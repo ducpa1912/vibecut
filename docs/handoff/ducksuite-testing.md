@@ -167,6 +167,19 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 Expected: one cue per transcript segment piece, editable text, valid SRT. A 46-second full edit produced 35 cues in this test.
 
+Burn-in:
+
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"burn":true}' \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/captions"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/render"
+```
+
+Expected: the MP4 contains readable captions with a dark rounded background and keeps the audio. A 2-second smoke render passed in this test.
+
 ## 4. Development app bundle
 
 ```bash

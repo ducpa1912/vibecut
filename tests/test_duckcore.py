@@ -278,6 +278,25 @@ def test_captions_generate_edit_and_srt(tmp_path: Path) -> None:
         assert "Edited line." in srt.text
 
 
+def test_caption_burn_helpers() -> None:
+    from PIL import Image
+
+    from duckcore.caption_burn import active_cue, draw_caption
+
+    cues = [
+        {"start": 0.0, "end": 2.0, "text": "First"},
+        {"start": 2.0, "end": 4.0, "text": "Second"},
+    ]
+    assert active_cue(cues, 1.0)["text"] == "First"
+    assert active_cue(cues, 3.0)["text"] == "Second"
+    assert active_cue(cues, 5.0) is None
+
+    frame = Image.new("RGB", (1080, 1080), "black")
+    drawn = draw_caption(frame, "A readable caption")
+    assert drawn.size == (1080, 1080)
+    assert drawn.tobytes() != frame.tobytes()
+
+
 def test_project_rejects_source_outside_data_root(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.mp4"
     outside.write_bytes(b"outside")

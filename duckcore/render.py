@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from duckcore import edits, media
+from duckcore import caption_burn, captions, edits, media
 from duckcore.store import ProjectStore
 
 
@@ -166,6 +166,20 @@ def render_edit(
         listing.unlink(missing_ok=True)
         for segment in segments:
             segment.unlink(missing_ok=True)
+
+        track = edit.get("captions")
+        if isinstance(track, dict) and track.get("cues"):
+            output.with_suffix(".srt").write_text(captions.srt(track), encoding="utf-8")
+            if track.get("burn"):
+                if progress:
+                    progress(0.97, "Burning captions")
+                captioned = output.with_name(f".{output.stem}.captions.mp4")
+                caption_burn.burn_captions(
+                    output, track, captioned,
+                    width=out_w, height=out_h, fps=float(target_fps), ffmpeg=ffmpeg,
+                )
+                captioned.replace(output)
+
         if progress:
             progress(1.0, "Render complete")
         return output

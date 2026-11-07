@@ -47,6 +47,7 @@ const renderStatus = document.querySelector("#render-status");
 const downloadRender = document.querySelector("#download-render");
 const generateCaptions = document.querySelector("#generate-captions");
 const downloadCaptions = document.querySelector("#download-captions");
+const burnCaptions = document.querySelector("#burn-captions");
 const captionsStatus = document.querySelector("#captions-status");
 const captionCues = document.querySelector("#caption-cues");
 
@@ -476,10 +477,18 @@ function renderCaptions() {
     captionCues.append(note);
     if (captionsStatus) captionsStatus.textContent = "";
     if (downloadCaptions) downloadCaptions.hidden = true;
+    if (burnCaptions) {
+      burnCaptions.checked = false;
+      burnCaptions.disabled = true;
+    }
     return;
   }
   if (captionsStatus) captionsStatus.textContent = `${track.cues.length} cues · SRT`;
   if (downloadCaptions) downloadCaptions.hidden = false;
+  if (burnCaptions) {
+    burnCaptions.disabled = false;
+    burnCaptions.checked = Boolean(track.burn);
+  }
   for (const cue of track.cues) {
     const row = document.createElement("div");
     row.className = "caption-row";
@@ -522,6 +531,20 @@ async function generateCaptionTrack() {
     renderCaptions();
   } catch (error) {
     if (captionsStatus) captionsStatus.textContent = `Captions failed: ${error.message}`;
+  }
+}
+
+async function setCaptionBurn(burn) {
+  if (!activeProject || !activeEdit) return;
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/captions`,
+      { method: "PATCH", body: JSON.stringify({ burn: Boolean(burn) }) },
+    );
+    activeEdit.captions = data.captions;
+    if (captionsStatus) captionsStatus.textContent = burn ? "Captions will burn into render" : "SRT sidecar only";
+  } catch (error) {
+    if (captionsStatus) captionsStatus.textContent = `Burn setting failed: ${error.message}`;
   }
 }
 
@@ -632,6 +655,7 @@ renderEdit?.addEventListener("click", startRenderEdit);
 downloadRender?.addEventListener("click", downloadRendered);
 generateCaptions?.addEventListener("click", generateCaptionTrack);
 downloadCaptions?.addEventListener("click", downloadCaptionTrack);
+burnCaptions?.addEventListener("change", () => setCaptionBurn(burnCaptions.checked));
 editor?.addEventListener("click", (event) => {
   if (event.target === editor) closeEditor();
 });
