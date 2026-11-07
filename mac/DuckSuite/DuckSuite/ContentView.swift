@@ -11,7 +11,9 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             if let url = model.url {
-                WebView(url: url)
+                WebView(url: url) {
+                    await model.importVideo()
+                }
             } else if let error = model.error {
                 VStack(spacing: 14) {
                     Image(systemName: "exclamationmark.triangle")
@@ -47,15 +49,21 @@ struct ContentView: View {
 
 private struct WebView: NSViewRepresentable {
     let url: URL
+    let onImport: @MainActor () async -> Bool
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.websiteDataStore = .nonPersistent()
 
+        let controller = WKUserContentController()
+        controller.add(context.coordinator, name: "duck")
+        configuration.userContentController = controller
+
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.underPageBackgroundColor = .clear
+        context.coordinator.webView = view
         return view
     }
 
@@ -66,10 +74,36 @@ private struct WebView: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onImport: onImport)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        weak var webView: WKWebView?
+        private let onImport: @MainActor () async -> Bool
+
+        init(onImport: @escaping @MainActor () async -> Bool) {
+            self.onImport = onImport
+        }
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard
+                message.name == "duck",
+                let body = message.body as? [String: Any],
+                body["type"] as? String == "import"
+            else { return }
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let imported = await self.onImport()
+                if imported {
+                    self.webView?.reload()
+                }
+            }
+        }
+
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,

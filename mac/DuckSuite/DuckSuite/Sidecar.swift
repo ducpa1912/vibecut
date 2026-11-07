@@ -18,6 +18,12 @@ enum SidecarError: LocalizedError {
     }
 }
 
+struct SidecarSession {
+    let baseURL: URL
+    let launchURL: URL
+    let token: String
+}
+
 final class Sidecar {
     private let process = Process()
     private let stdout = Pipe()
@@ -30,20 +36,29 @@ final class Sidecar {
         self.token = token
         self.dataRoot = dataRoot
 
-        let helper = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/duckcore")
-        guard FileManager.default.isExecutableFile(atPath: helper.path) else {
+        let bundle = Bundle.main.bundleURL
+        let resources = bundle.appendingPathComponent("Contents/Resources/duckcore/duckcore")
+        let helper = bundle.appendingPathComponent("Contents/Helpers/duckcore")
+        let executable = FileManager.default.isExecutableFile(atPath: resources.path)
+            ? resources
+            : helper
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             throw SidecarError.missingHelper
         }
 
-        process.executableURL = helper
+        process.executableURL = executable
         process.arguments = ["--data-root", dataRoot.path, "--port", "0"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["DUCK_STATIC_DIR"] = bundle
+            .appendingPathComponent("Contents/Resources/static/duck")
+            .path
+        process.environment = environment
         process.standardOutput = stdout
         process.standardError = stderr
         process.standardInput = stdin
     }
 
-    func start() throws -> URL {
+    func start() throws -> SidecarSession {
         try process.run()
 
         let input = stdin.fileHandleForWriting
@@ -59,10 +74,13 @@ final class Sidecar {
             throw SidecarError.invalidHandshake
         }
 
-        guard let url = URL(string: "http://127.0.0.1:\(port)/#t=\(token)") else {
+        guard
+            let baseURL = URL(string: "http://127.0.0.1:\(port)/"),
+            let launchURL = URL(string: "http://127.0.0.1:\(port)/#t=\(token)")
+        else {
             throw SidecarError.invalidHandshake
         }
-        return url
+        return SidecarSession(baseURL: baseURL, launchURL: launchURL, token: token)
     }
 
     func stop() {

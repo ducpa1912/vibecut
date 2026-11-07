@@ -8,7 +8,26 @@ Day 1 feasibility shell for the Mac App Store build.
 - Apple Silicon Mac running macOS 26+.
 - Optional: `xcodegen` to generate the project from `project.yml`.
 
-## Generate and run
+## Development bundle without Xcode
+
+From the repo root:
+
+```bash
+scripts/build-duck-dev.sh
+open "$PWD/build/DuckSuite.app"
+```
+
+This builds the Swift shell, the PyInstaller `duckcore` sidecar, the static DuckSuite page, the LaMa model and any compiled Apple helpers present in `bin/`.
+
+FFmpeg is not included until an LGPL build is supplied:
+
+```bash
+DUCK_FFMPEG=/path/to/lgpl/ffmpeg scripts/build-duck-dev.sh
+```
+
+## Generate the Xcode project
+
+Full Xcode 26+ is required for StoreKit, App Sandbox testing and App Store archives.
 
 ```bash
 cd mac/DuckSuite
@@ -17,6 +36,8 @@ open DuckSuite.xcodeproj
 ```
 
 Or create an Xcode project manually with the same bundle ID, deployment target, entitlements and Info.plist.
+
+Testing steps: [docs/handoff/ducksuite-testing.md](../../docs/handoff/ducksuite-testing.md).
 
 ## What must be in the bundle
 

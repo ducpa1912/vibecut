@@ -4,7 +4,17 @@
 
 **Clock:** agent-native. One implementation phase per day is the target. External gates — App Review, StoreKit propagation, clean-Mac signing, model quality, HF capacity, legal/license review — run in parallel and are not coding days.
 
-**Source of truth:** this file. Product record: `PRODUCT.md`. Detailed Phase 1 steps: `docs/handoff/ducksuite-phase1-plan.md`. Design system: `DESIGN.md` until the DuckSuite “Daylight Bench” rewrite lands.
+**Source of truth:** this file. Product record: `PRODUCT.md`. Detailed Phase 1 steps: `docs/handoff/ducksuite-phase1-plan.md`. Design system: `DESIGN.md` until the DuckSuite “Daylight Bench” rewrite lands. Testing: `docs/handoff/ducksuite-testing.md`.
+
+## 0. Build status (2026-11-07)
+
+| Day | Status | Note |
+|---:|---|---|
+| 1 | **Shell done; StoreKit/render pending** | `duckcore` sidecar, token handshake, static shell, SwiftUI shell, dev `.app`, LaMa model copy, tests |
+| 2 | **Projects/import done** | SQLite project index, native import bridge, project cards, delete, dev fallback |
+| 3+ | Not started | Analyze, Edit/Clean, Voice/Dub, Render/Export |
+
+Day 1 remaining: LGPL ffmpeg bundle, full Xcode build, StoreKit test, sample 1080p render.
 
 ---
 

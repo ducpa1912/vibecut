@@ -44,10 +44,10 @@
             1080p — without an account and without uploading your footage.
           </p>
           <div class="actions">
-            <button class="primary" type="button" disabled>New project</button>
+            <button class="primary" type="button" id="import-button">Import video</button>
             <button class="secondary" type="button" disabled>Open sample</button>
           </div>
-          <p class="fine">Import is wired on Day 2. This build proves the shell and local core.</p>
+          <p class="fine">MP4, MOV or M4V. One source per project. Copied into DuckSuite’s local container.</p>
         </div>
         <div class="frame" aria-hidden="true">
           <div class="frame-inner">
@@ -55,6 +55,17 @@
             <p>1080p · 24/30 fps</p>
           </div>
         </div>
+      </section>
+
+      <section class="projects-section" aria-labelledby="projects-title">
+        <div class="section-head">
+          <div>
+            <p class="kicker">On this Mac</p>
+            <h2 id="projects-title">Projects</h2>
+          </div>
+          <span class="section-note">No account required</span>
+        </div>
+        <div class="projects" id="projects" aria-live="polite"></div>
       </section>
 
       <section class="grid" aria-label="What ships in DuckSuite">
