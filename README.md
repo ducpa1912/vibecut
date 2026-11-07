@@ -44,6 +44,10 @@ Six-screen Daylight Story Desk UI is implemented. The app is not App Store ready
 
 See [ROADMAP.md](ROADMAP.md) and [docs/duck/DISTRIBUTION.md](docs/duck/DISTRIBUTION.md).
 
+## Footage rights
+
+DuckSuite is for footage you own or are authorized to edit. Do not use Clean to remove another creator’s watermark, logo, or ownership mark. The app shows an always-on acknowledgment in Settings; the full terms are in [TERMS.md](TERMS.md). By using Clean, you accept that you are responsible for the rights to the source video and the edited output.
+
 ## Run the development shell
 
 ```bash

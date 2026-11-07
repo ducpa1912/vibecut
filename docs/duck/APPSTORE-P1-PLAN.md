@@ -100,20 +100,19 @@ Do not start screenshots until Clean P1 is closed; do not upload until nested co
 
 **Exit:** no unused StoreKit code; App Store Connect has no missing IAP; review notes say local-only.
 
-## 6. Own-footage attestation
+## 6. Own-footage policy — no runtime gate
 
-**What it means:** the backend has a rights policy that locks Clean layers until the user confirms they own the footage or have permission. `rights.py` returns `rights_not_attested` / `attestation_required`; `detect.py` writes `blocked: rights_not_attested` into the Check prefill. The UI never shows that gate, so the user cannot attest.
+**Product decision:** remove the runtime rights gate. Put the responsibility in the README, Terms & Conditions, and an always-on acknowledgment in Settings.
 
-**UI**
+**Implementation**
 
-- On Import or first Check: one checkbox, plain language:
-  “I own this footage or have permission to edit it. I will not use DuckSuite to remove another creator’s watermark.”
-- Store locally per project; no account.
-- Until ticked: Fill locked; Blur/Off remain available for explicit review? Or all clean locked. Match `rights.lock`.
-- Show the reason on locked layers: “Confirm footage rights to unlock Fill.”
-- Review notes explain the gate and the watermark policy.
+- Check passes `attestation=True`; Clean layers are not blocked by `rights_not_attested`.
+- Settings shows a read-only, always-checked “I own this footage or have permission to edit it” row with the watermark/logo warning.
+- README and `TERMS.md` state the policy and the user’s responsibility.
+- App Review notes explain that the app is for the user’s own footage or authorized footage, and that Clean is not a watermark-removal tool.
+- Keep the rights policy code available for a future enterprise/client-review build, but do not gate the consumer v1 flow.
 
-**Exit:** fresh import cannot Fill without attestation; existing projects can attest; no silent bypass.
+**Exit:** no `rights_not_attested` blocks in a fresh Check; Settings acknowledgment visible; README and T&C published.
 
 ## 7. Third-party notices + licenses
 

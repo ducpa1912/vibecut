@@ -188,6 +188,7 @@ class CheckManager:
                 job_dir,
                 sampler=pipeline.read_text_samples,
                 audio_extractor=pipeline.extract_audio,
+                attestation=True,
                 sample_text=True,
                 progress=check_progress,
             )

@@ -77,7 +77,7 @@ Notarization is **not** part of the Mac App Store path. It is required only for 
 | Metadata | Description, keywords, category, age rating, support URL, screenshots | Required listing |
 | Review notes | Local server, bundled Python, no downloaded code, own-footage clean | High review-risk area |
 | Media auth | Frontend uses `?t=` for images/video; distribution doc says no query-string tokens | Security policy mismatch; move media reads to the HttpOnly cookie |
-| Own-footage | Rights attestation not surfaced in UI; Check reports `rights_not_attested` | Clean/watermark policy needs a visible gate |
+| Own-footage | Runtime gate removed by product decision; always-on acknowledgment in Settings; policy in README and T&C | Legal/review copy must ship; no runtime gate |
 | Clean quality | Scene 01 large-title artifact; some proofs still contain text | “Clean” is the key selling point; do not submit with a P1 proof |
 | TestFlight | No archive, upload, or clean-Mac test | Release gate |
 

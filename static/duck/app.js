@@ -1324,6 +1324,9 @@ async function openSettings() {
           <div class="kv"><span>Projects</span><strong>${fmtBytes(storage.projects_bytes)}</strong></div>
           <div class="kv"><span>Models</span><strong>${fmtBytes(storage.models_bytes)}</strong></div>
           <div class="kv"><span>Free</span><strong>${fmtBytes(storage.free_bytes)}</strong></div>
+          <h3 style="margin-top:10px">Footage rights</h3>
+          <div class="toggle-row"><span>I own this footage or have permission to edit it</span><label class="switch"><input type="checkbox" checked disabled><i></i></label></div>
+          <p class="small muted">Always on. Clean is for your own footage or footage you are authorized to edit. Do not use DuckSuite to remove another creator’s watermark or logo. See Terms &amp; Conditions.</p>
           <h3 style="margin-top:10px">Online jobs</h3>
           <div class="toggle-row"><span>Enable optional online jobs</span><label class="switch"><input id="online-enabled" type="checkbox" ${online.enabled ? 'checked' : ''}><i></i></label></div>
           <div class="field"><label>Endpoint</label><input id="online-endpoint" type="url" value="${esc(online.endpoint || '')}" placeholder="https://render.example.com"></div>
