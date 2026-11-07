@@ -12,7 +12,7 @@
 |---:|---|---|
 | 1 | **Shell done; StoreKit/render pending** | `duckcore` sidecar, token handshake, static shell, SwiftUI shell, dev `.app`, LaMa model copy, tests |
 | 2 | **Projects/import done** | SQLite project index, native import bridge, project cards, delete, dev fallback |
-| 3+ | Not started | Analyze, Edit/Clean, Voice/Dub, Render/Export |
+| 3 | **Engine extracted; pipeline wiring next** | Apple Vision, Apple Speech, detect/story engine, captions, LaMa textfill copied and importable; `/api/engine` and `/api/models` report readiness |
 
 Day 1 remaining: LGPL ffmpeg bundle, full Xcode build, StoreKit test, sample 1080p render.
 

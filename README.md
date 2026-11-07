@@ -26,7 +26,9 @@ Day 1 shell and Day 2 projects/import are implemented. The app is not App Store 
 - SQLite project index.
 - Static DuckSuite shell.
 - Development `.app` builder.
-- Tests for core auth and projects.
+- Engine extraction: Apple Vision, Apple Speech, smart story helpers, LaMa text fill.
+- `/api/engine` and `/api/models` show what is ready on this Mac.
+- Tests for core auth, projects and engine status.
 
 See [ROADMAP.md](ROADMAP.md) and [docs/duck/DISTRIBUTION.md](docs/duck/DISTRIBUTION.md).
 

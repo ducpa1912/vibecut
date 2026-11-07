@@ -20,6 +20,30 @@ Rule: **copy selected code into a new orphan DuckSuite branch. Do not merge Stud
 | Project/edit model | `edits.py`, `compose_render.py` | **Undecided.** Do not copy wholesale. Start with a new minimal project/manifest; borrow immutable-edit and hash ideas only. |
 | Licenses | `LICENSE`, `LICENSES/`, `THIRD_PARTY_NOTICES.md` | Copy and update for DuckSuite. |
 
+## Current extraction
+
+Copied into `duckcore/engine/` from Studio `510bee9`:
+
+- `vision.py` + `tools/vision_probe.swift`
+- `stt.py` + `tools/transcribe_apple.swift`
+- `detect.py`, `rights.py`, `textscore.py`
+- `clipset.py`, `selection.py`
+- `captions.py`
+- `textfill/` with `METHODS = ("lama",)`
+- `workflow_config.py`, `usage_store.py`, minimal `packs.py`, minimal `settings_store.py`
+
+Local API:
+
+- `GET /api/engine` — Vision, Speech, LaMa and story readiness.
+- `GET /api/models` — installed model list.
+
+Still to extract:
+
+- local TTS / voice-over
+- dub timing (`voice_fit.py`, translation helper)
+- render pipeline
+- edit/project model
+
 ## Keep as a small FastAPI app
 
 DuckSuite still uses FastAPI. It does **not** copy the old 110-route monolith.

@@ -28,7 +28,7 @@ Stop the server with `Ctrl+C`.
 python3 -m pytest -q tests/test_duckcore.py
 ```
 
-Expected: `4 passed`.
+Expected: `5 passed`.
 
 ## 3. Swift typecheck
 
@@ -39,6 +39,23 @@ swiftc -typecheck -target arm64-apple-macosx26.0 mac/DuckSuite/DuckSuite/*.swift
 ```
 
 Expected: no output.
+
+## 3. Engine status
+
+With the dev server running:
+
+```bash
+TOKEN=<printed token>
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8797/api/engine
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8797/api/models
+```
+
+Expected:
+
+- `vision.available: true`
+- `speech.apple: true`
+- `fill.method: "lama"`, `fill.ready: true`
+- `models[0].id: "lama"`
 
 ## 4. Development app bundle
 

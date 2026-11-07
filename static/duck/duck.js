@@ -2,6 +2,8 @@ const status = document.querySelector("#core-status");
 const statusText = document.querySelector("#core-status-text");
 const projectsHost = document.querySelector("#projects");
 const importButton = document.querySelector("#import-button");
+const engineGrid = document.querySelector("#engine-grid");
+const engineNote = document.querySelector("#engine-note");
 
 let launchToken = "";
 let baseURL = "";
@@ -114,6 +116,41 @@ async function importVideo() {
   }
 }
 
+function engineCard(title, detail, ready) {
+  const card = document.createElement("article");
+  card.className = "engine-card";
+  const head = document.createElement("div");
+  head.className = "engine-head";
+  const name = document.createElement("h3");
+  name.textContent = title;
+  const state = document.createElement("span");
+  state.className = ready ? "engine-state is-ready" : "engine-state";
+  state.textContent = ready ? "Ready" : "Unavailable";
+  head.append(name, state);
+  const copy = document.createElement("p");
+  copy.textContent = detail;
+  card.append(head, copy);
+  return card;
+}
+
+async function loadEngine() {
+  if (!engineGrid) return;
+  try {
+    const data = await api("/api/engine");
+    engineGrid.replaceChildren(
+      engineCard("Apple Vision", "OCR, faces, saliency and smart crop", data.vision.available),
+      engineCard("Apple Speech", "On-device transcription" + (data.speech.whisper ? " · Whisper fallback" : ""), data.speech.apple),
+      engineCard("LaMa", "Local text fill model", data.fill.ready),
+      engineCard("Smart stories", "Local scene, speech and text evidence", data.stories.ready),
+    );
+    const ready = [data.vision.available, data.speech.apple, data.fill.ready, data.stories.ready].filter(Boolean).length;
+    if (engineNote) engineNote.textContent = `${ready} of 4 ready`;
+  } catch (error) {
+    if (engineNote) engineNote.textContent = "Engine check failed";
+    setStatus(`Engine check failed: ${error.message}`, "bad");
+  }
+}
+
 async function health() {
   if (!launchToken) {
     setStatus("No launch token", "bad");
@@ -122,7 +159,7 @@ async function health() {
   try {
     const data = await api("/api/health");
     setStatus(`Local core ${data.version}`, "ok");
-    await loadProjects();
+    await Promise.all([loadProjects(), loadEngine()]);
   } catch (error) {
     setStatus("Local core unavailable", "bad");
     console.error(error);

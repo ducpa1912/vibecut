@@ -52,6 +52,15 @@ final class Sidecar {
         environment["DUCK_STATIC_DIR"] = bundle
             .appendingPathComponent("Contents/Resources/static/duck")
             .path
+        environment["DUCK_FILL_MODELS"] = bundle
+            .appendingPathComponent("Contents/Resources/base-models")
+            .path
+        environment["DUCK_HELPER_DIR"] = bundle
+            .appendingPathComponent("Contents/Helpers")
+            .path
+        environment["DUCK_SWIFT_DIR"] = bundle
+            .appendingPathComponent("Contents/Resources/swift")
+            .path
         process.environment = environment
         process.standardOutput = stdout
         process.standardError = stderr

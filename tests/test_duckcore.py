@@ -60,6 +60,26 @@ def test_project_create_list_and_delete(tmp_path: Path) -> None:
         assert client.get("/api/projects", headers=headers).json()["projects"] == []
 
 
+def test_engine_status_lists_vision_speech_and_lama(tmp_path: Path) -> None:
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token"}
+
+    with TestClient(app) as client:
+        engine = client.get("/api/engine", headers=headers)
+        assert engine.status_code == 200
+        payload = engine.json()
+        assert payload["vision"]["helper"].endswith("vision_probe")
+        assert "ocr" in payload["vision"]["features"]
+        assert "apple" in payload["speech"]
+        assert payload["fill"]["method"] == "lama"
+        assert "ready" in payload["fill"]
+        assert payload["stories"]["ready"] is True
+
+        models = client.get("/api/models", headers=headers)
+        assert models.status_code == 200
+        assert models.json()["models"][0]["id"] == "lama"
+
+
 def test_project_rejects_source_outside_data_root(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.mp4"
     outside.write_bytes(b"outside")

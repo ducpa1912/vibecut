@@ -19,6 +19,7 @@ import secrets
 import shutil
 import socket
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -57,6 +58,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     data_root.mkdir(parents=True, exist_ok=True)
     store = ProjectStore(data_root)
     dev_mode = os.environ.get("DUCK_DEV", "").strip() == "1"
+    engine_cache: dict = {"at": 0.0, "value": None}
 
     app = FastAPI(
         title="DuckSuite Core",
@@ -110,6 +112,64 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             path="/",
         )
         return {"ok": True}
+
+    @app.get("/api/engine")
+    def engine_status(_: None = Depends(require_token)) -> dict:
+        if engine_cache["value"] is not None and time.monotonic() - engine_cache["at"] < 30:
+            return engine_cache["value"]
+        from duckcore.engine import stt, textfill, vision
+
+        model_dir = textfill.models_dir(data_root)
+        model = model_dir / "lama_fp32.onnx"
+        vision_ready = vision.available()
+        apple_speech = stt._apple_transcribe_helper()
+        whisper = stt._whisper_command()
+        fill_problem = textfill.method_problem("lama", model_dir)
+        value = {
+            "vision": {
+                "available": vision_ready,
+                "helper": str(vision.BINARY),
+                "features": ["ocr", "faces", "saliency", "smart_crop"],
+            },
+            "speech": {
+                "apple": bool(apple_speech),
+                "apple_helper": str(apple_speech) if apple_speech else "",
+                "whisper": bool(whisper),
+                "default": "apple" if apple_speech else ("whisper" if whisper else ""),
+            },
+            "fill": {
+                "method": "lama",
+                "model": str(model),
+                "model_bytes": model.stat().st_size if model.is_file() else 0,
+                "ready": fill_problem is None,
+                "problem": fill_problem or "",
+            },
+            "stories": {"engine": "local", "ready": True},
+        }
+        engine_cache["at"] = time.monotonic()
+        engine_cache["value"] = value
+        return value
+
+    @app.get("/api/models")
+    def list_models(_: None = Depends(require_token)) -> dict:
+        from duckcore.engine import textfill
+
+        model_dir = textfill.models_dir(data_root)
+        model = model_dir / "lama_fp32.onnx"
+        return {
+            "models": [
+                {
+                    "id": "lama",
+                    "label": "LaMa text fill",
+                    "file": str(model),
+                    "installed": model.is_file() and model.stat().st_size > 0,
+                    "bytes": model.stat().st_size if model.is_file() else 0,
+                    "license": "Apache-2.0",
+                    "required": True,
+                    "ready": textfill.method_problem("lama", model_dir) is None,
+                }
+            ]
+        }
 
     @app.get("/api/projects")
     def list_projects(_: None = Depends(require_token)) -> dict:
