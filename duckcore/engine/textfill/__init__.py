@@ -20,6 +20,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -543,19 +544,45 @@ class _Reader:
         return np.frombuffer(data, dtype=np.uint8).reshape(self.shape).copy()
 
 
+def _writer_codec() -> list[str]:
+    """Intermediate fill codec.
+
+    The Mac app uses VideoToolbox so an LGPL ffmpeg build is enough. The Linux
+    worker keeps libx264 because it is not distributed to the user.
+    """
+    override = os.environ.get("DUCK_FILL_ENCODER", "").strip().lower()
+    if override in {"h264_videotoolbox", "videotoolbox"}:
+        return ["-c:v", "h264_videotoolbox", "-q:v", "65", "-pix_fmt", "yuv420p"]
+    if override in {"libx264", "x264"}:
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p"]
+    if sys.platform == "darwin":
+        return ["-c:v", "h264_videotoolbox", "-q:v", "65", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p"]
+
+
 class _Writer:
     def __init__(self, ffmpeg: str, output: Path, fps: float, width: int, height: int):
+        self.stderr_tail = ""
         self.proc = subprocess.Popen(
             [
                 ffmpeg, "-y", "-v", "error", "-nostdin",
                 "-f", "rawvideo", "-pix_fmt", "rgb24",
                 "-s", f"{width}x{height}", "-r", f"{fps:.6f}", "-i", "pipe:0",
-                "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "12",
-                "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                "-an", *_writer_codec(), "-movflags", "+faststart",
                 str(output),
             ],
             stdin=subprocess.PIPE, stderr=subprocess.PIPE,
         )
+        threading.Thread(target=self._drain, daemon=True).start()
+
+    def _drain(self) -> None:
+        if self.proc.stderr is None:
+            return
+        try:
+            for line in self.proc.stderr:
+                self.stderr_tail = (self.stderr_tail + line.decode("utf-8", "replace"))[-2000:]
+        except (OSError, ValueError):
+            pass
 
     def write(self, frame: np.ndarray) -> None:
         self.proc.stdin.write(np.ascontiguousarray(frame, dtype=np.uint8).tobytes())
@@ -1421,7 +1448,7 @@ def prepare_span(
         code = writer.proc.wait(timeout=300)
         reader.proc.wait(timeout=30)
         if code != 0 or written == 0:
-            detail = writer.proc.stderr.read().decode("utf-8", "replace").strip()[-400:]
+            detail = writer.stderr_tail.strip()[-400:]
             raise FillError(f"AI fill could not write the clip. {detail}".strip())
         os.replace(part, output)
         took = time.monotonic() - started

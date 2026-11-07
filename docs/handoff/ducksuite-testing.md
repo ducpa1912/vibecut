@@ -103,6 +103,24 @@ Expected:
 - clean layers are one per Check tracklet
 - layer actions are `fill`, `blur` or `exclude`
 
+### Preview and render
+
+```bash
+curl -s -o preview.jpg -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/clean/preview?time=2.0"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/render"
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/render"
+
+curl -s -o out.mp4 -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/render/file"
+```
+
+Expected render: H.264/AAC MP4, 1080p short side, 24 or 30 fps, original audio. A 5-second smoke render took about 100 seconds on this Mac with LaMa fill.
+
 ## 4. Development app bundle
 
 ```bash

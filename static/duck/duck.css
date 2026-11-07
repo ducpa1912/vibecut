@@ -515,6 +515,16 @@ h2 {
 .edit-head h3 { margin: 0; font-size: 22px; }
 .edit-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 
+.clean-preview {
+  margin: 0 0 14px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--canvas);
+}
+.clean-preview img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; background: var(--canvas); }
+.clean-preview figcaption { padding: 8px 10px; color: var(--muted); font-size: 11px; background: var(--surface-raised); }
+
 .clean-layers { display: grid; gap: 6px; }
 .clean-row {
   display: flex;

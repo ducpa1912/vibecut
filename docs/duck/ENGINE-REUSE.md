@@ -38,6 +38,9 @@ DuckSuite-only modules:
 - `duckcore/check.py` — background Check and smart stories
 - `duckcore/edits.py` — full-video edit, manual story, smart cut
 - `duckcore/clean.py` — clean layers from Check tracklets
+- `duckcore/preview.py` — one-frame clean preview
+- `duckcore/render.py` — 1080p clip render with clean layers and audio
+- `duckcore/media.py` — ffmpeg/ffprobe and frame extraction
 
 Local API:
 

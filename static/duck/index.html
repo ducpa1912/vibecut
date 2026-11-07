@@ -160,8 +160,16 @@
             </header>
             <div class="edit-actions">
               <button class="primary" type="button" id="clean-from-check">Create clean layers from Check</button>
+              <button class="secondary" type="button" id="clean-preview">Preview clean</button>
+              <button class="secondary" type="button" id="render-edit">Render 1080p</button>
+              <button class="secondary" type="button" id="download-render" hidden>Download</button>
               <span class="section-note" id="clean-count"></span>
+              <span class="section-note" id="render-status"></span>
             </div>
+            <figure class="clean-preview" id="clean-preview-figure" hidden>
+              <img id="clean-preview-image" alt="Clean preview">
+              <figcaption id="clean-preview-caption"></figcaption>
+            </figure>
             <div id="clean-layers" class="clean-layers"></div>
           </div>
         </main>

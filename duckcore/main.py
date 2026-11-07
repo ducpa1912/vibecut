@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from duckcore import clean, edits
+from duckcore import clean, edits, preview, render
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -71,6 +71,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     data_root.mkdir(parents=True, exist_ok=True)
     store = ProjectStore(data_root)
     checks = CheckManager(data_root, store)
+    renders = render.RenderManager(data_root, store)
     dev_mode = os.environ.get("DUCK_DEV", "").strip() == "1"
     engine_cache: dict = {"at": 0.0, "value": None}
 
@@ -321,6 +322,69 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         edit = clean.apply_report(edit, report)
         edits.save_edit(edit, data_root)
         return {"edit": edit, "layers": len(edit.get("clean") or [])}
+
+    @app.get(
+        "/api/projects/{project_id}/edits/{edit_id}/clean/preview",
+        responses={200: {"content": {"image/jpeg": {}}}},
+    )
+    def clean_preview(
+        project_id: str,
+        edit_id: str,
+        time: float | None = None,
+        _: None = Depends(require_token),
+    ) -> FileResponse:
+        try:
+            project = store.get(project_id)
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        when = float(time if time is not None else (edit.get("start") or 0.0) + 0.5)
+        output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{int(when * 1000)}.jpg"
+        try:
+            preview.render_clean_preview(
+                project["source_path"],
+                edit,
+                data_root,
+                output,
+                when=when,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+        return FileResponse(output, media_type="image/jpeg")
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/render")
+    def start_render(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        try:
+            return {"render": renders.start(project_id, edit_id)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/render")
+    def render_status(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> dict:
+        return {"render": renders.status(project_id, edit_id)}
+
+    @app.get(
+        "/api/projects/{project_id}/edits/{edit_id}/render/file",
+        responses={200: {"content": {"video/mp4": {}}}},
+    )
+    def render_file(
+        project_id: str, edit_id: str, _: None = Depends(require_token)
+    ) -> FileResponse:
+        status = renders.status(project_id, edit_id)
+        if status.get("state") != "done" or not status.get("output"):
+            raise HTTPException(status_code=409, detail="Render is not ready.")
+        path = Path(str(status["output"]))
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Render file is missing.")
+        return FileResponse(path, media_type="video/mp4", filename=path.name)
 
     @app.patch("/api/projects/{project_id}/edits/{edit_id}/clean/{layer_id}")
     def patch_clean_layer(

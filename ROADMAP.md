@@ -12,7 +12,7 @@
 |---:|---|---|
 | 1 | **Shell done; StoreKit/render pending** | `duckcore` sidecar, token handshake, static shell, SwiftUI shell, dev `.app`, LaMa model copy, tests |
 | 2 | **Projects/import done** | SQLite project index, native import bridge, project cards, delete, dev fallback |
-| 3 | **Check, full edit, story builder, smart cut, clean layers built** | Background Check runs scenes, transcript, OCR tracklets and smart stories. Full-video edit comes first; manual story builder and smart cut follow. Clean layers are generated from Check with Fill/Blur/Off. Render/queue next. |
+| 3 | **Check, edit, smart cut, clean, preview, render built** | Background Check; full-video edit; manual story; smart cut; clean layers with Fill/Blur/Off; clean frame preview; 1080p render with original audio. Queue and settings next. |
 
 Day 1 remaining: LGPL ffmpeg bundle, full Xcode build, StoreKit test, sample 1080p render.
 

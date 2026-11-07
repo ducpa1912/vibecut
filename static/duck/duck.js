@@ -21,8 +21,15 @@ const editKind = document.querySelector("#edit-kind");
 const editTitle = document.querySelector("#edit-title");
 const editMeta = document.querySelector("#edit-meta");
 const cleanFromCheck = document.querySelector("#clean-from-check");
+const cleanPreview = document.querySelector("#clean-preview");
+const cleanPreviewFigure = document.querySelector("#clean-preview-figure");
+const cleanPreviewImage = document.querySelector("#clean-preview-image");
+const cleanPreviewCaption = document.querySelector("#clean-preview-caption");
 const cleanCount = document.querySelector("#clean-count");
 const cleanLayers = document.querySelector("#clean-layers");
+const renderEdit = document.querySelector("#render-edit");
+const renderStatus = document.querySelector("#render-status");
+const downloadRender = document.querySelector("#download-render");
 
 let activeProject = null;
 let activeCheck = null;
@@ -157,6 +164,7 @@ async function startCheck(project, card) {
 }
 
 function closeEditor() {
+  resetRenderUi();
   editor.hidden = true;
   activeProject = null;
   activeCheck = null;
@@ -252,6 +260,8 @@ async function selectEdit(editId) {
   editTitle.textContent = activeEdit.title || "Edit";
   editMeta.textContent = `${formatTime(activeEdit.start)}–${formatTime(activeEdit.end)} · ${activeEdit.clips?.length || 0} clips`;
   renderCleanLayers();
+  resetRenderUi();
+  void pollRender();
   await loadEdits();
 }
 
@@ -352,6 +362,126 @@ async function buildManualStory() {
   }
 }
 
+async function previewClean() {
+  if (!activeProject || !activeEdit) return;
+  const first = (activeEdit.clean || []).find((layer) => layer.enabled !== false && layer.ranges?.length);
+  const when = first
+    ? Number(first.ranges[0].start || 0) + 0.5
+    : Number(activeEdit.start || 0) + 0.5;
+  try {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/clean/preview?time=${encodeURIComponent(when)}`,
+      { headers: { Authorization: `Bearer ${launchToken}` }, cache: "no-store" },
+    );
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    if (cleanPreviewImage.dataset.url) URL.revokeObjectURL(cleanPreviewImage.dataset.url);
+    const url = URL.createObjectURL(blob);
+    cleanPreviewImage.dataset.url = url;
+    cleanPreviewImage.src = url;
+    cleanPreviewFigure.hidden = false;
+    cleanPreviewCaption.textContent = `Frame at ${formatTime(when)} · ${activeEdit.clean?.length || 0} layers`;
+  } catch (error) {
+    setStatus(`Preview failed: ${error.message}`, "bad");
+  }
+}
+
+let renderTimer = null;
+let renderedBlobUrl = "";
+
+function resetRenderUi() {
+  if (renderTimer) clearTimeout(renderTimer);
+  renderTimer = null;
+  if (renderedBlobUrl) URL.revokeObjectURL(renderedBlobUrl);
+  renderedBlobUrl = "";
+  if (downloadRender) downloadRender.hidden = true;
+  if (renderStatus) renderStatus.textContent = "";
+}
+
+function renderUrl(suffix = "") {
+  return `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/render${suffix}`;
+}
+
+function paintRender(state) {
+  if (!renderStatus) return;
+  const percent = Math.round((Number(state.progress) || 0) * 100);
+  if (state.state === "queued" || state.state === "running") {
+    renderStatus.textContent = `${state.stage || "Rendering"} · ${percent}%`;
+    if (renderEdit) {
+      renderEdit.disabled = true;
+      renderEdit.textContent = "Rendering…";
+    }
+    return;
+  }
+  if (renderEdit) {
+    renderEdit.disabled = false;
+    renderEdit.textContent = state.state === "done" ? "Render again" : "Render 1080p";
+  }
+  if (state.state === "done") {
+    renderStatus.textContent = "Render complete";
+    if (downloadRender) downloadRender.hidden = false;
+    return;
+  }
+  if (state.state === "failed") {
+    renderStatus.textContent = state.message || "Render failed";
+    return;
+  }
+  renderStatus.textContent = "";
+}
+
+async function pollRender() {
+  if (!activeProject || !activeEdit) return;
+  try {
+    const data = await api(renderUrl());
+    paintRender(data.render);
+    if (data.render.state === "queued" || data.render.state === "running") {
+      renderTimer = setTimeout(pollRender, 2000);
+    }
+  } catch (error) {
+    if (renderStatus) renderStatus.textContent = `Render status failed: ${error.message}`;
+  }
+}
+
+async function startRenderEdit() {
+  if (!activeProject || !activeEdit) return;
+  renderTimer = null;
+  try {
+    const data = await api(renderUrl(), { method: "POST" });
+    paintRender(data.render);
+    if (data.render.state === "queued" || data.render.state === "running") {
+      renderTimer = setTimeout(pollRender, 1000);
+    }
+  } catch (error) {
+    if (renderStatus) renderStatus.textContent = `Render failed: ${error.message}`;
+  }
+}
+
+async function downloadRendered() {
+  if (!activeProject || !activeEdit) return;
+  try {
+    const response = await fetch(renderUrl("/file"), {
+      headers: { Authorization: `Bearer ${launchToken}` },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    if (renderedBlobUrl) URL.revokeObjectURL(renderedBlobUrl);
+    renderedBlobUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = renderedBlobUrl;
+    anchor.download = `${activeProject.name.replace(/[^\w.-]+/g, "-")}-${activeEdit.id}.mp4`;
+    anchor.click();
+  } catch (error) {
+    if (renderStatus) renderStatus.textContent = `Download failed: ${error.message}`;
+  }
+}
+
 async function cleanFromCheckLayers() {
   if (!activeProject || !activeEdit) return;
   try {
@@ -396,6 +526,9 @@ editorClose?.addEventListener("click", closeEditor);
 editFull?.addEventListener("click", createFullEdit);
 buildStory?.addEventListener("click", buildManualStory);
 cleanFromCheck?.addEventListener("click", cleanFromCheckLayers);
+cleanPreview?.addEventListener("click", previewClean);
+renderEdit?.addEventListener("click", startRenderEdit);
+downloadRender?.addEventListener("click", downloadRendered);
 editor?.addEventListener("click", (event) => {
   if (event.target === editor) closeEditor();
 });
