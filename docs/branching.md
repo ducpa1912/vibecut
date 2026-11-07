@@ -46,7 +46,7 @@ DuckClean is **not** built from this repo worktree.
 /Users/happynghia/Public/Project/Code/drop_eval/vibecut-voice-room voice-room
 ```
 
-The old prunable `vibecut-split` worktree metadata is stale and can be pruned.
+The old `vibecut-split` worktree metadata was pruned on 2026-11-07.
 
 ## Rules
 
