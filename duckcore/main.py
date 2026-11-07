@@ -18,6 +18,7 @@ import os
 import secrets
 import shutil
 import socket
+import subprocess
 import sys
 import time
 import uuid
@@ -26,15 +27,20 @@ from pathlib import Path
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from duckcore import app_settings, captions, clean, edits, preview, render, voice
+from duckcore import app_settings, captions, clean, edits, media, preview, render, voice
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = Path(os.environ.get("DUCK_STATIC_DIR", ROOT / "static" / "duck")).expanduser()
+if not STATIC.is_dir():
+    # PyInstaller one-folder app: static lives beside the duckcore folder in
+    # Contents/Resources, not inside _internal.
+    bundled_static = Path(sys.executable).resolve().parent.parent / "static" / "duck"
+    if bundled_static.is_dir():
+        STATIC = bundled_static
 APP_VERSION = "0.1.0"
 
 
@@ -83,6 +89,10 @@ class DevImport(BaseModel):
     name: str = Field(default="", max_length=160)
 
 
+class RevealBody(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+
+
 def create_app(token: str, data_root: Path) -> FastAPI:
     if not token:
         raise ValueError("DuckSuite core requires a launch token.")
@@ -102,13 +112,24 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
-    app.mount("/assets", StaticFiles(directory=STATIC), name="assets")
 
     def require_token(request: Request) -> None:
         header = request.headers.get("authorization", "")
         scheme, _, value = header.partition(" ")
         if scheme.lower() != "bearer" or not secrets.compare_digest(value, token):
             raise HTTPException(status_code=401, detail="Unauthorized")
+
+    def require_media(request: Request, media_token: str | None = None) -> None:
+        """Authorize an <img>/<video> read.
+
+        Media elements cannot attach the bearer header. The local shell passes
+        the same launch token as a short-lived query value; the HttpOnly cookie
+        is accepted as a fallback.
+        """
+        candidates = [media_token or "", request.cookies.get("duck_session", "")]
+        if any(item and secrets.compare_digest(item, token) for item in candidates):
+            return
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -117,13 +138,43 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
             "frame-ancestors 'none'; form-action 'none'"
         )
         if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
+            media_read = any(
+                marker in request.url.path
+                for marker in ("/frame", "/source", "/clean/preview", "/render/file", "/voice/audio")
+            )
+            response.headers["Cache-Control"] = (
+                "private, max-age=300" if media_read else "no-store"
+            )
         return response
+
+    @app.get("/assets/{asset_path:path}")
+    def static_asset(asset_path: str) -> FileResponse:
+        target = (STATIC / asset_path).resolve()
+        try:
+            target.relative_to(STATIC.resolve())
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Asset not found.") from exc
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Asset not found.")
+        media_type = {
+            ".html": "text/html",
+            ".css": "text/css",
+            ".js": "text/javascript",
+            ".mjs": "text/javascript",
+            ".json": "application/json",
+            ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".woff2": "font/woff2",
+        }.get(target.suffix.lower(), "application/octet-stream")
+        return FileResponse(target, media_type=media_type)
 
     @app.get("/api/health")
     def health(_: None = Depends(require_token)) -> dict:
@@ -235,6 +286,92 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"project": project}
+
+    @app.post("/api/projects/upload")
+    async def upload_project(request: Request, _: None = Depends(require_token)) -> dict:
+        """Browser fallback for Import. The sandboxed app uses NSOpenPanel."""
+        raw = await request.body()
+        if not raw:
+            raise HTTPException(status_code=400, detail="The video file is empty.")
+        filename = Path(request.headers.get("x-filename", "video.mp4")).name
+        suffix = Path(filename).suffix.lower() or ".mp4"
+        if suffix not in {".mp4", ".mov", ".m4v"}:
+            raise HTTPException(status_code=400, detail="Use MP4, MOV or M4V.")
+        target_dir = data_root / "imports" / uuid.uuid4().hex[:12]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"source{suffix}"
+        target.write_bytes(raw)
+        try:
+            project = store.create(Path(filename).stem, target)
+        except (FileNotFoundError, ValueError) as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"project": project}
+
+    @app.get("/api/projects/{project_id}/frame")
+    def project_frame(
+        project_id: str,
+        request: Request,
+        time: float = 0.0,
+        t: str | None = None,
+    ) -> FileResponse:
+        require_media(request, t)
+        try:
+            project = store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        when = max(0.0, float(time))
+        cache = data_root / "projects" / project_id / "frames" / f"frame_{int(when * 1000)}.jpg"
+        if not cache.is_file():
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                image = media.extract_frame(project["source_path"], when)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=500, detail=str(exc)[:300]) from exc
+            image.save(cache, format="JPEG", quality=88)
+        return FileResponse(cache, media_type="image/jpeg")
+
+    @app.get(
+        "/api/projects/{project_id}/source",
+        responses={200: {"content": {"video/mp4": {}}}},
+    )
+    def project_source(
+        project_id: str,
+        request: Request,
+        t: str | None = None,
+    ) -> FileResponse:
+        require_media(request, t)
+        try:
+            project = store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        path = Path(project["source_path"])
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Source is missing.")
+        return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+    @app.get("/api/projects/{project_id}/transcript")
+    def project_transcript(project_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        from duckcore.engine import stt
+
+        job_dir = data_root / "projects" / project_id
+        return {"transcript": stt.load_latest_transcript(job_dir) or {}}
+
+    @app.post("/api/reveal")
+    def reveal_file(body: RevealBody, _: None = Depends(require_token)) -> dict:
+        path = Path(body.path).expanduser().resolve()
+        try:
+            path.relative_to(data_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Path is outside DuckSuite.") from exc
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="File not found.")
+        subprocess.run(["open", "-R", str(path)], check=False)
+        return {"ok": True}
 
     @app.get("/api/projects/{project_id}")
     def get_project(project_id: str, _: None = Depends(require_token)) -> dict:
@@ -366,9 +503,11 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     def clean_preview(
         project_id: str,
         edit_id: str,
+        request: Request,
         time: float | None = None,
-        _: None = Depends(require_token),
+        t: str | None = None,
     ) -> FileResponse:
+        require_media(request, t)
         try:
             project = store.get(project_id)
             edit = edits.get_edit(data_root, project_id, edit_id)
@@ -376,6 +515,8 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         when = float(time if time is not None else (edit.get("start") or 0.0) + 0.5)
         output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{int(when * 1000)}.jpg"
+        if output.is_file() and output.stat().st_mtime >= float(edit.get("updated") or 0.0) - 1.0:
+            return FileResponse(output, media_type="image/jpeg")
         try:
             preview.render_clean_preview(
                 project["source_path"],
@@ -518,8 +659,12 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         responses={200: {"content": {"audio/wav": {}}}},
     )
     def voice_audio(
-        project_id: str, edit_id: str, _: None = Depends(require_token)
+        project_id: str,
+        edit_id: str,
+        request: Request,
+        t: str | None = None,
     ) -> FileResponse:
+        require_media(request, t)
         try:
             edit = edits.get_edit(data_root, project_id, edit_id)
         except KeyError as exc:
@@ -570,8 +715,12 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         responses={200: {"content": {"video/mp4": {}}}},
     )
     def render_file(
-        project_id: str, edit_id: str, _: None = Depends(require_token)
+        project_id: str,
+        edit_id: str,
+        request: Request,
+        t: str | None = None,
     ) -> FileResponse:
+        require_media(request, t)
         status = renders.status(project_id, edit_id)
         if status.get("state") != "done" or not status.get("output"):
             raise HTTPException(status_code=409, detail="Render is not ready.")

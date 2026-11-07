@@ -286,3 +286,30 @@ Current status: shell + local core + projects pass. ffmpeg/render and StoreKit s
 - Project card appears after import.
 - Delete removes the project row and copied source.
 - No path import, no URL import.
+
+## UI revamp smoke — six screens
+
+Start the dev shell:
+
+```bash
+DUCK_TOKEN=review-token DUCK_PORT=8797 scripts/serve-duck.sh
+```
+
+Open `http://127.0.0.1:8797/#t=review-token`.
+
+Expected:
+
+1. **Welcome** opens on projects, upload, active queue, recent renders, engine.
+2. **Check** cuts scenes first, publishes the scene strip, and auto-opens Editor while transcript/text detection continue.
+3. **Edit** shows Proof Rows, transcript, Clean/Captions/Voice, fine trim.
+4. **Clean Focus** is the Edit step in focus mode; only clean tools; proof pair; Fill/Blur/Off.
+5. **Preview** defaults to the full After proof; Before/Compare/After toggle; scene strip; proof readiness.
+6. **Render** shows source-aspect 1080p, one queue control, cancelled rows without a false progress bar, output returning to Welcome.
+
+Review evidence:
+
+- `docs/teams/team-1-welcome-check/review-02.md`
+- `docs/teams/team-2-edit-clean/review-02.md`
+- `docs/teams/team-3-preview-render/review-02.md`
+
+Known launch risk: LaMa proof quality on very large stylized text. Scene 01 shows an artifact; scene 07 is the verified clean example.

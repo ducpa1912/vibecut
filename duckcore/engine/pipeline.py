@@ -2756,6 +2756,9 @@ def analyze_source(
     job_dir: Path,
     options: dict,
     progress: Callable[[str, float, str], None],
+    *,
+    scenes: list[dict] | None = None,
+    scan_info: dict | None = None,
 ) -> dict:
     started = time.time()
     timings: dict[str, float] = {}
@@ -2767,13 +2770,19 @@ def analyze_source(
     speech_errors: list[dict] = []
 
     stage = time.time()
-    tracker.emit("scanning", 0.0, "Slicing the timeline")
-    scenes, scan_info = scan_scenes(
-        path, meta["duration"],
-        lambda fraction, message: tracker.emit("scanning", fraction, message),
-    )
-    tracker.emit("scanning", 1.0, "Timeline sliced")
-    timings["scan"] = round(time.time() - stage, 2)
+    if scenes is None:
+        tracker.emit("scanning", 0.0, "Slicing the timeline")
+        scenes, scan_info = scan_scenes(
+            path, meta["duration"],
+            lambda fraction, message: tracker.emit("scanning", fraction, message),
+        )
+        tracker.emit("scanning", 1.0, "Timeline sliced")
+        timings["scan"] = round(time.time() - stage, 2)
+    else:
+        # The caller already scanned the cuts so the Editor can open during
+        # Check. Reuse those scenes instead of scanning the same file twice.
+        scan_info = scan_info or {}
+        tracker.emit("scanning", 1.0, "Timeline sliced")
 
     stage = time.time()
     tracker.emit("audio", 0.05, "Listening to the audio")

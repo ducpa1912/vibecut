@@ -30,7 +30,7 @@ def test_shell_serves_duck_page(tmp_path: Path) -> None:
         page = client.get("/")
         assert page.status_code == 200
         assert "DuckSuite" in page.text
-        assert "Your video stays on this Mac." in page.text
+        assert "/assets/app.js" in page.text
 
 
 def test_project_create_list_and_delete(tmp_path: Path) -> None:
@@ -329,3 +329,42 @@ def test_project_rejects_source_outside_data_root(tmp_path: Path) -> None:
         )
         assert response.status_code == 400
     outside.unlink(missing_ok=True)
+
+
+def test_upload_creates_project(tmp_path: Path) -> None:
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token", "X-Filename": "clip.mp4"}
+
+    with TestClient(app) as client:
+        response = client.post("/api/projects/upload", headers=headers, content=b"not a real video")
+        assert response.status_code == 200
+        project = response.json()["project"]
+        assert project["name"] == "clip"
+        source = Path(project["source_path"])
+        assert source.is_file()
+        assert source.read_bytes() == b"not a real video"
+
+
+def test_upload_rejects_empty_file(tmp_path: Path) -> None:
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token", "X-Filename": "clip.mp4"}
+
+    with TestClient(app) as client:
+        response = client.post("/api/projects/upload", headers=headers, content=b"")
+        assert response.status_code == 400
+
+
+def test_reveal_rejects_path_outside_data_root(tmp_path: Path) -> None:
+    app = create_app("test-token", tmp_path)
+    headers = {"Authorization": "Bearer test-token"}
+
+    with TestClient(app) as client:
+        response = client.post("/api/reveal", headers=headers, json={"path": "/etc/hosts"})
+        assert response.status_code == 400
+
+
+def test_media_endpoints_require_token(tmp_path: Path) -> None:
+    app = create_app("test-token", tmp_path)
+    with TestClient(app) as client:
+        assert client.get("/api/projects/unknown/frame").status_code == 401
+        assert client.get("/api/projects/unknown/source").status_code == 401

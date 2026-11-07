@@ -339,10 +339,26 @@ class RenderQueue:
                 """,
                 (max(1, min(200, int(limit))),),
             ).fetchall()
+        from duckcore import edits
+
         result = []
         for row in rows:
             item = self._row(row)
             item["project_name"] = row["project_name"] or ""
+            try:
+                edit = edits.get_edit(self.data_root, item["project_id"], item["edit_id"])
+                source = edit.get("source") or {}
+                item["duration"] = round(
+                    max(0.0, float(edit.get("end") or 0.0) - float(edit.get("start") or 0.0)), 3
+                )
+                item["fps"] = float(source.get("fps") or 0.0)
+                item["width"] = int(source.get("width") or 0)
+                item["height"] = int(source.get("height") or 0)
+            except (KeyError, OSError, ValueError, TypeError):
+                item["duration"] = 0.0
+                item["fps"] = 0.0
+                item["width"] = 0
+                item["height"] = 0
             result.append(item)
         return result
 

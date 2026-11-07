@@ -79,6 +79,7 @@ class CheckManager:
             message="Waiting for the local engine",
             error="",
             result=None,
+            scenes=[],
         )
         self.executor.submit(self._run, project, cancel)
         return self.status(project_id)
@@ -101,12 +102,38 @@ class CheckManager:
             source = str(project["source_path"])
             meta = pipeline.probe(source)
 
+            # Phase 1: cut scenes. Publish them immediately so the Editor can
+            # open while transcript, OCR and stories continue below.
+            self._set(project_id, state="running", stage="Scenes", progress=0.02, message="Finding scene cuts")
+            scenes, scan_info = pipeline.scan_scenes(
+                source,
+                float(meta.get("duration") or 0.0),
+                lambda fraction, message: self._set(
+                    project_id,
+                    state="running",
+                    stage="Scenes",
+                    progress=min(0.18, 0.02 + 0.16 * max(0.0, min(1.0, float(fraction)))),
+                    message=message,
+                ),
+            )
+            (job_dir / "scenes.json").write_text(
+                json.dumps(scenes, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            self._set(
+                project_id,
+                state="running",
+                stage="Scenes",
+                progress=0.18,
+                message=f"{len(scenes)} scenes ready",
+                scenes=scenes,
+            )
+
             def analyze_progress(stage: str, fraction: float, message: str) -> None:
                 self._set(
                     project_id,
                     state="running",
                     stage=stage.title(),
-                    progress=min(0.72, 0.02 + 0.70 * max(0.0, min(1.0, float(fraction)))),
+                    progress=min(0.72, 0.18 + 0.54 * max(0.0, min(1.0, float(fraction)))),
                     message=message,
                 )
 
@@ -123,6 +150,8 @@ class CheckManager:
                     "request_id": project_id,
                 },
                 analyze_progress,
+                scenes=scenes,
+                scan_info=scan_info,
             )
 
             transcript = stt.load_latest_transcript(job_dir) or {}

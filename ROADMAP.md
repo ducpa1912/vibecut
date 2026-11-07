@@ -12,7 +12,7 @@
 |---:|---|---|
 | 1 | **Shell done; StoreKit/render pending** | `duckcore` sidecar, token handshake, static shell, SwiftUI shell, dev `.app`, LaMa model copy, tests |
 | 2 | **Projects/import done** | SQLite project index, native import bridge, project cards, delete, dev fallback |
-| 3 | **Check, edit, clean, render, queue, settings, captions, voice-over built** | Background Check; full-video edit; manual story; smart cut; clean layers; clean preview; 1080p VideoToolbox render; durable queue; Settings; captions with styles, SRT and burn-in; local voice-over with `say`, preview and render mix. Local dub next. |
+| 3 | **Six-screen UI, check/edit/clean/preview/render, captions, voice-over built** | Daylight Story Desk UI: Welcome, Check, Edit, Clean Focus, Preview, Render. Scene-first Check handoff; Proof Rows; clean focus mode; before/after proof; 1080p queue; Settings; captions; local voice-over. UI reviews: `docs/teams/`. Local dub and App Store hardening next. |
 
 Day 1 remaining: LGPL ffmpeg bundle, full Xcode build, StoreKit test, sample 1080p render.
 

@@ -3,7 +3,7 @@
 Offline macOS app for turning one long video into the few clips you will post.
 
 ```text
-Import → Analyze → Edit → Render → Export
+Welcome → Check → Edit ⇄ Clean Focus → Preview → Render → Welcome
 ```
 
 DuckSuite does the local work on this Mac:
@@ -19,7 +19,7 @@ No account. No telemetry. No upload unless the user chooses optional cloud rende
 
 ## Status
 
-Day 1 shell and Day 2 projects/import are implemented. The app is not App Store ready yet.
+Six-screen Daylight Story Desk UI is implemented. The app is not App Store ready yet.
 
 - `duckcore` local FastAPI core with token handshake.
 - Sandboxed SwiftUI shell with `NSOpenPanel` import.
@@ -28,18 +28,19 @@ Day 1 shell and Day 2 projects/import are implemented. The app is not App Store 
 - Development `.app` builder.
 - Engine extraction: Apple Vision, Apple Speech, smart story helpers, LaMa text fill.
 - `/api/engine` and `/api/models` show what is ready on this Mac.
-- Background Check: scenes, transcript, OCR tracklets, smart story candidates.
-- Full-video edit first, then manual story builder and one-click smart cut.
-- Clean layers from Check: LaMa Fill, explicit Blur or Off.
-- Clean preview from a real frame.
-- Render full video or a story at 1080p, 24/30 fps, with clean layers and original audio.
-- Durable render queue: run, pause, resume, cancel; survives restart.
-- Settings: engine status, model verification, storage, online-job endpoint.
+- Six screens: Welcome, Check, Edit, Clean Focus, Preview, Render.
+- Welcome: upload, recent projects, active queue, finished output, engine and disk.
+- Check: scene cuts publish first; Editor opens while transcript, text detection, and stories continue.
+- Editor: Proof Rows, transcript, captions, voice, fine trim, Clean focus entry.
+- Clean Focus: same Editor frame, only clean tools; scene list, proof pair, Fill/Blur/Off, detect status.
+- Preview: Before / Compare / After player; clean runs scene by scene; blurred placeholder is never rendered; readiness counts proofs.
+- Render: source-aspect 1080p, queue, state-appropriate pause/resume, output returns to Welcome.
+- Clean preview frames are cached per edit version; frame and source endpoints support media-token reads.
 - Captions: generate from transcript, edit cue text, download SRT, choose Clean/Bold/Minimal style and bottom/middle/top position, or burn into the render.
 - Voice-over: local macOS voices, script from captions, voice-over or voice-only, preview and render mix.
 - Language is auto-detect only; no picker.
-- Project cards show Check status and story candidates.
-- Tests for core auth, projects, engine status, edits and clean layers.
+- UI reviews and screenshots: [docs/teams/README.md](docs/teams/README.md).
+- Tests for core auth, projects, upload, engine status, edits, clean layers, media auth, and reveal guards.
 
 See [ROADMAP.md](ROADMAP.md) and [docs/duck/DISTRIBUTION.md](docs/duck/DISTRIBUTION.md).
 
