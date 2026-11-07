@@ -2,9 +2,9 @@ import {
   ClerkProvider,
   SignedIn,
   SignedOut,
-  SignInButton,
   UserButton,
   useAuth,
+  useClerk,
   useUser,
 } from '@clerk/clerk-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -47,6 +47,7 @@ function SetupState() {
 }
 
 function Landing() {
+  const { openSignIn } = useClerk();
   return (
     <main className="landing">
       <p className="wordmark">DuckClean</p>
@@ -55,11 +56,9 @@ function Landing() {
         Upload the full clip. DuckClean finds the marks, renders only the beats that
         contain them, and returns the whole video with the original audio.
       </p>
-      <SignInButton>
-        <button className="primary" type="button">
-          Sign in
-        </button>
-      </SignInButton>
+      <button className="primary" type="button" onClick={() => openSignIn()}>
+        Sign in
+      </button>
       <p className="fine">
         A phone can upload, review, render and download because rendering is remote.
       </p>

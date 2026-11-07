@@ -160,10 +160,11 @@ Then set `CPU_WORKER_URL=http://127.0.0.1:8799` and the same
 
 Remote:
 
-- Build the `worker/` image.
-- Deploy it to Hugging Face CPU for M1.
+- `worker/Dockerfile` and `worker/README.md` make `worker/` a Hugging Face
+  Docker Space (port 7860, ffmpeg included).
+- Set `DUCKCLEAN_HMAC_SECRET` in the Space settings.
 - Set `CPU_WORKER_URL` to the HTTPS Space URL.
-- Keep the HMAC secret in both the API Worker and the worker.
+- Keep the same HMAC secret in the API Worker and the worker.
 
 ### 7. API Worker secrets and deploy
 
