@@ -4,7 +4,7 @@
 
 **Clock:** agent-native. One implementation phase per day is the target. External gates — App Review, StoreKit propagation, clean-Mac signing, model quality, HF capacity, legal/license review — run in parallel and are not coding days.
 
-**Source of truth:** this file. Product record: `PRODUCT.md`. Distribution: `docs/duck/DISTRIBUTION.md`. Commercial: `docs/duck/COMMERCIAL.md`. Detailed Phase 1 steps: `docs/handoff/ducksuite-phase1-plan.md`. Design system: `DESIGN.md` until the DuckSuite “Daylight Bench” rewrite lands. Testing: `docs/handoff/ducksuite-testing.md`.
+**Source of truth:** this file. Product record: `PRODUCT.md`. Distribution: `docs/duck/DISTRIBUTION.md`. Commercial: `docs/duck/COMMERCIAL.md`. Detailed Phase 1 steps: `docs/handoff/ducksuite-phase1-plan.md`. Design system: `DESIGN.md`. Testing: `docs/handoff/ducksuite-testing.md`.
 
 ## 0. Build status (2026-11-07)
 

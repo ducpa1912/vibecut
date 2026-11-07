@@ -1,207 +1,81 @@
----
-name: VibeCut Studio (legacy visual system)
-description: Legacy dim workbench; DuckSuite replaces it with the Daylight Bench direction
-colors:
-  amber-work-light: "#e8a266"
-  amber-work-light-hover: "#f0b27c"
-  amber-ink: "#1a1209"
-  bench-black: "#0b0b0c"
-  panel: "#121214"
-  panel-raised: "#17171a"
-  panel-top: "#1d1d21"
-  line: "#2a2a2f"
-  line-strong: "#3a3a40"
-  paper-white: "#f1efe9"
-  muted: "#a3a1a6"
-  dim: "#8a888f"
-  ok-green: "#8ec9a3"
-  bad-coral: "#e28a7c"
-typography:
-  display:
-    fontFamily: "ui-serif, Iowan Old Style, Palatino Linotype, Palatino, Georgia, serif"
-    fontSize: "clamp(30px, 3.2vw, 44px)"
-    fontWeight: 500
-    lineHeight: 1.06
-    letterSpacing: "-0.025em"
-  title:
-    fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
-    fontSize: "15px"
-    fontWeight: 580
-  body:
-    fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
-    fontSize: "15px"
-    lineHeight: 1.45
-  body-editor:
-    fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
-    fontSize: "13px"
-  label:
-    fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
-    fontSize: "12px"
-  timecode:
-    fontFamily: "SF Mono, ui-monospace, Menlo, Consolas, monospace"
-    fontSize: "11px"
-rounded:
-  sm: "4px"
-  md: "8px"
-  control: "10px"
-  card: "14px"
-spacing:
-  "1": "4px"
-  "2": "8px"
-  "3": "12px"
-  "4": "16px"
-  "5": "24px"
-  "6": "32px"
-components:
-  button-primary:
-    backgroundColor: "{colors.amber-work-light}"
-    textColor: "{colors.amber-ink}"
-    rounded: "{rounded.control}"
-    padding: "9px 17px"
-    height: "40px"
-  button-primary-hover:
-    backgroundColor: "{colors.amber-work-light-hover}"
-  button-ghost:
-    textColor: "{colors.paper-white}"
-    rounded: "{rounded.control}"
-    padding: "9px 17px"
-    height: "40px"
-  button-ghost-hover:
-    backgroundColor: "{colors.panel-raised}"
-  button-quiet:
-    textColor: "{colors.muted}"
-    rounded: "{rounded.control}"
-    padding: "9px 17px"
-    height: "40px"
-  button-small:
-    padding: "6px 12px"
-    height: "32px"
-  icon-button:
-    size: "30px"
----
+# DuckSuite design
 
-# Design System: VibeCut Studio
+Direction: **Daylight Bench**.
 
-Recorded 2026-11-06 from `static/studio/studio.css` and `static/studio/edit/edit.css`. Classic and the Voice Room keep their own styles and are not covered here.
+A calm, warm Mac workspace. The video is the brightest object. Chrome is daylight; the canvas is dark.
 
-## Overview
+## Principles
 
-**Creative North Star: "The Darkroom Bench"**
+- One primary action per screen.
+- The picture leads; controls recede.
+- Local is visible: “On this Mac,” model status, disk, cloud off.
+- Honest progress. No fake ETA, no silent fallback.
+- Mac-native where it matters: menus, Settings, file panels, keyboard, trackpad.
 
-A dim, warm working room for long sessions. The picture is the lit object on the bench, the tools stay quiet around it, and amber marks what is active, like a safelight. Nothing competes with the video, because judging the video is the job.
+## Colour
 
-Studio is an Operate surface. Its density is high in Edit: one fixed screen that never scrolls as a page, with panels and a timeline that scroll inside themselves, and small labels that assume a creator who is there for an hour. The other steps breathe a little more and open with a serif heading. A faint amber glow in the page corner is the one atmospheric touch.
+| Token | Value | Use |
+|---|---|---|
+| Canvas | `#0E0E10` | Video surround, always dark |
+| Surface | `#F7F4EE` | Window |
+| Surface raised | `#FFFFFF` | Cards, panels |
+| Ink | `#1C1B19` | Main text |
+| Muted | `#5F5B54` | Secondary text |
+| Line | `#E4DED3` | Borders |
+| Accent | `#A9540C` | Text/icon accent, focus |
+| Accent fill | `#F0A45C` | Primary button |
+| Success | `#2F7D5B` | Ready, verified |
+| Warning | `#8A5A00` | Caution |
+| Danger | `#B23A2E` | Error, destructive |
+| Cloud | `#2F6FEB` | Cloud status only |
 
-**Key Characteristics:**
+## Type
 
-- Near-black, slightly warm tonal layers instead of shadows.
-- One accent: amber, on the primary action, the selected item and the keyboard focus.
-- Serif for step and stage headings, system sans for every control, mono for time.
-- Plain, literal labels with a line of honest detail beside them.
+- Display: New York / system serif, 32–44 px, welcome and empty states.
+- Title: SF Pro, 17–20 px semibold.
+- Body: SF Pro, 15 px.
+- Panel: SF Pro, 13 px.
+- Label: SF Pro, 12 px.
+- Timecode/hash: SF Mono, 11–12 px.
+- Minimum 12 px labels. No 9–10 px text.
 
-## Colors
+## Space and shape
 
-A warm near-black ramp, warm off-white text, one amber accent and two muted state colours.
+- 4/8/12/16/24/32/48 scale.
+- Page gutters 24; card padding 16–20.
+- Controls 28/32/40 high; primary 40.
+- Radii: 6 chips, 8 inputs, 10 buttons, 14 cards.
+- 1 px borders. Shadows only for native popovers/sheets. No glass, gradients or glow.
 
-### Primary
+## Motion
 
-- **Amber Work Light** (#e8a266): the primary button, selection, focus ring and active timeline edge. A 13% tint (`rgba(232, 162, 102, 0.13)`) marks selected rows. Hover lifts to #f0b27c.
-- **Amber Ink** (#1a1209): text on Amber Work Light.
+- 120–180 ms for controls; 220–240 ms for sheets.
+- Ease-out. No bounce.
+- Respect Reduce Motion.
+- No confetti on export. No auto-playing sound.
+- Progress never moves backward.
 
-### Neutral
+## Accessibility
 
-- **Bench Black** (#0b0b0c): the page behind everything.
-- **Panel** (#121214), **Panel Raised** (#17171a), **Panel Top** (#1d1d21): three steps of surface, each one closer to the creator.
-- **Line** (#2a2a2f), **Line Strong** (#3a3a40): dividers and the ghost button border.
-- **Paper White** (#f1efe9): main text.
-- **Muted** (#a3a1a6), **Dim** (#8a888f): secondary and tertiary text.
+- WCAG 2.2 AA.
+- 4.5:1 body contrast; 3:1 large text and controls.
+- Visible 2 px focus ring at 3 px offset.
+- Full keyboard path; no drag-only action.
+- VoiceOver labels and live regions for render, queue and model download.
+- 200% zoom; test at 1024×700, 1280×800, 1440×900.
+- Reduce Motion, Reduce Transparency, Increase Contrast.
+- Colour never the only signal.
 
-### State
+## Mac conventions
 
-- **OK Green** (#8ec9a3) and **Bad Coral** (#e28a7c), each with a 12% tint for backgrounds. They report status and never decorate.
+- Menu bar: File, Edit, View, Render, Help.
+- Settings `⌘,`.
+- `⌘N` new project, `⌘O` import, `⌘S` save, `⌘E` export, Space play/pause.
+- `NSOpenPanel` / `NSSavePanel`; security-scoped bookmarks.
+- Drag/drop, Quick Look, Share sheet, notifications, Dock badge for render completion.
+- Autosave, window restoration, standard About panel.
+- Native alerts for destructive actions; no custom web modal for system decisions.
 
-### Named Rules
+## Product family
 
-**The Safelight Rule.** Amber means active or next. If two things on a screen are amber and neither is selected or primary, one is wrong.
-
-**The Blue and Orange Rule.** On the Clean lane and preview, a box you drew is blue (#7fb7e8) and a box the scan found is orange. These are data colours and keep their meaning everywhere boxes appear. A dashed bar is found text with no layer yet.
-
-## Typography
-
-**Display Font:** the system serif (Iowan Old Style, Palatino, Georgia)
-**Body Font:** the system sans (`-apple-system`, Segoe UI, Helvetica)
-**Label/Mono Font:** SF Mono (`ui-monospace`, Menlo) for time and technical values
-
-**Character:** an editorial serif gives each step a calm title, while native system fonts keep controls familiar and fast. Text is a loaded system stack, so nothing is downloaded and it works offline.
-
-### Hierarchy
-
-- **Display** (500, `clamp(30px, 3.2vw, 44px)`, line height 1.06, -0.025em): step headings and Finish stage headings.
-- **Title** (580, 15px): panel titles in Edit.
-- **Body** (400, 15px, line height 1.45): the shell. Prose keeps to about 620px.
-- **Body Editor** (13px): Edit panels, whose small scale is `--edit-text-small` 12px, `--edit-text-body` 13px and `--edit-title` 15px.
-- **Label** (11–12px): the most common size in the CSS, for rows, hints and timeline text.
-
-### Named Rules
-
-**The One Serif Rule.** The serif is for headings that name where you are. No control, row or timeline label uses it.
-
-## Layout
-
-Edit is a fixed frame: Elements on the left, the preview in the middle, layers and inspector on the right, and a full-width timeline below. The page itself never scrolls, and timeline widths are percentages, so 1280 and 1440 wide both fit with no sideways scroll. The other steps are a bounded grid that scrolls inside `.st-main`.
-
-Spacing is a 4px-based scale (4, 8, 12, 16, 24, 32), exposed in Edit as `--edit-space-1` to `--edit-space-6`. Page gutters use `clamp(12px, 1.7vw, 24px)`.
-
-The main breakpoints are 1366, 1100, 1023, 900 and 767 wide, plus 780 tall for short screens. Below 1023 the Edit inspector becomes a drawer or sheet.
-
-## Elevation & Depth
-
-The system is flat. Depth comes from the tonal steps of Panel, Panel Raised and Panel Top. Box shadows act as hairlines, not lift: `0 0 0 1px` in amber for selection, `inset 0 0 0 1px` for an inner edge, and `inset 2px 0 0` in amber for an active row.
-
-**The No Lift Rule.** Do not float a surface with a soft drop shadow. A dialog or drawer is separated by its tone and its line.
-
-## Shapes
-
-Corners are gently curved and scale with the object: 3–5px on small chips and timeline bars, 8px on inputs and rows, 10px on buttons, 14px (`--st-radius`) on large cards. Borders are 1px.
-
-## Components
-
-Component variables are scoped to `#studio-root` and `.st-edit-panel`, so other pages keep their own rules.
-
-### Buttons
-
-- **Shape:** 10px radius, 40px tall, 9px 17px padding, 13.5px at weight 580. Small buttons are 32px tall at 12px text.
-- **Primary:** Amber Work Light with Amber Ink. There is one per view.
-- **Ghost:** transparent with a Line Strong border. Hover fills Panel Raised.
-- **Quiet:** transparent, Muted text, for low-priority actions.
-- **States:** focus is a 2px amber outline at 3px offset. Press moves down 1px over 140ms. Disabled is 42% opacity.
-
-### Icon buttons
-
-30px square with a transparent border, using one Lucide-derived icon set from `static/studio/edit/icons.js`. Every icon has a label and tooltip.
-
-### Clean boxes and timeline bars
-
-A box on the preview and its timeline bar are one object: select, move or resize either. The orange and blue colours follow the Blue and Orange Rule, and the bars stack in rows when they overlap so each stays clickable.
-
-### Queue drawer
-
-A slide-over from the Finish step with Queue and History tabs. The render card keeps a compact status strip with the real time left.
-
-## Do's and Don'ts
-
-### Do:
-
-- **Do** keep the video the brightest thing on screen.
-- **Do** use tokens from `#studio-root` rather than new hex values.
-- **Do** put state in words as well as colour.
-- **Do** keep Edit one fixed screen, with scrolling inside its panels.
-- **Do** bump the `?v=` asset version in `static/index.html`, `static/studio/shell.js`, `static/studio/edit.js` and `static/studio/edit/index.js` when Studio's JavaScript changes.
-
-### Don't:
-
-- **Don't** add a second accent colour, or use amber for decoration.
-- **Don't** use the serif on controls.
-- **Don't** use soft drop shadows for depth.
-- **Don't** add web fonts or remote assets. The app must work with the network off.
-- **Don't** reuse blue or orange for anything other than drawn and found boxes on the Clean surfaces.
+DuckSuite uses amber and medium density. DuckClean is white and calm. DuckClassic is dense and quick. DuckStudio is dark and full. Shared tokens, typography, grid and states; product accents differ.
