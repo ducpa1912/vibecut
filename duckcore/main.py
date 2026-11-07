@@ -68,7 +68,9 @@ class CuePatch(BaseModel):
 
 
 class CaptionsPatch(BaseModel):
-    burn: bool
+    burn: bool | None = None
+    style: str | None = None
+    position: str | None = None
 
 
 class DevImport(BaseModel):
@@ -435,7 +437,18 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     ) -> dict:
         try:
             edit = edits.get_edit(data_root, project_id, edit_id)
-            track = captions.set_burn(edit, body.burn, data_root)
+            track = None
+            if body.style or body.position:
+                track = captions.set_style(
+                    edit,
+                    style_id=body.style or "",
+                    position=body.position or "",
+                    data_root=data_root,
+                )
+            if body.burn is not None:
+                track = captions.set_burn(edit, body.burn, data_root)
+            if track is None:
+                track = edit.get("captions")
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         except ValueError as exc:

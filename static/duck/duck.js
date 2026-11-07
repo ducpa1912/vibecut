@@ -48,6 +48,8 @@ const downloadRender = document.querySelector("#download-render");
 const generateCaptions = document.querySelector("#generate-captions");
 const downloadCaptions = document.querySelector("#download-captions");
 const burnCaptions = document.querySelector("#burn-captions");
+const captionStyle = document.querySelector("#caption-style");
+const captionPosition = document.querySelector("#caption-position");
 const captionsStatus = document.querySelector("#captions-status");
 const captionCues = document.querySelector("#caption-cues");
 
@@ -481,6 +483,8 @@ function renderCaptions() {
       burnCaptions.checked = false;
       burnCaptions.disabled = true;
     }
+    if (captionStyle) captionStyle.disabled = true;
+    if (captionPosition) captionPosition.disabled = true;
     return;
   }
   if (captionsStatus) captionsStatus.textContent = `${track.cues.length} cues · SRT`;
@@ -488,6 +492,15 @@ function renderCaptions() {
   if (burnCaptions) {
     burnCaptions.disabled = false;
     burnCaptions.checked = Boolean(track.burn);
+  }
+  const style = typeof track.style === "string" ? { id: track.style } : (track.style || {});
+  if (captionStyle) {
+    captionStyle.disabled = false;
+    captionStyle.value = style.id || "clean";
+  }
+  if (captionPosition) {
+    captionPosition.disabled = false;
+    captionPosition.value = style.position || "bottom";
   }
   for (const cue of track.cues) {
     const row = document.createElement("div");
@@ -531,6 +544,26 @@ async function generateCaptionTrack() {
     renderCaptions();
   } catch (error) {
     if (captionsStatus) captionsStatus.textContent = `Captions failed: ${error.message}`;
+  }
+}
+
+async function setCaptionStyle() {
+  if (!activeProject || !activeEdit) return;
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/edits/${encodeURIComponent(activeEdit.id)}/captions`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          style: captionStyle?.value || "clean",
+          position: captionPosition?.value || "bottom",
+        }),
+      },
+    );
+    activeEdit.captions = data.captions;
+    if (captionsStatus) captionsStatus.textContent = "Caption style saved";
+  } catch (error) {
+    if (captionsStatus) captionsStatus.textContent = `Style failed: ${error.message}`;
   }
 }
 
@@ -656,6 +689,8 @@ downloadRender?.addEventListener("click", downloadRendered);
 generateCaptions?.addEventListener("click", generateCaptionTrack);
 downloadCaptions?.addEventListener("click", downloadCaptionTrack);
 burnCaptions?.addEventListener("change", () => setCaptionBurn(burnCaptions.checked));
+captionStyle?.addEventListener("change", setCaptionStyle);
+captionPosition?.addEventListener("change", setCaptionStyle);
 editor?.addEventListener("click", (event) => {
   if (event.target === editor) closeEditor();
 });

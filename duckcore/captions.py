@@ -132,6 +132,30 @@ def update_cue(edit: dict, cue_id: str, text: str, data_root: Path) -> dict:
     raise KeyError(cue_id)
 
 
+def set_style(
+    edit: dict,
+    *,
+    style_id: str = "",
+    position: str = "",
+    data_root: Path,
+) -> dict:
+    from duckcore import caption_style
+
+    track = edit.get("captions")
+    if not isinstance(track, dict):
+        raise ValueError("Generate captions first.")
+    current = caption_style.normalize(track.get("style"))
+    if style_id:
+        current = caption_style.normalize(style_id)
+    if position:
+        if position not in caption_style.POSITIONS:
+            raise ValueError("Caption position must be bottom, middle or top.")
+        current["position"] = position
+    track["style"] = current
+    edits.save_edit(edit, data_root)
+    return track
+
+
 def set_burn(edit: dict, burn: bool, data_root: Path) -> dict:
     track = edit.get("captions")
     if not isinstance(track, dict):

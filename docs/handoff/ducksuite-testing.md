@@ -180,6 +180,16 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 Expected: the MP4 contains readable captions with a dark rounded background and keeps the audio. A 2-second smoke render passed in this test.
 
+Caption style:
+
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"style":"bold","position":"top"}' \
+  "http://127.0.0.1:8797/api/projects/$PROJECT/edits/$EDIT/captions"
+```
+
+Styles: `clean`, `bold`, `minimal`. Positions: `bottom`, `middle`, `top`.
+
 ## 4. Development app bundle
 
 ```bash

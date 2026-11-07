@@ -192,6 +192,20 @@
                 <button class="secondary" type="button" id="generate-captions">Generate captions</button>
                 <button class="secondary" type="button" id="download-captions" hidden>Download SRT</button>
                 <label class="settings-check"><input type="checkbox" id="burn-captions"> Burn into render</label>
+                <label class="settings-check">Style
+                  <select id="caption-style">
+                    <option value="clean">Clean</option>
+                    <option value="bold">Bold</option>
+                    <option value="minimal">Minimal</option>
+                  </select>
+                </label>
+                <label class="settings-check">Position
+                  <select id="caption-position">
+                    <option value="bottom">Bottom</option>
+                    <option value="middle">Middle</option>
+                    <option value="top">Top</option>
+                  </select>
+                </label>
                 <span class="section-note" id="captions-status"></span>
               </div>
               <div id="caption-cues" class="caption-cues"></div>

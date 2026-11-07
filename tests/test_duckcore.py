@@ -270,6 +270,15 @@ def test_captions_generate_edit_and_srt(tmp_path: Path) -> None:
         assert patched.status_code == 200
         assert patched.json()["captions"]["cues"][0]["text"] == "Edited line."
 
+        styled = client.patch(
+            f"/api/projects/{project['id']}/edits/{edit['id']}/captions",
+            headers=headers,
+            json={"style": "bold", "position": "top"},
+        )
+        assert styled.status_code == 200
+        assert styled.json()["captions"]["style"]["id"] == "bold"
+        assert styled.json()["captions"]["style"]["position"] == "top"
+
         srt = client.get(
             f"/api/projects/{project['id']}/edits/{edit['id']}/captions.srt",
             headers=headers,
@@ -292,7 +301,7 @@ def test_caption_burn_helpers() -> None:
     assert active_cue(cues, 5.0) is None
 
     frame = Image.new("RGB", (1080, 1080), "black")
-    drawn = draw_caption(frame, "A readable caption")
+    drawn = draw_caption(frame, "A readable caption", {"id": "bold", "position": "top"})
     assert drawn.size == (1080, 1080)
     assert drawn.tobytes() != frame.tobytes()
 

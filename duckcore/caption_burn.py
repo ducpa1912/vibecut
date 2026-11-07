@@ -14,6 +14,8 @@ from typing import Iterable
 
 from PIL import Image, ImageDraw, ImageFont
 
+from duckcore import caption_style
+
 LATIN_FONT = Path("/System/Library/Fonts/SFNS.ttf")
 CJK_FONT = Path("/System/Library/Fonts/Hiragino Sans GB.ttc")
 _FONT_CACHE: dict[tuple[str, int, int], ImageFont.FreeTypeFont] = {}
@@ -44,7 +46,13 @@ def active_cue(cues: Iterable[dict], when: float) -> dict | None:
     return best
 
 
-def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, width: int) -> list[str]:
+def _wrap(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    width: int,
+    max_lines: int = 4,
+) -> list[str]:
     words = text.split()
     if not words:
         return []
@@ -72,17 +80,18 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, wi
                 current = candidate
         if current:
             lines.append(current)
-    return lines[:4]
+    return lines[:max_lines]
 
 
-def draw_caption(image: Image.Image, text: str) -> Image.Image:
+def draw_caption(image: Image.Image, text: str, style: Any = None) -> Image.Image:
     text = " ".join(str(text or "").split())
     if not text:
         return image
+    style = caption_style.normalize(style)
     width, height = image.size
-    font = _font(text, max(22, int(height * 0.042)))
+    font = _font(text, max(22, int(height * float(style["font_scale"]))))
     probe = ImageDraw.Draw(image)
-    lines = _wrap(probe, text, font, int(width * 0.82))
+    lines = _wrap(probe, text, font, int(width * 0.82), int(style["max_lines"]))
     if not lines:
         return image
     line_height = int(font.size * 1.22)
@@ -93,13 +102,19 @@ def draw_caption(image: Image.Image, text: str) -> Image.Image:
     box_w = int(max_line) + pad_x * 2
     box_h = block_h + pad_y * 2
     x0 = (width - box_w) // 2
-    y0 = height - int(height * 0.065) - box_h
+    margin = int(height * float(style["margin"]))
+    if style["position"] == "top":
+        y0 = margin
+    elif style["position"] == "middle":
+        y0 = (height - box_h) // 2
+    else:
+        y0 = height - margin - box_h
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     draw.rounded_rectangle(
         (x0, y0, x0 + box_w, y0 + box_h),
-        radius=max(8, int(height * 0.012)),
-        fill=(0, 0, 0, 170),
+        radius=max(8, int(height * float(style["radius"]))),
+        fill=(0, 0, 0, int(style["background"])),
     )
     image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(image)
@@ -111,7 +126,7 @@ def draw_caption(image: Image.Image, text: str) -> Image.Image:
             line,
             font=font,
             fill=(255, 255, 255),
-            stroke_width=2,
+            stroke_width=int(style["stroke"]),
             stroke_fill=(0, 0, 0),
         )
         y += line_height
@@ -177,7 +192,7 @@ def burn_captions(
             frame = Image.frombytes("RGB", (width, height), data)
             cue = active_cue(cues, index / max(1e-6, fps))
             if cue:
-                frame = draw_caption(frame, str(cue.get("text") or ""))
+                frame = draw_caption(frame, str(cue.get("text") or ""), track.get("style"))
             writer.stdin.write(frame.tobytes())
             index += 1
         writer.stdin.close()
