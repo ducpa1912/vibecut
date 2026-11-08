@@ -163,3 +163,17 @@ def test_clip_trim_and_queue_clear(tmp_path) -> None:
         cleared = client.post("/api/queue/clear", headers=headers)
         assert cleared.status_code == 200
         assert cleared.json()["items"] == []
+
+
+def test_long_speech_is_split_below_four_seconds() -> None:
+    cues = _cues_for_clip(
+        [{"start": 0.0, "end": 12.0, "text": "one two three four five six seven eight nine ten eleven twelve"}],
+        clip_start=0.0,
+        clip_end=12.0,
+        out_start=0.0,
+    )
+    assert len(cues) >= 3
+    assert all(end - start <= 4.0 + 1e-6 for start, end, _text in cues)
+    assert " ".join(text for _start, _end, text in cues).split() == (
+        "one two three four five six seven eight nine ten eleven twelve".split()
+    )

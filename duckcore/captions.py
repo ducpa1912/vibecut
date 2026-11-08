@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import time
 from pathlib import Path
@@ -124,6 +125,48 @@ def _slice_text(text: str, start: float, end: float, full_start: float, full_end
     return " ".join(picked)
 
 
+def _split_words(text: str, parts: int) -> list[str]:
+    words = text.split()
+    if parts <= 1 or len(words) <= 1:
+        return [text]
+    total = sum(max(1, len(word)) for word in words)
+    chunks: list[str] = []
+    current: list[str] = []
+    seen = 0
+    target = total
+    for index, word in enumerate(words):
+        current.append(word)
+        seen += max(1, len(word))
+        left = len(words) - index - 1
+        if len(chunks) < parts - 1 and (seen >= target / parts or left <= parts - len(chunks) - 1):
+            chunks.append(" ".join(current))
+            current = []
+            seen = 0
+    if current:
+        chunks.append(" ".join(current))
+    return chunks or [text]
+
+
+def _split_long_cues(cues: list[list]) -> list[list]:
+    out: list[list] = []
+    for start, end, text in cues:
+        duration = end - start
+        if duration <= 4.0 + 1e-6:
+            out.append([start, end, text])
+            continue
+        parts = max(2, min(4, int(math.ceil(duration / 4.0))))
+        chunks = _split_words(text, parts)
+        if len(chunks) <= 1:
+            out.append([start, end, text])
+            continue
+        step = duration / len(chunks)
+        for index, chunk in enumerate(chunks):
+            piece_start = start + step * index
+            piece_end = end if index == len(chunks) - 1 else start + step * (index + 1)
+            out.append([piece_start, piece_end, chunk])
+    return out
+
+
 def _finish_cues(
     rows: list[tuple[float, float, str]],
     *,
@@ -192,6 +235,7 @@ def _finish_cues(
             del cleaned[index]
             continue
         index += 1
+    cleaned = _split_long_cues(cleaned)
     return [(round(start, 3), round(end, 3), text) for start, end, text in cleaned]
 
 

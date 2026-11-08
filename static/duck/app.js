@@ -457,6 +457,17 @@ function sceneCleanCount(scenes = getScenes()) {
   return scenes.filter((scene) => sceneLayers(scene).length > 0).length;
 }
 
+function sceneRenderReady(scene) {
+  const layers = sceneLayers(scene);
+  if (!layers.length) return true;
+  if (layers.every((layer) => layer.enabled === false)) return true;
+  return state.previewStatus.get(scene.id) === 'ready';
+}
+
+function sceneReadyCount(scenes = getScenes()) {
+  return scenes.filter(sceneRenderReady).length;
+}
+
 function frameUrl(time, projectId = state.project?.id) {
   if (!projectId) return '';
   return mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/frame`, { time: Math.max(0, Number(time) || 0).toFixed(3) });
@@ -1233,7 +1244,7 @@ function screenPreview() {
           <p class="readiness-note">${ready === scenes.length ? 'All scenes have a proof. Review before render.' : 'Rendering stays blocked until each scene is ready or explicitly set to Off.'}</p>
         </section>
 
-        <button class="btn primary wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px">${icon('play', 15)} Render</button>
+        <button class="btn primary wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px" ${sceneReadyCount(scenes) === scenes.length ? '' : 'disabled'}>${icon('play', 15)} Render</button>
       </aside>
     </div>
   </main>`;
@@ -1247,7 +1258,7 @@ function previewStatusLabel(value) {
 
 function screenRender() {
   const scenes = getScenes();
-  const checked = sceneCleanCount(scenes);
+  const checked = sceneReadyCount(scenes);
   const captions = state.edit?.captions?.cues?.length ? 1 : 0;
   const voice = state.edit?.voice ? 1 : 0;
   const outputPath = state.settings?.storage?.data_root
@@ -1287,7 +1298,7 @@ function screenRender() {
         <section class="panel render-ready" style="border:0;box-shadow:none;padding:0;background:transparent">
           <div class="panel-head" style="padding:0 0 2px"><h2>Ready</h2><span class="meta">${checked}/${scenes.length}</span></div>
           <div class="ready-card">
-            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${scenes.length} scenes layered</strong><span>${checked === scenes.length ? 'Review proofs before render' : 'Some scenes still need a decision'}</span></span></div>
+            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${scenes.length} scenes ready</strong><span>${checked === scenes.length ? 'Review proofs before render' : 'Some scenes still need a decision'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Captions</strong><span>${captions ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Voice</strong><span>${voice ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · 1080p · H.264</span></span></div>
@@ -1468,6 +1479,7 @@ async function startPreviewClean(forceSceneId = '') {
     try {
       const url = cleanPreviewUrl(sceneMid(scene));
       const blob = await enqueueCleanFetch(url);
+      if (run !== state.previewRun) break;
       const dataUrl = await blobToDataUrl(blob);
       state.previewCache.set(scene.id, dataUrl);
       state.previewStatus.set(scene.id, 'ready');
@@ -1476,7 +1488,7 @@ async function startPreviewClean(forceSceneId = '') {
     }
     updatePreviewUI();
   }
-  state.previewRunning = false;
+  if (run === state.previewRun) state.previewRunning = false;
   updatePreviewUI();
 }
 
@@ -1499,6 +1511,10 @@ async function cleanAction(layerId, action) {
     if (scene) {
       state.previewCache.delete(scene.id);
       state.previewStatus.set(scene.id, 'queued');
+    }
+    if (state.previewRunning) {
+      state.previewRun += 1;
+      state.previewRunning = false;
     }
     render();
     toast(`Clean set to ${action === 'exclude' ? 'Off' : action}.`);
@@ -1789,6 +1805,10 @@ app.addEventListener('click', async (event) => {
       if (scene) {
         state.previewCache.delete(scene.id);
         state.previewStatus.set(scene.id, 'queued');
+        if (state.previewRunning) {
+          state.previewRun += 1;
+          state.previewRunning = false;
+        }
         startPreviewClean(scene.id);
       }
     } else if (action === 'save-online') await saveOnline();
