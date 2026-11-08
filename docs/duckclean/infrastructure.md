@@ -74,15 +74,23 @@ npx wrangler whoami
 
 1. Create a Clerk application.
 2. Enable Google, Apple and email link as needed.
-3. Copy the **Frontend API URL** (issuer), for example
-   `https://your-app.clerk.accounts.dev`.
-4. Copy the **Publishable key** (`pk_test_...` or `pk_live_...`).
-5. Add the local and Pages origins to Clerk's allowed origins.
-6. Default session tokens have no `aud`. Leave `CLERK_AUDIENCE` empty for M1.
+3. Open **API keys** in the Clerk dashboard (older dashboards:
+   **Developers → API keys**).
+4. Copy the **Publishable key**, for example `pk_test_...`. This is the Vite
+   key. Put it in `web/.env.local` as `VITE_CLERK_PUBLISHABLE_KEY`.
+5. Copy the **Frontend API URL**, for example
+   `https://your-app.clerk.accounts.dev`. Put it in `api/.dev.vars` as
+   `CLERK_ISSUER`.
+6. Add `http://localhost:5173` and `http://127.0.0.1:5173` to Clerk's allowed
+   origins.
+7. Default session tokens have no `aud`. Leave `CLERK_AUDIENCE` empty for M1.
    If you create a JWT template that adds an audience, set both
    `CLERK_AUDIENCE` and `VITE_CLERK_JWT_TEMPLATE`.
+8. Restart `npm run dev:web` after changing the env file.
 
-Do not put the Clerk secret key in the browser.
+Only variables prefixed with `VITE_` reach the browser. The publishable key is
+public by design. **Never put the Clerk secret key (`sk_...`) in a `VITE_`
+variable.**
 
 ### 3. Postgres
 
@@ -156,9 +164,11 @@ The consumer is the same Worker; `api/src/index.ts` exports both `fetch` and
 Local:
 
 ```bash
+cp worker/.env.example worker/.env
+# keep DUCKCLEAN_HMAC_SECRET identical to WORKER_HMAC_SECRET in api/.dev.vars
 cd worker
-DUCKCLEAN_HMAC_SECRET='same-secret' \
-  ../.venv/bin/uvicorn duckclean_worker.app:app --port 8799
+set -a; source .env; set +a
+../.venv/bin/uvicorn duckclean_worker.app:app --port 8799
 ```
 
 Then set `CPU_WORKER_URL=http://127.0.0.1:8799` and the same

@@ -71,12 +71,13 @@ M1 needs live Clerk, Postgres and R2 credentials. Read
 ```bash
 cp api/.dev.vars.example api/.dev.vars
 cp web/.env.example web/.env.local
-# fill Clerk, Postgres, R2 and the worker secret
+cp worker/.env.example worker/.env
+# fill Clerk, Postgres and R2; keep both HMAC secrets identical
 
 npm run m1:doctor               # missing env, Wrangler auth, live health
 npm run dev:web                 # Vite on :5173, proxies /api to :8787
 npm run dev:api                 # wrangler dev on :8787
-cd worker && ../.venv/bin/uvicorn duckclean_worker.app:app --port 8799
+cd worker && set -a && source .env && set +a && ../.venv/bin/uvicorn duckclean_worker.app:app --port 8799
 ```
 
 Individual tests:
