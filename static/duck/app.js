@@ -36,6 +36,7 @@ const state = {
   welcomeQuery: '',
   queuePaused: false,
   previewView: 'after',
+  inlinePlaying: false,
   importing: false,
   lastCheckKey: '',
   lastQueueKey: '',
@@ -1182,6 +1183,12 @@ function screenClean() {
 function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
   const view = state.previewView || 'compare';
   if (!scene) return '';
+  if (state.inlinePlaying) {
+    return `<div class="split-stage inline-player" style="aspect-ratio:${mediaAspect()};min-height:380px">
+      <video data-inline-player data-start="${Number(scene.start || 0).toFixed(3)}" controls autoplay playsinline poster="${frameUrl(sceneMid(scene))}" src="${sourceUrl()}"></video>
+      <button class="btn small inline-close" type="button" data-action="close-inline-player">${icon('arrowLeft', 12)} Back to proof</button>
+    </div>`;
+  }
   const status = state.previewStatus.get(scene.id) || 'pending';
   const cached = state.previewCache.get(scene.id);
   const after = cached || (useCleanUrl && sceneLayers(scene).length ? cleanPreviewUrl(sceneMid(scene)) : frameUrl(sceneMid(scene)));
@@ -1732,7 +1739,8 @@ function playRender(projectId, editId) {
 
 function playSource() {
   if (!state.project) return;
-  openVideoModal(sourceUrl(), state.project.name || 'Source');
+  state.inlinePlaying = true;
+  render();
 }
 
 async function downloadCaptions() {
@@ -1791,6 +1799,7 @@ app.addEventListener('click', async (event) => {
       state.selectedScene = Math.max(0, Math.min(index, scenes.length - 1));
       state.previewTime = Number(scenes[state.selectedScene]?.start || 0) + 0.1;
       state.selectedLayerId = '';
+      state.inlinePlaying = false;
       state.showAllLayers = false;
       state.showAllCues = false;
       state.previewStatus.set(scenes[state.selectedScene]?.id, state.previewCache.has(scenes[state.selectedScene]?.id) ? 'ready' : (state.previewStatus.get(scenes[state.selectedScene]?.id) || 'pending'));
@@ -1822,6 +1831,7 @@ app.addEventListener('click', async (event) => {
     else if (action === 'resume-queue') await queueAction('resume');
     else if (action === 'play-render') playRender(target.dataset.project || '', target.dataset.edit || '');
     else if (action === 'play-source') playSource();
+    else if (action === 'close-inline-player') { state.inlinePlaying = false; render(); }
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
     else if (action === 'preview-reclean') {
@@ -1877,6 +1887,15 @@ app.addEventListener('input', (event) => {
 /* ------------------------------------------------------------------ after render */
 
 function afterRender() {
+  const inline = document.querySelector('video[data-inline-player]');
+  if (inline) {
+    const start = Number(inline.dataset.start || 0);
+    if (start > 0 && Math.abs(inline.currentTime - start) > 0.5) {
+      try { inline.currentTime = start; } catch (_) { /* metadata not ready */ }
+    }
+    inline.play().catch(() => {});
+    inline.addEventListener('timeupdate', () => { state.previewTime = inline.currentTime; }, { passive: true });
+  }
   const video = document.querySelector('video[data-preview]');
   if (video) {
     if (state.previewTime > 0 && Math.abs(video.currentTime - state.previewTime) > 0.35) {
