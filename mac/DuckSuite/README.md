@@ -25,29 +25,59 @@ FFmpeg is not included until an LGPL build is supplied:
 DUCK_FFMPEG=/path/to/lgpl/ffmpeg scripts/build-duck-dev.sh
 ```
 
-## Generate the Xcode project
+## Build with Xcode
 
-Full Xcode 26+ is required for StoreKit, App Sandbox testing and App Store archives.
+Full Xcode is required for App Sandbox signing, StoreKit testing and App Store archives.
 
 ```bash
+# One-time
+brew install xcodegen
+
+# Build the sidecar, helpers, model and static page, then the Xcode app
+scripts/build-xcode-dev.sh
+open "$PWD/build/DuckSuite-Xcode.app"
+```
+
+Output: `build/DuckSuite-Xcode.app`, ad-hoc signed for local testing.
+
+Manual equivalent:
+
+```bash
+scripts/build-duck-dev.sh
 cd mac/DuckSuite
 xcodegen generate
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project DuckSuite.xcodeproj -scheme DuckSuite -configuration Release \
+  -derivedDataPath ../../build/xcode-derived BUILD CODE_SIGNING_ALLOWED=NO build
 open DuckSuite.xcodeproj
 ```
 
-Or create an Xcode project manually with the same bundle ID, deployment target, entitlements and Info.plist.
+The Xcode project embeds:
+
+```text
+Contents/Resources/duckcore/
+Contents/Resources/static/duck/
+Contents/Resources/Helpers/
+Contents/Resources/base-models/lama_fp32.onnx
+```
+
+`project.yml` is the source of truth. `Info.plist` and `DuckSuite.entitlements` are generated from its `info.properties` and `entitlements.properties`. The generated `.xcodeproj` is not checked in.
+
+App Store archive needs a real Apple Development / App Store signing identity and `DEVELOPMENT_TEAM`. Current local archive is unsigned.
 
 Testing steps: [docs/handoff/ducksuite-testing.md](../../docs/handoff/ducksuite-testing.md).
 
 ## What must be in the bundle
 
 ```text
-DuckSuite.app/Contents/Helpers/duckcore
+DuckSuite.app/Contents/Helpers/duckcore            # dev bundle
 DuckSuite.app/Contents/Helpers/ffmpeg
 DuckSuite.app/Contents/Helpers/ffprobe
 DuckSuite.app/Contents/Helpers/vision_probe
 DuckSuite.app/Contents/Helpers/transcribe_apple
 DuckSuite.app/Contents/Helpers/translate_apple
+DuckSuite.app/Contents/Resources/Helpers/duckcore  # Xcode bundle
+DuckSuite.app/Contents/Resources/duckcore/          # Xcode PyInstaller folder
 DuckSuite.app/Contents/Resources/base-models/lama_fp32.onnx
 DuckSuite.app/Contents/Resources/static/duck/
 ```
@@ -75,7 +105,8 @@ The page removes the fragment immediately and keeps the token in memory.
 
 ## Not here yet
 
-- Helper build scripts.
-- Xcode project checked in.
-- StoreKit configuration file.
-- App Store archive and privacy manifest.
+- Signing identity and `DEVELOPMENT_TEAM`.
+- App Store signed archive and upload.
+- Privacy manifest and AppIcon.
+- StoreKit configuration (not in v1).
+- LGPL ffmpeg in the Xcode bundle.

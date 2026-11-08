@@ -44,10 +44,12 @@ Verified: the bundled app launches, its local core serves the UI, and JS/CSS ret
    - Privacy policy URL and support URL.
    - App Privacy label: local app collects nothing, unless optional cloud render ships.
    - `PrivacyInfo.xcprivacy` inside the bundle.
-6. **Install full Xcode 26+.**
-   - Current machine has Command Line Tools only.
-   - `xcodebuild` fails; `altool` is unavailable.
-   - Generate `DuckSuite.xcodeproj` from `mac/DuckSuite/project.yml` with XcodeGen, or create the project in Xcode.
+6. **Use full Xcode.**
+   - Xcode 27.2 is installed at `/Applications/Xcode.app`.
+   - XcodeGen 2.46 is installed.
+   - `xcodebuild -version` works with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
+   - A full local build and an unsigned archive now succeed.
+   - App Store signing still needs an Apple Development / App Store identity and a `DEVELOPMENT_TEAM`.
 7. **Fix the distribution blockers below.**
    - LGPL ffmpeg, app icon, privacy manifest, signed nested code, StoreKit decision, review notes.
 8. **Archive and upload.**
@@ -68,8 +70,8 @@ Notarization is **not** part of the Mac App Store path. It is required only for 
 
 | Area | Missing | Why it blocks |
 |---|---|---|
-| Toolchain | Full Xcode 26+; Xcode project generation | Cannot archive or upload with Command Line Tools |
-| Signing | Distribution certificate, App Store provisioning profile, team ID | Current build is ad-hoc |
+| Toolchain | Xcode project generation | Ready: Xcode 27.2 + XcodeGen 2.46; unsigned build/archive pass |
+| Signing | Distribution certificate, App Store provisioning profile, team ID | Current build is ad-hoc; unsigned archive has empty Team |
 | ffmpeg | LGPL ffmpeg/ffprobe bundled in `Contents/Helpers` | Homebrew build is GPL with libx264/x265; App Store and license blocker |
 | Privacy | `PrivacyInfo.xcprivacy`, privacy policy URL, App Privacy answers | Required for submission |
 | Icon | `Assets.xcassets` with 1024 px AppIcon; `CFBundleIconName` | App Store requires an icon |
@@ -105,7 +107,22 @@ See [APPSTORE-P1-PLAN.md](APPSTORE-P1-PLAN.md) for owners, order, commands, and 
 - Privacy policy content for model packs and offline processing.
 - Clean proof review gate in marketing.
 
-## What can be done before full Xcode
+## Current Xcode artifacts
+
+```text
+build/DuckSuite-Xcode.app      ad-hoc signed, local run
+build/DuckSuite.xcarchive      unsigned archive, arm64
+```
+
+The archive contains the full app: Swift binary, `duckcore`, static UI, helpers, and LaMa model.
+
+Unsigned archive command:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild   -project mac/DuckSuite/DuckSuite.xcodeproj -scheme DuckSuite   -configuration Release -archivePath build/DuckSuite.xcarchive   CODE_SIGNING_ALLOWED=NO archive
+```
+
+## What can be done before signing
 
 - Add `PrivacyInfo.xcprivacy` and copy it into the bundle.
 - Add the app icon asset catalog.

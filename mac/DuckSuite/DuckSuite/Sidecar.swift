@@ -39,9 +39,12 @@ final class Sidecar {
         let bundle = Bundle.main.bundleURL
         let resources = bundle.appendingPathComponent("Contents/Resources/duckcore/duckcore")
         let helper = bundle.appendingPathComponent("Contents/Helpers/duckcore")
+        let resourceHelpers = bundle.appendingPathComponent("Contents/Resources/Helpers/duckcore")
         let executable = FileManager.default.isExecutableFile(atPath: resources.path)
             ? resources
-            : helper
+            : FileManager.default.isExecutableFile(atPath: helper.path)
+                ? helper
+                : resourceHelpers
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             throw SidecarError.missingHelper
         }
@@ -55,9 +58,12 @@ final class Sidecar {
         environment["DUCK_FILL_MODELS"] = bundle
             .appendingPathComponent("Contents/Resources/base-models")
             .path
-        environment["DUCK_HELPER_DIR"] = bundle
-            .appendingPathComponent("Contents/Helpers")
-            .path
+        let helpers = FileManager.default.fileExists(
+            atPath: bundle.appendingPathComponent("Contents/Helpers").path
+        )
+            ? bundle.appendingPathComponent("Contents/Helpers")
+            : bundle.appendingPathComponent("Contents/Resources/Helpers")
+        environment["DUCK_HELPER_DIR"] = helpers.path
         environment["DUCK_SWIFT_DIR"] = bundle
             .appendingPathComponent("Contents/Resources/swift")
             .path
@@ -104,31 +110,53 @@ final class Sidecar {
         }
     }
 
+    private final class HandshakeBuffer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        private var line: String?
+        private var failure: String?
+
+        func append(_ chunk: Data) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            data.append(chunk)
+            if let newline = data.firstIndex(of: 0x0A), line == nil {
+                line = String(data: data[..<newline], encoding: .utf8)
+                return true
+            }
+            return false
+        }
+
+        func close() {
+            lock.lock()
+            defer { lock.unlock() }
+            if line == nil {
+                failure = "The local core exited before handshake."
+            }
+        }
+
+        func result() -> (line: String?, failure: String?) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (line, failure)
+        }
+    }
+
     private func readLine(timeout: TimeInterval) throws -> String {
         let semaphore = DispatchSemaphore(value: 0)
-        let lock = NSLock()
-        var buffer = Data()
-        var line: String?
-        var failure: String?
+        let buffer = HandshakeBuffer()
 
         stdout.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
-                lock.lock()
-                if line == nil { failure = "The local core exited before handshake." }
-                lock.unlock()
+                buffer.close()
                 semaphore.signal()
                 return
             }
-            lock.lock()
-            buffer.append(data)
-            if let newline = buffer.firstIndex(of: 0x0A), line == nil {
-                let bytes = buffer[..<newline]
-                line = String(data: bytes, encoding: .utf8)
+            if buffer.append(data) {
                 handle.readabilityHandler = nil
                 semaphore.signal()
             }
-            lock.unlock()
         }
 
         if semaphore.wait(timeout: .now() + timeout) == .timedOut {
@@ -136,10 +164,9 @@ final class Sidecar {
             throw SidecarError.failedToStart("Timed out waiting for the local core.")
         }
 
-        lock.lock()
-        defer { lock.unlock() }
-        if let line { return line }
-        if let failure { throw SidecarError.failedToStart(failure) }
+        let result = buffer.result()
+        if let line = result.line { return line }
+        if let failure = result.failure { throw SidecarError.failedToStart(failure) }
         throw SidecarError.invalidHandshake
     }
 }

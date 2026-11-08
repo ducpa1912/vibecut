@@ -23,17 +23,23 @@ Do not start screenshots until Clean P1 is closed; do not upload until nested co
 
 ## 1. Xcode and project
 
-**Need:** full Xcode 26+ for `xcodebuild archive`, StoreKit testing, and App Store upload. Command Line Tools are enough for `swiftc` and local `.app` builds, not for submission.
+**Status:** ready for build, not for signed submission.
 
-**Options**
+- Xcode 27.2 installed at `/Applications/Xcode.app`.
+- XcodeGen 2.46 installed.
+- `xcodebuild -version` works with `DEVELOPER_DIR`.
+- `scripts/build-xcode-dev.sh` builds the full app.
+- Unsigned archive succeeds at `build/DuckSuite.xcarchive`.
+- No signing identity and no `DEVELOPMENT_TEAM` are configured.
+- `security find-identity -v -p codesigning` reports 0 identities.
 
-- Install Xcode from the Mac App Store or Apple Developer downloads.
-- Or archive on a cloud Mac CI with Xcode 26 and App Store Connect API key.
-- XcodeGen is a separate convenience: `brew install xcodegen`, then generate from `mac/DuckSuite/project.yml`.
-- `xcodebuild -version` must report Xcode, not Command Line Tools.
-- Select it: `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
+**Remaining**
 
-**Exit:** `xcodebuild -version` returns Xcode 26+; `xcodebuild -list` sees the DuckSuite scheme.
+- Add the Apple Development / App Store identity in Xcode.
+- Set `DEVELOPMENT_TEAM` or choose the team in Signing & Capabilities.
+- Archive signed, validate, upload.
+
+**Exit:** signed archive validates in Organizer; TestFlight build uploads.
 
 ## 2. LGPL ffmpeg
 

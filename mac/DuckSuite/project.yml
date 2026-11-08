@@ -15,10 +15,37 @@ targets:
     platform: macOS
     sources:
       - path: DuckSuite
+      - path: ../../static
+        type: folder
+        buildPhase: resources
+      - path: ../../build/duckcore-dist/duckcore
+        type: folder
+        buildPhase: resources
+      - path: ../../build/DuckSuite.app/Contents/Helpers
+        type: folder
+        buildPhase: resources
+      - path: ../../build/DuckSuite.app/Contents/Resources/base-models
+        type: folder
+        buildPhase: resources
     info:
       path: DuckSuite/Info.plist
+      properties:
+        CFBundleDisplayName: DuckSuite
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSApplicationCategoryType: public.app-category.video
+        LSMinimumSystemVersion: "26.0"
+        NSHighResolutionCapable: true
+        NSHumanReadableCopyright: "Copyright © 2026 DuckSuite."
+        ITSAppUsesNonExemptEncryption: false
     entitlements:
       path: DuckSuite/DuckSuite.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
+        com.apple.security.files.user-selected.read-write: true
+        com.apple.security.files.bookmarks.app-scope: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ducksuite.app
@@ -27,4 +54,6 @@ targets:
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: YES
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: NO
         COMBINE_HIDPI_IMAGES: YES

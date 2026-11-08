@@ -63,6 +63,25 @@ scripts/build-duck-dev.sh
 open "$PWD/build/DuckSuite.app"
 ```
 
+## Build with Xcode
+
+```bash
+brew install xcodegen
+scripts/build-xcode-dev.sh
+open "$PWD/build/DuckSuite-Xcode.app"
+```
+
+Unsigned archive:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project mac/DuckSuite/DuckSuite.xcodeproj -scheme DuckSuite \
+  -configuration Release -archivePath build/DuckSuite.xcarchive \
+  CODE_SIGNING_ALLOWED=NO archive
+```
+
+A signed App Store archive needs an Apple signing identity and `DEVELOPMENT_TEAM`.
+
 Requires full Xcode for StoreKit, sandbox and App Store archives. Command Line Tools are enough for `swiftc -typecheck`.
 
 Testing: [docs/handoff/ducksuite-testing.md](docs/handoff/ducksuite-testing.md).
