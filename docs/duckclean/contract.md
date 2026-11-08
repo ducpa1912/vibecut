@@ -55,6 +55,11 @@ These were open or under-specified in `plan.md`; the plan is updated to match.
     is dispatch and retry state only — source, beat, detection and render
     truth stays in their own tables. The worker gains `POST /v1/proxy`, and
     an upload can be re-signed while it is still pending.
+12. **LaMa is CPU-only.** The fast clean path uses LaMa on the CPU worker. GPU
+    is reserved for ProPainter and generative fill. The API planner resolves
+    `lama` to `cpu`; the worker rejects `lama` with `gpu_standard` or
+    `gpu_premium`. This is enforced in `api/src/schemas.ts` and
+    `worker/duckclean_worker/contract.py`.
 
 ## 2. Identity and ownership
 
@@ -223,7 +228,7 @@ argument order can never change the revision:
   "v": 1,
   "detection_revision": "…",
   "groups": [ { "group_id": "…", "engine": "lama",
-                "device_class": "gpu_standard",
+                "device_class": "cpu",
                 "members": [ { "member_id": "…", "range_mode": "ranges",
                                "ranges": [ { "beat_index": 0,
                                              "start_frame": 10,

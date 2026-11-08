@@ -34,8 +34,8 @@ proxy and poster back to R2.
 | Postgres | **Not provisioned.** Tests use PGlite in memory | Hyperdrive binding + `localConnectionString` |
 | R2 | **Not created.** Bucket name is a placeholder (`duckclean-media`) | R2 binding + R2 S3 secrets |
 | Queues | **Not created.** Names only | `wrangler.toml` |
-| CPU worker | Code and tests, not deployed | `worker/`, `CPU_WORKER_URL` |
-| GPU worker | Not built past the contract | Later milestone |
+| CPU worker | Code and tests, not deployed; runs probe/proxy and LaMa clean | `worker/`, `CPU_WORKER_URL` |
+| GPU worker | Not built past the contract; only ProPainter/generative | Later milestone |
 | Pages | Not deployed | Later milestone |
 | Claude/Cloudflare auth | `wrangler` is **not logged in** on this machine | `npx wrangler login` |
 | Docker / local Postgres | Not installed on this machine | Use Neon or Homebrew Postgres |

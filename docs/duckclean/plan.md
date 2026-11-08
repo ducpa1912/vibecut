@@ -355,7 +355,7 @@ truncation. Detection writes masks to R2; it does not return pixels.
   "selection": {
     "revision": "sha256",
     "groups": [{"group_id": "uuid", "member_ids": ["uuid"],
-                "engine": "lama", "device": "gpu"}]
+                "engine": "lama", "device": "cpu"}]
   },
   "output": {
     "url": "presigned-put",
@@ -520,14 +520,15 @@ real clips with known text, and keep a human review step before spend.
 | Engine | Use | Device | Notes |
 |---|---|---|---|
 | `blur` | Pre-render diagnostic and honest fallback | CPU/GPU | Never sold as AI fill |
-| `lama` | Still or slow-moving text, logos, small regions | GPU | Fast, good for smooth backgrounds |
-| `propainter` | Moving text, logos, larger regions, temporal coherence | GPU | Best default for video |
+| `lama` | Still or slow-moving text, logos, small regions | **CPU only** | Fast clean path; no GPU spend |
+| `propainter` | Moving text, logos, larger regions, temporal coherence | GPU | Best default for hard video |
 | `generative` | Large or complex regions needing invented content | GPU | Flux Fill or SDXL inpainting, keyframes plus propagation |
 | `cover` | Opaque object, deliberate cover-up | CPU/GPU | Only when the user asks |
 
-Default: `propainter` when available, `lama` as the fast path, `generative` on
-demand. A missing engine disables the option with a reason; it never silently
-falls back to a worse result.
+Default: `lama` on CPU for the fast clean path; `propainter` on GPU when the
+region moves or LaMa is not enough; `generative` on demand. The API and worker
+must reject `lama` with a GPU device class. A missing engine disables the option
+with a reason; it never silently falls back to a worse result.
 
 ## 10. Storage layout
 
@@ -600,7 +601,8 @@ database, storage, CPU and GPU. The full model is in
 [`cost-model.md`](./cost-model.md).
 
 Planning assumptions: 2-minute average source, 3 CPU-minutes per upload,
-5 GPU-minutes per rendered clip, L4 GPU at $0.59–0.80/hour, video on R2.
+LaMa on CPU, 5 GPU-minutes per GPU-engine render (ProPainter/generative),
+L4 GPU at $0.59–0.80/hour, video on R2.
 
 | Scale | Hosting + DB + storage + worker | With Clerk | With WorkOS/Supabase |
 |---|---:|---:|---:|
@@ -710,8 +712,8 @@ Product:
 5. **Review UI** — library, upload, detection stream, timeline, masks,
    include/exclude.
 6. **Pre-render** — blur/cheap fill from the cloud, labeled playback.
-7. **GPU render** — LaMa per selected beat, parallel segments, concat, audio
-   mux, download.
+7. **Clean render** — LaMa on CPU per selected beat; GPU only for ProPainter
+   or generative fill; parallel segments, concat, audio mux, download.
 8. **Billing** — estimate, ledger, Stripe meter, quotas, plan limits.
 9. **Best-quality engine** — ProPainter, then generative fill for hard regions.
 10. **Real-media acceptance and launch** — phone flow, cancel, retry, retention.

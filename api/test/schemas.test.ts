@@ -3,6 +3,7 @@ import {
   detectRequestSchema,
   detectionMemberSchema,
   detectionStateSchema,
+  deviceClassForEngine,
   errorEnvelopeSchema,
   renderRequestSchema,
   uploadTicketSchema,
@@ -167,6 +168,20 @@ describe('requests', () => {
       },
     });
     expect(parsed.selection.groups).toHaveLength(1);
+  });
+
+  it('forces LaMa to CPU and keeps GPU for video models', () => {
+    expect(deviceClassForEngine('lama', 'gpu_standard')).toBe('cpu');
+    expect(deviceClassForEngine('propainter', 'gpu_standard')).toBe('gpu_standard');
+    expect(deviceClassForEngine('generative', 'gpu_premium')).toBe('gpu_premium');
+    expect(() =>
+      renderRequestSchema.parse({
+        detection_revision: 'a'.repeat(64),
+        selection: { groups: [], manual_regions: [] },
+        engine: 'lama',
+        device_class: 'gpu_standard',
+      }),
+    ).toThrow(/LaMa must run on CPU/);
   });
 
   it('rejects an override with empty ranges', () => {

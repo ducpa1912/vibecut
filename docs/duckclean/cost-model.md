@@ -25,7 +25,7 @@ dollars to roughly **$1.5k–2k/month** before auth. Clerk would add roughly
 
 These are planning assumptions, not forecasts.
 
-| Scale | MAU | Uploads/mo | Avg source | Stored | Egress/mo | GPU renders/mo |
+| Scale | MAU | Uploads/mo | Avg source | Stored | Egress/mo | GPU-engine renders/mo |
 |---|---:|---:|---:|---:|---:|---:|
 | Early | 1k | 100 | 2 min | 50 GB | 500 GB | 20 |
 | Growth | 100k | 10k | 2 min | 1 TB | 10 TB | 2k |
@@ -34,7 +34,8 @@ These are planning assumptions, not forecasts.
 Worker assumptions:
 
 - Detection: 3 CPU-minutes per upload.
-- GPU fill: 5 GPU-minutes per rendered clip.
+- LaMa clean: CPU only. Its minutes add to the CPU line, not the GPU line.
+- GPU fill: 5 GPU-minutes per clip that chooses ProPainter or generative fill.
 - CPU upgrade: $0.03/hour.
 - L4 GPU: $0.59/hour RunPod, $0.80/hour HF or Modal.
 - One region, no retries, no peak concurrency, no model training.
@@ -51,6 +52,10 @@ Worker assumptions:
 | **AWS Activate** | $1k–$5k self-funded; up to $200k portfolio | Credits expire; AWS egress is expensive |
 | **Google for Startups** | ~$2k start; up to $350k AI | Credits expire; GCP egress is expensive |
 | **Microsoft for Startups** | Up to $150k Azure | Investor referral for large tiers |
+
+The standard clean path uses **LaMa on CPU**, so a LaMa-only month can avoid the
+GPU line entirely. GPU-engine renders are the clips that choose ProPainter or
+generative fill.
 
 The real subsidies at M1 are: Cloudflare bundles the DB proxy and queue into
 $5, and HF CPU Basic is free. Neither survives heavy video egress or GPU work.
@@ -107,7 +112,8 @@ At 100M requests and 7 ms average CPU: `$5 + $27 + $13.40 = $45.40`.
 
 ## GPU sensitivity
 
-At 20k renders/month, the GPU line depends entirely on measured fill time.
+At 20k **GPU-engine** renders/month, the GPU line depends entirely on measured
+fill time. LaMa-only renders do not appear here; their cost is CPU time.
 
 | GPU-min per render | GPU-hours/mo | At $0.59/hr | At $0.80/hr |
 |---:|---:|---:|---:|
@@ -160,7 +166,8 @@ Recommendation:
 Before locking price, measure:
 
 - CPU-minutes per uploaded minute for probe + OCR + beat dissection.
-- GPU-minutes per rendered output minute for LaMa, ProPainter and generative fill.
+- CPU-minutes per rendered output minute for LaMa.
+- GPU-minutes per rendered output minute for ProPainter and generative fill.
 - Percentage of uploads that actually need render.
 - Average source duration and egress per user.
 

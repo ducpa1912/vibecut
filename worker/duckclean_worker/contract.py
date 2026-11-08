@@ -488,12 +488,23 @@ class SelectionMember(StrictModel):
         return self
 
 
+def _lama_must_use_cpu(engine: FillEngine, device_class: DeviceClass) -> None:
+    """LaMa runs on CPU for the clean path; GPU is reserved for video models."""
+    if engine is FillEngine.LAMA and device_class is not DeviceClass.CPU:
+        raise ValueError("LaMa must run on CPU; use ProPainter or generative fill for GPU")
+
+
 class SelectionGroup(StrictModel):
     group_id: UUID
     kind: GroupKind
     engine: FillEngine
     device_class: DeviceClass
     members: list[SelectionMember]
+
+    @model_validator(mode="after")
+    def _lama_uses_cpu(self) -> SelectionGroup:
+        _lama_must_use_cpu(self.engine, self.device_class)
+        return self
 
 
 class ManualRegion(StrictModel):
@@ -502,6 +513,11 @@ class ManualRegion(StrictModel):
     engine: FillEngine
     device_class: DeviceClass
     ranges: list[FrameRange]
+
+    @model_validator(mode="after")
+    def _lama_uses_cpu(self) -> ManualRegion:
+        _lama_must_use_cpu(self.engine, self.device_class)
+        return self
 
 
 class RenderSelection(StrictModel):

@@ -52,9 +52,9 @@ dissection and detection.
 | API (Cloudflare Workers) | OAuth session, library, upload signing, job records, billing, worker dispatch. |
 | Postgres | Users, library, beats, detections, jobs, usage ledger. |
 | Cloudflare R2 | Source video, proxy, posters, beat clips, masks, outputs. S3-compatible, no egress fee. |
-| CPU worker | ffmpeg probe, beat dissection, frame extraction, OCR and logo detection. |
-| GPU worker | AI fill, video inpainting, generative fill, encode and assembly. |
-| Hugging Face | Hosting for the first CPU/GPU worker deployment. |
+| CPU worker | ffmpeg probe, beat dissection, frame extraction, OCR/logo detection and LaMa clean fill. |
+| GPU worker | ProPainter video inpainting, generative fill, heavy encode and assembly. |
+| Hugging Face | Hosting for the first CPU worker; RunPod/Modal for GPU render. |
 | Stripe | OAuth-adjacent billing and metered render-hour usage. |
 
 The worker is a Docker image behind a small HTTP contract. Hugging Face runs it
@@ -105,8 +105,8 @@ wall-clock time or seat count.
 - Server-owned groups, members, boxes, masks, ranges and revision.
 - Timeline review with include/exclude, seek, range edit and manual add.
 - Pre-render check with blur or a cheap fill, streamed from the cloud.
-- AI fill on selected beats: LaMa for fast, video inpainting for moving
-  regions.
+- AI fill on selected beats: LaMa on CPU for the fast clean path; ProPainter or
+  generative fill on GPU for moving or hard regions.
 - Generative fill on demand for large or complex regions.
 - Parallel beat rendering, assembly, audio mux and download.
 - Cancel, retry, per-beat resume and cached output.

@@ -20,6 +20,7 @@ from duckclean_worker.contract import (
     FrameRange,
     GroupKind,
     JobStatus,
+    ManualRegion,
     PresignedUrl,
     ProbeInfo,
     Provenance,
@@ -29,6 +30,7 @@ from duckclean_worker.contract import (
     RenderOutput,
     RenderRequest,
     RenderSelection,
+    SelectionGroup,
     SelectionMember,
     Usage,
 )
@@ -187,3 +189,32 @@ def test_rendered_segment_defaults_do_not_invent_work() -> None:
     segment = RenderedSegment(beat_id=uuid4(), beat_index=0, mode="passthrough", status="done")
     assert segment.fill_engine is None
     assert segment.fill_seconds == 0.0
+
+
+def test_lama_is_cpu_only() -> None:
+    group = SelectionGroup(
+        group_id=uuid4(),
+        kind=GroupKind.TEXT,
+        engine=FillEngine.LAMA,
+        device_class=DeviceClass.CPU,
+        members=[],
+    )
+    assert group.device_class is DeviceClass.CPU
+
+    with pytest.raises(ValidationError, match="LaMa must run on CPU"):
+        SelectionGroup(
+            group_id=uuid4(),
+            kind=GroupKind.TEXT,
+            engine=FillEngine.LAMA,
+            device_class=DeviceClass.GPU_STANDARD,
+            members=[],
+        )
+
+    with pytest.raises(ValidationError, match="LaMa must run on CPU"):
+        ManualRegion(
+            region_id=uuid4(),
+            box=Box(x=0, y=0, w=100, h=50),
+            engine=FillEngine.LAMA,
+            device_class=DeviceClass.GPU_PREMIUM,
+            ranges=[],
+        )

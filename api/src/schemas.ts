@@ -103,6 +103,19 @@ export type FillEngine = z.infer<typeof fillEngineSchema>;
 export type DeviceClass = z.infer<typeof deviceClassSchema>;
 export type Provenance = z.infer<typeof provenanceSchema>;
 
+/**
+ * LaMa is the CPU clean path. GPU is reserved for ProPainter and generative
+ * fill, where the model actually needs the device. The planner must call this
+ * instead of trusting a client-supplied device for LaMa.
+ */
+export function deviceClassForEngine(
+  engine: FillEngine | null | undefined,
+  requested?: DeviceClass,
+): DeviceClass {
+  if (engine === 'lama') return 'cpu';
+  return requested ?? 'gpu_standard';
+}
+
 // ------------------------------------------------------------------- uploads
 
 export const uploadCreateRequestSchema = z
@@ -389,7 +402,19 @@ export const renderRequestSchema = z
     device_class: deviceClassSchema.optional(),
     idempotency_key: z.string().min(8).max(100).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      !(
+        value.engine === 'lama' &&
+        value.device_class !== undefined &&
+        value.device_class !== 'cpu'
+      ),
+    {
+      message: 'LaMa must run on CPU; use ProPainter or generative fill for GPU.',
+      path: ['device_class'],
+    },
+  );
 
 export const previewRequestSchema = z
   .object({
@@ -398,7 +423,19 @@ export const previewRequestSchema = z
     engine: z.enum(['blur', 'lama']).default('blur'),
     device_class: deviceClassSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      !(
+        value.engine === 'lama' &&
+        value.device_class !== undefined &&
+        value.device_class !== 'cpu'
+      ),
+    {
+      message: 'LaMa must run on CPU.',
+      path: ['device_class'],
+    },
+  );
 
 export const renderSegmentSchema = z
   .object({
