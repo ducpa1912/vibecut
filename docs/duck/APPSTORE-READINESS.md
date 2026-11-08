@@ -1,7 +1,7 @@
 # DuckSuite — App Store readiness
 
-Date: 2026-11-07  
-Status: not ready to submit
+Date: 2026-11-08  
+Status: code-complete for local build; signing still blocked
 
 ## Short answer: where is the DMG?
 
@@ -15,13 +15,14 @@ There is **no DMG**. That is intentional.
 ## Current artifact
 
 ```text
-build/DuckSuite.app
+build/DuckSuite-Xcode.app
   ad-hoc signed
   TeamIdentifier: not set
   no distribution provisioning profile
-  no PrivacyInfo.xcprivacy
-  no app icon
-  no bundled ffmpeg/ffprobe
+  PrivacyInfo.xcprivacy present
+  AppIcon present (CFBundleIconName = AppIcon)
+  LGPL ffmpeg + ffprobe bundled
+  licenses bundled at Contents/Resources/Licenses
 ```
 
 Verified: the bundled app launches, its local core serves the UI, and JS/CSS return 200 in the sandbox.
@@ -72,10 +73,10 @@ Notarization is **not** part of the Mac App Store path. It is required only for 
 |---|---|---|
 | Toolchain | Xcode project generation | Ready: Xcode 27.2 + XcodeGen 2.46; unsigned build/archive pass |
 | Signing | Distribution certificate, App Store provisioning profile, team ID | Current build is ad-hoc; unsigned archive has empty Team |
-| ffmpeg | LGPL ffmpeg/ffprobe bundled in `Contents/Helpers` | Homebrew build is GPL with libx264/x265; App Store and license blocker |
-| Privacy | `PrivacyInfo.xcprivacy`, privacy policy URL, App Privacy answers | Required for submission |
-| Icon | `Assets.xcassets` with 1024 px AppIcon; `CFBundleIconName` | App Store requires an icon |
-| StoreKit | Decide: no cloud in v1, or configure Render subscription products and restore | Current `StoreManager` is unused scaffold |
+| ffmpeg | Ready: FFmpeg 7.1.1 LGPL arm64, `--disable-gpl`, VideoToolbox H.264, zlib, no network | Rebuild with `scripts/build-ffmpeg-lgpl.sh` |
+| Privacy | Ready: `PrivacyInfo.xcprivacy` in bundle; policy URL and App Privacy answers still to publish | Required for submission |
+| Icon | Ready: `CFBundleIconName = AppIcon`, `AppIcon.icns` in Resources | App Store requires an icon |
+| StoreKit | Ready: no IAP scaffold in v1; price comes from App Store Connect | No subscription in v1 |
 | Metadata | Description, keywords, category, age rating, support URL, screenshots | Required listing |
 | Review notes | Local server, bundled Python, no downloaded code, own-footage clean | High review-risk area |
 | Media auth | Frontend uses `?t=` for images/video; distribution doc says no query-string tokens | Security policy mismatch; move media reads to the HttpOnly cookie |
@@ -89,14 +90,14 @@ See [APPSTORE-P1-PLAN.md](APPSTORE-P1-PLAN.md) for owners, order, commands, and 
 
 ## Missing — P1
 
-- Third-party notices are still VibeCut-era and mention yt-dlp, xhs_get, voice engines, and VibeCut. Rewrite for DuckSuite: FastAPI, Uvicorn, NumPy, Pillow, ONNX Runtime, LaMa, Python, ffmpeg LGPL, Swift helpers.
-- Bundle exact license texts for every shipped component.
-- `PrivacyInfo.xcprivacy` required-reason APIs: file timestamp, disk space, UserDefaults if used.
-- Nested code signing: Python binary, `duckcore`, Swift helpers, ONNX runtime dylibs; archive signing must cover all.
-- `CFBundleVersion` increment and release version scheme.
-- App Store screenshots at 1280×800, 1440×900, 2560×1600, 2880×1800; long 16:9 fixture.
-- Menu commands and window minimum: Swift window is 1080×700; design target is 1280×800.
-- App Store review notes explaining that the local server binds `127.0.0.1:0` and uses a per-launch token.
+- Third-party notices rewritten for DuckSuite; license texts are in `licenses/` and `Contents/Resources/Licenses/`.
+- `PrivacyInfo.xcprivacy` declares no tracking and no collected data; file timestamp and disk space reasons are declared.
+- Nested code signing: still needs a real identity. The archive is unsigned.
+- `CFBundleVersion` is 1; bump before each upload.
+- Screenshots captured at 1280×800 and 1440×900, saved at 2× (2560×1600 and 2880×1800). Source footage needs a rights check before submission.
+- Menu commands and window minimum: window minimum is 1280×800.
+- Review notes written in `APP-REVIEW-NOTES.md`; metadata in `APPSTORE-METADATA.md`.
+- Clean P1 still fails at scene 01, 3.5 s. See `docs/teams/clean-quality/loop-04.md`.
 
 ## Missing — P2
 

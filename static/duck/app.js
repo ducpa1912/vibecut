@@ -899,7 +899,7 @@ function sceneProofRows(scenes) {
       <span class="proof-main">
         <span class="proof-title">${esc(truncate(sceneTitle(scene, index), 42))}</span>
         <span class="proof-sub">${fmtTC(scene.start)} – ${fmtTC(scene.end)}</span>
-        <span class="proof-meta">${fmtDuration((scene.end || 0) - (scene.start || 0))} · <span class="${status === 'Clean' ? 'chip green' : 'chip'}">${esc(status)}</span> ${layers.length ? `· ${layers.length} layers` : ''}</span>
+        <span class="proof-meta">${fmtDuration((scene.end || 0) - (scene.start || 0))} · <span class="${status === 'Clean' ? 'chip green' : 'chip'}">${esc(status)}</span> ${layers.length ? `· ${layers.length} layer${layers.length === 1 ? '' : 's'}` : ''}</span>
       </span>
       <span class="proof-thumbs"><img src="${frameUrl(scene.start + 0.1)}" alt=""><span class="arrow">›</span><img src="${frameUrl(Math.max(scene.start + 0.1, scene.end - 0.1))}" alt=""></span>
     </button>`;
@@ -1196,9 +1196,10 @@ function screenRender() {
   const checked = sceneCleanCount(scenes);
   const captions = state.edit?.captions?.cues?.length ? 1 : 0;
   const voice = state.edit?.voice ? 1 : 0;
-  const outputDir = state.settings?.storage?.data_root
+  const outputPath = state.settings?.storage?.data_root
     ? `${state.settings.storage.data_root}/exports`
-    : 'Local exports';
+    : '';
+  const outputDir = 'DuckSuite Exports';
   const fps = Math.round(Number(state.edit?.source?.fps || 24));
   const sourceMeta = state.edit?.source || state.sourceMeta || {};
   const sourceW = Number(sourceMeta.width || 0);
@@ -1217,7 +1218,7 @@ function screenRender() {
           <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div><div class="toggle-row"><span>${state.edit?.captions?.burn ? 'Burn into render' : 'Sidecar SRT'}</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div></div>
           <div class="render-setting"><div class="setting-head">${icon('voice', 14)} Voice-over</div><div class="toggle-row"><span>${state.edit?.voice ? 'Included' : 'None'}</span><label class="switch"><input type="checkbox" ${state.edit?.voice ? 'checked' : ''} disabled><i></i></label></div></div>
           <div class="media-rule"></div>
-          <div class="render-setting"><div class="setting-head">${icon('folder', 14)} Output folder</div><div class="path">${esc(outputDir)}</div></div>
+          <div class="render-setting"><div class="setting-head">${icon('folder', 14)} Output folder</div><div class="path-row"><span class="path" title="${esc(outputPath)}">${esc(outputDir)}</span>${outputPath ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(outputPath)}">${icon('folderOpen', 11)} Show</button>` : ''}</div></div>
           <div class="render-setting"><div class="setting-head">${icon('monitor', 14)} Disk space</div><div class="small muted">${state.settings?.storage?.free_bytes ? `${fmtBytes(state.settings.storage.free_bytes)} free` : 'Local storage'}</div></div>
         </div>
       </aside>
@@ -1238,7 +1239,7 @@ function screenRender() {
             <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · 1080p · H.264</span></span></div>
           </div>
           <button class="btn primary wide start" type="button" data-action="start-render" ${checked === scenes.length ? '' : 'disabled'}>${icon('play', 16)} Start render</button>
-          <div class="ready-card"><div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('folder', 12)}</span><span class="ready-main"><strong>Output</strong><span class="output-path">${esc(outputDir)}</span></span></div></div>
+          <div class="ready-card"><div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('folder', 12)}</span><span class="ready-main"><strong>Output</strong><span class="output-path" title="${esc(outputPath)}">${esc(outputDir)}</span></span></div></div>
         </section>
       </aside>
     </div>
@@ -1250,7 +1251,7 @@ function renderQueueRow(item) {
   const active = item.state === 'running' || item.state === 'rendering' || item.state === 'queued' || item.state === 'paused';
   const duration = item.duration ? fmtDuration(item.duration) : (item.edit_id === state.edit?.id ? fmtDuration(state.edit?.end || 0) : '—');
   return `<div class="queue-item${active ? ' is-active' : ''}">
-    <div class="queue-story"><img src="${frameUrl(0.5, item.project_id)}" alt=""><div><strong>${esc(item.project_name || 'Project')} · ${esc(item.title || 'Render')}</strong><span>${esc(item.message || '1080p · H.264')}</span></div></div>
+    <div class="queue-story"><img src="${frameUrl(0.5, item.project_id)}" alt=""><div><strong title="${esc(item.project_name || 'Project')} · ${esc(item.title || 'Render')}">${esc(item.title || 'Render')}</strong><span>${esc(item.project_name || 'Project')} · ${duration} · ${item.width && item.height ? `${item.width}×${item.height}` : '1080p'} · v1</span></div></div>
     <span class="queue-cell">v1</span>
     <span class="queue-cell">${duration}</span>
     <span class="queue-cell">${item.width && item.height ? `${item.width}×${item.height}` : '1080p'}</span>

@@ -19,11 +19,16 @@ open "$PWD/build/DuckSuite.app"
 
 This builds the Swift shell, the PyInstaller `duckcore` sidecar, the static DuckSuite page, the LaMa model and any compiled Apple helpers present in `bin/`.
 
-FFmpeg is not included until an LGPL build is supplied:
+FFmpeg is an LGPL 7.1.1 build made from source:
 
 ```bash
-DUCK_FFMPEG=/path/to/lgpl/ffmpeg scripts/build-duck-dev.sh
+scripts/build-ffmpeg-lgpl.sh
 ```
+
+That writes `build/ffmpeg-lgpl/bin/ffmpeg` and `ffprobe`. `build-duck-dev.sh`
+copies them, `libdav1d.7.dylib` for AV1 decode, and `Licenses/` into the app.
+Override with `DUCK_FFMPEG` / `DUCK_FFPROBE` only when testing another LGPL
+build. Never ship a Homebrew GPL build.
 
 ## Build with Xcode
 
@@ -103,10 +108,16 @@ The page removes the fragment immediately and keeps the token in memory.
 - StoreKit test purchase for the CPU Render product.
 - One sample 1080p render with bundled ffmpeg and LaMa.
 
+## Shipped in the bundle
+
+- `PrivacyInfo.xcprivacy` with no tracking and no collected data.
+- `AppIcon` asset catalog and `AppIcon.icns`.
+- LGPL FFmpeg 7.1.1, ffprobe, and `libdav1d.7.dylib`.
+- License texts under `Contents/Resources/Licenses/`.
+
 ## Not here yet
 
 - Signing identity and `DEVELOPMENT_TEAM`.
 - App Store signed archive and upload.
-- Privacy manifest and AppIcon.
-- StoreKit configuration (not in v1).
-- LGPL ffmpeg in the Xcode bundle.
+- Published support and privacy URLs.
+- A licensed demo video for App Store screenshots.

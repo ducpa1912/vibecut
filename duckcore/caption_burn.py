@@ -162,7 +162,7 @@ def burn_captions(
     write_tail: list[str] = []
     reader = subprocess.Popen(
         [
-            ffmpeg, "-v", "error", "-i", str(video),
+            ffmpeg, "-v", "error", "-hwaccel", "none", "-i", str(video),
             "-f", "rawvideo", "-pix_fmt", "rgb24",
             "-s", f"{width}x{height}", "-r", f"{fps:.6f}", "pipe:1",
         ],

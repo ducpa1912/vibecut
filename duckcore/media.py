@@ -56,7 +56,7 @@ def has_audio(source: str | Path) -> bool:
 def extract_frame(source: str | Path, when: float) -> Image.Image:
     command = [
         ffmpeg(), "-v", "error", "-ss", f"{max(0.0, float(when)):.3f}",
-        "-i", str(source), "-frames:v", "1",
+        "-hwaccel", "none", "-i", str(source), "-frames:v", "1",
         "-f", "image2pipe", "-vcodec", "png", "pipe:1",
     ]
     result = subprocess.run(command, capture_output=True, timeout=120)

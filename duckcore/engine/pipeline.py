@@ -441,7 +441,7 @@ def scan_scenes(
     )
     cmd = [
         ffmpeg, "-hide_banner", "-nostats", "-progress", "pipe:1",
-        "-i", path, "-filter_complex", graph,
+        "-hwaccel", "none", "-i", path, "-filter_complex", graph,
         "-map", "[sv]", "-f", "null", os.devnull,
         "-map", "[mv]", "-f", "null", os.devnull,
     ]
@@ -697,7 +697,7 @@ def extract_thumbs(
         out = thumb_dir / f"{scene['id']:05d}.jpg"
         moment = min(max(scene["mid"], scene["start"] + 0.04), scene["end"] - 0.04)
         cmd = [
-            ffmpeg, "-y", "-v", "error", "-ss", f"{moment:.3f}", "-i", path,
+            ffmpeg, "-y", "-v", "error", "-hwaccel", "none", "-ss", f"{moment:.3f}", "-i", path,
             "-frames:v", "1", "-vf", "scale=360:-2:flags=lanczos", "-q:v", "5", str(out),
         ]
         try:
@@ -767,7 +767,7 @@ def extract_tracking_frames(
         out = tracking_dir / f"s{scene['id']:05d}_{index}.jpg"
         try:
             _run([
-                ffmpeg, "-y", "-v", "error", "-ss", f"{moment:.3f}", "-i", path,
+                ffmpeg, "-y", "-v", "error", "-hwaccel", "none", "-ss", f"{moment:.3f}", "-i", path,
                 "-frames:v", "1", "-vf", "scale=360:-2:flags=lanczos", "-q:v", "5", str(out),
             ], timeout=90)
             files[out.name] = out

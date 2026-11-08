@@ -175,9 +175,15 @@ def method_problem(method: str, directory: Path) -> str | None:
 
 
 def text_mask_enabled() -> bool:
-    """Narrow scan layers to the text itself. Set off to fill the whole box."""
-    value = os.environ.get("VIBECUT_FILL_TEXT_MASK", "on").strip().lower()
-    return value not in {"0", "off", "false", "no"}
+    """Narrow scan layers to the glyphs. Off by default.
+
+    A tight glyph mask leaves anti-aliased edges and shadows in the model's
+    context, so LaMa can paint dark halos or a hole inside a seat or a face.
+    The whole detected line box is the safer hole; set this to ``1`` only to
+    compare a tighter mask.
+    """
+    value = os.environ.get("VIBECUT_FILL_TEXT_MASK", "off").strip().lower()
+    return value in {"1", "on", "true", "yes"}
 
 
 def _rate_key(method: str, device: str = DEFAULT_DEVICE) -> str:

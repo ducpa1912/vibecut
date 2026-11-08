@@ -66,7 +66,8 @@ open "$PWD/build/DuckSuite.app"
 ## Build with Xcode
 
 ```bash
-brew install xcodegen
+brew install xcodegen pkgconf
+scripts/build-ffmpeg-lgpl.sh
 scripts/build-xcode-dev.sh
 open "$PWD/build/DuckSuite-Xcode.app"
 ```

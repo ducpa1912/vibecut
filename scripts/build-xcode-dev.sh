@@ -30,7 +30,8 @@ rm -rf "$APP_OUT"
 cp -R "$BUILT" "$APP_OUT"
 # Local development signature only. App Store distribution needs a real
 # Apple Development/App Store identity and provisioning profile.
-codesign --force --deep --sign - \
+codesign --force --deep --sign - "$APP_OUT" >/dev/null
+codesign --force --sign - \
   --entitlements "$ROOT/mac/DuckSuite/DuckSuite/DuckSuite.entitlements" \
   "$APP_OUT" >/dev/null
 

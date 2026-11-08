@@ -18,6 +18,9 @@ targets:
       - path: ../../static
         type: folder
         buildPhase: resources
+      - path: ../../Licenses
+        type: folder
+        buildPhase: resources
       - path: ../../build/duckcore-dist/duckcore
         type: folder
         buildPhase: resources
@@ -50,10 +53,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ducksuite.app
         PRODUCT_NAME: DuckSuite
-        MARKETING_VERSION: 0.1.0
+        MARKETING_VERSION: 1.0
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: YES
         ARCHS: arm64
         ONLY_ACTIVE_ARCH: NO
         COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

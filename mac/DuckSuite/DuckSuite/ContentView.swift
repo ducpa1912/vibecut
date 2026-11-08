@@ -106,21 +106,18 @@ private struct WebView: NSViewRepresentable {
 
         func webView(
             _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-        ) {
+            decidePolicyFor navigationAction: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
             guard let url = navigationAction.request.url else {
-                decisionHandler(.cancel)
-                return
+                return .cancel
             }
             if url.scheme == "http", url.host == "127.0.0.1" {
-                decisionHandler(.allow)
-                return
+                return .allow
             }
             if url.scheme == "https" {
                 NSWorkspace.shared.open(url)
             }
-            decisionHandler(.cancel)
+            return .cancel
         }
     }
 }

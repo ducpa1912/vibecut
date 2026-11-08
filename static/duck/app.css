@@ -340,14 +340,14 @@ svg { display: block; flex: 0 0 auto; }
 .project-list { display: grid; gap: 4px; }
 .project-row {
   display: flex; align-items: center; gap: 10px;
-  width: 100%; min-height: 42px; padding: 7px 9px;
+  width: 100%; min-height: 42px; padding: 7px 9px; overflow: hidden;
   border: 1px solid transparent; border-radius: 9px;
   background: transparent; text-align: left;
 }
 .project-row:hover { background: var(--panel-2); }
 .project-row.is-active { background: var(--amber-soft); border-color: #f0d3aa; }
 .project-row .project-icon { color: var(--amber); }
-.project-row > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; }
+.project-row > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .project-row .project-name { display: block; font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-row .project-sub { display: block; color: var(--muted); font-size: 11px; }
 .project-row .chip { margin-left: auto; }
@@ -724,6 +724,9 @@ svg { display: block; flex: 0 0 auto; }
 .render-setting .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .media-rule { height: 1px; background: var(--line); margin: 2px 0; }
 
+.path-row { display: flex; align-items: center; gap: 8px; }
+.path-row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.output-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .render-queue { overflow: hidden; }
 .render-queue-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; }
 .render-queue-head h2 { margin: 0; font-size: 13px; font-weight: 740; letter-spacing: .08em; text-transform: uppercase; }
@@ -797,7 +800,13 @@ dialog.modal::backdrop { background: rgba(28, 23, 16, .38); backdrop-filter: blu
   .workspace.edit { grid-template-columns: 258px minmax(0, 1fr) 315px; }
   .workspace.clean { grid-template-columns: 244px minmax(0, 1fr) 315px; }
   .workspace.render { grid-template-columns: 250px minmax(0, 1fr) 300px; }
-  .queue-head-row, .queue-item { grid-template-columns: minmax(0,1.6fr) 72px 56px 72px 80px 96px 104px; }
+  .queue-head-row { grid-template-columns: minmax(0,1fr) 84px 106px; }
+  .queue-head-row span:nth-child(2),
+  .queue-head-row span:nth-child(3),
+  .queue-head-row span:nth-child(4),
+  .queue-head-row span:nth-child(7) { display: none; }
+  .queue-item { grid-template-columns: minmax(0,1fr) 84px 106px 116px; }
+  .queue-item .queue-cell { display: none; }
 }
 @media (max-width: 1180px) {
   .topbar-main { padding: 0 16px; gap: 10px; }

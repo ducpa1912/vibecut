@@ -204,7 +204,7 @@ def render_frame(
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [
         media.ffmpeg(), "-y", "-v", "error",
-        "-ss", f"{max(0.0, offset):.6f}", "-i", str(input_path),
+        "-hwaccel", "none", "-ss", f"{max(0.0, offset):.6f}", "-i", str(input_path),
         "-frames:v", "1", "-vf", video_filter,
     ]
     if output.suffix.lower() in {".jpg", ".jpeg"}:
@@ -285,7 +285,7 @@ def render_edit(
             if filled:
                 command = [
                     ffmpeg, "-y", "-v", "error",
-                    "-i", str(filled["path"]),
+                    "-hwaccel", "none", "-i", str(filled["path"]),
                     "-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", source,
                     "-map", "0:v:0", "-map", "1:a?",
                     "-vf", video_filter,
@@ -296,7 +296,7 @@ def render_edit(
             else:
                 command = [
                     ffmpeg, "-y", "-v", "error",
-                    "-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", source,
+                    "-hwaccel", "none", "-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", source,
                     "-map", "0:v:0", "-map", "0:a?",
                     "-vf", video_filter,
                     *_video_codec(),

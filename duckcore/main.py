@@ -43,7 +43,7 @@ if not STATIC.is_dir():
     if bundled_static.is_dir():
         STATIC = bundled_static
 APP_VERSION = "0.1.0"
-PROOF_VERSION = 8
+PROOF_VERSION = 9
 
 
 class ProjectCreate(BaseModel):

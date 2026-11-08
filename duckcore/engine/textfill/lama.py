@@ -18,8 +18,10 @@ import numpy as np
 from PIL import Image
 
 SIZE = 512
-# The network halves its input three times, and needs some picture to read.
-STEP = 8
+# The network halves its input four times, and needs some picture to read.
+# An input that is not a multiple of 16 makes the FFC skip join fail with a
+# 62-by-63 broadcast error, so round every run size up to 16.
+STEP = 16
 MIN_SIDE = 64
 MODEL_FILE = "lama_fp32.onnx"
 

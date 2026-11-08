@@ -43,6 +43,11 @@ Do not start screenshots until Clean P1 is closed; do not upload until nested co
 
 ## 2. LGPL ffmpeg
 
+**Status:** done. FFmpeg 7.1.1 LGPL arm64, zlib, libdav1d, VideoToolbox.
+Built by `scripts/build-ffmpeg-lgpl.sh`. No GPL/nonfree code and no network
+protocols. `libdav1d.7.dylib` ships beside the binaries with an
+`@executable_path` rpath.
+
 **Need:** `Contents/Helpers/ffmpeg` and `ffprobe` built LGPL, with VideoToolbox. No `--enable-gpl`, no libx264, no libx265.
 
 **Tasks**
@@ -56,6 +61,10 @@ Do not start screenshots until Clean P1 is closed; do not upload until nested co
 **Exit:** `ffmpeg -version` is LGPL; app renders 1080p H.264 through VideoToolbox; no GPL binary in the bundle.
 
 ## 3. Sign nested code
+
+**Status:** local ad-hoc order fixed. Nested code is signed before the outer
+app, and helpers do not receive the app sandbox entitlements. A real Apple
+identity and team are still missing.
 
 **Need:** every executable and dylib signed before the outer app. `codesign --deep` is not a submission strategy.
 
@@ -78,6 +87,9 @@ Do not start screenshots until Clean P1 is closed; do not upload until nested co
 **Exit:** strict verification passes; no unsigned nested code; archive validates in Organizer.
 
 ## 4. PrivacyInfo and privacy answers
+
+**Status:** done in the bundle. Privacy policy and support URLs still need
+public pages.
 
 **Bundle:** `Contents/Resources/PrivacyInfo.xcprivacy`.
 
@@ -122,6 +134,9 @@ Do not start screenshots until Clean P1 is closed; do not upload until nested co
 
 ## 7. Third-party notices + licenses
 
+**Status:** done. `THIRD_PARTY_NOTICES.md` rewritten; texts in `Licenses/` and
+`Contents/Resources/Licenses/`. Includes dav1d.
+
 Rewrite `THIRD_PARTY_NOTICES.md` for DuckSuite only. Remove VibeCut, yt-dlp, xhs_get, voice engines, and cloud tenants.
 
 **Bundle in `Contents/Resources/Licenses/`**
@@ -142,6 +157,8 @@ Rewrite `THIRD_PARTY_NOTICES.md` for DuckSuite only. Remove VibeCut, yt-dlp, xhs
 
 ## 8. Window minimum
 
+**Status:** done. Minimum is 1280×800; verified at 1280 and 1440 widths.
+
 `DuckSuiteApp.swift` currently uses 1080×700. Design target is 1280×800.
 
 - Set `.frame(minWidth: 1280, minHeight: 800)`.
@@ -152,7 +169,9 @@ Rewrite `THIRD_PARTY_NOTICES.md` for DuckSuite only. Remove VibeCut, yt-dlp, xhs
 
 ## 9. Screenshot set
 
-Capture after Clean P1 is closed.
+**Status:** captured at 1280×800 and 1440×900 at 2× (2560×1600 and
+2880×1800) from a six-scene demo edit. Source footage rights still need a
+check. Clean P1 is not closed, so the set does not prove every frame.
 
 - 1280×800
 - 1440×900
@@ -171,6 +190,9 @@ Use a long 16:9 fixture, not the 46 s square test. Screens:
 No fake data. No black artifact. No 12/12 claim that the proof cannot support.
 
 ## 10. Review notes
+
+**Status:** written at `docs/duck/APP-REVIEW-NOTES.md`; metadata at
+`docs/duck/APPSTORE-METADATA.md`. Contact and URLs are TODO.
 
 Write `docs/duck/APP-REVIEW-NOTES.md`:
 

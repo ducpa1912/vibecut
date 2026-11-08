@@ -14,7 +14,7 @@ PLIST="$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable DuckSuite" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.ducksuite.app" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName DuckSuite" "$PLIST"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 1" "$PLIST"
 
 swiftc \
@@ -28,6 +28,9 @@ mkdir -p "$APP/Contents/Resources/duckcore"
 cp -R "$CORE/duckcore/." "$APP/Contents/Resources/duckcore/"
 mkdir -p "$APP/Contents/Resources/static"
 cp -R "$ROOT/static/duck" "$APP/Contents/Resources/static/duck"
+mkdir -p "$APP/Contents/Resources/Licenses"
+cp -R "$ROOT/Licenses/." "$APP/Contents/Resources/Licenses/"
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/Licenses/README.md"
 
 mkdir -p "$ROOT/bin"
 for helper in vision_probe transcribe_apple translate_apple; do
@@ -53,13 +56,34 @@ else
   printf 'warning: LaMa model not found at %s\n' "$MODEL" >&2
 fi
 
-if [ -n "${DUCK_FFMPEG:-}" ] && [ -x "$DUCK_FFMPEG" ]; then
-  cp "$DUCK_FFMPEG" "$APP/Contents/Helpers/ffmpeg"
+FFMPEG_SRC="${DUCK_FFMPEG:-${DUCK_LGPL_FFMPEG:-$ROOT/build/ffmpeg-lgpl/bin/ffmpeg}}"
+FFPROBE_SRC="${DUCK_FFPROBE:-$(dirname "$FFMPEG_SRC")/ffprobe}"
+if [ -x "$FFMPEG_SRC" ]; then
+  cp "$FFMPEG_SRC" "$APP/Contents/Helpers/ffmpeg"
+  codesign --force --sign - "$APP/Contents/Helpers/ffmpeg" >/dev/null 2>&1 || true
 else
   printf 'warning: LGPL ffmpeg not copied; set DUCK_FFMPEG=/path/to/lgpl/ffmpeg\n' >&2
 fi
+if [ -x "$FFPROBE_SRC" ]; then
+  cp "$FFPROBE_SRC" "$APP/Contents/Helpers/ffprobe"
+  codesign --force --sign - "$APP/Contents/Helpers/ffprobe" >/dev/null 2>&1 || true
+else
+  printf 'warning: LGPL ffprobe not copied; set DUCK_FFPROBE=/path/to/lgpl/ffprobe\n' >&2
+fi
 
-codesign --force --deep --sign - \
+DAV1D="${DUCK_DAV1D:-$ROOT/build/ffmpeg-lgpl/lib/libdav1d.7.dylib}"
+if [ -f "$DAV1D" ]; then
+  cp "$DAV1D" "$APP/Contents/Helpers/libdav1d.7.dylib"
+  codesign --force --sign - "$APP/Contents/Helpers/libdav1d.7.dylib" >/dev/null 2>&1 || true
+else
+  printf 'warning: libdav1d not copied; AV1 input will not decode\n' >&2
+fi
+
+# Sign nested code first without the app's sandbox entitlements, then seal the
+# app itself. A deep sign with --entitlements gives every helper the app
+# sandbox, which breaks standalone ffmpeg/ffprobe runs and is not needed.
+codesign --force --deep --sign - "$APP" >/dev/null
+codesign --force --sign - \
   --entitlements "$ROOT/mac/DuckSuite/DuckSuite/DuckSuite.entitlements" \
   "$APP" >/dev/null
 

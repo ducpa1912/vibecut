@@ -13,6 +13,16 @@ Team: product owner + engineer + tester only. No designer, no new UI modes.
 - Clean preview: one frame per scene midpoint.
 - Render: per-frame fill.
 
+## Latest loop
+
+- Loop 2: shared proof/render frame path. Passed at scene 01 1.8 s and scene 07.
+- Loop 3: shared blur parity and an optional edge-text OCR pass. Partial.
+- Loop 4: LaMa run sizes round to 16 px (fixes an ONNX crash on 512×500/504
+  runs); the whole detected line box is the default hole (fixes dark glyph
+  halos and the seat hole on scene 03). Scene 01 at 3.5 s still fails because
+  the `room` line is outside the detected box.
+- Details: [../teams/clean-quality/loop-04.md](../teams/clean-quality/loop-04.md)
+
 ## Observed on the fixed test video
 
 Fixture: `check-smoke`, 46 s, 1080×1080, 24 fps.
