@@ -22,6 +22,12 @@ SAMPLE_WIDTH = 2
 CHANNELS = 1
 
 
+NOVELTY_VOICES = {
+    "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos", "Good News",
+    "Jester", "Organ", "Superstar", "Trinoids", "Whisper", "Wobble", "Zarvox",
+}
+
+
 def list_voices() -> list[dict[str, str]]:
     try:
         result = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, timeout=30)
@@ -32,11 +38,15 @@ def list_voices() -> list[dict[str, str]]:
         match = VOICE_RE.match(line.strip())
         if not match:
             continue
+        name = match.group("name").strip()
+        if name in NOVELTY_VOICES:
+            continue
         voices.append({
-            "name": match.group("name").strip(),
+            "name": name,
             "locale": match.group("locale"),
             "sample": (match.group("sample") or "").strip(),
         })
+    voices.sort(key=lambda item: (not item["locale"].startswith("en_US"), item["locale"], item["name"]))
     return voices
 
 

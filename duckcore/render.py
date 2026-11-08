@@ -147,8 +147,9 @@ def render_frame(
 ) -> Path:
     """Extract one frame through the exact render/fill pipeline.
 
-    The proof must not be a second approximation. It uses the same clip span,
-    ``prepare_span`` cache, fill layers, key plan, and scale/pad/fps filter.
+    The proof uses the same fill layers, masks, key plan, ``prepare_span``
+    cache and scale/pad/fps filter. It fills a short window around the frame
+    instead of the whole scene, so a proof does not take minutes.
     """
     from duckcore.engine import pipeline, textfill
 
@@ -176,11 +177,19 @@ def render_frame(
     layers = _fill_layers(edit)
     filled = None
     if layers:
+        # A proof fills a short window around the requested frame, not the
+        # whole scene. It uses the same fills, masks and blend rules, while a
+        # 46 s video no longer spends minutes on the first proof.
+        window = 0.6
+        proof_start = max(start, min(requested - window / 2, start + duration - window))
+        proof_end = min(start + duration, max(proof_start + window, requested + window / 2))
+        if proof_end - proof_start < 0.2:
+            proof_start = max(start, proof_end - 0.2)
         filled = textfill.prepare_span(
             source=source,
             meta=meta,
-            start=start,
-            duration=duration,
+            start=proof_start,
+            duration=proof_end - proof_start,
             layers=layers,
             method="lama",
             cache_dir=job_dir / "fill",
@@ -195,7 +204,7 @@ def render_frame(
             ),
         )
     input_path = Path(filled["path"]) if filled else Path(source)
-    offset = requested - start if filled else requested
+    offset = requested - proof_start if filled else requested
     out_w, out_h, scale = _scale_filter(meta, target_fps)
     video_filter = _blur_filter(
         edit, meta, clip_start=start, target_fps=target_fps, at=requested,
@@ -524,6 +533,13 @@ class RenderQueue:
     def resume(self) -> dict:
         self.paused = False
         return {"paused": False}
+
+    def clear_finished(self) -> list[dict]:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM render_queue WHERE state IN ('done', 'failed', 'cancelled')"
+            )
+        return self.list()
 
     def cancel(self, project_id: str, edit_id: str) -> dict:
         with self._connect() as connection:

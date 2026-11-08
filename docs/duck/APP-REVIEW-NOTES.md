@@ -100,6 +100,6 @@ Support and privacy contact: **TODO before submission**.
 
 ## Build artifacts
 
-- Signed archive: `build/DuckSuite.xcarchive` (needs the team identity).
+- Archive: `build/DuckSuite.xcarchive` builds, but it is **unsigned** until a team identity is installed.
 - Local app: `build/DuckSuite-Xcode.app`.
 - Screenshots: `docs/appstore/screenshots/`.

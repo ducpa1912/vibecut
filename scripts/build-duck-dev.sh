@@ -17,6 +17,28 @@ PLIST="$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 1" "$PLIST"
 
+mkdir -p "$APP/Contents/Resources"
+cp "$ROOT/mac/DuckSuite/DuckSuite/PrivacyInfo.xcprivacy" "$APP/Contents/Resources/PrivacyInfo.xcprivacy"
+if [ -d "$ROOT/mac/DuckSuite/DuckSuite/Assets.xcassets" ]; then
+  DEVELOPER="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+  ACTOOL="$DEVELOPER/usr/bin/actool"
+  if [ -x "$ACTOOL" ]; then
+    ICON_PLIST="$(mktemp -t duck-icon).plist"
+    "$ACTOOL" "$ROOT/mac/DuckSuite/DuckSuite/Assets.xcassets" \
+      --compile "$APP/Contents/Resources" \
+      --platform macosx --minimum-deployment-target 26.0 \
+      --app-icon AppIcon --output-partial-info-plist "$ICON_PLIST" >/dev/null 2>&1 || true
+    if [ -f "$ICON_PLIST" ]; then
+      /usr/libexec/PlistBuddy -c "Merge $ICON_PLIST :" "$PLIST" >/dev/null 2>&1 || true
+      rm -f "$ICON_PLIST"
+    fi
+  elif [ -f "$ROOT/build/DuckSuite-Xcode.app/Contents/Resources/AppIcon.icns" ]; then
+    cp "$ROOT/build/DuckSuite-Xcode.app/Contents/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$PLIST" >/dev/null 2>&1 || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$PLIST"
+  fi
+fi
+
 swiftc \
   -O \
   -target arm64-apple-macosx26.0 \
@@ -81,11 +103,20 @@ fi
 
 # Sign nested code first without the app's sandbox entitlements, then seal the
 # app itself. A deep sign with --entitlements gives every helper the app
-# sandbox, which breaks standalone ffmpeg/ffprobe runs and is not needed.
+# sandbox, which breaks standalone ffmpeg/ffprobe/vision_probe runs.
 codesign --force --deep --sign - "$APP" >/dev/null
-codesign --force --sign - \
-  --entitlements "$ROOT/mac/DuckSuite/DuckSuite/DuckSuite.entitlements" \
-  "$APP" >/dev/null
+for nested in "$APP"/Contents/Helpers/*; do
+  [ -f "$nested" ] && codesign --force --sign - "$nested" >/dev/null 2>&1 || true
+done
+for attempt in 1 2 3; do
+  if codesign --force --sign - \
+    --entitlements "$ROOT/mac/DuckSuite/DuckSuite/DuckSuite.entitlements" \
+    "$APP" >/dev/null 2>&1; then
+    break
+  fi
+  printf 'codesign attempt %s failed; retrying\n' "$attempt" >&2
+  sleep 1
+done
 
 printf 'Built %s\n' "$APP"
 printf 'Run: open "%s"\n' "$APP"

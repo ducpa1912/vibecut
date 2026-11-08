@@ -109,7 +109,7 @@ public pages.
 
 ## 5. StoreKit decision
 
-**v1:** local-only. Remove the Render subscription scaffold.
+**v1:** local-only. The Render subscription scaffold is already removed.
 
 - Delete `mac/DuckSuite/DuckSuite/StoreManager.swift` or move it behind a future cloud flag.
 - No StoreKit product IDs in v1.
@@ -159,9 +159,7 @@ Rewrite `THIRD_PARTY_NOTICES.md` for DuckSuite only. Remove VibeCut, yt-dlp, xhs
 
 **Status:** done. Minimum is 1280×800; verified at 1280 and 1440 widths.
 
-`DuckSuiteApp.swift` currently uses 1080×700. Design target is 1280×800.
-
-- Set `.frame(minWidth: 1280, minHeight: 800)`.
+- Minimum is `.frame(minWidth: 1280, minHeight: 800)`.
 - Verify at 1280×800: three-column layouts, queue table, preview stage, no clipped labels.
 - Keep 200% zoom behavior.
 

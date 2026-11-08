@@ -21,7 +21,9 @@ Team: product owner + engineer + tester only. No designer, no new UI modes.
   runs); the whole detected line box is the default hole (fixes dark glyph
   halos and the seat hole on scene 03). Scene 01 at 3.5 s still fails because
   the `room` line is outside the detected box.
-- Details: [../teams/clean-quality/loop-04.md](../teams/clean-quality/loop-04.md)
+- Loop 5: edge OCR on by default; stacked large titles merge; proofs use a
+  0.6 s window (MAD 2.30 vs render); captions de-duplicated.
+- Details: [../teams/clean-quality/loop-05.md](../teams/clean-quality/loop-05.md)
 
 ## Observed on the fixed test video
 

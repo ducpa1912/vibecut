@@ -1087,7 +1087,9 @@ def read_text_samples(
             if progress is not None:
                 done = min(total, offset + CHECK_OCR_BATCH)
                 progress(0.08 + 0.92 * done / total, f"Reading text · frame {done} / {total}")
-    if os.environ.get("DUCK_EDGE_TEXT") == "1":
+    # Edge crops recover large display type that full-frame OCR misses.
+    # Set DUCK_EDGE_TEXT=0 only to measure the cheaper first pass.
+    if os.environ.get("DUCK_EDGE_TEXT", "1").strip().lower() not in {"0", "off", "false", "no"}:
         _edge_text_pass(directory, frames, records)
     samples = []
     for frame in frames:

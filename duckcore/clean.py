@@ -69,7 +69,98 @@ def layers_from_report(report: dict, *, enabled: bool = True) -> list[dict]:
             "confidence": float(tracklet.get("confidence") or 0.0),
             "label": "Found text" if fill else "Handle or logo",
         })
-    return layers
+    return _merge_stacked_titles(layers)
+
+
+def _box_union(left: dict, right: dict) -> dict:
+    x0 = min(float(left.get("x") or 0.0), float(right.get("x") or 0.0))
+    y0 = min(float(left.get("y") or 0.0), float(right.get("y") or 0.0))
+    x1 = max(float(left.get("x") or 0.0) + float(left.get("w") or 0.0),
+             float(right.get("x") or 0.0) + float(right.get("w") or 0.0))
+    y1 = max(float(left.get("y") or 0.0) + float(left.get("h") or 0.0),
+             float(right.get("y") or 0.0) + float(right.get("h") or 0.0))
+    return {
+        "x": round(x0, 6),
+        "y": round(y0, 6),
+        "w": round(x1 - x0, 6),
+        "h": round(y1 - y0, 6),
+    }
+
+
+def _ranges_overlap(left: list[dict], right: list[dict]) -> bool:
+    for a in left:
+        for b in right:
+            if (float(a.get("start") or 0.0) < float(b.get("end") or 0.0)
+                    and float(b.get("start") or 0.0) < float(a.get("end") or 0.0)):
+                return True
+    return False
+
+
+def _merge_ranges(layers: list[dict]) -> list[dict]:
+    rows = sorted(
+        (
+            (float(item.get("start") or 0.0), float(item.get("end") or 0.0))
+            for layer in layers for item in layer.get("ranges") or []
+        ),
+    )
+    merged: list[list[float]] = []
+    for start, end in rows:
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1] + 0.04:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [{"start": round(start, 3), "end": round(end, 3)} for start, end in merged]
+
+
+def _merge_stacked_titles(layers: list[dict]) -> list[dict]:
+    """Join stacked large title lines into one fill block.
+
+    The detector tracks each OCR line separately. A two-line display title can
+    leave its second line outside the first line's box, so Fill removes only
+    half the title. Two large layers that overlap horizontally, touch
+    vertically and share time are one block. Subtitles and small labels keep
+    their own boxes.
+    """
+    merged: list[dict] = []
+    for layer in layers:
+        if layer.get("kind") != "fill" or not layer.get("large"):
+            merged.append(layer)
+            continue
+        target = None
+        for candidate in merged:
+            if candidate.get("kind") != "fill" or not candidate.get("large"):
+                continue
+            box = layer.get("box") or {}
+            other = candidate.get("box") or {}
+            left = max(float(box.get("x") or 0.0), float(other.get("x") or 0.0))
+            right = min(float(box.get("x") or 0.0) + float(box.get("w") or 0.0),
+                        float(other.get("x") or 0.0) + float(other.get("w") or 0.0))
+            across = max(0.0, right - left)
+            narrow = max(1e-6, min(float(box.get("w") or 0.0), float(other.get("w") or 0.0)))
+            gap = max(
+                float(other.get("y") or 0.0) - (float(box.get("y") or 0.0) + float(box.get("h") or 0.0)),
+                float(box.get("y") or 0.0) - (float(other.get("y") or 0.0) + float(other.get("h") or 0.0)),
+            )
+            if across / narrow >= 0.5 and gap <= 0.025 and _ranges_overlap(
+                layer.get("ranges") or [], candidate.get("ranges") or [],
+            ):
+                target = candidate
+                break
+        if target is None:
+            merged.append(layer)
+            continue
+        target["box"] = _box_union(target.get("box") or {}, layer.get("box") or {})
+        target["ranges"] = _merge_ranges([target, layer])
+        target["text_sample"] = " ".join(
+            item for item in (target.get("text_sample"), layer.get("text_sample")) if item
+        )[:160]
+        target["large"] = True
+        target["track"] = []
+        target["fill_keys"] = None
+        target["tracklet_id"] = f"{target.get('tracklet_id') or ''}+{layer.get('tracklet_id') or ''}"
+    return merged
 
 
 def merge_layers(existing: list[dict], fresh: list[dict]) -> list[dict]:

@@ -110,8 +110,7 @@ Upload these from `docs/appstore/screenshots/`:
 | 6 | `06-render-1280x800@2x.png` | `06-render-1440x900@2x.png` | 1080p locally. Nothing uploaded. |
 
 Files ending `@2x` are 2560 × 1600 and 2880 × 1800, both accepted Mac sizes.
-The screenshots use a synthetic demo project. Replace the footage with a
-licensed demo before submission if the current test clip is not cleared.
+The screenshots use the internal `check-smoke` fixture. Clear its footage or recapture with a licensed demo before submission.
 
 ## Review information
 

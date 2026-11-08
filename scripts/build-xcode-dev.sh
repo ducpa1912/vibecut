@@ -31,6 +31,9 @@ cp -R "$BUILT" "$APP_OUT"
 # Local development signature only. App Store distribution needs a real
 # Apple Development/App Store identity and provisioning profile.
 codesign --force --deep --sign - "$APP_OUT" >/dev/null
+for nested in "$APP_OUT"/Contents/Resources/Helpers/*; do
+  [ -f "$nested" ] && codesign --force --sign - "$nested" >/dev/null 2>&1 || true
+done
 codesign --force --sign - \
   --entitlements "$ROOT/mac/DuckSuite/DuckSuite/DuckSuite.entitlements" \
   "$APP_OUT" >/dev/null

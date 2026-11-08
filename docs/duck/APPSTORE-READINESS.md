@@ -1,7 +1,7 @@
 # DuckSuite — App Store readiness
 
 Date: 2026-11-08  
-Status: code-complete for local build; signing still blocked
+Status: user-test-02 pass; signing and store URLs still blocked
 
 ## Short answer: where is the DMG?
 
@@ -81,7 +81,7 @@ Notarization is **not** part of the Mac App Store path. It is required only for 
 | Review notes | Local server, bundled Python, no downloaded code, own-footage clean | High review-risk area |
 | Media auth | Frontend uses `?t=` for images/video; distribution doc says no query-string tokens | Security policy mismatch; move media reads to the HttpOnly cookie |
 | Own-footage | Runtime gate removed by product decision; always-on acknowledgment in Settings; policy in README and T&C | Legal/review copy must ship; no runtime gate |
-| Clean quality | Scene 01 large-title artifact; some proofs still contain text | “Clean” is the key selling point; do not submit with a P1 proof |
+| Clean quality | Pass on the fixed fixture: scene 01 3.5 s, scene 03, scene 07 clean; proof/render MAD 2.30 | Re-run on a licensed 16:9 demo before submission |
 | TestFlight | No archive, upload, or clean-Mac test | Release gate |
 
 ## P1 execution plan
@@ -97,7 +97,7 @@ See [APPSTORE-P1-PLAN.md](APPSTORE-P1-PLAN.md) for owners, order, commands, and 
 - Screenshots captured at 1280×800 and 1440×900, saved at 2× (2560×1600 and 2880×1800). Source footage needs a rights check before submission.
 - Menu commands and window minimum: window minimum is 1280×800.
 - Review notes written in `APP-REVIEW-NOTES.md`; metadata in `APPSTORE-METADATA.md`.
-- Clean P1 still fails at scene 01, 3.5 s. See `docs/teams/clean-quality/loop-04.md`.
+- Clean P1 passes on the fixed fixture. See `docs/teams/clean-quality/loop-05.md` and `docs/teams/user-test-02.md`.
 
 ## Missing — P2
 

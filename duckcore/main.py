@@ -42,8 +42,8 @@ if not STATIC.is_dir():
     bundled_static = Path(sys.executable).resolve().parent.parent / "static" / "duck"
     if bundled_static.is_dir():
         STATIC = bundled_static
-APP_VERSION = "0.1.0"
-PROOF_VERSION = 9
+APP_VERSION = "1.0.0"
+PROOF_VERSION = 10
 
 
 class ProjectCreate(BaseModel):
@@ -81,6 +81,11 @@ class CaptionsPatch(BaseModel):
     position: str | None = None
 
 
+class ClipPatch(BaseModel):
+    start: float | None = None
+    end: float | None = None
+
+
 class VoicePatch(BaseModel):
     voice: str = Field(min_length=1, max_length=80)
     mode: str = Field(default="voice_over", pattern="^(voice_over|voice_only)$")
@@ -93,6 +98,22 @@ class DevImport(BaseModel):
 
 class RevealBody(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
+
+
+def _active_clean(edit: dict, when: float) -> list[dict]:
+    """Clean layers that can touch this frame, for a stable proof cache key."""
+    active = []
+    for layer in edit.get("clean") or []:
+        if not isinstance(layer, dict):
+            continue
+        for item in layer.get("ranges") or []:
+            try:
+                if float(item.get("start") or 0.0) <= when <= float(item.get("end") or 0.0):
+                    active.append(layer)
+                    break
+            except (TypeError, ValueError):
+                continue
+    return active
 
 
 def create_app(token: str, data_root: Path) -> FastAPI:
@@ -498,6 +519,41 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         edits.save_edit(edit, data_root)
         return {"edit": edit, "layers": len(edit.get("clean") or [])}
 
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/clips/{clip_index}")
+    def patch_clip(
+        project_id: str,
+        edit_id: str,
+        clip_index: int,
+        body: ClipPatch,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        clips = [item for item in edit.get("clips") or [] if isinstance(item, dict)]
+        if clip_index < 0 or clip_index >= len(clips):
+            raise HTTPException(status_code=404, detail="Clip not found.")
+        clip = clips[clip_index]
+        old_start = float(clip.get("start") or 0.0)
+        old_end = float(clip.get("end") or 0.0)
+        start = float(body.start) if body.start is not None else old_start
+        end = float(body.end) if body.end is not None else old_end
+        lower = float(clips[clip_index - 1].get("end") or 0.0) if clip_index else 0.0
+        duration = float((edit.get("source") or {}).get("duration") or end)
+        upper = float(clips[clip_index + 1].get("start") or duration) if clip_index + 1 < len(clips) else duration
+        start = max(lower, min(start, upper - 0.1))
+        end = min(upper, max(end, start + 0.1))
+        if end - start < 0.1:
+            raise HTTPException(status_code=400, detail="Clip is too short.")
+        clip["start"] = round(start, 3)
+        clip["end"] = round(end, 3)
+        clip["dur"] = round(end - start, 3)
+        edit["start"] = round(float(clips[0].get("start") or 0.0), 3)
+        edit["end"] = round(float(clips[-1].get("end") or 0.0), 3)
+        edits.save_edit(edit, data_root)
+        return {"edit": edit}
+
     @app.get(
         "/api/projects/{project_id}/edits/{edit_id}/clean/preview",
         responses={200: {"content": {"image/jpeg": {}}}},
@@ -516,8 +572,20 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         when = float(time if time is not None else (edit.get("start") or 0.0) + 0.5)
+        active = _active_clean(edit, when)
+        clip = next(
+            (
+                item for item in edit.get("clips") or []
+                if float(item.get("start") or 0.0) <= when < float(item.get("end") or 0.0)
+            ),
+            (edit.get("clips") or [{}])[-1],
+        )
+        proof_key = {
+            "clean": active,
+            "clip": [round(float(clip.get("start") or 0.0), 3), round(float(clip.get("end") or 0.0), 3)],
+        }
         clean_hash = hashlib.sha1(
-            json.dumps(edit.get("clean") or [], sort_keys=True).encode("utf-8")
+            json.dumps(proof_key, sort_keys=True).encode("utf-8")
         ).hexdigest()[:12]
         output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{clean_hash}_v{PROOF_VERSION}_{int(when * 1000)}.jpg"
         if output.is_file():
@@ -525,7 +593,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         try:
             render.render_frame(
                 project,
-                edit,
+                {**edit, "clean": active},
                 data_root,
                 output,
                 when=when,
@@ -714,6 +782,10 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     @app.post("/api/queue/resume")
     def resume_queue(_: None = Depends(require_token)) -> dict:
         return renders.resume()
+
+    @app.post("/api/queue/clear")
+    def clear_queue(_: None = Depends(require_token)) -> dict:
+        return {"items": renders.clear_finished()}
 
     @app.get(
         "/api/projects/{project_id}/edits/{edit_id}/render/file",

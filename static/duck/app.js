@@ -40,6 +40,8 @@ const state = {
   lastCheckKey: '',
   lastQueueKey: '',
   autoOpened: false,
+  showAllLayers: false,
+  showAllCues: false,
 };
 
 /* ------------------------------------------------------------------ utils */
@@ -293,6 +295,16 @@ async function startCheck() {
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/check`, { method: 'POST' });
     state.check = data.check;
+    state.edit = null;
+    state.edits = [];
+    state.transcript = {};
+    state.previewCache.clear();
+    state.previewStatus.clear();
+    state.previewRun += 1;
+    state.selectedScene = 0;
+    state.selectedLayerId = '';
+    state.showAllLayers = false;
+    state.showAllCues = false;
     state.autoOpened = false;
     state.lastCheckKey = checkKey();
     render();
@@ -311,7 +323,7 @@ async function refreshCheck() {
   const hasScenes = getScenes().length;
   if (state.screen === 'check' && !NO_AUTO && !state.autoOpened && hadScenes === 0 && hasScenes > 0 && ['queued', 'running'].includes(data.check?.state)) {
     state.autoOpened = true;
-    toast('Scenes ready. Opening Editor.');
+    toast('Scenes ready. Opening Editor while the rest finishes.');
     window.setTimeout(() => navigate(projectPath('edit')), 900);
   }
   if (data.check?.state === 'done') {
@@ -345,8 +357,20 @@ function checkKey() {
 
 /* ------------------------------------------------------------------ model */
 
-function getScenes() {
+function checkScenes() {
   return state.check?.result?.scenes || state.check?.scenes || [];
+}
+
+function getScenes() {
+  const all = checkScenes();
+  if (!state.edit || state.edit.kind !== 'story') return all;
+  const ids = new Set(
+    (state.edit.clips || [])
+      .map((clip) => clip.scene)
+      .filter((id) => id !== null && id !== undefined),
+  );
+  if (!ids.size) return all;
+  return all.filter((scene) => ids.has(scene.id));
 }
 
 function getStories() {
@@ -388,6 +412,20 @@ function sceneLayers(scene) {
   return state.edit.clean.filter((layer) => (layer.ranges || []).some((range) => Number(range.end || 0) > start && Number(range.start || 0) < end));
 }
 
+function clipIndexForScene(scene, index = state.selectedScene) {
+  const clips = state.edit?.clips || [];
+  if (!clips.length) return -1;
+  const byScene = clips.findIndex((clip) => clip.scene === scene?.id);
+  if (byScene >= 0) return byScene;
+  return Math.max(0, Math.min(index, clips.length - 1));
+}
+
+function clipForScene(scene, index = state.selectedScene) {
+  const clips = state.edit?.clips || [];
+  const at = clipIndexForScene(scene, index);
+  return at >= 0 ? clips[at] : null;
+}
+
 function layerState(layer) {
   if (!layer || layer.enabled === false) return 'Off';
   return layer.kind === 'blur' ? 'Blur' : 'Fill';
@@ -412,7 +450,7 @@ function layerLabel(layer, index) {
 function cleanState(scene) {
   if (!state.edit) return 'Waiting';
   if (!sceneLayers(scene).length) return 'Needs clean';
-  return 'Clean';
+  return 'Layered';
 }
 
 function sceneCleanCount(scenes = getScenes()) {
@@ -574,11 +612,12 @@ function topbar() {
   const active = screen === 'clean' ? 'edit' : screen;
   const order = ['check', 'edit', 'preview', 'render'];
   const activeIndex = order.indexOf(active);
-  const step = (name, label, index) => {
+  const checkRunning = ['queued', 'running', 'cancelling'].includes(state.check?.state);
+  const step = (name, label, index, busy = false) => {
     const isActive = active === name;
-    const isDone = activeIndex > index;
+    const isDone = !busy && activeIndex > index;
     return `<button class="step${isActive ? ' is-active' : ''}${isDone ? ' is-done' : ''}" data-action="nav" data-screen="${name}" type="button">
-      <span class="step-check">${isDone || isActive ? icon('check', 11) : icon('circle', 11)}</span>
+      <span class="step-check">${busy ? icon('loader', 11) : isDone || isActive ? icon('check', 11) : icon('circle', 11)}</span>
       ${label}
     </button>`;
   };
@@ -589,15 +628,15 @@ function topbar() {
       <div class="project-facts">${esc(projectFacts())}</div>` : ''}
       <div class="top-actions">
         <span class="engine-pill"><span class="dot" id="engine-dot"></span>${esc(engineLabel())}</span>
-        <span class="queue-pill">${icon('layers', 15)} Queue: ${queueActiveCount()}</span>
+        <span class="queue-pill">${icon('layers', 15)} Queue: ${state.queue.length}</span>
         <button class="icon-btn" type="button" data-action="settings" title="Settings" aria-label="Settings">${icon('settings', 18)}</button>
         ${project ? `<button class="back-welcome" type="button" data-action="welcome">${icon('arrowLeft', 15)} Back to Welcome</button>` : ''}
       </div>
     </div>
     ${project ? `<div class="stepper-row"><div class="stepper">
-      ${step('check', 'Check', 0)}
+      ${step('check', checkRunning ? 'Checking' : 'Check', 0, checkRunning)}
       <span class="step-line"></span>
-      ${step('edit', screen === 'clean' ? 'Clean focus' : 'Edit', 1)}
+      ${step('edit', 'Edit', 1)}
       <span class="step-line"></span>
       ${step('preview', 'Preview', 2)}
       <span class="step-line"></span>
@@ -708,7 +747,7 @@ function queueLabel(value) {
 
 function screenCheck() {
   const check = state.check || {};
-  const scenes = getScenes();
+  const scenes = checkScenes();
   const running = ['queued', 'running', 'cancelling'].includes(check.state);
   const done = check.state === 'done';
   const scenesPct = stagePct('scenes');
@@ -824,10 +863,17 @@ function screenEditor() {
   const layer = layers.find((item) => item.id === state.selectedLayerId) || layers[0] || null;
   const segments = segmentsForScene(scene);
   const cleanCount = sceneCleanCount(scenes);
+  const checking = ['queued', 'running', 'cancelling'].includes(state.check?.state);
+  const clip = clipForScene(scene, state.selectedScene);
+  const clipIndex = clipIndexForScene(scene, state.selectedScene);
+  const clipStart = Number(clip?.start ?? scene.start ?? 0);
+  const clipEnd = Number(clip?.end ?? scene.end ?? 0);
+  const strip = Array.from({ length: 6 }, (_unused, at) => clipStart + (at + 0.5) * (clipEnd - clipStart) / 6);
+  const playhead = clipEnd > clipStart ? Math.max(0, Math.min(1, (state.previewTime - clipStart) / (clipEnd - clipStart))) : 0;
   return `<main class="screen">
     <div class="workspace edit">
       <aside class="panel proof-panel">
-        <div class="panel-head"><h2>Proof rows</h2><span class="meta">${scenes.length} scenes</span></div>
+        <div class="panel-head"><h2>Scenes</h2><span class="meta">${scenes.length} scenes</span></div>
         <div class="proof-tabs">
           <button class="proof-tab${state.proofTab === 'scenes' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="scenes">Scenes ${scenes.length}</button>
           <button class="proof-tab${state.proofTab === 'stories' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="stories">Stories ${stories.length}</button>
@@ -838,6 +884,7 @@ function screenEditor() {
       </aside>
 
       <section class="editor-center">
+        ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Transcript and clean layers appear as they finish. Scenes are safe to review now.</div>` : ''}
         <section class="panel preview-block">
           <div class="media-card" style="height:min(48vh, 460px)">
             <video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video><span class="media-badge right">${mediaResolution()}</span>
@@ -853,11 +900,16 @@ function screenEditor() {
         </section>
 
         <section class="panel fine-trim">
-          <div class="fine-head">${icon('chevronDown', 13)} <strong>Fine trim</strong><span class="mono">${fmtTC(scene.start, state.check?.result?.meta?.fps || 24)} – ${fmtTC(scene.end, state.check?.result?.meta?.fps || 24)}</span><span class="muted">· ${fmtDuration((scene.end || 0) - (scene.start || 0))}</span></div>
-          <div class="fine-strip">
-            ${scenes.map((item) => `<img src="${frameUrl(sceneMid(item))}" alt="">`).join('')}
-            <span class="fine-playhead" style="left:${scenes.length ? ((state.selectedScene + 0.5) / scenes.length) * 100 : 0}%"></span>
+          <div class="fine-head"><strong>Fine trim</strong><span class="mono">${fmtTC(clipStart, state.check?.result?.meta?.fps || 24)} – ${fmtTC(clipEnd, state.check?.result?.meta?.fps || 24)}</span><span class="muted">· ${fmtDuration(clipEnd - clipStart)}</span><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndex}" ${clipIndex >= 0 ? '' : 'disabled'}>Apply</button></div>
+          <div class="fine-controls">
+            <label class="field"><span>In</span><input id="trim-in" type="number" step="0.05" min="0" value="${clipStart.toFixed(2)}" aria-label="Scene in point"></label>
+            <label class="field"><span>Out</span><input id="trim-out" type="number" step="0.05" min="0" value="${clipEnd.toFixed(2)}" aria-label="Scene out point"></label>
           </div>
+          <div class="fine-strip">
+            ${strip.map((when) => `<button type="button" class="fine-frame" data-action="seek" data-time="${when.toFixed(3)}"><img src="${frameUrl(when)}" alt=""></button>`).join('')}
+            <span class="fine-playhead" style="left:${(playhead * 100).toFixed(2)}%"></span>
+          </div>
+          <p class="fine-note">Trim this scene's clip. Proofs use the new range; regenerate captions after a trim.</p>
         </section>
       </section>
 
@@ -899,7 +951,7 @@ function sceneProofRows(scenes) {
       <span class="proof-main">
         <span class="proof-title">${esc(truncate(sceneTitle(scene, index), 42))}</span>
         <span class="proof-sub">${fmtTC(scene.start)} – ${fmtTC(scene.end)}</span>
-        <span class="proof-meta">${fmtDuration((scene.end || 0) - (scene.start || 0))} · <span class="${status === 'Clean' ? 'chip green' : 'chip'}">${esc(status)}</span> ${layers.length ? `· ${layers.length} layer${layers.length === 1 ? '' : 's'}` : ''}</span>
+        <span class="proof-meta"><span class="${status === 'Layered' ? 'chip green' : 'chip'}">${esc(status)}</span>${layers.length ? `· ${layers.length} layer${layers.length === 1 ? '' : 's'}` : ''}</span>
       </span>
       <span class="proof-thumbs"><img src="${frameUrl(scene.start + 0.1)}" alt=""><span class="arrow">›</span><img src="${frameUrl(Math.max(scene.start + 0.1, scene.end - 0.1))}" alt=""></span>
     </button>`;
@@ -955,14 +1007,14 @@ function inspectorClean(scene, layer, layers) {
       return `<button class="${active ? 'is-active' : ''}" type="button" data-action="clean-action" data-layer="${esc(layer?.id || '')}" data-kind="${action}" ${layer ? '' : 'disabled'}>${label}</button>`;
     }).join('')}
   </div>
-  <div class="layer-list">
-    ${layers.length ? layers.slice(0, 6).map((item, index) => `<button class="layer-row${item.id === layer?.id ? ' is-active' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
+  <div class="layer-list${state.showAllLayers ? ' is-expanded' : ''}">
+    ${layers.length ? (state.showAllLayers ? layers : layers.slice(0, 6)).map((item, index) => `<button class="layer-row${item.id === layer?.id ? ' is-active' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
       <span class="eye">${item.enabled === false ? icon('eyeOff', 14) : icon('eye', 14)}</span>
       <span class="layer-name" title="${esc(item.text_sample || '')}">${esc(layerLabel(item, index))}</span>
       <span class="layer-kind">${esc(layerState(item))}</span>
     </button>`).join('') : '<p class="small muted">No text detected in this scene.</p>'}
   </div>
-  ${layers.length > 6 ? `<p class="small muted">+ ${layers.length - 6} more layers in this scene</p>` : ''}
+  ${layers.length > 6 ? `<button class="btn small wide" type="button" data-action="toggle-layers">${state.showAllLayers ? 'Show fewer layers' : `Show all ${layers.length} layers`}</button>` : ''}
   <div class="model-line"><span class="dot"></span><strong>LaMa · ready</strong><span>Local fill</span></div>
   <button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview before / after</button>
   <button class="btn wide" type="button" data-action="nav" data-screen="clean">${icon('sparkle', 14)} Clean focus</button>`;
@@ -978,7 +1030,8 @@ function inspectorCaptions(scene) {
   <div class="field"><label>Position</label><select data-action="caption-position">
     ${['bottom', 'middle', 'top'].map((value) => `<option value="${value}" ${track?.position === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
   </select></div>
-  ${track ? `<div class="layer-list">${cues.slice(0, 6).map((cue) => `<label class="field"><span class="small muted mono">${fmtTC(cue.start, 24)}</span><input type="text" value="${esc(cue.text || '')}" data-action="cue-save" data-cue="${esc(cue.id)}"></label>`).join('')}</div>` : `<p class="small muted">No captions yet. Generate from the transcript.</p>`}
+  ${track ? `<div class="layer-list${state.showAllCues ? ' is-expanded' : ''}">${(state.showAllCues ? cues : cues.slice(0, 6)).map((cue) => `<label class="field"><span class="small muted mono">${fmtTC(cue.start, 24)}</span><input type="text" value="${esc(cue.text || '')}" data-action="cue-save" data-cue="${esc(cue.id)}"></label>`).join('')}</div>` : `<p class="small muted">No captions yet. Generate from the transcript.</p>`}
+  ${cues.length > 6 ? `<button class="btn small wide" type="button" data-action="toggle-cues">${state.showAllCues ? 'Show fewer cues' : `Show all ${cues.length} cues`}</button>` : ''}
   <button class="btn primary wide" type="button" data-action="caption-generate">${icon('captions', 14)} ${track ? 'Regenerate captions' : 'Generate captions'}</button>
   ${track ? `<button class="btn wide" type="button" data-action="download-captions">${icon('download', 14)} Download SRT</button>` : ''}`;
 }
@@ -986,7 +1039,7 @@ function inspectorCaptions(scene) {
 function inspectorVoice() {
   const voice = state.edit?.voice;
   return `<div class="field"><label>Local voice</label><select data-action="voice-select">
-    ${state.voices.length ? state.voices.filter((item) => item.locale === 'en_US' || item.name === state.voiceName).slice(0, 80).map((item) => `<option value="${esc(item.name)}" ${item.name === state.voiceName ? 'selected' : ''}>${esc(item.name)} · ${esc(item.locale)}</option>`).join('') : `<option>${esc(state.voiceName)}</option>`}
+    ${state.voices.length ? state.voices.slice(0, 120).map((item) => `<option value="${esc(item.name)}" ${item.name === state.voiceName ? 'selected' : ''}>${esc(item.name)} · ${esc(item.locale)}</option>`).join('') : `<option>${esc(state.voiceName)}</option>`}
   </select></div>
   <div class="field"><label>Mode</label><select data-action="voice-mode">
     <option value="voice_over" ${state.voiceMode === 'voice_over' ? 'selected' : ''}>Voice over original</option>
@@ -1020,7 +1073,7 @@ function screenClean() {
             return `<button class="clean-scene${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
               <img src="${state.previewCache.get(item.id) || frameUrl(sceneMid(item))}" alt="">
               <span><span class="clean-scene-title">${esc(truncate(sceneTitle(item, index), 30))}</span><span class="clean-scene-sub">${fmtTime(item.start)} – ${fmtTime(item.end)}</span></span>
-              <span class="chip ${failed ? 'red' : cleaning ? 'amber' : status === 'Clean' ? 'green' : ''}">${failed ? 'Failed' : cleaning ? 'Cleaning' : hasProof ? 'Proof' : status === 'Clean' ? 'Layered' : status}</span>
+              <span class="chip ${failed ? 'red' : cleaning ? 'amber' : status === 'Layered' ? 'green' : ''}">${failed ? 'Failed' : cleaning ? 'Cleaning' : hasProof ? 'Proof' : status === 'Layered' ? 'Layered' : status}</span>
             </button>`;
           }).join('')}
         </div>
@@ -1031,13 +1084,13 @@ function screenClean() {
           ${splitStage(scene, { showCleaning: true, useCleanUrl: false })}
         </section>
         <section class="panel clean-scene-strip">
-          <div class="scene-strip-head"><h3>Scene strip · clean status</h3><span class="small muted">${checked}/${scenes.length} clean${scenes.length > 7 ? ' · scroll →' : ''}</span></div>
+          <div class="scene-strip-head"><h3>Scene strip · clean status</h3><span class="small muted">${checked}/${scenes.length} layered${scenes.length > 7 ? ' · scroll →' : ''}</span></div>
           <div class="scene-strip">
             ${scenes.map((item, index) => {
               const status = cleanState(item);
               return `<button class="scene-tile${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
                 <span class="thumb"><img src="${state.previewCache.get(item.id) || frameUrl(sceneMid(item))}" alt=""><span class="tc">${pad(index + 1)}</span></span>
-                <span class="scene-label">${state.previewCache.has(item.id) ? 'Proof' : status === 'Clean' ? 'Layered' : status}</span>
+                <span class="scene-label">${state.previewCache.has(item.id) ? 'Proof' : status === 'Layered' ? 'Layered' : status}</span>
               </button>`;
             }).join('')}
           </div>
@@ -1045,7 +1098,7 @@ function screenClean() {
       </section>
 
       <aside class="panel inspector">
-        <div class="panel-head"><h2>Clean</h2><span class="meta">${checked}/${scenes.length}</span></div>
+        <div class="panel-head"><h2>Clean</h2><span class="meta">${checked}/${scenes.length} layered</span></div>
         <div class="inspector-body">
           <div class="field"><div class="toggle-row"><span class="small muted">Text detect</span><strong class="mono small">${detectPct}%</strong></div><div class="progress"><span style="width:${detectPct}%"></span></div></div>
           <div class="proof-pair">
@@ -1060,13 +1113,14 @@ function screenClean() {
               return `<button class="${active ? 'is-active' : ''}" type="button" data-action="clean-action" data-layer="${esc(layer?.id || '')}" data-kind="${action}" ${layer ? '' : 'disabled'}>${label}</button>`;
             }).join('')}
           </div>
-          <div class="layer-list">
-            ${layers.length ? layers.slice(0, 6).map((item, index) => `<button class="layer-row${item.id === layer?.id ? ' is-active' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
+          <div class="layer-list${state.showAllLayers ? ' is-expanded' : ''}">
+            ${layers.length ? (state.showAllLayers ? layers : layers.slice(0, 6)).map((item, index) => `<button class="layer-row${item.id === layer?.id ? ' is-active' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
               <span class="eye">${item.enabled === false ? icon('eyeOff', 14) : icon('eye', 14)}</span>
               <span class="layer-name" title="${esc(item.text_sample || '')}">${esc(layerLabel(item, index))}</span>
               <span class="layer-kind">${esc(layerState(item))}</span>
             </button>`).join('') : '<p class="small muted">No text detected in this scene yet.</p>'}
           </div>
+          ${layers.length > 6 ? `<button class="btn small wide" type="button" data-action="toggle-layers">${state.showAllLayers ? 'Show fewer layers' : `Show all ${layers.length} layers`}</button>` : ''}
           <div class="model-line"><span class="dot"></span><strong>LaMa · ready</strong><span>Local fill</span></div>
           ${checked === scenes.length
             ? `<button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 15)} Preview clean</button><button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all scenes</button>`
@@ -1098,11 +1152,11 @@ function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
     return `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px">${beforeMarkup}<span class="split-tag before">Before</span>${overlay}</div>`;
   }
   if (view === 'after') {
-    return `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer${blurred ? ' is-blurred' : ''}">${afterMarkup}</div><span class="split-tag after">After</span>${cleaningMarkup}${overlay}</div>`;
+    return `<div class="split-stage" data-split="0" style="aspect-ratio:${mediaAspect()};min-height:380px"><div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div><span class="split-tag after">After</span>${cleaningMarkup}${overlay}</div>`;
   }
   return `<div class="split-stage" data-split="50" style="aspect-ratio:${mediaAspect()};min-height:380px">
     ${beforeMarkup}
-    <div class="after-layer${blurred ? ' is-blurred' : ''}">${afterMarkup}</div>
+    <div class="after-layer${blurred ? ' is-cleaning' : ''}">${afterMarkup}</div>
     <span class="split-tag before">Before</span>
     <span class="split-tag after">After</span>
     <span class="split-handle" aria-hidden="true"></span>
@@ -1157,7 +1211,7 @@ function screenPreview() {
         <section class="panel preview-status-card">
           <div class="preview-thumb"><img src="${frameUrl(sceneMid(scene))}" alt=""><div><h3>Scene ${pad(state.selectedScene + 1)}</h3><p>${fmtTC(scene.start)} – ${fmtTC(scene.end)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</p></div></div>
           <div class="panel-rule" style="margin:12px 0"></div>
-          <div class="ready-row"><span class="ready-icon" style="${status === 'ready' ? '' : 'background:var(--amber-soft);color:var(--amber-ink)'}">${status === 'ready' ? icon('check', 12) : icon('loader', 12)}</span><span class="ready-main"><strong>${status === 'ready' ? 'Proof generated' : status === 'failed' ? 'Clean failed' : 'Cleaning…'}</strong><span>${status === 'ready' ? 'Review the before / after' : 'Blur is a temporary placeholder'}</span></span></div>
+          <div class="ready-row"><span class="ready-icon" style="${status === 'ready' ? '' : 'background:var(--amber-soft);color:var(--amber-ink)'}">${status === 'ready' ? icon('check', 12) : icon('loader', 12)}</span><span class="ready-main"><strong>${status === 'ready' ? 'Proof generated' : status === 'failed' ? 'Clean failed' : 'Cleaning…'}</strong><span>${status === 'ready' ? 'Review the before / after' : 'Building a proof frame from this scene.'}</span></span></div>
         </section>
 
         <section class="panel preview-actions">
@@ -1166,7 +1220,7 @@ function screenPreview() {
             <div class="segmented">
               ${['before', 'compare', 'after'].map((view) => `<button class="${state.previewView === view ? 'is-active' : ''}" type="button" data-action="preview-view" data-view="${view}">${view[0].toUpperCase() + view.slice(1)}</button>`).join('')}
             </div>
-            <div class="toggle-row"><span>Current scene first</span><label class="switch"><input type="checkbox" checked disabled><i></i></label></div>
+            <div class="toggle-row"><span>Current scene first</span><span class="small muted">Always</span></div>
             <button class="btn wide" type="button" data-action="preview-reclean">${icon('loader', 14)} Re-clean this scene</button>
             <button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all</button>
             ${status === 'failed' ? `<p class="small" style="color:var(--red)">This scene failed. Retry before render.</p>` : ''}
@@ -1224,7 +1278,7 @@ function screenRender() {
       </aside>
 
       <section class="panel render-queue">
-        <div class="render-queue-head"><h2>Render queue · ${queue.length} jobs</h2><div style="display:flex;gap:6px">${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">${icon('play', 12)} Resume</button>` : activeJobs ? `<button class="btn small" type="button" data-action="pause-queue">${icon('pause', 12)} Pause</button>` : `<button class="btn small" type="button" disabled>Queue idle</button>`}</div></div>
+        <div class="render-queue-head"><h2>Render queue · ${queue.length} jobs</h2><div style="display:flex;gap:6px">${queue.some((item) => ['done', 'failed', 'cancelled'].includes(item.state)) ? `<button class="btn small" type="button" data-action="clear-queue">Clear finished</button>` : ''}${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">${icon('play', 12)} Resume</button>` : activeJobs ? `<button class="btn small" type="button" data-action="pause-queue">${icon('pause', 12)} Pause</button>` : `<button class="btn small" type="button" disabled>Queue idle</button>`}</div></div>
         <div class="queue-head-row"><span>Project / Story</span><span>Edit</span><span>Duration</span><span>Resolution</span><span>State</span><span>Progress</span><span>Output</span></div>
         ${queue.length ? queue.map((item) => renderQueueRow(item)).join('') : '<div class="queue-empty">No jobs yet. Start a render from Preview.</div>'}
       </section>
@@ -1333,7 +1387,7 @@ async function openSettings() {
           <div class="field"><label>Endpoint</label><input id="online-endpoint" type="url" value="${esc(online.endpoint || '')}" placeholder="https://render.example.com"></div>
           <button class="btn" type="button" data-action="save-online">Save online settings</button>
           <div class="kv"><span>Language</span><strong>Auto-detect only</strong></div>
-          <div class="kv"><span>Version</span><strong>${esc(state.settings?.version || '0.1.0')}</strong></div>
+          <div class="kv"><span>Version</span><strong>${esc(state.settings?.version || '1.0.0')}</strong></div>
         </section>
       </div>
     </div>
@@ -1441,12 +1495,53 @@ async function cleanAction(layerId, action) {
     });
     state.edit = data.edit;
     state.cleanVersion += 1;
+    const scene = currentScene();
+    if (scene) {
+      state.previewCache.delete(scene.id);
+      state.previewStatus.set(scene.id, 'queued');
+    }
+    render();
+    toast(`Clean set to ${action === 'exclude' ? 'Off' : action}.`);
+    if (scene && ['clean', 'preview'].includes(state.screen)) startPreviewClean(scene.id);
+  } catch (error) {
+    toast(`Clean change failed: ${error.message}`, 'bad');
+  }
+}
+
+async function clearQueue() {
+  try {
+    const data = await api('/api/queue/clear', { method: 'POST' });
+    state.queue = data.items || [];
+    state.lastQueueKey = JSON.stringify(state.queue.map((item) => [item.id, item.state]));
+    render();
+    toast('Finished renders cleared.');
+  } catch (error) {
+    toast(`Queue clear failed: ${error.message}`, 'bad');
+  }
+}
+
+async function applyTrim() {
+  if (!state.project || !state.edit) return;
+  const index = Number(document.querySelector('[data-action="trim-apply"]')?.dataset.clip ?? -1);
+  const start = Number(document.querySelector('#trim-in')?.value);
+  const end = Number(document.querySelector('#trim-out')?.value);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start + 0.1) {
+    toast('Out point must be at least 0.1 s after In.', 'bad');
+    return;
+  }
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clips/${index}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ start, end }),
+    });
+    state.edit = data.edit;
+    state.cleanVersion += 1;
     state.previewCache.clear();
     state.previewStatus.clear();
     render();
-    toast(`Clean set to ${action === 'exclude' ? 'Off' : action}.`);
+    toast('Scene trimmed.');
   } catch (error) {
-    toast(`Clean change failed: ${error.message}`, 'bad');
+    toast(`Trim failed: ${error.message}`, 'bad');
   }
 }
 
@@ -1660,6 +1755,8 @@ app.addEventListener('click', async (event) => {
       state.selectedScene = Math.max(0, Math.min(index, scenes.length - 1));
       state.previewTime = Number(scenes[state.selectedScene]?.start || 0) + 0.1;
       state.selectedLayerId = '';
+      state.showAllLayers = false;
+      state.showAllCues = false;
       state.previewStatus.set(scenes[state.selectedScene]?.id, state.previewCache.has(scenes[state.selectedScene]?.id) ? 'ready' : (state.previewStatus.get(scenes[state.selectedScene]?.id) || 'pending'));
       render();
     } else if (action === 'select-story') {
@@ -1669,6 +1766,10 @@ app.addEventListener('click', async (event) => {
       state.previewTime = Number(getStories()[Number(target.dataset.index || 0)]?.start || 0) + 0.1;
       render();
     } else if (action === 'select-layer') { state.selectedLayerId = target.dataset.layer || ''; render(); }
+    else if (action === 'toggle-layers') { state.showAllLayers = !state.showAllLayers; render(); }
+    else if (action === 'toggle-cues') { state.showAllCues = !state.showAllCues; render(); }
+    else if (action === 'trim-apply') await applyTrim();
+    else if (action === 'clear-queue') await clearQueue();
     else if (action === 'clean-action') await cleanAction(target.dataset.layer || '', target.dataset.kind || 'fill');
     else if (action === 'clean-all') await cleanAll();
     else if (action === 'caption-generate') await generateCaptions();

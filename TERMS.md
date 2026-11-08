@@ -41,7 +41,7 @@ Captions are generated from local speech recognition and can contain errors. Voi
 
 ## 6. Third-party components
 
-DuckSuite includes open-source and third-party components, including Python, ONNX Runtime, LaMa, and an LGPL ffmpeg build. Their licences apply. See `THIRD_PARTY_NOTICES.md` and the bundled `Licences/` folder. Apple frameworks are used under the macOS SDK terms and are not redistributed as standalone files.
+DuckSuite includes open-source and third-party components, including Python, ONNX Runtime, LaMa, and an LGPL ffmpeg build. Their licences apply. See `THIRD_PARTY_NOTICES.md` and the bundled `Licenses/` folder. Apple frameworks are used under the macOS SDK terms and are not redistributed as standalone files.
 
 ## 7. Privacy
 
