@@ -6,6 +6,7 @@ import io
 import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 from PIL import Image
@@ -40,6 +41,54 @@ def ffmpeg() -> str:
 
 def ffprobe() -> str:
     return _tool("ffprobe")
+
+
+_PREVIEW_LOCK = threading.Lock()
+
+
+def preview_path(data_root: str | Path, project_id: str) -> Path:
+    return Path(data_root) / "projects" / project_id / "preview.mp4"
+
+
+def ensure_preview(
+    source: str | Path,
+    target: str | Path,
+    *,
+    timeout: float = 600.0,
+) -> Path | None:
+    """Make a browser-playable H.264 proxy for the editor.
+
+    WKWebView cannot reliably decode AV1/HEVC sources. The source stays the
+    render master; this proxy is only the editor video element.
+    """
+    target = Path(target)
+    if target.is_file() and target.stat().st_size > 1024:
+        return target
+    source = Path(source)
+    if not source.is_file():
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.stem}.part.mp4")
+    command = [
+        ffmpeg(), "-y", "-v", "error", "-hwaccel", "none", "-i", str(source),
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2",
+        "-c:v", "h264_videotoolbox", "-q:v", "65", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
+        str(temporary),
+    ]
+    with _PREVIEW_LOCK:
+        if target.is_file() and target.stat().st_size > 1024:
+            return target
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError):
+            temporary.unlink(missing_ok=True)
+            return None
+        if result.returncode != 0 or not temporary.is_file() or temporary.stat().st_size < 1024:
+            temporary.unlink(missing_ok=True)
+            return None
+        temporary.replace(target)
+    return target
 
 
 def has_audio(source: str | Path) -> bool:

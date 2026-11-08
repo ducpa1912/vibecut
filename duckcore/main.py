@@ -21,6 +21,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -350,6 +351,11 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except (FileNotFoundError, ValueError) as exc:
             target.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        threading.Thread(
+            target=media.ensure_preview,
+            args=(target, media.preview_path(data_root, project["id"])),
+            daemon=True,
+        ).start()
         return {"project": project}
 
     @app.get("/api/projects/{project_id}/frame")
@@ -392,7 +398,12 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         path = Path(project["source_path"])
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Source is missing.")
-        return FileResponse(path, media_type="video/mp4", filename=path.name)
+        # WKWebView cannot reliably decode AV1/HEVC. Serve a cached H.264
+        # proxy for the editor; the original stays the render master.
+        playable = media.ensure_preview(
+            path, media.preview_path(data_root, project_id),
+        ) or path
+        return FileResponse(playable, media_type="video/mp4")
 
     @app.get("/api/projects/{project_id}/transcript")
     def project_transcript(project_id: str, _: None = Depends(require_token)) -> dict:
@@ -870,6 +881,11 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             target = target_dir / f"source{source.suffix.lower() or '.mp4'}"
             shutil.copy2(source, target)
             project = store.create(body.name or source.stem, target)
+            threading.Thread(
+                target=media.ensure_preview,
+                args=(target, media.preview_path(data_root, project["id"])),
+                daemon=True,
+            ).start()
             return {"project": project}
 
     @app.get("/")
