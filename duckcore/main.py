@@ -451,12 +451,15 @@ def create_app(token: str, data_root: Path) -> FastAPI:
 
     def completed_check(project_id: str) -> dict:
         status = checks.status(project_id)
-        if status.get("state") != "done" or not isinstance(status.get("result"), dict):
+        result = status.get("result")
+        # Stories may still be running after text and transcript are saved.
+        # The Editor only needs scenes and a report; allow that partial check.
+        if not isinstance(result, dict) or not result.get("scenes"):
             raise HTTPException(
                 status_code=409,
                 detail="Run Check first; the edit needs Check results.",
             )
-        return status["result"]
+        return result
 
     @app.get("/api/projects/{project_id}/edits")
     def list_project_edits(project_id: str, _: None = Depends(require_token)) -> dict:

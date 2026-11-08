@@ -1002,7 +1002,7 @@ def _edge_text_pass(
     for frame in frames:
         record = records.get(frame["file"]) or {}
         lines = record.get("text") or []
-        if not lines or any(float((line.get("box") or {}).get("h") or 0.0) >= 0.08 for line in lines):
+        if not lines or any(float((line.get("box") or {}).get("h") or 0.0) >= 0.12 for line in lines):
             selected.append(frame)
     if not selected or not vision.available():
         return
@@ -1017,9 +1017,13 @@ def _edge_text_pass(
         try:
             with Image.open(source) as image:
                 width, height = image.size
+                # A 1080p crop is already large enough for Vision. Upscaling
+                # every half-frame was the slowest part of Check on HD video.
+                scale = 2 if width < 1000 else 1
                 for label, y0, y1 in (("top", 0.0, 0.50), ("bottom", 0.50, 1.0)):
                     crop = image.crop((0, int(height * y0), width, int(height * y1)))
-                    crop = crop.resize((width * 2, crop.height * 2), Image.LANCZOS)
+                    if scale > 1:
+                        crop = crop.resize((width * scale, crop.height * scale), Image.LANCZOS)
                     target = crop_dir / f"{source.stem}_{label}.jpg"
                     crop.save(target, quality=94)
                     jobs.append((target, source.name, y0, y1 - y0))

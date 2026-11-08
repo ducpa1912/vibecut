@@ -35,6 +35,13 @@ class CheckManager:
             state = self.states.setdefault(project_id, {})
             state.update(values)
             state["updated"] = time.time()
+            history = state.setdefault("history", [])
+            history.append({
+                "at": round(state["updated"], 3),
+                "stage": state.get("stage", ""),
+                "progress": round(float(state.get("progress") or 0.0), 3),
+            })
+            del history[:-200]
 
     def _saved(self, project_id: str) -> dict[str, Any] | None:
         path = self._project_dir(project_id) / "check.json"
@@ -80,6 +87,7 @@ class CheckManager:
             error="",
             result=None,
             scenes=[],
+            editor_ready=False,
         )
         self.executor.submit(self._run, project, cancel)
         return self.status(project_id)
@@ -143,8 +151,11 @@ class CheckManager:
                 job_dir,
                 {
                     "ocr": True,
-                    "smart_crop": True,
-                    "crop_tracking": True,
+                    # DuckSuite v1 exports the source aspect; crop paths are
+                    # not used by Edit or Render. Skipping them keeps Check
+                    # focused on transcript, text and stories.
+                    "smart_crop": False,
+                    "crop_tracking": False,
                     "transcribe": True,
                     "job_id": project_id,
                     "request_id": project_id,
@@ -156,16 +167,6 @@ class CheckManager:
 
             transcript = stt.load_latest_transcript(job_dir) or {}
             segments = transcript.get("segments") or []
-            self._set(project_id, stage="Stories", progress=0.74, message="Finding smart stories")
-            stories = clipset.build_clipset(
-                analysis.get("scenes") or [],
-                segments,
-                float(meta.get("duration") or 0.0),
-                count=6,
-                min_s=15.0,
-                max_s=90.0,
-            )
-
             self._set(project_id, stage="Check", progress=0.76, message="Checking text and speech")
 
             def check_progress(fraction: float, message: str) -> None:
@@ -210,11 +211,38 @@ class CheckManager:
                     "text": str(transcript.get("text") or "")[:4000],
                 },
                 "engine": analysis.get("engine") or {},
+                "timings": analysis.get("timings") or {},
                 "scenes": analysis.get("scenes") or [],
-                "stories": stories,
+                "stories": {},
                 "report": report,
                 "finished": time.time(),
             }
+
+            # Publish the edit-ready result before stories finish. The Editor
+            # can build its full edit and clean layers now; the Stories tab
+            # fills in on the next poll.
+            temporary = job_dir / "check.json.tmp"
+            temporary.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+            temporary.replace(job_dir / "check.json")
+            self._set(
+                project_id,
+                state="running",
+                stage="Stories",
+                progress=0.86,
+                message="Editor ready · finding stories",
+                editor_ready=True,
+                result=result,
+            )
+
+            result["stories"] = clipset.build_clipset(
+                analysis.get("scenes") or [],
+                segments,
+                float(meta.get("duration") or 0.0),
+                count=6,
+                min_s=15.0,
+                max_s=90.0,
+            )
+            result["finished"] = time.time()
             temporary = job_dir / "check.json.tmp"
             temporary.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
             temporary.replace(job_dir / "check.json")
@@ -224,6 +252,7 @@ class CheckManager:
                 stage="Cancelled" if cancel.is_set() else "Done",
                 progress=1.0,
                 message="Check stopped" if cancel.is_set() else "Check complete",
+                editor_ready=True,
                 result=None,
             )
         except Exception as exc:  # noqa: BLE001

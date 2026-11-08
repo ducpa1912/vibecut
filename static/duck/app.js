@@ -40,6 +40,7 @@ const state = {
   lastCheckKey: '',
   lastQueueKey: '',
   autoOpened: false,
+  editorReady: false,
   showAllLayers: false,
   showAllCues: false,
 };
@@ -259,6 +260,7 @@ async function openProject(id, { startCheck = false } = {}) {
   state.previewRun += 1;
   state.previewTime = 0;
   state.autoOpened = false;
+  state.editorReady = false;
 
   const [editsData, transcriptData] = await Promise.all([
     api(`/api/projects/${encodeURIComponent(id)}/edits`).catch(() => ({ edits: [] })),
@@ -281,13 +283,34 @@ async function ensureEdit() {
   if (candidate) {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(candidate.id)}`);
     state.edit = data.edit;
+    await ensureCleanLayers();
     return state.edit;
   }
-  if (state.check?.state !== 'done') return null;
+  if (!state.check?.result?.scenes?.length) return null;
   const created = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/full`, { method: 'POST' });
   state.edit = created.edit;
   state.edits = [{ ...created.edit, kind: 'full' }, ...state.edits];
+  await ensureCleanLayers();
   return state.edit;
+}
+
+async function ensureCleanLayers() {
+  if (!state.project || !state.edit) return;
+  if (state.edit.clean?.length) return;
+  if (!state.check?.result?.report?.tracklets?.length) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clean/from-check`, { method: 'POST' });
+    state.edit = data.edit;
+    state.cleanVersion += 1;
+  } catch (_) { /* Editor still opens; Clean reports the failure */ }
+}
+
+async function refreshTranscript() {
+  if (!state.project) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/transcript`);
+    state.transcript = data.transcript || {};
+  } catch (_) { /* keep the last transcript */ }
 }
 
 async function startCheck() {
@@ -306,6 +329,7 @@ async function startCheck() {
     state.showAllLayers = false;
     state.showAllCues = false;
     state.autoOpened = false;
+    state.editorReady = false;
     state.lastCheckKey = checkKey();
     render();
   } catch (error) {
@@ -326,9 +350,19 @@ async function refreshCheck() {
     toast('Scenes ready. Opening Editor while the rest finishes.');
     window.setTimeout(() => navigate(projectPath('edit')), 900);
   }
+  if (data.check?.editor_ready && !state.editorReady) {
+    state.editorReady = true;
+    state.sourceMeta = data.check?.result?.meta || state.sourceMeta;
+    if (!state.edit) await ensureEdit();
+    await refreshTranscript();
+  }
   if (data.check?.state === 'done') {
     state.sourceMeta = data.check?.result?.meta || state.sourceMeta;
     if (!state.edit) await ensureEdit();
+    if (!state.editorReady) {
+      state.editorReady = true;
+      await refreshTranscript();
+    }
   }
   if (next !== previous) {
     state.lastCheckKey = next;
@@ -784,9 +818,9 @@ function screenCheck() {
           <div class="panel-head"><h2>Stages</h2><span class="meta">${done ? 'Complete' : running ? `${Math.round((check.progress || 0) * 100)}%` : 'Not started'}</span></div>
           <div class="stage-list">
             ${stageRow('scenes', 'Stage 1 · Scenes', scenes.length ? `${scenes.length} scenes` : 'Detect and split scenes', scenesPct, done || scenesPct >= 1)}
-            ${stageRow('transcript', 'Stage 2 · Transcript', 'Speech to text · auto language', transcriptPct, done)}
-            ${stageRow('text', 'Text detect', 'Find burned-in text', textPct, done)}
-            ${stageRow('stories', 'Stories', 'Find story segments', storiesPct, done)}
+            ${stageRow('transcript', 'Stage 2 · Transcript', 'Speech to text · auto language', transcriptPct, done || transcriptPct >= 0.999)}
+            ${stageRow('text', 'Text detect', 'Find burned-in text', textPct, done || textPct >= 0.999)}
+            ${stageRow('stories', 'Stories', 'Find story segments', storiesPct, done || storiesPct >= 0.999)}
           </div>
         </section>
       </aside>
@@ -811,7 +845,7 @@ function screenCheck() {
         <div class="check-cta" style="padding-top:14px">
           <div class="check-summary">
             <strong>${scenes.length ? `${scenes.length} scenes ready` : running ? 'Finding scene cuts' : 'Not checked yet'}</strong>
-            <span>${done ? 'Check complete. Transcript, text detection, and stories are ready.' : `Transcript ${Math.round(transcriptPct * 100)}% · Text detect ${Math.round(textPct * 100)}% · Stories ${done ? 'ready' : 'pending'}`}</span>
+            <span>${done ? 'Check complete. Transcript, text detection, and stories are ready.' : state.check?.editor_ready ? 'Editor ready. Stories finish in the background.' : `Transcript ${Math.round(transcriptPct * 100)}% · Text detect ${Math.round(textPct * 100)}% · Stories ${done ? 'ready' : 'pending'}`}</span>
           </div>
           ${done || scenes.length
             ? `<button class="btn primary wide" type="button" data-action="open-editor">${icon('arrowRight', 15)} Open Editor</button><p class="note">${running ? 'Scenes are ready. The Editor opens while the rest continues.' : 'Transcript and text detection continue in the background.'}</p>`
