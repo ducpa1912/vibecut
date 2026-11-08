@@ -99,32 +99,6 @@ def _normalize_words(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9']+", text.lower()))
 
 
-def _slice_text(text: str, start: float, end: float, full_start: float, full_end: float) -> str:
-    """The share of a sentence that falls inside a clip boundary.
-
-    A transcript segment can cross a cut. Repeating the whole sentence in both
-    clips duplicates captions; slicing by word timing keeps each word once.
-    """
-    span = full_end - full_start
-    if span <= 0 or (start <= full_start + 1e-6 and end >= full_end - 1e-6):
-        return text
-    words = text.split()
-    if len(words) <= 1:
-        return text
-    weights = [max(1, len(word)) for word in words]
-    total = sum(weights)
-    start_share = max(0.0, min(1.0, (start - full_start) / span))
-    end_share = max(0.0, min(1.0, (end - full_start) / span))
-    picked = []
-    seen = 0
-    for word, weight in zip(words, weights):
-        middle = (seen + weight / 2) / total
-        if start_share <= middle < end_share:
-            picked.append(word)
-        seen += weight
-    return " ".join(picked)
-
-
 def _split_words(text: str, parts: int) -> list[str]:
     words = text.split()
     if parts <= 1 or len(words) <= 1:

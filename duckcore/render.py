@@ -135,6 +135,23 @@ def _scale_filter(meta: dict, target_fps: float) -> tuple[int, int, str]:
     )
 
 
+def proof_window(start: float, duration: float, when: float, size: float = 0.6) -> tuple[float, float]:
+    """Source-time window a proof fills around one frame.
+
+    A proof needs local temporal context, not the whole scene. Keep at least
+    0.2 s so a single-frame fill still has a neighbour to blend against.
+    """
+    start = max(0.0, float(start))
+    duration = max(0.04, float(duration))
+    when = max(start, min(start + duration, float(when)))
+    size = max(0.2, min(duration, float(size)))
+    first = max(start, min(when - size / 2, start + duration - size))
+    last = min(start + duration, max(first + size, when + size / 2))
+    if last - first < 0.2:
+        first = max(start, last - 0.2)
+    return first, last
+
+
 def render_frame(
     project: dict,
     edit: dict,
@@ -180,11 +197,7 @@ def render_frame(
         # A proof fills a short window around the requested frame, not the
         # whole scene. It uses the same fills, masks and blend rules, while a
         # 46 s video no longer spends minutes on the first proof.
-        window = 0.6
-        proof_start = max(start, min(requested - window / 2, start + duration - window))
-        proof_end = min(start + duration, max(proof_start + window, requested + window / 2))
-        if proof_end - proof_start < 0.2:
-            proof_start = max(start, proof_end - 0.2)
+        proof_start, proof_end = proof_window(start, duration, requested)
         filled = textfill.prepare_span(
             source=source,
             meta=meta,

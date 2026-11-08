@@ -28,15 +28,8 @@ DEVELOPER_DIR="$DEVELOPER" xcodebuild \
 BUILT="$ROOT/build/xcode-derived/Build/Products/Release/DuckSuite.app"
 rm -rf "$APP_OUT"
 cp -R "$BUILT" "$APP_OUT"
-# Local development signature only. App Store distribution needs a real
-# Apple Development/App Store identity and provisioning profile.
-codesign --force --deep --sign - "$APP_OUT" >/dev/null
-for nested in "$APP_OUT"/Contents/Resources/Helpers/*; do
-  [ -f "$nested" ] && codesign --force --sign - "$nested" >/dev/null 2>&1 || true
-done
-codesign --force --sign - \
-  --entitlements "$ROOT/mac/DuckSuite/DuckSuite/DuckSuite.entitlements" \
-  "$APP_OUT" >/dev/null
+# Local ad-hoc signature; App Store needs a real identity.
+"$ROOT/scripts/sign-local-app.sh" "$APP_OUT"
 
 printf 'Built %s\n' "$APP_OUT"
 printf 'Run: open "%s"\n' "$APP_OUT"

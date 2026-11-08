@@ -82,13 +82,11 @@ FFMPEG_SRC="${DUCK_FFMPEG:-${DUCK_LGPL_FFMPEG:-$ROOT/build/ffmpeg-lgpl/bin/ffmpe
 FFPROBE_SRC="${DUCK_FFPROBE:-$(dirname "$FFMPEG_SRC")/ffprobe}"
 if [ -x "$FFMPEG_SRC" ]; then
   cp "$FFMPEG_SRC" "$APP/Contents/Helpers/ffmpeg"
-  codesign --force --sign - "$APP/Contents/Helpers/ffmpeg" >/dev/null 2>&1 || true
 else
   printf 'warning: LGPL ffmpeg not copied; set DUCK_FFMPEG=/path/to/lgpl/ffmpeg\n' >&2
 fi
 if [ -x "$FFPROBE_SRC" ]; then
   cp "$FFPROBE_SRC" "$APP/Contents/Helpers/ffprobe"
-  codesign --force --sign - "$APP/Contents/Helpers/ffprobe" >/dev/null 2>&1 || true
 else
   printf 'warning: LGPL ffprobe not copied; set DUCK_FFPROBE=/path/to/lgpl/ffprobe\n' >&2
 fi
@@ -96,27 +94,12 @@ fi
 DAV1D="${DUCK_DAV1D:-$ROOT/build/ffmpeg-lgpl/lib/libdav1d.7.dylib}"
 if [ -f "$DAV1D" ]; then
   cp "$DAV1D" "$APP/Contents/Helpers/libdav1d.7.dylib"
-  codesign --force --sign - "$APP/Contents/Helpers/libdav1d.7.dylib" >/dev/null 2>&1 || true
 else
   printf 'warning: libdav1d not copied; AV1 input will not decode\n' >&2
 fi
 
-# Sign nested code first without the app's sandbox entitlements, then seal the
-# app itself. A deep sign with --entitlements gives every helper the app
-# sandbox, which breaks standalone ffmpeg/ffprobe/vision_probe runs.
-codesign --force --deep --sign - "$APP" >/dev/null
-for nested in "$APP"/Contents/Helpers/*; do
-  [ -f "$nested" ] && codesign --force --sign - "$nested" >/dev/null 2>&1 || true
-done
-for attempt in 1 2 3; do
-  if codesign --force --sign - \
-    --entitlements "$ROOT/mac/DuckSuite/DuckSuite/DuckSuite.entitlements" \
-    "$APP" >/dev/null 2>&1; then
-    break
-  fi
-  printf 'codesign attempt %s failed; retrying\n' "$attempt" >&2
-  sleep 1
-done
+# Local ad-hoc signature; App Store needs a real identity (see the script).
+"$ROOT/scripts/sign-local-app.sh" "$APP"
 
 printf 'Built %s\n' "$APP"
 printf 'Run: open "%s"\n' "$APP"

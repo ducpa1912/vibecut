@@ -116,6 +116,27 @@ def _active_clean(edit: dict, when: float) -> list[dict]:
     return active
 
 
+def _proof_scope(edit: dict, when: float) -> tuple[list[dict], dict]:
+    """The layers and clip that define one proof frame.
+
+    The proof cache must change when its own layers or clip change, and must
+    not change when a layer in another scene changes.
+    """
+    active = _active_clean(edit, when)
+    clips = [item for item in edit.get("clips") or [] if isinstance(item, dict)]
+    clip = next(
+        (
+            item for item in clips
+            if float(item.get("start") or 0.0) <= when < float(item.get("end") or 0.0)
+        ),
+        clips[-1] if clips else {},
+    )
+    return active, {
+        "start": round(float(clip.get("start") or 0.0), 3),
+        "end": round(float(clip.get("end") or 0.0), 3),
+    }
+
+
 def create_app(token: str, data_root: Path) -> FastAPI:
     if not token:
         raise ValueError("DuckSuite core requires a launch token.")
@@ -572,20 +593,9 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         when = float(time if time is not None else (edit.get("start") or 0.0) + 0.5)
-        active = _active_clean(edit, when)
-        clip = next(
-            (
-                item for item in edit.get("clips") or []
-                if float(item.get("start") or 0.0) <= when < float(item.get("end") or 0.0)
-            ),
-            (edit.get("clips") or [{}])[-1],
-        )
-        proof_key = {
-            "clean": active,
-            "clip": [round(float(clip.get("start") or 0.0), 3), round(float(clip.get("end") or 0.0), 3)],
-        }
+        active, clip_scope = _proof_scope(edit, when)
         clean_hash = hashlib.sha1(
-            json.dumps(proof_key, sort_keys=True).encode("utf-8")
+            json.dumps({"clean": active, "clip": clip_scope}, sort_keys=True).encode("utf-8")
         ).hexdigest()[:12]
         output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{clean_hash}_v{PROOF_VERSION}_{int(when * 1000)}.jpg"
         if output.is_file():

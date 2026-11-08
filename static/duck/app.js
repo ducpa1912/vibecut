@@ -1004,6 +1004,18 @@ function transcriptRow(segment, index) {
   </button>`;
 }
 
+function layerListMarkup(active, layers, emptyText = 'No text detected in this scene.') {
+  const visible = state.showAllLayers ? layers : layers.slice(0, 6);
+  return `<div class="layer-list${state.showAllLayers ? ' is-expanded' : ''}">
+    ${layers.length ? visible.map((item, index) => `<button class="layer-row${item.id === active?.id ? ' is-active' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
+      <span class="eye">${item.enabled === false ? icon('eyeOff', 14) : icon('eye', 14)}</span>
+      <span class="layer-name" title="${esc(item.text_sample || '')}">${esc(layerLabel(item, index))}</span>
+      <span class="layer-kind">${esc(layerState(item))}</span>
+    </button>`).join('') : `<p class="small muted">${esc(emptyText)}</p>`}
+  </div>
+  ${layers.length > 6 ? `<button class="btn small wide" type="button" data-action="toggle-layers">${state.showAllLayers ? 'Show fewer layers' : `Show all ${layers.length} layers`}</button>` : ''}`;
+}
+
 function inspectorClean(scene, layer, layers) {
   if (!state.edit) return `<p class="small muted">Editor data is still loading. Clean controls appear when Check finishes.</p>`;
   return `<div class="proof-pair">
@@ -1018,14 +1030,7 @@ function inspectorClean(scene, layer, layers) {
       return `<button class="${active ? 'is-active' : ''}" type="button" data-action="clean-action" data-layer="${esc(layer?.id || '')}" data-kind="${action}" ${layer ? '' : 'disabled'}>${label}</button>`;
     }).join('')}
   </div>
-  <div class="layer-list${state.showAllLayers ? ' is-expanded' : ''}">
-    ${layers.length ? (state.showAllLayers ? layers : layers.slice(0, 6)).map((item, index) => `<button class="layer-row${item.id === layer?.id ? ' is-active' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
-      <span class="eye">${item.enabled === false ? icon('eyeOff', 14) : icon('eye', 14)}</span>
-      <span class="layer-name" title="${esc(item.text_sample || '')}">${esc(layerLabel(item, index))}</span>
-      <span class="layer-kind">${esc(layerState(item))}</span>
-    </button>`).join('') : '<p class="small muted">No text detected in this scene.</p>'}
-  </div>
-  ${layers.length > 6 ? `<button class="btn small wide" type="button" data-action="toggle-layers">${state.showAllLayers ? 'Show fewer layers' : `Show all ${layers.length} layers`}</button>` : ''}
+  ${layerListMarkup(layer, layers)}
   <div class="model-line"><span class="dot"></span><strong>LaMa · ready</strong><span>Local fill</span></div>
   <button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview before / after</button>
   <button class="btn wide" type="button" data-action="nav" data-screen="clean">${icon('sparkle', 14)} Clean focus</button>`;
@@ -1124,14 +1129,7 @@ function screenClean() {
               return `<button class="${active ? 'is-active' : ''}" type="button" data-action="clean-action" data-layer="${esc(layer?.id || '')}" data-kind="${action}" ${layer ? '' : 'disabled'}>${label}</button>`;
             }).join('')}
           </div>
-          <div class="layer-list${state.showAllLayers ? ' is-expanded' : ''}">
-            ${layers.length ? (state.showAllLayers ? layers : layers.slice(0, 6)).map((item, index) => `<button class="layer-row${item.id === layer?.id ? ' is-active' : ''}" type="button" data-action="select-layer" data-layer="${esc(item.id)}">
-              <span class="eye">${item.enabled === false ? icon('eyeOff', 14) : icon('eye', 14)}</span>
-              <span class="layer-name" title="${esc(item.text_sample || '')}">${esc(layerLabel(item, index))}</span>
-              <span class="layer-kind">${esc(layerState(item))}</span>
-            </button>`).join('') : '<p class="small muted">No text detected in this scene yet.</p>'}
-          </div>
-          ${layers.length > 6 ? `<button class="btn small wide" type="button" data-action="toggle-layers">${state.showAllLayers ? 'Show fewer layers' : `Show all ${layers.length} layers`}</button>` : ''}
+          ${layerListMarkup(layer, layers, 'No text detected in this scene yet.')}
           <div class="model-line"><span class="dot"></span><strong>LaMa · ready</strong><span>Local fill</span></div>
           ${checked === scenes.length
             ? `<button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 15)} Preview clean</button><button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all scenes</button>`

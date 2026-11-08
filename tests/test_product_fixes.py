@@ -177,3 +177,39 @@ def test_long_speech_is_split_below_four_seconds() -> None:
     assert " ".join(text for _start, _end, text in cues).split() == (
         "one two three four five six seven eight nine ten eleven twelve".split()
     )
+
+
+def test_proof_scope_changes_only_for_its_own_layers_and_clip() -> None:
+    from duckcore.main import _proof_scope
+
+    edit = {
+        "clips": [
+            {"start": 0.0, "end": 4.0},
+            {"start": 4.0, "end": 8.0},
+        ],
+        "clean": [
+            {"id": "a", "ranges": [{"start": 0.0, "end": 4.0}]},
+            {"id": "b", "ranges": [{"start": 4.0, "end": 8.0}]},
+        ],
+    }
+    active, clip = _proof_scope(edit, 2.0)
+    assert [item["id"] for item in active] == ["a"]
+    assert clip == {"start": 0.0, "end": 4.0}
+    active, clip = _proof_scope(edit, 6.0)
+    assert [item["id"] for item in active] == ["b"]
+    assert clip == {"start": 4.0, "end": 8.0}
+
+
+def test_proof_window_stays_inside_the_clip() -> None:
+    from duckcore.render import proof_window
+
+    first, last = proof_window(0.0, 3.625, 3.5)
+    assert 0.0 <= first < last <= 3.625
+    assert abs((last - first) - 0.6) < 1e-6
+
+    first, last = proof_window(5.0, 2.0, 6.9)
+    assert 5.0 <= first < last <= 7.0
+
+    first, last = proof_window(0.0, 3.625, 0.0)
+    assert first == 0.0
+    assert last == 0.6
