@@ -92,6 +92,20 @@ Only variables prefixed with `VITE_` reach the browser. The publishable key is
 public by design. **Never put the Clerk secret key (`sk_...`) in a `VITE_`
 variable.**
 
+### Clerk is not Next.js-only
+
+DuckClean is **React + Vite**. Vite is the bundler, not a framework; Clerk's
+React SDK works in a Vite SPA, and Next.js is not required.
+
+- This repo currently uses `@clerk/clerk-react` (the Clerk Core 2 package).
+- Current Clerk React docs use `@clerk/react`. Moving to it is a dependency and
+  import swap, not an architecture change.
+- Clerk also ships SDKs for Next.js, React Router, Astro, TanStack React Start,
+  Vue, Nuxt, Expo, Electron, Android and iOS. DuckClean uses only the React one.
+
+The Vite key is the Clerk publishable key, not a Vite-generated key. It starts
+with `pk_test_` in development and `pk_live_` in production.
+
 ### 3. Postgres
 
 Use Neon, Supabase, or local Postgres. Hyperdrive only pools the connection; it
