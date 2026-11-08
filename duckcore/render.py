@@ -61,6 +61,72 @@ def _fill_layers(edit: dict) -> list[dict]:
     ]
 
 
+def _blur_layers(edit: dict) -> list[dict]:
+    return [
+        layer for layer in edit.get("clean") or []
+        if isinstance(layer, dict)
+        and layer.get("enabled") is not False
+        and layer.get("kind") == "blur"
+    ]
+
+
+def _blur_filter(
+    edit: dict,
+    meta: dict,
+    *,
+    clip_start: float,
+    target_fps: float,
+    at: float | None = None,
+) -> str:
+    from duckcore.engine.textfill import mask as textmask
+
+    out_w, out_h, scale = _scale_filter(meta, target_fps)
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    layers = _blur_layers(edit)
+    if not layers or width < 2 or height < 2:
+        return scale
+    parts: list[str] = []
+    base = "0:v"
+    used = 0
+    for index, layer in enumerate(layers):
+        rect = textmask.layer_rect(layer, width, height)
+        x0, y0, x1, y1 = rect
+        if x1 <= x0 or y1 <= y0:
+            continue
+        ranges = [
+            (max(0.0, float(item.get("start") or 0.0) - clip_start),
+             max(0.0, float(item.get("end") or 0.0) - clip_start))
+            for item in layer.get("ranges") or []
+            if item.get("end") is not None
+        ]
+        if at is not None:
+            active = not ranges or any(lo <= at - clip_start <= hi for lo, hi in ranges)
+            if not active:
+                continue
+            enable = ""
+        else:
+            enable = ""
+            if ranges:
+                enable = ":enable='" + "+".join(
+                    f"between(t,{lo:.3f},{hi:.3f})" for lo, hi in ranges
+                ) + "'"
+        label = f"blur{used}"
+        base_out = f"base{used}"
+        out = f"v{used}"
+        parts.append(f"[{base}]split=2[{base_out}][crop{used}]")
+        parts.append(
+            f"[crop{used}]crop={x1-x0}:{y1-y0}:{x0}:{y0},gblur=sigma=18[{label}]"
+        )
+        parts.append(f"[{base_out}][{label}]overlay=x={x0}:y={y0}{enable}[{out}]")
+        base = out
+        used += 1
+    if not used:
+        return scale
+    parts.append(f"[{base}]{scale}")
+    return ";".join(parts)
+
+
 def _scale_filter(meta: dict, target_fps: float) -> tuple[int, int, str]:
     out_w, out_h = _target_size(meta)
     return out_w, out_h, (
@@ -131,12 +197,15 @@ def render_frame(
     input_path = Path(filled["path"]) if filled else Path(source)
     offset = requested - start if filled else requested
     out_w, out_h, scale = _scale_filter(meta, target_fps)
+    video_filter = _blur_filter(
+        edit, meta, clip_start=start, target_fps=target_fps, at=requested,
+    )
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [
         media.ffmpeg(), "-y", "-v", "error",
         "-ss", f"{max(0.0, offset):.6f}", "-i", str(input_path),
-        "-frames:v", "1", "-vf", scale,
+        "-frames:v", "1", "-vf", video_filter,
     ]
     if output.suffix.lower() in {".jpg", ".jpeg"}:
         command += ["-q:v", "2"]
@@ -165,8 +234,8 @@ def render_edit(
 
     source = str(project["source_path"])
     meta = pipeline.probe(source)
-    out_w, out_h, scale = _scale_filter(meta, 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30)
     target_fps = 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30
+    out_w, out_h, scale = _scale_filter(meta, target_fps)
     project_id = str(project["id"])
     job_dir = Path(data_root) / "projects" / project_id
     cache = job_dir / "fill"
@@ -210,13 +279,16 @@ def render_edit(
                     ),
                 )
             segment = output_dir / f".{edit['id']}_{index:04d}.mp4"
+            video_filter = _blur_filter(
+                edit, meta, clip_start=start, target_fps=target_fps,
+            )
             if filled:
                 command = [
                     ffmpeg, "-y", "-v", "error",
                     "-i", str(filled["path"]),
                     "-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", source,
                     "-map", "0:v:0", "-map", "1:a?",
-                    "-vf", scale,
+                    "-vf", video_filter,
                     *_video_codec(),
                     "-c:a", "aac", "-b:a", "192k", "-shortest",
                     str(segment),
@@ -226,7 +298,7 @@ def render_edit(
                     ffmpeg, "-y", "-v", "error",
                     "-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", source,
                     "-map", "0:v:0", "-map", "0:a?",
-                    "-vf", scale,
+                    "-vf", video_filter,
                     *_video_codec(),
                     "-c:a", "aac", "-b:a", "192k", "-shortest",
                     str(segment),

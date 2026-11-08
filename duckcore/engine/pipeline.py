@@ -862,9 +862,9 @@ def extract_text_frames(
 ) -> list[dict]:
     """Extract evenly spaced stills for the Check text pass.
 
-    The default cadence is 2 fps (one frame every half second). Long sources
-    lower the cadence so the pass never exceeds ``max_frames``. Frame times are
-    the sample starts; each frame represents ``1 / cadence`` seconds.
+    The default cadence is 4 fps. Check may request 8 fps for short sources.
+    Long sources lower the cadence so the pass never exceeds ``max_frames``.
+    Frame times are the sample starts; each frame represents ``1 / cadence`` seconds.
     """
     duration = max(0.0, float(duration or 0.0))
     if duration <= 0:
@@ -874,7 +874,7 @@ def extract_text_frames(
     span = max(0.0, window_end - window_start)
     if span <= 0:
         return []
-    cadence = min(max(float(fps or CHECK_SAMPLE_FPS), 0.05), 4.0)
+    cadence = min(max(float(fps or CHECK_SAMPLE_FPS), 0.05), 12.0)
     if span * cadence > max_frames:
         cadence = max(0.05, max_frames / span)
     directory = Path(out_dir) if out_dir else job_dir / "check" / "frames"
@@ -958,6 +958,84 @@ def motion_between_frames(directory: Path, files: list[Path]) -> dict | None:
     return {"maps": maps, "scale": 4.0}
 
 
+def _merge_ocr_line(record: dict, line: dict, *, crop_y0: float, crop_h: float) -> None:
+    """Merge one crop OCR line into the full-frame record."""
+    text = " ".join(str(line.get("text") or "").split())
+    box = line.get("box")
+    if not text or not isinstance(box, dict):
+        return
+    try:
+        mapped = {
+            "x": float(box.get("x") or 0.0),
+            "y": round(crop_y0 + float(box.get("y") or 0.0) * crop_h, 6),
+            "w": float(box.get("w") or 0.0),
+            "h": round(float(box.get("h") or 0.0) * crop_h, 6),
+        }
+    except (TypeError, ValueError):
+        return
+    normalized = text.casefold()
+    for existing in record.get("text") or []:
+        if " ".join(str(existing.get("text") or "").split()).casefold() != normalized:
+            continue
+        other = existing.get("box") or {}
+        try:
+            ox, oy = float(other.get("x") or 0.0), float(other.get("y") or 0.0)
+            ow, oh = float(other.get("w") or 0.0), float(other.get("h") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if abs(ox - mapped["x"]) < 0.08 and abs(oy - mapped["y"]) < 0.08:
+            return
+    record.setdefault("text", []).append({**line, "text": text, "box": mapped})
+
+
+def _edge_text_pass(
+    directory: Path,
+    frames: list[dict],
+    records: dict,
+) -> None:
+    """Read top and bottom crops for frames with large display type.
+
+    Vision misses very large stylised text at the top or bottom edge when it
+    reads the full frame. A 2x crop recovers it; boxes are mapped back.
+    """
+    selected = []
+    for frame in frames:
+        record = records.get(frame["file"]) or {}
+        lines = record.get("text") or []
+        if not lines or any(float((line.get("box") or {}).get("h") or 0.0) >= 0.08 for line in lines):
+            selected.append(frame)
+    if not selected or not vision.available():
+        return
+    crop_dir = directory.parent / "crops"
+    if crop_dir.exists():
+        shutil.rmtree(crop_dir, ignore_errors=True)
+    crop_dir.mkdir(parents=True, exist_ok=True)
+    jobs: list[tuple[Path, str, float, float]] = []
+    from PIL import Image
+    for frame in selected:
+        source = directory / str(frame["file"])
+        try:
+            with Image.open(source) as image:
+                width, height = image.size
+                for label, y0, y1 in (("top", 0.0, 0.50), ("bottom", 0.50, 1.0)):
+                    crop = image.crop((0, int(height * y0), width, int(height * y1)))
+                    crop = crop.resize((width * 2, crop.height * 2), Image.LANCZOS)
+                    target = crop_dir / f"{source.stem}_{label}.jpg"
+                    crop.save(target, quality=94)
+                    jobs.append((target, source.name, y0, y1 - y0))
+        except OSError:
+            continue
+    if not jobs:
+        shutil.rmtree(crop_dir, ignore_errors=True)
+        return
+    crop_records = vision.probe_images(crop_dir, files=[item[0] for item in jobs])
+    for target, source_name, y0, height in jobs:
+        record = crop_records.get(target.name) or {}
+        for line in record.get("text") or []:
+            _merge_ocr_line(records.setdefault(source_name, {}), line, crop_y0=y0, crop_h=height)
+    shutil.rmtree(crop_dir, ignore_errors=True)
+
+
 def read_text_samples(
     path: str,
     job_dir: Path,
@@ -1009,6 +1087,8 @@ def read_text_samples(
             if progress is not None:
                 done = min(total, offset + CHECK_OCR_BATCH)
                 progress(0.08 + 0.92 * done / total, f"Reading text · frame {done} / {total}")
+    if os.environ.get("DUCK_EDGE_TEXT") == "1":
+        _edge_text_pass(directory, frames, records)
     samples = []
     for frame in frames:
         record = records.get(frame["file"]) or {}
