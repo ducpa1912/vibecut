@@ -468,6 +468,10 @@ function sceneReadyCount(scenes = getScenes()) {
   return scenes.filter(sceneRenderReady).length;
 }
 
+function sceneStripControls(target) {
+  return `<span class="strip-arrows"><button class="strip-arrow" type="button" data-action="strip-scroll" data-target="${target}" data-dir="-1" aria-label="Scroll scenes left">‹</button><button class="strip-arrow" type="button" data-action="strip-scroll" data-target="${target}" data-dir="1" aria-label="Scroll scenes right">›</button></span>`;
+}
+
 function frameUrl(time, projectId = state.project?.id) {
   if (!projectId) return '';
   return mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/frame`, { time: Math.max(0, Number(time) || 0).toFixed(3) });
@@ -662,7 +666,9 @@ function screenWelcome() {
   const filtered = state.projects.filter((project) => project.name.toLowerCase().includes(state.welcomeQuery.toLowerCase()));
   const latest = latestRender();
   const activeQueue = state.queue.filter((item) => ['queued', 'running', 'rendering', 'paused'].includes(item.state));
-  const recentQueue = state.queue.filter((item) => item.state === 'done').slice(0, 2);
+  const recentQueue = state.queue
+    .filter((item) => item.state === 'done' && item.id !== latest?.id)
+    .slice(0, 2);
   const engine = state.engine || {};
   const free = state.settings?.storage?.free_bytes || 0;
   const retention = state.settings?.storage?.projects_bytes || 0;
@@ -718,10 +724,8 @@ function screenWelcome() {
         <div class="queue-list">
           ${activeQueue.length ? activeQueue.map((item) => queueCard(item)).join('') : '<div class="queue-empty">No active renders.</div>'}
         </div>
-        <div class="panel-head" style="padding:6px 14px 0"><h3 style="font-size:11px">Recent</h3><span class="meta">${recentQueue.length ? 'Finished' : 'None'}</span></div>
-        <div class="queue-list">
-          ${recentQueue.length ? recentQueue.map((item) => queueCard(item)).join('') : '<div class="queue-empty">Finished renders appear here.</div>'}
-        </div>
+        ${recentQueue.length ? `<div class="panel-head" style="padding:6px 14px 0"><h3 style="font-size:11px">Recent</h3><span class="meta">Finished</span></div>
+        <div class="queue-list">${recentQueue.map((item) => queueCard(item)).join('')}</div>` : ''}
         <div class="engine-card">
           <p class="section-label">Engine</p>
           <div class="engine-row"><span class="dot"></span><strong>${esc(engineLabel())}</strong></div>
@@ -796,8 +800,8 @@ function screenCheck() {
         </section>
         <section class="panel">
           <div class="scene-strip-wrap">
-            <div class="scene-strip-head"><h3>Scenes · ${scenes.length || '—'} total</h3><span class="small muted">${running ? 'Scenes ready · scroll →' : done ? 'All scenes ready · scroll →' : 'Waiting for scene cuts'}</span></div>
-            ${scenes.length ? `<div class="scene-strip">${scenes.map((scene, index) => sceneTile(scene, index)).join('')}</div>` : `<div class="queue-empty">Scene cuts appear here first. The Editor opens as soon as they are ready.</div>`}
+            <div class="scene-strip-head"><h3>Scenes · ${scenes.length || '—'} total</h3><span class="small muted">${running ? 'Scenes ready' : done ? 'All scenes ready' : 'Waiting for scene cuts'}</span>${sceneStripControls('check-scenes')}</div>
+            ${scenes.length ? `<div class="scene-strip" id="check-scenes">${scenes.map((scene, index) => sceneTile(scene, index)).join('')}</div>` : `<div class="queue-empty">Scene cuts appear here first. The Editor opens as soon as they are ready.</div>`}
           </div>
         </section>
       </section>
@@ -1031,7 +1035,7 @@ function inspectorClean(scene, layer, layers) {
     }).join('')}
   </div>
   ${layerListMarkup(layer, layers)}
-  <div class="model-line"><span class="dot"></span><strong>LaMa · ready</strong><span>Local fill</span></div>
+  <div class="model-line"><span class="dot"></span><strong>AI fill · ready</strong><span>Local fill</span></div>
   <button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview before / after</button>
   <button class="btn wide" type="button" data-action="nav" data-screen="clean">${icon('sparkle', 14)} Clean focus</button>`;
 }
@@ -1100,8 +1104,8 @@ function screenClean() {
           ${splitStage(scene, { showCleaning: true, useCleanUrl: false })}
         </section>
         <section class="panel clean-scene-strip">
-          <div class="scene-strip-head"><h3>Scene strip · clean status</h3><span class="small muted">${checked}/${scenes.length} layered${scenes.length > 7 ? ' · scroll →' : ''}</span></div>
-          <div class="scene-strip">
+          <div class="scene-strip-head"><h3>Scene strip · clean status</h3><span class="small muted">${checked}/${scenes.length} layered</span>${sceneStripControls('clean-scenes')}</div>
+          <div class="scene-strip" id="clean-scenes">
             ${scenes.map((item, index) => {
               const status = cleanState(item);
               return `<button class="scene-tile${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
@@ -1130,7 +1134,7 @@ function screenClean() {
             }).join('')}
           </div>
           ${layerListMarkup(layer, layers, 'No text detected in this scene yet.')}
-          <div class="model-line"><span class="dot"></span><strong>LaMa · ready</strong><span>Local fill</span></div>
+          <div class="model-line"><span class="dot"></span><strong>AI fill · ready</strong><span>Local fill</span></div>
           ${checked === scenes.length
             ? `<button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 15)} Preview clean</button><button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all scenes</button>`
             : `<button class="btn primary wide" type="button" data-action="clean-all">${icon('sparkle', 15)} Clean all scenes</button><button class="btn wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview</button>`}
@@ -1203,8 +1207,8 @@ function screenPreview() {
           ${splitStage(scene, { showCleaning: true, useCleanUrl: false })}
         </section>
         <section class="panel preview-scenes">
-          <div class="scene-strip-head"><h3>Scenes · ${scenes.length} total</h3><span class="small muted">${ready}/${scenes.length} proofs${scenes.length > 8 ? ' · scroll →' : ''}</span></div>
-          <div class="scene-strip">
+          <div class="scene-strip-head"><h3>Scenes · ${scenes.length} total</h3><span class="small muted">${ready}/${scenes.length} proofs</span>${sceneStripControls('preview-scenes')}</div>
+          <div class="scene-strip" id="preview-scenes">
             ${scenes.map((item, index) => {
               const itemStatus = state.previewStatus.get(item.id) || 'pending';
               return `<button class="scene-tile${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
@@ -1287,7 +1291,7 @@ function screenRender() {
       </aside>
 
       <section class="panel render-queue">
-        <div class="render-queue-head"><h2>Render queue · ${queue.length} jobs</h2><div style="display:flex;gap:6px">${queue.some((item) => ['done', 'failed', 'cancelled'].includes(item.state)) ? `<button class="btn small" type="button" data-action="clear-queue">Clear finished</button>` : ''}${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">${icon('play', 12)} Resume</button>` : activeJobs ? `<button class="btn small" type="button" data-action="pause-queue">${icon('pause', 12)} Pause</button>` : `<button class="btn small" type="button" disabled>Queue idle</button>`}</div></div>
+        <div class="render-queue-head"><h2>Render queue · ${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}</h2><div style="display:flex;gap:6px">${queue.some((item) => ['done', 'failed', 'cancelled'].includes(item.state)) ? `<button class="btn small" type="button" data-action="clear-queue">Clear finished</button>` : ''}${state.queuePaused ? `<button class="btn small" type="button" data-action="resume-queue">${icon('play', 12)} Resume</button>` : activeJobs ? `<button class="btn small" type="button" data-action="pause-queue">${icon('pause', 12)} Pause</button>` : `<button class="btn small" type="button" disabled>Queue idle</button>`}</div></div>
         <div class="queue-head-row"><span>Project / Story</span><span>Edit</span><span>Duration</span><span>Resolution</span><span>State</span><span>Progress</span><span>Output</span></div>
         ${queue.length ? queue.map((item) => renderQueueRow(item)).join('') : '<div class="queue-empty">No jobs yet. Start a render from Preview.</div>'}
       </section>
@@ -1368,7 +1372,6 @@ async function openSettings() {
     state.settings = settings || state.settings;
   } catch (_) { /* keep current */ }
   const storage = state.settings?.storage || {};
-  const online = state.settings?.online || {};
   openModal(`<dialog class="modal" aria-label="Settings">
     <div class="modal-head"><h2>Settings</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
     <div class="modal-body">
@@ -1378,7 +1381,7 @@ async function openSettings() {
           <div class="kv"><span>Engine</span><strong>${esc(engineLabel())}</strong></div>
           <div class="kv"><span>Vision</span><strong>${state.engine?.vision?.available ? 'Ready' : 'Unavailable'}</strong></div>
           <div class="kv"><span>Speech</span><strong>${state.engine?.speech?.default || 'Auto'}</strong></div>
-          <div class="kv"><span>LaMa</span><strong>${state.engine?.fill?.ready ? 'Ready' : 'Missing'}</strong></div>
+          <div class="kv"><span>AI fill</span><strong>${state.engine?.fill?.ready ? 'Ready' : 'Missing'}</strong></div>
           <h3 style="margin-top:10px">Models</h3>
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button></strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
         </section>
@@ -1391,10 +1394,6 @@ async function openSettings() {
           <h3 style="margin-top:10px">Footage rights</h3>
           <div class="toggle-row"><span>I own this footage or have permission to edit it</span><label class="switch"><input type="checkbox" checked disabled><i></i></label></div>
           <p class="small muted">Always on. Clean is for your own footage or footage you are authorized to edit. Do not use DuckSuite to remove another creator’s watermark or logo. See Terms &amp; Conditions.</p>
-          <h3 style="margin-top:10px">Online jobs</h3>
-          <div class="toggle-row"><span>Enable optional online jobs</span><label class="switch"><input id="online-enabled" type="checkbox" ${online.enabled ? 'checked' : ''}><i></i></label></div>
-          <div class="field"><label>Endpoint</label><input id="online-endpoint" type="url" value="${esc(online.endpoint || '')}" placeholder="https://render.example.com"></div>
-          <button class="btn" type="button" data-action="save-online">Save online settings</button>
           <div class="kv"><span>Language</span><strong>Auto-detect only</strong></div>
           <div class="kv"><span>Version</span><strong>${esc(state.settings?.version || '1.0.0')}</strong></div>
         </section>
@@ -1720,17 +1719,6 @@ async function downloadCaptions() {
   URL.revokeObjectURL(url);
 }
 
-async function saveOnline() {
-  const enabled = document.querySelector('#online-enabled')?.checked || false;
-  const endpoint = document.querySelector('#online-endpoint')?.value || '';
-  try {
-    const settings = await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ online_enabled: enabled, online_endpoint: endpoint }) });
-    state.settings = settings;
-    toast('Online settings saved.');
-  } catch (error) {
-    toast(`Settings failed: ${error.message}`, 'bad');
-  }
-}
 
 async function verifyModel(modelId) {
   try {
@@ -1782,6 +1770,10 @@ app.addEventListener('click', async (event) => {
     } else if (action === 'select-layer') { state.selectedLayerId = target.dataset.layer || ''; render(); }
     else if (action === 'toggle-layers') { state.showAllLayers = !state.showAllLayers; render(); }
     else if (action === 'toggle-cues') { state.showAllCues = !state.showAllCues; render(); }
+    else if (action === 'strip-scroll') {
+      const strip = document.getElementById(target.dataset.target || '');
+      if (strip) strip.scrollBy({ left: Number(target.dataset.dir || 1) * Math.max(180, strip.clientWidth * 0.75), behavior: 'smooth' });
+    }
     else if (action === 'trim-apply') await applyTrim();
     else if (action === 'clear-queue') await clearQueue();
     else if (action === 'clean-action') await cleanAction(target.dataset.layer || '', target.dataset.kind || 'fill');
@@ -1809,7 +1801,7 @@ app.addEventListener('click', async (event) => {
         }
         startPreviewClean(scene.id);
       }
-    } else if (action === 'save-online') await saveOnline();
+    }
     else if (action === 'verify-model') await verifyModel(target.dataset.model || '');
     else if (action === 'seek') {
       state.previewTime = Number(target.dataset.time || 0) + 0.01;

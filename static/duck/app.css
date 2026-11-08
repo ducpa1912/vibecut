@@ -492,7 +492,10 @@ svg { display: block; flex: 0 0 auto; }
 .check-cta .note { color: var(--muted); font-size: 12px; text-align: center; line-height: 1.35; }
 
 .scene-strip-wrap { padding: 12px 14px 14px; }
-.scene-strip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.strip-arrows { display: inline-flex; gap: 3px; margin-left: auto; }
+.strip-arrow { width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.strip-arrow:hover { color: var(--ink); border-color: var(--line-2); }
+.scene-strip-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin-bottom: 10px; }
 .scene-strip-head h3 { margin: 0; font-size: 12px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
 .scene-strip {
   display: flex;
