@@ -39,9 +39,22 @@ final class AppModel: ObservableObject {
     private var baseURL: URL?
     private var launchToken: String?
     private var dataRoot: URL?
+    private var isStarting = false
+
+    init() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stop() }
+        }
+    }
 
     func start() async {
-        guard url == nil, error == nil else { return }
+        guard url == nil, error == nil, !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
         do {
             let token = Self.randomToken()
             let root = try Self.dataRoot()
@@ -61,6 +74,10 @@ final class AppModel: ObservableObject {
     func stop() {
         sidecar?.stop()
         sidecar = nil
+        baseURL = nil
+        launchToken = nil
+        url = nil
+        error = nil
     }
 
     func loadProjects() async {
