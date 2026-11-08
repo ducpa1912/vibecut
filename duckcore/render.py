@@ -61,6 +61,94 @@ def _fill_layers(edit: dict) -> list[dict]:
     ]
 
 
+def _scale_filter(meta: dict, target_fps: float) -> tuple[int, int, str]:
+    out_w, out_h = _target_size(meta)
+    return out_w, out_h, (
+        f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+        f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={target_fps}"
+    )
+
+
+def render_frame(
+    project: dict,
+    edit: dict,
+    data_root: Path,
+    output: Path,
+    *,
+    when: float,
+    progress: Callable[[float, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> Path:
+    """Extract one frame through the exact render/fill pipeline.
+
+    The proof must not be a second approximation. It uses the same clip span,
+    ``prepare_span`` cache, fill layers, key plan, and scale/pad/fps filter.
+    """
+    from duckcore.engine import pipeline, textfill
+
+    source = str(project["source_path"])
+    meta = pipeline.probe(source)
+    fps = float(meta.get("fps") or 30.0)
+    target_fps = 24 if abs(fps - 24.0) < 0.6 else 30
+    clips = [
+        clip for clip in edit.get("clips") or []
+        if float(clip.get("end") or 0) > float(clip.get("start") or 0)
+    ]
+    if not clips:
+        raise RenderError("This edit has no clips.")
+    requested = max(0.0, float(when))
+    clip = next(
+        (
+            item for item in clips
+            if float(item.get("start") or 0.0) <= requested < float(item.get("end") or 0.0)
+        ),
+        clips[-1],
+    )
+    start = float(clip.get("start") or 0.0)
+    duration = max(0.04, float(clip.get("end") or 0.0) - start)
+    job_dir = Path(data_root) / "projects" / str(project["id"])
+    layers = _fill_layers(edit)
+    filled = None
+    if layers:
+        filled = textfill.prepare_span(
+            source=source,
+            meta=meta,
+            start=start,
+            duration=duration,
+            layers=layers,
+            method="lama",
+            cache_dir=job_dir / "fill",
+            data_root=data_root,
+            ffmpeg=media.ffmpeg(),
+            cancel_event=cancel_event,
+            progress=(
+                (lambda fraction, message: progress(
+                    max(0.0, min(0.95, float(fraction))), message,
+                ))
+                if progress is not None else None
+            ),
+        )
+    input_path = Path(filled["path"]) if filled else Path(source)
+    offset = requested - start if filled else requested
+    out_w, out_h, scale = _scale_filter(meta, target_fps)
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        media.ffmpeg(), "-y", "-v", "error",
+        "-ss", f"{max(0.0, offset):.6f}", "-i", str(input_path),
+        "-frames:v", "1", "-vf", scale,
+    ]
+    if output.suffix.lower() in {".jpg", ".jpeg"}:
+        command += ["-q:v", "2"]
+    command.append(str(output))
+    _run(command)
+    if not output.is_file():
+        raise RenderError("The render frame could not be written.")
+    if progress:
+        progress(1.0, "Render frame ready")
+    return output
+
+
 def render_edit(
     project: dict,
     edit: dict,
@@ -77,9 +165,8 @@ def render_edit(
 
     source = str(project["source_path"])
     meta = pipeline.probe(source)
-    out_w, out_h = _target_size(meta)
-    fps = float(meta.get("fps") or 30.0)
-    target_fps = 24 if abs(fps - 24.0) < 0.6 else 30
+    out_w, out_h, scale = _scale_filter(meta, 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30)
+    target_fps = 24 if abs(float(meta.get("fps") or 30.0) - 24.0) < 0.6 else 30
     project_id = str(project["id"])
     job_dir = Path(data_root) / "projects" / project_id
     cache = job_dir / "fill"
@@ -123,10 +210,6 @@ def render_edit(
                     ),
                 )
             segment = output_dir / f".{edit['id']}_{index:04d}.mp4"
-            scale = (
-                f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
-                f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={target_fps}"
-            )
             if filled:
                 command = [
                     ffmpeg, "-y", "-v", "error",

@@ -13,6 +13,7 @@ stdin. Stdout is reserved for the single handshake line:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import secrets
@@ -42,6 +43,7 @@ if not STATIC.is_dir():
     if bundled_static.is_dir():
         STATIC = bundled_static
 APP_VERSION = "0.1.0"
+PROOF_VERSION = 8
 
 
 class ProjectCreate(BaseModel):
@@ -514,12 +516,15 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         when = float(time if time is not None else (edit.get("start") or 0.0) + 0.5)
-        output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{int(when * 1000)}.jpg"
-        if output.is_file() and output.stat().st_mtime >= float(edit.get("updated") or 0.0) - 1.0:
+        clean_hash = hashlib.sha1(
+            json.dumps(edit.get("clean") or [], sort_keys=True).encode("utf-8")
+        ).hexdigest()[:12]
+        output = data_root / "projects" / project_id / "previews" / f"{edit_id}_{clean_hash}_v{PROOF_VERSION}_{int(when * 1000)}.jpg"
+        if output.is_file():
             return FileResponse(output, media_type="image/jpeg")
         try:
-            preview.render_clean_preview(
-                project["source_path"],
+            render.render_frame(
+                project,
                 edit,
                 data_root,
                 output,

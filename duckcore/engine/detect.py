@@ -422,11 +422,46 @@ def observations_from_scenes(scenes: Iterable[dict]) -> list[dict]:
     return observations
 
 
+def _large_box(box: dict) -> bool:
+    """Large display type, not a subtitle or screen UI label."""
+    try:
+        w = float(box.get("w") or 0.0)
+        h = float(box.get("h") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return h >= 0.12 or (h >= 0.09 and w >= 0.50) or (w * h >= 0.10)
+
+
+def _track_samples(values: list[dict]) -> list[dict]:
+    """Keep one per-sample box per OCR read, not only the union box."""
+    samples: dict[float, dict] = {}
+    for value in values:
+        try:
+            at = round(float(value.get("start") or 0.0), 3)
+            box = value.get("box") or {}
+            if not box:
+                continue
+            samples[at] = {
+                "t": at,
+                "box": {
+                    "x": round(float(box.get("x") or 0.0), 6),
+                    "y": round(float(box.get("y") or 0.0), 6),
+                    "w": round(float(box.get("w") or 0.0), 6),
+                    "h": round(float(box.get("h") or 0.0), 6),
+                },
+            }
+        except (TypeError, ValueError):
+            continue
+    return [samples[key] for key in sorted(samples)][:600]
+
+
 def _mark_screen_frame(blocks: list[dict], line_count: int) -> None:
     """Mark blocks from a text-heavy frame as screen-recording UI evidence."""
     if line_count < 6:
         return
     for block in blocks:
+        if _large_box(block.get("box") or {}):
+            continue
         block["screen_frame"] = True
 
 
@@ -637,6 +672,9 @@ def classify(tracklet: dict, duration: float) -> tuple[str, float]:
 
     if handle_like and corner and area <= 0.10:
         return "handle_or_logo", 0.8
+
+    if _large_box(box) and any(char.isalpha() for char in text) and not corner:
+        return "title", 0.8
 
     if _word_pop(text, box, corner):
         return "subtitle", 0.75
@@ -878,7 +916,7 @@ def _run_range(run: list[dict], duration: float) -> dict:
     if run[0].get("source") == "sample":
         half = (float(run[0]["end"]) - float(run[0]["start"])) / 2.0
         start = max(0.0, start - half)
-        end = max(start + 0.001, float(run[-1]["start"]) + half)
+        end = max(start + 0.001, float(run[-1]["end"]))
     if duration > 0:
         end = min(duration, end)
     return {"start": round(start, 3), "end": round(end, 3)}
@@ -914,6 +952,8 @@ def _line_tracklets(item: dict, values: list[dict], duration: float) -> list[dic
             "box": box,
             "ranges": spans,
             "text_sample": max((value["text"] for value in seen), key=len, default="")[:80],
+            "track": _track_samples(seen),
+            "large": _large_box(box),
             "samples": len({int(value["start"] // 2.0) for value in seen}),
             "duration": round(sum(span["end"] - span["start"] for span in spans), 3),
             "approximate": any(value.get("approximate") for value in seen),

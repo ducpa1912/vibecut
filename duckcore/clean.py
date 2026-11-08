@@ -43,10 +43,14 @@ def layers_from_report(report: dict, *, enabled: bool = True) -> list[dict]:
         seen.add(layer_id)
         fill = kind in TEXT_KINDS
         risky = kind in RISKY_KINDS
+        fill_plan = tracklet.get("fill_plan") if isinstance(tracklet.get("fill_plan"), dict) else {}
         layers.append({
             "id": layer_id,
             "kind": "fill" if fill else "blur",
             "method": "lama" if fill else "",
+            "track": list(tracklet.get("track") or [])[:600],
+            "large": bool(tracklet.get("large") or False),
+            "fill_keys": fill_plan.get("keys"),
             "box": {
                 "x": round(float(box.get("x") or 0.0), 6),
                 "y": round(float(box.get("y") or 0.0), 6),

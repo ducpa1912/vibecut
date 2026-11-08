@@ -46,7 +46,7 @@ Daylight Story Desk:
 
 ## Clean quality
 
-Separate clean-quality work is tracked in [clean-quality/loop-01.md](clean-quality/loop-01.md) and [clean-quality/loop-02-plan.md](clean-quality/loop-02-plan.md). Baseline complete: proof/render mismatch reproduced; render still has a 1.8 s dark pill; 1 fps is a regression; 8 fps is clamped and fragments titles. Loop 2 implementation plan is ready: shared proof/render frame path, glyph-complete mask, per-sample boxes, fill_keys, blur parity, and range refinement.
+Separate clean-quality work is tracked in [clean-quality/loop-01.md](clean-quality/loop-01.md) and [clean-quality/loop-02-plan.md](clean-quality/loop-02-plan.md). Baseline complete: proof/render mismatch reproduced; render still has a 1.8 s dark pill; 1 fps is a regression; 8 fps is clamped and fragments titles. Loop 2 implementation landed: shared proof/render frame path, glyph/bright-text masks, per-sample boxes, fill_keys, range edges, and 24 tests. Gate is partial: scene 01 1.8 s and scene 07 25.875 s pass; scene 01 3.5 s still fails.
 
 ## User test
 

@@ -21,6 +21,12 @@ PAD_RATIO = 0.06
 TEXT_SHADOW_RATIO = 0.18
 TEXT_SHADOW_MIN_PX = 6
 PAD_MIN_PX = 3
+# A large display title needs more context than a subtitle: its outline and
+# antialiasing sit further outside the OCR box.
+LARGE_TEXT_PAD_RATIO = 0.50
+LARGE_TEXT_PAD_MAX = 96
+# How long a per-sample box can stand in for a missing neighbour.
+TRACK_HOLD = 0.6
 # The scan reads two frames a second, so a detected range edge is known to about
 # a quarter second. Detected layers (with a tracklet_id) get this margin.
 DETECTED_TIME_MARGIN = 0.25
@@ -42,6 +48,8 @@ TEXT_WEAK_SHARE = 0.01
 TEXT_MAX_SHARE = 0.5
 TEXT_GROW_RATIO = 0.006
 TEXT_GROW_MIN_PX = 3
+TEXT_BRIGHT_MIN = 200
+TEXT_BRIGHT_SAT = 24
 
 Rect = tuple[int, int, int, int]  # x0, y0, x1, y1; x1 and y1 exclusive
 
@@ -53,7 +61,14 @@ def layer_rect(layer: dict, width: int, height: int) -> Rect:
     y = float(box.get("y", 0.0)) * height
     w = float(box.get("w", 0.0)) * width
     h = float(box.get("h", 0.0)) * height
+    large = bool(layer.get("large")) or (
+        h >= 0.12 * height
+        or (h >= 0.09 * height and w >= 0.50 * width)
+        or (w * h >= 0.10 * width * height)
+    )
     pad = max(PAD_MIN_PX, PAD_RATIO * h)
+    if large:
+        pad = max(pad, min(LARGE_TEXT_PAD_MAX, LARGE_TEXT_PAD_RATIO * h))
     if layer.get("tracklet_id"):
         pad = max(pad, TEXT_SHADOW_MIN_PX, TEXT_SHADOW_RATIO * h)
     x0 = max(0, int(math.floor(x - pad)))
@@ -132,6 +147,50 @@ def layer_rects(layer: dict, width: int, height: int) -> list[Rect]:
     return rects or [bounds]
 
 
+def _union_box(a: dict, b: dict) -> dict:
+    x0 = min(float(a.get("x", 0.0)), float(b.get("x", 0.0)))
+    y0 = min(float(a.get("y", 0.0)), float(b.get("y", 0.0)))
+    x1 = max(float(a.get("x", 0.0)) + float(a.get("w", 0.0)), float(b.get("x", 0.0)) + float(b.get("w", 0.0)))
+    y1 = max(float(a.get("y", 0.0)) + float(a.get("h", 0.0)), float(b.get("y", 0.0)) + float(b.get("h", 0.0)))
+    return {"x": x0, "y": y0, "w": max(0.0, x1 - x0), "h": max(0.0, y1 - y0)}
+
+
+def layer_rects_at(layer: dict, at: float, width: int, height: int) -> list[Rect]:
+    """Per-frame rects from the layer's sample track, or its static box."""
+    track = layer.get("track")
+    if not track or layer.get("mask"):
+        return layer_rects(layer, width, height)
+    samples = sorted(
+        (
+            (float(item.get("t", 0.0)), item.get("box") or {})
+            for item in track
+            if isinstance(item, dict)
+        ),
+        key=lambda item: item[0],
+    )
+    if not samples:
+        return layer_rects(layer, width, height)
+    previous = next_sample = None
+    for sample in samples:
+        if sample[0] <= at:
+            previous = sample
+        if sample[0] >= at:
+            next_sample = sample
+            break
+    box = None
+    if previous and next_sample and next_sample[0] - previous[0] <= TRACK_HOLD:
+        box = _union_box(previous[1], next_sample[1])
+    elif previous and at - previous[0] <= TRACK_HOLD:
+        box = previous[1]
+    elif next_sample and next_sample[0] - at <= TRACK_HOLD:
+        box = next_sample[1]
+    if box is None:
+        return []
+    temporary = {**layer, "box": box}
+    temporary.pop("track", None)
+    return layer_rects(temporary, width, height)
+
+
 def frame_keys(
     layers: Iterable[dict],
     *,
@@ -162,7 +221,7 @@ def layer_windows(layer: dict) -> list[tuple[float, float]] | None:
     ranges = layer.get("ranges") or []
     if not ranges:
         return None
-    margin = DETECTED_TIME_MARGIN if layer.get("tracklet_id") else 0.0
+    margin = 0.0 if layer.get("track") else (DETECTED_TIME_MARGIN if layer.get("tracklet_id") else 0.0)
     return [
         (float(item["start"]) - margin, float(item["end"]) + margin)
         for item in ranges
@@ -179,21 +238,17 @@ def frame_rects(
     height: int,
 ) -> list[list[Rect]]:
     """Rectangles to fill on each frame of a span that starts at ``start``."""
-    prepared = []
-    for layer in layers:
-        rects = layer_rects(layer, width, height)
-        if not rects:
-            continue
-        prepared.append((rects, layer_windows(layer)))
+    prepared = [(layer, layer_windows(layer)) for layer in layers]
     out: list[list[Rect]] = []
     step = 1.0 / float(fps)
     for index in range(int(frames)):
         # Frame centre time, so a window edge between frames is not ambiguous.
         at = float(start) + (index + 0.5) * step
         rects = [
-            rect for group, windows in prepared
+            rect
+            for layer, windows in prepared
             if windows is None or any(lo <= at < hi for lo, hi in windows)
-            for rect in group
+            for rect in layer_rects_at(layer, at, width, height)
         ]
         out.append(rects)
     return out
@@ -402,7 +457,27 @@ def text_in_region(region: np.ndarray, grow: int) -> np.ndarray | None:
     strong = contrast > limit
     # A lone speck is noise; a stroke has neighbours.
     strong &= _box_mean(_box_mean(strong.astype(np.float32), 1, 0), 1, 1) >= 3 / 9
+    # White display type on bright sky or grass can fall below the contrast
+    # limit. Low-saturation near-white pixels are the text in that case.
+    high = values.max(axis=2)
+    low = values.min(axis=2)
+    bright = (low >= TEXT_BRIGHT_MIN) & ((high - low) <= TEXT_BRIGHT_SAT)
+    bright_share = float(bright.mean())
+    if 0.002 <= bright_share <= 0.45:
+        bright = _box_mean(_box_mean(bright.astype(np.float32), grow, 0), grow, 1) > 1e-6
+        strong = strong | bright
     share = float(strong.mean())
+    if TEXT_MIN_SHARE <= share <= TEXT_MAX_SHARE:
+        # Very large solid glyphs raise the percentile until the normal limit
+        # sits above the letters. Take a second, lower pass and keep it only
+        # when it finds more text pixels inside the same box.
+        dense_limit = max(TEXT_WEAK_CONTRAST + 4.0, 1.5 * float(np.percentile(contrast, TEXT_QUIET_PERCENTILE)))
+        dense = contrast > dense_limit
+        dense &= _box_mean(_box_mean(dense.astype(np.float32), 1, 0), 1, 1) >= 3 / 9
+        dense_share = float(dense.mean())
+        if dense_share > share:
+            strong = dense
+            share = dense_share
     if share > TEXT_MAX_SHARE:
         return None
     if share < TEXT_MIN_SHARE:
@@ -436,7 +511,11 @@ class TextMasks:
         for rect in set(self.tight[min(index, len(self.tight) - 1)]):
             x0, y0, x1, y1 = rect
             # The letters' outline and shadow belong to the hole too.
-            grow = max(self.grow, int(round(TEXT_SHADOW_RATIO * (y1 - y0) * 0.7)))
+            grow = max(
+                self.grow,
+                int(round(TEXT_SHADOW_RATIO * (y1 - y0) * 0.7)),
+                int(round(0.20 * (y1 - y0))),
+            )
             text = text_in_region(frame[y0:y1, x0:x1], grow)
             if text is None:
                 text = np.ones((y1 - y0, x1 - x0), dtype=bool)
