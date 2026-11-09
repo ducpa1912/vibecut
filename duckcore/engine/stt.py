@@ -26,6 +26,7 @@ import hashlib
 import importlib.util
 import inspect
 import json
+import locale
 import math
 import os
 import re
@@ -203,6 +204,18 @@ def _base_language(value: Any, default: str = "en") -> str:
 
 def _speech_locale(language: str) -> str:
     return SPEECH_LOCALES.get(_base_language(language), "en-US")
+
+
+def _system_speech_language(default: str = "en") -> str:
+    """Apple Speech needs a locale; use the Mac language when nothing is known."""
+    try:
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            code = locale.getdefaultlocale()[0]
+    except Exception:
+        code = ""
+    return _base_language(code, default)
 
 
 # ---------------------------------------------------------------- whisper models
@@ -2039,9 +2052,14 @@ def transcribe_source(
         fail("stt", "", "No speech engine is configured.")
         return None
     terms = list(vocabulary or [])
-    auto_capable = any(
+    ready_routes = {
+        index: _engine_ready(str(route["provider"]), str(route["model"]))
+        for index, route in enumerate(plan)
+    }
+    ready_auto = any(
         str(route.get("provider") or "").lower() in {"whisper", "groq", "deepgram"}
-        for route in plan
+        and ready_routes[index]
+        for index, route in enumerate(plan)
         if isinstance(route, Mapping)
     )
     for route_index, route in enumerate(plan):
@@ -2050,17 +2068,21 @@ def transcribe_source(
         if (
             provider == "apple"
             and not requested_language
-            and auto_capable
+            and ready_auto
             and str(engine).lower() != "apple"
         ):
             # Apple needs a concrete locale.  Do not silently run a Chinese
-            # clip through en-US when an auto-detecting engine is available;
-            # let that next route report the real language instead.
+            # clip through en-US when an available auto engine can report it.
             fail("apple", route_model, "Apple speech needs a known language.")
             continue
-        if not _engine_ready(provider, route_model):
+        if not ready_routes[route_index]:
             fail(provider, route_model, "Speech engine is not available.")
             continue
+        route_language = requested_language
+        if provider == "apple" and not route_language:
+            # Apple is the only ready local engine. Use the Mac language
+            # rather than dropping the transcript entirely.
+            route_language = _system_speech_language()
         started = time.time()
         if progress is not None:
             # Said before the first chunk, or the previous stage's text stays up.
@@ -2070,7 +2092,7 @@ def transcribe_source(
                 prepared_path, Path(job_dir), float(duration),
                 audio_hash=prepared_hash,
                 engine=provider, model=route_model,
-                language=requested_language, vocabulary=terms,
+                language=route_language, vocabulary=terms,
                 timeout=timeout, progress=progress, helper=helper,
             )
         except SttCancelled:
@@ -2098,7 +2120,7 @@ def transcribe_source(
         transcript = build_transcript(
             engine=provider,
             model=route_model,
-            language=merged.get("language") or requested_language,
+            language=merged.get("language") or route_language or requested_language,
             segments=segments,
             words=words,
             audio_duration=float(duration),

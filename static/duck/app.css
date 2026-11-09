@@ -1084,3 +1084,37 @@ dialog.modal::backdrop { background: rgba(28, 23, 16, .38); backdrop-filter: blu
   .toolbar-engine .engine-text { display: none; }
   .toolbar-tab { padding: 0 10px; }
 }
+
+/* ---------------------------------------------------------------- search */
+.toolbar-search { width: 30px; height: 30px; flex: 0 0 auto; }
+dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
+.search-field {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font: 14px var(--sans);
+  outline: none;
+}
+.search-field:focus { border-color: var(--amber-2); background: var(--panel); box-shadow: 0 0 0 3px var(--amber-soft); }
+.search-results { display: grid; gap: 5px; margin-top: 10px; max-height: 360px; overflow: auto; }
+.search-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.search-result:hover { border-color: var(--line); background: var(--panel-2); }
+.search-result > span:last-child { display: grid; gap: 2px; min-width: 0; }
+.search-result strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 620; }
+.search-result small { color: var(--muted); font: 10px var(--mono); }

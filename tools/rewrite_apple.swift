@@ -26,6 +26,33 @@ func array(from text: String) -> [String]? {
 @main
 struct RewriteApple {
     static func main() async {
+        if CommandLine.arguments.contains("--check") {
+            var available = false
+            var reason = "Apple Intelligence is unavailable."
+            #if canImport(FoundationModels)
+            if #available(macOS 26.0, *) {
+                switch SystemLanguageModel.default.availability {
+                case .available:
+                    available = true
+                    reason = ""
+                case .unavailable(let value):
+                    reason = String(describing: value)
+                @unknown default:
+                    reason = "unknown availability"
+                }
+            } else {
+                reason = "requires macOS 26"
+            }
+            #else
+            reason = "FoundationModels is not available in this SDK"
+            #endif
+            let payload: [String: Any] = ["available": available, "reason": reason]
+            if let data = try? JSONSerialization.data(withJSONObject: payload),
+               let text = String(data: data, encoding: .utf8) {
+                print(text)
+            }
+            exit(0)
+        }
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             guard case .available = SystemLanguageModel.default.availability else {

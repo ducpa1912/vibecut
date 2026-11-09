@@ -334,6 +334,17 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         apple_speech = stt._apple_transcribe_helper()
         whisper = stt._whisper_command()
         fill_problem = textfill.method_problem("lama", model_dir)
+        rewrite = {"available": False, "reason": "The rewrite helper is missing."}
+        rewrite_helper = script._helper("rewrite_apple")
+        if rewrite_helper is not None:
+            try:
+                checked = subprocess.run(
+                    [str(rewrite_helper), "--check"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                rewrite = json.loads(checked.stdout.strip() or "{}")
+            except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+                rewrite = {"available": False, "reason": "The rewrite check did not answer."}
         value = {
             "vision": {
                 "available": vision_ready,
@@ -353,6 +364,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 "ready": fill_problem is None,
                 "problem": fill_problem or "",
             },
+            "rewrite": rewrite,
             "stories": {"engine": "local", "ready": True},
         }
         engine_cache["at"] = time.monotonic()
@@ -658,6 +670,39 @@ def create_app(token: str, data_root: Path) -> FastAPI:
 
         job_dir = data_root / "projects" / project_id
         return {"transcript": stt.load_latest_transcript(job_dir) or {}}
+
+    @app.post("/api/projects/{project_id}/transcript/retry")
+    def retry_transcript(project_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        status = checks.status(project_id)
+        result = status.get("result")
+        if not isinstance(result, dict) or not result.get("scenes"):
+            raise HTTPException(status_code=409, detail="Run Check first.")
+        from duckcore.engine import pipeline
+
+        job = {
+            "id": project_id,
+            "source": result.get("meta") or result.get("source") or {},
+            "analysis": {"scenes": result.get("scenes") or []},
+            "options": {},
+        }
+        retry = pipeline.retry_speech(job, data_root / "projects" / project_id)
+        if not retry.get("ok"):
+            raise HTTPException(
+                status_code=400,
+                detail=retry.get("reason") or "No speech was found in this video.",
+            )
+        if retry.get("scenes"):
+            result["scenes"] = retry["scenes"]
+        if retry.get("transcript"):
+            result["transcript"] = retry["transcript"]
+        result["engine"] = {**(result.get("engine") or {}), **(retry.get("engine") or {})}
+        append._save_check(data_root, project_id, result)
+        checks.adopt(project_id, result)
+        return {"ok": True, "transcript": result.get("transcript") or {}, "check": result}
 
     @app.post("/api/reveal")
     def reveal_file(body: RevealBody, _: None = Depends(require_token)) -> dict:

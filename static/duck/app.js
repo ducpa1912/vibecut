@@ -40,6 +40,7 @@ const state = {
   inlinePlaying: false,
   scriptOpen: false,
   scriptBusy: false,
+  transcriptBusy: false,
   scriptTarget: 'vi',
   scriptMode: 'clean',
   voicePreview: '',
@@ -722,6 +723,7 @@ function topbar() {
     <div class="toolbar-left">
       <button class="duck-home" type="button" data-action="welcome" title="Home" aria-label="Home">${duckMark(28)}</button>
       <button class="btn toolbar-import" type="button" data-action="import"${state.importing ? ' disabled' : ''}>${icon(state.importing ? 'loader' : 'plus', 14)} Import</button>
+      <button class="icon-btn toolbar-search" type="button" data-action="search" title="Search" aria-label="Search">${icon('search', 16)}</button>
     </div>
     <nav class="toolbar-tabs" aria-label="Workflow">
       ${tab('check', checkRunning ? 'Checking' : 'Check', 0, checkRunning)}
@@ -901,7 +903,10 @@ function checkCtaMarkup(scenes, running, done) {
   return `${done || scenes.length
     ? `<button class="btn primary wide" type="button" data-action="open-editor">${icon('arrowRight', 15)} Open Editor</button><p class="note">${running ? 'Scenes are ready. The Editor opens while the rest continues.' : 'Transcript and text detection continue in the background.'}</p>`
     : `<button class="btn primary wide" type="button" data-action="start-check" ${running ? 'disabled' : ''}>${running ? `${icon('loader', 15)} Checking…` : 'Start Check'}</button><p class="note">${running ? 'Scenes first. The Editor opens while the rest continues.' : 'Local only. Nothing leaves this Mac.'}</p>`}
-  ${done ? `<button class="btn wide" type="button" data-action="start-check">${icon('loader', 14)} Re-check</button>` : ''}`;
+  ${done ? `<button class="btn wide" type="button" data-action="start-check">${icon('loader', 14)} Re-check</button>` : ''}
+  ${done && !(Number(state.check?.result?.transcript?.segments) || 0)
+    ? `<button class="btn wide" type="button" data-action="retry-transcript" ${state.transcriptBusy ? 'disabled' : ''}>${icon('captions', 14)} ${state.transcriptBusy ? 'Reading speech…' : 'Re-read speech'}</button>`
+    : ''}`;
 }
 
 function stagePct(name) {
@@ -1051,7 +1056,11 @@ function screenEditor() {
         <section class="panel transcript-panel">
           <div class="transcript-head"><h3>Transcript</h3><span class="small muted">${segments.length} lines in this scene</span></div>
           <div class="transcript-list">
-            ${segments.length ? segments.map((segment, index) => transcriptRow(segment, index)).join('') : '<div class="transcript-empty">Transcript is still running. Keep cutting; lines appear here when ready.</div>'}
+            ${segments.length
+              ? segments.map((segment, index) => transcriptRow(segment, index)).join('')
+              : ['queued', 'running', 'cancelling'].includes(state.check?.state)
+                ? '<div class="transcript-empty">Transcript is still running. Keep cutting; lines appear here when ready.</div>'
+                : '<div class="transcript-empty">No transcript yet. <button class="btn small" type="button" data-action="retry-transcript">Re-read speech</button></div>'}
           </div>
         </section>
 
@@ -1736,8 +1745,53 @@ function openAudioModal(url, title = 'Voice-over') {
   </dialog>`);
 }
 
+function openSearch() {
+  const project = state.project;
+  openModal(`<dialog class="modal search-modal" aria-label="Search">
+    <div class="modal-head"><h2>Search</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
+    <div class="modal-body">
+      <input id="global-search" class="search-field" type="search" autofocus placeholder="${project ? 'Search scenes and transcript' : 'Search projects'}" aria-label="Search">
+      <div id="search-results" class="search-results"></div>
+    </div>
+  </dialog>`);
+  const input = document.getElementById('global-search');
+  if (!input) return;
+  const draw = () => {
+    const query = input.value.trim().toLowerCase();
+    const box = document.getElementById('search-results');
+    if (!box) return;
+    if (!project) {
+      const rows = state.projects.filter((item) => item.name.toLowerCase().includes(query)).slice(0, 20);
+      box.innerHTML = rows.length
+        ? rows.map((item) => `<button class="search-result" type="button" data-action="search-project" data-project="${esc(item.id)}"><span class="chip">Project</span><span><strong>${esc(item.name)}</strong><small>${esc(relDate(item.updated))} · ${fmtBytes(item.source_bytes)}</small></span></button>`).join('')
+        : '<p class="small muted">No projects match.</p>';
+      return;
+    }
+    const scenes = getScenes();
+    const sceneRows = scenes
+      .map((scene, index) => ({ index, text: sceneTitle(scene, index), start: Number(scene.start || 0), end: Number(scene.end || 0) }))
+      .filter((row) => row.text.toLowerCase().includes(query));
+    const segmentRows = getSegments()
+      .filter((segment) => String(segment.text || '').toLowerCase().includes(query))
+      .map((segment) => ({
+        text: segment.text,
+        start: Number(segment.start || 0),
+        end: Number(segment.end || 0),
+        index: Math.max(0, scenes.findIndex((scene) => Number(scene.end || 0) > Number(segment.start || 0) && Number(scene.start || 0) < Number(segment.end || 0))),
+      }));
+    const rows = [...sceneRows, ...segmentRows].slice(0, 24);
+    box.innerHTML = rows.length
+      ? rows.map((row) => `<button class="search-result" type="button" data-action="search-scene" data-index="${row.index}"><span class="chip">Scene ${pad(row.index + 1)}</span><span><strong>${esc(truncate(row.text, 90))}</strong><small>${fmtTC(row.start, 24)} – ${fmtTC(row.end, 24)}</small></span></button>`).join('')
+      : `<p class="small muted">${query ? 'No scenes or transcript lines match.' : 'Type to search this project.'}</p>`;
+  };
+  input.addEventListener('input', draw);
+  draw();
+  input.focus();
+}
+
 async function openSettings() {
   try {
+    if (!state.voices.length) await loadVoices();
     const [models, settings, packs] = await Promise.all([
       api('/api/models').catch(() => ({ models: [] })),
       api('/api/settings').catch(() => state.settings),
@@ -1758,6 +1812,13 @@ async function openSettings() {
           <div class="kv"><span>Vision</span><strong>${state.engine?.vision?.available ? 'Ready' : 'Unavailable'}</strong></div>
           <div class="kv"><span>Speech</span><strong>${state.engine?.speech?.default || 'Auto'}</strong></div>
           <div class="kv"><span>AI fill</span><strong>${state.engine?.fill?.ready ? 'Ready' : 'Missing'}</strong></div>
+          <div class="kv"><span>Voices</span><strong>${state.voices.length ? `${state.voices.length} local` : '—'}</strong></div>
+          <div class="kv"><span>Rewrite</span><strong>${state.engine?.rewrite?.available ? 'Ready' : 'Off'}</strong></div>
+          ${state.engine?.rewrite?.available ? '' : `<p class="small muted">${esc(
+            state.engine?.rewrite?.reason === 'appleIntelligenceNotEnabled'
+              ? 'Apple Intelligence is off. Turn it on in System Settings → Apple Intelligence & Siri to enable Rewrite.'
+              : `Rewrite: ${state.engine?.rewrite?.reason || 'Apple Intelligence is unavailable.'}`
+          )}</p>`}
           <h3 style="margin-top:10px">Models</h3>
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button></strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
           <h3 style="margin-top:12px">Optional downloads</h3>
@@ -2057,6 +2118,27 @@ async function cleanAll() {
     if (state.screen === 'preview') startPreviewClean();
   } catch (error) {
     toast(`Clean failed: ${error.message}`, 'bad');
+  }
+}
+
+async function retryTranscript() {
+  if (!state.project || state.transcriptBusy) return;
+  state.transcriptBusy = true;
+  render();
+  toast('Reading speech again…');
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/transcript/retry`, { method: 'POST' });
+    state.check.result = data.check || state.check.result;
+    await refreshTranscript();
+    state.edit = null;
+    await ensureEdit();
+    await ensureCaptions();
+    toast(`Transcript ready · ${data.transcript?.segments || 0} lines.`);
+  } catch (error) {
+    toast(`Transcript: ${error.message}`, 'bad');
+  } finally {
+    state.transcriptBusy = false;
+    render();
   }
 }
 
@@ -2384,6 +2466,14 @@ async function verifyModel(modelId) {
 
 /* ------------------------------------------------------------------ events */
 
+document.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  const bar = event.target.closest?.('.toolbar');
+  if (!bar) return;
+  if (event.target.closest('button, a, input, select, textarea, [data-action]')) return;
+  window.webkit?.messageHandlers?.duck?.postMessage({ type: 'windowDrag' });
+});
+
 document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]');
   if (!target) return;
@@ -2400,8 +2490,12 @@ document.addEventListener('click', async (event) => {
     else if (action === 'import-scenes') beginImport('scenes');
     else if (action === 'import-full') beginImport('full');
     else if (action === 'settings') await openSettings();
+    else if (action === 'search') openSearch();
+    else if (action === 'search-scene') { closeModal(); state.selectedScene = Math.max(0, Number(target.dataset.index || 0)); state.previewTime = Number(getScenes()[state.selectedScene]?.start || 0) + 0.1; navigate(projectPath('edit')); }
+    else if (action === 'search-project') { const id = target.dataset.project || ''; closeModal(); if (id) { await openProject(id); navigate(`project/${id}/${state.check?.state === 'done' ? 'edit' : 'check'}`); } }
     else if (action === 'close-modal') closeModal();
     else if (action === 'start-check') await startCheck();
+    else if (action === 'retry-transcript') await retryTranscript();
     else if (action === 'open-editor') navigate(projectPath('edit'));
     else if (action === 'nav') navigate(projectPath(target.dataset.screen || 'edit'));
     else if (action === 'proof-tab') { state.proofTab = target.dataset.tab || 'scenes'; render(); }

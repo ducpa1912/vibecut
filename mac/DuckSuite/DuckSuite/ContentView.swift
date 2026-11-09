@@ -99,6 +99,8 @@ private struct WebView: NSViewRepresentable {
         private let onImportNotice: @MainActor () -> String?
         private let onRecordStart: @MainActor () async throws -> String
         private let onRecordStop: @MainActor () -> String?
+        nonisolated(unsafe) private var mouseDownEvent: NSEvent?
+        nonisolated(unsafe) private var mouseMonitor: Any?
 
         init(
             onImport: @escaping @MainActor (String, String?) async -> Bool,
@@ -110,6 +112,17 @@ private struct WebView: NSViewRepresentable {
             self.onImportNotice = onImportNotice
             self.onRecordStart = onRecordStart
             self.onRecordStop = onRecordStop
+            super.init()
+            mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+                self?.mouseDownEvent = event
+                return event
+            }
+        }
+
+        deinit {
+            if let mouseMonitor {
+                NSEvent.removeMonitor(mouseMonitor)
+            }
         }
 
         func userContentController(
@@ -135,6 +148,13 @@ private struct WebView: NSViewRepresentable {
                     } else if let message = self.onImportNotice(), !message.isEmpty {
                         self.callJS("window.duckImportError", message)
                     }
+                }
+                return
+            }
+
+            if type == "windowDrag" {
+                if let event = mouseDownEvent {
+                    webView?.window?.performDrag(with: event)
                 }
                 return
             }
