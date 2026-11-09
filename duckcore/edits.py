@@ -6,6 +6,7 @@ smart story candidate. Clean layers live on the edit.
 
 from __future__ import annotations
 
+import copy
 import json
 import secrets
 import time
@@ -50,6 +51,55 @@ def _full_clips(check: dict) -> list[dict]:
     meta = check.get("meta") or {}
     duration = float(meta.get("duration") or 0.0)
     return [_clip(None, 0.0, duration)] if duration > 0 else []
+
+
+def _story_end(clips: list[dict]) -> float:
+    return round(sum(
+        max(0.0, float(clip.get("end") or 0.0) - float(clip.get("start") or 0.0))
+        for clip in clips
+    ), 3)
+
+
+def _latest_full_edit(data_root: Path, project_id: str) -> dict | None:
+    for row in list_edits(data_root, project_id):
+        if row.get("kind") == "full":
+            try:
+                return get_edit(data_root, project_id, str(row.get("id")))
+            except (KeyError, EditError):
+                return None
+    return None
+
+
+def _inherit_story(edit: dict, check: dict, data_root: Path) -> None:
+    """Carry the full edit's protection and caption style into a story."""
+    full = _latest_full_edit(data_root, str(edit["project_id"]))
+    source_track = None
+    if full is not None:
+        edit["clean"] = copy.deepcopy(full.get("clean") or [])
+        track = full.get("captions")
+        if isinstance(track, dict):
+            source_track = copy.deepcopy(track)
+    transcript = check.get("transcript")
+    if not isinstance(transcript, dict) or not isinstance(transcript.get("segments"), list):
+        try:
+            from duckcore.engine.stt import load_latest_transcript
+            transcript = load_latest_transcript(
+                Path(data_root) / "projects" / str(edit["project_id"])
+            ) or {}
+        except (ImportError, OSError):
+            transcript = {}
+    if not isinstance(transcript, dict) or not transcript.get("segments"):
+        return
+    try:
+        from duckcore import captions
+        track = captions.generate(edit, transcript, data_root)
+    except (ValueError, OSError):
+        return
+    if source_track:
+        for key, value in source_track.items():
+            if key not in {"cues", "track_id"}:
+                track[key] = copy.deepcopy(value)
+        save_edit(edit, data_root)
 
 
 def create_full(project_id: str, check: dict, data_root: Path) -> dict:
@@ -155,6 +205,9 @@ def create_story(
         "captions": None,
         "audio": {"mode": "original"},
     }
+    edit["start"] = 0.0
+    edit["end"] = _story_end(edit["clips"])
+    _inherit_story(edit, check, data_root)
     save_edit(edit, data_root)
     return edit
 
@@ -210,6 +263,131 @@ def create_story_from_scenes(
         "captions": None,
         "audio": {"mode": "original"},
     }
+    _inherit_story(edit, check, data_root)
+    save_edit(edit, data_root)
+    return edit
+
+
+def _story_clips(edit: dict) -> list[dict]:
+    if edit.get("kind") != "story":
+        raise EditError("This action only applies to a story edit.")
+    clips = [clip for clip in edit.get("clips") or [] if isinstance(clip, dict)]
+    if not clips:
+        raise EditError("This story has no beats.")
+    return clips
+
+
+def _refresh_story(edit: dict, clips: list[dict] | None = None) -> None:
+    if clips is None:
+        clips = _story_clips(edit)
+    edit["clips"] = clips
+    edit["scene_ids"] = [
+        int(clip["scene"]) for clip in clips
+        if clip.get("kind") != "media" and clip.get("scene") is not None
+    ]
+    edit["start"] = 0.0
+    edit["end"] = _story_end(clips)
+    title = str(edit.get("title") or "")
+    if title.startswith("Story · "):
+        scene_count = len([clip for clip in clips if clip.get("kind") != "media"])
+        edit["title"] = f"Story · {scene_count} scenes"
+
+
+def add_story_scene(
+    edit: dict, check: dict, data_root: Path, *, scene_id: int, index: int | None = None,
+) -> dict:
+    clips = _story_clips(edit)
+    scene = next(
+        (item for item in check.get("scenes") or []
+         if isinstance(item, dict) and int(item.get("id") if item.get("id") is not None else -1) == int(scene_id)),
+        None,
+    )
+    if scene is None:
+        raise EditError("Scene not found in this check.")
+    start = float(scene.get("start") or 0.0)
+    end = float(scene.get("end") or 0.0)
+    if end <= start:
+        raise EditError("That scene has no usable duration.")
+    clip = _clip(scene, start, end)
+    at = len(clips) if index is None else max(0, min(len(clips), int(index)))
+    clips.insert(at, clip)
+    _refresh_story(edit, clips)
+    save_edit(edit, data_root)
+    return edit
+
+
+def add_story_media(
+    edit: dict,
+    data_root: Path,
+    *,
+    kind: str,
+    filename: str,
+    raw: bytes,
+    duration: float,
+    index: int | None = None,
+) -> dict:
+    clips = _story_clips(edit)
+    if kind not in {"image", "video"}:
+        raise EditError("Story beats must be an image or a video.")
+    suffix = Path(filename or "").suffix.lower()
+    image_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic"}
+    video_suffixes = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
+    allowed = image_suffixes if kind == "image" else video_suffixes
+    if suffix not in allowed:
+        raise EditError("Use a supported image or video file.")
+    if not raw:
+        raise EditError("The beat file is empty.")
+    seconds = max(0.2, min(120.0, float(duration or (3.0 if kind == "image" else 5.0))))
+    folder = Path(data_root) / "projects" / str(edit["project_id"]) / "story"
+    folder.mkdir(parents=True, exist_ok=True)
+    name = f"{secrets.token_hex(8)}{suffix}"
+    saved = folder / name
+    saved.write_bytes(raw)
+    if kind == "video":
+        try:
+            from duckcore import media
+            probed = float(media.duration(saved) or 0.0)
+            if probed > 0:
+                seconds = min(seconds, max(0.2, probed))
+        except (ImportError, OSError, ValueError):
+            pass
+    clip = {
+        "scene": None,
+        "kind": "media",
+        "media": kind,
+        "file": f"story/{name}",
+        "label": (Path(filename or "").stem or kind)[:80],
+        "start": 0.0,
+        "end": round(seconds, 3),
+        "dur": round(seconds, 3),
+        "role": "beat",
+    }
+    at = len(clips) if index is None else max(0, min(len(clips), int(index)))
+    clips.insert(at, clip)
+    _refresh_story(edit, clips)
+    save_edit(edit, data_root)
+    return edit
+
+
+def remove_story_clip(edit: dict, data_root: Path, index: int) -> dict:
+    clips = _story_clips(edit)
+    if len(clips) <= 1:
+        raise EditError("A story needs at least one beat.")
+    if index < 0 or index >= len(clips):
+        raise EditError("Story beat not found.")
+    clips.pop(index)
+    _refresh_story(edit, clips)
+    save_edit(edit, data_root)
+    return edit
+
+
+def move_story_clip(edit: dict, data_root: Path, index: int, delta: int) -> dict:
+    clips = _story_clips(edit)
+    target = index + int(delta)
+    if index < 0 or index >= len(clips) or target < 0 or target >= len(clips):
+        raise EditError("Story beat cannot move there.")
+    clips.insert(target, clips.pop(index))
+    _refresh_story(edit, clips)
     save_edit(edit, data_root)
     return edit
 

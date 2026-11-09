@@ -1091,6 +1091,233 @@ function syncSceneForTime() {
   if (sub) sub.textContent = `${fmtTC(scene.start, state.check?.result?.meta?.fps || 24)} – ${fmtTC(scene.end, state.check?.result?.meta?.fps || 24)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}`;
 }
 
+function fullVideoEdit() {
+  return (state.edits || []).find((edit) => edit.kind === 'full') || null;
+}
+
+function storyClipAt(time) {
+  let cursor = 0;
+  const clips = state.edit?.clips || [];
+  for (let index = 0; index < clips.length; index += 1) {
+    const clip = clips[index];
+    const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
+    if (Number(time) < cursor + duration || index === clips.length - 1) {
+      return { clip, index, start: cursor, offset: Math.max(0, Number(time) - cursor) };
+    }
+    cursor += duration;
+  }
+  return null;
+}
+
+function storyClipLabel(clip, index) {
+  if (clip?.kind === 'media') return clip.media === 'image' ? 'IMG' : 'VID';
+  const scene = getScenes().find((item) => item.id === clip?.scene);
+  const at = scene ? getScenes().indexOf(scene) : index;
+  return `S${pad(at + 1)}`;
+}
+
+function storyFileUrl(name) {
+  return mediaUrl(`/api/projects/${encodeURIComponent(state.project?.id || '')}/edits/${encodeURIComponent(state.edit?.id || '')}/story/file`, { name });
+}
+
+function storyOptionLabel(edit) {
+  const title = String(edit?.title || 'Story');
+  const seconds = Math.max(0, Number(edit?.end || 0));
+  return `${title} · ${fmtDuration(seconds)} · ${String(edit?.id || '').slice(-4)}`;
+}
+
+function storyBanner() {
+  if (!isStoryEdit()) return '';
+  const clips = state.edit?.clips || [];
+  const full = fullVideoEdit();
+  const stories = (state.edits || []).filter((edit) => edit.kind === 'story');
+  if (!stories.some((edit) => edit.id === state.edit.id)) stories.unshift(state.edit);
+  const sceneCount = clips.filter((clip) => clip.kind !== 'media').length;
+  const storedTitle = String(state.edit.title || 'Story');
+  const displayTitle = storedTitle.startsWith('Story · ') ? `Story · ${sceneCount} scenes` : storedTitle;
+  const used = new Set(clips.filter((clip) => clip.kind !== 'media').map((clip) => clip.scene));
+  const available = checkScenes().filter((scene) => !used.has(scene.id));
+  return `<div class="story-banner">
+    <span class="chip green">Story edit</span>
+    <strong>${esc(displayTitle)}</strong>
+    <span class="small muted">${clips.length} beats · ${fmtDuration(timelineDuration())}</span>
+    <span class="spacer"></span>
+    <select id="story-edit-select" title="Switch edit">
+      ${full ? `<option value="${esc(full.id)}">Full video</option>` : ''}
+      ${stories.map((edit) => `<option value="${esc(edit.id)}" ${edit.id === state.edit.id ? 'selected' : ''}>${esc(storyOptionLabel(edit))}</option>`).join('')}
+    </select>
+    <button class="btn small" type="button" data-action="story-add-image">${icon('grid', 12)} Image</button>
+    <button class="btn small" type="button" data-action="story-add-video">${icon('film', 12)} Video</button>
+    <select id="story-scene-select" ${available.length ? '' : 'disabled'} title="Scene to add">
+      ${available.length ? available.map((scene) => {
+        const at = checkScenes().indexOf(scene);
+        return `<option value="${esc(scene.id)}">S${pad(at + 1)} · ${esc(truncate(sceneTitle(scene, at), 20))}</option>`;
+      }).join('') : '<option>All scenes used</option>'}
+    </select>
+    <button class="btn small" type="button" data-action="story-add-scene" ${available.length ? '' : 'disabled'}>${icon('plus', 12)} Scene</button>
+    <button class="btn small" type="button" data-action="back-to-full">${icon('arrowLeft', 12)} Full video</button>
+  </div>
+  <div class="story-beats">
+    ${clips.map((clip, index) => {
+      const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
+      return `<span class="story-beat">
+        <span class="chip">${storyClipLabel(clip, index)}</span>
+        <span class="story-beat-name">${esc(clip.label || (clip.kind === 'media' ? 'Inserted beat' : `Scene ${pad(index + 1)}`))}</span>
+        <span class="small muted">${fmtDuration(duration)}</span>
+        <button class="icon-btn" type="button" data-action="story-move-beat" data-index="${index}" data-delta="-1" title="Move left">‹</button>
+        <button class="icon-btn" type="button" data-action="story-move-beat" data-index="${index}" data-delta="1" title="Move right">›</button>
+        <button class="icon-btn" type="button" data-action="story-remove-beat" data-index="${index}" title="Remove beat">×</button>
+      </span>`;
+    }).join('')}
+  </div>`;
+}
+
+function editSwitch() {
+  const full = fullVideoEdit();
+  const stories = (state.edits || []).filter((edit) => edit.kind === 'story');
+  if (!stories.length) return '';
+  if (!stories.some((edit) => edit.id === state.edit?.id)) {
+    if (state.edit?.kind === 'story') stories.unshift(state.edit);
+  }
+  return `<div class="edit-switch"><span class="small muted">Edit</span>
+    <select id="edit-select" title="Switch edit">
+      ${full ? `<option value="${esc(full.id)}" ${state.edit?.id === full.id ? 'selected' : ''}>Full video</option>` : ''}
+      ${stories.map((edit) => `<option value="${esc(edit.id)}" ${state.edit?.id === edit.id ? 'selected' : ''}>${esc(storyOptionLabel(edit))}</option>`).join('')}
+    </select>
+  </div>`;
+}
+
+function mediaFileDuration(file) {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    const finish = (value) => { URL.revokeObjectURL(url); resolve(value); };
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => finish(Math.max(0.2, Math.min(120, Number(video.duration || 5))));
+    video.onerror = () => finish(5);
+    video.src = url;
+  });
+}
+
+function applyEdit(edit) {
+  state.edit = edit;
+  const row = (state.edits || []).find((item) => item.id === edit.id);
+  if (row) {
+    row.title = edit.title;
+    row.kind = edit.kind;
+    row.end = edit.end;
+  }
+}
+
+async function openEditById(editId) {
+  if (!state.project || !editId) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(editId)}`);
+    state.edit = data.edit;
+    state.focusMode = '';
+    state.storySelect = false;
+    state.storyScenes = [];
+    state.timelineTime = 0;
+    state.previewTime = Number(data.edit.clips?.[0]?.start || 0) + 0.1;
+    state.selectedScene = 0;
+    await ensureCleanLayers();
+    await ensureCaptions();
+    render();
+  } catch (error) {
+    toast(`Edit: ${error.message}`, 'bad');
+  }
+}
+
+async function backToFullVideo() {
+  const full = fullVideoEdit();
+  if (!full) {
+    toast('Full video edit is missing.', 'bad');
+    return;
+  }
+  await openEditById(full.id);
+  toast('Back to full video.');
+}
+
+async function refreshStoryCaptions() {
+  if (!state.edit?.captions?.cues?.length) {
+    await ensureCaptions();
+    return;
+  }
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/captions/generate`, { method: 'POST' });
+    state.edit.captions = data.captions;
+  } catch (_) { /* keep the existing cues if regeneration fails */ }
+}
+
+async function addStoryScene() {
+  const chosen = Number(document.querySelector('#story-scene-select')?.value || 0);
+  const scene = checkScenes().find((item) => Number(item.id) === chosen) || currentScene();
+  if (!state.project || !state.edit || !scene) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/story/scene`, {
+      method: 'POST',
+      body: JSON.stringify({ scene_id: scene.id }),
+    });
+    applyEdit(data.edit);
+    await refreshStoryCaptions();
+    render();
+    toast(`Scene ${pad(checkScenes().indexOf(scene) + 1)} added to the story.`);
+  } catch (error) {
+    toast(`Story: ${error.message}`, 'bad');
+  }
+}
+
+async function uploadStoryBeat(kind, file) {
+  if (!state.project || !state.edit || !file) return;
+  try {
+    const duration = kind === 'video' ? await mediaFileDuration(file) : 3;
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/story/beat`, {
+      method: 'POST',
+      body: await file.arrayBuffer(),
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'x-kind': kind,
+        'x-filename': file.name,
+        'x-duration': String(duration),
+      },
+    });
+    applyEdit(data.edit);
+    await refreshStoryCaptions();
+    render();
+    toast(`${kind === 'image' ? 'Image' : 'Video'} beat added.`);
+  } catch (error) {
+    toast(`Story beat: ${error.message}`, 'bad');
+  }
+}
+
+async function removeStoryBeat(index) {
+  if (!state.project || !state.edit) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/story/clip/${Number(index)}`, { method: 'DELETE' });
+    applyEdit(data.edit);
+    await refreshStoryCaptions();
+    render();
+    toast('Story beat removed.');
+  } catch (error) {
+    toast(`Story: ${error.message}`, 'bad');
+  }
+}
+
+async function moveStoryBeat(index, delta) {
+  if (!state.project || !state.edit) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/story/clip/move`, {
+      method: 'POST',
+      body: JSON.stringify({ index: Number(index), delta: Number(delta) }),
+    });
+    applyEdit(data.edit);
+    await refreshStoryCaptions();
+    render();
+  } catch (error) {
+    toast(`Story: ${error.message}`, 'bad');
+  }
+}
+
 function screenEditor() {
   const scenes = getScenes();
   const scene = currentScene();
@@ -1108,7 +1335,9 @@ function screenEditor() {
       : tab === 'audio' ? inspectorAudio()
         : inspectorSFX();
   const focusLabel = { clean: 'Clean', script: 'Script', audio: 'Audio', sfx: 'SFX' }[tab];
-  return `<main class="screen">
+  const story = isStoryEdit() ? storyClipAt(state.timelineTime || 0) : null;
+  const mediaClip = story?.clip?.kind === 'media' ? story.clip : null;
+  return `<main class="screen">${storyBanner()}
     <div class="workspace edit edit-clean">
       <aside class="panel proof-panel">
         <div class="panel-head"><h2>Scenes</h2><span class="meta">${scenes.length} scenes</span><button class="btn small story-toggle" type="button" data-action="toggle-story-select">${state.storySelect ? 'Cancel' : 'Story'}</button></div>
@@ -1116,6 +1345,7 @@ function screenEditor() {
           <button class="proof-tab${state.proofTab === 'scenes' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="scenes">Scenes ${scenes.length}</button>
           <button class="proof-tab${state.proofTab === 'stories' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="stories">Stories ${getStories().length}</button>
         </div>
+        ${editSwitch()}
         <div class="proof-list compact">
           ${state.proofTab === 'stories' ? storyProofRows(getStories()) : sceneProofRows(scenes)}
         </div>
@@ -1126,13 +1356,17 @@ function screenEditor() {
         ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Scenes, transcript and layers appear as they finish.</div>` : ''}
         <section class="panel preview-block">
           <div class="media-card preview-large">
-            <video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>
-            <span class="media-badge right">${mediaResolution()}</span>
-            <div class="media-overlay"><span class="tc">${fmtTC(state.previewTime || scene.start)} / ${fmtTC(state.edit?.end || state.check?.result?.meta?.duration || 0)}</span><span class="spacer"></span></div>
-            <div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}">
+            ${mediaClip
+              ? mediaClip.media === 'image'
+                ? `<img class="story-media-preview" src="${storyFileUrl(mediaClip.file)}" alt="${esc(mediaClip.label || 'Story image')}">`
+                : `<video class="story-media-preview" data-story-media controls preload="metadata" src="${storyFileUrl(mediaClip.file)}"></video>`
+              : `<video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
+            <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
+            <div class="media-overlay"><span class="tc">${fmtTC(mediaClip ? state.timelineTime : (state.previewTime || scene.start))} / ${fmtTC(mediaClip ? timelineDuration() : (state.edit?.end || state.check?.result?.meta?.duration || 0))}</span><span class="spacer"></span></div>
+            ${mediaClip ? '' : `<div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}">
               <button class="overlay-toggle" type="button" data-action="toggle-transcript-overlay" title="Transcript layer">CC</button>
               <div class="transcript-ghost">${transcriptGhostMarkup(overlayCues)}</div>
-            </div>
+            </div>`}
           </div>
         </section>
       </section>
@@ -1166,6 +1400,8 @@ function screenEditor() {
     ${state.focusMode ? focusDock() : timelinePanel()}
     <input id="music-input" type="file" accept="audio/*,.m4a,.mp3,.wav,.aac" hidden>
     <input id="sfx-file-input" type="file" accept="audio/*,image/*,video/*,.gif,.webp" hidden>
+    <input id="story-image-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif" hidden>
+    <input id="story-video-input" type="file" accept="video/*,.mp4,.mov,.m4v,.webm" hidden>
   </main>`;
 }
 
@@ -1185,7 +1421,9 @@ async function buildStory() {
     state.storyScenes = [];
     state.selectedScene = 0;
     state.focusMode = '';
+    state.timelineTime = 0;
     state.screen = 'edit';
+    await ensureCaptions();
     render();
     toast(`Story built from ${data.edit.clips?.length || 0} scenes.`);
   } catch (error) {
@@ -1796,7 +2034,7 @@ function timelineSceneRanges() {
   const rows = [];
   (state.edit?.clips || []).forEach((clip, index) => {
     const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
-    rows.push({ scene: byId.get(clip.scene), index, start: cursor, end: cursor + duration });
+    rows.push({ scene: byId.get(clip.scene), clip, index, start: cursor, end: cursor + duration });
     cursor += duration;
   });
   return rows;
@@ -1867,7 +2105,14 @@ function timelinePanel() {
       </div>
       <div class="timeline-tracks" style="grid-template-rows:22px 22px 22px ${audioHeight}px 22px">
         <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / cut / split', 'trim-focus', '') : ''}</div>
-        <div class="timeline-track scene">${timelineSceneRanges().map((row) => timelineBlock(row.start, row.end, total, `S${pad(row.index + 1)}`, 'select-scene', `data-index="${row.index}"`, row.index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '')).join('')}</div>
+        <div class="timeline-track scene">${timelineSceneRanges().map((row) => {
+          const story = isStoryEdit();
+          const label = story ? storyClipLabel(row.clip, row.index) : `S${pad(row.index + 1)}`;
+          const action = story ? 'timeline-seek' : 'select-scene';
+          const data = story ? `data-time="${row.start.toFixed(3)}"` : `data-index="${row.index}"`;
+          const extra = !story && row.index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '';
+          return timelineBlock(row.start, row.end, total, label, action, data, extra);
+        }).join('')}</div>
         <div class="timeline-track script">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
         <div class="timeline-track audio-stack">${audioRows.length ? audioRows.map((row) => {
           const start = Number(row.start || 0);
@@ -2174,6 +2419,7 @@ function brushStage(scene) {
 
 function seekToTime(time) {
   const total = Number(document.querySelector('.timeline')?.dataset.total || 0);
+  const mediaBefore = !!document.querySelector('.story-media-preview');
   state.timelineTime = Math.max(0, Math.min(total || Number(time || 0), Number(time || 0)));
   state.previewTime = timelineToSource(state.timelineTime);
   const video = document.querySelector('video[data-preview]');
@@ -2183,6 +2429,14 @@ function seekToTime(time) {
   updateTimelinePlayhead(state.timelineTime);
   updateGhostActive();
   refreshTranscriptOverlay();
+  const mediaAfter = isStoryEdit() && storyClipAt(state.timelineTime)?.clip?.kind === 'media';
+  if (mediaBefore || mediaAfter) {
+    render();
+    const player = document.querySelector('video[data-preview]');
+    if (player) {
+      try { player.currentTime = state.previewTime; } catch (_) { /* metadata not ready */ }
+    }
+  }
 }
 
 function updateGhostActive() {
@@ -3503,6 +3757,12 @@ document.addEventListener('click', async (event) => {
       render();
     }
     else if (action === 'build-story') await buildStory();
+    else if (action === 'back-to-full') await backToFullVideo();
+    else if (action === 'story-add-image') document.querySelector('#story-image-input')?.click();
+    else if (action === 'story-add-video') document.querySelector('#story-video-input')?.click();
+    else if (action === 'story-add-scene') await addStoryScene();
+    else if (action === 'story-remove-beat') await removeStoryBeat(Number(target.dataset.index));
+    else if (action === 'story-move-beat') await moveStoryBeat(Number(target.dataset.index), Number(target.dataset.delta));
     else if (action === 'select-scene') {
       const index = Number(target.dataset.index || 0);
       const scenes = getScenes();
@@ -3612,6 +3872,16 @@ document.addEventListener('click', async (event) => {
 
 document.addEventListener('change', async (event) => {
   const target = event.target;
+  if (target.id === 'story-edit-select' || target.id === 'edit-select') {
+    await openEditById(target.value);
+    return;
+  }
+  if (target.id === 'story-image-input' || target.id === 'story-video-input') {
+    const file = target.files?.[0];
+    target.value = '';
+    if (file) await uploadStoryBeat(target.id === 'story-image-input' ? 'image' : 'video', file);
+    return;
+  }
   if (target.dataset?.audioField) {
     const field = target.dataset.audioField;
     const value = field === 'volume' ? Number(target.value) : Number(target.value);

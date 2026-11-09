@@ -285,6 +285,44 @@ def render_edit(
             duration = max(0.04, float(clip.get("end") or 0.0) - start)
             if progress:
                 progress(index / max(1, len(clips)), f"Rendering clip {index + 1}/{len(clips)}")
+            if str(clip.get("kind")) == "media":
+                media_path = job_dir / str(clip.get("file") or "")
+                if not media_path.is_file():
+                    raise RenderError("A story beat file is missing.")
+                segment = output_dir / f".{edit['id']}_{index:04d}.mp4"
+                offset = max(0.0, float(clip.get("offset") or 0.0))
+                if str(clip.get("media")) == "image":
+                    command = [
+                        ffmpeg, "-y", "-v", "error",
+                        "-loop", "1", "-framerate", str(target_fps), "-i", str(media_path),
+                        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                        "-t", f"{duration:.6f}",
+                        "-map", "0:v:0", "-map", "1:a:0",
+                        "-vf", scale,
+                        *_video_codec(), "-c:a", "aac", "-b:a", "192k",
+                        "-shortest", str(segment),
+                    ]
+                else:
+                    has_beat_audio = media.has_audio(media_path)
+                    command = [
+                        ffmpeg, "-y", "-v", "error",
+                        "-ss", f"{offset:.6f}", "-t", f"{duration:.6f}", "-i", str(media_path),
+                    ]
+                    if not has_beat_audio:
+                        command += [
+                            "-f", "lavfi", "-i",
+                            "anullsrc=channel_layout=stereo:sample_rate=48000",
+                        ]
+                    command += ["-map", "0:v:0"]
+                    command += ["-map", "0:a:0" if has_beat_audio else "1:a:0"]
+                    command += [
+                        "-vf", scale,
+                        *_video_codec(), "-c:a", "aac", "-b:a", "192k",
+                        "-shortest", str(segment),
+                    ]
+                _run(command)
+                segments.append(segment)
+                continue
             filled = None
             if layers:
                 filled = textfill.prepare_span(

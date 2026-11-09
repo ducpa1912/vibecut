@@ -310,6 +310,144 @@ def test_mix_audio_keeps_full_duration_for_solo_zero_volume_row(tmp_path: Path) 
     assert media.has_audio(source)
 
 
+def _story_check() -> dict:
+    return {
+        "meta": {"duration": 12.0, "width": 160, "height": 90, "fps": 24.0},
+        "scenes": [
+            {"id": 1, "start": 0.0, "end": 4.0},
+            {"id": 2, "start": 4.0, "end": 8.0},
+        ],
+        "transcript": {
+            "segments": [
+                {"start": 0.5, "end": 3.5, "text": "First line"},
+                {"start": 4.5, "end": 7.5, "text": "Second line"},
+            ],
+        },
+    }
+
+
+def test_story_inherits_clean_and_captions(tmp_path: Path) -> None:
+    from duckcore import edits
+
+    check = _story_check()
+    full = edits.create_full("prj_story", check, tmp_path)
+    full["clean"] = [{
+        "id": "cl_one", "kind": "blur", "enabled": True,
+        "ranges": [{"start": 0.0, "end": 4.0}],
+    }]
+    full["captions"] = {
+        "track_id": "cap_full", "style": "bold", "burn": True,
+        "cues": [{"id": "c1", "start": 0, "end": 1, "text": "old"}],
+    }
+    edits.save_edit(full, tmp_path)
+
+    story = edits.create_story_from_scenes(
+        "prj_story", check, tmp_path, scene_ids=[1, 2],
+    )
+    assert [layer["id"] for layer in story["clean"]] == ["cl_one"]
+    assert story["captions"]["burn"] is True
+    assert story["captions"]["style"] == "bold"
+    assert [cue["text"] for cue in story["captions"]["cues"]] == ["First line", "Second line"]
+    assert story["end"] == 8.0
+
+
+def test_story_captions_skip_media_beats_and_keep_style(tmp_path: Path) -> None:
+    from duckcore import captions, edits
+
+    check = _story_check()
+    full = edits.create_full("prj_story_cap", check, tmp_path)
+    full["captions"] = {
+        "track_id": "cap_full", "style": "bold", "burn": True,
+        "cues": [{"id": "c1", "start": 0, "end": 1, "text": "old"}],
+    }
+    edits.save_edit(full, tmp_path)
+    story = edits.create_story_from_scenes(
+        "prj_story_cap", check, tmp_path, scene_ids=[1, 2],
+    )
+    edits.add_story_media(
+        story, tmp_path, kind="image", filename="hook.png",
+        raw=b"png", duration=3.0, index=0,
+    )
+    track = captions.generate(story, check["transcript"], tmp_path)
+    assert track["style"] == "bold"
+    assert track["burn"] is True
+    assert track["cues"]
+    assert all(float(cue["start"]) >= 3.0 for cue in track["cues"])
+    assert all(float(cue["end"]) <= 11.0 for cue in track["cues"])
+
+
+def test_story_extension_adds_scene_media_and_reorders(tmp_path: Path) -> None:
+    from duckcore import edits
+
+    check = _story_check()
+    story = edits.create_story_from_scenes("prj_story2", check, tmp_path, scene_ids=[1])
+    assert story["end"] == 4.0
+
+    edits.add_story_scene(story, check, tmp_path, scene_id=2)
+    assert [clip.get("scene") for clip in story["clips"]] == [1, 2]
+    assert story["end"] == 8.0
+
+    edited = edits.add_story_media(
+        story, tmp_path, kind="image", filename="hook.png",
+        raw=b"not-a-real-png", duration=3.0, index=0,
+    )
+    assert edited["clips"][0]["kind"] == "media"
+    assert edited["end"] == 11.0
+    assert (tmp_path / "projects" / "prj_story2" / edited["clips"][0]["file"]).is_file()
+
+    edits.move_story_clip(edited, tmp_path, 0, 1)
+    assert edited["clips"][1]["kind"] == "media"
+    edits.remove_story_clip(edited, tmp_path, 1)
+    assert edited["end"] == 8.0
+
+
+def test_render_story_media_beat(tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+
+    import pytest
+
+    from duckcore import edits, media, render
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is not installed")
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [ffmpeg, "-y", "-v", "error",
+         "-f", "lavfi", "-i", "color=c=black:s=160x90:d=1",
+         "-f", "lavfi", "-i", "sine=frequency=220:duration=1",
+         "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", str(source)],
+        check=True,
+    )
+    image = tmp_path / "beat.png"
+    subprocess.run(
+        [ffmpeg, "-y", "-v", "error", "-f", "lavfi",
+         "-i", "color=c=red:s=160x90", "-frames:v", "1", str(image)],
+        check=True,
+    )
+    check = _story_check()
+    story = edits.create_story_from_scenes("prj_story3", check, tmp_path, scene_ids=[1])
+    story["clips"] = story["clips"][:1]
+    story["end"] = 1.0
+    story["clips"][0]["end"] = 1.0
+    story["clips"][0]["dur"] = 1.0
+    edits.save_edit(story, tmp_path)
+    edits.add_story_media(
+        story, tmp_path, kind="image", filename="end.png",
+        raw=image.read_bytes(), duration=1.0,
+    )
+    edits.add_story_media(
+        story, tmp_path, kind="video", filename="beat.mp4",
+        raw=source.read_bytes(), duration=1.0,
+    )
+    project = {"id": "prj_story3", "source_path": str(source)}
+    output = render.render_edit(project, story, tmp_path)
+    assert output.is_file()
+    assert abs(media.duration(output) - 3.0) < 0.4
+
+
 def test_slip_clip_preserves_duration(tmp_path: Path) -> None:
     from duckcore import edits
 

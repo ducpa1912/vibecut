@@ -76,6 +76,16 @@ class SceneStoryBody(BaseModel):
     title: str = Field(default="", max_length=120)
 
 
+class StorySceneBody(BaseModel):
+    scene_id: int
+    index: int | None = None
+
+
+class StoryMoveBody(BaseModel):
+    index: int
+    delta: int = Field(ge=-500, le=500)
+
+
 class LayerAction(BaseModel):
     action: str = Field(pattern="^(fill|blur|exclude)$")
 
@@ -883,6 +893,104 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except edits.EditError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/story/scene")
+    def add_story_scene(
+        project_id: str, edit_id: str, body: StorySceneBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            check = completed_check(project_id)
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edits.add_story_scene(
+                edit, check, data_root, scene_id=body.scene_id, index=body.index,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/story/beat")
+    async def add_story_beat(
+        project_id: str, edit_id: str, request: Request,
+        _: None = Depends(require_token),
+    ) -> dict:
+        raw = await request.body()
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edits.add_story_media(
+                edit, data_root,
+                kind=request.headers.get("x-kind", "image"),
+                filename=request.headers.get("x-filename", "beat"),
+                raw=raw,
+                duration=float(request.headers.get("x-duration", "0") or 0),
+                index=(
+                    int(request.headers["x-index"])
+                    if request.headers.get("x-index") not in (None, "") else None
+                ),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"edit": edit}
+
+    @app.delete("/api/projects/{project_id}/edits/{edit_id}/story/clip/{index}")
+    def delete_story_clip(
+        project_id: str, edit_id: str, index: int,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edits.remove_story_clip(edit, data_root, index)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/story/clip/move")
+    def move_story_clip(
+        project_id: str, edit_id: str, body: StoryMoveBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edits.move_story_clip(edit, data_root, body.index, body.delta)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"edit": edit}
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/story/file")
+    def story_beat_file(
+        project_id: str, edit_id: str, name: str,
+        request: Request, t: str | None = None,
+    ) -> FileResponse:
+        require_media(request, t)
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        if not any(str(clip.get("file") or "") == name for clip in edit.get("clips") or []):
+            raise HTTPException(status_code=404, detail="Story beat not found.")
+        project_dir = (data_root / "projects" / project_id).resolve()
+        path = (project_dir / name).resolve()
+        if project_dir not in path.parents or not path.is_file():
+            raise HTTPException(status_code=404, detail="Story beat file is missing.")
+        suffix = path.suffix.lower()
+        media_type = (
+            "image/png" if suffix == ".png"
+            else "image/jpeg" if suffix in {".jpg", ".jpeg"}
+            else "image/gif" if suffix == ".gif"
+            else "image/webp" if suffix == ".webp"
+            else "video/mp4" if suffix in {".mp4", ".m4v"}
+            else "video/quicktime" if suffix == ".mov"
+            else "application/octet-stream"
+        )
+        return FileResponse(path, media_type=media_type)
 
     @app.post("/api/projects/{project_id}/stories/{story_id}/smart-cut")
     def create_smart_cut(

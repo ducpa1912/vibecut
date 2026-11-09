@@ -251,6 +251,12 @@ def generate(edit: dict, transcript: dict, data_root: Path) -> dict:
         start = float(clip.get("start") or 0.0)
         end = float(clip.get("end") or 0.0)
         duration = max(0.0, end - start)
+        if str(clip.get("kind")) == "media":
+            # Inserted images and videos have no source speech. Keep their
+            # space on the story timeline, but do not pull source captions
+            # into the beat.
+            out_cursor += duration
+            continue
         for cue_start, cue_end, text in _cues_for_clip(
             segments, clip_start=start, clip_end=end, out_start=out_cursor,
         ):
@@ -264,10 +270,11 @@ def generate(edit: dict, transcript: dict, data_root: Path) -> dict:
         out_cursor += duration
     if not cues:
         raise ValueError("No speech overlaps this edit.")
+    existing = edit.get("captions") if isinstance(edit.get("captions"), dict) else {}
     track = {
         "track_id": f"cap_{hashlib.sha1(str(time.time()).encode()).hexdigest()[:10]}",
-        "style": "clean",
-        "burn": False,
+        "style": existing.get("style") or "clean",
+        "burn": bool(existing.get("burn")),
         "cues": cues,
     }
     edit["captions"] = track
