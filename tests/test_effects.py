@@ -69,3 +69,24 @@ def test_story_from_selected_scenes_keeps_order(tmp_path: Path) -> None:
     assert [clip["scene"] for clip in edit["clips"]] == [3, 1]
     assert edit["end"] == 6.0
     assert edit["scene_ids"] == [3, 1]
+
+
+def test_split_at_uses_output_timeline(tmp_path: Path) -> None:
+    from duckcore import edits
+
+    edit = {
+        "id": "ed_split01",
+        "project_id": "prj_split",
+        "kind": "story",
+        "end": 8.0,
+        "clips": [
+            {"scene": 8, "start": 10.0, "end": 13.0, "dur": 3.0},
+            {"scene": 11, "start": 20.0, "end": 25.0, "dur": 5.0},
+        ],
+    }
+    edits.save_edit(edit, tmp_path)
+    split = edits.split_at(edit, tmp_path, 4.0)
+    assert [clip["scene"] for clip in split["clips"]] == [8, 11, 11]
+    assert split["clips"][1]["start"] == 20.0
+    assert split["clips"][1]["end"] == 21.0
+    assert split["end"] == 8.0

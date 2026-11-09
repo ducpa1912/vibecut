@@ -214,6 +214,34 @@ def create_story_from_scenes(
     return edit
 
 
+def split_at(edit: dict, data_root: Path, output_time: float) -> dict:
+    """Split the clip under an output-timeline time into two clips."""
+    time_value = max(0.0, float(output_time))
+    clips = [clip for clip in edit.get("clips") or [] if isinstance(clip, dict)]
+    if not clips:
+        raise EditError("This edit has no clips.")
+    cursor = 0.0
+    for index, clip in enumerate(clips):
+        start = float(clip.get("start") or 0.0)
+        end = float(clip.get("end") or 0.0)
+        duration = max(0.0, end - start)
+        if time_value < cursor + duration - 0.02:
+            offset = max(0.02, time_value - cursor)
+            split = start + offset
+            if split <= start + 0.02 or split >= end - 0.02:
+                raise EditError("Move the playhead inside a clip to split it.")
+            first = _clip({"id": clip.get("scene")}, start, split, str(clip.get("role") or "body"))
+            second = _clip({"id": clip.get("scene")}, split, end, str(clip.get("role") or "body"))
+            clips[index:index + 1] = [first, second]
+            edit["clips"] = clips
+            if edit.get("kind") != "story":
+                edit["end"] = max(float(edit.get("end") or 0.0), end)
+            save_edit(edit, data_root)
+            return edit
+        cursor += duration
+    raise EditError("Move the playhead inside a clip to split it.")
+
+
 def save_edit(edit: dict, data_root: Path) -> dict:
     edit["updated"] = time.time()
     path = edit_path(data_root, str(edit["project_id"]), str(edit["id"]))

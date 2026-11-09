@@ -27,6 +27,7 @@ const state = {
   proofTab: 'scenes',
   inspectorTab: 'clean',
   previewTime: 0,
+  timelineTime: 0,
   previewCache: new Map(),
   previewStatus: new Map(),
   previewRunning: false,
@@ -278,6 +279,7 @@ async function openProject(id, { startCheck = false } = {}) {
   state.previewRunning = false;
   state.previewRun += 1;
   state.previewTime = 0;
+  state.timelineTime = 0;
   state.autoOpened = false;
   state.editorReady = false;
   state.brushMode = false;
@@ -301,7 +303,10 @@ async function openProject(id, { startCheck = false } = {}) {
   await ensureEdit();
   await ensureCaptions();
   const scenes = getScenes();
-  if (scenes[0]) state.previewTime = Number(scenes[0].start || 0) + 0.1;
+  if (scenes[0]) {
+    state.previewTime = Number(scenes[0].start || 0) + 0.1;
+    state.timelineTime = sourceToTimeline(state.previewTime);
+  }
 
   if (startCheck && state.check?.state === 'idle') await startCheck();
 }
@@ -456,13 +461,11 @@ function checkScenes() {
 function getScenes() {
   const all = checkScenes();
   if (!state.edit || state.edit.kind !== 'story') return all;
-  const ids = new Set(
-    (state.edit.clips || [])
-      .map((clip) => clip.scene)
-      .filter((id) => id !== null && id !== undefined),
-  );
-  if (!ids.size) return all;
-  return all.filter((scene) => ids.has(scene.id));
+  const byId = new Map(all.map((scene) => [scene.id, scene]));
+  const ordered = (state.edit.clips || [])
+    .map((clip) => byId.get(clip.scene))
+    .filter(Boolean);
+  return ordered.length ? ordered : all;
 }
 
 function getStories() {
@@ -1034,8 +1037,12 @@ function screenEditor() {
   const layers = sceneLayers(scene);
   const layer = layers.find((item) => item.id === state.selectedLayerId) || layers[0] || null;
   const checking = ['queued', 'running', 'cancelling'].includes(state.check?.state);
-  const cues = scriptCues().filter((cue) => Number(cue.end || 0) > Number(scene.start || 0) && Number(cue.start || 0) < Number(scene.end || 0));
-  const overlayCues = cues.length ? cues : getSegments().slice(0, 2);
+  const allCues = scriptCues();
+  let cueIndex = allCues.findIndex((cue) => Number(cue.end || 0) > Number(state.timelineTime || 0) && Number(cue.start || 0) <= Number(state.timelineTime || 0));
+  if (cueIndex < 0) cueIndex = Math.max(0, allCues.length - 1);
+  const overlayCues = allCues.length
+    ? allCues.slice(cueIndex, cueIndex + 2)
+    : getSegments().filter((segment) => Number(segment.end || 0) > Number(state.previewTime || 0)).slice(0, 2);
   const scopeNote = state.editScope === 'project' ? 'All scenes' : `Scene ${pad(state.selectedScene + 1)}`;
   const tab = state.inspectorTab === 'audio' || state.inspectorTab === 'voice' ? 'audio'
     : state.inspectorTab === 'sfx' ? 'sfx'
@@ -1069,12 +1076,15 @@ function screenEditor() {
             <div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}">
               <button class="overlay-toggle" type="button" data-action="toggle-transcript-overlay" title="Transcript layer">CC</button>
               <div class="transcript-ghost">
+                <div class="ghost-head"><strong>Transcript</strong><span>${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene</span></div>
                 ${overlayCues.slice(0, 2).map((cue, index) => {
                   const source = String(cue.source_text || cue.text || '').trim();
                   const text = String(cue.text || '').trim();
                   return `<button class="ghost-line${index === 0 ? ' is-current' : ''}" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}">
-                    ${source && source !== text ? `<span class="ghost-source">${esc(source)}</span>` : ''}
-                    <span>${esc(text || source)}</span>
+                    <span class="ghost-tc">${fmtTC(cue.start, state.check?.result?.meta?.fps || 24)}</span>
+                    <span class="ghost-speaker">Speaker</span>
+                    <span class="ghost-copy">${source && source !== text ? `<span class="ghost-source">${esc(source)}</span>` : ''}<span>${esc(text || source)}</span></span>
+                    <span class="ghost-more">${icon('more', 12)}</span>
                   </button>`;
                 }).join('') || '<span class="overlay-empty">Transcript appears here when speech is ready.</span>'}
               </div>
@@ -1454,8 +1464,15 @@ function scriptLanguage() {
     || 'en';
 }
 
+function isStoryEdit() {
+  return state.edit?.kind === 'story';
+}
+
 function timelineDuration() {
   const edit = state.edit;
+  if (isStoryEdit()) {
+    return (edit?.clips || []).reduce((sum, clip) => sum + Math.max(0, Number(clip.end || 0) - Number(clip.start || 0)), 0);
+  }
   const scenes = getScenes();
   return Math.max(
     Number(edit?.end || 0),
@@ -1465,6 +1482,50 @@ function timelineDuration() {
     Number(edit?.dub?.duration || 0),
     ...(edit?.sfx || []).map((effect) => Number(effect.end || 0)),
   );
+}
+
+function timelineSceneRanges() {
+  const scenes = getScenes();
+  if (!isStoryEdit()) {
+    return scenes.map((scene, index) => ({ scene, index, start: Number(scene.start || 0), end: Number(scene.end || 0) }));
+  }
+  const byId = new Map(scenes.map((scene) => [scene.id, scene]));
+  let cursor = 0;
+  const rows = [];
+  (state.edit?.clips || []).forEach((clip, index) => {
+    const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
+    rows.push({ scene: byId.get(clip.scene), index, start: cursor, end: cursor + duration });
+    cursor += duration;
+  });
+  return rows;
+}
+
+function timelineToSource(time) {
+  if (!isStoryEdit()) return Number(time) || 0;
+  let cursor = 0;
+  for (const clip of state.edit?.clips || []) {
+    const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
+    if (Number(time) < cursor + duration) {
+      return Number(clip.start || 0) + (Number(time) - cursor);
+    }
+    cursor += duration;
+  }
+  const last = (state.edit?.clips || []).slice(-1)[0];
+  return Number(last?.end || 0);
+}
+
+function sourceToTimeline(time) {
+  if (!isStoryEdit()) return Number(time) || 0;
+  let cursor = 0;
+  for (const clip of state.edit?.clips || []) {
+    const start = Number(clip.start || 0);
+    const end = Number(clip.end || 0);
+    if (Number(time) >= start && Number(time) < end) {
+      return cursor + (Number(time) - start);
+    }
+    cursor += Math.max(0, end - start);
+  }
+  return cursor;
 }
 
 function timelineBlock(start, end, total, label, action = '', data = '', extraStyle = '') {
@@ -1482,14 +1543,14 @@ function timelinePanel() {
   const voice = state.edit.dub || state.edit.voice;
   const music = state.edit.music;
   const fx = state.edit.sfx || [];
-  const playhead = total > 0 ? Math.max(0, Math.min(100, (Number(state.previewTime || 0) / total) * 100)) : 0;
+  const playhead = total > 0 ? Math.max(0, Math.min(100, (Number(state.timelineTime || 0) / total) * 100)) : 0;
   const ruler = Array.from({ length: 7 }, (_unused, index) => {
     const time = total > 0 ? (total * index) / 6 : 0;
     return `<span class="ruler-tick" style="left:${(index / 6 * 100).toFixed(2)}%">${fmtTC(time, 24)}</span>`;
   }).join('');
   return `<section class="panel timeline" data-total="${total}">
     <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${scenes.length} scenes · ${cues.length} cues · ${fx.length} effects</span><span class="spacer"></span>
-      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}">Trim</button></span>
+      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}">Trim</button><button class="btn small" type="button" data-action="split-at-playhead">Split</button></span>
       <button class="btn small" type="button" data-action="open-script">${icon('captions', 12)} Script</button></div>
     <div class="timeline-ruler" id="timeline-ruler" data-total="${total}">${ruler}<span class="ruler-playhead" style="left:${playhead.toFixed(2)}%"></span></div>
     <div class="timeline-body">
@@ -1497,16 +1558,14 @@ function timelinePanel() {
         <div class="timeline-label"><strong>Video</strong><button class="timeline-tool" type="button" data-action="trim-focus">Crop</button></div>
         <div class="timeline-label"><strong>Scene</strong><span class="timeline-tool">All</span></div>
         <div class="timeline-label"><strong>Script</strong><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
-        <div class="timeline-label"><strong>Audio</strong><button class="timeline-tool" type="button" data-action="open-focus" data-focus="audio">Mix</button></div>
         <div class="timeline-label"><strong>Voice</strong><button class="timeline-tool" type="button" data-action="voice-tab">${voice ? 'Preview' : 'Add'}</button></div>
         <div class="timeline-label"><strong>Music</strong>${music ? `<button class="timeline-tool" type="button" data-action="remove-music">Remove</button>` : `<button class="timeline-tool" type="button" data-action="add-music">Add</button>`}</div>
         <div class="timeline-label"><strong>SFX</strong><button class="timeline-tool" type="button" data-action="open-focus" data-focus="sfx">Add</button></div>
       </div>
       <div class="timeline-tracks">
-        <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / crop', 'trim-focus', '') : ''}</div>
-        <div class="timeline-track scene">${scenes.map((scene, index) => timelineBlock(scene.start, scene.end, total, `S${pad(index + 1)}`, 'select-scene', `data-index="${index}"`, index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '')).join('')}</div>
+        <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / cut / split', 'trim-focus', '') : ''}</div>
+        <div class="timeline-track scene">${timelineSceneRanges().map((row) => timelineBlock(row.start, row.end, total, `S${pad(row.index + 1)}`, 'select-scene', `data-index="${row.index}"`, row.index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '')).join('')}</div>
         <div class="timeline-track script">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
-        <div class="timeline-track audio">${total > 0 ? timelineBlock(0, total, total, 'Original', '', '') : ''}</div>
         <div class="timeline-track voice">${voice ? timelineBlock(0, Math.min(total, Number(voice.duration || total)), total, state.edit.dub ? 'Dub' : (voice.engine === 'record' ? 'Recorded' : 'Voice'), 'open-focus', 'data-focus="audio"') : ''}</div>
         <div class="timeline-track music">${music ? timelineBlock(0, total, total, music.name || 'Music', 'open-focus', 'data-focus="audio"') : ''}</div>
         <div class="timeline-track sfx">${fx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('')}</div>
@@ -1737,12 +1796,13 @@ function brushStage(scene) {
 
 function seekToTime(time) {
   const total = Number(document.querySelector('.timeline')?.dataset.total || 0);
-  state.previewTime = Math.max(0, Math.min(total || Number(time || 0), Number(time || 0)));
+  state.timelineTime = Math.max(0, Math.min(total || Number(time || 0), Number(time || 0)));
+  state.previewTime = timelineToSource(state.timelineTime);
   const video = document.querySelector('video[data-preview]');
   if (video) {
     try { video.currentTime = state.previewTime; } catch (_) { /* metadata not ready */ }
   }
-  updateTimelinePlayhead(state.previewTime);
+  updateTimelinePlayhead(state.timelineTime);
 }
 
 function setupTimelineRuler() {
@@ -2297,7 +2357,10 @@ async function handleFile(file) {
       state.screen = 'edit';
       state.selectedScene = Math.max(0, (state.check?.result?.scenes?.length || 1) - 1);
       const appendedScene = state.check?.result?.scenes?.[state.selectedScene];
-      if (appendedScene) state.previewTime = Number(appendedScene.start || 0) + 0.1;
+      if (appendedScene) {
+        state.previewTime = Number(appendedScene.start || 0) + 0.1;
+        state.timelineTime = sourceToTimeline(state.previewTime);
+      }
       navigate(projectPath('edit'));
       const added = mode === 'scenes'
         ? `Added ${data.scenes} scene${data.scenes === 1 ? '' : 's'}.`
@@ -2418,6 +2481,25 @@ async function clearQueue() {
     toast('Finished renders cleared.');
   } catch (error) {
     toast(`Queue clear failed: ${error.message}`, 'bad');
+  }
+}
+
+async function splitAtPlayhead() {
+  if (!state.project || !state.edit) return;
+  if (!(state.timelineTime > 0.02)) {
+    toast('Move the playhead inside a clip first.', 'bad');
+    return;
+  }
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clips/split`, {
+      method: 'POST',
+      body: JSON.stringify({ time: state.timelineTime }),
+    });
+    state.edit = data.edit;
+    render();
+    toast('Clip split.');
+  } catch (error) {
+    toast(`Split: ${error.message}`, 'bad');
   }
 }
 
@@ -2835,7 +2917,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'import-full') beginImport('full');
     else if (action === 'settings') await openSettings();
     else if (action === 'search') openSearch();
-    else if (action === 'search-scene') { closeModal(); state.selectedScene = Math.max(0, Number(target.dataset.index || 0)); state.previewTime = Number(getScenes()[state.selectedScene]?.start || 0) + 0.1; navigate(projectPath('edit')); }
+    else if (action === 'search-scene') { closeModal(); state.selectedScene = Math.max(0, Number(target.dataset.index || 0)); state.previewTime = Number(getScenes()[state.selectedScene]?.start || 0) + 0.1; state.timelineTime = sourceToTimeline(state.previewTime); navigate(projectPath('edit')); }
     else if (action === 'search-project') { const id = target.dataset.project || ''; closeModal(); if (id) { await openProject(id); navigate(`project/${id}/${state.check?.state === 'done' ? 'edit' : 'check'}`); } }
     else if (action === 'close-modal') closeModal();
     else if (action === 'start-check') await startCheck();
@@ -2867,6 +2949,7 @@ document.addEventListener('click', async (event) => {
       const scenes = getScenes();
       state.selectedScene = Math.max(0, Math.min(index, scenes.length - 1));
       state.previewTime = Number(scenes[state.selectedScene]?.start || 0) + 0.1;
+      state.timelineTime = sourceToTimeline(state.previewTime);
       state.selectedLayerId = '';
       state.inlinePlaying = false;
       state.showAllLayers = false;
@@ -2878,6 +2961,7 @@ document.addEventListener('click', async (event) => {
       state.proofTab = 'stories';
       state.selectedScene = Math.max(0, Math.min(index, getScenes().length - 1));
       state.previewTime = Number(getStories()[Number(target.dataset.index || 0)]?.start || 0) + 0.1;
+      state.timelineTime = sourceToTimeline(state.previewTime);
       render();
     } else if (action === 'select-layer') { state.selectedLayerId = target.dataset.layer || ''; render(); }
     else if (action === 'toggle-layers') { state.showAllLayers = !state.showAllLayers; render(); }
@@ -2887,6 +2971,7 @@ document.addEventListener('click', async (event) => {
       if (strip) strip.scrollBy({ left: Number(target.dataset.dir || 1) * Math.max(180, strip.clientWidth * 0.75), behavior: 'smooth' });
     }
     else if (action === 'trim-apply') await applyTrim();
+    else if (action === 'split-at-playhead') await splitAtPlayhead();
     else if (action === 'clear-queue') await clearQueue();
     else if (action === 'clean-action') await cleanAction(target.dataset.layer || '', target.dataset.kind || 'fill');
     else if (action === 'clean-all') await cleanAll();
@@ -2953,9 +3038,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'download-pack') await downloadPack(target.dataset.pack || '');
     else if (action === 'remove-pack') await removePack(target.dataset.pack || '');
     else if (action === 'seek') {
-      state.previewTime = Number(target.dataset.time || 0) + 0.01;
-      const video = document.querySelector('video[data-preview]');
-      if (video) video.currentTime = state.previewTime;
+      seekToTime(Number(target.dataset.time || 0) + 0.01);
       render();
     }
   } catch (error) {
@@ -3019,14 +3102,14 @@ function afterRender() {
       try { inline.currentTime = start; } catch (_) { /* metadata not ready */ }
     }
     inline.play().catch(() => {});
-    inline.addEventListener('timeupdate', () => { state.previewTime = inline.currentTime; updateTimelinePlayhead(inline.currentTime); }, { passive: true });
+    inline.addEventListener('timeupdate', () => { state.previewTime = inline.currentTime; state.timelineTime = sourceToTimeline(inline.currentTime); updateTimelinePlayhead(state.timelineTime); }, { passive: true });
   }
   const video = document.querySelector('video[data-preview]');
   if (video) {
     if (state.previewTime > 0 && Math.abs(video.currentTime - state.previewTime) > 0.35) {
       try { video.currentTime = state.previewTime; } catch (_) { /* metadata not ready */ }
     }
-    video.addEventListener('timeupdate', () => { state.previewTime = video.currentTime; updateTimelinePlayhead(video.currentTime); }, { passive: true });
+    video.addEventListener('timeupdate', () => { state.previewTime = video.currentTime; state.timelineTime = sourceToTimeline(video.currentTime); updateTimelinePlayhead(state.timelineTime); }, { passive: true });
   }
 
   document.querySelectorAll('.split-stage').forEach((stage) => {

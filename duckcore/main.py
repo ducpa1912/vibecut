@@ -100,6 +100,10 @@ class ClipPatch(BaseModel):
     end: float | None = None
 
 
+class SplitClipBody(BaseModel):
+    time: float = Field(ge=0.0)
+
+
 class VoicePatch(BaseModel):
     voice: str = Field(min_length=1, max_length=80)
     mode: str = Field(default="voice_over", pattern="^(voice_over|voice_only)$")
@@ -939,6 +943,20 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         edit["start"] = round(float(clips[0].get("start") or 0.0), 3)
         edit["end"] = round(float(clips[-1].get("end") or 0.0), 3)
         edits.save_edit(edit, data_root)
+        return {"edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/clips/split")
+    def split_clip(
+        project_id: str, edit_id: str, body: SplitClipBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edit = edits.split_at(edit, data_root, body.time)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"edit": edit}
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/clean/manual")
