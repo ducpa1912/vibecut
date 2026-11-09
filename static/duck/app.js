@@ -203,6 +203,7 @@ function icon(name, size = 18) {
     captions: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 10.2a2.4 2.4 0 1 0 0 3.6M17 10.2a2.4 2.4 0 1 0 0 3.6"/>',
     voice: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V21M9 21h6"/>',
     layers: '<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>',
+    split: '<path d="M12 3v18M8 3h8M8 21h8"/>',
     sparkle: '<path d="M12 3.5 13.6 9l5.4 1.6-5.4 1.6L12 17.7l-1.6-5.5L5 10.6 10.4 9 12 3.5Z"/><path d="M18.5 15.5 19.2 18l2.3.7-2.3.7-.7 2.4-.7-2.4-2.3-.7 2.3-.7.7-2.5Z"/>',
     grid: '<rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/>',
     list: '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
@@ -1080,7 +1081,7 @@ function screenEditor() {
                 ${overlayCues.slice(0, 2).map((cue, index) => {
                   const source = String(cue.source_text || cue.text || '').trim();
                   const text = String(cue.text || '').trim();
-                  return `<button class="ghost-line${index === 0 ? ' is-current' : ''}" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}">
+                  return `<button class="ghost-line${index === 0 ? ' is-current' : ''}" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}" data-start="${Number(cue.start || 0).toFixed(3)}" data-end="${Number(cue.end || 0).toFixed(3)}">
                     <span class="ghost-tc">${fmtTC(cue.start, state.check?.result?.meta?.fps || 24)}</span>
                     <span class="ghost-speaker">Speaker</span>
                     <span class="ghost-copy">${source && source !== text ? `<span class="ghost-source">${esc(source)}</span>` : ''}<span>${esc(text || source)}</span></span>
@@ -1589,16 +1590,16 @@ function timelinePanel() {
   }).join('');
   return `<section class="panel timeline" data-total="${total}">
     <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${scenes.length} scenes · ${cues.length} cues · ${(state.edit.sfx || []).length} effects</span><span class="spacer"></span>
-      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}">Trim</button><button class="btn small" type="button" data-action="split-at-playhead">Split</button><button class="btn small" type="button" data-action="slip-clip" data-delta="-0.5">Slip −</button><button class="btn small" type="button" data-action="slip-clip" data-delta="0.5">Slip +</button></span>
-      <button class="btn small" type="button" data-action="open-script">${icon('captions', 12)} Script</button></div>
+      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="icon-btn timeline-action" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}" title="Trim selected clip">${icon('scissors', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="split-at-playhead" title="Split at playhead">${icon('split', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="slip-clip" data-delta="-0.5" title="Slip earlier">${icon('chevronLeft', 14)}</button><button class="icon-btn timeline-action" type="button" data-action="slip-clip" data-delta="0.5" title="Slip later">${icon('chevronRight', 14)}</button></span>
+      <button class="icon-btn timeline-action" type="button" data-action="open-script" title="Open Script Focus">${icon('captions', 14)}</button></div>
     <div class="timeline-ruler" id="timeline-ruler" data-total="${total}">${ruler}<span class="ruler-playhead" style="left:${playhead.toFixed(2)}%"></span></div>
     <div class="timeline-body">
       <div class="timeline-labels" style="grid-template-rows:22px 22px 22px ${audioHeight}px 22px">
-        <div class="timeline-label"><strong>Video</strong><button class="timeline-tool" type="button" data-action="trim-focus">Crop</button></div>
+        <div class="timeline-label"><strong>Video</strong><button class="timeline-tool icon" type="button" data-action="trim-focus" title="Trim, cut or slip video">${icon('expand', 10)}</button></div>
         <div class="timeline-label"><strong>Scene</strong><span class="timeline-tool">All</span></div>
         <div class="timeline-label"><strong>Script</strong><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
-        <div class="timeline-label audio-labels"><strong>Voice & Music</strong><span><button class="timeline-tool" type="button" data-action="voice-tab">+ Voice</button><button class="timeline-tool" type="button" data-action="add-music">+ Music</button></span></div>
-        <div class="timeline-label"><strong>SFX</strong><button class="timeline-tool" type="button" data-action="open-focus" data-focus="sfx">Add</button></div>
+        <div class="timeline-label audio-labels"><strong>Voice & Music</strong><span><button class="timeline-tool icon" type="button" data-action="voice-tab" title="Add voice-over">${icon('plus', 10)}</button><button class="timeline-tool icon" type="button" data-action="add-music" title="Add music">${icon('volume', 10)}</button></span></div>
+        <div class="timeline-label"><strong>SFX</strong><button class="timeline-tool icon" type="button" data-action="open-focus" data-focus="sfx" title="Add special effect">${icon('plus', 10)}</button></div>
       </div>
       <div class="timeline-tracks" style="grid-template-rows:22px 22px 22px ${audioHeight}px 22px">
         <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / cut / split', 'trim-focus', '') : ''}</div>
@@ -1840,6 +1841,16 @@ function seekToTime(time) {
     try { video.currentTime = state.previewTime; } catch (_) { /* metadata not ready */ }
   }
   updateTimelinePlayhead(state.timelineTime);
+  updateGhostActive();
+}
+
+function updateGhostActive() {
+  const time = Number(state.timelineTime || 0);
+  document.querySelectorAll('.ghost-line').forEach((line) => {
+    const start = Number(line.dataset.start || 0);
+    const end = Number(line.dataset.end || 0);
+    line.classList.toggle('is-current', time >= start && time < end);
+  });
 }
 
 function setupTimelineRuler() {
@@ -3049,7 +3060,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'script-translate') await translateScript();
     else if (action === 'script-rewrite') await rewriteScript();
     else if (action === 'script-reset') await resetScript();
-    else if (action === 'timeline-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); render(); }
+    else if (action === 'timeline-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); updateGhostActive(); }
     else if (action === 'trim-focus') document.querySelector('.timeline-trim')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     else if (action === 'voice-tab') { state.inspectorTab = 'voice'; state.scriptOpen = false; render(); }
     else if (action === 'add-music') document.querySelector('#music-input')?.click();
@@ -3098,7 +3109,6 @@ document.addEventListener('click', async (event) => {
     else if (action === 'remove-pack') await removePack(target.dataset.pack || '');
     else if (action === 'seek') {
       seekToTime(Number(target.dataset.time || 0) + 0.01);
-      render();
     }
   } catch (error) {
     toast(error.message || 'Action failed.', 'bad');

@@ -1423,3 +1423,16 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
 .timeline-trim { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .timeline { overflow: hidden; }
 .ruler-tick.is-last { transform: translateX(-100%); }
+.transcript-ghost {
+  background: rgba(255, 253, 249, .58);
+  border-color: rgba(255, 255, 255, .22);
+  box-shadow: 0 4px 18px rgba(0,0,0,.10);
+  backdrop-filter: blur(9px) saturate(1.08);
+}
+.ghost-head { border-bottom-color: rgba(255,255,255,.20); background: rgba(255,253,249,.18); }
+.ghost-line { border-bottom-color: rgba(255,255,255,.16); }
+.ghost-line.is-current { background: rgba(255,253,249,.34); }
+.ghost-line:hover { background: rgba(253,240,223,.48); }
+.timeline-action { width: 25px; height: 25px; padding: 0; flex: 0 0 auto; }
+.timeline-tool.icon { width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 4px; }
+.timeline-tool.icon:hover { background: var(--panel); text-decoration: none; }
