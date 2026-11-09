@@ -43,6 +43,18 @@ class CheckManager:
             })
             del history[:-200]
 
+    def adopt(self, project_id: str, result: dict[str, Any]) -> None:
+        """Publish an externally updated Check result without rerunning."""
+        self._set(
+            project_id,
+            state="done",
+            stage="Done",
+            progress=1.0,
+            message="Check complete",
+            editor_ready=True,
+            result=result,
+        )
+
     def _saved(self, project_id: str) -> dict[str, Any] | None:
         path = self._project_dir(project_id) / "check.json"
         if not path.is_file():

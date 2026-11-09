@@ -55,6 +55,7 @@ def ensure_preview(
     target: str | Path,
     *,
     timeout: float = 600.0,
+    force: bool = False,
 ) -> Path | None:
     """Make a browser-playable H.264 proxy for the editor.
 
@@ -62,7 +63,7 @@ def ensure_preview(
     render master; this proxy is only the editor video element.
     """
     target = Path(target)
-    if target.is_file() and target.stat().st_size > 1024:
+    if not force and target.is_file() and target.stat().st_size > 1024:
         return target
     source = Path(source)
     if not source.is_file():
@@ -77,7 +78,7 @@ def ensure_preview(
         str(temporary),
     ]
     with _PREVIEW_LOCK:
-        if target.is_file() and target.stat().st_size > 1024:
+        if not force and target.is_file() and target.stat().st_size > 1024:
             return target
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)

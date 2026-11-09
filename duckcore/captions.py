@@ -275,6 +275,82 @@ def generate(edit: dict, transcript: dict, data_root: Path) -> dict:
     return track
 
 
+def append_appended(
+    edit: dict,
+    transcript: dict,
+    data_root: Path,
+    offset: float,
+    scene_ids: set[int] | None = None,
+) -> dict | None:
+    """Add caption cues for clips appended after ``offset``.
+
+    Existing cues stay untouched, including user edits and translations. New
+    cues use the source transcript for the appended range.
+    """
+    try:
+        edit = edits.get_edit(data_root, str(edit["project_id"]), str(edit["id"]))
+    except (KeyError, edits.EditError):
+        pass
+    track = edit.get("captions")
+    if not isinstance(track, dict) or not track.get("cues"):
+        return None
+    clips = [
+        clip for clip in edit.get("clips") or []
+        if float(clip.get("end") or 0.0) > float(clip.get("start") or 0.0)
+    ]
+    if scene_ids:
+        first = next(
+            (index for index, clip in enumerate(clips)
+             if int(clip.get("scene") or -1) in scene_ids),
+            None,
+        )
+    else:
+        first = next(
+            (index for index, clip in enumerate(clips)
+             if float(clip.get("start") or 0.0) >= float(offset) - 0.05),
+            None,
+        )
+    if first is None:
+        return None
+    segments = [item for item in transcript.get("segments") or [] if isinstance(item, dict)]
+    if not segments:
+        return None
+    out_cursor = 0.0
+    for clip in clips[:first]:
+        out_cursor += max(0.0, float(clip.get("end") or 0.0) - float(clip.get("start") or 0.0))
+    existing = list(track.get("cues") or [])
+    known = {
+        (round(float(cue.get("start") or 0.0), 2), round(float(cue.get("end") or 0.0), 2),
+         str(cue.get("text") or ""))
+        for cue in existing
+    }
+    added: list[dict] = []
+    for clip in clips[first:]:
+        start = float(clip.get("start") or 0.0)
+        end = float(clip.get("end") or 0.0)
+        duration = max(0.0, end - start)
+        for cue_start, cue_end, text in _cues_for_clip(
+            segments, clip_start=start, clip_end=end, out_start=out_cursor,
+        ):
+            key = (round(cue_start, 2), round(cue_end, 2), text)
+            if key in known:
+                continue
+            known.add(key)
+            added.append({
+                "id": f"cq_{hashlib.sha1(f'{cue_start}:{cue_end}:{text}'.encode()).hexdigest()[:10]}",
+                "start": round(cue_start, 3),
+                "end": round(cue_end, 3),
+                "text": text,
+                "source_text": text,
+            })
+        out_cursor += duration
+    if not added:
+        return track
+    track["cues"] = sorted(existing + added, key=lambda cue: float(cue.get("start") or 0.0))
+    edits.save_edit(edit, data_root)
+    return track
+
+
 def srt(track: dict) -> str:
     def stamp(value: float) -> str:
         value = max(0.0, float(value))

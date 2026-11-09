@@ -27,6 +27,9 @@ final class DuckSuiteAppDelegate: NSObject, NSApplicationDelegate {
         guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         for window in app.windows where window.canBecomeMain {
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.isMovableByWindowBackground = true
             var frame = window.frame
             let intersectsActiveScreen = visible.intersects(frame)
             if !intersectsActiveScreen || frame.width > visible.width || frame.height > visible.height {
@@ -56,7 +59,9 @@ struct DuckSuiteApp: App {
                 .environmentObject(model)
                 .frame(minWidth: 1280, minHeight: 800)
         }
-        .windowStyle(.titleBar)
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 1440, height: 900)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Project") {}

@@ -3,6 +3,18 @@
 Date: 2026-11-08  
 Status: user-test-02 pass; signing and store URLs still blocked
 
+## Current publish result
+
+`xcodebuild -exportArchive` fails with:
+
+```text
+error: exportArchive No Team Found in Archive
+```
+
+Reason: no Apple Development / Apple Distribution identity, no team ID, and no
+provisioning profile on this Mac. TestFlight upload cannot start until an Apple
+Developer account signs into Xcode.
+
 ## Short answer: where is the DMG?
 
 There is **no DMG**. That is intentional.
@@ -79,7 +91,7 @@ Notarization is **not** part of the Mac App Store path. It is required only for 
 | StoreKit | Ready: no IAP scaffold in v1; price comes from App Store Connect | No subscription in v1 |
 | Metadata | Description, keywords, category, age rating, support URL, screenshots | Required listing |
 | Review notes | Local server, bundled Python, no downloaded code, own-footage clean | High review-risk area |
-| Media auth | Frontend uses `?t=` for images/video; distribution doc says no query-string tokens | Security policy mismatch; move media reads to the HttpOnly cookie |
+| Media auth | Ready: the frontend calls `/api/session` and media reads use the HttpOnly cookie; no query-string token is built into media URLs | Matches the distribution policy |
 | Own-footage | Runtime gate removed by product decision; always-on acknowledgment in Settings; policy in README and T&C | Legal/review copy must ship; no runtime gate |
 | Clean quality | Pass on the fixed fixture: scene 01 3.5 s, scene 03, scene 07 clean; proof/render MAD 2.30 | Re-run on a licensed 16:9 demo before submission |
 | TestFlight | No archive, upload, or clean-Mac test | Release gate |

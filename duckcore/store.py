@@ -96,6 +96,21 @@ class ProjectStore:
             raise KeyError(project_id)
         return self._row(row)
 
+    def update_source(self, project_id: str, source_path: str | Path) -> dict[str, Any]:
+        source = Path(source_path).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError(str(source))
+        if not source.is_relative_to(self.data_root):
+            raise ValueError("Source must be inside the DuckSuite data folder.")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE projects SET source_path = ?, source_bytes = ?, updated = ? WHERE id = ?",
+                (str(source), source.stat().st_size, time.time(), project_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(project_id)
+        return self.get(project_id)
+
     def rename(self, project_id: str, name: str) -> dict[str, Any]:
         clean_name = " ".join(str(name or "").split()).strip()
         if not clean_name:

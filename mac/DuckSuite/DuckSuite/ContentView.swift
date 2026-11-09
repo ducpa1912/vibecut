@@ -13,7 +13,10 @@ struct ContentView: View {
             if let url = model.url {
                 WebView(
                     url: url,
-                    onImport: { await model.importVideo() },
+                    onImport: { mode, projectID in
+                        await model.importVideo(mode: mode, projectID: projectID)
+                    },
+                    onImportNotice: { model.notice },
                     onRecordStart: { try await model.startRecording() },
                     onRecordStop: { model.stopRecording() }
                 )
@@ -53,7 +56,8 @@ struct ContentView: View {
 
 private struct WebView: NSViewRepresentable {
     let url: URL
-    let onImport: @MainActor () async -> Bool
+    let onImport: @MainActor (String, String?) async -> Bool
+    let onImportNotice: @MainActor () -> String?
     let onRecordStart: @MainActor () async throws -> String
     let onRecordStop: @MainActor () -> String?
 
@@ -82,6 +86,7 @@ private struct WebView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             onImport: onImport,
+            onImportNotice: onImportNotice,
             onRecordStart: onRecordStart,
             onRecordStop: onRecordStop
         )
@@ -89,16 +94,19 @@ private struct WebView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
-        private let onImport: @MainActor () async -> Bool
+        private let onImport: @MainActor (String, String?) async -> Bool
+        private let onImportNotice: @MainActor () -> String?
         private let onRecordStart: @MainActor () async throws -> String
         private let onRecordStop: @MainActor () -> String?
 
         init(
-            onImport: @escaping @MainActor () async -> Bool,
+            onImport: @escaping @MainActor (String, String?) async -> Bool,
+            onImportNotice: @escaping @MainActor () -> String?,
             onRecordStart: @escaping @MainActor () async throws -> String,
             onRecordStop: @escaping @MainActor () -> String?
         ) {
             self.onImport = onImport
+            self.onImportNotice = onImportNotice
             self.onRecordStart = onRecordStart
             self.onRecordStop = onRecordStop
         }
@@ -114,11 +122,17 @@ private struct WebView: NSViewRepresentable {
             else { return }
 
             if type == "import" {
+                let mode = (body["mode"] as? String) ?? "new"
+                let projectID = (body["projectId"] as? String).flatMap {
+                    $0.isEmpty ? nil : $0
+                }
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    let imported = await self.onImport()
+                    let imported = await self.onImport(mode, projectID)
                     if imported {
                         self.webView?.reload()
+                    } else if let message = self.onImportNotice(), !message.isEmpty {
+                        self.callJS("window.duckImportError", message)
                     }
                 }
                 return

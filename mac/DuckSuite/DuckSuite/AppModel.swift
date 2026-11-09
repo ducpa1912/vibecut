@@ -126,11 +126,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func importVideo() async -> Bool {
+    func importVideo(mode: String = "new", projectID: String? = nil) async -> Bool {
         guard !isImporting else { return false }
+        notice = nil
         let panel = NSOpenPanel()
-        panel.title = "Import a video"
-        panel.message = "MP4, MOV or M4V. The file is copied into DuckSuite."
+        panel.title = projectID == nil ? "Import a video" : "Add a video to this project"
+        panel.message = projectID == nil
+            ? "MP4, MOV or M4V. The file is copied into DuckSuite."
+            : "MP4, MOV or M4V. The project keeps its existing scenes."
         panel.prompt = "Import"
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -150,10 +153,47 @@ final class AppModel: ObservableObject {
                 .appendingPathComponent("imports", isDirectory: true)
                 .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var keepCopy = false
+            defer {
+                if !keepCopy {
+                    try? FileManager.default.removeItem(at: folder)
+                }
+            }
             let ext = source.pathExtension.isEmpty ? "mp4" : source.pathExtension.lowercased()
             let target = folder.appendingPathComponent("source.\(ext)")
             try FileManager.default.copyItem(at: source, to: target)
 
+            if let projectID, !projectID.isEmpty, mode == "scenes" || mode == "full" {
+                let started = try await request(
+                    path: "api/projects/\(projectID)/append/job",
+                    method: "POST",
+                    body: try JSONSerialization.data(withJSONObject: [
+                        "source_path": target.path,
+                        "mode": mode,
+                        "cleanup": true,
+                    ]),
+                    timeout: 30
+                )
+                guard
+                    let object = try JSONSerialization.jsonObject(with: started) as? [String: Any],
+                    let job = object["job"] as? [String: Any],
+                    let jobID = job["id"] as? String
+                else {
+                    throw ImportError.badResponse
+                }
+                keepCopy = true
+                let completed = try await waitForAppendJob(projectID: projectID, jobID: jobID)
+                await loadProjects()
+                let added = mode == "scenes"
+                    ? "Added scenes from \(source.lastPathComponent)"
+                    : "Added the full video \(source.lastPathComponent)"
+                if let warning = completed["warning"] as? String, !warning.isEmpty {
+                    notice = "\(added). \(warning)"
+                } else {
+                    notice = added
+                }
+                return true
+            }
             _ = try await request(
                 path: "api/projects",
                 method: "POST",
@@ -162,6 +202,7 @@ final class AppModel: ObservableObject {
                     "source_path": target.path,
                 ])
             )
+            keepCopy = true
             await loadProjects()
             notice = "Imported \(source.lastPathComponent)"
             return true
@@ -169,6 +210,42 @@ final class AppModel: ObservableObject {
             notice = "Import failed: \(error.localizedDescription)"
             return false
         }
+    }
+
+    private func waitForAppendJob(projectID: String, jobID: String) async throws -> [String: Any] {
+        var consecutiveErrors = 0
+        for _ in 0..<7200 {
+            let data: Data
+            do {
+                data = try await request(
+                    path: "api/projects/\(projectID)/append/job/\(jobID)",
+                    timeout: 30
+                )
+                consecutiveErrors = 0
+            } catch {
+                consecutiveErrors += 1
+                if consecutiveErrors >= 8 {
+                    throw error
+                }
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
+            guard
+                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let job = object["job"] as? [String: Any]
+            else {
+                throw ImportError.badResponse
+            }
+            switch job["state"] as? String {
+            case "done":
+                return job
+            case "failed":
+                throw ImportError.server((job["error"] as? String) ?? "Import failed.")
+            default:
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+        throw ImportError.server("The import took too long.")
     }
 
     func deleteProject(_ project: Project) async {
@@ -186,11 +263,13 @@ final class AppModel: ObservableObject {
     private func request(
         path: String,
         method: String = "GET",
-        body: Data? = nil
+        body: Data? = nil,
+        timeout: TimeInterval = 60
     ) async throws -> Data {
         guard let baseURL, let launchToken else { throw ImportError.notReady }
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = method
+        request.timeoutInterval = timeout
         request.setValue("Bearer \(launchToken)", forHTTPHeaderField: "Authorization")
         if let body {
             request.httpBody = body

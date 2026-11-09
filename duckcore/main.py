@@ -30,8 +30,9 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
-from duckcore import app_settings, captions, clean, edits, media, packs, preview, render, script, voice
+from duckcore import append, app_settings, captions, clean, edits, media, packs, preview, render, script, voice
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -45,6 +46,7 @@ if not STATIC.is_dir():
         STATIC = bundled_static
 APP_VERSION = "1.0.0"
 PROOF_VERSION = 10
+MAX_IMPORT_BYTES = 8 * 1024**3
 
 
 class ProjectCreate(BaseModel):
@@ -54,6 +56,12 @@ class ProjectCreate(BaseModel):
 
 class ProjectRename(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+
+
+class ProjectAppend(BaseModel):
+    source_path: str
+    mode: str = Field(default="scenes", pattern="^(scenes|full)$")
+    cleanup: bool = False
 
 
 class StoryEditBody(BaseModel):
@@ -185,6 +193,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     data_root = Path(data_root).expanduser().resolve()
     data_root.mkdir(parents=True, exist_ok=True)
     store = ProjectStore(data_root)
+    append.recover_commits(store, data_root)
     checks = CheckManager(data_root, store)
     renders = render.RenderQueue(data_root)
     dev_mode = os.environ.get("DUCK_DEV", "").strip() == "1"
@@ -215,6 +224,35 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         if any(item and secrets.compare_digest(item, token) for item in candidates):
             return
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+    async def stage_upload(request: Request) -> tuple[Path, Path]:
+        filename = Path(request.headers.get("x-filename", "video.mp4")).name
+        suffix = Path(filename).suffix.lower() or ".mp4"
+        if suffix not in {".mp4", ".mov", ".m4v"}:
+            raise HTTPException(status_code=400, detail="Use MP4, MOV or M4V.")
+        target_dir = data_root / "imports" / uuid.uuid4().hex[:12]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"source{suffix}"
+        size = 0
+        try:
+            with target.open("wb") as writer:
+                async for chunk in request.stream():
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > MAX_IMPORT_BYTES:
+                        raise HTTPException(status_code=413, detail="The video is larger than 8 GB.")
+                    writer.write(chunk)
+        except HTTPException:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=f"The upload failed: {exc}") from exc
+        if size == 0:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="The video file is empty.")
+        return target_dir, target
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -398,6 +436,171 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         ).start()
         return {"project": project}
 
+    @app.post("/api/projects/{project_id}/append")
+    def append_project(
+        project_id: str, body: ProjectAppend, _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        if append.busy(project_id):
+            raise HTTPException(status_code=409, detail="An import is already running.")
+        status = checks.status(project_id)
+        if status.get("state") in {"queued", "running", "cancelling"}:
+            raise HTTPException(status_code=409, detail="Wait for Check to finish first.")
+        if renders.busy_for(project_id):
+            raise HTTPException(status_code=409, detail="Wait for the render to finish first.")
+        try:
+            result = append.append_locked(
+                project_id,
+                body.source_path,
+                body.mode,
+                store=store,
+                data_root=data_root,
+                checks=checks,
+                renders=renders,
+                cleanup=body.cleanup,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        except append.AppendError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(exc)[:300]) from exc
+        return result
+
+    @app.post("/api/projects/{project_id}/append/job", status_code=202)
+    def append_project_job(
+        project_id: str, body: ProjectAppend, _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        if append.busy(project_id):
+            raise HTTPException(status_code=409, detail="An import is already running.")
+        status = checks.status(project_id)
+        if status.get("state") in {"queued", "running", "cancelling"}:
+            raise HTTPException(status_code=409, detail="Wait for Check to finish first.")
+        if renders.busy_for(project_id):
+            raise HTTPException(status_code=409, detail="Wait for the render to finish first.")
+        try:
+            job = append.start_job(
+                project_id,
+                body.source_path,
+                body.mode,
+                store=store,
+                data_root=data_root,
+                checks=checks,
+                renders=renders,
+                cleanup=body.cleanup,
+            )
+        except append.AppendError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"job": job}
+
+    @app.get("/api/projects/{project_id}/append/job")
+    def append_project_job_current(
+        project_id: str, _: None = Depends(require_token),
+    ) -> dict:
+        return {"job": append.active_job(project_id)}
+
+    @app.get("/api/projects/{project_id}/append/job/{job_id}")
+    def append_project_job_status(
+        project_id: str, job_id: str, _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            job = append.job_status(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Append job not found.") from exc
+        if str(job.get("project_id")) != project_id:
+            raise HTTPException(status_code=404, detail="Append job not found.")
+        return {"job": job}
+
+    @app.post("/api/projects/{project_id}/append/upload")
+    async def append_project_upload(
+        project_id: str, request: Request, _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        if append.busy(project_id):
+            raise HTTPException(status_code=409, detail="An import is already running.")
+        status = checks.status(project_id)
+        if status.get("state") in {"queued", "running", "cancelling"}:
+            raise HTTPException(status_code=409, detail="Wait for Check to finish first.")
+        if renders.busy_for(project_id):
+            raise HTTPException(status_code=409, detail="Wait for the render to finish first.")
+        mode = str(request.headers.get("x-mode", "scenes")).lower()
+        if mode not in {"scenes", "full"}:
+            raise HTTPException(status_code=400, detail="Choose Add scenes or Use full video.")
+        target_dir, target = await stage_upload(request)
+        try:
+            return await run_in_threadpool(
+                append.append_locked,
+                project_id,
+                target,
+                mode,
+                store=store,
+                data_root=data_root,
+                checks=checks,
+                renders=renders,
+                cleanup=True,
+            )
+        except append.AppendError as exc:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=str(exc)[:300]) from exc
+
+    @app.post("/api/projects/{project_id}/append/upload/job", status_code=202)
+    async def append_project_upload_job(
+        project_id: str, request: Request, _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            store.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
+        if append.busy(project_id):
+            raise HTTPException(status_code=409, detail="An import is already running.")
+        status = checks.status(project_id)
+        if status.get("state") in {"queued", "running", "cancelling"}:
+            raise HTTPException(status_code=409, detail="Wait for Check to finish first.")
+        if renders.busy_for(project_id):
+            raise HTTPException(status_code=409, detail="Wait for the render to finish first.")
+        mode = str(request.headers.get("x-mode", "scenes")).lower()
+        if mode not in {"scenes", "full"}:
+            raise HTTPException(status_code=400, detail="Choose Add scenes or Use full video.")
+        target_dir, target = await stage_upload(request)
+        try:
+            job = append.start_job(
+                project_id,
+                target,
+                mode,
+                store=store,
+                data_root=data_root,
+                checks=checks,
+                renders=renders,
+                cleanup=True,
+            )
+        except append.AppendError as exc:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=str(exc)[:300]) from exc
+        return {"job": job}
+
     @app.get("/api/projects/{project_id}/frame")
     def project_frame(
         project_id: str,
@@ -474,7 +677,14 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             project = store.get(project_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Project not found.") from exc
-        return {"project": project, "check": checks.status(project_id)}
+        status = checks.status(project_id)
+        result = status.get("result")
+        if isinstance(result, dict):
+            expired = append.expire_pending(data_root, project_id, result)
+            if expired is not None:
+                checks.adopt(project_id, expired)
+                status = checks.status(project_id)
+        return {"project": project, "check": status}
 
     @app.post("/api/projects/{project_id}/check")
     def start_check(project_id: str, _: None = Depends(require_token)) -> dict:
@@ -482,6 +692,18 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             store.get(project_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Project not found.") from exc
+        status = checks.status(project_id)
+        result = status.get("result")
+        if append.busy(project_id):
+            raise HTTPException(status_code=409, detail="Wait for the import to finish first.")
+        if isinstance(result, dict) and (result.get("append") or {}).get("analysis") == "pending":
+            expired = append.expire_pending(data_root, project_id, result)
+            if expired is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Wait for the added scenes to finish reading.",
+                )
+            checks.adopt(project_id, expired)
         return {"check": checks.start(project_id)}
 
     @app.get("/api/projects/{project_id}/check")
@@ -490,7 +712,14 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             store.get(project_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Project not found.") from exc
-        return {"check": checks.status(project_id)}
+        status = checks.status(project_id)
+        result = status.get("result")
+        if isinstance(result, dict):
+            expired = append.expire_pending(data_root, project_id, result)
+            if expired is not None:
+                checks.adopt(project_id, expired)
+                status = checks.status(project_id)
+        return {"check": status}
 
     @app.post("/api/projects/{project_id}/check/cancel")
     def cancel_check(project_id: str, _: None = Depends(require_token)) -> dict:
@@ -1035,6 +1264,15 @@ def create_app(token: str, data_root: Path) -> FastAPI:
     def start_render(
         project_id: str, edit_id: str, _: None = Depends(require_token)
     ) -> dict:
+        if append.busy(project_id):
+            raise HTTPException(status_code=409, detail="Wait for the import to finish first.")
+        status = checks.status(project_id)
+        result = status.get("result")
+        if isinstance(result, dict) and (result.get("append") or {}).get("analysis") == "pending":
+            expired = append.expire_pending(data_root, project_id, result)
+            if expired is None:
+                raise HTTPException(status_code=409, detail="Wait for the added scenes to finish reading.")
+            checks.adopt(project_id, expired)
         try:
             return {"render": renders.start(project_id, edit_id)}
         except KeyError as exc:

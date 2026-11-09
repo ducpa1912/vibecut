@@ -49,6 +49,7 @@ const state = {
   brushSize: 0.025,
   brushStrokes: [],
   importing: false,
+  pendingImportMode: 'new',
   lastCheckKey: '',
   lastQueueKey: '',
   autoOpened: false,
@@ -133,7 +134,6 @@ function mediaUrl(path, params = {}) {
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
   }
-  url.searchParams.set('t', state.token);
   return `${url.pathname}${url.search}`;
 }
 
@@ -273,6 +273,10 @@ async function openProject(id, { startCheck = false } = {}) {
   state.previewTime = 0;
   state.autoOpened = false;
   state.editorReady = false;
+  state.brushMode = false;
+  state.brushStrokes = [];
+  state.showAllLayers = false;
+  state.showAllCues = false;
 
   const [editsData, transcriptData] = await Promise.all([
     api(`/api/projects/${encodeURIComponent(id)}/edits`).catch(() => ({ edits: [] })),
@@ -280,6 +284,7 @@ async function openProject(id, { startCheck = false } = {}) {
   ]);
   state.edits = editsData.edits || [];
   state.transcript = transcriptData.transcript || {};
+  state.edit = null;
   await ensureEdit();
   await ensureCaptions();
   const scenes = getScenes();
@@ -354,8 +359,15 @@ async function refreshCheck() {
   if (!state.project) return;
   const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/check`);
   const previous = state.lastCheckKey;
+  const previousAppend = state.check?.result?.append?.analysis || '';
   const hadScenes = getScenes().length;
   state.check = data.check;
+  if (previousAppend === 'pending' && state.check?.result?.append?.analysis !== 'pending') {
+    await refreshTranscript();
+    state.edit = null;
+    await ensureEdit();
+    await ensureCaptions();
+  }
   const next = checkKey();
   const hasScenes = getScenes().length;
   if (state.screen === 'check' && !NO_AUTO && !state.autoOpened && hadScenes === 0 && hasScenes > 0 && ['queued', 'running'].includes(data.check?.state)) {
@@ -400,7 +412,7 @@ async function refreshQueue() {
 function checkKey() {
   const check = state.check || {};
   const scenes = getScenes().length;
-  return `${check.state || ''}|${check.stage || ''}|${Math.round((check.progress || 0) * 1000)}|${scenes}`;
+  return `${check.state || ''}|${check.stage || ''}|${Math.round((check.progress || 0) * 1000)}|${scenes}|${check.result?.append?.analysis || ''}`;
 }
 
 /* ------------------------------------------------------------------ model */
@@ -588,7 +600,9 @@ function afterFrameUrl(scene) {
 
 function sourceUrl(projectId = state.project?.id) {
   if (!projectId) return '';
-  return mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/source`);
+  const append = projectId === state.project?.id ? state.check?.result?.append : null;
+  const version = append ? `${Math.round(Number(append.at || 0) * 1000)}-${append.analysis || ''}` : '';
+  return mediaUrl(`/api/projects/${encodeURIComponent(projectId)}/source`, version ? { v: version } : {});
 }
 
 function projectFacts() {
@@ -677,35 +691,30 @@ function topbar() {
   const order = ['check', 'edit', 'preview', 'render'];
   const activeIndex = order.indexOf(active);
   const checkRunning = ['queued', 'running', 'cancelling'].includes(state.check?.state);
-  const step = (name, label, index, busy = false) => {
+  const disabled = project ? '' : ' disabled';
+  const tab = (name, label, index, busy = false) => {
     const isActive = active === name;
     const isDone = !busy && activeIndex > index;
-    return `<button class="step${isActive ? ' is-active' : ''}${isDone ? ' is-done' : ''}" data-action="nav" data-screen="${name}" type="button">
-      <span class="step-check">${busy ? icon('loader', 11) : isDone || isActive ? icon('check', 11) : icon('circle', 11)}</span>
-      ${label}
+    return `<button class="toolbar-tab${isActive ? ' is-active' : ''}${isDone ? ' is-done' : ''}" data-action="nav" data-screen="${name}" type="button"${disabled}>
+      ${busy ? icon('loader', 12) : ''}<span>${label}</span>${isDone ? icon('check', 11) : ''}
     </button>`;
   };
-  return `<header class="topbar">
-    <div class="topbar-main">
-      <a class="brand" href="#/welcome" data-action="welcome">${duckMark(34)}<span class="brand-name">DuckSuite</span></a>
-      ${project ? `<button class="project-pill" type="button" data-action="welcome" title="All projects"><span>${esc(project.name)}</span>${icon('chevronDown', 14)}</button>
-      <div class="project-facts">${esc(projectFacts())}</div>` : ''}
-      <div class="top-actions">
-        <span class="engine-pill"><span class="dot" id="engine-dot"></span>${esc(engineLabel())}</span>
-        <span class="queue-pill">${icon('layers', 15)} Queue: ${state.queue.length}</span>
-        <button class="icon-btn" type="button" data-action="settings" title="Settings" aria-label="Settings">${icon('settings', 18)}</button>
-        ${project ? `<button class="back-welcome" type="button" data-action="welcome">${icon('arrowLeft', 15)} Back to Welcome</button>` : ''}
-      </div>
+  return `<header class="toolbar" data-toolbar>
+    <div class="toolbar-left">
+      <button class="duck-home" type="button" data-action="welcome" title="Home" aria-label="Home">${duckMark(28)}</button>
+      <button class="btn toolbar-import" type="button" data-action="import"${state.importing ? ' disabled' : ''}>${icon(state.importing ? 'loader' : 'plus', 14)} Import</button>
     </div>
-    ${project ? `<div class="stepper-row"><div class="stepper">
-      ${step('check', checkRunning ? 'Checking' : 'Check', 0, checkRunning)}
-      <span class="step-line"></span>
-      ${step('edit', 'Edit', 1)}
-      <span class="step-line"></span>
-      ${step('preview', 'Preview', 2)}
-      <span class="step-line"></span>
-      ${step('render', 'Render', 3)}
-    </div></div>` : ''}
+    <nav class="toolbar-tabs" aria-label="Workflow">
+      ${tab('check', checkRunning ? 'Checking' : 'Check', 0, checkRunning)}
+      ${tab('edit', 'Edit', 1)}
+      ${tab('preview', 'Preview', 2)}
+      ${tab('render', 'Render', 3)}
+    </nav>
+    <div class="toolbar-right">
+      <span class="toolbar-engine" title="${esc(engineLabel())}"><span class="dot${state.engine?.fill?.ready && state.engine?.vision?.available ? '' : ' is-idle'}"></span><span class="engine-text">${state.engine?.fill?.ready && state.engine?.vision?.available ? 'Ready' : 'Check'}</span></span>
+      <button class="toolbar-queue${queueActiveCount() ? ' is-active' : ''}" type="button" data-action="nav" data-screen="render" title="Render queue"${disabled}>${icon('layers', 14)}<span>Queue</span><strong>${queueActiveCount()}</strong></button>
+      <button class="icon-btn toolbar-settings" type="button" data-action="settings" title="Settings" aria-label="Settings">${icon('settings', 18)}</button>
+    </div>
   </header>`;
 }
 
@@ -1698,19 +1707,116 @@ async function openSettings() {
 
 async function triggerImport() {
   if (state.importing) return;
-  if (window.webkit?.messageHandlers?.duck) {
-    window.webkit.messageHandlers.duck.postMessage({ type: 'import' });
-    toast('Choose a video in the Mac file panel.');
+  if (state.project) {
+    if (['queued', 'running', 'cancelling'].includes(state.check?.state)) {
+      toast('Wait for Check to finish before importing.', 'bad');
+      return;
+    }
+    if (state.queue.some((item) => item.project_id === state.project.id && ['queued', 'running', 'cancelling'].includes(item.state))) {
+      toast('Wait for the render to finish before importing.', 'bad');
+      return;
+    }
+    openImportChoice();
     return;
   }
-  document.querySelector('#file-input')?.click();
+  beginImport('new');
+}
+
+function openImportChoice() {
+  const name = state.project?.name || 'this project';
+  openModal(`<dialog class="modal import-modal" aria-label="Import video">
+    <div class="modal-head"><h2>Add video to ${esc(name)}</h2><button class="icon-btn" type="button" data-action="close-modal" aria-label="Close">${icon('close', 16)}</button></div>
+    <div class="modal-body import-choice">
+      <button class="import-option" type="button" data-action="import-scenes">
+        <span class="import-icon">${icon('film', 20)}</span>
+        <span><strong>Add scenes</strong><small>Find the cuts in the new video and append every scene. Existing scenes and edits stay.</small></span>
+      </button>
+      <button class="import-option" type="button" data-action="import-full">
+        <span class="import-icon">${icon('upload', 20)}</span>
+        <span><strong>Use full video</strong><small>Append the whole new file as one clip after the current video.</small></span>
+      </button>
+      <p class="small muted">The new video is joined to this project. Nothing replaces your current work.</p>
+    </div>
+  </dialog>`);
+}
+
+function beginImport(mode) {
+  closeModal();
+  state.pendingImportMode = mode;
+  if (window.webkit?.messageHandlers?.duck) {
+    window.webkit.messageHandlers.duck.postMessage({
+      type: 'import',
+      mode,
+      projectId: state.project?.id || '',
+    });
+    toast(state.project ? 'Choose a video to add to this project.' : 'Choose a video to import.');
+    return;
+  }
+  const input = document.querySelector('#import-file-input');
+  if (input) {
+    input.value = '';
+    input.click();
+  }
+}
+
+async function waitForAppendJob(projectId, jobId) {
+  const deadline = Date.now() + 2 * 60 * 60 * 1000;
+  let errors = 0;
+  while (Date.now() < deadline) {
+    let data = null;
+    try {
+      data = await api(`/api/projects/${encodeURIComponent(projectId)}/append/job/${encodeURIComponent(jobId)}`);
+      errors = 0;
+    } catch (error) {
+      errors += 1;
+      if (errors >= 8) throw error;
+    }
+    if (data) {
+      const job = data.job || {};
+      if (job.stage) toast(`${job.stage}…`);
+      if (job.state === 'done') return job;
+      if (job.state === 'failed') throw new Error(job.error || 'Import failed.');
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+  throw new Error('The import is taking too long. Reopen the project to check its scenes.');
 }
 
 async function handleFile(file) {
   if (!file || state.importing) return;
+  const mode = state.pendingImportMode;
+  const projectId = state.project?.id || '';
   state.importing = true;
-  toast(`Importing ${file.name}…`);
+  toast(projectId ? `Adding ${file.name}…` : `Importing ${file.name}…`);
   try {
+    if (projectId && (mode === 'scenes' || mode === 'full')) {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/append/upload/job`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          'X-Filename': file.name,
+          'X-Mode': mode,
+        },
+        body: file,
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${response.status}`);
+      }
+      const started = await response.json();
+      const data = await waitForAppendJob(projectId, started.job?.id || '');
+      await openProject(projectId);
+      state.screen = 'edit';
+      state.selectedScene = Math.max(0, (state.check?.result?.scenes?.length || 1) - 1);
+      const appendedScene = state.check?.result?.scenes?.[state.selectedScene];
+      if (appendedScene) state.previewTime = Number(appendedScene.start || 0) + 0.1;
+      navigate(projectPath('edit'));
+      const added = mode === 'scenes'
+        ? `Added ${data.scenes} scene${data.scenes === 1 ? '' : 's'}.`
+        : 'Full video added.';
+      toast(data.warning ? `${added} ${data.warning}` : added);
+      return;
+    }
     const response = await fetch('/api/projects/upload', {
       method: 'POST',
       headers: { Authorization: `Bearer ${state.token}`, 'X-Filename': file.name },
@@ -1728,6 +1834,8 @@ async function handleFile(file) {
     toast(`Import failed: ${error.message}`, 'bad');
   } finally {
     state.importing = false;
+    state.pendingImportMode = 'new';
+    render();
   }
 }
 
@@ -2193,7 +2301,7 @@ async function verifyModel(modelId) {
 
 /* ------------------------------------------------------------------ events */
 
-app.addEventListener('click', async (event) => {
+document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]');
   if (!target) return;
   const action = target.dataset.action;
@@ -2206,6 +2314,8 @@ app.addEventListener('click', async (event) => {
       navigate(`project/${id}/${screen}`);
       if (state.check?.state === 'idle') await startCheck();
     } else if (action === 'import') await triggerImport();
+    else if (action === 'import-scenes') beginImport('scenes');
+    else if (action === 'import-full') beginImport('full');
     else if (action === 'settings') await openSettings();
     else if (action === 'close-modal') closeModal();
     else if (action === 'start-check') await startCheck();
@@ -2309,9 +2419,9 @@ app.addEventListener('click', async (event) => {
   }
 });
 
-app.addEventListener('change', async (event) => {
+document.addEventListener('change', async (event) => {
   const target = event.target;
-  if (target.id === 'file-input') {
+  if (target.id === 'file-input' || target.id === 'import-file-input') {
     const file = target.files?.[0];
     target.value = '';
     await handleFile(file);
@@ -2338,7 +2448,7 @@ app.addEventListener('change', async (event) => {
   else if (action === 'voice-mode') { state.voiceMode = target.value; render(); }
 });
 
-app.addEventListener('input', (event) => {
+document.addEventListener('input', (event) => {
   if (event.target.id === 'project-search') {
     state.welcomeQuery = event.target.value;
     render();
@@ -2458,7 +2568,7 @@ function render() {
 function startPolls() {
   window.setInterval(async () => {
     if (!state.project) return;
-    if (['queued', 'running', 'cancelling'].includes(state.check?.state)) {
+    if (['queued', 'running', 'cancelling'].includes(state.check?.state) || state.check?.result?.append?.analysis === 'pending') {
       try { await refreshCheck(); } catch (_) { /* keep last */ }
     }
   }, 1500);
@@ -2466,6 +2576,12 @@ function startPolls() {
     if (['welcome', 'render'].includes(state.screen)) await refreshQueue();
   }, 2500);
 }
+
+window.duckImportError = (message) => {
+  state.importing = false;
+  render();
+  toast(message || 'Import failed.', 'bad');
+};
 
 window.duckRecordingStarted = (path) => {
   state.recordingPath = path;
@@ -2501,6 +2617,7 @@ async function boot() {
     return;
   }
   try {
+    await api('/api/session', { method: 'POST' });
     await Promise.all([loadProjects(), loadQueue(), loadEngine(), loadSettings()]);
     loadVoices();
     const routeParam = new URLSearchParams(window.location.search).get('route');

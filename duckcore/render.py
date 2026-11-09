@@ -502,6 +502,18 @@ class RenderQueue:
             "updated": row["updated"],
         }
 
+    def busy_for(self, project_id: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM render_queue
+                WHERE project_id = ? AND state IN ('queued', 'running', 'cancelling')
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+        return row is not None
+
     def enqueue(self, project_id: str, edit_id: str, title: str) -> dict:
         with self._connect() as connection:
             existing = connection.execute(
