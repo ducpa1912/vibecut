@@ -466,10 +466,7 @@ def _apply_visual_effects(
 def _mix_sfx_audio(
     ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=None,
 ) -> None:
-    items = [
-        item for item in effects.sound_effects(edit)
-        if (job_dir / str(item.get("file") or "")).is_file()
-    ]
+    rows, items, solo = _audible_audio(edit, job_dir)
     if not items:
         return
     if progress:
@@ -483,14 +480,22 @@ def _mix_sfx_audio(
         path = job_dir / str(item.get("file") or "")
         inputs += ["-i", str(path)]
         delay = max(0, int(float(item.get("start") or 0.0) * 1000))
-        level = max(0.0, min(1.5, float(item.get("volume") or 0.9)))
+        raw_volume = item.get("volume")
+        level = max(0.0, min(1.5, float(0.9 if raw_volume is None else raw_volume)))
+        duration = max(0.2, float(item.get("end") or 0.0) - float(item.get("start") or 0.0))
+        offset = max(0.0, float(item.get("offset") or 0.0))
+        fade_in = max(0.0, min(duration / 2, float(item.get("fade_in") or 0.0)))
+        fade_out = max(0.0, min(duration / 2, float(item.get("fade_out") or 0.0)))
+        chain = f"atrim=start={offset:.3f}:duration={duration:.3f},asetpts=PTS-STARTPTS,volume={level:.3f}"
+        if fade_in:
+            chain += f",afade=t=in:st=0:d={fade_in:.3f}"
+        if fade_out:
+            chain += f",afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}"
         label = f"[sfx{input_index}]"
-        filters.append(
-            f"[{input_index}:a]volume={level:.3f},adelay={delay}|{delay}{label}"
-        )
+        filters.append(f"[{input_index}:a]{chain},adelay={delay}|{delay}{label}")
         labels.append(label)
         input_index += 1
-    if media.has_audio(output):
+    if media.has_audio(output) and (not solo or bool(rows)):
         filters.insert(0, "[0:a]volume=1.0[base]")
         labels.insert(0, "[base]")
     else:
@@ -500,7 +505,8 @@ def _mix_sfx_audio(
         )
         labels.insert(0, "[base]")
     filters.append(
-        "".join(labels) + f"amix=inputs={len(labels)}:duration=first:normalize=0[aout]"
+        "".join(labels) + f"amix=inputs={len(labels)}:duration=longest:normalize=0,"
+        f"apad=whole_dur={total:.3f}[aout]"
     )
     temporary = output.with_name(f".{output.stem}.sfx.mp4")
     command = [
@@ -514,12 +520,30 @@ def _mix_sfx_audio(
     temporary.replace(output)
 
 
+def _audible_audio(edit: dict, job_dir: Path) -> tuple[list[dict], list[dict], bool]:
+    """Return the audio rows and sound effects that survive the global solo state."""
+    all_rows = [
+        row for row in edits.ensure_audio_tracks(edit)
+        if not bool(row.get("muted"))
+    ]
+    all_items = [
+        item for item in effects.sound_effects(edit)
+        if not bool(item.get("muted"))
+    ]
+    solo_rows = [row for row in all_rows if bool(row.get("solo"))]
+    solo_items = [item for item in all_items if bool(item.get("solo"))]
+    solo = bool(solo_rows or solo_items)
+    rows = solo_rows if solo else all_rows
+    items = solo_items if solo else all_items
+    rows = [row for row in rows if (job_dir / str(row.get("audio") or "")).is_file()]
+    items = [item for item in items if (job_dir / str(item.get("file") or "")).is_file()]
+    return rows, items, solo
+
+
 def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=None) -> None:
     """Mix all voice, dub, and music rows into the rendered video."""
-    rows = [
-        row for row in edits.ensure_audio_tracks(edit)
-        if (job_dir / str(row.get("audio") or "")).is_file()
-    ]
+    rows, _unused_items, solo = _audible_audio(edit, job_dir)
+    total = max(0.05, float(edit.get("end") or media.duration(output)))
     has_original = media.has_audio(output)
     if not rows and not has_original:
         return
@@ -531,7 +555,7 @@ def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=No
         str(row.get("kind")) == "voice" and str(row.get("mode")) == "voice_only"
         for row in rows
     )
-    include_original = has_original and not dub and not voice_only
+    include_original = has_original and not dub and not voice_only and not solo
     mixed = output.with_name(f".{output.stem}.mix.mp4")
     inputs = ["-i", str(output)]
     for row in rows:
@@ -543,27 +567,47 @@ def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=No
         filters.append(f"[0:a]volume={level:.3f}[base]")
         labels.append("[base]")
     for index, row in enumerate(rows, 1):
-        level = max(0.0, min(1.5, float(row.get("volume") or (0.25 if row.get("kind") == "music" else 1.0))))
+        raw_volume = row.get("volume")
+        default_volume = 0.25 if row.get("kind") == "music" else 1.0
+        level = max(0.0, min(1.5, float(default_volume if raw_volume is None else raw_volume)))
         delay = max(0, int(float(row.get("start") or 0.0) * 1000))
+        duration = max(0.2, float(row.get("duration") or 0.2))
+        offset = max(0.0, float(row.get("offset") or 0.0))
+        fade_in = max(0.0, min(duration / 2, float(row.get("fade_in") or 0.0)))
+        fade_out = max(0.0, min(duration / 2, float(row.get("fade_out") or 0.0)))
+        chain = f"atrim=start={offset:.3f}:duration={duration:.3f},asetpts=PTS-STARTPTS,volume={level:.3f}"
+        if fade_in:
+            chain += f",afade=t=in:st=0:d={fade_in:.3f}"
+        if fade_out:
+            chain += f",afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}"
         label = f"[a{index}]"
         filters.append(
-            f"[{index}:a]volume={level:.3f},adelay={delay}|{delay}{label}"
+            f"[{index}:a]{chain},adelay={delay}|{delay}{label}"
         )
         labels.append(label)
     if not labels:
-        return
-    if len(labels) == 1:
-        filters.append(f"{labels[0]}anull[aout]")
+        if not solo:
+            return
+        filters.append(
+            f"anullsrc=channel_layout=stereo:sample_rate=48000,"
+            f"atrim=duration={total:.3f}[aout]"
+        )
+        labels.append("[aout]")
+    if len(labels) == 1 and labels[0] == "[aout]":
+        pass
+    elif len(labels) == 1:
+        filters.append(f"{labels[0]}apad=whole_dur={total:.3f}[aout]")
     else:
         filters.append(
-            "".join(labels) + f"amix=inputs={len(labels)}:duration=first:normalize=0[aout]"
+            "".join(labels) + f"amix=inputs={len(labels)}:duration=longest:normalize=0,"
+            f"apad=whole_dur={total:.3f}[aout]"
         )
     command = [
         ffmpeg, "-y", "-v", "error", *inputs,
         "-filter_complex", ";".join(filters),
         "-map", "0:v:0", "-map", "[aout]",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-        "-shortest", "-movflags", "+faststart", str(mixed),
+        "-t", f"{total:.3f}", "-movflags", "+faststart", str(mixed),
     ]
     _run(command)
     mixed.replace(output)

@@ -243,8 +243,9 @@ def split_at(edit: dict, data_root: Path, output_time: float) -> dict:
 
 
 def ensure_audio_tracks(edit: dict) -> list[dict]:
-    if isinstance(edit.get("audio_tracks"), list):
-        return edit["audio_tracks"]
+    existing = edit.get("audio_tracks")
+    if isinstance(existing, list) and existing:
+        return existing
     rows = []
     dub = edit.get("dub")
     voice = edit.get("voice")
@@ -276,6 +277,32 @@ def ensure_audio_tracks(edit: dict) -> list[dict]:
         })
     edit["audio_tracks"] = rows
     return rows
+
+
+def patch_audio_track(edit: dict, track_id: str, values: dict) -> dict:
+    rows = ensure_audio_tracks(edit)
+    row = next((item for item in rows if str(item.get("id")) == str(track_id)), None)
+    if row is None:
+        raise KeyError(track_id)
+    if "start" in values and values["start"] is not None:
+        row["start"] = max(0.0, float(values["start"]))
+    if "duration" in values and values["duration"] is not None:
+        row["duration"] = max(0.2, float(values["duration"]))
+    if "offset" in values and values["offset"] is not None:
+        row["offset"] = max(0.0, float(values["offset"]))
+    if "volume" in values and values["volume"] is not None:
+        row["volume"] = max(0.0, min(1.5, float(values["volume"])))
+    if "muted" in values:
+        row["muted"] = bool(values["muted"])
+    if "solo" in values:
+        row["solo"] = bool(values["solo"])
+    if "fade_in" in values and values["fade_in"] is not None:
+        row["fade_in"] = max(0.0, float(values["fade_in"]))
+    if "fade_out" in values and values["fade_out"] is not None:
+        row["fade_out"] = max(0.0, float(values["fade_out"]))
+    if "name" in values and values["name"]:
+        row["name"] = str(values["name"])[:120]
+    return row
 
 
 def remove_audio_track(edit: dict, track_id: str) -> list[dict]:

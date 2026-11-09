@@ -52,6 +52,15 @@ const state = {
   sfxKind: '',
   storySelect: false,
   storyScenes: [],
+  openAudioRows: new Set(),
+  waveformCache: new Map(),
+  audioBuffers: new Map(),
+  audioContext: null,
+  audioSources: [],
+  mixPlaying: false,
+  mixVideo: false,
+  mixTimer: null,
+  auditionId: '',
   voicePreview: '',
   recording: false,
   brushMode: false,
@@ -1314,11 +1323,37 @@ function audioFocus() {
   const music = state.edit?.music;
   const voice = state.edit?.voice;
   const dub = state.edit?.dub;
+  const rows = editAudioRows();
   return `<div class="focus-grid audio-focus">
+    <div class="focus-card audio-tracks-card">
+      <div class="audio-card-head"><h3>Voice & Music tracks</h3><button class="btn small" type="button" data-action="audio-mix-preview">${icon('play', 12)} ${state.mixPlaying ? 'Stop' : 'Preview mix'}</button></div>
+      <p class="small muted">Drag a block edge to trim, drag the middle to move. Each row can audition on its own.</p>
+      <div class="audio-focus-list">
+        ${rows.length ? rows.map((row) => `<details class="audio-track-card" data-audio-row="${esc(row.id)}" style="--lane-color:${audioColor(row.kind)}" ${state.openAudioRows.has(String(row.id)) ? 'open' : ''}>
+          <summary>
+            <span class="audio-focus-dot"></span>
+            <span class="audio-track-name">${esc(row.name || row.kind)}</span>
+            <span class="chip">${esc(row.kind)}</span>
+            <button class="icon-btn" type="button" data-action="audio-audition" data-track="${esc(row.id)}" title="Audition this row">${icon('play', 12)}</button>
+            <button class="icon-btn${row.muted ? ' is-on' : ''}" type="button" data-action="audio-mute" data-track="${esc(row.id)}" title="Mute">M</button>
+            <button class="icon-btn${row.solo ? ' is-on' : ''}" type="button" data-action="audio-solo" data-track="${esc(row.id)}" title="Solo">S</button>
+            <button class="icon-btn" type="button" data-action="audio-remove" data-track="${esc(row.id)}" title="Remove">${icon('trash', 13)}</button>
+          </summary>
+          <div class="audio-row-form">
+            <label>Start<input type="number" min="0" step="0.05" value="${Number(row.start || 0).toFixed(2)}" data-audio-field="start" data-track="${esc(row.id)}"></label>
+            <label>Length<input type="number" min="0.2" step="0.05" value="${Number(row.duration || 0).toFixed(2)}" data-audio-field="duration" data-track="${esc(row.id)}"></label>
+            <label>In<input type="number" min="0" step="0.05" value="${Number(row.offset || 0).toFixed(2)}" data-audio-field="offset" data-track="${esc(row.id)}"></label>
+            <label>Volume <span class="audio-value">${Number(row.volume ?? 0.25).toFixed(2)}</span><input type="range" min="0" max="1.5" step="0.01" value="${Number(row.volume ?? 0.25)}" data-audio-field="volume" data-track="${esc(row.id)}"></label>
+            <label>Fade in<input type="number" min="0" step="0.05" value="${Number(row.fade_in || 0).toFixed(2)}" data-audio-field="fade_in" data-track="${esc(row.id)}"></label>
+            <label>Fade out<input type="number" min="0" step="0.05" value="${Number(row.fade_out || 0).toFixed(2)}" data-audio-field="fade_out" data-track="${esc(row.id)}"></label>
+          </div>
+        </details>`).join('') : '<p class="small muted">No voice, music or sound tracks.</p>'}
+      </div>
+    </div>
     <div class="focus-card">
       <h3>Original audio</h3>
-      ${waveformBars(1)}
-      <p class="small muted">Source bed. Dub mutes it; voice-over can sit over it.</p>
+      <div class="audio-status"><span class="chip">${dub ? 'Muted by dub' : 'Source bed'}</span><span class="small muted">${dub ? 'The dub replaces the source audio.' : 'Voice-over and music sit over it.'}</span></div>
+      <p class="small muted">Mute or solo a row and the source bed follows the same rule on render.</p>
     </div>
     <div class="focus-card">
       <h3>Voice & dub</h3>
@@ -1332,14 +1367,6 @@ function audioFocus() {
         ${(state.edit?.sfx || []).filter((fx) => fx.kind === 'sound').map((fx) => `<div class="sfx-row"><span class="sfx-kind">sound</span><span class="sfx-name">${esc(fx.name || 'Sound')}</span><button class="icon-btn" data-action="sfx-remove" data-effect="${esc(fx.id)}">${icon('trash', 14)}</button></div>`).join('') || '<p class="small muted">No sound effects yet.</p>'}
       </div>
       <button class="btn wide" data-action="sfx-add" data-kind="sound">${icon('volume', 14)} Add sound effect</button>
-      <h3 style="margin-top:11px">All audio tracks</h3>
-      <div class="audio-focus-list">
-        ${editAudioRows().length ? editAudioRows().map((row) => `<div class="audio-focus-row" style="--lane-color:${audioColor(row.kind)}"><span class="audio-focus-dot"></span><span>${esc(row.name || row.kind)} · ${fmtDuration(row.duration || 0)}</span><button class="icon-btn" type="button" data-action="audio-remove" data-track="${esc(row.id)}" title="Remove">${icon('trash', 13)}</button></div>`).join('') : '<p class="small muted">No voice, music or sound tracks.</p>'}
-      </div>
-      <div class="future-actions">
-        <button class="btn wide" type="button" disabled>${icon('sparkle', 13)} Generate music · next</button>
-        <button class="btn wide" type="button" disabled>${icon('voice', 13)} Clone voice · next</button>
-      </div>
     </div>
   </div>`;
 }
@@ -1473,6 +1500,194 @@ async function handleSfxFile(file) {
   }
 }
 
+async function patchAudioTrack(trackId, values) {
+  if (!state.project || !state.edit || !trackId) return;
+  const active = document.activeElement;
+  const activeField = active?.dataset?.audioField || '';
+  const activeTrack = active?.dataset?.track || '';
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/audio/${encodeURIComponent(trackId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(values),
+    });
+    state.edit = data.edit;
+    render();
+    if (activeField && activeTrack) {
+      const next = [...document.querySelectorAll('[data-audio-field]')]
+        .find((input) => input.dataset.audioField === activeField && input.dataset.track === activeTrack);
+      next?.focus();
+    }
+  } catch (error) {
+    toast(`Audio track: ${error.message}`, 'bad');
+  }
+}
+
+function ensureAudioContext() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  state.audioContext = state.audioContext || new AudioCtor();
+  return state.audioContext;
+}
+
+function audioTrackUrl(trackId) {
+  return mediaUrl(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/audio/${encodeURIComponent(trackId)}/file`);
+}
+
+async function audioBufferFor(row) {
+  const key = String(row.id);
+  if (state.audioBuffers.has(key)) return state.audioBuffers.get(key);
+  const ctx = ensureAudioContext();
+  if (!ctx) return null;
+  try {
+    const response = await fetch(audioTrackUrl(row.id));
+    if (!response.ok) return null;
+    const buffer = await ctx.decodeAudioData((await response.arrayBuffer()).slice(0));
+    state.audioBuffers.set(key, buffer);
+    return buffer;
+  } catch (_) {
+    return null;
+  }
+}
+
+function stopAudioPlayback() {
+  for (const source of state.audioSources) {
+    try { source.stop(); } catch (_) { /* already stopped */ }
+  }
+  state.audioSources = [];
+  if (state.mixTimer) {
+    clearTimeout(state.mixTimer);
+    state.mixTimer = null;
+  }
+  if (state.mixVideo) {
+    const video = document.querySelector('[data-preview]');
+    if (video) {
+      video.pause();
+      video.muted = false;
+      video.volume = 1;
+    }
+    state.mixVideo = false;
+  }
+  state.mixPlaying = false;
+  state.auditionId = '';
+  syncAudioMixButton();
+}
+
+function syncAudioMixButton() {
+  const button = document.querySelector('[data-action="audio-mix-preview"]');
+  if (button) button.innerHTML = `${icon('play', 12)} ${state.mixPlaying ? 'Stop' : 'Preview mix'}`;
+}
+
+async function auditionAudioTrack(trackId) {
+  const row = editAudioRows().find((item) => String(item.id) === String(trackId));
+  if (!row) return;
+  const wasPlaying = state.auditionId === String(trackId);
+  stopAudioPlayback();
+  if (wasPlaying) return;
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  await ctx.resume();
+  const buffer = await audioBufferFor(row);
+  if (!buffer) {
+    toast('Audio row: file could not be read.', 'bad');
+    return;
+  }
+  const offset = Math.max(0, Math.min(buffer.duration - 0.01, Number(row.offset || 0)));
+  const wanted = Math.max(0.2, Number(row.duration || 0.2));
+  const playable = Math.max(0.01, Math.min(wanted, buffer.duration - offset));
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  const gain = ctx.createGain();
+  gain.gain.value = Math.max(0, Math.min(1.5, Number(row.volume ?? (row.kind === 'music' ? 0.25 : 1))));
+  source.connect(gain).connect(ctx.destination);
+  source.start(0, offset, playable);
+  source.onended = () => {
+    state.audioSources = state.audioSources.filter((item) => item !== source);
+    if (!state.audioSources.length && !state.mixPlaying) {
+      state.auditionId = '';
+      syncAudioMixButton();
+    }
+  };
+  state.audioSources.push(source);
+  state.auditionId = String(trackId);
+  toast(`Auditioning ${row.name || row.kind}`);
+}
+
+async function toggleAudioMixPreview() {
+  if (state.mixPlaying) {
+    stopAudioPlayback();
+    return;
+  }
+  stopAudioPlayback();
+  const ctx = ensureAudioContext();
+  if (!ctx) {
+    toast('Audio preview is not available in this browser.', 'bad');
+    return;
+  }
+  await ctx.resume();
+  const rows = editAudioRows().filter((row) => !row.muted);
+  const soloRows = rows.filter((row) => row.solo);
+  const audible = soloRows.length ? soloRows : rows;
+  const soloActive = soloRows.length > 0;
+  const dub = audible.some((row) => row.kind === 'dub');
+  const voiceOnly = audible.some((row) => row.kind === 'voice' && row.mode === 'voice_only');
+  const voices = audible.filter((row) => row.kind === 'voice' || row.kind === 'dub');
+  const playhead = Math.max(0, Number(state.timelineTime || 0));
+  const total = Math.max(0, Number(timelineDuration() || 0));
+  const video = document.querySelector('[data-preview]');
+  if (video) {
+    try {
+      video.currentTime = playhead;
+      video.muted = soloActive || dub || voiceOnly;
+      video.volume = voices.length ? 0.22 : 1;
+      await video.play();
+      state.mixVideo = true;
+    } catch (_) { /* keep the mix without the source player */ }
+  }
+  const base = ctx.currentTime + 0.08;
+  let last = playhead + 0.4;
+  for (const row of audible) {
+    const buffer = await audioBufferFor(row);
+    if (!buffer) continue;
+    const rowStart = Number(row.start || 0);
+    const rowEnd = rowStart + Math.max(0.2, Number(row.duration || 0.2));
+    if (rowEnd <= playhead) continue;
+    const inside = rowStart <= playhead;
+    const delay = inside ? 0 : rowStart - playhead;
+    const offset = Math.max(0, Number(row.offset || 0) + (inside ? playhead - rowStart : 0));
+    if (offset >= buffer.duration - 0.01) continue;
+    const wanted = Math.max(0.05, rowEnd - Math.max(rowStart, playhead));
+    const duration = Math.min(wanted, buffer.duration - offset);
+    const level = Math.max(0, Math.min(1.5, Number(row.volume ?? (row.kind === 'music' ? 0.25 : 1))));
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const gain = ctx.createGain();
+    const startTime = base + delay;
+    const endTime = startTime + duration;
+    const fadeIn = Math.max(0, Math.min(duration / 2, Number(row.fade_in || 0)));
+    const fadeOut = Math.max(0, Math.min(duration / 2, Number(row.fade_out || 0)));
+    gain.gain.setValueAtTime(fadeIn ? 0 : level, startTime);
+    if (fadeIn) gain.gain.linearRampToValueAtTime(level, startTime + fadeIn);
+    if (fadeOut) {
+      gain.gain.setValueAtTime(level, Math.max(startTime, endTime - fadeOut));
+      gain.gain.linearRampToValueAtTime(0, endTime);
+    }
+    source.connect(gain).connect(ctx.destination);
+    source.start(startTime, offset, duration);
+    state.audioSources.push(source);
+    last = Math.max(last, rowEnd);
+  }
+  state.mixPlaying = true;
+  const stopAt = total > playhead ? total : last;
+  state.mixTimer = setTimeout(() => stopAudioPlayback(), Math.max(400, (stopAt - playhead + 0.25) * 1000));
+  syncAudioMixButton();
+}
+
+async function toggleAudioTrack(trackId, field) {
+  const row = editAudioRows().find((item) => String(item.id) === String(trackId));
+  if (!row) return;
+  await patchAudioTrack(trackId, { [field]: !row[field] });
+}
+
 async function removeAudioTrack(trackId) {
   if (!state.project || !state.edit || !trackId) return;
   try {
@@ -1540,13 +1755,13 @@ function editAudioRows() {
   if (Array.isArray(edit.audio_tracks) && edit.audio_tracks.length) {
     rows.push(...edit.audio_tracks);
   } else {
-    if (edit.dub) rows.push({ id: 'legacy-dub', kind: 'dub', name: edit.dub.voice || 'Dub', audio: edit.dub.audio, duration: edit.dub.duration || 0, start: 0, volume: 1 });
-    if (edit.voice) rows.push({ id: 'legacy-voice', kind: 'voice', name: edit.voice.voice || 'Voice-over', audio: edit.voice.audio, duration: edit.voice.duration || 0, start: 0, volume: 1 });
-    if (edit.music) rows.push({ id: 'legacy-music', kind: 'music', name: edit.music.name || 'Music', audio: edit.music.audio, duration: edit.music.duration || 0, start: 0, volume: edit.music.volume || 0.25 });
+    if (edit.dub) rows.push({ id: 'legacy-dub', kind: 'dub', name: edit.dub.voice || 'Dub', audio: edit.dub.audio, duration: edit.dub.duration || 0, start: 0, volume: 1, offset: 0 });
+    if (edit.voice) rows.push({ id: 'legacy-voice', kind: 'voice', name: edit.voice.voice || 'Voice-over', audio: edit.voice.audio, duration: edit.voice.duration || 0, start: 0, volume: 1, offset: 0 });
+    if (edit.music) rows.push({ id: 'legacy-music', kind: 'music', name: edit.music.name || 'Music', audio: edit.music.audio, duration: edit.music.duration || 0, start: 0, volume: edit.music.volume ?? 0.25, offset: 0 });
   }
   for (const effect of edit.sfx || []) {
     if (effect.kind === 'sound') {
-      rows.push({ id: effect.id, kind: 'sound', name: effect.name || 'Sound effect', audio: effect.file, duration: Math.max(0.2, Number(effect.end || 0) - Number(effect.start || 0)), start: Number(effect.start || 0), volume: effect.volume || 0.9 });
+      rows.push({ id: effect.id, kind: 'sound', name: effect.name || 'Sound effect', audio: effect.file, duration: Math.max(0.2, Number(effect.end || 0) - Number(effect.start || 0)), start: Number(effect.start || 0), volume: effect.volume ?? 0.9, muted: effect.muted, solo: effect.solo, fade_in: effect.fade_in, fade_out: effect.fade_out, offset: effect.offset || 0 });
     }
   }
   return rows;
@@ -1654,7 +1869,23 @@ function timelinePanel() {
         <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / cut / split', 'trim-focus', '') : ''}</div>
         <div class="timeline-track scene">${timelineSceneRanges().map((row) => timelineBlock(row.start, row.end, total, `S${pad(row.index + 1)}`, 'select-scene', `data-index="${row.index}"`, row.index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '')).join('')}</div>
         <div class="timeline-track script">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
-        <div class="timeline-track audio-stack">${audioRows.length ? audioRows.map((row) => `<div class="audio-lane" style="--lane-color:${audioColor(row.kind)}">${timelineBlock(row.start, Number(row.start || 0) + Math.max(0.2, Number(row.duration || 0.2)), total, row.name || row.kind, 'open-focus', 'data-focus="audio"', `background:${audioColor(row.kind)};color:#fff;border-color:transparent`)}</div>`).join('') : '<div class="audio-lane empty"><span>No voice, music or sound yet</span></div>'}</div>
+        <div class="timeline-track audio-stack">${audioRows.length ? audioRows.map((row) => {
+          const start = Number(row.start || 0);
+          const duration = Math.max(0.2, Number(row.duration || 0.2));
+          const left = total > 0 ? Math.max(0, Math.min(100, (start / total) * 100)) : 0;
+          const width = total > 0 ? Math.max(0.6, Math.min(100 - left, (duration / total) * 100)) : 0;
+          const bars = Array.from({ length: 36 }, (_unused, index) => `<i style="height:${(25 + Math.abs(Math.sin((index + start) * 1.7)) * 70).toFixed(0)}%"></i>`).join('');
+          return `<div class="audio-lane${row.muted ? ' is-muted' : ''}${row.solo ? ' is-solo' : ''}" style="--lane-color:${audioColor(row.kind)}">
+            <span class="audio-lane-tools">
+              <button class="lane-tool${row.muted ? ' is-on' : ''}" type="button" data-action="audio-mute" data-track="${esc(row.id)}" title="Mute ${esc(row.name || row.kind)}">M</button>
+              <button class="lane-tool${row.solo ? ' is-on' : ''}" type="button" data-action="audio-solo" data-track="${esc(row.id)}" title="Solo ${esc(row.name || row.kind)}">S</button>
+            </span>
+            <button class="timeline-block audio-block" type="button" data-action="open-focus" data-focus="audio" data-track="${esc(row.id)}" data-start="${start.toFixed(3)}" data-duration="${duration.toFixed(3)}" data-offset="${Number(row.offset || 0).toFixed(3)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${audioColor(row.kind)}b8;color:#fff;border-color:transparent">
+              <span class="audio-wave" data-track="${esc(row.id)}" data-offset="${Number(row.offset || 0).toFixed(3)}" data-duration="${duration.toFixed(3)}" aria-hidden="true">${bars}</span>
+              <span class="audio-handle left" data-edge="start"></span><span class="audio-block-label">${esc(row.name || row.kind)}</span><span class="audio-handle right" data-edge="end"></span>
+            </button>
+          </div>`;
+        }).join('') : '<div class="audio-lane empty"><span>No voice, music or sound yet</span></div>'}</div>
         <div class="timeline-track sfx">${visualFx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('')}</div>
         <span class="timeline-playhead" style="left:${playhead.toFixed(2)}%"></span>
       </div>
@@ -1960,6 +2191,137 @@ function updateGhostActive() {
     const start = Number(line.dataset.start || 0);
     const end = Number(line.dataset.end || 0);
     line.classList.toggle('is-current', time >= start && time < end);
+  });
+}
+
+async function loadAudioWaveforms() {
+  if (!state.project || !state.edit) return;
+  const waves = [...document.querySelectorAll('.audio-wave[data-track]')];
+  if (!waves.length) return;
+  const rows = editAudioRows();
+  for (const wave of waves) {
+    const id = wave.dataset.track || '';
+    const row = rows.find((item) => String(item.id) === id);
+    if (!row) continue;
+    const offset = Math.max(0, Number(wave.dataset.offset || 0));
+    const duration = Math.max(0.05, Number(wave.dataset.duration || 0.05));
+    const count = Math.max(6, Math.min(64, Math.round((wave.clientWidth || 48) / 2)));
+    const key = `${id}:${offset.toFixed(2)}:${duration.toFixed(2)}:${count}`;
+    if (state.waveformCache.has(key)) {
+      const peaks = state.waveformCache.get(key);
+      wave.innerHTML = peaks.map((peak) => `<i style="height:${Math.max(8, peak * 100).toFixed(0)}%"></i>`).join('');
+      continue;
+    }
+    const buffer = await audioBufferFor(row);
+    if (!buffer) continue;
+    const channel = buffer.getChannelData(0);
+    const total = Math.max(0.01, buffer.duration);
+    const startAt = Math.min(channel.length - 1, Math.floor((offset / total) * channel.length));
+    const endAt = Math.min(channel.length, startAt + Math.floor((duration / total) * channel.length));
+    const block = Math.max(1, Math.floor((endAt - startAt) / count));
+    const peaks = Array.from({ length: count }, (_unused, index) => {
+      const from = startAt + index * block;
+      const to = Math.min(endAt, from + block);
+      let peak = 0;
+      for (let at = from; at < to; at += Math.max(1, Math.floor(block / 24))) {
+        peak = Math.max(peak, Math.abs(channel[at] || 0));
+      }
+      return Math.min(1, peak * 3.2);
+    });
+    state.waveformCache.set(key, peaks);
+    wave.innerHTML = peaks.map((peak) => `<i style="height:${Math.max(8, peak * 100).toFixed(0)}%"></i>`).join('');
+  }
+}
+
+function setupAudioRows() {
+  document.querySelectorAll('.audio-track-card').forEach((card) => {
+    const id = String(card.dataset.audioRow || '');
+    if (!id) return;
+    card.addEventListener('toggle', () => {
+      if (card.open) state.openAudioRows.add(id);
+      else state.openAudioRows.delete(id);
+    });
+    card.querySelectorAll('summary button').forEach((button) => {
+      button.addEventListener('click', (event) => event.preventDefault());
+    });
+    card.querySelectorAll('[data-audio-field="volume"]').forEach((input) => {
+      const value = input.parentElement.querySelector('.audio-value');
+      input.addEventListener('input', () => { if (value) value.textContent = Number(input.value).toFixed(2); });
+    });
+  });
+}
+
+function setupAudioDrag() {
+  document.querySelectorAll('.audio-block').forEach((block) => {
+    block.addEventListener('pointerdown', (event) => {
+      if (!window.PointerEvent) return;
+      const total = Number(document.querySelector('.timeline')?.dataset.total || 0);
+      const lane = block.parentElement;
+      if (total <= 0 || !lane) return;
+      const rect = lane.getBoundingClientRect();
+      const startValue = Number(block.dataset.start || 0);
+      const durationValue = Number(block.dataset.duration || 0.2);
+      const offsetValue = Number(block.dataset.offset || 0);
+      const edge = event.target.closest('.audio-handle')?.dataset.edge || 'move';
+      const originX = event.clientX;
+      const pointerId = event.pointerId;
+      let nextStart = startValue;
+      let nextDuration = durationValue;
+      let nextOffset = offsetValue;
+      let moved = false;
+      block.setPointerCapture?.(pointerId);
+      event.preventDefault();
+      const move = (moveEvent) => {
+        const delta = ((moveEvent.clientX - originX) / Math.max(1, rect.width)) * total;
+        if (Math.abs(moveEvent.clientX - originX) > 2) moved = true;
+        if (edge === 'start') {
+          const end = startValue + durationValue;
+          nextStart = Math.max(0, Math.min(end - 0.2, startValue + delta));
+          nextDuration = end - nextStart;
+          nextOffset = Math.max(0, offsetValue + (nextStart - startValue));
+        } else if (edge === 'end') {
+          nextStart = startValue;
+          nextDuration = Math.max(0.2, Math.min(total - startValue, durationValue + delta));
+        } else {
+          nextStart = Math.max(0, Math.min(total - durationValue, startValue + delta));
+          nextDuration = durationValue;
+        }
+        block.style.left = `${(nextStart / total * 100).toFixed(2)}%`;
+        block.style.width = `${(nextDuration / total * 100).toFixed(2)}%`;
+        let tip = document.querySelector('.audio-drag-tip');
+        if (!tip) {
+          tip = document.createElement('span');
+          tip.className = 'audio-drag-tip';
+          document.body.appendChild(tip);
+        }
+        tip.textContent = `${nextStart.toFixed(2)}s – ${(nextStart + nextDuration).toFixed(2)}s`;
+        tip.style.left = `${moveEvent.clientX + 10}px`;
+        tip.style.top = `${moveEvent.clientY - 26}px`;
+      };
+      const up = async () => {
+        block.removeEventListener('pointermove', move);
+        block.removeEventListener('pointerup', up);
+        block.removeEventListener('pointercancel', up);
+        document.querySelector('.audio-drag-tip')?.remove();
+        if (!moved) return;
+        block.dataset.dragged = '1';
+        await patchAudioTrack(block.dataset.track || '', {
+          start: Number(nextStart.toFixed(3)),
+          duration: Number(nextDuration.toFixed(3)),
+          offset: Number(nextOffset.toFixed(3)),
+        });
+      };
+      block.addEventListener('pointermove', move);
+      block.addEventListener('pointerup', up);
+      block.addEventListener('pointercancel', up);
+    }, { capture: true });
+    block.addEventListener('click', (event) => {
+      if (block.dataset.dragged === '1') {
+        block.dataset.dragged = '0';
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }, { capture: true });
   });
 }
 
@@ -3211,7 +3573,7 @@ document.addEventListener('click', async (event) => {
       if (focus === 'clean') navigate(projectPath('clean'));
       else { state.focusMode = focus; state.scriptOpen = false; render(); }
     }
-    else if (action === 'close-focus') { state.focusMode = ''; render(); }
+    else if (action === 'close-focus') { stopAudioPlayback(); state.focusMode = ''; render(); }
     else if (action === 'toggle-transcript-overlay') { state.transcriptOverlay = !state.transcriptOverlay; render(); }
     else if (action === 'sfx-add') startSfxUpload(target.dataset.kind || 'sound');
     else if (action === 'sfx-text') openSfxTextModal();
@@ -3220,6 +3582,9 @@ document.addEventListener('click', async (event) => {
     else if (action === 'sfx-text-add') await addSfxText();
     else if (action === 'sfx-remove') await removeSfx(target.dataset.effect || '');
     else if (action === 'audio-remove') await removeAudioTrack(target.dataset.track || '');
+    else if (action === 'audio-audition') await auditionAudioTrack(target.dataset.track || '');
+    else if (action === 'audio-mix-preview') await toggleAudioMixPreview();
+    else if (action === 'audio-mute' || action === 'audio-solo') await toggleAudioTrack(target.dataset.track || '', action === 'audio-mute' ? 'muted' : 'solo');
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
     else if (action === 'preview-reclean') {
@@ -3247,6 +3612,12 @@ document.addEventListener('click', async (event) => {
 
 document.addEventListener('change', async (event) => {
   const target = event.target;
+  if (target.dataset?.audioField) {
+    const field = target.dataset.audioField;
+    const value = field === 'volume' ? Number(target.value) : Number(target.value);
+    await patchAudioTrack(target.dataset.track || '', { [field]: value });
+    return;
+  }
   if (target.id === 'sfx-file-input') {
     const file = target.files?.[0];
     target.value = '';
@@ -3294,6 +3665,9 @@ document.addEventListener('input', (event) => {
 function afterRender() {
   setupBrushCanvas();
   setupTimelineRuler();
+  setupAudioRows();
+  loadAudioWaveforms();
+  setupAudioDrag();
   const inline = document.querySelector('video[data-inline-player]');
   if (inline) {
     const start = Number(inline.dataset.start || 0);

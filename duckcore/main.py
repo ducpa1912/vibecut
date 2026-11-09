@@ -108,6 +108,18 @@ class SlipClipBody(BaseModel):
     delta: float = Field(ge=-30.0, le=30.0)
 
 
+class AudioTrackPatch(BaseModel):
+    start: float | None = Field(default=None, ge=0.0)
+    duration: float | None = Field(default=None, ge=0.2)
+    offset: float | None = Field(default=None, ge=0.0)
+    volume: float | None = Field(default=None, ge=0.0, le=1.5)
+    muted: bool | None = None
+    solo: bool | None = None
+    fade_in: float | None = Field(default=None, ge=0.0)
+    fade_out: float | None = Field(default=None, ge=0.0)
+    name: str | None = Field(default=None, max_length=120)
+
+
 class VoicePatch(BaseModel):
     voice: str = Field(min_length=1, max_length=80)
     mode: str = Field(default="voice_over", pattern="^(voice_over|voice_only)$")
@@ -894,7 +906,12 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         project_id: str, edit_id: str, _: None = Depends(require_token)
     ) -> dict:
         try:
-            return {"edit": edits.get_edit(data_root, project_id, edit_id)}
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            if not edit.get("audio_tracks"):
+                rows = edits.ensure_audio_tracks(edit)
+                if rows:
+                    edits.save_edit(edit, data_root)
+            return {"edit": edit}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         except edits.EditError as exc:
@@ -1361,6 +1378,66 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Effect not found.") from exc
         return {"effects": rows, "edit": edit}
+
+    @app.get("/api/projects/{project_id}/edits/{edit_id}/audio/{track_id}/file")
+    def audio_track_file(
+        project_id: str, edit_id: str, track_id: str,
+        request: Request, t: str | None = None,
+    ) -> FileResponse:
+        require_media(request, t)
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        rows = edit.get("audio_tracks")
+        if not isinstance(rows, list) or not rows:
+            rows = edits.ensure_audio_tracks(edit)
+        row = next((item for item in rows if str(item.get("id")) == track_id), None)
+        if row is None:
+            row = next((item for item in edit.get("sfx") or [] if str(item.get("id")) == track_id and item.get("kind") == "sound"), None)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Audio track not found.")
+        path = data_root / "projects" / project_id / str(row.get("audio") or row.get("file") or "")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Audio file is missing.")
+        suffix = path.suffix.lower()
+        media_type = "audio/wav" if suffix == ".wav" else "audio/mp4" if suffix in {".m4a", ".aac"} else "audio/mpeg" if suffix == ".mp3" else "application/octet-stream"
+        return FileResponse(path, media_type=media_type)
+
+    @app.patch("/api/projects/{project_id}/edits/{edit_id}/audio/{track_id}")
+    def patch_audio_track(
+        project_id: str, edit_id: str, track_id: str, body: AudioTrackPatch,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        values = body.model_dump(exclude_none=True)
+        try:
+            row = edits.patch_audio_track(edit, track_id, values)
+        except KeyError:
+            effect = next((item for item in edit.get("sfx") or [] if str(item.get("id")) == track_id and item.get("kind") == "sound"), None)
+            if effect is None:
+                raise HTTPException(status_code=404, detail="Audio track not found.")
+            old_start = float(effect.get("start") or 0.0)
+            old_end = float(effect.get("end") or old_start)
+            if "start" in values:
+                effect["start"] = max(0.0, float(values["start"]))
+                if "duration" not in values:
+                    effect["end"] = max(float(effect["start"]) + 0.2, old_end + (float(effect["start"]) - old_start))
+            if "duration" in values:
+                effect["end"] = float(effect["start"] or 0.0) + max(0.2, float(values["duration"]))
+            if "offset" in values:
+                effect["offset"] = max(0.0, float(values["offset"]))
+            if "volume" in values:
+                effect["volume"] = max(0.0, min(1.5, float(values["volume"])))
+            for key in ("muted", "solo", "fade_in", "fade_out"):
+                if key in values:
+                    effect[key] = values[key]
+            row = effect
+        edits.save_edit(edit, data_root)
+        return {"audio_track": row, "edit": edit}
 
     @app.delete("/api/projects/{project_id}/edits/{edit_id}/audio/{track_id}")
     def delete_audio_track(
