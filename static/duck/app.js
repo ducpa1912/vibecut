@@ -1,6 +1,16 @@
 /* DuckSuite — Daylight Story Desk.
    One shell, six screens, no marketing page. */
 
+import {
+  storyClipAt as findStoryClip,
+  storyDuration,
+  timelineToSource as mapTimelineToSource,
+  sourceToTimeline as mapSourceToTimeline,
+  storyRanges,
+} from './timeline-model.js';
+import { waveformPeaks, audibleRows, mixEntry } from './audio-tools.js';
+import { storyBannerMarkup, mediaInspectorMarkup, audioFocusMarkup } from './editor-markup.js';
+
 const app = document.querySelector('#app');
 const modalRoot = document.querySelector('#modal-root');
 const toastEl = document.querySelector('#toast');
@@ -1097,17 +1107,7 @@ function fullVideoEdit() {
 }
 
 function storyClipAt(time) {
-  let cursor = 0;
-  const clips = state.edit?.clips || [];
-  for (let index = 0; index < clips.length; index += 1) {
-    const clip = clips[index];
-    const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
-    if (Number(time) < cursor + duration || index === clips.length - 1) {
-      return { clip, index, start: cursor, offset: Math.max(0, Number(time) - cursor) };
-    }
-    cursor += duration;
-  }
-  return null;
+  return findStoryClip(state.edit?.clips || [], time);
 }
 
 function storyClipLabel(clip, index) {
@@ -1145,42 +1145,34 @@ function storyBanner() {
   const full = fullVideoEdit();
   const stories = (state.edits || []).filter((edit) => edit.kind === 'story');
   if (!stories.some((edit) => edit.id === state.edit.id)) stories.unshift(state.edit);
-  const displayTitle = storyDisplayTitle();
   const used = new Set(clips.filter((clip) => clip.kind !== 'media').map((clip) => clip.scene));
   const available = checkScenes().filter((scene) => !used.has(scene.id));
-  return `<div class="story-banner">
-    <span class="chip green">Story edit</span>
-    <strong>${esc(displayTitle)}</strong>
-    <span class="small muted">${clips.length} beats · ${fmtDuration(timelineDuration())}</span>
-    <span class="spacer"></span>
-    <select id="story-edit-select" title="Switch edit">
-      ${full ? `<option value="${esc(full.id)}">Full video</option>` : ''}
-      ${stories.map((edit) => `<option value="${esc(edit.id)}" ${edit.id === state.edit.id ? 'selected' : ''}>${esc(storyOptionLabel(edit))}</option>`).join('')}
-    </select>
-    <button class="btn small" type="button" data-action="story-add-image">${icon('grid', 12)} Image</button>
-    <button class="btn small" type="button" data-action="story-add-video">${icon('film', 12)} Video</button>
-    <select id="story-scene-select" ${available.length ? '' : 'disabled'} title="Scene to add">
-      ${available.length ? available.map((scene) => {
-        const at = checkScenes().indexOf(scene);
-        return `<option value="${esc(scene.id)}">S${pad(at + 1)} · ${esc(truncate(sceneTitle(scene, at), 20))}</option>`;
-      }).join('') : '<option>All scenes used</option>'}
-    </select>
-    <button class="btn small" type="button" data-action="story-add-scene" ${available.length ? '' : 'disabled'}>${icon('plus', 12)} Scene</button>
-    <button class="btn small" type="button" data-action="back-to-full">${icon('arrowLeft', 12)} Full video</button>
-  </div>
-  <div class="story-beats">
-    ${clips.map((clip, index) => {
-      const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
-      return `<span class="story-beat">
-        <span class="chip">${storyClipLabel(clip, index)}</span>
-        <span class="story-beat-name">${esc(clip.label || (clip.kind === 'media' ? 'Inserted beat' : `Scene ${pad(index + 1)}`))}</span>
-        <span class="small muted">${fmtDuration(duration)}</span>
-        <button class="icon-btn" type="button" data-action="story-move-beat" data-index="${index}" data-delta="-1" title="Move left" ${index === 0 ? 'disabled' : ''}>‹</button>
-        <button class="icon-btn" type="button" data-action="story-move-beat" data-index="${index}" data-delta="1" title="Move right" ${index === clips.length - 1 ? 'disabled' : ''}>›</button>
-        <button class="icon-btn" type="button" data-action="story-remove-beat" data-index="${index}" title="Remove beat" ${clips.length <= 1 ? 'disabled' : ''}>×</button>
-      </span>`;
-    }).join('')}
-  </div>`;
+  return storyBannerMarkup({
+    esc,
+    icon,
+    title: storyDisplayTitle(),
+    beatCount: clips.length,
+    duration: fmtDuration(timelineDuration()),
+    fullId: full?.id || '',
+    editOptions: stories.map((edit) => ({
+      id: edit.id,
+      label: storyOptionLabel(edit),
+      selected: edit.id === state.edit.id,
+    })),
+    sceneOptions: available.map((scene) => {
+      const at = checkScenes().indexOf(scene);
+      return { id: scene.id, label: `S${pad(at + 1)} · ${truncate(sceneTitle(scene, at), 20)}` };
+    }),
+    beats: clips.map((clip, index) => ({
+      index,
+      chip: storyClipLabel(clip, index),
+      name: clip.label || (clip.kind === 'media' ? 'Inserted beat' : `Scene ${pad(index + 1)}`),
+      duration: fmtDuration(Math.max(0, Number(clip.end || 0) - Number(clip.start || 0))),
+      first: index === 0,
+      last: index === clips.length - 1,
+      single: clips.length <= 1,
+    })),
+  });
 }
 
 function storyContextBar() {
@@ -1360,28 +1352,20 @@ async function moveStoryBeat(index, delta) {
 
 function mediaInspector(story) {
   const clip = story.clip;
-  const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
-  const kind = clip.media === 'image' ? 'Image' : 'Video';
-  const index = story.index;
-  const total = (state.edit?.clips || []).length;
-  return `<aside class="panel inspector">
-    <div class="inspector-head">
-      <h2 class="inspector-title">${kind} beat · ${esc(clip.label || 'Inserted')}</h2>
-      <p class="inspector-sub">Inserted beat · ${fmtDuration(duration)} · story ${fmtTC(story.start)} – ${fmtTC(story.start + duration)}</p>
-    </div>
-    <div class="inspector-body">
-      ${clip.media === 'image'
-        ? `<img class="beat-thumb" src="${storyFileUrl(clip.file)}" alt="">`
-        : `<video class="beat-thumb" controls preload="metadata" src="${storyFileUrl(clip.file)}"></video>`}
-      <p class="small muted">Inserted beats render at the story resolution and do not read source clean layers. Source speech is not read for this beat.</p>
-      <div class="kv"><span>File</span><strong title="${esc(clip.file || '')}">${esc((clip.file || '').split('/').pop())}</strong></div>
-      <div class="beat-actions">
-        <button class="btn small" type="button" data-action="story-move-beat" data-index="${index}" data-delta="-1" ${index === 0 ? 'disabled' : ''}>‹ Move left</button>
-        <button class="btn small" type="button" data-action="story-move-beat" data-index="${index}" data-delta="1" ${index === total - 1 ? 'disabled' : ''}>Move right ›</button>
-        <button class="btn small" type="button" data-action="story-remove-beat" data-index="${index}" ${total <= 1 ? 'disabled' : ''}>Remove beat</button>
-      </div>
-    </div>
-  </aside>`;
+  const fileName = String(clip.file || '').split('/').pop();
+  return mediaInspectorMarkup({
+    esc,
+    kind: clip.media === 'image' ? 'Image' : 'Video',
+    label: clip.label || 'Inserted',
+    duration: fmtDuration(Math.max(0, Number(clip.end || 0) - Number(clip.start || 0))),
+    start: fmtTC(story.start),
+    end: fmtTC(story.start + Math.max(0, Number(clip.end || 0) - Number(clip.start || 0))),
+    fileUrl: storyFileUrl(clip.file),
+    fileName,
+    isImage: clip.media === 'image',
+    index: story.index,
+    total: (state.edit?.clips || []).length,
+  });
 }
 
 function screenEditor() {
@@ -1624,52 +1608,25 @@ function audioFocus() {
   const music = state.edit?.music;
   const voice = state.edit?.voice;
   const dub = state.edit?.dub;
-  const rows = editAudioRows();
-  return `<div class="focus-grid audio-focus">
-    <div class="focus-card audio-tracks-card">
-      <div class="audio-card-head"><h3>Voice & Music tracks</h3><button class="btn small" type="button" data-action="audio-mix-preview">${icon('play', 12)} ${state.mixPlaying ? 'Stop' : 'Preview mix'}</button></div>
-      <p class="small muted">Drag a block edge to trim, drag the middle to move. Each row can audition on its own.</p>
-      <div class="audio-focus-list">
-        ${rows.length ? rows.map((row) => `<details class="audio-track-card" data-audio-row="${esc(row.id)}" style="--lane-color:${audioColor(row.kind)}" ${state.openAudioRows.has(String(row.id)) ? 'open' : ''}>
-          <summary>
-            <span class="audio-focus-dot"></span>
-            <span class="audio-track-name">${esc(row.name || row.kind)}</span>
-            <span class="chip">${esc(row.kind)}</span>
-            <button class="icon-btn" type="button" data-action="audio-audition" data-track="${esc(row.id)}" title="Audition this row">${icon('play', 12)}</button>
-            <button class="icon-btn${row.muted ? ' is-on' : ''}" type="button" data-action="audio-mute" data-track="${esc(row.id)}" title="Mute">M</button>
-            <button class="icon-btn${row.solo ? ' is-on' : ''}" type="button" data-action="audio-solo" data-track="${esc(row.id)}" title="Solo">S</button>
-            <button class="icon-btn" type="button" data-action="audio-remove" data-track="${esc(row.id)}" title="Remove">${icon('trash', 13)}</button>
-          </summary>
-          <div class="audio-row-form">
-            <label>Start<input type="number" min="0" step="0.05" value="${Number(row.start || 0).toFixed(2)}" data-audio-field="start" data-track="${esc(row.id)}"></label>
-            <label>Length<input type="number" min="0.2" step="0.05" value="${Number(row.duration || 0).toFixed(2)}" data-audio-field="duration" data-track="${esc(row.id)}"></label>
-            <label>In<input type="number" min="0" step="0.05" value="${Number(row.offset || 0).toFixed(2)}" data-audio-field="offset" data-track="${esc(row.id)}"></label>
-            <label>Volume <span class="audio-value">${Number(row.volume ?? 0.25).toFixed(2)}</span><input type="range" min="0" max="1.5" step="0.01" value="${Number(row.volume ?? 0.25)}" data-audio-field="volume" data-track="${esc(row.id)}"></label>
-            <label>Fade in<input type="number" min="0" step="0.05" value="${Number(row.fade_in || 0).toFixed(2)}" data-audio-field="fade_in" data-track="${esc(row.id)}"></label>
-            <label>Fade out<input type="number" min="0" step="0.05" value="${Number(row.fade_out || 0).toFixed(2)}" data-audio-field="fade_out" data-track="${esc(row.id)}"></label>
-          </div>
-        </details>`).join('') : '<p class="small muted">No voice, music or sound tracks.</p>'}
-      </div>
-    </div>
-    <div class="focus-card">
-      <h3>Original audio</h3>
-      <div class="audio-status"><span class="chip">${dub ? 'Muted by dub' : 'Source bed'}</span><span class="small muted">${dub ? 'The dub replaces the source audio.' : 'Voice-over and music sit over it.'}</span></div>
-      <p class="small muted">Mute or solo a row and the source bed follows the same rule on render.</p>
-    </div>
-    <div class="focus-card">
-      <h3>Voice & dub</h3>
-      <div class="audio-status"><span class="chip ${voice || dub ? 'green' : ''}">${dub ? 'Dub built' : voice ? 'Voice-over' : 'None'}</span><span class="small muted">${voice ? esc(voice.voice || '') : ''}</span></div>
-      ${inspectorVoice()}
-    </div>
-    <div class="focus-card">
-      <h3>Music & SFX</h3>
-      ${music ? `<div class="kv"><span>${esc(music.name || 'Music')}</span><button class="btn small" data-action="remove-music">Remove</button></div>` : `<button class="btn wide" data-action="add-music">${icon('volume', 14)} Add music</button>`}
-      <div class="sfx-list" style="margin-top:10px">
-        ${(state.edit?.sfx || []).filter((fx) => fx.kind === 'sound').map((fx) => `<div class="sfx-row"><span class="sfx-kind">sound</span><span class="sfx-name">${esc(fx.name || 'Sound')}</span><button class="icon-btn" data-action="sfx-remove" data-effect="${esc(fx.id)}">${icon('trash', 14)}</button></div>`).join('') || '<p class="small muted">No sound effects yet.</p>'}
-      </div>
-      <button class="btn wide" data-action="sfx-add" data-kind="sound">${icon('volume', 14)} Add sound effect</button>
-    </div>
-  </div>`;
+  const rows = editAudioRows().map((row) => ({
+    ...row,
+    color: audioColor(row.kind),
+    open: state.openAudioRows.has(String(row.id)),
+  }));
+  const sounds = (state.edit?.sfx || [])
+    .filter((fx) => fx.kind === 'sound')
+    .map((fx) => ({ id: fx.id, name: fx.name || 'Sound' }));
+  return audioFocusMarkup({
+    esc,
+    icon,
+    rows,
+    music,
+    voice,
+    dub,
+    mixing: state.mixPlaying,
+    sounds,
+    voicePanel: inspectorVoice(),
+  });
 }
 
 function sfxFocus() {
@@ -1926,9 +1883,8 @@ async function toggleAudioMixPreview() {
   }
   await ctx.resume();
   const rows = editAudioRows().filter((row) => !row.muted);
-  const soloRows = rows.filter((row) => row.solo);
-  const audible = soloRows.length ? soloRows : rows;
-  const soloActive = soloRows.length > 0;
+  const audible = audibleRows(rows);
+  const soloActive = rows.some((row) => row.solo);
   const dub = audible.some((row) => row.kind === 'dub');
   const voiceOnly = audible.some((row) => row.kind === 'voice' && row.mode === 'voice_only');
   const voices = audible.filter((row) => row.kind === 'voice' || row.kind === 'dub');
@@ -1949,33 +1905,23 @@ async function toggleAudioMixPreview() {
   for (const row of audible) {
     const buffer = await audioBufferFor(row);
     if (!buffer) continue;
-    const rowStart = Number(row.start || 0);
-    const rowEnd = rowStart + Math.max(0.2, Number(row.duration || 0.2));
-    if (rowEnd <= playhead) continue;
-    const inside = rowStart <= playhead;
-    const delay = inside ? 0 : rowStart - playhead;
-    const offset = Math.max(0, Number(row.offset || 0) + (inside ? playhead - rowStart : 0));
-    if (offset >= buffer.duration - 0.01) continue;
-    const wanted = Math.max(0.05, rowEnd - Math.max(rowStart, playhead));
-    const duration = Math.min(wanted, buffer.duration - offset);
-    const level = Math.max(0, Math.min(1.5, Number(row.volume ?? (row.kind === 'music' ? 0.25 : 1))));
+    const entry = mixEntry(row, playhead, buffer.duration);
+    if (!entry) continue;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     const gain = ctx.createGain();
-    const startTime = base + delay;
-    const endTime = startTime + duration;
-    const fadeIn = Math.max(0, Math.min(duration / 2, Number(row.fade_in || 0)));
-    const fadeOut = Math.max(0, Math.min(duration / 2, Number(row.fade_out || 0)));
-    gain.gain.setValueAtTime(fadeIn ? 0 : level, startTime);
-    if (fadeIn) gain.gain.linearRampToValueAtTime(level, startTime + fadeIn);
-    if (fadeOut) {
-      gain.gain.setValueAtTime(level, Math.max(startTime, endTime - fadeOut));
+    const startTime = base + entry.delay;
+    const endTime = startTime + entry.duration;
+    gain.gain.setValueAtTime(entry.fadeIn ? 0 : entry.level, startTime);
+    if (entry.fadeIn) gain.gain.linearRampToValueAtTime(entry.level, startTime + entry.fadeIn);
+    if (entry.fadeOut) {
+      gain.gain.setValueAtTime(entry.level, Math.max(startTime, endTime - entry.fadeOut));
       gain.gain.linearRampToValueAtTime(0, endTime);
     }
     source.connect(gain).connect(ctx.destination);
-    source.start(startTime, offset, duration);
+    source.start(startTime, entry.offset, entry.duration);
     state.audioSources.push(source);
-    last = Math.max(last, rowEnd);
+    last = Math.max(last, Number(row.start || 0) + Math.max(0.2, Number(row.duration || 0.2)));
   }
   state.mixPlaying = true;
   const stopAt = total > playhead ? total : last;
@@ -2075,7 +2021,7 @@ function audioColor(kind) {
 function timelineDuration() {
   const edit = state.edit;
   if (isStoryEdit()) {
-    return (edit?.clips || []).reduce((sum, clip) => sum + Math.max(0, Number(clip.end || 0) - Number(clip.start || 0)), 0);
+    return storyDuration(edit?.clips || []);
   }
   const scenes = getScenes();
   return Math.max(
@@ -2093,42 +2039,17 @@ function timelineSceneRanges() {
     return scenes.map((scene, index) => ({ scene, index, start: Number(scene.start || 0), end: Number(scene.end || 0) }));
   }
   const byId = new Map(scenes.map((scene) => [scene.id, scene]));
-  let cursor = 0;
-  const rows = [];
-  (state.edit?.clips || []).forEach((clip, index) => {
-    const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
-    rows.push({ scene: byId.get(clip.scene), clip, index, start: cursor, end: cursor + duration });
-    cursor += duration;
-  });
-  return rows;
+  return storyRanges(state.edit?.clips || [], byId);
 }
 
 function timelineToSource(time) {
   if (!isStoryEdit()) return Number(time) || 0;
-  let cursor = 0;
-  for (const clip of state.edit?.clips || []) {
-    const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
-    if (Number(time) < cursor + duration) {
-      return Number(clip.start || 0) + (Number(time) - cursor);
-    }
-    cursor += duration;
-  }
-  const last = (state.edit?.clips || []).slice(-1)[0];
-  return Number(last?.end || 0);
+  return mapTimelineToSource(state.edit?.clips || [], time);
 }
 
 function sourceToTimeline(time) {
   if (!isStoryEdit()) return Number(time) || 0;
-  let cursor = 0;
-  for (const clip of state.edit?.clips || []) {
-    const start = Number(clip.start || 0);
-    const end = Number(clip.end || 0);
-    if (Number(time) >= start && Number(time) < end) {
-      return cursor + (Number(time) - start);
-    }
-    cursor += Math.max(0, end - start);
-  }
-  return cursor;
+  return mapSourceToTimeline(state.edit?.clips || [], time);
 }
 
 function timelineBlock(start, end, total, label, action = '', data = '', extraStyle = '') {
@@ -2535,20 +2456,7 @@ async function loadAudioWaveforms() {
     }
     const buffer = await audioBufferFor(row);
     if (!buffer) continue;
-    const channel = buffer.getChannelData(0);
-    const total = Math.max(0.01, buffer.duration);
-    const startAt = Math.min(channel.length - 1, Math.floor((offset / total) * channel.length));
-    const endAt = Math.min(channel.length, startAt + Math.floor((duration / total) * channel.length));
-    const block = Math.max(1, Math.floor((endAt - startAt) / count));
-    const peaks = Array.from({ length: count }, (_unused, index) => {
-      const from = startAt + index * block;
-      const to = Math.min(endAt, from + block);
-      let peak = 0;
-      for (let at = from; at < to; at += Math.max(1, Math.floor(block / 24))) {
-        peak = Math.max(peak, Math.abs(channel[at] || 0));
-      }
-      return Math.min(1, peak * 3.2);
-    });
+    const peaks = waveformPeaks(buffer.getChannelData(0), buffer.duration, offset, duration, count);
     state.waveformCache.set(key, peaks);
     wave.innerHTML = peaks.map((peak) => `<i style="height:${Math.max(8, peak * 100).toFixed(0)}%"></i>`).join('');
   }
