@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from duckcore import caption_burn, captions, edits, media
+from duckcore import caption_burn, captions, edits, effects, media
 from duckcore.store import ProjectStore
 
 
@@ -46,10 +46,16 @@ def _video_codec() -> list[str]:
     return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]
 
 
+def _clean_message(value: Any) -> str:
+    text = str(value or "")
+    text = "".join(ch for ch in text if ch in "\n\t" or ord(ch) >= 32)
+    return text[-1000:]
+
+
 def _run(command: list[str], timeout: float = 3600) -> None:
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
-        raise RenderError((result.stderr or result.stdout or "ffmpeg failed")[-800:])
+        raise RenderError(_clean_message(result.stderr or result.stdout or "ffmpeg failed"))
 
 
 def _fill_layers(edit: dict) -> list[dict]:
@@ -357,7 +363,12 @@ def render_edit(
                 )
                 captioned.replace(output)
 
+        _apply_visual_effects(
+            ffmpeg, output, edit, data_root, job_dir, out_w, out_h,
+            target_fps=float(target_fps), progress=progress,
+        )
         _mix_audio(ffmpeg, output, edit, job_dir, progress)
+        _mix_sfx_audio(ffmpeg, output, edit, job_dir, progress)
 
         if progress:
             progress(1.0, "Render complete")
@@ -366,6 +377,142 @@ def render_edit(
         for segment in segments:
             segment.unlink(missing_ok=True)
         raise
+
+def _apply_visual_effects(
+    ffmpeg: str,
+    output: Path,
+    edit: dict,
+    data_root: Path,
+    job_dir: Path,
+    out_w: int,
+    out_h: int,
+    *,
+    target_fps: float,
+    progress=None,
+) -> None:
+    items = effects.visual_effects(edit)
+    if not items:
+        return
+    if progress:
+        progress(0.975, "Adding effects")
+    total = max(0.05, float(edit.get("end") or media.duration(output)))
+    inputs = ["-i", str(output)]
+    filters: list[str] = []
+    base = "[0:v]"
+    input_index = 1
+    filter_index = 1
+    for effect in items:
+        kind = str(effect.get("kind") or "")
+        start = max(0.0, min(total, float(effect.get("start") or 0.0)))
+        end = max(start + 0.05, min(total, float(effect.get("end") or total)))
+        if kind == "filter":
+            preset = str(effect.get("preset") or "warm")
+            chain = effects.FILTERS.get(preset)
+            if not chain:
+                continue
+            label = f"[vf{filter_index}]"
+            filter_index += 1
+            filters.append(f"{base}{chain}:enable='between(t,{start:.3f},{end:.3f})'{label}")
+            base = label
+            continue
+        path = None
+        if kind == "text":
+            try:
+                path = effects.text_png(effect, str(edit["project_id"]), data_root, out_w, out_h)
+            except Exception:
+                continue
+            inputs += ["-loop", "1", "-framerate", str(int(target_fps)), "-i", str(path)]
+        elif kind in {"image", "gif", "sticker", "layer"}:
+            candidate = job_dir / str(effect.get("file") or "")
+            if not candidate.is_file():
+                continue
+            path = candidate
+            if kind == "gif" or candidate.suffix.lower() in {".gif", ".webp"}:
+                inputs += ["-stream_loop", "-1", "-ignore_loop", "0", "-i", str(candidate)]
+            elif kind == "layer" and candidate.suffix.lower() in {".mp4", ".mov", ".m4v"}:
+                inputs += ["-stream_loop", "-1", "-i", str(candidate)]
+            else:
+                inputs += ["-loop", "1", "-framerate", str(int(target_fps)), "-i", str(candidate)]
+        else:
+            continue
+        width = max(0.04, min(1.0, float(effect.get("width") or 0.35)))
+        scaled = f"[{input_index}:v]scale={max(2, int(out_w * width))}:-2,format=rgba,setpts=PTS-STARTPTS[ov{input_index}]"
+        filters.append(scaled)
+        label = f"[vfx{input_index}]"
+        x = max(0.0, min(1.0, float(effect.get("x") or 0.5)))
+        y = max(0.0, min(1.0, float(effect.get("y") or 0.5)))
+        filters.append(
+            f"{base}[ov{input_index}]overlay=x=(W-w)*{x:.3f}:y=(H-h)*{y:.3f}:"
+            f"enable='between(t,{start:.3f},{end:.3f})':shortest=1{label}"
+        )
+        base = label
+        input_index += 1
+    if base == "[0:v]":
+        return
+    filters.append(f"{base}format=yuv420p[vout]")
+    temporary = output.with_name(f".{output.stem}.fx.mp4")
+    command = [
+        ffmpeg, "-y", "-v", "error", *inputs,
+        "-filter_complex", ";".join(filters),
+        "-map", "[vout]", "-map", "0:a?",
+        "-c:v", "h264_videotoolbox", "-q:v", "65", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", "-t", f"{total:.3f}", "-movflags", "+faststart",
+        str(temporary),
+    ]
+    _run(command)
+    temporary.replace(output)
+
+
+def _mix_sfx_audio(
+    ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=None,
+) -> None:
+    items = [
+        item for item in effects.sound_effects(edit)
+        if (job_dir / str(item.get("file") or "")).is_file()
+    ]
+    if not items:
+        return
+    if progress:
+        progress(0.99, "Mixing effects")
+    total = max(0.05, float(edit.get("end") or media.duration(output)))
+    inputs = ["-i", str(output)]
+    filters: list[str] = []
+    labels: list[str] = []
+    input_index = 1
+    for item in items:
+        path = job_dir / str(item.get("file") or "")
+        inputs += ["-i", str(path)]
+        delay = max(0, int(float(item.get("start") or 0.0) * 1000))
+        level = max(0.0, min(1.5, float(item.get("volume") or 0.9)))
+        label = f"[sfx{input_index}]"
+        filters.append(
+            f"[{input_index}:a]volume={level:.3f},adelay={delay}|{delay}{label}"
+        )
+        labels.append(label)
+        input_index += 1
+    if media.has_audio(output):
+        filters.insert(0, "[0:a]volume=1.0[base]")
+        labels.insert(0, "[base]")
+    else:
+        filters.insert(
+            0,
+            f"anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration={total:.3f}[base]",
+        )
+        labels.insert(0, "[base]")
+    filters.append(
+        "".join(labels) + f"amix=inputs={len(labels)}:duration=first:normalize=0[aout]"
+    )
+    temporary = output.with_name(f".{output.stem}.sfx.mp4")
+    command = [
+        ffmpeg, "-y", "-v", "error", *inputs,
+        "-filter_complex", ";".join(filters),
+        "-map", "0:v:0", "-map", "[aout]",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-t", f"{total:.3f}", "-movflags", "+faststart", str(temporary),
+    ]
+    _run(command)
+    temporary.replace(output)
+
 
 def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=None) -> None:
     """Mix dub or voice-over and optional music into the rendered video."""
@@ -652,6 +799,8 @@ class RenderQueue:
         return self._row(row) if row else None
 
     def _update(self, item_id: str, **values) -> None:
+        if "message" in values:
+            values["message"] = _clean_message(values["message"])
         allowed = {"state", "stage", "progress", "message", "output"}
         fields = [key for key in values if key in allowed]
         if not fields:
@@ -715,7 +864,7 @@ class RenderQueue:
                     state="cancelled" if cancelled else "failed",
                     stage="Cancelled" if cancelled else "Failed",
                     progress=1.0,
-                    message="Render cancelled" if cancelled else str(exc)[:500],
+                    message="Render cancelled" if cancelled else _clean_message(exc)[:500],
                 )
             finally:
                 self.cancel_events.pop(item["id"], None)

@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from duckcore import append, app_settings, captions, clean, edits, media, packs, preview, render, script, voice
+from duckcore import append, app_settings, captions, clean, edits, effects, media, packs, preview, render, script, voice
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -121,6 +121,22 @@ class VoiceRecordBody(BaseModel):
 class DubBody(BaseModel):
     voice: str = Field(min_length=1, max_length=80)
     language: str = Field(default="", max_length=20)
+
+
+class SfxTextBody(BaseModel):
+    text: str = Field(min_length=1, max_length=240)
+    start: float = 0.0
+    end: float = 3.0
+    style: str = Field(default="headline", pattern="^(headline|caption|badge)$")
+    color: str = Field(default="#ffffff", max_length=9)
+    x: float = 0.5
+    y: float = 0.84
+
+
+class SfxFilterBody(BaseModel):
+    preset: str = Field(default="warm", pattern="^(warm|cool|bw|vivid)$")
+    start: float = 0.0
+    end: float | None = None
 
 
 class BrushPoint(BaseModel):
@@ -1197,6 +1213,81 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         edit["dub"] = track
         edits.save_edit(edit, data_root)
         return {"dub": track}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/sfx/text")
+    def add_sfx_text(
+        project_id: str, edit_id: str, body: SfxTextBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            effect = effects.add_text(
+                edit, data_root,
+                text=body.text, start=body.start, end=body.end,
+                style=body.style, color=body.color, x=body.x, y=body.y,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except effects.EffectError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"effect": effect, "edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/sfx/filter")
+    def add_sfx_filter(
+        project_id: str, edit_id: str, body: SfxFilterBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            effect = effects.add_filter(
+                edit, data_root,
+                preset=body.preset, start=body.start, end=body.end,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except effects.EffectError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"effect": effect, "edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/sfx/upload")
+    async def upload_sfx(
+        project_id: str, edit_id: str, request: Request,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        raw = await request.body()
+        if not raw:
+            raise HTTPException(status_code=400, detail="The effect file is empty.")
+        try:
+            effect = effects.add_upload(
+                edit, data_root,
+                kind=request.headers.get("x-kind", ""),
+                filename=request.headers.get("x-filename", "effect"),
+                raw=raw,
+                start=float(request.headers.get("x-start", "0") or 0),
+                end=float(request.headers.get("x-end", "3") or 3),
+                volume=float(request.headers.get("x-volume", "0.9") or 0.9),
+            )
+        except effects.EffectError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"effect": effect, "edit": edit}
+
+    @app.delete("/api/projects/{project_id}/edits/{edit_id}/sfx/{effect_id}")
+    def delete_sfx(
+        project_id: str, edit_id: str, effect_id: str,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            rows = effects.remove(edit, data_root, effect_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Effect not found.") from exc
+        return {"effects": rows, "edit": edit}
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/music")
     async def upload_music(

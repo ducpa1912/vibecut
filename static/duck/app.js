@@ -43,6 +43,10 @@ const state = {
   transcriptBusy: false,
   scriptTarget: 'vi',
   scriptMode: 'clean',
+  editScope: 'scene',
+  focusMode: '',
+  transcriptOverlay: true,
+  sfxKind: '',
   voicePreview: '',
   recording: false,
   brushMode: false,
@@ -276,6 +280,10 @@ async function openProject(id, { startCheck = false } = {}) {
   state.editorReady = false;
   state.brushMode = false;
   state.brushStrokes = [];
+  state.editScope = 'scene';
+  state.focusMode = '';
+  state.transcriptOverlay = true;
+  state.sfxKind = '';
   state.showAllLayers = false;
   state.showAllCues = false;
 
@@ -1017,67 +1025,79 @@ function sceneTile(scene, index) {
 
 function screenEditor() {
   const scenes = getScenes();
-  const stories = getStories();
   const scene = currentScene();
   if (!scene) return emptyEditor();
+  if (state.focusMode) {
+    return `<main class="screen">
+      ${focusShell()}
+      ${timelinePanel()}
+      <input id="music-input" type="file" accept="audio/*,.m4a,.mp3,.wav,.aac" hidden>
+      <input id="sfx-file-input" type="file" accept="audio/*,image/*,video/*,.gif,.webp" hidden>
+    </main>`;
+  }
   const layers = sceneLayers(scene);
   const layer = layers.find((item) => item.id === state.selectedLayerId) || layers[0] || null;
-  const segments = segmentsForScene(scene);
-  const cleanCount = sceneCleanCount(scenes);
   const checking = ['queued', 'running', 'cancelling'].includes(state.check?.state);
-  const clip = clipForScene(scene, state.selectedScene);
-  const clipIndex = clipIndexForScene(scene, state.selectedScene);
-  const clipStart = Number(clip?.start ?? scene.start ?? 0);
-  const clipEnd = Number(clip?.end ?? scene.end ?? 0);
-  const strip = Array.from({ length: 6 }, (_unused, at) => clipStart + (at + 0.5) * (clipEnd - clipStart) / 6);
-  const playhead = clipEnd > clipStart ? Math.max(0, Math.min(1, (state.previewTime - clipStart) / (clipEnd - clipStart))) : 0;
+  const cues = segmentsForScene(scene);
+  const overlayCues = cues.length ? cues : getSegments().slice(0, 2);
+  const scopeNote = state.editScope === 'project' ? 'All scenes' : `Scene ${pad(state.selectedScene + 1)}`;
+  const tab = state.inspectorTab === 'audio' || state.inspectorTab === 'voice' ? 'audio'
+    : state.inspectorTab === 'sfx' ? 'sfx'
+      : state.inspectorTab === 'script' ? 'script' : 'clean';
+  const tabBody = tab === 'clean' ? inspectorClean(scene, layer, layers)
+    : tab === 'script' ? inspectorScript()
+      : tab === 'audio' ? inspectorAudio()
+        : inspectorSFX();
+  const focusLabel = { clean: 'Clean', script: 'Script', audio: 'Audio', sfx: 'SFX' }[tab];
   return `<main class="screen">
-    <div class="workspace edit">
+    <div class="workspace edit edit-clean">
       <aside class="panel proof-panel">
         <div class="panel-head"><h2>Scenes</h2><span class="meta">${scenes.length} scenes</span></div>
         <div class="proof-tabs">
           <button class="proof-tab${state.proofTab === 'scenes' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="scenes">Scenes ${scenes.length}</button>
-          <button class="proof-tab${state.proofTab === 'stories' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="stories">Stories ${stories.length}</button>
+          <button class="proof-tab${state.proofTab === 'stories' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="stories">Stories ${getStories().length}</button>
         </div>
-        <div class="proof-list">
-          ${state.proofTab === 'stories' ? storyProofRows(stories) : sceneProofRows(scenes)}
+        <div class="proof-list compact">
+          ${state.proofTab === 'stories' ? storyProofRows(getStories()) : sceneProofRows(scenes)}
         </div>
       </aside>
 
       <section class="editor-center">
-        ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Transcript and clean layers appear as they finish. Scenes are safe to review now.</div>` : ''}
+        ${checking ? `<div class="check-banner">${icon('loader', 14)} Check is still running. Scenes, transcript and layers appear as they finish.</div>` : ''}
         <section class="panel preview-block">
-          <div class="media-card" style="height:min(48vh, 460px)">
-            <video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video><span class="media-badge right">${mediaResolution()}</span>
+          <div class="media-card preview-large">
+            <video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>
+            <span class="media-badge right">${mediaResolution()}</span>
             <div class="media-overlay"><span class="tc">${fmtTC(state.previewTime || scene.start)} / ${fmtTC(state.edit?.end || state.check?.result?.meta?.duration || 0)}</span><span class="spacer"></span></div>
+            <div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}">
+              <button class="overlay-toggle" type="button" data-action="toggle-transcript-overlay" title="Transcript layer">CC</button>
+              <div class="overlay-cues">
+                ${overlayCues.slice(0, 3).map((segment) => `<button class="overlay-cue${Number(segment.start || 0) <= state.previewTime && Number(segment.end || 0) > state.previewTime ? ' is-active' : ''}" type="button" data-action="seek" data-time="${Number(segment.start || 0).toFixed(3)}">${esc(segment.text || '')}</button>`).join('') || '<span class="overlay-empty">Transcript appears here when speech is ready.</span>'}
+              </div>
+            </div>
           </div>
         </section>
-
-        <section class="panel transcript-panel">
-          <div class="transcript-head"><h3>Transcript</h3><span class="small muted">${segments.length} lines in this scene</span></div>
-          <div class="transcript-list">
-            ${segments.length
-              ? segments.map((segment, index) => transcriptRow(segment, index)).join('')
-              : ['queued', 'running', 'cancelling'].includes(state.check?.state)
-                ? '<div class="transcript-empty">Transcript is still running. Keep cutting; lines appear here when ready.</div>'
-                : '<div class="transcript-empty">No transcript yet. <button class="btn small" type="button" data-action="retry-transcript">Re-read speech</button></div>'}
-          </div>
-        </section>
-
-        ${timelinePanel()}
-
       </section>
 
       <aside class="panel inspector">
         <div class="inspector-head">
-          <h2 class="inspector-title">Scene ${pad(state.selectedScene + 1)} · ${esc(truncate(sceneTitle(scene, state.selectedScene), 32))}</h2>
+          <h2 class="inspector-title">Scene ${pad(state.selectedScene + 1)} · ${esc(truncate(sceneTitle(scene, state.selectedScene), 26))}</h2>
           <p class="inspector-sub">${fmtTC(scene.start, state.check?.result?.meta?.fps || 24)} – ${fmtTC(scene.end, state.check?.result?.meta?.fps || 24)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</p>
         </div>
+        <div class="scope-line">
+          <span class="small muted">Apply to</span>
+          <div class="segmented scope-toggle">
+            <button class="${state.editScope === 'scene' ? 'is-active' : ''}" type="button" data-action="set-scope" data-scope="scene">Scene</button>
+            <button class="${state.editScope === 'project' ? 'is-active' : ''}" type="button" data-action="set-scope" data-scope="project">Whole video</button>
+          </div>
+          <span class="scope-note">${esc(scopeNote)}</span>
+        </div>
         <div class="tabs">
-          ${['clean', 'script', 'captions', 'voice'].map((tab) => `<button class="tab${state.inspectorTab === tab ? ' is-active' : ''}" type="button" data-action="inspector-tab" data-tab="${tab}">${tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
+          ${['clean', 'script', 'audio', 'sfx'].map((item) => `<button class="tab${tab === item ? ' is-active' : ''}" type="button" data-action="inspector-tab" data-tab="${item}">${item === 'audio' ? 'Audio' : item === 'sfx' ? 'SFX' : item[0].toUpperCase() + item.slice(1)}</button>`).join('')}
         </div>
         <div class="inspector-body">
-          ${state.inspectorTab === 'clean' ? inspectorClean(scene, layer, layers) : state.inspectorTab === 'captions' ? inspectorCaptions(scene) : state.inspectorTab === 'voice' ? inspectorVoice() : inspectorScript()}
+          ${tabBody}
+          <button class="btn wide focus-open" type="button" data-action="open-focus" data-focus="${tab}">${icon('expand', 14)} Open ${focusLabel} Focus</button>
           <div class="render-strip">
             <div class="panel-head" style="padding:0 0 4px"><h3 style="font-size:11px">Render queue</h3><span class="meta">${queueActiveCount()} active</span></div>
             ${state.queue.slice(0, 3).map((item) => `<div class="render-row"><span class="state-dot ${item.state === 'done' ? 'green' : ['running', 'rendering', 'queued', 'paused'].includes(item.state) ? 'amber' : ''}"></span><span>${esc(item.title || 'Render')}</span><span class="render-time">${item.state === 'done' ? 'Done' : queueLabel(item.state)}</span></div>`).join('') || '<p class="small muted">No renders yet.</p>'}
@@ -1085,8 +1105,9 @@ function screenEditor() {
         </div>
       </aside>
     </div>
-    ${state.scriptOpen ? scriptDrawer() : ''}
+    ${timelinePanel()}
     <input id="music-input" type="file" accept="audio/*,.m4a,.mp3,.wav,.aac" hidden>
+    <input id="sfx-file-input" type="file" accept="audio/*,image/*,video/*,.gif,.webp" hidden>
   </main>`;
 }
 
@@ -1103,14 +1124,14 @@ function sceneProofRows(scenes) {
   return scenes.map((scene, index) => {
     const layers = sceneLayers(scene);
     const status = cleanState(scene);
-    return `<button class="proof-row${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
+    return `<button class="proof-row compact${index === state.selectedScene ? ' is-active' : ''}" type="button" data-action="select-scene" data-index="${index}">
       <span class="proof-index">${pad(index + 1)}</span>
+      <span class="proof-thumb"><img src="${frameUrl(scene.start + 0.1)}" alt=""></span>
       <span class="proof-main">
-        <span class="proof-title">${esc(truncate(sceneTitle(scene, index), 42))}</span>
-        <span class="proof-sub">${fmtTC(scene.start)} – ${fmtTC(scene.end)}</span>
-        <span class="proof-meta"><span class="${status === 'Layered' ? 'chip green' : 'chip'}">${esc(status)}</span>${layers.length ? `· ${layers.length} layer${layers.length === 1 ? '' : 's'}` : ''}</span>
+        <span class="proof-title">${esc(truncate(sceneTitle(scene, index), 34))}</span>
+        <span class="proof-sub">${fmtTC(scene.start)} – ${fmtTC(scene.end)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</span>
       </span>
-      <span class="proof-thumbs"><img src="${frameUrl(scene.start + 0.1)}" alt=""><span class="arrow">›</span><img src="${frameUrl(Math.max(scene.start + 0.1, scene.end - 0.1))}" alt=""></span>
+      <span class="proof-state"><span class="${status === 'Layered' ? 'chip green' : 'chip'}">${esc(status)}</span></span>
     </button>`;
   }).join('');
 }
@@ -1184,6 +1205,200 @@ function inspectorClean(scene, layer, layers) {
 }
 
 
+function focusShell() {
+  const titles = { script: 'Script Focus', audio: 'Audio Focus', sfx: 'SFX Focus' };
+  const mode = state.focusMode;
+  return `<section class="focus-shell">
+    <div class="focus-head">
+      <div><span class="focus-kicker">Edit Focus</span><h1>${titles[mode] || 'Focus'}</h1></div>
+      <button class="btn" type="button" data-action="close-focus">${icon('arrowLeft', 14)} Back to Edit</button>
+    </div>
+    <div class="focus-body">${mode === 'script' ? scriptDrawer(true) : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
+  </section>`;
+}
+
+function waveformBars(seed = 0) {
+  return `<span class="waveform">${Array.from({ length: 44 }, (_unused, index) => {
+    const height = 22 + Math.abs(Math.sin((index + seed) * 1.7)) * 70;
+    return `<i style="height:${height.toFixed(0)}%"></i>`;
+  }).join('')}</span>`;
+}
+
+function audioFocus() {
+  const music = state.edit?.music;
+  const voice = state.edit?.voice;
+  const dub = state.edit?.dub;
+  return `<div class="focus-grid audio-focus">
+    <div class="focus-card">
+      <h3>Original audio</h3>
+      ${waveformBars(1)}
+      <p class="small muted">Source bed. Dub mutes it; voice-over can sit over it.</p>
+    </div>
+    <div class="focus-card">
+      <h3>Voice & dub</h3>
+      <div class="audio-status"><span class="chip ${voice || dub ? 'green' : ''}">${dub ? 'Dub built' : voice ? 'Voice-over' : 'None'}</span><span class="small muted">${voice ? esc(voice.voice || '') : ''}</span></div>
+      ${inspectorVoice()}
+    </div>
+    <div class="focus-card">
+      <h3>Music & SFX</h3>
+      ${music ? `<div class="kv"><span>${esc(music.name || 'Music')}</span><button class="btn small" data-action="remove-music">Remove</button></div>` : `<button class="btn wide" data-action="add-music">${icon('volume', 14)} Add music</button>`}
+      <div class="sfx-list" style="margin-top:10px">
+        ${(state.edit?.sfx || []).filter((fx) => fx.kind === 'sound').map((fx) => `<div class="sfx-row"><span class="sfx-kind">sound</span><span class="sfx-name">${esc(fx.name || 'Sound')}</span><button class="icon-btn" data-action="sfx-remove" data-effect="${esc(fx.id)}">${icon('trash', 14)}</button></div>`).join('') || '<p class="small muted">No sound effects yet.</p>'}
+      </div>
+      <button class="btn wide" data-action="sfx-add" data-kind="sound">${icon('volume', 14)} Add sound effect</button>
+    </div>
+  </div>`;
+}
+
+function sfxFocus() {
+  return `<div class="focus-grid sfx-focus">
+    <div class="focus-card">
+      <h3>Add special effect</h3>
+      <p class="small muted">Text, stickers, GIFs, images, layers, colour filters and sounds share the same timeline.</p>
+      <div class="sfx-add-grid">
+        <button class="btn" data-action="sfx-text">${icon('captions', 14)} Text block</button>
+        <button class="btn" data-action="sfx-add" data-kind="sticker">${icon('sparkle', 14)} Sticker</button>
+        <button class="btn" data-action="sfx-add" data-kind="gif">${icon('film', 14)} GIF / animation</button>
+        <button class="btn" data-action="sfx-add" data-kind="image">${icon('grid', 14)} Image</button>
+        <button class="btn" data-action="sfx-add" data-kind="layer">${icon('layers', 14)} Layer</button>
+        <button class="btn" data-action="sfx-add" data-kind="sound">${icon('volume', 14)} Sound</button>
+      </div>
+      <h3 style="margin-top:14px">Colour filter</h3>
+      <div class="filter-presets">
+        ${[['warm', 'Warm'], ['cool', 'Cool'], ['bw', 'B&W'], ['vivid', 'Vivid']].map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="sfx-filter-add" data-preset="${value}">${label}</button>`).join('')}
+      </div>
+    </div>
+    <div class="focus-card">
+      <h3>Timeline effects</h3>
+      ${inspectorSFX()}
+    </div>
+  </div>`;
+}
+
+function sfxRange() {
+  const scene = currentScene();
+  const start = state.editScope === 'project' ? 0 : Number(scene?.start || 0);
+  const end = state.editScope === 'project' ? Number(state.edit?.end || 0) : Number(scene?.end || 3);
+  return { start: Math.max(0, start), end: Math.max(start + 0.2, end) };
+}
+
+function openSfxTextModal() {
+  const range = sfxRange();
+  openModal(`<dialog class="modal sfx-modal" aria-label="Add text effect">
+    <div class="modal-head"><h2>Add text block</h2><button class="icon-btn" type="button" data-action="close-modal">${icon('close', 16)}</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Text</label><input id="sfx-text-value" type="text" maxlength="240" placeholder="Text on screen"></div>
+      <div class="grid g2">
+        <div class="field"><label>Style</label><select id="sfx-text-style"><option value="headline">Headline</option><option value="caption">Caption</option><option value="badge">Badge</option></select></div>
+        <div class="field"><label>Colour</label><input id="sfx-text-color" type="color" value="#ffffff"></div>
+        <div class="field"><label>Start</label><input id="sfx-text-start" type="number" step="0.1" value="${range.start.toFixed(2)}"></div>
+        <div class="field"><label>End</label><input id="sfx-text-end" type="number" step="0.1" value="${range.end.toFixed(2)}"></div>
+      </div>
+      <button class="btn primary wide" type="button" data-action="sfx-text-add">Add text block</button>
+    </div>
+  </dialog>`);
+}
+
+function openSfxFilterModal() {
+  const range = sfxRange();
+  openModal(`<dialog class="modal sfx-modal" aria-label="Add colour filter">
+    <div class="modal-head"><h2>Add colour filter</h2><button class="icon-btn" type="button" data-action="close-modal">${icon('close', 16)}</button></div>
+    <div class="modal-body">
+      <div class="filter-presets">
+        ${[['warm', 'Warm'], ['cool', 'Cool'], ['bw', 'Black & white'], ['vivid', 'Vivid']].map(([value, label]) => `<button class="filter-chip ${value}" type="button" data-action="sfx-filter-add" data-preset="${value}" data-start="${range.start.toFixed(2)}" data-end="${range.end.toFixed(2)}">${label}</button>`).join('')}
+      </div>
+    </div>
+  </dialog>`);
+}
+
+async function addSfxText() {
+  if (!state.project || !state.edit) return;
+  const value = document.getElementById('sfx-text-value')?.value || '';
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/sfx/text`, {
+      method: 'POST',
+      body: JSON.stringify({
+        text: value,
+        start: Number(document.getElementById('sfx-text-start')?.value || 0),
+        end: Number(document.getElementById('sfx-text-end')?.value || 3),
+        style: document.getElementById('sfx-text-style')?.value || 'headline',
+        color: document.getElementById('sfx-text-color')?.value || '#ffffff',
+      }),
+    });
+    state.edit = data.edit;
+    closeModal();
+    render();
+    toast('Text effect added.');
+  } catch (error) {
+    toast(`Text effect: ${error.message}`, 'bad');
+  }
+}
+
+async function addSfxFilter(preset, start, end) {
+  if (!state.project || !state.edit) return;
+  const range = sfxRange();
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/sfx/filter`, {
+      method: 'POST',
+      body: JSON.stringify({ preset, start: start ?? range.start, end: end ?? range.end }),
+    });
+    state.edit = data.edit;
+    closeModal();
+    render();
+    toast('Filter added.');
+  } catch (error) {
+    toast(`Filter: ${error.message}`, 'bad');
+  }
+}
+
+async function handleSfxFile(file) {
+  if (!file || !state.project || !state.edit || !state.sfxKind) return;
+  const range = sfxRange();
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/sfx/upload`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+        'X-Kind': state.sfxKind,
+        'X-Filename': file.name,
+        'X-Start': String(range.start),
+        'X-End': String(range.end),
+        'X-Volume': '0.9',
+      },
+      body: file,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    state.edit = data.edit;
+    render();
+    toast(`${state.sfxKind} effect added.`);
+  } catch (error) {
+    toast(`Effect: ${error.message}`, 'bad');
+  } finally {
+    state.sfxKind = '';
+  }
+}
+
+async function removeSfx(effectId) {
+  if (!state.project || !state.edit || !effectId) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/sfx/${encodeURIComponent(effectId)}`, { method: 'DELETE' });
+    state.edit = data.edit;
+    render();
+  } catch (error) {
+    toast(`Effect: ${error.message}`, 'bad');
+  }
+}
+
+function startSfxUpload(kind) {
+  state.sfxKind = kind;
+  const input = document.querySelector('#sfx-file-input');
+  if (input) {
+    input.value = '';
+    input.click();
+  }
+}
+
 function scriptCues() {
   return (state.edit?.captions?.cues || []).filter((cue) => String(cue.text || '').trim());
 }
@@ -1203,13 +1418,14 @@ function timelineDuration() {
     ...scriptCues().map((cue) => Number(cue.end || 0)),
     Number(edit?.voice?.duration || 0),
     Number(edit?.dub?.duration || 0),
+    ...(edit?.sfx || []).map((effect) => Number(effect.end || 0)),
   );
 }
 
-function timelineBlock(start, end, total, label, action = '', data = '') {
+function timelineBlock(start, end, total, label, action = '', data = '', extraStyle = '') {
   const left = total > 0 ? Math.max(0, Math.min(100, (Number(start) / total) * 100)) : 0;
   const width = total > 0 ? Math.max(0.6, Math.min(100 - left, ((Number(end) - Number(start)) / total) * 100)) : 0;
-  return `<button class="timeline-block" type="button" ${action ? `data-action="${action}" ${data}` : 'disabled'} style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%">${esc(label)}</button>`;
+  return `<button class="timeline-block" type="button" ${action ? `data-action="${action}" ${data}` : 'disabled'} style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;${extraStyle}">${esc(label)}</button>`;
 }
 
 function timelinePanel() {
@@ -1219,37 +1435,48 @@ function timelinePanel() {
   const cues = scriptCues();
   const voice = state.edit.dub || state.edit.voice;
   const music = state.edit.music;
+  const fx = state.edit.sfx || [];
+  const scene = currentScene();
+  const sceneClip = clipForScene(scene, state.selectedScene);
   const playhead = total > 0 ? Math.max(0, Math.min(100, (Number(state.previewTime || 0) / total) * 100)) : 0;
   return `<section class="panel timeline" data-total="${total}">
-    <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${clips.length} clips · ${cues.length} cues</span><span class="spacer"></span>
-      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}">Apply trim</button></span>
+    <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${clips.length} clips · ${cues.length} cues · ${fx.length} effects</span><span class="spacer"></span>
+      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(sceneClip?.start ?? scene?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(sceneClip?.end ?? scene?.end ?? 0).toFixed(2)}"></label><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(scene, state.selectedScene)}">Apply trim</button></span>
       <button class="btn small" type="button" data-action="open-script">${icon('captions', 12)} Script</button></div>
     <div class="timeline-body">
       <div class="timeline-labels">
         <div class="timeline-label"><strong>Video</strong><button class="timeline-tool" type="button" data-action="trim-focus">Trim</button></div>
+        <div class="timeline-label"><strong>Scene</strong><button class="timeline-tool" type="button" data-action="trim-focus">Slip</button></div>
         <div class="timeline-label"><strong>Script</strong><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
-        <div class="timeline-label"><strong>Voice</strong><button class="timeline-tool" type="button" data-action="voice-tab">${voice ? 'Preview' : 'Record'}</button></div>
+        <div class="timeline-label"><strong>Captions</strong><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
+        <div class="timeline-label"><strong>Audio</strong><button class="timeline-tool" type="button" data-action="open-focus" data-focus="audio">Mix</button></div>
+        <div class="timeline-label"><strong>Voice</strong><button class="timeline-tool" type="button" data-action="voice-tab">${voice ? 'Preview' : 'Add'}</button></div>
         <div class="timeline-label"><strong>Music</strong>${music ? `<button class="timeline-tool" type="button" data-action="remove-music">Remove</button>` : `<button class="timeline-tool" type="button" data-action="add-music">Add</button>`}</div>
+        <div class="timeline-label"><strong>SFX</strong><button class="timeline-tool" type="button" data-action="open-focus" data-focus="sfx">Add</button></div>
       </div>
       <div class="timeline-tracks">
         <div class="timeline-track video">${clips.map((clip, index) => {
-          const sceneIndex = getScenes().findIndex((scene) => scene.id === clip.scene);
+          const sceneIndex = getScenes().findIndex((item) => item.id === clip.scene);
           const at = sceneIndex >= 0 ? sceneIndex : index;
           return timelineBlock(clip.start, clip.end, total, `S${pad(at + 1)}`, 'select-scene', `data-index="${at}"`);
         }).join('')}</div>
+        <div class="timeline-track scene">${sceneClip ? timelineBlock(sceneClip.start, sceneClip.end, total, `Scene ${pad(state.selectedScene + 1)}`, '', '') : ''}</div>
         <div class="timeline-track script">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
-        <div class="timeline-track voice">${voice ? timelineBlock(0, Math.min(total, Number(voice.duration || total)), total, state.edit.dub ? 'Dub' : (voice.engine === 'record' ? 'Recorded' : 'Voice')) : ''}</div>
-        <div class="timeline-track music">${music ? timelineBlock(0, total, total, music.name || 'Music') : ''}</div>
+        <div class="timeline-track captions">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
+        <div class="timeline-track audio">${total > 0 ? timelineBlock(0, total, total, 'Original', '', '') : ''}</div>
+        <div class="timeline-track voice">${voice ? timelineBlock(0, Math.min(total, Number(voice.duration || total)), total, state.edit.dub ? 'Dub' : (voice.engine === 'record' ? 'Recorded' : 'Voice'), 'open-focus', 'data-focus="audio"') : ''}</div>
+        <div class="timeline-track music">${music ? timelineBlock(0, total, total, music.name || 'Music', 'open-focus', 'data-focus="audio"') : ''}</div>
+        <div class="timeline-track sfx">${fx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${3 + (index % 2) * 10}px;bottom:auto;height:11px`)).join('')}</div>
         <span class="timeline-playhead" style="left:${playhead.toFixed(2)}%"></span>
       </div>
     </div>
   </section>`;
 }
 
-function scriptDrawer() {
+function scriptDrawer(focus = false) {
   const cues = scriptCues();
   if (!cues.length) {
-    return `<section class="script-drawer"><div class="script-head"><strong>Script</strong><span class="spacer"></span><button class="btn small" type="button" data-action="close-script">Close</button></div><p class="small muted" style="padding:18px">Generate captions first. The script uses the caption track.</p></section>`;
+    return `<section class="script-drawer"><div class="script-head"><strong>Script</strong><span class="spacer"></span><button class="btn small" type="button" data-action="${focus ? 'close-focus' : 'close-script'}">Close</button></div><p class="small muted" style="padding:18px">Generate captions first. The script uses the caption track.</p></section>`;
   }
   return `<section class="script-drawer">
     <div class="script-head">
@@ -1264,7 +1491,7 @@ function scriptDrawer() {
       </select>
       <button class="btn small" type="button" data-action="script-rewrite" ${state.scriptBusy ? 'disabled' : ''}>Rewrite</button>
       <button class="btn small" type="button" data-action="script-reset">Reset</button>
-      <button class="btn small" type="button" data-action="close-script">Close</button>
+      <button class="btn small" type="button" data-action="${focus ? 'close-focus' : 'close-script'}">Close</button>
     </div>
     ${state.scriptBusy ? '<div class="script-progress">Working on the script…</div>' : ''}
     <div class="script-columns">
@@ -1275,7 +1502,43 @@ function scriptDrawer() {
 }
 
 function inspectorScript() {
-  return `<div class="script-card"><strong>Script tools</strong><p class="small muted">Translate, rewrite and edit the caption track. The script feeds captions, voice-over and dub.</p><button class="btn primary wide" type="button" data-action="open-script">${icon('captions', 14)} Open script</button></div>`;
+  const track = state.edit?.captions;
+  return `<div class="field"><label>Target language</label><select data-action="script-target">
+    ${['en', 'vi', 'zh'].map((code) => `<option value="${code}" ${state.scriptTarget === code ? 'selected' : ''}>${({ en: 'English', vi: 'Vietnamese', zh: 'Chinese' })[code]}</option>`).join('')}
+  </select></div>
+  <div class="field"><label>Rewrite style</label><div class="inline-control"><select data-action="script-mode">
+    ${[['clean', 'Clean up'], ['short', 'Shorten'], ['punchy', 'Punchier']].map(([value, label]) => `<option value="${value}" ${state.scriptMode === value ? 'selected' : ''}>${label}</option>`).join('')}
+  </select><button class="btn small" type="button" data-action="script-rewrite">Rewrite</button></div></div>
+  <div class="inline-control"><button class="btn small" type="button" data-action="script-translate">Translate</button><button class="btn small" type="button" data-action="script-reset">Reset</button></div>
+  <div class="toggle-row"><span>Burn captions</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${track?.burn ? 'checked' : ''}><i></i></label></div>
+  <div class="field"><label>Caption style</label><select data-action="caption-style">
+    ${['clean', 'bold', 'minimal'].map((value) => `<option value="${value}" ${track?.style === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
+  </select></div>
+  <div class="field"><label>Caption position</label><select data-action="caption-position">
+    ${['bottom', 'middle', 'top'].map((value) => `<option value="${value}" ${track?.position === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
+  </select></div>
+  <button class="btn wide" type="button" data-action="open-script">${icon('captions', 14)} Edit script lines</button>`;
+}
+
+function inspectorAudio() {
+  return `<div class="audio-mini"><span class="audio-mini-icon">${icon('volume', 15)}</span><span><strong>Original audio</strong><small>${state.edit?.voice || state.edit?.dub ? 'Voice mix active' : 'Original only'}</small></span><span class="chip ${state.edit?.dub ? 'green' : ''}">${state.edit?.dub ? 'Dub' : state.edit?.voice ? 'Voice' : 'Audio'}</span></div>
+  ${inspectorVoice()}`;
+}
+
+function inspectorSFX() {
+  const rows = state.edit?.sfx || [];
+  return `<div class="sfx-add-grid">
+    <button class="btn small" type="button" data-action="sfx-add" data-kind="sound">${icon('volume', 13)} Sound</button>
+    <button class="btn small" type="button" data-action="sfx-add" data-kind="image">${icon('grid', 13)} Image</button>
+    <button class="btn small" type="button" data-action="sfx-add" data-kind="gif">${icon('film', 13)} GIF</button>
+    <button class="btn small" type="button" data-action="sfx-add" data-kind="sticker">${icon('sparkle', 13)} Sticker</button>
+    <button class="btn small" type="button" data-action="sfx-add" data-kind="layer">${icon('layers', 13)} Layer</button>
+    <button class="btn small" type="button" data-action="sfx-text">${icon('captions', 13)} Text</button>
+    <button class="btn small" type="button" data-action="sfx-filter">${icon('sun', 13)} Filter</button>
+  </div>
+  <div class="sfx-list">
+    ${rows.length ? rows.map((effect) => `<div class="sfx-row"><span class="sfx-kind">${esc(effect.kind)}</span><span class="sfx-name">${esc(effect.name || effect.text || 'Effect')}</span><button class="icon-btn" type="button" data-action="sfx-remove" data-effect="${esc(effect.id)}" title="Remove">${icon('trash', 14)}</button></div>`).join('') : '<p class="small muted">No effects yet. Add text, a sticker, a filter or a sound.</p>'}
+  </div>`;
 }
 
 function inspectorCaptions(scene) {
@@ -2501,12 +2764,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'proof-tab') { state.proofTab = target.dataset.tab || 'scenes'; render(); }
     else if (action === 'inspector-tab') {
       state.inspectorTab = target.dataset.tab || 'clean';
-      if (state.inspectorTab === 'script') {
-        state.scriptOpen = true;
-        window.setTimeout(() => document.querySelector('.script-drawer')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
-      } else {
-        state.scriptOpen = false;
-      }
+      state.scriptOpen = false;
       render();
     }
     else if (action === 'select-scene') {
@@ -2548,7 +2806,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'play-render') playRender(target.dataset.project || '', target.dataset.edit || '');
     else if (action === 'play-source') playSource();
     else if (action === 'close-inline-player') { state.inlinePlaying = false; render(); }
-    else if (action === 'open-script') { state.scriptOpen = true; state.inspectorTab = 'script'; render(); window.setTimeout(() => document.querySelector('.script-drawer')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); }
+    else if (action === 'open-script') { state.focusMode = 'script'; state.scriptOpen = false; render(); }
     else if (action === 'close-script') { state.scriptOpen = false; render(); }
     else if (action === 'script-translate') await translateScript();
     else if (action === 'script-rewrite') await rewriteScript();
@@ -2568,6 +2826,20 @@ document.addEventListener('click', async (event) => {
     else if (action === 'brush-undo') { state.brushStrokes.pop(); render(); }
     else if (action === 'brush-clear') { state.brushStrokes = []; render(); }
     else if (action === 'brush-apply') await applyBrush();
+    else if (action === 'set-scope') { state.editScope = target.dataset.scope === 'project' ? 'project' : 'scene'; render(); }
+    else if (action === 'open-focus') {
+      const focus = target.dataset.focus || 'script';
+      if (focus === 'clean') navigate(projectPath('clean'));
+      else { state.focusMode = focus; state.scriptOpen = false; render(); }
+    }
+    else if (action === 'close-focus') { state.focusMode = ''; render(); }
+    else if (action === 'toggle-transcript-overlay') { state.transcriptOverlay = !state.transcriptOverlay; render(); }
+    else if (action === 'sfx-add') startSfxUpload(target.dataset.kind || 'sound');
+    else if (action === 'sfx-text') openSfxTextModal();
+    else if (action === 'sfx-filter') openSfxFilterModal();
+    else if (action === 'sfx-filter-add') await addSfxFilter(target.dataset.preset || 'warm', target.dataset.start, target.dataset.end);
+    else if (action === 'sfx-text-add') await addSfxText();
+    else if (action === 'sfx-remove') await removeSfx(target.dataset.effect || '');
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
     else if (action === 'preview-reclean') {
@@ -2598,6 +2870,12 @@ document.addEventListener('click', async (event) => {
 
 document.addEventListener('change', async (event) => {
   const target = event.target;
+  if (target.id === 'sfx-file-input') {
+    const file = target.files?.[0];
+    target.value = '';
+    await handleSfxFile(file);
+    return;
+  }
   if (target.id === 'file-input' || target.id === 'import-file-input') {
     const file = target.files?.[0];
     target.value = '';
