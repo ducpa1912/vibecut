@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,48 @@ def _basic_rewrite(text: str, mode: str) -> str:
     return (value[:1].upper() + value[1:]) if value else value
 
 
+def _array_from_text(text: str) -> list[str] | None:
+    start = str(text or "").find("[")
+    end = str(text or "").rfind("]")
+    if start < 0 or end <= start:
+        return None
+    try:
+        value = json.loads(str(text)[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        return None
+    return value
+
+
+def _rewrite_ollama(lines: list[str], mode: str) -> tuple[list[str], str]:
+    base = os.environ.get("DUCK_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+    model = os.environ.get("DUCK_OLLAMA_MODEL", "qwen3:4b")
+    style = {
+        "short": "Make every line shorter and tighter while keeping the meaning.",
+        "punchy": "Make every line punchier and more direct while keeping the meaning.",
+        "clean": "Remove filler words and false starts while keeping the meaning and tone.",
+    }.get(mode, "Remove filler words and false starts.")
+    prompt = (
+        "You rewrite subtitle lines. " + style +
+        " Keep the same line count. Return a JSON array of strings only, no commentary.\n" +
+        "\n".join(f"{index + 1}. {line}" for index, line in enumerate(lines))
+    )
+    payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
+    request = urllib.request.Request(
+        base + "/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    values = _array_from_text(str(body.get("response") or ""))
+    if values is None or len(values) != len(lines):
+        raise ValueError("The local rewrite model returned the wrong line count.")
+    return values, f"ollama:{model}"
+
+
 def translate(edit: dict, data_root: Path, *, target: str, source: str = "en") -> dict:
     target = str(target or "").strip().lower()
     if target not in {"en", "vi", "zh"}:
@@ -99,6 +142,7 @@ def translate(edit: dict, data_root: Path, *, target: str, source: str = "en") -
         "source_language": source,
         "target_language": target,
         "mode": "translated",
+        "engine": "apple-translation",
     }
     edits.save_edit(edit, data_root)
     return edit["captions"]
@@ -110,14 +154,18 @@ def rewrite(edit: dict, data_root: Path, *, mode: str = "clean") -> dict:
         raise ValueError("Choose clean, short or punchy.")
     cues = _cues(edit)
     lines = [str(cue.get("source_text") or cue.get("text") or "") for cue in cues]
+    engine = "apple-intelligence"
     fallback = False
     try:
         values = _run("rewrite_apple", {"mode": mode, "lines": lines})
-    except ValueError as exc:
-        if "Apple Intelligence" not in str(exc) and "unavailable" not in str(exc):
-            raise
-        values = [_basic_rewrite(line, mode) for line in lines]
-        fallback = True
+    except ValueError:
+        try:
+            values, engine = _rewrite_ollama(lines, mode)
+            fallback = True
+        except Exception:
+            values = [_basic_rewrite(line, mode) for line in lines]
+            engine = "basic-cleanup"
+            fallback = True
     for cue, value in zip(cues, values):
         cue["text"] = value
     edit["script"] = {
@@ -125,6 +173,7 @@ def rewrite(edit: dict, data_root: Path, *, mode: str = "clean") -> dict:
         "mode": "rewritten",
         "rewrite": mode,
         "fallback": fallback,
+        "engine": engine,
     }
     edits.save_edit(edit, data_root)
     return edit["captions"]

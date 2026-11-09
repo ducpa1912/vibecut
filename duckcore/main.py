@@ -1165,7 +1165,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"captions": track}
+        return {"captions": track, "script": edit.get("script") or {}}
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/script/rewrite")
     def rewrite_script(
@@ -1179,7 +1179,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"captions": track}
+        return {"captions": track, "script": edit.get("script") or {}}
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/script/reset")
     def reset_script(
@@ -1192,7 +1192,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"captions": track}
+        return {"captions": track, "script": edit.get("script") or {}}
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/voice/preview")
     def preview_voice_line(

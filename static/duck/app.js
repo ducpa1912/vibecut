@@ -41,6 +41,8 @@ const state = {
   inlinePlaying: false,
   scriptOpen: false,
   scriptBusy: false,
+  scriptStatus: 'Script ready',
+  scriptStatusKind: 'ready',
   transcriptBusy: false,
   scriptTarget: 'vi',
   scriptMode: 'clean',
@@ -302,6 +304,7 @@ async function openProject(id, { startCheck = false } = {}) {
   state.transcript = transcriptData.transcript || {};
   state.edit = null;
   await ensureEdit();
+  syncScriptStatus();
   await ensureCaptions();
   const scenes = getScenes();
   if (scenes[0]) {
@@ -1031,6 +1034,54 @@ function sceneTile(scene, index) {
 
 /* ------------------------------------------------------------------ editor */
 
+function overlayCuesForTime() {
+  const allCues = scriptCues();
+  let cueIndex = allCues.findIndex((cue) => Number(cue.end || 0) > Number(state.timelineTime || 0) && Number(cue.start || 0) <= Number(state.timelineTime || 0));
+  if (cueIndex < 0) cueIndex = Math.max(0, allCues.length - 1);
+  if (allCues.length) return allCues.slice(cueIndex, cueIndex + 2);
+  return getSegments().filter((segment) => Number(segment.end || 0) > Number(state.previewTime || 0)).slice(0, 2);
+}
+
+function transcriptGhostMarkup(cues) {
+  return `<div class="ghost-head"><strong>Transcript</strong><span>${cues.length} line${cues.length === 1 ? '' : 's'} in this scene</span></div>
+    ${cues.slice(0, 2).map((cue, index) => {
+      const source = String(cue.source_text || cue.text || '').trim();
+      const text = String(cue.text || '').trim();
+      const same = source.toLocaleLowerCase() === text.toLocaleLowerCase();
+      return `<button class="ghost-line${index === 0 ? ' is-current' : ''}" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}" data-start="${Number(cue.start || 0).toFixed(3)}" data-end="${Number(cue.end || 0).toFixed(3)}">
+        <span class="ghost-tc">${fmtTC(cue.start, state.check?.result?.meta?.fps || 24)}</span>
+        <span class="ghost-speaker">Speaker</span>
+        <span class="ghost-copy">${source && !same ? `<span class="ghost-source">${esc(source)}</span>` : ''}<span>${esc(text || source)}</span></span>
+        <span class="ghost-more">${icon('more', 12)}</span>
+      </button>`;
+    }).join('') || '<span class="overlay-empty">Transcript appears here when speech is ready.</span>'}`;
+}
+
+function refreshTranscriptOverlay(force = false) {
+  const ghost = document.querySelector('.transcript-ghost');
+  if (!ghost) return;
+  const cues = overlayCuesForTime();
+  const key = `${state.timelineTime}|${state.edit?.script?.mode || ''}|${state.edit?.script?.target_language || ''}|${cues.map((cue) => cue.text).join('|')}`;
+  if (!force && key === state.overlayKey) return;
+  state.overlayKey = key;
+  ghost.innerHTML = transcriptGhostMarkup(cues);
+}
+
+function syncSceneForTime() {
+  const scenes = getScenes();
+  const time = Number(state.previewTime || 0);
+  const index = scenes.findIndex((scene) => time >= Number(scene.start || 0) && time < Number(scene.end || 0));
+  if (index < 0 || index === state.selectedScene) return;
+  state.selectedScene = index;
+  state.selectedLayerId = '';
+  document.querySelectorAll('.proof-row').forEach((row, rowIndex) => row.classList.toggle('is-active', rowIndex === index));
+  const scene = scenes[index];
+  const title = document.querySelector('.inspector-title');
+  const sub = document.querySelector('.inspector-sub');
+  if (title) title.textContent = `Scene ${pad(index + 1)} · ${truncate(sceneTitle(scene, index), 26)}`;
+  if (sub) sub.textContent = `${fmtTC(scene.start, state.check?.result?.meta?.fps || 24)} – ${fmtTC(scene.end, state.check?.result?.meta?.fps || 24)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}`;
+}
+
 function screenEditor() {
   const scenes = getScenes();
   const scene = currentScene();
@@ -1038,12 +1089,7 @@ function screenEditor() {
   const layers = sceneLayers(scene);
   const layer = layers.find((item) => item.id === state.selectedLayerId) || layers[0] || null;
   const checking = ['queued', 'running', 'cancelling'].includes(state.check?.state);
-  const allCues = scriptCues();
-  let cueIndex = allCues.findIndex((cue) => Number(cue.end || 0) > Number(state.timelineTime || 0) && Number(cue.start || 0) <= Number(state.timelineTime || 0));
-  if (cueIndex < 0) cueIndex = Math.max(0, allCues.length - 1);
-  const overlayCues = allCues.length
-    ? allCues.slice(cueIndex, cueIndex + 2)
-    : getSegments().filter((segment) => Number(segment.end || 0) > Number(state.previewTime || 0)).slice(0, 2);
+  const overlayCues = overlayCuesForTime();
   const scopeNote = state.editScope === 'project' ? 'All scenes' : `Scene ${pad(state.selectedScene + 1)}`;
   const tab = state.inspectorTab === 'audio' || state.inspectorTab === 'voice' ? 'audio'
     : state.inspectorTab === 'sfx' ? 'sfx'
@@ -1076,19 +1122,7 @@ function screenEditor() {
             <div class="media-overlay"><span class="tc">${fmtTC(state.previewTime || scene.start)} / ${fmtTC(state.edit?.end || state.check?.result?.meta?.duration || 0)}</span><span class="spacer"></span></div>
             <div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}">
               <button class="overlay-toggle" type="button" data-action="toggle-transcript-overlay" title="Transcript layer">CC</button>
-              <div class="transcript-ghost">
-                <div class="ghost-head"><strong>Transcript</strong><span>${overlayCues.length} line${overlayCues.length === 1 ? '' : 's'} in this scene</span></div>
-                ${overlayCues.slice(0, 2).map((cue, index) => {
-                  const source = String(cue.source_text || cue.text || '').trim();
-                  const text = String(cue.text || '').trim();
-                  return `<button class="ghost-line${index === 0 ? ' is-current' : ''}" type="button" data-action="seek" data-time="${Number(cue.start || 0).toFixed(3)}" data-start="${Number(cue.start || 0).toFixed(3)}" data-end="${Number(cue.end || 0).toFixed(3)}">
-                    <span class="ghost-tc">${fmtTC(cue.start, state.check?.result?.meta?.fps || 24)}</span>
-                    <span class="ghost-speaker">Speaker</span>
-                    <span class="ghost-copy">${source && source !== text ? `<span class="ghost-source">${esc(source)}</span>` : ''}<span>${esc(text || source)}</span></span>
-                    <span class="ghost-more">${icon('more', 12)}</span>
-                  </button>`;
-                }).join('') || '<span class="overlay-empty">Transcript appears here when speech is ready.</span>'}
-              </div>
+              <div class="transcript-ghost">${transcriptGhostMarkup(overlayCues)}</div>
             </div>
           </div>
         </section>
@@ -1253,7 +1287,7 @@ function focusDock() {
       <div><span class="focus-kicker">Edit Focus</span><h2>${titles[mode] || 'Focus'}</h2></div>
       <button class="btn small" type="button" data-action="close-focus">${icon('arrowLeft', 12)} Back to timeline</button>
     </div>
-    <div class="focus-dock-body">${mode === 'script' ? scriptDrawer(true) : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
+    <div class="focus-dock-body">${mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
   </section>`;
 }
 
@@ -1265,7 +1299,7 @@ function focusShell() {
       <div><span class="focus-kicker">Edit Focus</span><h1>${titles[mode] || 'Focus'}</h1></div>
       <button class="btn" type="button" data-action="close-focus">${icon('arrowLeft', 14)} Back to Edit</button>
     </div>
-    <div class="focus-body">${mode === 'script' ? scriptDrawer(true) : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
+    <div class="focus-body">${mode === 'script' ? scriptFocus() : mode === 'audio' ? audioFocus() : sfxFocus()}</div>
   </section>`;
 }
 
@@ -1475,6 +1509,21 @@ function scriptCues() {
   return (state.edit?.captions?.cues || []).filter((cue) => String(cue.text || '').trim());
 }
 
+function syncScriptStatus() {
+  const script = state.edit?.script || {};
+  if (script.mode === 'translated') {
+    state.scriptStatusKind = 'ready';
+    state.scriptStatus = `Translated · ${({ en: 'English', vi: 'Vietnamese', zh: 'Chinese' })[script.target_language] || script.target_language || ''}`;
+  } else if (script.mode === 'rewritten') {
+    const engine = script.engine || (script.fallback ? 'basic-cleanup' : 'apple-intelligence');
+    state.scriptStatusKind = engine === 'basic-cleanup' ? 'warn' : 'ready';
+    state.scriptStatus = `Rewritten · ${script.rewrite || 'clean'} · ${engine.startsWith('ollama:') ? 'local model' : engine === 'apple-intelligence' ? 'Apple Intelligence' : 'basic cleanup'}`;
+  } else {
+    state.scriptStatusKind = 'ready';
+    state.scriptStatus = 'Script ready';
+  }
+}
+
 function scriptLanguage() {
   return state.edit?.script?.source_language
     || state.check?.result?.transcript?.language
@@ -1611,6 +1660,66 @@ function timelinePanel() {
       </div>
     </div>
   </section>`;
+}
+
+function scriptFocus() {
+  const cues = scriptCues();
+  const track = state.edit?.captions;
+  const script = state.edit?.script || {};
+  const modeLabel = script.mode === 'translated'
+    ? `Translated · ${script.target_language || state.scriptTarget}`
+    : script.mode === 'rewritten'
+      ? `Rewrite · ${script.rewrite || state.scriptMode}`
+      : 'Original';
+  const statusKind = state.scriptStatusKind || 'ready';
+  const needsTranslationLink = statusKind === 'error' && /translation|language/i.test(state.scriptStatus || '');
+  return `<div class="script-focus">
+    <div class="script-status ${statusKind}">
+      <span class="status-light"></span>
+      <strong>${esc(state.scriptStatus || 'Script ready')}</strong>
+      ${state.scriptBusy ? `<span class="status-spinner">${icon('loader', 12)}</span>` : ''}
+      ${needsTranslationLink ? `<a class="status-link" href="x-apple.systempreferences:com.apple.Localization-Settings.extension">Open Translation settings</a>` : ''}
+    </div>
+    ${cues.length ? `<div class="script-focus-grid">
+      <div class="script-focus-pane">
+        <div class="focus-col-head"><span>Cues</span><span>${cues.length}</span></div>
+        <div class="focus-scroll">
+          ${cues.map((cue, index) => `<button class="focus-cue${Number(cue.start || 0) <= state.timelineTime && Number(cue.end || 0) > state.timelineTime ? ' is-current' : ''}" type="button" data-action="script-seek" data-time="${Number(cue.start || 0).toFixed(3)}">
+            <span class="focus-tc">${fmtTC(cue.start, 24)}</span><span>${esc(truncate(cue.text || '', 58))}</span>
+          </button>`).join('')}
+        </div>
+      </div>
+      <div class="script-focus-pane">
+        <div class="focus-col-head"><span>Script</span><span class="focus-mode-tag">${esc(modeLabel)}</span></div>
+        <div class="focus-scroll">
+          ${cues.map((cue) => `<label class="focus-edit-row">
+            <span class="focus-edit-meta"><span class="focus-tc">${fmtTC(cue.start, 24)}</span>${cue.source_text && cue.source_text !== cue.text ? `<span class="focus-source">${esc(truncate(cue.source_text, 64))}</span>` : ''}</span>
+            <input type="text" value="${esc(cue.text || '')}" data-action="cue-save" data-cue="${esc(cue.id)}" aria-label="Script line ${fmtTC(cue.start, 24)}">
+          </label>`).join('')}
+        </div>
+      </div>
+      <aside class="script-focus-rules">
+        <div class="rule-block"><label>Target language</label><select data-action="script-target">
+          ${['en', 'vi', 'zh'].map((code) => `<option value="${code}" ${state.scriptTarget === code ? 'selected' : ''}>${({ en: 'English', vi: 'Vietnamese', zh: 'Chinese' })[code]}</option>`).join('')}
+        </select></div>
+        <button class="btn wide" type="button" data-action="script-translate" ${state.scriptBusy ? 'disabled' : ''}>${icon('captions', 13)} Translate</button>
+        <div class="rule-block"><label>Rewrite style</label><select data-action="script-mode">
+          ${[['clean', 'Clean up'], ['short', 'Shorten'], ['punchy', 'Punchier']].map(([value, label]) => `<option value="${value}" ${state.scriptMode === value ? 'selected' : ''}>${label}</option>`).join('')}
+        </select></div>
+        <button class="btn wide" type="button" data-action="script-rewrite" ${state.scriptBusy ? 'disabled' : ''}>${icon('sparkle', 13)} Rewrite</button>
+        <button class="btn wide" type="button" data-action="script-reset">Reset to source</button>
+        <div class="rule-sep"></div>
+        <div class="rule-block"><label>Caption style</label><select data-action="caption-style">
+          ${['clean', 'bold', 'minimal'].map((value) => `<option value="${value}" ${track?.style === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
+        </select></div>
+        <div class="rule-block"><label>Position</label><select data-action="caption-position">
+          ${['bottom', 'middle', 'top'].map((value) => `<option value="${value}" ${track?.position === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
+        </select></div>
+        <div class="toggle-row"><span>Burn captions</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${track?.burn ? 'checked' : ''}><i></i></label></div>
+        <button class="btn wide" type="button" data-action="download-captions">${icon('download', 13)} Download SRT</button>
+      </aside>
+    </div>` : '<div class="script-empty">No transcript yet. Re-read speech from the Check screen first.</div>'}
+  </div>`;
 }
 
 function scriptDrawer(focus = false) {
@@ -1842,6 +1951,7 @@ function seekToTime(time) {
   }
   updateTimelinePlayhead(state.timelineTime);
   updateGhostActive();
+  refreshTranscriptOverlay();
 }
 
 function updateGhostActive() {
@@ -2731,6 +2841,8 @@ async function previewLine(cueId) {
 async function translateScript() {
   if (!state.project || !state.edit) return;
   state.scriptBusy = true;
+  state.scriptStatusKind = 'working';
+  state.scriptStatus = 'Working on the script';
   render();
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/script/translate`, {
@@ -2738,8 +2850,13 @@ async function translateScript() {
       body: JSON.stringify({ target: state.scriptTarget, source: scriptLanguage() }),
     });
     state.edit.captions = data.captions;
-    toast(`Translated to ${state.scriptTarget}.`);
+    if (data.script) state.edit.script = data.script;
+    state.scriptStatusKind = 'ready';
+    state.scriptStatus = `Translated to ${({ en: 'English', vi: 'Vietnamese', zh: 'Chinese' })[state.scriptTarget] || state.scriptTarget}`;
+    toast(state.scriptStatus);
   } catch (error) {
+    state.scriptStatusKind = 'error';
+    state.scriptStatus = `Translation failed: ${error.message}`;
     toast(`Translate: ${error.message}`, 'bad');
   } finally {
     state.scriptBusy = false;
@@ -2750,6 +2867,8 @@ async function translateScript() {
 async function rewriteScript() {
   if (!state.project || !state.edit) return;
   state.scriptBusy = true;
+  state.scriptStatusKind = 'working';
+  state.scriptStatus = 'Working on the script';
   render();
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/script/rewrite`, {
@@ -2757,8 +2876,15 @@ async function rewriteScript() {
       body: JSON.stringify({ mode: state.scriptMode }),
     });
     state.edit.captions = data.captions;
-    toast('Script rewritten.');
+    if (data.script) state.edit.script = data.script;
+    const engine = data.script?.engine || 'apple-intelligence';
+    const engineLabel = engine.startsWith('ollama:') ? 'local model' : engine === 'apple-intelligence' ? 'Apple Intelligence' : 'basic cleanup';
+    state.scriptStatusKind = engine === 'basic-cleanup' ? 'warn' : 'ready';
+    state.scriptStatus = `Rewritten · ${data.script?.rewrite || state.scriptMode} · ${engineLabel}`;
+    toast(state.scriptStatus);
   } catch (error) {
+    state.scriptStatusKind = 'error';
+    state.scriptStatus = `Rewrite failed: ${error.message}`;
     toast(`Rewrite: ${error.message}`, 'bad');
   } finally {
     state.scriptBusy = false;
@@ -2771,6 +2897,9 @@ async function resetScript() {
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/script/reset`, { method: 'POST' });
     state.edit.captions = data.captions;
+    if (data.script) state.edit.script = data.script;
+    state.scriptStatusKind = 'ready';
+    state.scriptStatus = 'Script reset to source';
     render();
     toast('Script reset to source.');
   } catch (error) {
@@ -3060,6 +3189,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'script-translate') await translateScript();
     else if (action === 'script-rewrite') await rewriteScript();
     else if (action === 'script-reset') await resetScript();
+    else if (action === 'script-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); document.querySelectorAll('.focus-cue').forEach((row) => row.classList.toggle('is-current', Number(row.dataset.time || 0) <= state.timelineTime)); }
     else if (action === 'timeline-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); updateGhostActive(); }
     else if (action === 'trim-focus') document.querySelector('.timeline-trim')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     else if (action === 'voice-tab') { state.inspectorTab = 'voice'; state.scriptOpen = false; render(); }
@@ -3171,14 +3301,14 @@ function afterRender() {
       try { inline.currentTime = start; } catch (_) { /* metadata not ready */ }
     }
     inline.play().catch(() => {});
-    inline.addEventListener('timeupdate', () => { state.previewTime = inline.currentTime; state.timelineTime = sourceToTimeline(inline.currentTime); updateTimelinePlayhead(state.timelineTime); }, { passive: true });
+    inline.addEventListener('timeupdate', () => { state.previewTime = inline.currentTime; state.timelineTime = sourceToTimeline(inline.currentTime); updateTimelinePlayhead(state.timelineTime); syncSceneForTime(); refreshTranscriptOverlay(); }, { passive: true });
   }
   const video = document.querySelector('video[data-preview]');
   if (video) {
     if (state.previewTime > 0 && Math.abs(video.currentTime - state.previewTime) > 0.35) {
       try { video.currentTime = state.previewTime; } catch (_) { /* metadata not ready */ }
     }
-    video.addEventListener('timeupdate', () => { state.previewTime = video.currentTime; state.timelineTime = sourceToTimeline(video.currentTime); updateTimelinePlayhead(state.timelineTime); }, { passive: true });
+    video.addEventListener('timeupdate', () => { state.previewTime = video.currentTime; state.timelineTime = sourceToTimeline(video.currentTime); updateTimelinePlayhead(state.timelineTime); syncSceneForTime(); refreshTranscriptOverlay(); }, { passive: true });
   }
 
   document.querySelectorAll('.split-stage').forEach((stage) => {
