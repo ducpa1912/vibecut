@@ -48,6 +48,7 @@ struct ContentView: View {
                 }
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
         .task { await model.start() }
         .onAppear { Task { await model.start() } }
         .onDisappear { model.stop() }

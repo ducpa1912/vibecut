@@ -27,8 +27,11 @@ final class DuckSuiteAppDelegate: NSObject, NSApplicationDelegate {
         guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         for window in app.windows where window.canBecomeMain {
+            window.styleMask.insert(.fullSizeContentView)
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
+            window.titlebarSeparatorStyle = .none
+            window.backgroundColor = NSColor(calibratedRed: 0.965, green: 0.941, blue: 0.91, alpha: 1)
             window.isMovableByWindowBackground = true
             var frame = window.frame
             let intersectsActiveScreen = visible.intersects(frame)
