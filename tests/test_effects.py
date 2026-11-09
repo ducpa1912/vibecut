@@ -90,3 +90,39 @@ def test_split_at_uses_output_timeline(tmp_path: Path) -> None:
     assert split["clips"][1]["start"] == 20.0
     assert split["clips"][1]["end"] == 21.0
     assert split["end"] == 8.0
+
+
+def test_audio_tracks_merge_legacy_voice_and_music(tmp_path: Path) -> None:
+    from duckcore import edits
+
+    edit = {
+        "id": "ed_audio01",
+        "project_id": "prj_audio",
+        "voice": {"id": "at_voice", "audio": "voice/a.wav", "duration": 2.0, "mode": "voice_over"},
+        "music": {"id": "at_music", "audio": "music/a.m4a", "duration": 3.0, "volume": 0.25},
+    }
+    rows = edits.ensure_audio_tracks(edit)
+    assert [row["kind"] for row in rows] == ["voice", "music"]
+    assert rows[0]["start"] == 0.0
+    edits.remove_audio_track(edit, "at_music")
+    assert [row["kind"] for row in edit["audio_tracks"]] == ["voice"]
+    assert "music" not in edit
+
+
+def test_slip_clip_preserves_duration(tmp_path: Path) -> None:
+    from duckcore import edits
+
+    edit = {
+        "id": "ed_slip01",
+        "project_id": "prj_slip",
+        "source": {"duration": 20.0},
+        "clips": [
+            {"scene": 1, "start": 0.0, "end": 4.0, "dur": 4.0},
+            {"scene": 2, "start": 8.0, "end": 12.0, "dur": 4.0},
+        ],
+    }
+    edits.save_edit(edit, tmp_path)
+    slipped = edits.slip_clip(edit, tmp_path, 1, 1.0)
+    assert slipped["clips"][1]["start"] == 9.0
+    assert slipped["clips"][1]["end"] == 13.0
+    assert slipped["clips"][1]["dur"] == 4.0

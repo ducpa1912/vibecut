@@ -1297,6 +1297,10 @@ function audioFocus() {
         ${(state.edit?.sfx || []).filter((fx) => fx.kind === 'sound').map((fx) => `<div class="sfx-row"><span class="sfx-kind">sound</span><span class="sfx-name">${esc(fx.name || 'Sound')}</span><button class="icon-btn" data-action="sfx-remove" data-effect="${esc(fx.id)}">${icon('trash', 14)}</button></div>`).join('') || '<p class="small muted">No sound effects yet.</p>'}
       </div>
       <button class="btn wide" data-action="sfx-add" data-kind="sound">${icon('volume', 14)} Add sound effect</button>
+      <h3 style="margin-top:11px">All audio tracks</h3>
+      <div class="audio-focus-list">
+        ${editAudioRows().length ? editAudioRows().map((row) => `<div class="audio-focus-row" style="--lane-color:${audioColor(row.kind)}"><span class="audio-focus-dot"></span><span>${esc(row.name || row.kind)} · ${fmtDuration(row.duration || 0)}</span><button class="icon-btn" type="button" data-action="audio-remove" data-track="${esc(row.id)}" title="Remove">${icon('trash', 13)}</button></div>`).join('') : '<p class="small muted">No voice, music or sound tracks.</p>'}
+      </div>
       <div class="future-actions">
         <button class="btn wide" type="button" disabled>${icon('sparkle', 13)} Generate music · next</button>
         <button class="btn wide" type="button" disabled>${icon('voice', 13)} Clone voice · next</button>
@@ -1434,6 +1438,18 @@ async function handleSfxFile(file) {
   }
 }
 
+async function removeAudioTrack(trackId) {
+  if (!state.project || !state.edit || !trackId) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/audio/${encodeURIComponent(trackId)}`, { method: 'DELETE' });
+    state.edit = data.edit;
+    render();
+    toast('Audio track removed.');
+  } catch (error) {
+    toast(`Audio: ${error.message}`, 'bad');
+  }
+}
+
 async function removeSfx(effectId) {
   if (!state.project || !state.edit || !effectId) return;
   try {
@@ -1468,6 +1484,28 @@ function isStoryEdit() {
   return state.edit?.kind === 'story';
 }
 
+function editAudioRows() {
+  const edit = state.edit || {};
+  const rows = [];
+  if (Array.isArray(edit.audio_tracks) && edit.audio_tracks.length) {
+    rows.push(...edit.audio_tracks);
+  } else {
+    if (edit.dub) rows.push({ id: 'legacy-dub', kind: 'dub', name: edit.dub.voice || 'Dub', audio: edit.dub.audio, duration: edit.dub.duration || 0, start: 0, volume: 1 });
+    if (edit.voice) rows.push({ id: 'legacy-voice', kind: 'voice', name: edit.voice.voice || 'Voice-over', audio: edit.voice.audio, duration: edit.voice.duration || 0, start: 0, volume: 1 });
+    if (edit.music) rows.push({ id: 'legacy-music', kind: 'music', name: edit.music.name || 'Music', audio: edit.music.audio, duration: edit.music.duration || 0, start: 0, volume: edit.music.volume || 0.25 });
+  }
+  for (const effect of edit.sfx || []) {
+    if (effect.kind === 'sound') {
+      rows.push({ id: effect.id, kind: 'sound', name: effect.name || 'Sound effect', audio: effect.file, duration: Math.max(0.2, Number(effect.end || 0) - Number(effect.start || 0)), start: Number(effect.start || 0), volume: effect.volume || 0.9 });
+    }
+  }
+  return rows;
+}
+
+function audioColor(kind) {
+  return { voice: '#2d7b59', dub: '#c46812', music: '#6b5a9e', sound: '#b63a2c' }[kind] || '#6f7f86';
+}
+
 function timelineDuration() {
   const edit = state.edit;
   if (isStoryEdit()) {
@@ -1478,8 +1516,7 @@ function timelineDuration() {
     Number(edit?.end || 0),
     Number(scenes[scenes.length - 1]?.end || 0),
     ...scriptCues().map((cue) => Number(cue.end || 0)),
-    Number(edit?.voice?.duration || 0),
-    Number(edit?.dub?.duration || 0),
+    ...editAudioRows().map((row) => Number(row.start || 0) + Number(row.duration || 0)),
     ...(edit?.sfx || []).map((effect) => Number(effect.end || 0)),
   );
 }
@@ -1542,33 +1579,33 @@ function timelinePanel() {
   const cues = scriptCues();
   const voice = state.edit.dub || state.edit.voice;
   const music = state.edit.music;
-  const fx = state.edit.sfx || [];
+  const audioRows = editAudioRows();
+  const audioHeight = Math.max(22, audioRows.length * 17 + 4);
+  const visualFx = (state.edit.sfx || []).filter((effect) => effect.kind !== 'sound');
   const playhead = total > 0 ? Math.max(0, Math.min(100, (Number(state.timelineTime || 0) / total) * 100)) : 0;
   const ruler = Array.from({ length: 7 }, (_unused, index) => {
     const time = total > 0 ? (total * index) / 6 : 0;
-    return `<span class="ruler-tick" style="left:${(index / 6 * 100).toFixed(2)}%">${fmtTC(time, 24)}</span>`;
+    return `<span class="ruler-tick${index === 6 ? ' is-last' : ''}" style="left:${(index / 6 * 100).toFixed(2)}%">${fmtTC(time, 24)}</span>`;
   }).join('');
   return `<section class="panel timeline" data-total="${total}">
-    <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${scenes.length} scenes · ${cues.length} cues · ${fx.length} effects</span><span class="spacer"></span>
-      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}">Trim</button><button class="btn small" type="button" data-action="split-at-playhead">Split</button></span>
+    <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${scenes.length} scenes · ${cues.length} cues · ${(state.edit.sfx || []).length} effects</span><span class="spacer"></span>
+      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}">Trim</button><button class="btn small" type="button" data-action="split-at-playhead">Split</button><button class="btn small" type="button" data-action="slip-clip" data-delta="-0.5">Slip −</button><button class="btn small" type="button" data-action="slip-clip" data-delta="0.5">Slip +</button></span>
       <button class="btn small" type="button" data-action="open-script">${icon('captions', 12)} Script</button></div>
     <div class="timeline-ruler" id="timeline-ruler" data-total="${total}">${ruler}<span class="ruler-playhead" style="left:${playhead.toFixed(2)}%"></span></div>
     <div class="timeline-body">
-      <div class="timeline-labels">
+      <div class="timeline-labels" style="grid-template-rows:22px 22px 22px ${audioHeight}px 22px">
         <div class="timeline-label"><strong>Video</strong><button class="timeline-tool" type="button" data-action="trim-focus">Crop</button></div>
         <div class="timeline-label"><strong>Scene</strong><span class="timeline-tool">All</span></div>
         <div class="timeline-label"><strong>Script</strong><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
-        <div class="timeline-label"><strong>Voice</strong><button class="timeline-tool" type="button" data-action="voice-tab">${voice ? 'Preview' : 'Add'}</button></div>
-        <div class="timeline-label"><strong>Music</strong>${music ? `<button class="timeline-tool" type="button" data-action="remove-music">Remove</button>` : `<button class="timeline-tool" type="button" data-action="add-music">Add</button>`}</div>
+        <div class="timeline-label audio-labels"><strong>Voice & Music</strong><span><button class="timeline-tool" type="button" data-action="voice-tab">+ Voice</button><button class="timeline-tool" type="button" data-action="add-music">+ Music</button></span></div>
         <div class="timeline-label"><strong>SFX</strong><button class="timeline-tool" type="button" data-action="open-focus" data-focus="sfx">Add</button></div>
       </div>
-      <div class="timeline-tracks">
+      <div class="timeline-tracks" style="grid-template-rows:22px 22px 22px ${audioHeight}px 22px">
         <div class="timeline-track video">${total > 0 ? timelineBlock(0, total, total, 'Full video · trim / cut / split', 'trim-focus', '') : ''}</div>
         <div class="timeline-track scene">${timelineSceneRanges().map((row) => timelineBlock(row.start, row.end, total, `S${pad(row.index + 1)}`, 'select-scene', `data-index="${row.index}"`, row.index === state.selectedScene ? 'outline:1px solid var(--amber);z-index:2' : '')).join('')}</div>
         <div class="timeline-track script">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
-        <div class="timeline-track voice">${voice ? timelineBlock(0, Math.min(total, Number(voice.duration || total)), total, state.edit.dub ? 'Dub' : (voice.engine === 'record' ? 'Recorded' : 'Voice'), 'open-focus', 'data-focus="audio"') : ''}</div>
-        <div class="timeline-track music">${music ? timelineBlock(0, total, total, music.name || 'Music', 'open-focus', 'data-focus="audio"') : ''}</div>
-        <div class="timeline-track sfx">${fx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('')}</div>
+        <div class="timeline-track audio-stack">${audioRows.length ? audioRows.map((row) => `<div class="audio-lane" style="--lane-color:${audioColor(row.kind)}">${timelineBlock(row.start, Number(row.start || 0) + Math.max(0.2, Number(row.duration || 0.2)), total, row.name || row.kind, 'open-focus', 'data-focus="audio"', `background:${audioColor(row.kind)};color:#fff;border-color:transparent`)}</div>`).join('') : '<div class="audio-lane empty"><span>No voice, music or sound yet</span></div>'}</div>
+        <div class="timeline-track sfx">${visualFx.map((effect, index) => timelineBlock(effect.start, effect.end, total, effect.name || effect.kind || 'FX', 'open-focus', 'data-focus="sfx"', `top:${2 + (index % 2) * 9}px;bottom:auto;height:9px`)).join('')}</div>
         <span class="timeline-playhead" style="left:${playhead.toFixed(2)}%"></span>
       </div>
     </div>
@@ -1674,7 +1711,7 @@ function inspectorVoice() {
   </select></div>
   ${state.voicePreview ? `<audio class="inline-audio" controls autoplay src="${esc(state.voicePreview)}"></audio>` : ''}
   <div class="voice-actions">
-    <button class="btn wide" type="button" data-action="voice-generate">${icon('voice', 14)} ${voice ? 'Regenerate' : 'Generate'} voice-over</button>
+    <button class="btn wide" type="button" data-action="voice-generate">${icon('voice', 14)} Add voice-over</button>
     ${active ? `<button class="btn wide" type="button" data-action="voice-preview">${icon('play', 14)} Preview ${dub ? 'dub' : 'voice'}</button>` : ''}
   </div>
   <div class="record-row">
@@ -2484,6 +2521,23 @@ async function clearQueue() {
   }
 }
 
+async function slipClip(delta) {
+  if (!state.project || !state.edit || !delta) return;
+  const index = clipIndexForScene(currentScene(), state.selectedScene);
+  if (index < 0) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clips/${index}/slip`, {
+      method: 'POST',
+      body: JSON.stringify({ delta }),
+    });
+    state.edit = data.edit;
+    render();
+    toast(`Clip slipped ${delta > 0 ? '+' : ''}${delta.toFixed(1)}s.`);
+  } catch (error) {
+    toast(`Slip: ${error.message}`, 'bad');
+  }
+}
+
 async function splitAtPlayhead() {
   if (!state.project || !state.edit) return;
   if (!(state.timelineTime > 0.02)) {
@@ -2632,7 +2686,8 @@ async function generateVoice() {
       method: 'POST',
       body: JSON.stringify({ voice: state.voiceName, mode: state.voiceMode }),
     });
-    state.edit.voice = data.voice;
+    if (data.edit) state.edit = data.edit;
+    else state.edit.voice = data.voice;
     render();
     toast(`Voice-over ready: ${data.voice.voice}.`);
   } catch (error) {
@@ -2719,7 +2774,8 @@ async function buildDub() {
       method: 'POST',
       body: JSON.stringify({ voice: state.voiceName, language: state.scriptTarget }),
     });
-    state.edit.dub = data.dub;
+    if (data.edit) state.edit = data.edit;
+    else state.edit.dub = data.dub;
     render();
     toast('Dub built. Original audio will be muted on render.');
   } catch (error) {
@@ -2748,7 +2804,8 @@ async function uploadMusic(file) {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
-    state.edit.music = body.music;
+    if (body.edit) state.edit = body.edit;
+    else state.edit.music = body.music;
     render();
     toast('Background music added.');
   } catch (error) {
@@ -2972,6 +3029,7 @@ document.addEventListener('click', async (event) => {
     }
     else if (action === 'trim-apply') await applyTrim();
     else if (action === 'split-at-playhead') await splitAtPlayhead();
+    else if (action === 'slip-clip') await slipClip(Number(target.dataset.delta || 0));
     else if (action === 'clear-queue') await clearQueue();
     else if (action === 'clean-action') await cleanAction(target.dataset.layer || '', target.dataset.kind || 'fill');
     else if (action === 'clean-all') await cleanAll();
@@ -3020,6 +3078,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'sfx-filter-add') await addSfxFilter(target.dataset.preset || 'warm', target.dataset.start, target.dataset.end);
     else if (action === 'sfx-text-add') await addSfxText();
     else if (action === 'sfx-remove') await removeSfx(target.dataset.effect || '');
+    else if (action === 'audio-remove') await removeAudioTrack(target.dataset.track || '');
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
     else if (action === 'preview-reclean') {
@@ -3230,7 +3289,8 @@ window.duckRecordingStopped = async (path) => {
       method: 'POST',
       body: JSON.stringify({ path }),
     });
-    state.edit.voice = data.voice;
+    if (data.edit) state.edit = data.edit;
+    else state.edit.voice = data.voice;
     render();
     toast('Recorded voice-over saved.');
   } catch (error) {

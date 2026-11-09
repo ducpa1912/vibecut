@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import secrets
 import shutil
 import subprocess
 import wave
@@ -189,8 +190,15 @@ def build_voice(
         total_duration=float(edit.get("end") or 0.0),
     )
     track["duration"] = _duration(Path(data_root) / "projects" / str(edit["project_id"]) / track["audio"])
-    edit["voice"] = track
+    track["id"] = f"at_{secrets.token_hex(5)}"
+    track["kind"] = "voice"
+    track["name"] = track.get("voice") or "Voice-over"
+    track["start"] = 0.0
+    track["volume"] = 1.0
     from duckcore import edits
+    edits.ensure_audio_tracks(edit)
+    edit["audio_tracks"].append(track)
+    edit["voice"] = track
     edits.save_edit(edit, data_root)
     return track
 

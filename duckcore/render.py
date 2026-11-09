@@ -515,76 +515,56 @@ def _mix_sfx_audio(
 
 
 def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=None) -> None:
-    """Mix dub or voice-over and optional music into the rendered video."""
-    dub = edit.get("dub") if isinstance(edit.get("dub"), dict) else None
-    voice = edit.get("voice") if isinstance(edit.get("voice"), dict) else None
-    music = edit.get("music") if isinstance(edit.get("music"), dict) else None
-    voice_path = job_dir / str((dub or voice or {}).get("audio") or "") if (dub or voice) else None
-    music_path = job_dir / str((music or {}).get("audio") or "") if music else None
-    if voice_path and not voice_path.is_file():
-        voice_path = None
-    if music_path and not music_path.is_file():
-        music_path = None
-    if not voice_path and not music_path:
+    """Mix all voice, dub, and music rows into the rendered video."""
+    rows = [
+        row for row in edits.ensure_audio_tracks(edit)
+        if (job_dir / str(row.get("audio") or "")).is_file()
+    ]
+    has_original = media.has_audio(output)
+    if not rows and not has_original:
         return
     if progress:
-        progress(0.985, "Mixing dub" if dub else "Mixing audio")
+        progress(0.985, "Mixing audio")
+    voices = [row for row in rows if str(row.get("kind")) in {"voice", "dub"}]
+    dub = any(str(row.get("kind")) == "dub" for row in rows)
+    voice_only = any(
+        str(row.get("kind")) == "voice" and str(row.get("mode")) == "voice_only"
+        for row in rows
+    )
+    include_original = has_original and not dub and not voice_only
     mixed = output.with_name(f".{output.stem}.mix.mp4")
     inputs = ["-i", str(output)]
-    if voice_path:
-        inputs += ["-i", str(voice_path)]
-    if music_path:
-        inputs += ["-i", str(music_path)]
-    voice_index = 1 if voice_path else -1
-    music_index = (2 if voice_path else 1) if music_path else -1
-    level = max(0.0, min(1.0, float((music or {}).get("volume", 0.25))))
+    for row in rows:
+        inputs += ["-i", str(job_dir / str(row.get("audio")))]
     filters: list[str] = []
     labels: list[str] = []
-    if dub:
-        if voice_index >= 0:
-            filters.append(f"[{voice_index}:a]volume=1.0[dub]")
-            labels.append("[dub]")
-            if music_index >= 0:
-                filters.append(f"[{music_index}:a]volume={level:.3f}[music]")
-                labels.append("[music]")
-        if len(labels) == 2:
-            filters.append("[dub][music]amix=inputs=2:duration=first:dropout_transition=0[aout]")
-        elif labels:
-            filters.append(f"{labels[0]}anull[aout]")
-        else:
-            return
-        command = [ffmpeg, "-y", "-v", "error", *inputs, "-filter_complex", ";".join(filters),
-                   "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy",
-                   "-c:a", "aac", "-b:a", "192k", "-shortest",
-                   "-movflags", "+faststart", str(mixed)]
+    if include_original:
+        level = 0.22 if voices else 1.0
+        filters.append(f"[0:a]volume={level:.3f}[base]")
+        labels.append("[base]")
+    for index, row in enumerate(rows, 1):
+        level = max(0.0, min(1.5, float(row.get("volume") or (0.25 if row.get("kind") == "music" else 1.0))))
+        delay = max(0, int(float(row.get("start") or 0.0) * 1000))
+        label = f"[a{index}]"
+        filters.append(
+            f"[{index}:a]volume={level:.3f},adelay={delay}|{delay}{label}"
+        )
+        labels.append(label)
+    if not labels:
+        return
+    if len(labels) == 1:
+        filters.append(f"{labels[0]}anull[aout]")
     else:
-        has_original = media.has_audio(output)
-        if voice_path:
-            if voice.get("mode") == "voice_only" or not has_original:
-                filters.append(f"[{voice_index}:a]volume=1.0[voice]")
-                labels.append("[voice]")
-            else:
-                filters.append("[0:a]volume=0.22[orig]")
-                filters.append(f"[{voice_index}:a]volume=1.0[voice]")
-                labels += ["[orig]", "[voice]"]
-        elif has_original:
-            filters.append("[0:a]volume=1.0[orig]")
-            labels.append("[orig]")
-        if music_path:
-            filters.append(f"[{music_index}:a]volume={level:.3f}[music]")
-            labels.append("[music]")
-        if len(labels) == 1:
-            filters.append(f"{labels[0]}anull[aout]")
-        elif len(labels) > 1:
-            filters.append(
-                "".join(labels) + f"amix=inputs={len(labels)}:duration=first:dropout_transition=0[aout]"
-            )
-        else:
-            return
-        command = [ffmpeg, "-y", "-v", "error", *inputs, "-filter_complex", ";".join(filters),
-                   "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy",
-                   "-c:a", "aac", "-b:a", "192k", "-shortest",
-                   "-movflags", "+faststart", str(mixed)]
+        filters.append(
+            "".join(labels) + f"amix=inputs={len(labels)}:duration=first:normalize=0[aout]"
+        )
+    command = [
+        ffmpeg, "-y", "-v", "error", *inputs,
+        "-filter_complex", ";".join(filters),
+        "-map", "0:v:0", "-map", "[aout]",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-shortest", "-movflags", "+faststart", str(mixed),
+    ]
     _run(command)
     mixed.replace(output)
 

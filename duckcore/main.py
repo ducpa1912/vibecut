@@ -104,6 +104,10 @@ class SplitClipBody(BaseModel):
     time: float = Field(ge=0.0)
 
 
+class SlipClipBody(BaseModel):
+    delta: float = Field(ge=-30.0, le=30.0)
+
+
 class VoicePatch(BaseModel):
     voice: str = Field(min_length=1, max_length=80)
     mode: str = Field(default="voice_over", pattern="^(voice_over|voice_only)$")
@@ -945,6 +949,20 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         edits.save_edit(edit, data_root)
         return {"edit": edit}
 
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/clips/{clip_index}/slip")
+    def slip_clip(
+        project_id: str, edit_id: str, clip_index: int, body: SlipClipBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            edit = edits.slip_clip(edit, data_root, clip_index, body.delta)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"edit": edit}
+
     @app.post("/api/projects/{project_id}/edits/{edit_id}/clips/split")
     def split_clip(
         project_id: str, edit_id: str, body: SplitClipBody,
@@ -1221,15 +1239,22 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         target = target_dir / f"record_{uuid.uuid4().hex[:12]}{source.suffix or '.wav'}"
         shutil.copy2(source, target)
         track = {
+            "id": f"at_{uuid.uuid4().hex[:10]}",
+            "kind": "voice",
+            "name": "Microphone",
             "engine": "record",
             "voice": "Microphone",
             "mode": "voice_over",
             "audio": str(target.relative_to(data_root / "projects" / project_id)),
             "duration": media.duration(target),
+            "start": 0.0,
+            "volume": 1.0,
         }
+        edits.ensure_audio_tracks(edit)
+        edit["audio_tracks"].append(track)
         edit["voice"] = track
         edits.save_edit(edit, data_root)
-        return {"voice": track}
+        return {"voice": track, "edit": edit}
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/dub")
     def build_dub(
@@ -1249,10 +1274,18 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        track["id"] = f"at_{uuid.uuid4().hex[:10]}"
+        track["kind"] = "dub"
+        track["name"] = f"Dub · {body.voice}"
+        track["start"] = 0.0
+        track["volume"] = 1.0
         track["language"] = body.language
+        edits.ensure_audio_tracks(edit)
+        edit["audio_tracks"] = [row for row in edit["audio_tracks"] if row.get("kind") != "dub"]
+        edit["audio_tracks"].append(track)
         edit["dub"] = track
         edits.save_edit(edit, data_root)
-        return {"dub": track}
+        return {"dub": track, "edit": edit}
 
     @app.post("/api/projects/{project_id}/edits/{edit_id}/sfx/text")
     def add_sfx_text(
@@ -1329,6 +1362,26 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Effect not found.") from exc
         return {"effects": rows, "edit": edit}
 
+    @app.delete("/api/projects/{project_id}/edits/{edit_id}/audio/{track_id}")
+    def delete_audio_track(
+        project_id: str, edit_id: str, track_id: str,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        try:
+            rows = edits.remove_audio_track(edit, track_id)
+        except KeyError:
+            try:
+                effects.remove(edit, data_root, track_id)
+                rows = edits.ensure_audio_tracks(edit)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="Audio track not found.") from exc
+        edits.save_edit(edit, data_root)
+        return {"audio_tracks": rows, "edit": edit}
+
     @app.post("/api/projects/{project_id}/edits/{edit_id}/music")
     async def upload_music(
         project_id: str, edit_id: str, request: Request,
@@ -1346,13 +1399,20 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / name
         target.write_bytes(raw)
-        edit["music"] = {
-            "audio": str(target.relative_to(data_root / "projects" / project_id)),
+        track = {
+            "id": f"at_{uuid.uuid4().hex[:10]}",
+            "kind": "music",
             "name": name,
+            "audio": str(target.relative_to(data_root / "projects" / project_id)),
+            "duration": media.duration(target),
+            "start": 0.0,
             "volume": 0.25,
         }
+        edits.ensure_audio_tracks(edit)
+        edit["audio_tracks"].append(track)
+        edit["music"] = track
         edits.save_edit(edit, data_root)
-        return {"music": edit["music"]}
+        return {"music": track, "edit": edit}
 
     @app.delete("/api/projects/{project_id}/edits/{edit_id}/music")
     def remove_music(project_id: str, edit_id: str, _: None = Depends(require_token)) -> dict:
@@ -1360,6 +1420,12 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             edit = edits.get_edit(data_root, project_id, edit_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        music = edit.get("music")
+        if isinstance(music, dict) and music.get("id"):
+            try:
+                edits.remove_audio_track(edit, str(music["id"]))
+            except KeyError:
+                pass
         edit.pop("music", None)
         edits.save_edit(edit, data_root)
         return {"ok": True}
@@ -1413,7 +1479,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
-        return {"voice": track}
+        return {"voice": track, "edit": edit}
 
     @app.get(
         "/api/projects/{project_id}/edits/{edit_id}/voice/audio",

@@ -242,6 +242,79 @@ def split_at(edit: dict, data_root: Path, output_time: float) -> dict:
     raise EditError("Move the playhead inside a clip to split it.")
 
 
+def ensure_audio_tracks(edit: dict) -> list[dict]:
+    if isinstance(edit.get("audio_tracks"), list):
+        return edit["audio_tracks"]
+    rows = []
+    dub = edit.get("dub")
+    voice = edit.get("voice")
+    music = edit.get("music")
+    if isinstance(dub, dict):
+        dub.setdefault("id", f"at_{secrets.token_hex(5)}")
+        rows.append({
+            "id": dub["id"], "kind": "dub",
+            "name": dub.get("voice") or "Dub", "audio": dub.get("audio"),
+            "duration": dub.get("duration") or 0.0, "start": 0.0,
+            "volume": 1.0, "mode": "voice_only",
+        })
+    if isinstance(voice, dict):
+        voice.setdefault("id", f"at_{secrets.token_hex(5)}")
+        rows.append({
+            "id": voice["id"], "kind": "voice",
+            "name": voice.get("voice") or "Voice-over", "audio": voice.get("audio"),
+            "duration": voice.get("duration") or 0.0, "start": 0.0,
+            "volume": 1.0, "mode": voice.get("mode") or "voice_over",
+            "engine": voice.get("engine") or "",
+        })
+    if isinstance(music, dict):
+        music.setdefault("id", f"at_{secrets.token_hex(5)}")
+        rows.append({
+            "id": music["id"], "kind": "music",
+            "name": music.get("name") or "Music", "audio": music.get("audio"),
+            "duration": music.get("duration") or 0.0, "start": 0.0,
+            "volume": float(music.get("volume") or 0.25),
+        })
+    edit["audio_tracks"] = rows
+    return rows
+
+
+def remove_audio_track(edit: dict, track_id: str) -> list[dict]:
+    rows = ensure_audio_tracks(edit)
+    remaining = [row for row in rows if str(row.get("id")) != str(track_id)]
+    if len(remaining) == len(rows):
+        raise KeyError(track_id)
+    edit["audio_tracks"] = remaining
+    for key in ("voice", "dub", "music"):
+        item = edit.get(key)
+        if isinstance(item, dict) and str(item.get("id")) == str(track_id):
+            edit.pop(key, None)
+    return remaining
+
+
+def slip_clip(edit: dict, data_root: Path, clip_index: int, delta: float) -> dict:
+    clips = [clip for clip in edit.get("clips") or [] if isinstance(clip, dict)]
+    if clip_index < 0 or clip_index >= len(clips):
+        raise EditError("Clip not found.")
+    clip = clips[clip_index]
+    start = float(clip.get("start") or 0.0)
+    end = float(clip.get("end") or 0.0)
+    duration = max(0.0, end - start)
+    if duration <= 0:
+        raise EditError("This clip has no duration.")
+    source_duration = float((edit.get("source") or {}).get("duration") or end)
+    lower = float(clips[clip_index - 1].get("end") or 0.0) if clip_index else 0.0
+    upper = float(clips[clip_index + 1].get("start") or source_duration) if clip_index + 1 < len(clips) else source_duration
+    new_start = max(lower, min(upper - duration, start + float(delta)))
+    if abs(new_start - start) < 0.001:
+        raise EditError("The clip is already at its slip limit.")
+    clip["start"] = round(new_start, 3)
+    clip["end"] = round(new_start + duration, 3)
+    clip["dur"] = round(duration, 3)
+    edit["clips"] = clips
+    save_edit(edit, data_root)
+    return edit
+
+
 def save_edit(edit: dict, data_root: Path) -> dict:
     edit["updated"] = time.time()
     path = edit_path(data_root, str(edit["project_id"]), str(edit["id"]))

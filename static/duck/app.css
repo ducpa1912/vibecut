@@ -1393,3 +1393,33 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
 .ghost-source { color: var(--muted); font-size: 9px; }
 .ghost-more { color: var(--muted); display: grid; place-items: center; }
 .transcript-overlay .overlay-toggle { right: 0; bottom: -25px; }
+.audio-labels { align-items: flex-start; flex-direction: column; justify-content: center; gap: 1px; }
+.audio-labels > span { display: flex; gap: 4px; }
+.audio-labels .timeline-tool { font-size: 8px; }
+.timeline-track.audio-stack {
+  display: grid;
+  grid-auto-rows: 15px;
+  gap: 2px;
+  padding: 1px 0;
+  background: #f5f1ec;
+  overflow: hidden;
+}
+.audio-lane {
+  position: relative;
+  min-height: 15px;
+  border-left: 2px solid var(--lane-color, #6f7f86);
+  background: color-mix(in srgb, var(--lane-color, #6f7f86) 13%, transparent);
+  border-radius: 2px;
+}
+.audio-lane .timeline-block { top: 1px; bottom: 1px; height: auto; font-size: 8px; }
+.audio-lane.empty { display: flex; align-items: center; padding-left: 6px; border-left: 0; background: transparent; }
+.audio-lane.empty span { color: var(--muted); font-size: 8px; }
+.audio-focus-list { display: grid; gap: 4px; margin-top: 8px; }
+.audio-focus-row { display: grid; grid-template-columns: 10px minmax(0,1fr) auto; gap: 7px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.audio-focus-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--lane-color); }
+.audio-focus-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.timeline-head { flex-wrap: wrap; row-gap: 4px; }
+.timeline-head > .small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-trim { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.timeline { overflow: hidden; }
+.ruler-tick.is-last { transform: translateX(-100%); }
