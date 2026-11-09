@@ -360,13 +360,17 @@ async function refreshCheck() {
   const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/check`);
   const previous = state.lastCheckKey;
   const previousAppend = state.check?.result?.append?.analysis || '';
+  const previousEditorReady = state.editorReady;
+  const hadEdit = Boolean(state.edit);
   const hadScenes = getScenes().length;
   state.check = data.check;
+  let editorReloaded = false;
   if (previousAppend === 'pending' && state.check?.result?.append?.analysis !== 'pending') {
     await refreshTranscript();
     state.edit = null;
     await ensureEdit();
     await ensureCaptions();
+    editorReloaded = true;
   }
   const next = checkKey();
   const hasScenes = getScenes().length;
@@ -378,13 +382,19 @@ async function refreshCheck() {
   if (data.check?.editor_ready && !state.editorReady) {
     state.editorReady = true;
     state.sourceMeta = data.check?.result?.meta || state.sourceMeta;
-    if (!state.edit) await ensureEdit();
+    if (!state.edit) {
+      await ensureEdit();
+      editorReloaded = true;
+    }
     await refreshTranscript();
     await ensureCaptions();
   }
   if (data.check?.state === 'done') {
     state.sourceMeta = data.check?.result?.meta || state.sourceMeta;
-    if (!state.edit) await ensureEdit();
+    if (!state.edit) {
+      await ensureEdit();
+      editorReloaded = true;
+    }
     if (!state.editorReady) {
       state.editorReady = true;
       await refreshTranscript();
@@ -392,7 +402,16 @@ async function refreshCheck() {
   }
   if (next !== previous) {
     state.lastCheckKey = next;
-    if (['check', 'edit', 'clean', 'preview'].includes(state.screen)) render();
+    if (state.screen === 'check') {
+      if (hadScenes !== hasScenes) render();
+      else {
+        patchCheckProgress();
+        refreshToolbar();
+      }
+    } else if (['edit', 'clean', 'preview', 'render'].includes(state.screen)) {
+      if (editorReloaded || (!hadEdit && state.edit)) render();
+      else refreshToolbar();
+    }
   }
 }
 
@@ -871,14 +890,18 @@ function screenCheck() {
             <strong>${scenes.length ? `${scenes.length} scenes ready` : running ? 'Finding scene cuts' : 'Not checked yet'}</strong>
             <span>${done ? 'Check complete. Transcript, text detection, and stories are ready.' : state.check?.editor_ready ? 'Editor ready. Stories finish in the background.' : `Transcript ${Math.round(transcriptPct * 100)}% · Text detect ${Math.round(textPct * 100)}% · Stories ${done ? 'ready' : 'pending'}`}</span>
           </div>
-          ${done || scenes.length
-            ? `<button class="btn primary wide" type="button" data-action="open-editor">${icon('arrowRight', 15)} Open Editor</button><p class="note">${running ? 'Scenes are ready. The Editor opens while the rest continues.' : 'Transcript and text detection continue in the background.'}</p>`
-            : `<button class="btn primary wide" type="button" data-action="start-check" ${running ? 'disabled' : ''}>${running ? `${icon('loader', 15)} Checking…` : 'Start Check'}</button><p class="note">${running ? 'Scenes first. The Editor opens while the rest continues.' : 'Local only. Nothing leaves this Mac.'}</p>`}
-          ${done ? `<button class="btn wide" type="button" data-action="start-check">${icon('loader', 14)} Re-check</button>` : ''}
+          ${checkCtaMarkup(scenes, running, done)}
         </div>
       </aside>
     </div>
   </main>`;
+}
+
+function checkCtaMarkup(scenes, running, done) {
+  return `${done || scenes.length
+    ? `<button class="btn primary wide" type="button" data-action="open-editor">${icon('arrowRight', 15)} Open Editor</button><p class="note">${running ? 'Scenes are ready. The Editor opens while the rest continues.' : 'Transcript and text detection continue in the background.'}</p>`
+    : `<button class="btn primary wide" type="button" data-action="start-check" ${running ? 'disabled' : ''}>${running ? `${icon('loader', 15)} Checking…` : 'Start Check'}</button><p class="note">${running ? 'Scenes first. The Editor opens while the rest continues.' : 'Local only. Nothing leaves this Mac.'}</p>`}
+  ${done ? `<button class="btn wide" type="button" data-action="start-check">${icon('loader', 14)} Re-check</button>` : ''}`;
 }
 
 function stagePct(name) {
@@ -915,6 +938,66 @@ function checkStage(key, title, sub, pct, done) {
     <div><div class="stage-title">${esc(title)}</div><div class="stage-sub">${esc(sub)}</div><div class="progress"><span style="width:${p}%"></span></div></div>
     <span class="stage-pct">${done ? 'Done' : p > 0 ? `${p}%` : 'Pending'}</span>
   </div>`;
+}
+
+function patchCheckProgress() {
+  const check = state.check || {};
+  const scenes = checkScenes();
+  const running = ['queued', 'running', 'cancelling'].includes(check.state);
+  const done = check.state === 'done';
+  const values = {
+    scenes: stagePct('scenes'),
+    transcript: stagePct('transcript'),
+    text: stagePct('text'),
+    stories: stagePct('stories'),
+  };
+  const subs = {
+    scenes: scenes.length ? `${scenes.length} scenes` : 'Detect and split scenes',
+    transcript: 'Speech to text · auto language',
+    text: 'Find burned-in text',
+    stories: 'Find story segments',
+  };
+  document.querySelectorAll('.stage-row[data-stage]').forEach((row) => {
+    const key = row.dataset.stage;
+    const pct = values[key];
+    if (pct === undefined) return;
+    const p = Math.round(Math.max(0, Math.min(1, pct)) * 100);
+    const finished = done || pct >= 0.999;
+    const marker = row.querySelector('.stage-icon');
+    if (marker) {
+      marker.className = `stage-icon ${finished ? 'done' : p > 0 ? 'doing' : ''}`;
+      marker.innerHTML = finished ? icon('check', 12) : p > 0 ? icon('loader', 12) : icon('circle', 12);
+    }
+    const sub = row.querySelector('.stage-sub');
+    if (sub && subs[key]) sub.textContent = subs[key];
+    const bar = row.querySelector('.progress span');
+    if (bar) bar.style.width = `${p}%`;
+    const label = row.querySelector('.stage-pct');
+    if (label) label.textContent = `${p}%`;
+  });
+  const summary = document.querySelector('.check-summary');
+  if (summary) {
+    const text = done
+      ? 'Check complete. Transcript, text detection, and stories are ready.'
+      : state.check?.editor_ready
+        ? 'Editor ready. Stories finish in the background.'
+        : `Transcript ${Math.round(values.transcript * 100)}% · Text detect ${Math.round(values.text * 100)}% · Stories ${done ? 'ready' : 'pending'}`;
+    summary.innerHTML = `<strong>${scenes.length ? `${scenes.length} scenes ready` : running ? 'Finding scene cuts' : 'Not checked yet'}</strong><span>${text}</span>`;
+  }
+  const checkPanel = document.querySelector('.check-panel .panel-head .meta');
+  if (checkPanel) checkPanel.textContent = done ? 'Done' : running ? 'Running' : 'Idle';
+  const stagePanel = document.querySelector('.stage-list')?.closest('.panel');
+  const stageMeta = stagePanel?.querySelector('.panel-head .meta');
+  if (stageMeta) stageMeta.textContent = done ? 'Complete' : running ? `${Math.round((check.progress || 0) * 100)}%` : 'Not started';
+  const stripHead = document.querySelector('.scene-strip-head .small');
+  if (stripHead) stripHead.textContent = running ? 'Scenes ready' : done ? 'All scenes ready' : 'Waiting for scene cuts';
+  const cta = document.querySelector('.check-cta');
+  if (cta) cta.innerHTML = checkCtaMarkup(scenes, running, done);
+}
+
+function refreshToolbar() {
+  const header = document.querySelector('.toolbar');
+  if (header) header.outerHTML = topbar();
 }
 
 function sceneTile(scene, index) {
