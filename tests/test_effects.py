@@ -48,3 +48,24 @@ def test_sound_effect_upload(tmp_path: Path) -> None:
     )
     assert effect["kind"] == "sound"
     assert (tmp_path / "projects" / "prj_sfx" / effect["file"]).is_file()
+
+
+def test_story_from_selected_scenes_keeps_order(tmp_path: Path) -> None:
+    from duckcore import edits
+
+    check = {
+        "meta": {"duration": 10.0, "width": 1920, "height": 1080, "fps": 30.0},
+        "scenes": [
+            {"id": 1, "start": 0.0, "end": 2.0},
+            {"id": 2, "start": 2.0, "end": 5.0},
+            {"id": 3, "start": 5.0, "end": 9.0},
+        ],
+    }
+    edit = edits.create_story_from_scenes(
+        "prj_story", check, tmp_path,
+        scene_ids=[3, 1], title="Mix",
+    )
+    assert edit["kind"] == "story"
+    assert [clip["scene"] for clip in edit["clips"]] == [3, 1]
+    assert edit["end"] == 6.0
+    assert edit["scene_ids"] == [3, 1]

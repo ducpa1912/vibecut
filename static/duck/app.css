@@ -1254,3 +1254,110 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
 .edit-clean .inspector-body { flex: 1; overflow: auto; }
 .focus-shell .script-drawer { margin: 0; max-width: none; }
 .focus-shell .script-drawer .script-columns { max-height: 420px; }
+.transcript-overlay {
+  left: 24px;
+  right: auto;
+  bottom: 44px;
+  width: min(64%, 640px);
+  display: block;
+  justify-items: stretch;
+  opacity: 0;
+}
+.transcript-overlay.is-on { opacity: 1; }
+.transcript-ghost {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: rgba(10, 9, 8, .28);
+  backdrop-filter: blur(3px);
+}
+.ghost-line {
+  display: block;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255,255,255,.58);
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: left;
+}
+.ghost-line.is-current { color: #fff; font-weight: 620; }
+.ghost-line:hover { color: #fff; }
+.ghost-source {
+  display: block;
+  margin-bottom: 2px;
+  color: rgba(255,255,255,.48);
+  font-size: 9px;
+  font-weight: 400;
+}
+.transcript-overlay .overlay-toggle { right: 0; bottom: -24px; }
+.timeline { padding: 9px 11px 10px; }
+.timeline-head { margin-bottom: 4px; }
+.timeline-head h2 { font-size: 11px; }
+.timeline-head .small { font-size: 10px; }
+.timeline-head .btn { height: 25px; font-size: 10px; }
+.timeline-trim label { font-size: 10px; }
+.timeline-trim input { height: 24px; font-size: 11px; }
+.timeline-ruler {
+  position: relative;
+  height: 19px;
+  margin: 0 0 3px 90px;
+  border-bottom: 1px solid var(--line);
+  cursor: ew-resize;
+  user-select: none;
+}
+.ruler-tick {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font: 8px var(--mono);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.ruler-playhead {
+  position: absolute;
+  top: 15px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--amber);
+  pointer-events: none;
+}
+.timeline-body { grid-template-columns: 84px minmax(0, 1fr); gap: 6px; }
+.timeline-labels, .timeline-tracks { grid-template-rows: repeat(7, 22px); gap: 4px; }
+.timeline-label { font-size: 10px; }
+.timeline-label strong { font-size: 10px; }
+.timeline-tool { font-size: 9px; }
+.timeline-block { top: 2px; bottom: 2px; font-size: 8px; }
+.timeline-track.video { background: #eee7dc; }
+.timeline-track.scene { background: #f3ede3; }
+.timeline-track.script { background: #f6efe5; }
+.timeline-track.audio { background: #e9f0ee; }
+.timeline-track.voice { background: #e9f0ee; }
+.timeline-track.music { background: #f0eceb; }
+.timeline-track.sfx { background: #f2e7e5; }
+.focus-dock { margin: 12px 24px 0; max-width: none; padding: 10px 12px 12px; }
+.focus-dock-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.focus-dock-head .focus-kicker { font-size: 9px; }
+.focus-dock-head h2 { margin: 1px 0 0; font-size: 17px; letter-spacing: -.03em; }
+.focus-dock-body { min-height: 230px; max-height: 430px; overflow: auto; }
+.focus-dock .script-drawer { margin: 0; max-width: none; box-shadow: none; border: 0; }
+.focus-dock .script-columns { max-height: 300px; }
+.focus-dock .focus-grid { grid-template-columns: 1fr 1.1fr; }
+.focus-dock .waveform { height: 48px; }
+.focus-dock .audio-focus .focus-card:nth-child(3) { grid-column: auto; }
+.focus-dock .sfx-add-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.focus-dock .sfx-add-grid .btn { height: 26px; font-size: 9px; }
+.focus-dock .filter-presets { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.focus-dock .filter-chip { height: 30px; font-size: 9px; }
+.focus-dock .focus-card { padding: 10px; }
+.focus-dock .focus-card h3 { font-size: 10px; }
+.story-toggle { margin-left: auto; height: 23px; font-size: 9px; }
+.story-build { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-top: 1px solid var(--line); }
+.story-build span { flex: 1; color: var(--muted); font-size: 10px; }
+.proof-row.is-story { background: var(--amber-soft); }
+.proof-row.is-story .proof-index { color: var(--amber-ink); font-weight: 800; }
+.future-actions { display: grid; gap: 5px; margin-top: 8px; opacity: .62; }

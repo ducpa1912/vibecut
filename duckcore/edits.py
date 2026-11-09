@@ -159,6 +159,61 @@ def create_story(
     return edit
 
 
+def create_story_from_scenes(
+    project_id: str,
+    check: dict,
+    data_root: Path,
+    *,
+    scene_ids: list[int],
+    title: str = "",
+) -> dict:
+    by_id = {
+        int(scene.get("id")): scene
+        for scene in check.get("scenes") or []
+        if isinstance(scene, dict) and scene.get("id") is not None
+    }
+    ordered = [by_id[int(scene_id)] for scene_id in scene_ids if int(scene_id) in by_id]
+    if not ordered:
+        raise EditError("Select at least one scene for the story.")
+    clips = [
+        _clip(scene, float(scene.get("start") or 0.0), float(scene.get("end") or 0.0))
+        for scene in ordered
+        if float(scene.get("end") or 0.0) > float(scene.get("start") or 0.0)
+    ]
+    if not clips:
+        raise EditError("The selected scenes have no usable duration.")
+    duration = sum(float(clip.get("dur") or 0.0) for clip in clips)
+    meta = check.get("meta") or {}
+    now = time.time()
+    edit_id = f"ed_{secrets.token_hex(6)}"
+    edit = {
+        "schema": 1,
+        "id": edit_id,
+        "project_id": project_id,
+        "kind": "story",
+        "story_id": "selected-scenes",
+        "scene_ids": [int(scene.get("id")) for scene in ordered],
+        "title": (title or "Selected scenes")[:120],
+        "created": now,
+        "updated": now,
+        "source": {
+            "fingerprint": meta.get("fingerprint") or "",
+            "duration": float(meta.get("duration") or 0.0),
+            "width": int(meta.get("width") or 0),
+            "height": int(meta.get("height") or 0),
+            "fps": float(meta.get("fps") or 0.0),
+        },
+        "start": 0.0,
+        "end": round(duration, 3),
+        "clips": clips,
+        "clean": [],
+        "captions": None,
+        "audio": {"mode": "original"},
+    }
+    save_edit(edit, data_root)
+    return edit
+
+
 def save_edit(edit: dict, data_root: Path) -> dict:
     edit["updated"] = time.time()
     path = edit_path(data_root, str(edit["project_id"]), str(edit["id"]))

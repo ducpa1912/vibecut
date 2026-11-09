@@ -71,6 +71,11 @@ class StoryEditBody(BaseModel):
     title: str = Field(default="", max_length=120)
 
 
+class SceneStoryBody(BaseModel):
+    scene_ids: list[int] = Field(min_length=1, max_length=500)
+    title: str = Field(default="", max_length=120)
+
+
 class LayerAction(BaseModel):
     action: str = Field(pattern="^(fill|blur|exclude)$")
 
@@ -838,6 +843,23 @@ def create_app(token: str, data_root: Path) -> FastAPI:
                 end=body.end,
                 title=body.title,
             )
+        except edits.EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"edit": edit}
+
+    @app.post("/api/projects/{project_id}/edits/story/scenes")
+    def create_scene_story(
+        project_id: str, body: SceneStoryBody, _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            store.get(project_id)
+            check = completed_check(project_id)
+            edit = edits.create_story_from_scenes(
+                project_id, check, data_root,
+                scene_ids=body.scene_ids, title=body.title,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Project not found.") from exc
         except edits.EditError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"edit": edit}
