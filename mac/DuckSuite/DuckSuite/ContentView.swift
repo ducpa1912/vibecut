@@ -11,9 +11,12 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             if let url = model.url {
-                WebView(url: url) {
-                    await model.importVideo()
-                }
+                WebView(
+                    url: url,
+                    onImport: { await model.importVideo() },
+                    onRecordStart: { try await model.startRecording() },
+                    onRecordStop: { model.stopRecording() }
+                )
             } else if let error = model.error {
                 VStack(spacing: 14) {
                     Image(systemName: "exclamationmark.triangle")
@@ -51,6 +54,8 @@ struct ContentView: View {
 private struct WebView: NSViewRepresentable {
     let url: URL
     let onImport: @MainActor () async -> Bool
+    let onRecordStart: @MainActor () async throws -> String
+    let onRecordStop: @MainActor () -> String?
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -75,15 +80,27 @@ private struct WebView: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onImport: onImport)
+        Coordinator(
+            onImport: onImport,
+            onRecordStart: onRecordStart,
+            onRecordStop: onRecordStop
+        )
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
         private let onImport: @MainActor () async -> Bool
+        private let onRecordStart: @MainActor () async throws -> String
+        private let onRecordStop: @MainActor () -> String?
 
-        init(onImport: @escaping @MainActor () async -> Bool) {
+        init(
+            onImport: @escaping @MainActor () async -> Bool,
+            onRecordStart: @escaping @MainActor () async throws -> String,
+            onRecordStop: @escaping @MainActor () -> String?
+        ) {
             self.onImport = onImport
+            self.onRecordStart = onRecordStart
+            self.onRecordStop = onRecordStop
         }
 
         func userContentController(
@@ -93,16 +110,43 @@ private struct WebView: NSViewRepresentable {
             guard
                 message.name == "duck",
                 let body = message.body as? [String: Any],
-                body["type"] as? String == "import"
+                let type = body["type"] as? String
             else { return }
 
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let imported = await self.onImport()
-                if imported {
-                    self.webView?.reload()
+            if type == "import" {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let imported = await self.onImport()
+                    if imported {
+                        self.webView?.reload()
+                    }
                 }
+                return
             }
+
+            if type == "recordStart" {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        let path = try await self.onRecordStart()
+                        self.callJS("window.duckRecordingStarted", path)
+                    } catch {
+                        self.callJS("window.duckRecordingError", error.localizedDescription)
+                    }
+                }
+                return
+            }
+
+            if type == "recordStop" {
+                let path = onRecordStop() ?? ""
+                callJS("window.duckRecordingStopped", path)
+            }
+        }
+
+        private func callJS(_ function: String, _ value: String) {
+            guard let data = try? JSONSerialization.data(withJSONObject: [value]),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            webView?.evaluateJavaScript("\(function)(\(json)[0])")
         }
 
         func webView(
@@ -115,7 +159,7 @@ private struct WebView: NSViewRepresentable {
             if url.scheme == "http", url.host == "127.0.0.1" {
                 return .allow
             }
-            if url.scheme == "https" {
+            if url.scheme == "https" || url.scheme == "x-apple.systempreferences" {
                 NSWorkspace.shared.open(url)
             }
             return .cancel

@@ -259,6 +259,7 @@ def generate(edit: dict, transcript: dict, data_root: Path) -> dict:
                 "start": round(cue_start, 3),
                 "end": round(cue_end, 3),
                 "text": text,
+                "source_text": text,
             })
         out_cursor += duration
     if not cues:

@@ -91,6 +91,18 @@ def ensure_preview(
     return target
 
 
+def duration(source: str | Path) -> float:
+    result = subprocess.run(
+        [ffprobe(), "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(source)],
+        capture_output=True, text=True, timeout=30,
+    )
+    try:
+        return max(0.0, float(result.stdout.strip()))
+    except ValueError:
+        return 0.0
+
+
 def has_audio(source: str | Path) -> bool:
     result = subprocess.run(
         [

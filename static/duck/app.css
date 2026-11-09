@@ -889,3 +889,91 @@ dialog.modal::backdrop { background: rgba(28, 23, 16, .38); backdrop-filter: blu
 .check-summary strong { display: block; font-size: 15px; letter-spacing: -.01em; }
 .check-summary span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .scene-strip { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+
+/* ---------------------------------------------------------------- timeline */
+.timeline {
+  margin: 14px auto 0;
+  max-width: 1720px;
+  padding: 12px 14px 14px;
+}
+.timeline-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.timeline-head h2 { margin: 0; font-size: 12px; font-weight: 740; letter-spacing: .08em; text-transform: uppercase; }
+.timeline-head .spacer { flex: 1; }
+.timeline-body { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; }
+.timeline-labels { display: grid; grid-template-rows: repeat(4, 30px); gap: 6px; }
+.timeline-label { display: flex; align-items: center; justify-content: space-between; gap: 5px; color: var(--muted); font-size: 11px; }
+.timeline-label strong { color: var(--ink); font-weight: 640; }
+.timeline-tool { padding: 0; border: 0; background: transparent; color: var(--amber-ink); font-size: 10px; cursor: pointer; }
+.timeline-tool:hover { text-decoration: underline; }
+.timeline-tracks { position: relative; display: grid; grid-template-rows: repeat(4, 30px); gap: 6px; min-width: 0; }
+.timeline-track { position: relative; overflow: hidden; border-radius: 5px; background: var(--paper-2); }
+.timeline-track.video { background: #efe9df; }
+.timeline-track.script { background: #f5eee4; }
+.timeline-track.voice { background: #e9f0ee; }
+.timeline-track.music { background: #f0eceb; }
+.timeline-block { position: absolute; top: 3px; bottom: 3px; min-width: 3px; padding: 0 5px; overflow: hidden; border: 1px solid rgba(0,0,0,.08); border-radius: 4px; background: var(--panel); color: var(--ink); font-size: 9px; text-align: left; white-space: nowrap; cursor: pointer; }
+.timeline-block:hover { border-color: var(--amber-2); }
+.timeline-track.video .timeline-block { background: #f7d7ad; }
+.timeline-track.script .timeline-block { background: #ead6bd; }
+.timeline-track.voice .timeline-block { background: #cfe0db; }
+.timeline-track.music .timeline-block { background: #ddd4d1; }
+.timeline-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--amber); pointer-events: none; z-index: 2; }
+.timeline-playhead::before { content: ""; position: absolute; top: -3px; left: -3px; width: 8px; height: 8px; border-radius: 2px; background: var(--amber); }
+
+/* ---------------------------------------------------------------- script drawer */
+.script-drawer {
+  max-width: 1720px;
+  margin: 14px auto 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.script-head { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.script-head .spacer { flex: 1; }
+.script-head select { height: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font-size: 11px; }
+.script-progress { padding: 8px 12px; color: var(--amber-ink); background: var(--amber-soft); font-size: 12px; }
+.script-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); max-height: 300px; }
+.script-column { min-width: 0; background: var(--panel); }
+.script-column h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.script-rows { max-height: 260px; overflow: auto; }
+.script-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; align-items: start; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.script-row p { margin: 0; font-size: 12px; line-height: 1.45; }
+.script-row input { width: 100%; height: 30px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ink); font-family: inherit; font-size: 12px; }
+.script-row input:hover, .script-row input:focus { border-color: var(--line); background: var(--panel-2); outline: none; }
+.script-row .tc { padding-top: 3px; color: var(--muted); font: 9px var(--mono); }
+.script-card { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+
+/* ---------------------------------------------------------------- voice */
+.inline-audio { width: 100%; margin: 8px 0 10px; }
+.voice-actions { display: grid; gap: 7px; margin: 8px 0; }
+.record-row { padding: 8px 0; }
+.record-live { background: #f7d9d4; border-color: #e8b5ac; color: #8d2f22; }
+.voice-section { display: grid; gap: 7px; padding: 10px 0; border-top: 1px solid var(--line); }
+.voice-section > strong { font-size: 12px; }
+.line-preview-list { display: grid; gap: 4px; max-height: 170px; overflow: auto; }
+.line-preview { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.line-preview span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+
+/* ---------------------------------------------------------------- packs */
+.pack-list { display: grid; gap: 6px; margin-top: 6px; }
+.pack-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.pack-row > div { min-width: 0; display: grid; gap: 2px; }
+.pack-row strong { font-size: 12px; }
+.pack-row span { color: var(--muted); font-size: 10px; line-height: 1.35; }
+.pack-row .progress { height: 4px; margin-top: 3px; }
+.pack-error { color: var(--red); }
+
+/* ---------------------------------------------------------------- brush */
+.brush-stage { position: relative; overflow: hidden; background: var(--video); }
+.brush-stage > img { width: 100%; height: 100%; display: block; object-fit: contain; }
+#brush-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+.brush-toolbar { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 7px; border-radius: 8px; background: rgba(24,21,18,.84); color: #fff; }
+.brush-toolbar .btn { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.2); color: #fff; }
+.brush-toolbar .btn.primary { background: var(--amber); border-color: var(--amber); color: #fff; }
+.brush-toolbar .segmented { background: rgba(255,255,255,.1); }
+.brush-toolbar .segmented button { color: #fff; }
+.brush-toolbar .segmented button.is-active { background: rgba(255,255,255,.9); color: #1b1713; }
+.brush-size { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; }
+.brush-size input { width: 80px; }

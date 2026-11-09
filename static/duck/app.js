@@ -15,6 +15,7 @@ const state = {
   settings: null,
   models: [],
   voices: [],
+  packs: [],
   project: null,
   check: null,
   sourceMeta: null,
@@ -37,6 +38,16 @@ const state = {
   queuePaused: false,
   previewView: 'after',
   inlinePlaying: false,
+  scriptOpen: false,
+  scriptBusy: false,
+  scriptTarget: 'vi',
+  scriptMode: 'clean',
+  voicePreview: '',
+  recording: false,
+  brushMode: false,
+  brushKind: 'fill',
+  brushSize: 0.025,
+  brushStrokes: [],
   importing: false,
   lastCheckKey: '',
   lastQueueKey: '',
@@ -270,6 +281,7 @@ async function openProject(id, { startCheck = false } = {}) {
   state.edits = editsData.edits || [];
   state.transcript = transcriptData.transcript || {};
   await ensureEdit();
+  await ensureCaptions();
   const scenes = getScenes();
   if (scenes[0]) state.previewTime = Number(scenes[0].start || 0) + 0.1;
 
@@ -356,6 +368,7 @@ async function refreshCheck() {
     state.sourceMeta = data.check?.result?.meta || state.sourceMeta;
     if (!state.edit) await ensureEdit();
     await refreshTranscript();
+    await ensureCaptions();
   }
   if (data.check?.state === 'done') {
     state.sourceMeta = data.check?.result?.meta || state.sourceMeta;
@@ -474,6 +487,7 @@ const LAYER_KIND = {
   credit: 'Credit',
   watermark: 'Logo / watermark',
   handle_or_logo: 'Logo / watermark',
+  manual: 'Manual brush',
 };
 
 function layerLabel(layer, index) {
@@ -949,18 +963,8 @@ function screenEditor() {
           </div>
         </section>
 
-        <section class="panel fine-trim">
-          <div class="fine-head"><strong>Fine trim</strong><span class="mono">${fmtTC(clipStart, state.check?.result?.meta?.fps || 24)} – ${fmtTC(clipEnd, state.check?.result?.meta?.fps || 24)}</span><span class="muted">· ${fmtDuration(clipEnd - clipStart)}</span><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndex}" ${clipIndex >= 0 ? '' : 'disabled'}>Apply</button></div>
-          <div class="fine-controls">
-            <label class="field"><span>In</span><input id="trim-in" type="number" step="0.05" min="0" value="${clipStart.toFixed(2)}" aria-label="Scene in point"></label>
-            <label class="field"><span>Out</span><input id="trim-out" type="number" step="0.05" min="0" value="${clipEnd.toFixed(2)}" aria-label="Scene out point"></label>
-          </div>
-          <div class="fine-strip">
-            ${strip.map((when) => `<button type="button" class="fine-frame" data-action="seek" data-time="${when.toFixed(3)}"><img src="${frameUrl(when)}" alt=""></button>`).join('')}
-            <span class="fine-playhead" style="left:${(playhead * 100).toFixed(2)}%"></span>
-          </div>
-          <p class="fine-note">Trim this scene's clip. Proofs use the new range; regenerate captions after a trim.</p>
-        </section>
+        ${timelinePanel()}
+
       </section>
 
       <aside class="panel inspector">
@@ -969,10 +973,10 @@ function screenEditor() {
           <p class="inspector-sub">${fmtTC(scene.start, state.check?.result?.meta?.fps || 24)} – ${fmtTC(scene.end, state.check?.result?.meta?.fps || 24)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</p>
         </div>
         <div class="tabs">
-          ${['clean', 'captions', 'voice'].map((tab) => `<button class="tab${state.inspectorTab === tab ? ' is-active' : ''}" type="button" data-action="inspector-tab" data-tab="${tab}">${tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
+          ${['clean', 'script', 'captions', 'voice'].map((tab) => `<button class="tab${state.inspectorTab === tab ? ' is-active' : ''}" type="button" data-action="inspector-tab" data-tab="${tab}">${tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
         </div>
         <div class="inspector-body">
-          ${state.inspectorTab === 'clean' ? inspectorClean(scene, layer, layers) : state.inspectorTab === 'captions' ? inspectorCaptions(scene) : inspectorVoice()}
+          ${state.inspectorTab === 'clean' ? inspectorClean(scene, layer, layers) : state.inspectorTab === 'captions' ? inspectorCaptions(scene) : state.inspectorTab === 'voice' ? inspectorVoice() : inspectorScript()}
           <div class="render-strip">
             <div class="panel-head" style="padding:0 0 4px"><h3 style="font-size:11px">Render queue</h3><span class="meta">${queueActiveCount()} active</span></div>
             ${state.queue.slice(0, 3).map((item) => `<div class="render-row"><span class="state-dot ${item.state === 'done' ? 'green' : ['running', 'rendering', 'queued', 'paused'].includes(item.state) ? 'amber' : ''}"></span><span>${esc(item.title || 'Render')}</span><span class="render-time">${item.state === 'done' ? 'Done' : queueLabel(item.state)}</span></div>`).join('') || '<p class="small muted">No renders yet.</p>'}
@@ -980,6 +984,8 @@ function screenEditor() {
         </div>
       </aside>
     </div>
+    ${state.scriptOpen ? scriptDrawer() : ''}
+    <input id="music-input" type="file" accept="audio/*,.m4a,.mp3,.wav,.aac" hidden>
   </main>`;
 }
 
@@ -1070,9 +1076,105 @@ function inspectorClean(scene, layer, layers) {
     }).join('')}
   </div>
   ${layerListMarkup(layer, layers)}
+  <button class="btn wide" type="button" data-action="nav-clean-brush">${icon('sparkle', 14)} Paint a mask</button>
   <div class="model-line"><span class="dot"></span><strong>AI fill · ready</strong><span>Local fill</span></div>
   <button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 14)} Preview before / after</button>
   <button class="btn wide" type="button" data-action="nav" data-screen="clean">${icon('sparkle', 14)} Clean focus</button>`;
+}
+
+
+function scriptCues() {
+  return (state.edit?.captions?.cues || []).filter((cue) => String(cue.text || '').trim());
+}
+
+function scriptLanguage() {
+  return state.edit?.script?.source_language
+    || state.check?.result?.transcript?.language
+    || 'en';
+}
+
+function timelineDuration() {
+  const edit = state.edit;
+  const scenes = getScenes();
+  return Math.max(
+    Number(edit?.end || 0),
+    Number(scenes[scenes.length - 1]?.end || 0),
+    ...scriptCues().map((cue) => Number(cue.end || 0)),
+    Number(edit?.voice?.duration || 0),
+    Number(edit?.dub?.duration || 0),
+  );
+}
+
+function timelineBlock(start, end, total, label, action = '', data = '') {
+  const left = total > 0 ? Math.max(0, Math.min(100, (Number(start) / total) * 100)) : 0;
+  const width = total > 0 ? Math.max(0.6, Math.min(100 - left, ((Number(end) - Number(start)) / total) * 100)) : 0;
+  return `<button class="timeline-block" type="button" ${action ? `data-action="${action}" ${data}` : 'disabled'} style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%">${esc(label)}</button>`;
+}
+
+function timelinePanel() {
+  if (!state.edit) return '';
+  const total = timelineDuration();
+  const clips = state.edit.clips || [];
+  const cues = scriptCues();
+  const voice = state.edit.dub || state.edit.voice;
+  const music = state.edit.music;
+  const playhead = total > 0 ? Math.max(0, Math.min(100, (Number(state.previewTime || 0) / total) * 100)) : 0;
+  return `<section class="panel timeline" data-total="${total}">
+    <div class="timeline-head"><h2>Timeline</h2><span class="small muted">${fmtDuration(total)} · ${clips.length} clips · ${cues.length} cues</span><span class="spacer"></span>
+      <span class="timeline-trim"><label>In <input id="trim-in" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.start ?? currentScene()?.start ?? 0).toFixed(2)}"></label><label>Out <input id="trim-out" type="number" step="0.05" min="0" value="${Number(clipForScene(currentScene(), state.selectedScene)?.end ?? currentScene()?.end ?? 0).toFixed(2)}"></label><button class="btn small" type="button" data-action="trim-apply" data-clip="${clipIndexForScene(currentScene(), state.selectedScene)}">Apply trim</button></span>
+      <button class="btn small" type="button" data-action="open-script">${icon('captions', 12)} Script</button></div>
+    <div class="timeline-body">
+      <div class="timeline-labels">
+        <div class="timeline-label"><strong>Video</strong><button class="timeline-tool" type="button" data-action="trim-focus">Trim</button></div>
+        <div class="timeline-label"><strong>Script</strong><button class="timeline-tool" type="button" data-action="open-script">Edit</button></div>
+        <div class="timeline-label"><strong>Voice</strong><button class="timeline-tool" type="button" data-action="voice-tab">${voice ? 'Preview' : 'Record'}</button></div>
+        <div class="timeline-label"><strong>Music</strong>${music ? `<button class="timeline-tool" type="button" data-action="remove-music">Remove</button>` : `<button class="timeline-tool" type="button" data-action="add-music">Add</button>`}</div>
+      </div>
+      <div class="timeline-tracks">
+        <div class="timeline-track video">${clips.map((clip, index) => {
+          const sceneIndex = getScenes().findIndex((scene) => scene.id === clip.scene);
+          const at = sceneIndex >= 0 ? sceneIndex : index;
+          return timelineBlock(clip.start, clip.end, total, `S${pad(at + 1)}`, 'select-scene', `data-index="${at}"`);
+        }).join('')}</div>
+        <div class="timeline-track script">${cues.map((cue) => timelineBlock(cue.start, cue.end, total, '', 'timeline-seek', `data-time="${Number(cue.start || 0).toFixed(3)}"`)).join('')}</div>
+        <div class="timeline-track voice">${voice ? timelineBlock(0, Math.min(total, Number(voice.duration || total)), total, state.edit.dub ? 'Dub' : (voice.engine === 'record' ? 'Recorded' : 'Voice')) : ''}</div>
+        <div class="timeline-track music">${music ? timelineBlock(0, total, total, music.name || 'Music') : ''}</div>
+        <span class="timeline-playhead" style="left:${playhead.toFixed(2)}%"></span>
+      </div>
+    </div>
+  </section>`;
+}
+
+function scriptDrawer() {
+  const cues = scriptCues();
+  if (!cues.length) {
+    return `<section class="script-drawer"><div class="script-head"><strong>Script</strong><span class="spacer"></span><button class="btn small" type="button" data-action="close-script">Close</button></div><p class="small muted" style="padding:18px">Generate captions first. The script uses the caption track.</p></section>`;
+  }
+  return `<section class="script-drawer">
+    <div class="script-head">
+      <strong>Script</strong><span class="small muted">${cues.length} lines · ${esc(scriptLanguage())}</span>
+      <span class="spacer"></span>
+      <select data-action="script-target" aria-label="Target language">
+        ${['en','vi','zh'].map((code) => `<option value="${code}" ${state.scriptTarget === code ? 'selected' : ''}>${({en:'English',vi:'Vietnamese',zh:'Chinese'})[code]}</option>`).join('')}
+      </select>
+      <button class="btn small" type="button" data-action="script-translate" ${state.scriptBusy ? 'disabled' : ''}>Translate</button>
+      <select data-action="script-mode" aria-label="Rewrite style">
+        ${[['clean','Clean up'],['short','Shorten'],['punchy','Punchier']].map(([value,label]) => `<option value="${value}" ${state.scriptMode === value ? 'selected' : ''}>${label}</option>`).join('')}
+      </select>
+      <button class="btn small" type="button" data-action="script-rewrite" ${state.scriptBusy ? 'disabled' : ''}>Rewrite</button>
+      <button class="btn small" type="button" data-action="script-reset">Reset</button>
+      <button class="btn small" type="button" data-action="close-script">Close</button>
+    </div>
+    ${state.scriptBusy ? '<div class="script-progress">Working on the script…</div>' : ''}
+    <div class="script-columns">
+      <div class="script-column"><h3>Original</h3><div class="script-rows">${cues.map((cue) => `<div class="script-row"><span class="tc">${fmtTC(cue.start, 24)}</span><p>${esc(cue.source_text || cue.text || '')}</p></div>`).join('')}</div></div>
+      <div class="script-column"><h3>Script</h3><div class="script-rows">${cues.map((cue) => `<label class="script-row editing"><span class="tc">${fmtTC(cue.start, 24)}</span><input type="text" value="${esc(cue.text || '')}" data-action="cue-save" data-cue="${esc(cue.id)}"></label>`).join('')}</div></div>
+    </div>
+  </section>`;
+}
+
+function inspectorScript() {
+  return `<div class="script-card"><strong>Script tools</strong><p class="small muted">Translate, rewrite and edit the caption track. The script feeds captions, voice-over and dub.</p><button class="btn primary wide" type="button" data-action="open-script">${icon('captions', 14)} Open script</button></div>`;
 }
 
 function inspectorCaptions(scene) {
@@ -1093,16 +1195,43 @@ function inspectorCaptions(scene) {
 
 function inspectorVoice() {
   const voice = state.edit?.voice;
+  const dub = state.edit?.dub;
+  const music = state.edit?.music;
+  const cues = scriptCues();
+  const active = dub || voice;
   return `<div class="field"><label>Local voice</label><select data-action="voice-select">
     ${state.voices.length ? state.voices.slice(0, 120).map((item) => `<option value="${esc(item.name)}" ${item.name === state.voiceName ? 'selected' : ''}>${esc(item.name)} · ${esc(item.locale)}</option>`).join('') : `<option>${esc(state.voiceName)}</option>`}
   </select></div>
-  <div class="field"><label>Mode</label><select data-action="voice-mode">
-    <option value="voice_over" ${state.voiceMode === 'voice_over' ? 'selected' : ''}>Voice over original</option>
+  <div class="field"><label>Voice-over mode</label><select data-action="voice-mode">
+    <option value="voice_over" ${state.voiceMode === 'voice_over' ? 'selected' : ''}>Over original sound</option>
     <option value="voice_only" ${state.voiceMode === 'voice_only' ? 'selected' : ''}>Voice only</option>
   </select></div>
-  ${voice ? `<div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${esc(voice.voice)}</strong><span>${voice.mode === 'voice_only' ? 'Voice only' : 'Voice over original'}</span></span></div>` : '<p class="small muted">No voice-over yet. Captions are the script.</p>'}
-  <button class="btn primary wide" type="button" data-action="voice-generate">${icon('voice', 14)} ${voice ? 'Regenerate voice-over' : 'Generate voice-over'}</button>
-  ${voice ? `<button class="btn wide" type="button" data-action="voice-preview">${icon('play', 14)} Preview voice</button>` : ''}`;
+  ${state.voicePreview ? `<audio class="inline-audio" controls autoplay src="${esc(state.voicePreview)}"></audio>` : ''}
+  <div class="voice-actions">
+    <button class="btn wide" type="button" data-action="voice-generate">${icon('voice', 14)} ${voice ? 'Regenerate' : 'Generate'} voice-over</button>
+    ${active ? `<button class="btn wide" type="button" data-action="voice-preview">${icon('play', 14)} Preview ${dub ? 'dub' : 'voice'}</button>` : ''}
+  </div>
+  <div class="record-row">
+    ${state.recording
+      ? `<button class="btn wide record-live" type="button" data-action="record-stop">${icon('stop', 14)} Stop recording</button>`
+      : `<button class="btn wide" type="button" data-action="record-start">${icon('voice', 14)} Record voice-over</button>`}
+    <p class="small muted">${state.recording ? 'Recording from the microphone…' : 'Or record your own voice.'}</p>
+  </div>
+  <div class="media-rule"></div>
+  <div class="voice-section">
+    <strong>Dub</strong>
+    <p class="small muted">Speaks the current script. Original audio is muted; add music if you want a bed.</p>
+    <button class="btn wide" type="button" data-action="dub-build">${icon('captions', 14)} ${dub ? 'Rebuild dub' : 'Build dub'}</button>
+    ${dub ? `<p class="small" style="color:var(--green-ink)">Dub · ${esc(dub.voice)} · ${esc(dub.language || '')}</p>` : ''}
+  </div>
+  <div class="voice-section">
+    <strong>Background music</strong>
+    ${music ? `<div class="kv"><span>${esc(music.name || 'Music')}</span><button class="btn small" type="button" data-action="remove-music">Remove</button></div>` : `<button class="btn wide" type="button" data-action="add-music">${icon('volume', 14)} Add music</button>`}
+  </div>
+  ${cues.length ? `<div class="voice-section"><div class="toggle-row"><strong>Preview a line</strong><span class="small muted">${cues.length} cues</span></div>
+    <div class="line-preview-list">${(state.showAllCues ? cues : cues.slice(0, 4)).map((cue) => `<div class="line-preview"><span>${esc(truncate(cue.text || '', 54))}</span><button class="btn small" type="button" data-action="voice-line" data-cue="${esc(cue.id)}">${icon('play', 11)}</button></div>`).join('')}</div>
+    ${cues.length > 4 ? `<button class="btn small wide" type="button" data-action="toggle-cues">${state.showAllCues ? 'Show fewer lines' : `Show all ${cues.length} lines`}</button>` : ''}
+  </div>` : '<p class="small muted">Generate captions first; they are the voice script.</p>'}`;
 }
 
 /* ------------------------------------------------------------------ clean */
@@ -1136,7 +1265,7 @@ function screenClean() {
 
       <section style="display:grid;gap:14px;min-width:0">
         <section class="panel" style="overflow:hidden">
-          ${splitStage(scene, { showCleaning: true, useCleanUrl: false })}
+          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: false })}
         </section>
         <section class="panel clean-scene-strip">
           <div class="scene-strip-head"><h3>Scene strip · clean status</h3><span class="small muted">${checked}/${scenes.length} layered</span>${sceneStripControls('clean-scenes')}</div>
@@ -1169,6 +1298,7 @@ function screenClean() {
             }).join('')}
           </div>
           ${layerListMarkup(layer, layers, 'No text detected in this scene yet.')}
+          <button class="btn wide" type="button" data-action="brush-toggle">${icon('sparkle', 14)} ${state.brushMode ? 'Close brush' : 'Paint a mask'}</button>
           <div class="model-line"><span class="dot"></span><strong>AI fill · ready</strong><span>Local fill</span></div>
           ${checked === scenes.length
             ? `<button class="btn primary wide" type="button" data-action="nav" data-screen="preview">${icon('play', 15)} Preview clean</button><button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all scenes</button>`
@@ -1178,6 +1308,114 @@ function screenClean() {
       </aside>
     </div>
   </main>`;
+}
+
+function brushStage(scene) {
+  return `<div class="brush-stage" style="aspect-ratio:${mediaAspect()};min-height:380px">
+    <img src="${frameUrl(sceneMid(scene))}" alt="Frame to paint">
+    <canvas id="brush-canvas" aria-label="Paint a clean mask"></canvas>
+    <div class="brush-toolbar">
+      <div class="segmented" style="width:170px">
+        <button class="${state.brushKind === 'fill' ? 'is-active' : ''}" type="button" data-action="brush-kind" data-kind="fill">Fill</button>
+        <button class="${state.brushKind === 'blur' ? 'is-active' : ''}" type="button" data-action="brush-kind" data-kind="blur">Blur</button>
+      </div>
+      <label class="brush-size">Size <input id="brush-size" type="range" min="0.008" max="0.08" step="0.004" value="${state.brushSize}"></label>
+      <button class="btn small" type="button" data-action="brush-undo">Undo</button>
+      <button class="btn small" type="button" data-action="brush-clear">Clear</button>
+      <button class="btn small primary" type="button" data-action="brush-apply">Apply mask</button>
+      <button class="btn small" type="button" data-action="brush-toggle">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function updateTimelinePlayhead(time) {
+  const timeline = document.querySelector('.timeline');
+  const head = timeline?.querySelector('.timeline-playhead');
+  const total = Number(timeline?.dataset.total || 0);
+  if (!head || total <= 0) return;
+  head.style.left = `${Math.max(0, Math.min(100, (Number(time) / total) * 100)).toFixed(2)}%`;
+}
+
+function setupBrushCanvas() {
+  const canvas = document.getElementById('brush-canvas');
+  if (!canvas) return;
+  const stage = canvas.parentElement;
+  const context = canvas.getContext('2d');
+  const resize = () => {
+    const rect = stage.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(rect.width));
+    canvas.height = Math.max(1, Math.round(rect.height));
+    draw();
+  };
+  const draw = () => {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = 'rgba(217,119,22,.45)';
+    for (const stroke of state.brushStrokes) {
+      const radius = Math.max(2, stroke.r * canvas.width);
+      for (const point of stroke.points) {
+        context.beginPath();
+        context.arc(point.x * canvas.width, point.y * canvas.height, radius, 0, Math.PI * 2);
+        context.fill();
+      }
+    }
+  };
+  let drawing = false;
+  let stroke = null;
+  const point = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    };
+  };
+  canvas.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    canvas.setPointerCapture(event.pointerId);
+    drawing = true;
+    stroke = { r: state.brushSize, points: [point(event)] };
+    state.brushStrokes.push(stroke);
+    draw();
+  });
+  canvas.addEventListener('pointermove', (event) => {
+    if (!drawing || !stroke) return;
+    stroke.points.push(point(event));
+    draw();
+  });
+  const end = () => { drawing = false; stroke = null; };
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+  resize();
+}
+
+async function applyBrush() {
+  if (!state.project || !state.edit || !state.brushStrokes.length) {
+    toast('Paint at least one stroke.', 'bad');
+    return;
+  }
+  const scene = currentScene();
+  if (!scene) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/clean/manual`, {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: state.brushKind,
+        start: scene.start,
+        end: scene.end,
+        strokes: state.brushStrokes,
+      }),
+    });
+    state.edit = data.edit;
+    state.brushMode = false;
+    state.brushStrokes = [];
+    state.selectedLayerId = data.layer?.id || '';
+    state.previewCache.delete(scene.id);
+    state.previewStatus.set(scene.id, 'queued');
+    render();
+    toast('Brush mask added.');
+    startPreviewClean(scene.id);
+  } catch (error) {
+    toast(`Brush: ${error.message}`, 'bad');
+  }
 }
 
 function splitStage(scene, { showCleaning = false, useCleanUrl = false } = {}) {
@@ -1245,7 +1483,7 @@ function screenPreview() {
     <div class="workspace preview">
       <section class="preview-main">
         <section class="panel preview-stage" style="overflow:hidden">
-          ${splitStage(scene, { showCleaning: true, useCleanUrl: false })}
+          ${state.brushMode ? brushStage(scene) : splitStage(scene, { showCleaning: true, useCleanUrl: false })}
         </section>
         <section class="panel preview-scenes">
           <div class="scene-strip-head"><h3>Scenes · ${scenes.length} total</h3><span class="small muted">${ready}/${scenes.length} proofs</span>${sceneStripControls('preview-scenes')}</div>
@@ -1304,6 +1542,8 @@ function screenRender() {
   const checked = sceneReadyCount(scenes);
   const captions = state.edit?.captions?.cues?.length ? 1 : 0;
   const voice = state.edit?.voice ? 1 : 0;
+  const dub = state.edit?.dub ? 1 : 0;
+  const music = state.edit?.music ? 1 : 0;
   const outputPath = state.settings?.storage?.data_root
     ? `${state.settings.storage.data_root}/exports`
     : '';
@@ -1322,7 +1562,7 @@ function screenRender() {
         <div class="render-settings">
           <div class="render-setting"><div class="setting-head">${icon('monitor', 14)} Resolution</div><div class="readonly">1080p (${resolutionLabel})</div></div>
           <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><select data-action="render-fps"><option>${fps || 24} fps</option><option>30 fps</option></select></div>
-          <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${esc(state.edit?.voice ? 'Voice over + original' : 'Original audio')}</div></div>
+          <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${dub ? `Dub${music ? ' + music' : ''}` : state.edit?.voice ? `Voice over + original${music ? ' + music' : ''}` : music ? 'Original + music' : 'Original audio'}</div></div>
           <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div><div class="toggle-row"><span>${state.edit?.captions?.burn ? 'Burn into render' : 'Sidecar SRT'}</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div></div>
           <div class="render-setting"><div class="setting-head">${icon('voice', 14)} Voice-over</div><div class="toggle-row"><span>${state.edit?.voice ? 'Included' : 'None'}</span><label class="switch"><input type="checkbox" ${state.edit?.voice ? 'checked' : ''} disabled><i></i></label></div></div>
           <div class="media-rule"></div>
@@ -1343,7 +1583,8 @@ function screenRender() {
           <div class="ready-card">
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>${checked} / ${scenes.length} scenes ready</strong><span>${checked === scenes.length ? 'Review proofs before render' : 'Some scenes still need a decision'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Captions</strong><span>${captions ? '1 track' : 'None'}</span></span></div>
-            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Voice</strong><span>${voice ? '1 track' : 'None'}</span></span></div>
+            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Voice</strong><span>${dub ? 'Dub track' : voice ? 'Voice-over track' : 'None'}</span></span></div>
+            <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Music</strong><span>${music ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · 1080p · H.264</span></span></div>
           </div>
           <button class="btn primary wide start" type="button" data-action="start-render" ${checked === scenes.length ? '' : 'disabled'}>${icon('play', 16)} Start render</button>
@@ -1405,12 +1646,14 @@ function openAudioModal(url, title = 'Voice-over') {
 
 async function openSettings() {
   try {
-    const [models, settings] = await Promise.all([
+    const [models, settings, packs] = await Promise.all([
       api('/api/models').catch(() => ({ models: [] })),
       api('/api/settings').catch(() => state.settings),
+      api('/api/packs').catch(() => ({ packs: [] })),
     ]);
     state.models = models.models || [];
     state.settings = settings || state.settings;
+    state.packs = packs.packs || [];
   } catch (_) { /* keep current */ }
   const storage = state.settings?.storage || {};
   openModal(`<dialog class="modal" aria-label="Settings">
@@ -1425,6 +1668,14 @@ async function openSettings() {
           <div class="kv"><span>AI fill</span><strong>${state.engine?.fill?.ready ? 'Ready' : 'Missing'}</strong></div>
           <h3 style="margin-top:10px">Models</h3>
           ${state.models.map((model) => `<div class="kv"><span>${esc(model.label || model.id)}</span><strong>${model.ready ? 'Ready' : 'Missing'} <button class="btn small" type="button" data-action="verify-model" data-model="${esc(model.id)}">Verify</button></strong></div>`).join('') || '<p class="small muted">No models reported.</p>'}
+          <h3 style="margin-top:12px">Optional downloads</h3>
+          <div class="pack-list">
+            ${state.packs.map((pack) => {
+              const pct = pack.size_bytes ? Math.min(100, Math.round((Number(pack.downloaded_bytes || 0) / pack.size_bytes) * 100)) : 0;
+              return `<div class="pack-row"><div><strong>${esc(pack.name)}</strong><span>${fmtBytes(pack.size_bytes)} · ${esc(pack.license)} · ${esc(pack.detail)}</span>${pack.downloading ? `<div class="progress"><span style="width:${pct}%"></span></div>` : ''}${pack.error ? `<span class="pack-error">${esc(pack.error)}</span>` : ''}</div>${pack.installed ? `<button class="btn small" type="button" data-action="remove-pack" data-pack="${esc(pack.id)}">Remove</button>` : pack.downloading ? `<span class="small muted">${pct}%</span>` : `<button class="btn small" type="button" data-action="download-pack" data-pack="${esc(pack.id)}">Download</button>`}</div>`;
+            }).join('') || '<p class="small muted">No optional packs.</p>'}
+          </div>
+          <p class="small muted" style="margin-top:8px">System packs live in macOS: <a href="x-apple.systempreferences:com.apple.Localization-Settings.extension">Translation languages</a> (English, Vietnamese, Chinese), Apple Intelligence for rewrite, and extra voices. DuckSuite never downloads executable code.</p>
         </section>
         <section>
           <h3>Storage</h3>
@@ -1618,6 +1869,17 @@ async function cleanAll() {
   }
 }
 
+async function ensureCaptions() {
+  if (!state.project || !state.edit || state.edit.captions?.cues?.length) return;
+  if (!getSegments().length) await refreshTranscript();
+  if (!getSegments().length) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/captions/generate`, { method: 'POST' });
+    state.edit.captions = data.captions;
+    state.cleanVersion += 1;
+  } catch (_) { /* Script stays empty; the user can retry from Captions */ }
+}
+
 async function generateCaptions() {
   if (!state.project || !state.edit) {
     toast('Finish Check first.', 'bad');
@@ -1680,9 +1942,134 @@ async function generateVoice() {
 }
 
 function previewVoice() {
-  if (!state.project || !state.edit?.voice) return;
-  const url = mediaUrl(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/voice/audio`);
-  openAudioModal(url, 'Voice-over preview');
+  if (!state.project || (!state.edit?.voice && !state.edit?.dub)) return;
+  state.voicePreview = mediaUrl(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/voice/audio`);
+  render();
+}
+
+async function previewLine(cueId) {
+  if (!state.project || !state.edit) return;
+  const cue = scriptCues().find((item) => String(item.id) === String(cueId));
+  if (!cue) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/voice/preview`, {
+      method: 'POST',
+      body: JSON.stringify({ text: cue.text || '', voice: state.voiceName }),
+    });
+    state.voicePreview = mediaUrl(`/api/projects/${encodeURIComponent(state.project.id)}/voice/preview/${encodeURIComponent((data.preview?.audio || '').split('/').pop())}`);
+    render();
+  } catch (error) {
+    toast(`Preview failed: ${error.message}`, 'bad');
+  }
+}
+
+async function translateScript() {
+  if (!state.project || !state.edit) return;
+  state.scriptBusy = true;
+  render();
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/script/translate`, {
+      method: 'POST',
+      body: JSON.stringify({ target: state.scriptTarget, source: scriptLanguage() }),
+    });
+    state.edit.captions = data.captions;
+    toast(`Translated to ${state.scriptTarget}.`);
+  } catch (error) {
+    toast(`Translate: ${error.message}`, 'bad');
+  } finally {
+    state.scriptBusy = false;
+    render();
+  }
+}
+
+async function rewriteScript() {
+  if (!state.project || !state.edit) return;
+  state.scriptBusy = true;
+  render();
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/script/rewrite`, {
+      method: 'POST',
+      body: JSON.stringify({ mode: state.scriptMode }),
+    });
+    state.edit.captions = data.captions;
+    toast('Script rewritten.');
+  } catch (error) {
+    toast(`Rewrite: ${error.message}`, 'bad');
+  } finally {
+    state.scriptBusy = false;
+    render();
+  }
+}
+
+async function resetScript() {
+  if (!state.project || !state.edit) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/script/reset`, { method: 'POST' });
+    state.edit.captions = data.captions;
+    render();
+    toast('Script reset to source.');
+  } catch (error) {
+    toast(`Reset: ${error.message}`, 'bad');
+  }
+}
+
+async function buildDub() {
+  if (!state.project || !state.edit) return;
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/dub`, {
+      method: 'POST',
+      body: JSON.stringify({ voice: state.voiceName, language: state.scriptTarget }),
+    });
+    state.edit.dub = data.dub;
+    render();
+    toast('Dub built. Original audio will be muted on render.');
+  } catch (error) {
+    toast(`Dub failed: ${error.message}`, 'bad');
+  }
+}
+
+async function removeMusic() {
+  if (!state.project || !state.edit) return;
+  try {
+    await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/music`, { method: 'DELETE' });
+    delete state.edit.music;
+    render();
+  } catch (error) {
+    toast(`Music: ${error.message}`, 'bad');
+  }
+}
+
+async function uploadMusic(file) {
+  if (!file || !state.project || !state.edit) return;
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/music`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${state.token}`, 'X-Filename': file.name },
+      body: file,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+    state.edit.music = body.music;
+    render();
+    toast('Background music added.');
+  } catch (error) {
+    toast(`Music: ${error.message}`, 'bad');
+  }
+}
+
+function startRecording() {
+  if (!window.webkit?.messageHandlers?.duck) {
+    toast('Recording needs the Mac app.', 'bad');
+    return;
+  }
+  state.recording = true;
+  render();
+  window.webkit.messageHandlers.duck.postMessage({ type: 'recordStart' });
+}
+
+function stopRecording() {
+  if (!state.recording) return;
+  window.webkit?.messageHandlers?.duck?.postMessage({ type: 'recordStop' });
 }
 
 async function startRender(projectId = '', editId = '') {
@@ -1762,6 +2149,39 @@ async function downloadCaptions() {
 }
 
 
+async function refreshPacks() {
+  const data = await api('/api/packs').catch(() => ({ packs: [] }));
+  state.packs = data.packs || [];
+  if (state.packs.some((pack) => pack.downloading)) {
+    window.setTimeout(async () => {
+      await refreshPacks();
+      if (document.querySelector('dialog')) await openSettings();
+    }, 1500);
+  }
+}
+
+async function downloadPack(packId) {
+  try {
+    await api(`/api/packs/${encodeURIComponent(packId)}/download`, { method: 'POST' });
+    await refreshPacks();
+    await openSettings();
+    toast('Download started.');
+  } catch (error) {
+    toast(`Pack: ${error.message}`, 'bad');
+  }
+}
+
+async function removePack(packId) {
+  try {
+    await api(`/api/packs/${encodeURIComponent(packId)}`, { method: 'DELETE' });
+    await refreshPacks();
+    await openSettings();
+    toast('Pack removed.');
+  } catch (error) {
+    toast(`Pack: ${error.message}`, 'bad');
+  }
+}
+
 async function verifyModel(modelId) {
   try {
     const result = await api(`/api/models/${encodeURIComponent(modelId)}/verify`, { method: 'POST' });
@@ -1792,7 +2212,16 @@ app.addEventListener('click', async (event) => {
     else if (action === 'open-editor') navigate(projectPath('edit'));
     else if (action === 'nav') navigate(projectPath(target.dataset.screen || 'edit'));
     else if (action === 'proof-tab') { state.proofTab = target.dataset.tab || 'scenes'; render(); }
-    else if (action === 'inspector-tab') { state.inspectorTab = target.dataset.tab || 'clean'; render(); }
+    else if (action === 'inspector-tab') {
+      state.inspectorTab = target.dataset.tab || 'clean';
+      if (state.inspectorTab === 'script') {
+        state.scriptOpen = true;
+        window.setTimeout(() => document.querySelector('.script-drawer')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+      } else {
+        state.scriptOpen = false;
+      }
+      render();
+    }
     else if (action === 'select-scene') {
       const index = Number(target.dataset.index || 0);
       const scenes = getScenes();
@@ -1832,6 +2261,26 @@ app.addEventListener('click', async (event) => {
     else if (action === 'play-render') playRender(target.dataset.project || '', target.dataset.edit || '');
     else if (action === 'play-source') playSource();
     else if (action === 'close-inline-player') { state.inlinePlaying = false; render(); }
+    else if (action === 'open-script') { state.scriptOpen = true; state.inspectorTab = 'script'; render(); window.setTimeout(() => document.querySelector('.script-drawer')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); }
+    else if (action === 'close-script') { state.scriptOpen = false; render(); }
+    else if (action === 'script-translate') await translateScript();
+    else if (action === 'script-rewrite') await rewriteScript();
+    else if (action === 'script-reset') await resetScript();
+    else if (action === 'timeline-seek') { state.previewTime = Number(target.dataset.time || 0) + 0.01; render(); }
+    else if (action === 'trim-focus') document.querySelector('.timeline-trim')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else if (action === 'voice-tab') { state.inspectorTab = 'voice'; state.scriptOpen = false; render(); }
+    else if (action === 'add-music') document.querySelector('#music-input')?.click();
+    else if (action === 'remove-music') await removeMusic();
+    else if (action === 'record-start') startRecording();
+    else if (action === 'record-stop') stopRecording();
+    else if (action === 'dub-build') await buildDub();
+    else if (action === 'voice-line') await previewLine(target.dataset.cue || '');
+    else if (action === 'nav-clean-brush') { state.brushMode = true; state.brushStrokes = []; navigate(projectPath('clean')); }
+    else if (action === 'brush-toggle') { state.brushMode = !state.brushMode; if (!state.brushMode) state.brushStrokes = []; render(); }
+    else if (action === 'brush-kind') { state.brushKind = target.dataset.kind || 'fill'; render(); }
+    else if (action === 'brush-undo') { state.brushStrokes.pop(); render(); }
+    else if (action === 'brush-clear') { state.brushStrokes = []; render(); }
+    else if (action === 'brush-apply') await applyBrush();
     else if (action === 'reveal') await revealPath(target.dataset.path || '');
     else if (action === 'preview-view') { state.previewView = target.dataset.view || 'compare'; render(); }
     else if (action === 'preview-reclean') {
@@ -1847,6 +2296,8 @@ app.addEventListener('click', async (event) => {
       }
     }
     else if (action === 'verify-model') await verifyModel(target.dataset.model || '');
+    else if (action === 'download-pack') await downloadPack(target.dataset.pack || '');
+    else if (action === 'remove-pack') await removePack(target.dataset.pack || '');
     else if (action === 'seek') {
       state.previewTime = Number(target.dataset.time || 0) + 0.01;
       const video = document.querySelector('video[data-preview]');
@@ -1866,8 +2317,20 @@ app.addEventListener('change', async (event) => {
     await handleFile(file);
     return;
   }
+  if (target.id === 'brush-size') {
+    state.brushSize = Number(target.value || 0.025);
+    return;
+  }
+  if (target.id === 'music-input') {
+    const file = target.files?.[0];
+    target.value = '';
+    await uploadMusic(file);
+    return;
+  }
   const action = target.dataset?.action;
-  if (action === 'caption-burn') await patchCaptions({ burn: target.checked });
+  if (action === 'script-target') { state.scriptTarget = target.value; render(); await translateScript(); }
+  else if (action === 'script-mode') { state.scriptMode = target.value; render(); }
+  else if (action === 'caption-burn') await patchCaptions({ burn: target.checked });
   else if (action === 'caption-style') await patchCaptions({ style: target.value });
   else if (action === 'caption-position') await patchCaptions({ position: target.value });
   else if (action === 'cue-save') await saveCue(target.dataset.cue || '', target.value);
@@ -1887,6 +2350,7 @@ app.addEventListener('input', (event) => {
 /* ------------------------------------------------------------------ after render */
 
 function afterRender() {
+  setupBrushCanvas();
   const inline = document.querySelector('video[data-inline-player]');
   if (inline) {
     const start = Number(inline.dataset.start || 0);
@@ -1894,14 +2358,14 @@ function afterRender() {
       try { inline.currentTime = start; } catch (_) { /* metadata not ready */ }
     }
     inline.play().catch(() => {});
-    inline.addEventListener('timeupdate', () => { state.previewTime = inline.currentTime; }, { passive: true });
+    inline.addEventListener('timeupdate', () => { state.previewTime = inline.currentTime; updateTimelinePlayhead(inline.currentTime); }, { passive: true });
   }
   const video = document.querySelector('video[data-preview]');
   if (video) {
     if (state.previewTime > 0 && Math.abs(video.currentTime - state.previewTime) > 0.35) {
       try { video.currentTime = state.previewTime; } catch (_) { /* metadata not ready */ }
     }
-    video.addEventListener('timeupdate', () => { state.previewTime = video.currentTime; }, { passive: true });
+    video.addEventListener('timeupdate', () => { state.previewTime = video.currentTime; updateTimelinePlayhead(video.currentTime); }, { passive: true });
   }
 
   document.querySelectorAll('.split-stage').forEach((stage) => {
@@ -2002,6 +2466,33 @@ function startPolls() {
     if (['welcome', 'render'].includes(state.screen)) await refreshQueue();
   }, 2500);
 }
+
+window.duckRecordingStarted = (path) => {
+  state.recordingPath = path;
+  toast('Recording. Press Stop when finished.');
+};
+
+window.duckRecordingStopped = async (path) => {
+  state.recording = false;
+  if (!path) { render(); toast('Recording was empty.', 'bad'); return; }
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(state.edit.id)}/voice/record`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    });
+    state.edit.voice = data.voice;
+    render();
+    toast('Recorded voice-over saved.');
+  } catch (error) {
+    toast(`Recording: ${error.message}`, 'bad');
+  }
+};
+
+window.duckRecordingError = (message) => {
+  state.recording = false;
+  render();
+  toast(`Recording: ${message}`, 'bad');
+};
 
 async function boot() {
   state.token = readToken();

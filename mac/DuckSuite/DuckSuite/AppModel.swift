@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import Security
 import SwiftUI
@@ -40,6 +41,8 @@ final class AppModel: ObservableObject {
     private var launchToken: String?
     private var dataRoot: URL?
     private var isStarting = false
+    private var recorder: AVAudioRecorder?
+    private var recordingURL: URL?
 
     init() {
         NotificationCenter.default.addObserver(
@@ -69,6 +72,40 @@ final class AppModel: ObservableObject {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    func startRecording() async throws -> String {
+        guard let dataRoot else { throw ImportError.noDataRoot }
+        let granted = await AVCaptureDevice.requestAccess(for: .audio)
+        guard granted else {
+            throw SidecarError.failedToStart("Microphone access is off. Allow it in System Settings > Privacy & Security > Microphone.")
+        }
+        let folder = dataRoot.appendingPathComponent("recordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("recording-\(UUID().uuidString.lowercased()).wav")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 48_000,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+        ]
+        recorder = try AVAudioRecorder(url: url, settings: settings)
+        recordingURL = url
+        guard recorder?.record() == true else {
+            throw SidecarError.failedToStart("The microphone could not start recording.")
+        }
+        return url.path
+    }
+
+    func stopRecording() -> String? {
+        recorder?.stop()
+        recorder = nil
+        defer { recordingURL = nil }
+        guard let url = recordingURL, FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return url.path
     }
 
     func stop() {

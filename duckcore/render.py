@@ -357,33 +357,7 @@ def render_edit(
                 )
                 captioned.replace(output)
 
-        voice = edit.get("voice")
-        if isinstance(voice, dict) and voice.get("audio"):
-            voice_path = job_dir / str(voice["audio"])
-            if voice_path.is_file():
-                if progress:
-                    progress(0.985, "Mixing voice-over")
-                mixed = output.with_name(f".{output.stem}.voice.mp4")
-                if voice.get("mode") == "voice_only" or not media.has_audio(output):
-                    _run([
-                        ffmpeg, "-y", "-v", "error",
-                        "-i", str(output), "-i", str(voice_path),
-                        "-map", "0:v:0", "-map", "1:a:0",
-                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                        "-shortest", "-movflags", "+faststart", str(mixed),
-                    ])
-                else:
-                    _run([
-                        ffmpeg, "-y", "-v", "error",
-                        "-i", str(output), "-i", str(voice_path),
-                        "-filter_complex",
-                        "[0:a]volume=0.22[o];[1:a]volume=1.0[v];"
-                        "[o][v]amix=inputs=2:duration=first:dropout_transition=0[a]",
-                        "-map", "0:v:0", "-map", "[a]",
-                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                        "-shortest", "-movflags", "+faststart", str(mixed),
-                    ])
-                mixed.replace(output)
+        _mix_audio(ffmpeg, output, edit, job_dir, progress)
 
         if progress:
             progress(1.0, "Render complete")
@@ -392,6 +366,81 @@ def render_edit(
         for segment in segments:
             segment.unlink(missing_ok=True)
         raise
+
+def _mix_audio(ffmpeg: str, output: Path, edit: dict, job_dir: Path, progress=None) -> None:
+    """Mix dub or voice-over and optional music into the rendered video."""
+    dub = edit.get("dub") if isinstance(edit.get("dub"), dict) else None
+    voice = edit.get("voice") if isinstance(edit.get("voice"), dict) else None
+    music = edit.get("music") if isinstance(edit.get("music"), dict) else None
+    voice_path = job_dir / str((dub or voice or {}).get("audio") or "") if (dub or voice) else None
+    music_path = job_dir / str((music or {}).get("audio") or "") if music else None
+    if voice_path and not voice_path.is_file():
+        voice_path = None
+    if music_path and not music_path.is_file():
+        music_path = None
+    if not voice_path and not music_path:
+        return
+    if progress:
+        progress(0.985, "Mixing dub" if dub else "Mixing audio")
+    mixed = output.with_name(f".{output.stem}.mix.mp4")
+    inputs = ["-i", str(output)]
+    if voice_path:
+        inputs += ["-i", str(voice_path)]
+    if music_path:
+        inputs += ["-i", str(music_path)]
+    voice_index = 1 if voice_path else -1
+    music_index = (2 if voice_path else 1) if music_path else -1
+    level = max(0.0, min(1.0, float((music or {}).get("volume", 0.25))))
+    filters: list[str] = []
+    labels: list[str] = []
+    if dub:
+        if voice_index >= 0:
+            filters.append(f"[{voice_index}:a]volume=1.0[dub]")
+            labels.append("[dub]")
+            if music_index >= 0:
+                filters.append(f"[{music_index}:a]volume={level:.3f}[music]")
+                labels.append("[music]")
+        if len(labels) == 2:
+            filters.append("[dub][music]amix=inputs=2:duration=first:dropout_transition=0[aout]")
+        elif labels:
+            filters.append(f"{labels[0]}anull[aout]")
+        else:
+            return
+        command = [ffmpeg, "-y", "-v", "error", *inputs, "-filter_complex", ";".join(filters),
+                   "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy",
+                   "-c:a", "aac", "-b:a", "192k", "-shortest",
+                   "-movflags", "+faststart", str(mixed)]
+    else:
+        has_original = media.has_audio(output)
+        if voice_path:
+            if voice.get("mode") == "voice_only" or not has_original:
+                filters.append(f"[{voice_index}:a]volume=1.0[voice]")
+                labels.append("[voice]")
+            else:
+                filters.append("[0:a]volume=0.22[orig]")
+                filters.append(f"[{voice_index}:a]volume=1.0[voice]")
+                labels += ["[orig]", "[voice]"]
+        elif has_original:
+            filters.append("[0:a]volume=1.0[orig]")
+            labels.append("[orig]")
+        if music_path:
+            filters.append(f"[{music_index}:a]volume={level:.3f}[music]")
+            labels.append("[music]")
+        if len(labels) == 1:
+            filters.append(f"{labels[0]}anull[aout]")
+        elif len(labels) > 1:
+            filters.append(
+                "".join(labels) + f"amix=inputs={len(labels)}:duration=first:dropout_transition=0[aout]"
+            )
+        else:
+            return
+        command = [ffmpeg, "-y", "-v", "error", *inputs, "-filter_complex", ";".join(filters),
+                   "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy",
+                   "-c:a", "aac", "-b:a", "192k", "-shortest",
+                   "-movflags", "+faststart", str(mixed)]
+    _run(command)
+    mixed.replace(output)
+
 
 class RenderQueue:
     def __init__(self, data_root: Path):

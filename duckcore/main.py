@@ -31,7 +31,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from duckcore import app_settings, captions, clean, edits, media, preview, render, voice
+from duckcore import app_settings, captions, clean, edits, media, packs, preview, render, script, voice
 from duckcore.check import CheckManager
 from duckcore.store import ProjectStore
 
@@ -90,6 +90,46 @@ class ClipPatch(BaseModel):
 class VoicePatch(BaseModel):
     voice: str = Field(min_length=1, max_length=80)
     mode: str = Field(default="voice_over", pattern="^(voice_over|voice_only)$")
+
+
+class ScriptTranslate(BaseModel):
+    target: str = Field(default="vi", pattern="^(en|vi|zh)$")
+    source: str = Field(default="en", pattern="^(en|vi|zh)$")
+
+
+class ScriptRewrite(BaseModel):
+    mode: str = Field(default="clean", pattern="^(clean|short|punchy)$")
+
+
+class VoicePreviewBody(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    voice: str = Field(min_length=1, max_length=80)
+
+
+class VoiceRecordBody(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+
+
+class DubBody(BaseModel):
+    voice: str = Field(min_length=1, max_length=80)
+    language: str = Field(default="", max_length=20)
+
+
+class BrushPoint(BaseModel):
+    x: float
+    y: float
+
+
+class BrushStroke(BaseModel):
+    r: float = 0.02
+    points: list[BrushPoint]
+
+
+class ManualLayerBody(BaseModel):
+    kind: str = Field(default="fill", pattern="^(fill|blur)$")
+    start: float
+    end: float
+    strokes: list[BrushStroke]
 
 
 class DevImport(BaseModel):
@@ -589,6 +629,53 @@ def create_app(token: str, data_root: Path) -> FastAPI:
         edits.save_edit(edit, data_root)
         return {"edit": edit}
 
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/clean/manual")
+    def create_manual_layer(
+        project_id: str, edit_id: str, body: ManualLayerBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        strokes = [
+            {"r": max(0.003, min(0.12, float(stroke.r))), "points": [
+                {"x": max(0.0, min(1.0, float(point.x))), "y": max(0.0, min(1.0, float(point.y)))}
+                for point in stroke.points
+            ]}
+            for stroke in body.strokes if stroke.points
+        ]
+        points = [point for stroke in strokes for point in stroke["points"]]
+        if not points:
+            raise HTTPException(status_code=400, detail="Paint at least one stroke.")
+        start = max(0.0, float(body.start))
+        end = max(start + 0.05, float(body.end))
+        radius = max(stroke["r"] for stroke in strokes)
+        x0 = max(0.0, min(point["x"] for point in points) - radius)
+        y0 = max(0.0, min(point["y"] for point in points) - radius)
+        x1 = min(1.0, max(point["x"] for point in points) + radius)
+        y1 = min(1.0, max(point["y"] for point in points) + radius)
+        layer = {
+            "id": f"cl_manual_{uuid.uuid4().hex[:8]}",
+            "kind": body.kind,
+            "method": "lama" if body.kind == "fill" else "",
+            "enabled": True,
+            "label": "Manual brush",
+            "tracklet_kind": "manual",
+            "text_sample": "Manual brush",
+            "box": {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0},
+            "ranges": [{"start": start, "end": end}],
+            "mask": {"strokes": strokes},
+            "large": False,
+            "track": [],
+            "fill_keys": None,
+            "tracklet_id": "",
+            "confidence": 1.0,
+        }
+        edit.setdefault("clean", []).append(layer)
+        edits.save_edit(edit, data_root)
+        return {"edit": edit, "layer": layer}
+
     @app.get(
         "/api/projects/{project_id}/edits/{edit_id}/clean/preview",
         responses={200: {"content": {"image/jpeg": {}}}},
@@ -718,6 +805,178 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{edit_id}.srt"'},
         )
 
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/script/translate")
+    def translate_script(
+        project_id: str, edit_id: str, body: ScriptTranslate,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            track = script.translate(edit, data_root, target=body.target, source=body.source)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"captions": track}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/script/rewrite")
+    def rewrite_script(
+        project_id: str, edit_id: str, body: ScriptRewrite,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            track = script.rewrite(edit, data_root, mode=body.mode)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"captions": track}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/script/reset")
+    def reset_script(
+        project_id: str, edit_id: str, _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+            track = script.reset(edit, data_root)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"captions": track}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/voice/preview")
+    def preview_voice_line(
+        project_id: str, edit_id: str, body: VoicePreviewBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edits.get_edit(data_root, project_id, edit_id)
+            track = voice.preview_line(body.text, body.voice, project_id, data_root)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"preview": track}
+
+    @app.get("/api/projects/{project_id}/voice/preview/{name}")
+    def preview_audio(
+        project_id: str, name: str, request: Request, t: str | None = None,
+    ) -> FileResponse:
+        require_media(request, t)
+        target = (data_root / "projects" / project_id / "voice" / "previews" / Path(name).name).resolve()
+        try:
+            target.relative_to((data_root / "projects" / project_id / "voice" / "previews").resolve())
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Preview not found.") from exc
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Preview not found.")
+        return FileResponse(target, media_type="audio/wav")
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/voice/record")
+    def save_recording(
+        project_id: str, edit_id: str, body: VoiceRecordBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        source = Path(body.path).expanduser()
+        if not source.is_file():
+            raise HTTPException(status_code=400, detail="Recording file is missing.")
+        target_dir = data_root / "projects" / project_id / "voice"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"record_{uuid.uuid4().hex[:12]}{source.suffix or '.wav'}"
+        shutil.copy2(source, target)
+        track = {
+            "engine": "record",
+            "voice": "Microphone",
+            "mode": "voice_over",
+            "audio": str(target.relative_to(data_root / "projects" / project_id)),
+            "duration": media.duration(target),
+        }
+        edit["voice"] = track
+        edits.save_edit(edit, data_root)
+        return {"voice": track}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/dub")
+    def build_dub(
+        project_id: str, edit_id: str, body: DubBody,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        try:
+            track = voice.build_track(
+                (edit.get("captions") or {}).get("cues") or [],
+                voice_name=body.voice, mode="voice_only",
+                project_id=project_id, data_root=data_root,
+                total_duration=float(edit.get("end") or 0.0),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        track["language"] = body.language
+        edit["dub"] = track
+        edits.save_edit(edit, data_root)
+        return {"dub": track}
+
+    @app.post("/api/projects/{project_id}/edits/{edit_id}/music")
+    async def upload_music(
+        project_id: str, edit_id: str, request: Request,
+        _: None = Depends(require_token),
+    ) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        raw = await request.body()
+        if not raw:
+            raise HTTPException(status_code=400, detail="Music file is empty.")
+        name = Path(request.headers.get("x-filename", "music.m4a")).name
+        target_dir = data_root / "projects" / project_id / "music"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / name
+        target.write_bytes(raw)
+        edit["music"] = {
+            "audio": str(target.relative_to(data_root / "projects" / project_id)),
+            "name": name,
+            "volume": 0.25,
+        }
+        edits.save_edit(edit, data_root)
+        return {"music": edit["music"]}
+
+    @app.delete("/api/projects/{project_id}/edits/{edit_id}/music")
+    def remove_music(project_id: str, edit_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            edit = edits.get_edit(data_root, project_id, edit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Edit not found.") from exc
+        edit.pop("music", None)
+        edits.save_edit(edit, data_root)
+        return {"ok": True}
+
+    @app.get("/api/packs")
+    def list_packs(_: None = Depends(require_token)) -> dict:
+        return {"packs": packs.status(data_root)}
+
+    @app.post("/api/packs/{pack_id}/download")
+    def download_pack(pack_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            return {"packs": packs.start_download(data_root, pack_id)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Pack not found.") from exc
+
+    @app.delete("/api/packs/{pack_id}")
+    def remove_pack(pack_id: str, _: None = Depends(require_token)) -> dict:
+        try:
+            return {"packs": packs.remove(data_root, pack_id)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Pack not found.") from exc
+
     @app.get("/api/voices")
     def local_voices(_: None = Depends(require_token)) -> dict:
         return {"voices": voice.list_voices()}
@@ -766,7 +1025,7 @@ def create_app(token: str, data_root: Path) -> FastAPI:
             edit = edits.get_edit(data_root, project_id, edit_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Edit not found.") from exc
-        track = edit.get("voice") or {}
+        track = edit.get("voice") or edit.get("dub") or {}
         path = data_root / "projects" / project_id / str(track.get("audio") or "")
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Voice audio is missing.")

@@ -114,25 +114,25 @@ def _silence(frames: int) -> bytes:
     return b"\x00" * max(0, frames) * SAMPLE_WIDTH * CHANNELS
 
 
-def build_voice(
-    edit: dict,
-    reference: dict,
-    data_root: Path,
+def build_track(
+    cues: list[dict],
     *,
-    voice: str,
-    mode: str = "voice_over",
+    voice_name: str,
+    mode: str,
+    project_id: str,
+    data_root: Path,
+    total_duration: float | None = None,
 ) -> dict:
-    cues = [cue for cue in (reference or {}).get("cues") or [] if str(cue.get("text") or "").strip()]
+    cues = [cue for cue in cues or [] if str(cue.get("text") or "").strip()]
     if not cues:
-        raise ValueError("Generate captions first; they are the voice-over script.")
-    if not voice:
+        raise ValueError("Generate captions first; they are the script.")
+    if not voice_name:
         raise ValueError("Choose a local voice.")
     mode = "voice_only" if mode == "voice_only" else "voice_over"
-    project_id = str(edit["project_id"])
     job_dir = Path(data_root) / "projects" / project_id / "voice"
     job_dir.mkdir(parents=True, exist_ok=True)
     token = hashlib.sha1(
-        f"{voice}|{mode}|{[(c.get('start'), c.get('end'), c.get('text')) for c in cues]}".encode()
+        f"{voice_name}|{mode}|{[(c.get('start'), c.get('end'), c.get('text')) for c in cues]}".encode()
     ).hexdigest()[:12]
     output = job_dir / f"voice_{token}.wav"
     if not output.is_file():
@@ -151,7 +151,7 @@ def build_voice(
                 aiff = job_dir / f".cue_{index}.aiff"
                 wav = job_dir / f".cue_{index}.wav"
                 fitted = job_dir / f".cue_{index}.fit.wav"
-                _synthesize(str(cue.get("text") or ""), voice, aiff)
+                _synthesize(str(cue.get("text") or ""), voice_name, aiff)
                 _to_wave(aiff, wav)
                 _fit(wav, fitted, end - start)
                 with wave.open(str(fitted), "rb") as reader:
@@ -160,18 +160,54 @@ def build_voice(
                 cursor += len(frames) // (SAMPLE_WIDTH * CHANNELS)
                 for path in (aiff, wav, fitted):
                     path.unlink(missing_ok=True)
-            total = int(round(float(edit.get("end") or 0.0) * SAMPLE_RATE))
+            total = int(round(float(total_duration or 0.0) * SAMPLE_RATE))
             if total > cursor:
                 writer.writeframes(_silence(total - cursor))
-    track = {
+    return {
         "engine": "say",
-        "voice": voice,
+        "voice": voice_name,
         "mode": mode,
         "audio": str(output.relative_to(Path(data_root) / "projects" / project_id)),
         "duration": _duration(output),
     }
+
+
+def build_voice(
+    edit: dict,
+    reference: dict,
+    data_root: Path,
+    *,
+    voice: str,
+    mode: str = "voice_over",
+) -> dict:
+    track = build_track(
+        [cue for cue in (reference or {}).get("cues") or [] if isinstance(cue, dict)],
+        voice_name=voice,
+        mode=mode,
+        project_id=str(edit["project_id"]),
+        data_root=data_root,
+        total_duration=float(edit.get("end") or 0.0),
+    )
+    track["duration"] = _duration(Path(data_root) / "projects" / str(edit["project_id"]) / track["audio"])
     edit["voice"] = track
     from duckcore import edits
-
     edits.save_edit(edit, data_root)
     return track
+
+
+def preview_line(text: str, voice_name: str, project_id: str, data_root: Path) -> dict:
+    text = str(text or "").strip()
+    if not text:
+        raise ValueError("Choose a line to preview.")
+    if not voice_name:
+        raise ValueError("Choose a local voice.")
+    job_dir = Path(data_root) / "projects" / project_id / "voice" / "previews"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    token = hashlib.sha1(f"{voice_name}|{text}".encode()).hexdigest()[:16]
+    output = job_dir / f"{token}.wav"
+    if not output.is_file():
+        aiff = job_dir / f".{token}.aiff"
+        _synthesize(text, voice_name, aiff)
+        _to_wave(aiff, output)
+        aiff.unlink(missing_ok=True)
+    return {"audio": str(output.relative_to(Path(data_root) / "projects" / project_id)), "duration": _duration(output)}

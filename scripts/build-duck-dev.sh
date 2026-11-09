@@ -55,7 +55,7 @@ cp -R "$ROOT/Licenses/." "$APP/Contents/Resources/Licenses/"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/Licenses/README.md"
 
 mkdir -p "$ROOT/bin"
-for helper in vision_probe transcribe_apple translate_apple; do
+for helper in vision_probe transcribe_apple translate_apple rewrite_apple; do
   source="$ROOT/tools/$helper.swift"
   binary="$ROOT/bin/$helper"
   if [ -f "$source" ] && { [ ! -x "$binary" ] || [ "$source" -nt "$binary" ]; }; then
