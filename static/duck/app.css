@@ -1591,3 +1591,24 @@ dialog.search-modal { width: min(680px, calc(100vw - 40px)); }
 .edit-switch { display: flex; align-items: center; gap: 5px; margin: 4px 0 6px; }
 .edit-switch select { flex: 1; min-width: 0; height: 28px; font-size: 10px; }
 .story-banner #story-scene-select { max-width: 200px; }
+.story-context { display: flex; align-items: center; gap: 6px; padding: 6px 10px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); box-shadow: var(--shadow); }
+.story-context strong { font-size: 12px; white-space: nowrap; }
+.story-context .edit-switch { flex: 0 0 220px; margin: 0; }
+.story-context .edit-switch span { display: none; }
+.story-select-banner { display: flex; align-items: center; gap: 5px; padding: 5px 7px; margin: 0 0 6px; border: 1px solid var(--amber-2); border-radius: 6px; background: var(--amber-soft); }
+.story-select-banner strong { font-size: 11px; }
+.readiness-blockers { margin: 6px 0 0; color: var(--amber-ink); font-size: 10px; line-height: 1.35; }
+.transcript-overlay.is-top { top: 12px; bottom: auto; }
+.overlay-move { right: 34px; }
+.beat-thumb { width: 100%; border-radius: 7px; border: 1px solid var(--line); background: #0b0f0e; object-fit: contain; max-height: 180px; }
+.beat-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.rail-head { margin: 2px 0 4px; color: var(--muted); font: 700 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.setup-note { margin: -2px 0 6px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+.story-select-banner { display: grid; grid-template-columns: auto 1fr; gap: 4px; align-items: center; }
+.story-select-banner .story-select-actions { grid-column: 1 / -1; display: flex; gap: 5px; }
+.story-select-banner .story-select-actions .btn:last-child { flex: 1; }
+.scope-line { flex-wrap: wrap; }
+.scope-toggle button { white-space: nowrap; }
+.scope-line .scope-note { flex-basis: 100%; }
+.toolbar-engine { border: 0; background: transparent; padding: 0; cursor: pointer; }
+.toolbar-engine:hover { color: var(--ink); }

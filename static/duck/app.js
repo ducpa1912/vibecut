@@ -49,6 +49,7 @@ const state = {
   editScope: 'scene',
   focusMode: '',
   transcriptOverlay: true,
+  overlayTop: false,
   sfxKind: '',
   storySelect: false,
   storyScenes: [],
@@ -558,7 +559,7 @@ function layerLabel(layer, index) {
 
 function cleanState(scene) {
   if (!state.edit) return 'Waiting';
-  if (!sceneLayers(scene).length) return 'Needs clean';
+  if (!sceneLayers(scene).length) return 'No text';
   return 'Layered';
 }
 
@@ -668,7 +669,7 @@ function projectFacts() {
 
 function engineLabel() {
   if (!state.engine) return 'Starting local core…';
-  return state.engine.fill?.ready && state.engine.vision?.available ? 'Local · ready' : 'Local · check';
+  return state.engine.fill?.ready && state.engine.vision?.available ? 'Local · ready' : 'Local · setup needed';
 }
 
 function queueActiveCount() {
@@ -760,7 +761,7 @@ function topbar() {
       ${tab('render', 'Render', 3)}
     </nav>
     <div class="toolbar-right">
-      <span class="toolbar-engine" title="${esc(engineLabel())}"><span class="dot${state.engine?.fill?.ready && state.engine?.vision?.available ? '' : ' is-idle'}"></span><span class="engine-text">${state.engine?.fill?.ready && state.engine?.vision?.available ? 'Ready' : 'Check'}</span></span>
+      <button class="toolbar-engine" type="button" data-action="settings" title="${esc(engineLabel())} · open engine settings"><span class="dot${state.engine?.fill?.ready && state.engine?.vision?.available ? '' : ' is-idle'}"></span><span class="engine-text">${state.engine?.fill?.ready && state.engine?.vision?.available ? 'Ready' : 'Setup needed'}</span></button>
       <button class="toolbar-queue${queueActiveCount() ? ' is-active' : ''}" type="button" data-action="nav" data-screen="render" title="Render queue"${disabled}>${icon('layers', 14)}<span>Queue</span><strong>${queueActiveCount()}</strong></button>
       <button class="icon-btn toolbar-settings" type="button" data-action="settings" title="Settings" aria-label="Settings">${icon('settings', 18)}</button>
     </div>
@@ -1120,10 +1121,22 @@ function storyFileUrl(name) {
   return mediaUrl(`/api/projects/${encodeURIComponent(state.project?.id || '')}/edits/${encodeURIComponent(state.edit?.id || '')}/story/file`, { name });
 }
 
+function storyDisplayTitle() {
+  const clips = state.edit?.clips || [];
+  const stored = String(state.edit?.title || 'Story');
+  if (!stored.startsWith('Story · ')) return stored;
+  const scenes = clips.filter((clip) => clip.kind !== 'media').length;
+  return `Story · ${scenes} scenes`;
+}
+
 function storyOptionLabel(edit) {
   const title = String(edit?.title || 'Story');
   const seconds = Math.max(0, Number(edit?.end || 0));
-  return `${title} · ${fmtDuration(seconds)} · ${String(edit?.id || '').slice(-4)}`;
+  const updated = Number(edit?.updated || 0);
+  const when = updated
+    ? new Date(updated * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : String(edit?.id || '').slice(-4);
+  return `${title} · ${fmtDuration(seconds)} · ${when}`;
 }
 
 function storyBanner() {
@@ -1132,9 +1145,7 @@ function storyBanner() {
   const full = fullVideoEdit();
   const stories = (state.edits || []).filter((edit) => edit.kind === 'story');
   if (!stories.some((edit) => edit.id === state.edit.id)) stories.unshift(state.edit);
-  const sceneCount = clips.filter((clip) => clip.kind !== 'media').length;
-  const storedTitle = String(state.edit.title || 'Story');
-  const displayTitle = storedTitle.startsWith('Story · ') ? `Story · ${sceneCount} scenes` : storedTitle;
+  const displayTitle = storyDisplayTitle();
   const used = new Set(clips.filter((clip) => clip.kind !== 'media').map((clip) => clip.scene));
   const available = checkScenes().filter((scene) => !used.has(scene.id));
   return `<div class="story-banner">
@@ -1164,12 +1175,36 @@ function storyBanner() {
         <span class="chip">${storyClipLabel(clip, index)}</span>
         <span class="story-beat-name">${esc(clip.label || (clip.kind === 'media' ? 'Inserted beat' : `Scene ${pad(index + 1)}`))}</span>
         <span class="small muted">${fmtDuration(duration)}</span>
-        <button class="icon-btn" type="button" data-action="story-move-beat" data-index="${index}" data-delta="-1" title="Move left">‹</button>
-        <button class="icon-btn" type="button" data-action="story-move-beat" data-index="${index}" data-delta="1" title="Move right">›</button>
-        <button class="icon-btn" type="button" data-action="story-remove-beat" data-index="${index}" title="Remove beat">×</button>
+        <button class="icon-btn" type="button" data-action="story-move-beat" data-index="${index}" data-delta="-1" title="Move left" ${index === 0 ? 'disabled' : ''}>‹</button>
+        <button class="icon-btn" type="button" data-action="story-move-beat" data-index="${index}" data-delta="1" title="Move right" ${index === clips.length - 1 ? 'disabled' : ''}>›</button>
+        <button class="icon-btn" type="button" data-action="story-remove-beat" data-index="${index}" title="Remove beat" ${clips.length <= 1 ? 'disabled' : ''}>×</button>
       </span>`;
     }).join('')}
   </div>`;
+}
+
+function storyContextBar() {
+  if (!isStoryEdit()) return '';
+  const clips = state.edit?.clips || [];
+  return `<div class="story-context">
+    <span class="chip green">Story edit</span>
+    <strong>${esc(storyDisplayTitle())}</strong>
+    <span class="small muted">${clips.length} beats · ${fmtDuration(timelineDuration())}</span>
+    <span class="spacer"></span>
+    ${editSwitch()}
+    <button class="btn small" type="button" data-action="back-to-full">${icon('arrowLeft', 12)} Full video</button>
+  </div>`;
+}
+
+function outputSizeLabel() {
+  const meta = state.edit?.source || state.sourceMeta || {};
+  const width = Number(meta.width || 0);
+  const height = Number(meta.height || 0);
+  if (!width || !height) return '1080 × 1920';
+  const outW = width >= height ? Math.round((width * 1080) / height) : 1080;
+  const outH = width >= height ? 1080 : Math.round((height * 1080) / width);
+  const even = (value) => (value % 2 === 0 ? value : value + 1);
+  return `${even(outW)} × ${even(outH)}`;
 }
 
 function editSwitch() {
@@ -1213,7 +1248,11 @@ async function openEditById(editId) {
   if (!state.project || !editId) return;
   try {
     const data = await api(`/api/projects/${encodeURIComponent(state.project.id)}/edits/${encodeURIComponent(editId)}`);
-    state.edit = data.edit;
+    if (data.edit.kind === 'story' && String(data.edit.title || '').startsWith('Story · ')) {
+      const scenes = (data.edit.clips || []).filter((clip) => clip.kind !== 'media').length;
+      data.edit.title = `Story · ${scenes} scenes`;
+    }
+    applyEdit(data.edit);
     state.focusMode = '';
     state.storySelect = false;
     state.storyScenes = [];
@@ -1222,6 +1261,7 @@ async function openEditById(editId) {
     state.selectedScene = 0;
     await ensureCleanLayers();
     await ensureCaptions();
+    syncScriptStatus();
     render();
   } catch (error) {
     toast(`Edit: ${error.message}`, 'bad');
@@ -1318,6 +1358,32 @@ async function moveStoryBeat(index, delta) {
   }
 }
 
+function mediaInspector(story) {
+  const clip = story.clip;
+  const duration = Math.max(0, Number(clip.end || 0) - Number(clip.start || 0));
+  const kind = clip.media === 'image' ? 'Image' : 'Video';
+  const index = story.index;
+  const total = (state.edit?.clips || []).length;
+  return `<aside class="panel inspector">
+    <div class="inspector-head">
+      <h2 class="inspector-title">${kind} beat · ${esc(clip.label || 'Inserted')}</h2>
+      <p class="inspector-sub">Inserted beat · ${fmtDuration(duration)} · story ${fmtTC(story.start)} – ${fmtTC(story.start + duration)}</p>
+    </div>
+    <div class="inspector-body">
+      ${clip.media === 'image'
+        ? `<img class="beat-thumb" src="${storyFileUrl(clip.file)}" alt="">`
+        : `<video class="beat-thumb" controls preload="metadata" src="${storyFileUrl(clip.file)}"></video>`}
+      <p class="small muted">Inserted beats render at the story resolution and do not read source clean layers. Source speech is not read for this beat.</p>
+      <div class="kv"><span>File</span><strong title="${esc(clip.file || '')}">${esc((clip.file || '').split('/').pop())}</strong></div>
+      <div class="beat-actions">
+        <button class="btn small" type="button" data-action="story-move-beat" data-index="${index}" data-delta="-1" ${index === 0 ? 'disabled' : ''}>‹ Move left</button>
+        <button class="btn small" type="button" data-action="story-move-beat" data-index="${index}" data-delta="1" ${index === total - 1 ? 'disabled' : ''}>Move right ›</button>
+        <button class="btn small" type="button" data-action="story-remove-beat" data-index="${index}" ${total <= 1 ? 'disabled' : ''}>Remove beat</button>
+      </div>
+    </div>
+  </aside>`;
+}
+
 function screenEditor() {
   const scenes = getScenes();
   const scene = currentScene();
@@ -1326,7 +1392,6 @@ function screenEditor() {
   const layer = layers.find((item) => item.id === state.selectedLayerId) || layers[0] || null;
   const checking = ['queued', 'running', 'cancelling'].includes(state.check?.state);
   const overlayCues = overlayCuesForTime();
-  const scopeNote = state.editScope === 'project' ? 'All scenes' : `Scene ${pad(state.selectedScene + 1)}`;
   const tab = state.inspectorTab === 'audio' || state.inspectorTab === 'voice' ? 'audio'
     : state.inspectorTab === 'sfx' ? 'sfx'
       : state.inspectorTab === 'script' ? 'script' : 'clean';
@@ -1341,6 +1406,7 @@ function screenEditor() {
     <div class="workspace edit edit-clean">
       <aside class="panel proof-panel">
         <div class="panel-head"><h2>Scenes</h2><span class="meta">${scenes.length} scenes</span><button class="btn small story-toggle" type="button" data-action="toggle-story-select">${state.storySelect ? 'Cancel' : 'Story'}</button></div>
+        ${state.storySelect ? `<div class="story-select-banner"><span class="chip amber">Story selection</span><strong>${state.storyScenes.length} selected</strong><div class="story-select-actions"><button class="btn small" type="button" data-action="toggle-story-select">Cancel</button><button class="btn small primary" type="button" data-action="build-story" ${state.storyScenes.length ? '' : 'disabled'}>Build story</button></div></div>` : ''}
         <div class="proof-tabs">
           <button class="proof-tab${state.proofTab === 'scenes' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="scenes">Scenes ${scenes.length}</button>
           <button class="proof-tab${state.proofTab === 'stories' ? ' is-active' : ''}" type="button" data-action="proof-tab" data-tab="stories">Stories ${getStories().length}</button>
@@ -1349,7 +1415,6 @@ function screenEditor() {
         <div class="proof-list compact">
           ${state.proofTab === 'stories' ? storyProofRows(getStories()) : sceneProofRows(scenes)}
         </div>
-        ${state.storySelect ? `<div class="story-build"><span>${state.storyScenes.length} selected</span><button class="btn small primary" type="button" data-action="build-story" ${state.storyScenes.length ? '' : 'disabled'}>Build story</button></div>` : ''}
       </aside>
 
       <section class="editor-center">
@@ -1363,27 +1428,25 @@ function screenEditor() {
               : `<video data-preview controls preload="metadata" poster="${frameUrl(state.previewTime || scene.start)}" src="${sourceUrl()}"></video>`}
             <span class="media-badge right">${mediaClip ? (mediaClip.media === 'image' ? 'IMAGE BEAT' : 'VIDEO BEAT') : mediaResolution()}</span>
             <div class="media-overlay"><span class="tc">${fmtTC(mediaClip ? state.timelineTime : (state.previewTime || scene.start))} / ${fmtTC(mediaClip ? timelineDuration() : (state.edit?.end || state.check?.result?.meta?.duration || 0))}</span><span class="spacer"></span></div>
-            ${mediaClip ? '' : `<div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}">
+            ${mediaClip ? '' : `<div class="transcript-overlay${state.transcriptOverlay ? ' is-on' : ''}${state.overlayTop ? ' is-top' : ''}">
               <button class="overlay-toggle" type="button" data-action="toggle-transcript-overlay" title="Transcript layer">CC</button>
+              <button class="overlay-toggle overlay-move" type="button" data-action="overlay-position" title="Move transcript between bottom and top">⇕</button>
               <div class="transcript-ghost">${transcriptGhostMarkup(overlayCues)}</div>
             </div>`}
           </div>
         </section>
       </section>
 
-      <aside class="panel inspector">
+      ${mediaClip ? mediaInspector(story) : `<aside class="panel inspector">
         <div class="inspector-head">
           <h2 class="inspector-title">Scene ${pad(state.selectedScene + 1)} · ${esc(truncate(sceneTitle(scene, state.selectedScene), 26))}</h2>
           <p class="inspector-sub">${fmtTC(scene.start, state.check?.result?.meta?.fps || 24)} – ${fmtTC(scene.end, state.check?.result?.meta?.fps || 24)} · ${fmtDuration((scene.end || 0) - (scene.start || 0))}</p>
         </div>
-        <div class="scope-line">
-          <span class="small muted">Apply to</span>
-          <div class="segmented scope-toggle">
-            <button class="${state.editScope === 'scene' ? 'is-active' : ''}" type="button" data-action="set-scope" data-scope="scene">Scene</button>
-            <button class="${state.editScope === 'project' ? 'is-active' : ''}" type="button" data-action="set-scope" data-scope="project">Whole video</button>
-          </div>
-          <span class="scope-note">${esc(scopeNote)}</span>
-        </div>
+        ${tab === 'clean' ? `<div class="scope-line">
+          <span class="small muted">Clean scope</span>
+          <span class="chip">This scene’s text</span>
+          <span class="scope-note">Use Clean all in Preview to clean every scene.</span>
+        </div>` : ''}
         <div class="tabs">
           ${['clean', 'script', 'audio', 'sfx'].map((item) => `<button class="tab${tab === item ? ' is-active' : ''}" type="button" data-action="inspector-tab" data-tab="${item}">${item === 'audio' ? 'Audio' : item === 'sfx' ? 'SFX' : item[0].toUpperCase() + item.slice(1)}</button>`).join('')}
         </div>
@@ -1395,7 +1458,7 @@ function screenEditor() {
             ${state.queue.slice(0, 3).map((item) => `<div class="render-row"><span class="state-dot ${item.state === 'done' ? 'green' : ['running', 'rendering', 'queued', 'paused'].includes(item.state) ? 'amber' : ''}"></span><span>${esc(item.title || 'Render')}</span><span class="render-time">${item.state === 'done' ? 'Done' : queueLabel(item.state)}</span></div>`).join('') || '<p class="small muted">No renders yet.</p>'}
           </div>
         </div>
-      </aside>
+      </aside>`}
     </div>
     ${state.focusMode ? focusDock() : timelinePanel()}
     <input id="music-input" type="file" accept="audio/*,.m4a,.mp3,.wav,.aac" hidden>
@@ -1636,8 +1699,8 @@ function sfxFocus() {
 
 function sfxRange() {
   const scene = currentScene();
-  const start = state.editScope === 'project' ? 0 : Number(scene?.start || 0);
-  const end = state.editScope === 'project' ? Number(state.edit?.end || 0) : Number(scene?.end || 3);
+  const start = Number(scene?.start || 0);
+  const end = Number(scene?.end || 3);
   return { start: Math.max(0, start), end: Math.max(start + 0.2, end) };
 }
 
@@ -2175,16 +2238,20 @@ function scriptFocus() {
         </div>
       </div>
       <aside class="script-focus-rules">
+        <div class="rail-head">Script tools</div>
         <div class="rule-block"><label>Target language</label><select data-action="script-target">
           ${['en', 'vi', 'zh'].map((code) => `<option value="${code}" ${state.scriptTarget === code ? 'selected' : ''}>${({ en: 'English', vi: 'Vietnamese', zh: 'Chinese' })[code]}</option>`).join('')}
         </select></div>
         <button class="btn wide" type="button" data-action="script-translate" ${state.scriptBusy ? 'disabled' : ''}>${icon('captions', 13)} Translate</button>
+        <p class="setup-note">First use may ask for a macOS language pack.</p>
         <div class="rule-block"><label>Rewrite style</label><select data-action="script-mode">
           ${[['clean', 'Clean up'], ['short', 'Shorten'], ['punchy', 'Punchier']].map(([value, label]) => `<option value="${value}" ${state.scriptMode === value ? 'selected' : ''}>${label}</option>`).join('')}
         </select></div>
         <button class="btn wide" type="button" data-action="script-rewrite" ${state.scriptBusy ? 'disabled' : ''}>${icon('sparkle', 13)} Rewrite</button>
+        <p class="setup-note">${state.engine?.rewrite?.available === false ? 'Apple Intelligence is off. Rewrite uses the local model or basic cleanup.' : 'Rewrite uses the best available local engine.'}</p>
         <button class="btn wide" type="button" data-action="script-reset">Reset to source</button>
         <div class="rule-sep"></div>
+        <div class="rail-head">Caption tools</div>
         <div class="rule-block"><label>Caption style</label><select data-action="caption-style">
           ${['clean', 'bold', 'minimal'].map((value) => `<option value="${value}" ${track?.style === value ? 'selected' : ''}>${value[0].toUpperCase() + value.slice(1)}</option>`).join('')}
         </select></div>
@@ -2757,8 +2824,9 @@ function screenPreview() {
   const scene = currentScene();
   if (!scene) return emptyEditor();
   const ready = scenes.filter((item) => state.previewStatus.get(item.id) === 'ready').length;
+  const blocking = scenes.filter((item) => !sceneRenderReady(item));
   const status = state.previewStatus.get(scene.id) || 'pending';
-  return `<main class="screen">
+  return `<main class="screen">${storyContextBar()}
     <div class="workspace preview">
       <section class="preview-main">
         <section class="panel preview-stage" style="overflow:hidden">
@@ -2791,7 +2859,6 @@ function screenPreview() {
             <div class="segmented">
               ${['before', 'compare', 'after'].map((view) => `<button class="${state.previewView === view ? 'is-active' : ''}" type="button" data-action="preview-view" data-view="${view}">${view[0].toUpperCase() + view.slice(1)}</button>`).join('')}
             </div>
-            <div class="toggle-row"><span>Current scene first</span><span class="small muted">Always</span></div>
             <button class="btn wide" type="button" data-action="preview-reclean">${icon('loader', 14)} Re-clean this scene</button>
             <button class="btn wide" type="button" data-action="clean-all">${icon('sparkle', 14)} Clean all</button>
             ${status === 'failed' ? `<p class="small" style="color:var(--red)">This scene failed. Retry before render.</p>` : ''}
@@ -2801,7 +2868,7 @@ function screenPreview() {
         <section class="panel readiness">
           <div class="readiness-head"><strong>Readiness</strong><span>${ready} / ${scenes.length} proofs</span></div>
           <div class="progress"><span style="width:${scenes.length ? (ready / scenes.length) * 100 : 0}%"></span></div>
-          <p class="readiness-note">${ready === scenes.length ? 'All scenes have a proof. Review before render.' : 'Rendering stays blocked until each scene is ready or explicitly set to Off.'}</p>
+          <p class="readiness-note">${ready === scenes.length ? 'All scenes have a proof. Review before render.' : `Rendering stays blocked until each scene is ready. Still blocked: ${blocking.slice(0, 8).map((item) => `S${pad(scenes.indexOf(item) + 1)}`).join(', ')}${blocking.length > 8 ? ` +${blocking.length - 8}` : ''}.`}</p>
         </section>
 
         <button class="btn primary wide" type="button" data-action="nav" data-screen="render" style="height:46px;font-size:15px" ${sceneReadyCount(scenes) === scenes.length ? '' : 'disabled'}>${icon('play', 15)} Render</button>
@@ -2819,33 +2886,36 @@ function previewStatusLabel(value) {
 function screenRender() {
   const scenes = getScenes();
   const checked = sceneReadyCount(scenes);
+  const blocking = scenes.filter((scene) => !sceneRenderReady(scene));
   const captions = state.edit?.captions?.cues?.length ? 1 : 0;
   const voice = state.edit?.voice ? 1 : 0;
   const dub = state.edit?.dub ? 1 : 0;
   const music = state.edit?.music ? 1 : 0;
-  const outputPath = state.settings?.storage?.data_root
-    ? `${state.settings.storage.data_root}/exports`
+  const outputPath = state.settings?.storage?.data_root && state.project
+    ? `${state.settings.storage.data_root}/projects/${state.project.id}/renders`
     : '';
-  const outputDir = 'DuckSuite Exports';
+  const outputLabel = outputPath
+    ? outputPath.replace(state.settings?.storage?.data_root || '', '').replace(/^\//, '')
+    : 'Project render folder';
   const fps = Math.round(Number(state.edit?.source?.fps || 24));
   const sourceMeta = state.edit?.source || state.sourceMeta || {};
   const sourceW = Number(sourceMeta.width || 0);
   const sourceH = Number(sourceMeta.height || 0);
-  const resolutionLabel = sourceW && sourceH ? `${sourceW} × ${sourceH}` : '1080p';
+  const resolutionLabel = outputSizeLabel();
   const activeJobs = state.queue.filter((item) => ['queued', 'running', 'rendering', 'paused'].includes(item.state)).length;
   const queue = state.queue;
-  return `<main class="screen">
+  return `<main class="screen">${storyContextBar()}
     <div class="workspace render">
       <aside class="panel">
         <div class="panel-head"><h2>Render settings</h2></div>
         <div class="render-settings">
-          <div class="render-setting"><div class="setting-head">${icon('monitor', 14)} Resolution</div><div class="readonly">1080p (${resolutionLabel})</div></div>
+          <div class="render-setting"><div class="setting-head">${icon('monitor', 14)} Resolution</div><div class="readonly">${resolutionLabel}</div></div>
           <div class="render-setting"><div class="setting-head">${icon('film', 14)} Frame rate</div><select data-action="render-fps"><option>${fps || 24} fps</option><option>30 fps</option></select></div>
           <div class="render-setting"><div class="setting-head">${icon('volume', 14)} Audio mix</div><div class="readonly">${dub ? `Dub${music ? ' + music' : ''}` : state.edit?.voice ? `Voice over + original${music ? ' + music' : ''}` : music ? 'Original + music' : 'Original audio'}</div></div>
           <div class="render-setting"><div class="setting-head">${icon('captions', 14)} Captions</div><div class="toggle-row"><span>${state.edit?.captions?.burn ? 'Burn into render' : 'Sidecar SRT'}</span><label class="switch"><input type="checkbox" data-action="caption-burn" ${state.edit?.captions?.burn ? 'checked' : ''}><i></i></label></div></div>
           <div class="render-setting"><div class="setting-head">${icon('voice', 14)} Voice-over</div><div class="toggle-row"><span>${state.edit?.voice ? 'Included' : 'None'}</span><label class="switch"><input type="checkbox" ${state.edit?.voice ? 'checked' : ''} disabled><i></i></label></div></div>
           <div class="media-rule"></div>
-          <div class="render-setting"><div class="setting-head">${icon('folder', 14)} Output folder</div><div class="path-row"><span class="path" title="${esc(outputPath)}">${esc(outputDir)}</span>${outputPath ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(outputPath)}">${icon('folderOpen', 11)} Show</button>` : ''}</div></div>
+          <div class="render-setting"><div class="setting-head">${icon('folder', 14)} Output folder</div><div class="path-row"><span class="path" title="${esc(outputPath)}">${esc(outputLabel)}</span>${outputPath ? `<button class="btn small" type="button" data-action="reveal" data-path="${esc(outputPath)}">${icon('folderOpen', 11)} Show</button>` : ''}</div></div>
           <div class="render-setting"><div class="setting-head">${icon('monitor', 14)} Disk space</div><div class="small muted">${state.settings?.storage?.free_bytes ? `${fmtBytes(state.settings.storage.free_bytes)} free` : 'Local storage'}</div></div>
         </div>
       </aside>
@@ -2864,10 +2934,11 @@ function screenRender() {
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Captions</strong><span>${captions ? '1 track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Voice</strong><span>${dub ? 'Dub track' : voice ? 'Voice-over track' : 'None'}</span></span></div>
             <div class="ready-row"><span class="ready-icon">${icon('check', 12)}</span><span class="ready-main"><strong>Music</strong><span>${music ? '1 track' : 'None'}</span></span></div>
-            <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · 1080p · H.264</span></span></div>
+            <div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('clock', 12)}</span><span class="ready-main"><strong>Render</strong><span>Local · ${resolutionLabel} · H.264</span></span></div>
           </div>
           <button class="btn primary wide start" type="button" data-action="start-render" ${checked === scenes.length ? '' : 'disabled'}>${icon('play', 16)} Start render</button>
-          <div class="ready-card"><div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('folder', 12)}</span><span class="ready-main"><strong>Output</strong><span class="output-path" title="${esc(outputPath)}">${esc(outputDir)}</span></span></div></div>
+          ${blocking.length ? `<p class="readiness-blockers">Still blocked: ${blocking.slice(0, 8).map((item) => `S${pad(scenes.indexOf(item) + 1)}`).join(', ')}${blocking.length > 8 ? ` +${blocking.length - 8}` : ''}</p>` : ''}
+          <div class="ready-card"><div class="ready-row"><span class="ready-icon" style="background:var(--paper-2);color:var(--muted)">${icon('folder', 12)}</span><span class="ready-main"><strong>Output</strong><span class="output-path" title="${esc(outputPath)}">${esc(outputLabel)}</span></span></div></div>
         </section>
       </aside>
     </div>
@@ -3813,6 +3884,7 @@ document.addEventListener('click', async (event) => {
     else if (action === 'script-reset') await resetScript();
     else if (action === 'script-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); document.querySelectorAll('.focus-cue').forEach((row) => row.classList.toggle('is-current', Number(row.dataset.time || 0) <= state.timelineTime)); }
     else if (action === 'timeline-seek') { seekToTime(Number(target.dataset.time || 0) + 0.01); updateGhostActive(); }
+    else if (action === 'overlay-position') { state.overlayTop = !state.overlayTop; render(); }
     else if (action === 'trim-focus') document.querySelector('.timeline-trim')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     else if (action === 'voice-tab') { state.inspectorTab = 'voice'; state.scriptOpen = false; render(); }
     else if (action === 'add-music') document.querySelector('#music-input')?.click();
